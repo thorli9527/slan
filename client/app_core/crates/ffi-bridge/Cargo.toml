@@ -1,0 +1,12 @@
+[package]
+name = "ffi-bridge"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+controller-client = { path = "../controller-client" }
+nat = { path = "../nat" }
+p2p = { path = "../p2p" }
+relay-client = { path = "../relay-client" }
+slan-app-core = { path = "../app-core" }
+tunnel = { path = "../tunnel" }

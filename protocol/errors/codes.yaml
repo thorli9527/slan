@@ -1,0 +1,110 @@
+# 控制面、节点控制通道和 relay 数据面的统一错误码定义。
+#
+# 错误码按职责分层：
+# - 认证与会话
+# - 设备与节点
+# - 网络与成员关系
+# - IPAM / 子网
+# - 控制通道
+# - relay / 连接编排
+version: 0.2.0
+codes:
+  - code: AUTH_INVALID_CREDENTIALS
+    http_status: 401
+    message: 邮箱或密码无效
+
+  - code: AUTH_TOKEN_EXPIRED
+    http_status: 401
+    message: 访问令牌已过期
+
+  - code: AUTH_TOKEN_INVALID
+    http_status: 401
+    message: 访问令牌无效
+
+  - code: DEVICE_ALREADY_REGISTERED
+    http_status: 409
+    message: 设备已注册
+
+  - code: DEVICE_NOT_FOUND
+    http_status: 404
+    message: 设备不存在
+
+  - code: NODE_NOT_REGISTERED
+    http_status: 404
+    message: 节点未注册
+
+  - code: NODE_KEY_INVALID
+    http_status: 401
+    message: 节点公钥无效
+
+  - code: NODE_KEY_EXPIRED
+    http_status: 401
+    message: 节点密钥已过期
+
+  - code: NETWORK_NOT_FOUND
+    http_status: 404
+    message: 网络不存在
+
+  - code: NETWORK_MEMBER_EXISTS
+    http_status: 409
+    message: 设备已是该网络成员
+
+  - code: NETWORK_MEMBER_NOT_FOUND
+    http_status: 404
+    message: 网络成员不存在
+
+  - code: SUBNET_NOT_FOUND
+    http_status: 404
+    message: 子网不存在
+
+  - code: ATTACHMENT_NOT_FOUND
+    http_status: 404
+    message: 子网挂载关系不存在
+
+  - code: IPAM_NO_AVAILABLE_ADDRESS
+    http_status: 409
+    message: 没有可分配的虚拟 IP
+
+  - code: CONTROL_SESSION_INVALID
+    http_status: 401
+    message: 控制会话无效
+
+  - code: CONTROL_SESSION_EXPIRED
+    http_status: 401
+    message: 控制会话已过期
+
+  - code: NETWORK_MAP_STALE
+    http_status: 409
+    message: 网络地图版本过旧
+
+  - code: PEER_NOT_REACHABLE
+    http_status: 409
+    message: 当前对等节点不可达
+
+  - code: CONNECT_PLAN_MISSING
+    http_status: 404
+    message: 未找到连接计划
+
+  - code: RELAY_TICKET_INVALID
+    http_status: 401
+    message: Relay 票据无效
+
+  - code: RELAY_TICKET_EXPIRED
+    http_status: 401
+    message: Relay 票据已过期
+
+  - code: RELAY_SESSION_NOT_FOUND
+    http_status: 404
+    message: Relay 会话不存在
+
+  - code: RELAY_SESSION_EXISTS
+    http_status: 409
+    message: Relay 会话已存在
+
+  - code: RELAY_PEER_UNAUTHORIZED
+    http_status: 403
+    message: 节点不属于该 Relay 会话
+
+  - code: RELAY_PAYLOAD_INVALID
+    http_status: 400
+    message: Relay 负载无效

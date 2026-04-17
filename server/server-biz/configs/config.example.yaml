@@ -1,0 +1,57 @@
+# server-biz 本地开发配置样例。
+#
+# 该文件用于说明控制面服务在本地运行时需要的核心配置项。
+http:
+  # HTTP API 监听地址。
+  address: ":8080"
+ws:
+  # 控制通道 WebSocket 路径。
+  path: "/control/ws"
+jwt:
+  # JWT 签发者标识。
+  issuer: "slan"
+  # JWT 签名密钥，生产环境应替换。
+  secret: "change-me"
+relay:
+  # Relay 所属区域或集群名称。
+  region: "local"
+  # 返回给客户端的 UDP relay 端点。
+  udp_endpoint: "127.0.0.1:9000"
+bootstrap:
+  # Bootstrap 返回的默认 STUN 列表。
+  stun_servers:
+    - "stun:stun.l.google.com:19302"
+postgres:
+  # PostgreSQL 主机。
+  host: "127.0.0.1"
+  # PostgreSQL 端口。
+  port: 5432
+  # 数据库名。
+  database: "slan"
+  # 数据库用户名。
+  username: "postgres"
+  # 数据库密码。
+  password: "123456"
+  # 本地开发关闭 SSL。
+  ssl_mode: "disable"
+  # 最大连接数。
+  max_open_conns: 10
+  # 最小空闲连接数。
+  min_idle_conns: 2
+  # 连接最大存活时间，单位秒。
+  conn_max_lifetime_seconds: 1800
+  # 连接最大空闲时间，单位秒。
+  conn_max_idle_time_seconds: 300
+redis:
+  # Redis 主机。
+  host: "127.0.0.1"
+  # Redis 端口。
+  port: 6379
+  # Redis 密码，空表示不启用密码。
+  password: ""
+  # Redis 库编号。
+  database: 1
+  # 连接池大小。
+  pool_size: 10
+  # 最小空闲连接数。
+  min_idle_conns: 2

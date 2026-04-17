@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "crates/app-core",
+    "crates/controller-client",
+    "crates/nat",
+    "crates/p2p",
+    "crates/relay-client",
+    "crates/tunnel",
+    "crates/ffi-bridge",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"

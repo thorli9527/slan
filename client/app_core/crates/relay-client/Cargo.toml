@@ -1,0 +1,7 @@
+[package]
+name = "relay-client"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+slan-app-core = { path = "../app-core" }

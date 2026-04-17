@@ -1,0 +1,183 @@
+# app_core 内部需求
+
+本文档描述 `client/app_core` 在系统中的内部职责、模块拆分和后续必须实现的核心能力。
+
+## 1. 定位
+
+`app_core` 是 Flutter 应用与底层组网核心之间的 Rust 中间层，负责：
+
+- 承接控制面身份与配置
+- 承接 NAT / P2P / relay / DERP 等连接逻辑
+- 向上提供稳定门面
+- 向下隔离网络实现细节
+
+它本身不是 UI，也不是完整控制面客户端，而是“客户端运行时编排层”。
+
+## 2. 内部核心职责
+
+### 2.1 账户与身份
+
+- 注册与登录
+- 设备注册
+- 节点注册
+- 保存当前运行会话所需的身份信息
+
+### 2.2 网络配置获取
+
+- 查询可见网络
+- 创建网络
+- 让设备加入网络
+- 拉取 `bootstrap`
+
+### 2.3 运行时连接管理
+
+- NAT 探测
+- 候选路径收集
+- P2P 直连尝试
+- relay / DERP 回退
+- 隧道建立与关闭
+
+### 2.4 DERP/集群能力
+
+- 解析控制面返回的 `derp_map`
+- 构建 `derp_pool`
+- 建立 2~3 个 DERP 热连接
+- 只选择一个 active 节点发送
+- 每 5 秒执行 RTT / 超时 / 丢包探测
+- 基于评分触发切换
+
+## 3. crate 划分
+
+当前工作区：
+
+- `crates/app-core`
+  共享模型定义
+- `crates/controller-client`
+  控制面客户端 trait 与请求模型
+- `crates/nat`
+  NAT 探测抽象
+- `crates/p2p`
+  P2P 候选与连接抽象
+- `crates/relay-client`
+  relay / DERP 回退连接与路径管理抽象
+- `crates/tunnel`
+  隧道抽象
+- `crates/ffi-bridge`
+  对 Flutter 暴露统一门面
+
+## 4. 当前内部需求模型
+
+`crates/app-core` 当前应承载这些内部模型：
+
+- `Session`
+- `Device`
+- `Node`
+- `Network`
+- `BootstrapConfig`
+- `RelayTicket`
+- `ConnectionState`
+- `DerpTransport`
+- `DerpNodeMeta`
+- `DerpCluster`
+- `DerpMap`
+- `ProbeSample`
+- `DerpLinkState`
+- `DerpHealth`
+- `DerpLinkSnapshot`
+- `DerpPoolState`
+- `ActivePath`
+- `SwitchReason`
+- `DerpSwitchEvent`
+
+这些模型属于运行时内部语义，UI 不一定全部可见。
+
+## 5. 当前内部 trait 需求
+
+### `controller-client`
+
+必须支持：
+
+- `register`
+- `login`
+- `register_device`
+- `register_node`
+- `list_networks`
+- `create_network`
+- `join_network`
+- `bootstrap`
+- `issue_relay_ticket`
+
+DERP 场景下还要求：
+
+- `bootstrap()` 能返回 `derp_map`
+- `issue_relay_ticket()` 能携带 `derp_cluster_id`
+- `issue_relay_ticket()` 能携带 `preferred_derp_node_ids`
+
+### `relay-client`
+
+当前内部最少应包含四层能力：
+
+- `RelayClient`
+  单次 relay 回退入口
+- `DerpClient`
+  单个 DERP 连接
+- `DerpPool`
+  多连接热备、评分、切换
+- `PathManager`
+  统一管理 `p2p / relay / derp`
+
+### `p2p`
+
+必须提供：
+
+- `PeerCandidate`
+- `P2PConnector::connect`
+
+后续应与 `PathManager` 联动，而不是单独对外暴露连接结论。
+
+### `tunnel`
+
+必须提供：
+
+- `TunnelConfig`
+- `TunnelManager::establish`
+- `TunnelManager::close`
+
+后续应由 `PathManager` 决定“通过哪条路径承载隧道数据”。
+
+## 6. 暂不暴露给 Flutter 的内部能力
+
+以下内容先定义在 Rust 内部，不直接暴露给 Flutter：
+
+- `DerpClient`
+- `DerpPool`
+- `PathManager`
+- `DerpLinkSnapshot`
+- `DerpPoolState`
+- `DerpSwitchEvent`
+
+原因：
+
+- 它们是运行时调度与诊断语义
+- UI 当前只需要稳定的连接状态与结果
+- 先在内核层收敛再开放，能避免 FFI 过早固化
+
+## 7. 当前缺口
+
+当前接口已经定义，但实现上仍缺：
+
+1. `controller-client` 的真实 HTTP 实现
+2. `bootstrap.derp_map` 的真实解析与消费
+3. `DerpClient` 的真实连接实现
+4. `DerpPool` 的健康检查、评分、选主、切换逻辑
+5. `PathManager` 与 `p2p` / `relay-client` / `tunnel` 的打通
+6. 上报控制面的连接状态扩展
+
+## 8. 建议实现顺序
+
+1. 完成 `controller-client` 对 `bootstrap` 和 `ticket` 的真实接入
+2. 完成 `DerpClient` 单连接能力
+3. 完成 `DerpPool.warm_up()` 与 `send_via_active()`
+4. 完成 `tick_health_check()` 与 `maybe_switch()`
+5. 完成 `PathManager`
+6. 最后再考虑是否把 DERP 诊断状态开放给 Flutter

@@ -1,0 +1,220 @@
+syntax = "proto3";
+
+package slan.control;
+
+option go_package = "github.com/slan/server/server-biz/api/proto/control;control";
+
+// 控制通道总封装。
+//
+// 所有节点与控制面之间的实时消息都通过 Envelope 承载，
+// 具体负载类型由 oneof 中的字段决定。
+message Envelope {
+  string type = 1;
+  string request_id = 2;
+  oneof payload {
+    NodeHello node_hello = 10;
+    NodeHelloAck node_hello_ack = 11;
+    Ping ping = 12;
+    Pong pong = 13;
+    NetworkMapRequest network_map_request = 14;
+    NetworkMapResponse network_map_response = 15;
+    PeerUpdate peer_update = 16;
+    PeerRemove peer_remove = 17;
+    EndpointReport endpoint_report = 18;
+    PeerCandidate peer_candidate = 19;
+    ConnectPlan connect_plan = 20;
+    RelayTicket relay_ticket = 21;
+    ConnectionState connection_state = 22;
+    DisconnectNotice disconnect_notice = 23;
+    ErrorMessage error = 24;
+  }
+}
+
+// 节点上线后的第一条握手消息。
+message NodeHello {
+  string user_id = 1;
+  string device_id = 2;
+  string node_id = 3;
+  string network_id = 4;
+  string session_token = 5;
+  string node_public_key = 6;
+  repeated string capabilities = 7;
+}
+
+// 控制面对节点握手的确认响应。
+message NodeHelloAck {
+  string control_session_id = 1;
+  int32 heartbeat_seconds = 2;
+  uint64 network_revision = 3;
+}
+
+// 保活 ping。
+message Ping {
+  int64 timestamp = 1;
+}
+
+// 保活 pong。
+message Pong {
+  int64 timestamp = 1;
+}
+
+// 节点主动请求完整 NetworkMap。
+message NetworkMapRequest {
+  string network_id = 1;
+  uint64 last_revision = 2;
+}
+
+// 控制面返回完整 NetworkMap。
+message NetworkMapResponse {
+  NetworkMap map = 1;
+}
+
+// 网络地图。
+//
+// 这是控制面下发给节点的核心视图，包含当前网络拓扑、对端信息、
+// STUN 配置、relay 区域和基础路由/DNS 信息。
+message NetworkMap {
+  string self_user_id = 1;
+  string self_device_id = 2;
+  string self_node_id = 3;
+  string network_id = 4;
+  uint64 revision = 5;
+  int32 heartbeat_seconds = 6;
+  repeated string stun_servers = 7;
+  repeated Peer peers = 8;
+  repeated Route routes = 9;
+  repeated RelayRegion relay_regions = 10;
+  DNSConfig dns = 11;
+  int32 mtu = 12;
+}
+
+// 网络中的对等节点信息。
+message Peer {
+  string node_id = 1;
+  string device_id = 2;
+  string public_key = 3;
+  string status = 4;
+  bool relay_allowed = 5;
+  repeated string virtual_ips = 6;
+  repeated Endpoint endpoints = 7;
+  repeated string allowed_routes = 8;
+}
+
+// 单个节点可用的候选端点。
+message Endpoint {
+  string type = 1;      // lan / wan / reflexive / relay
+  string address = 2;   // ip:port
+  int64 updated_at = 3; // unix 秒时间戳
+}
+
+// 路由信息。
+message Route {
+  string cidr = 1;
+  string via_node_id = 2;
+  string metric = 3;
+}
+
+// DNS 配置。
+message DNSConfig {
+  repeated string servers = 1;
+  repeated string search_domains = 2;
+}
+
+// relay 区域定义。
+message RelayRegion {
+  string region_id = 1;
+  string region_name = 2;
+  repeated RelayEndpoint endpoints = 3;
+}
+
+// relay 区域内的具体端点。
+message RelayEndpoint {
+  string endpoint_id = 1;
+  string transport = 2; // udp / tcp / quic
+  string address = 3;
+}
+
+// 增量对等端更新。
+message PeerUpdate {
+  string network_id = 1;
+  uint64 revision = 2;
+  Peer peer = 3;
+}
+
+// 对等端移除通知。
+message PeerRemove {
+  string network_id = 1;
+  uint64 revision = 2;
+  string peer_node_id = 3;
+}
+
+// 节点向控制面上报本地观测到的端点和 NAT 类型。
+message EndpointReport {
+  string network_id = 1;
+  string node_id = 2;
+  string nat_type = 3;
+  repeated Endpoint endpoints = 4;
+}
+
+// 控制面向节点同步某个对端的候选信息。
+message PeerCandidate {
+  string peer_node_id = 1;
+  string candidate_type = 2;
+  string endpoint = 3;
+  int32 priority = 4;
+}
+
+// 控制面给出的连接计划。
+//
+// 节点应优先按照 paths 中的优先级尝试直连；
+// 如果直连失败，则可以使用附带的 relay_ticket 进行回退。
+message ConnectPlan {
+  string peer_node_id = 1;
+  bool prefer_direct = 2;
+  repeated PathOption paths = 3;
+  RelayTicket relay_ticket = 4;
+}
+
+// 单条连接路径选项。
+message PathOption {
+  string path_type = 1; // direct_udp / direct_ipv6 / relay
+  string endpoint = 2;
+  int32 priority = 3;
+}
+
+// relay 票据。
+//
+// 由控制面签发，供 relay 数据面校验并建立会话。
+message RelayTicket {
+  string ticket_id = 1;
+  string network_id = 2;
+  string session_id = 3;
+  string src_node_id = 4;
+  string dst_node_id = 5;
+  string relay_url = 6;
+  string expires_at = 7;
+  string session_key = 8;
+  string signature = 9;
+}
+
+// 节点上报的连接状态。
+message ConnectionState {
+  string network_id = 1;
+  string peer_node_id = 2;
+  string path = 3;   // p2p / relay
+  string state = 4;  // connecting / connected / failed / closed
+  string reason = 5;
+}
+
+// 节点断开通知。
+message DisconnectNotice {
+  string network_id = 1;
+  string peer_node_id = 2;
+  string reason = 3;
+}
+
+// 控制通道错误消息。
+message ErrorMessage {
+  string code = 1;
+  string message = 2;
+}

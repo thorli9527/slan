@@ -1,0 +1,467 @@
+package dto
+
+// RegisterRequest 用于注册新的终端用户账号。
+type RegisterRequest struct {
+	// Email 是唯一账号标识。
+	Email string `json:"email"`
+	// Password 是客户端提交的原始凭证，由服务端负责哈希处理。
+	Password string `json:"password"`
+}
+
+// LoginRequest 用于认证已有的终端用户账号。
+type LoginRequest struct {
+	// Email 是唯一账号标识。
+	Email string `json:"email"`
+	// Password 是用于登录校验的原始凭证。
+	Password string `json:"password"`
+}
+
+// AuthResponse 返回控制面的访问令牌对。
+type AuthResponse struct {
+	// UserID 是认证通过后的用户标识。
+	UserID string `json:"userId"`
+	// AccessToken 是受保护接口使用的 Bearer Token。
+	AccessToken string `json:"accessToken"`
+	// RefreshToken 预留给更长生命周期的会话续期使用。
+	RefreshToken string `json:"refreshToken,omitempty"`
+	// ExpiresIn 是访问令牌的有效期，单位为秒。
+	ExpiresIn int64 `json:"expiresIn"`
+}
+
+// RegisterDeviceRequest 用于将当前客户端安装实例绑定到用户。
+type RegisterDeviceRequest struct {
+	// Name 是用户可见的设备名称。
+	Name string `json:"name"`
+	// Platform 是客户端操作系统，例如 macos、windows 或 linux。
+	Platform string `json:"platform"`
+	// MachineID 是本地持久化的机器标识。
+	MachineID string `json:"machineId"`
+	// PublicKey 是设备隧道使用的公钥。
+	PublicKey string `json:"publicKey"`
+}
+
+// Device 描述设备实体本身。
+// 注意：虚拟 IP 不再存储在设备上，IP 归属于子网挂载关系。
+type Device struct {
+	// DeviceID 是由控制面管理的唯一设备标识。
+	DeviceID string `json:"deviceId"`
+	// Name 是当前用户可见的设备名称。
+	Name string `json:"name"`
+	// Platform 是设备操作系统。
+	Platform string `json:"platform"`
+	// Status 是设备在线状态的粗粒度快照。
+	Status string `json:"status"`
+	// PublicKey 是用于建立隧道时对外公布的公钥。
+	PublicKey string `json:"publicKey,omitempty"`
+	// NetworkIDs 列出当前与设备关联的网络 ID。
+	NetworkIDs []string `json:"networkIds,omitempty"`
+}
+
+// CreateNetworkRequest 用于创建逻辑网络。
+// 注意：这里的 CIDR 指的是随网络一起创建的默认子网 CIDR。
+type CreateNetworkRequest struct {
+	// Name 是展示给用户的逻辑网络名称。
+	Name string `json:"name"`
+	// Description 是给运维或业务使用的可选说明。
+	Description string `json:"description,omitempty"`
+	// CIDR 是该网络创建时默认子网的 CIDR。
+	CIDR string `json:"cidr"`
+}
+
+// CreateSubnetRequest 用于在已有网络中创建额外子网。
+type CreateSubnetRequest struct {
+	// Name 是网络内唯一的子网名称。
+	Name string `json:"name"`
+	// CIDR 是该子网管理的地址段。
+	CIDR string `json:"cidr"`
+	// GatewayIP 是预留的网关或虚拟路由地址。
+	GatewayIP string `json:"gatewayIp,omitempty"`
+	// AllocationStartIP 定义可分配地址范围的起始地址。
+	AllocationStartIP string `json:"allocationStartIp,omitempty"`
+	// AllocationEndIP 定义可分配地址范围的结束地址。
+	AllocationEndIP string `json:"allocationEndIp,omitempty"`
+}
+
+// AttachDeviceRequest 用于把设备挂载到指定子网。
+type AttachDeviceRequest struct {
+	// DeviceID 是要挂载到子网的设备 ID。
+	DeviceID string `json:"deviceId"`
+}
+
+// Network 表示成员、权限与子网归属关系的逻辑分组。
+// 注意：地址空间存在于子网层，而不是直接挂在网络层。
+type Network struct {
+	// NetworkID 是唯一的逻辑网络标识。
+	NetworkID string `json:"networkId"`
+	// Name 是网络展示名称。
+	Name string `json:"name"`
+	// Description 是运维说明或业务描述。
+	Description string `json:"description,omitempty"`
+	// DefaultSubnetID 是创建网络时自动生成的默认子网 ID。
+	DefaultSubnetID string `json:"defaultSubnetId,omitempty"`
+	// DefaultSubnetCIDR 为 phase 1 UI 流程提供便捷返回。
+	DefaultSubnetCIDR string `json:"defaultSubnetCidr,omitempty"`
+}
+
+// Subnet 表示网络内实际承载地址空间的容器。
+type Subnet struct {
+	// SubnetID 是唯一子网标识。
+	SubnetID string `json:"subnetId"`
+	// NetworkID 是所属父级逻辑网络的 ID。
+	NetworkID string `json:"networkId"`
+	// Name 是子网展示名称。
+	Name string `json:"name"`
+	// CIDR 是子网地址段。
+	CIDR string `json:"cidr"`
+	// GatewayIP 是预留网关或路由 IP。
+	GatewayIP string `json:"gatewayIp,omitempty"`
+	// AllocationStartIP 是可分配范围中的起始 IP。
+	AllocationStartIP string `json:"allocationStartIp,omitempty"`
+	// AllocationEndIP 是可分配范围中的结束 IP。
+	AllocationEndIP string `json:"allocationEndIp,omitempty"`
+	// IsDefault 标记该子网是否为 phase-1 加入流程自动创建的默认子网。
+	IsDefault bool `json:"isDefault"`
+	// Status 是子网生命周期状态的粗粒度表示。
+	Status string `json:"status,omitempty"`
+}
+
+// JoinNetworkRequest 用于让设备加入网络。
+// Phase 1 注意：服务端会自动把设备挂载到默认子网。
+type JoinNetworkRequest struct {
+	// DeviceID 是要加入目标网络的设备 ID。
+	DeviceID string `json:"deviceId"`
+}
+
+// NetworkMember 描述网络层级的成员关系。
+// 注意：这里不携带虚拟 IP，因为 IP 归属于子网挂载关系。
+type NetworkMember struct {
+	// MemberID 是网络成员关系的唯一标识。
+	MemberID string `json:"memberId"`
+	// NetworkID 是所属网络 ID。
+	NetworkID string `json:"networkId"`
+	// DeviceID 是对应的成员设备 ID。
+	DeviceID string `json:"deviceId"`
+	// Role 是网络层级角色，例如 owner 或 member。
+	Role string `json:"role"`
+	// Status 是成员关系的生命周期状态。
+	Status string `json:"status,omitempty"`
+}
+
+// SubnetAttachment 描述设备在网络中的子网落点及其分配到的 IP。
+type SubnetAttachment struct {
+	// AttachmentID 是子网挂载关系的唯一标识。
+	AttachmentID string `json:"attachmentId"`
+	// NetworkID 是所属网络 ID。
+	NetworkID string `json:"networkId"`
+	// SubnetID 是设备挂载到的子网 ID。
+	SubnetID string `json:"subnetId"`
+	// DeviceID 是被挂载的设备 ID。
+	DeviceID string `json:"deviceId"`
+	// VirtualIP 是在该子网内分配给设备的虚拟 IP。
+	VirtualIP string `json:"virtualIp,omitempty"`
+	// Status 是挂载关系的生命周期状态。
+	Status string `json:"status,omitempty"`
+}
+
+// NetworkJoinResult 是 Join 操作的返回结果，包含成员关系和默认子网挂载结果。
+type NetworkJoinResult struct {
+	// Member 是新创建或已存在的网络层级成员关系。
+	Member NetworkMember `json:"member"`
+	// Attachment 是设备落到默认子网后的挂载结果。
+	Attachment SubnetAttachment `json:"attachment"`
+}
+
+// NetworkDetail 在网络基础信息上展开子网和成员列表。
+type NetworkDetail struct {
+	Network
+	// Subnets 列出该网络下当前定义的全部子网。
+	Subnets []Subnet `json:"subnets"`
+	// Members 列出该网络下全部网络层级成员。
+	Members []NetworkMember `json:"members"`
+}
+
+// RegisterNodeRequest 用于注册节点身份。
+type RegisterNodeRequest struct {
+	// DeviceID 是业务设备 ID。
+	DeviceID string `json:"deviceId"`
+	// NodeID 是通信节点 ID。
+	NodeID string `json:"nodeId"`
+	// NodePublicKey 是节点公钥。
+	NodePublicKey string `json:"nodePublicKey"`
+	// Capabilities 是节点能力声明，例如 relay、exit-node、subnet-router。
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// Node 描述一个可参与组网的通信节点。
+type Node struct {
+	// NodeID 是节点唯一标识。
+	NodeID string `json:"nodeId"`
+	// DeviceID 是关联的业务设备 ID。
+	DeviceID string `json:"deviceId"`
+	// NodePublicKey 是节点公钥。
+	NodePublicKey string `json:"nodePublicKey"`
+	// NetworkIDs 是当前节点可见或已加入的网络列表。
+	NetworkIDs []string `json:"networkIds,omitempty"`
+	// Capabilities 是节点能力集合。
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// CreateControlSessionRequest 用于创建控制通道会话。
+type CreateControlSessionRequest struct {
+	// NodeID 是发起控制会话的节点 ID。
+	NodeID string `json:"nodeId"`
+	// NetworkID 是目标网络 ID。
+	NetworkID string `json:"networkId"`
+}
+
+// BootstrapRequest 用于为指定节点会话加载运行时配置。
+type BootstrapRequest struct {
+	// NodeID 是即将启动运行时会话的节点 ID。
+	NodeID string `json:"nodeId"`
+	// NetworkID 是目标网络 ID。
+	NetworkID string `json:"networkId"`
+}
+
+// DeviceBootstrap 返回设备本身及其当前全部子网挂载关系。
+type DeviceBootstrap struct {
+	// Device 是标准设备实体。
+	Device Device `json:"device"`
+	// Attachments 包含该设备所有子网落点和对应分配 IP。
+	Attachments []SubnetAttachment `json:"attachments"`
+}
+
+// ControlPlaneConfig 包含控制通道所需的端点配置。
+type ControlPlaneConfig struct {
+	// WSURL 是控制通道使用的 WebSocket 端点。
+	WSURL string `json:"wsUrl"`
+	// HeartbeatSeconds 是服务端期望的保活心跳间隔。
+	HeartbeatSeconds int `json:"heartbeatSeconds"`
+}
+
+// RelayConfig 包含中继回退所需的端点配置。
+type RelayConfig struct {
+	// Region 是中继部署区域或集群名称。
+	Region string `json:"region"`
+	// UDPEndpoint 是主 UDP 中继端点。
+	UDPEndpoint string `json:"udpEndpoint"`
+	// TCPEndpoint 预留给未来的 TCP 中继支持。
+	TCPEndpoint string `json:"tcpEndpoint,omitempty"`
+}
+
+// DerpNode 描述一个 DERP 节点。
+type DerpNode struct {
+	// NodeID 是 DERP 节点 ID。
+	NodeID string `json:"nodeId"`
+	// Host 是节点主机名或 IP。
+	Host string `json:"host"`
+	// Port 是节点监听端口。
+	Port int `json:"port"`
+	// Transport 是传输类型，例如 udp / tcp / quic。
+	Transport string `json:"transport"`
+	// Priority 是控制面建议优先级。
+	Priority int `json:"priority"`
+	// Tags 是可选标签。
+	Tags []string `json:"tags,omitempty"`
+}
+
+// DerpCluster 描述一个 DERP 集群。
+type DerpCluster struct {
+	// ClusterID 是集群 ID。
+	ClusterID string `json:"clusterId"`
+	// RegionID 是区域 ID。
+	RegionID string `json:"regionId"`
+	// RegionName 是区域名称。
+	RegionName string `json:"regionName"`
+	// RecommendedFanout 是建议客户端建立的热连接数量。
+	RecommendedFanout int `json:"recommendedFanout"`
+	// Nodes 是集群内 DERP 节点列表。
+	Nodes []DerpNode `json:"nodes,omitempty"`
+}
+
+// DerpMap 是控制面下发给客户端的 DERP 集群视图。
+type DerpMap struct {
+	// ProbeIntervalSeconds 是客户端建议探测周期。
+	ProbeIntervalSeconds int `json:"probeIntervalSeconds"`
+	// Clusters 是可用 DERP 集群列表。
+	Clusters []DerpCluster `json:"clusters,omitempty"`
+}
+
+// Endpoint 描述节点当前可用的一个候选网络端点。
+type Endpoint struct {
+	// Type 标识端点类型，例如 lan / wan / reflexive / relay。
+	Type string `json:"type"`
+	// Address 是 ip:port 形式的地址。
+	Address string `json:"address"`
+	// UpdatedAt 是最近更新时间，使用 unix 秒时间戳。
+	UpdatedAt int64 `json:"updatedAt"`
+}
+
+// Peer 描述网络地图中的一个对等节点。
+type Peer struct {
+	// NodeID 是对等节点 ID。
+	NodeID string `json:"nodeId"`
+	// DeviceID 是关联设备 ID。
+	DeviceID string `json:"deviceId"`
+	// PublicKey 是对等节点公钥。
+	PublicKey string `json:"publicKey"`
+	// Status 是节点在线状态。
+	Status string `json:"status"`
+	// RelayAllowed 表示是否允许走 relay 回退。
+	RelayAllowed bool `json:"relayAllowed"`
+	// VirtualIPs 是分配给该节点的虚拟 IP 列表。
+	VirtualIPs []string `json:"virtualIps,omitempty"`
+	// Endpoints 是当前控制面已知的候选端点列表。
+	Endpoints []Endpoint `json:"endpoints,omitempty"`
+	// AllowedRoutes 是该节点允许通告或可达的路由列表。
+	AllowedRoutes []string `json:"allowedRoutes,omitempty"`
+}
+
+// Route 描述一条网络内可见的逻辑路由。
+type Route struct {
+	// CIDR 是目标网段。
+	CIDR string `json:"cidr"`
+	// ViaNodeID 是下一跳节点 ID。
+	ViaNodeID string `json:"viaNodeId"`
+	// Metric 是可选的度量值。
+	Metric string `json:"metric,omitempty"`
+}
+
+// DNSConfig 描述网络级 DNS 配置。
+type DNSConfig struct {
+	// Servers 是 DNS 服务器地址列表。
+	Servers []string `json:"servers,omitempty"`
+	// SearchDomains 是搜索域列表。
+	SearchDomains []string `json:"searchDomains,omitempty"`
+}
+
+// RelayEndpoint 描述一个 relay 区域下的具体接入点。
+type RelayEndpoint struct {
+	// EndpointID 是 relay 端点 ID。
+	EndpointID string `json:"endpointId"`
+	// Transport 是传输类型，例如 udp / tcp / quic。
+	Transport string `json:"transport"`
+	// Address 是 relay 监听地址。
+	Address string `json:"address"`
+}
+
+// RelayRegion 描述一个 relay 区域。
+type RelayRegion struct {
+	// RegionID 是区域 ID。
+	RegionID string `json:"regionId"`
+	// RegionName 是区域名称。
+	RegionName string `json:"regionName"`
+	// Endpoints 是该区域下的 relay 接入点。
+	Endpoints []RelayEndpoint `json:"endpoints,omitempty"`
+}
+
+// NetworkMap 是控制面下发给节点的网络视图。
+type NetworkMap struct {
+	// SelfUserID 是当前节点所属用户 ID。
+	SelfUserID string `json:"selfUserId"`
+	// SelfDeviceID 是当前节点关联设备 ID。
+	SelfDeviceID string `json:"selfDeviceId"`
+	// SelfNodeID 是当前节点 ID。
+	SelfNodeID string `json:"selfNodeId"`
+	// NetworkID 是所属网络 ID。
+	NetworkID string `json:"networkId"`
+	// Revision 是网络地图版本号。
+	Revision uint64 `json:"revision"`
+	// HeartbeatSeconds 是控制通道心跳间隔。
+	HeartbeatSeconds int `json:"heartbeatSeconds"`
+	// STUNServers 是 NAT 探测使用的 STUN 列表。
+	STUNServers []string `json:"stunServers,omitempty"`
+	// Peers 是当前网络中的对等节点列表。
+	Peers []Peer `json:"peers,omitempty"`
+	// Routes 是网络路由列表。
+	Routes []Route `json:"routes,omitempty"`
+	// RelayRegions 是可用 relay 区域列表。
+	RelayRegions []RelayRegion `json:"relayRegions,omitempty"`
+	// DNS 是可选 DNS 配置。
+	DNS DNSConfig `json:"dns"`
+	// MTU 是建议 MTU。
+	MTU int `json:"mtu,omitempty"`
+}
+
+// BootstrapResponse 是客户端核心启动时使用的完整启动载荷。
+type BootstrapResponse struct {
+	// ControlSessionID 是控制通道会话 ID。
+	ControlSessionID string `json:"controlSessionId,omitempty"`
+	// Device 是设备启动视图，包含当前子网挂载信息。
+	Device DeviceBootstrap `json:"device"`
+	// Networks 是该设备可见的网络拓扑。
+	Networks []NetworkDetail `json:"networks"`
+	// ControlPlane 是运行时控制通道配置。
+	ControlPlane ControlPlaneConfig `json:"controlPlane"`
+	// STUNServers 是用于 NAT 探测的候选 STUN 服务列表。
+	STUNServers []string `json:"stunServers"`
+	// Relay 是中继回退配置。
+	Relay RelayConfig `json:"relay"`
+	// DerpMap 是 DERP 集群视图。
+	DerpMap DerpMap `json:"derpMap"`
+	// NetworkMap 是初始网络地图。
+	NetworkMap NetworkMap `json:"networkMap"`
+}
+
+// ControlSessionResponse 描述控制通道会话的创建结果。
+type ControlSessionResponse struct {
+	// ControlSessionID 是控制面分配的会话 ID。
+	ControlSessionID string `json:"controlSessionId"`
+	// SessionToken 是控制通道鉴权令牌。
+	SessionToken string `json:"sessionToken"`
+	// ControlPlane 是控制面 WebSocket 配置。
+	ControlPlane ControlPlaneConfig `json:"controlPlane"`
+	// NetworkMap 是当前会话的初始网络地图。
+	NetworkMap NetworkMap `json:"networkMap"`
+}
+
+// RelayTicketRequest 用于向控制面申请中继回退授权。
+type RelayTicketRequest struct {
+	// NetworkID 是本次请求中继会话所属的逻辑网络 ID。
+	NetworkID string `json:"networkId"`
+	// SrcNodeID 是本地源节点 ID。
+	SrcNodeID string `json:"srcNodeId"`
+	// DstNodeID 是目标对等节点 ID。
+	DstNodeID string `json:"dstNodeId"`
+	// DerpClusterID 是期望使用的 DERP 集群 ID。
+	DerpClusterID string `json:"derpClusterId,omitempty"`
+	// PreferredDerpNodeIDs 是客户端偏好的 DERP 节点列表。
+	PreferredDerpNodeIDs []string `json:"preferredDerpNodeIds,omitempty"`
+	// Reason 描述无法建立直连的原因。
+	Reason string `json:"reason"`
+	// RelayRegionID 是期望使用的 relay 区域 ID。
+	RelayRegionID string `json:"relayRegionId,omitempty"`
+}
+
+// RelayTicket 是提供给中继数据面消费的授权票据。
+type RelayTicket struct {
+	// TicketID 是唯一的中继授权标识。
+	TicketID string `json:"ticketId"`
+	// NetworkID 是 relay 会话所属网络 ID。
+	NetworkID string `json:"networkId"`
+	// SessionID 是 relay 会话 ID。
+	SessionID string `json:"sessionId"`
+	// SrcNodeID 是源节点 ID。
+	SrcNodeID string `json:"srcNodeId"`
+	// DstNodeID 是目标节点 ID。
+	DstNodeID string `json:"dstNodeId"`
+	// DerpClusterID 是票据允许使用的 DERP 集群。
+	DerpClusterID string `json:"derpClusterId,omitempty"`
+	// AllowedDerpNodeIDs 是票据允许的 DERP 节点白名单。
+	AllowedDerpNodeIDs []string `json:"allowedDerpNodeIds,omitempty"`
+	// RelayURL 是应当接收该票据的中继端点。
+	RelayURL string `json:"relayUrl"`
+	// ExpiresAt 是票据过期时间。
+	ExpiresAt string `json:"expiresAt"`
+	// SessionKey 是可选的派生密钥或不透明会话密钥。
+	SessionKey string `json:"sessionKey,omitempty"`
+	// Signature 是供中继校验的控制面签名。
+	Signature string `json:"signature"`
+}
+
+// ErrorResponse 是 HTTP 处理器统一使用的错误响应结构。
+type ErrorResponse struct {
+	// Code 是稳定的机器可读错误码。
+	Code string `json:"code"`
+	// Message 是给人看的错误信息。
+	Message string `json:"message"`
+}

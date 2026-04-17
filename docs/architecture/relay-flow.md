@@ -1,0 +1,177 @@
+# Relay 功能梳理
+
+## 目标
+
+当客户端无法通过 P2P 直连时，由控制面签发短时效 `RelayTicket`，客户端再使用该票据接入 `server-relay`，通过中继完成数据转发。
+
+## 角色划分
+
+- `server/server-biz`
+  - 负责 `bootstrap` 和 `issueRelayTicket`
+  - 负责把中继配置返回给客户端
+  - 负责在控制通道里下发带 `relay_ticket` 的 `ConnectDirective`
+- `server/server-relay`
+  - 负责校验 `RelayTicket`
+  - 负责创建/维护 relay session
+  - 负责把一个设备发来的 UDP 负载转发给 session 内的另一端
+- `client/app` / `client/app_core`
+  - 负责调用 biz 的 `bootstrap` 和 `issueRelayTicket`
+  - 负责在连接失败时从 P2P 回退到 relay
+- `protocol`
+  - `openapi/phase1.yaml` 定义 HTTP 接口
+  - `protobuf/control.proto` 定义控制通道消息
+  - `errors/codes.yaml` 定义错误码
+
+## 当前协议面
+
+### HTTP 接口
+
+- `POST /bootstrap`
+  - 返回设备启动配置、网络拓扑、控制通道配置、STUN 列表和 relay 配置
+- `POST /relay/tickets`
+  - 输入：`deviceId`、`networkId`、`peerDeviceId`、`reason`
+  - 输出：`ticketId`、`relayUrl`、`expiresAt`、`sessionKey`、`signature`
+
+定义位置：
+
+- `protocol/openapi/phase1.yaml`
+- `server/server-biz/api/dto/types.go`
+- `server/server-biz/api/http/routes.go`
+
+### 控制通道消息
+
+- `PeerCandidate`
+  - 交换 NAT 穿透候选
+- `ConnectDirective`
+  - 指示优先使用 P2P 还是 relay
+  - relay 回退时携带 `relay_ticket`
+- `ConnectionState`
+  - 回报 `connecting / connected / failed`
+
+定义位置：
+
+- `protocol/protobuf/control.proto`
+- `server/server-biz/internal/ws/messages.go`
+
+## 当前服务端实现
+
+### biz
+
+`server/server-biz` 已实现：
+
+- `bootstrap`
+  - 返回 `RelayConfig`
+- `issueRelayTicket`
+  - 校验设备、网络、对端成员关系
+  - 生成带 `relayUrl / expiresAt / signature / sessionKey` 的票据
+
+实现位置：
+
+- `server/server-biz/internal/service/memory.go`
+
+### relay
+
+`server/server-relay` 已实现：
+
+- `relay-core`
+  - `RelayTicket`
+  - `RelaySession`
+  - `RelayError`
+  - 票据过期判断与时间解析
+- `auth`
+  - `StaticTicketValidator`
+  - 校验空字段、URL 前缀、过期时间
+- `session`
+  - `InMemorySessionStore`
+  - `create / get / remove`
+- `udp-relay`
+  - `attach`
+  - `attach_with_ticket`
+  - `session`
+  - `detach`
+  - `forward`
+
+实现位置：
+
+- `server/server-relay/crates/relay-core/src/lib.rs`
+- `server/server-relay/crates/auth/src/lib.rs`
+- `server/server-relay/crates/session/src/lib.rs`
+- `server/server-relay/crates/udp-relay/src/lib.rs`
+
+## 当前 app / app_core 对接情况
+
+### 已完成
+
+Flutter 侧已补齐 relay 相关接口契约：
+
+- `AppCoreApi.issueRelayTicket(...)`
+- `RelayTicketModel`
+- `ControlApi.issueRelayTicket(...)`
+- `api_models.dart` 中的 `RelayTicketRequest`
+
+Mock 已支持：
+
+- 返回 mock relay ticket
+- `connect()` 根据 peer 标识模拟 `p2p` 或 `relay` 连接路径
+
+实现位置：
+
+- `client/app/lib/infra/app_core/app_core_api.dart`
+- `client/app/lib/infra/app_core/models.dart`
+- `client/app/lib/infra/app_core/mock_app_core_api.dart`
+- `client/app/lib/infra/control_api.dart`
+- `client/app/lib/infra/api_models.dart`
+
+### 已有但未落地的 Rust 接口
+
+`client/app_core` 已有：
+
+- `ControllerClient::bootstrap`
+- `ControllerClient::issue_relay_ticket`
+- `RelayClient::connect`
+
+定义位置：
+
+- `client/app_core/crates/controller-client/src/lib.rs`
+- `client/app_core/crates/relay-client/src/lib.rs`
+
+## 端到端调用链
+
+### 启动阶段
+
+1. app 调用 biz 的 `/bootstrap`
+2. biz 返回：
+   - 控制通道 `wsUrl`
+   - `stunServers`
+   - `relay.region`
+   - `relay.udpEndpoint`
+3. 客户端建立控制通道并尝试 P2P
+
+### 回退阶段
+
+1. P2P 失败，客户端上报 `ConnectionState.failed`
+2. biz 判断需要 relay，或客户端主动调用 `/relay/tickets`
+3. biz 返回 `RelayTicket`
+4. 客户端把 `RelayTicket` 传给 `RelayClient`
+5. `server-relay` 校验票据，创建 session
+6. 双方通过 relay session 转发 UDP 数据
+
+## 当前缺口
+
+- `client/app_core` 仍只有 trait，没有真实 HTTP `ControllerClient` 实现
+- `client/app_core` 还没有真实 `RelayClient` 实现去接 `server-relay`
+- Flutter 页面还没有把 relay ticket 申请和 fallback 状态展示出来
+- `ConnectDirective.relay_ticket` 还没有和 app/core 的连接流程真正打通
+
+## 建议下一步
+
+1. 先实现 `client/app_core` 的 HTTP `ControllerClient`
+   - 对接 `/bootstrap`
+   - 对接 `/relay/tickets`
+2. 再实现 `client/app_core` 的 `RelayClient`
+   - 消费 `RelayTicket`
+   - 和 `server-relay` 建立 session
+3. 最后把 Flutter `connect()` 串成：
+   - 先 P2P
+   - 失败后申请 relay ticket
+   - 再走 relay

@@ -1,0 +1,761 @@
+# SLAN 控制面 HTTP API 草案。
+#
+# 设计目标：
+# - HTTP 只承担管理面和一次性授权职责
+# - 节点实时同步改走控制通道 WebSocket / protobuf
+# - 节点身份、NetworkMap、relay ticket 都围绕“节点组网编排”展开
+openapi: 3.1.0
+info:
+  title: SLAN Control Plane API
+  version: 0.3.0
+  description: >
+    当前协议参考 Tailscale 风格的控制面设计：
+    控制面负责用户、设备、节点、网络、NetworkMap 和 relay ticket 的授权与编排；
+    实时 peer 同步与连接计划通过控制通道下发；
+    数据面默认优先 P2P，失败后使用 relay 回退。
+servers:
+  - url: http://localhost:8080
+    description: 本地开发控制面
+tags:
+  - name: Auth
+  - name: Devices
+  - name: Networks
+  - name: Nodes
+  - name: Control
+  - name: Relay
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: 注册用户
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: 注册成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: 用户登录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /devices/register:
+    post:
+      tags: [Devices]
+      operationId: registerDevice
+      summary: 注册设备
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceRequest'
+      responses:
+        '201':
+          description: 设备注册成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+
+  /networks:
+    get:
+      tags: [Networks]
+      operationId: listNetworks
+      summary: 获取用户可见网络列表
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 网络列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Network'
+    post:
+      tags: [Networks]
+      operationId: createNetwork
+      summary: 创建网络
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNetworkRequest'
+      responses:
+        '201':
+          description: 网络创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Network'
+
+  /networks/{networkId}:
+    get:
+      tags: [Networks]
+      operationId: getNetwork
+      summary: 获取网络详情
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: 网络详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkDetail'
+
+  /networks/{networkId}/join:
+    post:
+      tags: [Networks]
+      operationId: joinNetwork
+      summary: 让设备加入网络
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinNetworkRequest'
+      responses:
+        '200':
+          description: 加入网络成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkJoinResult'
+
+  /nodes/register:
+    post:
+      tags: [Nodes]
+      operationId: registerNode
+      summary: 注册节点身份
+      description: >
+        节点身份独立于业务设备身份。客户端在拿到 deviceId 后，
+        需要再注册 nodeId 和 nodePublicKey，供控制通道与数据面使用。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterNodeRequest'
+      responses:
+        '201':
+          description: 节点注册成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+
+  /control/sessions:
+    post:
+      tags: [Control]
+      operationId: createControlSession
+      summary: 创建控制通道会话
+      description: >
+        控制面返回控制会话令牌、WebSocket 地址和初始 NetworkMap。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateControlSessionRequest'
+      responses:
+        '201':
+          description: 控制会话创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControlSessionResponse'
+
+  /bootstrap:
+    post:
+      tags: [Control]
+      operationId: bootstrap
+      summary: 获取节点启动配置
+      description: >
+        返回当前节点所需的基础启动信息，包括控制通道、STUN、relay 区域
+        以及当前网络的初始 NetworkMap。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BootstrapRequest'
+      responses:
+        '200':
+          description: 启动配置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootstrapResponse'
+
+  /relay/tickets:
+    post:
+      tags: [Relay]
+      operationId: issueRelayTicket
+      summary: 签发 relay 回退票据
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelayTicketRequest'
+      responses:
+        '201':
+          description: relay 票据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayTicket'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    NetworkId:
+      name: networkId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      required: [userId, accessToken, expiresIn]
+      properties:
+        userId:
+          type: string
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+
+    RegisterDeviceRequest:
+      type: object
+      required: [name, platform, machineId, publicKey]
+      properties:
+        name:
+          type: string
+        platform:
+          type: string
+        machineId:
+          type: string
+        publicKey:
+          type: string
+
+    Device:
+      type: object
+      required: [deviceId, name, platform, status]
+      properties:
+        deviceId:
+          type: string
+        name:
+          type: string
+        platform:
+          type: string
+        status:
+          type: string
+        publicKey:
+          type: string
+
+    CreateNetworkRequest:
+      type: object
+      required: [name, cidr]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        cidr:
+          type: string
+
+    JoinNetworkRequest:
+      type: object
+      required: [deviceId]
+      properties:
+        deviceId:
+          type: string
+
+    Network:
+      type: object
+      required: [networkId, name]
+      properties:
+        networkId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        defaultSubnetId:
+          type: string
+        defaultSubnetCidr:
+          type: string
+
+    NetworkMember:
+      type: object
+      required: [memberId, networkId, deviceId, role]
+      properties:
+        memberId:
+          type: string
+        networkId:
+          type: string
+        deviceId:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+
+    Subnet:
+      type: object
+      required: [subnetId, networkId, name, cidr]
+      properties:
+        subnetId:
+          type: string
+        networkId:
+          type: string
+        name:
+          type: string
+        cidr:
+          type: string
+        gatewayIp:
+          type: string
+        allocationStartIp:
+          type: string
+        allocationEndIp:
+          type: string
+        isDefault:
+          type: boolean
+
+    NetworkDetail:
+      allOf:
+        - $ref: '#/components/schemas/Network'
+        - type: object
+          required: [members, subnets]
+          properties:
+            members:
+              type: array
+              items:
+                $ref: '#/components/schemas/NetworkMember'
+            subnets:
+              type: array
+              items:
+                $ref: '#/components/schemas/Subnet'
+
+    SubnetAttachment:
+      type: object
+      required: [attachmentId, networkId, subnetId, deviceId]
+      properties:
+        attachmentId:
+          type: string
+        networkId:
+          type: string
+        subnetId:
+          type: string
+        deviceId:
+          type: string
+        virtualIp:
+          type: string
+        status:
+          type: string
+
+    NetworkJoinResult:
+      type: object
+      required: [member, attachment]
+      properties:
+        member:
+          $ref: '#/components/schemas/NetworkMember'
+        attachment:
+          $ref: '#/components/schemas/SubnetAttachment'
+
+    RegisterNodeRequest:
+      type: object
+      required: [deviceId, nodeId, nodePublicKey]
+      properties:
+        deviceId:
+          type: string
+        nodeId:
+          type: string
+        nodePublicKey:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+
+    Node:
+      type: object
+      required: [nodeId, deviceId, networkIds, nodePublicKey]
+      properties:
+        nodeId:
+          type: string
+        deviceId:
+          type: string
+        nodePublicKey:
+          type: string
+        networkIds:
+          type: array
+          items:
+            type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+
+    CreateControlSessionRequest:
+      type: object
+      required: [nodeId, networkId]
+      properties:
+        nodeId:
+          type: string
+        networkId:
+          type: string
+
+    BootstrapRequest:
+      type: object
+      required: [nodeId, networkId]
+      properties:
+        nodeId:
+          type: string
+        networkId:
+          type: string
+
+    BootstrapResponse:
+      type: object
+      required: [controlSessionId, controlPlane, networkMap, derpMap]
+      properties:
+        controlSessionId:
+          type: string
+        controlPlane:
+          $ref: '#/components/schemas/ControlPlaneConfig'
+        derpMap:
+          $ref: '#/components/schemas/DerpMap'
+        networkMap:
+          $ref: '#/components/schemas/NetworkMap'
+
+    ControlSessionResponse:
+      type: object
+      required: [controlSessionId, sessionToken, controlPlane, networkMap]
+      properties:
+        controlSessionId:
+          type: string
+        sessionToken:
+          type: string
+        controlPlane:
+          $ref: '#/components/schemas/ControlPlaneConfig'
+        networkMap:
+          $ref: '#/components/schemas/NetworkMap'
+
+    ControlPlaneConfig:
+      type: object
+      required: [wsUrl, heartbeatSeconds]
+      properties:
+        wsUrl:
+          type: string
+        heartbeatSeconds:
+          type: integer
+
+    NetworkMap:
+      type: object
+      required:
+        [selfUserId, selfDeviceId, selfNodeId, networkId, revision, heartbeatSeconds, peers, stunServers, relayRegions]
+      properties:
+        selfUserId:
+          type: string
+        selfDeviceId:
+          type: string
+        selfNodeId:
+          type: string
+        networkId:
+          type: string
+        revision:
+          type: integer
+        heartbeatSeconds:
+          type: integer
+        stunServers:
+          type: array
+          items:
+            type: string
+        peers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Peer'
+        relayRegions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayRegion'
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+        dns:
+          $ref: '#/components/schemas/DNSConfig'
+        mtu:
+          type: integer
+
+    Peer:
+      type: object
+      required: [nodeId, deviceId, publicKey, status, relayAllowed, endpoints, virtualIps]
+      properties:
+        nodeId:
+          type: string
+        deviceId:
+          type: string
+        publicKey:
+          type: string
+        status:
+          type: string
+        relayAllowed:
+          type: boolean
+        virtualIps:
+          type: array
+          items:
+            type: string
+        endpoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/Endpoint'
+        allowedRoutes:
+          type: array
+          items:
+            type: string
+
+    Endpoint:
+      type: object
+      required: [type, address, updatedAt]
+      properties:
+        type:
+          type: string
+        address:
+          type: string
+        updatedAt:
+          type: integer
+
+    Route:
+      type: object
+      required: [cidr, viaNodeId]
+      properties:
+        cidr:
+          type: string
+        viaNodeId:
+          type: string
+        metric:
+          type: string
+
+    DNSConfig:
+      type: object
+      properties:
+        servers:
+          type: array
+          items:
+            type: string
+        searchDomains:
+          type: array
+          items:
+            type: string
+
+    RelayRegion:
+      type: object
+      required: [regionId, regionName, endpoints]
+      properties:
+        regionId:
+          type: string
+        regionName:
+          type: string
+        endpoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayEndpoint'
+
+    RelayEndpoint:
+      type: object
+      required: [endpointId, transport, address]
+      properties:
+        endpointId:
+          type: string
+        transport:
+          type: string
+        address:
+          type: string
+
+    DerpNode:
+      type: object
+      required: [nodeId, host, port, transport, priority]
+      properties:
+        nodeId:
+          type: string
+        host:
+          type: string
+        port:
+          type: integer
+        transport:
+          type: string
+        priority:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+
+    DerpCluster:
+      type: object
+      required: [clusterId, regionId, regionName, recommendedFanout, nodes]
+      properties:
+        clusterId:
+          type: string
+        regionId:
+          type: string
+        regionName:
+          type: string
+        recommendedFanout:
+          type: integer
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DerpNode'
+
+    DerpMap:
+      type: object
+      required: [probeIntervalSeconds, clusters]
+      properties:
+        probeIntervalSeconds:
+          type: integer
+        clusters:
+          type: array
+          items:
+            $ref: '#/components/schemas/DerpCluster'
+
+    RelayTicketRequest:
+      type: object
+      required: [networkId, srcNodeId, dstNodeId, reason]
+      properties:
+        networkId:
+          type: string
+        srcNodeId:
+          type: string
+        dstNodeId:
+          type: string
+        derpClusterId:
+          type: string
+        preferredDerpNodeIds:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+        relayRegionId:
+          type: string
+
+    RelayTicket:
+      type: object
+      required: [ticketId, networkId, sessionId, srcNodeId, dstNodeId, relayUrl, expiresAt, signature]
+      properties:
+        ticketId:
+          type: string
+        networkId:
+          type: string
+        sessionId:
+          type: string
+        srcNodeId:
+          type: string
+        dstNodeId:
+          type: string
+        derpClusterId:
+          type: string
+        allowedDerpNodeIds:
+          type: array
+          items:
+            type: string
+        relayUrl:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        sessionKey:
+          type: string
+        signature:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
