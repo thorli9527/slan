@@ -23,7 +23,6 @@ slan/
 ├─ server/
 │  ├─ server-biz/                       # Go 控制面
 │  ├─ server-relay/                     # Rust Relay 数据面
-│  └─ server-ops/                       # 运营平台
 │
 ├─ protocol/                            # 协议定义
 ├─ deploy/                              # 部署资源
@@ -103,12 +102,6 @@ server/
 │  │  ├─ session/                       # 会话管理
 │  │  └─ metrics/                       # 指标采集
 │  └─ tests/
-│
-└─ server-ops/
-   ├─ frontend/                         # 管理后台前端
-   ├─ backend/                          # 后台 API
-   ├─ jobs/                             # Python 统计任务、报表、计费
-   └─ scripts/
 ```
 
 ### 3.3 公共目录
@@ -152,12 +145,6 @@ deploy/
 - 关注鉴权、会话管理、转发性能、保活和回收
 - 不负责用户系统、网络管理和运营逻辑
 
-### `server/server-ops`
-
-- 负责后台管理、统计分析、报表和计费
-- 可以承载网络监控、DAU/MAU、运营工具
-- 不进入一期 MVP 主链路
-
 ### `protocol`
 
 - 作为唯一协议来源
@@ -175,17 +162,8 @@ client/
 
 server/
 ├─ server-biz/
-├─ server-relay/
-└─ server-ui/
+└─ server-relay/
 ```
-
-目标命名：
-
-- `server/server-ui` 重命名为 `server/server-ops`
-
-调整原因：
-
-- `server-ops` 比 `server-ui` 更准确表达运营平台职责
 
 ## 6. 实施约束
 

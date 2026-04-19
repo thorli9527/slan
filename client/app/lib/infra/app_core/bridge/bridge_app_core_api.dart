@@ -1,0 +1,439 @@
+import 'package:flutter/services.dart';
+
+import '../../control_api_responses.dart';
+import '../api/app_core_api.dart';
+import 'app_core_bridge.dart';
+import '../models/models.dart';
+
+class BridgeAppCoreApi implements AppCoreApi {
+  BridgeAppCoreApi({required AppCoreBridge bridge}) : _bridge = bridge;
+
+  final AppCoreBridge _bridge;
+
+  @override
+  Future<SessionModel> register({
+    required String email,
+    required String password,
+  }) async {
+    final payload = await _invokeMap('register', {
+      'email': email,
+      'password': password,
+    });
+    return parseSessionResponse(payload);
+  }
+
+  @override
+  Future<SessionModel> login({
+    required String email,
+    required String password,
+  }) async {
+    final payload = await _invokeMap('login', {
+      'email': email,
+      'password': password,
+    });
+    return parseSessionResponse(payload);
+  }
+
+  @override
+  Future<DeviceModel> registerDevice({
+    required String name,
+    required String platform,
+    required String machineId,
+    required String publicKey,
+  }) async {
+    final payload = await _invokeMap('registerDevice', {
+      'name': name,
+      'platform': platform,
+      'machineId': machineId,
+      'publicKey': publicKey,
+    });
+    return parseDeviceResponse(payload);
+  }
+
+  @override
+  Future<NodeModel> registerNode({
+    required String deviceId,
+    required String nodeId,
+    required String nodePublicKey,
+    List<String> capabilities = const [],
+  }) async {
+    final payload = await _invokeMap('registerNode', {
+      'deviceId': deviceId,
+      'nodeId': nodeId,
+      'nodePublicKey': nodePublicKey,
+      'capabilities': capabilities,
+    });
+    return parseNodeResponse(payload);
+  }
+
+  @override
+  Future<List<NetworkModel>> listNetworks() async {
+    final payload = await _invokeMap('listNetworks');
+    return parseNetworkListResponse(_readList(payload, 'items'));
+  }
+
+  @override
+  Future<NetworkModel> createNetwork({
+    required String name,
+    String cidr = '100.64.0.0/24',
+  }) async {
+    final payload = await _invokeMap('createNetwork', {
+      'name': name,
+      'cidr': cidr,
+    });
+    return parseNetworkResponse(payload);
+  }
+
+  @override
+  Future<BootstrapModel> bootstrap({
+    required String nodeId,
+    required String networkId,
+  }) async {
+    final payload = await _invokeMap('bootstrap', {
+      'nodeId': nodeId,
+      'networkId': networkId,
+    });
+    return parseBootstrapResponse(payload);
+  }
+
+  @override
+  Future<BootstrapModel> controlSync({
+    required String nodeId,
+    required String networkId,
+  }) async {
+    final payload = await _invokeMap('controlSync', {
+      'nodeId': nodeId,
+      'networkId': networkId,
+    });
+    return parseBootstrapResponse(payload);
+  }
+
+  @override
+  Future<ControlStatusModel> controlStatus() async {
+    final payload = await _invokeMap('controlStatus');
+    return _parseControlStatus(payload);
+  }
+
+  @override
+  Future<RelayTicketModel> issueRelayTicket({
+    required String networkId,
+    required String srcNodeId,
+    required String dstNodeId,
+    required String reason,
+  }) async {
+    final payload = await _invokeMap('issueRelayTicket', {
+      'networkId': networkId,
+      'srcNodeId': srcNodeId,
+      'dstNodeId': dstNodeId,
+      'reason': reason,
+    });
+    return parseRelayTicketResponse(payload);
+  }
+
+  @override
+  Future<ConnectionStateModel> connect({
+    required String networkId,
+    required String peerNodeId,
+  }) async {
+    final payload = await _invokeMap('connect', {
+      'networkId': networkId,
+      'peerNodeId': peerNodeId,
+    });
+    return _parseConnectionState(payload);
+  }
+
+  @override
+  Future<DataPlaneProbeModel> probe({
+    required String payload,
+    int? probeTimeoutMs,
+  }) async {
+    try {
+      final probe = await _invokeMap('probe', {
+        'payload': payload,
+        if (probeTimeoutMs != null) 'probeTimeoutMs': probeTimeoutMs,
+      });
+      return _parseProbe(probe);
+    } on PlatformException catch (err) {
+      throw ProbeException(_classifyProbeFailure(err));
+    }
+  }
+
+  @override
+  Future<int> send({
+    required String payload,
+  }) async {
+    try {
+      final response = await _invokeMap('send', {
+        'payload': payload,
+      });
+      return _readInt(response, 'bytesSent');
+    } on PlatformException catch (err) {
+      throw SendException(_classifySendFailure(err));
+    }
+  }
+
+  @override
+  Future<void> disconnect() async {
+    await _bridge.invoke('disconnect');
+  }
+
+  Future<Map<String, dynamic>> _invokeMap(
+    String method, [
+    Map<String, Object?> args = const {},
+  ]) async {
+    final payload = await _bridge.invoke(method, args);
+    if (payload is Map<String, dynamic>) {
+      return payload;
+    }
+    if (payload is Map) {
+      return payload.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+    }
+    throw FormatException(
+        'Expected object payload from bridge method "$method"');
+  }
+}
+
+ConnectionStateModel _parseConnectionState(Map<String, dynamic> json) {
+  final status = json['status'];
+  if (status is! String) {
+    throw const FormatException('Expected connection status string');
+  }
+  switch (status) {
+    case 'disconnected':
+      return const ConnectionStateModel.disconnected();
+    case 'connecting':
+      return const ConnectionStateModel.connecting();
+    case 'connected':
+      final path = json['path'];
+      if (path == 'relay' || path == 'derp') {
+        return const ConnectionStateModel.connected(ConnectionPathModel.relay);
+      }
+      return const ConnectionStateModel.connected(ConnectionPathModel.p2p);
+    case 'failed':
+      final reason = json['reason'];
+      return ConnectionStateModel.failed(reason is String ? reason : 'unknown');
+    default:
+      throw FormatException('Unsupported connection status: $status');
+  }
+}
+
+DataPlaneProbeModel _parseProbe(Map<String, dynamic> json) {
+  return DataPlaneProbeModel(
+    probeId: _readString(json, 'probeId'),
+    sampledAtMs: _readInt(json, 'sampledAtMs'),
+    activePath: _readMap(json, 'activePath'),
+    bytesSent: _readInt(json, 'bytesSent'),
+    replyObserved: _readBool(json, 'replyObserved'),
+    replyBytesReceived: _readNullableInt(json, 'replyBytesReceived'),
+    replySampledAtMs: _readNullableInt(json, 'replySampledAtMs'),
+    replyRttMs: _readNullableInt(json, 'replyRttMs'),
+    tunnelPeerVirtualIp: _readNullableString(json, 'tunnelPeerVirtualIp'),
+    observedRttMs: _readNullableInt(json, 'observedRttMs'),
+    packetLossPpm: _readNullableInt(json, 'packetLossPpm'),
+    pathScore: _readNullableInt(json, 'pathScore'),
+    derpClusterId: _readNullableString(json, 'derpClusterId'),
+    derpNodeId: _readNullableString(json, 'derpNodeId'),
+  );
+}
+
+ControlStatusModel _parseControlStatus(Map<String, dynamic> json) {
+  final plans = _readList(json, 'connectPlans')
+      .whereType<Map>()
+      .map((entry) => entry.map(
+            (key, value) => MapEntry(key.toString(), value),
+          ))
+      .map(
+        (entry) => ControlConnectPlanModel(
+          peerNodeId: _readString(entry, 'peerNodeId'),
+          preferDirect: _readBool(entry, 'preferDirect'),
+          pathCount: _readInt(entry, 'pathCount'),
+          preferredPath: _readNullableMap(entry, 'preferredPath') == null
+              ? null
+              : ControlPathOptionModel(
+                  pathType:
+                      _readString(_readMap(entry, 'preferredPath'), 'pathType'),
+                  endpoint:
+                      _readString(_readMap(entry, 'preferredPath'), 'endpoint'),
+                  priority:
+                      _readInt(_readMap(entry, 'preferredPath'), 'priority'),
+                ),
+          derpClusterId: _readNullableString(entry, 'derpClusterId'),
+          preferredDerpNodeIds: _readStringList(entry, 'preferredDerpNodeIds'),
+          relayTicketId: _readNullableString(entry, 'relayTicketId'),
+        ),
+      )
+      .toList(growable: false);
+  return ControlStatusModel(
+    status: _readString(json, 'status'),
+    wsUrl: _readNullableString(json, 'wsUrl'),
+    heartbeatSeconds: _readNullableInt(json, 'heartbeatSeconds'),
+    sessionTokenPresent: _readBool(json, 'sessionTokenPresent'),
+    networkMapPresent: _readBool(json, 'networkMapPresent'),
+    networkId: _readNullableString(json, 'networkId'),
+    nodeId: _readNullableString(json, 'nodeId'),
+    deviceId: _readNullableString(json, 'deviceId'),
+    peerCount: _readInt(json, 'peerCount'),
+    connectPlanCount: _readInt(json, 'connectPlanCount'),
+    connectPlans: plans,
+  );
+}
+
+List<dynamic> _readList(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is List) {
+    return value;
+  }
+  throw FormatException('Expected list for "$key"');
+}
+
+Map<String, dynamic> _readMap(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value
+        .map((mapKey, mapValue) => MapEntry(mapKey.toString(), mapValue));
+  }
+  throw FormatException('Expected object for "$key"');
+}
+
+String _readString(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is String) {
+    return value;
+  }
+  throw FormatException('Expected string for "$key"');
+}
+
+String? _readNullableString(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  return value is String ? value : null;
+}
+
+Map<String, dynamic>? _readNullableMap(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value
+        .map((mapKey, mapValue) => MapEntry(mapKey.toString(), mapValue));
+  }
+  return null;
+}
+
+List<String> _readStringList(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is List) {
+    return value.whereType<String>().toList(growable: false);
+  }
+  return const [];
+}
+
+int _readInt(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is int) {
+    return value;
+  }
+  throw FormatException('Expected int for "$key"');
+}
+
+int? _readNullableInt(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  return value is int ? value : null;
+}
+
+bool _readBool(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is bool) {
+    return value;
+  }
+  throw FormatException('Expected bool for "$key"');
+}
+
+ProbeFailure _classifyProbeFailure(PlatformException err) {
+  return ProbeFailure.fromDataPlane(
+    _classifyDataPlaneBridgeFailure(err, fallbackMessage: 'probe failed'),
+  );
+}
+
+SendFailure _classifySendFailure(PlatformException err) {
+  return SendFailure.fromDataPlane(
+    _classifyDataPlaneBridgeFailure(err, fallbackMessage: 'send failed'),
+  );
+}
+
+DataPlaneFailureDetails _classifyDataPlaneBridgeFailure(
+  PlatformException err, {
+  required String fallbackMessage,
+}) {
+  final code = err.code;
+  final message = err.message ?? fallbackMessage;
+  final normalizedCode = code.toLowerCase();
+  final lower = '$code $message'.toLowerCase();
+  if (normalizedCode == 'probe_timeout' ||
+      normalizedCode == 'send_timeout' ||
+      lower.contains('timeout') ||
+      lower.contains('timed out')) {
+    return DataPlaneFailureDetails(
+      kind: DataPlaneFailureKind.timeout,
+      code: code,
+      message: message,
+    );
+  }
+  if (normalizedCode == 'probe_unsupported_path' ||
+      normalizedCode == 'send_unsupported_path' ||
+      lower.contains('unsupported')) {
+    return DataPlaneFailureDetails(
+      kind: DataPlaneFailureKind.unsupported,
+      code: code,
+      message: message,
+    );
+  }
+  if (normalizedCode == 'probe_transport_error' ||
+      normalizedCode == 'send_transport_error' ||
+      lower.contains('transport') ||
+      lower.contains('socket') ||
+      lower.contains('connection')) {
+    return DataPlaneFailureDetails(
+      kind: DataPlaneFailureKind.transport,
+      code: code,
+      message: message,
+    );
+  }
+  if (normalizedCode == 'probe_relay_auth_error' ||
+      normalizedCode == 'send_relay_auth_error') {
+    return DataPlaneFailureDetails(
+      kind: DataPlaneFailureKind.relayAuth,
+      code: code,
+      message: message,
+    );
+  }
+  if (normalizedCode == 'probe_relay_session_error' ||
+      normalizedCode == 'send_relay_session_error') {
+    return DataPlaneFailureDetails(
+      kind: DataPlaneFailureKind.relaySession,
+      code: code,
+      message: message,
+    );
+  }
+  if (normalizedCode == 'probe_relay_protocol_error' ||
+      normalizedCode == 'send_relay_protocol_error') {
+    return DataPlaneFailureDetails(
+      kind: DataPlaneFailureKind.relayProtocol,
+      code: code,
+      message: message,
+    );
+  }
+  return DataPlaneFailureDetails(
+    kind: DataPlaneFailureKind.unknown,
+    code: code,
+    message: message,
+  );
+}

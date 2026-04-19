@@ -1,0 +1,21 @@
+name: slan_app_core_plugin_windows
+description: Windows placeholder implementation of the federated SLAN app_core Flutter plugin.
+version: 0.1.0
+publish_to: "none"
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.3.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  slan_app_core_plugin_platform_interface:
+    path: ../app_core_plugin_platform_interface
+
+flutter:
+  plugin:
+    implements: slan_app_core_plugin
+    platforms:
+      windows:
+        pluginClass: SlanAppCorePluginWindowsPluginCApi

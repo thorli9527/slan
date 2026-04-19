@@ -1,0 +1,97 @@
+package repo
+
+import (
+	"context"
+)
+
+// GetNodeByID loads one node row by its stable public id.
+func (r *PostgresRepository) GetNodeByID(ctx context.Context, nodeID string) (Node, error) {
+	var record Node
+	err := r.db.WithContext(ctx).Where("node_id = ?", nodeID).First(&record).Error
+	return record, err
+}
+
+// ListNodesByNetwork returns the distinct nodes whose backing devices are
+// members of the target network.
+func (r *PostgresRepository) ListNodesByNetwork(ctx context.Context, networkID string) ([]Node, error) {
+	var out []Node
+	err := r.db.WithContext(ctx).
+		Table("nodes").
+		Select("distinct nodes.*").
+		Joins("join network_members on network_members.device_id = nodes.device_id").
+		Where("network_members.network_id = ?", networkID).
+		Order("nodes.node_id").
+		Find(&out).Error
+	return out, err
+}
+
+// ListNodeEndpoints returns the node's advertised endpoints for one network,
+// newest first.
+func (r *PostgresRepository) ListNodeEndpoints(ctx context.Context, nodeID, networkID string) ([]NodeEndpoint, error) {
+	var out []NodeEndpoint
+	err := r.db.WithContext(ctx).
+		Where("node_id = ? AND network_id = ?", nodeID, networkID).
+		Order("updated_at desc, endpoint_id").
+		Find(&out).Error
+	return out, err
+}
+
+// GetNodeNatType reads the NAT observation from the newest endpoint row stored
+// for the node.
+func (r *PostgresRepository) GetNodeNatType(ctx context.Context, nodeID, networkID string) (string, error) {
+	var record NodeEndpoint
+	err := r.db.WithContext(ctx).
+		Where("node_id = ? AND network_id = ?", nodeID, networkID).
+		Order("updated_at desc, endpoint_id").
+		First(&record).Error
+	if err != nil {
+		return "", err
+	}
+	return record.NatType, nil
+}
+
+// GetNodeConnectionState loads the latest stored connection state for a node
+// pair in one network.
+func (r *PostgresRepository) GetNodeConnectionState(ctx context.Context, networkID, nodeID, peerNodeID string) (NodeConnectionState, error) {
+	var record NodeConnectionState
+	err := r.db.WithContext(ctx).
+		Where("network_id = ? AND node_id = ? AND peer_node_id = ?", networkID, nodeID, peerNodeID).
+		First(&record).Error
+	return record, err
+}
+
+// ListNodePathHealth returns recent path-health samples for a node pair ordered
+// from newest to oldest.
+func (r *PostgresRepository) ListNodePathHealth(ctx context.Context, networkID, nodeID, peerNodeID string) ([]NodePathHealth, error) {
+	var out []NodePathHealth
+	err := r.db.WithContext(ctx).
+		Where("network_id = ? AND node_id = ? AND peer_node_id = ?", networkID, nodeID, peerNodeID).
+		Order("sampled_at_ms desc, updated_at desc, health_id").
+		Find(&out).Error
+	return out, err
+}
+
+// ListRecentRelayNodePathHealth returns recent path-health rows that reference
+// relay/DERP nodes so relay ranking can aggregate them.
+func (r *PostgresRepository) ListRecentRelayNodePathHealth(ctx context.Context, cutoff int64) ([]NodePathHealth, error) {
+	var out []NodePathHealth
+	err := r.db.WithContext(ctx).
+		Where("updated_at >= ? AND derp_node_id <> ''", cutoff).
+		Order("sampled_at_ms desc, updated_at desc, health_id").
+		Find(&out).Error
+	return out, err
+}
+
+// ListNodesByDevice returns all nodes registered under one device.
+func (r *PostgresRepository) ListNodesByDevice(ctx context.Context, deviceID string) ([]Node, error) {
+	var out []Node
+	err := r.db.WithContext(ctx).Where("device_id = ?", deviceID).Order("node_id").Find(&out).Error
+	return out, err
+}
+
+// ListNodes returns every node row ordered by node id.
+func (r *PostgresRepository) ListNodes(ctx context.Context) ([]Node, error) {
+	var out []Node
+	err := r.db.WithContext(ctx).Order("node_id").Find(&out).Error
+	return out, err
+}

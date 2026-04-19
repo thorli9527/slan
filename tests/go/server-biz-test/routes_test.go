@@ -87,6 +87,12 @@ func TestPhase1Flow(t *testing.T) {
 	if len(bootstrap.DerpMap.Clusters) != 1 {
 		t.Fatalf("unexpected derp map: %+v", bootstrap.DerpMap)
 	}
+	if bootstrap.Relay.DefaultClusterID != "cn-local-a" {
+		t.Fatalf("unexpected relay config: %+v", bootstrap.Relay)
+	}
+	if len(bootstrap.Relay.Countries) != 1 || len(bootstrap.Relay.Countries[0].Cities) != 1 {
+		t.Fatalf("unexpected relay topology: %+v", bootstrap.Relay)
+	}
 
 	controlSession := performJSON[dto.ControlSessionResponse](t, router, http.MethodPost, "/control/sessions", dto.CreateControlSessionRequest{
 		NodeID:    node.NodeID,
@@ -103,11 +109,11 @@ func TestPhase1Flow(t *testing.T) {
 		NetworkID:            network.NetworkID,
 		SrcNodeID:            node.NodeID,
 		DstNodeID:            peerNode.NodeID,
-		DerpClusterID:        "cluster-ap-east",
-		PreferredDerpNodeIDs: []string{"tokyo", "singapore"},
+		DerpClusterID:        "cn-local-a",
+		PreferredDerpNodeIDs: []string{"relay-cn-local-udp", "relay-cn-local-tcp"},
 		Reason:               "timeout",
 	}, registerResp.AccessToken)
-	if relay.RelayURL == "" || relay.Signature == "" || relay.SessionID == "" || relay.DerpClusterID != "cluster-ap-east" {
+	if relay.RelayURL == "" || relay.Signature == "" || relay.SessionID == "" || relay.DerpClusterID != "cn-local-a" {
 		t.Fatalf("unexpected relay ticket: %+v", relay)
 	}
 }

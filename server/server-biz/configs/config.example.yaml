@@ -2,8 +2,10 @@
 #
 # 该文件用于说明控制面服务在本地运行时需要的核心配置项。
 http:
-  # HTTP API 监听地址。
+  # 对外客户 HTTP API 监听地址。
   address: ":8080"
+  # 运营管理 HTTP API 监听地址。
+  ops_address: ":8081"
 ws:
   # 控制通道 WebSocket 路径。
   path: "/control/ws"
@@ -13,14 +15,36 @@ jwt:
   # JWT 签名密钥，生产环境应替换。
   secret: "change-me"
 relay:
-  # Relay 所属区域或集群名称。
-  region: "local"
-  # 返回给客户端的 UDP relay 端点。
-  udp_endpoint: "127.0.0.1:9000"
+  # 默认 relay 集群。
+  default_cluster_id: "cn-local-a"
+  # relay ticket HMAC 签名密钥，生产环境必须替换。
+  ticket_signing_secret: "change-me-relay-ticket-secret"
+  # 四层 relay 拓扑：国家 -> 城市 -> 集群 -> 节点。
+  countries:
+    - country_code: "CN"
+      country_name: "China"
+      cities:
+        - city_code: "local"
+          city_name: "Local"
+          clusters:
+            - cluster_id: "cn-local-a"
+              cluster_name: "CN Local A"
+              nodes:
+                - node_id: "relay-cn-local-udp"
+                  transport: "udp"
+                  address: "127.0.0.1:9000"
+                  priority: 10
+                - node_id: "relay-cn-local-tcp"
+                  transport: "tcp"
+                  address: "127.0.0.1:9001"
+                  priority: 20
 bootstrap:
   # Bootstrap 返回的默认 STUN 列表。
   stun_servers:
     - "stun:stun.l.google.com:19302"
+ops:
+  # 运营入口静态令牌，生产环境必须替换。
+  access_token: "change-me-ops-token"
 postgres:
   # PostgreSQL 主机。
   host: "127.0.0.1"

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use slan_app_core::{
-    BootstrapConfig, ControlPlaneConfig, DerpCluster, DerpMap, DerpNodeMeta, DerpTransport,
-    Device, DnsConfig, Endpoint, Network, NetworkMap, NetworkMember, Node, Peer, RelayConfig,
-    RelayEndpoint, RelayRegion, RelayTicket, Route, Session,
+    BootstrapConfig, ControlPlaneConfig, DerpCluster, DerpMap, DerpNodeMeta, DerpTransport, Device,
+    DnsConfig, Endpoint, Network, NetworkMap, NetworkMember, Node, Peer, RelayCity, RelayCluster,
+    RelayConfig, RelayCountry, RelayEndpoint, RelayNode, RelayRegion, RelayTicket, Route, Session,
 };
 
 use crate::api::{
@@ -190,17 +190,35 @@ pub struct JoinNetworkRequestDto {
 pub struct NetworkDto {
     pub network_id: String,
     pub name: String,
+    #[serde(default)]
     pub cidr: String,
+    #[serde(default)]
+    pub default_subnet_cidr: Option<String>,
+    #[serde(default)]
+    pub subnets: Vec<SubnetDto>,
     #[serde(default)]
     pub members: Vec<NetworkMemberDto>,
 }
 
 impl From<NetworkDto> for Network {
     fn from(value: NetworkDto) -> Self {
+        let cidr = if !value.cidr.is_empty() {
+            value.cidr
+        } else if let Some(default_subnet_cidr) = value.default_subnet_cidr {
+            default_subnet_cidr
+        } else {
+            value
+                .subnets
+                .iter()
+                .find(|subnet| subnet.is_default)
+                .map(|subnet| subnet.cidr.clone())
+                .or_else(|| value.subnets.first().map(|subnet| subnet.cidr.clone()))
+                .unwrap_or_default()
+        };
         Self {
             network_id: value.network_id,
             name: value.name,
-            cidr: value.cidr,
+            cidr,
             members: value.members.into_iter().map(Into::into).collect(),
         }
     }
@@ -218,6 +236,14 @@ pub struct ListNetworksResponseDto {
 pub struct NetworkJoinResultDto {
     pub network_id: String,
     pub device_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubnetDto {
+    pub cidr: String,
+    #[serde(default)]
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -269,6 +295,8 @@ pub struct BootstrapDeviceDto {
 #[serde(rename_all = "camelCase")]
 pub struct ControlPlaneConfigDto {
     pub ws_url: String,
+    #[serde(default)]
+    pub session_token: Option<String>,
     #[serde(default = "default_heartbeat_seconds")]
     pub heartbeat_seconds: u32,
 }
@@ -277,6 +305,7 @@ impl From<ControlPlaneConfigDto> for ControlPlaneConfig {
     fn from(value: ControlPlaneConfigDto) -> Self {
         Self {
             ws_url: value.ws_url,
+            session_token: value.session_token,
             heartbeat_seconds: value.heartbeat_seconds,
         }
     }
@@ -285,18 +314,97 @@ impl From<ControlPlaneConfigDto> for ControlPlaneConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayConfigDto {
-    pub region: String,
-    pub udp_endpoint: String,
+    pub default_cluster_id: String,
     #[serde(default)]
-    pub tcp_endpoint: Option<String>,
+    pub countries: Vec<RelayCountryDto>,
 }
 
 impl From<RelayConfigDto> for RelayConfig {
     fn from(value: RelayConfigDto) -> Self {
         Self {
-            region: value.region,
-            udp_endpoint: value.udp_endpoint,
-            tcp_endpoint: value.tcp_endpoint,
+            default_cluster_id: value.default_cluster_id,
+            countries: value.countries.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayCountryDto {
+    pub country_code: String,
+    pub country_name: String,
+    #[serde(default)]
+    pub cities: Vec<RelayCityDto>,
+}
+
+impl From<RelayCountryDto> for RelayCountry {
+    fn from(value: RelayCountryDto) -> Self {
+        Self {
+            country_code: value.country_code,
+            country_name: value.country_name,
+            cities: value.cities.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayCityDto {
+    pub city_code: String,
+    pub city_name: String,
+    #[serde(default)]
+    pub clusters: Vec<RelayClusterDto>,
+}
+
+impl From<RelayCityDto> for RelayCity {
+    fn from(value: RelayCityDto) -> Self {
+        Self {
+            city_code: value.city_code,
+            city_name: value.city_name,
+            clusters: value.clusters.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayClusterDto {
+    pub cluster_id: String,
+    pub cluster_name: String,
+    #[serde(default)]
+    pub nodes: Vec<RelayNodeDto>,
+}
+
+impl From<RelayClusterDto> for RelayCluster {
+    fn from(value: RelayClusterDto) -> Self {
+        Self {
+            cluster_id: value.cluster_id,
+            cluster_name: value.cluster_name,
+            nodes: value.nodes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayNodeDto {
+    pub node_id: String,
+    pub transport: String,
+    pub address: String,
+    #[serde(default)]
+    pub priority: u32,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+impl From<RelayNodeDto> for RelayNode {
+    fn from(value: RelayNodeDto) -> Self {
+        Self {
+            node_id: value.node_id,
+            transport: value.transport,
+            address: value.address,
+            priority: value.priority,
+            tags: value.tags,
         }
     }
 }
@@ -460,6 +568,18 @@ pub struct RelayRegionDto {
     pub region_id: String,
     pub region_name: String,
     #[serde(default)]
+    pub country_code: Option<String>,
+    #[serde(default)]
+    pub country_name: Option<String>,
+    #[serde(default)]
+    pub city_code: Option<String>,
+    #[serde(default)]
+    pub city_name: Option<String>,
+    #[serde(default)]
+    pub cluster_id: Option<String>,
+    #[serde(default)]
+    pub cluster_name: Option<String>,
+    #[serde(default)]
     pub endpoints: Vec<RelayEndpointDto>,
 }
 
@@ -468,6 +588,12 @@ impl From<RelayRegionDto> for RelayRegion {
         Self {
             region_id: value.region_id,
             region_name: value.region_name,
+            country_code: value.country_code,
+            country_name: value.country_name,
+            city_code: value.city_code,
+            city_name: value.city_name,
+            cluster_id: value.cluster_id,
+            cluster_name: value.cluster_name,
             endpoints: value.endpoints.into_iter().map(Into::into).collect(),
         }
     }
@@ -519,8 +645,18 @@ impl TryFrom<DerpMapDto> for DerpMap {
 #[serde(rename_all = "camelCase")]
 pub struct DerpClusterDto {
     pub cluster_id: String,
+    #[serde(default)]
+    pub cluster_name: Option<String>,
     pub region_id: String,
     pub region_name: String,
+    #[serde(default)]
+    pub country_code: Option<String>,
+    #[serde(default)]
+    pub country_name: Option<String>,
+    #[serde(default)]
+    pub city_code: Option<String>,
+    #[serde(default)]
+    pub city_name: Option<String>,
     #[serde(default = "default_recommended_fanout")]
     pub recommended_fanout: u8,
     #[serde(default)]
@@ -532,17 +668,36 @@ impl TryFrom<DerpClusterDto> for DerpCluster {
 
     fn try_from(value: DerpClusterDto) -> Result<Self, Self::Error> {
         let cluster_id = value.cluster_id;
+        let cluster_name = value.cluster_name;
         let region_id = value.region_id;
         let region_name = value.region_name;
+        let country_code = value.country_code;
+        let country_name = value.country_name;
+        let city_code = value.city_code;
+        let city_name = value.city_name;
         let nodes = value
             .nodes
             .into_iter()
-            .map(|node| node.into_meta(cluster_id.clone(), region_id.clone()))
+            .map(|node| {
+                node.into_meta(
+                    cluster_id.clone(),
+                    region_id.clone(),
+                    country_code.clone(),
+                    country_name.clone(),
+                    city_code.clone(),
+                    city_name.clone(),
+                )
+            })
             .collect();
         Ok(Self {
             cluster_id,
+            cluster_name,
             region_id,
             region_name,
+            country_code,
+            country_name,
+            city_code,
+            city_name,
             recommended_fanout: value.recommended_fanout,
             nodes,
         })
@@ -563,10 +718,22 @@ pub struct DerpNodeDto {
 }
 
 impl DerpNodeDto {
-    fn into_meta(self, cluster_id: String, region_id: String) -> DerpNodeMeta {
+    fn into_meta(
+        self,
+        cluster_id: String,
+        region_id: String,
+        country_code: Option<String>,
+        country_name: Option<String>,
+        city_code: Option<String>,
+        city_name: Option<String>,
+    ) -> DerpNodeMeta {
         DerpNodeMeta {
             cluster_id,
             region_id,
+            country_code,
+            country_name,
+            city_code,
+            city_name,
             node_id: self.node_id,
             host: self.host,
             port: self.port,
@@ -612,6 +779,10 @@ pub struct RelayTicketDto {
     #[serde(default)]
     pub derp_cluster_id: Option<String>,
     #[serde(default)]
+    pub country_code: Option<String>,
+    #[serde(default)]
+    pub city_code: Option<String>,
+    #[serde(default)]
     pub allowed_derp_node_ids: Vec<String>,
     pub relay_url: String,
     pub expires_at: String,
@@ -629,6 +800,8 @@ impl From<RelayTicketDto> for RelayTicket {
             src_node_id: value.src_node_id,
             dst_node_id: value.dst_node_id,
             derp_cluster_id: value.derp_cluster_id,
+            country_code: value.country_code,
+            city_code: value.city_code,
             allowed_derp_node_ids: value.allowed_derp_node_ids,
             relay_url: value.relay_url,
             expires_at: value.expires_at,

@@ -179,7 +179,6 @@ protocol
 - `protocol` 必须最先建立
 - `client/app` 依赖 `app_core`
 - `app_core` 依赖 `server-biz` 和 `server-relay`
-- `server-ops` 不进入一期主依赖链
 
 ## 6. 一期主流程时序
 

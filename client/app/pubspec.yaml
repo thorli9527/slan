@@ -10,9 +10,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  slan_app_core_plugin:
+    path: ../app_core_plugin
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ^3.0.0
 

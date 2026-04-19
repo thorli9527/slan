@@ -4,18 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
+// RedisTokenStore 负责访问令牌、控制会话和跨实例同步状态的 Redis 存储。
 type RedisTokenStore struct {
+	// client 是底层 Redis 客户端。
 	client *redis.Client
 }
 
 const controlSyncChannel = "control_sync_events"
 const networkRevisionKeyPrefix = "network_revision:"
+const connectPlanRetryCountKeyPrefix = "connect_plan_retry_count:"
+const connectPlanRetryGateKeyPrefix = "connect_plan_retry_gate:"
+const peerCandidateDeliveryKeyPrefix = "peer_candidate_delivery:"
 
 func NewRedisTokenStore(client *redis.Client) *RedisTokenStore {
 	return &RedisTokenStore{client: client}
@@ -71,6 +77,7 @@ func (s *RedisTokenStore) SubscribeControlSyncEvents(ctx context.Context, handle
 			}
 			pubsub := s.client.Subscribe(ctx, controlSyncChannel)
 			if _, err := pubsub.Receive(ctx); err != nil {
+				log.Printf("redis control-sync subscribe failed channel=%s err=%v", controlSyncChannel, err)
 				_ = pubsub.Close()
 				select {
 				case <-ctx.Done():
@@ -89,17 +96,20 @@ func (s *RedisTokenStore) SubscribeControlSyncEvents(ctx context.Context, handle
 					return
 				case msg, ok := <-ch:
 					if !ok {
+						log.Printf("redis control-sync channel closed channel=%s", controlSyncChannel)
 						reconnect = true
 						break
 					}
 					var event controlws.ControlSyncEvent
 					if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
+						log.Printf("redis control-sync decode failed channel=%s err=%v", controlSyncChannel, err)
 						continue
 					}
 					handler(event)
 				}
 			}
 			_ = pubsub.Close()
+			log.Printf("redis control-sync reconnecting channel=%s", controlSyncChannel)
 			select {
 			case <-ctx.Done():
 				return
@@ -128,4 +138,72 @@ func (s *RedisTokenStore) CurrentNetworkRevision(ctx context.Context, networkID 
 		return 0, err
 	}
 	return value, nil
+}
+
+func (s *RedisTokenStore) AcquireConnectPlanRetry(ctx context.Context, networkID, nodeID, peerNodeID string) (bool, error) {
+	pairKey := connectPlanRetryPairKey(networkID, nodeID, peerNodeID)
+	countKey := connectPlanRetryCountKeyPrefix + pairKey
+	gateKey := connectPlanRetryGateKeyPrefix + pairKey
+
+	count, err := s.client.Incr(ctx, countKey).Result()
+	if err != nil {
+		return false, err
+	}
+	if count == 1 {
+		if err := s.client.Expire(ctx, countKey, 5*time.Minute).Err(); err != nil {
+			return false, err
+		}
+	}
+	backoff := connectPlanRetryBackoff(int(count))
+	if backoff <= 0 {
+		return true, nil
+	}
+	allowed, err := s.client.SetNX(ctx, gateKey, count, backoff).Result()
+	if err != nil {
+		return false, err
+	}
+	return allowed, nil
+}
+
+func (s *RedisTokenStore) ResetConnectPlanRetry(ctx context.Context, networkID, nodeID, peerNodeID string) error {
+	pairKey := connectPlanRetryPairKey(networkID, nodeID, peerNodeID)
+	return s.client.Del(
+		ctx,
+		connectPlanRetryCountKeyPrefix+pairKey,
+		connectPlanRetryGateKeyPrefix+pairKey,
+	).Err()
+}
+
+func (s *RedisTokenStore) AcquirePeerCandidateDelivery(ctx context.Context, networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = 10 * time.Second
+	}
+	key := peerCandidateDeliveryKeyPrefix + peerCandidateDeliveryKey(networkID, sourceNodeID, targetNodeID, candidate)
+	return s.client.SetNX(ctx, key, 1, ttl).Result()
+}
+
+func connectPlanRetryPairKey(networkID, nodeID, peerNodeID string) string {
+	if nodeID > peerNodeID {
+		nodeID, peerNodeID = peerNodeID, nodeID
+	}
+	return networkID + ":" + nodeID + ":" + peerNodeID
+}
+
+func peerCandidateDeliveryKey(networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate) string {
+	return networkID + ":" + sourceNodeID + ":" + targetNodeID + ":" + candidate.CandidateType + ":" + candidate.Endpoint + ":" + fmt.Sprintf("%d", candidate.Priority)
+}
+
+func connectPlanRetryBackoff(failures int) time.Duration {
+	switch {
+	case failures <= 1:
+		return 0
+	case failures == 2:
+		return 2 * time.Second
+	case failures == 3:
+		return 5 * time.Second
+	case failures == 4:
+		return 10 * time.Second
+	default:
+		return 20 * time.Second
+	}
 }

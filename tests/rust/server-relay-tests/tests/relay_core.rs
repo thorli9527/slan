@@ -15,6 +15,8 @@ fn ticket_expiry_works() {
         src_node_id: "node-a".into(),
         dst_node_id: "node-b".into(),
         derp_cluster_id: None,
+        country_code: None,
+        city_code: None,
         allowed_derp_node_ids: vec![],
         relay_url: "udp://127.0.0.1:9000".into(),
         expires_at: "100".into(),

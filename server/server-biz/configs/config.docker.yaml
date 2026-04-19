@@ -1,0 +1,53 @@
+# server-biz 本地 Docker 运行配置。
+#
+# 这个配置假设 PostgreSQL / Redis 都运行在同一个 docker compose 网络里。
+# relay 地址先保留为宿主机端口占位；server-relay 进程当前还没有独立 binary。
+http:
+  address: ":8080"
+  ops_address: ":8081"
+ws:
+  path: "/control/ws"
+relay:
+  default_cluster_id: "cn-local-a"
+  ticket_signing_secret: "docker-relay-ticket-secret"
+  countries:
+    - country_code: "CN"
+      country_name: "China"
+      cities:
+        - city_code: "local"
+          city_name: "Local"
+          clusters:
+            - cluster_id: "cn-local-a"
+              cluster_name: "CN Local A"
+              nodes:
+                - node_id: "relay-cn-local-udp"
+                  transport: "udp"
+                  address: "127.0.0.1:19000"
+                  priority: 10
+                - node_id: "relay-cn-local-tcp"
+                  transport: "tcp"
+                  address: "127.0.0.1:19001"
+                  priority: 20
+bootstrap:
+  stun_servers:
+    - "stun:stun.l.google.com:19302"
+ops:
+  access_token: "docker-ops-token"
+postgres:
+  host: "postgres"
+  port: 5432
+  database: "slan"
+  username: "postgres"
+  password: "123456"
+  ssl_mode: "disable"
+  max_open_conns: 10
+  min_idle_conns: 2
+  conn_max_lifetime_seconds: 1800
+  conn_max_idle_time_seconds: 300
+redis:
+  host: "redis"
+  port: 6379
+  password: ""
+  database: 1
+  pool_size: 10
+  min_idle_conns: 2

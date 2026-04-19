@@ -1,29 +1,49 @@
+# OS / editor noise
 .DS_Store
-
+.cache/
 .idea/
-*.iml
 .vscode/
+*.iml
 
+# Logs / coverage
 *.log
 coverage/
+artifacts/
 
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Rust / Cargo build outputs
+**/target/
+**/*.rs.bk
+
+# Go build / test outputs under server
 server/**/bin/
 server/**/*.exe
 server/**/*.test
 server/**/*.out
 
-**/target/
-**/*.rs.bk
-
+# Flutter / Dart generated files
 **/.dart_tool/
 **/build/
 **/.flutter-plugins
 **/.flutter-plugins-dependencies
 **/.metadata
+**/.pub/
+**/.pub-cache/
+**/ios/Flutter/.last_build_id
 
+# macOS / Xcode generated files
+**/.build/
+**/.build-spm/
+**/Flutter/ephemeral/
+**/Pods/
+**/xcuserdata/
+**/DerivedData/
+**/.swiftpm/
+
+# Frontend package manager outputs
 node_modules/
 dist/
-
-.env
-.env.local
-.env.*.local

@@ -5,6 +5,7 @@
 mod api;
 mod client;
 mod dto;
+mod http_runtime;
 mod transport;
 
 pub use api::{

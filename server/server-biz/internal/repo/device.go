@@ -1,0 +1,91 @@
+package repo
+
+import (
+	"context"
+
+	"github.com/slan/server/server-biz/api/dto"
+)
+
+// Device 是业务设备的持久化模型。
+type Device struct {
+	// DeviceID 是设备唯一标识。
+	DeviceID string `gorm:"column:device_id;primaryKey"`
+	// UserID 是设备所属用户。
+	UserID string `gorm:"column:user_id;index;not null"`
+	// MachineID 是设备安装实例的机器标识。
+	MachineID string `gorm:"column:machine_id;not null;uniqueIndex:idx_user_machine"`
+	// Name 是设备展示名称。
+	Name string `gorm:"column:name;not null"`
+	// Platform 是设备平台，例如 macos 或 linux。
+	Platform string `gorm:"column:platform;not null"`
+	// Status 是设备状态。
+	Status string `gorm:"column:status;not null"`
+	// PublicKey 是设备隧道公钥。
+	PublicKey *string `gorm:"column:public_key"`
+}
+
+func (Device) TableName() string { return "devices" }
+
+func (m Device) ToDTO(networkIDs []string) dto.Device {
+	var publicKey string
+	if m.PublicKey != nil {
+		publicKey = *m.PublicKey
+	}
+	return dto.Device{
+		DeviceID:   m.DeviceID,
+		Name:       m.Name,
+		Platform:   m.Platform,
+		Status:     m.Status,
+		PublicKey:  publicKey,
+		NetworkIDs: networkIDs,
+	}
+}
+
+func (r *PostgresRepository) GetDeviceByUserMachine(ctx context.Context, userID, machineID string) (Device, error) {
+	var record Device
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND machine_id = ?", userID, machineID).
+		First(&record).Error
+	return record, err
+}
+
+func (r *PostgresRepository) InsertDevice(ctx context.Context, record Device) error {
+	return r.db.WithContext(ctx).Create(&record).Error
+}
+
+func (r *PostgresRepository) UpdateDevice(ctx context.Context, record Device) error {
+	return r.db.WithContext(ctx).
+		Model(&Device{}).
+		Where("device_id = ?", record.DeviceID).
+		Updates(map[string]any{
+			"name":       record.Name,
+			"platform":   record.Platform,
+			"status":     record.Status,
+			"public_key": record.PublicKey,
+		}).Error
+}
+
+func (r *PostgresRepository) ListDevicesByUser(ctx context.Context, userID string) ([]Device, error) {
+	var out []Device
+	err := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("device_id").Find(&out).Error
+	return out, err
+}
+
+func (r *PostgresRepository) ListDevices(ctx context.Context) ([]Device, error) {
+	var out []Device
+	err := r.db.WithContext(ctx).Order("device_id").Find(&out).Error
+	return out, err
+}
+
+func (r *PostgresRepository) GetDeviceByID(ctx context.Context, deviceID string) (Device, error) {
+	var record Device
+	err := r.db.WithContext(ctx).Where("device_id = ?", deviceID).First(&record).Error
+	return record, err
+}
+
+func (r *PostgresRepository) UpdateDeviceStatus(ctx context.Context, deviceID, status string) error {
+	return r.db.WithContext(ctx).
+		Model(&Device{}).
+		Where("device_id = ?", deviceID).
+		Update("status", status).Error
+}

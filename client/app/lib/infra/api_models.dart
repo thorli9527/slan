@@ -1,4 +1,5 @@
 /// Flutter 侧控制面请求模型定义。
+library slan_app.infra.api_models;
 
 /// 注册请求体。
 class RegisterRequest {
@@ -58,6 +59,44 @@ class RegisterDeviceRequest {
         'platform': platform,
         'machineId': machineId,
         'publicKey': publicKey,
+      };
+}
+
+/// 注册节点请求体。
+class RegisterNodeRequest {
+  const RegisterNodeRequest({
+    required this.deviceId,
+    required this.nodeId,
+    required this.nodePublicKey,
+    this.capabilities = const [],
+  });
+
+  final String deviceId;
+  final String nodeId;
+  final String nodePublicKey;
+  final List<String> capabilities;
+
+  Map<String, dynamic> toJson() => {
+        'deviceId': deviceId,
+        'nodeId': nodeId,
+        'nodePublicKey': nodePublicKey,
+        'capabilities': capabilities,
+      };
+}
+
+/// 获取启动配置请求体。
+class BootstrapRequest {
+  const BootstrapRequest({
+    required this.nodeId,
+    required this.networkId,
+  });
+
+  final String nodeId;
+  final String networkId;
+
+  Map<String, dynamic> toJson() => {
+        'nodeId': nodeId,
+        'networkId': networkId,
       };
 }
 

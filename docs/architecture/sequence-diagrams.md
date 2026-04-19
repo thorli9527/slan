@@ -52,6 +52,95 @@ sequenceDiagram
     App-->>User: 展示设备和节点身份
 ```
 
+## 2.1 用户登录到设备入网（端到端）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as 用户
+    participant App as App(UI/Flutter)
+    participant Core as Core(Rust)
+    participant Biz as Biz(server-biz)
+    participant Redis as Redis(Token/Sync)
+    participant PG as Postgres
+
+    User->>App: 输入邮箱/密码
+    App->>Biz: POST /auth/login (email, password)
+    Biz->>PG: GetUserByEmail(email)
+    PG-->>Biz: User(userId, passwordHash)
+    Biz->>Redis: StoreAccessToken(accessToken, userId, ttl)
+    Biz->>Redis: StoreRefreshToken(refreshToken, userId, ttl)
+    Biz-->>App: AuthResponse(userId, accessToken, refreshToken)
+    App-->>User: 展示已登录状态
+
+    User->>App: 注册当前设备
+    App->>Biz: POST /devices/register (Authorization: Bearer accessToken)
+    Biz->>Redis: Authenticate(accessToken)
+    Redis-->>Biz: userId
+    Biz->>PG: CreateDevice(userId, deviceId, publicKey, ...)
+    PG-->>Biz: ok
+    Biz-->>App: Device(deviceId, publicKey, status)
+
+    User->>App: 注册当前节点(运行实例)
+    App->>Biz: POST /nodes/register (Authorization: Bearer accessToken)
+    Note right of App: 带 deviceId、nodePublicKey 等
+    Biz->>Redis: Authenticate(accessToken)
+    Redis-->>Biz: userId
+    Biz->>PG: CreateNode(userId, nodeId, deviceId, publicKey, ...)
+    PG-->>Biz: ok
+    Biz-->>App: Node(nodeId, deviceId, status)
+
+    alt 用户创建一个新网络
+        User->>App: 创建网络
+        App->>Biz: POST /networks (Authorization: Bearer accessToken)
+        Biz->>Redis: Authenticate(accessToken)
+        Redis-->>Biz: userId
+        Biz->>PG: CreateNetworkWithDefaultSubnet(owner=userId, cidr)
+        PG-->>Biz: Network(networkId, defaultSubnetId)
+        Biz-->>App: Network(networkId, defaultSubnetId)
+    else 用户加入一个已存在网络
+        User->>App: 选择 networkId
+    end
+
+    User->>App: 让设备加入网络
+    App->>Biz: POST /networks/{networkId}/join (Authorization: Bearer accessToken)
+    Note right of App: body: { deviceId }
+    Biz->>Redis: Authenticate(accessToken)
+    Redis-->>Biz: userId
+    Biz->>PG: GetDeviceByID(deviceId) 校验归属
+    PG-->>Biz: Device(userId, deviceId)
+    Biz->>PG: GetNetworkByID(networkId)
+    PG-->>Biz: Network(defaultSubnetId)
+    Biz->>PG: GetMemberByNetworkDevice(networkId, deviceId)
+    alt 不存在 member
+        Biz->>PG: CreateMember(memberId, networkId, deviceId)
+        PG-->>Biz: Member
+    else 已存在 member
+        PG-->>Biz: Member
+    end
+    Biz->>PG: GetAttachmentBySubnetDevice(defaultSubnetId, deviceId)
+    alt 不存在 attachment
+        Biz->>PG: ListAttachmentsBySubnet(defaultSubnetId)
+        PG-->>Biz: attachments(used IPs)
+        Biz->>Biz: allocateIP(subnetRange, used)
+        Biz->>PG: CreateAttachment(attachmentId, virtualIP)
+        PG-->>Biz: Attachment
+    else 已存在 attachment
+        PG-->>Biz: Attachment
+    end
+    Biz-->>App: NetworkJoinResult(member, attachment)
+    App-->>User: 展示已入网(虚拟IP/网络信息)
+
+    opt 展示网络详情
+        App->>Biz: GET /networks/{networkId} (Authorization: Bearer accessToken)
+        Biz->>Redis: Authenticate(accessToken)
+        Redis-->>Biz: userId
+        Biz->>PG: GetNetworkByID + ListSubnetsByNetwork + ListMembersByNetwork
+        PG-->>Biz: NetworkDetail
+        Biz-->>App: NetworkDetail(subnets, members)
+    end
+```
+
 ## 3. 网络创建与设备加入网络
 
 ```mermaid

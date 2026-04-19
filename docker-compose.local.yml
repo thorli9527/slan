@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: slan-postgres
+    environment:
+      POSTGRES_DB: slan
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "123456"
+    ports:
+      - "15432:5432"
+    volumes:
+      - slan-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d slan"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: slan-redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - slan-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server-biz:
+    build:
+      context: ./server/server-biz
+      dockerfile: Dockerfile
+      args:
+        APP_TARGET: biz-server
+    container_name: slan-server-biz
+    command: ["-config", "/app/config.yaml"]
+    ports:
+      - "18080:8080"
+      - "18081:8081"
+    volumes:
+      - ./server/server-biz/configs/config.docker.yaml:/app/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  slan-postgres-data:
+  slan-redis-data:

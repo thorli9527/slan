@@ -1,0 +1,1 @@
+library slan_app_core_plugin_windows;

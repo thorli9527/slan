@@ -105,7 +105,6 @@
 
 - `server-biz` 负责控制面
 - `server-relay` 负责中继数据面
-- `server-ops` 负责运营平台和后台能力
 
 ## 6. 设计原则
 

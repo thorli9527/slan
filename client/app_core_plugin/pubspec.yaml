@@ -1,0 +1,34 @@
+name: slan_app_core_plugin
+description: Federated Flutter plugin entrypoint for SLAN app_core host integrations.
+version: 0.1.0
+publish_to: "none"
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.3.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  slan_app_core_plugin_android:
+    path: ../app_core_plugin_android
+  slan_app_core_plugin_linux:
+    path: ../app_core_plugin_linux
+  slan_app_core_plugin_macos:
+    path: ../app_core_plugin_macos
+  slan_app_core_plugin_platform_interface:
+    path: ../app_core_plugin_platform_interface
+  slan_app_core_plugin_windows:
+    path: ../app_core_plugin_windows
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        default_package: slan_app_core_plugin_android
+      linux:
+        default_package: slan_app_core_plugin_linux
+      macos:
+        default_package: slan_app_core_plugin_macos
+      windows:
+        default_package: slan_app_core_plugin_windows

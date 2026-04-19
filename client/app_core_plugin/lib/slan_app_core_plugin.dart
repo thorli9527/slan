@@ -1,0 +1,3 @@
+library slan_app_core_plugin;
+
+export 'package:slan_app_core_plugin_platform_interface/slan_app_core_plugin_platform_interface.dart';

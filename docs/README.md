@@ -11,20 +11,19 @@
 - [Relay 功能梳理](./architecture/relay-flow.md)
 - [DERP 集群与连接池设计](./architecture/derp-cluster-design.md)
 - [AppCore 内部需求接口](./architecture/app-core-derp-internal-interfaces.md)
+- [Client 重构清单](./architecture/client-refactor-plan.md)
+- [Client 本地测试入口](./architecture/client-local-test-entrypoints.md)
+- [Client Integration Test Runner](./architecture/client-integration-test-runner.md)
+- [macOS Packet Tunnel Provider 接入清单](./architecture/macos-packet-tunnel-provider-plan.md)
 - [系统边界与接口矩阵](./architecture/system-boundary-matrix.md)
 - [.gitignore 约定](./architecture/gitignore.md)
+- [上线准备清单（server-biz）](./architecture/production-readiness-checklist.md)
+- [Token / 会话设计（生产建议）](./architecture/token-session-design.md)
 
 ## 当前约定
 
 - 客户端一级目录为 `client/`
 - 服务端一级目录为 `server/`
 - 客户端核心目录为 `client/app_core`
-- 运营平台目录目标命名为 `server/server-ops`
 
-## 仓库现状与目标命名映射
-
-当前仓库中已存在旧骨架目录，后续应逐步对齐到目标命名：
-
-- `server/server-ui` -> `server/server-ops`
-
-当前设计文档统一以仓库实际目录为准，避免继续扩散旧名称。
+当前设计文档统一以当前仓库实际目录为准，不再保留 `server-ops` 目标目录描述。

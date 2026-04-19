@@ -1,0 +1,177 @@
+package ws
+
+// EndpointReport 用于节点向控制面上报本地端点和 NAT 观测结果。
+type EndpointReport struct {
+	// NetworkID 是所属网络。
+	NetworkID string `json:"networkId"`
+	// NodeID 是当前节点 ID。
+	NodeID string `json:"nodeId"`
+	// NatType 是观测到的 NAT 类型。
+	NatType string `json:"natType"`
+	// Endpoints 是本地可用候选端点列表。
+	Endpoints []Endpoint `json:"endpoints,omitempty"`
+}
+
+// PeerCandidate 承载对等端之间交换的候选路径信息。
+type PeerCandidate struct {
+	// PeerNodeID 是目标远端节点 ID。
+	PeerNodeID string `json:"peerNodeId"`
+	// CandidateType 描述候选来源，例如 reflexive 或 relay。
+	CandidateType string `json:"candidateType"`
+	// Foundation 是 ICE-like foundation。
+	Foundation string `json:"foundation,omitempty"`
+	// Component 是组件类型。
+	Component int `json:"component,omitempty"`
+	// Protocol 是传输协议，例如 udp。
+	Protocol string `json:"protocol,omitempty"`
+	// Address 是候选地址。
+	Address string `json:"address,omitempty"`
+	// Port 是候选端口。
+	Port int `json:"port,omitempty"`
+	// Priority 是候选优先级。
+	Priority int `json:"priority,omitempty"`
+	// RelatedAddress 是关联地址。
+	RelatedAddress string `json:"relatedAddress,omitempty"`
+	// RelatedPort 是关联端口。
+	RelatedPort int `json:"relatedPort,omitempty"`
+	// RelayURL 是 relay 候选对应的 relay URL。
+	RelayURL string `json:"relayUrl,omitempty"`
+	// Endpoint 是用于直连尝试的网络地址。
+	Endpoint string `json:"endpoint"`
+	// Priority 是候选优先级，数值越小优先级越高。
+	PriorityRank int `json:"priority,omitempty"`
+}
+
+// PathHealthReport 用于节点向控制面上报路径健康度采样。
+type PathHealthReport struct {
+	// NetworkID 是所属网络。
+	NetworkID string `json:"networkId"`
+	// PeerNodeID 是对端节点 ID。
+	PeerNodeID string `json:"peerNodeId"`
+	// PathType 是路径类型，例如 lan / wan / reflexive / relay / derp。
+	PathType string `json:"pathType"`
+	// Endpoint 是采样对应的端点。
+	Endpoint string `json:"endpoint,omitempty"`
+	// DerpNodeID 是采样对应的 relay/DERP 节点。
+	DerpNodeID string `json:"derpNodeId,omitempty"`
+	// ObservedRttMs 是观测 RTT。
+	ObservedRttMs *uint32 `json:"observedRttMs,omitempty"`
+	// PacketLossPpm 是观测丢包率。
+	PacketLossPpm *uint32 `json:"packetLossPpm,omitempty"`
+	// PathScore 是客户端本地评分。
+	PathScore *uint32 `json:"pathScore,omitempty"`
+	// SampledAtMs 是采样时间戳，毫秒。
+	SampledAtMs uint64 `json:"sampledAtMs,omitempty"`
+}
+
+// PathOption 描述一条可尝试的连接路径。
+type PathOption struct {
+	// PathType 是路径类型，例如 direct_udp / direct_ipv6 / relay。
+	PathType string `json:"pathType"`
+	// Endpoint 是目标端点。
+	Endpoint string `json:"endpoint"`
+	// Priority 是优先级，数值越小优先级越高。
+	Priority int `json:"priority"`
+}
+
+// RelayTicket 描述控制面签发的 relay 回退票据。
+type RelayTicket struct {
+	// TicketID 是票据 ID。
+	TicketID string `json:"ticketId"`
+	// NetworkID 是所属网络 ID。
+	NetworkID string `json:"networkId"`
+	// SessionID 是 relay 会话 ID。
+	SessionID string `json:"sessionId"`
+	// SrcNodeID 是源节点 ID。
+	SrcNodeID string `json:"srcNodeId"`
+	// DstNodeID 是目标节点 ID。
+	DstNodeID string `json:"dstNodeId"`
+	// DerpClusterID 是票据允许使用的 DERP 集群。
+	DerpClusterID string `json:"derpClusterId,omitempty"`
+	// CountryCode 是选中的国家编码。
+	CountryCode string `json:"countryCode,omitempty"`
+	// CityCode 是选中的城市编码。
+	CityCode string `json:"cityCode,omitempty"`
+	// AllowedDerpNodeIDs 是允许的 DERP 节点白名单。
+	AllowedDerpNodeIDs []string `json:"allowedDerpNodeIds,omitempty"`
+	// RelayURL 是 relay 接入地址。
+	RelayURL string `json:"relayUrl"`
+	// ExpiresAt 是过期时间。
+	ExpiresAt string `json:"expiresAt"`
+	// SessionKey 是会话密钥或派生密钥。
+	SessionKey string `json:"sessionKey,omitempty"`
+	// Signature 是控制面签名。
+	Signature string `json:"signature"`
+}
+
+// ConnectPlan 描述控制面给节点的连接计划。
+type ConnectPlan struct {
+	// PeerNodeID 是目标对等节点 ID。
+	PeerNodeID string `json:"peerNodeId"`
+	// PreferDirect 表示应优先尝试直连。
+	PreferDirect bool `json:"preferDirect"`
+	// Paths 是可尝试的连接路径列表。
+	Paths []PathOption `json:"paths,omitempty"`
+	// DerpClusterID 是建议使用的 DERP 集群。
+	DerpClusterID string `json:"derpClusterId,omitempty"`
+	// PreferredDerpNodeIDs 是建议优先的 DERP 节点列表。
+	PreferredDerpNodeIDs []string `json:"preferredDerpNodeIds,omitempty"`
+	// RelayTicket 是 relay 回退时附带的票据。
+	RelayTicket *RelayTicket `json:"relayTicket,omitempty"`
+}
+
+// ConnectionState 用于向控制面回报本地连接进度。
+type ConnectionState struct {
+	// NetworkID 是当前会话所属的逻辑网络 ID。
+	NetworkID string `json:"networkId"`
+	// PeerNodeID 是当前上报状态的远端节点 ID。
+	PeerNodeID string `json:"peerNodeId"`
+	// Path 是当前连接使用的路径类型，例如 p2p / relay。
+	Path string `json:"path"`
+	// State 是标准化状态值，例如 connecting、connected、failed 或 closed。
+	State string `json:"state"`
+	// Reason 在当前状态表示失败或回退时填写原因。
+	Reason string `json:"reason,omitempty"`
+	// ObservedRttMs 是客户端观测到的链路 RTT。
+	ObservedRttMs *uint32 `json:"observedRttMs,omitempty"`
+	// PacketLossPpm 是客户端观测到的丢包率，单位 ppm。
+	PacketLossPpm *uint32 `json:"packetLossPpm,omitempty"`
+	// PathScore 是客户端本地路径评分。
+	PathScore *uint32 `json:"pathScore,omitempty"`
+	// DerpNodeID 是当前连接使用的 DERP/relay 节点。
+	DerpNodeID string `json:"derpNodeId,omitempty"`
+}
+
+// DisconnectNotice 用于通知连接断开。
+type DisconnectNotice struct {
+	// NetworkID 是所属网络。
+	NetworkID string `json:"networkId"`
+	// PeerNodeID 是对端节点。
+	PeerNodeID string `json:"peerNodeId"`
+	// Reason 是断开原因。
+	Reason string `json:"reason,omitempty"`
+}
+
+// ControlSyncEvent 是多实例之间通过 Redis 同步的控制通道事件。
+type ControlSyncEvent struct {
+	// InstanceID 是发布该事件的实例标识。
+	InstanceID string `json:"instanceId"`
+	// Type 是事件类型，例如 peer_update / peer_remove。
+	Type string `json:"type"`
+	// NetworkID 是事件所属网络。
+	NetworkID string `json:"networkId"`
+	// SourceNodeID 是触发事件的节点。
+	SourceNodeID string `json:"sourceNodeId"`
+	// Revision 是网络版本号。
+	Revision uint64 `json:"revision,omitempty"`
+	// Peer 是 peer_update 时携带的节点快照。
+	Peer *Peer `json:"peer,omitempty"`
+	// PeerNodeID 是 peer_remove 时携带的节点 ID。
+	PeerNodeID string `json:"peerNodeId,omitempty"`
+	// TargetNodeID 是 peer_candidate / connect_plan 的目标节点。
+	TargetNodeID string `json:"targetNodeId,omitempty"`
+	// Candidate 是 peer_candidate 时携带的候选信息。
+	Candidate *PeerCandidate `json:"candidate,omitempty"`
+	// Plan 是 connect_plan 时携带的连接计划。
+	Plan *ConnectPlan `json:"plan,omitempty"`
+}

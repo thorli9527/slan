@@ -1,0 +1,17 @@
+[package]
+name = "relay-daemon"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "server-relay"
+path = "src/main.rs"
+
+[dependencies]
+auth = { path = "../auth" }
+base64 = "0.22"
+relay-core = { path = "../relay-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+session = { path = "../session" }
+udp-relay = { path = "../udp-relay" }

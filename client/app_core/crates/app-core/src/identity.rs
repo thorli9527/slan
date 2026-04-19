@@ -1,5 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 /// 用户会话模型。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Session {
     pub user_id: String,
     pub access_token: String,
@@ -9,7 +12,8 @@ pub struct Session {
 }
 
 /// 设备模型。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Device {
     pub device_id: String,
     pub name: String,
@@ -20,7 +24,8 @@ pub struct Device {
 }
 
 /// 节点模型。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Node {
     pub node_id: String,
     pub device_id: String,

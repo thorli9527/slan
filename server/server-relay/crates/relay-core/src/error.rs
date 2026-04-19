@@ -5,6 +5,7 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayError {
     InvalidTicket,
+    InvalidSignature,
     InvalidTimestamp,
     TicketExpired,
     SessionNotFound,
@@ -19,6 +20,7 @@ impl Display for RelayError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             RelayError::InvalidTicket => f.write_str("invalid relay ticket"),
+            RelayError::InvalidSignature => f.write_str("invalid relay ticket signature"),
             RelayError::InvalidTimestamp => f.write_str("invalid timestamp"),
             RelayError::TicketExpired => f.write_str("relay ticket expired"),
             RelayError::SessionNotFound => f.write_str("relay session not found"),

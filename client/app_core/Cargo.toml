@@ -1,6 +1,9 @@
 [workspace]
 members = [
     "crates/app-core",
+    "crates/app-core-cli",
+    "crates/app-core-helper",
+    "crates/control-ws-client",
     "crates/controller-client",
     "crates/nat",
     "crates/p2p",

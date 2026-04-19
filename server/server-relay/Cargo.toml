@@ -4,6 +4,7 @@ members = [
     "crates/udp-relay",
     "crates/session",
     "crates/auth",
+    "crates/relay-daemon",
 ]
 resolver = "2"
 

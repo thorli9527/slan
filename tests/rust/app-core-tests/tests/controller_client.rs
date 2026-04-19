@@ -52,8 +52,10 @@ fn relay_ticket_request_serializes_derp_fields() {
             "sessionId":"session-1",
             "srcNodeId":"node-a",
             "dstNodeId":"node-b",
-            "derpClusterId":"cluster-ap-east",
-            "allowedDerpNodeIds":["tokyo","singapore"],
+            "derpClusterId":"cn-local-a",
+            "countryCode":"CN",
+            "cityCode":"local",
+            "allowedDerpNodeIds":["relay-cn-local-udp","relay-cn-local-tcp"],
             "relayUrl":"udp://127.0.0.1:9000",
             "expiresAt":"2099-01-01T00:00:00Z",
             "signature":"sig"
@@ -68,8 +70,11 @@ fn relay_ticket_request_serializes_derp_fields() {
                 network_id: "net-1".into(),
                 src_node_id: "node-a".into(),
                 dst_node_id: "node-b".into(),
-                derp_cluster_id: Some("cluster-ap-east".into()),
-                preferred_derp_node_ids: vec!["tokyo".into(), "singapore".into()],
+                derp_cluster_id: Some("cn-local-a".into()),
+                preferred_derp_node_ids: vec![
+                    "relay-cn-local-udp".into(),
+                    "relay-cn-local-tcp".into(),
+                ],
                 reason: "timeout".into(),
             },
         )
@@ -78,9 +83,9 @@ fn relay_ticket_request_serializes_derp_fields() {
     let request = client.transport.take_request();
     assert_eq!(request.path, "http://127.0.0.1:8080/relay/tickets");
     let body: Value = serde_json::from_slice(&request.body_json.unwrap()).unwrap();
-    assert_eq!(body["derpClusterId"], "cluster-ap-east");
-    assert_eq!(body["preferredDerpNodeIds"][0], "tokyo");
-    assert_eq!(body["preferredDerpNodeIds"][1], "singapore");
+    assert_eq!(body["derpClusterId"], "cn-local-a");
+    assert_eq!(body["preferredDerpNodeIds"][0], "relay-cn-local-udp");
+    assert_eq!(body["preferredDerpNodeIds"][1], "relay-cn-local-tcp");
 }
 
 #[test]
@@ -93,17 +98,40 @@ fn bootstrap_response_parses_derp_map() {
             "networks": [],
             "controlPlane": {"wsUrl":"ws://127.0.0.1:8080/control/ws","heartbeatSeconds":15},
             "stunServers": ["stun:stun.l.google.com:19302"],
-            "relay": {"region":"local","udpEndpoint":"127.0.0.1:9000"},
+            "relay": {
+                "defaultClusterId":"cn-local-a",
+                "countries":[{
+                    "countryCode":"CN",
+                    "countryName":"China",
+                    "cities":[{
+                        "cityCode":"local",
+                        "cityName":"Local",
+                        "clusters":[{
+                            "clusterId":"cn-local-a",
+                            "clusterName":"CN Local A",
+                            "nodes":[
+                                {"nodeId":"relay-cn-local-udp","transport":"udp","address":"127.0.0.1:9000","priority":10},
+                                {"nodeId":"relay-cn-local-tcp","transport":"tcp","address":"127.0.0.1:9001","priority":20}
+                            ]
+                        }]
+                    }]
+                }]
+            },
             "derpMap": {
                 "probeIntervalSeconds": 5,
                 "clusters": [{
-                    "clusterId": "cluster-ap-east",
-                    "regionId": "ap-east",
-                    "regionName": "Asia Pacific East",
+                    "clusterId": "cn-local-a",
+                    "clusterName": "CN Local A",
+                    "regionId": "local",
+                    "regionName": "Local",
+                    "countryCode": "CN",
+                    "countryName": "China",
+                    "cityCode": "local",
+                    "cityName": "Local",
                     "recommendedFanout": 3,
                     "nodes": [{
-                        "nodeId":"tokyo",
-                        "host":"tokyo.derp.local",
+                        "nodeId":"relay-cn-local-udp",
+                        "host":"127.0.0.1",
                         "port":9000,
                         "transport":"udp",
                         "priority":10
@@ -131,10 +159,13 @@ fn bootstrap_response_parses_derp_map() {
     let derp_map = bootstrap.derp_map.unwrap();
     assert_eq!(derp_map.clusters.len(), 1);
     let cluster = &derp_map.clusters[0];
-    assert_eq!(cluster.cluster_id, "cluster-ap-east");
-    assert_eq!(cluster.region_id, "ap-east");
-    assert_eq!(cluster.nodes[0].cluster_id, "cluster-ap-east");
-    assert_eq!(cluster.nodes[0].region_id, "ap-east");
+    assert_eq!(bootstrap.relay.default_cluster_id, "cn-local-a");
+    assert_eq!(cluster.cluster_id, "cn-local-a");
+    assert_eq!(cluster.region_id, "local");
+    assert_eq!(cluster.country_code.as_deref(), Some("CN"));
+    assert_eq!(cluster.city_code.as_deref(), Some("local"));
+    assert_eq!(cluster.nodes[0].cluster_id, "cn-local-a");
+    assert_eq!(cluster.nodes[0].region_id, "local");
 }
 
 #[test]

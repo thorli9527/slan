@@ -11,3 +11,4 @@ p2p = { path = "../../../client/app_core/crates/p2p" }
 relay-client = { path = "../../../client/app_core/crates/relay-client" }
 serde_json = "1"
 slan-app-core = { path = "../../../client/app_core/crates/app-core" }
+tunnel = { path = "../../../client/app_core/crates/tunnel" }

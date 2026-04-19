@@ -6,6 +6,7 @@ mod connection;
 mod derp;
 mod identity;
 mod network;
+mod wireguard;
 
 pub use connection::{ActivePath, ConnectionPath, ConnectionState};
 pub use derp::{
@@ -15,6 +16,10 @@ pub use derp::{
 };
 pub use identity::{Device, Node, Session};
 pub use network::{
-    ControlPlaneConfig, DnsConfig, Endpoint, Network, NetworkMap, NetworkMember, Peer, RelayConfig,
-    RelayEndpoint, RelayRegion, Route,
+    ControlPlaneConfig, DnsConfig, Endpoint, Network, NetworkMap, NetworkMember, Peer, RelayCity,
+    RelayCluster, RelayConfig, RelayCountry, RelayEndpoint, RelayNode, RelayRegion, Route,
+};
+pub use wireguard::{
+    AllowedIp, TunnelKeyMaterial, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair,
+    WireGuardPeerConfig, WireGuardRuntimeStats,
 };

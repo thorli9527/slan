@@ -678,9 +678,19 @@ components:
       properties:
         clusterId:
           type: string
+        clusterName:
+          type: string
         regionId:
           type: string
         regionName:
+          type: string
+        countryCode:
+          type: string
+        countryName:
+          type: string
+        cityCode:
+          type: string
+        cityName:
           type: string
         recommendedFanout:
           type: integer
@@ -736,6 +746,10 @@ components:
         dstNodeId:
           type: string
         derpClusterId:
+          type: string
+        countryCode:
+          type: string
+        cityCode:
           type: string
         allowedDerpNodeIds:
           type: array

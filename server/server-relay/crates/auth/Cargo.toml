@@ -4,4 +4,7 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+base64 = "0.22"
+hmac = "0.12"
 relay-core = { path = "../relay-core" }
+sha2 = "0.10"
