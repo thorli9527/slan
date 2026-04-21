@@ -2,6 +2,7 @@ package impl
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -41,6 +42,7 @@ func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 	service.TokenVerifier,
 	service.ControlChannel,
 	service.ControlSync,
+	service.MessageDelivery,
 	service.Ops,
 ) {
 	state := &dbState{
@@ -48,6 +50,12 @@ func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 		pg:                repo.NewPostgresRepository(runtime.Postgres),
 		tokens:            repo.NewRedisTokenStore(runtime.Redis),
 		cachedRelayTicket: make(map[string]cachedRelayTicket),
+	}
+	if err := state.seedBuiltinOpsRBAC(context.Background()); err != nil {
+		panic(fmt.Errorf("seed builtin ops rbac: %w", err))
+	}
+	if err := state.seedDefaultAdmin(context.Background()); err != nil {
+		panic(fmt.Errorf("seed default admin: %w", err))
 	}
 	state.cleanupExpiredControlPlaneState(context.Background(), time.Now())
 	state.startControlStateCleanupLoop()
@@ -59,5 +67,6 @@ func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 		dbTokenVerifier{state: state},
 		dbControlChannelService{state: state},
 		dbControlSyncService{state: state},
+		dbMessageDeliveryService{state: state},
 		dbOpsService{state: state}
 }

@@ -67,35 +67,30 @@
   HTTP 路由层
 - `api/dto`
   请求响应模型
-- `internal/auth`
-  账号能力接口
-- `internal/device`
-  设备能力接口
-- `internal/network`
-  网络、子网、挂载能力接口
-- `internal/node`
-  节点能力接口
-- `internal/control`
-  启动配置与 ticket 能力接口
 - `internal/ws`
   控制通道消息模型
 - `internal/service`
-  内存实现与统一 Services 聚合
-- `internal/infra`
-  配置与基础设施
+  服务接口与数据库实现
+- `internal/repo`
+  PostgreSQL / Redis 访问层
+- `configs`
+  配置结构、样例与运行时初始化
 
 ## 4. 当前内部服务边界
 
-当前聚合在 `internal/service/Services` 中的核心服务为：
+当前 `internal/service` 中的核心服务接口为：
 
 - `Auth`
 - `Device`
 - `Network`
 - `Node`
 - `Bootstrap`
-- `Tokens`
+- `TokenVerifier`
+- `ControlChannel`
+- `ControlSync`
+- `Ops`
 
-这说明当前控制面内部的主编排单元已经形成，但实现还主要是内存版。
+这些接口当前由 `internal/service/impl` 下的 PostgreSQL / Redis 实现承接。
 
 ## 5. 当前内部需求模型
 
@@ -196,8 +191,10 @@ server-biz 需求模型
 │   ├── SVC.3 Network
 │   ├── SVC.4 Node
 │   ├── SVC.5 Bootstrap
-│   ├── SVC.6 Tokens
-│   └── SVC.7 Services 聚合
+│   ├── SVC.6 TokenVerifier
+│   ├── SVC.7 ControlChannel
+│   ├── SVC.8 ControlSync
+│   └── SVC.9 Ops
 └── INFRA 基础设施
     ├── INFRA.1 HTTP Address
     ├── INFRA.2 WS Path
@@ -210,7 +207,7 @@ server-biz 需求模型
 
 - 纵向看业务对象：`Device`、`Node`、`Network`、`Subnet`、`NetworkMap`、`RelayTicket`
 - 横向看控制面职责：鉴权、编排、启动配置、控制会话、票据签发
-- 边界上看服务接口：`Auth`、`Device`、`Network`、`Node`、`Bootstrap`、`Tokens`
+- 边界上看服务接口：`Auth`、`Device`、`Network`、`Node`、`Bootstrap`、`TokenVerifier`
 
 ### 5.2 动态扩展规则
 

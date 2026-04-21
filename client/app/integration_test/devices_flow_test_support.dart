@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_app/app/app.dart';
+import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
 import 'package:slan_app/testing/app_test_keys.dart';
 
 class FakeHost {
@@ -218,10 +219,10 @@ class FakeHost {
             },
           ],
           'controlPlane': {
-            'wsUrl': 'ws://127.0.0.1:8080/control/ws',
+            'wsUrl': kDevControlWsUrl,
             'heartbeatSeconds': 15,
           },
-          'stunServers': ['stun:stun.l.google.com:19302'],
+          'stunServers': [kDevStunServer],
           'relay': {
             'defaultClusterId': 'cn-local-a',
             'countries': [
@@ -240,7 +241,7 @@ class FakeHost {
                           {
                             'nodeId': 'relay-cn-local-udp',
                             'transport': 'udp',
-                            'address': '127.0.0.1:9000',
+                            'address': kDevRelayUdpAddress,
                             'priority': 10,
                           },
                         ],
@@ -276,7 +277,7 @@ class FakeHost {
           'dstNodeId': 'fail-peer-node-1',
           'derpClusterId': 'cn-local-a',
           'allowedDerpNodeIds': ['relay-cn-local-udp'],
-          'relayUrl': 'udp://127.0.0.1:9000',
+          'relayUrl': kDevRelayUdpUrl,
           'expiresAt': '2026-04-17T10:00:00Z',
           'signature': 'signed',
         };
@@ -638,7 +639,8 @@ class DevicesPageHarness {
       findsOneWidget,
     );
     expect(
-      find.text('tunnel backend: ${backendName ?? '-'} / ${backendState ?? '-'}'),
+      find.text(
+          'tunnel backend: ${backendName ?? '-'} / ${backendState ?? '-'}'),
       findsOneWidget,
     );
     expect(

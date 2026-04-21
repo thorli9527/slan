@@ -1,7 +1,7 @@
 use slan_app_core::{BootstrapConfig, Device, Network, Node, RelayTicket, Session};
 
 use crate::api::{
-    ControllerClient, CreateNetworkRequest, JoinNetworkRequest, LoginRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest, LoginRequest,
     RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
 };
 use crate::dto::{
@@ -104,6 +104,36 @@ where
         Ok(())
     }
 
+    fn activate_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String> {
+        let _: NetworkJoinResultDto = post_json(
+            &self.transport,
+            &self.base_url,
+            &format!("/networks/{}/activate", req.network_id),
+            Some(access_token),
+            &JoinNetworkRequestDto {
+                device_id: req.device_id,
+            },
+        )?;
+        Ok(())
+    }
+
+    fn deactivate_network(
+        &self,
+        access_token: &str,
+        req: DeactivateNetworkRequest,
+    ) -> Result<(), String> {
+        let _: serde_json::Value = post_json(
+            &self.transport,
+            &self.base_url,
+            &format!("/networks/{}/deactivate", req.network_id),
+            Some(access_token),
+            &JoinNetworkRequestDto {
+                device_id: req.device_id,
+            },
+        )?;
+        Ok(())
+    }
+
     fn bootstrap(
         &self,
         access_token: &str,
@@ -177,6 +207,18 @@ where
 
     fn join_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String> {
         HttpControllerClient::join_network(self, access_token, req)
+    }
+
+    fn activate_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String> {
+        HttpControllerClient::activate_network(self, access_token, req)
+    }
+
+    fn deactivate_network(
+        &self,
+        access_token: &str,
+        req: DeactivateNetworkRequest,
+    ) -> Result<(), String> {
+        HttpControllerClient::deactivate_network(self, access_token, req)
     }
 
     fn bootstrap(

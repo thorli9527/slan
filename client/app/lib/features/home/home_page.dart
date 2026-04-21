@@ -1,28 +1,20 @@
-/// 首页容器页。
-///
-/// 在移动端保留原有 tab 结构，在桌面端切到侧边栏 + 概览面板布局。
 library slan_app.features.home;
+
+import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../auth/auth_callback_service.dart';
+import '../../features/shared/desktop_client_widgets.dart';
+import '../../infra/app_core/models/network_models.dart';
+import '../../infra/logging/startup_log.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
-import '../../infra/app_core/store/app_core_demo_store.dart';
+import '../../infra/app_core/store/app_session_store.dart';
+import '../../shared/desktop_platform.dart';
 import '../../testing/app_test_keys.dart';
-import '../auth/auth_page.dart';
-import '../devices/devices_page.dart';
-import '../networks/networks_page.dart';
-import '../shared/desktop_client_widgets.dart';
 
-enum _HomeSection {
-  auth('Auth', Icons.badge_outlined),
-  networks('Networks', Icons.hub_outlined),
-  devices('Devices', Icons.developer_board_outlined);
-
-  const _HomeSection(this.label, this.icon);
-
-  final String label;
-  final IconData icon;
-}
+part 'home_page_logic.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -32,112 +24,92 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  _HomeSection _section = _HomeSection.auth;
+  bool _autoSetupStarted = false;
+  bool _openedNetworkConsole = false;
+  String? _networkConsoleStatus;
+  Timer? _networkPollingTimer;
+
+  void _setNetworkConsoleStatus(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _networkConsoleStatus = message;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isDesktop = constraints.maxWidth >= 1080;
-        if (!isDesktop) {
-          return _buildMobileShell();
-        }
-        return _buildDesktopShell();
-      },
-    );
-  }
+    final sessionController = AppCoreScope.sessionController;
+    final sessionStore = AppCoreScope.sessionStore;
+    final tunnelStore = AppCoreScope.tunnelStore;
+    if (sessionStore.session == null) {
+      _autoSetupStarted = false;
+    }
+    if (sessionStore.session != null && !_autoSetupStarted) {
+      _autoSetupStarted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _ensureWorkspaceReady(sessionStore);
+      });
+    }
 
-  Widget _buildMobileShell() {
-    return DefaultTabController(
-      length: _HomeSection.values.length,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('SLAN Desktop Preview'),
-          bottom: TabBar(
-            onTap: (index) {
-              setState(() {
-                _section = _HomeSection.values[index];
-              });
-            },
-            tabs: const [
-              Tab(key: AppTestKeys.authTab, text: 'Auth'),
-              Tab(key: AppTestKeys.networksTab, text: 'Networks'),
-              Tab(key: AppTestKeys.devicesTab, text: 'Devices'),
+    return AnimatedBuilder(
+      animation: Listenable.merge([sessionStore, tunnelStore]),
+      builder: (context, _) {
+        final loggedIn = sessionStore.session != null;
+        final activeNetwork =
+            sessionStore.networks.isNotEmpty ? sessionStore.networks.first : null;
+        final runtime = tunnelStore.tunnelRuntimeView;
+        final currentMember =
+            _memberForCurrentDevice(sessionStore.device?.deviceId, activeNetwork);
+        final virtualIp = switch (activeNetwork) {
+          null => 'No network',
+          _ when currentMember?.virtualIp != null &&
+              currentMember!.virtualIp!.trim().isNotEmpty =>
+            currentMember.virtualIp!.trim(),
+          _ => 'Pending allocation',
+        };
+        final runtimeState =
+            activeNetwork == null ? 'inactive' : runtime?.state ?? 'idle';
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('SLAN'),
+            actions: [
+              IconButton(
+                tooltip: 'Settings',
+                onPressed: () => _showServerSettingsDialog(context),
+                icon: const Icon(Icons.tune),
+              ),
             ],
           ),
-        ),
-        body: const TabBarView(
-          children: [
-            AuthPage(),
-            NetworksPage(),
-            DevicesPage(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDesktopShell() {
-    final store = AppCoreScope.demo;
-    return AnimatedBuilder(
-      animation: store,
-      builder: (context, _) {
-        final theme = Theme.of(context);
-        return Scaffold(
-          body: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  theme.colorScheme.surface,
-                  theme.colorScheme.surfaceContainerLowest,
-                  const Color(0xFFE9F4EF),
-                ],
-              ),
-            ),
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _DesktopSidebar(
-                      section: _section,
-                      onSelect: (section) => setState(() => _section = section),
-                    ),
-                    const SizedBox(width: 20),
-                    Expanded(
-                      flex: 3,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _DesktopHero(section: _section, store: store),
-                          const SizedBox(height: 20),
-                          Expanded(
-                            child: DesktopWorkspaceFrame(
-                              backgroundColor: theme.colorScheme.surface
-                                  .withValues(alpha: 0.94),
-                              child: IndexedStack(
-                                index: _section.index,
-                                children: const [
-                                  AuthPage(),
-                                  NetworksPage(),
-                                  DevicesPage(),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: loggedIn
+                    ? _LoggedInHome(
+                        userLabel: sessionStore.session?.userLabel ??
+                            sessionStore.session?.userId ??
+                            'Unknown user',
+                        virtualIp: virtualIp,
+                        runtimeState: runtimeState,
+                        hasActiveNetwork: activeNetwork != null,
+                        busy: sessionStore.busy,
+                        statusMessage: _networkConsoleStatus ??
+                            sessionStore.notice ??
+                            tunnelStore.lastTunnelActionReport?.detail,
+                        error: sessionStore.error,
+                        onEnable: sessionController.enableActiveNetwork,
+                        onDisable: sessionController.disableActiveNetwork,
+                        onLogout: sessionController.signOut,
+                      )
+                    : _LoggedOutHome(
+                        hostLabel:
+                            AppCoreScope.hostConfig?.displayHost ?? 'mock',
+                        onLogin: () => _openBrowserLogin(),
+                        onSettings: () => _showServerSettingsDialog(context),
                       ),
-                    ),
-                    const SizedBox(width: 20),
-                    SizedBox(
-                      width: 320,
-                      child: _DesktopOverview(store: store, section: _section),
-                    ),
-                  ],
-                ),
               ),
             ),
           ),
@@ -145,260 +117,276 @@ class _HomePageState extends State<HomePage> {
       },
     );
   }
+
+  @override
+  void dispose() {
+    _networkPollingTimer?.cancel();
+    super.dispose();
+  }
 }
 
-class _DesktopSidebar extends StatelessWidget {
-  const _DesktopSidebar({
-    required this.section,
-    required this.onSelect,
+class _LoggedOutHome extends StatelessWidget {
+  const _LoggedOutHome({
+    required this.hostLabel,
+    required this.onLogin,
+    required this.onSettings,
   });
 
-  final _HomeSection section;
-  final ValueChanged<_HomeSection> onSelect;
+  final String hostLabel;
+  final VoidCallback onLogin;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
-    return DesktopNavigationSidebar(
-      title: 'SLAN',
-      subtitle: 'Mac desktop control surface',
-      footer: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white24),
+    return Row(
+      children: [
+        Expanded(
+          child: _ActionTile(
+            key: AppTestKeys.homeLoginButton,
+            icon: Icons.lock_open_rounded,
+            label: '登录',
+            subtitle: '打开浏览器完成登录',
+            color: const Color(0xFF1E6B52),
+            onTap: onLogin,
+          ),
         ),
-        child: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(width: 16),
+        Expanded(
+          child: _ActionTile(
+            key: AppTestKeys.homeSettingsButton,
+            icon: Icons.settings_suggest_rounded,
+            label: '设置',
+            subtitle: hostLabel,
+            color: const Color(0xFF355C7D),
+            onTap: onSettings,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LoggedInHome extends StatelessWidget {
+  const _LoggedInHome({
+    required this.userLabel,
+    required this.virtualIp,
+    required this.runtimeState,
+    required this.hasActiveNetwork,
+    required this.busy,
+    required this.statusMessage,
+    required this.error,
+    required this.onEnable,
+    required this.onDisable,
+    required this.onLogout,
+  });
+
+  final String userLabel;
+  final String virtualIp;
+  final String runtimeState;
+  final bool hasActiveNetwork;
+  final bool busy;
+  final String? statusMessage;
+  final String? error;
+  final Future<void> Function() onEnable;
+  final Future<void> Function() onDisable;
+  final Future<void> Function() onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DesktopHeroPanel(
+          title: 'Client',
+          description: '登录成功后默认进入这张极简页面，只保留当前用户、当前 IP 和网络启停。',
+          backgroundColor: const Color(0xFFF0FBF6),
+          trailing: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DesktopMetricPill(label: 'User', value: userLabel),
+              const SizedBox(height: 10),
+              DesktopMetricPill(label: 'IP', value: virtualIp),
+              const SizedBox(height: 10),
+              DesktopMetricPill(label: 'Runtime', value: runtimeState),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        Row(
           children: [
-            Text(
-              'Tunnel stack',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
+            Expanded(
+              child: FilledButton.icon(
+                key: AppTestKeys.homeEnableNetworkButton,
+                onPressed: busy || !hasActiveNetwork ? null : () => onEnable(),
+                icon: const Icon(Icons.play_circle_outline_rounded),
+                label: const Text('启用网络'),
               ),
             ),
-            SizedBox(height: 8),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: AppTestKeys.homeDisableNetworkButton,
+                onPressed: busy || !hasActiveNetwork ? null : () => onDisable(),
+                icon: const Icon(Icons.pause_circle_outline_rounded),
+                label: const Text('停用网络'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: AppTestKeys.homeLogoutButton,
+                onPressed: busy ? null : () => onLogout(),
+                icon: const Icon(Icons.logout_rounded),
+                label: const Text('退出'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        DesktopSurfaceCard(
+          title: 'Current Session',
+          subtitle: '这里只显示当前会话和网络运行反馈。',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _StatusRow(label: '当前用户', value: userLabel),
+              const SizedBox(height: 10),
+              _StatusRow(label: '当前 IP', value: virtualIp),
+              const SizedBox(height: 10),
+              _StatusRow(label: '网络状态', value: runtimeState),
+              const SizedBox(height: 16),
+              if (busy) const Text('Working on the current node operation...'),
+              if (!busy && statusMessage != null)
+                Text(
+                  statusMessage!,
+                  style: TextStyle(color: theme.colorScheme.primary),
+                ),
+              if (error != null) ...[
+                if (statusMessage != null || busy) const SizedBox(height: 8),
+                Text(
+                  error!,
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
+              ],
+              if (!busy && statusMessage == null && error == null)
+                Text(
+                  hasActiveNetwork
+                      ? 'Ready. You can enable, disable, or sign out.'
+                      : '当前账号还没有活动网络，请先在网页端创建或接入网络。',
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusRow extends StatelessWidget {
+  const _StatusRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        SizedBox(
+          width: 88,
+          child: Text(
+            label,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(28),
+      onTap: onTap,
+      child: Ink(
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(
+            color: color.withValues(alpha: 0.18),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: 0.08),
+              blurRadius: 28,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Icon(icon, color: color, size: 32),
+            ),
+            const SizedBox(height: 18),
             Text(
-              'PacketTunnel + WireGuard backend runtime lives behind the Devices workspace.',
-              style: TextStyle(color: Colors.white70, height: 1.35),
+              label,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    height: 1.45,
+                  ),
             ),
           ],
         ),
       ),
-      children: [
-        for (final item in _HomeSection.values) ...[
-          _SidebarButton(
-            item: item,
-            selected: item == section,
-            onTap: () => onSelect(item),
-          ),
-          const SizedBox(height: 10),
-        ],
-      ],
-    );
-  }
-}
-
-class _SidebarButton extends StatelessWidget {
-  const _SidebarButton({
-    required this.item,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _HomeSection item;
-  final bool selected;
-  final VoidCallback onTap;
-
-  Key _keyForSection() {
-    switch (item) {
-      case _HomeSection.auth:
-        return AppTestKeys.authTab;
-      case _HomeSection.networks:
-        return AppTestKeys.networksTab;
-      case _HomeSection.devices:
-        return AppTestKeys.devicesTab;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return KeyedSubtree(
-      key: _keyForSection(),
-      child: DesktopNavigationItem(
-        icon: item.icon,
-        label: item.label,
-        selected: selected,
-        onTap: onTap,
-      ),
-    );
-  }
-}
-
-class _DesktopHero extends StatelessWidget {
-  const _DesktopHero({
-    required this.section,
-    required this.store,
-  });
-
-  final _HomeSection section;
-  final AppCoreDemoStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    final statusLine = switch (section) {
-      _HomeSection.auth => store.session == null
-          ? 'No active session yet'
-          : 'Signed in as ${store.session!.userId}',
-      _HomeSection.networks => store.networks.isEmpty
-          ? 'No overlay networks loaded'
-          : '${store.networks.length} overlay networks tracked',
-      _HomeSection.devices => store.connectionState.status == 'connected'
-          ? 'Connected via ${store.connectionState.path?.name ?? 'unknown'}'
-          : 'Tunnel and path diagnostics are idle',
-    };
-
-    return DesktopHeroPanel(
-      title: section.label,
-      description: statusLine,
-      backgroundColor: const Color(0xFF173128),
-      foregroundColor: Colors.white,
-      footer: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: [
-          DesktopMetricPill(
-            label: 'Networks',
-            value: '${store.networks.length}',
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
-            foregroundColor: Colors.white,
-            borderColor: Colors.white24,
-          ),
-          DesktopMetricPill(
-            label: 'Session',
-            value: store.session == null ? 'offline' : 'ready',
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
-            foregroundColor: Colors.white,
-            borderColor: Colors.white24,
-          ),
-          DesktopMetricPill(
-            label: 'Path',
-            value: store.connectionState.path?.name ?? 'idle',
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
-            foregroundColor: Colors.white,
-            borderColor: Colors.white24,
-          ),
-          DesktopMetricPill(
-            label: 'Tunnel',
-            value: store.tunnelRuntimeView?.state ?? 'none',
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
-            foregroundColor: Colors.white,
-            borderColor: Colors.white24,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DesktopOverview extends StatelessWidget {
-  const _DesktopOverview({
-    required this.store,
-    required this.section,
-  });
-
-  final AppCoreDemoStore store;
-  final _HomeSection section;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        DesktopOverviewPanel(
-          title: 'Control Plane',
-          child: DesktopKeyValueList(
-            entries: [
-              DesktopKeyValueEntry(
-                  label: 'Busy', value: store.busy ? 'yes' : 'no'),
-              DesktopKeyValueEntry(
-                  label: 'User', value: store.session?.userId ?? '-'),
-              DesktopKeyValueEntry(
-                  label: 'Device', value: store.device?.deviceId ?? '-'),
-              DesktopKeyValueEntry(
-                  label: 'Node', value: store.node?.nodeId ?? '-'),
-              DesktopKeyValueEntry(label: 'Error', value: store.error ?? '-'),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        DesktopOverviewPanel(
-          title: 'Overlay',
-          child: DesktopKeyValueList(
-            entries: [
-              DesktopKeyValueEntry(
-                  label: 'Networks', value: '${store.networks.length}'),
-              DesktopKeyValueEntry(
-                label: 'Members',
-                value:
-                    '${store.networks.fold<int>(0, (sum, item) => sum + item.members.length)}',
-              ),
-              DesktopKeyValueEntry(
-                label: 'Connection',
-                value: store.connectionState.status,
-              ),
-              DesktopKeyValueEntry(
-                label: 'Relay Ticket',
-                value: store.relayTicket?.ticketId ?? '-',
-              ),
-              DesktopKeyValueEntry(
-                label: 'Bootstrap',
-                value: store.bootstrap == null ? 'not loaded' : 'loaded',
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        DesktopOverviewPanel(
-          title: 'Data Plane',
-          backgroundColor: const Color(0xFF204A3A),
-          foregroundColor: Colors.white,
-          child: DesktopKeyValueList(
-            entries: [
-              DesktopKeyValueEntry(
-                  label: 'Selected View', value: section.label),
-              DesktopKeyValueEntry(
-                  label: 'Probe', value: store.lastProbe?.probeId ?? '-'),
-              DesktopKeyValueEntry(
-                label: 'Send Failure',
-                value: store.lastSendFailure?.label ?? '-',
-              ),
-              DesktopKeyValueEntry(
-                label: 'Probe Failure',
-                value: store.lastProbeFailure?.label ?? '-',
-              ),
-              DesktopKeyValueEntry(
-                label: 'Tunnel',
-                value: store.tunnelRuntimeView == null
-                    ? 'none'
-                    : '${store.tunnelRuntimeView!.state}/${store.tunnelRuntimeView!.transport}',
-              ),
-              DesktopKeyValueEntry(
-                label: 'Backend',
-                value: store.tunnelRuntimeView?.backendState ?? '-',
-              ),
-            ],
-          ),
-        ),
-        const Spacer(),
-        const DesktopSurfaceCard(
-          title: 'Desktop Shell',
-          subtitle:
-              'Desktop mode keeps the existing mock control-plane flows, but wraps them in a Mac-focused shell so auth, networks, device registration, relay fallback, and PacketTunnel diagnostics live in one workspace.',
-          child: SizedBox.shrink(),
-        ),
-      ],
     );
   }
 }

@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: slan
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "123456"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
     ports:
       - "15432:5432"
     volumes:
@@ -33,13 +33,18 @@ services:
     build:
       context: ./server/server-biz
       dockerfile: Dockerfile
-      args:
-        APP_TARGET: biz-server
     container_name: slan-server-biz
     command: ["-config", "/app/config.yaml"]
+    environment:
+      SLAN_HTTP_PUBLIC_HOST: "${SLAN_HTTP_PUBLIC_HOST:-slan.localhost:18443}"
+      SLAN_HTTP_PUBLIC_SCHEME: "${SLAN_HTTP_PUBLIC_SCHEME:-https}"
+      SLAN_RELAY_TICKET_SIGNING_SECRET: "${SLAN_RELAY_TICKET_SIGNING_SECRET:-change-me-relay-ticket-secret}"
+      SLAN_OPS_ACCESS_TOKEN: "${SLAN_OPS_ACCESS_TOKEN:-change-me-ops-token}"
+      SLAN_OPS_DEFAULT_ADMIN_PASSWORD: "${SLAN_OPS_DEFAULT_ADMIN_PASSWORD:-change-me-admin-password}"
+      SLAN_POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
     ports:
-      - "18080:8080"
-      - "18081:8081"
+      - "${SLAN_BIZ_PUBLIC_PORT:-28080}:8080"
+      - "${SLAN_BIZ_OPS_PORT:-28081}:8081"
     volumes:
       - ./server/server-biz/configs/config.docker.yaml:/app/config.yaml:ro
     depends_on:
@@ -48,6 +53,48 @@ services:
       redis:
         condition: service_healthy
 
+  server-relay:
+    build:
+      context: ./server/server-relay
+      dockerfile: Dockerfile
+    container_name: slan-server-relay
+    command:
+      [
+        "--config",
+        "/app/relay-daemon.json",
+        "--ticket-signing-secret",
+        "${SLAN_RELAY_TICKET_SIGNING_SECRET:-change-me-relay-ticket-secret}"
+      ]
+    ports:
+      - "19000:9000/udp"
+    volumes:
+      - ./server/server-relay/configs/relay-daemon.example.json:/app/relay-daemon.json:ro
+
+  server-ui-web:
+    build:
+      context: ./server/server-ui/web
+      dockerfile: Dockerfile
+    container_name: slan-server-ui-web
+    ports:
+      - "${SLAN_WEB_PORT:-24200}:80"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: slan-caddy
+    ports:
+      - "18443:443"
+    volumes:
+      - ./deploy/local/Caddyfile:/etc/caddy/Caddyfile:ro
+      - slan-caddy-data:/data
+      - slan-caddy-config:/config
+    depends_on:
+      server-biz:
+        condition: service_started
+      server-ui-web:
+        condition: service_started
+
 volumes:
   slan-postgres-data:
   slan-redis-data:
+  slan-caddy-data:
+  slan-caddy-config:

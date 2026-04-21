@@ -22,6 +22,8 @@ const networkRevisionKeyPrefix = "network_revision:"
 const connectPlanRetryCountKeyPrefix = "connect_plan_retry_count:"
 const connectPlanRetryGateKeyPrefix = "connect_plan_retry_gate:"
 const peerCandidateDeliveryKeyPrefix = "peer_candidate_delivery:"
+const authCallbackStatusKeyPrefix = "auth_callback_status:"
+const authCallbackPayloadKeyPrefix = "auth_callback_payload:"
 
 func NewRedisTokenStore(client *redis.Client) *RedisTokenStore {
 	return &RedisTokenStore{client: client}
@@ -35,8 +37,58 @@ func (s *RedisTokenStore) StoreRefreshToken(ctx context.Context, token, userID s
 	return s.client.Set(ctx, "refresh_token:"+token, userID, ttl).Err()
 }
 
+func (s *RedisTokenStore) StoreOpsAccessToken(ctx context.Context, token, adminID string, ttl time.Duration) error {
+	return s.client.Set(ctx, "ops_access_token:"+token, adminID, ttl).Err()
+}
+
 func (s *RedisTokenStore) StoreControlSessionToken(ctx context.Context, token, userID string, ttl time.Duration) error {
 	return s.client.Set(ctx, "control_session_token:"+token, userID, ttl).Err()
+}
+
+func (s *RedisTokenStore) MarkAuthCallbackReceived(ctx context.Context, callbackID string, receivedAt int64, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	if err := s.client.Set(ctx, authCallbackStatusKeyPrefix+callbackID, receivedAt, ttl).Err(); err != nil {
+		return err
+	}
+	return s.client.Del(ctx, authCallbackPayloadKeyPrefix+callbackID).Err()
+}
+
+func (s *RedisTokenStore) AuthCallbackReceivedAt(ctx context.Context, callbackID string) (int64, error) {
+	value, err := s.client.Get(ctx, authCallbackStatusKeyPrefix+callbackID).Int64()
+	if err != nil {
+		if err == redis.Nil {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return value, nil
+}
+
+func (s *RedisTokenStore) StoreAuthCallbackPayload(ctx context.Context, callbackID string, payload any, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return s.client.Set(ctx, authCallbackPayloadKeyPrefix+callbackID, encoded, ttl).Err()
+}
+
+func (s *RedisTokenStore) LoadAuthCallbackPayload(ctx context.Context, callbackID string, target any) (bool, error) {
+	value, err := s.client.Get(ctx, authCallbackPayloadKeyPrefix+callbackID).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := json.Unmarshal(value, target); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *RedisTokenStore) Authenticate(ctx context.Context, accessToken string) (string, error) {
@@ -59,6 +111,17 @@ func (s *RedisTokenStore) AuthenticateControlSessionToken(ctx context.Context, t
 		return "", err
 	}
 	return userID, nil
+}
+
+func (s *RedisTokenStore) AuthenticateOpsAccessToken(ctx context.Context, token string) (string, error) {
+	adminID, err := s.client.Get(ctx, "ops_access_token:"+token).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return "", fmt.Errorf("token not found")
+		}
+		return "", err
+	}
+	return adminID, nil
 }
 
 func (s *RedisTokenStore) PublishControlSyncEvent(ctx context.Context, event controlws.ControlSyncEvent) error {

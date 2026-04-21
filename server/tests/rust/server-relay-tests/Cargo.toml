@@ -1,0 +1,11 @@
+[package]
+name = "server-relay-tests"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+auth = { path = "../../../server-relay/crates/auth" }
+relay-core = { path = "../../../server-relay/crates/relay-core" }
+session = { path = "../../../server-relay/crates/session" }
+udp-relay = { path = "../../../server-relay/crates/udp-relay" }

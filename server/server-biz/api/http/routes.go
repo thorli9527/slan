@@ -1,13 +1,9 @@
 package httpapi
 
 import (
-	"errors"
 	"expvar"
-	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/configs"
 	"github.com/slan/server/server-biz/internal/service"
 )
@@ -30,6 +26,8 @@ type routerDeps struct {
 	ControlChannel service.ControlChannel
 	// ControlSync 提供跨实例控制事件同步能力。
 	ControlSync service.ControlSync
+	// MessageDelivery 提供下行消息 ACK/重试/归档能力。
+	MessageDelivery service.MessageDelivery
 	// Ops 提供运营管理视图和 RBAC 管理能力。
 	Ops service.Ops
 }
@@ -43,23 +41,22 @@ func NewRouterDeps(
 	tokens service.TokenVerifier,
 	controlChannel service.ControlChannel,
 	controlSync service.ControlSync,
+	messageDelivery service.MessageDelivery,
 	ops service.Ops,
 ) routerDeps {
 	return routerDeps{
-		Auth:           auth,
-		Device:         device,
-		Network:        network,
-		Node:           node,
-		Bootstrap:      bootstrap,
-		Tokens:         tokens,
-		ControlChannel: controlChannel,
-		ControlSync:    controlSync,
-		Ops:            ops,
+		Auth:            auth,
+		Device:          device,
+		Network:         network,
+		Node:            node,
+		Bootstrap:       bootstrap,
+		Tokens:          tokens,
+		ControlChannel:  controlChannel,
+		ControlSync:     controlSync,
+		MessageDelivery: messageDelivery,
+		Ops:             ops,
 	}
 }
-
-// userIDContextKey 是 gin.Context 中保存当前认证用户 ID 的键。
-const userIDContextKey = "userId"
 
 // NewPublicRouter 构建对外客户使用的 HTTP 路由。
 func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
@@ -67,8 +64,9 @@ func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 		panic("http public router requires explicit services")
 	}
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery())
+	router.Use(gin.Logger(), gin.Recovery(), allowCORS())
 	registerControlWS(router, cfg.WS.Path, deps)
+	registerAuthCallbackWS(router, deps)
 
 	router.GET("/healthz", healthz)
 	router.GET("/debug/vars", gin.WrapH(expvar.Handler()))
@@ -85,7 +83,7 @@ func NewOpsRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 		panic("http ops router requires ops service")
 	}
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery())
+	router.Use(gin.Logger(), gin.Recovery(), allowCORS())
 
 	router.GET("/healthz", healthz)
 	router.GET("/debug/vars", gin.WrapH(expvar.Handler()))
@@ -99,102 +97,4 @@ func NewOpsRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 // NewRouter 保留为兼容入口，当前返回 public router。
 func NewRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	return NewPublicRouter(cfg, deps)
-}
-
-// healthz 返回轻量级就绪探针响应。
-func healthz(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
-}
-
-// authenticate 是受保护接口使用的 Bearer Token 鉴权中间件。
-//
-// 处理逻辑：
-// 1. 读取 Authorization 头
-// 2. 解析 Bearer Token
-// 3. 调用 Tokens 服务校验
-// 4. 将 userID 写入 gin context 供后续 handler 使用
-func authenticate(deps routerDeps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authz := strings.TrimSpace(c.GetHeader("Authorization"))
-		token := strings.TrimPrefix(authz, "Bearer ")
-		if token == authz || token == "" {
-			writeError(c, service.ErrUnauthorized)
-			c.Abort()
-			return
-		}
-
-		userID, err := deps.Tokens.Authenticate(token)
-		if err != nil {
-			writeError(c, err)
-			c.Abort()
-			return
-		}
-
-		c.Set(userIDContextKey, userID)
-		c.Next()
-	}
-}
-
-func authenticateOps(cfg configs.Config) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authz := strings.TrimSpace(c.GetHeader("Authorization"))
-		token := strings.TrimPrefix(authz, "Bearer ")
-		if token == authz || token == "" || token != cfg.Ops.AccessToken {
-			writeError(c, service.ErrUnauthorized)
-			c.Abort()
-			return
-		}
-		c.Next()
-	}
-}
-
-// bindJSON 负责统一绑定并校验 JSON 请求体。
-//
-// 当绑定失败时，直接按控制面约定输出 INVALID_ARGUMENT 错误。
-func bindJSON(c *gin.Context, out any) bool {
-	if err := c.ShouldBindJSON(out); err != nil {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{
-			Code:    "INVALID_ARGUMENT",
-			Message: err.Error(),
-		})
-		return false
-	}
-	return true
-}
-
-// userID 从 gin context 中取出当前认证用户 ID。
-func userID(c *gin.Context) string {
-	value, _ := c.Get(userIDContextKey)
-	userID, _ := value.(string)
-	return userID
-}
-
-// writeError 将领域错误统一映射为 HTTP 状态码和标准错误码。
-//
-// 这样路由层无需在每个 handler 中重复写错误分发逻辑。
-func writeError(c *gin.Context, err error) {
-	status := http.StatusInternalServerError
-	code := "INTERNAL"
-	switch {
-	case errors.Is(err, service.ErrInvalidArgument):
-		status = http.StatusBadRequest
-		code = "INVALID_ARGUMENT"
-	case errors.Is(err, service.ErrUnauthorized):
-		status = http.StatusUnauthorized
-		code = "UNAUTHORIZED"
-	case errors.Is(err, service.ErrForbidden):
-		status = http.StatusForbidden
-		code = "FORBIDDEN"
-	case errors.Is(err, service.ErrNotFound):
-		status = http.StatusNotFound
-		code = "NOT_FOUND"
-	case errors.Is(err, service.ErrConflict):
-		status = http.StatusConflict
-		code = "CONFLICT"
-	}
-
-	c.JSON(status, dto.ErrorResponse{
-		Code:    code,
-		Message: err.Error(),
-	})
 }

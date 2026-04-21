@@ -9,7 +9,13 @@ use crate::diagnostics::now_ms;
 pub fn probe_health_from_active_path<D: DerpPool>(
     derp_pool: &D,
     active_path: &ActivePath,
-) -> (Option<u32>, Option<u32>, Option<u32>, Option<String>, Option<String>) {
+) -> (
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Option<String>,
+    Option<String>,
+) {
     match active_path {
         ActivePath::Derp { .. } => derp_pool
             .active_link()

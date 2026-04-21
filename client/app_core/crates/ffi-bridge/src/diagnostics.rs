@@ -10,13 +10,22 @@ pub fn classify_path_manager_error(error: PathManagerError) -> DataPlaneError {
 fn classify_data_plane_error_parts(code: Option<&str>, error: String) -> DataPlaneError {
     if let Some(code) = code {
         match code {
-            "ticket_expired" | "invalid_signature" | "invalid_ticket" | "invalid_timestamp"
-            | "unauthorized_peer" | "participant_not_in_ticket" | "clock_skew" => {
+            "ticket_expired"
+            | "invalid_signature"
+            | "invalid_ticket"
+            | "invalid_timestamp"
+            | "unauthorized_peer"
+            | "participant_not_in_ticket"
+            | "clock_skew" => {
                 return DataPlaneError::new(DataPlaneErrorCode::RelayAuth, error);
             }
-            "session_not_found" | "session_already_exists" | "session_conflict"
-            | "session_not_attached" | "participant_not_attached"
-            | "participant_address_mismatch" | "peer_not_attached" => {
+            "session_not_found"
+            | "session_already_exists"
+            | "session_conflict"
+            | "session_not_attached"
+            | "participant_not_attached"
+            | "participant_address_mismatch"
+            | "peer_not_attached" => {
                 return DataPlaneError::new(DataPlaneErrorCode::RelaySession, error);
             }
             "empty_payload" => {

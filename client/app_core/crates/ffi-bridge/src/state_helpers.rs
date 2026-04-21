@@ -48,7 +48,9 @@ pub fn replace_tunnel<T: TunnelManager>(
     let mut current_tunnel = current_tunnel_peer_virtual_ip
         .lock()
         .map_err(|_| "app core tunnel state poisoned".to_string())?;
-    let next_peer_virtual_ip = config.as_ref().map(|config| config.peer_virtual_ip.as_str());
+    let next_peer_virtual_ip = config
+        .as_ref()
+        .map(|config| config.peer_virtual_ip.as_str());
     if let Some(current_peer_virtual_ip) = current_tunnel.as_deref() {
         if Some(current_peer_virtual_ip) != next_peer_virtual_ip {
             tunnel_manager.close(current_peer_virtual_ip)?;

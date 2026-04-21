@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     InMemoryTunnelManager, LinuxKernelWireGuardBackend, SystemTunnelManager, TunnelManager,
+    WindowsEmbeddableServiceBackend,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9,6 +10,7 @@ pub enum TunnelDriverKind {
     Auto,
     InMemory,
     LinuxKernel,
+    WindowsEmbeddable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,8 +32,9 @@ impl TunnelDriverKind {
             "auto" => Ok(Self::Auto),
             "in-memory" | "memory" | "inmemory" => Ok(Self::InMemory),
             "linux-kernel" | "linux" | "wg-kernel" => Ok(Self::LinuxKernel),
+            "windows-embeddable" | "windows" | "wintun" => Ok(Self::WindowsEmbeddable),
             other => Err(format!(
-                "unsupported tunnel driver '{other}'; expected auto, in-memory, or linux-kernel"
+                "unsupported tunnel driver '{other}'; expected auto, in-memory, linux-kernel, or windows-embeddable"
             )),
         }
     }
@@ -48,7 +51,11 @@ pub fn detect_platform_tunnel_driver(
             {
                 TunnelDriverKind::LinuxKernel
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(target_os = "windows")]
+            {
+                TunnelDriverKind::WindowsEmbeddable
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             {
                 TunnelDriverKind::InMemory
             }
@@ -58,6 +65,7 @@ pub fn detect_platform_tunnel_driver(
     let execution_mode = match selected {
         TunnelDriverKind::LinuxKernel if !dry_run => "system",
         TunnelDriverKind::LinuxKernel => "dry-run",
+        TunnelDriverKind::WindowsEmbeddable => "dry-run",
         TunnelDriverKind::InMemory => "memory",
         TunnelDriverKind::Auto => "unknown",
     };
@@ -69,6 +77,7 @@ pub fn detect_platform_tunnel_driver(
             "native" | "netlink" => "native",
             _ => "shell",
         },
+        TunnelDriverKind::WindowsEmbeddable => "embeddable",
         TunnelDriverKind::InMemory => "memory",
         TunnelDriverKind::Auto => "unknown",
     };
@@ -98,6 +107,9 @@ pub fn build_platform_tunnel_manager(
         TunnelDriverKind::LinuxKernel => Ok(Arc::new(SystemTunnelManager::new(
             LinuxKernelWireGuardBackend::new(),
         ))),
+        TunnelDriverKind::WindowsEmbeddable => Ok(Arc::new(SystemTunnelManager::new(
+            WindowsEmbeddableServiceBackend::new(),
+        ))),
         TunnelDriverKind::Auto => Err("auto tunnel driver selection is unresolved".to_string()),
     }
 }
@@ -115,6 +127,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_windows_driver_alias() {
+        assert_eq!(
+            TunnelDriverKind::parse(Some("windows")).unwrap(),
+            TunnelDriverKind::WindowsEmbeddable
+        );
+        assert_eq!(
+            TunnelDriverKind::parse(Some("wintun")).unwrap(),
+            TunnelDriverKind::WindowsEmbeddable
+        );
+    }
+
+    #[test]
     fn detects_dry_run_linux_mode() {
         let selection =
             detect_platform_tunnel_driver(Some("linux-kernel"), true).expect("selection");
@@ -122,5 +146,15 @@ mod tests {
         assert_eq!(selection.selected, TunnelDriverKind::LinuxKernel);
         assert_eq!(selection.execution_mode, "dry-run");
         assert_eq!(selection.execution_backend, "shell");
+    }
+
+    #[test]
+    fn detects_windows_embeddable_mode() {
+        let selection =
+            detect_platform_tunnel_driver(Some("windows-embeddable"), true).expect("selection");
+        assert_eq!(selection.requested, TunnelDriverKind::WindowsEmbeddable);
+        assert_eq!(selection.selected, TunnelDriverKind::WindowsEmbeddable);
+        assert_eq!(selection.execution_mode, "dry-run");
+        assert_eq!(selection.execution_backend, "embeddable");
     }
 }

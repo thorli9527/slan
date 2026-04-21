@@ -1,6 +1,10 @@
 package repo
 
-import "github.com/slan/server/server-biz/api/dto"
+import (
+	"strings"
+
+	"github.com/slan/server/server-biz/api/dto"
+)
 
 // Network 是逻辑网络的持久化模型。
 type Network struct {
@@ -16,6 +20,12 @@ type Network struct {
 	DefaultSubnetID string `gorm:"column:default_subnet_id;not null"`
 	// DefaultSubnetCIDR 是默认子网 CIDR。
 	DefaultSubnetCIDR string `gorm:"column:default_subnet_cidr;not null"`
+	// DNSServers 存储网络级 DNS 服务器列表，使用逗号分隔。
+	DNSServers string `gorm:"column:dns_servers;not null;default:''"`
+	// DNSSearchDomains 存储网络级 DNS 搜索域，使用逗号分隔。
+	DNSSearchDomains string `gorm:"column:dns_search_domains;not null;default:''"`
+	// JoinKey 是当前网络 owner 定义的接入 key。
+	JoinKey string `gorm:"column:join_key;index"`
 }
 
 func (Network) TableName() string { return "networks" }
@@ -27,6 +37,14 @@ func (m Network) ToDTO() dto.Network {
 		Description:       m.Description,
 		DefaultSubnetID:   m.DefaultSubnetID,
 		DefaultSubnetCIDR: m.DefaultSubnetCIDR,
+		JoinKeyConfigured: strings.TrimSpace(m.JoinKey) != "",
+	}
+}
+
+func (m Network) DNSConfig() dto.DNSConfig {
+	return dto.DNSConfig{
+		Servers:       decodeCSVList(m.DNSServers),
+		SearchDomains: decodeCSVList(m.DNSSearchDomains),
 	}
 }
 
@@ -78,6 +96,8 @@ type NetworkMember struct {
 	DeviceID string `gorm:"column:device_id;index;not null;uniqueIndex:idx_network_device"`
 	// Role 是网络层级角色。
 	Role string `gorm:"column:role;not null"`
+	// CreatedAt 是成员关系创建时间。
+	CreatedAt int64 `gorm:"column:created_at;not null;default:0"`
 	// Status 是成员状态。
 	Status string `gorm:"column:status;not null;default:'active'"`
 }
@@ -90,6 +110,7 @@ func (m NetworkMember) ToDTO() dto.NetworkMember {
 		NetworkID: m.NetworkID,
 		DeviceID:  m.DeviceID,
 		Role:      m.Role,
+		CreatedAt: m.CreatedAt,
 		Status:    m.Status,
 	}
 }
@@ -101,11 +122,13 @@ type SubnetAttachment struct {
 	// NetworkID 是所属网络。
 	NetworkID string `gorm:"column:network_id;index;not null"`
 	// SubnetID 是目标子网。
-	SubnetID string `gorm:"column:subnet_id;index;not null;uniqueIndex:idx_subnet_device"`
+	SubnetID string `gorm:"column:subnet_id;index;not null;uniqueIndex:idx_subnet_device;uniqueIndex:idx_subnet_ip"`
 	// DeviceID 是被挂载设备。
 	DeviceID string `gorm:"column:device_id;index;not null;uniqueIndex:idx_subnet_device"`
 	// VirtualIP 是分配给该挂载关系的虚拟 IP。
 	VirtualIP string `gorm:"column:virtual_ip;not null;default:'';uniqueIndex:idx_subnet_ip"`
+	// Remark 是 owner 维护的网络内设备备注。
+	Remark string `gorm:"column:remark;not null;default:''"`
 	// Status 是挂载状态。
 	Status string `gorm:"column:status;not null;default:'active'"`
 }
@@ -119,6 +142,35 @@ func (m SubnetAttachment) ToDTO() dto.SubnetAttachment {
 		SubnetID:     m.SubnetID,
 		DeviceID:     m.DeviceID,
 		VirtualIP:    m.VirtualIP,
+		Remark:       m.Remark,
 		Status:       m.Status,
 	}
+}
+
+func encodeCSVList(items []string) string {
+	trimmed := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		trimmed = append(trimmed, value)
+	}
+	return strings.Join(trimmed, ",")
+}
+
+func decodeCSVList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{}
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }

@@ -4,13 +4,25 @@
 library slan_app.infra.app_core.mock_api;
 
 import 'app_core_api.dart';
-import '../models/models.dart';
+import 'dev_defaults.dart';
+import '../models/bootstrap_models.dart';
+import '../models/connection_models.dart';
+import '../models/control_models.dart';
+import '../models/diagnostic_models.dart';
+import '../models/identity_models.dart';
+import '../models/network_models.dart';
+import '../models/relay_models.dart';
 
 class MockAppCoreApi implements AppCoreApi {
   SessionModel? _session;
   DeviceModel? _device;
   NodeModel? _node;
   final List<NetworkModel> _networks = [];
+
+  @override
+  void restoreSession(SessionModel session) {
+    _session = session;
+  }
 
   @override
   Future<SessionModel> register({
@@ -63,6 +75,10 @@ class MockAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<List<DeviceModel>> listDevices() async =>
+      _device == null ? const [] : [_device!];
+
+  @override
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,
@@ -86,7 +102,8 @@ class MockAppCoreApi implements AppCoreApi {
   @override
   Future<NetworkModel> createNetwork({
     required String name,
-    String cidr = '100.64.0.0/24',
+    String cidr = '10.0.0.0/16',
+    String? bindDeviceId,
   }) async {
     // mock 创建网络时，如果当前设备已存在，则自动把它放进成员列表。
     final network = NetworkModel(
@@ -108,6 +125,114 @@ class MockAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<void> joinNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    final index =
+        _networks.indexWhere((network) => network.networkId == networkId);
+    if (index < 0) {
+      return;
+    }
+    final current = _networks[index];
+    final alreadyJoined =
+        current.members.any((member) => member.deviceId == deviceId);
+    if (alreadyJoined) {
+      return;
+    }
+    _networks[index] = NetworkModel(
+      networkId: current.networkId,
+      name: current.name,
+      cidr: current.cidr,
+      members: [
+        ...current.members,
+        NetworkMemberModel(
+          deviceId: deviceId,
+          role: current.members.isEmpty ? 'owner' : 'member',
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<void> activateNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    final index =
+        _networks.indexWhere((network) => network.networkId == networkId);
+    if (index < 0) {
+      return;
+    }
+    final current = _networks[index];
+    final virtualIp =
+        _device?.virtualIp ?? '100.64.0.${current.members.length + 10}';
+    _networks[index] = NetworkModel(
+      networkId: current.networkId,
+      name: current.name,
+      cidr: current.cidr,
+      members: current.members
+          .map(
+            (member) => member.deviceId == deviceId
+                ? NetworkMemberModel(
+                    deviceId: member.deviceId,
+                    role: member.role,
+                    virtualIp: virtualIp,
+                  )
+                : member,
+          )
+          .toList(growable: false),
+    );
+    if (_device?.deviceId == deviceId) {
+      _device = DeviceModel(
+        deviceId: _device!.deviceId,
+        name: _device!.name,
+        platform: _device!.platform,
+        status: _device!.status,
+        publicKey: _device!.publicKey,
+        virtualIp: virtualIp,
+      );
+    }
+  }
+
+  @override
+  Future<void> deactivateNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    final index =
+        _networks.indexWhere((network) => network.networkId == networkId);
+    if (index < 0) {
+      return;
+    }
+    final current = _networks[index];
+    _networks[index] = NetworkModel(
+      networkId: current.networkId,
+      name: current.name,
+      cidr: current.cidr,
+      members: current.members
+          .map(
+            (member) => member.deviceId == deviceId
+                ? NetworkMemberModel(
+                    deviceId: member.deviceId,
+                    role: member.role,
+                  )
+                : member,
+          )
+          .toList(growable: false),
+    );
+    if (_device?.deviceId == deviceId) {
+      _device = DeviceModel(
+        deviceId: _device!.deviceId,
+        name: _device!.name,
+        platform: _device!.platform,
+        status: _device!.status,
+        publicKey: _device!.publicKey,
+      );
+    }
+  }
+
+  @override
   Future<BootstrapModel> bootstrap({
     required String nodeId,
     required String networkId,
@@ -125,11 +250,11 @@ class MockAppCoreApi implements AppCoreApi {
       device: device,
       networks: List.unmodifiable(_networks),
       controlPlane: const ControlPlaneConfigModel(
-        wsUrl: 'ws://127.0.0.1:8080/control/ws',
+        wsUrl: kDevControlWsUrl,
         sessionToken: 'mock-control-session-token',
         heartbeatSeconds: 15,
       ),
-      stunServers: const ['stun:stun.l.google.com:19302'],
+      stunServers: const [kDevStunServer],
       relay: const RelayConfigModel(
         defaultClusterId: 'cn-local-a',
         countries: [
@@ -148,13 +273,13 @@ class MockAppCoreApi implements AppCoreApi {
                       RelayNodeModel(
                         nodeId: 'relay-cn-local-udp',
                         transport: 'udp',
-                        address: '127.0.0.1:9000',
+                        address: kDevRelayUdpAddress,
                         priority: 10,
                       ),
                       RelayNodeModel(
                         nodeId: 'relay-cn-local-tcp',
                         transport: 'tcp',
-                        address: '127.0.0.1:9001',
+                        address: kDevRelayTcpAddress,
                         priority: 20,
                       ),
                     ],
@@ -180,7 +305,7 @@ class MockAppCoreApi implements AppCoreApi {
   Future<ControlStatusModel> controlStatus() async {
     return const ControlStatusModel(
       status: 'configured',
-      wsUrl: 'ws://127.0.0.1:8080/control/ws',
+      wsUrl: kDevControlWsUrl,
       heartbeatSeconds: 15,
       sessionTokenPresent: true,
       networkMapPresent: true,
@@ -196,7 +321,7 @@ class MockAppCoreApi implements AppCoreApi {
           pathCount: 1,
           preferredPath: ControlPathOptionModel(
             pathType: 'direct_udp',
-            endpoint: '127.0.0.1:40000',
+            endpoint: kDevPeerEndpointAddress,
             priority: 10,
           ),
           derpClusterId: 'cn-local-a',
@@ -225,7 +350,7 @@ class MockAppCoreApi implements AppCoreApi {
       countryCode: 'CN',
       cityCode: 'local',
       allowedDerpNodeIds: const ['relay-cn-local-udp', 'relay-cn-local-tcp'],
-      relayUrl: 'udp://127.0.0.1:9000',
+      relayUrl: kDevRelayUdpUrl,
       expiresAt: DateTime.now()
           .toUtc()
           .add(const Duration(minutes: 10))

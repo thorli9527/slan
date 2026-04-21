@@ -1,14 +1,27 @@
 import 'package:flutter/services.dart';
 
-import '../../control_api_responses.dart';
+import '../../control_api_responses/response_parsers.dart';
 import '../api/app_core_api.dart';
 import 'app_core_bridge.dart';
-import '../models/models.dart';
+import '../models/bootstrap_models.dart';
+import '../models/connection_models.dart';
+import '../models/control_models.dart';
+import '../models/diagnostic_models.dart';
+import '../models/identity_models.dart';
+import '../models/network_models.dart';
+import '../models/relay_models.dart';
 
 class BridgeAppCoreApi implements AppCoreApi {
   BridgeAppCoreApi({required AppCoreBridge bridge}) : _bridge = bridge;
 
   final AppCoreBridge _bridge;
+
+  @override
+  void restoreSession(SessionModel session) {
+    // Bridge mode owns session state on the Rust/native side. The desktop
+    // callback path currently targets HTTP mode, so no extra local state is
+    // required here.
+  }
 
   @override
   Future<SessionModel> register({
@@ -51,6 +64,12 @@ class BridgeAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<List<DeviceModel>> listDevices() async {
+    final payload = await _invokeMap('listDevices');
+    return parseDeviceListResponse(_readList(payload, 'items'));
+  }
+
+  @override
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,
@@ -75,13 +94,49 @@ class BridgeAppCoreApi implements AppCoreApi {
   @override
   Future<NetworkModel> createNetwork({
     required String name,
-    String cidr = '100.64.0.0/24',
+    String cidr = '10.0.0.0/16',
+    String? bindDeviceId,
   }) async {
     final payload = await _invokeMap('createNetwork', {
       'name': name,
       'cidr': cidr,
+      if (bindDeviceId != null && bindDeviceId.isNotEmpty)
+        'bindDeviceId': bindDeviceId,
     });
     return parseNetworkResponse(payload);
+  }
+
+  @override
+  Future<void> joinNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    await _invokeMap('joinNetwork', {
+      'networkId': networkId,
+      'deviceId': deviceId,
+    });
+  }
+
+  @override
+  Future<void> activateNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    await _invokeMap('activateNetwork', {
+      'networkId': networkId,
+      'deviceId': deviceId,
+    });
+  }
+
+  @override
+  Future<void> deactivateNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    await _invokeMap('deactivateNetwork', {
+      'networkId': networkId,
+      'deviceId': deviceId,
+    });
   }
 
   @override

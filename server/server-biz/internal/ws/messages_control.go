@@ -152,6 +152,42 @@ type DisconnectNotice struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// NetworkRestartRequired 用于通知客户端网络配置已变更，需要重载隧道。
+type NetworkRestartRequired struct {
+	// NetworkID 是发生配置变化的网络。
+	NetworkID string `json:"networkId"`
+	// Revision 是最新网络版本。
+	Revision uint64 `json:"revision,omitempty"`
+	// Reason 是重启原因说明。
+	Reason string `json:"reason,omitempty"`
+	// DefaultSubnetCIDR 是变更后的默认网段。
+	DefaultSubnetCIDR string `json:"defaultSubnetCidr,omitempty"`
+}
+
+// DeviceIPReassigned 用于通知客户端某台设备在网络中的虚拟 IP 已被重绑。
+type DeviceIPReassigned struct {
+	// NetworkID 是发生 IP 调整的网络。
+	NetworkID string `json:"networkId"`
+	// DeviceID 是被调整的设备 ID。
+	DeviceID string `json:"deviceId"`
+	// AttachmentID 是对应的网络挂载关系。
+	AttachmentID string `json:"attachmentId"`
+	// VirtualIP 是最新生效的虚拟 IP。
+	VirtualIP string `json:"virtualIp"`
+	// Reason 是重绑原因说明。
+	Reason string `json:"reason,omitempty"`
+}
+
+// ActiveNetworkEnabled 用于通知客户端当前用户的活动网络已切换到指定网络。
+type ActiveNetworkEnabled struct {
+	// UserID 是被通知的目标用户。
+	UserID string `json:"userId"`
+	// NetworkID 是最新启用的活动网络。
+	NetworkID string `json:"networkId"`
+	// Reason 描述触发启用的原因。
+	Reason string `json:"reason,omitempty"`
+}
+
 // ControlSyncEvent 是多实例之间通过 Redis 同步的控制通道事件。
 type ControlSyncEvent struct {
 	// InstanceID 是发布该事件的实例标识。
@@ -170,8 +206,16 @@ type ControlSyncEvent struct {
 	PeerNodeID string `json:"peerNodeId,omitempty"`
 	// TargetNodeID 是 peer_candidate / connect_plan 的目标节点。
 	TargetNodeID string `json:"targetNodeId,omitempty"`
+	// TargetUserID 是 user-scoped 事件的目标用户。
+	TargetUserID string `json:"targetUserId,omitempty"`
 	// Candidate 是 peer_candidate 时携带的候选信息。
 	Candidate *PeerCandidate `json:"candidate,omitempty"`
 	// Plan 是 connect_plan 时携带的连接计划。
 	Plan *ConnectPlan `json:"plan,omitempty"`
+	// Restart 是 network_restart_required 时携带的重启提示。
+	Restart *NetworkRestartRequired `json:"restart,omitempty"`
+	// DeviceIP 是 device_ip_reassigned 时携带的虚拟 IP 变更信息。
+	DeviceIP *DeviceIPReassigned `json:"deviceIp,omitempty"`
+	// ActiveNetwork 是 active_network_enabled 时携带的活动网络信息。
+	ActiveNetwork *ActiveNetworkEnabled `json:"activeNetwork,omitempty"`
 }

@@ -27,8 +27,8 @@ pub fn resolve_connect_context(
             state.current_node.as_ref().map(|node| node.node_id.clone()),
         )
     };
-    let bootstrap = bootstrap
-        .ok_or_else(|| "missing bootstrap config, call bootstrap first".to_string())?;
+    let bootstrap =
+        bootstrap.ok_or_else(|| "missing bootstrap config, call bootstrap first".to_string())?;
     let src_node_id =
         src_node_id.ok_or_else(|| "missing current node, register node first".to_string())?;
     let network_map = bootstrap

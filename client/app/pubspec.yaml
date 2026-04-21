@@ -12,6 +12,7 @@ dependencies:
     sdk: flutter
   slan_app_core_plugin:
     path: ../app_core_plugin
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:

@@ -6,6 +6,7 @@ class SessionModel {
     this.refreshToken,
     required this.expiresIn,
     this.deviceId,
+    this.userLabel,
   });
 
   final String userId;
@@ -13,6 +14,27 @@ class SessionModel {
   final String? refreshToken;
   final int expiresIn;
   final String? deviceId;
+  final String? userLabel;
+
+  Map<String, dynamic> toJson() => {
+        'userId': userId,
+        'accessToken': accessToken,
+        'refreshToken': refreshToken,
+        'expiresIn': expiresIn,
+        'deviceId': deviceId,
+        'userLabel': userLabel,
+      };
+
+  factory SessionModel.fromJson(Map<String, dynamic> json) {
+    return SessionModel(
+      userId: json['userId'] as String? ?? '',
+      accessToken: json['accessToken'] as String? ?? '',
+      refreshToken: json['refreshToken'] as String?,
+      expiresIn: (json['expiresIn'] as num?)?.toInt() ?? 3600,
+      deviceId: json['deviceId'] as String?,
+      userLabel: json['userLabel'] as String?,
+    );
+  }
 }
 
 /// 设备模型。

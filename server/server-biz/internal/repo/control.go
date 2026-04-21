@@ -68,3 +68,11 @@ func (r *PostgresRepository) DeleteControlSessionsBefore(ctx context.Context, cu
 		Where("last_seen_at < ?", cutoff).
 		Delete(&ControlSession{}).Error
 }
+
+func (r *PostgresRepository) DeleteControlSessionsByDeviceExceptNetwork(ctx context.Context, deviceID, keepNetworkID string) error {
+	query := r.db.WithContext(ctx).Where("device_id = ?", deviceID)
+	if keepNetworkID != "" {
+		query = query.Where("network_id <> ?", keepNetworkID)
+	}
+	return query.Delete(&ControlSession{}).Error
+}

@@ -16,6 +16,9 @@ func (r *PostgresRepository) CreateNetworkWithDefaultSubnet(ctx context.Context,
 			Description:       network.Description,
 			DefaultSubnetID:   network.DefaultSubnetID,
 			DefaultSubnetCIDR: network.DefaultSubnetCIDR,
+			DNSServers:        "",
+			DNSSearchDomains:  "",
+			JoinKey:           "",
 		}
 		subnetModel := Subnet{
 			SubnetID:          subnet.SubnetID,
@@ -56,6 +59,7 @@ func (r *PostgresRepository) CreateMember(ctx context.Context, member dto.Networ
 		NetworkID: member.NetworkID,
 		DeviceID:  member.DeviceID,
 		Role:      member.Role,
+		CreatedAt: member.CreatedAt,
 		Status:    member.Status,
 	}
 	return r.db.WithContext(ctx).Create(&model).Error
@@ -68,7 +72,109 @@ func (r *PostgresRepository) CreateAttachment(ctx context.Context, attachment dt
 		SubnetID:     attachment.SubnetID,
 		DeviceID:     attachment.DeviceID,
 		VirtualIP:    attachment.VirtualIP,
+		Remark:       attachment.Remark,
 		Status:       attachment.Status,
 	}
 	return r.db.WithContext(ctx).Create(&model).Error
+}
+
+func (r *PostgresRepository) DeleteMembersByDeviceExceptNetwork(ctx context.Context, deviceID, keepNetworkID string) error {
+	query := r.db.WithContext(ctx).Where("device_id = ?", deviceID)
+	if keepNetworkID != "" {
+		query = query.Where("network_id <> ?", keepNetworkID)
+	}
+	return query.Delete(&NetworkMember{}).Error
+}
+
+func (r *PostgresRepository) DeleteAttachmentsByDeviceExceptNetwork(ctx context.Context, deviceID, keepNetworkID string) error {
+	query := r.db.WithContext(ctx).Where("device_id = ?", deviceID)
+	if keepNetworkID != "" {
+		query = query.Where("network_id <> ?", keepNetworkID)
+	}
+	return query.Delete(&SubnetAttachment{}).Error
+}
+
+func (r *PostgresRepository) DeleteAttachmentsByDeviceInNetwork(ctx context.Context, deviceID, networkID string) error {
+	return r.db.WithContext(ctx).
+		Where("device_id = ? AND network_id = ?", deviceID, networkID).
+		Delete(&SubnetAttachment{}).Error
+}
+
+func (r *PostgresRepository) ClearAttachmentVirtualIP(ctx context.Context, attachmentID string) error {
+	return r.db.WithContext(ctx).
+		Model(&SubnetAttachment{}).
+		Where("attachment_id = ?", attachmentID).
+		Update("virtual_ip", "").Error
+}
+
+func (r *PostgresRepository) UpdateNetworkMetadata(ctx context.Context, networkID, name, description, defaultSubnetCIDR string) error {
+	return r.db.WithContext(ctx).
+		Model(&Network{}).
+		Where("network_id = ?", networkID).
+		Updates(map[string]any{
+			"name":                name,
+			"description":         description,
+			"default_subnet_cidr": defaultSubnetCIDR,
+		}).Error
+}
+
+func (r *PostgresRepository) UpdateNetworkDNS(ctx context.Context, networkID string, dns dto.DNSConfig) error {
+	return r.db.WithContext(ctx).
+		Model(&Network{}).
+		Where("network_id = ?", networkID).
+		Updates(map[string]any{
+			"dns_servers":        encodeCSVList(dns.Servers),
+			"dns_search_domains": encodeCSVList(dns.SearchDomains),
+		}).Error
+}
+
+func (r *PostgresRepository) UpdateNetworkJoinKey(ctx context.Context, networkID, joinKey string) error {
+	return r.db.WithContext(ctx).
+		Model(&Network{}).
+		Where("network_id = ?", networkID).
+		Update("join_key", joinKey).Error
+}
+
+func (r *PostgresRepository) ConsumeNetworkByJoinKey(ctx context.Context, joinKey string) (Network, error) {
+	var record Network
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.
+			Where("join_key = ?", joinKey).
+			First(&record).Error; err != nil {
+			return err
+		}
+		return tx.
+			Model(&Network{}).
+			Where("network_id = ? AND join_key = ?", record.NetworkID, joinKey).
+			Update("join_key", "").Error
+	})
+	return record, err
+}
+
+func (r *PostgresRepository) UpdateSubnetRange(ctx context.Context, subnet dto.Subnet) error {
+	return r.db.WithContext(ctx).
+		Model(&Subnet{}).
+		Where("subnet_id = ?", subnet.SubnetID).
+		Updates(map[string]any{
+			"cidr":                subnet.CIDR,
+			"gateway_ip":          subnet.GatewayIP,
+			"allocation_start_ip": subnet.AllocationStartIP,
+			"allocation_end_ip":   subnet.AllocationEndIP,
+			"is_default":          subnet.IsDefault,
+			"status":              subnet.Status,
+		}).Error
+}
+
+func (r *PostgresRepository) UpdateAttachmentVirtualIP(ctx context.Context, attachmentID, virtualIP string) error {
+	return r.db.WithContext(ctx).
+		Model(&SubnetAttachment{}).
+		Where("attachment_id = ?", attachmentID).
+		Update("virtual_ip", virtualIP).Error
+}
+
+func (r *PostgresRepository) UpdateAttachmentRemark(ctx context.Context, attachmentID, remark string) error {
+	return r.db.WithContext(ctx).
+		Model(&SubnetAttachment{}).
+		Where("attachment_id = ?", attachmentID).
+		Update("remark", remark).Error
 }

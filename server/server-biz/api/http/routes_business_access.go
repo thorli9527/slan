@@ -11,29 +11,28 @@ import (
 func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	auth := api.Group("/auth")
 	// POST /auth/register 创建终端用户账号。
-	auth.POST("/register", func(c *gin.Context) {
-		var req dto.RegisterRequest
-		if !bindJSON(c, &req) {
-			return
-		}
-		resp, err := deps.Auth.Register(req)
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		c.JSON(http.StatusCreated, resp)
-	})
+	auth.POST("/register", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.RegisterRequest) (dto.AuthResponse, error) {
+		return deps.Auth.Register(req)
+	}))
 	// POST /auth/login 校验账号并返回新的访问令牌。
-	auth.POST("/login", func(c *gin.Context) {
-		var req dto.LoginRequest
-		if !bindJSON(c, &req) {
-			return
+	auth.POST("/login", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.LoginRequest) (dto.AuthResponse, error) {
+		return deps.Auth.Login(req)
+	}))
+	auth.GET("/callback-status/:callbackId", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.AuthCallbackStatusResponse, error) {
+		rc := currentRouteContext(c)
+		return deps.Auth.GetCallbackStatus(rc.callbackID(c))
+	}))
+	auth.POST("/callback-status/:callbackId/complete", respondWithBodyStatus(http.StatusOK, gin.H{"status": "ok"}, func(c *gin.Context, req dto.CompleteAuthCallbackRequest) error {
+		rc := currentRouteContext(c)
+		callbackID := rc.callbackID(c)
+		if err := deps.Auth.CompleteCallback(callbackID, req); err != nil {
+			return err
 		}
-		resp, err := deps.Auth.Login(req)
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, resp)
-	})
+		defaultAuthCallbackWSHub.broadcastReady(callbackID, req)
+		return nil
+	}))
+	auth.POST("/callback-status/:callbackId/ack", respondWithStatus(http.StatusOK, gin.H{"status": "ok"}, func(c *gin.Context) error {
+		rc := currentRouteContext(c)
+		return deps.Auth.MarkCallbackReceived(rc.callbackID(c))
+	}))
 }

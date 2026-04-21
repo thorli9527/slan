@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
 import 'package:slan_app/infra/app_core/bridge/app_core_bridge.dart';
 import 'package:slan_app/infra/app_core/bridge/bridge_app_core_api.dart';
 import 'package:slan_app/infra/app_core/models/models.dart';
@@ -56,10 +57,10 @@ void main() {
           },
         ],
         'controlPlane': {
-          'wsUrl': 'ws://127.0.0.1:8080/control/ws',
+          'wsUrl': kDevControlWsUrl,
           'heartbeatSeconds': 15,
         },
-        'stunServers': ['stun:stun.l.google.com:19302'],
+        'stunServers': [kDevStunServer],
         'relay': {
           'defaultClusterId': 'cn-local-a',
           'countries': [
@@ -78,7 +79,7 @@ void main() {
                         {
                           'nodeId': 'relay-cn-local-udp',
                           'transport': 'udp',
-                          'address': '127.0.0.1:9000',
+                          'address': kDevRelayUdpAddress,
                           'priority': 10,
                         },
                       ],
@@ -148,7 +149,7 @@ void main() {
         'dstNodeId': 'node-2',
         'derpClusterId': 'cn-local-a',
         'allowedDerpNodeIds': ['relay-cn-local-udp'],
-        'relayUrl': 'udp://127.0.0.1:9000',
+        'relayUrl': kDevRelayUdpUrl,
         'expiresAt': '2026-04-17T10:00:00Z',
         'signature': 'signed',
       },
@@ -416,8 +417,9 @@ class _HelperProcessBridge implements AppCoreBridge {
     process.stderr.transform(utf8.decoder).listen((_) {});
     return _HelperProcessBridge._(
       process: process,
-      stdoutLines: StreamIterator(
-          process.stdout.transform(utf8.decoder).transform(const LineSplitter())),
+      stdoutLines: StreamIterator(process.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())),
       fallbackMessage: 'unknown app-core helper error',
     );
   }

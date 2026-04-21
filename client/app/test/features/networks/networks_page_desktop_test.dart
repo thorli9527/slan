@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_app/features/networks/networks_page.dart';
-import 'package:slan_app/testing/app_test_keys.dart';
 
 void main() {
   testWidgets('NetworksPage renders desktop workspace on wide layouts', (
@@ -18,11 +17,9 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Overlay Networks'), findsOneWidget);
-    expect(find.text('Network Inventory'), findsOneWidget);
-    expect(find.byKey(AppTestKeys.networksNameField), findsOneWidget);
-    expect(find.byKey(AppTestKeys.networksCidrField), findsOneWidget);
-    expect(find.byKey(AppTestKeys.networksCreateButton), findsOneWidget);
-    expect(find.byKey(AppTestKeys.networksRefreshButton), findsOneWidget);
+    expect(find.text('Network Details'), findsOneWidget);
+    expect(find.text('Current Network'), findsOneWidget);
+    expect(
+        find.text('No active network has been prepared yet.'), findsOneWidget);
   });
 }

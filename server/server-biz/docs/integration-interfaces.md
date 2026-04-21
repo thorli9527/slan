@@ -12,7 +12,7 @@
 
 ## 2. HTTP 接入接口
 
-HTTP 接入由 `api/http/routes.go` 承接。
+HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 
 ### 2.1 无鉴权接口
 
@@ -42,7 +42,9 @@ HTTP 接入由 `api/http/routes.go` 承接。
 控制通道消息结构由：
 
 - `protocol/protobuf/control.proto`
-- `internal/ws/messages.go`
+- `internal/ws/messages_handshake.go`
+- `internal/ws/messages_topology.go`
+- `internal/ws/messages_control.go`
 
 承接消息：
 
@@ -63,17 +65,21 @@ HTTP 层并不直接做业务处理，而是接入内部服务：
 - `Network`
 - `Node`
 - `Bootstrap`
-- `Tokens`
+- `TokenVerifier`
 
 调用入口聚合在：
 
-- `internal/service/interfaces.go`
+- `internal/service/access.go`
+- `internal/service/registration.go`
+- `internal/service/network.go`
+- `internal/service/control.go`
+- `internal/service/ops.go`
 
 ## 5. 配置接入
 
 当前配置主要由：
 
-- `internal/infra/config.go`
+- `configs/config.go`
 - `configs/config.example.yaml`
 
 承接。
@@ -106,12 +112,12 @@ HTTP 层并不直接做业务处理，而是接入内部服务：
 
 ### 6.3 与存储和基础设施
 
-当前仓库里还没有真正落库实现。
+当前仓库里已经接入 PostgreSQL 和 Redis 存储。
 
-后续接入时应控制在：
+这些外部依赖的访问应继续收口在：
 
 - `internal/repo`
-- `internal/infra`
+- `configs`
 
 而不是直接侵入 `api/http`
 
@@ -120,4 +126,4 @@ HTTP 层并不直接做业务处理，而是接入内部服务：
 1. 客户端 HTTP 只接到 `api/http`
 2. 控制通道只接到协议与消息层
 3. 业务编排只落在 `internal/*`
-4. 外部依赖只通过 `infra/repo` 收口
+4. 外部依赖只通过 `configs/repo` 收口

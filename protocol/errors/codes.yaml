@@ -7,7 +7,7 @@
 # - IPAM / 子网
 # - 控制通道
 # - relay / 连接编排
-version: 0.2.0
+version: 0.3.0
 codes:
   - code: AUTH_INVALID_CREDENTIALS
     http_status: 401
@@ -20,6 +20,10 @@ codes:
   - code: AUTH_TOKEN_INVALID
     http_status: 401
     message: 访问令牌无效
+
+  - code: AUTH_CALLBACK_NOT_FOUND
+    http_status: 404
+    message: 登录回调不存在
 
   - code: DEVICE_ALREADY_REGISTERED
     http_status: 409
@@ -73,9 +77,21 @@ codes:
     http_status: 401
     message: 控制会话已过期
 
+  - code: CONTROL_MESSAGE_ACK_TIMEOUT
+    http_status: 504
+    message: 控制消息确认超时
+
+  - code: CONTROL_MESSAGE_UNDELIVERED
+    http_status: 410
+    message: 控制消息未送达并已归档
+
   - code: NETWORK_MAP_STALE
     http_status: 409
     message: 网络地图版本过旧
+
+  - code: PATH_HEALTH_REPORT_INVALID
+    http_status: 400
+    message: 路径健康上报无效
 
   - code: PEER_NOT_REACHABLE
     http_status: 409

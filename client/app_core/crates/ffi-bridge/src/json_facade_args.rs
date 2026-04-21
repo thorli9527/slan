@@ -35,6 +35,13 @@ pub struct CreateNetworkArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JoinNetworkArgs {
+    pub network_id: String,
+    pub device_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapArgs {
     pub node_id: String,
     pub network_id: String,

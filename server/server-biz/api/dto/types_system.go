@@ -22,6 +22,14 @@ type OpsOverview struct {
 	RelayClusterCount int `json:"relayClusterCount"`
 	// RelayNodeCount 是当前配置或观测到的 relay 节点数量。
 	RelayNodeCount int `json:"relayNodeCount"`
+	// DefaultAdminSeeded 表示默认管理员是否已经落库。
+	DefaultAdminSeeded bool `json:"defaultAdminSeeded"`
+	// DefaultAdminLoginName 是配置中的默认管理员登录名。
+	DefaultAdminLoginName string `json:"defaultAdminLoginName,omitempty"`
+	// DefaultAdminRoleBound 表示默认管理员是否已绑定 ops-super-admin。
+	DefaultAdminRoleBound bool `json:"defaultAdminRoleBound"`
+	// SecurityWarnings 是当前环境需要运营关注的安全告警摘要。
+	SecurityWarnings []string `json:"securityWarnings,omitempty"`
 }
 
 // OpsUser 描述运营入口查看到的用户摘要。
@@ -102,14 +110,32 @@ type OpsAdminInfo struct {
 	AdminID string `json:"adminId"`
 	// UserID 是绑定的业务用户 ID。
 	UserID string `json:"userId"`
+	// LoginName 是管理员登录名。
+	LoginName string `json:"loginName"`
 	// Email 是管理员关联账号邮箱。
 	Email string `json:"email,omitempty"`
 	// DisplayName 是管理员显示名称。
 	DisplayName string `json:"displayName"`
 	// Phone 是管理员联系电话。
 	Phone string `json:"phone,omitempty"`
+	// Title 是岗位或职务。
+	Title string `json:"title,omitempty"`
+	// Department 是所属部门。
+	Department string `json:"department,omitempty"`
 	// Status 是管理员状态，例如 active 或 disabled。
 	Status string `json:"status"`
+	// PasswordUpdatedAt 是最近一次密码更新时间戳，单位毫秒。
+	PasswordUpdatedAt int64 `json:"passwordUpdatedAt,omitempty"`
+	// LastLoginAt 是最近一次成功登录时间戳，单位毫秒。
+	LastLoginAt int64 `json:"lastLoginAt,omitempty"`
+	// LastLoginIP 是最近一次成功登录来源 IP。
+	LastLoginIP string `json:"lastLoginIp,omitempty"`
+	// FailedLoginCount 是当前连续登录失败次数。
+	FailedLoginCount int `json:"failedLoginCount,omitempty"`
+	// LockedUntil 是账号锁定截止时间戳，单位毫秒。
+	LockedUntil int64 `json:"lockedUntil,omitempty"`
+	// UsingSeedPassword 表示该管理员当前仍在使用启动 seed 密码。
+	UsingSeedPassword bool `json:"usingSeedPassword,omitempty"`
 	// RoleIDs 是当前绑定角色 ID 列表。
 	RoleIDs []string `json:"roleIds,omitempty"`
 	// RoleCodes 是当前绑定角色编码列表。
@@ -122,12 +148,50 @@ type OpsAdminInfo struct {
 type UpsertAdminInfoRequest struct {
 	// UserID 是要补充管理员资料的业务用户 ID。
 	UserID string `json:"userId"`
+	// LoginName 是管理员登录名。
+	LoginName string `json:"loginName"`
+	// Password 是管理员登录密码；为空时保留原密码。
+	Password string `json:"password,omitempty"`
 	// DisplayName 是管理员显示名称。
 	DisplayName string `json:"displayName"`
 	// Phone 是管理员联系电话。
 	Phone string `json:"phone,omitempty"`
+	// Title 是岗位或职务。
+	Title string `json:"title,omitempty"`
+	// Department 是所属部门。
+	Department string `json:"department,omitempty"`
 	// Status 是管理员状态。
 	Status string `json:"status,omitempty"`
+}
+
+// OpsLoginRequest 用于管理员登录运营入口。
+type OpsLoginRequest struct {
+	// LoginName 是管理员登录名。
+	LoginName string `json:"loginName"`
+	// Password 是管理员登录密码。
+	Password string `json:"password"`
+}
+
+// OpsLoginResponse 描述管理员登录成功后返回的会话结果。
+type OpsLoginResponse struct {
+	// AdminID 是当前登录管理员 ID。
+	AdminID string `json:"adminId"`
+	// UserID 是管理员绑定的业务用户 ID。
+	UserID string `json:"userId"`
+	// LoginName 是当前登录名。
+	LoginName string `json:"loginName"`
+	// DisplayName 是管理员显示名称。
+	DisplayName string `json:"displayName"`
+	// AccessToken 是 ops HTTP 实例使用的 Bearer token。
+	AccessToken string `json:"accessToken"`
+	// ExpiresIn 是 access token 剩余秒数。
+	ExpiresIn int64 `json:"expiresIn"`
+}
+
+// ChangeAdminPasswordRequest 用于修改管理员登录密码。
+type ChangeAdminPasswordRequest struct {
+	// Password 是新的管理员登录密码。
+	Password string `json:"password"`
 }
 
 // OpsRole 描述角色。

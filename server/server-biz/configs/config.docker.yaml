@@ -1,10 +1,12 @@
 # server-biz 本地 Docker 运行配置。
 #
 # 这个配置假设 PostgreSQL / Redis 都运行在同一个 docker compose 网络里。
-# relay 地址先保留为宿主机端口占位；server-relay 进程当前还没有独立 binary。
+# relay 地址先保留为宿主机端口占位；server-relay 仍未接入这份本地 compose。
 http:
   address: ":8080"
   ops_address: ":8081"
+  public_host: "slan.localhost:18443"
+  public_scheme: "https"
 ws:
   path: "/control/ws"
 relay:
@@ -33,6 +35,12 @@ bootstrap:
     - "stun:stun.l.google.com:19302"
 ops:
   access_token: "docker-ops-token"
+  default_admin:
+    enabled: true
+    email: "admin@docker.slan"
+    password: "docker-admin-password"
+    login_name: "admin"
+    display_name: "Docker Admin"
 postgres:
   host: "postgres"
   port: 5432

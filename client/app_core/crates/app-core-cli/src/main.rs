@@ -573,10 +573,7 @@ fn format_state(snapshot: &AppCoreSnapshot) -> String {
                 .map(describe_connection_state)
                 .unwrap_or_else(|| "none".to_string())
         ),
-        format!(
-            "connect plans: {}",
-            snapshot.current_connect_plans.len()
-        ),
+        format!("connect plans: {}", snapshot.current_connect_plans.len()),
     ];
     if let Some(tunnel) = &snapshot.tunnel_runtime {
         let transport = match tunnel.transport {
@@ -1040,6 +1037,11 @@ fn control_ws_config_from_snapshot(snapshot: &AppCoreSnapshot) -> Result<Control
         .as_ref()
         .map(|session| session.user_id.clone())
         .unwrap_or_else(|| network_map.self_user_id.clone());
+    let access_token = snapshot
+        .session
+        .as_ref()
+        .map(|session| session.access_token.clone())
+        .ok_or_else(|| "missing session access token".to_string())?;
     let device_id = snapshot
         .current_device
         .as_ref()
@@ -1048,6 +1050,7 @@ fn control_ws_config_from_snapshot(snapshot: &AppCoreSnapshot) -> Result<Control
 
     Ok(ControlWsConfig {
         ws_url: bootstrap.control_plane.ws_url.clone(),
+        access_token,
         session_token,
         user_id,
         device_id,
@@ -1067,11 +1070,13 @@ fn tunnel_driver_report_json(report: &TunnelDriverSelection) -> Value {
             TunnelDriverKind::Auto => "auto",
             TunnelDriverKind::InMemory => "in-memory",
             TunnelDriverKind::LinuxKernel => "linux-kernel",
+            TunnelDriverKind::WindowsEmbeddable => "windows-embeddable",
         },
         "selected": match report.selected {
             TunnelDriverKind::Auto => "auto",
             TunnelDriverKind::InMemory => "in-memory",
             TunnelDriverKind::LinuxKernel => "linux-kernel",
+            TunnelDriverKind::WindowsEmbeddable => "windows-embeddable",
         },
         "executionMode": report.execution_mode,
         "executionBackend": report.execution_backend,
@@ -1084,11 +1089,13 @@ fn format_tunnel_driver_report(report: &TunnelDriverSelection) -> String {
         TunnelDriverKind::Auto => "auto",
         TunnelDriverKind::InMemory => "in-memory",
         TunnelDriverKind::LinuxKernel => "linux-kernel",
+        TunnelDriverKind::WindowsEmbeddable => "windows-embeddable",
     };
     let selected = match report.selected {
         TunnelDriverKind::Auto => "auto",
         TunnelDriverKind::InMemory => "in-memory",
         TunnelDriverKind::LinuxKernel => "linux-kernel",
+        TunnelDriverKind::WindowsEmbeddable => "windows-embeddable",
     };
     format!(
         "tunnel driver selected {} (requested {}, mode {}, backend {}, platform {})",

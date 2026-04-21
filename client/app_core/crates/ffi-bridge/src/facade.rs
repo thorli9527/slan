@@ -144,6 +144,9 @@ pub trait AppCoreFacade: Send + Sync {
     ) -> Result<Node, String>;
     fn list_networks(&self) -> Result<Vec<Network>, String>;
     fn create_network(&self, name: String, cidr: String) -> Result<Network, String>;
+    fn join_network(&self, network_id: String, device_id: String) -> Result<(), String>;
+    fn activate_network(&self, network_id: String, device_id: String) -> Result<(), String>;
+    fn deactivate_network(&self, network_id: String, device_id: String) -> Result<(), String>;
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String>;
     fn control_sync(&self) -> Result<BootstrapConfig, String>;
     fn control_status(&self) -> Result<ControlStatusView, String>;

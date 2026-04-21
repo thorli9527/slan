@@ -11,6 +11,7 @@
 - [Relay 功能梳理](./architecture/relay-flow.md)
 - [DERP 集群与连接池设计](./architecture/derp-cluster-design.md)
 - [AppCore 内部需求接口](./architecture/app-core-derp-internal-interfaces.md)
+- [协议合同清单](./architecture/protocol-contract-inventory.md)
 - [Client 重构清单](./architecture/client-refactor-plan.md)
 - [Client 本地测试入口](./architecture/client-local-test-entrypoints.md)
 - [Client Integration Test Runner](./architecture/client-integration-test-runner.md)
@@ -18,6 +19,8 @@
 - [系统边界与接口矩阵](./architecture/system-boundary-matrix.md)
 - [.gitignore 约定](./architecture/gitignore.md)
 - [上线准备清单（server-biz）](./architecture/production-readiness-checklist.md)
+- [小规模上线检查清单](./architecture/small-scale-rollout-checklist.md)
+- [local 到 production 配置迁移说明](./architecture/local-to-production-config.md)
 - [Token / 会话设计（生产建议）](./architecture/token-session-design.md)
 
 ## 当前约定

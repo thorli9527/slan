@@ -13,6 +13,10 @@ type HTTPConfig struct {
 	Address string `yaml:"address"`
 	// OpsAddress 是运营管理 HTTP API 服务的监听地址。
 	OpsAddress string `yaml:"ops_address"`
+	// PublicHost 是客户端生成控制面 WSURL 时使用的可访问主机名或 host:port。
+	PublicHost string `yaml:"public_host"`
+	// PublicScheme 是客户端访问控制面的外部协议，例如 http 或 https。
+	PublicScheme string `yaml:"public_scheme"`
 }
 
 // WSConfig 描述控制面 WebSocket 相关配置。
@@ -85,6 +89,22 @@ type BootstrapConfig struct {
 type OpsConfig struct {
 	// AccessToken 是运营入口使用的静态访问令牌。
 	AccessToken string `yaml:"access_token"`
+	// DefaultAdmin 描述启动时自动灌入的默认管理员账号。
+	DefaultAdmin OpsDefaultAdminConfig `yaml:"default_admin"`
+}
+
+// OpsDefaultAdminConfig 描述默认管理员 seed 配置。
+type OpsDefaultAdminConfig struct {
+	// Enabled 控制是否自动灌入默认管理员。
+	Enabled bool `yaml:"enabled"`
+	// Email 是默认管理员绑定的业务用户邮箱。
+	Email string `yaml:"email"`
+	// Password 是默认管理员初始密码。
+	Password string `yaml:"password"`
+	// LoginName 是默认管理员登录名。
+	LoginName string `yaml:"login_name"`
+	// DisplayName 是默认管理员显示名称。
+	DisplayName string `yaml:"display_name"`
 }
 
 // PostgresConfig 描述 PostgreSQL 连接与连接池参数。
@@ -150,6 +170,8 @@ func DefaultConfig() Config {
 	cfg := Config{}
 	cfg.HTTP.Address = ":8080"
 	cfg.HTTP.OpsAddress = ":8081"
+	cfg.HTTP.PublicHost = "127.0.0.1:8080"
+	cfg.HTTP.PublicScheme = "http"
 	cfg.WS.Path = "/control/ws"
 	cfg.Relay.DefaultClusterID = "cn-local-a"
 	cfg.Relay.TicketSigningSecret = "dev-relay-ticket-secret"
@@ -177,6 +199,13 @@ func DefaultConfig() Config {
 	}
 	cfg.Bootstrap.STUNServers = []string{"stun:stun.l.google.com:19302"}
 	cfg.Ops.AccessToken = "dev-ops-token"
+	cfg.Ops.DefaultAdmin = OpsDefaultAdminConfig{
+		Enabled:     true,
+		Email:       "admin@local.slan",
+		Password:    "change-me-admin-password",
+		LoginName:   "admin",
+		DisplayName: "Default Admin",
+	}
 	cfg.Postgres.Host = "127.0.0.1"
 	cfg.Postgres.Port = 5432
 	cfg.Postgres.Database = "slan"
@@ -216,6 +245,12 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.HTTP.OpsAddress == "" {
 		cfg.HTTP.OpsAddress = DefaultConfig().HTTP.OpsAddress
 	}
+	if cfg.HTTP.PublicHost == "" {
+		cfg.HTTP.PublicHost = DefaultConfig().HTTP.PublicHost
+	}
+	if cfg.HTTP.PublicScheme == "" {
+		cfg.HTTP.PublicScheme = DefaultConfig().HTTP.PublicScheme
+	}
 	if cfg.WS.Path == "" {
 		cfg.WS.Path = DefaultConfig().WS.Path
 	}
@@ -230,6 +265,18 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.Ops.AccessToken == "" {
 		cfg.Ops.AccessToken = DefaultConfig().Ops.AccessToken
+	}
+	if cfg.Ops.DefaultAdmin.Email == "" {
+		cfg.Ops.DefaultAdmin.Email = DefaultConfig().Ops.DefaultAdmin.Email
+	}
+	if cfg.Ops.DefaultAdmin.Password == "" {
+		cfg.Ops.DefaultAdmin.Password = DefaultConfig().Ops.DefaultAdmin.Password
+	}
+	if cfg.Ops.DefaultAdmin.LoginName == "" {
+		cfg.Ops.DefaultAdmin.LoginName = DefaultConfig().Ops.DefaultAdmin.LoginName
+	}
+	if cfg.Ops.DefaultAdmin.DisplayName == "" {
+		cfg.Ops.DefaultAdmin.DisplayName = DefaultConfig().Ops.DefaultAdmin.DisplayName
 	}
 	if cfg.Postgres.Host == "" {
 		cfg.Postgres = DefaultConfig().Postgres
@@ -270,7 +317,32 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Redis.MinIdleConns == 0 {
 		cfg.Redis.MinIdleConns = DefaultConfig().Redis.MinIdleConns
 	}
+	applyEnvOverrides(&cfg)
 	return cfg, nil
+}
+
+func applyEnvOverrides(cfg *Config) {
+	if value := os.Getenv("SLAN_HTTP_PUBLIC_HOST"); value != "" {
+		cfg.HTTP.PublicHost = value
+	}
+	if value := os.Getenv("SLAN_HTTP_PUBLIC_SCHEME"); value != "" {
+		cfg.HTTP.PublicScheme = value
+	}
+	if value := os.Getenv("SLAN_RELAY_TICKET_SIGNING_SECRET"); value != "" {
+		cfg.Relay.TicketSigningSecret = value
+	}
+	if value := os.Getenv("SLAN_OPS_ACCESS_TOKEN"); value != "" {
+		cfg.Ops.AccessToken = value
+	}
+	if value := os.Getenv("SLAN_OPS_DEFAULT_ADMIN_PASSWORD"); value != "" {
+		cfg.Ops.DefaultAdmin.Password = value
+	}
+	if value := os.Getenv("SLAN_POSTGRES_PASSWORD"); value != "" {
+		cfg.Postgres.Password = value
+	}
+	if value := os.Getenv("SLAN_REDIS_PASSWORD"); value != "" {
+		cfg.Redis.Password = value
+	}
 }
 
 // DSN 返回 PostgreSQL DSN。

@@ -13,12 +13,30 @@ type AdminInfo struct {
 	AdminID string `gorm:"column:admin_id;primaryKey"`
 	// UserID 是绑定的业务用户 ID。
 	UserID string `gorm:"column:user_id;uniqueIndex;not null"`
+	// LoginName 是管理员登录名。
+	LoginName string `gorm:"column:login_name;uniqueIndex;not null"`
+	// PasswordHash 是管理员登录密码哈希。
+	PasswordHash string `gorm:"column:password_hash;not null;default:''"`
+	// PasswordUpdatedAt 是最近一次密码更新时间戳，单位毫秒。
+	PasswordUpdatedAt int64 `gorm:"column:password_updated_at;not null;default:0"`
 	// DisplayName 是管理员显示名称。
 	DisplayName string `gorm:"column:display_name;not null"`
 	// Phone 是联系电话。
 	Phone string `gorm:"column:phone;not null;default:''"`
+	// Title 是岗位或职务。
+	Title string `gorm:"column:title;not null;default:''"`
+	// Department 是所属部门。
+	Department string `gorm:"column:department;not null;default:''"`
 	// Status 是管理员状态。
 	Status string `gorm:"column:status;not null;default:'active'"`
+	// LastLoginAt 是最近一次成功登录时间戳，单位毫秒。
+	LastLoginAt int64 `gorm:"column:last_login_at;not null;default:0"`
+	// LastLoginIP 是最近一次成功登录来源 IP。
+	LastLoginIP string `gorm:"column:last_login_ip;not null;default:''"`
+	// FailedLoginCount 是连续登录失败次数。
+	FailedLoginCount int `gorm:"column:failed_login_count;not null;default:0"`
+	// LockedUntil 是账号锁定截止时间戳，单位毫秒；0 表示未锁定。
+	LockedUntil int64 `gorm:"column:locked_until;not null;default:0"`
 }
 
 func (AdminInfo) TableName() string { return "admin_info" }
@@ -89,15 +107,68 @@ func (r *PostgresRepository) GetAdminInfoByUserID(ctx context.Context, userID st
 	return record, err
 }
 
+func (r *PostgresRepository) GetAdminInfoByID(ctx context.Context, adminID string) (AdminInfo, error) {
+	var record AdminInfo
+	err := r.db.WithContext(ctx).Where("admin_id = ?", adminID).First(&record).Error
+	return record, err
+}
+
+func (r *PostgresRepository) GetAdminInfoByLoginName(ctx context.Context, loginName string) (AdminInfo, error) {
+	var record AdminInfo
+	err := r.db.WithContext(ctx).Where("login_name = ?", loginName).First(&record).Error
+	return record, err
+}
+
 func (r *PostgresRepository) UpsertAdminInfo(ctx context.Context, record AdminInfo) error {
 	return r.db.WithContext(ctx).
 		Where("user_id = ?", record.UserID).
 		Assign(map[string]any{
-			"display_name": record.DisplayName,
-			"phone":        record.Phone,
-			"status":       record.Status,
+			"login_name":          record.LoginName,
+			"password_hash":       record.PasswordHash,
+			"password_updated_at": record.PasswordUpdatedAt,
+			"display_name":        record.DisplayName,
+			"phone":               record.Phone,
+			"title":               record.Title,
+			"department":          record.Department,
+			"status":              record.Status,
+			"last_login_at":       record.LastLoginAt,
+			"last_login_ip":       record.LastLoginIP,
+			"failed_login_count":  record.FailedLoginCount,
+			"locked_until":        record.LockedUntil,
 		}).
 		FirstOrCreate(&record).Error
+}
+
+func (r *PostgresRepository) UpdateAdminLoginAudit(ctx context.Context, adminID string, lastLoginAt int64, lastLoginIP string) error {
+	return r.db.WithContext(ctx).
+		Model(&AdminInfo{}).
+		Where("admin_id = ?", adminID).
+		Updates(map[string]any{
+			"last_login_at":      lastLoginAt,
+			"last_login_ip":      lastLoginIP,
+			"failed_login_count": 0,
+			"locked_until":       0,
+		}).Error
+}
+
+func (r *PostgresRepository) UpdateAdminPasswordAudit(ctx context.Context, adminID string, passwordHash string, passwordUpdatedAt int64) error {
+	return r.db.WithContext(ctx).
+		Model(&AdminInfo{}).
+		Where("admin_id = ?", adminID).
+		Updates(map[string]any{
+			"password_hash":       passwordHash,
+			"password_updated_at": passwordUpdatedAt,
+		}).Error
+}
+
+func (r *PostgresRepository) RecordAdminLoginFailure(ctx context.Context, adminID string, failedLoginCount int, lockedUntil int64) error {
+	return r.db.WithContext(ctx).
+		Model(&AdminInfo{}).
+		Where("admin_id = ?", adminID).
+		Updates(map[string]any{
+			"failed_login_count": failedLoginCount,
+			"locked_until":       lockedUntil,
+		}).Error
 }
 
 func (r *PostgresRepository) ListAdminInfo(ctx context.Context) ([]AdminInfo, error) {

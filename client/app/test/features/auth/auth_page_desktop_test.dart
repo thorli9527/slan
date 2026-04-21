@@ -17,12 +17,12 @@ void main() {
       ),
     );
 
-    expect(find.text('Authentication'), findsOneWidget);
-    expect(find.text('Session Controls'), findsOneWidget);
-    expect(find.text('No session'), findsOneWidget);
-    expect(find.byKey(AppTestKeys.authEmailField), findsOneWidget);
-    expect(find.byKey(AppTestKeys.authPasswordField), findsOneWidget);
-    expect(find.byKey(AppTestKeys.authRegisterButton), findsOneWidget);
-    expect(find.byKey(AppTestKeys.authLoginButton), findsOneWidget);
+    expect(find.text('Desktop Access Gateway'), findsOneWidget);
+    expect(find.text('Connection Profile'), findsOneWidget);
+    expect(find.text('Server Host'), findsOneWidget);
+    expect(find.byKey(AppTestKeys.authHostField), findsOneWidget);
+    expect(find.byKey(AppTestKeys.authApplyHostButton), findsOneWidget);
+    expect(find.byKey(AppTestKeys.authOpenLoginButton), findsOneWidget);
+    expect(find.byKey(AppTestKeys.authOpenConsoleButton), findsOneWidget);
   });
 }

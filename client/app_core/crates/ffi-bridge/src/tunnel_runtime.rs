@@ -1,6 +1,6 @@
 use slan_app_core::{
-    ActivePath, AllowedIp, BootstrapConfig, ConnectionPath, ConnectionState, Peer,
-    TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair, WireGuardPeerConfig,
+    ActivePath, AllowedIp, BootstrapConfig, ConnectionPath, ConnectionState, Peer, TunnelTransport,
+    WireGuardInterfaceConfig, WireGuardKeyPair, WireGuardPeerConfig,
 };
 use tunnel::TunnelConfig;
 
@@ -58,7 +58,10 @@ pub fn build_tunnel_config(
             peer_node_id: Some(peer.node_id.clone()),
             public_key: peer.public_key.clone(),
             preshared_key: None,
-            endpoint: peer.endpoints.first().map(|endpoint| endpoint.address.clone()),
+            endpoint: peer
+                .endpoints
+                .first()
+                .map(|endpoint| endpoint.address.clone()),
             allowed_ips: vec![AllowedIp {
                 cidr: format!("{}/32", peer_virtual_ip),
             }],

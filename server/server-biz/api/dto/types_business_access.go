@@ -27,3 +27,28 @@ type AuthResponse struct {
 	// ExpiresIn 是访问令牌的有效期，单位为秒。
 	ExpiresIn int64 `json:"expiresIn"`
 }
+
+// CompleteAuthCallbackRequest 用于网页端把认证结果暂存到服务端，等待桌面端拉取。
+type CompleteAuthCallbackRequest struct {
+	AccessToken string `json:"accessToken"`
+	UserID string `json:"userId"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+	ExpiresIn int64 `json:"expiresIn"`
+	DeviceID string `json:"deviceId,omitempty"`
+	UserLabel string `json:"userLabel,omitempty"`
+	Action string `json:"action,omitempty"`
+}
+
+// AuthCallbackStatusResponse 描述桌面客户端是否已接收网页登录回调。
+type AuthCallbackStatusResponse struct {
+	// CallbackID 是网页登录回调的唯一标识。
+	CallbackID string `json:"callbackId"`
+	// Ready 表示服务端是否已经缓存了可供客户端拉取的回调数据。
+	Ready bool `json:"ready"`
+	// Received 表示客户端是否已确认收到回调。
+	Received bool `json:"received"`
+	// ReceivedAt 是客户端确认收到回调的时间戳，单位毫秒。
+	ReceivedAt int64 `json:"receivedAt,omitempty"`
+	// Payload 是等待客户端消费的认证结果。
+	Payload *CompleteAuthCallbackRequest `json:"payload,omitempty"`
+}

@@ -1,6 +1,7 @@
+use std::collections::VecDeque;
 use std::fmt;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone)]
 pub struct ControlWsConfig {
     pub ws_url: String,
+    pub access_token: String,
     pub session_token: String,
     pub user_id: String,
     pub device_id: String,
@@ -50,6 +52,9 @@ pub enum ControlWsEvent {
     PeerUpdate(ControlWsPeerUpdate),
     PeerRemove(ControlWsPeerRemove),
     ConnectPlan(ControlWsConnectPlan),
+    NetworkRestartRequired(ControlWsNetworkRestartRequired),
+    DeviceIPReassigned(ControlWsDeviceIPReassigned),
+    ActiveNetworkEnabled(ControlWsActiveNetworkEnabled),
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +69,38 @@ pub struct ControlWsPeerRemove {
     pub network_id: String,
     pub revision: u64,
     pub peer_node_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlWsActiveNetworkEnabled {
+    pub user_id: String,
+    pub network_id: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlWsNetworkRestartRequired {
+    pub network_id: String,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub default_subnet_cidr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlWsDeviceIPReassigned {
+    pub network_id: String,
+    pub device_id: String,
+    pub attachment_id: String,
+    pub virtual_ip: String,
+    #[serde(default)]
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +167,8 @@ pub struct ControlWsPathHealthReport {
 #[derive(Debug)]
 pub struct ControlWsClient {
     stream: TcpStream,
+    ack_target: Option<AckTarget>,
+    queued_events: VecDeque<ControlWsEvent>,
 }
 
 impl ControlWsClient {
@@ -144,9 +183,11 @@ impl ControlWsClient {
             .set_write_timeout(Some(DEFAULT_IO_TIMEOUT))
             .map_err(|err| format!("set write timeout: {err}"))?;
 
+        let request_path = append_device_id_query(&endpoint.path, &config.device_id);
+        let request_origin = ws_origin(&endpoint.authority);
         let request = format!(
-            "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {}\r\n\r\n",
-            endpoint.path, endpoint.authority, STATIC_WS_KEY
+            "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: {}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {}\r\nX-Slan-Device-Id: {}\r\n\r\n",
+            request_path, endpoint.authority, request_origin, STATIC_WS_KEY, config.device_id
         );
         stream
             .write_all(request.as_bytes())
@@ -163,7 +204,11 @@ impl ControlWsClient {
             ));
         }
 
-        Ok(Self { stream })
+        Ok(Self {
+            stream,
+            ack_target: AckTarget::from_ws_url(&config.ws_url, &config.access_token).ok(),
+            queued_events: VecDeque::new(),
+        })
     }
 
     pub fn bootstrap_session(
@@ -173,15 +218,13 @@ impl ControlWsClient {
         let hello = Envelope {
             msg_type: "node_hello".to_string(),
             request_id: Some("node-hello".to_string()),
+            message_id: None,
             payload: serde_json::to_value(NodeHelloPayload::from(config.clone()))
                 .map_err(|err| format!("encode node_hello payload: {err}"))?,
         };
         self.send_envelope(&hello)?;
 
-        let ack_env = self.read_envelope()?;
-        if ack_env.msg_type == "error" {
-            return Err(format_control_error(ack_env.payload));
-        }
+        let ack_env = self.read_response_envelope("node_hello_ack")?;
         if ack_env.msg_type != "node_hello_ack" {
             return Err(format!(
                 "unexpected control ws response: {}",
@@ -191,10 +234,7 @@ impl ControlWsClient {
         let ack: NodeHelloAck = serde_json::from_value(ack_env.payload)
             .map_err(|err| format!("decode node_hello_ack: {err}"))?;
 
-        let network_env = self.read_envelope()?;
-        if network_env.msg_type == "error" {
-            return Err(format_control_error(network_env.payload));
-        }
+        let network_env = self.read_response_envelope("network_map_response")?;
         if network_env.msg_type != "network_map_response" {
             return Err(format!(
                 "unexpected control ws response after node_hello_ack: {}",
@@ -218,16 +258,14 @@ impl ControlWsClient {
         let request = Envelope {
             msg_type: "network_map_request".to_string(),
             request_id: Some("network-map".to_string()),
+            message_id: None,
             payload: serde_json::json!({
                 "networkId": network_id,
                 "lastRevision": last_revision,
             }),
         };
         self.send_envelope(&request)?;
-        let response = self.read_envelope()?;
-        if response.msg_type == "error" {
-            return Err(format_control_error(response.payload));
-        }
+        let response = self.read_response_envelope("network_map_response")?;
         if response.msg_type != "network_map_response" {
             return Err(format!(
                 "unexpected network map response: {}",
@@ -241,15 +279,13 @@ impl ControlWsClient {
         let request = Envelope {
             msg_type: "ping".to_string(),
             request_id: Some("ping".to_string()),
+            message_id: None,
             payload: serde_json::json!({
                 "timestamp": timestamp,
             }),
         };
         self.send_envelope(&request)?;
-        let response = self.read_envelope()?;
-        if response.msg_type == "error" {
-            return Err(format_control_error(response.payload));
-        }
+        let response = self.read_response_envelope("pong")?;
         if response.msg_type != "pong" {
             return Err(format!(
                 "unexpected control ws response to ping: {}",
@@ -266,6 +302,7 @@ impl ControlWsClient {
         let request = Envelope {
             msg_type: "connection_state".to_string(),
             request_id: Some("connection-state".to_string()),
+            message_id: None,
             payload: serde_json::to_value(report)
                 .map_err(|err| format!("encode connection_state payload: {err}"))?,
         };
@@ -279,6 +316,7 @@ impl ControlWsClient {
         let request = Envelope {
             msg_type: "path_health_report".to_string(),
             request_id: Some("path-health".to_string()),
+            message_id: None,
             payload: serde_json::to_value(report)
                 .map_err(|err| format!("encode path_health_report payload: {err}"))?,
         };
@@ -286,28 +324,14 @@ impl ControlWsClient {
     }
 
     pub fn read_event(&mut self) -> Result<ControlWsEvent, String> {
+        if let Some(event) = self.queued_events.pop_front() {
+            return Ok(event);
+        }
         let response = self.read_envelope()?;
         if response.msg_type == "error" {
             return Err(format_control_error(response.payload));
         }
-        match response.msg_type.as_str() {
-            "peer_update" => {
-                let update: PeerUpdateWire = serde_json::from_value(response.payload)
-                    .map_err(|err| format!("decode peer_update: {err}"))?;
-                Ok(ControlWsEvent::PeerUpdate(update.into()))
-            }
-            "peer_remove" => {
-                let remove: PeerRemoveWire = serde_json::from_value(response.payload)
-                    .map_err(|err| format!("decode peer_remove: {err}"))?;
-                Ok(ControlWsEvent::PeerRemove(remove.into()))
-            }
-            "connect_plan" => {
-                let plan: ControlWsConnectPlan = serde_json::from_value(response.payload)
-                    .map_err(|err| format!("decode connect_plan: {err}"))?;
-                Ok(ControlWsEvent::ConnectPlan(plan))
-            }
-            other => Err(format!("unexpected control ws event: {other}")),
-        }
+        decode_control_ws_event(response)
     }
 
     pub fn drain_pending_events(
@@ -326,7 +350,9 @@ impl ControlWsClient {
                 Err(err) => {
                     self.stream
                         .set_read_timeout(Some(DEFAULT_IO_TIMEOUT))
-                        .map_err(|reset_err| format!("reset read timeout after error: {reset_err}"))?;
+                        .map_err(|reset_err| {
+                            format!("reset read timeout after error: {reset_err}")
+                        })?;
                     return Err(err);
                 }
             }
@@ -352,9 +378,84 @@ impl ControlWsClient {
 
     fn read_envelope(&mut self) -> Result<Envelope, String> {
         let payload = decode_text_frame(&mut self.stream)?;
-        serde_json::from_slice::<Envelope>(&payload)
-            .map_err(|err| format!("decode ws envelope: {err}"))
+        let envelope = serde_json::from_slice::<Envelope>(&payload)
+            .map_err(|err| format!("decode ws envelope: {err}"))?;
+        if let (Some(ack_target), Some(message_id)) =
+            (self.ack_target.as_ref(), envelope.message_id.as_deref())
+        {
+            let _ = ack_control_message(ack_target, message_id);
+        }
+        Ok(envelope)
     }
+
+    fn read_response_envelope(&mut self, expected_type: &str) -> Result<Envelope, String> {
+        loop {
+            let response = self.read_envelope()?;
+            if response.msg_type == "error" {
+                return Err(format_control_error(response.payload));
+            }
+            if response.msg_type == expected_type {
+                return Ok(response);
+            }
+            match decode_control_ws_event(response) {
+                Ok(event) => self.queued_events.push_back(event),
+                Err(_) => {
+                    return Err(format!(
+                        "unexpected control ws response while waiting for {expected_type}"
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn decode_control_ws_event(response: Envelope) -> Result<ControlWsEvent, String> {
+    match response.msg_type.as_str() {
+        "peer_update" => {
+            let update: PeerUpdateWire = serde_json::from_value(response.payload)
+                .map_err(|err| format!("decode peer_update: {err}"))?;
+            Ok(ControlWsEvent::PeerUpdate(update.into()))
+        }
+        "peer_remove" => {
+            let remove: PeerRemoveWire = serde_json::from_value(response.payload)
+                .map_err(|err| format!("decode peer_remove: {err}"))?;
+            Ok(ControlWsEvent::PeerRemove(remove.into()))
+        }
+        "connect_plan" => {
+            let plan: ControlWsConnectPlan = serde_json::from_value(response.payload)
+                .map_err(|err| format!("decode connect_plan: {err}"))?;
+            Ok(ControlWsEvent::ConnectPlan(plan))
+        }
+        "network_restart_required" => {
+            let restart: ControlWsNetworkRestartRequired = serde_json::from_value(response.payload)
+                .map_err(|err| format!("decode network_restart_required: {err}"))?;
+            Ok(ControlWsEvent::NetworkRestartRequired(restart))
+        }
+        "device_ip_reassigned" => {
+            let updated: ControlWsDeviceIPReassigned = serde_json::from_value(response.payload)
+                .map_err(|err| format!("decode device_ip_reassigned: {err}"))?;
+            Ok(ControlWsEvent::DeviceIPReassigned(updated))
+        }
+        "active_network_enabled" => {
+            let enabled: ControlWsActiveNetworkEnabled =
+                serde_json::from_value(response.payload)
+                    .map_err(|err| format!("decode active_network_enabled: {err}"))?;
+            Ok(ControlWsEvent::ActiveNetworkEnabled(enabled))
+        }
+        other => Err(format!("unexpected control ws event: {other}")),
+    }
+}
+
+fn append_device_id_query(path: &str, device_id: &str) -> String {
+    if device_id.trim().is_empty() {
+        return path.to_string();
+    }
+    let separator = if path.contains('?') { '&' } else { '?' };
+    format!("{path}{separator}deviceId={device_id}")
+}
+
+fn ws_origin(authority: &str) -> String {
+    format!("http://{authority}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,6 +465,8 @@ struct Envelope {
     msg_type: String,
     #[serde(default)]
     request_id: Option<String>,
+    #[serde(default)]
+    message_id: Option<String>,
     #[serde(default)]
     payload: Value,
 }
@@ -398,6 +501,33 @@ impl From<ControlWsConfig> for NodeHelloPayload {
 struct WsEndpoint {
     authority: String,
     path: String,
+}
+
+#[derive(Debug, Clone)]
+struct AckTarget {
+    base_url: String,
+    access_token: String,
+}
+
+impl AckTarget {
+    fn from_ws_url(ws_url: &str, access_token: &str) -> Result<Self, String> {
+        let trimmed = ws_url.trim();
+        let rest = trimmed
+            .strip_prefix("ws://")
+            .ok_or_else(|| "only ws:// control plane URLs are currently supported".to_string())?;
+        let authority = rest
+            .split_once('/')
+            .map(|(authority, _)| authority)
+            .unwrap_or(rest)
+            .trim();
+        if authority.is_empty() || access_token.trim().is_empty() {
+            return Err("missing ack target".to_string());
+        }
+        Ok(Self {
+            base_url: format!("http://{authority}"),
+            access_token: access_token.to_string(),
+        })
+    }
 }
 
 fn parse_ws_url(url: &str) -> Result<WsEndpoint, String> {
@@ -435,6 +565,45 @@ fn read_http_response(stream: &mut TcpStream) -> Result<String, String> {
 
 fn first_response_line(response: &str) -> &str {
     response.lines().next().unwrap_or("invalid response")
+}
+
+fn ack_control_message(target: &AckTarget, message_id: &str) -> Result<(), String> {
+    let authority = target
+        .base_url
+        .trim()
+        .strip_prefix("http://")
+        .ok_or_else(|| "unsupported ack url scheme".to_string())?;
+    let socket_addr = authority
+        .to_socket_addrs()
+        .map_err(|err| format!("resolve ack authority {authority}: {err}"))?
+        .next()
+        .ok_or_else(|| format!("no ack address resolved for {authority}"))?;
+    let mut stream = TcpStream::connect_timeout(&socket_addr, DEFAULT_IO_TIMEOUT)
+        .map_err(|err| format!("connect ack endpoint {authority}: {err}"))?;
+    stream
+        .set_read_timeout(Some(DEFAULT_IO_TIMEOUT))
+        .map_err(|err| format!("set ack read timeout: {err}"))?;
+    stream
+        .set_write_timeout(Some(DEFAULT_IO_TIMEOUT))
+        .map_err(|err| format!("set ack write timeout: {err}"))?;
+
+    let body = b"{}";
+    let request = format!(
+        "POST /control/messages/{message_id}/ack HTTP/1.1\r\nHost: {authority}\r\nAccept: application/json\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        target.access_token,
+        body.len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .and_then(|_| stream.write_all(body))
+        .map_err(|err| format!("write ack request: {err}"))?;
+    let _ = stream.shutdown(Shutdown::Write);
+
+    let response = read_http_response(&mut stream)?;
+    if !response.starts_with("HTTP/1.1 200") && !response.starts_with("HTTP/1.0 200") {
+        return Err(format!("ack rejected: {}", first_response_line(&response)));
+    }
+    Ok(())
 }
 
 fn encode_text_frame(payload: &[u8]) -> Vec<u8> {
@@ -518,7 +687,10 @@ fn format_control_error(payload: Value) -> String {
 
 fn is_control_ws_timeout_error(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
-    lower.contains("timed out") || lower.contains("would block")
+    lower.contains("timed out")
+        || lower.contains("would block")
+        || lower.contains("resource temporarily unavailable")
+        || lower.contains("os error 35")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
 import 'package:slan_app/infra/app_core/api/http_app_core_api.dart';
 
 void main() {
@@ -111,10 +112,10 @@ void main() {
               },
             ],
             'controlPlane': {
-              'wsUrl': 'ws://127.0.0.1:8080/control/ws',
+              'wsUrl': kDevControlWsUrl,
               'heartbeatSeconds': 15,
             },
-            'stunServers': ['stun:stun.l.google.com:19302'],
+            'stunServers': [kDevStunServer],
             'relay': {
               'defaultClusterId': 'cn-local-a',
               'countries': [
@@ -133,13 +134,13 @@ void main() {
                             {
                               'nodeId': 'relay-cn-local-udp',
                               'transport': 'udp',
-                              'address': '127.0.0.1:9000',
+                              'address': kDevRelayUdpAddress,
                               'priority': 10,
                             },
                             {
                               'nodeId': 'relay-cn-local-tcp',
                               'transport': 'tcp',
-                              'address': '127.0.0.1:9001',
+                              'address': kDevRelayTcpAddress,
                               'priority': 20,
                             },
                           ],
@@ -172,7 +173,7 @@ void main() {
               'relay-cn-local-udp',
               'relay-cn-local-tcp',
             ],
-            'relayUrl': 'udp://127.0.0.1:9000',
+            'relayUrl': kDevRelayUdpUrl,
             'expiresAt': '2026-04-17T10:00:00Z',
             'sessionKey': 'session-key',
             'signature': 'signed-payload',

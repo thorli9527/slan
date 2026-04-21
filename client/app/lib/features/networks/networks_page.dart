@@ -1,236 +1,101 @@
 import 'package:flutter/material.dart';
 
-import '../../infra/app_core/models/models.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
-import '../../testing/app_test_keys.dart';
 import '../shared/desktop_client_widgets.dart';
 
-class NetworksPage extends StatefulWidget {
+class NetworksPage extends StatelessWidget {
   const NetworksPage({super.key});
 
   @override
-  State<NetworksPage> createState() => _NetworksPageState();
-}
-
-class _NetworksPageState extends State<NetworksPage> {
-  final _nameController = TextEditingController(text: 'home');
-  final _cidrController = TextEditingController(text: '100.64.0.0/24');
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      AppCoreScope.demo.refreshNetworks();
-    });
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _cidrController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final store = AppCoreScope.demo;
+    final sessionStore = AppCoreScope.sessionStore;
     return AnimatedBuilder(
-      animation: store,
+      animation: sessionStore,
       builder: (context, _) {
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final isDesktop = constraints.maxWidth >= 1040;
-            final child = isDesktop
-                ? _buildDesktopWorkspace(context, store)
-                : _buildCompactWorkspace(context, store);
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: child,
-            );
-          },
+        final network =
+            sessionStore.networks.isNotEmpty ? sessionStore.networks.first : null;
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              DesktopHeroPanel(
+                title: 'Network Details',
+                description: '客户端只展示当前唯一活动网络的基础信息，不再承担创建多个网络或切换复杂网络列表的入口。',
+                footer: DesktopBadge(
+                  label: network == null
+                      ? 'no network loaded'
+                      : 'active network ${network.networkId}',
+                ),
+              ),
+              const SizedBox(height: 16),
+              DesktopSurfaceCard(
+                title: 'Current Network',
+                child: network == null
+                    ? const Text('No active network has been prepared yet.')
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _Line(label: 'Name', value: network.name),
+                          _Line(label: 'Network ID', value: network.networkId),
+                          _Line(label: 'CIDR', value: network.cidr),
+                          _Line(
+                              label: 'Members',
+                              value: '${network.members.length}'),
+                          const SizedBox(height: 16),
+                          const Text('Members'),
+                          const SizedBox(height: 8),
+                          if (network.members.isEmpty)
+                            const Text('No members joined yet.')
+                          else
+                            ...network.members.map(
+                              (member) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: DesktopInsetBlock(
+                                  title: member.deviceId,
+                                  child: Text(
+                                    '${member.role}${member.virtualIp == null || member.virtualIp!.isEmpty ? '' : ' · ${member.virtualIp}'}',
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
         );
       },
     );
   }
-
-  Widget _buildCompactWorkspace(BuildContext context, dynamic store) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _NetworksHero(networkCount: store.networks.length),
-        const SizedBox(height: 16),
-        _NetworkCreateCard(
-          nameController: _nameController,
-          cidrController: _cidrController,
-          busy: store.busy,
-          onCreate: () => store.createNetwork(
-                name: _nameController.text.trim(),
-                cidr: _cidrController.text.trim(),
-              ),
-          onRefresh: store.refreshNetworks,
-        ),
-        const SizedBox(height: 16),
-        _NetworkListCard(networks: store.networks),
-      ],
-    );
-  }
-
-  Widget _buildDesktopWorkspace(BuildContext context, dynamic store) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            children: [
-              _NetworksHero(networkCount: store.networks.length),
-              const SizedBox(height: 16),
-              _NetworkCreateCard(
-                nameController: _nameController,
-                cidrController: _cidrController,
-                busy: store.busy,
-                onCreate: () => store.createNetwork(
-                      name: _nameController.text.trim(),
-                      cidr: _cidrController.text.trim(),
-                    ),
-                onRefresh: store.refreshNetworks,
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          flex: 2,
-          child: _NetworkListCard(networks: store.networks),
-        ),
-      ],
-    );
-  }
 }
 
-class _NetworksHero extends StatelessWidget {
-  const _NetworksHero({required this.networkCount});
-
-  final int networkCount;
-
-  @override
-  Widget build(BuildContext context) {
-    return DesktopHeroPanel(
-      title: 'Overlay Networks',
-      description:
-          'Create and inspect the overlay networks that feed device bootstrap and tunnel path selection.',
-      backgroundColor: const Color(0xFFF1F4FB),
-      footer: DesktopBadge(
-        label: '$networkCount network${networkCount == 1 ? '' : 's'} loaded',
-      ),
-    );
-  }
-}
-
-class _NetworkCreateCard extends StatelessWidget {
-  const _NetworkCreateCard({
-    required this.nameController,
-    required this.cidrController,
-    required this.busy,
-    required this.onCreate,
-    required this.onRefresh,
+class _Line extends StatelessWidget {
+  const _Line({
+    required this.label,
+    required this.value,
   });
 
-  final TextEditingController nameController;
-  final TextEditingController cidrController;
-  final bool busy;
-  final VoidCallback onCreate;
-  final VoidCallback onRefresh;
+  final String label;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
-    return DesktopSurfaceCard(
-      title: 'Create Network',
-      subtitle:
-          'This is still the existing Phase 1 mock control plane, but now wrapped in a desktop-oriented authoring panel.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
         children: [
-          TextField(
-            key: AppTestKeys.networksNameField,
-            controller: nameController,
-            decoration: const InputDecoration(labelText: 'Network Name'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            key: AppTestKeys.networksCidrField,
-            controller: cidrController,
-            decoration: const InputDecoration(labelText: 'CIDR'),
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              FilledButton(
-                key: AppTestKeys.networksCreateButton,
-                onPressed: busy ? null : onCreate,
-                child: const Text('Create Network'),
-              ),
-              OutlinedButton(
-                key: AppTestKeys.networksRefreshButton,
-                onPressed: busy ? null : onRefresh,
-                child: const Text('Refresh'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NetworkListCard extends StatelessWidget {
-  const _NetworkListCard({required this.networks});
-
-  final List<NetworkModel> networks;
-
-  @override
-  Widget build(BuildContext context) {
-    return DesktopSurfaceCard(
-      title: 'Network Inventory',
-      child: networks.isEmpty
-          ? const Text(
-              'No networks yet. Create one here, then use it from the Devices workspace.',
-            )
-          : Column(
-              children: [
-                for (final network in networks) _NetworkCard(network: network),
-              ],
+          SizedBox(
+            width: 130,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
             ),
-    );
-  }
-}
-
-class _NetworkCard extends StatelessWidget {
-  const _NetworkCard({required this.network});
-
-  final NetworkModel network;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: DesktopInsetBlock(
-        title: network.name,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('networkId: ${network.networkId}'),
-            Text('cidr: ${network.cidr}'),
-            const SizedBox(height: 8),
-            Text('members: ${network.members.length}'),
-            for (final member in network.members)
-              Text('${member.deviceId} (${member.role}) ${member.virtualIp ?? ''}'),
-          ],
-        ),
+          ),
+          Expanded(child: Text(value)),
+        ],
       ),
     );
   }

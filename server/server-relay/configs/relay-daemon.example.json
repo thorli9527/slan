@@ -1,0 +1,5 @@
+{
+  "udp_bind": "0.0.0.0:9000",
+  "relay_url_prefix": "udp://",
+  "ticket_signing_secret": "change-me-relay-ticket-secret"
+}

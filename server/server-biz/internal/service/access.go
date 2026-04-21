@@ -8,6 +8,12 @@ type Auth interface {
 	Register(req dto.RegisterRequest) (dto.AuthResponse, error)
 	// Login 校验用户身份并返回新的访问令牌与当前用户信息。
 	Login(req dto.LoginRequest) (dto.AuthResponse, error)
+	// GetCallbackStatus 返回网页登录回调是否已被桌面客户端接收。
+	GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error)
+	// CompleteCallback 暂存网页登录结果，等待桌面客户端主动拉取。
+	CompleteCallback(callbackID string, req dto.CompleteAuthCallbackRequest) error
+	// MarkCallbackReceived 标记桌面客户端已接收网页登录回调。
+	MarkCallbackReceived(callbackID string) error
 }
 
 // TokenVerifier 定义控制面对访问令牌的校验能力。

@@ -1,0 +1,73 @@
+:root {
+  --bg: #f5f0e8;
+  --panel: rgba(255, 255, 255, 0.86);
+  --panel-strong: rgba(255, 255, 255, 0.94);
+  --text: #17202a;
+  --text-soft: #2a3640;
+  --muted: #5f6b76;
+  --accent: #a23c24;
+  --accent-soft: #f0c3a3;
+  --line: rgba(23, 32, 42, 0.12);
+  --line-strong: rgba(23, 32, 42, 0.18);
+  --ok: #1f7a53;
+  --warn: #b46a1e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(240, 195, 163, 0.65), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(162, 60, 36, 0.12), transparent 28%),
+    linear-gradient(180deg, #f7f2eb 0%, #efe4d6 100%);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.status-badge[data-tone="success"] {
+  color: #13553a;
+  background: rgba(31, 122, 83, .12);
+  border-color: rgba(31, 122, 83, .18);
+}
+
+.status-badge[data-tone="warn"] {
+  color: #8a5514;
+  background: rgba(180, 106, 30, .12);
+  border-color: rgba(180, 106, 30, .18);
+}
+
+.status-badge[data-tone="info"] {
+  color: #1b5c83;
+  background: rgba(25, 92, 148, .12);
+  border-color: rgba(25, 92, 148, .18);
+}
+
+.status-badge[data-tone="muted"] {
+  color: var(--muted);
+  background: rgba(95, 107, 118, .10);
+  border-color: rgba(95, 107, 118, .14);
+}

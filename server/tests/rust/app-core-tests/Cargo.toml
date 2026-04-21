@@ -1,0 +1,14 @@
+[package]
+name = "app-core-tests"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+controller-client = { path = "../../../../client/app_core/crates/controller-client" }
+ffi-bridge = { path = "../../../../client/app_core/crates/ffi-bridge" }
+p2p = { path = "../../../../client/app_core/crates/p2p" }
+relay-client = { path = "../../../../client/app_core/crates/relay-client" }
+serde_json = "1"
+slan-app-core = { path = "../../../../client/app_core/crates/app-core" }
+tunnel = { path = "../../../../client/app_core/crates/tunnel" }

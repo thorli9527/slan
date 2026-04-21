@@ -567,7 +567,7 @@ client/app_core/crates/
 server/server-biz/
 ├── api/dto/
 │   └── 扩展 bootstrap / relay ticket 结构
-└── internal/control/
+└── internal/service/impl/
     └── 补充 derp cluster 编排
 
 server/server-relay/

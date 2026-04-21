@@ -11,40 +11,20 @@ import (
 func registerRegistrationRoutes(protected *gin.RouterGroup, deps routerDeps) {
 	devices := protected.Group("/devices")
 	// POST /devices/register 为当前用户注册一台设备。
-	devices.POST("/register", func(c *gin.Context) {
-		var req dto.RegisterDeviceRequest
-		if !bindJSON(c, &req) {
-			return
-		}
-		resp, err := deps.Device.Register(userID(c), req)
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		c.JSON(http.StatusCreated, resp)
-	})
+	devices.POST("/register", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.RegisterDeviceRequest) (dto.Device, error) {
+		rc := currentRouteContext(c)
+		return deps.Device.Register(rc.user(), req)
+	}))
 	// GET /devices 返回当前用户拥有的设备列表。
-	devices.GET("", func(c *gin.Context) {
-		items, err := deps.Device.ListByUser(userID(c))
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"items": items})
-	})
+	devices.GET("", respondWithItems(func(c *gin.Context) ([]dto.Device, error) {
+		rc := currentRouteContext(c)
+		return deps.Device.ListByUser(rc.user())
+	}))
 
 	nodes := protected.Group("/nodes")
 	// POST /nodes/register 为当前用户某台设备注册一个通信节点。
-	nodes.POST("/register", func(c *gin.Context) {
-		var req dto.RegisterNodeRequest
-		if !bindJSON(c, &req) {
-			return
-		}
-		resp, err := deps.Node.Register(userID(c), req)
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		c.JSON(http.StatusCreated, resp)
-	})
+	nodes.POST("/register", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.RegisterNodeRequest) (dto.Node, error) {
+		rc := currentRouteContext(c)
+		return deps.Node.Register(rc.user(), req)
+	}))
 }

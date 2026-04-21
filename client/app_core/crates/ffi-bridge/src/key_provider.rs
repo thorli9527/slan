@@ -83,14 +83,18 @@ impl FileTunnelKeyProvider {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|err| format!("parse tunnel key store {}: {err}", self.path.display())),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(TunnelKeyStore::default()),
-            Err(err) => Err(format!("read tunnel key store {}: {err}", self.path.display())),
+            Err(err) => Err(format!(
+                "read tunnel key store {}: {err}",
+                self.path.display()
+            )),
         }
     }
 
     fn save_store(&self, store: &TunnelKeyStore) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|err| format!("create tunnel key store dir {}: {err}", parent.display()))?;
+            fs::create_dir_all(parent).map_err(|err| {
+                format!("create tunnel key store dir {}: {err}", parent.display())
+            })?;
         }
         let payload = serde_json::to_vec_pretty(store)
             .map_err(|err| format!("serialize tunnel key store {}: {err}", self.path.display()))?;
@@ -157,8 +161,12 @@ mod tests {
         let path = std::env::temp_dir().join(format!("slan-tunnel-key-store-{unique}.json"));
         let provider = FileTunnelKeyProvider::new(&path);
 
-        let first = provider.generate("dev-1", Some("node-1"), "peer-1", 42).unwrap();
-        let second = provider.generate("dev-1", Some("node-1"), "peer-2", 43).unwrap();
+        let first = provider
+            .generate("dev-1", Some("node-1"), "peer-1", 42)
+            .unwrap();
+        let second = provider
+            .generate("dev-1", Some("node-1"), "peer-2", 43)
+            .unwrap();
 
         assert_eq!(first, second);
         let _ = fs::remove_file(path);

@@ -3,8 +3,12 @@ package httpapi
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"sync"
+	"time"
 
+	"github.com/slan/server/server-biz/internal/repo"
+	"github.com/slan/server/server-biz/internal/util"
 	controlws "github.com/slan/server/server-biz/internal/ws"
 	"golang.org/x/net/websocket"
 )
@@ -15,6 +19,7 @@ import (
 // 便于 handler、fanout 和 metrics 在不暴露底层连接细节的前提下协作。
 type wsSession struct {
 	userID    string
+	deviceID  string
 	nodeID    string
 	networkID string
 }
@@ -29,6 +34,7 @@ type controlWSSession struct {
 	conn      *websocket.Conn
 	writeMu   sync.Mutex
 	userID    string
+	deviceID  string
 	nodeID    string
 	networkID string
 }
@@ -91,14 +97,71 @@ func (h *controlWSHub) peersInNetwork(networkID, excludeNodeID string) []*contro
 	return out
 }
 
+// sessionsByUser 返回同一用户当前所有活跃会话。
+func (h *controlWSHub) sessionsByUser(userID string) []*controlWSSession {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	out := make([]*controlWSSession, 0, len(h.sessions))
+	for _, session := range h.sessions {
+		if session.userID != userID {
+			continue
+		}
+		out = append(out, session)
+	}
+	return out
+}
+
 // send 以串行写方式向该连接发送一条标准 Envelope 消息。
 func (s *controlWSSession) send(msgType, requestID string, payload any) error {
+	return s.sendTracked(msgType, requestID, payload, nil)
+}
+
+func (s *controlWSSession) sendTracked(
+	msgType, requestID string,
+	payload any,
+	deps *routerDeps,
+) error {
+	messageID := ""
+	if deps != nil && deps.MessageDelivery != nil {
+		payloadJSON, err := json.Marshal(payload)
+		if err == nil {
+			messageID = util.NewID("msg")
+			now := time.Now().UnixMilli()
+			_ = deps.MessageDelivery.CreatePending(repo.ControlOutboundMessage{
+				MessageID:     messageID,
+				TargetUserID:  s.userID,
+				TargetNodeID:  s.nodeID,
+				NetworkID:     s.networkID,
+				MessageType:   msgType,
+				RequestID:     requestID,
+				PayloadJSON:   string(payloadJSON),
+				AttemptCount:  1,
+				Status:        "pending",
+				LastAttemptAt: now,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			})
+		}
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return websocket.JSON.Send(s.conn, controlws.Envelope{
 		Type:      msgType,
 		RequestID: requestID,
+		MessageID: messageID,
 		Payload:   payload,
+	})
+}
+
+func (s *controlWSSession) resendStored(message repo.ControlOutboundMessage) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return websocket.JSON.Send(s.conn, controlws.Envelope{
+		Type:      message.MessageType,
+		RequestID: message.RequestID,
+		MessageID: message.MessageID,
+		Payload:   json.RawMessage(message.PayloadJSON),
 	})
 }
 

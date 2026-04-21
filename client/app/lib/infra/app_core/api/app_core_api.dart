@@ -3,9 +3,18 @@
 /// UI 层只依赖这一层，不直接依赖具体的 Rust FFI 或 HTTP 实现。
 library slan_app.infra.app_core.api;
 
-import '../models/models.dart';
+import '../models/bootstrap_models.dart';
+import '../models/connection_models.dart';
+import '../models/control_models.dart';
+import '../models/diagnostic_models.dart';
+import '../models/identity_models.dart';
+import '../models/network_models.dart';
+import '../models/relay_models.dart';
 
 abstract class AppCoreApi {
+  /// 把外部恢复的会话注入到当前实现里。
+  void restoreSession(SessionModel session);
+
   /// 注册用户并返回会话信息。
   Future<SessionModel> register({
     required String email,
@@ -26,6 +35,9 @@ abstract class AppCoreApi {
     required String publicKey,
   });
 
+  /// 返回当前用户已注册设备。
+  Future<List<DeviceModel>> listDevices();
+
   /// 注册当前节点身份。
   Future<NodeModel> registerNode({
     required String deviceId,
@@ -40,7 +52,26 @@ abstract class AppCoreApi {
   /// 创建网络，默认会由服务端一并创建默认子网。
   Future<NetworkModel> createNetwork({
     required String name,
-    String cidr = '100.64.0.0/24',
+    String cidr = '10.0.0.0/16',
+    String? bindDeviceId,
+  });
+
+  /// 让当前设备加入指定网络。
+  Future<void> joinNetwork({
+    required String networkId,
+    required String deviceId,
+  });
+
+  /// 仅在当前设备显式启用网络时建立接入并分配虚拟 IP。
+  Future<void> activateNetwork({
+    required String networkId,
+    required String deviceId,
+  });
+
+  /// 停用当前设备在目标网络上的接入，并释放虚拟 IP。
+  Future<void> deactivateNetwork({
+    required String networkId,
+    required String deviceId,
   });
 
   /// 获取指定节点的启动配置。

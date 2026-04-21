@@ -51,12 +51,14 @@ func handleNodeHello(conn *websocket.Conn, deps routerDeps, session *wsSession, 
 	metricAddByType(controlWSMessageTypeMetrics, "node_hello_ack", 1)
 	*session = wsSession{
 		userID:    util.FirstNonEmpty(hello.UserID, networkMap.SelfUserID),
+		deviceID:  util.FirstNonEmpty(hello.DeviceID, session.deviceID),
 		nodeID:    hello.NodeID,
 		networkID: hello.NetworkID,
 	}
 	defaultControlWSHub.register(&controlWSSession{
 		conn:      conn,
 		userID:    session.userID,
+		deviceID:  session.deviceID,
 		nodeID:    session.nodeID,
 		networkID: session.networkID,
 	})

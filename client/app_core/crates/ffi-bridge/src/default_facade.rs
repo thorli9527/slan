@@ -1,11 +1,11 @@
-use std::sync::Mutex;
 use control_ws_client::{
     ControlWsClient, ControlWsConfig, ControlWsConnectPlan, ControlWsConnectionStateReport,
-    ControlWsEvent, ControlWsPathHealthReport,
+    ControlWsActiveNetworkEnabled, ControlWsDeviceIPReassigned, ControlWsEvent,
+    ControlWsPathHealthReport,
 };
 use controller_client::{
-    ControllerClient, CreateNetworkRequest, LoginRequest, RegisterDeviceRequest,
-    RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest,
+    LoginRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
 };
 use p2p::{P2PConnector, PeerCandidate};
 use relay_client::{DerpPool, PathManager, RelayClient};
@@ -13,6 +13,7 @@ use slan_app_core::{
     ActivePath, BootstrapConfig, ConnectionPath, ConnectionState, DerpCluster, Device, Endpoint,
     Network, Node, Peer, RelayTicket, Session,
 };
+use std::sync::Mutex;
 use tunnel::{TunnelConfig, TunnelManager};
 
 use crate::connect_runtime::{finalize_connected_path, resolve_connect_context};
@@ -27,8 +28,10 @@ use crate::snapshot::AppCoreSnapshot;
 use crate::snapshot_updates::{
     record_probe_result, update_connected_snapshot, update_disconnected_snapshot,
 };
-use crate::state_helpers::{ensure_tunnel_key_pair, remember_data_plane_error};
-use crate::tunnel_runtime::{build_tunnel_config, connection_state_from_active_path};
+use crate::state_helpers::{ensure_tunnel_key_pair, remember_data_plane_error, replace_tunnel};
+use crate::tunnel_runtime::{
+    build_tunnel_config, build_tunnel_runtime, connection_state_from_active_path,
+};
 
 pub struct DefaultAppCoreFacade<C, P, R, D, M, T>
 where
@@ -330,6 +333,11 @@ where
             .as_ref()
             .map(|session| session.user_id.clone())
             .unwrap_or_else(|| network_map.self_user_id.clone());
+        let access_token = state
+            .session
+            .as_ref()
+            .map(|session| session.access_token.clone())
+            .ok_or_else(|| "missing session access token".to_string())?;
         let device_id = state
             .current_device
             .as_ref()
@@ -338,6 +346,7 @@ where
 
         Ok(ControlWsConfig {
             ws_url: bootstrap.control_plane.ws_url.clone(),
+            access_token,
             session_token,
             user_id,
             device_id,
@@ -351,7 +360,10 @@ where
         })
     }
 
-    fn connect_plan_for_peer(&self, peer_node_id: &str) -> Result<Option<ControlWsConnectPlan>, String> {
+    fn connect_plan_for_peer(
+        &self,
+        peer_node_id: &str,
+    ) -> Result<Option<ControlWsConnectPlan>, String> {
         let state = self
             .state
             .lock()
@@ -359,9 +371,7 @@ where
         Ok(state.current_connect_plans.get(peer_node_id).cloned())
     }
 
-    fn infer_control_report_peer_node_id(
-        state: &AppCoreSnapshot,
-    ) -> Option<String> {
+    fn infer_control_report_peer_node_id(state: &AppCoreSnapshot) -> Option<String> {
         match state.active_path.as_ref() {
             Some(ActivePath::P2P { peer_node_id }) | Some(ActivePath::Relay { peer_node_id }) => {
                 Some(peer_node_id.clone())
@@ -396,11 +406,23 @@ where
         if let Some(connection_state) = state.connection_state.as_ref() {
             let (path, status, reason) = match connection_state {
                 ConnectionState::Disconnected => ("none".to_string(), "closed".to_string(), None),
-                ConnectionState::Connecting => ("connecting".to_string(), "connecting".to_string(), None),
-                ConnectionState::Connected(ConnectionPath::P2P) => ("p2p".to_string(), "connected".to_string(), None),
-                ConnectionState::Connected(ConnectionPath::Relay) => ("relay".to_string(), "connected".to_string(), None),
-                ConnectionState::Connected(ConnectionPath::Derp) => ("derp".to_string(), "connected".to_string(), None),
-                ConnectionState::Failed(reason) => ("failed".to_string(), "failed".to_string(), Some(reason.clone())),
+                ConnectionState::Connecting => {
+                    ("connecting".to_string(), "connecting".to_string(), None)
+                }
+                ConnectionState::Connected(ConnectionPath::P2P) => {
+                    ("p2p".to_string(), "connected".to_string(), None)
+                }
+                ConnectionState::Connected(ConnectionPath::Relay) => {
+                    ("relay".to_string(), "connected".to_string(), None)
+                }
+                ConnectionState::Connected(ConnectionPath::Derp) => {
+                    ("derp".to_string(), "connected".to_string(), None)
+                }
+                ConnectionState::Failed(reason) => (
+                    "failed".to_string(),
+                    "failed".to_string(),
+                    Some(reason.clone()),
+                ),
             };
             let (observed_rtt_ms, packet_loss_ppm, path_score, derp_node_id) = state
                 .last_probe
@@ -483,14 +505,17 @@ where
             peer_node_id,
             plan.and_then(|plan| {
                 let value = plan.derp_cluster_id.trim();
-                if value.is_empty() { None } else { Some(value.to_string()) }
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                }
             }),
             plan.map(|plan| plan.preferred_derp_node_ids.clone())
                 .unwrap_or_default(),
             "p2p_failed".to_string(),
         )
     }
-
 }
 
 impl<C, P, R, D, M, T> AppCoreFacade for DefaultAppCoreFacade<C, P, R, D, M, T>
@@ -587,6 +612,39 @@ where
             .create_network(&access_token, CreateNetworkRequest { name, cidr })
     }
 
+    fn join_network(&self, network_id: String, device_id: String) -> Result<(), String> {
+        let access_token = self.with_access_token()?;
+        self.controller.join_network(
+            &access_token,
+            JoinNetworkRequest {
+                network_id,
+                device_id,
+            },
+        )
+    }
+
+    fn activate_network(&self, network_id: String, device_id: String) -> Result<(), String> {
+        let access_token = self.with_access_token()?;
+        self.controller.activate_network(
+            &access_token,
+            JoinNetworkRequest {
+                network_id,
+                device_id,
+            },
+        )
+    }
+
+    fn deactivate_network(&self, network_id: String, device_id: String) -> Result<(), String> {
+        let access_token = self.with_access_token()?;
+        self.controller.deactivate_network(
+            &access_token,
+            DeactivateNetworkRequest {
+                network_id,
+                device_id,
+            },
+        )
+    }
+
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String> {
         let access_token = self.with_access_token()?;
         let bootstrap = self
@@ -621,18 +679,15 @@ where
             .lock()
             .map_err(|_| "app core control ws state poisoned".to_string())?;
         let bootstrap = if let Some(client) = control_ws.as_mut() {
-            match client
-                .ping(now_ms() as i64)
-                .and_then(|_| {
-                    let snapshot = self
-                        .state
-                        .lock()
-                        .map_err(|_| "app core state poisoned".to_string())?
-                        .clone();
-                    Self::emit_control_observations(client, &snapshot, &config)?;
-                    client.request_network_map_since(&config.network_id, current_revision)
-                })
-            {
+            match client.ping(now_ms() as i64).and_then(|_| {
+                let snapshot = self
+                    .state
+                    .lock()
+                    .map_err(|_| "app core state poisoned".to_string())?
+                    .clone();
+                Self::emit_control_observations(client, &snapshot, &config)?;
+                client.request_network_map_since(&config.network_id, current_revision)
+            }) {
                 Ok(mut network_map) => {
                     let mut pending_connect_plans = {
                         let state = self
@@ -641,13 +696,26 @@ where
                             .map_err(|_| "app core state poisoned".to_string())?;
                         state.current_connect_plans.clone()
                     };
-                    for event in client.drain_pending_events(std::time::Duration::from_millis(50), 16)? {
-                        apply_control_ws_event(&mut network_map, &mut pending_connect_plans, event);
+                    let mut device_ip_updates = Vec::new();
+                    let mut active_network_enabled = None;
+                    for event in
+                        client.drain_pending_events(std::time::Duration::from_millis(200), 32)?
+                    {
+                        apply_control_ws_event(
+                            &mut network_map,
+                            &mut pending_connect_plans,
+                            &mut device_ip_updates,
+                            &mut active_network_enabled,
+                            event,
+                        );
                     }
                     ControlWsBootstrapUpdate {
+                        bootstrap_override: None,
                         network_map,
                         heartbeat_seconds: 0,
                         connect_plans: pending_connect_plans,
+                        device_ip_updates,
+                        active_network_enabled,
                     }
                 }
                 Err(_) => {
@@ -660,18 +728,27 @@ where
                         .clone();
                     Self::emit_control_observations(&mut client, &snapshot, &config)?;
                     let mut pending_connect_plans = std::collections::HashMap::new();
-                    for event in client.drain_pending_events(std::time::Duration::from_millis(50), 16)? {
+                    let mut device_ip_updates = Vec::new();
+                    let mut active_network_enabled = None;
+                    for event in
+                        client.drain_pending_events(std::time::Duration::from_millis(200), 32)?
+                    {
                         apply_control_ws_event(
                             &mut bootstrap.network_map,
                             &mut pending_connect_plans,
+                            &mut device_ip_updates,
+                            &mut active_network_enabled,
                             event,
                         );
                     }
                     *control_ws = Some(client);
                     ControlWsBootstrapUpdate {
+                        bootstrap_override: None,
                         network_map: bootstrap.network_map,
                         heartbeat_seconds: bootstrap.ack.heartbeat_seconds,
                         connect_plans: pending_connect_plans,
+                        device_ip_updates,
+                        active_network_enabled,
                     }
                 }
             }
@@ -685,37 +762,219 @@ where
                 .clone();
             Self::emit_control_observations(&mut client, &snapshot, &config)?;
             let mut pending_connect_plans = std::collections::HashMap::new();
-            for event in client.drain_pending_events(std::time::Duration::from_millis(50), 16)? {
+            let mut device_ip_updates = Vec::new();
+            let mut active_network_enabled = None;
+            for event in client.drain_pending_events(std::time::Duration::from_millis(200), 32)? {
                 apply_control_ws_event(
                     &mut bootstrap.network_map,
                     &mut pending_connect_plans,
+                    &mut device_ip_updates,
+                    &mut active_network_enabled,
                     event,
                 );
             }
             *control_ws = Some(client);
             ControlWsBootstrapUpdate {
+                bootstrap_override: None,
                 network_map: bootstrap.network_map,
                 heartbeat_seconds: bootstrap.ack.heartbeat_seconds,
                 connect_plans: pending_connect_plans,
+                device_ip_updates,
+                active_network_enabled,
             }
         };
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| "app core state poisoned".to_string())?;
-        let updated_bootstrap = {
+        let bootstrap = if let Some(enabled) = bootstrap.active_network_enabled.as_ref() {
+            let current_network_id = {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| "app core state poisoned".to_string())?;
+                state.current_network_id.clone()
+            };
+            if current_network_id.as_deref() != Some(enabled.network_id.as_str()) {
+                let access_token = self.with_access_token()?;
+                let device_id = {
+                    let state = self
+                        .state
+                        .lock()
+                        .map_err(|_| "app core state poisoned".to_string())?;
+                    state
+                        .current_device
+                        .as_ref()
+                        .map(|device| device.device_id.clone())
+                        .ok_or_else(|| "missing current device, register device first".to_string())?
+                };
+                self.controller.activate_network(
+                    &access_token,
+                    JoinNetworkRequest {
+                        network_id: enabled.network_id.clone(),
+                        device_id,
+                    },
+                )?;
+                let refreshed = self.controller.bootstrap(
+                    &access_token,
+                    &config.node_id,
+                    &enabled.network_id,
+                )?;
+                ControlWsBootstrapUpdate {
+                    bootstrap_override: Some(refreshed.clone()),
+                    network_map: refreshed
+                        .network_map
+                        .clone()
+                        .ok_or_else(|| "missing network map after active network enable".to_string())?,
+                    heartbeat_seconds: refreshed.control_plane.heartbeat_seconds,
+                    connect_plans: std::collections::HashMap::new(),
+                    device_ip_updates: vec![],
+                    active_network_enabled: Some(enabled.clone()),
+                }
+            } else {
+                bootstrap
+            }
+        } else {
+            bootstrap
+        };
+        let (updated_bootstrap, tunnel_reapply) = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| "app core state poisoned".to_string())?;
+            let active_path = state.active_path.clone();
+            let current_device_id = state
+                .current_device
+                .as_ref()
+                .map(|device| device.device_id.clone());
             let current_bootstrap = state
                 .current_bootstrap
                 .as_mut()
                 .ok_or_else(|| "missing bootstrap config, call bootstrap first".to_string())?;
+            if let Some(override_bootstrap) = bootstrap.bootstrap_override.clone() {
+                *current_bootstrap = override_bootstrap;
+            }
+            let override_device = current_bootstrap.device.clone();
+            let previous_network_map = current_bootstrap.network_map.clone();
             if bootstrap.heartbeat_seconds > 0 {
                 current_bootstrap.control_plane.heartbeat_seconds = bootstrap.heartbeat_seconds;
             }
             current_bootstrap.network_map = Some(bootstrap.network_map.clone());
-            current_bootstrap.clone()
+            let mut should_reapply_tunnel = false;
+            let mut updated_current_device_virtual_ip: Option<String> = None;
+            for update in &bootstrap.device_ip_updates {
+                if update.network_id != bootstrap.network_map.network_id {
+                    continue;
+                }
+                if current_bootstrap.device.device_id == update.device_id {
+                    current_bootstrap.device.virtual_ip = Some(update.virtual_ip.clone());
+                    should_reapply_tunnel = true;
+                }
+                if current_device_id.as_deref() == Some(update.device_id.as_str()) {
+                    updated_current_device_virtual_ip = Some(update.virtual_ip.clone());
+                }
+            }
+            let updated_bootstrap = current_bootstrap.clone();
+            let tunnel_reapply = match active_path.clone() {
+                Some(ActivePath::P2P { ref peer_node_id })
+                | Some(ActivePath::Relay { ref peer_node_id }) => {
+                    let peer_update = bootstrap
+                        .device_ip_updates
+                        .iter()
+                        .find(|update| {
+                            updated_bootstrap
+                                .network_map
+                                .as_ref()
+                                .and_then(|network_map| {
+                                    network_map
+                                        .peers
+                                        .iter()
+                                        .find(|peer| peer.node_id == *peer_node_id)
+                                        .map(|peer| peer.device_id.as_str())
+                                })
+                                .or_else(|| {
+                                    previous_network_map.as_ref().and_then(|network_map| {
+                                        network_map
+                                            .peers
+                                            .iter()
+                                            .find(|peer| peer.node_id == *peer_node_id)
+                                            .map(|peer| peer.device_id.as_str())
+                                    })
+                                })
+                                == Some(update.device_id.as_str())
+                        })
+                        .cloned();
+                    let peer = updated_bootstrap
+                        .network_map
+                        .as_ref()
+                        .and_then(|network_map| {
+                            network_map
+                                .peers
+                                .iter()
+                                .find(|peer| peer.node_id == *peer_node_id)
+                                .cloned()
+                        })
+                        .or_else(|| {
+                            previous_network_map.as_ref().and_then(|network_map| {
+                                network_map
+                                    .peers
+                                    .iter()
+                                    .find(|peer| peer.node_id == *peer_node_id)
+                                    .cloned()
+                            })
+                        })
+                        .map(|mut peer| {
+                            if let Some(update) = peer_update.as_ref() {
+                                peer.virtual_ips = vec![update.virtual_ip.clone()];
+                            }
+                            peer
+                        });
+                    if let Some(peer) = peer {
+                        if peer_update.is_some()
+                            || bootstrap
+                                .device_ip_updates
+                                .iter()
+                                .any(|update| update.device_id == peer.device_id)
+                        {
+                            should_reapply_tunnel = true;
+                        }
+                        if should_reapply_tunnel {
+                            Some((
+                                active_path.clone().unwrap_or(ActivePath::None),
+                                updated_bootstrap.clone(),
+                                peer,
+                            ))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(virtual_ip) = updated_current_device_virtual_ip {
+                if let Some(device) = state.current_device.as_mut() {
+                    device.virtual_ip = Some(virtual_ip);
+                }
+            } else if bootstrap.bootstrap_override.is_some() {
+                state.current_device = Some(override_device);
+            }
+            state.current_network_id = Some(bootstrap.network_map.network_id.clone());
+            state.current_connect_plans = bootstrap.connect_plans.clone();
+            (updated_bootstrap, tunnel_reapply)
         };
-        state.current_network_id = Some(bootstrap.network_map.network_id.clone());
-        state.current_connect_plans = bootstrap.connect_plans.clone();
+        if let Some((active_path, bootstrap, peer)) = tunnel_reapply {
+            if let Some(config) = self.build_tunnel_config(&active_path, &bootstrap, &peer)? {
+                replace_tunnel(
+                    &self.current_tunnel_peer_virtual_ip,
+                    &self.tunnel_manager,
+                    Some(config.clone()),
+                )?;
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| "app core state poisoned".to_string())?;
+                state.tunnel_peer_virtual_ip = Some(config.peer_virtual_ip.clone());
+                state.tunnel_runtime = Some(build_tunnel_runtime(&config));
+            }
+        }
         Ok(updated_bootstrap)
     }
 
@@ -762,7 +1021,10 @@ where
                     Some(plan.derp_cluster_id.clone())
                 },
                 preferred_derp_node_ids: plan.preferred_derp_node_ids.clone(),
-                relay_ticket_id: plan.relay_ticket.as_ref().map(|ticket| ticket.ticket_id.clone()),
+                relay_ticket_id: plan
+                    .relay_ticket
+                    .as_ref()
+                    .map(|ticket| ticket.ticket_id.clone()),
             })
             .collect::<Vec<_>>();
         connect_plans.sort_by(|left, right| left.peer_node_id.cmp(&right.peer_node_id));
@@ -868,11 +1130,11 @@ where
                     peer.node_id.clone(),
                     connect_plan.as_ref(),
                 )?;
-                let relay_state = self
-                    .relay
-                    .connect(&ticket)
-                    .map_err(|err| err.to_string())?;
-                if matches!(relay_state, ConnectionState::Connected(ConnectionPath::Relay)) {
+                let relay_state = self.relay.connect(&ticket).map_err(|err| err.to_string())?;
+                if matches!(
+                    relay_state,
+                    ConnectionState::Connected(ConnectionPath::Relay)
+                ) {
                     self.path_manager
                         .on_p2p_failed(&peer.node_id, "relay_fallback")
                         .map_err(|err| err.to_string())?;
@@ -880,13 +1142,15 @@ where
                 relay_state
             }
         };
-        if matches!(fallback_state, ConnectionState::Connected(ConnectionPath::Derp)) {
+        if matches!(
+            fallback_state,
+            ConnectionState::Connected(ConnectionPath::Derp)
+        ) {
             self.path_manager
                 .on_p2p_failed(&peer.node_id, "derp_fallback")
                 .map_err(|err| err.to_string())?;
         }
-        let managed_state =
-            connection_state_from_active_path(self.path_manager.current_path());
+        let managed_state = connection_state_from_active_path(self.path_manager.current_path());
         if matches!(managed_state, ConnectionState::Connected(_)) {
             let active_path = self.path_manager.current_path();
             let tunnel_config = self.build_tunnel_config(&active_path, &bootstrap, &peer)?;
@@ -937,9 +1201,15 @@ where
         let tunnel_peer_virtual_ip = self
             .current_tunnel_peer_virtual_ip
             .lock()
-            .map_err(|_| DataPlaneError::new(DataPlaneErrorCode::Unknown, "app core tunnel state poisoned"))?
+            .map_err(|_| {
+                DataPlaneError::new(
+                    DataPlaneErrorCode::Unknown,
+                    "app core tunnel state poisoned",
+                )
+            })?
             .clone();
-        let (reply_observed, reply_bytes_received, reply_sampled_at_ms, reply_rtt_ms) = match reply {
+        let (reply_observed, reply_bytes_received, reply_sampled_at_ms, reply_rtt_ms) = match reply
+        {
             Some((reply_len, reply_sampled_at_ms)) => (
                 true,
                 Some(reply_len),
@@ -990,14 +1260,19 @@ where
 }
 
 struct ControlWsBootstrapUpdate {
+    bootstrap_override: Option<BootstrapConfig>,
     network_map: slan_app_core::NetworkMap,
     heartbeat_seconds: u32,
     connect_plans: std::collections::HashMap<String, ControlWsConnectPlan>,
+    device_ip_updates: Vec<ControlWsDeviceIPReassigned>,
+    active_network_enabled: Option<ControlWsActiveNetworkEnabled>,
 }
 
 fn apply_control_ws_event(
     network_map: &mut slan_app_core::NetworkMap,
     connect_plans: &mut std::collections::HashMap<String, ControlWsConnectPlan>,
+    device_ip_updates: &mut Vec<ControlWsDeviceIPReassigned>,
+    active_network_enabled: &mut Option<ControlWsActiveNetworkEnabled>,
     event: ControlWsEvent,
 ) {
     match event {
@@ -1022,6 +1297,22 @@ fn apply_control_ws_event(
         }
         ControlWsEvent::ConnectPlan(plan) => {
             connect_plans.insert(plan.peer_node_id.clone(), plan);
+        }
+        ControlWsEvent::NetworkRestartRequired(_restart) => {}
+        ControlWsEvent::DeviceIPReassigned(update) => {
+            if update.network_id == network_map.network_id {
+                for peer in network_map
+                    .peers
+                    .iter_mut()
+                    .filter(|peer| peer.device_id == update.device_id)
+                {
+                    peer.virtual_ips = vec![update.virtual_ip.clone()];
+                }
+            }
+            device_ip_updates.push(update);
+        }
+        ControlWsEvent::ActiveNetworkEnabled(enabled) => {
+            *active_network_enabled = Some(enabled);
         }
     }
 }

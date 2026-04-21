@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/slan/server/server-biz/api/dto"
+	"gorm.io/gorm/clause"
 )
 
 // Device 是业务设备的持久化模型。
@@ -11,7 +12,7 @@ type Device struct {
 	// DeviceID 是设备唯一标识。
 	DeviceID string `gorm:"column:device_id;primaryKey"`
 	// UserID 是设备所属用户。
-	UserID string `gorm:"column:user_id;index;not null"`
+	UserID string `gorm:"column:user_id;index;not null;uniqueIndex:idx_user_machine"`
 	// MachineID 是设备安装实例的机器标识。
 	MachineID string `gorm:"column:machine_id;not null;uniqueIndex:idx_user_machine"`
 	// Name 是设备展示名称。
@@ -22,6 +23,8 @@ type Device struct {
 	Status string `gorm:"column:status;not null"`
 	// PublicKey 是设备隧道公钥。
 	PublicKey *string `gorm:"column:public_key"`
+	// CreatedAt 是设备创建时间。
+	CreatedAt int64 `gorm:"column:created_at;not null;default:0"`
 }
 
 func (Device) TableName() string { return "devices" }
@@ -35,7 +38,9 @@ func (m Device) ToDTO(networkIDs []string) dto.Device {
 		DeviceID:   m.DeviceID,
 		Name:       m.Name,
 		Platform:   m.Platform,
+		MachineID:  m.MachineID,
 		Status:     m.Status,
+		CreatedAt:  m.CreatedAt,
 		PublicKey:  publicKey,
 		NetworkIDs: networkIDs,
 	}
@@ -51,6 +56,26 @@ func (r *PostgresRepository) GetDeviceByUserMachine(ctx context.Context, userID,
 
 func (r *PostgresRepository) InsertDevice(ctx context.Context, record Device) error {
 	return r.db.WithContext(ctx).Create(&record).Error
+}
+
+func (r *PostgresRepository) UpsertDeviceByUserMachine(ctx context.Context, record Device) (Device, error) {
+	if err := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "user_id"},
+				{Name: "machine_id"},
+			},
+			DoUpdates: clause.Assignments(map[string]any{
+				"name":       record.Name,
+				"platform":   record.Platform,
+				"status":     record.Status,
+				"public_key": record.PublicKey,
+			}),
+		}).
+		Create(&record).Error; err != nil {
+		return Device{}, err
+	}
+	return r.GetDeviceByUserMachine(ctx, record.UserID, record.MachineID)
 }
 
 func (r *PostgresRepository) UpdateDevice(ctx context.Context, record Device) error {

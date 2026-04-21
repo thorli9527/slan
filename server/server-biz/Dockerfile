@@ -23,6 +23,6 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /out/app /app/${APP_TARGET}
 
-EXPOSE 8080 18080
+EXPOSE 8080 8081
 
-ENTRYPOINT ["/bin/sh", "-lc", "exec /app/${APP_TARGET} \"$@\"", "--"]
+ENTRYPOINT ["/app/biz-server"]

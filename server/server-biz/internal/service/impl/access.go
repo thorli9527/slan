@@ -63,6 +63,70 @@ func (s dbAuthService) Login(req dto.LoginRequest) (dto.AuthResponse, error) {
 	return s.state.issueAuthResponse(ctx, user.UserID)
 }
 
+func (s dbAuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error) {
+	callbackID = strings.TrimSpace(callbackID)
+	if callbackID == "" {
+		return dto.AuthCallbackStatusResponse{}, ErrInvalidArgument
+	}
+	var payload dto.CompleteAuthCallbackRequest
+	ready, err := s.state.tokens.LoadAuthCallbackPayload(context.Background(), callbackID, &payload)
+	if err != nil {
+		return dto.AuthCallbackStatusResponse{}, err
+	}
+	receivedAt, err := s.state.tokens.AuthCallbackReceivedAt(context.Background(), callbackID)
+	if err != nil {
+		return dto.AuthCallbackStatusResponse{}, err
+	}
+	var responsePayload *dto.CompleteAuthCallbackRequest
+	if ready {
+		responsePayload = &payload
+	}
+	return dto.AuthCallbackStatusResponse{
+		CallbackID: callbackID,
+		Ready:      ready,
+		Received:   receivedAt > 0,
+		ReceivedAt: receivedAt,
+		Payload:    responsePayload,
+	}, nil
+}
+
+func (s dbAuthService) CompleteCallback(callbackID string, req dto.CompleteAuthCallbackRequest) error {
+	callbackID = strings.TrimSpace(callbackID)
+	if callbackID == "" {
+		return ErrInvalidArgument
+	}
+	req.AccessToken = strings.TrimSpace(req.AccessToken)
+	req.UserID = strings.TrimSpace(req.UserID)
+	req.DeviceID = strings.TrimSpace(req.DeviceID)
+	req.UserLabel = strings.TrimSpace(req.UserLabel)
+	req.Action = strings.TrimSpace(req.Action)
+	if req.AccessToken == "" || req.UserID == "" {
+		return ErrInvalidArgument
+	}
+	if req.ExpiresIn <= 0 {
+		req.ExpiresIn = 3600
+	}
+	return s.state.tokens.StoreAuthCallbackPayload(
+		context.Background(),
+		callbackID,
+		req,
+		10*time.Minute,
+	)
+}
+
+func (s dbAuthService) MarkCallbackReceived(callbackID string) error {
+	callbackID = strings.TrimSpace(callbackID)
+	if callbackID == "" {
+		return ErrInvalidArgument
+	}
+	return s.state.tokens.MarkAuthCallbackReceived(
+		context.Background(),
+		callbackID,
+		time.Now().UnixMilli(),
+		10*time.Minute,
+	)
+}
+
 func (s *dbState) issueAuthResponse(ctx context.Context, userID string) (dto.AuthResponse, error) {
 	accessToken := util.OpaqueToken("access", userID)
 	refreshToken := util.OpaqueToken("refresh", userID)

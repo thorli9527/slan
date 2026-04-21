@@ -1,0 +1,18 @@
+{
+	auto_https disable_redirects
+}
+
+slan.localhost {
+	tls internal
+	reverse_proxy server-biz:8080
+}
+
+ops.slan.localhost {
+	tls internal
+	reverse_proxy server-biz:8081
+}
+
+web.slan.localhost {
+	tls internal
+	reverse_proxy server-ui-web:80
+}

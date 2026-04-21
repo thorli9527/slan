@@ -18,7 +18,7 @@ func fanoutPeerUpdate(deps routerDeps, session wsSession) {
 		}
 	}
 	wsPeer := dtoPeerToWSPeer(peer)
-	broadcastPeerUpdateToSessions(session.networkID, session.nodeID, revision, wsPeer)
+	broadcastPeerUpdateToSessions(deps, session.networkID, session.nodeID, revision, wsPeer)
 	metricAdd("peer_update_broadcast_total", 1)
 	if deps.ControlSync != nil {
 		_ = deps.ControlSync.Publish(controlws.ControlSyncEvent{
@@ -40,7 +40,7 @@ func fanoutPeerRemove(deps routerDeps, networkID, sourceNodeID string) {
 			revision = next
 		}
 	}
-	broadcastPeerRemoveToSessions(networkID, sourceNodeID, revision)
+	broadcastPeerRemoveToSessions(deps, networkID, sourceNodeID, revision)
 	metricAdd("peer_remove_broadcast_total", 1)
 	if deps.ControlSync != nil {
 		_ = deps.ControlSync.Publish(controlws.ControlSyncEvent{
@@ -59,12 +59,12 @@ func fanoutConnectPlans(deps routerDeps, session wsSession) {
 	for _, peerSession := range defaultControlWSHub.peersInNetwork(session.networkID, session.nodeID) {
 		planForSource, err := deps.ControlChannel.ConnectPlan(session.userID, session.nodeID, session.networkID, peerSession.nodeID)
 		if err == nil {
-			sendConnectPlanToNode(session.networkID, session.nodeID, session.nodeID, planForSource)
+			sendConnectPlanToNode(deps, session.networkID, session.nodeID, session.nodeID, planForSource)
 			publishConnectPlan(deps, session.networkID, session.nodeID, session.nodeID, planForSource)
 		}
 		planForPeer, err := deps.ControlChannel.ConnectPlan(peerSession.userID, peerSession.nodeID, peerSession.networkID, session.nodeID)
 		if err == nil {
-			sendConnectPlanToNode(peerSession.networkID, peerSession.nodeID, peerSession.nodeID, planForPeer)
+			sendConnectPlanToNode(deps, peerSession.networkID, peerSession.nodeID, peerSession.nodeID, planForPeer)
 			publishConnectPlan(deps, peerSession.networkID, peerSession.nodeID, peerSession.nodeID, planForPeer)
 		}
 	}
@@ -77,12 +77,12 @@ func fanoutConnectPlanPair(deps routerDeps, session wsSession, peerNodeID string
 
 	planForSource, err := deps.ControlChannel.ConnectPlan(session.userID, session.nodeID, session.networkID, peerNodeID)
 	if err == nil {
-		sendConnectPlanToNode(session.networkID, session.nodeID, session.nodeID, planForSource)
+		sendConnectPlanToNode(deps, session.networkID, session.nodeID, session.nodeID, planForSource)
 	}
 
 	planForPeer, err := deps.ControlChannel.ConnectPlanByNode(peerNodeID, session.networkID, session.nodeID)
 	if err == nil {
-		sendConnectPlanToNode(session.networkID, peerNodeID, peerNodeID, planForPeer)
+		sendConnectPlanToNode(deps, session.networkID, peerNodeID, peerNodeID, planForPeer)
 		publishConnectPlan(deps, session.networkID, peerNodeID, peerNodeID, planForPeer)
 	}
 }
@@ -104,7 +104,7 @@ func publishConnectPlan(deps routerDeps, networkID, sourceNodeID, targetNodeID s
 	metricAdd("sync_event_published_total", 1)
 }
 
-func sendPeerCandidateToNode(targetNodeID string, candidate controlws.PeerCandidate) {
+func sendPeerCandidateToNode(deps routerDeps, targetNodeID string, candidate controlws.PeerCandidate) {
 	if targetNodeID == "" {
 		return
 	}
@@ -112,10 +112,10 @@ func sendPeerCandidateToNode(targetNodeID string, candidate controlws.PeerCandid
 	if session == nil {
 		return
 	}
-	_ = session.send("peer_candidate", "", candidate)
+	_ = session.sendTracked("peer_candidate", "", candidate, &deps)
 }
 
-func sendConnectPlanToNode(networkID, sourceNodeID, targetNodeID string, plan controlws.ConnectPlan) {
+func sendConnectPlanToNode(deps routerDeps, networkID, sourceNodeID, targetNodeID string, plan controlws.ConnectPlan) {
 	if targetNodeID == "" {
 		return
 	}
@@ -124,29 +124,50 @@ func sendConnectPlanToNode(networkID, sourceNodeID, targetNodeID string, plan co
 		return
 	}
 	metricRecordConnectPlan(networkID, sourceNodeID, targetNodeID, plan)
-	_ = session.send("connect_plan", "", plan)
+	_ = session.sendTracked("connect_plan", "", plan, &deps)
 }
 
-func broadcastPeerUpdateToSessions(networkID, sourceNodeID string, revision uint64, peer controlws.Peer) {
+func broadcastPeerUpdateToSessions(deps routerDeps, networkID, sourceNodeID string, revision uint64, peer controlws.Peer) {
 	for _, peerSession := range defaultControlWSHub.peersInNetwork(networkID, sourceNodeID) {
-		_ = peerSession.send("peer_update", "", controlws.PeerUpdate{
+		_ = peerSession.sendTracked("peer_update", "", controlws.PeerUpdate{
 			NetworkID: networkID,
 			Revision:  revision,
 			Peer:      peer,
-		})
+		}, &deps)
 	}
 }
 
-func broadcastPeerRemoveToSessions(networkID, sourceNodeID string, revision uint64) {
+func broadcastPeerRemoveToSessions(deps routerDeps, networkID, sourceNodeID string, revision uint64) {
 	if sourceNodeID == "" || networkID == "" {
 		return
 	}
 	for _, peerSession := range defaultControlWSHub.peersInNetwork(networkID, sourceNodeID) {
-		_ = peerSession.send("peer_remove", "", controlws.PeerRemove{
+		_ = peerSession.sendTracked("peer_remove", "", controlws.PeerRemove{
 			NetworkID:  networkID,
 			Revision:   revision,
 			PeerNodeID: sourceNodeID,
-		})
+		}, &deps)
+	}
+}
+
+func broadcastNetworkRestartRequired(deps routerDeps, networkID string, restart controlws.NetworkRestartRequired) {
+	for _, peerSession := range defaultControlWSHub.peersInNetwork(networkID, "") {
+		_ = peerSession.sendTracked("network_restart_required", "", restart, &deps)
+	}
+}
+
+func broadcastDeviceIPReassigned(deps routerDeps, networkID string, deviceIP controlws.DeviceIPReassigned) {
+	for _, peerSession := range defaultControlWSHub.peersInNetwork(networkID, "") {
+		_ = peerSession.sendTracked("device_ip_reassigned", "", deviceIP, &deps)
+	}
+}
+
+func broadcastActiveNetworkEnabled(deps routerDeps, userID string, enabled controlws.ActiveNetworkEnabled) {
+	if userID == "" {
+		return
+	}
+	for _, session := range defaultControlWSHub.sessionsByUser(userID) {
+		_ = session.sendTracked("active_network_enabled", "", enabled, &deps)
 	}
 }
 

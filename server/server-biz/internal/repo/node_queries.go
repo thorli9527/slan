@@ -60,6 +60,20 @@ func (r *PostgresRepository) GetNodeConnectionState(ctx context.Context, network
 	return record, err
 }
 
+// GetLatestDeviceConnectionState returns the newest connection-state row across
+// every node owned by one device inside a network.
+func (r *PostgresRepository) GetLatestDeviceConnectionState(ctx context.Context, networkID, deviceID string) (NodeConnectionState, error) {
+	var record NodeConnectionState
+	err := r.db.WithContext(ctx).
+		Table("node_connection_states").
+		Select("node_connection_states.*").
+		Joins("join nodes on nodes.node_id = node_connection_states.node_id").
+		Where("node_connection_states.network_id = ? AND nodes.device_id = ?", networkID, deviceID).
+		Order("node_connection_states.updated_at desc, node_connection_states.state_id").
+		First(&record).Error
+	return record, err
+}
+
 // ListNodePathHealth returns recent path-health samples for a node pair ordered
 // from newest to oldest.
 func (r *PostgresRepository) ListNodePathHealth(ctx context.Context, networkID, nodeID, peerNodeID string) ([]NodePathHealth, error) {

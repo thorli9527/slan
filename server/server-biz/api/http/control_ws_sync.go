@@ -7,6 +7,9 @@ import (
 )
 
 func registerControlWS(router *gin.Engine, path string, deps routerDeps) {
+	controlWSDeliveryRetryOnce.Do(func() {
+		startControlWSDeliveryRetryLoop(deps)
+	})
 	controlWSSyncOnce.Do(func() {
 		if deps.ControlSync != nil {
 			_ = deps.ControlSync.Subscribe(func(event controlws.ControlSyncEvent) {
@@ -17,17 +20,29 @@ func registerControlWS(router *gin.Engine, path string, deps routerDeps) {
 				switch event.Type {
 				case "peer_update":
 					if event.Peer != nil {
-						broadcastPeerUpdateToSessions(event.NetworkID, event.SourceNodeID, event.Revision, *event.Peer)
+						broadcastPeerUpdateToSessions(deps, event.NetworkID, event.SourceNodeID, event.Revision, *event.Peer)
 					}
 				case "peer_remove":
-					broadcastPeerRemoveToSessions(event.NetworkID, event.SourceNodeID, event.Revision)
+					broadcastPeerRemoveToSessions(deps, event.NetworkID, event.SourceNodeID, event.Revision)
 				case "peer_candidate":
 					if event.Candidate != nil {
-						sendPeerCandidateToNode(event.TargetNodeID, *event.Candidate)
+						sendPeerCandidateToNode(deps, event.TargetNodeID, *event.Candidate)
 					}
 				case "connect_plan":
 					if event.Plan != nil {
-						sendConnectPlanToNode(event.NetworkID, event.SourceNodeID, event.TargetNodeID, *event.Plan)
+						sendConnectPlanToNode(deps, event.NetworkID, event.SourceNodeID, event.TargetNodeID, *event.Plan)
+					}
+				case "network_restart_required":
+					if event.Restart != nil {
+						broadcastNetworkRestartRequired(deps, event.NetworkID, *event.Restart)
+					}
+				case "device_ip_reassigned":
+					if event.DeviceIP != nil {
+						broadcastDeviceIPReassigned(deps, event.NetworkID, *event.DeviceIP)
+					}
+				case "active_network_enabled":
+					if event.ActiveNetwork != nil {
+						broadcastActiveNetworkEnabled(deps, event.TargetUserID, *event.ActiveNetwork)
 					}
 				}
 			})

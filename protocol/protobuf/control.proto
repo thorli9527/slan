@@ -11,6 +11,7 @@ option go_package = "github.com/slan/server/server-biz/api/proto/control;control
 message Envelope {
   string type = 1;
   string request_id = 2;
+  string message_id = 3;
   oneof payload {
     NodeHello node_hello = 10;
     NodeHelloAck node_hello_ack = 11;
@@ -27,6 +28,9 @@ message Envelope {
     ConnectionState connection_state = 22;
     DisconnectNotice disconnect_notice = 23;
     ErrorMessage error = 24;
+    PathHealthReport path_health_report = 25;
+    NetworkRestartRequired network_restart_required = 26;
+    ActiveNetworkEnabled active_network_enabled = 27;
   }
 }
 
@@ -160,8 +164,16 @@ message EndpointReport {
 message PeerCandidate {
   string peer_node_id = 1;
   string candidate_type = 2;
-  string endpoint = 3;
-  int32 priority = 4;
+  string foundation = 3;
+  int32 component = 4;
+  string protocol = 5;
+  string address = 6;
+  int32 port = 7;
+  string related_address = 8;
+  int32 related_port = 9;
+  string relay_url = 10;
+  string endpoint = 11;
+  int32 priority = 12;
 }
 
 // 控制面给出的连接计划。
@@ -173,6 +185,8 @@ message ConnectPlan {
   bool prefer_direct = 2;
   repeated PathOption paths = 3;
   RelayTicket relay_ticket = 4;
+  string derp_cluster_id = 5;
+  repeated string preferred_derp_node_ids = 6;
 }
 
 // 单条连接路径选项。
@@ -191,10 +205,14 @@ message RelayTicket {
   string session_id = 3;
   string src_node_id = 4;
   string dst_node_id = 5;
-  string relay_url = 6;
-  string expires_at = 7;
-  string session_key = 8;
-  string signature = 9;
+  string derp_cluster_id = 6;
+  string country_code = 7;
+  string city_code = 8;
+  repeated string allowed_derp_node_ids = 9;
+  string relay_url = 10;
+  string expires_at = 11;
+  string session_key = 12;
+  string signature = 13;
 }
 
 // 节点上报的连接状态。
@@ -204,12 +222,44 @@ message ConnectionState {
   string path = 3;   // p2p / relay
   string state = 4;  // connecting / connected / failed / closed
   string reason = 5;
+  uint32 observed_rtt_ms = 6;
+  uint32 packet_loss_ppm = 7;
+  uint32 path_score = 8;
+  string derp_node_id = 9;
+}
+
+// 节点上报的路径健康采样。
+message PathHealthReport {
+  string network_id = 1;
+  string peer_node_id = 2;
+  string path_type = 3;
+  string endpoint = 4;
+  string derp_node_id = 5;
+  uint32 observed_rtt_ms = 6;
+  uint32 packet_loss_ppm = 7;
+  uint32 path_score = 8;
+  uint64 sampled_at_ms = 9;
 }
 
 // 节点断开通知。
 message DisconnectNotice {
   string network_id = 1;
   string peer_node_id = 2;
+  string reason = 3;
+}
+
+// 网络配置变化后要求客户端重载隧道。
+message NetworkRestartRequired {
+  string network_id = 1;
+  uint64 revision = 2;
+  string reason = 3;
+  string default_subnet_cidr = 4;
+}
+
+// 当前用户的活动网络已切换到指定网络。
+message ActiveNetworkEnabled {
+  string user_id = 1;
+  string network_id = 2;
   string reason = 3;
 }
 

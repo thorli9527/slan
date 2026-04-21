@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
+	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
 func (s *dbState) allocateIP(ctx context.Context, subnet dto.Subnet) (string, error) {
@@ -37,6 +39,125 @@ func (s *dbState) allocateIP(ctx context.Context, subnet dto.Subnet) (string, er
 	return "", fmt.Errorf("%w: subnet is exhausted", ErrConflict)
 }
 
+func (s *dbState) preferredOwnerIP(ctx context.Context, subnet dto.Subnet) (string, bool, error) {
+	attachments, err := s.pg.ListAttachmentsBySubnet(ctx, subnet.SubnetID)
+	if err != nil {
+		return "", false, err
+	}
+	prefix, start, end, err := subnetRange(subnet.CIDR, subnet.GatewayIP, subnet.AllocationStartIP, subnet.AllocationEndIP)
+	if err != nil {
+		return "", false, err
+	}
+	candidate := networkBase(prefix) + 2
+	if candidate < start || candidate > end || !prefix.Contains(uint32ToAddr(candidate)) {
+		return "", false, nil
+	}
+	ip := uint32ToAddr(candidate).String()
+	for _, attachment := range attachments {
+		if attachment.VirtualIP == ip {
+			return "", false, nil
+		}
+	}
+	return ip, true, nil
+}
+
+func (s *dbState) reassignDefaultSubnetLeasePool(ctx context.Context, networkID string, subnet dto.Subnet) error {
+	attachments, err := s.pg.ListAttachmentsBySubnet(ctx, subnet.SubnetID)
+	if err != nil {
+		return err
+	}
+	prefix, start, end, err := subnetRange(subnet.CIDR, subnet.GatewayIP, subnet.AllocationStartIP, subnet.AllocationEndIP)
+	if err != nil {
+		return err
+	}
+	if len(attachments) > int(end-start+1) {
+		return fmt.Errorf("%w: subnet is too small for current members", ErrConflict)
+	}
+
+	sort.Slice(attachments, func(i, j int) bool {
+		leftOwner := false
+		if member, err := s.pg.GetMemberByNetworkDevice(ctx, attachments[i].NetworkID, attachments[i].DeviceID); err == nil {
+			leftOwner = member.Role == "owner"
+		}
+		rightOwner := false
+		if member, err := s.pg.GetMemberByNetworkDevice(ctx, attachments[j].NetworkID, attachments[j].DeviceID); err == nil {
+			rightOwner = member.Role == "owner"
+		}
+		if leftOwner != rightOwner {
+			return leftOwner
+		}
+		return attachments[i].AttachmentID < attachments[j].AttachmentID
+	})
+	for index, attachment := range attachments {
+		candidate := start + uint32(index)
+		if candidate > end || !prefix.Contains(uint32ToAddr(candidate)) {
+			return fmt.Errorf("%w: subnet is exhausted", ErrConflict)
+		}
+		if err := s.pg.UpdateAttachmentVirtualIP(ctx, attachment.AttachmentID, uint32ToAddr(candidate).String()); err != nil {
+			return err
+		}
+	}
+	return s.pg.UpdateSubnetRange(ctx, subnet)
+}
+
+func (s *dbState) publishNetworkRestartRequired(networkID, cidr string) {
+	if strings.TrimSpace(networkID) == "" || s.tokens == nil {
+		return
+	}
+
+	ctx := context.Background()
+	revision, err := s.tokens.NextNetworkRevision(ctx, networkID)
+	if err != nil || revision == 0 {
+		revision = 1
+	}
+	_ = s.tokens.PublishControlSyncEvent(ctx, controlws.ControlSyncEvent{
+		Type:      "network_restart_required",
+		NetworkID: networkID,
+		Revision:  revision,
+		Restart: &controlws.NetworkRestartRequired{
+			NetworkID:         networkID,
+			Revision:          revision,
+			Reason:            "network configuration changed, tunnel restart required",
+			DefaultSubnetCIDR: cidr,
+		},
+	})
+}
+
+func (s *dbState) publishDeviceIPReassigned(networkID, deviceID, attachmentID, virtualIP string) {
+	if strings.TrimSpace(networkID) == "" || strings.TrimSpace(deviceID) == "" || s.tokens == nil {
+		return
+	}
+
+	_ = s.tokens.PublishControlSyncEvent(context.Background(), controlws.ControlSyncEvent{
+		Type:      "device_ip_reassigned",
+		NetworkID: networkID,
+		DeviceIP: &controlws.DeviceIPReassigned{
+			NetworkID:    networkID,
+			DeviceID:     deviceID,
+			AttachmentID: attachmentID,
+			VirtualIP:    virtualIP,
+			Reason:       "attachment virtual ip updated",
+		},
+	})
+}
+
+func (s *dbState) publishActiveNetworkEnabled(userID, networkID, reason string) {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(networkID) == "" || s.tokens == nil {
+		return
+	}
+
+	_ = s.tokens.PublishControlSyncEvent(context.Background(), controlws.ControlSyncEvent{
+		Type:         "active_network_enabled",
+		NetworkID:    networkID,
+		TargetUserID: userID,
+		ActiveNetwork: &controlws.ActiveNetworkEnabled{
+			UserID:    userID,
+			NetworkID: networkID,
+			Reason:    reason,
+		},
+	})
+}
+
 func (s *dbState) controlPlaneConfig() dto.ControlPlaneConfig {
 	return dto.ControlPlaneConfig{
 		WSURL:            s.wsURL(),
@@ -56,7 +177,7 @@ func (s *dbState) buildNetworkMap(ctx context.Context, userID string, self dto.N
 		Peers:            s.buildNetworkMapPeers(ctx, self, networkID),
 		Routes:           s.routesForNetwork(ctx, networkID),
 		RelayRegions:     s.relayRegions(),
-		DNS:              buildNetworkMapDNS(),
+		DNS:              s.buildNetworkMapDNS(ctx, networkID),
 		MTU:              defaultTunnelMTU,
 	}
 }
@@ -139,18 +260,18 @@ func (s *dbState) routesForNetwork(ctx context.Context, networkID string) []dto.
 }
 
 func (s *dbState) wsURL() string {
-	host := s.cfg.HTTP.Address
-	if strings.HasPrefix(host, ":") {
-		host = "localhost" + host
+	scheme := strings.ToLower(strings.TrimSpace(s.cfg.HTTP.PublicScheme))
+	if scheme == "https" {
+		return "wss://" + s.cfg.HTTP.PublicHost + s.cfg.WS.Path
 	}
-	if !strings.Contains(host, ":") {
-		host += ":80"
-	}
-	return "ws://" + host + s.cfg.WS.Path
+	return "ws://" + s.cfg.HTTP.PublicHost + s.cfg.WS.Path
 }
 
 func (s *dbState) currentNetworkRevision(ctx context.Context, networkID string) uint64 {
 	revision := uint64(1)
+	if s.tokens == nil {
+		return revision
+	}
 	if current, err := s.tokens.CurrentNetworkRevision(ctx, networkID); err == nil && current > 0 {
 		revision = current
 	}
@@ -200,11 +321,22 @@ func (s *dbState) networkPeerDTO(ctx context.Context, self dto.Node, networkID s
 	}, true
 }
 
-func buildNetworkMapDNS() dto.DNSConfig {
-	return dto.DNSConfig{
-		Servers:       []string{},
-		SearchDomains: []string{},
+func (s *dbState) buildNetworkMapDNS(ctx context.Context, networkID string) dto.DNSConfig {
+	record, err := s.pg.GetNetworkByID(ctx, networkID)
+	if err != nil {
+		return dto.DNSConfig{
+			Servers:       []string{},
+			SearchDomains: []string{},
+		}
 	}
+	return record.DNSConfig()
+}
+
+func visibleJoinKey(network repo.Network, userID string) string {
+	if network.OwnerUserID != userID {
+		return ""
+	}
+	return strings.TrimSpace(network.JoinKey)
 }
 
 func newSubnet(networkID, subnetID, name, cidr, gatewayIP, startIP, endIP string, isDefault bool) (dto.Subnet, error) {
@@ -220,6 +352,18 @@ func newSubnet(networkID, subnetID, name, cidr, gatewayIP, startIP, endIP string
 	}
 	if endIP == "" {
 		endIP = uint32ToAddr(end).String()
+	}
+	if isDefault {
+		ownerIP := uint32ToAddr(networkBase(prefix) + 2).String()
+		ownerValue := networkBase(prefix) + 2
+		gatewayValue := addrToUint32(mustParseAddr(gatewayIP))
+		if gatewayValue == ownerValue || ownerValue < start || ownerValue > end {
+			return dto.Subnet{}, fmt.Errorf(
+				"%w: default subnet DHCP range must include owner ip %s",
+				ErrInvalidArgument,
+				ownerIP,
+			)
+		}
 	}
 
 	return dto.Subnet{
@@ -253,33 +397,53 @@ func subnetRange(cidr, gatewayIP, startIP, endIP string) (netip.Prefix, uint32, 
 	gateway := base + 1
 	start := base + 2
 	end := broadcast - 1
+	startRaw := strings.TrimSpace(startIP)
+	endRaw := strings.TrimSpace(endIP)
+	if (startRaw == "") != (endRaw == "") {
+		return netip.Prefix{}, 0, 0, fmt.Errorf(
+			"%w: allocationStartIp and allocationEndIp must be provided together",
+			ErrInvalidArgument,
+		)
+	}
 
 	if gatewayIP != "" {
 		gatewayAddr, err := parseIPv4InPrefix(gatewayIP, prefix, "gatewayIp")
 		if err != nil {
 			return netip.Prefix{}, 0, 0, err
 		}
+		if gatewayAddr == base || gatewayAddr == broadcast {
+			return netip.Prefix{}, 0, 0, fmt.Errorf("%w: gatewayIp cannot be network or broadcast address", ErrInvalidArgument)
+		}
 		gateway = gatewayAddr
 		if start <= gateway {
 			start = gateway + 1
 		}
 	}
-	if startIP != "" {
+	if startRaw != "" {
 		addr, err := parseIPv4InPrefix(startIP, prefix, "allocationStartIp")
 		if err != nil {
 			return netip.Prefix{}, 0, 0, err
 		}
+		if addr == base || addr == broadcast {
+			return netip.Prefix{}, 0, 0, fmt.Errorf("%w: allocationStartIp cannot be network or broadcast address", ErrInvalidArgument)
+		}
 		start = addr
 	}
-	if endIP != "" {
+	if endRaw != "" {
 		addr, err := parseIPv4InPrefix(endIP, prefix, "allocationEndIp")
 		if err != nil {
 			return netip.Prefix{}, 0, 0, err
 		}
+		if addr == base || addr == broadcast {
+			return netip.Prefix{}, 0, 0, fmt.Errorf("%w: allocationEndIp cannot be network or broadcast address", ErrInvalidArgument)
+		}
 		end = addr
 	}
 	if start <= gateway || end <= start {
-		return netip.Prefix{}, 0, 0, fmt.Errorf("%w: invalid allocation range", ErrInvalidArgument)
+		return netip.Prefix{}, 0, 0, fmt.Errorf(
+			"%w: invalid allocation range, ensure gateway < allocationStartIp < allocationEndIp",
+			ErrInvalidArgument,
+		)
 	}
 	return prefix, start, end, nil
 }
@@ -316,4 +480,9 @@ func uint32ToAddr(value uint32) netip.Addr {
 		byte(value >> 8),
 		byte(value),
 	})
+}
+
+func mustParseAddr(raw string) netip.Addr {
+	addr, _ := netip.ParseAddr(strings.TrimSpace(raw))
+	return addr
 }

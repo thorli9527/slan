@@ -13,9 +13,10 @@ import (
 // - 规范化邮箱
 // - 密码哈希
 type User struct {
-	UserID       string `gorm:"column:user_id;primaryKey"`
-	Email        string `gorm:"column:email;uniqueIndex;not null"`
-	PasswordHash string `gorm:"column:password_hash;not null"`
+	UserID          string `gorm:"column:user_id;primaryKey"`
+	Email           string `gorm:"column:email;uniqueIndex;not null"`
+	PasswordHash    string `gorm:"column:password_hash;not null"`
+	ActiveNetworkID string `gorm:"column:active_network_id;index"`
 }
 
 func (User) TableName() string { return "users" }
@@ -38,6 +39,14 @@ func (r *PostgresRepository) GetUserByID(ctx context.Context, userID string) (Us
 	var user User
 	err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&user).Error
 	return user, err
+}
+
+// UpdateUserActiveNetwork switches the user's current active network pointer.
+func (r *PostgresRepository) UpdateUserActiveNetwork(ctx context.Context, userID, networkID string) error {
+	return r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("user_id = ?", userID).
+		Update("active_network_id", networkID).Error
 }
 
 // ListUsers 返回当前所有用户，主要供 ops 视图聚合使用。

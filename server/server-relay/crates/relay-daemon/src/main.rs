@@ -19,6 +19,12 @@ fn parse_args() -> Result<DaemonConfig, String> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--config" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing value for --config".to_string())?;
+                config = DaemonConfig::from_file(value)?;
+            }
             "--udp-bind" => {
                 let value = args
                     .next()

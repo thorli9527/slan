@@ -6,6 +6,8 @@ type Envelope struct {
 	Type string `json:"type"`
 	// RequestID 在需要时用于关联请求和响应。
 	RequestID string `json:"requestId,omitempty"`
+	// MessageID 是服务端下行消息的可靠投递标识。
+	MessageID string `json:"messageId,omitempty"`
 	// Payload 承载具体消息体。
 	Payload interface{} `json:"payload,omitempty"`
 }

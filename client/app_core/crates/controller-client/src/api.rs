@@ -34,6 +34,11 @@ pub struct JoinNetworkRequest {
     pub device_id: String,
 }
 
+pub struct DeactivateNetworkRequest {
+    pub network_id: String,
+    pub device_id: String,
+}
+
 pub struct RelayTicketRequest {
     pub network_id: String,
     pub src_node_id: String,
@@ -59,6 +64,16 @@ pub trait ControllerClient: Send + Sync {
         req: CreateNetworkRequest,
     ) -> Result<Network, String>;
     fn join_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String>;
+    fn activate_network(
+        &self,
+        access_token: &str,
+        req: JoinNetworkRequest,
+    ) -> Result<(), String>;
+    fn deactivate_network(
+        &self,
+        access_token: &str,
+        req: DeactivateNetworkRequest,
+    ) -> Result<(), String>;
     fn bootstrap(
         &self,
         access_token: &str,

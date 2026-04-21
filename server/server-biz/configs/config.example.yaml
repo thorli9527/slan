@@ -6,6 +6,10 @@ http:
   address: ":8080"
   # 运营管理 HTTP API 监听地址。
   ops_address: ":8081"
+  # 客户端生成 control-plane WSURL 时使用的公网可访问地址。
+  public_host: "127.0.0.1:8080"
+  # 客户端访问控制面的外部协议；生产环境通常应为 https。
+  public_scheme: "http"
 ws:
   # 控制通道 WebSocket 路径。
   path: "/control/ws"
@@ -45,6 +49,18 @@ bootstrap:
 ops:
   # 运营入口静态令牌，生产环境必须替换。
   access_token: "change-me-ops-token"
+  # 管理员账号通过 /login 换取动态 ops token；静态令牌仍保留给内网运维或应急访问。
+  default_admin:
+    # 是否在首次启动时自动灌入默认管理员。
+    enabled: true
+    # 默认管理员绑定的业务用户邮箱。
+    email: "admin@local.slan"
+    # 默认管理员初始密码，生产环境必须替换。
+    password: "change-me-admin-password"
+    # 默认管理员登录名。
+    login_name: "admin"
+    # 默认管理员显示名称。
+    display_name: "Default Admin"
 postgres:
   # PostgreSQL 主机。
   host: "127.0.0.1"

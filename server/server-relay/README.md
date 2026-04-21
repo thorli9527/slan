@@ -24,8 +24,17 @@ Phase 1 MVP 的 Rust 中继数据面服务。
 cargo run -p relay-daemon --bin server-relay -- --udp-bind 0.0.0.0:9000
 ```
 
+也可以通过配置文件运行：
+
+```bash
+cargo run -p relay-daemon --bin server-relay -- \
+  --config ./configs/relay-daemon.example.json
+```
+
 可选参数：
 
+- `--config <path>`
+  从 JSON 配置文件加载 `udp_bind`、`relay_url_prefix`、`ticket_signing_secret`
 - `--udp-bind <addr>`
   默认 `0.0.0.0:9000`
 - `--relay-url-prefix <prefix>`
@@ -57,7 +66,5 @@ daemon 目前使用最小 UDP JSON 协议：
 
 虽然现在已经是可运行进程，但下面这些还没做：
 
-- 真实签名验票
 - 多节点 / 集群 runtime
 - DERP 健康探测与反馈
-- Dockerfile / compose 接入

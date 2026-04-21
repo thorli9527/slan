@@ -1,11 +1,24 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
+import '../../application/tunnel_session_service.dart';
+import '../../infra/app_core/api/dev_defaults.dart';
+import '../../infra/app_core/models/bootstrap_models.dart';
+import '../../infra/app_core/models/connection_models.dart';
+import '../../infra/app_core/models/control_models.dart';
+import '../../infra/app_core/models/diagnostic_models.dart';
+import '../../infra/app_core/models/identity_models.dart';
+import '../../infra/app_core/models/relay_models.dart';
+import '../../infra/app_core/models/tunnel_action_models.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
-import '../../infra/app_core/models/models.dart';
-import '../../infra/app_core/store/app_core_demo_store.dart';
+import '../../infra/app_core/store/app_session_controller.dart';
+import '../../infra/app_core/store/app_session_store.dart';
+import '../../infra/app_core/store/app_tunnel_controller.dart';
+import '../../infra/app_core/store/app_tunnel_store.dart';
+import '../../shared/desktop_platform.dart';
 import '../../testing/app_test_keys.dart';
 import '../shared/desktop_client_widgets.dart';
 
@@ -19,12 +32,15 @@ class DevicesPage extends StatefulWidget {
 }
 
 class _DevicesPageState extends State<DevicesPage> {
-  final _nameController = TextEditingController(text: 'thor-mac');
-  final _platformController = TextEditingController(text: 'macos');
-  final _machineIdController = TextEditingController(text: 'machine-1');
-  final _publicKeyController = TextEditingController(text: 'pubkey-1');
-  final _nodeIdController = TextEditingController(text: 'node-1');
-  final _nodePublicKeyController = TextEditingController(text: 'node-pubkey-1');
+  final TunnelSessionService _tunnelSessionService =
+      const TunnelSessionService();
+  final _nameController = TextEditingController();
+  final _platformController =
+      TextEditingController(text: DesktopPlatform.currentId);
+  final _machineIdController = TextEditingController();
+  final _publicKeyController = TextEditingController();
+  final _nodeIdController = TextEditingController();
+  final _nodePublicKeyController = TextEditingController();
   final _bootstrapNodeIdController = TextEditingController();
   final _networkIdController = TextEditingController(text: 'net-1');
   final _peerNodeIdController = TextEditingController(text: 'peer-node-1');
@@ -32,8 +48,8 @@ class _DevicesPageState extends State<DevicesPage> {
   final _sendPayloadController = TextEditingController(text: 'hello');
   final _probePayloadController = TextEditingController(text: 'hello');
   final _probeTimeoutController = TextEditingController(text: '25');
-  final _tunnelLocalIpController = TextEditingController(text: '100.64.0.10');
-  final _tunnelPeerIpController = TextEditingController(text: '100.64.0.2');
+  final _tunnelLocalIpController = TextEditingController(text: '10.0.0.10');
+  final _tunnelPeerIpController = TextEditingController(text: '10.0.0.2');
   final _tunnelPrivateKeyController =
       TextEditingController(text: 'debug-private-key');
   final _tunnelPublicKeyController =
@@ -41,7 +57,7 @@ class _DevicesPageState extends State<DevicesPage> {
   final _tunnelPeerPublicKeyController =
       TextEditingController(text: 'peer-debug-public-key');
   final _tunnelEndpointController =
-      TextEditingController(text: '203.0.113.10:51820');
+      TextEditingController(text: kDevTunnelEndpoint);
   final _tunnelDebugEngineModeController = TextEditingController();
   _TunnelActionEvent? _activeTunnelAction;
   String? _connectionPlanHint;
@@ -49,6 +65,14 @@ class _DevicesPageState extends State<DevicesPage> {
   final List<_TunnelHealthSnapshot> _recentHealthSnapshots = [];
   Timer? _runtimeMonitorTimer;
   bool _runtimeMonitorEnabled = false;
+  String? _localClientIp;
+
+  @override
+  void initState() {
+    super.initState();
+    _seedLocalIdentityDefaults();
+    unawaited(_loadLocalClientIp());
+  }
 
   @override
   void dispose() {
@@ -78,16 +102,31 @@ class _DevicesPageState extends State<DevicesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final store = AppCoreScope.demo;
+    final sessionController = AppCoreScope.sessionController;
+    final tunnelController = AppCoreScope.tunnelController;
+    final sessionStore = AppCoreScope.sessionStore;
+    final tunnelStore = AppCoreScope.tunnelStore;
     return AnimatedBuilder(
-      animation: store,
+      animation: Listenable.merge([sessionStore, tunnelStore]),
       builder: (context, _) {
         return LayoutBuilder(
           builder: (context, constraints) {
             final isDesktop = constraints.maxWidth >= 1180;
             final child = isDesktop
-                ? _buildDesktopWorkspace(context, store)
-                : _buildCompactWorkspace(context, store);
+                ? _buildDesktopWorkspace(
+                    context,
+                    sessionStore,
+                    tunnelStore,
+                    sessionController,
+                    tunnelController,
+                  )
+                : _buildCompactWorkspace(
+                    context,
+                    sessionStore,
+                    tunnelStore,
+                    sessionController,
+                    tunnelController,
+                  );
             return SingleChildScrollView(
               key: AppTestKeys.devicesScrollView,
               padding: const EdgeInsets.all(16),
@@ -99,53 +138,81 @@ class _DevicesPageState extends State<DevicesPage> {
     );
   }
 
-  Widget _buildCompactWorkspace(BuildContext context, AppCoreDemoStore store) {
+  Widget _buildCompactWorkspace(
+    BuildContext context,
+    AppSessionStore sessionStore,
+    AppTunnelStore tunnelStore,
+    AppSessionController sessionController,
+    AppTunnelController tunnelController,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildPageIntro(context),
         const SizedBox(height: 16),
-        _buildIdentitySection(context, store),
+        _buildIdentitySection(context, sessionStore),
         const SizedBox(height: 16),
-        _buildConnectivitySection(context, store),
+        _buildConnectivitySection(
+          context,
+          sessionStore,
+          tunnelStore,
+          sessionController,
+        ),
         const SizedBox(height: 16),
-        _buildDiagnosticsSection(context, store),
+        _buildDiagnosticsSection(
+          context,
+          sessionStore,
+          tunnelStore,
+          tunnelController,
+        ),
         const SizedBox(height: 16),
-        _buildTunnelSection(context, store),
+        _buildTunnelSection(
+          context,
+          sessionStore,
+          tunnelStore,
+          sessionController: sessionController,
+          tunnelController: tunnelController,
+        ),
         const SizedBox(height: 16),
         _DeviceStateCard(
-          device: store.device,
-          node: store.node,
-          bootstrap: store.bootstrap,
-          controlStatus: store.controlStatus,
-          relayTicket: store.relayTicket,
-          lastSendBytes: store.lastSendBytes,
-          lastSendFailure: store.lastSendFailure,
-          lastProbe: store.lastProbe,
-          lastProbeFailure: store.lastProbeFailure,
-          connectionState: store.connectionState,
-          tunnelRuntimeView: store.tunnelRuntimeView,
-          tunnelDebugError: store.tunnelDebugError,
-          error: store.error,
+          device: sessionStore.device,
+          node: sessionStore.node,
+          bootstrap: sessionStore.bootstrap,
+          controlStatus: sessionStore.controlStatus,
+          relayTicket: sessionStore.relayTicket,
+          lastSendBytes: tunnelStore.lastSendBytes,
+          lastSendFailure: tunnelStore.lastSendFailure,
+          lastProbe: tunnelStore.lastProbe,
+          lastProbeFailure: tunnelStore.lastProbeFailure,
+          connectionState: sessionStore.connectionState,
+          tunnelRuntimeView: tunnelStore.tunnelRuntimeView,
+          tunnelDebugError: tunnelStore.tunnelDebugError,
+          error: sessionStore.error,
           activeAction: _activeTunnelAction,
           recentActions: _recentTunnelActions,
           recentHealthSnapshots: _recentHealthSnapshots,
-          lastTunnelActionReport: store.lastTunnelActionReport,
+          lastTunnelActionReport: tunnelStore.lastTunnelActionReport,
           runtimeMonitorEnabled: _runtimeMonitorEnabled,
-          onBootstrap: () => _handleBootstrapRefresh(store),
-          onApply: () => _handleTunnelApply(store),
-          onRecover: () => _handleRecoverSession(store),
-          onUp: () => _handleTunnelUp(store),
-          onInspect: () => _handleTunnelInspect(store),
-          onDown: () => _handleTunnelDown(store),
-          busy: store.busy,
+          onBootstrap: () => _handleBootstrapRefresh(sessionController),
+          onApply: () => _handleTunnelApply(tunnelController),
+          onRecover: () => _handleRecoverSession(tunnelController),
+          onUp: () => _handleTunnelUp(tunnelController),
+          onInspect: () => _handleTunnelInspect(tunnelController),
+          onDown: () => _handleTunnelDown(tunnelController),
+          busy: sessionStore.busy,
         ),
       ],
     );
   }
 
-  Widget _buildDesktopWorkspace(BuildContext context, AppCoreDemoStore store) {
-    final runtime = store.tunnelRuntimeView;
+  Widget _buildDesktopWorkspace(
+    BuildContext context,
+    AppSessionStore sessionStore,
+    AppTunnelStore tunnelStore,
+    AppSessionController sessionController,
+    AppTunnelController tunnelController,
+  ) {
+    final runtime = tunnelStore.tunnelRuntimeView;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -157,7 +224,7 @@ class _DevicesPageState extends State<DevicesPage> {
             children: [
               DesktopMetricPill(
                 label: 'Connection',
-                value: store.connectionState.status,
+                value: sessionStore.connectionState.status,
               ),
               DesktopMetricPill(
                 label: 'Tunnel',
@@ -178,10 +245,11 @@ class _DevicesPageState extends State<DevicesPage> {
             runSpacing: 10,
             children: [
               DesktopBadge(
-                label: store.busy ? 'pipeline busy' : 'pipeline idle',
+                label: sessionStore.busy ? 'pipeline busy' : 'pipeline idle',
               ),
               DesktopBadge(
-                label: 'path ${store.connectionState.path?.name ?? 'unknown'}',
+                label:
+                    'path ${sessionStore.connectionState.path?.name ?? 'unknown'}',
               ),
               DesktopBadge(
                 label:
@@ -204,9 +272,14 @@ class _DevicesPageState extends State<DevicesPage> {
                       flex: 4,
                       child: Column(
                         children: [
-                          _buildIdentitySection(context, store),
+                          _buildIdentitySection(context, sessionStore),
                           const SizedBox(height: 16),
-                          _buildConnectivitySection(context, store),
+                          _buildConnectivitySection(
+                            context,
+                            sessionStore,
+                            tunnelStore,
+                            sessionController,
+                          ),
                         ],
                       ),
                     ),
@@ -215,9 +288,21 @@ class _DevicesPageState extends State<DevicesPage> {
                       flex: 6,
                       child: Column(
                         children: [
-                          _buildTunnelSection(context, store, isDesktop: true),
+                          _buildTunnelSection(
+                            context,
+                            sessionStore,
+                            tunnelStore,
+                            sessionController: sessionController,
+                            tunnelController: tunnelController,
+                            isDesktop: true,
+                          ),
                           const SizedBox(height: 16),
-                          _buildDiagnosticsSection(context, store),
+                          _buildDiagnosticsSection(
+                            context,
+                            sessionStore,
+                            tunnelStore,
+                            tunnelController,
+                          ),
                         ],
                       ),
                     ),
@@ -225,31 +310,32 @@ class _DevicesPageState extends State<DevicesPage> {
                     SizedBox(
                       width: 380,
                       child: _DeviceStateCard(
-                        device: store.device,
-                        node: store.node,
-                        bootstrap: store.bootstrap,
-                        controlStatus: store.controlStatus,
-                        relayTicket: store.relayTicket,
-                        lastSendBytes: store.lastSendBytes,
-                        lastSendFailure: store.lastSendFailure,
-                        lastProbe: store.lastProbe,
-                        lastProbeFailure: store.lastProbeFailure,
-                        connectionState: store.connectionState,
-                        tunnelRuntimeView: store.tunnelRuntimeView,
-                        tunnelDebugError: store.tunnelDebugError,
-                        error: store.error,
+                        device: sessionStore.device,
+                        node: sessionStore.node,
+                        bootstrap: sessionStore.bootstrap,
+                        controlStatus: sessionStore.controlStatus,
+                        relayTicket: sessionStore.relayTicket,
+                        lastSendBytes: tunnelStore.lastSendBytes,
+                        lastSendFailure: tunnelStore.lastSendFailure,
+                        lastProbe: tunnelStore.lastProbe,
+                        lastProbeFailure: tunnelStore.lastProbeFailure,
+                        connectionState: sessionStore.connectionState,
+                        tunnelRuntimeView: tunnelStore.tunnelRuntimeView,
+                        tunnelDebugError: tunnelStore.tunnelDebugError,
+                        error: sessionStore.error,
                         activeAction: _activeTunnelAction,
                         recentActions: _recentTunnelActions,
                         recentHealthSnapshots: _recentHealthSnapshots,
-                        lastTunnelActionReport: store.lastTunnelActionReport,
+                        lastTunnelActionReport: tunnelStore.lastTunnelActionReport,
                         runtimeMonitorEnabled: _runtimeMonitorEnabled,
-                        onBootstrap: () => _handleBootstrapRefresh(store),
-                        onApply: () => _handleTunnelApply(store),
-                        onRecover: () => _handleRecoverSession(store),
-                        onUp: () => _handleTunnelUp(store),
-                        onInspect: () => _handleTunnelInspect(store),
-                        onDown: () => _handleTunnelDown(store),
-                        busy: store.busy,
+                        onBootstrap: () =>
+                            _handleBootstrapRefresh(sessionController),
+                        onApply: () => _handleTunnelApply(tunnelController),
+                        onRecover: () => _handleRecoverSession(tunnelController),
+                        onUp: () => _handleTunnelUp(tunnelController),
+                        onInspect: () => _handleTunnelInspect(tunnelController),
+                        onDown: () => _handleTunnelDown(tunnelController),
+                        busy: sessionStore.busy,
                       ),
                     ),
                   ],
@@ -270,13 +356,34 @@ class _DevicesPageState extends State<DevicesPage> {
     return DesktopHeroPanel(
       title: 'Devices Workspace',
       description:
-          'Register a local device, attach a node, bootstrap overlay state, drive relay fallback, and inspect PacketTunnel runtime without leaving the desktop client.',
+          'Register a local device, attach a node, bootstrap overlay state, drive relay fallback, and inspect ${DesktopPlatform.nativeTunnelLabel} runtime without leaving the desktop client.',
       trailing: trailing,
-      footer: footer,
+      footer: DesktopPlatform.supportsNativeTunnel
+          ? footer
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Windows client is enabled for login, device, node, bootstrap, and control-plane flows.',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Local tunnel bring-up is still pending ${DesktopPlatform.nativeTunnelLabel} integration, so runtime actions currently return an explicit unsupported result.',
+                ),
+                if (footer != null) ...[
+                  const SizedBox(height: 12),
+                  footer,
+                ],
+              ],
+            ),
     );
   }
 
-  Widget _buildIdentitySection(BuildContext context, AppCoreDemoStore store) {
+  Widget _buildIdentitySection(
+    BuildContext context,
+    AppSessionStore sessionStore,
+  ) {
+    final sessionController = AppCoreScope.sessionController;
     return _DevicesWorkbenchCard(
       title: 'Identity',
       subtitle: 'Device registration, node registration, and bootstrap.',
@@ -286,6 +393,15 @@ class _DevicesPageState extends State<DevicesPage> {
             title: 'Register Device',
             child: Column(
               children: [
+                if (_localClientIp != null) ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: DesktopBadge(
+                      label: 'current client ip $_localClientIp',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 TextField(
                   key: AppTestKeys.devicesNameField,
                   controller: _nameController,
@@ -312,17 +428,22 @@ class _DevicesPageState extends State<DevicesPage> {
                 const SizedBox(height: 16),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: FilledButton(
-                    key: AppTestKeys.devicesRegisterDeviceButton,
-                    onPressed: store.busy
-                        ? null
-                        : () => store.registerDevice(
-                              name: _nameController.text.trim(),
-                              platform: _platformController.text.trim(),
-                              machineId: _machineIdController.text.trim(),
-                              publicKey: _publicKeyController.text.trim(),
-                            ),
-                    child: const Text('Register Device'),
+                  child: Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      FilledButton(
+                        key: AppTestKeys.devicesRegisterDeviceButton,
+                        onPressed: sessionStore.busy
+                            ? null
+                            : _handleDeviceRegistration,
+                        child: const Text('Register Device'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: sessionStore.busy ? null : _handleQuickSetup,
+                        child: const Text('Quick Setup Client'),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -336,7 +457,10 @@ class _DevicesPageState extends State<DevicesPage> {
                 TextField(
                   key: AppTestKeys.devicesNodeIdField,
                   controller: _nodeIdController,
-                  decoration: const InputDecoration(labelText: 'Node ID'),
+                  decoration: const InputDecoration(
+                    labelText: 'Node ID',
+                    hintText: 'Leave empty to auto-generate',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -350,14 +474,9 @@ class _DevicesPageState extends State<DevicesPage> {
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton(
                     key: AppTestKeys.devicesRegisterNodeButton,
-                    onPressed: store.busy || store.device == null
+                    onPressed: sessionStore.busy || sessionStore.device == null
                         ? null
-                        : () => store.registerNode(
-                              deviceId: store.device!.deviceId,
-                              nodeId: _nodeIdController.text.trim(),
-                              nodePublicKey:
-                                  _nodePublicKeyController.text.trim(),
-                            ),
+                        : _handleNodeRegistration,
                     child: const Text('Register Node'),
                   ),
                 ),
@@ -388,9 +507,9 @@ class _DevicesPageState extends State<DevicesPage> {
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton(
                     key: AppTestKeys.devicesLoadBootstrapButton,
-                    onPressed: store.busy
+                    onPressed: sessionStore.busy
                         ? null
-                        : () => store.loadBootstrap(
+                        : () => sessionController.loadBootstrap(
                               nodeId: _bootstrapNodeIdController.text,
                               networkId: _networkIdController.text,
                             ),
@@ -406,13 +525,17 @@ class _DevicesPageState extends State<DevicesPage> {
   }
 
   Widget _buildConnectivitySection(
-      BuildContext context, AppCoreDemoStore store) {
+    BuildContext context,
+    AppSessionStore sessionStore,
+    AppTunnelStore tunnelStore,
+    AppSessionController sessionController,
+  ) {
     final peerNodeId = _peerNodeIdController.text.trim();
-    final controlPlan = _connectPlanForPeer(store.controlStatus, peerNodeId);
+    final controlPlan = _connectPlanForPeer(sessionStore.controlStatus, peerNodeId);
     final recommendationMatch = _connectRecommendationMatchLabel(
       controlPlan: controlPlan,
-      connectionState: store.connectionState,
-      lastProbe: store.lastProbe,
+      connectionState: sessionStore.connectionState,
+      lastProbe: tunnelStore.lastProbe,
     );
     return _DevicesWorkbenchCard(
       title: 'Connectivity',
@@ -444,12 +567,14 @@ class _DevicesPageState extends State<DevicesPage> {
             children: [
               FilledButton(
                 key: AppTestKeys.devicesConnectButton,
-                onPressed: store.busy ? null : () => _handleConnect(store),
+                onPressed: sessionStore.busy
+                    ? null
+                    : () => _handleConnect(sessionController),
                 child: const Text('Connect'),
               ),
               OutlinedButton(
                 key: AppTestKeys.devicesDisconnectButton,
-                onPressed: store.busy ? null : store.disconnect,
+                onPressed: sessionStore.busy ? null : sessionController.disconnect,
                 child: const Text('Disconnect'),
               ),
             ],
@@ -489,8 +614,275 @@ class _DevicesPageState extends State<DevicesPage> {
     );
   }
 
+  Future<void> _handleDeviceRegistration() async {
+    final sessionController = AppCoreScope.sessionController;
+    final sessionStore = AppCoreScope.sessionStore;
+    final machineId = _machineIdController.text.trim().isEmpty
+        ? _generatedMachineId()
+        : _machineIdController.text.trim();
+    final publicKey = _publicKeyController.text.trim().isEmpty
+        ? _generatedPublicKey('device')
+        : _publicKeyController.text.trim();
+    _machineIdController.text = machineId;
+    _publicKeyController.text = publicKey;
+    await sessionController.registerDevice(
+      name: _nameController.text.trim(),
+      platform: _platformController.text.trim(),
+      machineId: machineId,
+      publicKey: publicKey,
+    );
+    if (!mounted || sessionStore.device == null) {
+      return;
+    }
+    _nodeIdController.text = _generatedNodeId(sessionStore.device!.deviceId);
+    _nodePublicKeyController.text = _generatedPublicKey('node');
+  }
+
+  Future<void> _handleNodeRegistration() async {
+    final sessionController = AppCoreScope.sessionController;
+    final sessionStore = AppCoreScope.sessionStore;
+    final generatedNodeId = _nodeIdController.text.trim().isEmpty
+        ? _generatedNodeId(sessionStore.device!.deviceId)
+        : _nodeIdController.text.trim();
+    final generatedNodePublicKey = _nodePublicKeyController.text.trim().isEmpty
+        ? _generatedPublicKey('node')
+        : _nodePublicKeyController.text.trim();
+    _nodeIdController.text = generatedNodeId;
+    _nodePublicKeyController.text = generatedNodePublicKey;
+    final bootstrapNetworkId = _networkIdController.text.trim().isNotEmpty
+        ? _networkIdController.text.trim()
+        : sessionStore.networks.isNotEmpty
+            ? sessionStore.networks.first.networkId
+            : null;
+    await sessionController.registerNode(
+      deviceId: sessionStore.device!.deviceId,
+      nodeId: generatedNodeId,
+      nodePublicKey: generatedNodePublicKey,
+      bootstrapNetworkId: bootstrapNetworkId,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (sessionStore.networks.isNotEmpty) {
+      _networkIdController.text = sessionStore.networks.first.networkId;
+    }
+    _bootstrapNodeIdController.text =
+        sessionStore.node?.nodeId ?? generatedNodeId;
+    _syncTunnelDefaultsFromState();
+  }
+
+  Future<void> _handleQuickSetup() async {
+    final sessionController = AppCoreScope.sessionController;
+    final tunnelController = AppCoreScope.tunnelController;
+    final sessionStore = AppCoreScope.sessionStore;
+    final tunnelStore = AppCoreScope.tunnelStore;
+    final startedAt = DateTime.now();
+
+    void setSetupProgress({
+      required String detail,
+      required String progressLabel,
+    }) {
+      setState(() {
+        _activeTunnelAction = _TunnelActionEvent(
+          kind: _TunnelActionKind.setup,
+          label: 'Quick setup client',
+          detail: detail,
+          status: _TunnelActionStatus.running,
+          occurredAt: startedAt,
+          progressLabel: progressLabel,
+        );
+      });
+    }
+
+    Future<void> finishSetup({
+      String? failureMessage,
+      String? successDetail,
+    }) async {
+      final completedEvent = _TunnelActionEvent(
+        kind: _TunnelActionKind.setup,
+        label: 'Quick setup client',
+        detail: failureMessage ??
+            successDetail ??
+            'Device, node, bootstrap, and tunnel flow completed.',
+        status: failureMessage == null
+            ? _TunnelActionStatus.succeeded
+            : _TunnelActionStatus.failed,
+        occurredAt: DateTime.now(),
+        progressLabel: failureMessage == null
+            ? '5/5 complete'
+            : 'Setup stopped before completion',
+      );
+      setState(() {
+        _activeTunnelAction = completedEvent;
+        _recentTunnelActions.insert(0, completedEvent);
+        if (_recentTunnelActions.length > 6) {
+          _recentTunnelActions.removeRange(6, _recentTunnelActions.length);
+        }
+        _captureHealthSnapshot();
+      });
+    }
+
+    final finalReport = await _tunnelSessionService.quickSetup(
+      onProgress: (update) {
+        setSetupProgress(
+          detail: update.detail,
+          progressLabel: update.progressLabel,
+        );
+      },
+      ensureDeviceRegistered: () async {
+        if (sessionStore.device != null) {
+          return;
+        }
+        await _handleDeviceRegistration();
+      },
+      ensureNetworkAvailableAndJoined: () async {
+        final currentDevice = sessionStore.device;
+        if (currentDevice == null) {
+          return;
+        }
+        final targetNetworkId =
+            await sessionController.ensureNetworkAvailableAndJoined(
+          currentDevice: currentDevice,
+          preferredNetworkId: _networkIdController.text.trim(),
+          fallbackNetworkName: '${_nameController.text.trim()}-network',
+        );
+        _networkIdController.text = targetNetworkId;
+      },
+      ensureNodeRegisteredAndBootstrapped: () async {
+        await _handleNodeRegistration();
+      },
+      applyConfiguration: () async {
+        _syncTunnelDefaultsFromState();
+        return tunnelController.applyTunnelConfiguration(
+          configuration: _buildTunnelConfiguration(),
+          verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
+        );
+      },
+      bringTunnelUp: () => tunnelController.bringTunnelUp(
+        verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
+      ),
+      readCurrentFailure: () => sessionStore.error ?? tunnelStore.tunnelDebugError,
+    );
+
+    final failureMessage = sessionStore.error ?? tunnelStore.tunnelDebugError;
+    if (failureMessage != null && failureMessage.isNotEmpty) {
+      await finishSetup(failureMessage: failureMessage);
+      return;
+    }
+    if (finalReport != null && !finalReport.succeeded) {
+      await finishSetup(
+        failureMessage: finalReport.errorMessage ??
+            _formatTunnelActionReportDetail(finalReport),
+      );
+      return;
+    }
+
+    await finishSetup(
+      successDetail:
+          'Client is ready. Device is registered, node is bootstrapped, and tunnel bring-up completed.',
+    );
+  }
+
+  void _seedLocalIdentityDefaults() {
+    final host = Platform.localHostname.replaceAll('.', '-');
+    _nameController.text = host;
+    _machineIdController.text = _generatedMachineId();
+    _publicKeyController.text = _generatedPublicKey('device');
+    _nodeIdController.text = _generatedNodeId(_machineIdController.text);
+    _nodePublicKeyController.text = _generatedPublicKey('node');
+  }
+
+  Future<void> _loadLocalClientIp() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      for (final interface in interfaces) {
+        for (final address in interface.addresses) {
+          if (address.address.isNotEmpty) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _localClientIp = address.address;
+            });
+            return;
+          }
+        }
+      }
+    } catch (_) {
+      return;
+    }
+  }
+
+  String _generatedMachineId() {
+    final host = Platform.localHostname.replaceAll('.', '-');
+    return '$host-${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  String _generatedNodeId(String seed) {
+    final normalized = seed.replaceAll(RegExp(r'[^a-zA-Z0-9-]'), '-');
+    return 'node-$normalized';
+  }
+
+  String _generatedPublicKey(String prefix) {
+    return '$prefix-key-${DateTime.now().microsecondsSinceEpoch}';
+  }
+
+  void _syncTunnelDefaultsFromState() {
+    final sessionStore = AppCoreScope.sessionStore;
+    final currentNetworkId = _networkIdController.text.trim();
+    final network = sessionStore.networks
+            .where((item) => item.networkId == currentNetworkId)
+            .isNotEmpty
+        ? sessionStore.networks
+            .firstWhere((item) => item.networkId == currentNetworkId)
+        : (sessionStore.networks.isNotEmpty ? sessionStore.networks.first : null);
+    final selfDeviceId = sessionStore.device?.deviceId;
+    String? localVirtualIp;
+    if (selfDeviceId != null && network != null) {
+      for (final member in network.members) {
+        if (member.deviceId == selfDeviceId &&
+            member.virtualIp != null &&
+            member.virtualIp!.isNotEmpty) {
+          localVirtualIp = member.virtualIp;
+          break;
+        }
+      }
+    }
+    if (localVirtualIp != null && localVirtualIp.isNotEmpty) {
+      _tunnelLocalIpController.text = localVirtualIp;
+      _tunnelPeerIpController.text = _derivedPeerVirtualIp(localVirtualIp);
+    }
+    if (_localClientIp != null && _localClientIp!.isNotEmpty) {
+      _tunnelEndpointController.text = '$_localClientIp:51820';
+    }
+  }
+
+  String _derivedPeerVirtualIp(String localVirtualIp) {
+    final parts = localVirtualIp.split('.');
+    if (parts.length != 4) {
+      return _tunnelPeerIpController.text.trim().isEmpty
+          ? '10.0.0.2'
+          : _tunnelPeerIpController.text.trim();
+    }
+    final last = int.tryParse(parts.last);
+    if (last == null) {
+      return _tunnelPeerIpController.text.trim().isEmpty
+          ? '10.0.0.2'
+          : _tunnelPeerIpController.text.trim();
+    }
+    final peerLast = last == 2 ? 3 : 2;
+    return '${parts[0]}.${parts[1]}.${parts[2]}.$peerLast';
+  }
+
   Widget _buildDiagnosticsSection(
-      BuildContext context, AppCoreDemoStore store) {
+    BuildContext context,
+    AppSessionStore sessionStore,
+    AppTunnelStore tunnelStore,
+    AppTunnelController tunnelController,
+  ) {
     return _DevicesWorkbenchCard(
       title: 'Diagnostics',
       subtitle:
@@ -511,9 +903,9 @@ class _DevicesPageState extends State<DevicesPage> {
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton(
                     key: AppTestKeys.devicesSendButton,
-                    onPressed: store.busy
+                    onPressed: sessionStore.busy
                         ? null
-                        : () => store.send(
+                        : () => tunnelController.send(
                               payload: _sendPayloadController.text,
                             ),
                     child: const Text('Send'),
@@ -544,9 +936,9 @@ class _DevicesPageState extends State<DevicesPage> {
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton(
                     key: AppTestKeys.devicesProbeButton,
-                    onPressed: store.busy
+                    onPressed: sessionStore.busy
                         ? null
-                        : () => store.probe(
+                        : () => tunnelController.probe(
                               payload: _probePayloadController.text,
                               probeTimeoutMs: int.tryParse(
                                   _probeTimeoutController.text.trim()),
@@ -564,23 +956,23 @@ class _DevicesPageState extends State<DevicesPage> {
               entries: [
                 DesktopKeyValueEntry(
                   label: 'Send bytes',
-                  value: store.lastSendBytes?.toString() ?? '-',
+                  value: tunnelStore.lastSendBytes?.toString() ?? '-',
                 ),
                 DesktopKeyValueEntry(
                   label: 'Send failure',
-                  value: store.lastSendFailure?.label ?? '-',
+                  value: tunnelStore.lastSendFailure?.label ?? '-',
                 ),
                 DesktopKeyValueEntry(
                   label: 'Probe',
-                  value: store.lastProbe?.probeId ?? 'none',
+                  value: tunnelStore.lastProbe?.probeId ?? 'none',
                 ),
                 DesktopKeyValueEntry(
                   label: 'Probe RTT',
-                  value: store.lastProbe?.replyRttMs?.toString() ?? '-',
+                  value: tunnelStore.lastProbe?.replyRttMs?.toString() ?? '-',
                 ),
                 DesktopKeyValueEntry(
                   label: 'Probe failure',
-                  value: store.lastProbeFailure?.label ?? '-',
+                  value: tunnelStore.lastProbeFailure?.label ?? '-',
                 ),
               ],
             ),
@@ -592,10 +984,14 @@ class _DevicesPageState extends State<DevicesPage> {
 
   Widget _buildTunnelSection(
     BuildContext context,
-    AppCoreDemoStore store, {
+    AppSessionStore sessionStore,
+    AppTunnelStore tunnelStore, {
+    required AppSessionController sessionController,
+    required AppTunnelController tunnelController,
     bool isDesktop = false,
   }) {
-    final actionButtons = _buildTunnelActionButtons(store);
+    final actionButtons =
+        _buildTunnelActionButtons(sessionStore, tunnelController);
     return _DevicesWorkbenchCard(
       title: 'WireGuard Tunnel Debug',
       subtitle:
@@ -703,31 +1099,35 @@ class _DevicesPageState extends State<DevicesPage> {
                           _DevicesSubsection(
                             title: 'Operations Desk',
                             child: _TunnelOperationsDesk(
-                              tunnelRuntimeView: store.tunnelRuntimeView,
-                              controlStatus: store.controlStatus,
-                              tunnelDebugError: store.tunnelDebugError,
-                              error: store.error,
-                              busy: store.busy,
-                              connectionState: store.connectionState,
+                              tunnelRuntimeView: tunnelStore.tunnelRuntimeView,
+                              controlStatus: sessionStore.controlStatus,
+                              tunnelDebugError: tunnelStore.tunnelDebugError,
+                              error: sessionStore.error,
+                              busy: sessionStore.busy,
+                              connectionState: sessionStore.connectionState,
                               peerVirtualIp:
                                   _tunnelPeerIpController.text.trim(),
                               activeAction: _activeTunnelAction,
                               recentActions: _recentTunnelActions,
                               recentHealthSnapshots: _recentHealthSnapshots,
                               lastTunnelActionReport:
-                                  store.lastTunnelActionReport,
-                              lastProbe: store.lastProbe,
-                              lastSendFailure: store.lastSendFailure,
-                              lastProbeFailure: store.lastProbeFailure,
-                              onRecover: () => _handleRecoverSession(store),
-                              onBootstrap: () => _handleBootstrapRefresh(store),
-                              onApply: () => _handleTunnelApply(store),
-                              onUp: () => _handleTunnelUp(store),
-                              onInspect: () => _handleTunnelInspect(store),
-                              onDown: () => _handleTunnelDown(store),
+                                  tunnelStore.lastTunnelActionReport,
+                              lastProbe: tunnelStore.lastProbe,
+                              lastSendFailure: tunnelStore.lastSendFailure,
+                              lastProbeFailure: tunnelStore.lastProbeFailure,
+                              onRecover: () =>
+                                  _handleRecoverSession(tunnelController),
+                              onBootstrap: () =>
+                                  _handleBootstrapRefresh(sessionController),
+                              onApply: () =>
+                                  _handleTunnelApply(tunnelController),
+                              onUp: () => _handleTunnelUp(tunnelController),
+                              onInspect: () =>
+                                  _handleTunnelInspect(tunnelController),
+                              onDown: () => _handleTunnelDown(tunnelController),
                               runtimeMonitorEnabled: _runtimeMonitorEnabled,
                               onToggleRuntimeMonitor: (enabled) =>
-                                  _setRuntimeMonitorEnabled(enabled, store),
+                                  _setRuntimeMonitorEnabled(enabled),
                             ),
                           ),
                         ],
@@ -739,9 +1139,9 @@ class _DevicesPageState extends State<DevicesPage> {
                 _DevicesSubsection(
                   title: 'Runtime Snapshot',
                   child: _TunnelRuntimeSummary(
-                    tunnelRuntimeView: store.tunnelRuntimeView,
-                    tunnelDebugError: store.tunnelDebugError,
-                    error: store.error,
+                    tunnelRuntimeView: tunnelStore.tunnelRuntimeView,
+                    tunnelDebugError: tunnelStore.tunnelDebugError,
+                    error: sessionStore.error,
                     dense: false,
                   ),
                 ),
@@ -810,108 +1210,123 @@ class _DevicesPageState extends State<DevicesPage> {
     );
   }
 
-  Widget _buildTunnelActionButtons(AppCoreDemoStore store) {
+  Widget _buildTunnelActionButtons(
+    AppSessionStore sessionStore,
+    AppTunnelController tunnelController,
+  ) {
     return Wrap(
       spacing: 12,
       runSpacing: 12,
       children: [
         FilledButton(
           key: AppTestKeys.devicesTunnelApplyButton,
-          onPressed: store.busy ? null : () => _handleTunnelApply(store),
+          onPressed: sessionStore.busy
+              ? null
+              : () => _handleTunnelApply(tunnelController),
           child: const Text('Apply Tunnel'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelUpButton,
-          onPressed: store.busy ? null : () => _handleTunnelUp(store),
+          onPressed: sessionStore.busy
+              ? null
+              : () => _handleTunnelUp(tunnelController),
           child: const Text('Bring Up'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelViewButton,
-          onPressed: store.busy ? null : () => _handleTunnelInspect(store),
+          onPressed: sessionStore.busy
+              ? null
+              : () => _handleTunnelInspect(tunnelController),
           child: const Text('View Runtime'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelDownButton,
-          onPressed: store.busy ? null : () => _handleTunnelDown(store),
+          onPressed: sessionStore.busy
+              ? null
+              : () => _handleTunnelDown(tunnelController),
           child: const Text('Bring Down'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelRemoveButton,
-          onPressed: store.busy ? null : () => _handleTunnelRemovePeer(store),
+          onPressed: sessionStore.busy
+              ? null
+              : () => _handleTunnelRemovePeer(tunnelController),
           child: const Text('Remove Peer'),
         ),
       ],
     );
   }
 
-  Future<void> _handleTunnelApply(AppCoreDemoStore store) {
+  Future<void> _handleTunnelApply(
+    AppTunnelController tunnelController,
+  ) {
     return _runTunnelWorkbenchAction(
-      store,
       kind: _TunnelActionKind.apply,
       label: 'Apply configuration',
       detail:
           'Stage ${_tunnelLocalIpController.text.trim()} -> ${_tunnelPeerIpController.text.trim()}',
-      action: () => store.applyTunnelConfiguration(
+      action: () => tunnelController.applyTunnelConfiguration(
         configuration: _buildTunnelConfiguration(),
         verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
       ),
     );
   }
 
-  Future<void> _handleTunnelUp(AppCoreDemoStore store) {
+  Future<void> _handleTunnelUp(
+    AppTunnelController tunnelController,
+  ) {
     return _runTunnelWorkbenchAction(
-      store,
       kind: _TunnelActionKind.up,
       label: 'Bring tunnel up',
       detail: 'Start PacketTunnel session',
-      action: () => store.bringTunnelUp(
+      action: () => tunnelController.bringTunnelUp(
         verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
       ),
     );
   }
 
-  Future<void> _handleTunnelInspect(AppCoreDemoStore store) {
+  Future<void> _handleTunnelInspect(
+    AppTunnelController tunnelController,
+  ) {
     return _runTunnelWorkbenchAction(
-      store,
       kind: _TunnelActionKind.inspect,
       label: 'Refresh runtime',
       detail: 'Inspect ${_tunnelPeerIpController.text.trim()} runtime view',
-      action: () => store.refreshTunnelRuntime(
+      action: () => tunnelController.refreshTunnelRuntime(
         peerVirtualIp: _tunnelPeerIpController.text.trim(),
       ),
     );
   }
 
-  Future<void> _handleTunnelDown(AppCoreDemoStore store) {
+  Future<void> _handleTunnelDown(
+    AppTunnelController tunnelController,
+  ) {
     return _runTunnelWorkbenchAction(
-      store,
       kind: _TunnelActionKind.down,
       label: 'Bring tunnel down',
       detail: 'Stop PacketTunnel session',
-      action: store.bringTunnelDown,
+      action: tunnelController.bringTunnelDown,
     );
   }
 
-  Future<void> _handleTunnelRemovePeer(AppCoreDemoStore store) {
+  Future<void> _handleTunnelRemovePeer(
+    AppTunnelController tunnelController,
+  ) {
     return _runTunnelWorkbenchAction(
-      store,
       kind: _TunnelActionKind.removePeer,
       label: 'Remove peer',
       detail:
           'Delete peer ${_tunnelPeerIpController.text.trim()} from tunnel view',
-      action: () => store.removeTunnelPeer(
+      action: () => tunnelController.removeTunnelPeer(
         peerVirtualIp: _tunnelPeerIpController.text.trim(),
       ),
     );
   }
 
-  Future<void> _handleBootstrapRefresh(AppCoreDemoStore store) async {
-    final targetNodeId = store.node?.nodeId.trim();
-    final targetNetworkId = store.bootstrap?.networks.isNotEmpty == true
-        ? store.bootstrap!.networks.first.networkId
-        : store.networks.isNotEmpty
-            ? store.networks.first.networkId
-            : null;
+  Future<void> _handleBootstrapRefresh(
+    AppSessionController sessionController,
+  ) async {
+    final sessionStore = AppCoreScope.sessionStore;
     final runningEvent = _TunnelActionEvent(
       kind: _TunnelActionKind.bootstrap,
       label: 'Refresh bootstrap',
@@ -923,34 +1338,14 @@ class _DevicesPageState extends State<DevicesPage> {
       _activeTunnelAction = runningEvent;
     });
 
-    final canRunControlSync =
-        (store.bootstrap?.controlPlane.sessionToken?.isNotEmpty ?? false) &&
-            (store.bootstrap?.controlPlane.wsUrl.trim().isNotEmpty ?? false) &&
-            targetNodeId != null &&
-            targetNodeId.isNotEmpty &&
-            targetNetworkId != null &&
-            targetNetworkId.isNotEmpty;
+    await sessionController.refreshBootstrapOrControlSync();
 
-    if (canRunControlSync) {
-      await store.syncControlPlane(
-        nodeId: targetNodeId,
-        networkId: targetNetworkId,
-      );
-    } else {
-      await store.loadBootstrap(
-        nodeId: targetNodeId,
-        networkId: targetNetworkId,
-      );
-    }
-
-    final failureMessage = store.error;
+    final failureMessage = sessionStore.error;
     final completedEvent = _TunnelActionEvent(
       kind: _TunnelActionKind.bootstrap,
       label: 'Refresh bootstrap',
       detail: failureMessage ??
-          (canRunControlSync
-              ? 'Control session synchronized and bootstrap metadata were refreshed from the control plane.'
-              : 'Bootstrap and relay metadata were refreshed from the control plane.'),
+          'Bootstrap and relay metadata were refreshed from the control plane.',
       status: failureMessage == null
           ? _TunnelActionStatus.succeeded
           : _TunnelActionStatus.failed,
@@ -959,54 +1354,50 @@ class _DevicesPageState extends State<DevicesPage> {
 
     setState(() {
       _activeTunnelAction = completedEvent;
-      _recentTunnelActions.insert(0, completedEvent);
-      if (_recentTunnelActions.length > 6) {
-        _recentTunnelActions.removeRange(6, _recentTunnelActions.length);
-      }
-      _captureHealthSnapshot(store);
-    });
+        _recentTunnelActions.insert(0, completedEvent);
+        if (_recentTunnelActions.length > 6) {
+          _recentTunnelActions.removeRange(6, _recentTunnelActions.length);
+        }
+        _captureHealthSnapshot();
+      });
   }
 
-  Future<void> _handleConnect(AppCoreDemoStore store) async {
+  Future<void> _handleConnect(
+    AppSessionController sessionController,
+  ) async {
+    final sessionStore = AppCoreScope.sessionStore;
     final peerNodeId = _peerNodeIdController.text.trim();
-    final plan = _connectPlanForPeer(store.controlStatus, peerNodeId);
-    final preflightHint = plan == null
-        ? 'No control-plane connect plan for $peerNodeId. Trying local direct path first, then relay fallback if needed.'
-        : 'Trying ${_describeConnectPlan(plan)} for $peerNodeId before relay fallback.';
+    final networkId = _networkIdController.text.trim();
+    if (networkId.isEmpty) {
+      setState(() {
+        _connectionPlanHint = 'No target network is selected.';
+      });
+      return;
+    }
+
     setState(() {
-      _connectionPlanHint = preflightHint;
+      _connectionPlanHint =
+          'Resolving control-plane connect plan for $peerNodeId.';
     });
 
-    await store.connectWithFallback(
-      networkId: _networkIdController.text.trim(),
+    final result = await sessionController.connectUsingControlPlan(
+      networkId: networkId,
       peerNodeId: peerNodeId,
       reason: _reasonController.text.trim(),
     );
-
-    final recommendationMatch = _connectRecommendationMatchLabel(
-      controlPlan: plan,
-      connectionState: store.connectionState,
-      lastProbe: store.lastProbe,
-    );
-    final resultHint = switch (store.connectionState.status) {
-      'connected' =>
-        'Connected over ${store.connectionState.path?.name ?? 'unknown'} path. Recommendation $recommendationMatch.${plan == null ? '' : ' Control plane suggested ${_describeConnectPlan(plan)}.'}',
-      'failed' =>
-        'Connection failed after trying the planned path. Recommendation $recommendationMatch.${plan == null ? '' : ' Last control suggestion was ${_describeConnectPlan(plan)}.'}',
-      'connecting' =>
-        'Connection is still in progress. Recommendation $recommendationMatch.${plan == null ? '' : ' Following ${_describeConnectPlan(plan)}.'}',
-      _ =>
-        'Connection state is ${store.connectionState.status}. Recommendation $recommendationMatch.${plan == null ? '' : ' Control suggestion remains ${_describeConnectPlan(plan)}.'}',
-    };
     if (!mounted) {
       return;
     }
     setState(() {
-      _connectionPlanHint = resultHint;
+      _connectionPlanHint = sessionStore.error ?? result.resultHint;
     });
   }
 
-  Future<void> _handleRecoverSession(AppCoreDemoStore store) {
+  Future<void> _handleRecoverSession(
+    AppTunnelController tunnelController,
+  ) {
+    final sessionStore = AppCoreScope.sessionStore;
+    final tunnelStore = AppCoreScope.tunnelStore;
     final startedAt = DateTime.now();
 
     void setRecoveryProgress({
@@ -1027,10 +1418,11 @@ class _DevicesPageState extends State<DevicesPage> {
 
     Future<void> finishRecovery(TunnelActionReport? finalReport) async {
       final failureMessage =
-          finalReport?.errorMessage ?? store.tunnelDebugError ?? store.error;
+          finalReport?.errorMessage ??
+              tunnelStore.tunnelDebugError ??
+              sessionStore.error;
       final automationNote = failureMessage == null
-          ? await _applyTunnelLifecycleAutomation(
-              _TunnelActionKind.recover, store)
+          ? await _applyTunnelLifecycleAutomation(_TunnelActionKind.recover)
           : null;
       final completedEvent = _TunnelActionEvent(
         kind: _TunnelActionKind.recover,
@@ -1051,48 +1443,34 @@ class _DevicesPageState extends State<DevicesPage> {
         if (_recentTunnelActions.length > 6) {
           _recentTunnelActions.removeRange(6, _recentTunnelActions.length);
         }
-        _captureHealthSnapshot(store);
+        _captureHealthSnapshot();
       });
     }
 
     return Future<void>(() async {
-      setRecoveryProgress(
-        detail: 'Applying configuration before recovery',
-        progressLabel: '1/3 Apply configuration',
+      final finalReport = await _tunnelSessionService.recoverSession(
+        onProgress: (update) {
+          setRecoveryProgress(
+            detail: update.detail,
+            progressLabel: update.progressLabel,
+          );
+        },
+        applyConfiguration: () => tunnelController.applyTunnelConfiguration(
+          configuration: _buildTunnelConfiguration(),
+          verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
+        ),
+        bringTunnelUp: () => tunnelController.bringTunnelUp(
+          verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
+        ),
+        inspectRuntime: () => tunnelController.refreshTunnelRuntime(
+          peerVirtualIp: _tunnelPeerIpController.text.trim(),
+        ),
       );
-      final applyReport = await store.applyTunnelConfiguration(
-        configuration: _buildTunnelConfiguration(),
-        verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
-      );
-      if (!applyReport.succeeded) {
-        await finishRecovery(applyReport);
-        return;
-      }
-
-      setRecoveryProgress(
-        detail: _formatTunnelActionReportDetail(applyReport),
-        progressLabel: '2/3 Bring tunnel up',
-      );
-      final upReport = await store.bringTunnelUp(
-        verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
-      );
-      if (!upReport.succeeded) {
-        await finishRecovery(upReport);
-        return;
-      }
-
-      setRecoveryProgress(
-        detail: _formatTunnelActionReportDetail(upReport),
-        progressLabel: '3/3 Inspect runtime',
-      );
-      final inspectReport = await store.refreshTunnelRuntime(
-        peerVirtualIp: _tunnelPeerIpController.text.trim(),
-      );
-      await finishRecovery(inspectReport);
+      await finishRecovery(finalReport);
     });
   }
 
-  void _setRuntimeMonitorEnabled(bool enabled, AppCoreDemoStore store) {
+  void _setRuntimeMonitorEnabled(bool enabled) {
     if (_runtimeMonitorEnabled == enabled) {
       return;
     }
@@ -1108,38 +1486,42 @@ class _DevicesPageState extends State<DevicesPage> {
       return;
     }
 
-    _refreshRuntimeFromMonitor(store);
+    _refreshRuntimeFromMonitor();
     _runtimeMonitorTimer = Timer.periodic(
       const Duration(seconds: 4),
-      (_) => _refreshRuntimeFromMonitor(store),
+      (_) => _refreshRuntimeFromMonitor(),
     );
   }
 
-  Future<void> _refreshRuntimeFromMonitor(AppCoreDemoStore store) async {
+  Future<void> _refreshRuntimeFromMonitor() async {
+    final tunnelController = AppCoreScope.tunnelController;
+    final sessionStore = AppCoreScope.sessionStore;
     final peerVirtualIp = _tunnelPeerIpController.text.trim();
     if (!_runtimeMonitorEnabled ||
         peerVirtualIp.isEmpty ||
-        store.busy ||
+        sessionStore.busy ||
         !mounted) {
       return;
     }
 
-    await store.refreshTunnelRuntime(peerVirtualIp: peerVirtualIp);
+    await tunnelController.refreshTunnelRuntime(peerVirtualIp: peerVirtualIp);
     if (!mounted) {
       return;
     }
     setState(() {
-      _captureHealthSnapshot(store);
+      _captureHealthSnapshot();
     });
   }
 
   Future<void> _runTunnelWorkbenchAction(
-    AppCoreDemoStore store, {
+   {
     required _TunnelActionKind kind,
     required String label,
     required String detail,
     required Future<TunnelActionReport> Function() action,
   }) async {
+    final sessionStore = AppCoreScope.sessionStore;
+    final tunnelStore = AppCoreScope.tunnelStore;
     final runningEvent = _TunnelActionEvent(
       kind: kind,
       label: label,
@@ -1154,9 +1536,9 @@ class _DevicesPageState extends State<DevicesPage> {
     final report = await action();
 
     final failureMessage =
-        report.errorMessage ?? store.tunnelDebugError ?? store.error;
+        report.errorMessage ?? tunnelStore.tunnelDebugError ?? sessionStore.error;
     final automationNote = failureMessage == null
-        ? await _applyTunnelLifecycleAutomation(kind, store)
+        ? await _applyTunnelLifecycleAutomation(kind)
         : null;
     final completedEvent = _TunnelActionEvent(
       kind: kind,
@@ -1176,7 +1558,7 @@ class _DevicesPageState extends State<DevicesPage> {
       if (_recentTunnelActions.length > 6) {
         _recentTunnelActions.removeRange(6, _recentTunnelActions.length);
       }
-      _captureHealthSnapshot(store);
+      _captureHealthSnapshot();
     });
   }
 
@@ -1187,19 +1569,21 @@ class _DevicesPageState extends State<DevicesPage> {
     return '${report.detail} Verified by ${report.sourceLabel}.';
   }
 
-  void _captureHealthSnapshot(AppCoreDemoStore store) {
+  void _captureHealthSnapshot() {
+    final sessionStore = AppCoreScope.sessionStore;
+    final tunnelStore = AppCoreScope.tunnelStore;
     final summary = _deriveTunnelSessionHealthSummary(
-      runtime: store.tunnelRuntimeView,
-      controlStatus: store.controlStatus,
-      connectionState: store.connectionState,
-      lastProbe: store.lastProbe,
-      tunnelDebugError: store.tunnelDebugError,
-      error: store.error,
+      runtime: tunnelStore.tunnelRuntimeView,
+      controlStatus: sessionStore.controlStatus,
+      connectionState: sessionStore.connectionState,
+      lastProbe: tunnelStore.lastProbe,
+      tunnelDebugError: tunnelStore.tunnelDebugError,
+      error: sessionStore.error,
       runtimeMonitorEnabled: _runtimeMonitorEnabled,
       recentActions: _recentTunnelActions,
       recentHealthSnapshots: _recentHealthSnapshots,
-      lastSendFailure: store.lastSendFailure,
-      lastProbeFailure: store.lastProbeFailure,
+      lastSendFailure: tunnelStore.lastSendFailure,
+      lastProbeFailure: tunnelStore.lastProbeFailure,
     );
     final snapshot = _TunnelHealthSnapshot(
       health: summary.health,
@@ -1218,9 +1602,10 @@ class _DevicesPageState extends State<DevicesPage> {
 
   Future<String?> _applyTunnelLifecycleAutomation(
     _TunnelActionKind kind,
-    AppCoreDemoStore store,
   ) async {
     switch (kind) {
+      case _TunnelActionKind.setup:
+        return 'Configuration changed. Continue observing dashboard and runtime state.';
       case _TunnelActionKind.apply:
         return _runtimeMonitorEnabled
             ? 'Configuration changed. Bring the tunnel up next, then re-observe runtime because live monitor is still running.'
@@ -1229,15 +1614,15 @@ class _DevicesPageState extends State<DevicesPage> {
         return 'Bootstrap and relay metadata refreshed from the control plane.';
       case _TunnelActionKind.up:
         final shouldStartMonitor = !_runtimeMonitorEnabled;
-        _setRuntimeMonitorEnabled(true, store);
-        await _refreshRuntimeFromMonitor(store);
+        _setRuntimeMonitorEnabled(true);
+        await _refreshRuntimeFromMonitor();
         return shouldStartMonitor
             ? 'Live runtime monitor started automatically.'
             : 'Live runtime monitor kept running.';
       case _TunnelActionKind.down:
       case _TunnelActionKind.removePeer:
         final wasMonitoring = _runtimeMonitorEnabled;
-        _setRuntimeMonitorEnabled(false, store);
+        _setRuntimeMonitorEnabled(false);
         return wasMonitoring
             ? 'Live runtime monitor stopped automatically.'
             : null;
@@ -1245,7 +1630,7 @@ class _DevicesPageState extends State<DevicesPage> {
         return null;
       case _TunnelActionKind.recover:
         final shouldStartMonitor = !_runtimeMonitorEnabled;
-        _setRuntimeMonitorEnabled(true, store);
+        _setRuntimeMonitorEnabled(true);
         return shouldStartMonitor
             ? 'Recovery finished and live runtime monitor started automatically.'
             : 'Recovery finished while live runtime monitor stayed active.';
@@ -1262,7 +1647,6 @@ class _DevicesPageState extends State<DevicesPage> {
       peerVirtualIp: peerVirtualIp,
       debugEngineMode: debugEngineMode.isEmpty ? null : debugEngineMode,
       interface: WireGuardTunnelInterfaceConfiguration(
-        interfaceName: 'utun9',
         keyPair: WireGuardTunnelKeyPair(
           privateKey: _tunnelPrivateKeyController.text.trim(),
           publicKey: _tunnelPublicKeyController.text.trim(),
@@ -1647,6 +2031,7 @@ class _DeviceStateCard extends StatelessWidget {
       return Future<void>.value();
     }
     return switch (kind) {
+      _TunnelActionKind.setup => onRecover(),
       _TunnelActionKind.apply => onApply(),
       _TunnelActionKind.bootstrap => onBootstrap(),
       _TunnelActionKind.recover => onRecover(),
@@ -2073,6 +2458,7 @@ class _TunnelOperationsDesk extends StatelessWidget {
       return Future<void>.value();
     }
     return switch (kind) {
+      _TunnelActionKind.setup => onRecover(),
       _TunnelActionKind.apply => onApply(),
       _TunnelActionKind.bootstrap => onBootstrap(),
       _TunnelActionKind.recover => onRecover(),
@@ -2109,6 +2495,7 @@ _TunnelActionPhaseGuidance _deriveTunnelActionPhaseGuidance(
 enum _TunnelActionStatus { running, succeeded, failed }
 
 enum _TunnelActionKind {
+  setup,
   apply,
   bootstrap,
   recover,

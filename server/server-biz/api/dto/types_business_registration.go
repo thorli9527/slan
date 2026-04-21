@@ -19,10 +19,24 @@ type Device struct {
 	DeviceID string `json:"deviceId"`
 	// Name 是当前用户可见的设备名称。
 	Name string `json:"name"`
+	// OwnerEmail 是设备所属用户邮箱。
+	OwnerEmail string `json:"ownerEmail,omitempty"`
 	// Platform 是设备操作系统。
 	Platform string `json:"platform"`
+	// MachineID 是本地持久化机器标识。
+	MachineID string `json:"machineId,omitempty"`
 	// Status 是设备在线状态的粗粒度快照。
 	Status string `json:"status"`
+	// CurrentVirtualIP 是当前活动网络下分配给设备的虚拟 IP。
+	CurrentVirtualIP string `json:"currentVirtualIp,omitempty"`
+	// LinkStatus 是当前链路状态，例如 connected / disconnected / online / offline。
+	LinkStatus string `json:"linkStatus,omitempty"`
+	// ConnectivityProtocol 是当前链路走的协议或路径，例如 direct / relay / derp。
+	ConnectivityProtocol string `json:"connectivityProtocol,omitempty"`
+	// JoinedAt 是当前活动网络下加入时间，使用 unix 秒时间戳。
+	JoinedAt int64 `json:"joinedAt,omitempty"`
+	// CreatedAt 是设备创建时间，使用 unix 秒时间戳。
+	CreatedAt int64 `json:"createdAt,omitempty"`
 	// PublicKey 是用于建立隧道时对外公布的公钥。
 	PublicKey string `json:"publicKey,omitempty"`
 	// NetworkIDs 列出当前与设备关联的网络 ID。

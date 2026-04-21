@@ -1,12 +1,21 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../../api_models.dart';
-import '../../control_api_responses.dart';
+import '../../api_contracts/request_models.dart';
+import '../../control_api_responses/response_parsers.dart';
+import '../../logging/startup_log.dart';
 import 'app_core_api.dart';
-import '../models/models.dart';
+import '../models/bootstrap_models.dart';
+import '../models/connection_models.dart';
+import '../models/control_models.dart';
+import '../models/diagnostic_models.dart';
+import '../models/identity_models.dart';
+import '../models/network_models.dart';
+import '../models/relay_models.dart';
 
 class HttpAppCoreApi implements AppCoreApi {
+  static const Duration _requestTimeout = Duration(seconds: 8);
+
   HttpAppCoreApi({
     required String baseUrl,
     HttpClient? httpClient,
@@ -19,6 +28,11 @@ class HttpAppCoreApi implements AppCoreApi {
   String? _accessToken;
   ConnectionStateModel _connectionState =
       const ConnectionStateModel.disconnected();
+
+  @override
+  void restoreSession(SessionModel session) {
+    _accessToken = session.accessToken;
+  }
 
   @override
   Future<SessionModel> register({
@@ -75,6 +89,12 @@ class HttpAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<List<DeviceModel>> listDevices() async {
+    final json = await _send('GET', '/devices', authorized: true);
+    return parseDeviceListResponse(_readItems(json));
+  }
+
+  @override
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,
@@ -105,15 +125,59 @@ class HttpAppCoreApi implements AppCoreApi {
   @override
   Future<NetworkModel> createNetwork({
     required String name,
-    String cidr = '100.64.0.0/24',
+    String cidr = '10.0.0.0/16',
+    String? bindDeviceId,
   }) async {
     return parseNetworkResponse(
       await _send(
         'POST',
         '/networks',
-        body: CreateNetworkRequest(name: name, cidr: cidr).toJson(),
+        body: CreateNetworkRequest(
+          name: name,
+          cidr: cidr,
+          bindDeviceId: bindDeviceId,
+        ).toJson(),
         authorized: true,
       ),
+    );
+  }
+
+  @override
+  Future<void> joinNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    await _send(
+      'POST',
+      '/networks/$networkId/join',
+      body: JoinNetworkRequest(deviceId: deviceId).toJson(),
+      authorized: true,
+    );
+  }
+
+  @override
+  Future<void> activateNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    await _send(
+      'POST',
+      '/networks/$networkId/activate',
+      body: JoinNetworkRequest(deviceId: deviceId).toJson(),
+      authorized: true,
+    );
+  }
+
+  @override
+  Future<void> deactivateNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    await _send(
+      'POST',
+      '/networks/$networkId/deactivate',
+      body: JoinNetworkRequest(deviceId: deviceId).toJson(),
+      authorized: true,
     );
   }
 
@@ -224,7 +288,11 @@ class HttpAppCoreApi implements AppCoreApi {
     Map<String, dynamic>? body,
     bool authorized = false,
   }) async {
-    final request = await _httpClient.openUrl(method, _baseUri.resolve(path));
+    final target = _baseUri.resolve(path);
+    await StartupLog.write('http $method $target start authorized=$authorized');
+    final request = await _httpClient
+        .openUrl(method, target)
+        .timeout(_requestTimeout);
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     if (authorized) {
       final token = _accessToken;
@@ -238,10 +306,16 @@ class HttpAppCoreApi implements AppCoreApi {
       request.write(jsonEncode(body));
     }
 
-    final response = await request.close();
-    final payload = await response.transform(utf8.decoder).join();
+    final response = await request.close().timeout(_requestTimeout);
+    final payload = await response
+        .transform(utf8.decoder)
+        .join()
+        .timeout(_requestTimeout);
     final json = payload.isEmpty ? <String, dynamic>{} : _decodeObject(payload);
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      await StartupLog.write(
+        'http $method $target failed status=${response.statusCode} code=${_readOptionalString(json, 'code') ?? '-'} message=${_readOptionalString(json, 'message') ?? '-'}',
+      );
       throw HttpAppCoreException(
         statusCode: response.statusCode,
         code: _readOptionalString(json, 'code'),
@@ -249,6 +323,7 @@ class HttpAppCoreApi implements AppCoreApi {
             'HTTP $method $path failed with status ${response.statusCode}',
       );
     }
+    await StartupLog.write('http $method $target ok status=${response.statusCode}');
     return json;
   }
 }

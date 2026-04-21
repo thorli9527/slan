@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:slan_app/infra/control_api_responses.dart';
+import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
+import 'package:slan_app/infra/control_api_responses/response_parsers.dart';
 
 void main() {
   test('parseBootstrapResponse maps four-level relay topology into app models',
@@ -53,10 +54,10 @@ void main() {
         },
       ],
       'controlPlane': {
-        'wsUrl': 'ws://127.0.0.1:8080/control/ws',
+        'wsUrl': kDevControlWsUrl,
         'heartbeatSeconds': 15,
       },
-      'stunServers': ['stun:stun.l.google.com:19302'],
+      'stunServers': [kDevStunServer],
       'relay': {
         'defaultClusterId': 'cn-sh-a',
         'countries': [
@@ -75,14 +76,14 @@ void main() {
                       {
                         'nodeId': 'relay-cn-sh-udp',
                         'transport': 'udp',
-                        'address': '1.1.1.1:9000',
+                        'address': kDevRelayUdpAddress,
                         'priority': 10,
                         'tags': ['default'],
                       },
                       {
                         'nodeId': 'relay-cn-sh-tcp',
                         'transport': 'tcp',
-                        'address': '1.1.1.1:9001',
+                        'address': kDevRelayTcpAddress,
                         'priority': 20,
                       },
                     ],
@@ -132,7 +133,7 @@ void main() {
       'countryCode': 'CN',
       'cityCode': 'sh',
       'allowedDerpNodeIds': ['relay-cn-sh-udp', 'relay-cn-sh-tcp'],
-      'relayUrl': 'udp://1.1.1.1:9000',
+      'relayUrl': kDevRelayUdpUrl,
       'expiresAt': '2026-04-17T10:00:00Z',
       'sessionKey': 'opaque-session-key',
       'signature': 'signed-payload',
@@ -141,7 +142,7 @@ void main() {
     expect(ticket.ticketId, 'ticket-1');
     expect(ticket.derpClusterId, 'cn-sh-a');
     expect(ticket.allowedDerpNodeIds, ['relay-cn-sh-udp', 'relay-cn-sh-tcp']);
-    expect(ticket.relayUrl, 'udp://1.1.1.1:9000');
+    expect(ticket.relayUrl, kDevRelayUdpUrl);
     expect(ticket.signature, 'signed-payload');
   });
 }

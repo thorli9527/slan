@@ -38,3 +38,16 @@ func NewID(prefix string) string {
 func OpaqueToken(kind, subject string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(kind + ":" + subject + ":" + NewID("tok")))
 }
+
+// RandomHex 返回固定长度的十六进制随机字符串。
+func RandomHex(bytes int) string {
+	if bytes <= 0 {
+		return ""
+	}
+	buf := make([]byte, bytes)
+	if _, err := rand.Read(buf); err != nil {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+		return hex.EncodeToString(sum[:bytes])
+	}
+	return hex.EncodeToString(buf)
+}

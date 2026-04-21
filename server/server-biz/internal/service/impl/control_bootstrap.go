@@ -24,86 +24,65 @@ var _ service.Bootstrap = dbBootstrapService{}
 // CreateControlSession allocates a fresh control-plane token for an existing
 // node and returns the initial network map snapshot.
 func (s dbBootstrapService) CreateControlSession(userID string, req dto.CreateControlSessionRequest) (dto.ControlSessionResponse, error) {
-	if strings.TrimSpace(req.NodeID) == "" || strings.TrimSpace(req.NetworkID) == "" {
-		return dto.ControlSessionResponse{}, fmt.Errorf("%w: nodeId and networkId are required", ErrInvalidArgument)
+	if err := s.requireBootstrapRequest(req.NodeID, req.NetworkID); err != nil {
+		return dto.ControlSessionResponse{}, err
 	}
 
 	ctx := context.Background()
-	node, err := s.state.requireNodeSession(ctx, userID, req.NodeID, req.NetworkID)
+	session, err := s.requireBootstrapSession(ctx, userID, req.NodeID, req.NetworkID)
 	if err != nil {
 		return dto.ControlSessionResponse{}, err
 	}
-	controlSessionID, sessionToken, err := s.state.createStoredControlSession(ctx, userID, node.DeviceID, node.NodeID, req.NetworkID)
+	runtime, err := s.createRuntimeSession(ctx, userID, session)
 	if err != nil {
 		return dto.ControlSessionResponse{}, err
 	}
 	return dto.ControlSessionResponse{
-		ControlSessionID: controlSessionID,
-		SessionToken:     sessionToken,
+		ControlSessionID: runtime.controlSessionID,
+		SessionToken:     runtime.sessionToken,
 		ControlPlane:     s.state.controlPlaneConfig(),
-		NetworkMap:       s.state.buildNetworkMap(ctx, userID, node.ToDTO(nil), req.NetworkID),
+		NetworkMap:       runtime.networkMap,
 	}, nil
 }
 
 // Bootstrap returns the full startup payload needed by a client after login,
 // including device view, visible networks, relay config and control-plane data.
 func (s dbBootstrapService) Bootstrap(userID string, req dto.BootstrapRequest) (dto.BootstrapResponse, error) {
-	if strings.TrimSpace(req.NodeID) == "" || strings.TrimSpace(req.NetworkID) == "" {
-		return dto.BootstrapResponse{}, fmt.Errorf("%w: nodeId and networkId are required", ErrInvalidArgument)
+	if err := s.requireBootstrapRequest(req.NodeID, req.NetworkID); err != nil {
+		return dto.BootstrapResponse{}, err
 	}
 
 	ctx := context.Background()
-	node, err := s.state.requireNodeSession(ctx, userID, req.NodeID, req.NetworkID)
+	session, err := s.requireBootstrapSession(ctx, userID, req.NodeID, req.NetworkID)
 	if err != nil {
 		return dto.BootstrapResponse{}, err
 	}
-	deviceRecord, err := s.state.pg.GetDeviceByID(ctx, node.DeviceID)
-	if err != nil {
-		if repo.IsNotFound(err) {
-			return dto.BootstrapResponse{}, ErrNotFound
-		}
-		return dto.BootstrapResponse{}, err
-	}
-	attachments, err := s.state.pg.ListAttachmentsByDevice(ctx, node.DeviceID)
+	device, err := s.buildBootstrapDevice(ctx, userID, session.node.DeviceID)
 	if err != nil {
 		return dto.BootstrapResponse{}, err
 	}
-
-	seen := make(map[string]struct{})
-	var networks []dto.NetworkDetail
-	for _, attachment := range attachments {
-		if _, ok := seen[attachment.NetworkID]; ok {
-			continue
-		}
-		seen[attachment.NetworkID] = struct{}{}
-		detail, err := dbNetworkService{state: s.state}.Get(userID, attachment.NetworkID)
-		if err != nil {
-			continue
-		}
-		networks = append(networks, detail)
-	}
-
-	deviceNetworkIDs, _ := s.state.deviceNetworkIDs(ctx, deviceRecord.DeviceID)
-	device := deviceRecord.ToDTO(deviceNetworkIDs)
-
-	controlSessionID, sessionToken, err := s.state.createStoredControlSession(ctx, userID, node.DeviceID, node.NodeID, req.NetworkID)
+	networks, err := s.buildVisibleNetworkDetails(ctx, userID)
 	if err != nil {
+		return dto.BootstrapResponse{}, err
+	}
+	runtime, err := s.createRuntimeSession(ctx, userID, session)
+	if err != nil {
+		return dto.BootstrapResponse{}, err
+	}
+	if err := s.state.pg.UpdateUserActiveNetwork(ctx, userID, req.NetworkID); err != nil {
 		return dto.BootstrapResponse{}, err
 	}
 
 	return dto.BootstrapResponse{
-		ControlSessionID: controlSessionID,
-		SessionToken:     sessionToken,
-		Device: dto.DeviceBootstrap{
-			Device:      device,
-			Attachments: attachments,
-		},
+		ControlSessionID: runtime.controlSessionID,
+		SessionToken:     runtime.sessionToken,
+		Device:           device,
 		Networks:     networks,
 		ControlPlane: s.state.controlPlaneConfig(),
 		STUNServers:  append([]string(nil), s.state.cfg.Bootstrap.STUNServers...),
 		Relay:        s.state.relayConfig(),
 		DerpMap:      s.state.derpMap(),
-		NetworkMap:   s.state.buildNetworkMap(ctx, userID, node.ToDTO(nil), req.NetworkID),
+		NetworkMap:   runtime.networkMap,
 	}, nil
 }
 
@@ -203,6 +182,9 @@ func (s *dbState) createStoredControlSession(ctx context.Context, userID, device
 		LastSeenAt:       now,
 	}); err != nil {
 		return "", "", err
+	}
+	if s.tokens == nil {
+		return controlSessionID, sessionToken, nil
 	}
 	if err := s.tokens.StoreControlSessionToken(ctx, sessionToken, userID, 24*time.Hour); err != nil {
 		return "", "", err

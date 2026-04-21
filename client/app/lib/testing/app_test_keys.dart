@@ -1,14 +1,32 @@
 import 'package:flutter/foundation.dart';
 
 abstract final class AppTestKeys {
-  static const authTab = ValueKey<String>('home.tab.auth');
+  static const dashboardTab = ValueKey<String>('home.tab.dashboard');
   static const networksTab = ValueKey<String>('home.tab.networks');
   static const devicesTab = ValueKey<String>('home.tab.devices');
+  static const homeOpenNetworksButton =
+      ValueKey<String>('home.open_networks_button');
+  static const homeOpenDevicesButton =
+      ValueKey<String>('home.open_devices_button');
+  static const homeEnableNetworkButton =
+      ValueKey<String>('home.enable_network_button');
+  static const homeDisableNetworkButton =
+      ValueKey<String>('home.disable_network_button');
+  static const homeManageNetworkButton =
+      ValueKey<String>('home.manage_network_button');
+  static const homeLoginButton = ValueKey<String>('home.login_button');
+  static const homeSettingsButton = ValueKey<String>('home.settings_button');
+  static const homeAddButton = ValueKey<String>('home.add_button');
+  static const homeLogoutButton = ValueKey<String>('home.logout_button');
 
   static const authEmailField = ValueKey<String>('auth.email');
   static const authPasswordField = ValueKey<String>('auth.password');
   static const authRegisterButton = ValueKey<String>('auth.register');
   static const authLoginButton = ValueKey<String>('auth.login');
+  static const authOpenLoginButton = ValueKey<String>('auth.open_login');
+  static const authOpenConsoleButton = ValueKey<String>('auth.open_console');
+  static const authHostField = ValueKey<String>('auth.host');
+  static const authApplyHostButton = ValueKey<String>('auth.apply_host');
 
   static const networksNameField = ValueKey<String>('networks.name');
   static const networksCidrField = ValueKey<String>('networks.cidr');
