@@ -35,6 +35,9 @@ server/**/*.out
 **/.pub/
 **/.pub-cache/
 **/ios/Flutter/.last_build_id
+client/app_core_plugin_android/pubspec.lock
+client/app_core_plugin_linux/pubspec.lock
+client/app_core_plugin_windows/pubspec.lock
 
 # macOS / Xcode generated files
 **/.build/
