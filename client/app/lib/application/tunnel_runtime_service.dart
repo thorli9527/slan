@@ -2,6 +2,7 @@ library slan_app.application.tunnel_runtime_service;
 
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
+import 'tunnel_host_gateway.dart';
 import '../infra/app_core/models/tunnel_action_models.dart';
 
 class TunnelRuntimeOperationResult {
@@ -15,14 +16,17 @@ class TunnelRuntimeOperationResult {
 }
 
 class TunnelRuntimeService {
-  const TunnelRuntimeService();
+  const TunnelRuntimeService({
+    this.hostGateway = const PluginTunnelHostGateway(),
+  });
+
+  final TunnelHostGateway hostGateway;
 
   Future<TunnelRuntimeOperationResult> applyTunnelConfiguration({
     required WireGuardTunnelConfiguration configuration,
     String? verifyPeerVirtualIp,
   }) async {
-    final nativeResult =
-        await SlanAppCorePluginPlatform.instance.applyTunnelConfiguration(
+    final nativeResult = await hostGateway.applyTunnelConfiguration(
       configuration,
     );
     final acceptedReport = TunnelActionReport(
@@ -41,7 +45,7 @@ class TunnelRuntimeService {
       return TunnelRuntimeOperationResult(report: acceptedReport);
     }
 
-    final runtime = await SlanAppCorePluginPlatform.instance.tunnelRuntimeView(
+    final runtime = await hostGateway.tunnelRuntimeView(
       peerVirtualIp,
     );
     return TunnelRuntimeOperationResult(
@@ -53,8 +57,7 @@ class TunnelRuntimeService {
   Future<TunnelRuntimeOperationResult> bringTunnelUp({
     String? verifyPeerVirtualIp,
   }) async {
-    final nativeResult =
-        await SlanAppCorePluginPlatform.instance.bringTunnelUp();
+    final nativeResult = await hostGateway.bringTunnelUp();
     final acceptedReport = TunnelActionReport(
       succeeded: nativeResult.accepted,
       detail: nativeResult.detail,
@@ -71,7 +74,7 @@ class TunnelRuntimeService {
       return TunnelRuntimeOperationResult(report: acceptedReport);
     }
 
-    final runtime = await SlanAppCorePluginPlatform.instance.tunnelRuntimeView(
+    final runtime = await hostGateway.tunnelRuntimeView(
       peerVirtualIp,
     );
     return TunnelRuntimeOperationResult(
@@ -81,8 +84,7 @@ class TunnelRuntimeService {
   }
 
   Future<TunnelRuntimeOperationResult> bringTunnelDown() async {
-    final nativeResult =
-        await SlanAppCorePluginPlatform.instance.bringTunnelDown();
+    final nativeResult = await hostGateway.bringTunnelDown();
     return TunnelRuntimeOperationResult(
       report: TunnelActionReport(
         succeeded: nativeResult.accepted,
@@ -97,8 +99,7 @@ class TunnelRuntimeService {
   Future<TunnelRuntimeOperationResult> removeTunnelPeer({
     required String peerVirtualIp,
   }) async {
-    final nativeResult = await SlanAppCorePluginPlatform.instance
-        .removeTunnelPeer(peerVirtualIp);
+    final nativeResult = await hostGateway.removeTunnelPeer(peerVirtualIp);
     return TunnelRuntimeOperationResult(
       report: TunnelActionReport(
         succeeded: nativeResult.accepted,
@@ -113,7 +114,7 @@ class TunnelRuntimeService {
   Future<TunnelRuntimeOperationResult> refreshTunnelRuntime({
     required String peerVirtualIp,
   }) async {
-    final runtime = await SlanAppCorePluginPlatform.instance.tunnelRuntimeView(
+    final runtime = await hostGateway.tunnelRuntimeView(
       peerVirtualIp,
     );
     final errorMessage = runtime?.backendLastError ?? runtime?.lastError;

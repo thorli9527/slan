@@ -47,7 +47,9 @@ impl MacosWireGuardKitConfigMapper {
             return Err("macos backend requires non-empty wireguard private key".to_string());
         }
         if interface.addresses.is_empty() {
-            return Err("macos backend requires at least one wireguard interface address".to_string());
+            return Err(
+                "macos backend requires at least one wireguard interface address".to_string(),
+            );
         }
         Ok(())
     }

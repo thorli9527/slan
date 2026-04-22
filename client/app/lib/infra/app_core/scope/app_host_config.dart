@@ -20,7 +20,11 @@ final class AppHostConfig {
   final bool secure;
 
   String get authLoginUrl => Uri.parse(webConsoleUrl)
-      .replace(queryParameters: const {'auth': 'login'}).toString();
+      .replace(
+        path: '/',
+        queryParameters: const {'auth': 'login'},
+      )
+      .toString();
 
   static AppHostConfig? tryParse(String? raw) {
     final normalized = raw?.trim() ?? '';

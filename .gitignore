@@ -9,6 +9,7 @@
 *.log
 coverage/
 artifacts/
+**/.tmp/
 
 # Local environment files
 .env
@@ -47,3 +48,4 @@ server/**/*.out
 # Frontend package manager outputs
 node_modules/
 dist/
+**/.angular/cache/

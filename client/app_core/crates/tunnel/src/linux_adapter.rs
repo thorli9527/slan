@@ -219,20 +219,18 @@ impl LinuxKernelWireGuardAdapter {
 
     fn apply_interface_commands(interface: &LinuxKernelInterfacePlan) -> Vec<LinuxCommandSpec> {
         let interface_name = Self::interface_name_from_plan(interface);
-        let mut commands = vec![
-            LinuxCommandSpec::new(
-                "ip",
-                vec![
-                    "link".into(),
-                    "add".into(),
-                    "dev".into(),
-                    interface_name.clone(),
-                    "type".into(),
-                    "wireguard".into(),
-                ],
-            )
-            .ignore_stderr("File exists"),
-        ];
+        let mut commands = vec![LinuxCommandSpec::new(
+            "ip",
+            vec![
+                "link".into(),
+                "add".into(),
+                "dev".into(),
+                interface_name.clone(),
+                "type".into(),
+                "wireguard".into(),
+            ],
+        )
+        .ignore_stderr("File exists")];
         let mut wg_args = vec![
             "set".into(),
             interface_name.clone(),
@@ -243,7 +241,8 @@ impl LinuxKernelWireGuardAdapter {
             wg_args.push("listen-port".into());
             wg_args.push(listen_port.to_string());
         }
-        commands.push(LinuxCommandSpec::new("wg", wg_args).with_stdin(interface.private_key.clone()));
+        commands
+            .push(LinuxCommandSpec::new("wg", wg_args).with_stdin(interface.private_key.clone()));
         if let Some(mtu) = interface.mtu {
             commands.push(LinuxCommandSpec::new(
                 "ip",
@@ -480,7 +479,10 @@ impl LinuxKernelWireGuardAdapter {
     }
 
     pub fn interface_runtime(&self) -> Option<LinuxKernelRuntime> {
-        self.interface.lock().ok().and_then(|runtime| runtime.clone())
+        self.interface
+            .lock()
+            .ok()
+            .and_then(|runtime| runtime.clone())
     }
 
     pub fn peer_runtime(&self, peer_virtual_ip: &str) -> Option<LinuxKernelPeerRuntime> {
@@ -502,8 +504,12 @@ impl LinuxKernelWireGuardAdapter {
         LinuxDriverDiagnostics {
             execution_mode: self.execution_mode,
             execution_backend: self.execution_backend,
-            interface_name: interface_runtime.as_ref().and_then(|runtime| runtime.interface_name.clone()),
-            is_up: interface_runtime.map(|runtime| runtime.is_up).unwrap_or(false),
+            interface_name: interface_runtime
+                .as_ref()
+                .and_then(|runtime| runtime.interface_name.clone()),
+            is_up: interface_runtime
+                .map(|runtime| runtime.is_up)
+                .unwrap_or(false),
             planned_peer_count: self.planned_peer_ips().len(),
             recent_command_count: self.recent_commands().len(),
         }

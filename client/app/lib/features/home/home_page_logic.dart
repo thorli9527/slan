@@ -42,13 +42,18 @@ extension _HomePageLogic on _HomePageState {
     if (target == null || target.isEmpty) {
       return;
     }
-    final callbackId = await AuthCallbackService.preparePendingServerCallback();
+    final currentDeviceId = AppCoreScope.sessionStore.device?.deviceId?.trim();
+    final loginTargetDeviceId =
+        currentDeviceId != null && currentDeviceId.isNotEmpty
+            ? currentDeviceId
+            : AppCoreScope.clientMachineId;
+    await AuthCallbackService.preparePendingServerCallback(
+      preferredKey: loginTargetDeviceId,
+    );
     await _openExternalUrl(
       Uri.parse(target).replace(queryParameters: {
         ...Uri.parse(target).queryParameters,
-        'auth': 'login',
-        'deviceId': AppCoreScope.clientMachineId,
-        'callbackId': callbackId,
+        'deviceId': loginTargetDeviceId,
       }).toString(),
     );
   }
@@ -102,13 +107,6 @@ extension _HomePageLogic on _HomePageState {
   }
 
   Future<void> _openNetworkConsoleIfNeeded() async {
-    if (_openedNetworkConsole) {
-      _setNetworkConsoleStatus(
-        'No network is assigned to this client yet. Use the web console for network, subnet, and DHCP management.',
-      );
-      return;
-    }
-
     final target = AppCoreScope.webConsoleUrl;
     if (target == null || target.isEmpty) {
       _setNetworkConsoleStatus(
@@ -116,18 +114,10 @@ extension _HomePageLogic on _HomePageState {
       );
       return;
     }
-
-    try {
-      await _openExternalUrl(target);
-      _openedNetworkConsole = true;
-      _setNetworkConsoleStatus(
-        'No network is assigned. The web console has been opened for network, subnet, and DHCP management.',
-      );
-    } catch (_) {
-      _setNetworkConsoleStatus(
-        'No network is assigned. Open the web console manually: $target',
-      );
-    }
+    _openedNetworkConsole = false;
+    _setNetworkConsoleStatus(
+      'No network is assigned yet. Open the web console manually if you want to manage networks, subnets, or DHCP: $target',
+    );
   }
 
   void _stopMissingNetworkPolling() {
@@ -136,19 +126,7 @@ extension _HomePageLogic on _HomePageState {
   }
 
   Future<void> _openExternalUrl(String url) async {
-    if (Platform.isMacOS) {
-      await Process.start('open', [url]);
-      return;
-    }
-    if (Platform.isLinux) {
-      await Process.start('xdg-open', [url]);
-      return;
-    }
-    if (Platform.isWindows) {
-      await Process.start('cmd', ['/c', 'start', '', url]);
-      return;
-    }
-    throw UnsupportedError('unsupported desktop platform');
+    await DesktopUrlLauncher.open(url);
   }
 
   NetworkMemberModel? _memberForCurrentDevice(

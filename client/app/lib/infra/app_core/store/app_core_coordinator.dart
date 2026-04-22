@@ -6,6 +6,7 @@ import '../../../application/auth_session_service.dart';
 import '../../../application/device_setup_service.dart';
 import '../../../application/device_runtime_service.dart';
 import '../../../application/tunnel_configuration_service.dart';
+import '../../../application/tunnel_host_gateway.dart';
 import '../../../application/tunnel_runtime_service.dart';
 import '../scope/app_core_scope.dart';
 import '../models/diagnostic_models.dart';
@@ -17,7 +18,9 @@ import 'app_tunnel_store.dart';
 
 class AppCoreCoordinator with AppCoreCoordinatorAsync {
   static const defaultAutoNetworkCidr = '10.0.0.0/16';
-  AppCoreCoordinator();
+  AppCoreCoordinator({
+    TunnelHostGateway hostGateway = const PluginTunnelHostGateway(),
+  }) : _tunnelRuntimeService = TunnelRuntimeService(hostGateway: hostGateway);
 
   final AppSessionStore sessionStore = AppSessionStore();
   final AppTunnelStore tunnelStore = AppTunnelStore();
@@ -33,8 +36,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   final DeviceRuntimeService _deviceRuntimeService = DeviceRuntimeService(
     apiProvider: () => AppCoreScope.instance,
   );
-  final TunnelRuntimeService _tunnelRuntimeService =
-      const TunnelRuntimeService();
+  final TunnelRuntimeService _tunnelRuntimeService;
   final TunnelConfigurationService _tunnelConfigurationService =
       const TunnelConfigurationService();
 

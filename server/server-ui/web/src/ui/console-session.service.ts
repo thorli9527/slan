@@ -31,10 +31,12 @@ export class ConsoleSessionService {
     const callbackId = params.get('callbackId');
     const clientPlatform = params.get('clientPlatform');
     const clientName = params.get('clientName');
+    const resolvedDeviceId = (deviceId || clientDeviceId || '').trim();
+    const resolvedCallbackId = callbackId?.trim() || resolvedDeviceId || undefined;
     return {
       authMode: authMode === 'login' || authMode === 'register' ? authMode : undefined,
-      callbackId: callbackId?.trim() || undefined,
-      deviceId: (deviceId || clientDeviceId || '').trim(),
+      callbackId: resolvedCallbackId,
+      deviceId: resolvedDeviceId,
       clientPlatform: clientPlatform?.trim() || 'desktop',
       clientName: clientName?.trim() || 'SLAN Client',
     };

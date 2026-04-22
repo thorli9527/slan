@@ -1,6 +1,6 @@
 use control_ws_client::{
-    ControlWsClient, ControlWsConfig, ControlWsConnectPlan, ControlWsConnectionStateReport,
-    ControlWsActiveNetworkEnabled, ControlWsDeviceIPReassigned, ControlWsEvent,
+    ControlWsActiveNetworkEnabled, ControlWsClient, ControlWsConfig, ControlWsConnectPlan,
+    ControlWsConnectionStateReport, ControlWsDeviceIPReassigned, ControlWsEvent,
     ControlWsPathHealthReport,
 };
 use controller_client::{
@@ -802,7 +802,9 @@ where
                         .current_device
                         .as_ref()
                         .map(|device| device.device_id.clone())
-                        .ok_or_else(|| "missing current device, register device first".to_string())?
+                        .ok_or_else(|| {
+                            "missing current device, register device first".to_string()
+                        })?
                 };
                 self.controller.activate_network(
                     &access_token,
@@ -818,10 +820,9 @@ where
                 )?;
                 ControlWsBootstrapUpdate {
                     bootstrap_override: Some(refreshed.clone()),
-                    network_map: refreshed
-                        .network_map
-                        .clone()
-                        .ok_or_else(|| "missing network map after active network enable".to_string())?,
+                    network_map: refreshed.network_map.clone().ok_or_else(|| {
+                        "missing network map after active network enable".to_string()
+                    })?,
                     heartbeat_seconds: refreshed.control_plane.heartbeat_seconds,
                     connect_plans: std::collections::HashMap::new(),
                     device_ip_updates: vec![],

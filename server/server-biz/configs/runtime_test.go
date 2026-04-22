@@ -6,13 +6,17 @@ import (
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
+	_ "modernc.org/sqlite"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func TestMigrateSubnetAttachmentIndexes_AllowsReuseAcrossSubnets(t *testing.T) {
 	ctx := context.Background()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.New(sqlite.Config{
+		DriverName: "sqlite",
+		DSN:        "file::memory:?cache=shared",
+	}), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

@@ -12,6 +12,7 @@ import '../../infra/logging/startup_log.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
 import '../../infra/app_core/store/app_session_store.dart';
 import '../../shared/desktop_platform.dart';
+import '../../shared/desktop_url_launcher.dart';
 import '../../testing/app_test_keys.dart';
 
 part 'home_page_logic.dart';

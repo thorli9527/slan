@@ -53,10 +53,7 @@ impl LinuxKernelWireGuardConfigMapper {
         Ok(())
     }
 
-    pub fn validate_peer(
-        peer_virtual_ip: &str,
-        peer: &WireGuardPeerConfig,
-    ) -> Result<(), String> {
+    pub fn validate_peer(peer_virtual_ip: &str, peer: &WireGuardPeerConfig) -> Result<(), String> {
         if peer_virtual_ip.trim().is_empty() {
             return Err("linux backend requires non-empty peer virtual ip".to_string());
         }

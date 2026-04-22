@@ -10,6 +10,7 @@ import (
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/service"
+	_ "modernc.org/sqlite"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -57,6 +58,103 @@ func TestCreateNetwork_RejectsSecondOwnedNetwork(t *testing.T) {
 	}
 	if user.ActiveNetworkID != "" {
 		t.Fatalf("expected active network to stay empty after rejected create, got %s", user.ActiveNetworkID)
+	}
+}
+
+func TestRegister_CreatesDefaultOwnedNetwork(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+
+	auth, err := dbAuthService{state: state}.Register(dto.RegisterRequest{
+		Email:    "new-user@local.slan",
+		Password: "Register-2026!",
+	})
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	if auth.UserID == "" || auth.AccessToken == "" {
+		t.Fatalf("expected auth tokens, got %+v", auth)
+	}
+
+	user, err := state.pg.GetUserByID(ctx, auth.UserID)
+	if err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	if user.ActiveNetworkID == "" {
+		t.Fatalf("expected active network to be initialized")
+	}
+
+	owned, err := state.pg.GetOwnedNetworkByUser(ctx, auth.UserID)
+	if err != nil {
+		t.Fatalf("load owned network: %v", err)
+	}
+	if owned.Name != defaultOwnedNetworkName {
+		t.Fatalf("expected default network name %q, got %q", defaultOwnedNetworkName, owned.Name)
+	}
+	if owned.NetworkID != user.ActiveNetworkID {
+		t.Fatalf("expected active network %s to match owned network %s", user.ActiveNetworkID, owned.NetworkID)
+	}
+
+	subnets, err := state.pg.ListSubnetsByNetwork(ctx, owned.NetworkID)
+	if err != nil {
+		t.Fatalf("list default subnets: %v", err)
+	}
+	if len(subnets) != 1 || !subnets[0].IsDefault {
+		t.Fatalf("expected one default subnet, got %+v", subnets)
+	}
+}
+
+func TestRegisterDevice_ProvisionsIntoActiveNetwork(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+
+	auth, err := dbAuthService{state: state}.Register(dto.RegisterRequest{
+		Email:    "desktop-user@local.slan",
+		Password: "Desktop-2026!",
+	})
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+
+	device, err := dbDeviceService{state: state}.Register(auth.UserID, dto.RegisterDeviceRequest{
+		Name:      "SLAN Client Windows",
+		Platform:  "windows",
+		MachineID: "client-machine-1",
+		PublicKey: "device-key-1",
+	})
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+
+	user, err := state.pg.GetUserByID(ctx, auth.UserID)
+	if err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	if user.ActiveNetworkID == "" {
+		t.Fatalf("expected active network after register")
+	}
+
+	member, err := state.pg.GetMemberByNetworkDevice(ctx, user.ActiveNetworkID, device.DeviceID)
+	if err != nil {
+		t.Fatalf("load auto-created member: %v", err)
+	}
+	if member.Role != "owner" {
+		t.Fatalf("expected first device to become owner member, got %+v", member)
+	}
+
+	attachments, err := state.pg.ListAttachmentsByDevice(ctx, device.DeviceID)
+	if err != nil {
+		t.Fatalf("list device attachments: %v", err)
+	}
+	if len(attachments) != 1 {
+		t.Fatalf("expected one attachment, got %+v", attachments)
+	}
+	if attachments[0].NetworkID != user.ActiveNetworkID || attachments[0].VirtualIP == "" {
+		t.Fatalf("expected active-network attachment with ip, got %+v", attachments[0])
+	}
+
+	if device.CurrentVirtualIP == "" {
+		t.Fatalf("expected device dto to expose current virtual ip, got %+v", device)
 	}
 }
 
@@ -830,7 +928,10 @@ func newNetworkTestState(t *testing.T) *dbState {
 	t.Helper()
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(sqlite.New(sqlite.Config{
+		DriverName: "sqlite",
+		DSN:        dsn,
+	}), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -850,7 +951,8 @@ func newNetworkTestState(t *testing.T) *dbState {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return &dbState{
-		pg: repo.NewPostgresRepository(db),
+		pg:     repo.NewPostgresRepository(db),
+		tokens: newMemoryTokenStore(),
 	}
 }
 

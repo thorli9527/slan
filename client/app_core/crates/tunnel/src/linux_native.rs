@@ -81,7 +81,14 @@ mod tests {
     fn classifies_peer_configuration_command() {
         let operation = NativeLinuxOperation::classify(&spec(
             "wg",
-            &["set", "wg0", "peer", "peer-pk", "allowed-ips", "100.64.0.2/32"],
+            &[
+                "set",
+                "wg0",
+                "peer",
+                "peer-pk",
+                "allowed-ips",
+                "100.64.0.2/32",
+            ],
         ));
         assert_eq!(operation, NativeLinuxOperation::ConfigurePeer);
     }

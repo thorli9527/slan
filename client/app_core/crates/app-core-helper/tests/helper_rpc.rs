@@ -1,5 +1,8 @@
 use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
@@ -67,7 +70,10 @@ fn helper_process_serializes_probe_success_response_over_stdio() {
     assert_eq!(response["result"]["bytesSent"], 5);
     assert_eq!(response["result"]["replyObserved"], true);
     assert_eq!(response["result"]["replyRttMs"], 2);
-    assert_eq!(response["result"]["activePath"]["relay"]["peer_node_id"], "peer-1");
+    assert_eq!(
+        response["result"]["activePath"]["relay"]["peer_node_id"],
+        "peer-1"
+    );
     assert_eq!(response.get("error"), None);
     assert_eq!(response.get("errorCode"), None);
     assert_eq!(response.get("errorMessage"), None);
@@ -85,7 +91,10 @@ fn helper_process_serializes_generic_error_response_over_stdio() {
 
     assert_eq!(response["ok"], false);
     assert_eq!(response["errorCode"], "app_core_helper_error");
-    assert_eq!(response["errorMessage"], "unsupported method: unsupportedMethod");
+    assert_eq!(
+        response["errorMessage"],
+        "unsupported method: unsupportedMethod"
+    );
     assert_eq!(response["error"], "unsupported method: unsupportedMethod");
 }
 
@@ -143,7 +152,10 @@ fn helper_process_serializes_send_unsupported_response_over_stdio() {
 
     assert_eq!(response["ok"], false);
     assert_eq!(response["errorCode"], "send_unsupported_path");
-    assert_eq!(response["errorMessage"], "active path does not support send");
+    assert_eq!(
+        response["errorMessage"],
+        "active path does not support send"
+    );
     assert_eq!(
         response["error"],
         "send_unsupported_path: active path does not support send"
@@ -218,7 +230,10 @@ fn helper_process_serializes_probe_unsupported_response_over_stdio() {
 
     assert_eq!(response["ok"], false);
     assert_eq!(response["errorCode"], "probe_unsupported_path");
-    assert_eq!(response["errorMessage"], "active path does not support probe");
+    assert_eq!(
+        response["errorMessage"],
+        "active path does not support probe"
+    );
     assert_eq!(
         response["error"],
         "probe_unsupported_path: active path does not support probe"
@@ -243,7 +258,10 @@ fn helper_process_serializes_probe_timeout_response_over_stdio() {
 
     assert_eq!(response["ok"], false);
     assert_eq!(response["errorCode"], "probe_timeout");
-    assert_eq!(response["errorMessage"], "timed out waiting for probe reply");
+    assert_eq!(
+        response["errorMessage"],
+        "timed out waiting for probe reply"
+    );
     assert_eq!(
         response["error"],
         "probe_timeout: timed out waiting for probe reply"
@@ -275,6 +293,36 @@ fn helper_process_serializes_probe_transport_response_over_stdio() {
     );
 }
 
+#[test]
+fn helper_process_serializes_success_response_over_tcp_host() {
+    let bind = TcpListener::bind("127.0.0.1:0").expect("bind test port");
+    let address = bind.local_addr().expect("tcp host local addr");
+    drop(bind);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_app-core-helper"));
+    command
+        .arg("--tcp-host")
+        .arg(address.to_string())
+        .env("SLAN_CONTROL_BASE_URL", "http://127.0.0.1:9")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().expect("spawn tcp helper");
+
+    let response = invoke_helper_over_tcp(
+        address,
+        &json!({
+            "method": "disconnect",
+            "args": {}
+        }),
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"], json!({}));
+}
+
 fn invoke_helper(base_url: &str, request: &Value) -> Value {
     invoke_helper_with_env(base_url, request, &[])
 }
@@ -304,10 +352,38 @@ fn invoke_helper_with_env(base_url: &str, request: &Value, envs: &[(&str, &str)]
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
     reader.read_line(&mut line).expect("read response line");
-    assert!(!line.trim().is_empty(), "helper returned empty response line");
+    assert!(
+        !line.trim().is_empty(),
+        "helper returned empty response line"
+    );
 
     let _ = child.kill();
     let _ = child.wait();
 
     serde_json::from_str(line.trim()).expect("parse helper json response")
+}
+
+fn invoke_helper_over_tcp(address: std::net::SocketAddr, request: &Value) -> Value {
+    for _ in 0..50 {
+        match TcpStream::connect(address) {
+            Ok(mut stream) => {
+                writeln!(
+                    stream,
+                    "{}",
+                    serde_json::to_string(request).expect("serialize request")
+                )
+                .expect("write tcp request");
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read tcp response line");
+                assert!(
+                    !line.trim().is_empty(),
+                    "helper returned empty tcp response line"
+                );
+                return serde_json::from_str(line.trim()).expect("parse helper tcp response");
+            }
+            Err(_) => thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    panic!("timed out waiting for helper tcp host to accept connections");
 }

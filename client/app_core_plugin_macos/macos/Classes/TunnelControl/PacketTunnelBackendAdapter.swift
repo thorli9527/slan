@@ -2,6 +2,7 @@ import Foundation
 import NetworkExtension
 
 final class PacketTunnelBackendAdapter: WireGuardTunnelBackendInvoking {
+  let hostSource = "packet-tunnel-host"
   private let lock = NSLock()
   private let packetTunnelManager: PacketTunnelManaging
 

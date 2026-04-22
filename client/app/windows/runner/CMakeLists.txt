@@ -38,3 +38,17 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+get_filename_component(APP_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../app_core" ABSOLUTE)
+set(APP_CORE_HELPER_OUTPUT_DIR "$<IF:$<CONFIG:Debug>,debug,release>")
+
+add_custom_command(
+  TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND cargo build -p app-core-helper $<$<NOT:$<CONFIG:Debug>>:--release>
+  WORKING_DIRECTORY "${APP_CORE_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${APP_CORE_DIR}/target/${APP_CORE_HELPER_OUTPUT_DIR}/app-core-helper.exe"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/app-core-helper.exe"
+  VERBATIM
+  COMMAND_EXPAND_LISTS
+)

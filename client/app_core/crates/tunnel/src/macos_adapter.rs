@@ -15,10 +15,7 @@ pub struct MacosWireGuardKitAdapter {
 }
 
 impl MacosWireGuardKitAdapter {
-    pub fn apply_interface(
-        &self,
-        runtime: MacosWireGuardKitRuntime,
-    ) -> Result<(), String> {
+    pub fn apply_interface(&self, runtime: MacosWireGuardKitRuntime) -> Result<(), String> {
         let mut interface = self
             .interface
             .lock()
@@ -57,6 +54,9 @@ impl MacosWireGuardKitAdapter {
     }
 
     pub fn interface_runtime(&self) -> Option<MacosWireGuardKitRuntime> {
-        self.interface.lock().ok().and_then(|runtime| runtime.clone())
+        self.interface
+            .lock()
+            .ok()
+            .and_then(|runtime| runtime.clone())
     }
 }

@@ -65,7 +65,13 @@ pub fn detect_platform_tunnel_driver(
     let execution_mode = match selected {
         TunnelDriverKind::LinuxKernel if !dry_run => "system",
         TunnelDriverKind::LinuxKernel => "dry-run",
-        TunnelDriverKind::WindowsEmbeddable => "dry-run",
+        TunnelDriverKind::WindowsEmbeddable => {
+            if std::env::var("SLAN_WINDOWS_TUNNEL_MODE").ok().as_deref() == Some("dry-run") {
+                "dry-run"
+            } else {
+                "system"
+            }
+        }
         TunnelDriverKind::InMemory => "memory",
         TunnelDriverKind::Auto => "unknown",
     };
@@ -77,7 +83,13 @@ pub fn detect_platform_tunnel_driver(
             "native" | "netlink" => "native",
             _ => "shell",
         },
-        TunnelDriverKind::WindowsEmbeddable => "embeddable",
+        TunnelDriverKind::WindowsEmbeddable => {
+            if std::env::var("SLAN_WINDOWS_TUNNEL_MODE").ok().as_deref() == Some("dry-run") {
+                "embeddable"
+            } else {
+                "netsh"
+            }
+        }
         TunnelDriverKind::InMemory => "memory",
         TunnelDriverKind::Auto => "unknown",
     };
@@ -117,6 +129,12 @@ pub fn build_platform_tunnel_manager(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn windows_mode_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn parses_linux_driver_alias() {
@@ -150,8 +168,15 @@ mod tests {
 
     #[test]
     fn detects_windows_embeddable_mode() {
+        let _guard = windows_mode_lock().lock().unwrap();
+        unsafe {
+            std::env::set_var("SLAN_WINDOWS_TUNNEL_MODE", "dry-run");
+        }
         let selection =
             detect_platform_tunnel_driver(Some("windows-embeddable"), true).expect("selection");
+        unsafe {
+            std::env::remove_var("SLAN_WINDOWS_TUNNEL_MODE");
+        }
         assert_eq!(selection.requested, TunnelDriverKind::WindowsEmbeddable);
         assert_eq!(selection.selected, TunnelDriverKind::WindowsEmbeddable);
         assert_eq!(selection.execution_mode, "dry-run");

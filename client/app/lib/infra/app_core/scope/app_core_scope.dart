@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../application/tunnel_host_gateway.dart';
 import '../api/app_core_api.dart';
 import '../bridge/app_core_bridge.dart';
 import '../models/identity_models.dart';
@@ -37,6 +38,10 @@ class AppCoreScope {
       String.fromEnvironment('SLAN_CONTROL_BASE_URL');
   static const String _serverUiUrl =
       String.fromEnvironment('SLAN_SERVER_UI_URL');
+  static const String _tunnelHostMode =
+      String.fromEnvironment('SLAN_TUNNEL_HOST_MODE');
+  static const String _helperHostAddress =
+      String.fromEnvironment('SLAN_APP_CORE_HELPER_HOST');
   static String? _runtimeHostInput = _serverHost.isEmpty ? null : _serverHost;
   static String? _runtimeControlBaseUrl =
       _controlBaseUrl.isEmpty ? null : _controlBaseUrl;
@@ -45,7 +50,9 @@ class AppCoreScope {
   static String? _runtimeClientMachineId;
 
   static AppCoreApi _instance = _buildDefaultInstance();
-  static AppCoreCoordinator _coordinator = AppCoreCoordinator();
+  static final TunnelHostGateway _tunnelHostGateway = _buildTunnelHostGateway();
+  static AppCoreCoordinator _coordinator =
+      AppCoreCoordinator(hostGateway: _tunnelHostGateway);
   static AppSessionController _sessionController =
       AppSessionController(_coordinator);
   static AppTunnelController _tunnelController =
@@ -58,6 +65,9 @@ class AppCoreScope {
 
   static Future<void> initialize() async {
     await StartupLog.write('app core initialize start mode=$_appCoreMode');
+    await StartupLog.write(
+      'tunnel host mode=${_resolvedTunnelHostMode()} helperHost=${_resolvedHelperHostAddress() ?? 'plugin'}',
+    );
     if (_appCoreMode == 'bridge') {
       await StartupLog.write('app core initialize skipped: bridge mode');
       return;
@@ -111,9 +121,11 @@ class AppCoreScope {
             'persisted session skipped after transient validation failure',
           );
         }
+        await _cleanupInactiveTunnelBackend('invalid persisted session');
       }
     } else {
       await StartupLog.write('no persisted session');
+      await _cleanupInactiveTunnelBackend('no persisted session');
     }
     await StartupLog.write('app core initialize done');
   }
@@ -123,6 +135,7 @@ class AppCoreScope {
   static AppTunnelStore get tunnelStore => _coordinator.tunnelStore;
   static AppSessionController get sessionController => _sessionController;
   static AppTunnelController get tunnelController => _tunnelController;
+  static TunnelHostGateway get tunnelHostGateway => _tunnelHostGateway;
   static String get mode => _appCoreMode;
   static AppHostConfig? get hostConfig =>
       AppHostConfig.tryParse(_runtimeHostInput) ??
@@ -198,9 +211,32 @@ class AppCoreScope {
   }
 
   static void _resetStoreBindings() {
-    _coordinator = AppCoreCoordinator();
+    _coordinator = AppCoreCoordinator(hostGateway: _tunnelHostGateway);
     _sessionController = AppSessionController(_coordinator);
     _tunnelController = AppTunnelController(_coordinator);
+  }
+
+  static TunnelHostGateway _buildTunnelHostGateway() {
+    final mode = _resolvedTunnelHostMode();
+    final helperHostAddress = _resolvedHelperHostAddress();
+    if ((mode == 'service' || mode == 'helper' || mode == 'helper-host') &&
+        helperHostAddress != null) {
+      return HelperServiceTunnelHostGateway(address: helperHostAddress);
+    }
+    return const PluginTunnelHostGateway();
+  }
+
+  static String _resolvedTunnelHostMode() {
+    final normalized = _tunnelHostMode.trim().toLowerCase();
+    return normalized.isEmpty ? 'plugin' : normalized;
+  }
+
+  static String? _resolvedHelperHostAddress() {
+    final normalized = _helperHostAddress.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
   }
 
   static Future<void> _persistHost({bool clear = false}) async {
@@ -332,6 +368,19 @@ class AppCoreScope {
           fragment: null,
         )
         .toString();
+  }
+
+  static Future<void> _cleanupInactiveTunnelBackend(String reason) async {
+    try {
+      final result = await _tunnelHostGateway.bringTunnelDown();
+      await StartupLog.write(
+        'inactive tunnel cleanup reason=$reason accepted=${result.accepted} detail=${result.detail}',
+      );
+    } catch (error) {
+      await StartupLog.write(
+        'inactive tunnel cleanup skipped reason=$reason error=$error',
+      );
+    }
   }
 }
 

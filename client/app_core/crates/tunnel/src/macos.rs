@@ -86,8 +86,7 @@ impl TunnelBackend for MacosWireGuardKitBackend {
 mod tests {
     use super::*;
     use slan_app_core::{
-        AllowedIp, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair,
-        WireGuardPeerConfig,
+        AllowedIp, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair, WireGuardPeerConfig,
     };
 
     fn sample_config() -> TunnelConfig {
@@ -148,7 +147,10 @@ mod tests {
 
         let err = backend.establish(&config).unwrap_err();
 
-        assert_eq!(err, "macos backend requires distinct local and peer virtual ip");
+        assert_eq!(
+            err,
+            "macos backend requires distinct local and peer virtual ip"
+        );
         assert!(backend.planned_peer_ips().is_empty());
     }
 

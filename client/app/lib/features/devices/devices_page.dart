@@ -368,7 +368,7 @@ class _DevicesPageState extends State<DevicesPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Local tunnel bring-up is still pending ${DesktopPlatform.nativeTunnelLabel} integration, so runtime actions currently return an explicit unsupported result.',
+                  'Local tunnel runtime actions are routed through the Rust backend on ${DesktopPlatform.nativeTunnelLabel}, so apply, bring-up, and runtime inspection can now run through the desktop bridge.',
                 ),
                 if (footer != null) ...[
                   const SizedBox(height: 12),

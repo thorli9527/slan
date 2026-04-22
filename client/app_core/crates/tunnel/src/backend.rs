@@ -11,10 +11,7 @@ use crate::TunnelConfig;
 /// Windows embeddable service、Android tunnel SDK 的统一落点。
 pub trait TunnelBackend: Send + Sync {
     /// 应用本地 WireGuard 接口配置。
-    fn apply_interface_config(
-        &self,
-        _interface: &WireGuardInterfaceConfig,
-    ) -> Result<(), String> {
+    fn apply_interface_config(&self, _interface: &WireGuardInterfaceConfig) -> Result<(), String> {
         Ok(())
     }
 
@@ -96,7 +93,10 @@ impl TunnelBackend for InMemoryTunnelBackend {
             .state
             .lock()
             .map_err(|_| "tunnel backend state poisoned".to_string())?;
-        state.insert(config.peer_virtual_ip.clone(), config.wireguard_peer.clone());
+        state.insert(
+            config.peer_virtual_ip.clone(),
+            config.wireguard_peer.clone(),
+        );
         Ok(())
     }
 

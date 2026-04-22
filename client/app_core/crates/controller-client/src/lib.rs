@@ -9,8 +9,8 @@ mod http_runtime;
 mod transport;
 
 pub use api::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest, LoginRequest,
-    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest,
+    LoginRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
 };
 pub use client::HttpControllerClient;
 pub use transport::{

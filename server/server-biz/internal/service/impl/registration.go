@@ -28,6 +28,9 @@ func (s dbDeviceService) Register(userID string, req dto.RegisterDeviceRequest) 
 	if err != nil {
 		return dto.Device{}, err
 	}
+	if err := s.state.ensureDeviceProvisionedInActiveNetwork(ctx, userID, record.DeviceID); err != nil {
+		return dto.Device{}, err
+	}
 	return s.state.buildDeviceDTO(ctx, record), nil
 }
 

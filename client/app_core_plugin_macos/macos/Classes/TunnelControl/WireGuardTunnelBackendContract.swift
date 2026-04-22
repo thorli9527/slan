@@ -2,6 +2,7 @@ import Foundation
 import NetworkExtension
 
 protocol WireGuardTunnelBackendInvoking {
+  var hostSource: String { get }
   func apply(configuration: WireGuardTunnelConfiguration) throws
   func removePeer(peerVirtualIp: String) throws
   func bringUp() throws

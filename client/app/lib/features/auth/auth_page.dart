@@ -1,9 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../../infra/app_core/scope/app_host_config.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
+import '../../shared/desktop_url_launcher.dart';
 import '../../testing/app_test_keys.dart';
 import 'auth_callback_service.dart';
 import '../shared/desktop_client_widgets.dart';
@@ -77,37 +76,36 @@ class _AuthPageState extends State<AuthPage> {
   Future<void> _openWebAuth({required bool loginOnly}) async {
     final hostConfig =
         AppHostConfig.tryParse(_hostController.text) ?? AppCoreScope.hostConfig;
-    final configured =
-        hostConfig?.webConsoleUrl ?? AppCoreScope.webConsoleUrl ?? '';
-    if (configured.isEmpty) {
+    final configured = loginOnly
+        ? hostConfig?.authLoginUrl ??
+            (AppCoreScope.webConsoleUrl == null
+                ? null
+                : AppHostConfig.tryParse(AppCoreScope.webConsoleUrl)?.authLoginUrl)
+        : hostConfig?.webConsoleUrl ?? AppCoreScope.webConsoleUrl;
+    final sessionStore = AppCoreScope.sessionStore;
+    final currentDeviceId = sessionStore.device?.deviceId?.trim();
+    final loginTargetDeviceId =
+        currentDeviceId != null && currentDeviceId.isNotEmpty
+            ? currentDeviceId
+            : AppCoreScope.clientMachineId;
+    if (configured == null || configured.isEmpty) {
       return;
     }
     final uri = Uri.tryParse(configured);
     if (uri == null) {
       return;
     }
-    final callbackId = await AuthCallbackService.preparePendingServerCallback();
+    await AuthCallbackService.preparePendingServerCallback(
+      preferredKey: loginTargetDeviceId,
+    );
     final target = uri.replace(
+      path: '/',
       queryParameters: {
         ...uri.queryParameters,
-        if (loginOnly) 'auth': 'login',
-        'deviceId': AppCoreScope.clientMachineId,
-        'callbackId': callbackId,
+        'deviceId': loginTargetDeviceId,
       },
     );
-    final url = target.toString();
-    if (Platform.isMacOS) {
-      await Process.start('open', [url]);
-      return;
-    }
-    if (Platform.isLinux) {
-      await Process.start('xdg-open', [url]);
-      return;
-    }
-    if (Platform.isWindows) {
-      await Process.start('cmd', ['/c', 'start', '', url]);
-      return;
-    }
+    await DesktopUrlLauncher.open(target.toString());
   }
 
   void _applyHostConfig() {

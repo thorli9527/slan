@@ -61,8 +61,7 @@ impl TunnelManager for InMemoryTunnelManager {
 mod tests {
     use super::*;
     use slan_app_core::{
-        AllowedIp, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair,
-        WireGuardPeerConfig,
+        AllowedIp, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair, WireGuardPeerConfig,
     };
     use std::sync::Mutex;
 
@@ -124,7 +123,10 @@ mod tests {
         }
 
         fn remove_peer(&self, peer_virtual_ip: &str) -> Result<(), String> {
-            self.closed.lock().unwrap().push(peer_virtual_ip.to_string());
+            self.closed
+                .lock()
+                .unwrap()
+                .push(peer_virtual_ip.to_string());
             Ok(())
         }
     }

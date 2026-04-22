@@ -19,6 +19,12 @@ make help
 - `make macos-packet-tunnel-build-check`
 - `make macos-packet-tunnel-signing-check`
 
+Related notes:
+
+- [local-auth-callback-smoke.md](./local-auth-callback-smoke.md)
+- [m2-patch-summary.md](./m2-patch-summary.md)
+- [server-biz-local-test-notes.md](./server-biz-local-test-notes.md)
+
 ## 1. Flutter 桌面 UI Widget Tests
 
 入口：

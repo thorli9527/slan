@@ -1,16 +1,20 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use controller_client::{HttpControllerClient, TcpJsonHttpTransport};
-use ffi_bridge::{
-    DefaultAppCoreFacade, FileTunnelKeyProvider, JsonAppCoreFacade,
-};
+use ffi_bridge::{DefaultAppCoreFacade, FileTunnelKeyProvider, JsonAppCoreFacade};
 use p2p::SocketP2PConnector;
 use relay_client::{InMemoryDerpPool, InMemoryPathManager, SocketRelayClient};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tunnel::InMemoryTunnelManager;
+use serde_json::{json, Value};
+use slan_app_core::{TunnelTransport, WireGuardInterfaceConfig, WireGuardPeerConfig};
+#[cfg(not(target_os = "windows"))]
+use tunnel::InMemoryTunnelBackend;
+#[cfg(target_os = "windows")]
+use tunnel::WindowsEmbeddableServiceBackend;
+use tunnel::{TunnelBackend, TunnelConfig, TunnelManager};
 
 fn main() {
     if let Err(err) = run() {
@@ -20,12 +24,26 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
+    let mut command_args = std::env::args().skip(1);
+    let tcp_host = match command_args.next().as_deref() {
+        Some("--tcp-host") => Some(
+            command_args
+                .next()
+                .ok_or_else(|| "missing listen address after --tcp-host".to_string())?,
+        ),
+        Some(other) => {
+            return Err(format!(
+                "unsupported app-core-helper argument '{other}'; expected --tcp-host <host:port>"
+            ))
+        }
+        None => None,
+    };
     let base_url = std::env::var("SLAN_CONTROL_BASE_URL")
         .map_err(|_| "missing SLAN_CONTROL_BASE_URL for app-core-helper".to_string())?;
     let derp_pool = Arc::new(InMemoryDerpPool::default());
     let relay_client = Arc::new(SocketRelayClient::default());
     let p2p_connector = Arc::new(SocketP2PConnector::default());
-    let tunnel_manager = Arc::new(InMemoryTunnelManager::default());
+    let tunnel_host = Arc::new(HelperTunnelHost::new());
     let key_provider: Box<dyn ffi_bridge::TunnelKeyProvider> =
         match std::env::var("SLAN_APP_CORE_TUNNEL_KEY_FILE") {
             Ok(path) => Box::new(FileTunnelKeyProvider::new(PathBuf::from(path))),
@@ -37,9 +55,13 @@ fn run() -> Result<(), String> {
         relay_client.clone(),
         derp_pool.clone(),
         InMemoryPathManager::new(derp_pool, relay_client, p2p_connector),
-        tunnel_manager,
+        tunnel_host.clone(),
         key_provider,
     ));
+
+    if let Some(address) = tcp_host {
+        return run_tcp_host(&address, &facade, tunnel_host.as_ref());
+    }
 
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
@@ -48,17 +70,103 @@ fn run() -> Result<(), String> {
         if line.trim().is_empty() {
             continue;
         }
-        let request: RpcRequest = serde_json::from_str(&line).map_err(|err| err.to_string())?;
-        let response = build_rpc_response(
-            &request.method,
-            maybe_test_override_result(&request.method)
-                .unwrap_or_else(|| facade.invoke(&request.method, request.args)),
-        );
+        let response = handle_rpc_line(&line, &facade, tunnel_host.as_ref())?;
         serde_json::to_writer(&mut stdout, &response).map_err(|err| err.to_string())?;
         stdout.write_all(b"\n").map_err(|err| err.to_string())?;
         stdout.flush().map_err(|err| err.to_string())?;
     }
     Ok(())
+}
+
+fn run_tcp_host<F>(
+    address: &str,
+    facade: &JsonAppCoreFacade<F>,
+    tunnel_host: &HelperTunnelHost,
+) -> Result<(), String>
+where
+    F: ffi_bridge::AppCoreFacade,
+{
+    let listener = TcpListener::bind(address)
+        .map_err(|err| format!("failed to bind app-core-helper tcp host on {address}: {err}"))?;
+    for stream in listener.incoming() {
+        let stream = stream.map_err(|err| format!("tcp host accept failed: {err}"))?;
+        handle_tcp_client(stream, facade, tunnel_host)?;
+    }
+    Ok(())
+}
+
+fn handle_tcp_client<F>(
+    stream: TcpStream,
+    facade: &JsonAppCoreFacade<F>,
+    tunnel_host: &HelperTunnelHost,
+) -> Result<(), String>
+where
+    F: ffi_bridge::AppCoreFacade,
+{
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|err| format!("failed to clone tcp host stream: {err}"))?;
+    let mut reader = BufReader::new(reader_stream);
+    let mut writer = stream;
+    loop {
+        let mut line = String::new();
+        let bytes_read = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("tcp host read failed: {err}"))?;
+        if bytes_read == 0 {
+            return Ok(());
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = handle_rpc_line(&line, facade, tunnel_host)?;
+        serde_json::to_writer(&mut writer, &response).map_err(|err| err.to_string())?;
+        writer.write_all(b"\n").map_err(|err| err.to_string())?;
+        writer.flush().map_err(|err| err.to_string())?;
+    }
+}
+
+fn handle_rpc_line<F>(
+    line: &str,
+    facade: &JsonAppCoreFacade<F>,
+    tunnel_host: &HelperTunnelHost,
+) -> Result<RpcResponse, String>
+where
+    F: ffi_bridge::AppCoreFacade,
+{
+    let request: RpcRequest = serde_json::from_str(line).map_err(|err| err.to_string())?;
+    Ok(handle_rpc_request(request, facade, tunnel_host))
+}
+
+fn handle_rpc_request<F>(
+    request: RpcRequest,
+    facade: &JsonAppCoreFacade<F>,
+    tunnel_host: &HelperTunnelHost,
+) -> RpcResponse
+where
+    F: ffi_bridge::AppCoreFacade,
+{
+    build_rpc_response(
+        &request.method,
+        maybe_test_override_result(&request.method)
+            .unwrap_or_else(|| invoke_helper(&request.method, request.args, facade, tunnel_host)),
+    )
+}
+
+fn invoke_helper<F>(
+    method: &str,
+    args: Value,
+    facade: &JsonAppCoreFacade<F>,
+    tunnel_host: &HelperTunnelHost,
+) -> Result<Value, String>
+where
+    F: ffi_bridge::AppCoreFacade,
+{
+    if HelperTunnelHost::supports_method(method) {
+        tunnel_host.invoke(method, args)
+    } else {
+        facade.invoke(method, args)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,34 +233,436 @@ fn maybe_test_override_result(method: &str) -> Option<Result<Value, String>> {
 }
 
 fn classify_helper_error(method: &str, error: &str) -> (String, String) {
-    if method != "probe" && method != "send" {
-        return ("app_core_helper_error".to_string(), error.to_string());
+    if let Some((code, message)) = classify_structured_error(error) {
+        return (code, message);
     }
-    if let Some(result) = classify_data_plane_error(error) {
-        return result;
+    if method == "send" {
+        return ("send_failed".to_string(), error.to_string());
     }
-    match method {
-        "send" => ("send_failed".to_string(), error.to_string()),
-        _ => ("probe_failed".to_string(), error.to_string()),
+    if method == "probe" {
+        return ("probe_failed".to_string(), error.to_string());
+    }
+    ("app_core_helper_error".to_string(), error.to_string())
+}
+
+fn classify_structured_error(error: &str) -> Option<(String, String)> {
+    let (code, message) = error.split_once(": ")?;
+    if code.starts_with("probe_") || code.starts_with("send_") || code.starts_with("app_core_") {
+        return Some((code.to_string(), message.to_string()));
+    }
+    None
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HelperTunnelConfiguration {
+    transport: TunnelTransport,
+    local_virtual_ip: String,
+    peer_virtual_ip: String,
+    #[serde(default)]
+    debug_engine_mode: Option<String>,
+    wireguard_interface: WireGuardInterfaceConfig,
+    wireguard_peer: WireGuardPeerConfig,
+}
+
+impl HelperTunnelConfiguration {
+    fn into_tunnel_config(self) -> TunnelConfig {
+        TunnelConfig {
+            transport: self.transport,
+            local_virtual_ip: self.local_virtual_ip,
+            peer_virtual_ip: self.peer_virtual_ip,
+            wireguard_interface: self.wireguard_interface,
+            wireguard_peer: self.wireguard_peer,
+        }
+    }
+
+    fn from_tunnel_config(config: &TunnelConfig) -> Self {
+        Self {
+            transport: config.transport.clone(),
+            local_virtual_ip: config.local_virtual_ip.clone(),
+            peer_virtual_ip: config.peer_virtual_ip.clone(),
+            debug_engine_mode: None,
+            wireguard_interface: config.wireguard_interface.clone(),
+            wireguard_peer: config.wireguard_peer.clone(),
+        }
     }
 }
 
-fn classify_data_plane_error(error: &str) -> Option<(String, String)> {
-    if let Some((code, message)) = error.split_once(": ") {
-        if code.starts_with("probe_") || code.starts_with("send_") {
-            return Some((code.to_string(), message.to_string()));
+#[derive(Debug, Default, Clone)]
+struct HelperTunnelState {
+    configuration: Option<HelperTunnelConfiguration>,
+    last_error: Option<String>,
+    last_applied_at_ms: Option<u64>,
+    last_started_at_ms: Option<u64>,
+    is_running: bool,
+}
+
+struct HelperTunnelHost {
+    backend: Box<dyn TunnelBackend>,
+    state: Mutex<HelperTunnelState>,
+}
+
+impl HelperTunnelHost {
+    fn new() -> Self {
+        Self {
+            backend: default_tunnel_backend(),
+            state: Mutex::new(HelperTunnelState::default()),
         }
     }
-    None
+
+    fn supports_method(method: &str) -> bool {
+        matches!(
+            method,
+            "applyTunnelConfiguration"
+                | "removeTunnelPeer"
+                | "bringTunnelUp"
+                | "bringTunnelDown"
+                | "tunnelRuntimeView"
+        )
+    }
+
+    fn invoke(&self, method: &str, args: Value) -> Result<Value, String> {
+        match method {
+            "applyTunnelConfiguration" => self.apply_configuration(args),
+            "removeTunnelPeer" => self.remove_peer(args),
+            "bringTunnelUp" => self.bring_up(),
+            "bringTunnelDown" => self.bring_down(),
+            "tunnelRuntimeView" => self.runtime_view(args),
+            _ => Err(format!("unsupported method: {method}")),
+        }
+    }
+
+    fn apply_configuration(&self, args: Value) -> Result<Value, String> {
+        let configuration: HelperTunnelConfiguration = serde_json::from_value(args)
+            .map_err(|err| format!("app_core_invalid_tunnel_config: {err}"))?;
+        let tunnel_config = configuration.clone().into_tunnel_config();
+        self.backend
+            .apply_interface_config(&tunnel_config.wireguard_interface)
+            .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
+        self.backend
+            .apply_peer_config(
+                &tunnel_config.peer_virtual_ip,
+                &tunnel_config.wireguard_peer,
+            )
+            .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
+        let mut state = self.state.lock().map_err(|_| {
+            "app_core_tunnel_backend_error: tunnel helper state poisoned".to_string()
+        })?;
+        state.configuration = Some(configuration.clone());
+        state.last_error = None;
+        state.last_applied_at_ms = Some(current_timestamp_ms());
+        Ok(self.action_result_json(
+            &state,
+            "applyTunnelConfiguration",
+            true,
+            "configured",
+            format!(
+                "Rust backend accepted tunnel configuration for {}.",
+                configuration.peer_virtual_ip
+            ),
+        ))
+    }
+
+    fn remove_peer(&self, args: Value) -> Result<Value, String> {
+        let peer_virtual_ip = args
+            .get("peerVirtualIp")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "app_core_invalid_tunnel_config: missing or invalid peerVirtualIp".to_string()
+            })?;
+        self.backend
+            .remove_peer(peer_virtual_ip)
+            .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
+        let mut state = self.state.lock().map_err(|_| {
+            "app_core_tunnel_backend_error: tunnel helper state poisoned".to_string()
+        })?;
+        if state
+            .configuration
+            .as_ref()
+            .map(|config| config.peer_virtual_ip.as_str())
+            == Some(peer_virtual_ip)
+        {
+            state.configuration = None;
+            state.is_running = false;
+            state.last_error = None;
+        }
+        Ok(self.action_result_json(
+            &state,
+            "removeTunnelPeer",
+            true,
+            if state.configuration.is_some() {
+                "accepted"
+            } else {
+                "verified"
+            },
+            format!("Rust backend processed peer removal for {peer_virtual_ip}."),
+        ))
+    }
+
+    fn bring_up(&self) -> Result<Value, String> {
+        let mut state = self.state.lock().map_err(|_| {
+            "app_core_tunnel_backend_error: tunnel helper state poisoned".to_string()
+        })?;
+        if state.configuration.is_none() {
+            return Err("app_core_tunnel_backend_error: missing tunnel configuration".to_string());
+        }
+        match self.backend.bring_up() {
+            Ok(()) => {
+                state.is_running = true;
+                state.last_error = None;
+                state.last_started_at_ms = Some(current_timestamp_ms());
+                Ok(self.action_result_json(
+                    &state,
+                    "bringTunnelUp",
+                    true,
+                    "started",
+                    "Rust backend accepted the bring-up request.".to_string(),
+                ))
+            }
+            Err(err) => {
+                state.last_error = Some(err.clone());
+                Ok(self.action_result_json(
+                    &state,
+                    "bringTunnelUp",
+                    false,
+                    "failed",
+                    format!("Rust backend failed to bring the tunnel up: {err}"),
+                ))
+            }
+        }
+    }
+
+    fn bring_down(&self) -> Result<Value, String> {
+        let mut state = self.state.lock().map_err(|_| {
+            "app_core_tunnel_backend_error: tunnel helper state poisoned".to_string()
+        })?;
+        if state.configuration.is_none() {
+            state.is_running = false;
+            return Ok(self.action_result_json(
+                &state,
+                "bringTunnelDown",
+                true,
+                "verified",
+                "Rust backend confirmed the tunnel is already down.".to_string(),
+            ));
+        }
+        self.backend
+            .bring_down()
+            .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
+        state.is_running = false;
+        state.last_error = None;
+        Ok(self.action_result_json(
+            &state,
+            "bringTunnelDown",
+            true,
+            "verified",
+            "Rust backend accepted the bring-down request.".to_string(),
+        ))
+    }
+
+    fn runtime_view(&self, args: Value) -> Result<Value, String> {
+        let peer_virtual_ip = args
+            .get("peerVirtualIp")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "app_core_invalid_tunnel_config: missing or invalid peerVirtualIp".to_string()
+            })?;
+        let state = self.state.lock().map_err(|_| {
+            "app_core_tunnel_backend_error: tunnel helper state poisoned".to_string()
+        })?;
+        let Some(configuration) = state.configuration.as_ref() else {
+            return Ok(Value::Null);
+        };
+        if configuration.peer_virtual_ip != peer_virtual_ip {
+            return Ok(Value::Null);
+        }
+        let stats = self
+            .backend
+            .runtime_stats(peer_virtual_ip)
+            .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
+        Ok(self.runtime_view_json(configuration, &state, stats))
+    }
+
+    fn action_result_json(
+        &self,
+        state: &HelperTunnelState,
+        action: &str,
+        accepted: bool,
+        phase: &str,
+        detail: String,
+    ) -> Value {
+        let configuration = state.configuration.as_ref();
+        let runtime_state = configuration.map(|_| {
+            if state.is_running {
+                "configured"
+            } else {
+                "disconnected"
+            }
+        });
+        let backend_state = if state.last_error.is_some() {
+            Some("failed")
+        } else if state.is_running {
+            Some("started")
+        } else if configuration.is_some() {
+            Some("idle")
+        } else {
+            None
+        };
+        json!({
+            "action": action,
+            "accepted": accepted,
+            "phase": phase,
+            "source": "rust-helper",
+            "detail": detail,
+            "connectionStatus": if state.is_running { "connected" } else { "disconnected" },
+            "hasConfiguration": configuration.is_some(),
+            "configurationPeerVirtualIp": configuration.map(|config| config.peer_virtual_ip.clone()),
+            "runtimeState": runtime_state,
+            "backendState": backend_state,
+            "runtimeLastError": state.last_error.clone(),
+        })
+    }
+
+    fn runtime_view_json(
+        &self,
+        configuration: &HelperTunnelConfiguration,
+        state: &HelperTunnelState,
+        stats: Option<slan_app_core::WireGuardRuntimeStats>,
+    ) -> Value {
+        let selected_endpoint = stats
+            .as_ref()
+            .and_then(|stats| stats.selected_endpoint.clone())
+            .or_else(|| configuration.wireguard_peer.endpoint.clone());
+        let backend_state = if state.last_error.is_some() {
+            "failed"
+        } else if state.is_running {
+            "started"
+        } else {
+            "idle"
+        };
+        let bytes_received = stats
+            .as_ref()
+            .map(|stats| stats.bytes_received)
+            .unwrap_or(0);
+        let bytes_sent = stats.as_ref().map(|stats| stats.bytes_sent).unwrap_or(0);
+        json!({
+            "state": if state.is_running { "configured" } else { "disconnected" },
+            "transport": configuration.transport.clone(),
+            "debugEngineMode": configuration
+                .debug_engine_mode
+                .clone()
+                .unwrap_or_else(|| "noop".to_string()),
+            "backendName": backend_name(),
+            "backendState": backend_state,
+            "backendLastError": state.last_error.clone(),
+            "backendLastStartedAtMs": state.last_started_at_ms,
+            "backendPeerVirtualIp": configuration.peer_virtual_ip.clone(),
+            "backendSelectedEndpoint": selected_endpoint.clone(),
+            "peerVirtualIp": configuration.peer_virtual_ip.clone(),
+            "peerPublicKey": configuration.wireguard_peer.public_key.clone(),
+            "selectedEndpoint": selected_endpoint,
+            "interfaceName": configuration.wireguard_interface.interface_name.clone(),
+            "dnsServers": configuration.wireguard_interface.dns_servers.clone(),
+            "allowedIps": configuration
+                .wireguard_peer
+                .allowed_ips
+                .iter()
+                .map(|allowed_ip| allowed_ip.cidr.clone())
+                .collect::<Vec<_>>(),
+            "localVirtualIp": configuration.local_virtual_ip.clone(),
+            "remoteAddress": configuration.wireguard_peer.endpoint.clone().unwrap_or_default(),
+            "mtu": configuration.wireguard_interface.mtu,
+            "interfaceAddresses": configuration.wireguard_interface.addresses.clone(),
+            "includedRoutes": configuration
+                .wireguard_peer
+                .allowed_ips
+                .iter()
+                .map(|allowed_ip| allowed_ip.cidr.clone())
+                .collect::<Vec<_>>(),
+            "packetRxCount": if state.is_running && bytes_received > 0 { 1 } else { 0 },
+            "packetRxBytes": bytes_received,
+            "packetTxCount": if state.is_running && bytes_sent > 0 { 1 } else { 0 },
+            "packetTxBytes": bytes_sent,
+            "lastPacketAtMs": state.last_started_at_ms,
+            "lastAppliedAtMs": state.last_applied_at_ms,
+            "lastError": state.last_error.clone(),
+        })
+    }
+}
+
+impl TunnelManager for HelperTunnelHost {
+    fn establish(&self, config: &TunnelConfig) -> Result<(), String> {
+        self.backend.establish(config)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "tunnel helper state poisoned".to_string())?;
+        state.configuration = Some(HelperTunnelConfiguration::from_tunnel_config(config));
+        state.last_error = None;
+        state.last_applied_at_ms = Some(current_timestamp_ms());
+        state.last_started_at_ms = Some(current_timestamp_ms());
+        state.is_running = true;
+        Ok(())
+    }
+
+    fn close(&self, peer_virtual_ip: &str) -> Result<(), String> {
+        self.backend.close(peer_virtual_ip)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "tunnel helper state poisoned".to_string())?;
+        if state
+            .configuration
+            .as_ref()
+            .map(|config| config.peer_virtual_ip.as_str())
+            == Some(peer_virtual_ip)
+        {
+            state.configuration = None;
+            state.is_running = false;
+            state.last_error = None;
+        }
+        Ok(())
+    }
+}
+
+fn default_tunnel_backend() -> Box<dyn TunnelBackend> {
+    #[cfg(target_os = "windows")]
+    {
+        Box::new(WindowsEmbeddableServiceBackend::new())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Box::new(InMemoryTunnelBackend::default())
+    }
+}
+
+fn backend_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "windows-embeddable"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "in-memory"
+    }
+}
+
+fn current_timestamp_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_rpc_response, classify_data_plane_error, classify_helper_error,
-        maybe_test_override_result,
+        build_rpc_response, classify_helper_error, classify_structured_error, current_timestamp_ms,
+        maybe_test_override_result, HelperTunnelConfiguration, HelperTunnelHost,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn classifies_probe_timeout_errors() {
@@ -179,6 +689,16 @@ mod tests {
         );
         assert_eq!(code, "probe_unsupported_path");
         assert_eq!(message, "active path does not support probe");
+    }
+
+    #[test]
+    fn classifies_app_core_structured_errors() {
+        let (code, message) = classify_helper_error(
+            "applyTunnelConfiguration",
+            "app_core_invalid_tunnel_config: missing peerVirtualIp",
+        );
+        assert_eq!(code, "app_core_invalid_tunnel_config");
+        assert_eq!(message, "missing peerVirtualIp");
     }
 
     #[test]
@@ -213,19 +733,10 @@ mod tests {
     }
 
     #[test]
-    fn still_accepts_legacy_probe_prefix_for_send_errors() {
+    fn classifies_structured_error_prefixes_directly() {
         let (code, message) =
-            classify_helper_error("send", "probe_timeout: timed out waiting for probe reply");
-        assert_eq!(code, "probe_timeout");
-        assert_eq!(message, "timed out waiting for probe reply");
-    }
-
-    #[test]
-    fn classifies_data_plane_error_prefixes_directly() {
-        let (code, message) = classify_data_plane_error(
-            "send_unsupported_path: active path does not support send",
-        )
-        .expect("typed data-plane error");
+            classify_structured_error("send_unsupported_path: active path does not support send")
+                .expect("typed data-plane error");
         assert_eq!(code, "send_unsupported_path");
         assert_eq!(message, "active path does not support send");
     }
@@ -323,12 +834,140 @@ mod tests {
         unsafe {
             std::env::remove_var("SLAN_APP_CORE_HELPER_TEST_PROBE_RESULT");
         }
-        assert!(
-            result
-                .expect("override result")
-                .err()
-                .expect("override should return parse error")
-                .starts_with("invalid helper test result json in SLAN_APP_CORE_HELPER_TEST_PROBE_RESULT:")
-        );
+        assert!(result
+            .expect("override result")
+            .err()
+            .expect("override should return parse error")
+            .starts_with(
+                "invalid helper test result json in SLAN_APP_CORE_HELPER_TEST_PROBE_RESULT:"
+            ));
+    }
+
+    #[test]
+    fn tunnel_runtime_view_tracks_apply_and_bring_up() {
+        let host = HelperTunnelHost::new();
+        let result = host
+            .invoke(
+                "applyTunnelConfiguration",
+                json!({
+                    "transport": "relay",
+                    "localVirtualIp": "100.64.0.10",
+                    "peerVirtualIp": "100.64.0.2",
+                    "debugEngineMode": "loopback",
+                    "wireguardInterface": {
+                        "interfaceName": "slan0",
+                        "keyPair": {
+                            "publicKey": "self-pk",
+                            "privateKey": "self-sk"
+                        },
+                        "listenPort": 51820,
+                        "mtu": 1280,
+                        "addresses": ["100.64.0.10/32"],
+                        "dnsServers": ["1.1.1.1"],
+                        "peers": [],
+                    },
+                    "wireguardPeer": {
+                        "peerNodeId": "peer-1",
+                        "publicKey": "peer-pk",
+                        "endpoint": "203.0.113.10:51820",
+                        "allowedIps": [{"cidr": "100.64.0.2/32"}],
+                        "persistentKeepaliveSeconds": 15,
+                    }
+                }),
+            )
+            .expect("apply result");
+        assert_eq!(result["accepted"], true);
+        assert_eq!(result["phase"], "configured");
+
+        let started = host
+            .invoke("bringTunnelUp", json!({}))
+            .expect("bring up result");
+        assert_eq!(started["action"], "bringTunnelUp");
+
+        let runtime = host
+            .invoke(
+                "tunnelRuntimeView",
+                json!({
+                    "peerVirtualIp": "100.64.0.2"
+                }),
+            )
+            .expect("runtime");
+        assert_eq!(runtime["peerVirtualIp"], "100.64.0.2");
+        assert_eq!(runtime["backendName"], super::backend_name());
+        assert_eq!(runtime["lastAppliedAtMs"].as_u64().is_some(), true);
+        assert_eq!(runtime["state"].as_str().is_some(), true);
+    }
+
+    #[test]
+    fn tunnel_runtime_view_clears_after_remove() {
+        let host = HelperTunnelHost::new();
+        let now = current_timestamp_ms();
+        assert!(now > 0);
+        host.invoke(
+            "applyTunnelConfiguration",
+            json!({
+                "transport": "relay",
+                "localVirtualIp": "100.64.0.10",
+                "peerVirtualIp": "100.64.0.2",
+                "wireguardInterface": {
+                    "interfaceName": "slan0",
+                    "keyPair": {
+                        "publicKey": "self-pk",
+                        "privateKey": "self-sk"
+                    },
+                    "addresses": ["100.64.0.10/32"],
+                    "dnsServers": [],
+                    "peers": [],
+                },
+                "wireguardPeer": {
+                    "publicKey": "peer-pk",
+                    "allowedIps": [{"cidr": "100.64.0.2/32"}],
+                }
+            }),
+        )
+        .expect("apply");
+        host.invoke(
+            "removeTunnelPeer",
+            json!({
+                "peerVirtualIp": "100.64.0.2"
+            }),
+        )
+        .expect("remove");
+
+        let runtime = host
+            .invoke(
+                "tunnelRuntimeView",
+                json!({
+                    "peerVirtualIp": "100.64.0.2"
+                }),
+            )
+            .expect("runtime");
+        assert_eq!(runtime, Value::Null);
+    }
+
+    #[test]
+    fn helper_tunnel_configuration_deserializes_camel_case_payload() {
+        let configuration: HelperTunnelConfiguration = serde_json::from_value(json!({
+            "transport": "relay",
+            "localVirtualIp": "100.64.0.10",
+            "peerVirtualIp": "100.64.0.2",
+            "wireguardInterface": {
+                "interfaceName": "slan0",
+                "keyPair": {
+                    "publicKey": "self-pk",
+                    "privateKey": "self-sk"
+                },
+                "addresses": ["100.64.0.10/32"],
+                "dnsServers": [],
+                "peers": [],
+            },
+            "wireguardPeer": {
+                "publicKey": "peer-pk",
+                "allowedIps": [{"cidr": "100.64.0.2/32"}],
+            }
+        }))
+        .expect("configuration");
+        assert_eq!(configuration.local_virtual_ip, "100.64.0.10");
+        assert_eq!(configuration.peer_virtual_ip, "100.64.0.2");
     }
 }

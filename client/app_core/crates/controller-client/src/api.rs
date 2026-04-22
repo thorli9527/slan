@@ -64,11 +64,7 @@ pub trait ControllerClient: Send + Sync {
         req: CreateNetworkRequest,
     ) -> Result<Network, String>;
     fn join_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String>;
-    fn activate_network(
-        &self,
-        access_token: &str,
-        req: JoinNetworkRequest,
-    ) -> Result<(), String>;
+    fn activate_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String>;
     fn deactivate_network(
         &self,
         access_token: &str,

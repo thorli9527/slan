@@ -12,9 +12,7 @@ use slan_app_core::{
 
 use p2p::P2PConnector;
 
-use crate::{
-    DerpClient, DerpPool, PathManager, PathManagerError, RelayClient, RelayClientError,
-};
+use crate::{DerpClient, DerpPool, PathManager, PathManagerError, RelayClient, RelayClientError};
 
 enum ActiveSocket {
     Tcp(TcpStream),
@@ -210,7 +208,11 @@ impl SocketDerpClient {
 
     fn connect_udp(meta: &DerpNodeMeta) -> Result<ActiveSocket, String> {
         let authority = format!("{}:{}", meta.host, meta.port);
-        let bind_addr = if meta.host.contains(':') { "[::]:0" } else { "0.0.0.0:0" };
+        let bind_addr = if meta.host.contains(':') {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
         let socket =
             UdpSocket::bind(bind_addr).map_err(|err| format!("bind udp socket failed: {err}"))?;
         socket
@@ -219,7 +221,9 @@ impl SocketDerpClient {
         Ok(ActiveSocket::Udp(socket))
     }
 
-    fn require_ready_state(state: &DerpClientState) -> Result<(&DerpNodeMeta, &RelayTicket), String> {
+    fn require_ready_state(
+        state: &DerpClientState,
+    ) -> Result<(&DerpNodeMeta, &RelayTicket), String> {
         let meta = state
             .meta
             .as_ref()
@@ -276,7 +280,10 @@ impl DerpClient for SocketDerpClient {
             }
         }
         if !ticket.allowed_derp_node_ids.is_empty()
-            && !ticket.allowed_derp_node_ids.iter().any(|id| id == &meta.node_id)
+            && !ticket
+                .allowed_derp_node_ids
+                .iter()
+                .any(|id| id == &meta.node_id)
         {
             return Err(format!(
                 "relay ticket does not allow derp node {}",
@@ -551,10 +558,7 @@ impl SocketRelayClient {
         result
     }
 
-    fn send_udp_request(
-        socket: &UdpSocket,
-        request: &RelayDaemonRequest,
-    ) -> Result<(), String> {
+    fn send_udp_request(socket: &UdpSocket, request: &RelayDaemonRequest) -> Result<(), String> {
         let payload = serde_json::to_vec(request)
             .map_err(|err| format!("encode relay daemon request failed: {err}"))?;
         socket
@@ -566,37 +570,44 @@ impl SocketRelayClient {
 
 impl RelayClient for SocketRelayClient {
     fn connect(&self, ticket: &RelayTicket) -> Result<ConnectionState, RelayClientError> {
-        let (scheme, authority) = ticket
-            .relay_url
-            .split_once("://")
-            .ok_or_else(|| RelayClientError::message(format!("invalid relay url: {}", ticket.relay_url)))?;
+        let (scheme, authority) = ticket.relay_url.split_once("://").ok_or_else(|| {
+            RelayClientError::message(format!("invalid relay url: {}", ticket.relay_url))
+        })?;
         match scheme {
             "tcp" => Err(RelayClientError::message(
                 "tcp relay daemon protocol not implemented; use udp relay url",
             )),
             "udp" => {
-                let bind_addr = if authority.starts_with('[') { "[::]:0" } else { "0.0.0.0:0" };
-                let socket = UdpSocket::bind(bind_addr)
-                    .map_err(|err| RelayClientError::message(format!("bind udp socket failed: {err}")))?;
-                socket
-                    .connect(authority)
-                    .map_err(|err| RelayClientError::message(format!("udp relay connect to {authority} failed: {err}")))?;
+                let bind_addr = if authority.starts_with('[') {
+                    "[::]:0"
+                } else {
+                    "0.0.0.0:0"
+                };
+                let socket = UdpSocket::bind(bind_addr).map_err(|err| {
+                    RelayClientError::message(format!("bind udp socket failed: {err}"))
+                })?;
+                socket.connect(authority).map_err(|err| {
+                    RelayClientError::message(format!(
+                        "udp relay connect to {authority} failed: {err}"
+                    ))
+                })?;
                 let attach_request = RelayDaemonRequest::Attach {
                     participant_id: ticket.src_node_id.clone(),
                     ticket: ticket.clone(),
                 };
                 Self::send_udp_request(&socket, &attach_request).map_err(RelayClientError::from)?;
                 let response = Self::read_udp_response(&socket, Some(self.connect_timeout))?
-                    .ok_or_else(|| RelayClientError::message("timed out waiting for relay attach response"))?;
+                    .ok_or_else(|| {
+                        RelayClientError::message("timed out waiting for relay attach response")
+                    })?;
                 match response {
                     RelayDaemonResponse::Attached {
                         session_id,
                         peer_participant_id,
                     } => {
-                        let mut state = self
-                            .state
-                            .lock()
-                            .map_err(|_| RelayClientError::message("relay client state poisoned"))?;
+                        let mut state = self.state.lock().map_err(|_| {
+                            RelayClientError::message("relay client state poisoned")
+                        })?;
                         state.relay_url = Some(ticket.relay_url.clone());
                         state.session_id = Some(session_id);
                         state.local_participant_id = Some(ticket.src_node_id.clone());
@@ -621,7 +632,9 @@ impl RelayClient for SocketRelayClient {
 
     fn send_transport_packet(&self, packet: &[u8]) -> Result<(), RelayClientError> {
         if packet.is_empty() {
-            return Err(RelayClientError::message("cannot send empty packet via relay"));
+            return Err(RelayClientError::message(
+                "cannot send empty packet via relay",
+            ));
         }
         let mut state = self
             .state
@@ -636,17 +649,19 @@ impl RelayClient for SocketRelayClient {
         match socket {
             ActiveSocket::Tcp(stream) => {
                 use std::io::Write;
-                stream
-                    .write_all(packet)
-                    .map_err(|err| RelayClientError::message(format!("send packet to relay tcp socket failed: {err}")))?;
+                stream.write_all(packet).map_err(|err| {
+                    RelayClientError::message(format!(
+                        "send packet to relay tcp socket failed: {err}"
+                    ))
+                })?;
             }
             ActiveSocket::Udp(socket) => {
-                let session_id = session_id
-                    .clone()
-                    .ok_or_else(|| RelayClientError::message("relay client has no attached session"))?;
-                let from_participant_id = local_participant_id
-                    .clone()
-                    .ok_or_else(|| RelayClientError::message("relay client has no local participant id"))?;
+                let session_id = session_id.clone().ok_or_else(|| {
+                    RelayClientError::message("relay client has no attached session")
+                })?;
+                let from_participant_id = local_participant_id.clone().ok_or_else(|| {
+                    RelayClientError::message("relay client has no local participant id")
+                })?;
                 Self::send_udp_request(
                     socket,
                     &RelayDaemonRequest::Forward {
@@ -657,7 +672,9 @@ impl RelayClient for SocketRelayClient {
                 )
                 .map_err(RelayClientError::from)?;
                 let response = Self::read_udp_response(socket, Some(self.connect_timeout))?
-                    .ok_or_else(|| RelayClientError::message("timed out waiting for relay forward ack"))?;
+                    .ok_or_else(|| {
+                        RelayClientError::message("timed out waiting for relay forward ack")
+                    })?;
                 match response {
                     RelayDaemonResponse::Forwarded {
                         session_id: ack_session_id,
@@ -704,9 +721,11 @@ impl RelayClient for SocketRelayClient {
         match socket {
             ActiveSocket::Tcp(stream) => {
                 use std::io::Read;
-                stream
-                    .set_nonblocking(true)
-                    .map_err(|err| RelayClientError::message(format!("set relay tcp socket nonblocking failed: {err}")))?;
+                stream.set_nonblocking(true).map_err(|err| {
+                    RelayClientError::message(format!(
+                        "set relay tcp socket nonblocking failed: {err}"
+                    ))
+                })?;
                 let mut buf = vec![0_u8; 2048];
                 let result = match stream.read(&mut buf) {
                     Ok(0) => Ok(None),
@@ -715,7 +734,9 @@ impl RelayClient for SocketRelayClient {
                         Ok(Some(buf))
                     }
                     Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(None),
-                    Err(err) => Err(RelayClientError::message(format!("read relay tcp socket failed: {err}"))),
+                    Err(err) => Err(RelayClientError::message(format!(
+                        "read relay tcp socket failed: {err}"
+                    ))),
                 };
                 let _ = stream.set_nonblocking(false);
                 result
@@ -727,11 +748,15 @@ impl RelayClient for SocketRelayClient {
                     Some(RelayDaemonResponse::Packet { payload_b64, .. }) => STANDARD
                         .decode(payload_b64.as_bytes())
                         .map(Some)
-                        .map_err(|err| RelayClientError::message(format!("decode relay packet payload failed: {err}"))),
-                    Some(RelayDaemonResponse::Error { code, message }) => Err(
-                        RelayDaemonError::from_wire(code.as_deref(), message)
-                            .into_client_error("relay receive failed"),
-                    ),
+                        .map_err(|err| {
+                            RelayClientError::message(format!(
+                                "decode relay packet payload failed: {err}"
+                            ))
+                        }),
+                    Some(RelayDaemonResponse::Error { code, message }) => {
+                        Err(RelayDaemonError::from_wire(code.as_deref(), message)
+                            .into_client_error("relay receive failed"))
+                    }
                     Some(_) => Ok(None),
                     None => Ok(None),
                 }
@@ -843,21 +868,18 @@ where
             .active_path
             .clone();
         match path {
-            slan_app_core::ActivePath::Derp { .. } => {
-                self.derp_pool
-                    .send_transport_packet_via_active(packet)
-                    .map_err(PathManagerError::from)
-            }
-            slan_app_core::ActivePath::P2P { .. } => {
-                self.p2p_connector
-                    .send_transport_packet(packet)
-                    .map_err(PathManagerError::from)
-            }
-            slan_app_core::ActivePath::Relay { .. } => {
-                self.relay_client.send_transport_packet(packet).map_err(|err| {
-                    PathManagerError::new(err.code.clone(), err.to_string())
-                })
-            }
+            slan_app_core::ActivePath::Derp { .. } => self
+                .derp_pool
+                .send_transport_packet_via_active(packet)
+                .map_err(PathManagerError::from),
+            slan_app_core::ActivePath::P2P { .. } => self
+                .p2p_connector
+                .send_transport_packet(packet)
+                .map_err(PathManagerError::from),
+            slan_app_core::ActivePath::Relay { .. } => self
+                .relay_client
+                .send_transport_packet(packet)
+                .map_err(|err| PathManagerError::new(err.code.clone(), err.to_string())),
             slan_app_core::ActivePath::None => {
                 Err(PathManagerError::message("no active path selected"))
             }
@@ -872,21 +894,18 @@ where
             .active_path
             .clone();
         match path {
-            slan_app_core::ActivePath::Derp { .. } => {
-                self.derp_pool
-                    .poll_transport_packet_via_active()
-                    .map_err(PathManagerError::from)
-            }
-            slan_app_core::ActivePath::P2P { .. } => {
-                self.p2p_connector
-                    .poll_transport_packet()
-                    .map_err(PathManagerError::from)
-            }
-            slan_app_core::ActivePath::Relay { .. } => {
-                self.relay_client.poll_transport_packet().map_err(|err| {
-                    PathManagerError::new(err.code.clone(), err.to_string())
-                })
-            }
+            slan_app_core::ActivePath::Derp { .. } => self
+                .derp_pool
+                .poll_transport_packet_via_active()
+                .map_err(PathManagerError::from),
+            slan_app_core::ActivePath::P2P { .. } => self
+                .p2p_connector
+                .poll_transport_packet()
+                .map_err(PathManagerError::from),
+            slan_app_core::ActivePath::Relay { .. } => self
+                .relay_client
+                .poll_transport_packet()
+                .map_err(|err| PathManagerError::new(err.code.clone(), err.to_string())),
             slan_app_core::ActivePath::None => {
                 Err(PathManagerError::message("no active path selected"))
             }
@@ -984,18 +1003,20 @@ impl InMemoryDerpPool {
     }
 
     fn choose_active_index(links: &[DerpLinkSnapshot]) -> Option<usize> {
-        links.iter()
+        links
+            .iter()
             .enumerate()
-            .filter(|(_, link)| {
-                matches!(link.state, DerpLinkState::Ready | DerpLinkState::Suspect)
-            })
+            .filter(|(_, link)| matches!(link.state, DerpLinkState::Ready | DerpLinkState::Suspect))
             .min_by_key(|(_, link)| (link.health.score, link.meta.priority))
             .map(|(idx, _)| idx)
     }
 
     fn ensure_link_ready(link: &mut ManagedLink, ticket: &RelayTicket) -> Result<(), String> {
         let snapshot = link.client.snapshot();
-        if matches!(snapshot.state, DerpLinkState::Ready | DerpLinkState::Suspect) {
+        if matches!(
+            snapshot.state,
+            DerpLinkState::Ready | DerpLinkState::Suspect
+        ) {
             link.last_error = None;
             return Ok(());
         }
@@ -1076,8 +1097,8 @@ impl DerpPool for InMemoryDerpPool {
             }
         }
         let snapshots = Self::collect_snapshots(&state);
-        state.active_node_id = Self::choose_active_index(&snapshots)
-            .map(|idx| state.links[idx].meta.node_id.clone());
+        state.active_node_id =
+            Self::choose_active_index(&snapshots).map(|idx| state.links[idx].meta.node_id.clone());
         Ok(())
     }
 
@@ -1132,7 +1153,10 @@ impl DerpPool for InMemoryDerpPool {
             .map_err(|_| "derp pool state poisoned".to_string())?;
         for link in &mut state.links {
             let snapshot = link.client.snapshot();
-            if !matches!(snapshot.state, DerpLinkState::Ready | DerpLinkState::Suspect) {
+            if !matches!(
+                snapshot.state,
+                DerpLinkState::Ready | DerpLinkState::Suspect
+            ) {
                 continue;
             }
             match link.client.probe() {
@@ -1333,20 +1357,25 @@ mod tests {
         }
 
         fn snapshot(&self) -> DerpLinkSnapshot {
-            self.state.lock().unwrap().snapshot.clone().unwrap_or(DerpLinkSnapshot {
-                meta: sample_derp_node(),
-                state: DerpLinkState::Connecting,
-                health: DerpHealth {
-                    rtt_ms_ewma: 0,
-                    loss_ppm: 0,
-                    timeout_count: 0,
-                    consecutive_failures: 0,
-                    last_probe_at_ms: 0,
-                    last_recv_at_ms: 0,
-                    score: 0,
-                },
-                is_active: false,
-            })
+            self.state
+                .lock()
+                .unwrap()
+                .snapshot
+                .clone()
+                .unwrap_or(DerpLinkSnapshot {
+                    meta: sample_derp_node(),
+                    state: DerpLinkState::Connecting,
+                    health: DerpHealth {
+                        rtt_ms_ewma: 0,
+                        loss_ppm: 0,
+                        timeout_count: 0,
+                        consecutive_failures: 0,
+                        last_probe_at_ms: 0,
+                        last_recv_at_ms: 0,
+                        score: 0,
+                    },
+                    is_active: false,
+                })
         }
 
         fn close(&self) -> Result<(), String> {
@@ -1415,7 +1444,10 @@ mod tests {
                     state.send_calls = observed.send_calls.load(Ordering::SeqCst);
                     state.close_calls = observed.close_calls.load(Ordering::SeqCst);
                 }
-                Box::new(ObservedFakeDerpClient { inner: client, counters: observed })
+                Box::new(ObservedFakeDerpClient {
+                    inner: client,
+                    counters: observed,
+                })
             })
         })
     }
@@ -1510,7 +1542,13 @@ mod tests {
                     .unwrap()
                     .as_ref()
                     .map(|link| link.meta.node_id.clone()),
-                links: self.active_link.lock().unwrap().clone().into_iter().collect(),
+                links: self
+                    .active_link
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .into_iter()
+                    .collect(),
                 switch_epoch: 0,
             }
         }
@@ -1628,11 +1666,9 @@ mod tests {
 
     #[test]
     fn relay_daemon_error_formats_code_when_present() {
-        let formatted = RelayDaemonError::from_wire(
-            Some("ticket_expired"),
-            "relay ticket expired".into(),
-        )
-        .format_with_prefix("relay attach failed");
+        let formatted =
+            RelayDaemonError::from_wire(Some("ticket_expired"), "relay ticket expired".into())
+                .format_with_prefix("relay attach failed");
 
         assert_eq!(
             formatted,
@@ -1803,8 +1839,11 @@ mod tests {
             })),
             send_calls: Arc::new(AtomicUsize::new(0)),
         };
-        let manager =
-            InMemoryPathManager::new(pool, FakeRelayClient::default(), FakeP2PConnector::default());
+        let manager = InMemoryPathManager::new(
+            pool,
+            FakeRelayClient::default(),
+            FakeP2PConnector::default(),
+        );
 
         manager.on_p2p_failed("peer-1", "timeout").unwrap();
 
@@ -1848,8 +1887,11 @@ mod tests {
             })),
             send_calls: send_calls.clone(),
         };
-        let manager =
-            InMemoryPathManager::new(pool, FakeRelayClient::default(), FakeP2PConnector::default());
+        let manager = InMemoryPathManager::new(
+            pool,
+            FakeRelayClient::default(),
+            FakeP2PConnector::default(),
+        );
 
         manager.on_p2p_failed("peer-1", "timeout").unwrap();
         manager.send_transport_packet(b"hello").unwrap();

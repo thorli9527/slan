@@ -5,7 +5,7 @@ import NetworkExtension
 public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
   private let queue = DispatchQueue(label: "slan.app_core.plugin")
   private var helper: HelperBridgeClient?
-  private var tunnelBackend: WireGuardTunnelBackendInvoking?
+  private var tunnelHost: WireGuardTunnelBackendInvoking?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "slan/app_core", binaryMessenger: registrar.messenger)
@@ -60,12 +60,24 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
   }
 
   private func tunnelProcess() -> WireGuardTunnelBackendInvoking {
-    if let tunnelBackend {
-      return tunnelBackend
+    if let tunnelHost {
+      return tunnelHost
     }
-    let created = PacketTunnelBackendAdapter()
-    tunnelBackend = created
+    let created = resolveTunnelHost()
+    tunnelHost = created
     return created
+  }
+
+  private func resolveTunnelHost() -> WireGuardTunnelBackendInvoking {
+    let requestedHost = ProcessInfo.processInfo.environment["SLAN_MACOS_TUNNEL_HOST"]?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+    switch requestedHost {
+    case "helper", "rust-helper", "helper-host":
+      return HelperBackedTunnelHostAdapter { try self.helperProcess() }
+    default:
+      return PacketTunnelBackendAdapter()
+    }
   }
 
   private func handleTunnelBackend(
@@ -85,7 +97,8 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
         action: method.rawValue,
         accepted: true,
         phase: phase,
-        detail: "Native backend accepted tunnel configuration for \(configuration.peerVirtualIp)."
+        detail: "\(backend.hostSource) accepted tunnel configuration for \(configuration.peerVirtualIp).",
+        source: backend.hostSource
       )
     case .removePeer:
       let peerVirtualIp = try requireStringArg("peerVirtualIp", in: args)
@@ -96,7 +109,8 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
         action: method.rawValue,
         accepted: true,
         phase: phase,
-        detail: "Native backend processed peer removal for \(peerVirtualIp)."
+        detail: "\(backend.hostSource) processed peer removal for \(peerVirtualIp).",
+        source: backend.hostSource
       )
     case .bringUp:
       try backend.bringUp()
@@ -116,7 +130,8 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
         action: method.rawValue,
         accepted: true,
         phase: phase,
-        detail: "Native backend accepted the bring-up request."
+        detail: "\(backend.hostSource) accepted the bring-up request.",
+        source: backend.hostSource
       )
     case .bringDown:
       try backend.bringDown()
@@ -128,7 +143,8 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
         action: method.rawValue,
         accepted: true,
         phase: phase,
-        detail: "Native backend accepted the bring-down request."
+        detail: "\(backend.hostSource) accepted the bring-down request.",
+        source: backend.hostSource
       )
     case .runtimeView:
       let peerVirtualIp = try requireStringArg("peerVirtualIp", in: args)
@@ -152,6 +168,227 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
 
 private protocol HelperBridgeInvoking {
   func invoke(method: String, args: [String: Any]) throws -> Any
+}
+
+private final class HelperBackedTunnelHostAdapter: WireGuardTunnelBackendInvoking {
+  let hostSource = "rust-helper-host"
+
+  private let helperProvider: () throws -> HelperBridgeInvoking
+  private let lock = NSLock()
+  private var currentPeerVirtualIp: String?
+  private var lastActionSnapshot = WireGuardTunnelBackendActionSnapshot(
+    connectionStatus: "disconnected",
+    hasConfiguration: false,
+    configurationPeerVirtualIp: nil,
+    runtimeState: nil,
+    backendState: nil,
+    runtimeLastError: nil
+  )
+
+  init(helperProvider: @escaping () throws -> HelperBridgeInvoking) {
+    self.helperProvider = helperProvider
+  }
+
+  func apply(configuration: WireGuardTunnelConfiguration) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    let helper = try helperProvider()
+    let response = try invokeHelper(
+      helper,
+      method: WireGuardTunnelBackendMethod.applyConfiguration.rawValue,
+      args: helperConfigurationArgs(configuration)
+    )
+    currentPeerVirtualIp = configuration.peerVirtualIp
+    lastActionSnapshot = snapshot(from: response)
+  }
+
+  func removePeer(peerVirtualIp: String) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    let helper = try helperProvider()
+    let response = try invokeHelper(
+      helper,
+      method: WireGuardTunnelBackendMethod.removePeer.rawValue,
+      args: ["peerVirtualIp": peerVirtualIp]
+    )
+    if currentPeerVirtualIp == peerVirtualIp {
+      currentPeerVirtualIp = nil
+    }
+    lastActionSnapshot = snapshot(from: response)
+  }
+
+  func bringUp() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    let helper = try helperProvider()
+    let response = try invokeHelper(
+      helper,
+      method: WireGuardTunnelBackendMethod.bringUp.rawValue,
+      args: [:]
+    )
+    lastActionSnapshot = snapshot(from: response)
+  }
+
+  func bringDown() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    let helper = try helperProvider()
+    let response = try invokeHelper(
+      helper,
+      method: WireGuardTunnelBackendMethod.bringDown.rawValue,
+      args: [:]
+    )
+    lastActionSnapshot = snapshot(from: response)
+  }
+
+  func runtimeView(peerVirtualIp: String) throws -> WireGuardTunnelRuntimeView? {
+    lock.lock()
+    defer { lock.unlock() }
+    let helper = try helperProvider()
+    let response = try helper.invoke(
+      method: WireGuardTunnelBackendMethod.runtimeView.rawValue,
+      args: ["peerVirtualIp": peerVirtualIp]
+    )
+    if response is NSNull {
+      return nil
+    }
+    guard let json = response as? [String: Any] else {
+      throw SlanAppCorePluginError(
+        code: "app_core_invalid_response",
+        message: "Helper tunnel runtime returned a non-object response"
+      )
+    }
+    return try mapRuntimeView(json)
+  }
+
+  func actionSnapshot(preferredPeerVirtualIp: String?) throws -> WireGuardTunnelBackendActionSnapshot {
+    lock.lock()
+    defer { lock.unlock() }
+    if let preferredPeerVirtualIp, !preferredPeerVirtualIp.isEmpty {
+      currentPeerVirtualIp = preferredPeerVirtualIp
+    }
+    return lastActionSnapshot
+  }
+
+  private func invokeHelper(
+    _ helper: HelperBridgeInvoking,
+    method: String,
+    args: [String: Any]
+  ) throws -> [String: Any] {
+    let response = try helper.invoke(method: method, args: args)
+    guard let json = response as? [String: Any] else {
+      throw SlanAppCorePluginError(
+        code: "app_core_invalid_response",
+        message: "Helper tunnel action returned a non-object response"
+      )
+    }
+    return json
+  }
+
+  private func snapshot(from json: [String: Any]) -> WireGuardTunnelBackendActionSnapshot {
+    WireGuardTunnelBackendActionSnapshot(
+      connectionStatus: (json["connectionStatus"] as? String) ?? "disconnected",
+      hasConfiguration: (json["hasConfiguration"] as? Bool) ?? false,
+      configurationPeerVirtualIp: json["configurationPeerVirtualIp"] as? String,
+      runtimeState: json["runtimeState"] as? String,
+      backendState: json["backendState"] as? String,
+      runtimeLastError: json["runtimeLastError"] as? String
+    )
+  }
+
+  private func helperConfigurationArgs(_ configuration: WireGuardTunnelConfiguration) -> [String: Any] {
+    [
+      "transport": configuration.transport,
+      "localVirtualIp": configuration.localVirtualIp,
+      "peerVirtualIp": configuration.peerVirtualIp,
+      "debugEngineMode": configuration.debugEngineMode as Any,
+      "wireguardInterface": [
+        "interfaceName": configuration.interface.interfaceName as Any,
+        "keyPair": [
+          "publicKey": configuration.interface.keyPair.publicKey,
+          "privateKey": configuration.interface.keyPair.privateKey,
+        ],
+        "listenPort": configuration.interface.listenPort as Any,
+        "mtu": configuration.interface.mtu as Any,
+        "addresses": configuration.interface.addresses,
+        "dnsServers": configuration.interface.dnsServers,
+      ],
+      "wireguardPeer": [
+        "peerNodeId": configuration.peer.peerNodeId as Any,
+        "publicKey": configuration.peer.publicKey,
+        "presharedKey": configuration.peer.presharedKey as Any,
+        "endpoint": configuration.peer.endpoint as Any,
+        "allowedIps": configuration.peer.allowedIps.map { ["cidr": $0] },
+        "persistentKeepaliveSeconds": configuration.peer.persistentKeepaliveSeconds as Any,
+      ],
+    ]
+  }
+
+  private func mapRuntimeView(_ json: [String: Any]) throws -> WireGuardTunnelRuntimeView {
+    guard
+      let state = json["state"] as? String,
+      let transport = json["transport"] as? String,
+      let peerVirtualIp = json["peerVirtualIp"] as? String,
+      let peerPublicKey = json["peerPublicKey"] as? String,
+      let localVirtualIp = json["localVirtualIp"] as? String,
+      let remoteAddress = json["remoteAddress"] as? String
+    else {
+      throw SlanAppCorePluginError(
+        code: "app_core_invalid_response",
+        message: "Helper tunnel runtime response is missing required fields"
+      )
+    }
+
+    func int64(_ key: String) -> Int64? {
+      if let value = json[key] as? Int64 {
+        return value
+      }
+      if let value = json[key] as? NSNumber {
+        return value.int64Value
+      }
+      return nil
+    }
+
+    func intValue(_ key: String) -> Int? {
+      if let value = json[key] as? Int {
+        return value
+      }
+      if let value = json[key] as? NSNumber {
+        return value.intValue
+      }
+      return nil
+    }
+
+    return WireGuardTunnelRuntimeView(
+      state: state,
+      transport: transport,
+      debugEngineMode: json["debugEngineMode"] as? String,
+      backendName: json["backendName"] as? String,
+      backendState: json["backendState"] as? String,
+      backendLastError: json["backendLastError"] as? String,
+      backendLastStartedAtMs: int64("backendLastStartedAtMs"),
+      backendPeerVirtualIp: json["backendPeerVirtualIp"] as? String,
+      backendSelectedEndpoint: json["backendSelectedEndpoint"] as? String,
+      peerVirtualIp: peerVirtualIp,
+      peerPublicKey: peerPublicKey,
+      selectedEndpoint: json["selectedEndpoint"] as? String,
+      interfaceName: json["interfaceName"] as? String,
+      dnsServers: (json["dnsServers"] as? [String]) ?? [],
+      allowedIps: (json["allowedIps"] as? [String]) ?? [],
+      localVirtualIp: localVirtualIp,
+      remoteAddress: remoteAddress,
+      mtu: intValue("mtu"),
+      interfaceAddresses: (json["interfaceAddresses"] as? [String]) ?? [],
+      includedRoutes: (json["includedRoutes"] as? [String]) ?? [],
+      packetRxCount: int64("packetRxCount") ?? 0,
+      packetRxBytes: int64("packetRxBytes") ?? 0,
+      packetTxCount: int64("packetTxCount") ?? 0,
+      packetTxBytes: int64("packetTxBytes") ?? 0,
+      lastPacketAtMs: int64("lastPacketAtMs"),
+      lastAppliedAtMs: int64("lastAppliedAtMs"),
+      lastError: json["lastError"] as? String
+    )
+  }
 }
 
 private final class HelperBridgeClient: HelperBridgeInvoking {

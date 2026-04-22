@@ -241,7 +241,11 @@ export class AppComponent implements OnDestroy {
           workspace: result.workspace,
         });
       }
-      await this.forwardCallbackToServer(result.auth, result.managedDevice.deviceId);
+      await this.forwardCallbackToServer(
+        result.auth,
+        result.managedDevice.deviceId,
+        this.authMode() === 'register' ? 'activate_active_network' : undefined,
+      );
     } catch (error) {
       this.setError(error);
     } finally {

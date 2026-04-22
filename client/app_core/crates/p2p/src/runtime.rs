@@ -144,6 +144,8 @@ mod tests {
             })
             .unwrap();
 
-        assert!(matches!(result, ConnectionState::Failed(reason) if reason.contains("unsupported p2p candidate type")));
+        assert!(
+            matches!(result, ConnectionState::Failed(reason) if reason.contains("unsupported p2p candidate type"))
+        );
     }
 }

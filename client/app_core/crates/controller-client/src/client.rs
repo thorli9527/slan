@@ -1,8 +1,8 @@
 use slan_app_core::{BootstrapConfig, Device, Network, Node, RelayTicket, Session};
 
 use crate::api::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest, LoginRequest,
-    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest,
+    LoginRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
 };
 use crate::dto::{
     AuthResponseDto, BootstrapRequestDto, BootstrapResponseDto, CreateNetworkRequestDto, DeviceDto,
@@ -33,14 +33,24 @@ where
     }
 
     fn register(&self, req: RegisterRequest) -> Result<Session, String> {
-        let dto: AuthResponseDto =
-            post_json(&self.transport, &self.base_url, "/auth/register", None, &RegisterRequestDto::from(req))?;
+        let dto: AuthResponseDto = post_json(
+            &self.transport,
+            &self.base_url,
+            "/auth/register",
+            None,
+            &RegisterRequestDto::from(req),
+        )?;
         dto.try_into()
     }
 
     fn login(&self, req: LoginRequest) -> Result<Session, String> {
-        let dto: AuthResponseDto =
-            post_json(&self.transport, &self.base_url, "/auth/login", None, &LoginRequestDto::from(req))?;
+        let dto: AuthResponseDto = post_json(
+            &self.transport,
+            &self.base_url,
+            "/auth/login",
+            None,
+            &LoginRequestDto::from(req),
+        )?;
         dto.try_into()
     }
 
@@ -71,8 +81,12 @@ where
     }
 
     fn list_networks(&self, access_token: &str) -> Result<Vec<Network>, String> {
-        let dto: ListNetworksResponseDto =
-            get_json(&self.transport, &self.base_url, "/networks", Some(access_token))?;
+        let dto: ListNetworksResponseDto = get_json(
+            &self.transport,
+            &self.base_url,
+            "/networks",
+            Some(access_token),
+        )?;
         Ok(dto.items.into_iter().map(Into::into).collect())
     }
 

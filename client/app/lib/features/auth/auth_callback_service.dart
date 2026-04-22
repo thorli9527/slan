@@ -19,8 +19,12 @@ class AuthCallbackService {
   static WebSocket? _socket;
   static String? _socketCallbackId;
 
-  static Future<String> preparePendingServerCallback() async {
-    final callbackId = 'cb-${DateTime.now().microsecondsSinceEpoch}';
+  static Future<String> preparePendingServerCallback({String? preferredKey}) async {
+    final callbackId = (preferredKey?.trim().isNotEmpty == true)
+        ? preferredKey!.trim()
+        : 'cb-${DateTime.now().microsecondsSinceEpoch}';
+    // Allow the same device-scoped callback id to be reused across fresh login attempts.
+    _lastAppliedCallbackId = null;
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString(_pendingCallbackIdKey, callbackId);
     return callbackId;

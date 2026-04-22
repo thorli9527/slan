@@ -128,8 +128,7 @@ mod tests {
     use super::*;
     use crate::linux_adapter::{LinuxCommandSpec, LinuxKernelCommandExecutor};
     use slan_app_core::{
-        AllowedIp, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair,
-        WireGuardPeerConfig,
+        AllowedIp, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair, WireGuardPeerConfig,
     };
     use std::sync::Mutex;
 
@@ -192,7 +191,10 @@ mod tests {
         assert_eq!(backend.planned_peer_ips(), vec!["100.64.0.2"]);
         assert_eq!(backend.interface_name().as_deref(), Some("wg0"));
         assert!(backend.is_up());
-        assert_eq!(backend.diagnostics().execution_mode, LinuxExecutionMode::DryRun);
+        assert_eq!(
+            backend.diagnostics().execution_mode,
+            LinuxExecutionMode::DryRun
+        );
         assert_eq!(
             backend.diagnostics().execution_backend,
             LinuxExecutionBackend::Shell
@@ -208,7 +210,10 @@ mod tests {
         let runtime = backend.runtime_stats("100.64.0.2").unwrap().unwrap();
 
         assert_eq!(runtime.transport, TunnelTransport::P2P);
-        assert_eq!(runtime.selected_endpoint.as_deref(), Some("198.51.100.10:51820"));
+        assert_eq!(
+            runtime.selected_endpoint.as_deref(),
+            Some("198.51.100.10:51820")
+        );
     }
 
     #[test]
