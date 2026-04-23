@@ -1,7 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
-import '../../control_api_responses/response_parsers.dart';
 import '../api/app_core_api.dart';
 import '../models/bootstrap_models.dart';
 import '../models/connection_models.dart';
@@ -35,7 +34,7 @@ class BridgeAppCoreApi implements AppCoreApi {
       email: email,
       password: password,
     );
-    return parseSessionResponse(payload.toJson());
+    return _toSessionModel(payload);
   }
 
   @override
@@ -47,7 +46,7 @@ class BridgeAppCoreApi implements AppCoreApi {
       email: email,
       password: password,
     );
-    return parseSessionResponse(payload.toJson());
+    return _toSessionModel(payload);
   }
 
   @override
@@ -63,15 +62,13 @@ class BridgeAppCoreApi implements AppCoreApi {
       machineId: machineId,
       publicKey: publicKey,
     );
-    return parseDeviceResponse(payload.toJson());
+    return _toDeviceModel(payload);
   }
 
   @override
   Future<List<DeviceModel>> listDevices() async {
     final payload = await _pluginPlatform.listDevices();
-    return parseDeviceListResponse(
-      payload.map((item) => item.toJson()).toList(growable: false),
-    );
+    return payload.map(_toDeviceModel).toList(growable: false);
   }
 
   @override
@@ -87,15 +84,13 @@ class BridgeAppCoreApi implements AppCoreApi {
       nodePublicKey: nodePublicKey,
       capabilities: capabilities,
     );
-    return parseNodeResponse(payload.toJson());
+    return _toNodeModel(payload);
   }
 
   @override
   Future<List<NetworkModel>> listNetworks() async {
     final payload = await _pluginPlatform.listNetworks();
-    return parseNetworkListResponse(
-      payload.map((item) => item.toJson()).toList(growable: false),
-    );
+    return payload.map(_toNetworkSummaryModel).toList(growable: false);
   }
 
   @override
@@ -109,7 +104,7 @@ class BridgeAppCoreApi implements AppCoreApi {
       cidr: cidr,
       bindDeviceId: bindDeviceId,
     );
-    return parseNetworkResponse(payload.toJson());
+    return _toNetworkSummaryModel(payload);
   }
 
   @override
@@ -154,7 +149,7 @@ class BridgeAppCoreApi implements AppCoreApi {
       nodeId: nodeId,
       networkId: networkId,
     );
-    return parseBootstrapResponse(payload.toJson());
+    return _toBootstrapModel(payload);
   }
 
   @override
@@ -166,7 +161,7 @@ class BridgeAppCoreApi implements AppCoreApi {
       nodeId: nodeId,
       networkId: networkId,
     );
-    return parseBootstrapResponse(payload.toJson());
+    return _toBootstrapModel(payload);
   }
 
   @override
@@ -188,7 +183,7 @@ class BridgeAppCoreApi implements AppCoreApi {
       dstNodeId: dstNodeId,
       reason: reason,
     );
-    return parseRelayTicketResponse(payload.toJson());
+    return _toRelayTicketModel(payload);
   }
 
   @override
@@ -234,6 +229,227 @@ class BridgeAppCoreApi implements AppCoreApi {
   Future<void> disconnect() async {
     await _pluginPlatform.disconnect();
   }
+}
+
+SessionModel _toSessionModel(AppCoreSessionPayload payload) {
+  return SessionModel(
+    userId: payload.userId,
+    accessToken: payload.accessToken,
+    refreshToken: payload.refreshToken,
+    expiresIn: payload.expiresIn,
+    deviceId: payload.deviceId,
+    userLabel: payload.userLabel,
+  );
+}
+
+DeviceModel _toDeviceModel(
+  AppCoreDevicePayload payload, {
+  String? virtualIp,
+}) {
+  return DeviceModel(
+    deviceId: payload.deviceId,
+    name: payload.name,
+    platform: payload.platform,
+    status: payload.status,
+    virtualIp: virtualIp ?? payload.currentVirtualIp,
+    publicKey: payload.publicKey,
+  );
+}
+
+NodeModel _toNodeModel(AppCoreNodePayload payload) {
+  return NodeModel(
+    nodeId: payload.nodeId,
+    deviceId: payload.deviceId,
+    nodePublicKey: payload.nodePublicKey,
+    networkIds: payload.networkIds,
+    capabilities: payload.capabilities,
+  );
+}
+
+NetworkModel _toNetworkSummaryModel(AppCoreNetworkPayload payload) {
+  return NetworkModel(
+    networkId: payload.networkId,
+    name: payload.name,
+    cidr: payload.defaultSubnetCidr ?? '',
+  );
+}
+
+BootstrapModel _toBootstrapModel(AppCoreBootstrapPayload payload) {
+  final activeNetworkId = payload.networkMap?.networkId;
+  return BootstrapModel(
+    device: _toBootstrapDeviceModel(
+      payload.device,
+      preferredNetworkId: activeNetworkId,
+    ),
+    networks: payload.networks
+        .map(
+          (network) => _toNetworkDetailModel(
+            network,
+            selfDeviceId: payload.device.device.deviceId,
+            selfAttachments: payload.device.attachments,
+          ),
+        )
+        .toList(growable: false),
+    controlPlane: _toControlPlaneModel(payload.controlPlane),
+    stunServers: payload.stunServers,
+    relay: _toRelayConfigModel(payload.relay),
+  );
+}
+
+DeviceModel _toBootstrapDeviceModel(
+  AppCoreBootstrapDevicePayload payload, {
+  String? preferredNetworkId,
+}) {
+  return _toDeviceModel(
+    payload.device,
+    virtualIp: _resolveVirtualIp(
+      payload.attachments,
+      preferredNetworkId: preferredNetworkId,
+    ),
+  );
+}
+
+String? _resolveVirtualIp(
+  List<AppCoreSubnetAttachmentPayload> attachments, {
+  String? preferredNetworkId,
+}) {
+  for (final attachment in attachments) {
+    if (preferredNetworkId != null &&
+        attachment.networkId == preferredNetworkId &&
+        attachment.virtualIp != null &&
+        attachment.virtualIp!.isNotEmpty) {
+      return attachment.virtualIp;
+    }
+  }
+  for (final attachment in attachments) {
+    if (attachment.virtualIp != null && attachment.virtualIp!.isNotEmpty) {
+      return attachment.virtualIp;
+    }
+  }
+  return null;
+}
+
+NetworkModel _toNetworkDetailModel(
+  AppCoreNetworkDetailPayload payload, {
+  required String selfDeviceId,
+  required List<AppCoreSubnetAttachmentPayload> selfAttachments,
+}) {
+  final cidr = payload.defaultSubnetCidr ??
+      payload.subnets
+          .where((subnet) => subnet.isDefault)
+          .map((subnet) => subnet.cidr)
+          .cast<String?>()
+          .firstWhere(
+            (subnet) => subnet != null,
+            orElse: () => payload.subnets.isNotEmpty ? payload.subnets.first.cidr : '',
+          ) ??
+      '';
+  return NetworkModel(
+    networkId: payload.networkId,
+    name: payload.name,
+    cidr: cidr,
+    members: payload.members
+        .map(
+          (member) => _toNetworkMemberModel(
+            member,
+            networkId: payload.networkId,
+            selfDeviceId: selfDeviceId,
+            selfAttachments: selfAttachments,
+          ),
+        )
+        .toList(growable: false),
+  );
+}
+
+NetworkMemberModel _toNetworkMemberModel(
+  AppCoreNetworkMemberPayload payload, {
+  required String networkId,
+  required String selfDeviceId,
+  required List<AppCoreSubnetAttachmentPayload> selfAttachments,
+}) {
+  String? virtualIp;
+  if (payload.deviceId == selfDeviceId) {
+    for (final attachment in selfAttachments) {
+      if (attachment.networkId == networkId &&
+          attachment.virtualIp != null &&
+          attachment.virtualIp!.isNotEmpty) {
+        virtualIp = attachment.virtualIp;
+        break;
+      }
+    }
+  }
+  return NetworkMemberModel(
+    deviceId: payload.deviceId,
+    role: payload.role,
+    virtualIp: virtualIp,
+  );
+}
+
+ControlPlaneConfigModel _toControlPlaneModel(AppCoreControlPlanePayload payload) {
+  return ControlPlaneConfigModel(
+    wsUrl: payload.wsUrl,
+    sessionToken: payload.sessionToken,
+    heartbeatSeconds: payload.heartbeatSeconds,
+  );
+}
+
+RelayConfigModel _toRelayConfigModel(AppCoreRelayConfigPayload payload) {
+  return RelayConfigModel(
+    defaultClusterId: payload.defaultClusterId,
+    countries: payload.countries
+        .map(
+          (country) => RelayCountryModel(
+            countryCode: country.countryCode,
+            countryName: country.countryName,
+            cities: country.cities
+                .map(
+                  (city) => RelayCityModel(
+                    cityCode: city.cityCode,
+                    cityName: city.cityName,
+                    clusters: city.clusters
+                        .map(
+                          (cluster) => RelayClusterModel(
+                            clusterId: cluster.clusterId,
+                            clusterName: cluster.clusterName,
+                            nodes: cluster.nodes
+                                .map(
+                                  (node) => RelayNodeModel(
+                                    nodeId: node.nodeId,
+                                    transport: node.transport,
+                                    address: node.address,
+                                    priority: node.priority,
+                                    tags: node.tags,
+                                  ),
+                                )
+                                .toList(growable: false),
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        )
+        .toList(growable: false),
+  );
+}
+
+RelayTicketModel _toRelayTicketModel(AppCoreRelayTicketPayload payload) {
+  return RelayTicketModel(
+    ticketId: payload.ticketId,
+    networkId: payload.networkId,
+    sessionId: payload.sessionId,
+    srcNodeId: payload.srcNodeId,
+    dstNodeId: payload.dstNodeId,
+    derpClusterId: payload.derpClusterId,
+    countryCode: payload.countryCode,
+    cityCode: payload.cityCode,
+    allowedDerpNodeIds: payload.allowedDerpNodeIds,
+    relayUrl: payload.relayUrl,
+    expiresAt: payload.expiresAt,
+    sessionKey: payload.sessionKey,
+    signature: payload.signature,
+  );
 }
 
 ConnectionStateModel _parseConnectionState(
