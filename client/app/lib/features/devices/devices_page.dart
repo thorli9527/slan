@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
+import '../../application/control_plan_insights.dart';
 import '../../application/tunnel_session_service.dart';
 import '../../infra/app_core/api/dev_defaults.dart';
 import '../../infra/app_core/models/bootstrap_models.dart';
@@ -531,8 +532,8 @@ class _DevicesPageState extends State<DevicesPage> {
     AppSessionController sessionController,
   ) {
     final peerNodeId = _peerNodeIdController.text.trim();
-    final controlPlan = _connectPlanForPeer(sessionStore.controlStatus, peerNodeId);
-    final recommendationMatch = _connectRecommendationMatchLabel(
+    final controlPlan = connectPlanForPeer(sessionStore.controlStatus, peerNodeId);
+    final recommendationMatch = connectRecommendationMatchLabel(
       controlPlan: controlPlan,
       connectionState: sessionStore.connectionState,
       lastProbe: tunnelStore.lastProbe,
@@ -588,7 +589,7 @@ class _DevicesPageState extends State<DevicesPage> {
                   label: 'Control plan',
                   value: controlPlan == null
                       ? 'none'
-                      : _describeConnectPlan(controlPlan),
+                      : describeConnectPlan(controlPlan),
                 ),
                 DesktopKeyValueEntry(
                   label: 'Preferred relay',
@@ -1844,11 +1845,11 @@ class _DeviceStateCard extends StatelessWidget {
                 ),
                 DesktopKeyValueEntry(
                   label: 'Suggested path',
-                  value: _preferredControlPathLabel(control),
+                  value: preferredControlPathLabel(control),
                 ),
                 DesktopKeyValueEntry(
                   label: 'Suggested relay',
-                  value: _preferredControlRelayLabel(control),
+                  value: preferredControlRelayLabel(control),
                 ),
                 DesktopKeyValueEntry(
                   label: 'Tunnel peer',

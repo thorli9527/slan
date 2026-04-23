@@ -7,120 +7,6 @@ String _trafficValue(WireGuardTunnelRuntimeView? runtime) {
   return '${runtime.packetRxCount}rx · ${runtime.packetTxCount}tx';
 }
 
-String _preferredControlPathLabel(ControlStatusModel? status) {
-  final plan =
-      status?.connectPlans.isEmpty == false ? status!.connectPlans.first : null;
-  final path = plan?.preferredPath;
-  if (path == null) {
-    return '-';
-  }
-  return '${path.pathType} ${path.endpoint}';
-}
-
-String _preferredControlRelayLabel(ControlStatusModel? status) {
-  final plan =
-      status?.connectPlans.isEmpty == false ? status!.connectPlans.first : null;
-  if (plan == null) {
-    return '-';
-  }
-  if (plan.preferredDerpNodeIds.isNotEmpty) {
-    return plan.preferredDerpNodeIds.first;
-  }
-  return plan.derpClusterId ?? '-';
-}
-
-ControlConnectPlanModel? _connectPlanForPeer(
-  ControlStatusModel? status,
-  String peerNodeId,
-) {
-  if (peerNodeId.trim().isEmpty) {
-    return null;
-  }
-  for (final plan
-      in status?.connectPlans ?? const <ControlConnectPlanModel>[]) {
-    if (plan.peerNodeId == peerNodeId) {
-      return plan;
-    }
-  }
-  return null;
-}
-
-String _describeConnectPlan(ControlConnectPlanModel plan) {
-  final preferredPath = plan.preferredPath;
-  if (preferredPath != null) {
-    return '${plan.preferDirect ? 'direct' : 'guided'} ${preferredPath.pathType} ${preferredPath.endpoint}';
-  }
-  if (plan.preferredDerpNodeIds.isNotEmpty) {
-    return 'relay ${plan.preferredDerpNodeIds.first}';
-  }
-  if (plan.derpClusterId?.isNotEmpty == true) {
-    return 'relay cluster ${plan.derpClusterId}';
-  }
-  return plan.preferDirect ? 'direct-first plan' : 'relay-guided plan';
-}
-
-String _connectRecommendationMatchLabel({
-  required ControlConnectPlanModel? controlPlan,
-  required ConnectionStateModel connectionState,
-  required DataPlaneProbeModel? lastProbe,
-}) {
-  if (controlPlan == null) {
-    return 'none';
-  }
-  if (connectionState.status != 'connected') {
-    return connectionState.status == 'failed' ? 'diverged' : 'pending';
-  }
-
-  final preferredPath = controlPlan.preferredPath;
-  final expectsRelay = preferredPath == null
-      ? (!controlPlan.preferDirect &&
-          (controlPlan.preferredDerpNodeIds.isNotEmpty ||
-              (controlPlan.derpClusterId?.isNotEmpty ?? false)))
-      : _pathLooksRelay(preferredPath.pathType);
-  final actualRelay = connectionState.path == ConnectionPathModel.relay ||
-      _probeLooksRelay(lastProbe);
-  final actualDirect = connectionState.path == ConnectionPathModel.p2p ||
-      _probeLooksDirect(lastProbe);
-
-  if (expectsRelay) {
-    return actualRelay ? 'matched' : 'diverged';
-  }
-  if (actualDirect) {
-    return 'matched';
-  }
-  if (actualRelay) {
-    return 'diverged';
-  }
-  return 'pending';
-}
-
-bool _pathLooksRelay(String pathType) {
-  final normalized = pathType.toLowerCase();
-  return normalized.contains('relay') || normalized.contains('derp');
-}
-
-bool _probeLooksRelay(DataPlaneProbeModel? probe) {
-  if (probe == null) {
-    return false;
-  }
-  final values = probe.activePath.values.map((value) => '$value'.toLowerCase());
-  return values
-      .any((value) => value.contains('relay') || value.contains('derp'));
-}
-
-bool _probeLooksDirect(DataPlaneProbeModel? probe) {
-  if (probe == null) {
-    return false;
-  }
-  final values = probe.activePath.values.map((value) => '$value'.toLowerCase());
-  return values.any(
-    (value) =>
-        value.contains('p2p') ||
-        value.contains('direct') ||
-        value.contains('reflexive'),
-  );
-}
-
 _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
   required WireGuardTunnelRuntimeView? runtime,
   required ControlStatusModel? controlStatus,
@@ -173,10 +59,10 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
   final hasControlSession = controlStatus?.sessionTokenPresent == true;
   final controlMapPending =
       hasControlSession && controlStatus?.networkMapPresent != true;
-  final preferredControlPath = _preferredControlPathLabel(controlStatus);
-  final preferredControlRelay = _preferredControlRelayLabel(controlStatus);
+  final preferredControlPath = preferredControlPathLabel(controlStatus);
+  final preferredControlRelay = preferredControlRelayLabel(controlStatus);
   final hasPreferredControlPath = preferredControlPath != '-';
-  final recommendationMatch = _connectRecommendationMatchLabel(
+  final recommendationMatch = connectRecommendationMatchLabel(
     controlPlan: controlStatus?.connectPlans.isEmpty == false
         ? controlStatus!.connectPlans.first
         : null,
@@ -720,8 +606,8 @@ _TunnelStagePlan _deriveTunnelStagePlan({
   final hasControlSession = controlStatus?.sessionTokenPresent == true;
   final controlMapPending =
       hasControlSession && controlStatus?.networkMapPresent != true;
-  final preferredControlPath = _preferredControlPathLabel(controlStatus);
-  final preferredControlRelay = _preferredControlRelayLabel(controlStatus);
+  final preferredControlPath = preferredControlPathLabel(controlStatus);
+  final preferredControlRelay = preferredControlRelayLabel(controlStatus);
   final hasPreferredControlPath = preferredControlPath != '-';
 
   final nextStepLabel = blocked

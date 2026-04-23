@@ -1,5 +1,6 @@
 library slan_app.application.device_runtime_service;
 
+import 'control_plan_insights.dart';
 import '../infra/app_core/api/app_core_api.dart';
 import '../infra/app_core/models/bootstrap_models.dart';
 import '../infra/app_core/models/connection_models.dart';
@@ -102,10 +103,10 @@ class DeviceRuntimeService {
       throw StateError('register a node first');
     }
 
-    final plan = _connectPlanForPeer(controlStatus, peerNodeId);
+    final plan = connectPlanForPeer(controlStatus, peerNodeId);
     final preflightHint = plan == null
         ? 'No control-plane connect plan for $peerNodeId. Trying local direct path first, then relay fallback if needed.'
-        : 'Trying ${_describeConnectPlan(plan)} for $peerNodeId before relay fallback.';
+        : 'Trying ${describeConnectPlan(plan)} for $peerNodeId before relay fallback.';
 
     RelayTicketModel? relayTicket;
     var connectionState = await _api.connect(
@@ -125,20 +126,20 @@ class DeviceRuntimeService {
       );
     }
 
-    final recommendationMatch = _connectRecommendationMatchLabel(
+    final recommendationMatch = connectRecommendationMatchLabel(
       controlPlan: plan,
       connectionState: connectionState,
       lastProbe: lastProbe,
     );
     final resultHint = switch (connectionState.status) {
       'connected' =>
-        'Connected over ${connectionState.path?.name ?? 'unknown'} path. Recommendation $recommendationMatch.${plan == null ? '' : ' Control plane suggested ${_describeConnectPlan(plan)}.'}',
+        'Connected over ${connectionState.path?.name ?? 'unknown'} path. Recommendation $recommendationMatch.${plan == null ? '' : ' Control plane suggested ${describeConnectPlan(plan)}.'}',
       'failed' =>
-        'Connection failed after trying the planned path. Recommendation $recommendationMatch.${plan == null ? '' : ' Last control suggestion was ${_describeConnectPlan(plan)}.'}',
+        'Connection failed after trying the planned path. Recommendation $recommendationMatch.${plan == null ? '' : ' Last control suggestion was ${describeConnectPlan(plan)}.'}',
       'connecting' =>
-        'Connection is still in progress. Recommendation $recommendationMatch.${plan == null ? '' : ' Following ${_describeConnectPlan(plan)}.'}',
+        'Connection is still in progress. Recommendation $recommendationMatch.${plan == null ? '' : ' Following ${describeConnectPlan(plan)}.'}',
       _ =>
-        'Connection state is ${connectionState.status}. Recommendation $recommendationMatch.${plan == null ? '' : ' Control suggestion remains ${_describeConnectPlan(plan)}.'}',
+        'Connection state is ${connectionState.status}. Recommendation $recommendationMatch.${plan == null ? '' : ' Control suggestion remains ${describeConnectPlan(plan)}.'}',
     };
 
     return ConnectAttemptResult(
@@ -148,100 +149,4 @@ class DeviceRuntimeService {
       resultHint: resultHint,
     );
   }
-}
-
-ControlConnectPlanModel? _connectPlanForPeer(
-  ControlStatusModel? status,
-  String peerNodeId,
-) {
-  if (peerNodeId.trim().isEmpty) {
-    return null;
-  }
-  for (final plan
-      in status?.connectPlans ?? const <ControlConnectPlanModel>[]) {
-    if (plan.peerNodeId == peerNodeId) {
-      return plan;
-    }
-  }
-  return null;
-}
-
-String _describeConnectPlan(ControlConnectPlanModel plan) {
-  final preferredPath = plan.preferredPath;
-  if (preferredPath != null) {
-    return '${plan.preferDirect ? 'direct' : 'guided'} ${preferredPath.pathType} ${preferredPath.endpoint}';
-  }
-  if (plan.preferredDerpNodeIds.isNotEmpty) {
-    return 'relay ${plan.preferredDerpNodeIds.first}';
-  }
-  if (plan.derpClusterIDOrNull?.isNotEmpty == true) {
-    return 'relay cluster ${plan.derpClusterIDOrNull}';
-  }
-  return plan.preferDirect ? 'direct-first plan' : 'relay-guided plan';
-}
-
-String _connectRecommendationMatchLabel({
-  required ControlConnectPlanModel? controlPlan,
-  required ConnectionStateModel connectionState,
-  required DataPlaneProbeModel? lastProbe,
-}) {
-  if (controlPlan == null) {
-    return 'none';
-  }
-  if (connectionState.status != 'connected') {
-    return connectionState.status == 'failed' ? 'diverged' : 'pending';
-  }
-
-  final preferredPath = controlPlan.preferredPath;
-  final expectsRelay = preferredPath == null
-      ? (!controlPlan.preferDirect &&
-          (controlPlan.preferredDerpNodeIds.isNotEmpty ||
-              (controlPlan.derpClusterIDOrNull?.isNotEmpty ?? false)))
-      : _pathLooksRelay(preferredPath.pathType);
-  final actualRelay = connectionState.path == ConnectionPathModel.relay ||
-      _probeLooksRelay(lastProbe);
-  final actualDirect = connectionState.path == ConnectionPathModel.p2p ||
-      _probeLooksDirect(lastProbe);
-
-  if (expectsRelay) {
-    return actualRelay ? 'matched' : 'diverged';
-  }
-  if (actualDirect) {
-    return 'matched';
-  }
-  if (actualRelay) {
-    return 'diverged';
-  }
-  return 'pending';
-}
-
-bool _pathLooksRelay(String pathType) {
-  final normalized = pathType.toLowerCase();
-  return normalized.contains('relay') || normalized.contains('derp');
-}
-
-bool _probeLooksRelay(DataPlaneProbeModel? probe) {
-  if (probe == null) {
-    return false;
-  }
-  final values = probe.activePath.values.map((value) => '$value'.toLowerCase());
-  return values
-      .any((value) => value.contains('relay') || value.contains('derp'));
-}
-
-bool _probeLooksDirect(DataPlaneProbeModel? probe) {
-  if (probe == null) {
-    return false;
-  }
-  final values = probe.activePath.values.map((value) => '$value'.toLowerCase());
-  return values.any(
-    (value) =>
-        value.contains('p2p') ||
-        value.contains('direct') ||
-        value.contains('reflexive'),
-  );
-}
-
-extension on ControlConnectPlanModel {
-  String? get derpClusterIDOrNull => derpClusterId;
 }
