@@ -1,0 +1,156 @@
+version: 1
+slice: control-plane
+source_of_truth: server/server-biz/api/dto
+contracts:
+  BootstrapRequest:
+    fields:
+      nodeId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+  ControlPlaneConfig:
+    fields:
+      wsUrl:
+        type: string
+        required: true
+      heartbeatSeconds:
+        type: int
+        required: true
+  RelayNode:
+    fields:
+      nodeId:
+        type: string
+        required: true
+      transport:
+        type: string
+        required: true
+      address:
+        type: string
+        required: true
+      priority:
+        type: int
+        required: true
+      tags:
+        type: string[]
+        required: false
+  RelayCluster:
+    fields:
+      clusterId:
+        type: string
+        required: true
+      clusterName:
+        type: string
+        required: true
+      nodes:
+        type: RelayNode[]
+        required: false
+  RelayCity:
+    fields:
+      cityCode:
+        type: string
+        required: true
+      cityName:
+        type: string
+        required: true
+      clusters:
+        type: RelayCluster[]
+        required: false
+  RelayCountry:
+    fields:
+      countryCode:
+        type: string
+        required: true
+      countryName:
+        type: string
+        required: true
+      cities:
+        type: RelayCity[]
+        required: false
+  RelayConfig:
+    fields:
+      defaultClusterId:
+        type: string
+        required: true
+      countries:
+        type: RelayCountry[]
+        required: false
+  DeviceBootstrap:
+    fields:
+      device:
+        type: Device
+        required: true
+      attachments:
+        type: SubnetAttachment[]
+        required: true
+  BootstrapResponse:
+    fields:
+      controlSessionId:
+        type: string
+        required: false
+      sessionToken:
+        type: string
+        required: false
+      device:
+        type: DeviceBootstrap
+        required: true
+      networks:
+        type: NetworkDetail[]
+        required: true
+      controlPlane:
+        type: ControlPlaneConfig
+        required: true
+      stunServers:
+        type: string[]
+        required: true
+      relay:
+        type: RelayConfig
+        required: true
+      derpMap:
+        type: DerpMap
+        required: true
+      networkMap:
+        type: NetworkMap
+        required: true
+  RelayTicket:
+    fields:
+      ticketId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      sessionId:
+        type: string
+        required: true
+      srcNodeId:
+        type: string
+        required: true
+      dstNodeId:
+        type: string
+        required: true
+      derpClusterId:
+        type: string
+        required: false
+      countryCode:
+        type: string
+        required: false
+      cityCode:
+        type: string
+        required: false
+      allowedDerpNodeIds:
+        type: string[]
+        required: false
+      relayUrl:
+        type: string
+        required: true
+      expiresAt:
+        type: string
+        required: true
+      sessionKey:
+        type: string
+        required: false
+      signature:
+        type: string
+        required: true

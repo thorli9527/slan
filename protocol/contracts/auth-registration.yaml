@@ -1,0 +1,160 @@
+version: 1
+slice: auth-registration
+source_of_truth: server/server-biz/api/dto
+contracts:
+  RegisterRequest:
+    fields:
+      email:
+        type: string
+        required: true
+      password:
+        type: string
+        required: true
+  LoginRequest:
+    fields:
+      email:
+        type: string
+        required: true
+      password:
+        type: string
+        required: true
+  AuthResponse:
+    fields:
+      userId:
+        type: string
+        required: true
+      accessToken:
+        type: string
+        required: true
+      refreshToken:
+        type: string
+        required: false
+      expiresIn:
+        type: int64
+        required: true
+  CompleteAuthCallbackRequest:
+    fields:
+      accessToken:
+        type: string
+        required: true
+      userId:
+        type: string
+        required: true
+      refreshToken:
+        type: string
+        required: false
+      expiresIn:
+        type: int64
+        required: true
+      deviceId:
+        type: string
+        required: false
+      userLabel:
+        type: string
+        required: false
+      action:
+        type: string
+        required: false
+  AuthCallbackStatusResponse:
+    fields:
+      callbackId:
+        type: string
+        required: true
+      ready:
+        type: bool
+        required: true
+      received:
+        type: bool
+        required: true
+      receivedAt:
+        type: int64
+        required: false
+      payload:
+        type: CompleteAuthCallbackRequest
+        required: false
+  RegisterDeviceRequest:
+    fields:
+      name:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      machineId:
+        type: string
+        required: true
+      publicKey:
+        type: string
+        required: true
+  Device:
+    fields:
+      deviceId:
+        type: string
+        required: true
+      name:
+        type: string
+        required: true
+      ownerEmail:
+        type: string
+        required: false
+      platform:
+        type: string
+        required: true
+      machineId:
+        type: string
+        required: false
+      status:
+        type: string
+        required: true
+      currentVirtualIp:
+        type: string
+        required: false
+      linkStatus:
+        type: string
+        required: false
+      connectivityProtocol:
+        type: string
+        required: false
+      joinedAt:
+        type: int64
+        required: false
+      createdAt:
+        type: int64
+        required: false
+      publicKey:
+        type: string
+        required: false
+      networkIds:
+        type: string[]
+        required: false
+  RegisterNodeRequest:
+    fields:
+      deviceId:
+        type: string
+        required: true
+      nodeId:
+        type: string
+        required: true
+      nodePublicKey:
+        type: string
+        required: true
+      capabilities:
+        type: string[]
+        required: false
+  Node:
+    fields:
+      nodeId:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: true
+      nodePublicKey:
+        type: string
+        required: true
+      networkIds:
+        type: string[]
+        required: false
+      capabilities:
+        type: string[]
+        required: false

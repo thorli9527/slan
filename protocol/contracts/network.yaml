@@ -1,0 +1,260 @@
+version: 1
+slice: network
+source_of_truth: server/server-biz/api/dto
+contracts:
+  CreateNetworkRequest:
+    fields:
+      name:
+        type: string
+        required: true
+      description:
+        type: string
+        required: false
+      cidr:
+        type: string
+        required: true
+      bindDeviceId:
+        type: string
+        required: false
+  UpdateNetworkRequest:
+    fields:
+      name:
+        type: string
+        required: false
+      description:
+        type: string
+        required: false
+      cidr:
+        type: string
+        required: true
+  SwitchNetworkRequest:
+    fields:
+      deviceId:
+        type: string
+        required: true
+  DeactivateNetworkRequest:
+    fields:
+      deviceId:
+        type: string
+        required: true
+  JoinNetworkByOwnerEmailRequest:
+    fields:
+      ownerEmail:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: true
+  JoinNetworkByKeyRequest:
+    fields:
+      joinKey:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: true
+  UpdateAttachmentIPRequest:
+    fields:
+      virtualIp:
+        type: string
+        required: true
+  UpdateAttachmentRemarkRequest:
+    fields:
+      remark:
+        type: string
+        required: false
+  CreateSubnetRequest:
+    fields:
+      name:
+        type: string
+        required: true
+      cidr:
+        type: string
+        required: true
+      gatewayIp:
+        type: string
+        required: false
+      allocationStartIp:
+        type: string
+        required: false
+      allocationEndIp:
+        type: string
+        required: false
+  AttachDeviceRequest:
+    fields:
+      deviceId:
+        type: string
+        required: true
+  Network:
+    fields:
+      networkId:
+        type: string
+        required: true
+      name:
+        type: string
+        required: true
+      description:
+        type: string
+        required: false
+      defaultSubnetId:
+        type: string
+        required: false
+      defaultSubnetCidr:
+        type: string
+        required: false
+      joinKeyConfigured:
+        type: bool
+        required: false
+  NetworkHome:
+    fields:
+      activeNetwork:
+        type: Network
+        required: false
+      ownedNetwork:
+        type: Network
+        required: false
+      hasNetwork:
+        type: bool
+        required: true
+  Subnet:
+    fields:
+      subnetId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      name:
+        type: string
+        required: true
+      cidr:
+        type: string
+        required: true
+      gatewayIp:
+        type: string
+        required: false
+      allocationStartIp:
+        type: string
+        required: false
+      allocationEndIp:
+        type: string
+        required: false
+      isDefault:
+        type: bool
+        required: true
+      status:
+        type: string
+        required: false
+  NetworkMember:
+    fields:
+      memberId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: true
+      role:
+        type: string
+        required: true
+      createdAt:
+        type: int64
+        required: false
+      status:
+        type: string
+        required: false
+  SubnetAttachment:
+    fields:
+      attachmentId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      subnetId:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: true
+      virtualIp:
+        type: string
+        required: false
+      remark:
+        type: string
+        required: false
+      status:
+        type: string
+        required: false
+  NetworkDetail:
+    fields:
+      networkId:
+        type: string
+        required: true
+      name:
+        type: string
+        required: true
+      description:
+        type: string
+        required: false
+      defaultSubnetId:
+        type: string
+        required: false
+      defaultSubnetCidr:
+        type: string
+        required: false
+      joinKeyConfigured:
+        type: bool
+        required: false
+      ownedByCurrentUser:
+        type: bool
+        required: true
+      dns:
+        type: DNSConfig
+        required: true
+      joinKey:
+        type: string
+        required: false
+      subnets:
+        type: Subnet[]
+        required: true
+      members:
+        type: NetworkMember[]
+        required: true
+  NetworkAssignment:
+    fields:
+      attachmentId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      subnetId:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: true
+      deviceName:
+        type: string
+        required: true
+      userId:
+        type: string
+        required: true
+      userEmail:
+        type: string
+        required: true
+      role:
+        type: string
+        required: true
+      remark:
+        type: string
+        required: false
+      virtualIp:
+        type: string
+        required: false
+      status:
+        type: string
+        required: false

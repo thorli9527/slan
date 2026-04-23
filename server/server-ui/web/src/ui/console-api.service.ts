@@ -1,7 +1,9 @@
 import { Injectable } from '@angular/core';
 
 import {
+  AuthCallbackStatusResponse,
   AuthResponse,
+  CompleteAuthCallbackRequest,
   Device,
   Network,
   NetworkAssignment,
@@ -178,50 +180,17 @@ export class ConsoleApiService {
     return this.request<{ items: Device[] }>('/devices', { token });
   }
 
-  getCallbackStatus(callbackId: string): Promise<{
-    callbackId: string;
-    ready: boolean;
-    received: boolean;
-    receivedAt?: number;
-    payload?: {
-      accessToken: string;
-      userId: string;
-      refreshToken?: string;
-      expiresIn: number;
-      deviceId?: string;
-      userLabel?: string;
-      action?: string;
-    };
-  }> {
-    return this.request<{
-      callbackId: string;
-      ready: boolean;
-      received: boolean;
-      receivedAt?: number;
-      payload?: {
-        accessToken: string;
-        userId: string;
-        refreshToken?: string;
-        expiresIn: number;
-        deviceId?: string;
-        userLabel?: string;
-        action?: string;
-      };
-    }>(
+  getCallbackStatus(callbackId: string): Promise<AuthCallbackStatusResponse> {
+    return this.request<AuthCallbackStatusResponse>(
       `/auth/callback-status/${encodeURIComponent(callbackId)}`,
       {}
     );
   }
 
-  completeCallback(callbackId: string, payload: {
-    accessToken: string;
-    userId: string;
-    refreshToken?: string;
-    expiresIn: number;
-    deviceId?: string;
-    userLabel?: string;
-    action?: string;
-  }): Promise<void> {
+  completeCallback(
+    callbackId: string,
+    payload: CompleteAuthCallbackRequest,
+  ): Promise<void> {
     return this.request(`/auth/callback-status/${encodeURIComponent(callbackId)}/complete`, {
       init: {
         method: 'POST',

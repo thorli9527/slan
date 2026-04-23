@@ -13,6 +13,7 @@ make help
 当前客户端相关入口有：
 
 - `make client-desktop-ui-test`
+- `make protocol-contract-check`
 - `make devices-integration`
 - `make cleanup-devices-integration`
 - `make macos-tunnel-control-test`
@@ -24,6 +25,7 @@ Related notes:
 - [local-auth-callback-smoke.md](./local-auth-callback-smoke.md)
 - [m2-patch-summary.md](./m2-patch-summary.md)
 - [server-biz-local-test-notes.md](./server-biz-local-test-notes.md)
+- [protocol-contract-inventory.md](./protocol-contract-inventory.md)
 
 ## 1. Flutter 桌面 UI Widget Tests
 

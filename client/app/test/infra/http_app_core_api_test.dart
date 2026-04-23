@@ -229,4 +229,76 @@ void main() {
       'relay-cn-local-tcp',
     ]);
   });
+
+  test('HttpAppCoreApi sends network switch-shaped bodies for activate/deactivate',
+      () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+
+    final seenRoutes = <String, Map<String, dynamic>>{};
+
+    server.listen((request) async {
+      final body = await utf8.decoder.bind(request).join();
+      final json = body.isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(body) as Map<String, dynamic>;
+      final route = '${request.method} ${request.uri.path}';
+
+      if (route == 'POST /auth/login') {
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            'userId': 'user-1',
+            'accessToken': 'token-2',
+            'expiresIn': 3600,
+          }));
+      } else if (route == 'POST /networks/net-1/activate' ||
+          route == 'POST /networks/net-1/deactivate') {
+        expect(request.headers.value(HttpHeaders.authorizationHeader),
+            'Bearer token-2');
+        seenRoutes[route] = json;
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            if (route.endsWith('/activate'))
+              'member': {
+                'memberId': 'member-1',
+                'networkId': 'net-1',
+                'deviceId': 'dev-1',
+                'role': 'member',
+              },
+            if (route.endsWith('/activate'))
+              'attachment': {
+                'attachmentId': 'att-1',
+                'networkId': 'net-1',
+                'subnetId': 'subnet-1',
+                'deviceId': 'dev-1',
+                'virtualIp': '100.64.0.2',
+              },
+            if (route.endsWith('/deactivate')) 'status': 'deactivated',
+          }));
+      } else {
+        request.response.statusCode = HttpStatus.notFound;
+      }
+
+      await request.response.close();
+    });
+
+    final api = HttpAppCoreApi(
+      baseUrl: 'http://${server.address.host}:${server.port}',
+    );
+
+    await api.login(email: 'user@example.com', password: 'password123');
+    await api.activateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    await api.deactivateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+
+    expect(seenRoutes['POST /networks/net-1/activate'], {
+      'deviceId': 'dev-1',
+    });
+    expect(seenRoutes['POST /networks/net-1/deactivate'], {
+      'deviceId': 'dev-1',
+    });
+  });
 }

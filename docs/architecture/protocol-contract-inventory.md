@@ -12,6 +12,45 @@ across:
 The goal is not to force one-step unification. The goal is to make the next
 round of protocol-source extraction concrete and low-risk.
 
+## Drift Check
+
+The repository now includes a minimal field-level drift checker for web
+transport contracts:
+
+```bash
+go run ./scripts/check_protocol_contracts.go --target web
+```
+
+Current scope:
+
+- Reads canonical slice drafts from `protocol/contracts/*.yaml`
+- Compares matching contract names against
+  `server/server-ui/web/src/ui/api-contracts.ts`
+- Verifies that every field listed in the canonical contract also exists in the
+  matching exported web transport type
+
+Flutter drift check is also available:
+
+```bash
+go run ./scripts/check_protocol_contracts.go --target flutter
+```
+
+Current Flutter scope is intentionally narrower than web:
+
+- Checks request contracts in
+  `client/app/lib/infra/api_contracts/request_models.dart`
+- Checks only the Flutter response DTOs that are intended to remain close to
+  backend transport shape today:
+  `AuthResponseDto`, `CompleteAuthCallbackRequestDto`,
+  `AuthCallbackStatusResponseDto`, `NodeResponseDto`,
+  `ControlPlaneConfigResponseDto`, and `RelayTicketResponseDto`
+- Does not currently fail on reduced Flutter projection DTOs such as
+  `DeviceResponseDto`, `NetworkDetailResponseDto`, or `BootstrapResponseDto`
+
+See also:
+
+- [protocol-contract-checks.md](./protocol-contract-checks.md)
+
 ## Current Sources
 
 ### Backend
@@ -20,6 +59,12 @@ round of protocol-source extraction concrete and low-risk.
 - Registration: `server/server-biz/api/dto/types_business_registration.go`
 - Network: `server/server-biz/api/dto/types_business_network.go`
 - Control / bootstrap / relay: `server/server-biz/api/dto/types_business_control.go`
+
+### Canonical Slice Drafts
+
+- `protocol/contracts/auth-registration.yaml`
+- `protocol/contracts/control-plane.yaml`
+- `protocol/contracts/network.yaml`
 
 ### Web
 
@@ -59,8 +104,8 @@ Status:
 
 - Request and response field names are aligned across backend, web, and
   Flutter.
-- `AuthCallbackStatusResponse` exists in backend transport but has no explicit
-  web contract file yet.
+- The first canonical slice draft now lives at
+  `protocol/contracts/auth-registration.yaml`.
 
 ### Registration
 
@@ -137,7 +182,10 @@ Flutter:
 
 Status:
 
-- Web only models the subset needed by the console UI.
+- A canonical slice draft now exists at `protocol/contracts/network.yaml`.
+- Web now has explicit transport typings for `NetworkMember`,
+  `SubnetAttachment`, `NetworkJoinResult`, and
+  `NetworkJoinByOwnerEmailResult`.
 - Flutter currently models a reduced network view and folds attachment IP into
   `DeviceModel` / `NetworkMemberModel`.
 - Backend `NetworkDetail` includes `subnets` and `members`; web currently keeps
@@ -178,8 +226,9 @@ Flutter:
 Status:
 
 - Flutter mirrors bootstrap-related backend DTOs much more closely than web.
-- Web console currently does not consume bootstrap/control contracts as first
-  class types.
+- Web now has explicit transport type definitions for `ControlPlaneConfig`,
+  `BootstrapResponse`, and `RelayTicket`, even though the console does not yet
+  consume all of them as first-class runtime flows.
 
 ### Relay Topology
 

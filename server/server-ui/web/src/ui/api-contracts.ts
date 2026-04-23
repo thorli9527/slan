@@ -5,6 +5,24 @@ export type AuthResponse = {
   expiresIn: number;
 };
 
+export type CompleteAuthCallbackRequest = {
+  accessToken: string;
+  userId: string;
+  refreshToken?: string;
+  expiresIn: number;
+  deviceId?: string;
+  userLabel?: string;
+  action?: string;
+};
+
+export type AuthCallbackStatusResponse = {
+  callbackId: string;
+  ready: boolean;
+  received: boolean;
+  receivedAt?: number;
+  payload?: CompleteAuthCallbackRequest;
+};
+
 export type Device = {
   deviceId: string;
   name: string;
@@ -17,6 +35,8 @@ export type Device = {
   connectivityProtocol?: string;
   joinedAt?: number;
   createdAt?: number;
+  publicKey?: string;
+  networkIds?: string[];
 };
 
 export type Network = {
@@ -45,9 +65,12 @@ export type NetworkDetail = {
   description?: string;
   defaultSubnetId?: string;
   defaultSubnetCidr?: string;
+  joinKeyConfigured?: boolean;
   ownedByCurrentUser: boolean;
   dns: DNSConfig;
   joinKey?: string;
+  subnets?: Subnet[];
+  members?: NetworkMember[];
 };
 
 export type Subnet = {
@@ -74,4 +97,190 @@ export type NetworkAssignment = {
   remark?: string;
   virtualIp?: string;
   status?: string;
+};
+
+export type NetworkMember = {
+  memberId: string;
+  networkId: string;
+  deviceId: string;
+  role: string;
+  createdAt?: number;
+  status?: string;
+};
+
+export type SubnetAttachment = {
+  attachmentId: string;
+  networkId: string;
+  subnetId: string;
+  deviceId: string;
+  virtualIp?: string;
+  remark?: string;
+  status?: string;
+};
+
+export type NetworkJoinResult = {
+  member: NetworkMember;
+  attachment: SubnetAttachment;
+};
+
+export type NetworkJoinByOwnerEmailResult = {
+  network: Network;
+  member: NetworkMember;
+  attachment: SubnetAttachment;
+};
+
+export type ControlPlaneConfig = {
+  wsUrl: string;
+  heartbeatSeconds: number;
+};
+
+export type RelayNode = {
+  nodeId: string;
+  transport: string;
+  address: string;
+  priority: number;
+  tags?: string[];
+};
+
+export type RelayCluster = {
+  clusterId: string;
+  clusterName: string;
+  nodes?: RelayNode[];
+};
+
+export type RelayCity = {
+  cityCode: string;
+  cityName: string;
+  clusters?: RelayCluster[];
+};
+
+export type RelayCountry = {
+  countryCode: string;
+  countryName: string;
+  cities?: RelayCity[];
+};
+
+export type RelayConfig = {
+  defaultClusterId: string;
+  countries?: RelayCountry[];
+};
+
+export type DeviceBootstrap = {
+  device: Device;
+  attachments: {
+    networkId: string;
+    deviceId: string;
+    virtualIp?: string;
+  }[];
+};
+
+export type BootstrapResponse = {
+  controlSessionId?: string;
+  sessionToken?: string;
+  device: DeviceBootstrap;
+  networks: NetworkDetail[];
+  controlPlane: ControlPlaneConfig;
+  stunServers: string[];
+  relay: RelayConfig;
+  derpMap: DerpMap;
+  networkMap: NetworkMap;
+};
+
+export type RelayTicket = {
+  ticketId: string;
+  networkId: string;
+  sessionId: string;
+  srcNodeId: string;
+  dstNodeId: string;
+  derpClusterId?: string;
+  countryCode?: string;
+  cityCode?: string;
+  allowedDerpNodeIds?: string[];
+  relayUrl: string;
+  expiresAt: string;
+  sessionKey?: string;
+  signature: string;
+};
+
+export type DerpNode = {
+  nodeId: string;
+  host: string;
+  port: number;
+  transport: string;
+  priority: number;
+  tags?: string[];
+};
+
+export type DerpCluster = {
+  clusterId: string;
+  clusterName?: string;
+  regionId: string;
+  regionName: string;
+  countryCode?: string;
+  countryName?: string;
+  cityCode?: string;
+  cityName?: string;
+  recommendedFanout: number;
+  nodes?: DerpNode[];
+};
+
+export type DerpMap = {
+  probeIntervalSeconds: number;
+  clusters?: DerpCluster[];
+};
+
+export type Endpoint = {
+  type: string;
+  address: string;
+  updatedAt: number;
+};
+
+export type Peer = {
+  nodeId: string;
+  deviceId: string;
+  publicKey: string;
+  status: string;
+  relayAllowed: boolean;
+  virtualIps?: string[];
+  endpoints?: Endpoint[];
+  allowedRoutes?: string[];
+};
+
+export type Route = {
+  cidr: string;
+  viaNodeId: string;
+  metric?: string;
+};
+
+export type RelayEndpoint = {
+  endpointId: string;
+  transport: string;
+  address: string;
+};
+
+export type RelayRegion = {
+  regionId: string;
+  regionName: string;
+  countryCode?: string;
+  countryName?: string;
+  cityCode?: string;
+  cityName?: string;
+  clusterId?: string;
+  clusterName?: string;
+  endpoints?: RelayEndpoint[];
+};
+
+export type NetworkMap = {
+  selfUserId: string;
+  selfDeviceId: string;
+  selfNodeId: string;
+  networkId: string;
+  revision: number;
+  heartbeatSeconds: number;
+  stunServers?: string[];
+  peers?: Peer[];
+  routes?: Route[];
+  relayRegions?: RelayRegion[];
+  dns: DNSConfig;
+  mtu?: number;
 };

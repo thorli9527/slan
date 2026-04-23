@@ -20,6 +20,64 @@ class AuthResponseDto {
   final String accessToken;
   final String? refreshToken;
   final int expiresIn;
+}
+
+class CompleteAuthCallbackRequestDto {
+  const CompleteAuthCallbackRequestDto({
+    required this.accessToken,
+    required this.userId,
+    this.refreshToken,
+    required this.expiresIn,
+    this.deviceId,
+    this.userLabel,
+    this.action,
+  });
+
+  factory CompleteAuthCallbackRequestDto.fromJson(Map<String, dynamic> json) =>
+      CompleteAuthCallbackRequestDto(
+        accessToken: readString(json, 'accessToken'),
+        userId: readString(json, 'userId'),
+        refreshToken: readNullableString(json, 'refreshToken'),
+        expiresIn: readInt(json, 'expiresIn'),
+        deviceId: readNullableString(json, 'deviceId'),
+        userLabel: readNullableString(json, 'userLabel'),
+        action: readNullableString(json, 'action'),
+      );
+
+  final String accessToken;
+  final String userId;
+  final String? refreshToken;
+  final int expiresIn;
+  final String? deviceId;
+  final String? userLabel;
+  final String? action;
+}
+
+class AuthCallbackStatusResponseDto {
+  const AuthCallbackStatusResponseDto({
+    required this.callbackId,
+    required this.ready,
+    required this.received,
+    this.receivedAt,
+    this.payload,
+  });
+
+  factory AuthCallbackStatusResponseDto.fromJson(Map<String, dynamic> json) =>
+      AuthCallbackStatusResponseDto(
+        callbackId: readString(json, 'callbackId'),
+        ready: readBool(json, 'ready'),
+        received: readBool(json, 'received'),
+        receivedAt: readNullableInt(json, 'receivedAt'),
+        payload: readNullableMap(json, 'payload') == null
+            ? null
+            : CompleteAuthCallbackRequestDto.fromJson(readMap(json, 'payload')),
+      );
+
+  final String callbackId;
+  final bool ready;
+  final bool received;
+  final int? receivedAt;
+  final CompleteAuthCallbackRequestDto? payload;
 
 }
 

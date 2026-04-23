@@ -163,7 +163,7 @@ class HttpAppCoreApi implements AppCoreApi {
     await _send(
       'POST',
       '/networks/$networkId/activate',
-      body: JoinNetworkRequest(deviceId: deviceId).toJson(),
+      body: SwitchNetworkRequest(deviceId: deviceId).toJson(),
       authorized: true,
     );
   }
@@ -176,7 +176,7 @@ class HttpAppCoreApi implements AppCoreApi {
     await _send(
       'POST',
       '/networks/$networkId/deactivate',
-      body: JoinNetworkRequest(deviceId: deviceId).toJson(),
+      body: DeactivateNetworkRequest(deviceId: deviceId).toJson(),
       authorized: true,
     );
   }

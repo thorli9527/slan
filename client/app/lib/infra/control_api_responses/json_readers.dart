@@ -69,6 +69,17 @@ int readInt(Map<String, dynamic> json, String key) {
   throw FormatException('Expected int for "$key", got ${value.runtimeType}');
 }
 
+int? readNullableInt(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is int) {
+    return value;
+  }
+  throw FormatException('Expected int for "$key", got ${value.runtimeType}');
+}
+
 bool readBool(Map<String, dynamic> json, String key) {
   final value = json[key];
   if (value is bool) {

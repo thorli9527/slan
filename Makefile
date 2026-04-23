@@ -1,10 +1,11 @@
-.PHONY: help cleanup-devices-integration devices-integration macos-tunnel-control-test macos-packet-tunnel-build-check macos-packet-tunnel-signing-check client-desktop-ui-test
+.PHONY: help cleanup-devices-integration devices-integration macos-tunnel-control-test macos-packet-tunnel-build-check macos-packet-tunnel-signing-check client-desktop-ui-test protocol-contract-check
 
 help:
 	@echo "Available targets:"
 	@echo ""
 	@echo "  Flutter UI"
 	@echo "    make client-desktop-ui-test       # run widget tests covering the desktop client shell"
+	@echo "    make protocol-contract-check      # run web + Flutter protocol drift checks"
 	@echo ""
 	@echo "  Devices Integration"
 	@echo "    make cleanup-devices-integration  # kill lingering Flutter integration and slan_app processes"
@@ -32,3 +33,6 @@ macos-packet-tunnel-signing-check:
 
 client-desktop-ui-test:
 	./scripts/test_client_desktop_ui.sh
+
+protocol-contract-check:
+	./scripts/check_protocol_contracts.sh

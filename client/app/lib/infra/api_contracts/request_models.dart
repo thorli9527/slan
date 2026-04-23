@@ -31,16 +31,20 @@ class LoginRequest {
 class CreateNetworkRequest {
   const CreateNetworkRequest({
     required this.name,
+    this.description,
     this.cidr = '10.0.0.0/16',
     this.bindDeviceId,
   });
 
   final String name;
+  final String? description;
   final String cidr;
   final String? bindDeviceId;
 
   Map<String, dynamic> toJson() => {
         'name': name,
+        if (description != null && description!.isNotEmpty)
+          'description': description,
         'cidr': cidr,
         if (bindDeviceId != null && bindDeviceId!.isNotEmpty)
           'bindDeviceId': bindDeviceId,
@@ -55,6 +59,140 @@ class JoinNetworkRequest {
 
   Map<String, dynamic> toJson() => {
         'deviceId': deviceId,
+      };
+}
+
+/// 显式切换活动网络请求体。
+class SwitchNetworkRequest {
+  const SwitchNetworkRequest({required this.deviceId});
+
+  final String deviceId;
+
+  Map<String, dynamic> toJson() => {
+        'deviceId': deviceId,
+      };
+}
+
+/// 释放设备当前网络接入请求体。
+class DeactivateNetworkRequest {
+  const DeactivateNetworkRequest({required this.deviceId});
+
+  final String deviceId;
+
+  Map<String, dynamic> toJson() => {
+        'deviceId': deviceId,
+      };
+}
+
+/// 按 owner 邮箱加入网络请求体。
+class JoinNetworkByOwnerEmailRequest {
+  const JoinNetworkByOwnerEmailRequest({
+    required this.ownerEmail,
+    required this.deviceId,
+  });
+
+  final String ownerEmail;
+  final String deviceId;
+
+  Map<String, dynamic> toJson() => {
+        'ownerEmail': ownerEmail,
+        'deviceId': deviceId,
+      };
+}
+
+/// 按 join key 加入网络请求体。
+class JoinNetworkByKeyRequest {
+  const JoinNetworkByKeyRequest({
+    required this.joinKey,
+    required this.deviceId,
+  });
+
+  final String joinKey;
+  final String deviceId;
+
+  Map<String, dynamic> toJson() => {
+        'joinKey': joinKey,
+        'deviceId': deviceId,
+      };
+}
+
+/// 修改网络基础配置请求体。
+class UpdateNetworkRequest {
+  const UpdateNetworkRequest({
+    this.name,
+    this.description,
+    required this.cidr,
+  });
+
+  final String? name;
+  final String? description;
+  final String cidr;
+
+  Map<String, dynamic> toJson() => {
+        if (name != null && name!.isNotEmpty) 'name': name,
+        if (description != null && description!.isNotEmpty)
+          'description': description,
+        'cidr': cidr,
+      };
+}
+
+/// 创建子网请求体。
+class CreateSubnetRequest {
+  const CreateSubnetRequest({
+    required this.name,
+    required this.cidr,
+    this.gatewayIp,
+    this.allocationStartIp,
+    this.allocationEndIp,
+  });
+
+  final String name;
+  final String cidr;
+  final String? gatewayIp;
+  final String? allocationStartIp;
+  final String? allocationEndIp;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'cidr': cidr,
+        if (gatewayIp != null && gatewayIp!.isNotEmpty) 'gatewayIp': gatewayIp,
+        if (allocationStartIp != null && allocationStartIp!.isNotEmpty)
+          'allocationStartIp': allocationStartIp,
+        if (allocationEndIp != null && allocationEndIp!.isNotEmpty)
+          'allocationEndIp': allocationEndIp,
+      };
+}
+
+/// 挂载设备到子网请求体。
+class AttachDeviceRequest {
+  const AttachDeviceRequest({required this.deviceId});
+
+  final String deviceId;
+
+  Map<String, dynamic> toJson() => {
+        'deviceId': deviceId,
+      };
+}
+
+/// 修改 attachment 虚拟 IP 请求体。
+class UpdateAttachmentIPRequest {
+  const UpdateAttachmentIPRequest({required this.virtualIp});
+
+  final String virtualIp;
+
+  Map<String, dynamic> toJson() => {
+        'virtualIp': virtualIp,
+      };
+}
+
+/// 修改 attachment 备注请求体。
+class UpdateAttachmentRemarkRequest {
+  const UpdateAttachmentRemarkRequest({this.remark});
+
+  final String? remark;
+
+  Map<String, dynamic> toJson() => {
+        if (remark != null) 'remark': remark,
       };
 }
 
