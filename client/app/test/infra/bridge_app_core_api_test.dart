@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
-import 'package:slan_app/infra/app_core/bridge/app_core_bridge.dart';
 import 'package:slan_app/infra/app_core/bridge/bridge_app_core_api.dart';
 import 'package:slan_app/infra/app_core/models/models.dart';
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
@@ -14,26 +13,6 @@ void main() {
   test(
       'BridgeAppCoreApi forwards bootstrap and relay topology through facade bridge',
       () async {
-    final bridge = _FakeAppCoreBridge({
-      'probe': {
-        'probeId': 'probe-1',
-        'sampledAtMs': 1,
-        'activePath': {
-          'relay': {'peer_node_id': 'peer-1'},
-        },
-        'bytesSent': 5,
-        'replyObserved': true,
-        'replyBytesReceived': 5,
-        'replySampledAtMs': 3,
-        'replyRttMs': 2,
-        'tunnelPeerVirtualIp': '100.64.0.2',
-        'observedRttMs': null,
-        'packetLossPpm': null,
-        'pathScore': null,
-        'derpClusterId': null,
-        'derpNodeId': null,
-      },
-    });
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'register': _sessionPayload(),
       'bootstrap': _bootstrapPayload(),
@@ -42,8 +21,7 @@ void main() {
         'path': 'derp',
       },
     });
-    final api =
-        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     final session = await api.register(
       email: 'user@example.com',
@@ -80,7 +58,6 @@ void main() {
 
   test('BridgeAppCoreApi maps listNetworks and relay ticket payloads',
       () async {
-    final bridge = _FakeAppCoreBridge({});
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'listNetworks': {
         'items': [
@@ -104,8 +81,7 @@ void main() {
         'signature': 'signed',
       },
     });
-    final api =
-        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     final networks = await api.listNetworks();
     final ticket = await api.issueRelayTicket(
@@ -127,7 +103,6 @@ void main() {
 
   test('BridgeAppCoreApi routes auth, device, node, and network setup via plugin platform',
       () async {
-    final bridge = _FakeAppCoreBridge({});
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'login': _sessionPayload(),
       'registerDevice': {
@@ -162,8 +137,7 @@ void main() {
         ],
       },
     });
-    final api =
-        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     final session = await api.login(
       email: 'user@example.com',
@@ -188,7 +162,6 @@ void main() {
     await api.joinNetwork(networkId: 'net-1', deviceId: 'dev-1');
     final devices = await api.listDevices();
 
-    expect(bridge.calls, isEmpty);
     expect(session.accessToken, 'token-1');
     expect(device.deviceId, 'dev-1');
     expect(node.nodeId, 'node-1');
@@ -206,20 +179,17 @@ void main() {
 
   test('BridgeAppCoreApi routes activate/deactivate and controlSync via plugin platform',
       () async {
-    final bridge = _FakeAppCoreBridge({});
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'activateNetwork': null,
       'deactivateNetwork': null,
       'controlSync': _bootstrapPayload(),
     });
-    final api =
-        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     await api.activateNetwork(networkId: 'net-1', deviceId: 'dev-1');
     await api.deactivateNetwork(networkId: 'net-1', deviceId: 'dev-1');
     final bootstrap = await api.controlSync(nodeId: 'node-1', networkId: 'net-1');
 
-    expect(bridge.calls, isEmpty);
     expect(pluginPlatform.calls.map((call) => call.method), [
       'activateNetwork',
       'deactivateNetwork',
@@ -241,7 +211,6 @@ void main() {
   });
 
   test('BridgeAppCoreApi routes control status via plugin platform', () async {
-    final bridge = _FakeAppCoreBridge({});
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'controlStatus': {
         'status': 'connected',
@@ -271,12 +240,10 @@ void main() {
         ],
       },
     });
-    final api =
-        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     final status = await api.controlStatus();
 
-    expect(bridge.calls, isEmpty);
     expect(pluginPlatform.calls.single.method, 'controlStatus');
     expect(status.status, 'connected');
     expect(status.networkMapPresent, isTrue);
@@ -284,22 +251,19 @@ void main() {
   });
 
   test('BridgeAppCoreApi routes disconnect via plugin platform', () async {
-    final bridge = _FakeAppCoreBridge({});
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'disconnect': null,
     });
-    final api =
-        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     await api.disconnect();
 
-    expect(bridge.calls, isEmpty);
     expect(pluginPlatform.calls.single.method, 'disconnect');
   });
 
   test('BridgeAppCoreApi forwards probe timeout and parses probe payload',
       () async {
-    final bridge = _FakeAppCoreBridge({
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'probe': {
         'probeId': 'probe-1',
         'sampledAtMs': 1,
@@ -319,7 +283,7 @@ void main() {
         'derpNodeId': null,
       },
     });
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     final probe = await api.probe(
       payload: 'hello',
@@ -329,18 +293,18 @@ void main() {
     expect(probe.probeId, 'probe-1');
     expect(probe.replyObserved, isTrue);
     expect(probe.replyRttMs, 2);
-    expect(bridge.calls.single.method, 'probe');
-    expect(bridge.calls.single.args, {
+    expect(pluginPlatform.calls.single.method, 'probe');
+    expect(pluginPlatform.calls.single.args, {
       'payload': 'hello',
       'probeTimeoutMs': 7,
     });
   });
 
   test('BridgeAppCoreApi classifies probe timeout failures', () async {
-    final bridge = _FakeAppCoreBridge({});
-    bridge.probeErrorCode = 'probe_timeout';
-    bridge.probeErrorMessage = 'timed out waiting for probe reply';
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({});
+    pluginPlatform.probeErrorCode = 'probe_timeout';
+    pluginPlatform.probeErrorMessage = 'timed out waiting for probe reply';
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     try {
       await api.probe(payload: 'hello', probeTimeoutMs: 7);
@@ -353,10 +317,10 @@ void main() {
   });
 
   test('BridgeAppCoreApi classifies probe unsupported failures', () async {
-    final bridge = _FakeAppCoreBridge({});
-    bridge.probeErrorCode = 'probe_unsupported_path';
-    bridge.probeErrorMessage = 'active path does not support probe';
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({});
+    pluginPlatform.probeErrorCode = 'probe_unsupported_path';
+    pluginPlatform.probeErrorMessage = 'active path does not support probe';
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     try {
       await api.probe(payload: 'hello', probeTimeoutMs: 7);
@@ -370,29 +334,29 @@ void main() {
 
   test('BridgeAppCoreApi forwards send payload and parses bytes sent',
       () async {
-    final bridge = _FakeAppCoreBridge({
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'send': {
         'status': 'sent',
         'bytesSent': 5,
         'path': 'relay',
       },
     });
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     final bytesSent = await api.send(payload: 'hello');
 
     expect(bytesSent, 5);
-    expect(bridge.calls.single.method, 'send');
-    expect(bridge.calls.single.args, {
+    expect(pluginPlatform.calls.single.method, 'send');
+    expect(pluginPlatform.calls.single.args, {
       'payload': 'hello',
     });
   });
 
   test('BridgeAppCoreApi classifies send transport failures', () async {
-    final bridge = _FakeAppCoreBridge({});
-    bridge.sendErrorCode = 'send_transport_error';
-    bridge.sendErrorMessage = 'relay client has no active connection';
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({});
+    pluginPlatform.sendErrorCode = 'send_transport_error';
+    pluginPlatform.sendErrorMessage = 'relay client has no active connection';
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     try {
       await api.send(payload: 'hello');
@@ -405,10 +369,10 @@ void main() {
   });
 
   test('BridgeAppCoreApi classifies send unsupported failures', () async {
-    final bridge = _FakeAppCoreBridge({});
-    bridge.sendErrorCode = 'send_unsupported_path';
-    bridge.sendErrorMessage = 'active path does not support send';
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({});
+    pluginPlatform.sendErrorCode = 'send_unsupported_path';
+    pluginPlatform.sendErrorMessage = 'active path does not support send';
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     try {
       await api.send(payload: 'hello');
@@ -421,10 +385,10 @@ void main() {
   });
 
   test('BridgeAppCoreApi leaves generic send failures as unknown', () async {
-    final bridge = _FakeAppCoreBridge({});
-    bridge.sendErrorCode = 'send_failed';
-    bridge.sendErrorMessage = 'send failed unexpectedly';
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({});
+    pluginPlatform.sendErrorCode = 'send_failed';
+    pluginPlatform.sendErrorMessage = 'send failed unexpectedly';
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     try {
       await api.send(payload: 'hello');
@@ -439,14 +403,14 @@ void main() {
   test(
       'BridgeAppCoreApi classifies probe unsupported failures from real helper process',
       () async {
-    final bridge = await _HelperProcessBridge.start(
+    final pluginPlatform = await _HelperProcessPluginPlatform.start(
       environment: {
         'SLAN_APP_CORE_HELPER_TEST_PROBE_ERROR':
             'probe_unsupported_path: active path does not support probe',
       },
     );
-    addTearDown(bridge.close);
-    final api = BridgeAppCoreApi(bridge: bridge);
+    addTearDown(pluginPlatform.close);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     try {
       await api.probe(payload: 'hello', probeTimeoutMs: 7);
@@ -461,14 +425,14 @@ void main() {
   test(
       'BridgeAppCoreApi classifies send timeout failures from real helper process',
       () async {
-    final bridge = await _HelperProcessBridge.start(
+    final pluginPlatform = await _HelperProcessPluginPlatform.start(
       environment: {
         'SLAN_APP_CORE_HELPER_TEST_SEND_ERROR':
             'send_timeout: timed out waiting for send reply',
       },
     );
-    addTearDown(bridge.close);
-    final api = BridgeAppCoreApi(bridge: bridge);
+    addTearDown(pluginPlatform.close);
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
     try {
       await api.send(payload: 'hello');
@@ -479,39 +443,6 @@ void main() {
       expect(err.failure.message, 'timed out waiting for send reply');
     }
   });
-}
-
-class _FakeAppCoreBridge implements AppCoreBridge {
-  _FakeAppCoreBridge(this._responses);
-
-  final Map<String, Object?> _responses;
-  final List<_BridgeCall> calls = [];
-  String? probeErrorCode;
-  String? probeErrorMessage;
-  String? sendErrorCode;
-  String? sendErrorMessage;
-  @override
-  Future<Object?> invoke(String method,
-      [Map<String, Object?> args = const {}]) async {
-    calls.add(
-        _BridgeCall(method: method, args: Map<String, Object?>.from(args)));
-    if (method == 'probe' && probeErrorCode != null) {
-      throw PlatformException(
-        code: probeErrorCode!,
-        message: probeErrorMessage,
-      );
-    }
-    if (method == 'send' && sendErrorCode != null) {
-      throw PlatformException(
-        code: sendErrorCode!,
-        message: sendErrorMessage,
-      );
-    }
-    if (!_responses.containsKey(method)) {
-      throw StateError('Missing fake bridge response for $method');
-    }
-    return _responses[method];
-  }
 }
 
 Map<String, Object?> _sessionPayload() => {
@@ -601,6 +532,10 @@ class _FakeSlanAppCorePluginPlatform extends SlanAppCorePluginPlatform {
 
   final Map<String, Object?> _responses;
   final List<_BridgeCall> calls = [];
+  String? probeErrorCode;
+  String? probeErrorMessage;
+  String? sendErrorCode;
+  String? sendErrorMessage;
 
   @override
   Future<Object?> invoke(
@@ -610,6 +545,18 @@ class _FakeSlanAppCorePluginPlatform extends SlanAppCorePluginPlatform {
     calls.add(
       _BridgeCall(method: method, args: Map<String, Object?>.from(args)),
     );
+    if (method == 'probe' && probeErrorCode != null) {
+      throw PlatformException(
+        code: probeErrorCode!,
+        message: probeErrorMessage,
+      );
+    }
+    if (method == 'send' && sendErrorCode != null) {
+      throw PlatformException(
+        code: sendErrorCode!,
+        message: sendErrorMessage,
+      );
+    }
     if (!_responses.containsKey(method)) {
       throw StateError('Missing fake plugin platform response for $method');
     }
@@ -627,8 +574,8 @@ class _BridgeCall {
   final Map<String, Object?> args;
 }
 
-class _HelperProcessBridge implements AppCoreBridge {
-  _HelperProcessBridge._({
+class _HelperProcessPluginPlatform extends SlanAppCorePluginPlatform {
+  _HelperProcessPluginPlatform._({
     required Process process,
     required StreamIterator<String> stdoutLines,
     required this.fallbackMessage,
@@ -639,12 +586,12 @@ class _HelperProcessBridge implements AppCoreBridge {
   final StreamIterator<String> _stdoutLines;
   final String fallbackMessage;
 
-  static Future<_HelperProcessBridge> start({
+  static Future<_HelperProcessPluginPlatform> start({
     Map<String, String> environment = const {},
   }) async {
     final process = await _startProcess(environment);
     process.stderr.transform(utf8.decoder).listen((_) {});
-    return _HelperProcessBridge._(
+    return _HelperProcessPluginPlatform._(
       process: process,
       stdoutLines: StreamIterator(process.stdout
           .transform(utf8.decoder)

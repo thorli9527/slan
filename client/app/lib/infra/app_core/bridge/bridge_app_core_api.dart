@@ -3,7 +3,6 @@ import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
 import '../../control_api_responses/response_parsers.dart';
 import '../api/app_core_api.dart';
-import 'app_core_bridge.dart';
 import '../models/bootstrap_models.dart';
 import '../models/connection_models.dart';
 import '../models/control_models.dart';
@@ -14,13 +13,9 @@ import '../models/relay_models.dart';
 
 class BridgeAppCoreApi implements AppCoreApi {
   BridgeAppCoreApi({
-    required AppCoreBridge bridge,
     SlanAppCorePluginPlatform? pluginPlatform,
-  })  : _bridge = bridge,
-        _pluginPlatform =
+  }) : _pluginPlatform =
             pluginPlatform ?? SlanAppCorePluginPlatform.instance;
-
-  final AppCoreBridge _bridge;
   final SlanAppCorePluginPlatform _pluginPlatform;
 
   @override
@@ -214,11 +209,11 @@ class BridgeAppCoreApi implements AppCoreApi {
     int? probeTimeoutMs,
   }) async {
     try {
-      final probe = await _invokeDiagnosticMap('probe', {
-        'payload': payload,
-        if (probeTimeoutMs != null) 'probeTimeoutMs': probeTimeoutMs,
-      });
-      return _parseProbe(probe);
+      final probe = await _pluginPlatform.probe(
+        payload: payload,
+        probeTimeoutMs: probeTimeoutMs,
+      );
+      return _parseProbe(probe.toJson());
     } on PlatformException catch (err) {
       throw ProbeException(_classifyProbeFailure(err));
     }
@@ -229,10 +224,7 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String payload,
   }) async {
     try {
-      final response = await _invokeDiagnosticMap('send', {
-        'payload': payload,
-      });
-      return _readInt(response, 'bytesSent');
+      return await _pluginPlatform.send(payload: payload);
     } on PlatformException catch (err) {
       throw SendException(_classifySendFailure(err));
     }
@@ -241,24 +233,6 @@ class BridgeAppCoreApi implements AppCoreApi {
   @override
   Future<void> disconnect() async {
     await _pluginPlatform.disconnect();
-  }
-
-  // Bridge-only diagnostics stay on the raw helper channel for now.
-  Future<Map<String, dynamic>> _invokeDiagnosticMap(
-    String method, [
-    Map<String, Object?> args = const {},
-  ]) async {
-    final payload = await _bridge.invoke(method, args);
-    if (payload is Map<String, dynamic>) {
-      return payload;
-    }
-    if (payload is Map) {
-      return payload.map(
-        (key, value) => MapEntry(key.toString(), value),
-      );
-    }
-    throw FormatException(
-        'Expected object payload from bridge method "$method"');
   }
 }
 

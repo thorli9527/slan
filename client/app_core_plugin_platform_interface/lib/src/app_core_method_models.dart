@@ -726,6 +726,76 @@ class AppCoreControlPathOptionPayload {
       };
 }
 
+class AppCoreDataPlaneProbePayload {
+  const AppCoreDataPlaneProbePayload({
+    required this.probeId,
+    required this.sampledAtMs,
+    required this.activePath,
+    required this.bytesSent,
+    required this.replyObserved,
+    this.replyBytesReceived,
+    this.replySampledAtMs,
+    this.replyRttMs,
+    this.tunnelPeerVirtualIp,
+    this.observedRttMs,
+    this.packetLossPpm,
+    this.pathScore,
+    this.derpClusterId,
+    this.derpNodeId,
+  });
+
+  factory AppCoreDataPlaneProbePayload.fromJson(Map<String, dynamic> json) {
+    return AppCoreDataPlaneProbePayload(
+      probeId: json['probeId'] as String? ?? '',
+      sampledAtMs: (json['sampledAtMs'] as num?)?.toInt() ?? 0,
+      activePath: _readMap(json['activePath']),
+      bytesSent: (json['bytesSent'] as num?)?.toInt() ?? 0,
+      replyObserved: json['replyObserved'] as bool? ?? false,
+      replyBytesReceived: (json['replyBytesReceived'] as num?)?.toInt(),
+      replySampledAtMs: (json['replySampledAtMs'] as num?)?.toInt(),
+      replyRttMs: (json['replyRttMs'] as num?)?.toInt(),
+      tunnelPeerVirtualIp: json['tunnelPeerVirtualIp'] as String?,
+      observedRttMs: (json['observedRttMs'] as num?)?.toInt(),
+      packetLossPpm: (json['packetLossPpm'] as num?)?.toInt(),
+      pathScore: (json['pathScore'] as num?)?.toInt(),
+      derpClusterId: json['derpClusterId'] as String?,
+      derpNodeId: json['derpNodeId'] as String?,
+    );
+  }
+
+  final String probeId;
+  final int sampledAtMs;
+  final Map<String, dynamic> activePath;
+  final int bytesSent;
+  final bool replyObserved;
+  final int? replyBytesReceived;
+  final int? replySampledAtMs;
+  final int? replyRttMs;
+  final String? tunnelPeerVirtualIp;
+  final int? observedRttMs;
+  final int? packetLossPpm;
+  final int? pathScore;
+  final String? derpClusterId;
+  final String? derpNodeId;
+
+  Map<String, dynamic> toJson() => {
+        'probeId': probeId,
+        'sampledAtMs': sampledAtMs,
+        'activePath': activePath,
+        'bytesSent': bytesSent,
+        'replyObserved': replyObserved,
+        'replyBytesReceived': replyBytesReceived,
+        'replySampledAtMs': replySampledAtMs,
+        'replyRttMs': replyRttMs,
+        'tunnelPeerVirtualIp': tunnelPeerVirtualIp,
+        'observedRttMs': observedRttMs,
+        'packetLossPpm': packetLossPpm,
+        'pathScore': pathScore,
+        'derpClusterId': derpClusterId,
+        'derpNodeId': derpNodeId,
+      };
+}
+
 List<String> _readStringList(Object? value) {
   if (value is List) {
     return value.whereType<String>().toList(growable: false);

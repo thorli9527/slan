@@ -214,6 +214,32 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     await invoke('disconnect');
   }
 
+  Future<AppCoreDataPlaneProbePayload> probe({
+    required String payload,
+    int? probeTimeoutMs,
+  }) async {
+    final response = await invoke('probe', {
+      'payload': payload,
+      if (probeTimeoutMs != null) 'probeTimeoutMs': probeTimeoutMs,
+    });
+    return AppCoreDataPlaneProbePayload.fromJson(
+      _expectMap(response, method: 'probe'),
+    );
+  }
+
+  Future<int> send({
+    required String payload,
+  }) async {
+    final response = await invoke('send', {
+      'payload': payload,
+    });
+    return _expectInt(
+      _expectMap(response, method: 'send'),
+      method: 'send',
+      key: 'bytesSent',
+    );
+  }
+
   Future<WireGuardTunnelActionResult> applyTunnelConfiguration(
     WireGuardTunnelConfiguration configuration,
   ) async {
@@ -311,5 +337,21 @@ List<Map<String, dynamic>> _expectList(
     payload,
     'payload',
     'Expected $method payload to contain an items list',
+  );
+}
+
+int _expectInt(
+  Map<String, dynamic> payload, {
+  required String method,
+  required String key,
+}) {
+  final value = payload[key];
+  if (value is int) {
+    return value;
+  }
+  throw ArgumentError.value(
+    payload,
+    'payload',
+    'Expected $method payload to contain an int at $key',
   );
 }

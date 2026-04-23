@@ -12,7 +12,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../application/tunnel_host_gateway.dart';
 import '../api/app_core_api.dart';
-import '../bridge/app_core_bridge.dart';
 import '../models/identity_models.dart';
 import '../store/app_core_coordinator.dart';
 import '../store/app_session_store.dart';
@@ -153,7 +152,7 @@ class AppCoreScope {
   static AppCoreApi _buildDefaultInstance() {
     final controlBaseUrl = AppCoreScope.controlBaseUrl;
     return switch (_appCoreMode) {
-      'bridge' => BridgeAppCoreApi(bridge: MethodChannelAppCoreBridge()),
+      'bridge' => BridgeAppCoreApi(),
       _ => controlBaseUrl == null || controlBaseUrl.isEmpty
           ? MockAppCoreApi()
           : HttpAppCoreApi(baseUrl: controlBaseUrl),

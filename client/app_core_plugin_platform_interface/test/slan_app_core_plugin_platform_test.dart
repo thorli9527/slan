@@ -122,6 +122,34 @@ void main() {
       expect(payload.connectPlans.single.preferredPath?.pathType, 'relay');
       expect(payload.connectPlans.single.relayTicketId, 'ticket-1');
     });
+
+    test('decodes data plane probe payload', () {
+      final payload = AppCoreDataPlaneProbePayload.fromJson({
+        'probeId': 'probe-1',
+        'sampledAtMs': 1,
+        'activePath': {
+          'relay': {'peer_node_id': 'peer-1'},
+        },
+        'bytesSent': 5,
+        'replyObserved': true,
+        'replyBytesReceived': 5,
+        'replySampledAtMs': 3,
+        'replyRttMs': 2,
+        'tunnelPeerVirtualIp': '100.64.0.2',
+        'observedRttMs': 2,
+        'packetLossPpm': 0,
+        'pathScore': 100,
+        'derpClusterId': 'cn-local-a',
+        'derpNodeId': 'relay-cn-local-udp',
+      });
+
+      expect(payload.probeId, 'probe-1');
+      expect(payload.activePath['relay'], isA<Map<String, dynamic>>());
+      expect(payload.replyObserved, isTrue);
+      expect(payload.replyRttMs, 2);
+      expect(payload.derpClusterId, 'cn-local-a');
+      expect(payload.derpNodeId, 'relay-cn-local-udp');
+    });
   });
 
   group('SlanAppCorePluginPlatform', () {
@@ -147,6 +175,29 @@ void main() {
           'status': 'connected',
           'path': 'derp',
         },
+        'probe': {
+          'probeId': 'probe-1',
+          'sampledAtMs': 1,
+          'activePath': {
+            'relay': {'peer_node_id': 'peer-1'},
+          },
+          'bytesSent': 5,
+          'replyObserved': true,
+          'replyBytesReceived': 5,
+          'replySampledAtMs': 3,
+          'replyRttMs': 2,
+          'tunnelPeerVirtualIp': '100.64.0.2',
+          'observedRttMs': null,
+          'packetLossPpm': null,
+          'pathScore': null,
+          'derpClusterId': null,
+          'derpNodeId': null,
+        },
+        'send': {
+          'status': 'sent',
+          'bytesSent': 5,
+          'path': 'relay',
+        },
         'disconnect': null,
       });
 
@@ -159,15 +210,24 @@ void main() {
         networkId: 'net-1',
         peerNodeId: 'node-2',
       );
+      final probe = await platform.probe(
+        payload: 'hello',
+        probeTimeoutMs: 7,
+      );
+      final bytesSent = await platform.send(payload: 'hello');
       await platform.disconnect();
 
       expect(session.accessToken, 'token-1');
       expect(devices.single.deviceId, 'dev-1');
       expect(connect.path, 'derp');
+      expect(probe.probeId, 'probe-1');
+      expect(bytesSent, 5);
       expect(platform.calls.map((call) => call.method), [
         'register',
         'listDevices',
         'connect',
+        'probe',
+        'send',
         'disconnect',
       ]);
       expect(platform.calls.first.args, {
@@ -177,6 +237,13 @@ void main() {
       expect(platform.calls[2].args, {
         'networkId': 'net-1',
         'peerNodeId': 'node-2',
+      });
+      expect(platform.calls[3].args, {
+        'payload': 'hello',
+        'probeTimeoutMs': 7,
+      });
+      expect(platform.calls[4].args, {
+        'payload': 'hello',
       });
     });
   });
