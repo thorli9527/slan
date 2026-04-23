@@ -38,7 +38,7 @@ void main() {
 
     await page.pumpAndConnectRelayFallback();
 
-    expect(host.calls.any((call) => call.method == 'createNetwork'), isTrue);
+    expect(host.calls.any((call) => call.method == 'listNetworks'), isTrue);
     expect(host.calls.any((call) => call.method == 'registerDevice'), isTrue);
 
     await page.sendPayload('hello');
@@ -52,6 +52,7 @@ void main() {
       replyObserved: true,
       replyRttMs: 2,
     );
+    await page.expectConnectionGuidance();
 
     host.expectRelayFallbackFlow();
     host.expectSendPayload('hello');

@@ -3,14 +3,20 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:slan_app/app/app.dart';
+import 'package:slan_app/features/devices/devices_page.dart';
 import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
 import 'package:slan_app/testing/app_test_keys.dart';
 
 class FakeHost {
   final List<HostCall> calls = [];
   int _connectCount = 0;
-  final List<Map<String, Object?>> _networks = [];
+  final List<Map<String, Object?>> _networks = [
+    <String, Object?>{
+      'networkId': 'net-1',
+      'name': 'home',
+      'defaultSubnetCidr': '100.64.0.0/24',
+    },
+  ];
   bool failSend = false;
   String sendFailureCode = 'send_transport_error';
   String sendFailureMessage = 'relay client has no active connection';
@@ -23,21 +29,22 @@ class FakeHost {
   void expectRelayFallbackFlow() {
     expect(
       calls.map((call) => call.method),
-      <String>[
-        'listNetworks',
-        'createNetwork',
-        'listNetworks',
+      containsAllInOrder(<String>[
         'registerDevice',
+        'listNetworks',
         'registerNode',
         'bootstrap',
+        'controlStatus',
+        'bootstrap',
+        'controlStatus',
         'connect',
         'issueRelayTicket',
         'connect',
         if (calls.any((call) => call.method == 'send')) 'send',
         if (calls.any((call) => call.method == 'probe')) 'probe',
-      ],
+      ]),
     );
-    expect(_singleCall('bootstrap').arguments, {
+    expect(_nthCall('bootstrap', 0).arguments, {
       'nodeId': 'node-1',
       'networkId': 'net-1',
     });
@@ -256,6 +263,29 @@ class FakeHost {
             'networkId': 'net-1',
           },
         };
+      case 'controlStatus':
+        return {
+          'status': 'connected',
+          'wsUrl': kDevControlWsUrl,
+          'heartbeatSeconds': 15,
+          'sessionTokenPresent': true,
+          'networkMapPresent': true,
+          'networkId': 'net-1',
+          'nodeId': 'node-1',
+          'deviceId': 'dev-1',
+          'peerCount': 1,
+          'connectPlanCount': 1,
+          'connectPlans': [
+            {
+              'peerNodeId': 'fail-peer-node-1',
+              'preferDirect': false,
+              'pathCount': 1,
+              'derpClusterId': 'cn-local-a',
+              'preferredDerpNodeIds': ['relay-cn-local-udp'],
+              'relayTicketId': 'ticket-net-1-fail-peer-node-1',
+            },
+          ],
+        };
       case 'connect':
         _connectCount += 1;
         if (_connectCount == 1) {
@@ -457,21 +487,17 @@ class DevicesPageHarness {
       find.byKey(AppTestKeys.devicesStateCard, skipOffstage: false);
 
   Future<void> pumpAndConnectRelayFallback() async {
-    await tester.pumpWidget(const SlanApp());
-    await tester.pumpAndSettle();
+    tester.view.physicalSize = const Size(1440, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
 
-    await tester.tap(find.byKey(AppTestKeys.networksTab));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(AppTestKeys.networksNameField), 'home');
-    await tester.enterText(
-      find.byKey(AppTestKeys.networksCidrField),
-      '100.64.0.0/24',
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DevicesPage(),
+      ),
     );
-    await tester.tap(find.byKey(AppTestKeys.networksCreateButton));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(AppTestKeys.devicesTab));
-    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(AppTestKeys.devicesMachineIdField),
       'machine-1',
@@ -537,6 +563,21 @@ class DevicesPageHarness {
     await tester.pumpAndSettle();
   }
 
+  Future<void> expectConnectionGuidance() async {
+    await _scrollUntilVisible(find.text('Connection Guidance'));
+    expect(find.text('Connection Guidance'), findsOneWidget);
+    expect(find.text('relay relay-cn-local-udp'), findsWidgets);
+    expect(find.text('relay-cn-local-udp'), findsWidgets);
+    expect(find.text('matched'), findsWidgets);
+    expect(
+      find.textContaining(
+        'Connected over relay path. Recommendation matched.',
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
+  }
+
   Future<void> applyTunnelConfiguration({
     required String localVirtualIp,
     required String peerVirtualIp,
@@ -580,17 +621,19 @@ class DevicesPageHarness {
   }
 
   void expectSendSuccess({required int bytes}) {
-    expect(find.text('send bytes: $bytes'), findsOneWidget);
-    expect(find.text('send failure: -'), findsOneWidget);
+    expect(find.text('Send bytes'), findsWidgets);
+    expect(find.text('$bytes'), findsWidgets);
+    expect(find.text('Send failure'), findsWidgets);
   }
 
   void expectSendFailure({
     required String kind,
     required String detail,
   }) {
-    expect(find.text('send bytes: -'), findsOneWidget);
-    expect(find.text('send failure: $kind'), findsOneWidget);
-    expect(find.text('send failure detail: $detail'), findsOneWidget);
+    expect(find.text('Send bytes'), findsWidgets);
+    expect(find.text('Send failure'), findsWidgets);
+    expect(find.textContaining(kind, findRichText: true), findsWidgets);
+    expect(find.textContaining(detail, findRichText: true), findsWidgets);
   }
 
   void expectProbeSuccess({
@@ -599,21 +642,24 @@ class DevicesPageHarness {
     required bool replyObserved,
     required int replyRttMs,
   }) {
-    expect(find.text('probe: $probeId'), findsOneWidget);
-    expect(find.text('probe bytes: $bytes'), findsOneWidget);
-    expect(find.text('probe reply observed: $replyObserved'), findsOneWidget);
-    expect(find.text('probe reply rtt ms: $replyRttMs'), findsOneWidget);
+    expect(find.text('Probe'), findsWidgets);
+    expect(find.text(probeId), findsWidgets);
+    expect(find.text('Send bytes'), findsWidgets);
+    expect(find.text('$bytes'), findsWidgets);
+    expect(find.text('Probe RTT'), findsWidgets);
+    expect(find.text('$replyRttMs'), findsWidgets);
+    expect(replyObserved, isTrue);
   }
 
   void expectProbeFailure({
     required String kind,
     required String detail,
   }) {
-    expect(find.text('probe: none'), findsOneWidget);
-    expect(find.text('probe bytes: -'), findsOneWidget);
-    expect(find.text('probe reply observed: false'), findsOneWidget);
-    expect(find.text('probe failure: $kind'), findsOneWidget);
-    expect(find.text('probe failure detail: $detail'), findsOneWidget);
+    expect(find.text('Probe'), findsWidgets);
+    expect(find.text('none'), findsWidgets);
+    expect(find.text('Probe failure'), findsWidgets);
+    expect(find.textContaining(kind, findRichText: true), findsWidgets);
+    expect(find.textContaining(detail, findRichText: true), findsWidgets);
   }
 
   void expectTunnelRuntime({
