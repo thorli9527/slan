@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
 import '../../control_api_responses/response_parsers.dart';
 import '../api/app_core_api.dart';
@@ -12,9 +13,15 @@ import '../models/network_models.dart';
 import '../models/relay_models.dart';
 
 class BridgeAppCoreApi implements AppCoreApi {
-  BridgeAppCoreApi({required AppCoreBridge bridge}) : _bridge = bridge;
+  BridgeAppCoreApi({
+    required AppCoreBridge bridge,
+    SlanAppCorePluginPlatform? pluginPlatform,
+  })  : _bridge = bridge,
+        _pluginPlatform =
+            pluginPlatform ?? SlanAppCorePluginPlatform.instance;
 
   final AppCoreBridge _bridge;
+  final SlanAppCorePluginPlatform _pluginPlatform;
 
   @override
   void restoreSession(SessionModel session) {
@@ -23,16 +30,17 @@ class BridgeAppCoreApi implements AppCoreApi {
     // required here.
   }
 
+  // Plugin-platform-backed app-core flows.
   @override
   Future<SessionModel> register({
     required String email,
     required String password,
   }) async {
-    final payload = await _invokeMap('register', {
-      'email': email,
-      'password': password,
-    });
-    return parseSessionResponse(payload);
+    final payload = await _pluginPlatform.register(
+      email: email,
+      password: password,
+    );
+    return parseSessionResponse(payload.toJson());
   }
 
   @override
@@ -40,11 +48,11 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String email,
     required String password,
   }) async {
-    final payload = await _invokeMap('login', {
-      'email': email,
-      'password': password,
-    });
-    return parseSessionResponse(payload);
+    final payload = await _pluginPlatform.login(
+      email: email,
+      password: password,
+    );
+    return parseSessionResponse(payload.toJson());
   }
 
   @override
@@ -54,19 +62,21 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String machineId,
     required String publicKey,
   }) async {
-    final payload = await _invokeMap('registerDevice', {
-      'name': name,
-      'platform': platform,
-      'machineId': machineId,
-      'publicKey': publicKey,
-    });
-    return parseDeviceResponse(payload);
+    final payload = await _pluginPlatform.registerDevice(
+      name: name,
+      platform: platform,
+      machineId: machineId,
+      publicKey: publicKey,
+    );
+    return parseDeviceResponse(payload.toJson());
   }
 
   @override
   Future<List<DeviceModel>> listDevices() async {
-    final payload = await _invokeMap('listDevices');
-    return parseDeviceListResponse(_readList(payload, 'items'));
+    final payload = await _pluginPlatform.listDevices();
+    return parseDeviceListResponse(
+      payload.map((item) => item.toJson()).toList(growable: false),
+    );
   }
 
   @override
@@ -76,19 +86,21 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String nodePublicKey,
     List<String> capabilities = const [],
   }) async {
-    final payload = await _invokeMap('registerNode', {
-      'deviceId': deviceId,
-      'nodeId': nodeId,
-      'nodePublicKey': nodePublicKey,
-      'capabilities': capabilities,
-    });
-    return parseNodeResponse(payload);
+    final payload = await _pluginPlatform.registerNode(
+      deviceId: deviceId,
+      nodeId: nodeId,
+      nodePublicKey: nodePublicKey,
+      capabilities: capabilities,
+    );
+    return parseNodeResponse(payload.toJson());
   }
 
   @override
   Future<List<NetworkModel>> listNetworks() async {
-    final payload = await _invokeMap('listNetworks');
-    return parseNetworkListResponse(_readList(payload, 'items'));
+    final payload = await _pluginPlatform.listNetworks();
+    return parseNetworkListResponse(
+      payload.map((item) => item.toJson()).toList(growable: false),
+    );
   }
 
   @override
@@ -97,13 +109,12 @@ class BridgeAppCoreApi implements AppCoreApi {
     String cidr = '10.0.0.0/16',
     String? bindDeviceId,
   }) async {
-    final payload = await _invokeMap('createNetwork', {
-      'name': name,
-      'cidr': cidr,
-      if (bindDeviceId != null && bindDeviceId.isNotEmpty)
-        'bindDeviceId': bindDeviceId,
-    });
-    return parseNetworkResponse(payload);
+    final payload = await _pluginPlatform.createNetwork(
+      name: name,
+      cidr: cidr,
+      bindDeviceId: bindDeviceId,
+    );
+    return parseNetworkResponse(payload.toJson());
   }
 
   @override
@@ -111,10 +122,10 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String networkId,
     required String deviceId,
   }) async {
-    await _invokeMap('joinNetwork', {
-      'networkId': networkId,
-      'deviceId': deviceId,
-    });
+    await _pluginPlatform.joinNetwork(
+      networkId: networkId,
+      deviceId: deviceId,
+    );
   }
 
   @override
@@ -122,10 +133,10 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String networkId,
     required String deviceId,
   }) async {
-    await _invokeMap('activateNetwork', {
-      'networkId': networkId,
-      'deviceId': deviceId,
-    });
+    await _pluginPlatform.activateNetwork(
+      networkId: networkId,
+      deviceId: deviceId,
+    );
   }
 
   @override
@@ -133,10 +144,10 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String networkId,
     required String deviceId,
   }) async {
-    await _invokeMap('deactivateNetwork', {
-      'networkId': networkId,
-      'deviceId': deviceId,
-    });
+    await _pluginPlatform.deactivateNetwork(
+      networkId: networkId,
+      deviceId: deviceId,
+    );
   }
 
   @override
@@ -144,11 +155,11 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String nodeId,
     required String networkId,
   }) async {
-    final payload = await _invokeMap('bootstrap', {
-      'nodeId': nodeId,
-      'networkId': networkId,
-    });
-    return parseBootstrapResponse(payload);
+    final payload = await _pluginPlatform.bootstrap(
+      nodeId: nodeId,
+      networkId: networkId,
+    );
+    return parseBootstrapResponse(payload.toJson());
   }
 
   @override
@@ -156,17 +167,17 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String nodeId,
     required String networkId,
   }) async {
-    final payload = await _invokeMap('controlSync', {
-      'nodeId': nodeId,
-      'networkId': networkId,
-    });
-    return parseBootstrapResponse(payload);
+    final payload = await _pluginPlatform.controlSync(
+      nodeId: nodeId,
+      networkId: networkId,
+    );
+    return parseBootstrapResponse(payload.toJson());
   }
 
   @override
   Future<ControlStatusModel> controlStatus() async {
-    final payload = await _invokeMap('controlStatus');
-    return _parseControlStatus(payload);
+    final payload = await _pluginPlatform.controlStatus();
+    return _parseControlStatus(payload.toJson());
   }
 
   @override
@@ -176,13 +187,13 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String dstNodeId,
     required String reason,
   }) async {
-    final payload = await _invokeMap('issueRelayTicket', {
-      'networkId': networkId,
-      'srcNodeId': srcNodeId,
-      'dstNodeId': dstNodeId,
-      'reason': reason,
-    });
-    return parseRelayTicketResponse(payload);
+    final payload = await _pluginPlatform.issueRelayTicket(
+      networkId: networkId,
+      srcNodeId: srcNodeId,
+      dstNodeId: dstNodeId,
+      reason: reason,
+    );
+    return parseRelayTicketResponse(payload.toJson());
   }
 
   @override
@@ -190,11 +201,11 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String networkId,
     required String peerNodeId,
   }) async {
-    final payload = await _invokeMap('connect', {
-      'networkId': networkId,
-      'peerNodeId': peerNodeId,
-    });
-    return _parseConnectionState(payload);
+    final payload = await _pluginPlatform.connect(
+      networkId: networkId,
+      peerNodeId: peerNodeId,
+    );
+    return _parseConnectionState(payload.toJson());
   }
 
   @override
@@ -203,7 +214,7 @@ class BridgeAppCoreApi implements AppCoreApi {
     int? probeTimeoutMs,
   }) async {
     try {
-      final probe = await _invokeMap('probe', {
+      final probe = await _invokeDiagnosticMap('probe', {
         'payload': payload,
         if (probeTimeoutMs != null) 'probeTimeoutMs': probeTimeoutMs,
       });
@@ -218,7 +229,7 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String payload,
   }) async {
     try {
-      final response = await _invokeMap('send', {
+      final response = await _invokeDiagnosticMap('send', {
         'payload': payload,
       });
       return _readInt(response, 'bytesSent');
@@ -229,10 +240,11 @@ class BridgeAppCoreApi implements AppCoreApi {
 
   @override
   Future<void> disconnect() async {
-    await _bridge.invoke('disconnect');
+    await _pluginPlatform.disconnect();
   }
 
-  Future<Map<String, dynamic>> _invokeMap(
+  // Bridge-only diagnostics stay on the raw helper channel for now.
+  Future<Map<String, dynamic>> _invokeDiagnosticMap(
     String method, [
     Map<String, Object?> args = const {},
   ]) async {

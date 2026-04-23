@@ -8,98 +8,42 @@ import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
 import 'package:slan_app/infra/app_core/bridge/app_core_bridge.dart';
 import 'package:slan_app/infra/app_core/bridge/bridge_app_core_api.dart';
 import 'package:slan_app/infra/app_core/models/models.dart';
+import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
 void main() {
   test(
       'BridgeAppCoreApi forwards bootstrap and relay topology through facade bridge',
       () async {
     final bridge = _FakeAppCoreBridge({
-      'register': {
-        'userId': 'user@example.com',
-        'accessToken': 'token-1',
-        'refreshToken': 'refresh-1',
-        'expiresIn': 3600,
+      'probe': {
+        'probeId': 'probe-1',
+        'sampledAtMs': 1,
+        'activePath': {
+          'relay': {'peer_node_id': 'peer-1'},
+        },
+        'bytesSent': 5,
+        'replyObserved': true,
+        'replyBytesReceived': 5,
+        'replySampledAtMs': 3,
+        'replyRttMs': 2,
+        'tunnelPeerVirtualIp': '100.64.0.2',
+        'observedRttMs': null,
+        'packetLossPpm': null,
+        'pathScore': null,
+        'derpClusterId': null,
+        'derpNodeId': null,
       },
-      'bootstrap': {
-        'device': {
-          'device': {
-            'deviceId': 'dev-1',
-            'name': 'thor-mac',
-            'platform': 'macos',
-            'status': 'online',
-          },
-          'attachments': [
-            {
-              'networkId': 'net-1',
-              'deviceId': 'dev-1',
-              'virtualIp': '100.64.0.10',
-            },
-          ],
-        },
-        'networks': [
-          {
-            'networkId': 'net-1',
-            'name': 'home',
-            'defaultSubnetCidr': '100.64.0.0/24',
-            'subnets': [
-              {
-                'networkId': 'net-1',
-                'cidr': '100.64.0.0/24',
-                'isDefault': true,
-              },
-            ],
-            'members': [
-              {
-                'deviceId': 'dev-1',
-                'role': 'owner',
-              },
-            ],
-          },
-        ],
-        'controlPlane': {
-          'wsUrl': kDevControlWsUrl,
-          'heartbeatSeconds': 15,
-        },
-        'stunServers': [kDevStunServer],
-        'relay': {
-          'defaultClusterId': 'cn-local-a',
-          'countries': [
-            {
-              'countryCode': 'CN',
-              'countryName': 'China',
-              'cities': [
-                {
-                  'cityCode': 'local',
-                  'cityName': 'Local',
-                  'clusters': [
-                    {
-                      'clusterId': 'cn-local-a',
-                      'clusterName': 'CN Local A',
-                      'nodes': [
-                        {
-                          'nodeId': 'relay-cn-local-udp',
-                          'transport': 'udp',
-                          'address': kDevRelayUdpAddress,
-                          'priority': 10,
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-        'networkMap': {
-          'networkId': 'net-1',
-        },
-      },
+    });
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
+      'register': _sessionPayload(),
+      'bootstrap': _bootstrapPayload(),
       'connect': {
         'status': 'connected',
         'path': 'derp',
       },
     });
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final api =
+        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
 
     final session = await api.register(
       email: 'user@example.com',
@@ -115,12 +59,17 @@ void main() {
     );
 
     expect(session.accessToken, 'token-1');
-    expect(bridge.calls.first.method, 'register');
-    expect(bridge.calls.first.args, {
+    expect(pluginPlatform.calls.first.method, 'register');
+    expect(pluginPlatform.calls.first.args, {
       'email': 'user@example.com',
       'password': 'password123',
     });
-    expect(bridge.calls[1].method, 'bootstrap');
+    expect(pluginPlatform.calls[1].method, 'bootstrap');
+    expect(pluginPlatform.calls[1].args, {
+      'nodeId': 'node-1',
+      'networkId': 'net-1',
+    });
+    expect(pluginPlatform.calls[2].method, 'connect');
     expect(
         bootstrap.relay.countries.single.cities.single.clusters.single.nodes
             .single.nodeId,
@@ -131,7 +80,8 @@ void main() {
 
   test('BridgeAppCoreApi maps listNetworks and relay ticket payloads',
       () async {
-    final bridge = _FakeAppCoreBridge({
+    final bridge = _FakeAppCoreBridge({});
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'listNetworks': {
         'items': [
           {
@@ -154,7 +104,8 @@ void main() {
         'signature': 'signed',
       },
     });
-    final api = BridgeAppCoreApi(bridge: bridge);
+    final api =
+        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
 
     final networks = await api.listNetworks();
     final ticket = await api.issueRelayTicket(
@@ -167,7 +118,183 @@ void main() {
     expect(networks.single.cidr, '100.64.0.0/24');
     expect(ticket.derpClusterId, 'cn-local-a');
     expect(ticket.allowedDerpNodeIds, ['relay-cn-local-udp']);
-    expect(bridge.calls[1].args['reason'], 'p2p_failed');
+    expect(pluginPlatform.calls.map((call) => call.method), [
+      'listNetworks',
+      'issueRelayTicket',
+    ]);
+    expect(pluginPlatform.calls[1].args['reason'], 'p2p_failed');
+  });
+
+  test('BridgeAppCoreApi routes auth, device, node, and network setup via plugin platform',
+      () async {
+    final bridge = _FakeAppCoreBridge({});
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
+      'login': _sessionPayload(),
+      'registerDevice': {
+        'deviceId': 'dev-1',
+        'name': 'thor-mac',
+        'platform': 'macos',
+        'status': 'online',
+        'currentVirtualIp': '100.64.0.10',
+        'publicKey': 'device-pub-1',
+      },
+      'registerNode': {
+        'nodeId': 'node-1',
+        'deviceId': 'dev-1',
+        'nodePublicKey': 'node-pub-1',
+        'networkIds': ['net-1'],
+        'capabilities': ['desktop'],
+      },
+      'createNetwork': {
+        'networkId': 'net-1',
+        'name': 'home',
+        'defaultSubnetCidr': '100.64.0.0/24',
+      },
+      'joinNetwork': null,
+      'listDevices': {
+        'items': [
+          {
+            'deviceId': 'dev-1',
+            'name': 'thor-mac',
+            'platform': 'macos',
+            'status': 'online',
+          },
+        ],
+      },
+    });
+    final api =
+        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+
+    final session = await api.login(
+      email: 'user@example.com',
+      password: 'password123',
+    );
+    final device = await api.registerDevice(
+      name: 'thor-mac',
+      platform: 'macos',
+      machineId: 'machine-1',
+      publicKey: 'device-pub-1',
+    );
+    final node = await api.registerNode(
+      deviceId: 'dev-1',
+      nodeId: 'node-1',
+      nodePublicKey: 'node-pub-1',
+      capabilities: const ['desktop'],
+    );
+    final network = await api.createNetwork(
+      name: 'home',
+      bindDeviceId: 'dev-1',
+    );
+    await api.joinNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    final devices = await api.listDevices();
+
+    expect(bridge.calls, isEmpty);
+    expect(session.accessToken, 'token-1');
+    expect(device.deviceId, 'dev-1');
+    expect(node.nodeId, 'node-1');
+    expect(network.networkId, 'net-1');
+    expect(devices.single.deviceId, 'dev-1');
+    expect(pluginPlatform.calls.map((call) => call.method), [
+      'login',
+      'registerDevice',
+      'registerNode',
+      'createNetwork',
+      'joinNetwork',
+      'listDevices',
+    ]);
+  });
+
+  test('BridgeAppCoreApi routes activate/deactivate and controlSync via plugin platform',
+      () async {
+    final bridge = _FakeAppCoreBridge({});
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
+      'activateNetwork': null,
+      'deactivateNetwork': null,
+      'controlSync': _bootstrapPayload(),
+    });
+    final api =
+        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+
+    await api.activateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    await api.deactivateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    final bootstrap = await api.controlSync(nodeId: 'node-1', networkId: 'net-1');
+
+    expect(bridge.calls, isEmpty);
+    expect(pluginPlatform.calls.map((call) => call.method), [
+      'activateNetwork',
+      'deactivateNetwork',
+      'controlSync',
+    ]);
+    expect(pluginPlatform.calls[0].args, {
+      'networkId': 'net-1',
+      'deviceId': 'dev-1',
+    });
+    expect(pluginPlatform.calls[1].args, {
+      'networkId': 'net-1',
+      'deviceId': 'dev-1',
+    });
+    expect(pluginPlatform.calls[2].args, {
+      'nodeId': 'node-1',
+      'networkId': 'net-1',
+    });
+    expect(bootstrap.networks.single.networkId, 'net-1');
+  });
+
+  test('BridgeAppCoreApi routes control status via plugin platform', () async {
+    final bridge = _FakeAppCoreBridge({});
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
+      'controlStatus': {
+        'status': 'connected',
+        'wsUrl': kDevControlWsUrl,
+        'heartbeatSeconds': 15,
+        'sessionTokenPresent': true,
+        'networkMapPresent': true,
+        'networkId': 'net-1',
+        'nodeId': 'node-1',
+        'deviceId': 'dev-1',
+        'peerCount': 1,
+        'connectPlanCount': 1,
+        'connectPlans': [
+          {
+            'peerNodeId': 'node-2',
+            'preferDirect': false,
+            'pathCount': 1,
+            'preferredPath': {
+              'pathType': 'relay',
+              'endpoint': kDevRelayUdpUrl,
+              'priority': 10,
+            },
+            'derpClusterId': 'cn-local-a',
+            'preferredDerpNodeIds': ['relay-cn-local-udp'],
+            'relayTicketId': 'ticket-1',
+          },
+        ],
+      },
+    });
+    final api =
+        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+
+    final status = await api.controlStatus();
+
+    expect(bridge.calls, isEmpty);
+    expect(pluginPlatform.calls.single.method, 'controlStatus');
+    expect(status.status, 'connected');
+    expect(status.networkMapPresent, isTrue);
+    expect(status.connectPlans.single.relayTicketId, 'ticket-1');
+  });
+
+  test('BridgeAppCoreApi routes disconnect via plugin platform', () async {
+    final bridge = _FakeAppCoreBridge({});
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
+      'disconnect': null,
+    });
+    final api =
+        BridgeAppCoreApi(bridge: bridge, pluginPlatform: pluginPlatform);
+
+    await api.disconnect();
+
+    expect(bridge.calls, isEmpty);
+    expect(pluginPlatform.calls.single.method, 'disconnect');
   });
 
   test('BridgeAppCoreApi forwards probe timeout and parses probe payload',
@@ -363,7 +490,6 @@ class _FakeAppCoreBridge implements AppCoreBridge {
   String? probeErrorMessage;
   String? sendErrorCode;
   String? sendErrorMessage;
-
   @override
   Future<Object?> invoke(String method,
       [Map<String, Object?> args = const {}]) async {
@@ -383,6 +509,109 @@ class _FakeAppCoreBridge implements AppCoreBridge {
     }
     if (!_responses.containsKey(method)) {
       throw StateError('Missing fake bridge response for $method');
+    }
+    return _responses[method];
+  }
+}
+
+Map<String, Object?> _sessionPayload() => {
+      'userId': 'user@example.com',
+      'accessToken': 'token-1',
+      'refreshToken': 'refresh-1',
+      'expiresIn': 3600,
+    };
+
+Map<String, Object?> _bootstrapPayload() => {
+      'device': {
+        'device': {
+          'deviceId': 'dev-1',
+          'name': 'thor-mac',
+          'platform': 'macos',
+          'status': 'online',
+        },
+        'attachments': [
+          {
+            'networkId': 'net-1',
+            'deviceId': 'dev-1',
+            'virtualIp': '100.64.0.10',
+          },
+        ],
+      },
+      'networks': [
+        {
+          'networkId': 'net-1',
+          'name': 'home',
+          'defaultSubnetCidr': '100.64.0.0/24',
+          'subnets': [
+            {
+              'networkId': 'net-1',
+              'cidr': '100.64.0.0/24',
+              'isDefault': true,
+            },
+          ],
+          'members': [
+            {
+              'deviceId': 'dev-1',
+              'role': 'owner',
+            },
+          ],
+        },
+      ],
+      'controlPlane': {
+        'wsUrl': kDevControlWsUrl,
+        'heartbeatSeconds': 15,
+      },
+      'stunServers': [kDevStunServer],
+      'relay': {
+        'defaultClusterId': 'cn-local-a',
+        'countries': [
+          {
+            'countryCode': 'CN',
+            'countryName': 'China',
+            'cities': [
+              {
+                'cityCode': 'local',
+                'cityName': 'Local',
+                'clusters': [
+                  {
+                    'clusterId': 'cn-local-a',
+                    'clusterName': 'CN Local A',
+                    'nodes': [
+                      {
+                        'nodeId': 'relay-cn-local-udp',
+                        'transport': 'udp',
+                        'address': kDevRelayUdpAddress,
+                        'priority': 10,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      'networkMap': {
+        'networkId': 'net-1',
+      },
+    };
+
+class _FakeSlanAppCorePluginPlatform extends SlanAppCorePluginPlatform {
+  _FakeSlanAppCorePluginPlatform(this._responses);
+
+  final Map<String, Object?> _responses;
+  final List<_BridgeCall> calls = [];
+
+  @override
+  Future<Object?> invoke(
+    String method, [
+    Map<String, Object?> args = const {},
+  ]) async {
+    calls.add(
+      _BridgeCall(method: method, args: Map<String, Object?>.from(args)),
+    );
+    if (!_responses.containsKey(method)) {
+      throw StateError('Missing fake plugin platform response for $method');
     }
     return _responses[method];
   }
