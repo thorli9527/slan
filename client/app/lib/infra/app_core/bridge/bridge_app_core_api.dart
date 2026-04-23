@@ -172,7 +172,7 @@ class BridgeAppCoreApi implements AppCoreApi {
   @override
   Future<ControlStatusModel> controlStatus() async {
     final payload = await _pluginPlatform.controlStatus();
-    return _parseControlStatus(payload.toJson());
+    return _parseControlStatus(payload);
   }
 
   @override
@@ -200,7 +200,7 @@ class BridgeAppCoreApi implements AppCoreApi {
       networkId: networkId,
       peerNodeId: peerNodeId,
     );
-    return _parseConnectionState(payload.toJson());
+    return _parseConnectionState(payload);
   }
 
   @override
@@ -213,7 +213,7 @@ class BridgeAppCoreApi implements AppCoreApi {
         payload: payload,
         probeTimeoutMs: probeTimeoutMs,
       );
-      return _parseProbe(probe.toJson());
+      return _parseProbe(probe);
     } on PlatformException catch (err) {
       throw ProbeException(_classifyProbeFailure(err));
     }
@@ -236,166 +236,80 @@ class BridgeAppCoreApi implements AppCoreApi {
   }
 }
 
-ConnectionStateModel _parseConnectionState(Map<String, dynamic> json) {
-  final status = json['status'];
-  if (status is! String) {
-    throw const FormatException('Expected connection status string');
-  }
+ConnectionStateModel _parseConnectionState(
+  AppCoreConnectionStatusPayload payload,
+) {
+  final status = payload.status;
   switch (status) {
     case 'disconnected':
       return const ConnectionStateModel.disconnected();
     case 'connecting':
       return const ConnectionStateModel.connecting();
     case 'connected':
-      final path = json['path'];
+      final path = payload.path;
       if (path == 'relay' || path == 'derp') {
         return const ConnectionStateModel.connected(ConnectionPathModel.relay);
       }
       return const ConnectionStateModel.connected(ConnectionPathModel.p2p);
     case 'failed':
-      final reason = json['reason'];
-      return ConnectionStateModel.failed(reason is String ? reason : 'unknown');
+      return ConnectionStateModel.failed(payload.reason ?? 'unknown');
     default:
       throw FormatException('Unsupported connection status: $status');
   }
 }
 
-DataPlaneProbeModel _parseProbe(Map<String, dynamic> json) {
+DataPlaneProbeModel _parseProbe(AppCoreDataPlaneProbePayload payload) {
   return DataPlaneProbeModel(
-    probeId: _readString(json, 'probeId'),
-    sampledAtMs: _readInt(json, 'sampledAtMs'),
-    activePath: _readMap(json, 'activePath'),
-    bytesSent: _readInt(json, 'bytesSent'),
-    replyObserved: _readBool(json, 'replyObserved'),
-    replyBytesReceived: _readNullableInt(json, 'replyBytesReceived'),
-    replySampledAtMs: _readNullableInt(json, 'replySampledAtMs'),
-    replyRttMs: _readNullableInt(json, 'replyRttMs'),
-    tunnelPeerVirtualIp: _readNullableString(json, 'tunnelPeerVirtualIp'),
-    observedRttMs: _readNullableInt(json, 'observedRttMs'),
-    packetLossPpm: _readNullableInt(json, 'packetLossPpm'),
-    pathScore: _readNullableInt(json, 'pathScore'),
-    derpClusterId: _readNullableString(json, 'derpClusterId'),
-    derpNodeId: _readNullableString(json, 'derpNodeId'),
+    probeId: payload.probeId,
+    sampledAtMs: payload.sampledAtMs,
+    activePath: payload.activePath,
+    bytesSent: payload.bytesSent,
+    replyObserved: payload.replyObserved,
+    replyBytesReceived: payload.replyBytesReceived,
+    replySampledAtMs: payload.replySampledAtMs,
+    replyRttMs: payload.replyRttMs,
+    tunnelPeerVirtualIp: payload.tunnelPeerVirtualIp,
+    observedRttMs: payload.observedRttMs,
+    packetLossPpm: payload.packetLossPpm,
+    pathScore: payload.pathScore,
+    derpClusterId: payload.derpClusterId,
+    derpNodeId: payload.derpNodeId,
   );
 }
 
-ControlStatusModel _parseControlStatus(Map<String, dynamic> json) {
-  final plans = _readList(json, 'connectPlans')
-      .whereType<Map>()
-      .map((entry) => entry.map(
-            (key, value) => MapEntry(key.toString(), value),
-          ))
+ControlStatusModel _parseControlStatus(AppCoreControlStatusPayload payload) {
+  final plans = payload.connectPlans
       .map(
         (entry) => ControlConnectPlanModel(
-          peerNodeId: _readString(entry, 'peerNodeId'),
-          preferDirect: _readBool(entry, 'preferDirect'),
-          pathCount: _readInt(entry, 'pathCount'),
-          preferredPath: _readNullableMap(entry, 'preferredPath') == null
+          peerNodeId: entry.peerNodeId,
+          preferDirect: entry.preferDirect,
+          pathCount: entry.pathCount,
+          preferredPath: entry.preferredPath == null
               ? null
               : ControlPathOptionModel(
-                  pathType:
-                      _readString(_readMap(entry, 'preferredPath'), 'pathType'),
-                  endpoint:
-                      _readString(_readMap(entry, 'preferredPath'), 'endpoint'),
-                  priority:
-                      _readInt(_readMap(entry, 'preferredPath'), 'priority'),
+                  pathType: entry.preferredPath!.pathType,
+                  endpoint: entry.preferredPath!.endpoint,
+                  priority: entry.preferredPath!.priority,
                 ),
-          derpClusterId: _readNullableString(entry, 'derpClusterId'),
-          preferredDerpNodeIds: _readStringList(entry, 'preferredDerpNodeIds'),
-          relayTicketId: _readNullableString(entry, 'relayTicketId'),
+          derpClusterId: entry.derpClusterId,
+          preferredDerpNodeIds: entry.preferredDerpNodeIds,
+          relayTicketId: entry.relayTicketId,
         ),
       )
       .toList(growable: false);
   return ControlStatusModel(
-    status: _readString(json, 'status'),
-    wsUrl: _readNullableString(json, 'wsUrl'),
-    heartbeatSeconds: _readNullableInt(json, 'heartbeatSeconds'),
-    sessionTokenPresent: _readBool(json, 'sessionTokenPresent'),
-    networkMapPresent: _readBool(json, 'networkMapPresent'),
-    networkId: _readNullableString(json, 'networkId'),
-    nodeId: _readNullableString(json, 'nodeId'),
-    deviceId: _readNullableString(json, 'deviceId'),
-    peerCount: _readInt(json, 'peerCount'),
-    connectPlanCount: _readInt(json, 'connectPlanCount'),
+    status: payload.status,
+    wsUrl: payload.wsUrl,
+    heartbeatSeconds: payload.heartbeatSeconds,
+    sessionTokenPresent: payload.sessionTokenPresent,
+    networkMapPresent: payload.networkMapPresent,
+    networkId: payload.networkId,
+    nodeId: payload.nodeId,
+    deviceId: payload.deviceId,
+    peerCount: payload.peerCount,
+    connectPlanCount: payload.connectPlanCount,
     connectPlans: plans,
   );
-}
-
-List<dynamic> _readList(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value is List) {
-    return value;
-  }
-  throw FormatException('Expected list for "$key"');
-}
-
-Map<String, dynamic> _readMap(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value is Map<String, dynamic>) {
-    return value;
-  }
-  if (value is Map) {
-    return value
-        .map((mapKey, mapValue) => MapEntry(mapKey.toString(), mapValue));
-  }
-  throw FormatException('Expected object for "$key"');
-}
-
-String _readString(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value is String) {
-    return value;
-  }
-  throw FormatException('Expected string for "$key"');
-}
-
-String? _readNullableString(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  return value is String ? value : null;
-}
-
-Map<String, dynamic>? _readNullableMap(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value == null) {
-    return null;
-  }
-  if (value is Map<String, dynamic>) {
-    return value;
-  }
-  if (value is Map) {
-    return value
-        .map((mapKey, mapValue) => MapEntry(mapKey.toString(), mapValue));
-  }
-  return null;
-}
-
-List<String> _readStringList(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value is List) {
-    return value.whereType<String>().toList(growable: false);
-  }
-  return const [];
-}
-
-int _readInt(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value is int) {
-    return value;
-  }
-  throw FormatException('Expected int for "$key"');
-}
-
-int? _readNullableInt(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  return value is int ? value : null;
-}
-
-bool _readBool(Map<String, dynamic> json, String key) {
-  final value = json[key];
-  if (value is bool) {
-    return value;
-  }
-  throw FormatException('Expected bool for "$key"');
 }
 
 ProbeFailure _classifyProbeFailure(PlatformException err) {
