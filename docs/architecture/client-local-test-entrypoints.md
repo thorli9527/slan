@@ -76,6 +76,12 @@ make devices-integration
 ./scripts/run_devices_integration.sh
 ```
 
+Windows PowerShell:
+
+```text
+powershell -ExecutionPolicy Bypass -File .\scripts\run_devices_integration.ps1
+```
+
 特点：
 
 - 会先做外部 cleanup
@@ -87,6 +93,13 @@ make devices-integration
 ```text
 artifacts/devices-integration/
 ```
+
+Windows notes:
+
+- On Windows, `make devices-integration` now dispatches to `scripts/run_devices_integration.ps1`.
+- The PowerShell runner executes `devices_*_flow_test.dart` one file at a time and performs external cleanup between files.
+- Treat this sequential runner as the stable local entrypoint for desktop integration coverage.
+- Do not rely on multi-file invocations such as `flutter test integration_test/a.dart integration_test/b.dart` as a stable Windows workflow; that path has shown intermittent app startup failures.
 
 如果上一轮 integration 没收干净，先执行：
 
