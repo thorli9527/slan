@@ -13,7 +13,8 @@ void main() {
 
   late FakeHost host;
 
-  setUp(() {
+  setUp(() async {
+    await cleanupDesktopIntegrationApp();
     host = FakeHost();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, host.handle);
@@ -26,7 +27,7 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     AppCoreScope.resetForTest();
-    await cleanupMacOsIntegrationApp();
+    await cleanupDesktopIntegrationApp();
   });
 
   DevicesPageHarness harness(WidgetTester tester) => DevicesPageHarness(tester);

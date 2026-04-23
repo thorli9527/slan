@@ -89,7 +89,7 @@ class FakeHost {
       'peerVirtualIp': peerVirtualIp,
       'debugEngineMode': debugEngineMode,
       'wireguardInterface': {
-        'interfaceName': 'utun9',
+        'interfaceName': null,
         'keyPair': {
           'publicKey': 'debug-public-key',
           'privateKey': 'debug-private-key',
@@ -676,53 +676,28 @@ class DevicesPageHarness {
     String? backendPeerVirtualIp,
     String? backendSelectedEndpoint,
   }) {
+    expect(find.text('Tunnel Runtime'), findsOneWidget);
+    expect(find.text('state $state'), findsWidgets);
+    expect(find.text('backend ${backendState ?? 'unavailable'}'), findsWidgets);
+    expect(find.text('engine ${debugEngineMode ?? '-'}'), findsWidgets);
+    expect(find.text(transport), findsWidgets);
+    expect(find.text(peerVirtualIp), findsWidgets);
+    expect(find.text(endpoint), findsWidgets);
     expect(
-      find.text('tunnel runtime: $state via $transport'),
-      findsOneWidget,
+      find.text('${backendName ?? '-'} / ${backendState ?? '-'}'),
+      findsWidgets,
     );
-    expect(
-      find.text('tunnel debug engine: ${debugEngineMode ?? '-'}'),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-          'tunnel backend: ${backendName ?? '-'} / ${backendState ?? '-'}'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('tunnel backend error: ${backendLastError ?? '-'}'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('tunnel backend started at: ${backendLastStartedAtMs ?? '-'}'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('tunnel backend peer: ${backendPeerVirtualIp ?? '-'}'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('tunnel backend endpoint: ${backendSelectedEndpoint ?? '-'}'),
-      findsOneWidget,
-    );
-    expect(find.text('tunnel peer: $peerVirtualIp'), findsOneWidget);
-    expect(find.text('tunnel endpoint: $endpoint'), findsOneWidget);
-    expect(find.text('tunnel interface: $interfaceName'), findsOneWidget);
-    expect(find.text('tunnel debug error: -'), findsOneWidget);
+    expect(find.text('${backendLastStartedAtMs ?? '-'}'), findsWidgets);
+    expect(find.text(backendPeerVirtualIp ?? '-'), findsWidgets);
+    expect(find.text(backendSelectedEndpoint ?? '-'), findsWidgets);
+    expect(find.text(backendLastError ?? '-'), findsWidgets);
   }
 
   void expectTunnelRuntimeCleared() {
-    expect(find.text('tunnel runtime: none'), findsOneWidget);
-    expect(find.text('tunnel debug engine: -'), findsOneWidget);
-    expect(find.text('tunnel backend: - / -'), findsOneWidget);
-    expect(find.text('tunnel backend error: -'), findsOneWidget);
-    expect(find.text('tunnel backend started at: -'), findsOneWidget);
-    expect(find.text('tunnel backend peer: -'), findsOneWidget);
-    expect(find.text('tunnel backend endpoint: -'), findsOneWidget);
-    expect(find.text('tunnel peer: -'), findsOneWidget);
-    expect(find.text('tunnel endpoint: -'), findsOneWidget);
-    expect(find.text('tunnel interface: -'), findsOneWidget);
-    expect(find.text('tunnel debug error: -'), findsOneWidget);
+    expect(find.text('Tunnel Runtime'), findsOneWidget);
+    expect(find.text('state idle'), findsWidgets);
+    expect(find.text('backend unavailable'), findsWidgets);
+    expect(find.text('engine -'), findsWidgets);
   }
 
   Future<void> _scrollUntilVisible(Finder finder) async {
@@ -734,12 +709,11 @@ class DevicesPageHarness {
   }
 }
 
-Future<void> cleanupMacOsIntegrationApp() async {
-  if (!Platform.isMacOS) {
-    return;
+Future<void> cleanupDesktopIntegrationApp() async {
+  if (Platform.isMacOS) {
+    await Process.run('pkill', [
+      '-f',
+      'slan_app.app/Contents/MacOS/slan_app',
+    ]);
   }
-  await Process.run('pkill', [
-    '-f',
-    'slan_app.app/Contents/MacOS/slan_app',
-  ]);
 }

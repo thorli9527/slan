@@ -13,7 +13,8 @@ void main() {
 
   late FakeHost host;
 
-  setUp(() {
+  setUp(() async {
+    await cleanupDesktopIntegrationApp();
     host = FakeHost();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, host.handle);
@@ -26,7 +27,7 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     AppCoreScope.resetForTest();
-    await cleanupMacOsIntegrationApp();
+    await cleanupDesktopIntegrationApp();
   });
 
   DevicesPageHarness harness(WidgetTester tester) => DevicesPageHarness(tester);
@@ -61,8 +62,7 @@ void main() {
       backendSelectedEndpoint: '203.0.113.10:51820',
     );
 
-    expect(find.text('tunnel packets tx: 0'), findsOneWidget);
-    expect(find.text('tunnel bytes tx: 0'), findsOneWidget);
+    expect(find.text('0 pkt / 0 B'), findsWidgets);
 
     host.expectTunnelApply(
       localVirtualIp: '100.64.0.10',

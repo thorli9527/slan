@@ -18,10 +18,18 @@ help:
 	@echo "    make macos-packet-tunnel-signing-check  # verify local development signing prerequisites for Runner + PacketTunnel"
 
 cleanup-devices-integration:
+ifeq ($(OS),Windows_NT)
+	powershell -ExecutionPolicy Bypass -File .\scripts\cleanup_devices_integration.ps1
+else
 	./scripts/cleanup_devices_integration.sh
+endif
 
 devices-integration:
+ifeq ($(OS),Windows_NT)
+	powershell -ExecutionPolicy Bypass -File .\scripts\run_devices_integration.ps1
+else
 	./scripts/run_devices_integration.sh
+endif
 
 macos-tunnel-control-test:
 	./scripts/test_macos_tunnel_control.sh

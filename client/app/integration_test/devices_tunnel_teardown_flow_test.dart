@@ -13,7 +13,8 @@ void main() {
 
   late FakeHost host;
 
-  setUp(() {
+  setUp(() async {
+    await cleanupDesktopIntegrationApp();
     host = FakeHost();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, host.handle);
@@ -26,7 +27,7 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     AppCoreScope.resetForTest();
-    await cleanupMacOsIntegrationApp();
+    await cleanupDesktopIntegrationApp();
   });
 
   DevicesPageHarness harness(WidgetTester tester) => DevicesPageHarness(tester);
@@ -53,6 +54,11 @@ void main() {
       peerVirtualIp: '100.64.0.2',
       endpoint: '203.0.113.10:51820',
       interfaceName: 'utun9',
+      debugEngineMode: 'noop',
+      backendName: 'wireguardkit',
+      backendState: 'idle',
+      backendPeerVirtualIp: '100.64.0.2',
+      backendSelectedEndpoint: '203.0.113.10:51820',
     );
 
     await page.removeTunnelPeer();
