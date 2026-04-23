@@ -150,35 +150,40 @@ class HelperServiceTunnelHostGateway extends TunnelHostGateway {
 }
 
 class PluginTunnelHostGateway extends TunnelHostGateway {
-  const PluginTunnelHostGateway();
+  const PluginTunnelHostGateway({
+    this.pluginPlatform,
+  });
+
+  final SlanAppCorePluginPlatform? pluginPlatform;
+
+  SlanAppCorePluginPlatform get _pluginPlatform =>
+      pluginPlatform ?? SlanAppCorePluginPlatform.instance;
 
   @override
   Future<WireGuardTunnelActionResult> applyTunnelConfiguration(
     WireGuardTunnelConfiguration configuration,
   ) {
-    return SlanAppCorePluginPlatform.instance.applyTunnelConfiguration(
-      configuration,
-    );
+    return _pluginPlatform.applyTunnelConfiguration(configuration);
   }
 
   @override
   Future<WireGuardTunnelActionResult> bringTunnelUp() {
-    return SlanAppCorePluginPlatform.instance.bringTunnelUp();
+    return _pluginPlatform.bringTunnelUp();
   }
 
   @override
   Future<WireGuardTunnelActionResult> bringTunnelDown() {
-    return SlanAppCorePluginPlatform.instance.bringTunnelDown();
+    return _pluginPlatform.bringTunnelDown();
   }
 
   @override
   Future<WireGuardTunnelActionResult> removeTunnelPeer(String peerVirtualIp) {
-    return SlanAppCorePluginPlatform.instance.removeTunnelPeer(peerVirtualIp);
+    return _pluginPlatform.removeTunnelPeer(peerVirtualIp);
   }
 
   @override
   Future<WireGuardTunnelRuntimeView?> tunnelRuntimeView(String peerVirtualIp) {
-    return SlanAppCorePluginPlatform.instance.tunnelRuntimeView(peerVirtualIp);
+    return _pluginPlatform.tunnelRuntimeView(peerVirtualIp);
   }
 }
 
