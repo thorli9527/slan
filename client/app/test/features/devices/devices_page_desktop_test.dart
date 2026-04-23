@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_app/application/tunnel_host_gateway.dart';
 import 'package:slan_app/features/devices/devices_page.dart';
+import 'package:slan_app/infra/app_core/api/app_core_api.dart';
 import 'package:slan_app/infra/app_core/api/mock_app_core_api.dart';
 import 'package:slan_app/infra/app_core/scope/app_core_scope.dart';
 import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
@@ -12,15 +13,7 @@ void main() {
   testWidgets('DevicesPage renders desktop workbench sections', (
     WidgetTester tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicesPage(),
-      ),
-    );
+    await _pumpDevicesPage(tester);
 
     expect(find.text('Devices Workspace'), findsOneWidget);
     expect(find.text('Identity'), findsOneWidget);
@@ -34,12 +27,7 @@ void main() {
   testWidgets('DevicesPage shows control plan guidance after quick setup and connect', (
     WidgetTester tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    AppCoreScope.configureForTest(appCoreApi: MockAppCoreApi());
-    addTearDown(AppCoreScope.resetForTest);
+    await _pumpDevicesPageWithMockAppCore(tester);
 
     await AppCoreScope.sessionController.registerDevice(
       name: 'thor-mac',
@@ -60,13 +48,6 @@ void main() {
       nodePublicKey: 'node-pub-1',
       bootstrapNetworkId: networkId,
     );
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicesPage(),
-      ),
-    );
-    await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.byKey(AppTestKeys.devicesPeerNodeIdField));
     await tester.enterText(
@@ -89,27 +70,9 @@ void main() {
   testWidgets('DevicesPage renders runtime snapshot from injected tunnel gateway', (
     WidgetTester tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
     final gateway = _FakeTunnelHostGateway.healthy();
-    AppCoreScope.configureForTest(
-      appCoreApi: MockAppCoreApi(),
-      tunnelHostGateway: gateway,
-    );
-    addTearDown(AppCoreScope.resetForTest);
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicesPage(),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.pumpAndSettle();
+    await _pumpDevicesPageWithGateway(tester, gateway);
+    await _inspectTunnelRuntime(tester);
 
     expect(gateway.lastRuntimePeerVirtualIp, '10.0.0.2');
     expect(find.text('Tunnel Runtime'), findsOneWidget);
@@ -124,27 +87,9 @@ void main() {
   testWidgets('DevicesPage derives healthy guidance from injected runtime snapshot', (
     WidgetTester tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
     final gateway = _FakeTunnelHostGateway.healthy();
-    AppCoreScope.configureForTest(
-      appCoreApi: MockAppCoreApi(),
-      tunnelHostGateway: gateway,
-    );
-    addTearDown(AppCoreScope.resetForTest);
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicesPage(),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.pumpAndSettle();
+    await _pumpDevicesPageWithGateway(tester, gateway);
+    await _inspectTunnelRuntime(tester);
 
     expect(find.text('Health Guidance'), findsWidgets);
     expect(find.text('Recent checks'), findsWidgets);
@@ -166,27 +111,9 @@ void main() {
   testWidgets('DevicesPage derives degraded guidance when runtime has no endpoint', (
     WidgetTester tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
     final gateway = _FakeTunnelHostGateway.missingEndpoint();
-    AppCoreScope.configureForTest(
-      appCoreApi: MockAppCoreApi(),
-      tunnelHostGateway: gateway,
-    );
-    addTearDown(AppCoreScope.resetForTest);
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicesPage(),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.pumpAndSettle();
+    await _pumpDevicesPageWithGateway(tester, gateway);
+    await _inspectTunnelRuntime(tester);
 
     expect(
       find.textContaining(
@@ -206,27 +133,9 @@ void main() {
   testWidgets('DevicesPage derives failed guidance when backend reports failure', (
     WidgetTester tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
     final gateway = _FakeTunnelHostGateway.failedBackend();
-    AppCoreScope.configureForTest(
-      appCoreApi: MockAppCoreApi(),
-      tunnelHostGateway: gateway,
-    );
-    addTearDown(AppCoreScope.resetForTest);
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicesPage(),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.pumpAndSettle();
+    await _pumpDevicesPageWithGateway(tester, gateway);
+    await _inspectTunnelRuntime(tester);
 
     expect(
       find.textContaining('The tunnel backend reports a failed state.'),
@@ -244,27 +153,9 @@ void main() {
   testWidgets('DevicesPage derives staged guidance when backend is not started yet', (
     WidgetTester tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
     final gateway = _FakeTunnelHostGateway.notStartedYet();
-    AppCoreScope.configureForTest(
-      appCoreApi: MockAppCoreApi(),
-      tunnelHostGateway: gateway,
-    );
-    addTearDown(AppCoreScope.resetForTest);
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicesPage(),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.pumpAndSettle();
+    await _pumpDevicesPageWithGateway(tester, gateway);
+    await _inspectTunnelRuntime(tester);
 
     expect(
       find.textContaining(
@@ -284,27 +175,9 @@ void main() {
   testWidgets('DevicesPage derives no-traffic guidance when runtime is up but idle', (
     WidgetTester tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
     final gateway = _FakeTunnelHostGateway.noTraffic();
-    AppCoreScope.configureForTest(
-      appCoreApi: MockAppCoreApi(),
-      tunnelHostGateway: gateway,
-    );
-    addTearDown(AppCoreScope.resetForTest);
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: DevicesPage(),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
-    await tester.pumpAndSettle();
+    await _pumpDevicesPageWithGateway(tester, gateway);
+    await _inspectTunnelRuntime(tester);
 
     expect(
       find.textContaining(
@@ -320,6 +193,65 @@ void main() {
     );
     expect(find.text('View Runtime'), findsWidgets);
   });
+}
+
+void _configureDesktopViewport(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1440, 1400);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+}
+
+Future<void> _pumpDevicesPage(
+  WidgetTester tester, {
+  bool configureViewport = true,
+}) async {
+  if (configureViewport) {
+    _configureDesktopViewport(tester);
+  }
+  await tester.pumpWidget(
+    const MaterialApp(
+      home: DevicesPage(),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+Future<void> _pumpDevicesPageWithMockAppCore(WidgetTester tester) async {
+  await _pumpDevicesPageWithScope(
+    tester,
+    appCoreApi: MockAppCoreApi(),
+  );
+}
+
+Future<void> _pumpDevicesPageWithGateway(
+  WidgetTester tester,
+  TunnelHostGateway gateway,
+) async {
+  await _pumpDevicesPageWithScope(
+    tester,
+    appCoreApi: MockAppCoreApi(),
+    tunnelHostGateway: gateway,
+  );
+}
+
+Future<void> _pumpDevicesPageWithScope(
+  WidgetTester tester, {
+  required AppCoreApi appCoreApi,
+  TunnelHostGateway? tunnelHostGateway,
+}) async {
+  _configureDesktopViewport(tester);
+  AppCoreScope.configureForTest(
+    appCoreApi: appCoreApi,
+    tunnelHostGateway: tunnelHostGateway,
+  );
+  addTearDown(AppCoreScope.resetForTest);
+  await _pumpDevicesPage(tester, configureViewport: false);
+}
+
+Future<void> _inspectTunnelRuntime(WidgetTester tester) async {
+  await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
+  await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
+  await tester.pumpAndSettle();
 }
 
 class _FakeTunnelHostGateway extends TunnelHostGateway {
