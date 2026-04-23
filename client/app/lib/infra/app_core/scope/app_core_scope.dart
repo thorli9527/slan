@@ -49,7 +49,7 @@ class AppCoreScope {
   static String? _runtimeClientMachineId;
 
   static AppCoreApi _instance = _buildDefaultInstance();
-  static final TunnelHostGateway _tunnelHostGateway = _buildTunnelHostGateway();
+  static TunnelHostGateway _tunnelHostGateway = _buildTunnelHostGateway();
   static AppCoreCoordinator _coordinator =
       AppCoreCoordinator(hostGateway: _tunnelHostGateway);
   static AppSessionController _sessionController =
@@ -194,8 +194,10 @@ class AppCoreScope {
   @visibleForTesting
   static void configureForTest({
     required AppCoreApi appCoreApi,
+    TunnelHostGateway? tunnelHostGateway,
   }) {
     _instance = appCoreApi;
+    _tunnelHostGateway = tunnelHostGateway ?? _buildTunnelHostGateway();
     _resetStoreBindings();
   }
 
@@ -206,6 +208,7 @@ class AppCoreScope {
     _runtimeServerUiUrl = _serverUiUrl.isEmpty ? null : _serverUiUrl;
     _runtimeClientMachineId = null;
     _instance = _buildDefaultInstance();
+    _tunnelHostGateway = _buildTunnelHostGateway();
     _resetStoreBindings();
   }
 
