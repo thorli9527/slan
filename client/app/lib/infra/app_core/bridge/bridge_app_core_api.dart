@@ -478,7 +478,10 @@ DataPlaneProbeModel _parseProbe(AppCoreDataPlaneProbePayload payload) {
   return DataPlaneProbeModel(
     probeId: payload.probeId,
     sampledAtMs: payload.sampledAtMs,
-    activePath: payload.activePath,
+    activePath: DataPlanePathModel(
+      kind: payload.activePath.kind,
+      details: payload.activePath.details,
+    ),
     bytesSent: payload.bytesSent,
     replyObserved: payload.replyObserved,
     replyBytesReceived: payload.replyBytesReceived,

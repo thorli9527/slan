@@ -748,7 +748,9 @@ class AppCoreDataPlaneProbePayload {
     return AppCoreDataPlaneProbePayload(
       probeId: json['probeId'] as String? ?? '',
       sampledAtMs: (json['sampledAtMs'] as num?)?.toInt() ?? 0,
-      activePath: _readMap(json['activePath']),
+      activePath: AppCoreDataPlanePathPayload.fromJson(
+        _readMap(json['activePath']),
+      ),
       bytesSent: (json['bytesSent'] as num?)?.toInt() ?? 0,
       replyObserved: json['replyObserved'] as bool? ?? false,
       replyBytesReceived: (json['replyBytesReceived'] as num?)?.toInt(),
@@ -765,7 +767,7 @@ class AppCoreDataPlaneProbePayload {
 
   final String probeId;
   final int sampledAtMs;
-  final Map<String, dynamic> activePath;
+  final AppCoreDataPlanePathPayload activePath;
   final int bytesSent;
   final bool replyObserved;
   final int? replyBytesReceived;
@@ -781,7 +783,7 @@ class AppCoreDataPlaneProbePayload {
   Map<String, dynamic> toJson() => {
         'probeId': probeId,
         'sampledAtMs': sampledAtMs,
-        'activePath': activePath,
+        'activePath': activePath.toJson(),
         'bytesSent': bytesSent,
         'replyObserved': replyObserved,
         'replyBytesReceived': replyBytesReceived,
@@ -793,6 +795,43 @@ class AppCoreDataPlaneProbePayload {
         'pathScore': pathScore,
         'derpClusterId': derpClusterId,
         'derpNodeId': derpNodeId,
+      };
+}
+
+class AppCoreDataPlanePathPayload {
+  const AppCoreDataPlanePathPayload({
+    required this.kind,
+    this.details = const {},
+  });
+
+  factory AppCoreDataPlanePathPayload.fromJson(Map<String, dynamic> json) {
+    if (json.isEmpty) {
+      return const AppCoreDataPlanePathPayload(kind: '');
+    }
+    final entry = json.entries.first;
+    return AppCoreDataPlanePathPayload(
+      kind: entry.key,
+      details: entry.value is Map ? _readMap(entry.value) : const {},
+    );
+  }
+
+  final String kind;
+  final Map<String, dynamic> details;
+
+  bool get isRelay {
+    final normalized = kind.toLowerCase();
+    return normalized.contains('relay') || normalized.contains('derp');
+  }
+
+  bool get isDirect {
+    final normalized = kind.toLowerCase();
+    return normalized.contains('p2p') ||
+        normalized.contains('direct') ||
+        normalized.contains('reflexive');
+  }
+
+  Map<String, dynamic> toJson() => {
+        if (kind.isNotEmpty) kind: details,
       };
 }
 

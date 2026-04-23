@@ -19,7 +19,7 @@ class DataPlaneProbeModel {
 
   final String probeId;
   final int sampledAtMs;
-  final Map<String, dynamic> activePath;
+  final DataPlanePathModel activePath;
   final int bytesSent;
   final bool replyObserved;
   final int? replyBytesReceived;
@@ -31,6 +31,28 @@ class DataPlaneProbeModel {
   final int? pathScore;
   final String? derpClusterId;
   final String? derpNodeId;
+}
+
+class DataPlanePathModel {
+  const DataPlanePathModel({
+    required this.kind,
+    this.details = const {},
+  });
+
+  final String kind;
+  final Map<String, dynamic> details;
+
+  bool get isRelay {
+    final normalized = kind.toLowerCase();
+    return normalized.contains('relay') || normalized.contains('derp');
+  }
+
+  bool get isDirect {
+    final normalized = kind.toLowerCase();
+    return normalized.contains('p2p') ||
+        normalized.contains('direct') ||
+        normalized.contains('reflexive');
+  }
 }
 
 enum ProbeFailureKind {

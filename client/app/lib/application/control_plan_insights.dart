@@ -100,20 +100,12 @@ bool probeLooksRelay(DataPlaneProbeModel? probe) {
   if (probe == null) {
     return false;
   }
-  final values = probe.activePath.values.map((value) => '$value'.toLowerCase());
-  return values
-      .any((value) => value.contains('relay') || value.contains('derp'));
+  return probe.activePath.isRelay;
 }
 
 bool probeLooksDirect(DataPlaneProbeModel? probe) {
   if (probe == null) {
     return false;
   }
-  final values = probe.activePath.values.map((value) => '$value'.toLowerCase());
-  return values.any(
-    (value) =>
-        value.contains('p2p') ||
-        value.contains('direct') ||
-        value.contains('reflexive'),
-  );
+  return probe.activePath.isDirect;
 }

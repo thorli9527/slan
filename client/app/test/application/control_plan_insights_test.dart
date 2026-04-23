@@ -74,9 +74,7 @@ void main() {
       const probe = DataPlaneProbeModel(
         probeId: 'probe-1',
         sampledAtMs: 1,
-        activePath: {
-          'pathType': 'relay',
-        },
+        activePath: DataPlanePathModel(kind: 'relay'),
         bytesSent: 5,
         replyObserved: true,
       );

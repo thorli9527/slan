@@ -387,9 +387,10 @@ class MockAppCoreApi implements AppCoreApi {
     return DataPlaneProbeModel(
       probeId: 'mock-probe-$now',
       sampledAtMs: now,
-      activePath: const {
-        'relay': {'peer_node_id': 'relay-peer-node-1'}
-      },
+      activePath: const DataPlanePathModel(
+        kind: 'relay',
+        details: {'peer_node_id': 'relay-peer-node-1'},
+      ),
       bytesSent: payload.length,
       replyObserved: true,
       replyBytesReceived: payload.length,

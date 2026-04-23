@@ -144,7 +144,9 @@ void main() {
       });
 
       expect(payload.probeId, 'probe-1');
-      expect(payload.activePath['relay'], isA<Map<String, dynamic>>());
+      expect(payload.activePath.kind, 'relay');
+      expect(payload.activePath.isRelay, isTrue);
+      expect(payload.activePath.details['peer_node_id'], 'peer-1');
       expect(payload.replyObserved, isTrue);
       expect(payload.replyRttMs, 2);
       expect(payload.derpClusterId, 'cn-local-a');

@@ -93,7 +93,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final gateway = _FakeTunnelHostGateway();
+    final gateway = _FakeTunnelHostGateway.healthy();
     AppCoreScope.configureForTest(
       appCoreApi: MockAppCoreApi(),
       tunnelHostGateway: gateway,
@@ -113,16 +113,266 @@ void main() {
 
     expect(gateway.lastRuntimePeerVirtualIp, '10.0.0.2');
     expect(find.text('Tunnel Runtime'), findsOneWidget);
-    expect(find.text('state configured'), findsWidgets);
+    expect(find.text('state up'), findsWidgets);
     expect(find.text('backend started'), findsWidgets);
     expect(find.text('engine loopback'), findsWidgets);
     expect(find.text('100.64.0.2'), findsWidgets);
     expect(find.text('wireguardkit / started'), findsWidgets);
     expect(find.text('203.0.113.10:51820'), findsWidgets);
   });
+
+  testWidgets('DevicesPage derives healthy guidance from injected runtime snapshot', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final gateway = _FakeTunnelHostGateway.healthy();
+    AppCoreScope.configureForTest(
+      appCoreApi: MockAppCoreApi(),
+      tunnelHostGateway: gateway,
+    );
+    addTearDown(AppCoreScope.resetForTest);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DevicesPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Health Guidance'), findsWidgets);
+    expect(find.text('Recent checks'), findsWidgets);
+    expect(
+      find.textContaining(
+        'The tunnel backend is running, an endpoint is selected, and traffic has been observed.',
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining(
+        'Recommended action: The session looks healthy.',
+      ),
+      findsWidgets,
+    );
+    expect(find.text('Run Bring Down'), findsOneWidget);
+  });
+
+  testWidgets('DevicesPage derives degraded guidance when runtime has no endpoint', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final gateway = _FakeTunnelHostGateway.missingEndpoint();
+    AppCoreScope.configureForTest(
+      appCoreApi: MockAppCoreApi(),
+      tunnelHostGateway: gateway,
+    );
+    addTearDown(AppCoreScope.resetForTest);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DevicesPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining(
+        'The session is running, but runtime has not selected an endpoint yet.',
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining(
+        'Refresh runtime now to confirm whether endpoint selection is still missing.',
+      ),
+      findsWidgets,
+    );
+    expect(find.text('View Runtime'), findsWidgets);
+  });
+
+  testWidgets('DevicesPage derives failed guidance when backend reports failure', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final gateway = _FakeTunnelHostGateway.failedBackend();
+    AppCoreScope.configureForTest(
+      appCoreApi: MockAppCoreApi(),
+      tunnelHostGateway: gateway,
+    );
+    addTearDown(AppCoreScope.resetForTest);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DevicesPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('The tunnel backend reports a failed state.'),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining(
+        'Inspect runtime first, then re-apply configuration if the backend still looks failed.',
+      ),
+      findsWidgets,
+    );
+    expect(find.text('Apply Tunnel Again'), findsWidgets);
+  });
+
+  testWidgets('DevicesPage derives staged guidance when backend is not started yet', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final gateway = _FakeTunnelHostGateway.notStartedYet();
+    AppCoreScope.configureForTest(
+      appCoreApi: MockAppCoreApi(),
+      tunnelHostGateway: gateway,
+    );
+    addTearDown(AppCoreScope.resetForTest);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DevicesPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining(
+        'Configuration has been staged, but the backend does not look fully started yet.',
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining(
+        'Bring the tunnel up again, then inspect runtime.',
+      ),
+      findsWidgets,
+    );
+    expect(find.text('Run Bring Up'), findsOneWidget);
+  });
+
+  testWidgets('DevicesPage derives no-traffic guidance when runtime is up but idle', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final gateway = _FakeTunnelHostGateway.noTraffic();
+    AppCoreScope.configureForTest(
+      appCoreApi: MockAppCoreApi(),
+      tunnelHostGateway: gateway,
+    );
+    addTearDown(AppCoreScope.resetForTest);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DevicesPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.tap(find.byKey(AppTestKeys.devicesTunnelViewButton));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining(
+        'The session is up and an endpoint is selected, but no traffic has been observed yet.',
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining(
+        'Inspect runtime first. Reconfigure only if traffic stays idle for multiple checks.',
+      ),
+      findsWidgets,
+    );
+    expect(find.text('View Runtime'), findsWidgets);
+  });
 }
 
 class _FakeTunnelHostGateway extends TunnelHostGateway {
+  _FakeTunnelHostGateway(this._runtimePayload);
+
+  factory _FakeTunnelHostGateway.healthy() =>
+      _FakeTunnelHostGateway(_healthyRuntimePayload);
+
+  factory _FakeTunnelHostGateway.missingEndpoint() =>
+      _FakeTunnelHostGateway({
+        ..._healthyRuntimePayload,
+        'selectedEndpoint': null,
+        'backendSelectedEndpoint': null,
+        'remoteAddress': '',
+      });
+
+  factory _FakeTunnelHostGateway.failedBackend() =>
+      _FakeTunnelHostGateway({
+        ..._healthyRuntimePayload,
+        'state': 'configured',
+        'backendState': 'failed',
+        'backendLastError': 'WireGuard backend failed to start',
+        'lastPacketAtMs': null,
+        'packetRxCount': 0,
+        'packetRxBytes': 0,
+        'packetTxCount': 0,
+        'packetTxBytes': 0,
+      });
+
+  factory _FakeTunnelHostGateway.notStartedYet() =>
+      _FakeTunnelHostGateway({
+        ..._healthyRuntimePayload,
+        'state': 'configured',
+        'backendState': 'idle',
+        'backendLastStartedAtMs': null,
+        'lastPacketAtMs': null,
+        'packetRxCount': 0,
+        'packetRxBytes': 0,
+        'packetTxCount': 0,
+        'packetTxBytes': 0,
+      });
+
+  factory _FakeTunnelHostGateway.noTraffic() =>
+      _FakeTunnelHostGateway({
+        ..._healthyRuntimePayload,
+        'packetRxCount': 0,
+        'packetRxBytes': 0,
+        'packetTxCount': 0,
+        'packetTxBytes': 0,
+        'lastPacketAtMs': null,
+      });
+
+  final Map<Object?, Object?> _runtimePayload;
   String? lastRuntimePeerVirtualIp;
 
   @override
@@ -150,25 +400,31 @@ class _FakeTunnelHostGateway extends TunnelHostGateway {
   @override
   Future<WireGuardTunnelRuntimeView?> tunnelRuntimeView(String peerVirtualIp) async {
     lastRuntimePeerVirtualIp = peerVirtualIp;
-    return WireGuardTunnelRuntimeView.fromJson({
-      'state': 'configured',
-      'transport': 'relay',
-      'debugEngineMode': 'loopback',
-      'backendName': 'wireguardkit',
-      'backendState': 'started',
-      'backendPeerVirtualIp': '100.64.0.2',
-      'backendSelectedEndpoint': '203.0.113.10:51820',
-      'peerVirtualIp': '100.64.0.2',
-      'peerPublicKey': 'peer-debug-public-key',
-      'selectedEndpoint': '203.0.113.10:51820',
-      'interfaceName': 'utun9',
-      'localVirtualIp': '100.64.0.10',
-      'remoteAddress': '203.0.113.10:51820',
-      'packetRxCount': 3,
-      'packetRxBytes': 192,
-      'packetTxCount': 3,
-      'packetTxBytes': 192,
-      'lastAppliedAtMs': 1712345678000,
-    });
+    final payload = Map<Object?, Object?>.from(_runtimePayload)
+      ..['peerVirtualIp'] = peerVirtualIp;
+    return WireGuardTunnelRuntimeView.fromJson(payload);
   }
 }
+
+const Map<Object?, Object?> _healthyRuntimePayload = {
+  'state': 'up',
+  'transport': 'relay',
+  'debugEngineMode': 'loopback',
+  'backendName': 'wireguardkit',
+  'backendState': 'started',
+  'backendLastStartedAtMs': 1712345677000,
+  'backendPeerVirtualIp': '100.64.0.2',
+  'backendSelectedEndpoint': '203.0.113.10:51820',
+  'peerVirtualIp': '100.64.0.2',
+  'peerPublicKey': 'peer-debug-public-key',
+  'selectedEndpoint': '203.0.113.10:51820',
+  'interfaceName': 'utun9',
+  'localVirtualIp': '100.64.0.10',
+  'remoteAddress': '203.0.113.10:51820',
+  'packetRxCount': 3,
+  'packetRxBytes': 192,
+  'packetTxCount': 3,
+  'packetTxBytes': 192,
+  'lastPacketAtMs': 1712345678123,
+  'lastAppliedAtMs': 1712345678000,
+};
