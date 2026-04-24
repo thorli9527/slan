@@ -713,6 +713,13 @@ func TestPendingJoinRequiresOwnerApprovalBeforeActivation(t *testing.T) {
 	if _, err := networkService.Activate("user-2", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-2"}); !errors.Is(err, service.ErrForbidden) {
 		t.Fatalf("expected pending activation to be forbidden, got %v", err)
 	}
+	pendingVisible, err := networkService.List("user-2")
+	if err != nil {
+		t.Fatalf("list pending networks: %v", err)
+	}
+	if len(pendingVisible) != 0 {
+		t.Fatalf("expected pending network to stay hidden from member visibility, got %+v", pendingVisible)
+	}
 
 	approved, err := networkService.UpdateMemberStatus("owner-1", "net-1", joined.Member.MemberID, dto.UpdateNetworkMemberStatusRequest{
 		Status: "active",
@@ -722,6 +729,13 @@ func TestPendingJoinRequiresOwnerApprovalBeforeActivation(t *testing.T) {
 	}
 	if approved.Status != "active" {
 		t.Fatalf("expected approved member, got %+v", approved)
+	}
+	activeVisible, err := networkService.List("user-2")
+	if err != nil {
+		t.Fatalf("list active networks: %v", err)
+	}
+	if len(activeVisible) != 1 || activeVisible[0].NetworkID != "net-1" {
+		t.Fatalf("expected approved network to become visible, got %+v", activeVisible)
 	}
 	activated, err := networkService.Activate("user-2", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-2"})
 	if err != nil {

@@ -216,8 +216,8 @@ export class AppComponent implements OnDestroy {
         detail: '网络加入 key、设备备注和设备 IP 绑定都已经可以直接在这个管理视图里维护。'
       },
       {
-        title: '后续可继续扩展',
-        detail: '如果还要做加入审批、key 过期或更细的接入策略，这一页可以继续往下长，但当前这版已经能直接管起来。'
+        title: '加入审批已接入',
+        detail: '其它设备提交加入申请后，会先进入待审批状态；owner 在网络管理页通过后，客户端才能启用网络并分配虚拟 IP。'
       }
     ];
   }

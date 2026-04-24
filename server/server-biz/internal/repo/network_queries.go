@@ -60,7 +60,7 @@ func (r *PostgresRepository) ListVisibleNetworksByUser(ctx context.Context, user
 		Select("distinct networks.*").
 		Joins("left join network_members on network_members.network_id = networks.network_id").
 		Joins("left join devices on devices.device_id = network_members.device_id").
-		Where("networks.owner_user_id = ? OR devices.user_id = ?", userID, userID).
+		Where("networks.owner_user_id = ? OR (devices.user_id = ? AND network_members.status = ?)", userID, userID, "active").
 		Order("networks.network_id").
 		Find(&out).Error
 	return out, err
