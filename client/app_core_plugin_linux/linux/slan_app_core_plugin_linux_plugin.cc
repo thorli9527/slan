@@ -20,6 +20,12 @@ namespace {
 
 constexpr char kDefaultHelperHost[] = "127.0.0.1:46321";
 
+struct HelperEndpoint {
+  std::string address;
+  std::string source;
+  bool allow_start;
+};
+
 std::string EscapeJsonString(const std::string& value) {
   std::ostringstream escaped;
   for (const unsigned char ch : value) {
@@ -132,16 +138,20 @@ std::string BuildRequestJson(const char* method, FlValue* arguments) {
   return request.str();
 }
 
-std::string ResolveHelperHost() {
+HelperEndpoint ResolveHelperEndpoint() {
   const char* service_host = g_getenv("SLAN_APP_CORE_SERVICE_HOST");
   if (service_host != nullptr && std::strlen(service_host) > 0) {
-    return service_host;
+    return {service_host, "SLAN_APP_CORE_SERVICE_HOST", false};
   }
   const char* helper_host = g_getenv("SLAN_APP_CORE_HELPER_HOST");
   if (helper_host != nullptr && std::strlen(helper_host) > 0) {
-    return helper_host;
+    return {helper_host, "SLAN_APP_CORE_HELPER_HOST", true};
   }
-  return kDefaultHelperHost;
+  return {kDefaultHelperHost, "default", true};
+}
+
+std::string ResolveHelperHost() {
+  return ResolveHelperEndpoint().address;
 }
 
 std::string CurrentExecutableDirectory() {
@@ -180,7 +190,8 @@ bool SplitHostPort(const std::string& host_port, std::string* host, std::string*
 }
 
 std::string HelperEndpointSummary() {
-  return "host=" + ResolveHelperHost() +
+  const HelperEndpoint endpoint = ResolveHelperEndpoint();
+  return "host=" + endpoint.address + ", source=" + endpoint.source +
          ", helper=" + ResolveHelperExecutablePath();
 }
 
@@ -283,6 +294,14 @@ static bool slan_app_core_plugin_linux_plugin_start_helper(
   }
 
   const std::string helper_path = ResolveHelperExecutablePath();
+  const HelperEndpoint endpoint = ResolveHelperEndpoint();
+  if (!endpoint.allow_start) {
+    *error_message =
+        "app-core service host is external; Linux plugin will not start a "
+        "local helper for it. " +
+        HelperEndpointSummary();
+    return false;
+  }
   if (!g_file_test(helper_path.c_str(), G_FILE_TEST_EXISTS)) {
     *error_message = "app-core helper executable was not found. " +
                      HelperEndpointSummary();

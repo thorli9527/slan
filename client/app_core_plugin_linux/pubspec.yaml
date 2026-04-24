@@ -1,5 +1,5 @@
 name: slan_app_core_plugin_linux
-description: Linux placeholder implementation of the federated SLAN app_core Flutter plugin.
+description: Linux implementation of the federated SLAN app_core Flutter plugin.
 version: 0.1.0
 publish_to: "none"
 

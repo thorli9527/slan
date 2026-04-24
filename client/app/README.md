@@ -104,9 +104,15 @@ flutter run -d windows `
 ```
 
 The Linux Flutter plugin uses the same helper JSON-line protocol. It first
-connects to `SLAN_APP_CORE_SERVICE_HOST` or `SLAN_APP_CORE_HELPER_HOST`; if no
-helper is listening, it starts `SLAN_APP_CORE_HELPER` or `app-core-helper` from
-the app executable directory with `--tcp-host 127.0.0.1:46321`.
+connects to the process environment variable `SLAN_APP_CORE_SERVICE_HOST` or
+`SLAN_APP_CORE_HELPER_HOST`. If `SLAN_APP_CORE_HELPER_HOST` is not listening,
+or neither variable is set, it starts `SLAN_APP_CORE_HELPER` or
+`app-core-helper` from the app executable directory with
+`--tcp-host 127.0.0.1:46321`.
+
+Use `SLAN_APP_CORE_SERVICE_HOST` for an already-running external helper or
+container. In that mode the plugin only connects to the service and will not
+try to spawn a local helper.
 
 If startup fails, the Linux plugin reports the resolved helper host and helper
 path in the Flutter `PlatformException`. This is the first place to check when a
