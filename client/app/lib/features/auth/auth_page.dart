@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../../infra/app_core/scope/app_host_config.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
+import '../../infra/app_core/scope/app_host_config.dart';
 import '../../shared/desktop_url_launcher.dart';
 import '../../testing/app_test_keys.dart';
-import 'auth_callback_service.dart';
 import '../shared/desktop_client_widgets.dart';
+import 'auth_callback_service.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -37,6 +37,8 @@ class _AuthPageState extends State<AuthPage> {
     return AnimatedBuilder(
       animation: sessionStore,
       builder: (context, _) {
+        final hostConfig = AppHostConfig.tryParse(_hostController.text) ??
+            AppCoreScope.hostConfig;
         return Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),
@@ -45,24 +47,26 @@ class _AuthPageState extends State<AuthPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: IconButton.filledTonal(
+                      key: AppTestKeys.authServerConfigButton,
+                      tooltip: 'Server Config',
+                      onPressed: () => _showServerConfigDialog(context),
+                      icon: const Icon(Icons.settings_ethernet),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   _AuthHero(
                     error: sessionStore.error,
-                    hostConfig: AppHostConfig.tryParse(_hostController.text) ??
-                        AppCoreScope.hostConfig,
+                    hostConfig: hostConfig,
                   ),
                   const SizedBox(height: 16),
                   _AuthFormCard(
-                    hostController: _hostController,
                     busy: sessionStore.busy,
-                    hostConfig: AppHostConfig.tryParse(_hostController.text) ??
-                        AppCoreScope.hostConfig,
                     appCoreMode: AppCoreScope.mode,
-                    onApplyServer: _applyHostConfig,
                     onOpenLogin: () => _openWebAuth(loginOnly: true),
                     onOpenConsole: () => _openWebAuth(loginOnly: false),
-                    onUseLocalHost: () => _setHostPreset('127.0.0.1'),
-                    onUseSecureLocalHost: () =>
-                        _setHostPreset('slan.localhost'),
                   ),
                 ],
               ),
@@ -80,7 +84,8 @@ class _AuthPageState extends State<AuthPage> {
         ? hostConfig?.authLoginUrl ??
             (AppCoreScope.webConsoleUrl == null
                 ? null
-                : AppHostConfig.tryParse(AppCoreScope.webConsoleUrl)?.authLoginUrl)
+                : AppHostConfig.tryParse(AppCoreScope.webConsoleUrl)
+                    ?.authLoginUrl)
         : hostConfig?.webConsoleUrl ?? AppCoreScope.webConsoleUrl;
     final sessionStore = AppCoreScope.sessionStore;
     final currentDeviceId = sessionStore.device?.deviceId?.trim();
@@ -117,6 +122,103 @@ class _AuthPageState extends State<AuthPage> {
     _hostController.text = host;
     _applyHostConfig();
   }
+
+  Future<void> _showServerConfigDialog(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final hostConfig = AppHostConfig.tryParse(_hostController.text) ??
+                AppCoreScope.hostConfig;
+            return AlertDialog(
+              key: AppTestKeys.authServerConfigDialog,
+              title: const Text('Server Config'),
+              content: SizedBox(
+                width: 560,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      key: AppTestKeys.authHostField,
+                      controller: _hostController,
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Server Host',
+                        hintText: '127.0.0.1 / slan.localhost / your-host',
+                        prefixIcon: Icon(Icons.hub_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        FilledButton.icon(
+                          key: AppTestKeys.authApplyHostButton,
+                          onPressed: () {
+                            _applyHostConfig();
+                            setDialogState(() {});
+                          },
+                          icon: const Icon(Icons.sync_alt),
+                          label: const Text('Apply Host'),
+                        ),
+                        OutlinedButton(
+                          onPressed: () {
+                            _setHostPreset('127.0.0.1');
+                            setDialogState(() {});
+                          },
+                          child: const Text('Use Local HTTP'),
+                        ),
+                        OutlinedButton(
+                          onPressed: () {
+                            _setHostPreset('slan.localhost');
+                            setDialogState(() {});
+                          },
+                          child: const Text('Use Local HTTPS'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    DesktopInsetBlock(
+                      title: 'Resolved Endpoints',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _ResolvedRow(
+                            label: 'Control API',
+                            value: hostConfig?.controlBaseUrl ?? 'pending',
+                          ),
+                          _ResolvedRow(
+                            label: 'Web Console',
+                            value: hostConfig?.webConsoleUrl ?? 'pending',
+                          ),
+                          _ResolvedRow(
+                            label: 'Login URL',
+                            value: hostConfig?.authLoginUrl ?? 'pending',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (mounted) {
+      setState(() {});
+    }
+  }
 }
 
 class _AuthHero extends StatelessWidget {
@@ -133,7 +235,8 @@ class _AuthHero extends StatelessWidget {
     final theme = Theme.of(context);
     return DesktopHeroPanel(
       title: 'Desktop Access Gateway',
-      description: '客户端现在只维护一个统一 host 配置。控制面、网页控制台和网页登录结果转交都从这里自动推导，避免多个地址分开维护。',
+      description:
+          'Use a single server host for browser login, console access, and desktop callback forwarding.',
       backgroundColor: const Color(0xFFEAF4EE),
       trailing: Wrap(
         spacing: 10,
@@ -178,32 +281,23 @@ class _AuthHero extends StatelessWidget {
 
 class _AuthFormCard extends StatelessWidget {
   const _AuthFormCard({
-    required this.hostController,
     required this.busy,
-    required this.hostConfig,
     required this.appCoreMode,
-    required this.onApplyServer,
     required this.onOpenLogin,
     required this.onOpenConsole,
-    required this.onUseLocalHost,
-    required this.onUseSecureLocalHost,
   });
 
-  final TextEditingController hostController;
   final bool busy;
-  final AppHostConfig? hostConfig;
   final String appCoreMode;
-  final VoidCallback onApplyServer;
   final VoidCallback onOpenLogin;
   final VoidCallback onOpenConsole;
-  final VoidCallback onUseLocalHost;
-  final VoidCallback onUseSecureLocalHost;
 
   @override
   Widget build(BuildContext context) {
     return DesktopSurfaceCard(
-      title: 'Connection Profile',
-      subtitle: '输入一个 host，客户端自动推导控制面和网页控制台地址。',
+      title: 'Sign In',
+      subtitle:
+          'Use browser login to authenticate this desktop client, then return here to continue.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -212,63 +306,13 @@ class _AuthFormCard extends StatelessWidget {
             runSpacing: 10,
             children: [
               DesktopBadge(label: 'mode $appCoreMode'),
-              DesktopBadge(
-                label:
-                    hostConfig == null ? 'state mock' : 'state connected-host',
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            key: AppTestKeys.authHostField,
-            controller: hostController,
-            decoration: const InputDecoration(
-              labelText: 'Server Host',
-              hintText: '127.0.0.1 / slan.localhost / your-host',
-              prefixIcon: Icon(Icons.hub_outlined),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              FilledButton.icon(
-                key: AppTestKeys.authApplyHostButton,
-                onPressed: busy ? null : onApplyServer,
-                icon: const Icon(Icons.sync_alt),
-                label: const Text('Apply Host'),
-              ),
-              OutlinedButton(
-                onPressed: busy ? null : onUseLocalHost,
-                child: const Text('Use Local HTTP'),
-              ),
-              OutlinedButton(
-                onPressed: busy ? null : onUseSecureLocalHost,
-                child: const Text('Use Local HTTPS'),
-              ),
+              const DesktopBadge(label: 'entry browser-auth'),
             ],
           ),
           const SizedBox(height: 16),
-          DesktopInsetBlock(
-            title: 'Resolved Endpoints',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _ResolvedRow(
-                  label: 'Control API',
-                  value: hostConfig?.controlBaseUrl ?? 'pending',
-                ),
-                _ResolvedRow(
-                  label: 'Web Console',
-                  value: hostConfig?.webConsoleUrl ?? 'pending',
-                ),
-                _ResolvedRow(
-                  label: 'Login URL',
-                  value: hostConfig?.authLoginUrl ?? 'pending',
-                ),
-              ],
-            ),
+          Text(
+            'If you need to change the target server, use the config button in the top-right corner before opening browser login.',
+            style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 12),
           Wrap(

@@ -11,7 +11,7 @@
 
 namespace slan_app_core_plugin_windows {
 
-class HelperBridgeClient;
+class AppCoreServiceBridgeClient;
 
 class SlanAppCorePluginWindowsPlugin : public flutter::Plugin {
  public:
@@ -29,24 +29,13 @@ class SlanAppCorePluginWindowsPlugin : public flutter::Plugin {
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 
-  std::optional<std::string> ForwardToHelper(
+  std::optional<std::string> ForwardToService(
       const std::string& method_name,
       const flutter::EncodableValue* arguments,
       std::string* error_message);
 
-  bool HandleTunnelMethodCall(
-      const flutter::MethodCall<flutter::EncodableValue>& method_call,
-      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result);
-
-  std::mutex tunnel_mutex_;
-  std::optional<std::string> tunnel_local_virtual_ip_;
-  std::optional<int> tunnel_local_prefix_len_;
-  std::optional<std::string> tunnel_peer_virtual_ip_;
-  std::optional<std::string> tunnel_last_error_;
-  bool tunnel_running_ = false;
-
-  std::mutex helper_mutex_;
-  std::unique_ptr<HelperBridgeClient> helper_;
+  std::mutex service_mutex_;
+  std::unique_ptr<AppCoreServiceBridgeClient> service_;
 };
 
 }  // namespace slan_app_core_plugin_windows

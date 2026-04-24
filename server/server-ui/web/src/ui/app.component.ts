@@ -3,6 +3,7 @@ import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 
 import { AuthResponse, Device, NetworkAssignment, NetworkDetail, NetworkHome, Subnet } from './api-contracts';
 import { AuthPanelComponent } from './auth-panel.component';
+import { ConsoleApiError, ConsoleApiService } from './console-api.service';
 import { AuthenticateResult, ConsoleAppFacadeService, RefreshWorkspaceResult } from './console-app-facade.service';
 import { CallbackTrackingHandle, ConsoleCallbackService } from './console-callback.service';
 import { ConsoleNetworkFormService } from './console-network-form.service';
@@ -27,6 +28,7 @@ import { AuthMode, ConsoleView } from './ui-models';
   styleUrl: './app.component.css'
 })
 export class AppComponent implements OnDestroy {
+  private static readonly SESSION_CHECK_INTERVAL_MS = 30_000;
   readonly navItems: Array<{ id: ConsoleView; label: string; caption: string }> = [
     { id: 'account', label: '账户概览', caption: '账号、设备、接入网络、切换与接入入口' },
     { id: 'network', label: '网络管理', caption: '子网、IP 绑定、设备接入和加入 key 管理' },
@@ -35,6 +37,7 @@ export class AppComponent implements OnDestroy {
   private readonly facade = inject(ConsoleAppFacadeService);
   private readonly callbackService = inject(ConsoleCallbackService);
   private readonly networkFormService = inject(ConsoleNetworkFormService);
+  private readonly api = inject(ConsoleApiService);
   private readonly sessionService = inject(ConsoleSessionService);
   private readonly workspaceService = inject(ConsoleWorkspaceService);
   email = '';
@@ -151,6 +154,8 @@ export class AppComponent implements OnDestroy {
   readonly callbackAcknowledged = signal(false);
   private callbackTracking: CallbackTrackingHandle | null = null;
   private autoCallbackAttempted = false;
+  private sessionCheckTimer: number | null = null;
+  private sessionCheckInFlight = false;
 
   constructor() {
     const loginClientContext = this.sessionService.readLoginClientContext(window.location.href);
@@ -167,12 +172,14 @@ export class AppComponent implements OnDestroy {
     this.loginClientPlatform.set(loginClientContext.clientPlatform);
     this.loginClientName.set(loginClientContext.clientName);
     if (this.token()) {
+      this.startSessionMonitor();
       void this.refreshWorkspace();
     }
   }
 
   ngOnDestroy(): void {
     this.disposeCallbackTracking();
+    this.stopSessionMonitor();
   }
 
   roleLabel(): string {
@@ -232,6 +239,7 @@ export class AppComponent implements OnDestroy {
         mode: this.authMode(),
         email: this.email,
         password: this.password,
+        loginDeviceId: this.loginClientDeviceId().trim() || this.currentDeviceId().trim() || undefined,
         tokenDeviceState: this.currentDeviceState(),
       });
       this.applyAuthentication(result);
@@ -267,9 +275,6 @@ export class AppComponent implements OnDestroy {
       this.applyRefreshWorkspaceResult(result);
       await this.resumeCachedLoginCallback(result.managedDevice.deviceId);
     } catch (error) {
-      if (this.authMode() === 'login') {
-        this.clearCachedAuth();
-      }
       this.setError(error);
     } finally {
       this.loading.set(false);
@@ -526,6 +531,36 @@ export class AppComponent implements OnDestroy {
     }
   }
 
+  membershipStatusLabel(device: Device): string {
+    const value = (device.membershipStatus || '').toLowerCase();
+    switch (value) {
+      case 'active':
+        return '已加入';
+      case 'pending':
+      case 'joining':
+        return '申请加入中';
+      case 'rejected':
+        return '已拒绝';
+      case 'disabled':
+        return '已停用';
+      default:
+        return value || '-';
+    }
+  }
+
+  membershipStatusTone(device: Device): string {
+    const value = (device.membershipStatus || '').toLowerCase();
+    switch (value) {
+      case 'active':
+        return 'success';
+      case 'pending':
+      case 'joining':
+        return 'warn';
+      default:
+        return 'muted';
+    }
+  }
+
   deviceStatusTone(device: Device): string {
     const value = (device.linkStatus || device.status || '').toLowerCase();
     switch (value) {
@@ -669,6 +704,7 @@ export class AppComponent implements OnDestroy {
     this.token.set('');
     this.userId.set('');
     this.autoCallbackAttempted = false;
+    this.stopSessionMonitor();
   }
 
   private disposeCallbackTracking(): void {
@@ -677,7 +713,26 @@ export class AppComponent implements OnDestroy {
   }
 
   private setError(error: unknown): void {
+    if (error instanceof ConsoleApiError && error.isUnauthorized) {
+      this.handleUnauthorizedSession(error.message || 'session invalid');
+      return;
+    }
     this.error.set(error instanceof Error ? error.message : String(error));
+    this.message.set('');
+  }
+
+  private handleUnauthorizedSession(message: string): void {
+    this.clearCachedAuth();
+    this.activeView.set('account');
+    this.home.set({ hasNetwork: false });
+    this.detail.set(null);
+    this.subnets.set([]);
+    this.assignments.set([]);
+    this.currentDeviceId.set('');
+    this.pendingCallbackId.set('');
+    this.callbackAcknowledged.set(false);
+    this.disposeCallbackTracking();
+    this.error.set(message || 'session invalid');
     this.message.set('');
   }
 
@@ -694,6 +749,7 @@ export class AppComponent implements OnDestroy {
   private applyAuthentication(result: AuthenticateResult): void {
     this.token.set(result.auth.accessToken);
     this.userId.set(result.auth.userId);
+    this.startSessionMonitor();
     this.applyManagedDeviceState(result.managedDevice);
   }
 
@@ -723,5 +779,39 @@ export class AppComponent implements OnDestroy {
     this.devices.set(managedDevice.devices);
     this.currentDeviceId.set(managedDevice.currentDeviceId);
     this.callbackDeviceId.set(managedDevice.callbackDeviceId);
+  }
+
+  private startSessionMonitor(): void {
+    if (this.sessionCheckTimer !== null || !this.token()) {
+      return;
+    }
+    this.sessionCheckTimer = window.setInterval(() => {
+      void this.checkSessionStillValid();
+    }, AppComponent.SESSION_CHECK_INTERVAL_MS);
+  }
+
+  private stopSessionMonitor(): void {
+    if (this.sessionCheckTimer !== null) {
+      window.clearInterval(this.sessionCheckTimer);
+      this.sessionCheckTimer = null;
+    }
+    this.sessionCheckInFlight = false;
+  }
+
+  private async checkSessionStillValid(): Promise<void> {
+    const token = this.token();
+    if (!token || this.sessionCheckInFlight) {
+      return;
+    }
+    this.sessionCheckInFlight = true;
+    try {
+      await this.api.getHome(token);
+    } catch (error) {
+      if (error instanceof ConsoleApiError && error.isUnauthorized) {
+        this.handleUnauthorizedSession(error.message || 'session invalid');
+      }
+    } finally {
+      this.sessionCheckInFlight = false;
+    }
   }
 }

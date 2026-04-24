@@ -96,6 +96,21 @@ func (r *PostgresRepository) ListDevicesByUser(ctx context.Context, userID strin
 	return out, err
 }
 
+func (r *PostgresRepository) ListDevicesByNetworks(ctx context.Context, networkIDs []string) ([]Device, error) {
+	if len(networkIDs) == 0 {
+		return []Device{}, nil
+	}
+	var out []Device
+	err := r.db.WithContext(ctx).
+		Table("devices").
+		Select("distinct devices.*").
+		Joins("join network_members on network_members.device_id = devices.device_id").
+		Where("network_members.network_id IN ?", networkIDs).
+		Order("devices.device_id").
+		Find(&out).Error
+	return out, err
+}
+
 func (r *PostgresRepository) ListDevices(ctx context.Context) ([]Device, error) {
 	var out []Device
 	err := r.db.WithContext(ctx).Order("device_id").Find(&out).Error

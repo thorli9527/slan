@@ -13,6 +13,20 @@ import {
 } from './api-contracts';
 import { AuthMode as AuthModeLocal } from './ui-models';
 
+export class ConsoleApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+
+  get isUnauthorized(): boolean {
+    return this.status === 401 || this.code === 'UNAUTHORIZED';
+  }
+}
+
 type RequestOptions = {
   token?: string;
   init?: RequestInit;
@@ -50,12 +64,21 @@ type CreateSubnetInput = {
 export class ConsoleApiService {
   private readonly serverBase = '/api';
 
-  authenticate(mode: AuthModeLocal, email: string, password: string): Promise<AuthResponse> {
+  authenticate(
+    mode: AuthModeLocal,
+    email: string,
+    password: string,
+    deviceId?: string,
+  ): Promise<AuthResponse> {
     const path = mode === 'login' ? '/auth/login' : '/auth/register';
     return this.request<AuthResponse>(path, {
       init: {
         method: 'POST',
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({
+          email,
+          password,
+          deviceId: deviceId?.trim() || undefined,
+        })
       }
     });
   }
@@ -210,7 +233,11 @@ export class ConsoleApiService {
     const payload = text ? JSON.parse(text) : null;
     if (!response.ok) {
       const raw = payload?.message || `request failed: ${response.status}`;
-      throw new Error(this.normalizeErrorMessage(raw));
+      throw new ConsoleApiError(
+        response.status,
+        payload?.code || '',
+        this.normalizeErrorMessage(raw),
+      );
     }
     return payload as T;
   }
@@ -219,6 +246,7 @@ export class ConsoleApiService {
     return message
       .replace(/^invalid argument:\s*/i, '')
       .replace(/^conflict:\s*/i, '')
+      .replace(/^unauthorized:\s*/i, '')
       .replace(/^forbidden:\s*/i, '')
       .replace(/^not found:\s*/i, '');
   }

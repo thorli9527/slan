@@ -16,6 +16,7 @@ abstract final class AppTestKeys {
       ValueKey<String>('home.manage_network_button');
   static const homeLoginButton = ValueKey<String>('home.login_button');
   static const homeSettingsButton = ValueKey<String>('home.settings_button');
+  static const homeDetailsButton = ValueKey<String>('home.details_button');
   static const homeAddButton = ValueKey<String>('home.add_button');
   static const homeLogoutButton = ValueKey<String>('home.logout_button');
 
@@ -25,6 +26,10 @@ abstract final class AppTestKeys {
   static const authLoginButton = ValueKey<String>('auth.login');
   static const authOpenLoginButton = ValueKey<String>('auth.open_login');
   static const authOpenConsoleButton = ValueKey<String>('auth.open_console');
+  static const authServerConfigButton =
+      ValueKey<String>('auth.server_config_button');
+  static const authServerConfigDialog =
+      ValueKey<String>('auth.server_config_dialog');
   static const authHostField = ValueKey<String>('auth.host');
   static const authApplyHostButton = ValueKey<String>('auth.apply_host');
 

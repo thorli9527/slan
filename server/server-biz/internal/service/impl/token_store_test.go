@@ -7,13 +7,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/slan/server/server-biz/internal/repo"
 	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
 type memoryTokenStore struct {
 	mu sync.Mutex
 
-	accessTokens         map[string]string
+	accessTokens         map[string]repo.AccessTokenSession
 	refreshTokens        map[string]string
 	opsTokens            map[string]string
 	controlSessionTokens map[string]string
@@ -26,7 +27,7 @@ type memoryTokenStore struct {
 
 func newMemoryTokenStore() *memoryTokenStore {
 	return &memoryTokenStore{
-		accessTokens:         make(map[string]string),
+		accessTokens:         make(map[string]repo.AccessTokenSession),
 		refreshTokens:        make(map[string]string),
 		opsTokens:            make(map[string]string),
 		controlSessionTokens: make(map[string]string),
@@ -38,10 +39,25 @@ func newMemoryTokenStore() *memoryTokenStore {
 	}
 }
 
-func (s *memoryTokenStore) StoreAccessToken(_ context.Context, token, userID string, _ time.Duration) error {
+func (s *memoryTokenStore) StoreAccessToken(
+	_ context.Context,
+	token, userID, deviceID string,
+	_ time.Duration,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.accessTokens[token] = userID
+	s.accessTokens[token] = repo.AccessTokenSession{
+		UserID:   userID,
+		DeviceID: deviceID,
+		IssuedAt: time.Now().Unix(),
+	}
+	return nil
+}
+
+func (s *memoryTokenStore) DeleteAccessToken(_ context.Context, accessToken string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.accessTokens, accessToken)
 	return nil
 }
 
@@ -104,14 +120,14 @@ func (s *memoryTokenStore) LoadAuthCallbackPayload(_ context.Context, callbackID
 	return true, nil
 }
 
-func (s *memoryTokenStore) Authenticate(_ context.Context, accessToken string) (string, error) {
+func (s *memoryTokenStore) Authenticate(_ context.Context, accessToken string) (repo.AccessTokenSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	userID, ok := s.accessTokens[accessToken]
+	session, ok := s.accessTokens[accessToken]
 	if !ok {
-		return "", fmt.Errorf("token not found")
+		return repo.AccessTokenSession{}, fmt.Errorf("token not found")
 	}
-	return userID, nil
+	return session, nil
 }
 
 func (s *memoryTokenStore) AuthenticateControlSessionToken(_ context.Context, token string) (string, error) {

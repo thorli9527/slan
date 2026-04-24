@@ -3,6 +3,7 @@ members = [
     "crates/app-core",
     "crates/app-core-cli",
     "crates/app-core-helper",
+    "crates/app-core-service",
     "crates/control-ws-client",
     "crates/controller-client",
     "crates/nat",

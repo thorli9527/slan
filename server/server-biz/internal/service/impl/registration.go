@@ -40,9 +40,35 @@ func (s dbDeviceService) ListByUser(userID string) ([]dto.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]dto.Device, 0, len(records))
+	visibleNetworks, err := s.state.deviceListVisibleNetworks(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	networkIDs := make([]string, 0, len(visibleNetworks))
+	for _, network := range visibleNetworks {
+		networkIDs = append(networkIDs, network.NetworkID)
+	}
+	networkDevices, err := s.state.pg.ListDevicesByNetworks(ctx, networkIDs)
+	if err != nil {
+		return nil, err
+	}
+	activeNetworkID := s.state.preferredDeviceListNetworkID(ctx, userID, visibleNetworks)
+	seen := make(map[string]struct{}, len(records)+len(networkDevices))
+	out := make([]dto.Device, 0, len(records)+len(networkDevices))
 	for _, record := range records {
-		out = append(out, s.state.buildDeviceDTO(ctx, record))
+		seen[record.DeviceID] = struct{}{}
+		out = append(out, s.state.buildDeviceDTOForNetwork(ctx, record, activeNetworkID))
+	}
+	for _, record := range networkDevices {
+		if _, ok := seen[record.DeviceID]; ok {
+			continue
+		}
+		seen[record.DeviceID] = struct{}{}
+		out = append(out, s.state.buildDeviceDTOForNetwork(
+			ctx,
+			record,
+			s.state.firstDeviceMembershipNetwork(ctx, record.DeviceID, networkIDs),
+		))
 	}
 	return out, nil
 }

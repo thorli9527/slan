@@ -48,6 +48,7 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
             expiresIn: session!.expiresIn,
             deviceId: nextDevice.deviceId,
             userLabel: session!.userLabel,
+            authenticatedAtMs: session!.authenticatedAtMs,
           );
   }
 

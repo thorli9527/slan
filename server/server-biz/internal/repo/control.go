@@ -57,6 +57,15 @@ func (r *PostgresRepository) GetLatestControlSessionByNode(ctx context.Context, 
 	return record, err
 }
 
+func (r *PostgresRepository) GetLatestControlSessionByDevice(ctx context.Context, deviceID string) (ControlSession, error) {
+	var record ControlSession
+	err := r.db.WithContext(ctx).
+		Where("device_id = ?", deviceID).
+		Order("last_seen_at desc, connected_at desc").
+		First(&record).Error
+	return record, err
+}
+
 func (r *PostgresRepository) DeleteControlSessionByNode(ctx context.Context, nodeID, networkID string) error {
 	return r.db.WithContext(ctx).
 		Where("node_id = ? AND network_id = ?", nodeID, networkID).
@@ -67,6 +76,19 @@ func (r *PostgresRepository) DeleteControlSessionsBefore(ctx context.Context, cu
 	return r.db.WithContext(ctx).
 		Where("last_seen_at < ?", cutoff).
 		Delete(&ControlSession{}).Error
+}
+
+func (r *PostgresRepository) MarkDevicesOfflineWithoutFreshControlSession(ctx context.Context, cutoff int64) error {
+	return r.db.WithContext(ctx).
+		Model(&Device{}).
+		Where("status = ?", "online").
+		Where("NOT EXISTS (?)",
+			r.db.Model(&ControlSession{}).
+				Select("1").
+				Where("control_sessions.device_id = devices.device_id").
+				Where("control_sessions.last_seen_at >= ?", cutoff),
+		).
+		Update("status", "offline").Error
 }
 
 func (r *PostgresRepository) DeleteControlSessionsByDeviceExceptNetwork(ctx context.Context, deviceID, keepNetworkID string) error {

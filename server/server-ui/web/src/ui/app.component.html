@@ -356,6 +356,7 @@
               <th>邮箱</th>
               <th>当前 IP</th>
               <th>链接状态</th>
+              <th>加入状态</th>
               <th>联网协议</th>
               <th>加入时间</th>
               <th>创建时间</th>
@@ -370,6 +371,7 @@
               <td>{{ device.ownerEmail || '-' }}</td>
               <td>{{ device.currentVirtualIp || '-' }}</td>
               <td><span class="status-badge" [attr.data-tone]="deviceStatusTone(device)">{{ deviceStatusLabel(device) }}</span></td>
+              <td><span class="status-badge" [attr.data-tone]="membershipStatusTone(device)">{{ membershipStatusLabel(device) }}</span></td>
               <td>{{ deviceProtocol(device) }}</td>
               <td>{{ formatTimestamp(device.joinedAt) }}</td>
               <td>{{ formatTimestamp(device.createdAt) }}</td>

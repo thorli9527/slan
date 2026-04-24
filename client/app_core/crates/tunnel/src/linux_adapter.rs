@@ -317,6 +317,38 @@ impl LinuxKernelWireGuardAdapter {
         commands
     }
 
+    fn apply_peer_wireguard_commands(
+        interface_name: &str,
+        peer: &LinuxKernelPeerPlan,
+    ) -> Vec<LinuxCommandSpec> {
+        Self::apply_peer_commands(interface_name, peer)
+            .into_iter()
+            .filter(|command| command.program == "wg")
+            .collect()
+    }
+
+    fn peer_route_commands(
+        interface_name: &str,
+        peer: &LinuxKernelPeerPlan,
+    ) -> Vec<LinuxCommandSpec> {
+        peer.allowed_ips
+            .iter()
+            .cloned()
+            .map(|allowed_ip| {
+                LinuxCommandSpec::new(
+                    "ip",
+                    vec![
+                        "route".into(),
+                        "replace".into(),
+                        allowed_ip,
+                        "dev".into(),
+                        interface_name.to_string(),
+                    ],
+                )
+            })
+            .collect()
+    }
+
     fn remove_peer_commands(
         interface_name: &str,
         peer: &LinuxKernelPeerPlan,
@@ -409,8 +441,15 @@ impl LinuxKernelWireGuardAdapter {
             .interface_runtime()
             .map(|runtime| Self::interface_name_from_runtime(&runtime))
             .ok_or_else(|| "linux adapter interface runtime unavailable".to_string())?;
-        let commands = Self::apply_peer_commands(&interface_name, &peer);
+        let commands = Self::apply_peer_wireguard_commands(&interface_name, &peer);
         self.run_all(&commands)?;
+        let is_up = self
+            .interface_runtime()
+            .map(|runtime| runtime.is_up)
+            .unwrap_or(false);
+        if is_up {
+            self.run_all(&Self::peer_route_commands(&interface_name, &peer))?;
+        }
         let mut peers = self
             .peers
             .lock()
@@ -451,6 +490,18 @@ impl LinuxKernelWireGuardAdapter {
             .push(command.clone());
         self.executor.run(&command)?;
         runtime.is_up = true;
+        let interface_name = Self::interface_name_from_runtime(runtime);
+        let peers = self
+            .peers
+            .lock()
+            .map_err(|_| "linux adapter peer state poisoned".to_string())?
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        drop(interface);
+        for peer in peers {
+            self.run_all(&Self::peer_route_commands(&interface_name, &peer.peer))?;
+        }
         Ok(())
     }
 

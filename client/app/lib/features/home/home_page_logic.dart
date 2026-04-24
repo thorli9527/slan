@@ -10,7 +10,8 @@ extension _HomePageLogic on _HomePageState {
     );
 
     final host = Platform.localHostname.replaceAll('.', '-');
-    final statusMessage = await AppCoreScope.sessionController.ensureHomeWorkspaceReady(
+    final statusMessage =
+        await AppCoreScope.sessionController.ensureHomeWorkspaceReady(
       deviceName: host,
       platform: DesktopPlatform.currentId,
       machineId: AppCoreScope.clientMachineId,
@@ -58,6 +59,35 @@ extension _HomePageLogic on _HomePageState {
     );
   }
 
+  Future<void> _openWebDetails() async {
+    final target = AppCoreScope.webConsoleUrl;
+    if (target == null || target.isEmpty) {
+      return;
+    }
+    await _openExternalUrl(target);
+  }
+
+  Future<void> _logoutFromClient({required bool hasActiveNetwork}) async {
+    final sessionController = AppCoreScope.sessionController;
+    if (hasActiveNetwork) {
+      try {
+        await sessionController.disableActiveNetwork();
+      } catch (_) {
+        // Best effort. Still continue with local sign out.
+      }
+    }
+    await sessionController.signOut();
+  }
+
+  String _formatLoginTime(int? authenticatedAtMs) {
+    if (authenticatedAtMs == null || authenticatedAtMs <= 0) {
+      return 'Unknown';
+    }
+    final time = DateTime.fromMillisecondsSinceEpoch(authenticatedAtMs).toLocal();
+    final two = (int value) => value.toString().padLeft(2, '0');
+    return '${time.year}-${two(time.month)}-${two(time.day)} ${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
+  }
+
   Future<void> _showServerSettingsDialog(BuildContext context) async {
     final controller = TextEditingController(
       text: AppCoreScope.hostInput ?? '127.0.0.1',
@@ -66,7 +96,7 @@ extension _HomePageLogic on _HomePageState {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('服务器地址'),
+          title: const Text('Server Host'),
           content: SizedBox(
             width: 420,
             child: Column(
@@ -82,7 +112,7 @@ extension _HomePageLogic on _HomePageState {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '只需要填写一个 host，客户端会自动推导控制面和网页控制台地址。',
+                  'Only one host value is needed. The client derives control and web endpoints from it automatically.',
                   style: Theme.of(dialogContext).textTheme.bodySmall,
                 ),
               ],
@@ -91,14 +121,14 @@ extension _HomePageLogic on _HomePageState {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('取消'),
+              child: const Text('Cancel'),
             ),
             FilledButton(
               onPressed: () {
                 AppCoreScope.configureHost(host: controller.text);
                 Navigator.of(dialogContext).pop();
               },
-              child: const Text('保存'),
+              child: const Text('Save'),
             ),
           ],
         );

@@ -34,6 +34,8 @@ export type Device = {
   linkStatus?: string;
   connectivityProtocol?: string;
   joinedAt?: number;
+  membershipStatus?: string;
+  networkRole?: string;
   createdAt?: number;
   publicKey?: string;
   networkIds?: string[];

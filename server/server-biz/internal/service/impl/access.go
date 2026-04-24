@@ -44,11 +44,12 @@ func (s dbAuthService) Register(req dto.RegisterRequest) (dto.AuthResponse, erro
 	if _, err := s.state.ensureOwnedNetwork(ctx, userID); err != nil {
 		return dto.AuthResponse{}, err
 	}
-	return s.state.issueAuthResponse(ctx, userID)
+	return s.state.issueAuthResponse(ctx, userID, "")
 }
 
 func (s dbAuthService) Login(req dto.LoginRequest) (dto.AuthResponse, error) {
 	email := strings.TrimSpace(strings.ToLower(req.Email))
+	deviceID := strings.TrimSpace(req.DeviceID)
 	if email == "" || req.Password == "" {
 		return dto.AuthResponse{}, fmt.Errorf("%w: email and password are required", ErrInvalidArgument)
 	}
@@ -63,7 +64,19 @@ func (s dbAuthService) Login(req dto.LoginRequest) (dto.AuthResponse, error) {
 	if user.PasswordHash != util.HashPassword(req.Password) {
 		return dto.AuthResponse{}, ErrUnauthorized
 	}
-	return s.state.issueAuthResponse(ctx, user.UserID)
+	if deviceID != "" {
+		device, err := s.state.pg.GetDeviceByID(ctx, deviceID)
+		if err != nil {
+			if repo.IsNotFound(err) {
+				return dto.AuthResponse{}, ErrUnauthorized
+			}
+			return dto.AuthResponse{}, err
+		}
+		if device.UserID != user.UserID {
+			return dto.AuthResponse{}, ErrForbidden
+		}
+	}
+	return s.state.issueAuthResponse(ctx, user.UserID, deviceID)
 }
 
 func (s dbAuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error) {
@@ -130,10 +143,10 @@ func (s dbAuthService) MarkCallbackReceived(callbackID string) error {
 	)
 }
 
-func (s *dbState) issueAuthResponse(ctx context.Context, userID string) (dto.AuthResponse, error) {
+func (s *dbState) issueAuthResponse(ctx context.Context, userID, deviceID string) (dto.AuthResponse, error) {
 	accessToken := util.OpaqueToken("access", userID)
 	refreshToken := util.OpaqueToken("refresh", userID)
-	if err := s.tokens.StoreAccessToken(ctx, accessToken, userID, time.Hour); err != nil {
+	if err := s.tokens.StoreAccessToken(ctx, accessToken, userID, deviceID, time.Hour); err != nil {
 		return dto.AuthResponse{}, err
 	}
 	if err := s.tokens.StoreRefreshToken(ctx, refreshToken, userID, 24*time.Hour); err != nil {
@@ -148,9 +161,14 @@ func (s *dbState) issueAuthResponse(ctx context.Context, userID string) (dto.Aut
 }
 
 func (v dbTokenVerifier) Authenticate(accessToken string) (string, error) {
-	userID, err := v.state.tokens.Authenticate(context.Background(), accessToken)
+	ctx := context.Background()
+	session, err := v.state.tokens.Authenticate(ctx, accessToken)
 	if err != nil {
 		return "", ErrUnauthorized
 	}
-	return userID, nil
+	if session.DeviceID != "" && !v.state.hasFreshDeviceBoundWebSession(ctx, session, time.Now()) {
+		_ = v.state.tokens.DeleteAccessToken(ctx, accessToken)
+		return "", ErrUnauthorized
+	}
+	return session.UserID, nil
 }

@@ -470,6 +470,7 @@ func relayTicketCacheKey(req dto.RelayTicketRequest) string {
 }
 
 const controlSessionFreshnessWindow = 45 * time.Second
+const deviceBoundWebSessionFreshnessWindow = 2 * time.Minute
 const nodeEndpointFreshnessWindow = 2 * time.Minute
 const nodeConnectionStateFreshnessWindow = 2 * time.Minute
 const nodePathHealthFreshnessWindow = 5 * time.Minute
@@ -500,6 +501,32 @@ func (s *dbState) hasFreshControlSession(ctx context.Context, nodeID, networkID 
 		return false
 	}
 	return controlSessionIsFresh(session, now)
+}
+
+func (s *dbState) hasFreshDeviceBoundWebSession(
+	ctx context.Context,
+	session repo.AccessTokenSession,
+	now time.Time,
+) bool {
+	if session.UserID == "" || session.DeviceID == "" {
+		return true
+	}
+	issuedAt := time.Unix(session.IssuedAt, 0)
+	if session.IssuedAt <= 0 {
+		issuedAt = now
+	}
+	record, err := s.pg.GetLatestControlSessionByDevice(ctx, session.DeviceID)
+	if err != nil {
+		return now.Sub(issuedAt) <= deviceBoundWebSessionFreshnessWindow
+	}
+	if record.UserID != session.UserID {
+		return false
+	}
+	lastSeenAt := time.Unix(record.LastSeenAt, 0)
+	if lastSeenAt.Before(issuedAt) {
+		lastSeenAt = issuedAt
+	}
+	return now.Sub(lastSeenAt) <= deviceBoundWebSessionFreshnessWindow
 }
 
 // controlSessionIsFresh applies the in-memory freshness window to a stored
@@ -551,6 +578,7 @@ func (s *dbState) startControlStateCleanupLoop() {
 // cleanupExpiredControlPlaneState performs one cleanup pass over transient
 // control-plane rows and in-memory relay ticket cache.
 func (s *dbState) cleanupExpiredControlPlaneState(ctx context.Context, now time.Time) {
+	_ = s.pg.MarkDevicesOfflineWithoutFreshControlSession(ctx, controlSessionCutoffUnix(now))
 	_ = s.pg.DeleteControlSessionsBefore(ctx, controlSessionCutoffUnix(now))
 	_ = s.pg.DeleteNodeEndpointsBeforeAll(ctx, endpointCutoffUnix(now))
 	_ = s.pg.DeleteNodeConnectionStatesBeforeAll(ctx, connectionStateCutoffUnix(now))

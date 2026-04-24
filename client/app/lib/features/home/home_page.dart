@@ -5,20 +5,25 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../auth/auth_callback_service.dart';
 import '../../features/shared/desktop_client_widgets.dart';
 import '../../infra/app_core/models/network_models.dart';
-import '../../infra/logging/startup_log.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
 import '../../infra/app_core/store/app_session_store.dart';
+import '../../infra/logging/startup_log.dart';
 import '../../shared/desktop_platform.dart';
 import '../../shared/desktop_url_launcher.dart';
 import '../../testing/app_test_keys.dart';
+import '../auth/auth_callback_service.dart';
 
 part 'home_page_logic.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({
+    super.key,
+    this.enableAutoSetup = true,
+  });
+
+  final bool enableAutoSetup;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -47,7 +52,9 @@ class _HomePageState extends State<HomePage> {
     if (sessionStore.session == null) {
       _autoSetupStarted = false;
     }
-    if (sessionStore.session != null && !_autoSetupStarted) {
+    if (widget.enableAutoSetup &&
+        sessionStore.session != null &&
+        !_autoSetupStarted) {
       _autoSetupStarted = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _ensureWorkspaceReady(sessionStore);
@@ -58,29 +65,39 @@ class _HomePageState extends State<HomePage> {
       animation: Listenable.merge([sessionStore, tunnelStore]),
       builder: (context, _) {
         final loggedIn = sessionStore.session != null;
-        final activeNetwork =
-            sessionStore.networks.isNotEmpty ? sessionStore.networks.first : null;
+        final activeNetwork = sessionStore.networks.isNotEmpty
+            ? sessionStore.networks.first
+            : null;
         final runtime = tunnelStore.tunnelRuntimeView;
         final currentMember =
             _memberForCurrentDevice(sessionStore.device?.deviceId, activeNetwork);
         final virtualIp = switch (activeNetwork) {
           null => 'No network',
           _ when currentMember?.virtualIp != null &&
-              currentMember!.virtualIp!.trim().isNotEmpty =>
+                  currentMember!.virtualIp!.trim().isNotEmpty =>
             currentMember.virtualIp!.trim(),
           _ => 'Pending allocation',
         };
         final runtimeState =
             activeNetwork == null ? 'inactive' : runtime?.state ?? 'idle';
+
         return Scaffold(
           appBar: AppBar(
             title: const Text('SLAN'),
             actions: [
-              IconButton(
-                tooltip: 'Settings',
-                onPressed: () => _showServerSettingsDialog(context),
-                icon: const Icon(Icons.tune),
-              ),
+              if (!loggedIn)
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Tooltip(
+                    message:
+                        'Server Config: ${AppCoreScope.hostConfig?.displayHost ?? 'mock'}',
+                    child: IconButton.filledTonal(
+                      key: AppTestKeys.homeSettingsButton,
+                      onPressed: () => _showServerSettingsDialog(context),
+                      icon: const Icon(Icons.settings_suggest_rounded),
+                    ),
+                  ),
+                ),
             ],
           ),
           body: Center(
@@ -93,23 +110,22 @@ class _HomePageState extends State<HomePage> {
                         userLabel: sessionStore.session?.userLabel ??
                             sessionStore.session?.userId ??
                             'Unknown user',
+                        loginTimeLabel: _formatLoginTime(
+                          sessionStore.session?.authenticatedAtMs,
+                        ),
                         virtualIp: virtualIp,
                         runtimeState: runtimeState,
                         hasActiveNetwork: activeNetwork != null,
                         busy: sessionStore.busy,
-                        statusMessage: _networkConsoleStatus ??
-                            sessionStore.notice ??
-                            tunnelStore.lastTunnelActionReport?.detail,
-                        error: sessionStore.error,
                         onEnable: sessionController.enableActiveNetwork,
                         onDisable: sessionController.disableActiveNetwork,
-                        onLogout: sessionController.signOut,
+                        onLogout: () => _logoutFromClient(
+                          hasActiveNetwork: activeNetwork != null,
+                        ),
+                        onDetails: _openWebDetails,
                       )
                     : _LoggedOutHome(
-                        hostLabel:
-                            AppCoreScope.hostConfig?.displayHost ?? 'mock',
-                        onLogin: () => _openBrowserLogin(),
-                        onSettings: () => _showServerSettingsDialog(context),
+                        onLogin: _openBrowserLogin,
                       ),
               ),
             ),
@@ -128,39 +144,23 @@ class _HomePageState extends State<HomePage> {
 
 class _LoggedOutHome extends StatelessWidget {
   const _LoggedOutHome({
-    required this.hostLabel,
     required this.onLogin,
-    required this.onSettings,
   });
 
-  final String hostLabel;
   final VoidCallback onLogin;
-  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: _ActionTile(
-            key: AppTestKeys.homeLoginButton,
-            icon: Icons.lock_open_rounded,
-            label: '登录',
-            subtitle: '打开浏览器完成登录',
-            color: const Color(0xFF1E6B52),
-            onTap: onLogin,
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: _ActionTile(
-            key: AppTestKeys.homeSettingsButton,
-            icon: Icons.settings_suggest_rounded,
-            label: '设置',
-            subtitle: hostLabel,
-            color: const Color(0xFF355C7D),
-            onTap: onSettings,
-          ),
+        _ActionTile(
+          key: AppTestKeys.homeLoginButton,
+          icon: Icons.lock_open_rounded,
+          label: 'Login',
+          subtitle: 'Open browser login',
+          color: const Color(0xFF1E6B52),
+          onTap: onLogin,
         ),
       ],
     );
@@ -170,117 +170,76 @@ class _LoggedOutHome extends StatelessWidget {
 class _LoggedInHome extends StatelessWidget {
   const _LoggedInHome({
     required this.userLabel,
+    required this.loginTimeLabel,
     required this.virtualIp,
     required this.runtimeState,
     required this.hasActiveNetwork,
     required this.busy,
-    required this.statusMessage,
-    required this.error,
     required this.onEnable,
     required this.onDisable,
     required this.onLogout,
+    required this.onDetails,
   });
 
   final String userLabel;
+  final String loginTimeLabel;
   final String virtualIp;
   final String runtimeState;
   final bool hasActiveNetwork;
   final bool busy;
-  final String? statusMessage;
-  final String? error;
   final Future<void> Function() onEnable;
   final Future<void> Function() onDisable;
   final Future<void> Function() onLogout;
+  final Future<void> Function() onDetails;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        DesktopHeroPanel(
-          title: 'Client',
-          description: '登录成功后默认进入这张极简页面，只保留当前用户、当前 IP 和网络启停。',
-          backgroundColor: const Color(0xFFF0FBF6),
-          trailing: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
+    return DesktopSurfaceCard(
+      title: 'Current Session',
+      subtitle: 'Minimal client summary after login.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _StatusRow(label: 'Current User', value: userLabel),
+          const SizedBox(height: 10),
+          _StatusRow(label: 'Login Time', value: loginTimeLabel),
+          const SizedBox(height: 10),
+          _StatusRow(label: 'Current IP', value: virtualIp),
+          const SizedBox(height: 10),
+          _StatusRow(label: 'Network State', value: runtimeState),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
             children: [
-              DesktopMetricPill(label: 'User', value: userLabel),
-              const SizedBox(height: 10),
-              DesktopMetricPill(label: 'IP', value: virtualIp),
-              const SizedBox(height: 10),
-              DesktopMetricPill(label: 'Runtime', value: runtimeState),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
+              FilledButton.icon(
                 key: AppTestKeys.homeEnableNetworkButton,
                 onPressed: busy || !hasActiveNetwork ? null : () => onEnable(),
                 icon: const Icon(Icons.play_circle_outline_rounded),
-                label: const Text('启用网络'),
+                label: const Text('Enable'),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
+              OutlinedButton.icon(
                 key: AppTestKeys.homeDisableNetworkButton,
                 onPressed: busy || !hasActiveNetwork ? null : () => onDisable(),
                 icon: const Icon(Icons.pause_circle_outline_rounded),
-                label: const Text('停用网络'),
+                label: const Text('Disable'),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
+              OutlinedButton.icon(
+                key: AppTestKeys.homeDetailsButton,
+                onPressed: busy ? null : () => onDetails(),
+                icon: const Icon(Icons.open_in_browser_rounded),
+                label: const Text('Details'),
+              ),
+              OutlinedButton.icon(
                 key: AppTestKeys.homeLogoutButton,
                 onPressed: busy ? null : () => onLogout(),
                 icon: const Icon(Icons.logout_rounded),
-                label: const Text('退出'),
+                label: const Text('Logout'),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        DesktopSurfaceCard(
-          title: 'Current Session',
-          subtitle: '这里只显示当前会话和网络运行反馈。',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _StatusRow(label: '当前用户', value: userLabel),
-              const SizedBox(height: 10),
-              _StatusRow(label: '当前 IP', value: virtualIp),
-              const SizedBox(height: 10),
-              _StatusRow(label: '网络状态', value: runtimeState),
-              const SizedBox(height: 16),
-              if (busy) const Text('Working on the current node operation...'),
-              if (!busy && statusMessage != null)
-                Text(
-                  statusMessage!,
-                  style: TextStyle(color: theme.colorScheme.primary),
-                ),
-              if (error != null) ...[
-                if (statusMessage != null || busy) const SizedBox(height: 8),
-                Text(
-                  error!,
-                  style: TextStyle(color: theme.colorScheme.error),
-                ),
-              ],
-              if (!busy && statusMessage == null && error == null)
-                Text(
-                  hasActiveNetwork
-                      ? 'Ready. You can enable, disable, or sign out.'
-                      : '当前账号还没有活动网络，请先在网页端创建或接入网络。',
-                ),
             ],
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -298,9 +257,10 @@ class _StatusRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 88,
+          width: 104,
           child: Text(
             label,
             style: theme.textTheme.bodyMedium?.copyWith(

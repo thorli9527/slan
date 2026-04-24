@@ -35,6 +35,10 @@ type Device struct {
 	ConnectivityProtocol string `json:"connectivityProtocol,omitempty"`
 	// JoinedAt 是当前活动网络下加入时间，使用 unix 秒时间戳。
 	JoinedAt int64 `json:"joinedAt,omitempty"`
+	// MembershipStatus 是设备在当前网络中的加入状态，例如 pending / active。
+	MembershipStatus string `json:"membershipStatus,omitempty"`
+	// NetworkRole 是设备在当前网络中的角色，例如 owner / member。
+	NetworkRole string `json:"networkRole,omitempty"`
 	// CreatedAt 是设备创建时间，使用 unix 秒时间戳。
 	CreatedAt int64 `json:"createdAt,omitempty"`
 	// PublicKey 是用于建立隧道时对外公布的公钥。

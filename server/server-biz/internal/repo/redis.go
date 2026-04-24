@@ -11,10 +11,14 @@ import (
 	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
-// RedisTokenStore 负责访问令牌、控制会话和跨实例同步状态的 Redis 存储。
 type RedisTokenStore struct {
-	// client 是底层 Redis 客户端。
 	client *redis.Client
+}
+
+type AccessTokenSession struct {
+	UserID   string `json:"userId"`
+	DeviceID string `json:"deviceId,omitempty"`
+	IssuedAt int64  `json:"issuedAt"`
 }
 
 const controlSyncChannel = "control_sync_events"
@@ -29,8 +33,24 @@ func NewRedisTokenStore(client *redis.Client) *RedisTokenStore {
 	return &RedisTokenStore{client: client}
 }
 
-func (s *RedisTokenStore) StoreAccessToken(ctx context.Context, token, userID string, ttl time.Duration) error {
-	return s.client.Set(ctx, "access_token:"+token, userID, ttl).Err()
+func (s *RedisTokenStore) StoreAccessToken(
+	ctx context.Context,
+	token, userID, deviceID string,
+	ttl time.Duration,
+) error {
+	payload, err := json.Marshal(AccessTokenSession{
+		UserID:   userID,
+		DeviceID: deviceID,
+		IssuedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		return err
+	}
+	return s.client.Set(ctx, "access_token:"+token, payload, ttl).Err()
+}
+
+func (s *RedisTokenStore) DeleteAccessToken(ctx context.Context, accessToken string) error {
+	return s.client.Del(ctx, "access_token:"+accessToken).Err()
 }
 
 func (s *RedisTokenStore) StoreRefreshToken(ctx context.Context, token, userID string, ttl time.Duration) error {
@@ -91,15 +111,22 @@ func (s *RedisTokenStore) LoadAuthCallbackPayload(ctx context.Context, callbackI
 	return true, nil
 }
 
-func (s *RedisTokenStore) Authenticate(ctx context.Context, accessToken string) (string, error) {
-	userID, err := s.client.Get(ctx, "access_token:"+accessToken).Result()
+func (s *RedisTokenStore) Authenticate(ctx context.Context, accessToken string) (AccessTokenSession, error) {
+	value, err := s.client.Get(ctx, "access_token:"+accessToken).Bytes()
 	if err != nil {
 		if err == redis.Nil {
-			return "", fmt.Errorf("token not found")
+			return AccessTokenSession{}, fmt.Errorf("token not found")
 		}
-		return "", err
+		return AccessTokenSession{}, err
 	}
-	return userID, nil
+	var session AccessTokenSession
+	if err := json.Unmarshal(value, &session); err != nil {
+		return AccessTokenSession{}, err
+	}
+	if session.UserID == "" {
+		return AccessTokenSession{}, fmt.Errorf("token session missing user")
+	}
+	return session, nil
 }
 
 func (s *RedisTokenStore) AuthenticateControlSessionToken(ctx context.Context, token string) (string, error) {

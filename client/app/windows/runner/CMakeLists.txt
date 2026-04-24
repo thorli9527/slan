@@ -40,15 +40,29 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
 get_filename_component(APP_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../app_core" ABSOLUTE)
+get_filename_component(CLIENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(WINTUN_DLL_PATH "${CLIENT_DIR}/drivers/wintun/bin/amd64/wintun.dll")
 set(APP_CORE_HELPER_OUTPUT_DIR "$<IF:$<CONFIG:Debug>,debug,release>")
+if(DEFINED ENV{CARGO_TARGET_DIR} AND NOT "$ENV{CARGO_TARGET_DIR}" STREQUAL "")
+  file(TO_CMAKE_PATH "$ENV{CARGO_TARGET_DIR}" APP_CORE_TARGET_DIR)
+else()
+  set(APP_CORE_TARGET_DIR "${APP_CORE_DIR}/target")
+endif()
 
 add_custom_command(
   TARGET ${BINARY_NAME} POST_BUILD
-  COMMAND cargo build -p app-core-helper $<$<NOT:$<CONFIG:Debug>>:--release>
+  COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${APP_CORE_TARGET_DIR}"
+    cargo build -p app-core-helper -p app-core-service $<$<NOT:$<CONFIG:Debug>>:--release>
   WORKING_DIRECTORY "${APP_CORE_DIR}"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${APP_CORE_DIR}/target/${APP_CORE_HELPER_OUTPUT_DIR}/app-core-helper.exe"
+    "${APP_CORE_TARGET_DIR}/${APP_CORE_HELPER_OUTPUT_DIR}/app-core-helper.exe"
     "$<TARGET_FILE_DIR:${BINARY_NAME}>/app-core-helper.exe"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${APP_CORE_TARGET_DIR}/${APP_CORE_HELPER_OUTPUT_DIR}/app-core-service.exe"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/app-core-service.exe"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${WINTUN_DLL_PATH}"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/wintun.dll"
   VERBATIM
   COMMAND_EXPAND_LISTS
 )

@@ -1,7 +1,9 @@
+use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use controller_client::{HttpControllerClient, TcpJsonHttpTransport};
 use ffi_bridge::{DefaultAppCoreFacade, FileTunnelKeyProvider, JsonAppCoreFacade};
@@ -12,12 +14,15 @@ use serde_json::{json, Value};
 use slan_app_core::{TunnelTransport, WireGuardInterfaceConfig, WireGuardPeerConfig};
 #[cfg(not(target_os = "windows"))]
 use tunnel::InMemoryTunnelBackend;
+#[cfg(target_os = "linux")]
+use tunnel::LinuxKernelWireGuardBackend;
 #[cfg(target_os = "windows")]
 use tunnel::WindowsEmbeddableServiceBackend;
 use tunnel::{TunnelBackend, TunnelConfig, TunnelManager};
 
 fn main() {
     if let Err(err) = run() {
+        write_helper_log(&format!("fatal error: {err}"));
         let _ = writeln!(io::stderr(), "{err}");
         std::process::exit(1);
     }
@@ -40,6 +45,11 @@ fn run() -> Result<(), String> {
     };
     let base_url = std::env::var("SLAN_CONTROL_BASE_URL")
         .map_err(|_| "missing SLAN_CONTROL_BASE_URL for app-core-helper".to_string())?;
+    write_helper_log(&format!(
+        "helper start tcp_host={} control_base_url={}",
+        tcp_host.as_deref().unwrap_or("<stdio>"),
+        base_url
+    ));
     let derp_pool = Arc::new(InMemoryDerpPool::default());
     let relay_client = Arc::new(SocketRelayClient::default());
     let p2p_connector = Arc::new(SocketP2PConnector::default());
@@ -88,8 +98,10 @@ where
 {
     let listener = TcpListener::bind(address)
         .map_err(|err| format!("failed to bind app-core-helper tcp host on {address}: {err}"))?;
+    write_helper_log(&format!("tcp host listening on {address}"));
     for stream in listener.incoming() {
         let stream = stream.map_err(|err| format!("tcp host accept failed: {err}"))?;
+        write_helper_log("accepted tcp client connection");
         handle_tcp_client(stream, facade, tunnel_host)?;
     }
     Ok(())
@@ -146,11 +158,14 @@ fn handle_rpc_request<F>(
 where
     F: ffi_bridge::AppCoreFacade,
 {
-    build_rpc_response(
-        &request.method,
-        maybe_test_override_result(&request.method)
-            .unwrap_or_else(|| invoke_helper(&request.method, request.args, facade, tunnel_host)),
-    )
+    let method_name = request.method.clone();
+    let result = maybe_test_override_result(&method_name)
+        .unwrap_or_else(|| invoke_helper(&method_name, request.args, facade, tunnel_host));
+    match &result {
+        Ok(_) => write_helper_log(&format!("method {method_name} completed successfully")),
+        Err(error) => write_helper_log(&format!("method {method_name} failed error={error}")),
+    }
+    build_rpc_response(&method_name, result)
 }
 
 fn invoke_helper<F>(
@@ -163,10 +178,40 @@ where
     F: ffi_bridge::AppCoreFacade,
 {
     if HelperTunnelHost::supports_method(method) {
+        write_helper_log(&format!("dispatching tunnel method {method}"));
         tunnel_host.invoke(method, args)
     } else {
         facade.invoke(method, args)
     }
+}
+
+fn write_helper_log(message: &str) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let log_path = helper_log_path();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = writeln!(file, "[{timestamp}] {message}");
+    }
+}
+
+fn helper_log_path() -> PathBuf {
+    if let Ok(configured) = std::env::var("SLAN_APP_CORE_HELPER_LOG") {
+        let trimmed = configured.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            return parent.join("app-core-helper.log");
+        }
+    }
+    std::env::temp_dir().join("app-core-helper.log")
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,6 +342,19 @@ struct HelperTunnelState {
     is_running: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BindAdapterIpArgs {
+    interface_name: Option<String>,
+    ip: String,
+    #[serde(default = "default_bind_prefix_len")]
+    prefix_len: u8,
+}
+
+fn default_bind_prefix_len() -> u8 {
+    32
+}
+
 struct HelperTunnelHost {
     backend: Box<dyn TunnelBackend>,
     state: Mutex<HelperTunnelState>,
@@ -314,6 +372,7 @@ impl HelperTunnelHost {
         matches!(
             method,
             "applyTunnelConfiguration"
+                | "bindAdapterIp"
                 | "removeTunnelPeer"
                 | "bringTunnelUp"
                 | "bringTunnelDown"
@@ -324,6 +383,7 @@ impl HelperTunnelHost {
     fn invoke(&self, method: &str, args: Value) -> Result<Value, String> {
         match method {
             "applyTunnelConfiguration" => self.apply_configuration(args),
+            "bindAdapterIp" => self.bind_adapter_ip(args),
             "removeTunnelPeer" => self.remove_peer(args),
             "bringTunnelUp" => self.bring_up(),
             "bringTunnelDown" => self.bring_down(),
@@ -335,22 +395,42 @@ impl HelperTunnelHost {
     fn apply_configuration(&self, args: Value) -> Result<Value, String> {
         let configuration: HelperTunnelConfiguration = serde_json::from_value(args)
             .map_err(|err| format!("app_core_invalid_tunnel_config: {err}"))?;
+        write_helper_log(&format!(
+            "applyTunnelConfiguration local_virtual_ip={} peer_virtual_ip={} interface_name={:?} addresses={:?}",
+            configuration.local_virtual_ip,
+            configuration.peer_virtual_ip,
+            configuration.wireguard_interface.interface_name,
+            configuration.wireguard_interface.addresses
+        ));
         let tunnel_config = configuration.clone().into_tunnel_config();
-        self.backend
+        if let Err(err) = self
+            .backend
             .apply_interface_config(&tunnel_config.wireguard_interface)
-            .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
-        self.backend
-            .apply_peer_config(
-                &tunnel_config.peer_virtual_ip,
-                &tunnel_config.wireguard_peer,
-            )
-            .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
+        {
+            write_helper_log(&format!(
+                "applyTunnelConfiguration apply_interface_config failed error={err}"
+            ));
+            return Err(format!("app_core_tunnel_backend_error: {err}"));
+        }
+        if let Err(err) = self.backend.apply_peer_config(
+            &tunnel_config.peer_virtual_ip,
+            &tunnel_config.wireguard_peer,
+        ) {
+            write_helper_log(&format!(
+                "applyTunnelConfiguration apply_peer_config failed error={err}"
+            ));
+            return Err(format!("app_core_tunnel_backend_error: {err}"));
+        }
         let mut state = self.state.lock().map_err(|_| {
             "app_core_tunnel_backend_error: tunnel helper state poisoned".to_string()
         })?;
         state.configuration = Some(configuration.clone());
         state.last_error = None;
         state.last_applied_at_ms = Some(current_timestamp_ms());
+        write_helper_log(&format!(
+            "applyTunnelConfiguration accepted peer_virtual_ip={}",
+            configuration.peer_virtual_ip
+        ));
         Ok(self.action_result_json(
             &state,
             "applyTunnelConfiguration",
@@ -361,6 +441,79 @@ impl HelperTunnelHost {
                 configuration.peer_virtual_ip
             ),
         ))
+    }
+
+    fn bind_adapter_ip(&self, args: Value) -> Result<Value, String> {
+        let bind_args: BindAdapterIpArgs = serde_json::from_value(args)
+            .map_err(|err| format!("app_core_invalid_tunnel_config: {err}"))?;
+        let interface_name = bind_args
+            .interface_name
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "SLAN LAN Adapter".to_string());
+        let cidr = format!("{}/{}", bind_args.ip.trim(), bind_args.prefix_len);
+        write_helper_log(&format!(
+            "bindAdapterIp requested interface_name={} cidr={}",
+            interface_name, cidr
+        ));
+
+        let interface = WireGuardInterfaceConfig {
+            interface_name: Some(interface_name.clone()),
+            key_pair: slan_app_core::WireGuardKeyPair {
+                public_key: "diag-public-key".to_string(),
+                private_key: "diag-private-key".to_string(),
+            },
+            listen_port: Some(51820),
+            mtu: Some(1280),
+            addresses: vec![cidr.clone()],
+            dns_servers: vec![],
+            peers: vec![],
+        };
+        self.backend
+            .apply_interface_config(&interface)
+            .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
+        write_helper_log(&format!(
+            "bindAdapterIp apply_interface_config accepted interface_name={} cidr={}",
+            interface_name, cidr
+        ));
+
+        match self.backend.bring_up() {
+            Ok(()) => {
+                write_helper_log(&format!(
+                    "bindAdapterIp succeeded interface_name={} cidr={}",
+                    interface_name, cidr
+                ));
+                Ok(json!({
+                    "action": "bindAdapterIp",
+                    "accepted": true,
+                    "phase": "started",
+                    "source": "rust-helper",
+                    "detail": format!("Rust backend bound {} to {}.", cidr, interface_name),
+                    "interfaceName": interface_name,
+                    "localVirtualIp": bind_args.ip,
+                    "prefixLen": bind_args.prefix_len,
+                    "connectionStatus": "connected",
+                }))
+            }
+            Err(err) => {
+                write_helper_log(&format!(
+                    "bindAdapterIp failed interface_name={} cidr={} error={}",
+                    interface_name, cidr, err
+                ));
+                Ok(json!({
+                    "action": "bindAdapterIp",
+                    "accepted": false,
+                    "phase": "failed",
+                    "source": "rust-helper",
+                    "detail": format!("Rust backend failed to bind {} to {}: {}.", cidr, interface_name, err),
+                    "interfaceName": interface_name,
+                    "localVirtualIp": bind_args.ip,
+                    "prefixLen": bind_args.prefix_len,
+                    "runtimeLastError": err,
+                    "connectionStatus": "disconnected",
+                }))
+            }
+        }
     }
 
     fn remove_peer(&self, args: Value) -> Result<Value, String> {
@@ -407,11 +560,22 @@ impl HelperTunnelHost {
         if state.configuration.is_none() {
             return Err("app_core_tunnel_backend_error: missing tunnel configuration".to_string());
         }
+        let configuration_peer = state
+            .configuration
+            .as_ref()
+            .map(|config| config.peer_virtual_ip.clone())
+            .unwrap_or_else(|| "<missing>".to_string());
+        write_helper_log(&format!(
+            "bringTunnelUp requested peer_virtual_ip={configuration_peer}"
+        ));
         match self.backend.bring_up() {
             Ok(()) => {
                 state.is_running = true;
                 state.last_error = None;
                 state.last_started_at_ms = Some(current_timestamp_ms());
+                write_helper_log(&format!(
+                    "bringTunnelUp succeeded peer_virtual_ip={configuration_peer}"
+                ));
                 Ok(self.action_result_json(
                     &state,
                     "bringTunnelUp",
@@ -422,6 +586,10 @@ impl HelperTunnelHost {
             }
             Err(err) => {
                 state.last_error = Some(err.clone());
+                write_helper_log(&format!(
+                    "bringTunnelUp failed peer_virtual_ip={} error={err}",
+                    configuration_peer
+                ));
                 Ok(self.action_result_json(
                     &state,
                     "bringTunnelUp",
@@ -482,6 +650,12 @@ impl HelperTunnelHost {
             .backend
             .runtime_stats(peer_virtual_ip)
             .map_err(|err| format!("app_core_tunnel_backend_error: {err}"))?;
+        write_helper_log(&format!(
+            "tunnelRuntimeView peer_virtual_ip={} state_running={} stats_present={}",
+            peer_virtual_ip,
+            state.is_running,
+            stats.is_some()
+        ));
         Ok(self.runtime_view_json(configuration, &state, stats))
     }
 
@@ -632,20 +806,51 @@ fn default_tunnel_backend() -> Box<dyn TunnelBackend> {
     {
         Box::new(WindowsEmbeddableServiceBackend::new())
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        if linux_tunnel_driver_name() == "in-memory" {
+            Box::new(InMemoryTunnelBackend::default())
+        } else {
+            Box::new(LinuxKernelWireGuardBackend::new())
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         Box::new(InMemoryTunnelBackend::default())
     }
 }
 
-fn backend_name() -> &'static str {
+fn backend_name() -> String {
     #[cfg(target_os = "windows")]
     {
-        "windows-embeddable"
+        "windows-embeddable".to_string()
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
-        "in-memory"
+        linux_tunnel_driver_name()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        "in-memory".to_string()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tunnel_driver_name() -> String {
+    match std::env::var("SLAN_TUNNEL_DRIVER")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("in-memory") | Some("memory") | Some("inmemory") => "in-memory".to_string(),
+        Some("auto") | Some("linux") | Some("linux-kernel") | Some("wg-kernel") | None
+        | Some("") => "linux-kernel".to_string(),
+        Some(other) => {
+            write_helper_log(&format!(
+                "unsupported SLAN_TUNNEL_DRIVER '{other}', falling back to linux-kernel"
+            ));
+            "linux-kernel".to_string()
+        }
     }
 }
 

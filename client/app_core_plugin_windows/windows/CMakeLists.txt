@@ -17,7 +17,7 @@ target_compile_definitions(${PLUGIN_NAME} PRIVATE
   SLAN_APP_CORE_PLUGIN_WINDOWS_PLUGIN_IMPL)
 target_include_directories(${PLUGIN_NAME} INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
+target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin ws2_32)
 
 set(slan_app_core_plugin_windows_bundled_libraries
   ""

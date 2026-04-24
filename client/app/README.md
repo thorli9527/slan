@@ -67,6 +67,73 @@ Notes:
 - `SLAN_APP_CORE_HELPER_HOST` accepts either `host:port` or `tcp://host:port`.
 - Windows runner build copies `app-core-helper.exe` into the app output directory after build.
 
+## Linux Helper In Docker From Windows
+
+When developing on Windows but running the Linux client core in Docker, build the
+Linux helper inside Docker:
+
+```powershell
+docker build -f client/app_core/Dockerfile.linux-helper -t slan-linux-helper client/app_core
+```
+
+Run it with network-administration capability so the container can create the
+WireGuard interface:
+
+```powershell
+docker run --rm -it `
+  --name slan-linux-helper `
+  --cap-add NET_ADMIN `
+  --device /dev/net/tun `
+  -e SLAN_CONTROL_BASE_URL=http://host.docker.internal:28080 `
+  -e SLAN_TUNNEL_DRIVER=linux-kernel `
+  -e SLAN_LINUX_EXECUTOR=shell `
+  -p 46321:46321 `
+  slan-linux-helper
+```
+
+For a privileged local smoke test, `--privileged` can replace `--cap-add` and
+`--device`, but keep the narrower flags for normal development.
+
+From the Windows Flutter app, point the tunnel host at the container:
+
+```powershell
+flutter run -d windows `
+  --dart-define=SLAN_CONTROL_BASE_URL=http://127.0.0.1:28080 `
+  --dart-define=SLAN_TUNNEL_HOST_MODE=service `
+  --dart-define=SLAN_APP_CORE_HELPER_HOST=127.0.0.1:46321
+```
+
+The Linux Flutter plugin uses the same helper JSON-line protocol. It first
+connects to `SLAN_APP_CORE_SERVICE_HOST` or `SLAN_APP_CORE_HELPER_HOST`; if no
+helper is listening, it starts `SLAN_APP_CORE_HELPER` or `app-core-helper` from
+the app executable directory with `--tcp-host 127.0.0.1:46321`.
+
+Inside the container, verify adapter creation with:
+
+```bash
+ip link show
+ip address show
+wg show
+```
+
+Or run the bundled smoke test from Windows. It creates `slan0`, applies a
+temporary WireGuard configuration, verifies the address and WireGuard device,
+then removes the interface on exit:
+
+```powershell
+docker run --rm `
+  --cap-add NET_ADMIN `
+  --device /dev/net/tun `
+  -e SLAN_CONTROL_BASE_URL=http://host.docker.internal:28080 `
+  --entrypoint /bin/sh `
+  slan-linux-helper `
+  /app/scripts/linux-helper-smoke.sh
+```
+
+The Linux helper defaults to `SLAN_TUNNEL_DRIVER=linux-kernel`, which uses
+kernel WireGuard through `ip` and `wg`. Set `SLAN_TUNNEL_DRIVER=in-memory` only
+for logic tests where no real network adapter should be created.
+
 ## Local HTTPS Hostnames
 
 The local Docker + Caddy stack serves secure desktop auth flows from:

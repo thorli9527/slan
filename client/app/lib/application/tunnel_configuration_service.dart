@@ -8,6 +8,8 @@ import '../infra/app_core/models/network_models.dart';
 class TunnelConfigurationService {
   const TunnelConfigurationService();
 
+  static const windowsTunnelInterfaceName = 'SLAN LAN Adapter';
+
   WireGuardTunnelConfiguration buildActiveNetworkConfiguration({
     required NetworkModel network,
     required String deviceId,
@@ -20,6 +22,7 @@ class TunnelConfigurationService {
       localVirtualIp: localVirtualIp,
       peerVirtualIp: peerVirtualIp,
       interface: WireGuardTunnelInterfaceConfiguration(
+        interfaceName: windowsTunnelInterfaceName,
         keyPair: WireGuardTunnelKeyPair(
           privateKey: 'debug-private-key',
           publicKey: devicePublicKey?.trim().isNotEmpty == true

@@ -18,6 +18,7 @@ artifacts/
 
 # Rust / Cargo build outputs
 **/target/
+client/app_core/target*/
 **/*.rs.bk
 
 # Go build / test outputs under server

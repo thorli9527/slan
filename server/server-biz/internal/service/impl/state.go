@@ -12,13 +12,6 @@ import (
 	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
-// dbState 持有各 service 实现共享的基础依赖和进程内状态。
-//
-// 这里集中放：
-// - 静态配置
-// - PostgreSQL / Redis repository
-// - relay ticket cache
-// - control-plane 清理协程共享状态
 type dbState struct {
 	cfg    configs.Config
 	pg     *repo.PostgresRepository
@@ -29,7 +22,8 @@ type dbState struct {
 }
 
 type tokenStore interface {
-	StoreAccessToken(ctx context.Context, token, userID string, ttl time.Duration) error
+	StoreAccessToken(ctx context.Context, token, userID, deviceID string, ttl time.Duration) error
+	DeleteAccessToken(ctx context.Context, accessToken string) error
 	StoreRefreshToken(ctx context.Context, token, userID string, ttl time.Duration) error
 	StoreOpsAccessToken(ctx context.Context, token, adminID string, ttl time.Duration) error
 	StoreControlSessionToken(ctx context.Context, token, userID string, ttl time.Duration) error
@@ -37,7 +31,7 @@ type tokenStore interface {
 	AuthCallbackReceivedAt(ctx context.Context, callbackID string) (int64, error)
 	StoreAuthCallbackPayload(ctx context.Context, callbackID string, payload any, ttl time.Duration) error
 	LoadAuthCallbackPayload(ctx context.Context, callbackID string, target any) (bool, error)
-	Authenticate(ctx context.Context, accessToken string) (string, error)
+	Authenticate(ctx context.Context, accessToken string) (repo.AccessTokenSession, error)
 	AuthenticateControlSessionToken(ctx context.Context, token string) (string, error)
 	AuthenticateOpsAccessToken(ctx context.Context, token string) (string, error)
 	PublishControlSyncEvent(ctx context.Context, event controlws.ControlSyncEvent) error
@@ -49,12 +43,6 @@ type tokenStore interface {
 	AcquirePeerCandidateDelivery(ctx context.Context, networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate, ttl time.Duration) (bool, error)
 }
 
-// NewDBServices 基于同一份共享状态构造全部 service 实现。
-//
-// 这样各业务实现可以共享：
-// - 同一个 repository 视图
-// - 同一份控制面缓存
-// - 同一套后台清理循环
 func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 	service.Auth,
 	service.Device,

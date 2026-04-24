@@ -31,6 +31,7 @@ export class ConsoleAppFacadeService {
     mode: AuthMode;
     email: string;
     password: string;
+    loginDeviceId?: string;
     tokenDeviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<AuthenticateResult> {
     if (!input.email.trim()) {
@@ -43,7 +44,12 @@ export class ConsoleAppFacadeService {
       throw new Error('password must be at least 8 characters');
     }
 
-    const auth = await this.api.authenticate(input.mode, input.email, input.password);
+    const auth = await this.api.authenticate(
+      input.mode,
+      input.email,
+      input.password,
+      input.loginDeviceId,
+    );
     this.sessionService.persistAuth(auth);
     const managedDevice = await this.ensureManagementDevice({
       token: auth.accessToken,

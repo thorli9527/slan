@@ -102,20 +102,25 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     required bool persistSession,
   }) async {
     await runAction(() async {
+      final hydratedSession = nextSession.authenticatedAtMs == null
+          ? nextSession.copyWith(
+              authenticatedAtMs: DateTime.now().millisecondsSinceEpoch,
+            )
+          : nextSession;
       debugPrint(
-        '[auth-callback] store applyExternalSessionInternal start userId=${nextSession.userId} deviceId=${nextSession.deviceId}',
+        '[auth-callback] store applyExternalSessionInternal start userId=${hydratedSession.userId} deviceId=${hydratedSession.deviceId}',
       );
       resetState();
-      sessionStore.session = nextSession;
+      sessionStore.session = hydratedSession;
       if (persistSession) {
-        await AppCoreScope.persistSession(nextSession);
+        await AppCoreScope.persistSession(hydratedSession);
       }
       sessionStore.notice = '已收到浏览器登录回调，正在恢复客户端会话。';
       emitStateChanged();
       debugPrint(
           '[auth-callback] store session assigned and listeners notified');
       final hydrated =
-          await _authSessionService.hydrateExternalSession(nextSession);
+          await _authSessionService.hydrateExternalSession(hydratedSession);
       if (hydrated.device != null) {
         sessionStore.syncDevice(hydrated.device);
         emitStateChanged();
@@ -253,6 +258,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         currentNode: sessionStore.node,
         currentNetworks: sessionStore.networks,
       );
+      debugPrint(
+        '[tunnel-enable] runtime ready activeNetwork=${runtime.activeNetwork.networkId} node=${runtime.node?.nodeId} device=${runtime.device?.deviceId}',
+      );
       sessionStore.node = runtime.node;
       sessionStore.bootstrap = runtime.bootstrap;
       sessionStore.controlStatus = runtime.controlStatus;
@@ -266,14 +274,22 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         devicePublicKey: sessionStore.device!.publicKey,
       );
       final peerVirtualIp = config.peer.allowedIps.first.split('/').first;
+      debugPrint(
+        '[tunnel-enable] apply start peerVirtualIp=$peerVirtualIp listenPort=${config.interface.listenPort}',
+      );
       final applyReport = await applyTunnelConfiguration(
         configuration: config,
         verifyPeerVirtualIp: peerVirtualIp,
       );
+      debugPrint(
+        '[tunnel-enable] apply done succeeded=${applyReport.succeeded} phase=${applyReport.phase} error=${applyReport.errorMessage}',
+      );
       if (!applyReport.succeeded) {
         return;
       }
+      debugPrint('[tunnel-enable] bring-up start peerVirtualIp=$peerVirtualIp');
       await bringTunnelUp(verifyPeerVirtualIp: peerVirtualIp);
+      debugPrint('[tunnel-enable] bring-up done peerVirtualIp=$peerVirtualIp');
     });
   }
 

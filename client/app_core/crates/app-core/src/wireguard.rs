@@ -47,6 +47,7 @@ pub struct WireGuardInterfaceConfig {
     pub mtu: Option<u16>,
     pub addresses: Vec<String>,
     pub dns_servers: Vec<String>,
+    #[serde(default)]
     pub peers: Vec<WireGuardPeerConfig>,
 }
 

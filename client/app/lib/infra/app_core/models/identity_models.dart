@@ -7,6 +7,7 @@ class SessionModel {
     required this.expiresIn,
     this.deviceId,
     this.userLabel,
+    this.authenticatedAtMs,
   });
 
   final String userId;
@@ -15,6 +16,27 @@ class SessionModel {
   final int expiresIn;
   final String? deviceId;
   final String? userLabel;
+  final int? authenticatedAtMs;
+
+  SessionModel copyWith({
+    String? userId,
+    String? accessToken,
+    String? refreshToken,
+    int? expiresIn,
+    String? deviceId,
+    String? userLabel,
+    int? authenticatedAtMs,
+  }) {
+    return SessionModel(
+      userId: userId ?? this.userId,
+      accessToken: accessToken ?? this.accessToken,
+      refreshToken: refreshToken ?? this.refreshToken,
+      expiresIn: expiresIn ?? this.expiresIn,
+      deviceId: deviceId ?? this.deviceId,
+      userLabel: userLabel ?? this.userLabel,
+      authenticatedAtMs: authenticatedAtMs ?? this.authenticatedAtMs,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'userId': userId,
@@ -23,6 +45,7 @@ class SessionModel {
         'expiresIn': expiresIn,
         'deviceId': deviceId,
         'userLabel': userLabel,
+        'authenticatedAtMs': authenticatedAtMs,
       };
 
   factory SessionModel.fromJson(Map<String, dynamic> json) {
@@ -33,6 +56,7 @@ class SessionModel {
       expiresIn: (json['expiresIn'] as num?)?.toInt() ?? 3600,
       deviceId: json['deviceId'] as String?,
       userLabel: json['userLabel'] as String?,
+      authenticatedAtMs: (json['authenticatedAtMs'] as num?)?.toInt(),
     );
   }
 }

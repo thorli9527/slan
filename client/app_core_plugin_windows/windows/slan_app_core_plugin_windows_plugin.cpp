@@ -1,3 +1,9 @@
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include "include/slan_app_core_plugin_windows/slan_app_core_plugin_windows_plugin.h"
 
 #include <flutter/method_channel.h>
@@ -5,7 +11,6 @@
 #include <flutter/standard_method_codec.h>
 
 #include <windows.h>
-#include <shellapi.h>
 
 #include <cstdio>
 #include <fstream>
@@ -14,14 +19,14 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace slan_app_core_plugin_windows {
 
 namespace {
 
-constexpr wchar_t kDefaultWindowsTunnelInterfaceAlias[] = L"Loopback Pseudo-Interface 1";
-constexpr wchar_t kPreferredWindowsTunnelInterfaceDescription[] =
-    L"Microsoft KM-TEST Loopback Adapter";
+constexpr char kDefaultAppCoreServiceHost[] = "127.0.0.1:46391";
+constexpr wchar_t kWindowsServiceName[] = L"SLANAppCoreService";
 
 std::string EscapeJsonString(const std::string& value) {
   std::ostringstream escaped;
@@ -139,6 +144,10 @@ std::optional<std::wstring> GetEnvironmentPath(const wchar_t* name) {
   return value;
 }
 
+std::wstring Utf8ToWide(const std::string& value);
+std::string WideToUtf8(const std::wstring& value);
+std::string WideToUtf8(const wchar_t* value);
+
 std::wstring ResolveHelperExecutablePath() {
   if (const auto env_path = GetEnvironmentPath(L"SLAN_APP_CORE_HELPER")) {
     return *env_path;
@@ -155,6 +164,38 @@ std::wstring ResolveHelperExecutablePath() {
   return directory + L"\\app-core-helper.exe";
 }
 
+std::wstring ResolveServiceExecutablePath() {
+  if (const auto env_path = GetEnvironmentPath(L"SLAN_APP_CORE_SERVICE")) {
+    return *env_path;
+  }
+
+  std::wstring executable_path(MAX_PATH, L'\0');
+  DWORD length = GetModuleFileNameW(
+      nullptr, executable_path.data(),
+      static_cast<DWORD>(executable_path.size()));
+  executable_path.resize(length);
+  const auto separator = executable_path.find_last_of(L"\\/");
+  const std::wstring directory =
+      separator == std::wstring::npos ? L"." : executable_path.substr(0, separator);
+  return directory + L"\\app-core-service.exe";
+}
+
+std::string ResolveServiceHost() {
+  if (const auto env_host = GetEnvironmentPath(L"SLAN_APP_CORE_SERVICE_HOST")) {
+    const auto utf8 = WideToUtf8(*env_host);
+    if (!utf8.empty()) {
+      return utf8;
+    }
+  }
+  if (const auto env_host = GetEnvironmentPath(L"SLAN_APP_CORE_HELPER_HOST")) {
+    const auto utf8 = WideToUtf8(*env_host);
+    if (!utf8.empty()) {
+      return utf8;
+    }
+  }
+  return kDefaultAppCoreServiceHost;
+}
+
 std::string BuildHelperRequestJson(
     const std::string& method_name,
     const flutter::EncodableValue* arguments) {
@@ -167,39 +208,6 @@ std::string BuildHelperRequestJson(
   }
   request << "}\n";
   return request.str();
-}
-
-std::optional<std::string> GetStringFromMap(
-    const flutter::EncodableMap& map,
-    const char* key) {
-  const auto iterator = map.find(flutter::EncodableValue(key));
-  if (iterator == map.end()) {
-    return std::nullopt;
-  }
-  if (const auto* value = std::get_if<std::string>(&iterator->second)) {
-    return *value;
-  }
-  return std::nullopt;
-}
-
-const flutter::EncodableMap* GetMapFromMap(
-    const flutter::EncodableMap& map,
-    const char* key) {
-  const auto iterator = map.find(flutter::EncodableValue(key));
-  if (iterator == map.end()) {
-    return nullptr;
-  }
-  return std::get_if<flutter::EncodableMap>(&iterator->second);
-}
-
-const flutter::EncodableList* GetListFromMap(
-    const flutter::EncodableMap& map,
-    const char* key) {
-  const auto iterator = map.find(flutter::EncodableValue(key));
-  if (iterator == map.end()) {
-    return nullptr;
-  }
-  return std::get_if<flutter::EncodableList>(&iterator->second);
 }
 
 std::wstring Utf8ToWide(const std::string& value) {
@@ -240,151 +248,72 @@ std::string WideToUtf8(const wchar_t* value) {
   return WideToUtf8(std::wstring(value));
 }
 
-std::string JsonEnvelope(
-    bool ok,
-    const std::string& result_json,
-    const std::string& error_code = "",
-    const std::string& error_message = "") {
-  std::ostringstream json;
-  json << "{\"ok\":" << (ok ? "true" : "false");
-  if (ok) {
-    json << ",\"result\":" << result_json;
-  } else {
-    json << ",\"errorCode\":\"" << EscapeJsonString(error_code) << "\"";
-    json << ",\"errorMessage\":\"" << EscapeJsonString(error_message) << "\"";
-    json << ",\"error\":\"" << EscapeJsonString(error_message) << "\"";
-  }
-  json << "}";
-  return json.str();
-}
+bool TryStartWindowsService() {
+  STARTUPINFOW startup_info{};
+  startup_info.cb = sizeof(startup_info);
+  startup_info.dwFlags = STARTF_USESHOWWINDOW;
+  startup_info.wShowWindow = SW_HIDE;
 
-std::string TunnelActionResultJson(
-    const std::string& action,
-    bool accepted,
-    const std::string& phase,
-    const std::string& detail,
-    bool has_configuration,
-    const std::string& peer_virtual_ip,
-    bool running,
-    const std::optional<std::string>& last_error) {
-  std::ostringstream json;
-  json << "{"
-       << "\"accepted\":" << (accepted ? "true" : "false")
-       << ",\"action\":\"" << EscapeJsonString(action) << "\""
-       << ",\"backendState\":\""
-       << EscapeJsonString(last_error.has_value() ? "failed" : (running ? "started" : "idle"))
-       << "\""
-       << ",\"configurationPeerVirtualIp\":\"" << EscapeJsonString(peer_virtual_ip) << "\""
-       << ",\"connectionStatus\":\"" << EscapeJsonString(running ? "connected" : "disconnected")
-       << "\""
-       << ",\"detail\":\"" << EscapeJsonString(detail) << "\""
-       << ",\"hasConfiguration\":" << (has_configuration ? "true" : "false")
-       << ",\"phase\":\"" << EscapeJsonString(phase) << "\""
-       << ",\"runtimeLastError\":";
-  if (last_error.has_value()) {
-    json << "\"" << EscapeJsonString(*last_error) << "\"";
-  } else {
-    json << "null";
-  }
-  json << ",\"runtimeState\":\"" << EscapeJsonString(running ? "configured" : "disconnected")
-       << "\""
-       << ",\"source\":\"windows-plugin\""
-       << "}";
-  return json.str();
-}
+  PROCESS_INFORMATION process_info{};
+  std::wstring command_line =
+      L"cmd.exe /C sc.exe start \"" + std::wstring(kWindowsServiceName) + L"\"";
+  std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
+  mutable_command.push_back(L'\0');
 
-std::optional<std::pair<std::string, int>> ParseAddressAndPrefix(
-    const flutter::EncodableValue* configuration) {
-  if (configuration == nullptr) {
-    return std::nullopt;
-  }
-  const auto* map = std::get_if<flutter::EncodableMap>(configuration);
-  if (map == nullptr) {
-    return std::nullopt;
-  }
-  const auto* interface_map = GetMapFromMap(*map, "wireguardInterface");
-  if (interface_map == nullptr) {
-    return std::nullopt;
-  }
-  const auto* addresses = GetListFromMap(*interface_map, "addresses");
-  if (addresses == nullptr || addresses->empty()) {
-    return std::nullopt;
-  }
-  const auto* address = std::get_if<std::string>(&addresses->front());
-  if (address == nullptr) {
-    return std::nullopt;
-  }
-  const auto separator = address->find('/');
-  if (separator == std::string::npos) {
-    return std::nullopt;
-  }
-  return std::make_pair(
-      address->substr(0, separator),
-      std::stoi(address->substr(separator + 1)));
-}
-
-std::optional<std::string> ExtractPeerVirtualIp(
-    const flutter::EncodableValue* configuration) {
-  if (configuration == nullptr) {
-    return std::nullopt;
-  }
-  const auto* map = std::get_if<flutter::EncodableMap>(configuration);
-  if (map == nullptr) {
-    return std::nullopt;
-  }
-  return GetStringFromMap(*map, "peerVirtualIp");
-}
-
-std::wstring CreateTempPowerShellScript(const std::wstring& script_body) {
-  wchar_t temp_path[MAX_PATH];
-  GetTempPathW(MAX_PATH, temp_path);
-  wchar_t temp_file[MAX_PATH];
-  GetTempFileNameW(temp_path, L"sln", 0, temp_file);
-  std::filesystem::path script_path(temp_file);
-  script_path.replace_extension(L".ps1");
-  std::wofstream output(script_path);
-  output << script_body;
-  output.close();
-  return script_path.wstring();
-}
-
-bool RunElevatedPowerShellScript(
-    const std::wstring& script_body,
-    std::string* error_message) {
-  const std::wstring script_path = CreateTempPowerShellScript(script_body);
-  SHELLEXECUTEINFOW execute_info{};
-  execute_info.cbSize = sizeof(execute_info);
-  execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
-  execute_info.lpVerb = L"runas";
-  execute_info.lpFile = L"powershell.exe";
-  const std::wstring parameters =
-      L"-NoProfile -ExecutionPolicy Bypass -File \"" + script_path + L"\"";
-  execute_info.lpParameters = parameters.c_str();
-  execute_info.nShow = SW_HIDE;
-  if (!ShellExecuteExW(&execute_info)) {
-    const DWORD error = GetLastError();
-    std::filesystem::remove(script_path);
-    if (error_message != nullptr) {
-      if (error == ERROR_CANCELLED) {
-        *error_message = "UAC prompt was cancelled.";
-      } else {
-        *error_message = "Failed to start elevated PowerShell.";
-      }
-    }
+  if (!CreateProcessW(
+          nullptr,
+          mutable_command.data(),
+          nullptr,
+          nullptr,
+          FALSE,
+          CREATE_NO_WINDOW,
+          nullptr,
+          nullptr,
+          &startup_info,
+          &process_info)) {
     return false;
   }
-  WaitForSingleObject(execute_info.hProcess, INFINITE);
+
+  WaitForSingleObject(process_info.hProcess, 10'000);
   DWORD exit_code = 1;
-  GetExitCodeProcess(execute_info.hProcess, &exit_code);
-  CloseHandle(execute_info.hProcess);
-  std::filesystem::remove(script_path);
-  if (exit_code == 0) {
-    return true;
+  GetExitCodeProcess(process_info.hProcess, &exit_code);
+  CloseHandle(process_info.hThread);
+  CloseHandle(process_info.hProcess);
+  return exit_code == 0 || exit_code == 1056;
+}
+
+bool WindowsServiceExists() {
+  STARTUPINFOW startup_info{};
+  startup_info.cb = sizeof(startup_info);
+  startup_info.dwFlags = STARTF_USESHOWWINDOW;
+  startup_info.wShowWindow = SW_HIDE;
+
+  PROCESS_INFORMATION process_info{};
+  std::wstring command_line =
+      L"cmd.exe /C sc.exe query \"" + std::wstring(kWindowsServiceName) + L"\"";
+  std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
+  mutable_command.push_back(L'\0');
+
+  if (!CreateProcessW(
+          nullptr,
+          mutable_command.data(),
+          nullptr,
+          nullptr,
+          FALSE,
+          CREATE_NO_WINDOW,
+          nullptr,
+          nullptr,
+          &startup_info,
+          &process_info)) {
+    return false;
   }
-  if (error_message != nullptr) {
-    *error_message = "Elevated PowerShell command failed.";
-  }
-  return false;
+
+  WaitForSingleObject(process_info.hProcess, 10'000);
+  DWORD exit_code = 1;
+  GetExitCodeProcess(process_info.hProcess, &exit_code);
+  CloseHandle(process_info.hThread);
+  CloseHandle(process_info.hProcess);
+  return exit_code == 0;
 }
 
 std::wstring CurrentExecutableDirectory() {
@@ -400,231 +329,178 @@ std::wstring CurrentExecutableDirectory() {
   return executable_path.substr(0, separator);
 }
 
-std::string RunPowerShellCapture(const std::wstring& command_line) {
-  const std::wstring script_path = CreateTempPowerShellScript(command_line);
-  const std::wstring output_path =
-      (std::filesystem::path(CurrentExecutableDirectory()) / L"slan_tunnel_state.json").wstring();
-  STARTUPINFOW startup_info{};
-  startup_info.cb = sizeof(startup_info);
-  PROCESS_INFORMATION process_info{};
-  std::wstring shell_command =
-      L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" + script_path + L"\"";
-  if (!CreateProcessW(
-          nullptr,
-          shell_command.data(),
-          nullptr,
-          nullptr,
-          FALSE,
-          CREATE_NO_WINDOW,
-          nullptr,
-          nullptr,
-          &startup_info,
-          &process_info)) {
-    std::filesystem::remove(script_path);
-    return "";
-  }
-  WaitForSingleObject(process_info.hProcess, INFINITE);
-  CloseHandle(process_info.hThread);
-  CloseHandle(process_info.hProcess);
-  std::filesystem::remove(script_path);
-  std::ifstream input(output_path);
-  if (!input.is_open()) {
-    return "";
-  }
-  std::stringstream buffer;
-  buffer << input.rdbuf();
-  input.close();
-  std::filesystem::remove(output_path);
-  return buffer.str();
-}
-
-std::string TrimAsciiWhitespace(const std::string& value) {
-  const auto first = value.find_first_not_of(" \r\n\t");
-  if (first == std::string::npos) {
-    return "";
-  }
-  const auto last = value.find_last_not_of(" \r\n\t");
-  return value.substr(first, last - first + 1);
-}
-
-struct TunnelInterfaceTarget {
-  int interface_index = 1;
-  std::wstring interface_alias = kDefaultWindowsTunnelInterfaceAlias;
-  bool is_dedicated_adapter = false;
-};
-
-TunnelInterfaceTarget ResolveTunnelInterfaceTarget() {
-  TunnelInterfaceTarget target;
-  if (const auto configured_alias =
-          GetEnvironmentPath(L"SLAN_WINDOWS_TUNNEL_INTERFACE_ALIAS")) {
-    if (!configured_alias->empty()) {
-      target.interface_alias = *configured_alias;
-      return target;
-    }
-  }
-
-  const std::wstring output_path =
-      (std::filesystem::path(CurrentExecutableDirectory()) / L"slan_tunnel_state.json")
-          .wstring();
-  std::ostringstream route_command;
-  route_command << "Set-Content -Path '" << WideToUtf8(output_path)
-                << "' -Value ((route print | Out-String))\n";
-  const std::string route_output =
-      RunPowerShellCapture(Utf8ToWide(route_command.str()));
-  std::istringstream route_lines(route_output);
-  std::string route_line;
-  while (std::getline(route_lines, route_line)) {
-    if (route_line.find("Microsoft KM-TEST") == std::string::npos) {
-      continue;
-    }
-    std::istringstream parser(route_line);
-    int parsed_index = 0;
-    if (parser >> parsed_index) {
-      target.interface_index = parsed_index;
-      target.is_dedicated_adapter = true;
-      break;
-    }
-  }
-  if (!target.is_dedicated_adapter) {
-    return target;
-  }
-
-  std::ostringstream netsh_command;
-  netsh_command << "Set-Content -Path '" << WideToUtf8(output_path)
-                << "' -Value ((netsh interface ipv4 show interfaces | Out-String))\n";
-  const std::string netsh_output =
-      RunPowerShellCapture(Utf8ToWide(netsh_command.str()));
-  std::istringstream netsh_lines(netsh_output);
-  std::string netsh_line;
-  while (std::getline(netsh_lines, netsh_line)) {
-    std::istringstream parser(netsh_line);
-    int parsed_index = 0;
-    if (!(parser >> parsed_index) || parsed_index != target.interface_index) {
-      continue;
-    }
-    std::string metric;
-    std::string mtu;
-    std::string state;
-    if (!(parser >> metric >> mtu >> state)) {
-      break;
-    }
-    std::string alias;
-    std::getline(parser, alias);
-    alias = TrimAsciiWhitespace(alias);
-    if (!alias.empty()) {
-      target.interface_alias = Utf8ToWide(alias);
-    }
-    break;
-  }
-  return target;
-}
-
 }  // namespace
 
-class HelperBridgeClient {
+class AppCoreServiceBridgeClient {
  public:
-  HelperBridgeClient() = default;
-  ~HelperBridgeClient() { Close(); }
+  AppCoreServiceBridgeClient() = default;
+  ~AppCoreServiceBridgeClient() { Close(); }
 
   bool Invoke(
       const std::string& method_name,
       const flutter::EncodableValue* arguments,
       std::string* response,
       std::string* error_message) {
-    if (!EnsureStarted(error_message)) {
-      return false;
-    }
-
     const std::string request = BuildHelperRequestJson(method_name, arguments);
-    DWORD bytes_written = 0;
-    if (!WriteFile(
-            stdin_write_, request.data(), static_cast<DWORD>(request.size()),
-            &bytes_written, nullptr) ||
-        bytes_written != request.size()) {
-      if (error_message != nullptr) {
-        *error_message = "Failed to write request to app-core helper.";
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (!EnsureConnected(error_message)) {
+        return false;
       }
-      return false;
+      if (!WriteRequest(request, error_message)) {
+        ResetSocket();
+        continue;
+      }
+      if (ReadResponseLine(response, error_message)) {
+        return true;
+      }
+      ResetSocket();
     }
-
-    return ReadResponseLine(response, error_message);
+    return false;
   }
 
  private:
-  bool EnsureStarted(std::string* error_message) {
-    if (process_ != nullptr) {
+  bool ConnectToResolvedServiceHost(std::string* error_message) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    const std::string service_host = ResolveServiceHost();
+    const auto separator = service_host.rfind(':');
+    if (separator == std::string::npos || separator == 0 || separator == service_host.size() - 1) {
+      if (error_message != nullptr) {
+        *error_message = "Invalid app-core service host. Expected host:port.";
+      }
+      return false;
+    }
+    const std::string hostname = service_host.substr(0, separator);
+    const std::string port = service_host.substr(separator + 1);
+
+    addrinfo* resolved = nullptr;
+    const int resolve_result =
+        getaddrinfo(hostname.c_str(), port.c_str(), &hints, &resolved);
+    if (resolve_result != 0) {
+      if (error_message != nullptr) {
+        *error_message = "Failed to resolve app-core service host.";
+      }
+      return false;
+    }
+
+    bool connected = false;
+    for (int attempt = 0; attempt < 25 && !connected; ++attempt) {
+      for (addrinfo* current = resolved; current != nullptr; current = current->ai_next) {
+        SOCKET candidate =
+            socket(current->ai_family, current->ai_socktype, current->ai_protocol);
+        if (candidate == INVALID_SOCKET) {
+          continue;
+        }
+        if (connect(candidate, current->ai_addr, static_cast<int>(current->ai_addrlen)) == 0) {
+          socket_ = candidate;
+          connected = true;
+          break;
+        }
+        closesocket(candidate);
+      }
+      if (!connected) {
+        Sleep(200);
+      }
+    }
+    freeaddrinfo(resolved);
+
+    if (!connected) {
+      if (error_message != nullptr) {
+        *error_message =
+            "Failed to connect to app-core service. Ensure app-core-service.exe is available.";
+      }
+      return false;
+    }
+    return true;
+  }
+
+  bool EnsureConnected(std::string* error_message) {
+    if (socket_ != INVALID_SOCKET) {
+      return true;
+    }
+    if (!EnsureWinsock(error_message)) {
+      return false;
+    }
+
+    if (ConnectToResolvedServiceHost(nullptr)) {
       return true;
     }
 
-    SECURITY_ATTRIBUTES security_attributes{};
-    security_attributes.nLength = sizeof(SECURITY_ATTRIBUTES);
-    security_attributes.bInheritHandle = TRUE;
-
-    HANDLE stdout_read = nullptr;
-    HANDLE stdout_write = nullptr;
-    if (!CreatePipe(&stdout_read, &stdout_write, &security_attributes, 0)) {
-      if (error_message != nullptr) {
-        *error_message = "Failed to create stdout pipe for app-core helper.";
-      }
+    if (!EnsureServiceStarted(error_message)) {
       return false;
     }
 
-    HANDLE stdin_read = nullptr;
-    HANDLE stdin_write = nullptr;
-    if (!CreatePipe(&stdin_read, &stdin_write, &security_attributes, 0)) {
-      CloseHandle(stdout_read);
-      CloseHandle(stdout_write);
+    return ConnectToResolvedServiceHost(error_message);
+  }
+
+  bool EnsureWinsock(std::string* error_message) {
+    if (winsock_ready_) {
+      return true;
+    }
+    WSADATA winsock_data{};
+    if (WSAStartup(MAKEWORD(2, 2), &winsock_data) != 0) {
       if (error_message != nullptr) {
-        *error_message = "Failed to create stdin pipe for app-core helper.";
+        *error_message = "Failed to initialize Winsock for app-core service bridge.";
       }
       return false;
     }
+    winsock_ready_ = true;
+    return true;
+  }
 
-    SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0);
-    SetHandleInformation(stdin_write, HANDLE_FLAG_INHERIT, 0);
+  bool EnsureServiceStarted(std::string* error_message) {
+    if (process_ != nullptr) {
+      DWORD exit_code = STILL_ACTIVE;
+      if (GetExitCodeProcess(process_, &exit_code) && exit_code == STILL_ACTIVE) {
+        return true;
+      }
+      CloseHandle(process_);
+      process_ = nullptr;
+    }
 
-    STARTUPINFOW startup_info{};
-    startup_info.cb = sizeof(STARTUPINFOW);
-    startup_info.dwFlags = STARTF_USESTDHANDLES;
-    startup_info.hStdInput = stdin_read;
-    startup_info.hStdOutput = stdout_write;
-    startup_info.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-
-    PROCESS_INFORMATION process_info{};
-    std::wstring command_line = L"\"" + ResolveHelperExecutablePath() + L"\"";
-    BOOL started = CreateProcessW(
-        nullptr, command_line.data(), nullptr, nullptr, TRUE, 0, nullptr,
-        nullptr, &startup_info, &process_info);
-
-    CloseHandle(stdin_read);
-    CloseHandle(stdout_write);
-
-    if (!started) {
-      CloseHandle(stdout_read);
-      CloseHandle(stdin_write);
-      if (error_message != nullptr) {
+    if (TryStartWindowsService()) {
+      return true;
+    }
+    if (error_message != nullptr) {
+      if (!WindowsServiceExists()) {
         *error_message =
-            "Failed to launch app-core helper. Set SLAN_APP_CORE_HELPER to the Rust helper executable path.";
+            "SLAN AppCore Service is not installed. Please reinstall SLAN so the Windows service is registered.";
+      } else {
+        *error_message =
+            "SLAN AppCore Service could not be started. Please reinstall SLAN or restart the machine to restore the Windows service.";
       }
-      return false;
     }
+    return false;
+  }
 
-    process_ = process_info.hProcess;
-    stdin_write_ = stdin_write;
-    stdout_read_ = stdout_read;
-    CloseHandle(process_info.hThread);
+  bool WriteRequest(const std::string& request, std::string* error_message) {
+    const char* current = request.data();
+    int remaining = static_cast<int>(request.size());
+    while (remaining > 0) {
+      const int bytes_sent = send(socket_, current, remaining, 0);
+      if (bytes_sent == SOCKET_ERROR) {
+        if (error_message != nullptr) {
+          *error_message = "Failed to write request to app-core service.";
+        }
+        return false;
+      }
+      current += bytes_sent;
+      remaining -= bytes_sent;
+    }
     return true;
   }
 
   bool ReadResponseLine(std::string* response, std::string* error_message) {
     response->clear();
     char byte = 0;
-    DWORD bytes_read = 0;
     while (true) {
-      if (!ReadFile(stdout_read_, &byte, 1, &bytes_read, nullptr) ||
-          bytes_read == 0) {
+      const int bytes_read = recv(socket_, &byte, 1, 0);
+      if (bytes_read <= 0) {
         if (error_message != nullptr) {
-          *error_message = "app-core helper closed stdout unexpectedly.";
+          *error_message = "app-core service closed its TCP connection unexpectedly.";
         }
         return false;
       }
@@ -635,25 +511,29 @@ class HelperBridgeClient {
     }
   }
 
+  void ResetSocket() {
+    if (socket_ != INVALID_SOCKET) {
+      closesocket(socket_);
+      socket_ = INVALID_SOCKET;
+    }
+  }
+
   void Close() {
-    if (stdin_write_ != nullptr) {
-      CloseHandle(stdin_write_);
-      stdin_write_ = nullptr;
-    }
-    if (stdout_read_ != nullptr) {
-      CloseHandle(stdout_read_);
-      stdout_read_ = nullptr;
-    }
+    ResetSocket();
     if (process_ != nullptr) {
       TerminateProcess(process_, 0);
       CloseHandle(process_);
       process_ = nullptr;
     }
+    if (winsock_ready_) {
+      WSACleanup();
+      winsock_ready_ = false;
+    }
   }
 
   HANDLE process_ = nullptr;
-  HANDLE stdin_write_ = nullptr;
-  HANDLE stdout_read_ = nullptr;
+  SOCKET socket_ = INVALID_SOCKET;
+  bool winsock_ready_ = false;
 };
 
 void SlanAppCorePluginWindowsPlugin::RegisterWithRegistrar(
@@ -676,16 +556,16 @@ SlanAppCorePluginWindowsPlugin::SlanAppCorePluginWindowsPlugin() {}
 
 SlanAppCorePluginWindowsPlugin::~SlanAppCorePluginWindowsPlugin() {}
 
-std::optional<std::string> SlanAppCorePluginWindowsPlugin::ForwardToHelper(
+std::optional<std::string> SlanAppCorePluginWindowsPlugin::ForwardToService(
     const std::string& method_name,
     const flutter::EncodableValue* arguments,
     std::string* error_message) {
-  std::lock_guard<std::mutex> lock(helper_mutex_);
-  if (!helper_) {
-    helper_ = std::make_unique<HelperBridgeClient>();
+  std::lock_guard<std::mutex> lock(service_mutex_);
+  if (!service_) {
+    service_ = std::make_unique<AppCoreServiceBridgeClient>();
   }
   std::string response;
-  if (!helper_->Invoke(method_name, arguments, &response, error_message)) {
+  if (!service_->Invoke(method_name, arguments, &response, error_message)) {
     return std::nullopt;
   }
   return response;
@@ -694,274 +574,14 @@ std::optional<std::string> SlanAppCorePluginWindowsPlugin::ForwardToHelper(
 void SlanAppCorePluginWindowsPlugin::HandleMethodCall(
     const flutter::MethodCall<flutter::EncodableValue>& method_call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  if (HandleTunnelMethodCall(method_call, result)) {
-    return;
-  }
   std::string error_message;
-  const auto response = ForwardToHelper(
+  const auto response = ForwardToService(
       method_call.method_name(), method_call.arguments(), &error_message);
   if (!response.has_value()) {
     result->Error("app_core_process_start_failed", error_message);
     return;
   }
   result->Success(flutter::EncodableValue(*response));
-}
-
-bool SlanAppCorePluginWindowsPlugin::HandleTunnelMethodCall(
-    const flutter::MethodCall<flutter::EncodableValue>& method_call,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>& result) {
-  const std::string& method = method_call.method_name();
-  if (method != "applyTunnelConfiguration" && method != "bringTunnelUp" &&
-      method != "bringTunnelDown" && method != "removeTunnelPeer" &&
-      method != "tunnelRuntimeView") {
-    return false;
-  }
-
-  std::lock_guard<std::mutex> lock(tunnel_mutex_);
-  if (method == "applyTunnelConfiguration") {
-    const auto address_and_prefix = ParseAddressAndPrefix(method_call.arguments());
-    tunnel_local_virtual_ip_ =
-        address_and_prefix.has_value() ? std::optional<std::string>(address_and_prefix->first)
-                                       : std::nullopt;
-    tunnel_local_prefix_len_ =
-        address_and_prefix.has_value() ? std::optional<int>(address_and_prefix->second)
-                                       : std::nullopt;
-    tunnel_peer_virtual_ip_ = ExtractPeerVirtualIp(method_call.arguments());
-    tunnel_last_error_.reset();
-    tunnel_running_ = false;
-    const auto peer_virtual_ip = tunnel_peer_virtual_ip_.value_or("");
-    result->Success(flutter::EncodableValue(JsonEnvelope(
-        true,
-        TunnelActionResultJson(
-            "applyTunnelConfiguration",
-            true,
-            "configured",
-            "Windows plugin accepted tunnel configuration.",
-            true,
-            peer_virtual_ip,
-            false,
-            tunnel_last_error_))));
-    return true;
-  }
-
-  const TunnelInterfaceTarget interface_target = ResolveTunnelInterfaceTarget();
-  const std::string interface_alias_utf8 = WideToUtf8(interface_target.interface_alias);
-  const int interface_index = interface_target.interface_index;
-  const std::string peer_virtual_ip = tunnel_peer_virtual_ip_.value_or("");
-
-  if (!tunnel_local_virtual_ip_.has_value() || !tunnel_local_prefix_len_.has_value()) {
-    if (method == "bringTunnelDown" || method == "removeTunnelPeer") {
-      if (interface_target.is_dedicated_adapter) {
-        std::ostringstream cleanup_script;
-        cleanup_script << "$ErrorActionPreference='Stop'\n";
-        cleanup_script
-            << "Get-NetIPAddress -InterfaceIndex " << interface_index
-            << " -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-               "Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue\n"
-            << "Disable-NetAdapter -InterfaceIndex " << interface_index
-            << " -Confirm:$false -ErrorAction SilentlyContinue | Out-Null\n";
-        std::string ignored_error;
-        RunElevatedPowerShellScript(Utf8ToWide(cleanup_script.str()), &ignored_error);
-      }
-      tunnel_running_ = false;
-      tunnel_last_error_.reset();
-      if (method == "removeTunnelPeer") {
-        tunnel_peer_virtual_ip_.reset();
-      }
-      result->Success(flutter::EncodableValue(JsonEnvelope(
-          true,
-          TunnelActionResultJson(
-              method,
-              true,
-              "verified",
-              interface_target.is_dedicated_adapter
-                  ? "Windows plugin disabled the SLAN adapter."
-                  : "Windows plugin found no staged tunnel configuration.",
-              false,
-              "",
-              false,
-              tunnel_last_error_))));
-      return true;
-    }
-    result->Success(flutter::EncodableValue(JsonEnvelope(
-        true,
-        TunnelActionResultJson(
-            method,
-            false,
-            "failed",
-            "Missing tunnel configuration.",
-            false,
-            "",
-            false,
-            std::optional<std::string>("missing tunnel configuration")))));
-    return true;
-  }
-
-  if (method == "bringTunnelUp") {
-    std::ostringstream script;
-    script
-        << "$ErrorActionPreference='Stop'\n"
-        << "if (Get-NetAdapter -InterfaceIndex " << interface_index
-        << " -ErrorAction SilentlyContinue) {\n";
-    if (interface_target.is_dedicated_adapter) {
-      script
-          << "  Enable-NetAdapter -InterfaceIndex " << interface_index
-          << " -Confirm:$false -ErrorAction SilentlyContinue | Out-Null\n"
-          << "  Set-NetIPInterface -InterfaceIndex " << interface_index
-          << " -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null\n";
-    }
-    script
-        << "  Get-NetIPAddress -InterfaceIndex " << interface_index
-        << " -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-           "Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue\n"
-        << "  New-NetIPAddress -InterfaceIndex " << interface_index
-        << " -IPAddress " << *tunnel_local_virtual_ip_
-        << " -PrefixLength " << *tunnel_local_prefix_len_
-        << " -AddressFamily IPv4 -Type Unicast | Out-Null\n"
-        << "} else {\n"
-        << "  throw 'Tunnel interface is unavailable.'\n"
-        << "}\n";
-    std::string error_message;
-    if (!RunElevatedPowerShellScript(Utf8ToWide(script.str()), &error_message)) {
-      tunnel_running_ = false;
-      tunnel_last_error_ = error_message;
-      result->Success(flutter::EncodableValue(JsonEnvelope(
-          true,
-          TunnelActionResultJson(
-              method,
-              false,
-              "failed",
-              "Windows plugin failed to assign the virtual IP: " + error_message,
-              true,
-              peer_virtual_ip,
-              false,
-              tunnel_last_error_))));
-      return true;
-    }
-    tunnel_running_ = true;
-    tunnel_last_error_.reset();
-    result->Success(flutter::EncodableValue(JsonEnvelope(
-        true,
-        TunnelActionResultJson(
-            method,
-            true,
-            "started",
-            "Windows plugin assigned the virtual IP.",
-            true,
-            peer_virtual_ip,
-            true,
-            tunnel_last_error_))));
-    return true;
-  }
-
-  if (method == "bringTunnelDown" || method == "removeTunnelPeer") {
-    std::ostringstream script;
-    script << "$ErrorActionPreference='Stop'\n"
-           << "Get-NetIPAddress -InterfaceIndex " << interface_index
-           << " -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-              "Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue\n";
-    if (interface_target.is_dedicated_adapter) {
-      script << "Disable-NetAdapter -InterfaceIndex " << interface_index
-             << " -Confirm:$false -ErrorAction SilentlyContinue | Out-Null\n";
-    }
-    std::string ignored_error;
-    RunElevatedPowerShellScript(Utf8ToWide(script.str()), &ignored_error);
-    tunnel_running_ = false;
-    tunnel_last_error_.reset();
-    if (method == "removeTunnelPeer") {
-      tunnel_local_virtual_ip_.reset();
-      tunnel_local_prefix_len_.reset();
-      tunnel_peer_virtual_ip_.reset();
-    }
-    result->Success(flutter::EncodableValue(JsonEnvelope(
-        true,
-        TunnelActionResultJson(
-            method,
-            true,
-            "verified",
-            method == "bringTunnelDown"
-                ? (interface_target.is_dedicated_adapter
-                       ? "Windows plugin removed the virtual IP and disabled the SLAN adapter."
-                       : "Windows plugin removed the virtual IP.")
-                : (interface_target.is_dedicated_adapter
-                       ? "Windows plugin cleared the tunnel peer and disabled the SLAN adapter."
-                       : "Windows plugin cleared the tunnel peer."),
-            tunnel_local_virtual_ip_.has_value(),
-            peer_virtual_ip,
-            false,
-            tunnel_last_error_))));
-    return true;
-  }
-
-  if (method == "tunnelRuntimeView") {
-    std::string detected_ip;
-    if (tunnel_local_virtual_ip_.has_value()) {
-      const std::wstring output_path =
-          (std::filesystem::path(CurrentExecutableDirectory()) / L"slan_tunnel_state.json")
-              .wstring();
-      std::ostringstream command;
-      command
-          << "$value = Get-NetIPAddress -InterfaceIndex " << interface_index
-          << " -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-             "Where-Object {$_.IPAddress -eq '" << *tunnel_local_virtual_ip_
-          << "'} | Select-Object -First 1 -ExpandProperty IPAddress; "
-          << "Set-Content -Path '" << WideToUtf8(output_path) << "' -Value ($value | Out-String)\n";
-      detected_ip = RunPowerShellCapture(Utf8ToWide(command.str()));
-    }
-    const bool ip_present =
-        detected_ip.find(tunnel_local_virtual_ip_.value_or("")) !=
-        std::string::npos;
-    std::ostringstream runtime;
-    runtime << "{"
-            << "\"state\":\"" << EscapeJsonString(ip_present ? "configured" : "disconnected") << "\""
-            << ",\"transport\":\"relay\""
-            << ",\"debugEngineMode\":\"noop\""
-            << ",\"backendName\":\"windows-plugin\""
-            << ",\"backendState\":\""
-            << EscapeJsonString(tunnel_last_error_.has_value() ? "failed"
-                                                               : (ip_present ? "started" : "idle"))
-            << "\""
-            << ",\"backendLastError\":";
-    if (tunnel_last_error_.has_value()) {
-      runtime << "\"" << EscapeJsonString(*tunnel_last_error_) << "\"";
-    } else {
-      runtime << "null";
-    }
-    runtime << ",\"backendLastStartedAtMs\":null"
-            << ",\"backendPeerVirtualIp\":\"" << EscapeJsonString(peer_virtual_ip) << "\""
-            << ",\"backendSelectedEndpoint\":null"
-            << ",\"peerVirtualIp\":\"" << EscapeJsonString(peer_virtual_ip) << "\""
-            << ",\"peerPublicKey\":\"peer-debug-public-key\""
-            << ",\"selectedEndpoint\":null"
-            << ",\"interfaceName\":\"" << EscapeJsonString(interface_alias_utf8) << "\""
-            << ",\"dnsServers\":[\"1.1.1.1\"]"
-            << ",\"allowedIps\":[\"" << EscapeJsonString(peer_virtual_ip + "/32") << "\"]"
-            << ",\"localVirtualIp\":\""
-            << EscapeJsonString(tunnel_local_virtual_ip_.value_or(""))
-            << "\""
-            << ",\"remoteAddress\":\"\""
-            << ",\"mtu\":1280"
-            << ",\"interfaceAddresses\":[\""
-            << EscapeJsonString(
-                   tunnel_local_virtual_ip_.has_value() && tunnel_local_prefix_len_.has_value()
-                       ? *tunnel_local_virtual_ip_ + "/" +
-                             std::to_string(*tunnel_local_prefix_len_)
-                       : "")
-            << "\"]"
-            << ",\"includedRoutes\":[\"" << EscapeJsonString(peer_virtual_ip + "/32") << "\"]"
-            << ",\"packetRxCount\":0,\"packetRxBytes\":0,\"packetTxCount\":0,\"packetTxBytes\":0"
-            << ",\"lastPacketAtMs\":null,\"lastAppliedAtMs\":null,\"lastError\":";
-    if (tunnel_last_error_.has_value()) {
-      runtime << "\"" << EscapeJsonString(*tunnel_last_error_) << "\"";
-    } else {
-      runtime << "null";
-    }
-    runtime << "}";
-    result->Success(flutter::EncodableValue(JsonEnvelope(true, runtime.str())));
-    return true;
-  }
-
-  return false;
 }
 
 }  // namespace slan_app_core_plugin_windows

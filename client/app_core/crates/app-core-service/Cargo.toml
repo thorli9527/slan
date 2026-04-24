@@ -1,0 +1,12 @@
+[package]
+name = "app-core-service"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+slan-app-core = { path = "../app-core" }
+tunnel = { path = "../tunnel" }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
