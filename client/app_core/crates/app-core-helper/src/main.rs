@@ -668,6 +668,7 @@ impl HelperTunnelHost {
         detail: String,
     ) -> Value {
         let configuration = state.configuration.as_ref();
+        let diagnostics = self.backend.diagnostics();
         let runtime_state = configuration.map(|_| {
             if state.is_running {
                 "configured"
@@ -694,7 +695,14 @@ impl HelperTunnelHost {
             "hasConfiguration": configuration.is_some(),
             "configurationPeerVirtualIp": configuration.map(|config| config.peer_virtual_ip.clone()),
             "runtimeState": runtime_state,
+            "backendName": diagnostics.name,
             "backendState": backend_state,
+            "backendExecutionMode": diagnostics.execution_mode,
+            "backendExecutionBackend": diagnostics.execution_backend,
+            "backendInterfaceName": diagnostics.interface_name,
+            "backendIsUp": diagnostics.is_up,
+            "backendPlannedPeerCount": diagnostics.planned_peer_count,
+            "backendRecentCommandCount": diagnostics.recent_command_count,
             "runtimeLastError": state.last_error.clone(),
         })
     }
@@ -716,6 +724,7 @@ impl HelperTunnelHost {
         } else {
             "idle"
         };
+        let diagnostics = self.backend.diagnostics();
         let bytes_received = stats
             .as_ref()
             .map(|stats| stats.bytes_received)
@@ -728,8 +737,14 @@ impl HelperTunnelHost {
                 .debug_engine_mode
                 .clone()
                 .unwrap_or_else(|| "noop".to_string()),
-            "backendName": backend_name(),
+            "backendName": diagnostics.name,
             "backendState": backend_state,
+            "backendExecutionMode": diagnostics.execution_mode,
+            "backendExecutionBackend": diagnostics.execution_backend,
+            "backendInterfaceName": diagnostics.interface_name,
+            "backendIsUp": diagnostics.is_up,
+            "backendPlannedPeerCount": diagnostics.planned_peer_count,
+            "backendRecentCommandCount": diagnostics.recent_command_count,
             "backendLastError": state.last_error.clone(),
             "backendLastStartedAtMs": state.last_started_at_ms,
             "backendPeerVirtualIp": configuration.peer_virtual_ip.clone(),
@@ -820,6 +835,7 @@ fn default_tunnel_backend() -> Box<dyn TunnelBackend> {
     }
 }
 
+#[cfg(test)]
 fn backend_name() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -1099,6 +1115,9 @@ mod tests {
             .expect("runtime");
         assert_eq!(runtime["peerVirtualIp"], "100.64.0.2");
         assert_eq!(runtime["backendName"], super::backend_name());
+        assert_eq!(runtime["backendExecutionMode"].as_str().is_some(), true);
+        assert_eq!(runtime["backendExecutionBackend"].as_str().is_some(), true);
+        assert_eq!(runtime["backendPlannedPeerCount"].as_u64(), Some(1));
         assert_eq!(runtime["lastAppliedAtMs"].as_u64().is_some(), true);
         assert_eq!(runtime["state"].as_str().is_some(), true);
     }

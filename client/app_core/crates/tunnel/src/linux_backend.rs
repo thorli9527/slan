@@ -4,7 +4,7 @@ use crate::linux_adapter::{
 };
 use crate::linux_mapper::LinuxKernelWireGuardConfigMapper;
 use crate::linux_stats::LinuxKernelWireGuardStatsMapper;
-use crate::{TunnelBackend, TunnelConfig};
+use crate::{TunnelBackend, TunnelBackendDiagnostics, TunnelConfig};
 
 /// Linux kernel WireGuard backend 骨架。
 ///
@@ -121,6 +121,25 @@ impl TunnelBackend for LinuxKernelWireGuardBackend {
             &peer_runtime.peer,
         )))
     }
+
+    fn diagnostics(&self) -> TunnelBackendDiagnostics {
+        let linux = self.adapter.diagnostics();
+        TunnelBackendDiagnostics {
+            name: "linux-kernel",
+            execution_mode: Some(match linux.execution_mode {
+                LinuxExecutionMode::System => "system",
+                LinuxExecutionMode::DryRun => "dry-run",
+            }),
+            execution_backend: Some(match linux.execution_backend {
+                LinuxExecutionBackend::Shell => "shell",
+                LinuxExecutionBackend::Native => "native",
+            }),
+            interface_name: linux.interface_name,
+            is_up: linux.is_up,
+            planned_peer_count: linux.planned_peer_count,
+            recent_command_count: linux.recent_command_count,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +219,13 @@ mod tests {
             LinuxExecutionBackend::Shell
         );
         assert!(!backend.recent_commands().is_empty());
+
+        let diagnostics = <LinuxKernelWireGuardBackend as TunnelBackend>::diagnostics(&backend);
+        assert_eq!(diagnostics.name, "linux-kernel");
+        assert_eq!(diagnostics.execution_mode, Some("dry-run"));
+        assert_eq!(diagnostics.execution_backend, Some("shell"));
+        assert_eq!(diagnostics.interface_name.as_deref(), Some("wg0"));
+        assert_eq!(diagnostics.planned_peer_count, 1);
     }
 
     #[test]

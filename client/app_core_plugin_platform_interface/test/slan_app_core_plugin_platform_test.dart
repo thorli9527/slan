@@ -152,6 +152,57 @@ void main() {
       expect(payload.derpClusterId, 'cn-local-a');
       expect(payload.derpNodeId, 'relay-cn-local-udp');
     });
+
+    test('decodes tunnel backend diagnostics', () {
+      final action = WireGuardTunnelActionResult.fromJson({
+        'action': 'bringTunnelUp',
+        'accepted': true,
+        'phase': 'started',
+        'source': 'rust-helper',
+        'detail': 'started',
+        'connectionStatus': 'connected',
+        'hasConfiguration': true,
+        'backendName': 'linux-kernel',
+        'backendState': 'started',
+        'backendExecutionMode': 'system',
+        'backendExecutionBackend': 'shell',
+        'backendInterfaceName': 'slan0',
+        'backendIsUp': true,
+        'backendPlannedPeerCount': 1,
+        'backendRecentCommandCount': 4,
+      });
+      final runtime = WireGuardTunnelRuntimeView.fromJson({
+        'state': 'configured',
+        'transport': 'p2p',
+        'backendName': 'linux-kernel',
+        'backendState': 'started',
+        'backendExecutionMode': 'system',
+        'backendExecutionBackend': 'shell',
+        'backendInterfaceName': 'slan0',
+        'backendIsUp': true,
+        'backendPlannedPeerCount': 1,
+        'backendRecentCommandCount': 4,
+        'peerVirtualIp': '100.64.0.2',
+        'peerPublicKey': 'peer-pk',
+        'localVirtualIp': '100.64.0.10',
+        'remoteAddress': '198.51.100.10:51820',
+      });
+
+      expect(action.backendName, 'linux-kernel');
+      expect(action.backendExecutionMode, 'system');
+      expect(action.backendExecutionBackend, 'shell');
+      expect(action.backendInterfaceName, 'slan0');
+      expect(action.backendIsUp, isTrue);
+      expect(action.backendPlannedPeerCount, 1);
+      expect(action.backendRecentCommandCount, 4);
+      expect(runtime.backendName, 'linux-kernel');
+      expect(runtime.backendExecutionMode, 'system');
+      expect(runtime.backendExecutionBackend, 'shell');
+      expect(runtime.backendInterfaceName, 'slan0');
+      expect(runtime.backendIsUp, isTrue);
+      expect(runtime.backendPlannedPeerCount, 1);
+      expect(runtime.backendRecentCommandCount, 4);
+    });
   });
 
   group('SlanAppCorePluginPlatform', () {

@@ -19,7 +19,7 @@ mod runtime;
 mod windows_backend;
 
 pub use android_backend::AndroidWireGuardTunnelBackend;
-pub use backend::{InMemoryTunnelBackend, TunnelBackend};
+pub use backend::{InMemoryTunnelBackend, TunnelBackend, TunnelBackendDiagnostics};
 pub use config::TunnelConfig;
 pub use factory::TunnelBackendFactory;
 pub use linux_backend::LinuxKernelWireGuardBackend;

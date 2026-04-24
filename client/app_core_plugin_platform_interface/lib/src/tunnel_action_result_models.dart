@@ -30,7 +30,14 @@ class WireGuardTunnelActionResult {
     required this.hasConfiguration,
     this.configurationPeerVirtualIp,
     this.runtimeState,
+    this.backendName,
     this.backendState,
+    this.backendExecutionMode,
+    this.backendExecutionBackend,
+    this.backendInterfaceName,
+    this.backendIsUp,
+    this.backendPlannedPeerCount,
+    this.backendRecentCommandCount,
     this.runtimeLastError,
   });
 
@@ -43,7 +50,14 @@ class WireGuardTunnelActionResult {
   final bool hasConfiguration;
   final String? configurationPeerVirtualIp;
   final String? runtimeState;
+  final String? backendName;
   final String? backendState;
+  final String? backendExecutionMode;
+  final String? backendExecutionBackend;
+  final String? backendInterfaceName;
+  final bool? backendIsUp;
+  final int? backendPlannedPeerCount;
+  final int? backendRecentCommandCount;
   final String? runtimeLastError;
 
   factory WireGuardTunnelActionResult.fromJson(Map<Object?, Object?> json) {
@@ -59,7 +73,16 @@ class WireGuardTunnelActionResult {
       hasConfiguration: json['hasConfiguration'] as bool? ?? false,
       configurationPeerVirtualIp: json['configurationPeerVirtualIp'] as String?,
       runtimeState: json['runtimeState'] as String?,
+      backendName: json['backendName'] as String?,
       backendState: json['backendState'] as String?,
+      backendExecutionMode: json['backendExecutionMode'] as String?,
+      backendExecutionBackend: json['backendExecutionBackend'] as String?,
+      backendInterfaceName: json['backendInterfaceName'] as String?,
+      backendIsUp: json['backendIsUp'] as bool?,
+      backendPlannedPeerCount:
+          (json['backendPlannedPeerCount'] as num?)?.toInt(),
+      backendRecentCommandCount:
+          (json['backendRecentCommandCount'] as num?)?.toInt(),
       runtimeLastError: json['runtimeLastError'] as String?,
     );
   }

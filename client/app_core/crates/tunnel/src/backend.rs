@@ -5,6 +5,31 @@ use slan_app_core::{WireGuardInterfaceConfig, WireGuardPeerConfig, WireGuardRunt
 
 use crate::TunnelConfig;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TunnelBackendDiagnostics {
+    pub name: &'static str,
+    pub execution_mode: Option<&'static str>,
+    pub execution_backend: Option<&'static str>,
+    pub interface_name: Option<String>,
+    pub is_up: bool,
+    pub planned_peer_count: usize,
+    pub recent_command_count: usize,
+}
+
+impl TunnelBackendDiagnostics {
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            execution_mode: None,
+            execution_backend: None,
+            interface_name: None,
+            is_up: false,
+            planned_peer_count: 0,
+            recent_command_count: 0,
+        }
+    }
+}
+
 /// 平台 tunnel backend 能力。
 ///
 /// 这一层是后续对接 WireGuardKit、Linux kernel WireGuard、
@@ -41,6 +66,10 @@ pub trait TunnelBackend: Send + Sync {
         _peer_virtual_ip: &str,
     ) -> Result<Option<WireGuardRuntimeStats>, String> {
         Ok(None)
+    }
+
+    fn diagnostics(&self) -> TunnelBackendDiagnostics {
+        TunnelBackendDiagnostics::new("unknown")
     }
 
     /// 应用一条到对端的隧道配置。
@@ -107,5 +136,13 @@ impl TunnelBackend for InMemoryTunnelBackend {
             .map_err(|_| "tunnel backend state poisoned".to_string())?;
         state.remove(peer_virtual_ip);
         Ok(())
+    }
+
+    fn diagnostics(&self) -> TunnelBackendDiagnostics {
+        let mut diagnostics = TunnelBackendDiagnostics::new("in-memory");
+        diagnostics.execution_mode = Some("memory");
+        diagnostics.execution_backend = Some("memory");
+        diagnostics.planned_peer_count = self.established_peer_ips().len();
+        diagnostics
     }
 }

@@ -1,7 +1,7 @@
 use crate::macos_adapter::MacosWireGuardKitAdapter;
 use crate::macos_mapper::MacosWireGuardKitConfigMapper;
 use crate::macos_stats::MacosWireGuardKitStatsMapper;
-use crate::{TunnelBackend, TunnelConfig};
+use crate::{TunnelBackend, TunnelBackendDiagnostics, TunnelConfig};
 
 /// macOS WireGuardKit backend 骨架。
 ///
@@ -80,6 +80,14 @@ impl TunnelBackend for MacosWireGuardKitBackend {
             None,
         )))
     }
+
+    fn diagnostics(&self) -> TunnelBackendDiagnostics {
+        let mut diagnostics = TunnelBackendDiagnostics::new("macos-wireguardkit");
+        diagnostics.execution_mode = Some("system-extension");
+        diagnostics.execution_backend = Some("wireguardkit");
+        diagnostics.planned_peer_count = self.planned_peer_ips().len();
+        diagnostics
+    }
 }
 
 #[cfg(test)]
@@ -125,6 +133,10 @@ mod tests {
         backend.establish(&sample_config()).unwrap();
 
         assert_eq!(backend.planned_peer_ips(), vec!["100.64.0.2"]);
+        let diagnostics = <MacosWireGuardKitBackend as TunnelBackend>::diagnostics(&backend);
+        assert_eq!(diagnostics.name, "macos-wireguardkit");
+        assert_eq!(diagnostics.execution_backend, Some("wireguardkit"));
+        assert_eq!(diagnostics.planned_peer_count, 1);
     }
 
     #[test]

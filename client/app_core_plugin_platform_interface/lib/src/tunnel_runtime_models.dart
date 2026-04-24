@@ -5,6 +5,12 @@ class WireGuardTunnelRuntimeView {
     this.debugEngineMode,
     this.backendName,
     this.backendState,
+    this.backendExecutionMode,
+    this.backendExecutionBackend,
+    this.backendInterfaceName,
+    this.backendIsUp,
+    this.backendPlannedPeerCount,
+    this.backendRecentCommandCount,
     this.backendLastError,
     this.backendLastStartedAtMs,
     this.backendPeerVirtualIp,
@@ -34,6 +40,12 @@ class WireGuardTunnelRuntimeView {
   final String? debugEngineMode;
   final String? backendName;
   final String? backendState;
+  final String? backendExecutionMode;
+  final String? backendExecutionBackend;
+  final String? backendInterfaceName;
+  final bool? backendIsUp;
+  final int? backendPlannedPeerCount;
+  final int? backendRecentCommandCount;
   final String? backendLastError;
   final int? backendLastStartedAtMs;
   final String? backendPeerVirtualIp;
@@ -64,6 +76,14 @@ class WireGuardTunnelRuntimeView {
       debugEngineMode: json['debugEngineMode'] as String?,
       backendName: json['backendName'] as String?,
       backendState: json['backendState'] as String?,
+      backendExecutionMode: json['backendExecutionMode'] as String?,
+      backendExecutionBackend: json['backendExecutionBackend'] as String?,
+      backendInterfaceName: json['backendInterfaceName'] as String?,
+      backendIsUp: json['backendIsUp'] as bool?,
+      backendPlannedPeerCount:
+          (json['backendPlannedPeerCount'] as num?)?.toInt(),
+      backendRecentCommandCount:
+          (json['backendRecentCommandCount'] as num?)?.toInt(),
       backendLastError: json['backendLastError'] as String?,
       backendLastStartedAtMs:
           (json['backendLastStartedAtMs'] as num?)?.toInt(),

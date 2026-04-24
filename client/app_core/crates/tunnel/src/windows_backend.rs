@@ -35,7 +35,7 @@ use slan_app_core::{
     TunnelTransport, WireGuardInterfaceConfig, WireGuardPeerConfig, WireGuardRuntimeStats,
 };
 
-use crate::{TunnelBackend, TunnelConfig};
+use crate::{TunnelBackend, TunnelBackendDiagnostics, TunnelConfig};
 
 const WINDOWS_LOOPBACK_INTERFACE_ALIAS: &str = "Loopback Pseudo-Interface 1";
 const WINDOWS_KMTEST_LOOPBACK_DESCRIPTION: &str = "Microsoft KM-TEST Loopback Adapter";
@@ -1341,6 +1341,43 @@ impl TunnelBackend for WindowsEmbeddableServiceBackend {
             bytes_sent: if interface_runtime.is_up { 1 } else { 0 },
         }))
     }
+
+    fn diagnostics(&self) -> TunnelBackendDiagnostics {
+        let interface = self.interface.lock().ok().and_then(|state| state.clone());
+        TunnelBackendDiagnostics {
+            name: "windows-embeddable",
+            execution_mode: Some(
+                if std::env::var("SLAN_WINDOWS_TUNNEL_MODE").ok().as_deref() == Some("dry-run") {
+                    "dry-run"
+                } else {
+                    "system"
+                },
+            ),
+            execution_backend: Some(windows_execution_backend_name()),
+            interface_name: interface
+                .as_ref()
+                .map(|runtime| runtime.interface_name.clone()),
+            is_up: interface
+                .as_ref()
+                .map(|runtime| runtime.is_up)
+                .unwrap_or(false),
+            planned_peer_count: self.planned_peer_ips().len(),
+            recent_command_count: 0,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_execution_backend_name() -> &'static str {
+    match WindowsEmbeddableServiceBackend::dedicated_driver_kind() {
+        WindowsDedicatedDriverKind::KmTest => "netsh",
+        WindowsDedicatedDriverKind::Wintun => "wintun",
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_execution_backend_name() -> &'static str {
+    "netsh"
 }
 
 fn parse_interface_address(raw: &str) -> Result<(String, u8), String> {
