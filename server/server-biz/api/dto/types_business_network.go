@@ -49,6 +49,12 @@ type DeactivateNetworkRequest struct {
 	DeviceID string `json:"deviceId"`
 }
 
+// UpdateNetworkMemberStatusRequest 用于 owner 审批或拒绝网络加入申请。
+type UpdateNetworkMemberStatusRequest struct {
+	// Status 是目标成员状态，当前支持 active 或 rejected。
+	Status string `json:"status"`
+}
+
 // JoinNetworkByOwnerEmailRequest 允许用户按宿主邮箱加入其网络。
 type JoinNetworkByOwnerEmailRequest struct {
 	// OwnerEmail 是目标网络宿主用户的邮箱。

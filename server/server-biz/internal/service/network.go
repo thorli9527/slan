@@ -32,6 +32,8 @@ type Network interface {
 	Deactivate(userID, networkID string, req dto.DeactivateNetworkRequest) error
 	// ListMembers 返回网络当前的成员设备列表。
 	ListMembers(userID, networkID string) ([]dto.NetworkMember, error)
+	// UpdateMemberStatus 允许网络 owner 审批或拒绝加入申请。
+	UpdateMemberStatus(userID, networkID, memberID string, req dto.UpdateNetworkMemberStatusRequest) (dto.NetworkMember, error)
 	// ListAssignments 返回网络内设备与虚拟 IP 的绑定关系；仅网络 owner 可访问。
 	ListAssignments(userID, networkID string) ([]dto.NetworkAssignment, error)
 	// CreateSubnet 在指定网络内创建一个新的子网。

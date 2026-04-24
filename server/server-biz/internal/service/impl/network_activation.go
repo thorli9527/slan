@@ -18,7 +18,7 @@ func (s dbNetworkService) Join(userID, networkID string, req dto.JoinNetworkRequ
 	if err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
-	member, err := s.ensureActiveMemberForNetwork(ctx, userID, req.DeviceID, record)
+	member, err := s.requestMemberForNetwork(ctx, userID, req.DeviceID, record)
 	if err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
@@ -40,7 +40,7 @@ func (s dbNetworkService) JoinByOwnerEmail(userID string, req dto.JoinNetworkByO
 	if err := s.state.ensureDeviceOwner(ctx, userID, req.DeviceID); err != nil {
 		return dto.NetworkJoinByOwnerEmailResult{}, err
 	}
-	member, err := s.ensureActiveMemberForNetwork(ctx, userID, req.DeviceID, target)
+	member, err := s.requestMemberForNetwork(ctx, userID, req.DeviceID, target)
 	if err != nil {
 		return dto.NetworkJoinByOwnerEmailResult{}, err
 	}
@@ -69,7 +69,7 @@ func (s dbNetworkService) JoinByKey(userID string, req dto.JoinNetworkByKeyReque
 		}
 		return dto.NetworkJoinResult{}, err
 	}
-	member, err := s.ensureActiveMemberForNetwork(ctx, userID, req.DeviceID, target)
+	member, err := s.requestMemberForNetwork(ctx, userID, req.DeviceID, target)
 	if err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
@@ -101,8 +101,11 @@ func (s dbNetworkService) Activate(userID, networkID string, req dto.JoinNetwork
 	if err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
-	member, err := s.ensureActiveMemberForNetwork(ctx, userID, req.DeviceID, record)
+	member, err := s.state.requireActiveNetworkMember(ctx, networkID, req.DeviceID, ErrForbidden, "device")
 	if err != nil {
+		return dto.NetworkJoinResult{}, err
+	}
+	if err := s.state.ensureSingleActiveNetworkForUser(ctx, userID, networkID); err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
 	attachment, err := s.state.ensureAttachment(ctx, networkID, record.DefaultSubnetID, req.DeviceID)

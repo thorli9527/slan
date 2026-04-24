@@ -2,6 +2,8 @@ package impl
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
@@ -79,6 +81,42 @@ func (s dbNetworkService) ListMembers(userID, networkID string) ([]dto.NetworkMe
 		return nil, err
 	}
 	return s.state.pg.ListMembersByNetwork(ctx, networkID)
+}
+
+func (s dbNetworkService) UpdateMemberStatus(userID, networkID, memberID string, req dto.UpdateNetworkMemberStatusRequest) (dto.NetworkMember, error) {
+	status := strings.TrimSpace(req.Status)
+	if status != "active" && status != "rejected" {
+		return dto.NetworkMember{}, fmt.Errorf("%w: status must be active or rejected", ErrInvalidArgument)
+	}
+	ctx := context.Background()
+	record, err := s.state.pg.GetNetworkByID(ctx, networkID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return dto.NetworkMember{}, ErrNotFound
+		}
+		return dto.NetworkMember{}, err
+	}
+	if record.OwnerUserID != userID {
+		return dto.NetworkMember{}, ErrForbidden
+	}
+	member, err := s.state.pg.GetMemberByID(ctx, memberID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return dto.NetworkMember{}, ErrNotFound
+		}
+		return dto.NetworkMember{}, err
+	}
+	if member.NetworkID != networkID {
+		return dto.NetworkMember{}, ErrNotFound
+	}
+	if member.Role == "owner" && status != "active" {
+		return dto.NetworkMember{}, fmt.Errorf("%w: owner membership cannot be rejected", ErrInvalidArgument)
+	}
+	if err := s.state.pg.UpdateMemberStatus(ctx, memberID, status); err != nil {
+		return dto.NetworkMember{}, err
+	}
+	member.Status = status
+	return member, nil
 }
 
 func (s dbNetworkService) ListAssignments(userID, networkID string) ([]dto.NetworkAssignment, error) {

@@ -107,6 +107,15 @@ func (r *PostgresRepository) GetMemberByNetworkDevice(ctx context.Context, netwo
 	return model.ToDTO(), err
 }
 
+// GetMemberByID loads one network membership by its stable public id.
+func (r *PostgresRepository) GetMemberByID(ctx context.Context, memberID string) (dto.NetworkMember, error) {
+	var model NetworkMember
+	err := r.db.WithContext(ctx).
+		Where("member_id = ?", memberID).
+		First(&model).Error
+	return model.ToDTO(), err
+}
+
 // ListMembersByNetwork returns every member device currently attached to the
 // network.
 func (r *PostgresRepository) ListMembersByNetwork(ctx context.Context, networkID string) ([]dto.NetworkMember, error) {

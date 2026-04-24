@@ -65,6 +65,13 @@ func (r *PostgresRepository) CreateMember(ctx context.Context, member dto.Networ
 	return r.db.WithContext(ctx).Create(&model).Error
 }
 
+func (r *PostgresRepository) UpdateMemberStatus(ctx context.Context, memberID, status string) error {
+	return r.db.WithContext(ctx).
+		Model(&NetworkMember{}).
+		Where("member_id = ?", memberID).
+		Update("status", status).Error
+}
+
 func (r *PostgresRepository) CreateAttachment(ctx context.Context, attachment dto.SubnetAttachment) error {
 	model := SubnetAttachment{
 		AttachmentID: attachment.AttachmentID,

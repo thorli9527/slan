@@ -26,6 +26,10 @@ func (ctx routeContext) attachmentID(c *gin.Context) string {
 	return c.Param("attachmentId")
 }
 
+func (ctx routeContext) memberID(c *gin.Context) string {
+	return c.Param("memberId")
+}
+
 func (ctx routeContext) messageID(c *gin.Context) string {
 	return c.Param("messageId")
 }

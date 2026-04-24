@@ -76,6 +76,10 @@ func (s *dbState) requireActiveNetworkMember(ctx context.Context, networkID, dev
 // 该 helper 让 Join 流程保持幂等：如果成员已存在则直接复用，
 // 否则按默认角色创建一条激活中的成员记录。
 func (s *dbState) ensureMember(ctx context.Context, networkID, deviceID, role string) (dto.NetworkMember, error) {
+	return s.ensureMemberWithStatus(ctx, networkID, deviceID, role, "active")
+}
+
+func (s *dbState) ensureMemberWithStatus(ctx context.Context, networkID, deviceID, role, status string) (dto.NetworkMember, error) {
 	member, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, deviceID)
 	if err == nil {
 		return member, nil
@@ -90,7 +94,7 @@ func (s *dbState) ensureMember(ctx context.Context, networkID, deviceID, role st
 		DeviceID:  deviceID,
 		Role:      role,
 		CreatedAt: time.Now().Unix(),
-		Status:    "active",
+		Status:    status,
 	}
 	return member, s.pg.CreateMember(ctx, member)
 }

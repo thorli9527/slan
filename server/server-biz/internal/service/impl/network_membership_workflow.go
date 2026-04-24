@@ -46,6 +46,21 @@ func (s dbNetworkService) ensureActiveMemberForNetwork(ctx context.Context, user
 	return s.state.ensureMember(ctx, record.NetworkID, deviceID, role)
 }
 
+func (s dbNetworkService) requestMemberForNetwork(ctx context.Context, userID, deviceID string, record repo.Network) (dto.NetworkMember, error) {
+	role, err := s.state.membershipRole(ctx, record.NetworkID, deviceID, record.OwnerUserID, userID)
+	if err != nil {
+		return dto.NetworkMember{}, err
+	}
+	status := "pending"
+	if record.OwnerUserID == userID {
+		status = "active"
+		if err := s.state.ensureSingleActiveNetworkForUser(ctx, userID, record.NetworkID); err != nil {
+			return dto.NetworkMember{}, err
+		}
+	}
+	return s.state.ensureMemberWithStatus(ctx, record.NetworkID, deviceID, role, status)
+}
+
 func (s dbNetworkService) lookupOwnedNetworkByOwnerEmail(ctx context.Context, ownerEmail string) (repo.Network, error) {
 	owner, err := s.state.pg.GetUserByEmail(ctx, ownerEmail)
 	if err != nil {

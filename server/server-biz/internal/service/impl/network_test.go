@@ -10,9 +10,9 @@ import (
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/service"
-	_ "modernc.org/sqlite"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	_ "modernc.org/sqlite"
 )
 
 func TestCreateNetwork_RejectsSecondOwnedNetwork(t *testing.T) {
@@ -577,6 +577,9 @@ func TestJoinByOwnerEmail_JoinsOwnedNetwork(t *testing.T) {
 	if result.Network.NetworkID != "net-1" {
 		t.Fatalf("expected joined net-1, got %+v", result)
 	}
+	if result.Member.Status != "pending" {
+		t.Fatalf("expected pending join request, got %+v", result.Member)
+	}
 	if result.Attachment.VirtualIP != "" {
 		t.Fatalf("expected no ip before activation, got %+v", result.Attachment)
 	}
@@ -647,6 +650,9 @@ func TestJoinByKey_ConsumesKeyAfterOneUse(t *testing.T) {
 	if result.Member.NetworkID != "net-1" {
 		t.Fatalf("expected joined net-1, got %+v", result)
 	}
+	if result.Member.Status != "pending" {
+		t.Fatalf("expected join by key to create pending request, got %+v", result.Member)
+	}
 
 	record, err := state.pg.GetNetworkByID(ctx, "net-1")
 	if err != nil {
@@ -661,6 +667,68 @@ func TestJoinByKey_ConsumesKeyAfterOneUse(t *testing.T) {
 		DeviceID: "dev-3",
 	}); !errors.Is(err, service.ErrNotFound) {
 		t.Fatalf("expected second use to fail with not found, got %v", err)
+	}
+}
+
+func TestPendingJoinRequiresOwnerApprovalBeforeActivation(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "owner-1",
+		Email:        "owner@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-2",
+		Email:        "member@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create member user: %v", err)
+	}
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-2",
+		UserID:    "user-2",
+		MachineID: "machine-2",
+		Name:      "member-device",
+		Platform:  "macos",
+		Status:    "online",
+	}); err != nil {
+		t.Fatalf("create member device: %v", err)
+	}
+	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+
+	networkService := dbNetworkService{state: state}
+	joined, err := networkService.JoinByOwnerEmail("user-2", dto.JoinNetworkByOwnerEmailRequest{
+		OwnerEmail: "owner@local.slan",
+		DeviceID:   "dev-2",
+	})
+	if err != nil {
+		t.Fatalf("join by owner email: %v", err)
+	}
+	if joined.Member.Status != "pending" {
+		t.Fatalf("expected pending member, got %+v", joined.Member)
+	}
+	if _, err := networkService.Activate("user-2", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-2"}); !errors.Is(err, service.ErrForbidden) {
+		t.Fatalf("expected pending activation to be forbidden, got %v", err)
+	}
+
+	approved, err := networkService.UpdateMemberStatus("owner-1", "net-1", joined.Member.MemberID, dto.UpdateNetworkMemberStatusRequest{
+		Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("approve member: %v", err)
+	}
+	if approved.Status != "active" {
+		t.Fatalf("expected approved member, got %+v", approved)
+	}
+	activated, err := networkService.Activate("user-2", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-2"})
+	if err != nil {
+		t.Fatalf("activate after approval: %v", err)
+	}
+	if activated.Attachment.VirtualIP == "" {
+		t.Fatalf("expected virtual ip after approval, got %+v", activated)
 	}
 }
 
@@ -695,11 +763,15 @@ func TestSwitch_ActivatesOwnedNetwork(t *testing.T) {
 	createNetworkFixture(t, state, "owner-2", "net-2", "subnet-2", "10.1.0.0/16")
 
 	service := dbNetworkService{state: state}
-	if _, err := service.JoinByOwnerEmail("user-1", dto.JoinNetworkByOwnerEmailRequest{
+	joined, err := service.JoinByOwnerEmail("user-1", dto.JoinNetworkByOwnerEmailRequest{
 		OwnerEmail: "owner-2@local.slan",
 		DeviceID:   "dev-1",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("join foreign network: %v", err)
+	}
+	if joined.Member.Status != "pending" {
+		t.Fatalf("expected pending foreign network request, got %+v", joined.Member)
 	}
 	result, err := service.Switch("user-1", "net-1", dto.SwitchNetworkRequest{DeviceID: "dev-1"})
 	if err != nil {

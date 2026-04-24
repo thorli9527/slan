@@ -76,6 +76,11 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		rc := currentRouteContext(c)
 		return deps.Network.ListMembers(rc.user(), rc.networkID(c))
 	}))
+	// PUT /networks/:networkId/members/:memberId/status 审批或拒绝加入申请。
+	networks.PUT("/:networkId/members/:memberId/status", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.UpdateNetworkMemberStatusRequest) (dto.NetworkMember, error) {
+		rc := currentRouteContext(c)
+		return deps.Network.UpdateMemberStatus(rc.user(), rc.networkID(c), rc.memberID(c), req)
+	}))
 	// GET /networks/:networkId/assignments 返回网络内设备与虚拟 IP 绑定关系。
 	networks.GET("/:networkId/assignments", respondWithItems(func(c *gin.Context) ([]dto.NetworkAssignment, error) {
 		rc := currentRouteContext(c)
