@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use controller_client::{
-    ControllerClient, CreateNetworkRequest, JoinNetworkRequest, LoginRequest,
-    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest,
+    LoginRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
 };
 use ffi_bridge::{AppCoreFacade, DefaultAppCoreFacade};
 use p2p::{P2PConnector, PeerCandidate};
@@ -103,6 +103,22 @@ impl ControllerClient for FakeController {
     }
 
     fn join_network(&self, _access_token: &str, _req: JoinNetworkRequest) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn activate_network(
+        &self,
+        _access_token: &str,
+        _req: JoinNetworkRequest,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn deactivate_network(
+        &self,
+        _access_token: &str,
+        _req: DeactivateNetworkRequest,
+    ) -> Result<(), String> {
         Ok(())
     }
 

@@ -540,7 +540,11 @@ where
     }
 
     fn login(&self, email: String, password: String) -> Result<Session, String> {
-        let session = self.controller.login(LoginRequest { email, password })?;
+        let session = self.controller.login(LoginRequest {
+            email,
+            password,
+            device_id: None,
+        })?;
         let mut state = self
             .state
             .lock()

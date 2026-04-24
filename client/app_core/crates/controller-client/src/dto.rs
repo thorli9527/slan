@@ -31,6 +31,8 @@ impl From<RegisterRequest> for RegisterRequestDto {
 pub struct LoginRequestDto {
     pub email: String,
     pub password: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 impl From<LoginRequest> for LoginRequestDto {
@@ -38,6 +40,7 @@ impl From<LoginRequest> for LoginRequestDto {
         Self {
             email: value.email,
             password: value.password,
+            device_id: value.device_id.filter(|value| !value.trim().is_empty()),
         }
     }
 }
@@ -234,8 +237,22 @@ pub struct ListNetworksResponseDto {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkJoinResultDto {
+    pub member: NetworkMemberDto,
+    pub attachment: SubnetAttachmentDto,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubnetAttachmentDto {
+    pub attachment_id: String,
     pub network_id: String,
+    pub subnet_id: String,
     pub device_id: String,
+    #[serde(default)]
+    pub virtual_ip: Option<String>,
+    #[serde(default)]
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

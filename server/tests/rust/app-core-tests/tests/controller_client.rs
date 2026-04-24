@@ -2,8 +2,8 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use controller_client::{
-    ControllerClient, HttpControllerClient, HttpRequest, HttpResponse, JsonHttpTransport,
-    RelayTicketRequest, TcpJsonHttpTransport,
+    ControllerClient, HttpControllerClient, HttpRequest, HttpResponse, JoinNetworkRequest,
+    JsonHttpTransport, LoginRequest, RelayTicketRequest, TcpJsonHttpTransport,
 };
 use serde_json::Value;
 
@@ -91,6 +91,76 @@ fn relay_ticket_request_serializes_derp_fields() {
     assert_eq!(body["derpClusterId"], "cn-local-a");
     assert_eq!(body["preferredDerpNodeIds"][0], "relay-cn-local-udp");
     assert_eq!(body["preferredDerpNodeIds"][1], "relay-cn-local-tcp");
+}
+
+#[test]
+fn login_request_serializes_optional_device_id() {
+    let transport = RecordingTransport::default();
+    transport.respond_with(
+        200,
+        r#"{
+            "userId":"user-1",
+            "accessToken":"token-1",
+            "expiresIn":3600,
+            "deviceId":"dev-1"
+        }"#,
+    );
+
+    let client = HttpControllerClient::new(support::DEV_CONTROL_BASE_URL, transport);
+    let session = client
+        .login(LoginRequest {
+            email: "user@example.com".into(),
+            password: "password123".into(),
+            device_id: Some("dev-1".into()),
+        })
+        .unwrap();
+
+    let request = client.transport.take_request();
+    let body: Value = serde_json::from_slice(&request.body_json.unwrap()).unwrap();
+    assert_eq!(body["deviceId"], "dev-1");
+    assert_eq!(session.device_id.as_deref(), Some("dev-1"));
+}
+
+#[test]
+fn join_network_accepts_member_attachment_response() {
+    let transport = RecordingTransport::default();
+    transport.respond_with(
+        200,
+        r#"{
+            "member":{
+                "memberId":"member-1",
+                "networkId":"net-1",
+                "deviceId":"dev-1",
+                "role":"member",
+                "status":"active"
+            },
+            "attachment":{
+                "attachmentId":"att-1",
+                "networkId":"net-1",
+                "subnetId":"subnet-1",
+                "deviceId":"dev-1",
+                "virtualIp":"100.64.0.2",
+                "status":"active"
+            }
+        }"#,
+    );
+
+    let client = HttpControllerClient::new(support::DEV_CONTROL_BASE_URL, transport);
+    client
+        .join_network(
+            "token-1",
+            JoinNetworkRequest {
+                network_id: "net-1".into(),
+                device_id: "dev-1".into(),
+            },
+        )
+        .unwrap();
+
+    let request = client.transport.take_request();
+    assert_eq!(
+        request.path,
+        format!("{}/networks/net-1/join", support::DEV_CONTROL_BASE_URL)
+    );
 }
 
 #[test]
