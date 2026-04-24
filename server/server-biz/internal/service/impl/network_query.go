@@ -116,6 +116,13 @@ func (s dbNetworkService) UpdateMemberStatus(userID, networkID, memberID string,
 		return dto.NetworkMember{}, err
 	}
 	member.Status = status
+	if status == "active" && member.Role != "owner" {
+		device, err := s.state.pg.GetDeviceByID(ctx, member.DeviceID)
+		if err != nil {
+			return dto.NetworkMember{}, err
+		}
+		s.state.publishActiveNetworkEnabled(device.UserID, networkID, "network join approved")
+	}
 	return member, nil
 }
 

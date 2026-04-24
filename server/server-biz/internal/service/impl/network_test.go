@@ -730,6 +730,17 @@ func TestPendingJoinRequiresOwnerApprovalBeforeActivation(t *testing.T) {
 	if approved.Status != "active" {
 		t.Fatalf("expected approved member, got %+v", approved)
 	}
+	tokenStore := state.tokens.(*memoryTokenStore)
+	if len(tokenStore.controlSyncEvents) != 1 {
+		t.Fatalf("expected approval control sync event, got %+v", tokenStore.controlSyncEvents)
+	}
+	event := tokenStore.controlSyncEvents[0]
+	if event.Type != "active_network_enabled" || event.TargetUserID != "user-2" || event.NetworkID != "net-1" {
+		t.Fatalf("expected active network enabled event for applicant, got %+v", event)
+	}
+	if event.ActiveNetwork == nil || event.ActiveNetwork.UserID != "user-2" || event.ActiveNetwork.NetworkID != "net-1" {
+		t.Fatalf("expected active network payload for applicant, got %+v", event.ActiveNetwork)
+	}
 	activeVisible, err := networkService.List("user-2")
 	if err != nil {
 		t.Fatalf("list active networks: %v", err)

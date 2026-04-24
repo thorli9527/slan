@@ -21,6 +21,7 @@ type memoryTokenStore struct {
 	authCallbackPayloads map[string][]byte
 	authCallbackReceived map[string]int64
 	networkRevisions     map[string]uint64
+	controlSyncEvents    []controlws.ControlSyncEvent
 	connectPlanGate      map[string]struct{}
 	peerCandidateGate    map[string]struct{}
 }
@@ -34,6 +35,7 @@ func newMemoryTokenStore() *memoryTokenStore {
 		authCallbackPayloads: make(map[string][]byte),
 		authCallbackReceived: make(map[string]int64),
 		networkRevisions:     make(map[string]uint64),
+		controlSyncEvents:    []controlws.ControlSyncEvent{},
 		connectPlanGate:      make(map[string]struct{}),
 		peerCandidateGate:    make(map[string]struct{}),
 	}
@@ -150,7 +152,10 @@ func (s *memoryTokenStore) AuthenticateOpsAccessToken(_ context.Context, token s
 	return adminID, nil
 }
 
-func (s *memoryTokenStore) PublishControlSyncEvent(_ context.Context, _ controlws.ControlSyncEvent) error {
+func (s *memoryTokenStore) PublishControlSyncEvent(_ context.Context, event controlws.ControlSyncEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.controlSyncEvents = append(s.controlSyncEvents, event)
 	return nil
 }
 
