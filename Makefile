@@ -11,7 +11,7 @@ help:
 	@echo "    make cleanup-devices-integration  # kill lingering Flutter integration and slan_app processes"
 	@echo "    make devices-integration          # run the devices integration suites with external cleanup"
 	@echo "    make local-stack-smoke           # run the local Docker control-plane + relay smoke"
-	@echo ""
+	@echo "    "
 	@echo "  macOS Native"
 	@echo "    make macos-tunnel-control-test        # run the SwiftPM TunnelControl native tests"
 	@echo "    make macos-packet-tunnel-build-check  # build-check the macOS PacketTunnel target without code signing"
