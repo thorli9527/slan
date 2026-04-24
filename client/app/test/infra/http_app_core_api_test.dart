@@ -230,7 +230,7 @@ void main() {
     ]);
   });
 
-  test('HttpAppCoreApi sends network switch-shaped bodies for activate/deactivate',
+  test('HttpAppCoreApi sends network lifecycle bodies for activate/deactivate',
       () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);

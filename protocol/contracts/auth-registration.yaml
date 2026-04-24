@@ -18,6 +18,9 @@ contracts:
       password:
         type: string
         required: true
+      deviceId:
+        type: string
+        required: false
   AuthResponse:
     fields:
       userId:

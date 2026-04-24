@@ -16,14 +16,20 @@ class RegisterRequest {
 
 /// 登录请求体。
 class LoginRequest {
-  const LoginRequest({required this.email, required this.password});
+  const LoginRequest({
+    required this.email,
+    required this.password,
+    this.deviceId,
+  });
 
   final String email;
   final String password;
+  final String? deviceId;
 
   Map<String, dynamic> toJson() => {
         'email': email,
         'password': password,
+        if (deviceId != null && deviceId!.isNotEmpty) 'deviceId': deviceId,
       };
 }
 
