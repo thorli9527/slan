@@ -7,6 +7,7 @@ import {
   Device,
   Network,
   NetworkAssignment,
+  NetworkMember,
   NetworkDetail,
   NetworkHome,
   NetworkJoinByOwnerEmailResult,
@@ -147,6 +148,16 @@ export class ConsoleApiService {
       init: {
         method: 'PUT',
         body: JSON.stringify({ joinKey })
+      }
+    });
+  }
+
+  updateNetworkMemberStatus(token: string, networkId: string, memberId: string, status: 'active' | 'rejected'): Promise<NetworkMember> {
+    return this.request<NetworkMember>(`/networks/${networkId}/members/${memberId}/status`, {
+      token,
+      init: {
+        method: 'PUT',
+        body: JSON.stringify({ status })
       }
     });
   }

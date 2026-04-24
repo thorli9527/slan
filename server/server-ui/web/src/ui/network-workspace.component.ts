@@ -2,7 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { Network, NetworkAssignment, NetworkDetail, Subnet } from './api-contracts';
+import { Network, NetworkAssignment, NetworkDetail, NetworkMember, Subnet } from './api-contracts';
 
 @Component({
   selector: 'slan-network-workspace',
@@ -150,6 +150,37 @@ import { Network, NetworkAssignment, NetworkDetail, Subnet } from './api-contrac
 
       <div class="card section-card" *ngIf="detail?.ownedByCurrentUser">
         <div class="panel-title">
+          <h3>加入申请</h3>
+          <p>申请中的设备需要 owner 审批后才能激活网络并分配虚拟 IP。</p>
+        </div>
+        <table *ngIf="pendingMembers.length > 0">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of pendingMembers">
+              <td>{{ item.deviceId }}</td>
+              <td><span class="status-badge" [attr.data-tone]="roleTone(item.role)">{{ roleLabel(item.role) }}</span></td>
+              <td><span class="status-badge" data-tone="warn">{{ memberStatusLabel(item.status) }}</span></td>
+              <td>{{ formatMemberTime(item.createdAt) }}</td>
+              <td>
+                <button class="ghost" (click)="updateMemberStatus.emit({ memberId: item.memberId, status: 'active' })">通过</button>
+                <button class="ghost" (click)="updateMemberStatus.emit({ memberId: item.memberId, status: 'rejected' })">拒绝</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hint" *ngIf="pendingMembers.length === 0">当前没有待审批加入申请。</p>
+      </div>
+
+      <div class="card section-card" *ngIf="detail?.ownedByCurrentUser">
+        <div class="panel-title">
           <h3>网络 IP 管理</h3>
           <p>只有宿主网络 owner 能管理成员虚拟 IP 和网络内设备备注。owner 设备固定为该默认子网的 x.x.x.2。</p>
         </div>
@@ -202,6 +233,7 @@ export class NetworkWorkspaceComponent {
   @Input({ required: true }) detail!: NetworkDetail | null;
   @Input({ required: true }) subnets!: Subnet[];
   @Input({ required: true }) assignments!: NetworkAssignment[];
+  @Input({ required: true }) pendingMembers!: NetworkMember[];
   @Input({ required: true }) selectedDeviceLabel!: string;
   @Input({ required: true }) joinOwnerEmail!: string;
   @Input({ required: true }) updateName!: string;
@@ -234,6 +266,7 @@ export class NetworkWorkspaceComponent {
   @Output() readonly draftRemarkChange = new EventEmitter<{ attachmentId: string; value: string }>();
   @Output() readonly saveAttachmentIp = new EventEmitter<string>();
   @Output() readonly saveAttachmentRemark = new EventEmitter<string>();
+  @Output() readonly updateMemberStatus = new EventEmitter<{ memberId: string; status: 'active' | 'rejected' }>();
 
   subnetNameById(subnetId: string): string {
     const subnet = this.subnets.find((item) => item.subnetId === subnetId);
@@ -267,5 +300,22 @@ export class NetworkWorkspaceComponent {
       default:
         return 'muted';
     }
+  }
+
+  memberStatusLabel(status?: string): string {
+    switch ((status || '').toLowerCase()) {
+      case 'active':
+        return '已通过';
+      case 'pending':
+        return '待审批';
+      case 'rejected':
+        return '已拒绝';
+      default:
+        return status || '-';
+    }
+  }
+
+  formatMemberTime(value?: number): string {
+    return value ? new Date(value * 1000).toLocaleString() : '-';
   }
 }

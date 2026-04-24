@@ -146,6 +146,8 @@ void main() {
                     'networkId': 'net-1',
                     'deviceId': 'machine-1',
                     'role': 'owner',
+                    'createdAt': 1713340000,
+                    'status': 'active',
                   },
                 ],
               },
@@ -269,6 +271,8 @@ void main() {
     expect(devices.last.membershipStatus, 'pending');
     expect(devices.last.networkRole, 'member');
     expect(bootstrap.device.virtualIp, '100.64.0.10');
+    expect(bootstrap.networks.single.members.single.memberId, 'member-1');
+    expect(bootstrap.networks.single.members.single.status, 'active');
     expect(bootstrap.relay.countries.single.cities.single.clusters.single.nodes,
         hasLength(2));
     expect(ticket.allowedDerpNodeIds, [

@@ -1,13 +1,21 @@
 /// 网络成员模型。
 class NetworkMemberModel {
   const NetworkMemberModel({
+    this.memberId,
+    this.networkId,
     required this.deviceId,
     required this.role,
+    this.createdAt,
+    this.status,
     this.virtualIp,
   });
 
+  final String? memberId;
+  final String? networkId;
   final String deviceId;
   final String role;
+  final int? createdAt;
+  final String? status;
   final String? virtualIp;
 }
 

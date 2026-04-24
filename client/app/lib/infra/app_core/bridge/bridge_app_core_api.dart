@@ -399,8 +399,12 @@ NetworkMemberModel _toNetworkMemberModel(
     }
   }
   return NetworkMemberModel(
+    memberId: payload.memberId,
+    networkId: payload.networkId ?? networkId,
     deviceId: payload.deviceId,
     role: payload.role,
+    createdAt: payload.createdAt,
+    status: payload.status,
     virtualIp: virtualIp,
   );
 }

@@ -146,8 +146,12 @@ extension NetworkMemberResponseDtoMapper on NetworkMemberResponseDto {
       }
     }
     return NetworkMemberModel(
+      memberId: memberId,
+      networkId: this.networkId ?? networkId,
       deviceId: deviceId,
       role: role,
+      createdAt: createdAt,
+      status: status,
       virtualIp: virtualIp,
     );
   }

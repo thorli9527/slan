@@ -43,12 +43,16 @@ void main() {
               'networkId': 'net-1',
               'deviceId': 'dev-1',
               'role': 'owner',
+              'createdAt': 1713340000,
+              'status': 'active',
             },
             {
               'memberId': 'member-2',
               'networkId': 'net-1',
               'deviceId': 'dev-2',
               'role': 'member',
+              'createdAt': 1713340100,
+              'status': 'pending',
             },
           ],
         },
@@ -104,6 +108,9 @@ void main() {
     expect(bootstrap.networks, hasLength(1));
     expect(bootstrap.networks.first.cidr, '100.64.0.0/24');
     expect(bootstrap.networks.first.members.first.virtualIp, '100.64.0.10');
+    expect(bootstrap.networks.first.members.first.memberId, 'member-1');
+    expect(bootstrap.networks.first.members.first.status, 'active');
+    expect(bootstrap.networks.first.members.last.status, 'pending');
 
     expect(bootstrap.relay.defaultClusterId, 'cn-sh-a');
     expect(bootstrap.relay.countries, hasLength(1));

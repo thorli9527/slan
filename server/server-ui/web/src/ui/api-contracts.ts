@@ -110,6 +110,8 @@ export type NetworkMember = {
   status?: string;
 };
 
+export type UpdateNetworkMemberStatus = 'active' | 'rejected';
+
 export type SubnetAttachment = {
   attachmentId: string;
   networkId: string;

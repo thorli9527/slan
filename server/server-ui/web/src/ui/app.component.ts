@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 
-import { AuthResponse, Device, NetworkAssignment, NetworkDetail, NetworkHome, Subnet } from './api-contracts';
+import { AuthResponse, Device, NetworkAssignment, NetworkDetail, NetworkHome, NetworkMember, Subnet } from './api-contracts';
 import { AuthPanelComponent } from './auth-panel.component';
 import { ConsoleApiError, ConsoleApiService } from './console-api.service';
 import { AuthenticateResult, ConsoleAppFacadeService, RefreshWorkspaceResult } from './console-app-facade.service';
@@ -108,6 +108,9 @@ export class AppComponent implements OnDestroy {
         .toLowerCase()
         .includes(keyword);
     });
+  });
+  readonly pendingMembers = computed((): NetworkMember[] => {
+    return (this.detail()?.members || []).filter((item) => item.status === 'pending');
   });
   readonly filteredDevices = computed(() => {
     const keyword = this.deviceSearch.trim().toLowerCase();
@@ -326,7 +329,7 @@ export class AppComponent implements OnDestroy {
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
-      this.message.set(`已加入 ${this.joinOwnerEmail.trim()} 的网络`);
+      this.message.set('已提交加入申请，请等待网络 owner 审批后再启用网络');
     } catch (error) {
       this.setError(error);
     } finally {
@@ -344,7 +347,7 @@ export class AppComponent implements OnDestroy {
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
-      this.message.set('已通过 Join Key 加入网络');
+      this.message.set('已通过 Join Key 提交加入申请，请等待网络 owner 审批');
     } catch (error) {
       this.setError(error);
     } finally {
@@ -480,6 +483,29 @@ export class AppComponent implements OnDestroy {
       } else {
         this.message.set('已生成新的 32 位 Join Key');
       }
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.actionBusy.set('');
+    }
+  }
+
+  async updateMemberStatus(memberId: string, status: 'active' | 'rejected'): Promise<void> {
+    const active = this.activeNetwork();
+    if (!active) {
+      return;
+    }
+    this.actionBusy.set(`member:${memberId}:${status}`);
+    try {
+      const result = await this.facade.updateNetworkMemberStatus({
+        token: this.token(),
+        networkId: active.networkId,
+        memberId,
+        status,
+        deviceState: this.currentDeviceState(),
+      });
+      this.applyRefreshWorkspaceResult(result);
+      this.message.set(status === 'active' ? '加入申请已通过' : '加入申请已拒绝');
     } catch (error) {
       this.setError(error);
     } finally {

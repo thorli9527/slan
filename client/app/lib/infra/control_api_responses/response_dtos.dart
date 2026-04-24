@@ -303,18 +303,30 @@ class SubnetResponseDto {
 
 class NetworkMemberResponseDto {
   const NetworkMemberResponseDto({
+    this.memberId,
+    this.networkId,
     required this.deviceId,
     required this.role,
+    this.createdAt,
+    this.status,
   });
 
   factory NetworkMemberResponseDto.fromJson(Map<String, dynamic> json) =>
       NetworkMemberResponseDto(
+        memberId: readNullableString(json, 'memberId'),
+        networkId: readNullableString(json, 'networkId'),
         deviceId: readString(json, 'deviceId'),
         role: readString(json, 'role'),
+        createdAt: readNullableInt(json, 'createdAt'),
+        status: readNullableString(json, 'status'),
       );
 
+  final String? memberId;
+  final String? networkId;
   final String deviceId;
   final String role;
+  final int? createdAt;
+  final String? status;
 
 }
 

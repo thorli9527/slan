@@ -420,23 +420,39 @@ class AppCoreSubnetPayload {
 
 class AppCoreNetworkMemberPayload {
   const AppCoreNetworkMemberPayload({
+    this.memberId,
+    this.networkId,
     required this.deviceId,
     required this.role,
+    this.createdAt,
+    this.status,
   });
 
   factory AppCoreNetworkMemberPayload.fromJson(Map<String, dynamic> json) {
     return AppCoreNetworkMemberPayload(
+      memberId: json['memberId'] as String?,
+      networkId: json['networkId'] as String?,
       deviceId: json['deviceId'] as String? ?? '',
       role: json['role'] as String? ?? '',
+      createdAt: (json['createdAt'] as num?)?.toInt(),
+      status: json['status'] as String?,
     );
   }
 
+  final String? memberId;
+  final String? networkId;
   final String deviceId;
   final String role;
+  final int? createdAt;
+  final String? status;
 
   Map<String, dynamic> toJson() => {
+        'memberId': memberId,
+        'networkId': networkId,
         'deviceId': deviceId,
         'role': role,
+        'createdAt': createdAt,
+        'status': status,
       };
 }
 

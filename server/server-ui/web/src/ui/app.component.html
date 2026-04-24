@@ -271,6 +271,7 @@
             [detail]="detail()"
             [subnets]="subnets()"
             [assignments]="filteredAssignments()"
+            [pendingMembers]="pendingMembers()"
             [selectedDeviceLabel]="selectedDeviceLabel()"
             [joinOwnerEmail]="joinOwnerEmail"
             [updateName]="updateName"
@@ -302,6 +303,7 @@
             (saveAttachmentIp)="updateAttachmentIp($event)"
             (draftRemarkChange)="setDraftRemark($event.attachmentId, $event.value)"
             (saveAttachmentRemark)="updateAttachmentRemark($event)"
+            (updateMemberStatus)="updateMemberStatus($event.memberId, $event.status)"
           />
         </ng-container>
       </section>

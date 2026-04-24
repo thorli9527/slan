@@ -132,7 +132,7 @@ export class ConsoleAppFacadeService {
     });
     const result = await this.api.joinByOwnerEmail(input.token, ownerEmail, managedDevice.deviceId);
     const networkId = result.network?.networkId;
-    if (networkId) {
+    if (networkId && result.member?.status === 'active') {
       await this.workspaceService.activateNetwork(input.token, networkId, managedDevice.deviceId);
     }
     return this.refreshWorkspace({
@@ -156,7 +156,7 @@ export class ConsoleAppFacadeService {
       ...input.deviceState,
     });
     const result = await this.api.joinByKey(input.token, joinKey, managedDevice.deviceId);
-    if (result.member?.networkId) {
+    if (result.member?.networkId && result.member.status === 'active') {
       await this.workspaceService.activateNetwork(input.token, result.member.networkId, managedDevice.deviceId);
     }
     return this.refreshWorkspace({
@@ -235,6 +235,20 @@ export class ConsoleAppFacadeService {
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<RefreshWorkspaceResult> {
     await this.api.updateNetworkJoinKey(input.token, input.networkId, input.joinKey.trim());
+    return this.refreshWorkspace({
+      token: input.token,
+      ...input.deviceState,
+    });
+  }
+
+  async updateNetworkMemberStatus(input: {
+    token: string;
+    networkId: string;
+    memberId: string;
+    status: 'active' | 'rejected';
+    deviceState: Omit<EnsureDeviceInput, 'token'>;
+  }): Promise<RefreshWorkspaceResult> {
+    await this.api.updateNetworkMemberStatus(input.token, input.networkId, input.memberId, input.status);
     return this.refreshWorkspace({
       token: input.token,
       ...input.deviceState,

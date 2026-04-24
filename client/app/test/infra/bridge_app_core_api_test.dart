@@ -52,6 +52,8 @@ void main() {
         bootstrap.relay.countries.single.cities.single.clusters.single.nodes
             .single.nodeId,
         'relay-cn-local-udp');
+    expect(bootstrap.networks.single.members.single.memberId, 'member-1');
+    expect(bootstrap.networks.single.members.single.status, 'active');
     expect(state.status, 'connected');
     expect(state.path?.name, 'relay');
   });
@@ -558,8 +560,12 @@ Map<String, Object?> _bootstrapPayload() => {
           ],
           'members': [
             {
+              'memberId': 'member-1',
+              'networkId': 'net-1',
               'deviceId': 'dev-1',
               'role': 'owner',
+              'createdAt': 1713340000,
+              'status': 'active',
             },
           ],
         },
