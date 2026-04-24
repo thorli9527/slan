@@ -116,9 +116,10 @@ ip address show
 wg show
 ```
 
-Or run the bundled smoke test from Windows. It creates `slan0`, applies a
-temporary WireGuard configuration, verifies the address and WireGuard device,
-then removes the interface on exit:
+Or run the bundled smoke test from Windows. It checks `platformDoctor` and
+`platformInstallPlan`, creates `slan0`, applies a temporary WireGuard
+configuration, verifies the address and WireGuard device, then removes the
+interface on exit:
 
 ```powershell
 docker run --rm `

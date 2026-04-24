@@ -24,6 +24,8 @@ EOF
 )
 
 request_up='{"method":"bringTunnelUp","args":{}}'
+request_doctor='{"method":"platformDoctor","args":{}}'
+request_install_plan='{"method":"platformInstallPlan","args":{}}'
 request_runtime=$(cat <<EOF
 {"method":"tunnelRuntimeView","args":{"peerVirtualIp":"$peer_ip"}}
 EOF
@@ -31,6 +33,8 @@ EOF
 
 responses="$(
   {
+    printf '%s\n' "$request_doctor"
+    printf '%s\n' "$request_install_plan"
     printf '%s\n' "$request_apply"
     printf '%s\n' "$request_up"
     printf '%s\n' "$request_runtime"
@@ -45,8 +49,13 @@ if printf '%s\n' "$responses" | grep -q '"ok":false'; then
 fi
 
 printf '%s\n' "$responses" | grep -q '"ok":true'
+printf '%s\n' "$responses" | grep -q '"name":"ip_command"'
+printf '%s\n' "$responses" | grep -q '"name":"wg_command"'
+printf '%s\n' "$responses" | grep -q '"name":"tun_device"'
+printf '%s\n' "$responses" | grep -q '"linux-kernel"'
+printf '%s\n' "$responses" | grep -q '"wireguard-tools"'
 ip link show "$interface_name" >/dev/null
 ip address show dev "$interface_name" | grep -q "$local_ip/32"
 wg show "$interface_name" >/dev/null
 
-echo "linux-helper-smoke ok: $interface_name has $local_ip/32"
+echo "linux-helper-smoke ok: $interface_name has $local_ip/32 and platform diagnostics"
