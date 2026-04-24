@@ -140,6 +140,9 @@ func (s dbControlChannelService) ReportConnectionState(userID, nodeID string, st
 	if _, err := s.state.requireActiveNetworkMember(ctx, state.NetworkID, peerNode.DeviceID, ErrForbidden, "peer node device"); err != nil {
 		return err
 	}
+	if _, err := s.state.requireActiveNetworkAttachment(ctx, state.NetworkID, peerNode.DeviceID, ErrForbidden, "peer node device"); err != nil {
+		return err
+	}
 	return s.state.pg.UpsertNodeConnectionState(ctx, repo.NodeConnectionState{
 		StateID:       util.NewID("conn"),
 		NetworkID:     state.NetworkID,
@@ -176,6 +179,9 @@ func (s dbControlChannelService) ReportPathHealth(userID, nodeID string, report 
 		return err
 	}
 	if _, err := s.state.requireActiveNetworkMember(ctx, report.NetworkID, peerNode.DeviceID, ErrForbidden, "peer node device"); err != nil {
+		return err
+	}
+	if _, err := s.state.requireActiveNetworkAttachment(ctx, report.NetworkID, peerNode.DeviceID, ErrForbidden, "peer node device"); err != nil {
 		return err
 	}
 
@@ -284,6 +290,9 @@ func (s dbControlChannelService) PeerSnapshot(userID, nodeID, networkID, peerNod
 	if _, err := s.state.requireActiveNetworkMember(ctx, networkID, record.DeviceID, ErrForbidden, "peer node device"); err != nil {
 		return dto.Peer{}, err
 	}
+	if _, err := s.state.requireActiveNetworkAttachment(ctx, networkID, record.DeviceID, ErrForbidden, "peer node device"); err != nil {
+		return dto.Peer{}, err
+	}
 	device, err := s.state.pg.GetDeviceByID(ctx, record.DeviceID)
 	if err != nil {
 		if repo.IsNotFound(err) {
@@ -345,6 +354,9 @@ func (s *dbState) requireNodeSession(ctx context.Context, userID, nodeID, networ
 		return repo.Node{}, err
 	}
 	if _, err := s.requireActiveNetworkMember(ctx, networkID, node.DeviceID, ErrForbidden, "node device"); err != nil {
+		return repo.Node{}, err
+	}
+	if _, err := s.requireActiveNetworkAttachment(ctx, networkID, node.DeviceID, ErrForbidden, "node device"); err != nil {
 		return repo.Node{}, err
 	}
 	return node, nil

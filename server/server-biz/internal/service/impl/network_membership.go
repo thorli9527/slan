@@ -167,3 +167,19 @@ func (s *dbState) ensureAttachment(ctx context.Context, networkID, subnetID, dev
 	}
 	return attachment, s.pg.CreateAttachment(ctx, attachment)
 }
+
+func (s *dbState) requireActiveNetworkAttachment(ctx context.Context, networkID, deviceID string, missingErr error, label string) (dto.SubnetAttachment, error) {
+	attachments, err := s.pg.ListAttachmentsByDevice(ctx, deviceID)
+	if err != nil {
+		return dto.SubnetAttachment{}, err
+	}
+	for _, attachment := range attachments {
+		if attachment.NetworkID != networkID {
+			continue
+		}
+		if attachment.Status == "active" && attachment.VirtualIP != "" {
+			return attachment, nil
+		}
+	}
+	return dto.SubnetAttachment{}, fmt.Errorf("%w: %s has no active network attachment", missingErr, label)
+}

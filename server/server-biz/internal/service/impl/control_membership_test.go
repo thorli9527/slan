@@ -25,6 +25,17 @@ func TestRuntimeControlRejectsPendingNetworkMember(t *testing.T) {
 	}
 }
 
+func TestRuntimeControlRejectsActiveMemberWithoutAttachment(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	seedRuntimeMembershipFixture(t, state, "active")
+
+	_, err := state.requireNodeSession(ctx, "user-1", "node-1", "net-1")
+	if !errors.Is(err, service.ErrForbidden) {
+		t.Fatalf("expected forbidden for member without active attachment, got %v", err)
+	}
+}
+
 func TestRuntimeNodeListExcludesPendingNetworkMembers(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
@@ -44,6 +55,7 @@ func TestRelayTicketRejectsPendingDestinationMember(t *testing.T) {
 	state.cfg = configs.DefaultConfig()
 	ctx := context.Background()
 	seedRuntimeMembershipFixture(t, state, "active")
+	seedRuntimeAttachment(t, state, "att-1", "dev-1", "100.64.0.2")
 
 	if err := state.pg.InsertDevice(ctx, repo.Device{
 		DeviceID:  "dev-2",
@@ -90,6 +102,7 @@ func TestRelayTicketRejectsPendingDestinationMember(t *testing.T) {
 func TestRuntimePeerReportsRejectPendingPeerMember(t *testing.T) {
 	state := newNetworkTestState(t)
 	seedRuntimeMembershipFixture(t, state, "active")
+	seedRuntimeAttachment(t, state, "att-1", "dev-1", "100.64.0.2")
 	seedRuntimePeer(t, state, "pending")
 
 	channel := dbControlChannelService{state: state}
@@ -116,6 +129,7 @@ func TestRuntimePeerSnapshotRejectsPendingPeerMember(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	seedRuntimeMembershipFixture(t, state, "active")
+	seedRuntimeAttachment(t, state, "att-1", "dev-1", "100.64.0.2")
 	seedRuntimePeer(t, state, "pending")
 
 	if err := state.pg.CreateControlSession(ctx, repo.ControlSession{
@@ -257,5 +271,19 @@ func seedRuntimePeer(t *testing.T, state *dbState, status string) {
 		CreatedAt: time.Now().Unix(),
 	}); err != nil {
 		t.Fatalf("create peer member: %v", err)
+	}
+}
+
+func seedRuntimeAttachment(t *testing.T, state *dbState, attachmentID, deviceID, virtualIP string) {
+	t.Helper()
+	if err := state.pg.CreateAttachment(context.Background(), dto.SubnetAttachment{
+		AttachmentID: attachmentID,
+		NetworkID:    "net-1",
+		SubnetID:     "subnet-1",
+		DeviceID:     deviceID,
+		VirtualIP:    virtualIP,
+		Status:       "active",
+	}); err != nil {
+		t.Fatalf("create runtime attachment: %v", err)
 	}
 }

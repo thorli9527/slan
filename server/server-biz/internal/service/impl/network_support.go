@@ -308,6 +308,9 @@ func (s *dbState) networkPeerDTO(ctx context.Context, self dto.Node, networkID s
 	if err != nil || device.Status != "online" {
 		return dto.Peer{}, false
 	}
+	if _, err := s.requireActiveNetworkAttachment(ctx, networkID, record.DeviceID, ErrForbidden, "peer node device"); err != nil {
+		return dto.Peer{}, false
+	}
 	if !s.hasFreshControlSession(ctx, record.NodeID, networkID, now) {
 		return dto.Peer{}, false
 	}

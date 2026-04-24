@@ -120,7 +120,13 @@ func (s *dbState) issueRelayTicket(ctx context.Context, userID string, req dto.R
 	if _, err := s.requireActiveNetworkMember(ctx, req.NetworkID, srcNode.DeviceID, ErrForbidden, "source node device"); err != nil {
 		return dto.RelayTicket{}, err
 	}
+	if _, err := s.requireActiveNetworkAttachment(ctx, req.NetworkID, srcNode.DeviceID, ErrForbidden, "source node device"); err != nil {
+		return dto.RelayTicket{}, err
+	}
 	if _, err := s.requireActiveNetworkMember(ctx, req.NetworkID, dstNode.DeviceID, ErrNotFound, "destination node device"); err != nil {
+		return dto.RelayTicket{}, err
+	}
+	if _, err := s.requireActiveNetworkAttachment(ctx, req.NetworkID, dstNode.DeviceID, ErrNotFound, "destination node device"); err != nil {
 		return dto.RelayTicket{}, err
 	}
 	cluster := s.relayClusterForRequest(req.DerpClusterID)
