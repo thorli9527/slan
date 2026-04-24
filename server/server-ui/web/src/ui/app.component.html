@@ -341,14 +341,26 @@
               </select>
             </label>
           </div>
-          <label>
-            <span>状态过滤</span>
-            <select [value]="deviceStatusFilter" (change)="deviceStatusFilter = $any($event.target).value">
-              <option value="all">全部设备</option>
-              <option value="online">只看在线 / 已连接</option>
-              <option value="offline">只看离线 / 已断开</option>
-            </select>
-          </label>
+          <div class="grid two">
+            <label>
+              <span>连接状态过滤</span>
+              <select [value]="deviceStatusFilter" (change)="deviceStatusFilter = $any($event.target).value">
+                <option value="all">全部连接状态</option>
+                <option value="online">只看在线 / 已连接</option>
+                <option value="offline">只看离线 / 已断开</option>
+              </select>
+            </label>
+            <label>
+              <span>加入状态过滤</span>
+              <select [value]="deviceMembershipFilter" (change)="deviceMembershipFilter = $any($event.target).value">
+                <option value="all">全部加入状态</option>
+                <option value="active">已加入</option>
+                <option value="pending">申请加入中</option>
+                <option value="rejected">已拒绝</option>
+                <option value="none">未加入</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <div class="table-shell" *ngIf="filteredDevices().length > 0; else noDevices">

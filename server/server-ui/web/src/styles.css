@@ -66,6 +66,12 @@ select {
   border-color: rgba(25, 92, 148, .18);
 }
 
+.status-badge[data-tone="danger"] {
+  color: #9f2d20;
+  background: rgba(204, 67, 52, .12);
+  border-color: rgba(204, 67, 52, .18);
+}
+
 .status-badge[data-tone="muted"] {
   color: var(--muted);
   background: rgba(95, 107, 118, .10);

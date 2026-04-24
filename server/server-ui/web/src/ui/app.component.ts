@@ -50,6 +50,7 @@ export class AppComponent implements OnDestroy {
   deviceSearch = '';
   deviceSort = 'created_desc';
   deviceStatusFilter = 'all';
+  deviceMembershipFilter = 'all';
   assignmentSearch = '';
   assignmentRoleFilter = 'all';
   updateName = '';
@@ -115,6 +116,7 @@ export class AppComponent implements OnDestroy {
   readonly filteredDevices = computed(() => {
     const keyword = this.deviceSearch.trim().toLowerCase();
     const statusFilter = this.deviceStatusFilter;
+    const membershipFilter = this.deviceMembershipFilter;
     const filtered = this.devices().filter((item) => {
       if (statusFilter !== 'all') {
         const tone = this.deviceStatusTone(item);
@@ -122,6 +124,16 @@ export class AppComponent implements OnDestroy {
           return false;
         }
         if (statusFilter === 'offline' && tone === 'success') {
+          return false;
+        }
+      }
+      if (membershipFilter !== 'all') {
+        const membership = (item.membershipStatus || '').toLowerCase();
+        if (membershipFilter === 'none') {
+          if (membership) {
+            return false;
+          }
+        } else if (membership !== membershipFilter) {
           return false;
         }
       }
@@ -585,6 +597,8 @@ export class AppComponent implements OnDestroy {
       case 'pending':
       case 'joining':
         return 'warn';
+      case 'rejected':
+        return 'danger';
       default:
         return 'muted';
     }
