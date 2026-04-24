@@ -28,6 +28,12 @@ namespace {
 constexpr char kDefaultAppCoreServiceHost[] = "127.0.0.1:46391";
 constexpr wchar_t kWindowsServiceName[] = L"SLANAppCoreService";
 
+struct ServiceEndpoint {
+  std::string address;
+  std::string source;
+  bool allow_start;
+};
+
 std::string EscapeJsonString(const std::string& value) {
   std::ostringstream escaped;
   for (const unsigned char ch : value) {
@@ -180,20 +186,29 @@ std::wstring ResolveServiceExecutablePath() {
   return directory + L"\\app-core-service.exe";
 }
 
-std::string ResolveServiceHost() {
+ServiceEndpoint ResolveServiceEndpoint() {
   if (const auto env_host = GetEnvironmentPath(L"SLAN_APP_CORE_SERVICE_HOST")) {
     const auto utf8 = WideToUtf8(*env_host);
     if (!utf8.empty()) {
-      return utf8;
+      return {utf8, "SLAN_APP_CORE_SERVICE_HOST", false};
     }
   }
   if (const auto env_host = GetEnvironmentPath(L"SLAN_APP_CORE_HELPER_HOST")) {
     const auto utf8 = WideToUtf8(*env_host);
     if (!utf8.empty()) {
-      return utf8;
+      return {utf8, "SLAN_APP_CORE_HELPER_HOST", true};
     }
   }
-  return kDefaultAppCoreServiceHost;
+  return {kDefaultAppCoreServiceHost, "default", true};
+}
+
+std::string ResolveServiceHost() {
+  return ResolveServiceEndpoint().address;
+}
+
+std::string ServiceEndpointSummary() {
+  const ServiceEndpoint endpoint = ResolveServiceEndpoint();
+  return "host=" + endpoint.address + ", source=" + endpoint.source;
 }
 
 std::string BuildHelperRequestJson(
@@ -369,7 +384,8 @@ class AppCoreServiceBridgeClient {
     const auto separator = service_host.rfind(':');
     if (separator == std::string::npos || separator == 0 || separator == service_host.size() - 1) {
       if (error_message != nullptr) {
-        *error_message = "Invalid app-core service host. Expected host:port.";
+        *error_message = "Invalid app-core service host. Expected host:port. " +
+                         ServiceEndpointSummary();
       }
       return false;
     }
@@ -381,7 +397,8 @@ class AppCoreServiceBridgeClient {
         getaddrinfo(hostname.c_str(), port.c_str(), &hints, &resolved);
     if (resolve_result != 0) {
       if (error_message != nullptr) {
-        *error_message = "Failed to resolve app-core service host.";
+        *error_message = "Failed to resolve app-core service host. " +
+                         ServiceEndpointSummary();
       }
       return false;
     }
@@ -410,7 +427,7 @@ class AppCoreServiceBridgeClient {
     if (!connected) {
       if (error_message != nullptr) {
         *error_message =
-            "Failed to connect to app-core service. Ensure app-core-service.exe is available.";
+            "Failed to connect to app-core service. " + ServiceEndpointSummary();
       }
       return false;
     }
@@ -427,6 +444,17 @@ class AppCoreServiceBridgeClient {
 
     if (ConnectToResolvedServiceHost(nullptr)) {
       return true;
+    }
+
+    const ServiceEndpoint endpoint = ResolveServiceEndpoint();
+    if (!endpoint.allow_start) {
+      if (error_message != nullptr) {
+        *error_message =
+            "app-core service host is external; Windows plugin will not start "
+            "the local SLAN AppCore Service for it. " +
+            ServiceEndpointSummary();
+      }
+      return false;
     }
 
     if (!EnsureServiceStarted(error_message)) {

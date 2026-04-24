@@ -65,6 +65,9 @@ Notes:
 
 - Empty `SLAN_TUNNEL_HOST_MODE` falls back to `plugin`.
 - `SLAN_APP_CORE_HELPER_HOST` accepts either `host:port` or `tcp://host:port`.
+- `SLAN_APP_CORE_SERVICE_HOST` is for an already-running external helper or
+  service. Desktop plugins connect to it but do not try to start local helper
+  processes or OS services for that address.
 - Windows runner build copies `app-core-helper.exe` into the app output directory after build.
 
 ## Linux Helper In Docker From Windows
