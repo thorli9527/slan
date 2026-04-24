@@ -3,6 +3,7 @@ part of 'devices_page.dart';
 class _DeviceStateCard extends StatelessWidget {
   const _DeviceStateCard({
     required this.device,
+    required this.devices,
     required this.node,
     required this.bootstrap,
     required this.controlStatus,
@@ -30,6 +31,7 @@ class _DeviceStateCard extends StatelessWidget {
   });
 
   final DeviceModel? device;
+  final List<DeviceModel> devices;
   final NodeModel? node;
   final BootstrapModel? bootstrap;
   final ControlStatusModel? controlStatus;
@@ -121,6 +123,14 @@ class _DeviceStateCard extends StatelessWidget {
               node: node,
               control: control,
               connectionState: connectionState,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _DevicesSubsection(
+            title: 'Device Inventory',
+            child: _DeviceStateInventorySection(
+              device: device,
+              devices: devices,
             ),
           ),
           const SizedBox(height: 16),

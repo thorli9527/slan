@@ -10,6 +10,7 @@ import '../models/relay_models.dart';
 mixin AppCoreSessionStoreState on ChangeNotifier {
   SessionModel? session;
   DeviceModel? device;
+  List<DeviceModel> devices = const [];
   NodeModel? node;
   List<NetworkModel> networks = const [];
   BootstrapModel? bootstrap;
@@ -25,6 +26,7 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
   void resetSessionState() {
     session = null;
     device = null;
+    devices = const [];
     node = null;
     networks = const [];
     bootstrap = null;
@@ -39,6 +41,18 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
   @protected
   void syncSessionDevice(DeviceModel? nextDevice) {
     device = nextDevice;
+    if (nextDevice != null) {
+      final index =
+          devices.indexWhere((item) => item.deviceId == nextDevice.deviceId);
+      if (index < 0) {
+        devices = List.unmodifiable([nextDevice, ...devices]);
+      } else {
+        devices = List.unmodifiable([
+          for (var i = 0; i < devices.length; i++)
+            if (i == index) nextDevice else devices[i],
+        ]);
+      }
+    }
     session = session == null || nextDevice == null
         ? session
         : SessionModel(

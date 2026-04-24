@@ -87,6 +87,14 @@ class DeviceResponseDto {
     required this.name,
     required this.platform,
     required this.status,
+    this.ownerEmail,
+    this.currentVirtualIp,
+    this.linkStatus,
+    this.connectivityProtocol,
+    this.joinedAt,
+    this.membershipStatus,
+    this.networkRole,
+    this.createdAt,
     this.publicKey,
     this.networkIds = const [],
   });
@@ -97,6 +105,14 @@ class DeviceResponseDto {
         name: readString(json, 'name'),
         platform: readString(json, 'platform'),
         status: readString(json, 'status'),
+        ownerEmail: readNullableString(json, 'ownerEmail'),
+        currentVirtualIp: readNullableString(json, 'currentVirtualIp'),
+        linkStatus: readNullableString(json, 'linkStatus'),
+        connectivityProtocol: readNullableString(json, 'connectivityProtocol'),
+        joinedAt: readNullableInt(json, 'joinedAt'),
+        membershipStatus: readNullableString(json, 'membershipStatus'),
+        networkRole: readNullableString(json, 'networkRole'),
+        createdAt: readNullableInt(json, 'createdAt'),
         publicKey: readNullableString(json, 'publicKey'),
         networkIds: readStringList(json, 'networkIds'),
       );
@@ -105,6 +121,14 @@ class DeviceResponseDto {
   final String name;
   final String platform;
   final String status;
+  final String? ownerEmail;
+  final String? currentVirtualIp;
+  final String? linkStatus;
+  final String? connectivityProtocol;
+  final int? joinedAt;
+  final String? membershipStatus;
+  final String? networkRole;
+  final int? createdAt;
   final String? publicKey;
   final List<String> networkIds;
 

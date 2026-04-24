@@ -70,6 +70,14 @@ class DeviceModel {
     required this.status,
     this.virtualIp,
     this.publicKey,
+    this.ownerEmail,
+    this.linkStatus,
+    this.connectivityProtocol,
+    this.joinedAt,
+    this.membershipStatus,
+    this.networkRole,
+    this.createdAt,
+    this.networkIds = const [],
   });
 
   final String deviceId;
@@ -78,6 +86,14 @@ class DeviceModel {
   final String status;
   final String? virtualIp;
   final String? publicKey;
+  final String? ownerEmail;
+  final String? linkStatus;
+  final String? connectivityProtocol;
+  final int? joinedAt;
+  final String? membershipStatus;
+  final String? networkRole;
+  final int? createdAt;
+  final List<String> networkIds;
 }
 
 /// 节点模型。

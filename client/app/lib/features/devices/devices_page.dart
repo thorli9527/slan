@@ -180,6 +180,7 @@ class _DevicesPageState extends State<DevicesPage> {
         const SizedBox(height: 16),
         _DeviceStateCard(
           device: sessionStore.device,
+          devices: sessionStore.devices,
           node: sessionStore.node,
           bootstrap: sessionStore.bootstrap,
           controlStatus: sessionStore.controlStatus,
@@ -315,6 +316,7 @@ class _DevicesPageState extends State<DevicesPage> {
                       width: 380,
                       child: _DeviceStateCard(
                         device: sessionStore.device,
+                        devices: sessionStore.devices,
                         node: sessionStore.node,
                         bootstrap: sessionStore.bootstrap,
                         controlStatus: sessionStore.controlStatus,

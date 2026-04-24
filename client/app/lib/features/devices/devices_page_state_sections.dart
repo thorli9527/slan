@@ -46,6 +46,60 @@ class _DeviceStateControlPlaneSection extends StatelessWidget {
   }
 }
 
+class _DeviceStateInventorySection extends StatelessWidget {
+  const _DeviceStateInventorySection({
+    required this.device,
+    required this.devices,
+  });
+
+  final DeviceModel? device;
+  final List<DeviceModel> devices;
+
+  @override
+  Widget build(BuildContext context) {
+    final pendingCount =
+        devices.where((item) => item.membershipStatus == 'pending').length;
+    final visibleDevices = devices.take(4).toList(growable: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DesktopKeyValueList(
+          entries: [
+            DesktopKeyValueEntry(
+              label: 'Devices',
+              value: devices.length.toString(),
+            ),
+            DesktopKeyValueEntry(
+              label: 'Pending joins',
+              value: pendingCount.toString(),
+            ),
+            DesktopKeyValueEntry(
+              label: 'Membership',
+              value: device?.membershipStatus ?? '-',
+            ),
+            DesktopKeyValueEntry(
+              label: 'Role',
+              value: device?.networkRole ?? '-',
+            ),
+            DesktopKeyValueEntry(
+              label: 'Networks',
+              value: device?.networkIds.join(', ') ?? '-',
+            ),
+          ],
+        ),
+        if (visibleDevices.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          for (final item in visibleDevices)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(_deviceInventoryLine(item)),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
 class _DeviceStateRelayOverlaySection extends StatelessWidget {
   const _DeviceStateRelayOverlaySection({
     required this.relayTicket,
@@ -98,6 +152,17 @@ class _DeviceStateRelayOverlaySection extends StatelessWidget {
       ],
     );
   }
+}
+
+String _deviceInventoryLine(DeviceModel device) {
+  final status = device.membershipStatus?.isNotEmpty == true
+      ? device.membershipStatus!
+      : device.status;
+  final role = device.networkRole?.isNotEmpty == true
+      ? device.networkRole!
+      : '-';
+  final ip = device.virtualIp?.isNotEmpty == true ? device.virtualIp! : '-';
+  return '${device.name} $status/$role $ip';
 }
 
 class _DeviceStatePipelineStatusSection extends StatelessWidget {

@@ -8,12 +8,14 @@ class AuthSessionHydrationResult {
   const AuthSessionHydrationResult({
     required this.session,
     required this.device,
+    required this.devices,
     required this.networks,
     required this.notice,
   });
 
   final SessionModel session;
   final DeviceModel? device;
+  final List<DeviceModel> devices;
   final List<NetworkModel> networks;
   final String notice;
 }
@@ -52,6 +54,7 @@ class AuthSessionService {
     return AuthSessionHydrationResult(
       session: session,
       device: matchedDevice,
+      devices: devices,
       networks: networks,
       notice: notice,
     );

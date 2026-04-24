@@ -122,11 +122,14 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       final hydrated =
           await _authSessionService.hydrateExternalSession(hydratedSession);
       if (hydrated.device != null) {
+        sessionStore.devices = hydrated.devices;
         sessionStore.syncDevice(hydrated.device);
         emitStateChanged();
         debugPrint(
           '[auth-callback] store matched device=${hydrated.device!.deviceId}',
         );
+      } else {
+        sessionStore.devices = hydrated.devices;
       }
       sessionStore.networks = hydrated.networks;
       debugPrint(
@@ -308,13 +311,21 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       final currentDevice = result.device;
       sessionStore.networks = result.networks;
       if (currentDevice != null) {
-        sessionStore.device = DeviceModel(
+        sessionStore.syncDevice(DeviceModel(
           deviceId: currentDevice.deviceId,
           name: currentDevice.name,
           platform: currentDevice.platform,
           status: currentDevice.status,
           publicKey: currentDevice.publicKey,
-        );
+          ownerEmail: currentDevice.ownerEmail,
+          linkStatus: currentDevice.linkStatus,
+          connectivityProtocol: currentDevice.connectivityProtocol,
+          joinedAt: currentDevice.joinedAt,
+          membershipStatus: currentDevice.membershipStatus,
+          networkRole: currentDevice.networkRole,
+          createdAt: currentDevice.createdAt,
+          networkIds: currentDevice.networkIds,
+        ));
       }
       sessionStore.notice = '当前网络已停用，本地隧道和虚拟 IP 已释放。';
       sessionStore.bootstrap = null;

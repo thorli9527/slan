@@ -265,6 +265,14 @@ DeviceModel _toDeviceModel(
     status: payload.status,
     virtualIp: virtualIp ?? payload.currentVirtualIp,
     publicKey: payload.publicKey,
+    ownerEmail: payload.ownerEmail,
+    linkStatus: payload.linkStatus,
+    connectivityProtocol: payload.connectivityProtocol,
+    joinedAt: payload.joinedAt,
+    membershipStatus: payload.membershipStatus,
+    networkRole: payload.networkRole,
+    createdAt: payload.createdAt,
+    networkIds: payload.networkIds,
   );
 }
 

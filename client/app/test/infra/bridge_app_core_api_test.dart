@@ -110,8 +110,16 @@ void main() {
         'name': 'thor-mac',
         'platform': 'macos',
         'status': 'online',
+        'ownerEmail': 'user@example.com',
         'currentVirtualIp': '100.64.0.10',
+        'linkStatus': 'direct',
+        'connectivityProtocol': 'p2p',
+        'joinedAt': 1713340000,
+        'membershipStatus': 'active',
+        'networkRole': 'owner',
+        'createdAt': 1713330000,
         'publicKey': 'device-pub-1',
+        'networkIds': ['net-1'],
       },
       'registerNode': {
         'nodeId': 'node-1',
@@ -133,6 +141,10 @@ void main() {
             'name': 'thor-mac',
             'platform': 'macos',
             'status': 'online',
+            'currentVirtualIp': '100.64.0.10',
+            'membershipStatus': 'pending',
+            'networkRole': 'member',
+            'networkIds': ['net-1'],
           },
         ],
       },
@@ -164,9 +176,18 @@ void main() {
 
     expect(session.accessToken, 'token-1');
     expect(device.deviceId, 'dev-1');
+    expect(device.ownerEmail, 'user@example.com');
+    expect(device.virtualIp, '100.64.0.10');
+    expect(device.membershipStatus, 'active');
+    expect(device.networkRole, 'owner');
+    expect(device.networkIds, ['net-1']);
     expect(node.nodeId, 'node-1');
     expect(network.networkId, 'net-1');
     expect(devices.single.deviceId, 'dev-1');
+    expect(devices.single.virtualIp, '100.64.0.10');
+    expect(devices.single.membershipStatus, 'pending');
+    expect(devices.single.networkRole, 'member');
+    expect(devices.single.networkIds, ['net-1']);
     expect(pluginPlatform.calls.map((call) => call.method), [
       'login',
       'registerDevice',

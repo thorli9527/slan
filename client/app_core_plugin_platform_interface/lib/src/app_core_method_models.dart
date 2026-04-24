@@ -44,6 +44,14 @@ class AppCoreDevicePayload {
     required this.status,
     this.currentVirtualIp,
     this.publicKey,
+    this.ownerEmail,
+    this.linkStatus,
+    this.connectivityProtocol,
+    this.joinedAt,
+    this.membershipStatus,
+    this.networkRole,
+    this.createdAt,
+    this.networkIds = const [],
   });
 
   factory AppCoreDevicePayload.fromJson(Map<String, dynamic> json) {
@@ -54,6 +62,14 @@ class AppCoreDevicePayload {
       status: json['status'] as String? ?? '',
       currentVirtualIp: json['currentVirtualIp'] as String?,
       publicKey: json['publicKey'] as String?,
+      ownerEmail: json['ownerEmail'] as String?,
+      linkStatus: json['linkStatus'] as String?,
+      connectivityProtocol: json['connectivityProtocol'] as String?,
+      joinedAt: (json['joinedAt'] as num?)?.toInt(),
+      membershipStatus: json['membershipStatus'] as String?,
+      networkRole: json['networkRole'] as String?,
+      createdAt: (json['createdAt'] as num?)?.toInt(),
+      networkIds: _readStringList(json['networkIds']),
     );
   }
 
@@ -63,6 +79,14 @@ class AppCoreDevicePayload {
   final String status;
   final String? currentVirtualIp;
   final String? publicKey;
+  final String? ownerEmail;
+  final String? linkStatus;
+  final String? connectivityProtocol;
+  final int? joinedAt;
+  final String? membershipStatus;
+  final String? networkRole;
+  final int? createdAt;
+  final List<String> networkIds;
 
   Map<String, dynamic> toJson() => {
         'deviceId': deviceId,
@@ -71,6 +95,14 @@ class AppCoreDevicePayload {
         'status': status,
         'currentVirtualIp': currentVirtualIp,
         'publicKey': publicKey,
+        'ownerEmail': ownerEmail,
+        'linkStatus': linkStatus,
+        'connectivityProtocol': connectivityProtocol,
+        'joinedAt': joinedAt,
+        'membershipStatus': membershipStatus,
+        'networkRole': networkRole,
+        'createdAt': createdAt,
+        'networkIds': networkIds,
       };
 }
 

@@ -19,8 +19,16 @@ extension DeviceResponseDtoMapper on DeviceResponseDto {
         name: name,
         platform: platform,
         status: status,
-        virtualIp: virtualIp,
+        virtualIp: virtualIp ?? currentVirtualIp,
         publicKey: publicKey,
+        ownerEmail: ownerEmail,
+        linkStatus: linkStatus,
+        connectivityProtocol: connectivityProtocol,
+        joinedAt: joinedAt,
+        membershipStatus: membershipStatus,
+        networkRole: networkRole,
+        createdAt: createdAt,
+        networkIds: networkIds,
       );
 }
 

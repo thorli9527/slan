@@ -39,7 +39,16 @@ void main() {
             'name': json['name'],
             'platform': json['platform'],
             'status': 'online',
+            'ownerEmail': 'user@example.com',
+            'currentVirtualIp': '100.64.0.10',
+            'linkStatus': 'direct',
+            'connectivityProtocol': 'p2p',
+            'joinedAt': 1713340000,
+            'membershipStatus': 'active',
+            'networkRole': 'owner',
+            'createdAt': 1713330000,
             'publicKey': json['publicKey'],
+            'networkIds': ['net-1'],
           }));
       } else if (route == 'POST /nodes/register') {
         request.response
@@ -76,6 +85,9 @@ void main() {
                 'name': 'thor-mac',
                 'platform': 'macos',
                 'status': 'online',
+                'membershipStatus': 'active',
+                'networkRole': 'owner',
+                'networkIds': ['net-1'],
                 'publicKey': 'device-pub',
               },
               'attachments': [
@@ -219,6 +231,10 @@ void main() {
 
     expect(session.accessToken, 'token-1');
     expect(device.deviceId, 'machine-1');
+    expect(device.virtualIp, '100.64.0.10');
+    expect(device.membershipStatus, 'active');
+    expect(device.networkRole, 'owner');
+    expect(device.networkIds, ['net-1']);
     expect(node.capabilities, ['relay']);
     expect(networks.single.cidr, '100.64.0.0/24');
     expect(bootstrap.device.virtualIp, '100.64.0.10');
