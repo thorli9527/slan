@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
@@ -808,6 +809,105 @@ func TestRejectedJoinCanBeRequestedAgain(t *testing.T) {
 	}
 	if second.Member.MemberID != first.Member.MemberID || second.Member.Status != "pending" {
 		t.Fatalf("expected rejected membership to reopen as pending, got first=%+v second=%+v", first.Member, second.Member)
+	}
+}
+
+func TestRejectActiveMemberCleansRuntimeState(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	for _, user := range []repo.User{
+		{UserID: "owner-1", Email: "owner@local.slan", PasswordHash: "hash", ActiveNetworkID: "net-1"},
+		{UserID: "user-2", Email: "member@local.slan", PasswordHash: "hash", ActiveNetworkID: "net-1"},
+	} {
+		if err := state.pg.CreateUser(ctx, user); err != nil {
+			t.Fatalf("create user %s: %v", user.UserID, err)
+		}
+	}
+	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-2",
+		UserID:    "user-2",
+		MachineID: "machine-2",
+		Name:      "member-device",
+		Platform:  "windows",
+		Status:    "online",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("create member device: %v", err)
+	}
+	if err := state.pg.UpsertNode(ctx, repo.Node{
+		NodeID:        "node-2",
+		UserID:        "user-2",
+		DeviceID:      "dev-2",
+		NodePublicKey: "node-public-key",
+		Capabilities:  []string{"desktop"},
+	}); err != nil {
+		t.Fatalf("create member node: %v", err)
+	}
+	if err := state.pg.CreateMember(ctx, dto.NetworkMember{
+		MemberID:  "member-2",
+		NetworkID: "net-1",
+		DeviceID:  "dev-2",
+		Role:      "member",
+		Status:    "active",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("create active member: %v", err)
+	}
+	if err := state.pg.CreateAttachment(ctx, dto.SubnetAttachment{
+		AttachmentID: "att-2",
+		NetworkID:    "net-1",
+		SubnetID:     "subnet-1",
+		DeviceID:     "dev-2",
+		VirtualIP:    "10.0.0.3",
+		Status:       "active",
+	}); err != nil {
+		t.Fatalf("create member attachment: %v", err)
+	}
+	if err := state.pg.CreateControlSession(ctx, repo.ControlSession{
+		ControlSessionID: "ctrl-2",
+		UserID:           "user-2",
+		DeviceID:         "dev-2",
+		NodeID:           "node-2",
+		NetworkID:        "net-1",
+		SessionToken:     "token-2",
+		ConnectedAt:      now,
+		LastSeenAt:       now,
+	}); err != nil {
+		t.Fatalf("create control session: %v", err)
+	}
+
+	rejected, err := dbNetworkService{state: state}.UpdateMemberStatus("owner-1", "net-1", "member-2", dto.UpdateNetworkMemberStatusRequest{
+		Status: "rejected",
+	})
+	if err != nil {
+		t.Fatalf("reject member: %v", err)
+	}
+	if rejected.Status != "rejected" {
+		t.Fatalf("expected rejected member, got %+v", rejected)
+	}
+	attachments, err := state.pg.ListAttachmentsByDevice(ctx, "dev-2")
+	if err != nil {
+		t.Fatalf("list attachments: %v", err)
+	}
+	if len(attachments) != 0 {
+		t.Fatalf("expected rejected member attachments to be deleted, got %+v", attachments)
+	}
+	if _, err := state.pg.GetLatestControlSessionByNode(ctx, "node-2", "net-1"); !repo.IsNotFound(err) {
+		t.Fatalf("expected rejected member control session to be deleted, got %v", err)
+	}
+	user, err := state.pg.GetUserByID(ctx, "user-2")
+	if err != nil {
+		t.Fatalf("load member user: %v", err)
+	}
+	if user.ActiveNetworkID != "" {
+		t.Fatalf("expected rejected member active network to be cleared, got %s", user.ActiveNetworkID)
+	}
+	tokenStore := state.tokens.(*memoryTokenStore)
+	if len(tokenStore.controlSyncEvents) != 1 || tokenStore.controlSyncEvents[0].Type != "peer_remove" {
+		t.Fatalf("expected peer_remove control sync event, got %+v", tokenStore.controlSyncEvents)
 	}
 }
 

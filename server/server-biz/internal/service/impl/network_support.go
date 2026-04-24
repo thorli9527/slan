@@ -158,6 +158,25 @@ func (s *dbState) publishActiveNetworkEnabled(userID, networkID, reason string) 
 	})
 }
 
+func (s *dbState) publishPeerRemove(networkID, nodeID string) {
+	if strings.TrimSpace(networkID) == "" || strings.TrimSpace(nodeID) == "" || s.tokens == nil {
+		return
+	}
+
+	ctx := context.Background()
+	revision, err := s.tokens.NextNetworkRevision(ctx, networkID)
+	if err != nil || revision == 0 {
+		revision = 1
+	}
+	_ = s.tokens.PublishControlSyncEvent(ctx, controlws.ControlSyncEvent{
+		Type:         "peer_remove",
+		NetworkID:    networkID,
+		SourceNodeID: nodeID,
+		Revision:     revision,
+		PeerNodeID:   nodeID,
+	})
+}
+
 func (s *dbState) controlPlaneConfig() dto.ControlPlaneConfig {
 	return dto.ControlPlaneConfig{
 		WSURL:            s.wsURL(),

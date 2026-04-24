@@ -98,3 +98,9 @@ func (r *PostgresRepository) DeleteControlSessionsByDeviceExceptNetwork(ctx cont
 	}
 	return query.Delete(&ControlSession{}).Error
 }
+
+func (r *PostgresRepository) DeleteControlSessionsByDeviceInNetwork(ctx context.Context, deviceID, networkID string) error {
+	return r.db.WithContext(ctx).
+		Where("device_id = ? AND network_id = ?", deviceID, networkID).
+		Delete(&ControlSession{}).Error
+}

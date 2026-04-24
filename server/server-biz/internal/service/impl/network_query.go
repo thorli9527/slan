@@ -123,7 +123,59 @@ func (s dbNetworkService) UpdateMemberStatus(userID, networkID, memberID string,
 		}
 		s.state.publishActiveNetworkEnabled(device.UserID, networkID, "network join approved")
 	}
+	if status == "rejected" {
+		if err := s.state.cleanupRejectedNetworkMember(ctx, networkID, member); err != nil {
+			return dto.NetworkMember{}, err
+		}
+	}
 	return member, nil
+}
+
+func (s *dbState) cleanupRejectedNetworkMember(ctx context.Context, networkID string, member dto.NetworkMember) error {
+	if member.Role == "owner" {
+		return nil
+	}
+	nodes, err := s.pg.ListNodesByDevice(ctx, member.DeviceID)
+	if err != nil {
+		return err
+	}
+	if err := s.pg.DeleteAttachmentsByDeviceInNetwork(ctx, member.DeviceID, networkID); err != nil {
+		return err
+	}
+	if err := s.pg.DeleteControlSessionsByDeviceInNetwork(ctx, member.DeviceID, networkID); err != nil {
+		return err
+	}
+	device, err := s.pg.GetDeviceByID(ctx, member.DeviceID)
+	if err != nil {
+		return err
+	}
+	user, err := s.pg.GetUserByID(ctx, device.UserID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(user.ActiveNetworkID) == networkID {
+		keepActive := false
+		devices, err := s.pg.ListDevicesByUser(ctx, device.UserID)
+		if err != nil {
+			return err
+		}
+		for _, ownedDevice := range devices {
+			candidate, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, ownedDevice.DeviceID)
+			if err == nil && candidate.Status == "active" {
+				keepActive = true
+				break
+			}
+		}
+		if !keepActive {
+			if err := s.pg.UpdateUserActiveNetwork(ctx, device.UserID, ""); err != nil {
+				return err
+			}
+		}
+	}
+	for _, node := range nodes {
+		s.publishPeerRemove(networkID, node.NodeID)
+	}
+	return nil
 }
 
 func (s dbNetworkService) ListAssignments(userID, networkID string) ([]dto.NetworkAssignment, error) {
