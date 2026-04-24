@@ -179,6 +179,11 @@ bool SplitHostPort(const std::string& host_port, std::string* host, std::string*
   return true;
 }
 
+std::string HelperEndpointSummary() {
+  return "host=" + ResolveHelperHost() +
+         ", helper=" + ResolveHelperExecutablePath();
+}
+
 }  // namespace
 
 struct _SlanAppCorePluginLinuxPlugin {
@@ -211,7 +216,8 @@ static bool slan_app_core_plugin_linux_plugin_connect(
   std::string host;
   std::string port;
   if (!SplitHostPort(ResolveHelperHost(), &host, &port)) {
-    *error_message = "Invalid app-core helper host. Expected host:port.";
+    *error_message = "Invalid app-core helper host. Expected host:port. " +
+                     HelperEndpointSummary();
     return false;
   }
 
@@ -221,7 +227,9 @@ static bool slan_app_core_plugin_linux_plugin_connect(
   addrinfo* resolved = nullptr;
   const int resolve_result = getaddrinfo(host.c_str(), port.c_str(), &hints, &resolved);
   if (resolve_result != 0) {
-    *error_message = "Failed to resolve app-core helper host.";
+    *error_message = "Failed to resolve app-core helper host '" + host +
+                     "': " + gai_strerror(resolve_result) + ". " +
+                     HelperEndpointSummary();
     return false;
   }
 
@@ -239,22 +247,58 @@ static bool slan_app_core_plugin_linux_plugin_connect(
   }
 
   freeaddrinfo(resolved);
-  *error_message = "Failed to connect to app-core helper.";
+  *error_message = "Failed to connect to app-core helper at " + host + ":" +
+                   port + ". " + HelperEndpointSummary();
   return false;
+}
+
+static void slan_app_core_plugin_linux_plugin_clear_helper(
+    SlanAppCorePluginLinuxPlugin* self) {
+  if (self->helper_process != nullptr) {
+    g_clear_object(&self->helper_process);
+  }
+}
+
+static bool slan_app_core_plugin_linux_plugin_helper_exited(
+    SlanAppCorePluginLinuxPlugin* self,
+    std::string* exit_summary) {
+  if (self->helper_process == nullptr ||
+      !g_subprocess_get_if_exited(self->helper_process)) {
+    return false;
+  }
+  *exit_summary = "app-core helper exited with status " +
+                  std::to_string(g_subprocess_get_exit_status(
+                      self->helper_process));
+  return true;
 }
 
 static bool slan_app_core_plugin_linux_plugin_start_helper(
     SlanAppCorePluginLinuxPlugin* self,
     std::string* error_message) {
-  if (self->helper_process != nullptr) {
+  std::string exit_summary;
+  if (slan_app_core_plugin_linux_plugin_helper_exited(self, &exit_summary)) {
+    slan_app_core_plugin_linux_plugin_clear_helper(self);
+  } else if (self->helper_process != nullptr) {
     return true;
   }
 
   const std::string helper_path = ResolveHelperExecutablePath();
+  if (!g_file_test(helper_path.c_str(), G_FILE_TEST_EXISTS)) {
+    *error_message = "app-core helper executable was not found. " +
+                     HelperEndpointSummary();
+    return false;
+  }
+  if (!g_file_test(helper_path.c_str(), G_FILE_TEST_IS_EXECUTABLE)) {
+    *error_message = "app-core helper is not executable. " +
+                     HelperEndpointSummary();
+    return false;
+  }
+
   std::string host;
   std::string port;
   if (!SplitHostPort(ResolveHelperHost(), &host, &port)) {
-    *error_message = "Invalid app-core helper host. Expected host:port.";
+    *error_message = "Invalid app-core helper host. Expected host:port. " +
+                     HelperEndpointSummary();
     return false;
   }
   const std::string listen_address = host + ":" + port;
@@ -269,7 +313,8 @@ static bool slan_app_core_plugin_linux_plugin_start_helper(
       nullptr);
   if (self->helper_process == nullptr) {
     *error_message = "Failed to start app-core helper at " + helper_path + ": " +
-                     (error == nullptr ? "unknown error" : error->message);
+                     (error == nullptr ? "unknown error" : error->message) +
+                     ". " + HelperEndpointSummary();
     return false;
   }
   return true;
@@ -288,6 +333,12 @@ static bool slan_app_core_plugin_linux_plugin_ensure_connected(
     if (slan_app_core_plugin_linux_plugin_connect(self, error_message)) {
       return true;
     }
+    std::string exit_summary;
+    if (slan_app_core_plugin_linux_plugin_helper_exited(self, &exit_summary)) {
+      *error_message = exit_summary + ". " + HelperEndpointSummary();
+      slan_app_core_plugin_linux_plugin_clear_helper(self);
+      return false;
+    }
     usleep(200 * 1000);
   }
   return false;
@@ -302,7 +353,8 @@ static bool slan_app_core_plugin_linux_plugin_write_all(
   while (remaining > 0) {
     const ssize_t written = send(self->socket_fd, current, remaining, 0);
     if (written <= 0) {
-      *error_message = "Failed to write request to app-core helper.";
+      *error_message = "Failed to write request to app-core helper. " +
+                       HelperEndpointSummary();
       return false;
     }
     current += written;
@@ -320,7 +372,9 @@ static bool slan_app_core_plugin_linux_plugin_read_line(
   while (true) {
     const ssize_t count = recv(self->socket_fd, &byte, 1, 0);
     if (count <= 0) {
-      *error_message = "app-core helper closed its TCP connection unexpectedly.";
+      *error_message =
+          "app-core helper closed its TCP connection unexpectedly. " +
+          HelperEndpointSummary();
       return false;
     }
     if (byte == '\n') {
@@ -388,7 +442,7 @@ static void slan_app_core_plugin_linux_plugin_dispose(GObject* object) {
   slan_app_core_plugin_linux_plugin_reset_socket(self);
   if (self->helper_process != nullptr) {
     g_subprocess_force_exit(self->helper_process);
-    g_clear_object(&self->helper_process);
+    slan_app_core_plugin_linux_plugin_clear_helper(self);
   }
   G_OBJECT_CLASS(slan_app_core_plugin_linux_plugin_parent_class)->dispose(object);
 }

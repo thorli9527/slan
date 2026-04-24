@@ -108,6 +108,11 @@ connects to `SLAN_APP_CORE_SERVICE_HOST` or `SLAN_APP_CORE_HELPER_HOST`; if no
 helper is listening, it starts `SLAN_APP_CORE_HELPER` or `app-core-helper` from
 the app executable directory with `--tcp-host 127.0.0.1:46321`.
 
+If startup fails, the Linux plugin reports the resolved helper host and helper
+path in the Flutter `PlatformException`. This is the first place to check when a
+Linux build cannot find `app-core-helper`, cannot execute it, or the helper
+exits before opening its TCP listener.
+
 Inside the container, verify adapter creation with:
 
 ```bash
