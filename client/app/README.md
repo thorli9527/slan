@@ -67,10 +67,11 @@ cargo run -q -p app-core-helper -- --tcp-host 127.0.0.1:46321
 Notes:
 
 - Empty `SLAN_TUNNEL_HOST_MODE` falls back to `plugin`.
-- `SLAN_APP_CORE_HELPER_HOST` accepts either `host:port` or `tcp://host:port`.
+- `SLAN_APP_CORE_HELPER_HOST` and `SLAN_APP_CORE_SERVICE_HOST` accept either
+  `host:port` or `tcp://host:port` as Dart defines for the Dart tunnel gateway.
 - `SLAN_APP_CORE_SERVICE_HOST` is for an already-running external helper or
-  service. Desktop plugins connect to it but do not try to start local helper
-  processes or OS services for that address.
+  service. Native desktop plugins also read it from the process environment and
+  connect to it without trying to start local helper processes or OS services.
 - Windows runner build copies `app-core-helper.exe` into the app output directory after build.
 
 ## Linux Helper In Docker From Windows

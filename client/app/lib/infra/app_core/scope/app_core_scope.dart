@@ -39,6 +39,8 @@ class AppCoreScope {
       String.fromEnvironment('SLAN_SERVER_UI_URL');
   static const String _tunnelHostMode =
       String.fromEnvironment('SLAN_TUNNEL_HOST_MODE');
+  static const String _serviceHostAddress =
+      String.fromEnvironment('SLAN_APP_CORE_SERVICE_HOST');
   static const String _helperHostAddress =
       String.fromEnvironment('SLAN_APP_CORE_HELPER_HOST');
   static String? _runtimeHostInput = _serverHost.isEmpty ? null : _serverHost;
@@ -65,7 +67,7 @@ class AppCoreScope {
   static Future<void> initialize() async {
     await StartupLog.write('app core initialize start mode=$_appCoreMode');
     await StartupLog.write(
-      'tunnel host mode=${_resolvedTunnelHostMode()} helperHost=${_resolvedHelperHostAddress() ?? 'plugin'}',
+      'tunnel host mode=${_resolvedTunnelHostMode()} helperHost=${_resolvedTunnelHostAddress() ?? 'plugin'}',
     );
     if (_appCoreMode == 'bridge') {
       await StartupLog.write('app core initialize skipped: bridge mode');
@@ -234,6 +236,10 @@ class AppCoreScope {
   }
 
   static String? _resolvedHelperHostAddress() {
+    final serviceHost = _serviceHostAddress.trim();
+    if (serviceHost.isNotEmpty) {
+      return serviceHost;
+    }
     final normalized = _helperHostAddress.trim();
     if (normalized.isEmpty) {
       return null;
