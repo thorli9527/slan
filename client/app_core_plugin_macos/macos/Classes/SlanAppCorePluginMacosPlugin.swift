@@ -1,4 +1,5 @@
 import Cocoa
+import Darwin
 import FlutterMacOS
 import NetworkExtension
 
@@ -54,7 +55,7 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
     if let helper {
       return helper
     }
-    let created = try HelperBridgeClient(transport: RustHelperProcessTransport())
+    let created = try HelperBridgeClient(transport: HelperTransportFactory.create())
     helper = created
     return created
   }
@@ -444,6 +445,181 @@ private enum HelperRpcCodec {
 
 private protocol HelperProcessTransporting {
   func roundTrip(_ requestLine: Data) throws -> Data
+}
+
+private struct HelperHostEndpoint {
+  let host: String
+  let port: UInt16
+  let source: String
+
+  var summary: String {
+    "host=\(host):\(port), source=\(source)"
+  }
+}
+
+private enum HelperTransportFactory {
+  static func create() throws -> HelperProcessTransporting {
+    if let endpoint = try resolveHostEndpoint() {
+      return try HelperTcpTransport(endpoint: endpoint)
+    }
+    return try RustHelperProcessTransport()
+  }
+
+  private static func resolveHostEndpoint() throws -> HelperHostEndpoint? {
+    let env = ProcessInfo.processInfo.environment
+    if let raw = trimmed(env["SLAN_APP_CORE_SERVICE_HOST"]), !raw.isEmpty {
+      return try parseHost(raw, source: "SLAN_APP_CORE_SERVICE_HOST")
+    }
+    if let raw = trimmed(env["SLAN_APP_CORE_HELPER_HOST"]), !raw.isEmpty {
+      return try parseHost(raw, source: "SLAN_APP_CORE_HELPER_HOST")
+    }
+    return nil
+  }
+
+  private static func trimmed(_ value: String?) -> String? {
+    value?.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private static func parseHost(_ raw: String, source: String) throws -> HelperHostEndpoint {
+    var value = raw
+    if value.hasPrefix("tcp://") {
+      value.removeFirst("tcp://".count)
+    }
+    guard let separator = value.lastIndex(of: ":") else {
+      throw invalidHost(raw, source: source)
+    }
+    let host = String(value[..<separator])
+    let portText = String(value[value.index(after: separator)...])
+    guard !host.isEmpty, let port = UInt16(portText), port > 0 else {
+      throw invalidHost(raw, source: source)
+    }
+    return HelperHostEndpoint(host: host, port: port, source: source)
+  }
+
+  private static func invalidHost(_ raw: String, source: String) -> SlanAppCorePluginError {
+    SlanAppCorePluginError(
+      code: "app_core_service_host_invalid",
+      message: "Invalid app-core helper host in \(source). Expected host:port or tcp://host:port, got \(raw)."
+    )
+  }
+}
+
+private final class HelperTcpTransport: HelperProcessTransporting {
+  private let endpoint: HelperHostEndpoint
+  private var socketFd: Int32 = -1
+
+  init(endpoint: HelperHostEndpoint) throws {
+    self.endpoint = endpoint
+    try connect()
+  }
+
+  deinit {
+    closeSocket()
+  }
+
+  func roundTrip(_ requestLine: Data) throws -> Data {
+    try writeAll(requestLine)
+    return try readLine()
+  }
+
+  private func connect() throws {
+    var hints = addrinfo(
+      ai_flags: 0,
+      ai_family: AF_UNSPEC,
+      ai_socktype: SOCK_STREAM,
+      ai_protocol: IPPROTO_TCP,
+      ai_addrlen: 0,
+      ai_canonname: nil,
+      ai_addr: nil,
+      ai_next: nil
+    )
+    var resolved: UnsafeMutablePointer<addrinfo>?
+    let resolveResult = getaddrinfo(
+      endpoint.host,
+      String(endpoint.port),
+      &hints,
+      &resolved
+    )
+    guard resolveResult == 0, let resolved else {
+      throw SlanAppCorePluginError(
+        code: "app_core_service_resolve_failed",
+        message: "Failed to resolve app-core helper host. \(endpoint.summary)"
+      )
+    }
+    defer { freeaddrinfo(resolved) }
+
+    var current: UnsafeMutablePointer<addrinfo>? = resolved
+    while let candidateInfo = current {
+      let candidate = socket(
+        candidateInfo.pointee.ai_family,
+        candidateInfo.pointee.ai_socktype,
+        candidateInfo.pointee.ai_protocol
+      )
+      if candidate >= 0 {
+        if Darwin.connect(
+          candidate,
+          candidateInfo.pointee.ai_addr,
+          candidateInfo.pointee.ai_addrlen
+        ) == 0 {
+          socketFd = candidate
+          return
+        }
+        Darwin.close(candidate)
+      }
+      current = candidateInfo.pointee.ai_next
+    }
+
+    throw SlanAppCorePluginError(
+      code: "app_core_service_connect_failed",
+      message: "Failed to connect to app-core helper service. \(endpoint.summary)"
+    )
+  }
+
+  private func writeAll(_ data: Data) throws {
+    try data.withUnsafeBytes { rawBuffer in
+      guard let base = rawBuffer.baseAddress else {
+        return
+      }
+      var offset = 0
+      while offset < data.count {
+        let written = Darwin.send(socketFd, base.advanced(by: offset), data.count - offset, 0)
+        if written <= 0 {
+          closeSocket()
+          throw SlanAppCorePluginError(
+            code: "app_core_service_write_failed",
+            message: "Failed to write request to app-core helper service. \(endpoint.summary)"
+          )
+        }
+        offset += written
+      }
+    }
+  }
+
+  private func readLine() throws -> Data {
+    var buffer = Data()
+    var byte: UInt8 = 0
+    while true {
+      let count = Darwin.recv(socketFd, &byte, 1, 0)
+      if count <= 0 {
+        closeSocket()
+        throw SlanAppCorePluginError(
+          code: "app_core_service_closed",
+          message: "app-core helper service closed its TCP connection unexpectedly. \(endpoint.summary)"
+        )
+      }
+      if byte == 0x0A {
+        return buffer
+      }
+      buffer.append(byte)
+    }
+  }
+
+  private func closeSocket() {
+    if socketFd >= 0 {
+      Darwin.close(socketFd)
+      socketFd = -1
+    }
+  }
 }
 
 private final class RustHelperProcessTransport: HelperProcessTransporting {

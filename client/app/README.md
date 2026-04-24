@@ -35,6 +35,9 @@ Notes:
 
 - `SLAN_APP_CORE_MODE=bridge` makes Dart call `MethodChannel('slan/app_core')`.
 - `SLAN_APP_CORE_HELPER` points to the Rust helper executable.
+- On macOS, `SLAN_APP_CORE_SERVICE_HOST` or `SLAN_APP_CORE_HELPER_HOST` makes
+  bridge mode use an already-running TCP helper instead of launching the local
+  helper process.
 - `SLAN_CONTROL_BASE_URL` is passed through to the helper so Rust `HttpControllerClient` can reach the control plane.
 
 ## Tunnel Host Modes

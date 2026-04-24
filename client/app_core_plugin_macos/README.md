@@ -2,6 +2,15 @@
 
 macOS implementation of the federated `slan_app_core_plugin`.
 
+## Helper transport
+
+By default, bridge calls start the bundled `app-core-helper` or the executable
+configured by `SLAN_APP_CORE_HELPER` and communicate over stdio.
+
+Set `SLAN_APP_CORE_SERVICE_HOST` or `SLAN_APP_CORE_HELPER_HOST` to
+`host:port` or `tcp://host:port` to connect to an already-running TCP helper
+instead. In that mode the plugin does not start a local helper process.
+
 ## Local native verification
 
 本地测试/构建入口已经统一整理在：
