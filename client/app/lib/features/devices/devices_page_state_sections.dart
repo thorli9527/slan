@@ -59,6 +59,8 @@ class _DeviceStateInventorySection extends StatelessWidget {
   Widget build(BuildContext context) {
     final pendingCount =
         devices.where((item) => item.membershipStatus == 'pending').length;
+    final rejectedCount =
+        devices.where((item) => item.membershipStatus == 'rejected').length;
     final visibleDevices = devices.take(4).toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -74,8 +76,12 @@ class _DeviceStateInventorySection extends StatelessWidget {
               value: pendingCount.toString(),
             ),
             DesktopKeyValueEntry(
+              label: 'Rejected joins',
+              value: rejectedCount.toString(),
+            ),
+            DesktopKeyValueEntry(
               label: 'Membership',
-              value: device?.membershipStatus ?? '-',
+              value: _membershipStatusLabel(device?.membershipStatus),
             ),
             DesktopKeyValueEntry(
               label: 'Role',
@@ -156,13 +162,29 @@ class _DeviceStateRelayOverlaySection extends StatelessWidget {
 
 String _deviceInventoryLine(DeviceModel device) {
   final status = device.membershipStatus?.isNotEmpty == true
-      ? device.membershipStatus!
+      ? _membershipStatusLabel(device.membershipStatus)
       : device.status;
   final role = device.networkRole?.isNotEmpty == true
       ? device.networkRole!
       : '-';
   final ip = device.virtualIp?.isNotEmpty == true ? device.virtualIp! : '-';
   return '${device.name} $status/$role $ip';
+}
+
+String _membershipStatusLabel(String? status) {
+  switch ((status ?? '').toLowerCase()) {
+    case 'active':
+      return 'active';
+    case 'pending':
+    case 'joining':
+      return 'pending approval';
+    case 'rejected':
+      return 'rejected';
+    case 'disabled':
+      return 'disabled';
+    default:
+      return status?.isNotEmpty == true ? status! : '-';
+  }
 }
 
 class _DeviceStatePipelineStatusSection extends StatelessWidget {
