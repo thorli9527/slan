@@ -239,7 +239,7 @@ export class AppComponent implements OnDestroy {
         mode: this.authMode(),
         email: this.email,
         password: this.password,
-        loginDeviceId: this.loginClientDeviceId().trim() || this.currentDeviceId().trim() || undefined,
+        loginDeviceId: this.loginClientDeviceId().trim() || undefined,
         tokenDeviceState: this.currentDeviceState(),
       });
       this.applyAuthentication(result);

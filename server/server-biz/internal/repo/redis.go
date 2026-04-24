@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -119,9 +120,25 @@ func (s *RedisTokenStore) Authenticate(ctx context.Context, accessToken string) 
 		}
 		return AccessTokenSession{}, err
 	}
+	return parseAccessTokenSession(value)
+}
+
+func parseAccessTokenSession(value []byte) (AccessTokenSession, error) {
 	var session AccessTokenSession
 	if err := json.Unmarshal(value, &session); err != nil {
-		return AccessTokenSession{}, err
+		legacyUserID := strings.TrimSpace(string(value))
+		if legacyUserID == "" {
+			return AccessTokenSession{}, err
+		}
+		if strings.HasPrefix(legacyUserID, "\"") {
+			var decoded string
+			if stringErr := json.Unmarshal(value, &decoded); stringErr == nil {
+				legacyUserID = strings.TrimSpace(decoded)
+			}
+		}
+		return AccessTokenSession{
+			UserID: legacyUserID,
+		}, nil
 	}
 	if session.UserID == "" {
 		return AccessTokenSession{}, fmt.Errorf("token session missing user")

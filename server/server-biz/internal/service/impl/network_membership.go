@@ -2,6 +2,7 @@ package impl
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
@@ -54,6 +55,20 @@ func (s *dbState) ensureNetworkAccess(ctx context.Context, userID, networkID str
 		}
 	}
 	return ErrForbidden
+}
+
+func (s *dbState) requireActiveNetworkMember(ctx context.Context, networkID, deviceID string, missingErr error, label string) (dto.NetworkMember, error) {
+	member, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, deviceID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return dto.NetworkMember{}, fmt.Errorf("%w: %s is not a network member", missingErr, label)
+		}
+		return dto.NetworkMember{}, err
+	}
+	if member.Status != "active" {
+		return dto.NetworkMember{}, fmt.Errorf("%w: %s membership is not active", ErrForbidden, label)
+	}
+	return member, nil
 }
 
 // ensureMember 确保设备已经在网络中拥有 member 记录。

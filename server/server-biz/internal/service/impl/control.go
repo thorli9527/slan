@@ -353,10 +353,7 @@ func (s *dbState) requireNodeSession(ctx context.Context, userID, nodeID, networ
 	if err := s.ensureNetworkAccess(ctx, userID, networkID); err != nil {
 		return repo.Node{}, err
 	}
-	if _, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, node.DeviceID); err != nil {
-		if repo.IsNotFound(err) {
-			return repo.Node{}, fmt.Errorf("%w: node device is not a network member", ErrForbidden)
-		}
+	if _, err := s.requireActiveNetworkMember(ctx, networkID, node.DeviceID, ErrForbidden, "node device"); err != nil {
 		return repo.Node{}, err
 	}
 	return node, nil

@@ -77,3 +77,47 @@ func TestListDevicesIncludesVisibleNetworkJoinRequests(t *testing.T) {
 		t.Fatalf("expected pending member status, got %+v", guest)
 	}
 }
+
+func TestListDevicesForMemberDoesNotExposeOtherNetworkDevices(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	for _, user := range []repo.User{
+		{UserID: "owner-user", Email: "owner@example.com", PasswordHash: "hash", ActiveNetworkID: "net-1"},
+		{UserID: "member-user", Email: "member@example.com", PasswordHash: "hash", ActiveNetworkID: "net-1"},
+	} {
+		if err := state.pg.CreateUser(ctx, user); err != nil {
+			t.Fatalf("create user %s: %v", user.UserID, err)
+		}
+	}
+	createNetworkFixture(t, state, "owner-user", "net-1", "subnet-1", "10.0.0.0/16")
+	for _, device := range []repo.Device{
+		{DeviceID: "owner-device", UserID: "owner-user", MachineID: "owner-machine", Name: "owner pc", Platform: "windows", Status: "online", CreatedAt: now},
+		{DeviceID: "member-device", UserID: "member-user", MachineID: "member-machine", Name: "member pc", Platform: "windows", Status: "offline", CreatedAt: now},
+	} {
+		if err := state.pg.InsertDevice(ctx, device); err != nil {
+			t.Fatalf("insert device %s: %v", device.DeviceID, err)
+		}
+	}
+	for _, member := range []dto.NetworkMember{
+		{MemberID: "member-owner", NetworkID: "net-1", DeviceID: "owner-device", Role: "owner", CreatedAt: now, Status: "active"},
+		{MemberID: "member-peer", NetworkID: "net-1", DeviceID: "member-device", Role: "member", CreatedAt: now, Status: "active"},
+	} {
+		if err := state.pg.CreateMember(ctx, member); err != nil {
+			t.Fatalf("create member %s: %v", member.MemberID, err)
+		}
+	}
+
+	devices, err := dbDeviceService{state: state}.ListByUser("member-user")
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+
+	if len(devices) != 1 || devices[0].DeviceID != "member-device" {
+		t.Fatalf("expected only member-owned devices, got %+v", devices)
+	}
+	if devices[0].MembershipStatus != "active" || devices[0].NetworkRole != "member" {
+		t.Fatalf("expected own membership metadata, got %+v", devices[0])
+	}
+}

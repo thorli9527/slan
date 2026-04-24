@@ -77,12 +77,12 @@ func (s dbBootstrapService) Bootstrap(userID string, req dto.BootstrapRequest) (
 		ControlSessionID: runtime.controlSessionID,
 		SessionToken:     runtime.sessionToken,
 		Device:           device,
-		Networks:     networks,
-		ControlPlane: s.state.controlPlaneConfig(),
-		STUNServers:  append([]string(nil), s.state.cfg.Bootstrap.STUNServers...),
-		Relay:        s.state.relayConfig(),
-		DerpMap:      s.state.derpMap(),
-		NetworkMap:   runtime.networkMap,
+		Networks:         networks,
+		ControlPlane:     s.state.controlPlaneConfig(),
+		STUNServers:      append([]string(nil), s.state.cfg.Bootstrap.STUNServers...),
+		Relay:            s.state.relayConfig(),
+		DerpMap:          s.state.derpMap(),
+		NetworkMap:       runtime.networkMap,
 	}, nil
 }
 
@@ -117,16 +117,10 @@ func (s *dbState) issueRelayTicket(ctx context.Context, userID string, req dto.R
 		}
 		return dto.RelayTicket{}, err
 	}
-	if _, err := s.pg.GetMemberByNetworkDevice(ctx, req.NetworkID, srcNode.DeviceID); err != nil {
-		if repo.IsNotFound(err) {
-			return dto.RelayTicket{}, fmt.Errorf("%w: source node device is not a network member", ErrForbidden)
-		}
+	if _, err := s.requireActiveNetworkMember(ctx, req.NetworkID, srcNode.DeviceID, ErrForbidden, "source node device"); err != nil {
 		return dto.RelayTicket{}, err
 	}
-	if _, err := s.pg.GetMemberByNetworkDevice(ctx, req.NetworkID, dstNode.DeviceID); err != nil {
-		if repo.IsNotFound(err) {
-			return dto.RelayTicket{}, fmt.Errorf("%w: destination node device is not a network member", ErrNotFound)
-		}
+	if _, err := s.requireActiveNetworkMember(ctx, req.NetworkID, dstNode.DeviceID, ErrNotFound, "destination node device"); err != nil {
 		return dto.RelayTicket{}, err
 	}
 	cluster := s.relayClusterForRequest(req.DerpClusterID)

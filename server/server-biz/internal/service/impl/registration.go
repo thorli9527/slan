@@ -48,7 +48,13 @@ func (s dbDeviceService) ListByUser(userID string) ([]dto.Device, error) {
 	for _, network := range visibleNetworks {
 		networkIDs = append(networkIDs, network.NetworkID)
 	}
-	networkDevices, err := s.state.pg.ListDevicesByNetworks(ctx, networkIDs)
+	ownedNetworkIDs := make([]string, 0, len(visibleNetworks))
+	for _, network := range visibleNetworks {
+		if network.OwnerUserID == userID {
+			ownedNetworkIDs = append(ownedNetworkIDs, network.NetworkID)
+		}
+	}
+	networkDevices, err := s.state.pg.ListDevicesByNetworks(ctx, ownedNetworkIDs)
 	if err != nil {
 		return nil, err
 	}

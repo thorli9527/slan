@@ -12,14 +12,14 @@ func (r *PostgresRepository) GetNodeByID(ctx context.Context, nodeID string) (No
 }
 
 // ListNodesByNetwork returns the distinct nodes whose backing devices are
-// members of the target network.
+// active members of the target network.
 func (r *PostgresRepository) ListNodesByNetwork(ctx context.Context, networkID string) ([]Node, error) {
 	var out []Node
 	err := r.db.WithContext(ctx).
 		Table("nodes").
 		Select("distinct nodes.*").
 		Joins("join network_members on network_members.device_id = nodes.device_id").
-		Where("network_members.network_id = ?", networkID).
+		Where("network_members.network_id = ? AND network_members.status = ?", networkID, "active").
 		Order("nodes.node_id").
 		Find(&out).Error
 	return out, err
