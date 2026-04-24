@@ -24,6 +24,23 @@ void main() {
     expect(find.byKey(AppTestKeys.devicesStateCard), findsOneWidget);
   });
 
+  testWidgets('DevicesPage shows platform doctor results', (
+    WidgetTester tester,
+  ) async {
+    await _pumpDevicesPageWithMockAppCore(tester);
+
+    await tester.ensureVisible(
+      find.byKey(AppTestKeys.devicesPlatformDoctorButton),
+    );
+    await tester.tap(find.byKey(AppTestKeys.devicesPlatformDoctorButton));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Run Doctor'), findsOneWidget);
+    expect(find.textContaining('mock / family mock / pkg mock'), findsOneWidget);
+    expect(find.textContaining('in-memory / memory / memory'), findsOneWidget);
+    expect(find.textContaining('mock_backend:ok'), findsOneWidget);
+  });
+
   testWidgets('DevicesPage shows control plan guidance after quick setup and connect', (
     WidgetTester tester,
   ) async {

@@ -475,6 +475,52 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     return tunnelStore.lastTunnelActionReport!;
   }
 
+  Future<PlatformDoctorModel> refreshPlatformDoctor() async {
+    final report = await runTunnelAction<PlatformDoctorModel>(() {
+      return AppCoreScope.instance.platformDoctor();
+    });
+    tunnelStore.platformDoctor = report ?? _failedPlatformDoctor();
+    emitStateChanged();
+    return tunnelStore.platformDoctor!;
+  }
+
+  Future<PlatformInstallPlanModel> refreshPlatformInstallPlan() async {
+    final plan = await runTunnelAction<PlatformInstallPlanModel>(() {
+      return AppCoreScope.instance.platformInstallPlan();
+    });
+    tunnelStore.platformInstallPlan = plan ?? _failedPlatformInstallPlan();
+    emitStateChanged();
+    return tunnelStore.platformInstallPlan!;
+  }
+
+  PlatformDoctorModel _failedPlatformDoctor() {
+    return PlatformDoctorModel(
+      platform: const PlatformInfoModel(os: 'unknown'),
+      tunnelBackend: const TunnelBackendDiagnosticsModel(
+        name: 'unavailable',
+        isUp: false,
+        plannedPeerCount: 0,
+        recentCommandCount: 0,
+      ),
+      checks: [
+        PlatformCheckModel(
+          name: 'platform_doctor',
+          status: 'fail',
+          detail: tunnelDebugError ?? error ?? 'platform doctor failed',
+        ),
+      ],
+    );
+  }
+
+  PlatformInstallPlanModel _failedPlatformInstallPlan() {
+    return PlatformInstallPlanModel(
+      platform: const PlatformInfoModel(os: 'unknown'),
+      warnings: [
+        tunnelDebugError ?? error ?? 'platform install plan failed',
+      ],
+    );
+  }
+
   TunnelActionReport _failedTunnelActionReport() {
     return TunnelActionReport(
       succeeded: false,

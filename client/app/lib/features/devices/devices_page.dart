@@ -955,6 +955,78 @@ class _DevicesPageState extends State<DevicesPage> {
           ),
           const SizedBox(height: 16),
           _DevicesSubsection(
+            title: 'Platform',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    OutlinedButton(
+                      key: AppTestKeys.devicesPlatformDoctorButton,
+                      onPressed: sessionStore.busy
+                          ? null
+                          : () => tunnelController.refreshPlatformDoctor(),
+                      child: const Text('Run Doctor'),
+                    ),
+                    OutlinedButton(
+                      key: AppTestKeys.devicesPlatformInstallPlanButton,
+                      onPressed: sessionStore.busy
+                          ? null
+                          : () =>
+                              tunnelController.refreshPlatformInstallPlan(),
+                      child: const Text('Install Plan'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                DesktopKeyValueList(
+                  entries: [
+                    DesktopKeyValueEntry(
+                      label: 'Platform',
+                      value: _formatPlatformSummary(tunnelStore.platformDoctor
+                              ?.platform ??
+                          tunnelStore.platformInstallPlan?.platform),
+                    ),
+                    DesktopKeyValueEntry(
+                      label: 'Tunnel backend',
+                      value: _formatBackendSummary(
+                        tunnelStore.platformDoctor?.tunnelBackend,
+                      ),
+                    ),
+                    DesktopKeyValueEntry(
+                      label: 'Checks',
+                      value: _formatPlatformChecks(
+                        tunnelStore.platformDoctor?.checks ?? const [],
+                      ),
+                    ),
+                    DesktopKeyValueEntry(
+                      label: 'Packages',
+                      value:
+                          tunnelStore.platformInstallPlan?.packages.join(', ') ??
+                              '-',
+                    ),
+                    DesktopKeyValueEntry(
+                      label: 'Driver modes',
+                      value: tunnelStore.platformInstallPlan
+                              ?.supportedDriverModes
+                              .join(', ') ??
+                          '-',
+                    ),
+                    DesktopKeyValueEntry(
+                      label: 'Warnings',
+                      value:
+                          tunnelStore.platformInstallPlan?.warnings.join('; ') ??
+                              '-',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          _DevicesSubsection(
             title: 'Latest Diagnostics',
             child: DesktopKeyValueList(
               entries: [
@@ -984,6 +1056,44 @@ class _DevicesPageState extends State<DevicesPage> {
         ],
       ),
     );
+  }
+
+  String _formatPlatformSummary(PlatformInfoModel? platform) {
+    if (platform == null) {
+      return '-';
+    }
+    final parts = [
+      platform.os,
+      if (platform.distroId != null && platform.distroId!.isNotEmpty)
+        platform.distroId!,
+      if (platform.versionId != null && platform.versionId!.isNotEmpty)
+        platform.versionId!,
+      if (platform.family != null && platform.family!.isNotEmpty)
+        'family ${platform.family}',
+      if (platform.packageManager != null &&
+          platform.packageManager!.isNotEmpty)
+        'pkg ${platform.packageManager}',
+    ];
+    return parts.join(' / ');
+  }
+
+  String _formatBackendSummary(TunnelBackendDiagnosticsModel? backend) {
+    if (backend == null) {
+      return '-';
+    }
+    final mode = backend.executionMode ?? '-';
+    final executor = backend.executionBackend ?? '-';
+    final interfaceName = backend.interfaceName ?? '-';
+    return '${backend.name} / $mode / $executor / $interfaceName / peers ${backend.plannedPeerCount}';
+  }
+
+  String _formatPlatformChecks(List<PlatformCheckModel> checks) {
+    if (checks.isEmpty) {
+      return '-';
+    }
+    return checks
+        .map((check) => '${check.name}:${check.status}')
+        .join(', ');
   }
 
   Widget _buildTunnelSection(

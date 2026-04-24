@@ -1,5 +1,6 @@
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
+import '../models/diagnostic_models.dart';
 import '../models/tunnel_action_models.dart';
 import 'app_core_coordinator.dart';
 
@@ -36,6 +37,12 @@ class AppTunnelController {
     required String peerVirtualIp,
   }) =>
       _coordinator.refreshTunnelRuntime(peerVirtualIp: peerVirtualIp);
+
+  Future<PlatformDoctorModel> refreshPlatformDoctor() =>
+      _coordinator.refreshPlatformDoctor();
+
+  Future<PlatformInstallPlanModel> refreshPlatformInstallPlan() =>
+      _coordinator.refreshPlatformInstallPlan();
 
   Future<void> probe({
     required String payload,

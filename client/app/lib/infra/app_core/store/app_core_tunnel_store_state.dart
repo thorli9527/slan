@@ -11,6 +11,8 @@ mixin AppCoreTunnelStoreState on ChangeNotifier {
   SendFailure? lastSendFailure;
   WireGuardTunnelRuntimeView? tunnelRuntimeView;
   TunnelActionReport? lastTunnelActionReport;
+  PlatformDoctorModel? platformDoctor;
+  PlatformInstallPlanModel? platformInstallPlan;
   String? tunnelDebugError;
 
   @protected
@@ -21,6 +23,8 @@ mixin AppCoreTunnelStoreState on ChangeNotifier {
     lastSendFailure = null;
     tunnelRuntimeView = null;
     lastTunnelActionReport = null;
+    platformDoctor = null;
+    platformInstallPlan = null;
     tunnelDebugError = null;
   }
 

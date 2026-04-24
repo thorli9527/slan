@@ -74,6 +74,10 @@ abstract final class AppTestKeys {
   static const devicesSendPayloadField =
       ValueKey<String>('devices.send.payload');
   static const devicesSendButton = ValueKey<String>('devices.send.button');
+  static const devicesPlatformDoctorButton =
+      ValueKey<String>('devices.platform.doctor_button');
+  static const devicesPlatformInstallPlanButton =
+      ValueKey<String>('devices.platform.install_plan_button');
   static const devicesTunnelLocalIpField =
       ValueKey<String>('devices.tunnel.local_ip');
   static const devicesTunnelPeerIpField =
