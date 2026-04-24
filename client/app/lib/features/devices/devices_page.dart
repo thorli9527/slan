@@ -449,6 +449,14 @@ class _DevicesPageState extends State<DevicesPage> {
                         onPressed: sessionStore.busy ? null : _handleQuickSetup,
                         child: const Text('Quick Setup Client'),
                       ),
+                      OutlinedButton(
+                        key: AppTestKeys.devicesRefreshInventoryButton,
+                        onPressed: sessionStore.busy ||
+                                sessionStore.session == null
+                            ? null
+                            : sessionController.refreshDeviceInventory,
+                        child: const Text('Refresh Devices'),
+                      ),
                     ],
                   ),
                 ),

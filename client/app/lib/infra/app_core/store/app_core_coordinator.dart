@@ -171,6 +171,28 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     });
   }
 
+  Future<void> refreshDeviceInventory() async {
+    await runAction(() async {
+      if (sessionStore.session == null) {
+        throw StateError('login required');
+      }
+      final devices = await AppCoreScope.instance.listDevices();
+      sessionStore.devices = devices;
+      final currentDeviceId = sessionStore.device?.deviceId ??
+          sessionStore.session?.deviceId;
+      if (currentDeviceId != null && currentDeviceId.isNotEmpty) {
+        for (final device in devices) {
+          if (device.deviceId == currentDeviceId) {
+            sessionStore.syncDevice(device);
+            break;
+          }
+        }
+      } else if (devices.isNotEmpty) {
+        sessionStore.syncDevice(devices.first);
+      }
+    });
+  }
+
   Future<String?> ensureHomeWorkspaceReady({
     required String deviceName,
     required String platform,

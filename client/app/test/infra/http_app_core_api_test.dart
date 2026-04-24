@@ -74,6 +74,33 @@ void main() {
               },
             ],
           }));
+      } else if (route == 'GET /devices') {
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            'items': [
+              {
+                'deviceId': 'machine-1',
+                'name': 'thor-mac',
+                'platform': 'macos',
+                'status': 'online',
+                'currentVirtualIp': '100.64.0.10',
+                'membershipStatus': 'active',
+                'networkRole': 'owner',
+                'networkIds': ['net-1'],
+              },
+              {
+                'deviceId': 'guest-1',
+                'name': 'guest-laptop',
+                'platform': 'windows',
+                'status': 'offline',
+                'membershipStatus': 'pending',
+                'networkRole': 'member',
+                'networkIds': ['net-1'],
+              },
+            ],
+          }));
       } else if (route == 'POST /bootstrap') {
         request.response
           ..statusCode = HttpStatus.ok
@@ -218,6 +245,7 @@ void main() {
       capabilities: const ['relay'],
     );
     final networks = await api.listNetworks();
+    final devices = await api.listDevices();
     final bootstrap = await api.bootstrap(
       nodeId: node.nodeId,
       networkId: 'net-1',
@@ -237,6 +265,9 @@ void main() {
     expect(device.networkIds, ['net-1']);
     expect(node.capabilities, ['relay']);
     expect(networks.single.cidr, '100.64.0.0/24');
+    expect(devices, hasLength(2));
+    expect(devices.last.membershipStatus, 'pending');
+    expect(devices.last.networkRole, 'member');
     expect(bootstrap.device.virtualIp, '100.64.0.10');
     expect(bootstrap.relay.countries.single.cities.single.clusters.single.nodes,
         hasLength(2));

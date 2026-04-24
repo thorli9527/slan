@@ -47,6 +47,8 @@ abstract final class AppTestKeys {
   static const devicesPublicKeyField = ValueKey<String>('devices.public_key');
   static const devicesRegisterDeviceButton =
       ValueKey<String>('devices.register_device_button');
+  static const devicesRefreshInventoryButton =
+      ValueKey<String>('devices.refresh_inventory_button');
   static const devicesNodeIdField = ValueKey<String>('devices.node_id');
   static const devicesNodePublicKeyField =
       ValueKey<String>('devices.node_public_key');

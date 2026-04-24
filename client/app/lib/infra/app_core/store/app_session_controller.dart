@@ -25,6 +25,9 @@ class AppSessionController {
         publicKey: publicKey,
       );
 
+  Future<void> refreshDeviceInventory() =>
+      _coordinator.refreshDeviceInventory();
+
   Future<String?> ensureHomeWorkspaceReady({
     required String deviceName,
     required String platform,
