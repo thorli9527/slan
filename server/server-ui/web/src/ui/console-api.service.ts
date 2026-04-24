@@ -9,6 +9,8 @@ import {
   NetworkAssignment,
   NetworkDetail,
   NetworkHome,
+  NetworkJoinByOwnerEmailResult,
+  NetworkJoinResult,
   Subnet,
 } from './api-contracts';
 import { AuthMode as AuthModeLocal } from './ui-models';
@@ -109,8 +111,8 @@ export class ConsoleApiService {
     });
   }
 
-  joinByOwnerEmail(token: string, ownerEmail: string, deviceId: string): Promise<void> {
-    return this.request('/networks/join-by-owner-email', {
+  joinByOwnerEmail(token: string, ownerEmail: string, deviceId: string): Promise<NetworkJoinByOwnerEmailResult> {
+    return this.request<NetworkJoinByOwnerEmailResult>('/networks/join-by-owner-email', {
       token,
       init: {
         method: 'POST',
@@ -119,8 +121,8 @@ export class ConsoleApiService {
     });
   }
 
-  joinByKey(token: string, joinKey: string, deviceId: string): Promise<void> {
-    return this.request('/networks/join-by-key', {
+  joinByKey(token: string, joinKey: string, deviceId: string): Promise<NetworkJoinResult> {
+    return this.request<NetworkJoinResult>('/networks/join-by-key', {
       token,
       init: {
         method: 'POST',
@@ -181,6 +183,16 @@ export class ConsoleApiService {
 
   switchNetwork(token: string, networkId: string, deviceId: string): Promise<void> {
     return this.request(`/networks/${networkId}/switch`, {
+      token,
+      init: {
+        method: 'POST',
+        body: JSON.stringify({ deviceId })
+      }
+    });
+  }
+
+  activateNetwork(token: string, networkId: string, deviceId: string): Promise<void> {
+    return this.request(`/networks/${networkId}/activate`, {
       token,
       init: {
         method: 'POST',

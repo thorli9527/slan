@@ -108,6 +108,7 @@ export class ConsoleAppFacadeService {
       callbackDeviceId: managedDevice.callbackDeviceId || input.deviceState.callbackDeviceId,
     });
     await this.workspaceService.switchNetwork(input.token, network.networkId, refreshed.managedDevice.deviceId);
+    await this.workspaceService.activateNetwork(input.token, network.networkId, refreshed.managedDevice.deviceId);
     const switched = await this.refreshWorkspace({
       token: input.token,
       ...managedDeviceToEnsureInput(refreshed.managedDevice, input.deviceState),
@@ -129,7 +130,11 @@ export class ConsoleAppFacadeService {
       token: input.token,
       ...input.deviceState,
     });
-    await this.api.joinByOwnerEmail(input.token, ownerEmail, managedDevice.deviceId);
+    const result = await this.api.joinByOwnerEmail(input.token, ownerEmail, managedDevice.deviceId);
+    const networkId = result.network?.networkId;
+    if (networkId) {
+      await this.workspaceService.activateNetwork(input.token, networkId, managedDevice.deviceId);
+    }
     return this.refreshWorkspace({
       token: input.token,
       ...managedDeviceToEnsureInput(managedDevice, input.deviceState),
@@ -150,7 +155,10 @@ export class ConsoleAppFacadeService {
       token: input.token,
       ...input.deviceState,
     });
-    await this.api.joinByKey(input.token, joinKey, managedDevice.deviceId);
+    const result = await this.api.joinByKey(input.token, joinKey, managedDevice.deviceId);
+    if (result.member?.networkId) {
+      await this.workspaceService.activateNetwork(input.token, result.member.networkId, managedDevice.deviceId);
+    }
     return this.refreshWorkspace({
       token: input.token,
       ...managedDeviceToEnsureInput(managedDevice, input.deviceState),

@@ -56,4 +56,8 @@ export class ConsoleWorkspaceService {
   switchNetwork(token: string, networkId: string, deviceId: string): Promise<void> {
     return this.api.switchNetwork(token, networkId, deviceId);
   }
+
+  activateNetwork(token: string, networkId: string, deviceId: string): Promise<void> {
+    return this.api.activateNetwork(token, networkId, deviceId);
+  }
 }

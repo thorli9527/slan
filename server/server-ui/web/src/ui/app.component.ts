@@ -630,6 +630,7 @@ export class AppComponent implements OnDestroy {
     });
     this.applyManagedDeviceState(result.managedDevice);
     await this.workspaceService.switchNetwork(this.token(), networkId, result.managedDevice.deviceId);
+    await this.workspaceService.activateNetwork(this.token(), networkId, result.managedDevice.deviceId);
     const switched = await this.facade.refreshWorkspace({
       token: this.token(),
       ...this.currentDeviceState(),
