@@ -203,6 +203,50 @@ void main() {
       expect(runtime.backendPlannedPeerCount, 1);
       expect(runtime.backendRecentCommandCount, 4);
     });
+
+    test('decodes platform doctor and install plan payloads', () {
+      final doctor = AppCorePlatformDoctorPayload.fromJson({
+        'platform': {
+          'os': 'linux',
+          'distroId': 'ubuntu',
+          'versionId': '24.04',
+          'idLike': ['debian'],
+          'family': 'debian',
+          'kernelRelease': '6.8.0',
+          'packageManager': 'apt-get',
+        },
+        'tunnelBackend': {
+          'name': 'linux-kernel',
+          'executionMode': 'system',
+          'executionBackend': 'shell',
+          'interfaceName': 'slan0',
+          'isUp': true,
+          'plannedPeerCount': 1,
+          'recentCommandCount': 4,
+        },
+        'checks': [
+          {
+            'name': 'ip_command',
+            'status': 'ok',
+            'detail': 'ip command available',
+          },
+        ],
+      });
+      final installPlan = AppCorePlatformInstallPlanPayload.fromJson({
+        'platform': {'os': 'linux', 'family': 'debian'},
+        'packages': ['wireguard-tools', 'iproute2'],
+        'supportedDriverModes': ['in-memory', 'linux-kernel-shell'],
+        'warnings': [],
+      });
+
+      expect(doctor.platform.os, 'linux');
+      expect(doctor.platform.packageManager, 'apt-get');
+      expect(doctor.tunnelBackend.name, 'linux-kernel');
+      expect(doctor.tunnelBackend.isUp, isTrue);
+      expect(doctor.checks.single.name, 'ip_command');
+      expect(installPlan.packages, contains('wireguard-tools'));
+      expect(installPlan.supportedDriverModes, contains('linux-kernel-shell'));
+    });
   });
 
   group('SlanAppCorePluginPlatform', () {
@@ -252,6 +296,22 @@ void main() {
           'path': 'relay',
         },
         'disconnect': null,
+        'platformDoctor': {
+          'platform': {'os': 'linux'},
+          'tunnelBackend': {
+            'name': 'linux-kernel',
+            'isUp': false,
+            'plannedPeerCount': 0,
+            'recentCommandCount': 0,
+          },
+          'checks': [],
+        },
+        'platformInstallPlan': {
+          'platform': {'os': 'linux'},
+          'packages': ['wireguard-tools'],
+          'supportedDriverModes': ['linux-kernel-shell'],
+          'warnings': [],
+        },
       });
 
       final session = await platform.register(
@@ -269,12 +329,16 @@ void main() {
       );
       final bytesSent = await platform.send(payload: 'hello');
       await platform.disconnect();
+      final doctor = await platform.platformDoctor();
+      final installPlan = await platform.platformInstallPlan();
 
       expect(session.accessToken, 'token-1');
       expect(devices.single.deviceId, 'dev-1');
       expect(connect.path, 'derp');
       expect(probe.probeId, 'probe-1');
       expect(bytesSent, 5);
+      expect(doctor.tunnelBackend.name, 'linux-kernel');
+      expect(installPlan.packages, ['wireguard-tools']);
       expect(platform.calls.map((call) => call.method), [
         'register',
         'listDevices',
@@ -282,6 +346,8 @@ void main() {
         'probe',
         'send',
         'disconnect',
+        'platformDoctor',
+        'platformInstallPlan',
       ]);
       expect(platform.calls.first.args, {
         'email': 'user@example.com',

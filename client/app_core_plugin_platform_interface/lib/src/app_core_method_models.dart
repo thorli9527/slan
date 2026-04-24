@@ -700,6 +700,141 @@ class AppCoreControlConnectPlanPayload {
       };
 }
 
+class AppCorePlatformDoctorPayload {
+  const AppCorePlatformDoctorPayload({
+    required this.platform,
+    required this.tunnelBackend,
+    this.checks = const [],
+  });
+
+  factory AppCorePlatformDoctorPayload.fromJson(Map<String, dynamic> json) {
+    return AppCorePlatformDoctorPayload(
+      platform: AppCorePlatformPayload.fromJson(_readMap(json['platform'])),
+      tunnelBackend: AppCoreTunnelBackendDiagnosticsPayload.fromJson(
+        _readMap(json['tunnelBackend']),
+      ),
+      checks: _readMapList(json['checks'])
+          .map(AppCorePlatformCheckPayload.fromJson)
+          .toList(growable: false),
+    );
+  }
+
+  final AppCorePlatformPayload platform;
+  final AppCoreTunnelBackendDiagnosticsPayload tunnelBackend;
+  final List<AppCorePlatformCheckPayload> checks;
+}
+
+class AppCorePlatformInstallPlanPayload {
+  const AppCorePlatformInstallPlanPayload({
+    required this.platform,
+    this.packages = const [],
+    this.supportedDriverModes = const [],
+    this.warnings = const [],
+  });
+
+  factory AppCorePlatformInstallPlanPayload.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return AppCorePlatformInstallPlanPayload(
+      platform: AppCorePlatformPayload.fromJson(_readMap(json['platform'])),
+      packages: _readStringList(json['packages']),
+      supportedDriverModes: _readStringList(json['supportedDriverModes']),
+      warnings: _readStringList(json['warnings']),
+    );
+  }
+
+  final AppCorePlatformPayload platform;
+  final List<String> packages;
+  final List<String> supportedDriverModes;
+  final List<String> warnings;
+}
+
+class AppCorePlatformPayload {
+  const AppCorePlatformPayload({
+    required this.os,
+    this.distroId,
+    this.versionId,
+    this.idLike = const [],
+    this.family,
+    this.kernelRelease,
+    this.packageManager,
+  });
+
+  factory AppCorePlatformPayload.fromJson(Map<String, dynamic> json) {
+    return AppCorePlatformPayload(
+      os: json['os'] as String? ?? '',
+      distroId: json['distroId'] as String?,
+      versionId: json['versionId'] as String?,
+      idLike: _readStringList(json['idLike']),
+      family: json['family'] as String?,
+      kernelRelease: json['kernelRelease'] as String?,
+      packageManager: json['packageManager'] as String?,
+    );
+  }
+
+  final String os;
+  final String? distroId;
+  final String? versionId;
+  final List<String> idLike;
+  final String? family;
+  final String? kernelRelease;
+  final String? packageManager;
+}
+
+class AppCoreTunnelBackendDiagnosticsPayload {
+  const AppCoreTunnelBackendDiagnosticsPayload({
+    required this.name,
+    this.executionMode,
+    this.executionBackend,
+    this.interfaceName,
+    required this.isUp,
+    required this.plannedPeerCount,
+    required this.recentCommandCount,
+  });
+
+  factory AppCoreTunnelBackendDiagnosticsPayload.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return AppCoreTunnelBackendDiagnosticsPayload(
+      name: json['name'] as String? ?? '',
+      executionMode: json['executionMode'] as String?,
+      executionBackend: json['executionBackend'] as String?,
+      interfaceName: json['interfaceName'] as String?,
+      isUp: json['isUp'] as bool? ?? false,
+      plannedPeerCount: (json['plannedPeerCount'] as num?)?.toInt() ?? 0,
+      recentCommandCount: (json['recentCommandCount'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  final String name;
+  final String? executionMode;
+  final String? executionBackend;
+  final String? interfaceName;
+  final bool isUp;
+  final int plannedPeerCount;
+  final int recentCommandCount;
+}
+
+class AppCorePlatformCheckPayload {
+  const AppCorePlatformCheckPayload({
+    required this.name,
+    required this.status,
+    required this.detail,
+  });
+
+  factory AppCorePlatformCheckPayload.fromJson(Map<String, dynamic> json) {
+    return AppCorePlatformCheckPayload(
+      name: json['name'] as String? ?? '',
+      status: json['status'] as String? ?? '',
+      detail: json['detail'] as String? ?? '',
+    );
+  }
+
+  final String name;
+  final String status;
+  final String detail;
+}
+
 class AppCoreControlPathOptionPayload {
   const AppCoreControlPathOptionPayload({
     required this.pathType,

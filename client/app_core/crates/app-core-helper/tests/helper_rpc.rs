@@ -294,6 +294,43 @@ fn helper_process_serializes_probe_transport_response_over_stdio() {
 }
 
 #[test]
+fn helper_process_serializes_platform_doctor_response_over_stdio() {
+    let response = invoke_helper(
+        "http://127.0.0.1:9",
+        &json!({
+            "method": "platformDoctor",
+            "args": {}
+        }),
+    );
+
+    assert_eq!(response["ok"], true);
+    assert!(response["result"]["platform"]["os"].as_str().is_some());
+    assert!(response["result"]["tunnelBackend"]["name"]
+        .as_str()
+        .is_some());
+    assert!(response["result"]["checks"].as_array().is_some());
+}
+
+#[test]
+fn helper_process_serializes_platform_install_plan_response_over_stdio() {
+    let response = invoke_helper(
+        "http://127.0.0.1:9",
+        &json!({
+            "method": "platformInstallPlan",
+            "args": {}
+        }),
+    );
+
+    assert_eq!(response["ok"], true);
+    assert!(response["result"]["platform"]["os"].as_str().is_some());
+    assert!(response["result"]["supportedDriverModes"]
+        .as_array()
+        .expect("driver modes")
+        .iter()
+        .any(|mode| mode == "in-memory"));
+}
+
+#[test]
 fn helper_process_serializes_success_response_over_tcp_host() {
     let bind = TcpListener::bind("127.0.0.1:0").expect("bind test port");
     let address = bind.local_addr().expect("tcp host local addr");

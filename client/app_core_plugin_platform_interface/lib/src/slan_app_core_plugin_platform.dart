@@ -287,6 +287,20 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
       _expectEncodableMap(payload, method: 'tunnelRuntimeView'),
     );
   }
+
+  Future<AppCorePlatformDoctorPayload> platformDoctor() async {
+    final payload = await invoke('platformDoctor');
+    return AppCorePlatformDoctorPayload.fromJson(
+      _expectMap(payload, method: 'platformDoctor'),
+    );
+  }
+
+  Future<AppCorePlatformInstallPlanPayload> platformInstallPlan() async {
+    final payload = await invoke('platformInstallPlan');
+    return AppCorePlatformInstallPlanPayload.fromJson(
+      _expectMap(payload, method: 'platformInstallPlan'),
+    );
+  }
 }
 
 Map<String, dynamic> _expectMap(

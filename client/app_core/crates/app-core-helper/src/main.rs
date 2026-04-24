@@ -1,7 +1,7 @@
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -377,6 +377,8 @@ impl HelperTunnelHost {
                 | "bringTunnelUp"
                 | "bringTunnelDown"
                 | "tunnelRuntimeView"
+                | "platformDoctor"
+                | "platformInstallPlan"
         )
     }
 
@@ -388,6 +390,8 @@ impl HelperTunnelHost {
             "bringTunnelUp" => self.bring_up(),
             "bringTunnelDown" => self.bring_down(),
             "tunnelRuntimeView" => self.runtime_view(args),
+            "platformDoctor" => Ok(platform_doctor_json(&self.backend.diagnostics())),
+            "platformInstallPlan" => Ok(platform_install_plan_json()),
             _ => Err(format!("unsupported method: {method}")),
         }
     }
@@ -851,6 +855,225 @@ fn backend_name() -> String {
     }
 }
 
+fn platform_report_json() -> Value {
+    let os = std::env::consts::OS.to_string();
+    let kernel_release = fs::read_to_string("/proc/sys/kernel/osrelease")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if os != "linux" {
+        return json!({
+            "os": os,
+            "distroId": Value::Null,
+            "versionId": Value::Null,
+            "idLike": Vec::<String>::new(),
+            "family": Value::Null,
+            "kernelRelease": kernel_release,
+            "packageManager": Value::Null,
+        });
+    }
+
+    let parsed = fs::read_to_string("/etc/os-release")
+        .ok()
+        .map(|contents| parse_os_release(&contents))
+        .unwrap_or_default();
+    let distro_id = parsed.get("ID").cloned();
+    let version_id = parsed.get("VERSION_ID").cloned();
+    let id_like = parsed
+        .get("ID_LIKE")
+        .map(|value| {
+            value
+                .split_whitespace()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let family = linux_family(distro_id.as_deref(), &id_like);
+    json!({
+        "os": os,
+        "distroId": distro_id,
+        "versionId": version_id,
+        "idLike": id_like,
+        "family": family,
+        "kernelRelease": kernel_release,
+        "packageManager": linux_package_manager(family),
+    })
+}
+
+fn platform_install_plan_json() -> Value {
+    let platform = platform_report_json();
+    let family = platform
+        .get("family")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let mut warnings = Vec::new();
+    let packages = match family {
+        "debian" => vec!["wireguard-tools", "iproute2"],
+        "rhel" => {
+            warnings.push(
+                "wireguard kernel packages may require extra repositories on some RHEL-family systems",
+            );
+            vec!["wireguard-tools", "iproute"]
+        }
+        "arch" => vec!["wireguard-tools", "iproute2"],
+        _ => {
+            warnings.push(
+                "unsupported or unknown linux distribution; package plan may need manual adjustments",
+            );
+            Vec::new()
+        }
+    };
+    let supported_driver_modes = if platform.get("os").and_then(Value::as_str) == Some("linux") {
+        vec!["in-memory", "linux-kernel-shell", "linux-kernel-native"]
+    } else {
+        vec!["in-memory"]
+    };
+    json!({
+        "platform": platform,
+        "packages": packages,
+        "supportedDriverModes": supported_driver_modes,
+        "warnings": warnings,
+    })
+}
+
+fn platform_doctor_json(diagnostics: &tunnel::TunnelBackendDiagnostics) -> Value {
+    let checks = vec![
+        platform_check_json(
+            "ip_command",
+            if command_on_path("ip") { "ok" } else { "fail" },
+            if command_on_path("ip") {
+                "ip command available".to_string()
+            } else {
+                "ip command missing from PATH".to_string()
+            },
+        ),
+        platform_check_json(
+            "wg_command",
+            if command_on_path("wg") { "ok" } else { "warn" },
+            if command_on_path("wg") {
+                "wg command available".to_string()
+            } else {
+                "wg command missing from PATH".to_string()
+            },
+        ),
+        platform_check_json(
+            "tun_device",
+            if Path::new("/dev/net/tun").exists() {
+                "ok"
+            } else {
+                "warn"
+            },
+            if Path::new("/dev/net/tun").exists() {
+                "/dev/net/tun present".to_string()
+            } else {
+                "/dev/net/tun missing".to_string()
+            },
+        ),
+        platform_check_json(
+            "tunnel_backend",
+            "ok",
+            format!(
+                "backend {} mode {} executor {} peers {} commands {}",
+                diagnostics.name,
+                diagnostics.execution_mode.unwrap_or("unknown"),
+                diagnostics.execution_backend.unwrap_or("unknown"),
+                diagnostics.planned_peer_count,
+                diagnostics.recent_command_count
+            ),
+        ),
+    ];
+    json!({
+        "platform": platform_report_json(),
+        "tunnelBackend": {
+            "name": diagnostics.name,
+            "executionMode": diagnostics.execution_mode,
+            "executionBackend": diagnostics.execution_backend,
+            "interfaceName": diagnostics.interface_name,
+            "isUp": diagnostics.is_up,
+            "plannedPeerCount": diagnostics.planned_peer_count,
+            "recentCommandCount": diagnostics.recent_command_count,
+        },
+        "checks": checks,
+    })
+}
+
+fn platform_check_json(name: &str, status: &str, detail: String) -> Value {
+    json!({
+        "name": name,
+        "status": status,
+        "detail": detail,
+    })
+}
+
+fn command_on_path(command: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths).any(|dir| {
+                let candidate = dir.join(command);
+                if candidate.exists() {
+                    return true;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    return dir.join(format!("{command}.exe")).exists();
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    false
+                }
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn parse_os_release(contents: &str) -> std::collections::BTreeMap<String, String> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (key, value) = line.split_once('=')?;
+            Some((
+                key.trim().to_string(),
+                value.trim_matches('"').to_ascii_lowercase(),
+            ))
+        })
+        .collect()
+}
+
+fn linux_family(id: Option<&str>, id_like: &[String]) -> &'static str {
+    let mut values = id_like.iter().map(String::as_str).collect::<Vec<_>>();
+    if let Some(id) = id {
+        values.push(id);
+    }
+    if values
+        .iter()
+        .any(|value| matches!(*value, "ubuntu" | "debian"))
+    {
+        "debian"
+    } else if values
+        .iter()
+        .any(|value| matches!(*value, "rhel" | "centos" | "fedora" | "rocky" | "almalinux"))
+    {
+        "rhel"
+    } else if values.iter().any(|value| *value == "arch") {
+        "arch"
+    } else {
+        "unknown"
+    }
+}
+
+fn linux_package_manager(family: &str) -> Option<&'static str> {
+    match family {
+        "debian" => Some("apt-get"),
+        "rhel" => Some("dnf"),
+        "arch" => Some("pacman"),
+        _ => None,
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn linux_tunnel_driver_name() -> String {
     match std::env::var("SLAN_TUNNEL_DRIVER")
@@ -881,7 +1104,8 @@ fn current_timestamp_ms() -> u64 {
 mod tests {
     use super::{
         build_rpc_response, classify_helper_error, classify_structured_error, current_timestamp_ms,
-        maybe_test_override_result, HelperTunnelConfiguration, HelperTunnelHost,
+        linux_family, linux_package_manager, maybe_test_override_result, parse_os_release,
+        HelperTunnelConfiguration, HelperTunnelHost,
     };
     use serde_json::{json, Value};
 
@@ -1193,5 +1417,67 @@ mod tests {
         .expect("configuration");
         assert_eq!(configuration.local_virtual_ip, "100.64.0.10");
         assert_eq!(configuration.peer_virtual_ip, "100.64.0.2");
+    }
+
+    #[test]
+    fn platform_doctor_reports_backend_diagnostics() {
+        let host = HelperTunnelHost::new();
+        let report = host
+            .invoke("platformDoctor", json!({}))
+            .expect("platform doctor");
+
+        assert_eq!(report["platform"]["os"].as_str().is_some(), true);
+        assert_eq!(report["tunnelBackend"]["name"].as_str().is_some(), true);
+        assert!(report["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .any(|check| check["name"] == "tunnel_backend"
+                && check["detail"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("backend")));
+    }
+
+    #[test]
+    fn platform_install_plan_reports_supported_driver_modes() {
+        let host = HelperTunnelHost::new();
+        let plan = host
+            .invoke("platformInstallPlan", json!({}))
+            .expect("platform install plan");
+
+        assert_eq!(plan["platform"]["os"].as_str().is_some(), true);
+        assert!(plan["supportedDriverModes"]
+            .as_array()
+            .expect("driver modes")
+            .iter()
+            .any(|mode| mode == "in-memory"));
+    }
+
+    #[test]
+    fn parses_linux_os_release_family() {
+        let parsed = parse_os_release(
+            r#"
+ID=ubuntu
+VERSION_ID="24.04"
+ID_LIKE="debian"
+"#,
+        );
+        let id_like = parsed
+            .get("ID_LIKE")
+            .map(|value| {
+                value
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        assert_eq!(parsed.get("ID").map(String::as_str), Some("ubuntu"));
+        assert_eq!(
+            linux_family(parsed.get("ID").map(String::as_str), &id_like),
+            "debian"
+        );
+        assert_eq!(linux_package_manager("debian"), Some("apt-get"));
     }
 }
