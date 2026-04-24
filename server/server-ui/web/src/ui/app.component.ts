@@ -495,6 +495,9 @@ export class AppComponent implements OnDestroy {
     if (!active) {
       return;
     }
+    if (this.actionBusy().startsWith(`member:${memberId}:`)) {
+      return;
+    }
     this.actionBusy.set(`member:${memberId}:${status}`);
     try {
       const result = await this.facade.updateNetworkMemberStatus({

@@ -247,6 +247,7 @@ export class NetworkWorkspaceComponent {
   @Input({ required: true }) draftIps!: Record<string, string>;
   @Input({ required: true }) draftRemarks!: Record<string, string>;
   @Input({ required: true }) showSwitchToOwned!: boolean;
+  @Input({ required: true }) actionBusy!: string;
 
   @Output() readonly refresh = new EventEmitter<void>();
   @Output() readonly switchToOwned = new EventEmitter<void>();
@@ -317,5 +318,13 @@ export class NetworkWorkspaceComponent {
 
   formatMemberTime(value?: number): string {
     return value ? new Date(value * 1000).toLocaleString() : '-';
+  }
+
+  isMemberActionBusy(memberId: string, status?: 'active' | 'rejected'): boolean {
+    const busy = this.actionBusy || '';
+    if (status) {
+      return busy === `member:${memberId}:${status}`;
+    }
+    return busy.startsWith(`member:${memberId}:`);
   }
 }
