@@ -170,8 +170,20 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember, Subnet } from
               <td><span class="status-badge" data-tone="warn">{{ memberStatusLabel(item.status) }}</span></td>
               <td>{{ formatMemberTime(item.createdAt) }}</td>
               <td>
-                <button class="ghost" (click)="updateMemberStatus.emit({ memberId: item.memberId, status: 'active' })">通过</button>
-                <button class="ghost" (click)="updateMemberStatus.emit({ memberId: item.memberId, status: 'rejected' })">拒绝</button>
+                <button
+                  class="ghost"
+                  (click)="updateMemberStatus.emit({ memberId: item.memberId, status: 'active' })"
+                  [disabled]="isMemberActionBusy(item.memberId)"
+                >
+                  {{ isMemberActionBusy(item.memberId, 'active') ? '处理中...' : '通过' }}
+                </button>
+                <button
+                  class="ghost"
+                  (click)="updateMemberStatus.emit({ memberId: item.memberId, status: 'rejected' })"
+                  [disabled]="isMemberActionBusy(item.memberId)"
+                >
+                  {{ isMemberActionBusy(item.memberId, 'rejected') ? '处理中...' : '拒绝' }}
+                </button>
               </td>
             </tr>
           </tbody>
