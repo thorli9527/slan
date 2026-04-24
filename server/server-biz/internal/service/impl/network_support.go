@@ -245,6 +245,9 @@ func (s *dbState) routesForNetwork(ctx context.Context, networkID string) []dto.
 	var routes []dto.Route
 	for _, subnet := range subnets {
 		for _, member := range members {
+			if member.Status != "active" {
+				continue
+			}
 			if _, err := s.pg.GetAttachmentBySubnetDevice(ctx, subnet.SubnetID, member.DeviceID); err != nil {
 				continue
 			}
