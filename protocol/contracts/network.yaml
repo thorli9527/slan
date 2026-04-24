@@ -32,6 +32,11 @@ contracts:
       deviceId:
         type: string
         required: true
+  JoinNetworkRequest:
+    fields:
+      deviceId:
+        type: string
+        required: true
   DeactivateNetworkRequest:
     fields:
       deviceId:
@@ -116,6 +121,14 @@ contracts:
       hasNetwork:
         type: bool
         required: true
+  DNSConfig:
+    fields:
+      servers:
+        type: string[]
+        required: true
+      searchDomains:
+        type: string[]
+        required: true
   Subnet:
     fields:
       subnetId:
@@ -188,6 +201,25 @@ contracts:
       status:
         type: string
         required: false
+  NetworkJoinResult:
+    fields:
+      member:
+        type: NetworkMember
+        required: true
+      attachment:
+        type: SubnetAttachment
+        required: true
+  NetworkJoinByOwnerEmailResult:
+    fields:
+      network:
+        type: Network
+        required: true
+      member:
+        type: NetworkMember
+        required: true
+      attachment:
+        type: SubnetAttachment
+        required: true
   NetworkDetail:
     fields:
       networkId:
