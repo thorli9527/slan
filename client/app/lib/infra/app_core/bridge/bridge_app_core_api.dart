@@ -215,6 +215,18 @@ class BridgeAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<PlatformDoctorModel> platformDoctor() async {
+    final payload = await _pluginPlatform.platformDoctor();
+    return _toPlatformDoctorModel(payload);
+  }
+
+  @override
+  Future<PlatformInstallPlanModel> platformInstallPlan() async {
+    final payload = await _pluginPlatform.platformInstallPlan();
+    return _toPlatformInstallPlanModel(payload);
+  }
+
+  @override
   Future<int> send({
     required String payload,
   }) async {
@@ -493,6 +505,61 @@ DataPlaneProbeModel _parseProbe(AppCoreDataPlaneProbePayload payload) {
     pathScore: payload.pathScore,
     derpClusterId: payload.derpClusterId,
     derpNodeId: payload.derpNodeId,
+  );
+}
+
+PlatformDoctorModel _toPlatformDoctorModel(
+  AppCorePlatformDoctorPayload payload,
+) {
+  return PlatformDoctorModel(
+    platform: _toPlatformInfoModel(payload.platform),
+    tunnelBackend: _toTunnelBackendDiagnosticsModel(payload.tunnelBackend),
+    checks: payload.checks
+        .map(
+          (check) => PlatformCheckModel(
+            name: check.name,
+            status: check.status,
+            detail: check.detail,
+          ),
+        )
+        .toList(growable: false),
+  );
+}
+
+PlatformInstallPlanModel _toPlatformInstallPlanModel(
+  AppCorePlatformInstallPlanPayload payload,
+) {
+  return PlatformInstallPlanModel(
+    platform: _toPlatformInfoModel(payload.platform),
+    packages: payload.packages,
+    supportedDriverModes: payload.supportedDriverModes,
+    warnings: payload.warnings,
+  );
+}
+
+PlatformInfoModel _toPlatformInfoModel(AppCorePlatformPayload payload) {
+  return PlatformInfoModel(
+    os: payload.os,
+    distroId: payload.distroId,
+    versionId: payload.versionId,
+    idLike: payload.idLike,
+    family: payload.family,
+    kernelRelease: payload.kernelRelease,
+    packageManager: payload.packageManager,
+  );
+}
+
+TunnelBackendDiagnosticsModel _toTunnelBackendDiagnosticsModel(
+  AppCoreTunnelBackendDiagnosticsPayload payload,
+) {
+  return TunnelBackendDiagnosticsModel(
+    name: payload.name,
+    executionMode: payload.executionMode,
+    executionBackend: payload.executionBackend,
+    interfaceName: payload.interfaceName,
+    isUp: payload.isUp,
+    plannedPeerCount: payload.plannedPeerCount,
+    recentCommandCount: payload.recentCommandCount,
   );
 }
 

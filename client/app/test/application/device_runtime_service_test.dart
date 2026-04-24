@@ -255,6 +255,16 @@ class _FakeAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<PlatformDoctorModel> platformDoctor() {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PlatformInstallPlanModel> platformInstallPlan() {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<SessionModel> register({
     required String email,
     required String password,

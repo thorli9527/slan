@@ -55,6 +55,88 @@ class DataPlanePathModel {
   }
 }
 
+class PlatformDoctorModel {
+  const PlatformDoctorModel({
+    required this.platform,
+    required this.tunnelBackend,
+    this.checks = const [],
+  });
+
+  final PlatformInfoModel platform;
+  final TunnelBackendDiagnosticsModel tunnelBackend;
+  final List<PlatformCheckModel> checks;
+}
+
+class PlatformInstallPlanModel {
+  const PlatformInstallPlanModel({
+    required this.platform,
+    this.packages = const [],
+    this.supportedDriverModes = const [],
+    this.warnings = const [],
+  });
+
+  final PlatformInfoModel platform;
+  final List<String> packages;
+  final List<String> supportedDriverModes;
+  final List<String> warnings;
+}
+
+class PlatformInfoModel {
+  const PlatformInfoModel({
+    required this.os,
+    this.distroId,
+    this.versionId,
+    this.idLike = const [],
+    this.family,
+    this.kernelRelease,
+    this.packageManager,
+  });
+
+  final String os;
+  final String? distroId;
+  final String? versionId;
+  final List<String> idLike;
+  final String? family;
+  final String? kernelRelease;
+  final String? packageManager;
+}
+
+class TunnelBackendDiagnosticsModel {
+  const TunnelBackendDiagnosticsModel({
+    required this.name,
+    this.executionMode,
+    this.executionBackend,
+    this.interfaceName,
+    required this.isUp,
+    required this.plannedPeerCount,
+    required this.recentCommandCount,
+  });
+
+  final String name;
+  final String? executionMode;
+  final String? executionBackend;
+  final String? interfaceName;
+  final bool isUp;
+  final int plannedPeerCount;
+  final int recentCommandCount;
+}
+
+class PlatformCheckModel {
+  const PlatformCheckModel({
+    required this.name,
+    required this.status,
+    required this.detail,
+  });
+
+  final String name;
+  final String status;
+  final String detail;
+
+  bool get isOk => status.toLowerCase() == 'ok';
+  bool get isWarning => status.toLowerCase() == 'warn';
+  bool get isFailure => status.toLowerCase() == 'fail';
+}
+
 enum ProbeFailureKind {
   timeout,
   transport,

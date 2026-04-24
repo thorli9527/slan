@@ -406,6 +406,40 @@ class MockAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<PlatformDoctorModel> platformDoctor() async {
+    return const PlatformDoctorModel(
+      platform: PlatformInfoModel(
+        os: 'mock',
+        family: 'mock',
+        packageManager: 'mock',
+      ),
+      tunnelBackend: TunnelBackendDiagnosticsModel(
+        name: 'in-memory',
+        executionMode: 'memory',
+        executionBackend: 'memory',
+        isUp: true,
+        plannedPeerCount: 1,
+        recentCommandCount: 0,
+      ),
+      checks: [
+        PlatformCheckModel(
+          name: 'mock_backend',
+          status: 'ok',
+          detail: 'mock app-core backend is available',
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<PlatformInstallPlanModel> platformInstallPlan() async {
+    return const PlatformInstallPlanModel(
+      platform: PlatformInfoModel(os: 'mock', family: 'mock'),
+      supportedDriverModes: ['in-memory'],
+    );
+  }
+
+  @override
   Future<int> send({
     required String payload,
   }) async {

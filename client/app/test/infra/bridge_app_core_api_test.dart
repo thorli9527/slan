@@ -250,6 +250,61 @@ void main() {
     expect(status.connectPlans.single.relayTicketId, 'ticket-1');
   });
 
+  test('BridgeAppCoreApi routes platform diagnostics via plugin platform',
+      () async {
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
+      'platformDoctor': {
+        'platform': {
+          'os': 'linux',
+          'distroId': 'ubuntu',
+          'family': 'debian',
+          'packageManager': 'apt-get',
+        },
+        'tunnelBackend': {
+          'name': 'linux-kernel',
+          'executionMode': 'system',
+          'executionBackend': 'shell',
+          'interfaceName': 'slan0',
+          'isUp': true,
+          'plannedPeerCount': 1,
+          'recentCommandCount': 4,
+        },
+        'checks': [
+          {
+            'name': 'ip_command',
+            'status': 'ok',
+            'detail': 'ip command available',
+          },
+        ],
+      },
+      'platformInstallPlan': {
+        'platform': {
+          'os': 'linux',
+          'family': 'debian',
+        },
+        'packages': ['wireguard-tools', 'iproute2'],
+        'supportedDriverModes': ['in-memory', 'linux-kernel-shell'],
+        'warnings': [],
+      },
+    });
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
+
+    final doctor = await api.platformDoctor();
+    final installPlan = await api.platformInstallPlan();
+
+    expect(pluginPlatform.calls.map((call) => call.method), [
+      'platformDoctor',
+      'platformInstallPlan',
+    ]);
+    expect(doctor.platform.os, 'linux');
+    expect(doctor.platform.packageManager, 'apt-get');
+    expect(doctor.tunnelBackend.name, 'linux-kernel');
+    expect(doctor.tunnelBackend.executionBackend, 'shell');
+    expect(doctor.checks.single.isOk, isTrue);
+    expect(installPlan.packages, contains('wireguard-tools'));
+    expect(installPlan.supportedDriverModes, contains('linux-kernel-shell'));
+  });
+
   test('BridgeAppCoreApi routes disconnect via plugin platform', () async {
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'disconnect': null,

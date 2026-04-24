@@ -269,6 +269,37 @@ class HttpAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<PlatformDoctorModel> platformDoctor() async {
+    return const PlatformDoctorModel(
+      platform: PlatformInfoModel(os: 'http'),
+      tunnelBackend: TunnelBackendDiagnosticsModel(
+        name: 'unavailable',
+        isUp: false,
+        plannedPeerCount: 0,
+        recentCommandCount: 0,
+      ),
+      checks: [
+        PlatformCheckModel(
+          name: 'app_core_bridge',
+          status: 'warn',
+          detail: 'HTTP mode does not expose local tunnel platform diagnostics',
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<PlatformInstallPlanModel> platformInstallPlan() async {
+    return const PlatformInstallPlanModel(
+      platform: PlatformInfoModel(os: 'http'),
+      supportedDriverModes: ['bridge'],
+      warnings: [
+        'HTTP mode does not expose local tunnel installation planning',
+      ],
+    );
+  }
+
+  @override
   Future<int> send({
     required String payload,
   }) async {
