@@ -42,6 +42,11 @@ contracts:
       deviceId:
         type: string
         required: true
+  UpdateNetworkMemberStatusRequest:
+    fields:
+      status:
+        type: string
+        required: true
   JoinNetworkByOwnerEmailRequest:
     fields:
       ownerEmail:

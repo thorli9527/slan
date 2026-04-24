@@ -212,6 +212,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/NetworkJoinResult'
 
+  /networks/{networkId}/members/{memberId}/status:
+    put:
+      tags: [Networks]
+      operationId: updateNetworkMemberStatus
+      summary: 审批或拒绝网络加入申请
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/MemberId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNetworkMemberStatusRequest'
+      responses:
+        '200':
+          description: 成员状态已更新
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkMember'
+
   /nodes/register:
     post:
       tags: [Nodes]
@@ -324,6 +348,12 @@ components:
       required: true
       schema:
         type: string
+    MemberId:
+      name: memberId
+      in: path
+      required: true
+      schema:
+        type: string
 
   schemas:
     RegisterRequest:
@@ -429,6 +459,14 @@ components:
         deviceId:
           type: string
 
+    UpdateNetworkMemberStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, rejected]
+
     Network:
       type: object
       required: [networkId, name]
@@ -456,8 +494,12 @@ components:
           type: string
         role:
           type: string
+        createdAt:
+          type: integer
+          format: int64
         status:
           type: string
+          enum: [pending, active, rejected]
 
     Subnet:
       type: object
