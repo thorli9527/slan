@@ -269,7 +269,7 @@ func (s dbControlChannelService) CloseSession(userID, nodeID, networkID string) 
 	if err := s.state.pg.DeleteControlSessionByNode(ctx, nodeID, networkID); err != nil {
 		return err
 	}
-	return s.state.pg.UpdateDeviceStatus(ctx, node.DeviceID, "offline")
+	return s.state.markDeviceOfflineIfNoFreshControlSession(ctx, node.DeviceID, time.Now())
 }
 
 // PeerSnapshot returns the peer view that would appear in the current network
@@ -527,6 +527,19 @@ func (s *dbState) hasFreshDeviceBoundWebSession(
 		lastSeenAt = issuedAt
 	}
 	return now.Sub(lastSeenAt) <= deviceBoundWebSessionFreshnessWindow
+}
+
+// markDeviceOfflineIfNoFreshControlSession avoids flipping a device offline
+// while another node/network session for the same device is still fresh.
+func (s *dbState) markDeviceOfflineIfNoFreshControlSession(ctx context.Context, deviceID string, now time.Time) error {
+	session, err := s.pg.GetLatestControlSessionByDevice(ctx, deviceID)
+	if err == nil && controlSessionIsFresh(session, now) {
+		return nil
+	}
+	if err != nil && !repo.IsNotFound(err) {
+		return err
+	}
+	return s.pg.UpdateDeviceStatus(ctx, deviceID, "offline")
 }
 
 // controlSessionIsFresh applies the in-memory freshness window to a stored

@@ -121,3 +121,51 @@ func TestListDevicesForMemberDoesNotExposeOtherNetworkDevices(t *testing.T) {
 		t.Fatalf("expected own membership metadata, got %+v", devices[0])
 	}
 }
+
+func TestListDevicesRefreshesStalePresenceBeforeReturning(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-1",
+		Email:        "user@example.com",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-stale",
+		UserID:    "user-1",
+		MachineID: "machine-stale",
+		Name:      "stale device",
+		Platform:  "windows",
+		Status:    "online",
+		CreatedAt: now.Unix(),
+	}); err != nil {
+		t.Fatalf("insert device: %v", err)
+	}
+	if err := state.pg.CreateControlSession(ctx, repo.ControlSession{
+		ControlSessionID: "ctrl-stale",
+		UserID:           "user-1",
+		DeviceID:         "dev-stale",
+		NodeID:           "node-stale",
+		NetworkID:        "net-stale",
+		SessionToken:     "token-stale",
+		ConnectedAt:      now.Add(-5 * time.Minute).Unix(),
+		LastSeenAt:       now.Add(-5 * time.Minute).Unix(),
+	}); err != nil {
+		t.Fatalf("create stale control session: %v", err)
+	}
+
+	devices, err := dbDeviceService{state: state}.ListByUser("user-1")
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("expected one device, got %+v", devices)
+	}
+	if devices[0].Status != "offline" {
+		t.Fatalf("expected stale device to be returned offline, got %+v", devices[0])
+	}
+}

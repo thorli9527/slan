@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lib/pq"
+	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
 )
 
@@ -97,5 +99,94 @@ func TestCleanupExpiredControlPlaneStateKeepsDeviceOnlineWithFreshSession(t *tes
 	}
 	if device.Status != "online" {
 		t.Fatalf("expected fresh device online, got %s", device.Status)
+	}
+}
+
+func TestCloseSessionKeepsDeviceOnlineWithAnotherFreshSession(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-1",
+		Email:        "user@example.com",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	createNetworkFixture(t, state, "user-1", "net-1", "subnet-1", "100.64.0.0/24")
+	createNetworkFixture(t, state, "user-1", "net-2", "subnet-2", "100.65.0.0/24")
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-1",
+		UserID:    "user-1",
+		MachineID: "machine-1",
+		Name:      "device",
+		Platform:  "windows",
+		Status:    "online",
+		CreatedAt: now.Unix(),
+	}); err != nil {
+		t.Fatalf("insert device: %v", err)
+	}
+	for _, member := range []dto.NetworkMember{
+		{MemberID: "member-1", NetworkID: "net-1", DeviceID: "dev-1", Role: "owner", Status: "active", CreatedAt: now.Unix()},
+		{MemberID: "member-2", NetworkID: "net-2", DeviceID: "dev-1", Role: "owner", Status: "active", CreatedAt: now.Unix()},
+	} {
+		if err := state.pg.CreateMember(ctx, member); err != nil {
+			t.Fatalf("create member %s: %v", member.MemberID, err)
+		}
+	}
+	for _, attachment := range []dto.SubnetAttachment{
+		{AttachmentID: "att-1", NetworkID: "net-1", SubnetID: "subnet-1", DeviceID: "dev-1", VirtualIP: "100.64.0.2", Status: "active"},
+		{AttachmentID: "att-2", NetworkID: "net-2", SubnetID: "subnet-2", DeviceID: "dev-1", VirtualIP: "100.65.0.2", Status: "active"},
+	} {
+		if err := state.pg.CreateAttachment(ctx, attachment); err != nil {
+			t.Fatalf("create attachment %s: %v", attachment.AttachmentID, err)
+		}
+	}
+	for _, node := range []repo.Node{
+		{NodeID: "node-1", UserID: "user-1", DeviceID: "dev-1", NodePublicKey: "node-pub-1", Capabilities: pq.StringArray{}},
+		{NodeID: "node-2", UserID: "user-1", DeviceID: "dev-1", NodePublicKey: "node-pub-2", Capabilities: pq.StringArray{}},
+	} {
+		if err := state.pg.UpsertNode(ctx, node); err != nil {
+			t.Fatalf("upsert node %s: %v", node.NodeID, err)
+		}
+	}
+	for _, session := range []repo.ControlSession{
+		{
+			ControlSessionID: "ctrl-1",
+			UserID:           "user-1",
+			DeviceID:         "dev-1",
+			NodeID:           "node-1",
+			NetworkID:        "net-1",
+			SessionToken:     "token-1",
+			ConnectedAt:      now.Unix(),
+			LastSeenAt:       now.Unix(),
+		},
+		{
+			ControlSessionID: "ctrl-2",
+			UserID:           "user-1",
+			DeviceID:         "dev-1",
+			NodeID:           "node-2",
+			NetworkID:        "net-2",
+			SessionToken:     "token-2",
+			ConnectedAt:      now.Unix(),
+			LastSeenAt:       now.Unix(),
+		},
+	} {
+		if err := state.pg.CreateControlSession(ctx, session); err != nil {
+			t.Fatalf("create session %s: %v", session.ControlSessionID, err)
+		}
+	}
+
+	if err := (dbControlChannelService{state: state}).CloseSession("user-1", "node-1", "net-1"); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+
+	device, err := state.pg.GetDeviceByID(ctx, "dev-1")
+	if err != nil {
+		t.Fatalf("load device: %v", err)
+	}
+	if device.Status != "online" {
+		t.Fatalf("expected device to stay online, got %s", device.Status)
 	}
 }

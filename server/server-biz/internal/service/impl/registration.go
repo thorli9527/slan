@@ -2,6 +2,7 @@ package impl
 
 import (
 	"context"
+	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
@@ -36,6 +37,7 @@ func (s dbDeviceService) Register(userID string, req dto.RegisterDeviceRequest) 
 
 func (s dbDeviceService) ListByUser(userID string) ([]dto.Device, error) {
 	ctx := context.Background()
+	s.state.cleanupExpiredControlPlaneState(ctx, time.Now())
 	records, err := s.state.pg.ListDevicesByUser(ctx, userID)
 	if err != nil {
 		return nil, err
