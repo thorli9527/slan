@@ -82,6 +82,12 @@ func (s *dbState) ensureMember(ctx context.Context, networkID, deviceID, role st
 func (s *dbState) ensureMemberWithStatus(ctx context.Context, networkID, deviceID, role, status string) (dto.NetworkMember, error) {
 	member, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, deviceID)
 	if err == nil {
+		if member.Status == "rejected" && status == "pending" {
+			if err := s.pg.UpdateMemberStatus(ctx, member.MemberID, status); err != nil {
+				return dto.NetworkMember{}, err
+			}
+			member.Status = status
+		}
 		return member, nil
 	}
 	if !repo.IsNotFound(err) {

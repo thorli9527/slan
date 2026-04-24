@@ -746,6 +746,60 @@ func TestPendingJoinRequiresOwnerApprovalBeforeActivation(t *testing.T) {
 	}
 }
 
+func TestRejectedJoinCanBeRequestedAgain(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "owner-1",
+		Email:        "owner@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-2",
+		Email:        "member@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create member user: %v", err)
+	}
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-2",
+		UserID:    "user-2",
+		MachineID: "machine-2",
+		Name:      "member-device",
+		Platform:  "macos",
+		Status:    "online",
+	}); err != nil {
+		t.Fatalf("create member device: %v", err)
+	}
+	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+
+	networkService := dbNetworkService{state: state}
+	first, err := networkService.JoinByOwnerEmail("user-2", dto.JoinNetworkByOwnerEmailRequest{
+		OwnerEmail: "owner@local.slan",
+		DeviceID:   "dev-2",
+	})
+	if err != nil {
+		t.Fatalf("join by owner email: %v", err)
+	}
+	if _, err := networkService.UpdateMemberStatus("owner-1", "net-1", first.Member.MemberID, dto.UpdateNetworkMemberStatusRequest{
+		Status: "rejected",
+	}); err != nil {
+		t.Fatalf("reject member: %v", err)
+	}
+	second, err := networkService.JoinByOwnerEmail("user-2", dto.JoinNetworkByOwnerEmailRequest{
+		OwnerEmail: "owner@local.slan",
+		DeviceID:   "dev-2",
+	})
+	if err != nil {
+		t.Fatalf("re-request join by owner email: %v", err)
+	}
+	if second.Member.MemberID != first.Member.MemberID || second.Member.Status != "pending" {
+		t.Fatalf("expected rejected membership to reopen as pending, got first=%+v second=%+v", first.Member, second.Member)
+	}
+}
+
 func TestSwitch_ActivatesOwnedNetwork(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
