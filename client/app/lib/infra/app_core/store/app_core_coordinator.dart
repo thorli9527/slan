@@ -238,7 +238,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       if (result.bootstrap != null) {
         sessionStore.bootstrap = result.bootstrap;
         sessionStore.controlStatus = result.controlStatus;
-        sessionStore.device = result.bootstrap!.device;
+        sessionStore.syncDevice(result.bootstrap!.device);
       }
       sessionStore.networks = result.networks;
     });
@@ -289,7 +289,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.node = runtime.node;
       sessionStore.bootstrap = runtime.bootstrap;
       sessionStore.controlStatus = runtime.controlStatus;
-      sessionStore.device = runtime.device;
+      sessionStore.syncDevice(runtime.device);
       sessionStore.networks = runtime.networks;
 
       final config =
@@ -389,7 +389,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         networkId: targetNetworkId,
       );
       sessionStore.controlStatus = await AppCoreScope.instance.controlStatus();
-      sessionStore.device = sessionStore.bootstrap!.device;
+      sessionStore.syncDevice(sessionStore.bootstrap!.device);
       sessionStore.networks = sessionStore.bootstrap!.networks;
     });
   }
@@ -404,7 +404,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       );
       sessionStore.bootstrap = result.bootstrap;
       sessionStore.controlStatus = result.controlStatus;
-      sessionStore.device = result.bootstrap.device;
+      sessionStore.syncDevice(result.bootstrap.device);
       sessionStore.networks = result.bootstrap.networks;
       detail = result.detail;
     });
