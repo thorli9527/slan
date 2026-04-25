@@ -176,6 +176,9 @@ func TestCloseSessionKeepsDeviceOnlineWithAnotherFreshSession(t *testing.T) {
 		if err := state.pg.CreateControlSession(ctx, session); err != nil {
 			t.Fatalf("create session %s: %v", session.ControlSessionID, err)
 		}
+		if err := state.tokens.StoreControlSessionToken(ctx, session.SessionToken, session.UserID, time.Hour); err != nil {
+			t.Fatalf("store session token %s: %v", session.SessionToken, err)
+		}
 	}
 
 	if err := (dbControlChannelService{state: state}).CloseSession("user-1", "node-1", "net-1"); err != nil {
@@ -188,5 +191,12 @@ func TestCloseSessionKeepsDeviceOnlineWithAnotherFreshSession(t *testing.T) {
 	}
 	if device.Status != "online" {
 		t.Fatalf("expected device to stay online, got %s", device.Status)
+	}
+	tokenStore := state.tokens.(*memoryTokenStore)
+	if _, err := tokenStore.AuthenticateControlSessionToken(ctx, "token-1"); err == nil {
+		t.Fatal("expected closed session token to be revoked")
+	}
+	if _, err := tokenStore.AuthenticateControlSessionToken(ctx, "token-2"); err != nil {
+		t.Fatalf("expected other fresh session token to remain valid: %v", err)
 	}
 }

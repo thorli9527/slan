@@ -66,6 +66,10 @@ func (s *RedisTokenStore) StoreControlSessionToken(ctx context.Context, token, u
 	return s.client.Set(ctx, "control_session_token:"+token, userID, ttl).Err()
 }
 
+func (s *RedisTokenStore) DeleteControlSessionToken(ctx context.Context, token string) error {
+	return s.client.Del(ctx, "control_session_token:"+token).Err()
+}
+
 func (s *RedisTokenStore) MarkAuthCallbackReceived(ctx context.Context, callbackID string, receivedAt int64, ttl time.Duration) error {
 	if ttl <= 0 {
 		ttl = 10 * time.Minute

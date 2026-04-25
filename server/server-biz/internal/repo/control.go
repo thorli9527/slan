@@ -66,6 +66,32 @@ func (r *PostgresRepository) GetLatestControlSessionByDevice(ctx context.Context
 	return record, err
 }
 
+func (r *PostgresRepository) ListControlSessionsByNode(ctx context.Context, nodeID, networkID string) ([]ControlSession, error) {
+	var records []ControlSession
+	err := r.db.WithContext(ctx).
+		Where("node_id = ? AND network_id = ?", nodeID, networkID).
+		Find(&records).Error
+	return records, err
+}
+
+func (r *PostgresRepository) ListControlSessionsByDeviceInNetwork(ctx context.Context, deviceID, networkID string) ([]ControlSession, error) {
+	var records []ControlSession
+	err := r.db.WithContext(ctx).
+		Where("device_id = ? AND network_id = ?", deviceID, networkID).
+		Find(&records).Error
+	return records, err
+}
+
+func (r *PostgresRepository) ListControlSessionsByDeviceExceptNetwork(ctx context.Context, deviceID, keepNetworkID string) ([]ControlSession, error) {
+	var records []ControlSession
+	query := r.db.WithContext(ctx).Where("device_id = ?", deviceID)
+	if keepNetworkID != "" {
+		query = query.Where("network_id <> ?", keepNetworkID)
+	}
+	err := query.Find(&records).Error
+	return records, err
+}
+
 func (r *PostgresRepository) DeleteControlSessionByNode(ctx context.Context, nodeID, networkID string) error {
 	return r.db.WithContext(ctx).
 		Where("node_id = ? AND network_id = ?", nodeID, networkID).

@@ -1033,6 +1033,9 @@ func TestActivateAndDeactivate_AllocatesIpOnlyWhileEnabled(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create control session: %v", err)
 	}
+	if err := state.tokens.StoreControlSessionToken(ctx, "token-1", "user-1", time.Hour); err != nil {
+		t.Fatalf("store control session token: %v", err)
+	}
 
 	afterActivate, err := state.pg.ListAttachmentsByDevice(ctx, "dev-1")
 	if err != nil {
@@ -1064,6 +1067,9 @@ func TestActivateAndDeactivate_AllocatesIpOnlyWhileEnabled(t *testing.T) {
 		t.Fatalf("expected control session to be deleted after deactivation, got %v", err)
 	}
 	tokenStore := state.tokens.(*memoryTokenStore)
+	if _, err := tokenStore.AuthenticateControlSessionToken(ctx, "token-1"); err == nil {
+		t.Fatal("expected control session token to be revoked after deactivation")
+	}
 	if len(tokenStore.controlSyncEvents) != 1 || tokenStore.controlSyncEvents[0].Type != "peer_remove" {
 		t.Fatalf("expected peer_remove control sync event, got %+v", tokenStore.controlSyncEvents)
 	}

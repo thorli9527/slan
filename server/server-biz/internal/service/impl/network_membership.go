@@ -112,6 +112,11 @@ func (s *dbState) ensureMemberWithStatus(ctx context.Context, networkID, deviceI
 // control sessions in other networks are removed so the device effectively
 // switches to the target network.
 func (s *dbState) ensureSingleNetworkMembership(ctx context.Context, deviceID, networkID string) error {
+	if sessions, err := s.pg.ListControlSessionsByDeviceExceptNetwork(ctx, deviceID, networkID); err != nil {
+		return err
+	} else {
+		s.deleteControlSessionTokens(ctx, sessions)
+	}
 	if err := s.pg.DeleteControlSessionsByDeviceExceptNetwork(ctx, deviceID, networkID); err != nil {
 		return err
 	}

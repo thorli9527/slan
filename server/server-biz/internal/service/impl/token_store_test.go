@@ -84,6 +84,13 @@ func (s *memoryTokenStore) StoreControlSessionToken(_ context.Context, token, us
 	return nil
 }
 
+func (s *memoryTokenStore) DeleteControlSessionToken(_ context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.controlSessionTokens, token)
+	return nil
+}
+
 func (s *memoryTokenStore) MarkAuthCallbackReceived(_ context.Context, callbackID string, receivedAt int64, _ time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

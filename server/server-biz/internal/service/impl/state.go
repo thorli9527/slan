@@ -27,6 +27,7 @@ type tokenStore interface {
 	StoreRefreshToken(ctx context.Context, token, userID string, ttl time.Duration) error
 	StoreOpsAccessToken(ctx context.Context, token, adminID string, ttl time.Duration) error
 	StoreControlSessionToken(ctx context.Context, token, userID string, ttl time.Duration) error
+	DeleteControlSessionToken(ctx context.Context, token string) error
 	MarkAuthCallbackReceived(ctx context.Context, callbackID string, receivedAt int64, ttl time.Duration) error
 	AuthCallbackReceivedAt(ctx context.Context, callbackID string) (int64, error)
 	StoreAuthCallbackPayload(ctx context.Context, callbackID string, payload any, ttl time.Duration) error

@@ -137,6 +137,11 @@ func (s *dbState) cleanupDeactivatedNetworkDevice(ctx context.Context, networkID
 	if err := s.pg.DeleteAttachmentsByDeviceInNetwork(ctx, deviceID, networkID); err != nil {
 		return err
 	}
+	if sessions, err := s.pg.ListControlSessionsByDeviceInNetwork(ctx, deviceID, networkID); err != nil {
+		return err
+	} else {
+		s.deleteControlSessionTokens(ctx, sessions)
+	}
 	if err := s.pg.DeleteControlSessionsByDeviceInNetwork(ctx, deviceID, networkID); err != nil {
 		return err
 	}

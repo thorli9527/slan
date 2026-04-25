@@ -266,6 +266,11 @@ func (s dbControlChannelService) CloseSession(userID, nodeID, networkID string) 
 	if err := s.state.pg.DeleteNodeConnectionStates(ctx, nodeID, networkID); err != nil {
 		return err
 	}
+	if sessions, err := s.state.pg.ListControlSessionsByNode(ctx, nodeID, networkID); err != nil {
+		return err
+	} else {
+		s.state.deleteControlSessionTokens(ctx, sessions)
+	}
 	if err := s.state.pg.DeleteControlSessionByNode(ctx, nodeID, networkID); err != nil {
 		return err
 	}
@@ -483,6 +488,18 @@ func (s *dbState) touchControlSessionByToken(ctx context.Context, sessionToken s
 		return
 	}
 	_ = s.pg.TouchControlSessionByToken(ctx, sessionToken, time.Now().Unix())
+}
+
+func (s *dbState) deleteControlSessionTokens(ctx context.Context, sessions []repo.ControlSession) {
+	if s.tokens == nil {
+		return
+	}
+	for _, session := range sessions {
+		if strings.TrimSpace(session.SessionToken) == "" {
+			continue
+		}
+		_ = s.tokens.DeleteControlSessionToken(ctx, session.SessionToken)
+	}
 }
 
 // touchControlSessionByNode refreshes the latest control session for a node.
