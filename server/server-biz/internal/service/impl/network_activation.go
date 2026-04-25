@@ -123,7 +123,10 @@ func (s dbNetworkService) Deactivate(userID, networkID string, req dto.Deactivat
 	if _, err := s.loadNetworkForDevice(ctx, userID, networkID, req.DeviceID, false); err != nil {
 		return err
 	}
-	return s.state.cleanupDeactivatedNetworkDevice(ctx, networkID, req.DeviceID)
+	if err := s.state.cleanupDeactivatedNetworkDevice(ctx, networkID, req.DeviceID); err != nil {
+		return err
+	}
+	return s.state.clearUserActiveNetworkIfNoAttachments(ctx, userID, networkID)
 }
 
 func (s *dbState) cleanupDeactivatedNetworkDevice(ctx context.Context, networkID, deviceID string) error {
@@ -141,4 +144,30 @@ func (s *dbState) cleanupDeactivatedNetworkDevice(ctx context.Context, networkID
 		s.publishPeerRemove(networkID, node.NodeID)
 	}
 	return nil
+}
+
+func (s *dbState) clearUserActiveNetworkIfNoAttachments(ctx context.Context, userID, networkID string) error {
+	user, err := s.pg.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(user.ActiveNetworkID) != networkID {
+		return nil
+	}
+	devices, err := s.pg.ListDevicesByUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, device := range devices {
+		attachments, err := s.pg.ListAttachmentsByDevice(ctx, device.DeviceID)
+		if err != nil {
+			return err
+		}
+		for _, attachment := range attachments {
+			if attachment.NetworkID == networkID && attachment.Status == "active" && attachment.VirtualIP != "" {
+				return nil
+			}
+		}
+	}
+	return s.pg.UpdateUserActiveNetwork(ctx, userID, "")
 }

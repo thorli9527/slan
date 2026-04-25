@@ -1053,6 +1053,13 @@ func TestActivateAndDeactivate_AllocatesIpOnlyWhileEnabled(t *testing.T) {
 	if len(afterDeactivate) != 0 {
 		t.Fatalf("expected no attachments after deactivation, got %+v", afterDeactivate)
 	}
+	user, err := state.pg.GetUserByID(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("reload user after deactivation: %v", err)
+	}
+	if user.ActiveNetworkID != "" {
+		t.Fatalf("expected active network pointer to be cleared after deactivation, got %s", user.ActiveNetworkID)
+	}
 	if _, err := state.pg.GetLatestControlSessionByNode(ctx, "node-1", "net-1"); !repo.IsNotFound(err) {
 		t.Fatalf("expected control session to be deleted after deactivation, got %v", err)
 	}
