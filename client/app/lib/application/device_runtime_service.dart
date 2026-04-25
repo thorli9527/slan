@@ -53,11 +53,11 @@ class DeviceRuntimeService {
     required List<NetworkModel> currentNetworks,
   }) async {
     final targetNodeId = node?.nodeId.trim();
-    final targetNetworkId = currentBootstrap?.networks.isNotEmpty == true
-        ? currentBootstrap!.networks.first.networkId
-        : currentNetworks.isNotEmpty
-            ? currentNetworks.first.networkId
-            : null;
+    final targetNetworkId = _resolveRuntimeNetworkId(
+      node: node,
+      bootstrap: currentBootstrap,
+      networks: currentNetworks,
+    );
     if (targetNodeId == null ||
         targetNodeId.isEmpty ||
         targetNetworkId == null ||
@@ -149,4 +149,32 @@ class DeviceRuntimeService {
       resultHint: resultHint,
     );
   }
+}
+
+String? _resolveRuntimeNetworkId({
+  required NodeModel? node,
+  required BootstrapModel? bootstrap,
+  required List<NetworkModel> networks,
+}) {
+  for (final networkId in [
+    ...?node?.networkIds,
+    ...?bootstrap?.device.networkIds,
+  ]) {
+    final normalized = networkId.trim();
+    if (normalized.isEmpty) {
+      continue;
+    }
+    if (_containsNetwork(bootstrap?.networks, normalized) ||
+        _containsNetwork(networks, normalized)) {
+      return normalized;
+    }
+  }
+  if (bootstrap?.networks.isNotEmpty == true) {
+    return bootstrap!.networks.first.networkId;
+  }
+  return networks.isNotEmpty ? networks.first.networkId : null;
+}
+
+bool _containsNetwork(List<NetworkModel>? networks, String networkId) {
+  return networks?.any((network) => network.networkId == networkId) ?? false;
 }

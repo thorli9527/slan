@@ -172,8 +172,10 @@ class AppWorkspaceService {
     required List<NetworkModel> currentNetworks,
   }) async {
     final device = currentDevice;
+    final networks =
+        session == null ? currentNetworks : await _api.listNetworks();
     final activeNetwork =
-        currentNetworks.isNotEmpty ? currentNetworks.first : null;
+        networks.isNotEmpty ? networks.first : null;
     if (device != null && activeNetwork != null) {
       await _api.deactivateNetwork(
         networkId: activeNetwork.networkId,
@@ -182,7 +184,7 @@ class AppWorkspaceService {
     }
 
     final refreshedNetworks =
-        session == null ? currentNetworks : await _api.listNetworks();
+        session == null ? networks : await _api.listNetworks();
     return DeactivatedNetworkResult(
       device: device,
       networks: refreshedNetworks,
