@@ -154,7 +154,7 @@ func (s dbNodeService) buildNodeDTO(ctx context.Context, req dto.RegisterNodeReq
 		NodePublicKey: req.NodePublicKey,
 		Capabilities:  append([]string(nil), req.Capabilities...),
 	}
-	node.NetworkIDs, _ = s.state.deviceNetworkIDs(ctx, req.DeviceID)
+	node.NetworkIDs, _ = s.state.activeDeviceNetworkIDs(ctx, req.DeviceID)
 	return node
 }
 

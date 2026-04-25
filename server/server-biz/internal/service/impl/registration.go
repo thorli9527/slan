@@ -121,14 +121,29 @@ func (s *dbState) deviceNetworkIDs(ctx context.Context, deviceID string) ([]stri
 	if err != nil {
 		return nil, err
 	}
+	return networkIDsForMembers(members, false), nil
+}
+
+func (s *dbState) activeDeviceNetworkIDs(ctx context.Context, deviceID string) ([]string, error) {
+	members, err := s.pg.ListMembersByDevice(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	return networkIDsForMembers(members, true), nil
+}
+
+func networkIDsForMembers(members []dto.NetworkMember, activeOnly bool) []string {
 	seen := make(map[string]struct{})
 	var out []string
 	for _, member := range members {
+		if activeOnly && member.Status != "active" {
+			continue
+		}
 		if _, ok := seen[member.NetworkID]; ok {
 			continue
 		}
 		seen[member.NetworkID] = struct{}{}
 		out = append(out, member.NetworkID)
 	}
-	return out, nil
+	return out
 }

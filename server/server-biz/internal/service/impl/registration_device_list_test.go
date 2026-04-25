@@ -122,6 +122,57 @@ func TestListDevicesForMemberDoesNotExposeOtherNetworkDevices(t *testing.T) {
 	}
 }
 
+func TestRegisterNodeOnlyReturnsActiveNetworkIDs(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:          "user-1",
+		Email:           "user@example.com",
+		PasswordHash:    "hash",
+		ActiveNetworkID: "net-active",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-1",
+		UserID:    "user-1",
+		MachineID: "machine-1",
+		Name:      "device",
+		Platform:  "windows",
+		Status:    "online",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("insert device: %v", err)
+	}
+	for _, networkID := range []string{"net-active", "net-pending", "net-rejected"} {
+		createNetworkFixture(t, state, "user-1", networkID, "subnet-"+networkID, "10.0.0.0/16")
+	}
+	for _, member := range []dto.NetworkMember{
+		{MemberID: "member-active", NetworkID: "net-active", DeviceID: "dev-1", Role: "owner", CreatedAt: now, Status: "active"},
+		{MemberID: "member-pending", NetworkID: "net-pending", DeviceID: "dev-1", Role: "member", CreatedAt: now, Status: "pending"},
+		{MemberID: "member-rejected", NetworkID: "net-rejected", DeviceID: "dev-1", Role: "member", CreatedAt: now, Status: "rejected"},
+	} {
+		if err := state.pg.CreateMember(ctx, member); err != nil {
+			t.Fatalf("create member %s: %v", member.MemberID, err)
+		}
+	}
+
+	node, err := dbNodeService{state: state}.Register("user-1", dto.RegisterNodeRequest{
+		DeviceID:      "dev-1",
+		NodeID:        "node-1",
+		NodePublicKey: "node-public-key",
+		Capabilities:  []string{"desktop"},
+	})
+	if err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	if len(node.NetworkIDs) != 1 || node.NetworkIDs[0] != "net-active" {
+		t.Fatalf("expected only active network ids, got %+v", node.NetworkIDs)
+	}
+}
+
 func TestListDevicesRefreshesStalePresenceBeforeReturning(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
