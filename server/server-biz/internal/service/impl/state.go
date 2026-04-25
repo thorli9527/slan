@@ -25,6 +25,8 @@ type tokenStore interface {
 	StoreAccessToken(ctx context.Context, token, userID, deviceID string, ttl time.Duration) error
 	DeleteAccessToken(ctx context.Context, accessToken string) error
 	StoreRefreshToken(ctx context.Context, token, userID string, ttl time.Duration) error
+	AuthenticateRefreshToken(ctx context.Context, token string) (string, error)
+	DeleteRefreshToken(ctx context.Context, token string) error
 	StoreOpsAccessToken(ctx context.Context, token, adminID string, ttl time.Duration) error
 	StoreControlSessionToken(ctx context.Context, token, userID string, ttl time.Duration) error
 	DeleteControlSessionToken(ctx context.Context, token string) error

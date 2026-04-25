@@ -8,6 +8,7 @@ type Auth interface {
 	Register(req dto.RegisterRequest) (dto.AuthResponse, error)
 	// Login 校验用户身份并返回新的访问令牌与当前用户信息。
 	Login(req dto.LoginRequest) (dto.AuthResponse, error)
+	Refresh(req dto.RefreshTokenRequest) (dto.AuthResponse, error)
 	// GetCallbackStatus 返回网页登录回调是否已被桌面客户端接收。
 	GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error)
 	// CompleteCallback 暂存网页登录结果，等待桌面客户端主动拉取。

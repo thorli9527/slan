@@ -58,6 +58,21 @@ func (s *RedisTokenStore) StoreRefreshToken(ctx context.Context, token, userID s
 	return s.client.Set(ctx, "refresh_token:"+token, userID, ttl).Err()
 }
 
+func (s *RedisTokenStore) AuthenticateRefreshToken(ctx context.Context, token string) (string, error) {
+	userID, err := s.client.Get(ctx, "refresh_token:"+token).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return "", fmt.Errorf("token not found")
+		}
+		return "", err
+	}
+	return userID, nil
+}
+
+func (s *RedisTokenStore) DeleteRefreshToken(ctx context.Context, token string) error {
+	return s.client.Del(ctx, "refresh_token:"+token).Err()
+}
+
 func (s *RedisTokenStore) StoreOpsAccessToken(ctx context.Context, token, adminID string, ttl time.Duration) error {
 	return s.client.Set(ctx, "ops_access_token:"+token, adminID, ttl).Err()
 }

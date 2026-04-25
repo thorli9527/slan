@@ -70,6 +70,23 @@ func (s *memoryTokenStore) StoreRefreshToken(_ context.Context, token, userID st
 	return nil
 }
 
+func (s *memoryTokenStore) AuthenticateRefreshToken(_ context.Context, token string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userID, ok := s.refreshTokens[token]
+	if !ok {
+		return "", fmt.Errorf("token not found")
+	}
+	return userID, nil
+}
+
+func (s *memoryTokenStore) DeleteRefreshToken(_ context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.refreshTokens, token)
+	return nil
+}
+
 func (s *memoryTokenStore) StoreOpsAccessToken(_ context.Context, token, adminID string, _ time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

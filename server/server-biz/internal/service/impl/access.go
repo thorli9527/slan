@@ -79,6 +79,35 @@ func (s dbAuthService) Login(req dto.LoginRequest) (dto.AuthResponse, error) {
 	return s.state.issueAuthResponse(ctx, user.UserID, deviceID)
 }
 
+func (s dbAuthService) Refresh(req dto.RefreshTokenRequest) (dto.AuthResponse, error) {
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if refreshToken == "" {
+		return dto.AuthResponse{}, fmt.Errorf("%w: refreshToken is required", ErrInvalidArgument)
+	}
+	ctx := context.Background()
+	userID, err := s.state.tokens.AuthenticateRefreshToken(ctx, refreshToken)
+	if err != nil {
+		return dto.AuthResponse{}, ErrUnauthorized
+	}
+	if err := s.state.tokens.DeleteRefreshToken(ctx, refreshToken); err != nil {
+		return dto.AuthResponse{}, err
+	}
+	if deviceID != "" {
+		device, err := s.state.pg.GetDeviceByID(ctx, deviceID)
+		if err != nil {
+			if repo.IsNotFound(err) {
+				return dto.AuthResponse{}, ErrUnauthorized
+			}
+			return dto.AuthResponse{}, err
+		}
+		if device.UserID != userID {
+			return dto.AuthResponse{}, ErrForbidden
+		}
+	}
+	return s.state.issueAuthResponse(ctx, userID, deviceID)
+}
+
 func (s dbAuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error) {
 	callbackID = strings.TrimSpace(callbackID)
 	if callbackID == "" {

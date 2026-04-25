@@ -18,6 +18,9 @@ func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	auth.POST("/login", rateLimitByIP(10, authRateLimitWindow), respondWithBody(http.StatusOK, func(c *gin.Context, req dto.LoginRequest) (dto.AuthResponse, error) {
 		return deps.Auth.Login(req)
 	}))
+	auth.POST("/refresh", rateLimitByIP(20, authRateLimitWindow), respondWithBody(http.StatusOK, func(c *gin.Context, req dto.RefreshTokenRequest) (dto.AuthResponse, error) {
+		return deps.Auth.Refresh(req)
+	}))
 	auth.GET("/callback-status/:callbackId", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.AuthCallbackStatusResponse, error) {
 		rc := currentRouteContext(c)
 		return deps.Auth.GetCallbackStatus(rc.callbackID(c))

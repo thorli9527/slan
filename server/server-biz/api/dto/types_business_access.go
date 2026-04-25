@@ -11,6 +11,11 @@ type LoginRequest struct {
 	DeviceID string `json:"deviceId,omitempty"`
 }
 
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refreshToken"`
+	DeviceID     string `json:"deviceId,omitempty"`
+}
+
 type AuthResponse struct {
 	UserID       string `json:"userId"`
 	AccessToken  string `json:"accessToken"`

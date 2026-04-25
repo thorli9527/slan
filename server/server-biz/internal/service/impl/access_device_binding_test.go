@@ -54,6 +54,75 @@ func TestLogin_RejectsDeviceBoundToAnotherUser(t *testing.T) {
 	}
 }
 
+func TestRefresh_RotatesRefreshToken(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+
+	if err := state.tokens.StoreRefreshToken(ctx, "refresh-old", "user-1", time.Hour); err != nil {
+		t.Fatalf("store refresh token: %v", err)
+	}
+
+	auth := dbAuthService{state: state}
+	refreshed, err := auth.Refresh(dto.RefreshTokenRequest{RefreshToken: "refresh-old"})
+	if err != nil {
+		t.Fatalf("refresh token: %v", err)
+	}
+	if refreshed.UserID != "user-1" || refreshed.AccessToken == "" || refreshed.RefreshToken == "" {
+		t.Fatalf("expected new auth response, got %+v", refreshed)
+	}
+	if _, err := state.tokens.AuthenticateRefreshToken(ctx, "refresh-old"); err == nil {
+		t.Fatal("expected old refresh token to be revoked")
+	}
+	if _, err := state.tokens.AuthenticateRefreshToken(ctx, refreshed.RefreshToken); err != nil {
+		t.Fatalf("expected new refresh token to be valid: %v", err)
+	}
+}
+
+func TestRefresh_RejectsRefreshTokenReplay(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.tokens.StoreRefreshToken(ctx, "refresh-old", "user-1", time.Hour); err != nil {
+		t.Fatalf("store refresh token: %v", err)
+	}
+
+	auth := dbAuthService{state: state}
+	if _, err := auth.Refresh(dto.RefreshTokenRequest{RefreshToken: "refresh-old"}); err != nil {
+		t.Fatalf("first refresh token use: %v", err)
+	}
+	_, err := auth.Refresh(dto.RefreshTokenRequest{RefreshToken: "refresh-old"})
+	if !errors.Is(err, service.ErrUnauthorized) {
+		t.Fatalf("expected unauthorized replay, got %v", err)
+	}
+}
+
+func TestRefresh_RejectsDeviceBoundToAnotherUser(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+
+	if err := state.tokens.StoreRefreshToken(ctx, "refresh-1", "user-1", time.Hour); err != nil {
+		t.Fatalf("store refresh token: %v", err)
+	}
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-2",
+		UserID:    "user-2",
+		MachineID: "machine-2",
+		Name:      "device-2",
+		Platform:  "windows",
+		Status:    "online",
+		CreatedAt: time.Now().Unix(),
+	}); err != nil {
+		t.Fatalf("insert device: %v", err)
+	}
+
+	_, err := dbAuthService{state: state}.Refresh(dto.RefreshTokenRequest{
+		RefreshToken: "refresh-1",
+		DeviceID:     "dev-2",
+	})
+	if !errors.Is(err, service.ErrForbidden) {
+		t.Fatalf("expected forbidden, got %v", err)
+	}
+}
+
 func TestAuthenticate_InvalidatesExpiredDeviceBoundSession(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
