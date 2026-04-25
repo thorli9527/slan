@@ -9,6 +9,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	defaultOpsLoginRateLimitWindowSeconds  = 60
+	defaultOpsLoginRateLimitIPLimit        = 10
+	defaultOpsLoginRateLimitIPLoginName    = 5
+	defaultOpsLoginRateLimitLoginNameLimit = 20
+)
+
 // HTTPConfig 描述 server-biz 两套 HTTP listener 的监听地址。
 type HTTPConfig struct {
 	// Address 是对外客户 HTTP API 服务的监听地址。
@@ -101,6 +108,22 @@ type OpsConfig struct {
 	AccessToken string `yaml:"access_token"`
 	// DefaultAdmin 描述启动时自动灌入的默认管理员账号。
 	DefaultAdmin OpsDefaultAdminConfig `yaml:"default_admin"`
+	// LoginRateLimit 描述运维登录入口的限流配置。
+	LoginRateLimit OpsLoginRateLimitConfig `yaml:"login_rate_limit"`
+}
+
+// OpsLoginRateLimitConfig 描述运维登录入口的限流规则。
+type OpsLoginRateLimitConfig struct {
+	// Disabled 控制是否关闭运维登录限流；默认启用。
+	Disabled bool `yaml:"disabled"`
+	// WindowSeconds 是固定窗口长度。
+	WindowSeconds int `yaml:"window_seconds"`
+	// IPLimit 是单 IP 在窗口内可访问 /login 的次数。
+	IPLimit int `yaml:"ip_limit"`
+	// IPLoginNameLimit 是单 IP 对同一登录名在窗口内可尝试的次数。
+	IPLoginNameLimit int `yaml:"ip_login_name_limit"`
+	// LoginNameLimit 是同一登录名跨 IP 在窗口内可尝试的次数。
+	LoginNameLimit int `yaml:"login_name_limit"`
 }
 
 // OpsDefaultAdminConfig 描述默认管理员 seed 配置。
@@ -226,6 +249,12 @@ func DefaultConfig() Config {
 		LoginName:   "admin",
 		DisplayName: "Default Admin",
 	}
+	cfg.Ops.LoginRateLimit = OpsLoginRateLimitConfig{
+		WindowSeconds:    defaultOpsLoginRateLimitWindowSeconds,
+		IPLimit:          defaultOpsLoginRateLimitIPLimit,
+		IPLoginNameLimit: defaultOpsLoginRateLimitIPLoginName,
+		LoginNameLimit:   defaultOpsLoginRateLimitLoginNameLimit,
+	}
 	cfg.Postgres.Host = "127.0.0.1"
 	cfg.Postgres.Port = 5432
 	cfg.Postgres.Database = "slan"
@@ -310,6 +339,18 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.Ops.DefaultAdmin.DisplayName == "" {
 		cfg.Ops.DefaultAdmin.DisplayName = DefaultConfig().Ops.DefaultAdmin.DisplayName
+	}
+	if cfg.Ops.LoginRateLimit.WindowSeconds == 0 {
+		cfg.Ops.LoginRateLimit.WindowSeconds = DefaultConfig().Ops.LoginRateLimit.WindowSeconds
+	}
+	if cfg.Ops.LoginRateLimit.IPLimit == 0 {
+		cfg.Ops.LoginRateLimit.IPLimit = DefaultConfig().Ops.LoginRateLimit.IPLimit
+	}
+	if cfg.Ops.LoginRateLimit.IPLoginNameLimit == 0 {
+		cfg.Ops.LoginRateLimit.IPLoginNameLimit = DefaultConfig().Ops.LoginRateLimit.IPLoginNameLimit
+	}
+	if cfg.Ops.LoginRateLimit.LoginNameLimit == 0 {
+		cfg.Ops.LoginRateLimit.LoginNameLimit = DefaultConfig().Ops.LoginRateLimit.LoginNameLimit
 	}
 	if cfg.Postgres.Host == "" {
 		cfg.Postgres = DefaultConfig().Postgres

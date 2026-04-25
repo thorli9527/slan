@@ -38,6 +38,12 @@ auth:
   refresh_token_ttl_seconds: 86400
 ops:
   access_token: "docker-ops-token"
+  login_rate_limit:
+    disabled: false
+    window_seconds: 60
+    ip_limit: 10
+    ip_login_name_limit: 5
+    login_name_limit: 20
   default_admin:
     enabled: true
     email: "admin@docker.slan"

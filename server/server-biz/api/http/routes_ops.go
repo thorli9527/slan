@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/slan/server/server-biz/api/dto"
@@ -13,7 +14,7 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 	ops := api.Group("")
 
 	// POST /login 使用管理员登录名和密码换取 ops access token。
-	ops.POST("/login", rateLimitByIP(10, authRateLimitWindow), func(c *gin.Context) {
+	opsLoginHandlers := append(opsLoginRateLimitHandlers(cfg.Ops.LoginRateLimit), func(c *gin.Context) {
 		var req dto.OpsLoginRequest
 		if !bindJSON(c, &req) {
 			return
@@ -25,6 +26,7 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 		}
 		c.JSON(http.StatusOK, resp)
 	})
+	ops.POST("/login", opsLoginHandlers...)
 
 	ops.Use(authenticateOps(cfg, deps))
 
@@ -174,4 +176,31 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 		}
 		c.JSON(http.StatusOK, resp)
 	})
+}
+
+func opsLoginRateLimitHandlers(cfg configs.OpsLoginRateLimitConfig) []gin.HandlerFunc {
+	if cfg.Disabled {
+		return nil
+	}
+	window := time.Duration(cfg.WindowSeconds) * time.Second
+	if window <= 0 {
+		window = defaultOpsLoginRateLimitWindow
+	}
+	ipLimit := cfg.IPLimit
+	if ipLimit <= 0 {
+		ipLimit = defaultOpsLoginIPLimit
+	}
+	ipLoginNameLimit := cfg.IPLoginNameLimit
+	if ipLoginNameLimit <= 0 {
+		ipLoginNameLimit = defaultOpsLoginIPLoginNameLimit
+	}
+	loginNameLimit := cfg.LoginNameLimit
+	if loginNameLimit <= 0 {
+		loginNameLimit = defaultOpsLoginLoginNameLimit
+	}
+	return []gin.HandlerFunc{
+		rateLimitByIP(ipLimit, window),
+		rateLimitByIPAndJSONField(ipLoginNameLimit, window, "loginName"),
+		rateLimitByJSONField(loginNameLimit, window, "loginName"),
+	}
 }

@@ -54,6 +54,13 @@ auth:
 ops:
   # 运营入口静态令牌，生产环境必须替换。
   access_token: "change-me-ops-token"
+  login_rate_limit:
+    # 默认启用；只有显式设为 true 才关闭。
+    disabled: false
+    window_seconds: 60
+    ip_limit: 10
+    ip_login_name_limit: 5
+    login_name_limit: 20
   # 管理员账号通过 /login 换取动态 ops token；静态令牌仍保留给内网运维或应急访问。
   default_admin:
     # 是否在首次启动时自动灌入默认管理员。

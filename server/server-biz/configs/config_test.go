@@ -1,6 +1,8 @@
 package configs
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -36,6 +38,70 @@ func TestLoadConfig_AppliesAuthTTLOverrides(t *testing.T) {
 	}
 	if cfg.Auth.AccessTokenTTLSeconds != 120 || cfg.Auth.RefreshTokenTTLSeconds != 240 {
 		t.Fatalf("expected auth token ttl overrides, got %+v", cfg.Auth)
+	}
+}
+
+func TestLoadConfig_AppliesOpsLoginRateLimitConfig(t *testing.T) {
+	t.Setenv("SLAN_ENV", "")
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(`
+ops:
+  access_token: custom-ops-token
+  login_rate_limit:
+    disabled: true
+    window_seconds: 30
+    ip_limit: 2
+    ip_login_name_limit: 1
+    login_name_limit: 3
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Ops.AccessToken != "custom-ops-token" {
+		t.Fatalf("expected ops access token override, got %q", cfg.Ops.AccessToken)
+	}
+	rateLimit := cfg.Ops.LoginRateLimit
+	if !rateLimit.Disabled ||
+		rateLimit.WindowSeconds != 30 ||
+		rateLimit.IPLimit != 2 ||
+		rateLimit.IPLoginNameLimit != 1 ||
+		rateLimit.LoginNameLimit != 3 {
+		t.Fatalf("expected ops login rate limit override, got %+v", rateLimit)
+	}
+}
+
+func TestLoadConfig_PartialOpsLoginRateLimitKeepsEnabledDefault(t *testing.T) {
+	t.Setenv("SLAN_ENV", "")
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(`
+ops:
+  login_rate_limit:
+    window_seconds: 45
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	rateLimit := cfg.Ops.LoginRateLimit
+	if rateLimit.Disabled {
+		t.Fatalf("expected partial ops login rate limit config to keep rate limiting enabled, got %+v", rateLimit)
+	}
+	if rateLimit.WindowSeconds != 45 {
+		t.Fatalf("expected custom window, got %+v", rateLimit)
+	}
+	if rateLimit.IPLimit != DefaultConfig().Ops.LoginRateLimit.IPLimit ||
+		rateLimit.IPLoginNameLimit != DefaultConfig().Ops.LoginRateLimit.IPLoginNameLimit ||
+		rateLimit.LoginNameLimit != DefaultConfig().Ops.LoginRateLimit.LoginNameLimit {
+		t.Fatalf("expected missing rate limit values to use defaults, got %+v", rateLimit)
 	}
 }
 

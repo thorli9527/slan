@@ -11,14 +11,14 @@ import (
 func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	auth := api.Group("/auth")
 	// POST /auth/register 创建终端用户账号。
-	auth.POST("/register", rateLimitByIP(10, authRateLimitWindow), respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.RegisterRequest) (dto.AuthResponse, error) {
+	auth.POST("/register", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.RegisterRequest) (dto.AuthResponse, error) {
 		return deps.Auth.Register(req)
 	}))
 	// POST /auth/login 校验账号并返回新的访问令牌。
-	auth.POST("/login", rateLimitByIP(10, authRateLimitWindow), respondWithBody(http.StatusOK, func(c *gin.Context, req dto.LoginRequest) (dto.AuthResponse, error) {
+	auth.POST("/login", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.LoginRequest) (dto.AuthResponse, error) {
 		return deps.Auth.Login(req)
 	}))
-	auth.POST("/refresh", rateLimitByIP(20, authRateLimitWindow), respondWithBody(http.StatusOK, func(c *gin.Context, req dto.RefreshTokenRequest) (dto.AuthResponse, error) {
+	auth.POST("/refresh", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.RefreshTokenRequest) (dto.AuthResponse, error) {
 		return deps.Auth.Refresh(req)
 	}))
 	auth.GET("/callback-status/:callbackId", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.AuthCallbackStatusResponse, error) {

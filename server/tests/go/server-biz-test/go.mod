@@ -1,6 +1,6 @@
 module github.com/slan/server/tests/go/server-biz-test
 
-go 1.21
+go 1.25.0
 
 require github.com/slan/server/server-biz v0.0.0
 
@@ -17,11 +17,11 @@ require (
 	github.com/redis/go-redis/v9 v9.7.0 // indirect
 	github.com/stretchr/testify v1.9.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gorm.io/driver/postgres v1.5.11 // indirect
-	gorm.io/gorm v1.25.12 // indirect
+	gorm.io/gorm v1.30.0 // indirect
 )
 
 replace github.com/slan/server/server-biz => ../../../server-biz
