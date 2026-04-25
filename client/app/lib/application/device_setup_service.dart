@@ -113,12 +113,11 @@ class DeviceSetupService {
       capabilities: input.capabilities,
     );
 
-    final bootstrapNetworkId =
-        input.bootstrapNetworkId?.trim().isNotEmpty == true
-            ? input.bootstrapNetworkId!.trim()
-            : networks.isNotEmpty
-                ? networks.first.networkId
-                : null;
+    final bootstrapNetworkId = _resolveBootstrapNetworkId(
+      requestedNetworkId: input.bootstrapNetworkId,
+      node: node,
+      networks: networks,
+    );
     if (bootstrapNetworkId == null || bootstrapNetworkId.isEmpty) {
       return NodeRegistrationResult(
         node: node,
@@ -185,4 +184,25 @@ String _generatedNodeId(String seed) {
 
 String _generatedPublicKey(String prefix) {
   return '$prefix-key-${DateTime.now().microsecondsSinceEpoch}';
+}
+
+String? _resolveBootstrapNetworkId({
+  required String? requestedNetworkId,
+  required NodeModel node,
+  required List<NetworkModel> networks,
+}) {
+  final requested = requestedNetworkId?.trim();
+  if (requested != null && requested.isNotEmpty) {
+    return requested;
+  }
+  for (final networkId in node.networkIds) {
+    final normalized = networkId.trim();
+    if (normalized.isEmpty) {
+      continue;
+    }
+    if (networks.any((network) => network.networkId == normalized)) {
+      return normalized;
+    }
+  }
+  return networks.isNotEmpty ? networks.first.networkId : null;
 }

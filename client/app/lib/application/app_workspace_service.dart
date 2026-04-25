@@ -123,10 +123,7 @@ class AppWorkspaceService {
       throw StateError('login required');
     }
 
-    var networks = currentNetworks;
-    if (networks.isEmpty) {
-      networks = await _api.listNetworks();
-    }
+    final networks = await _api.listNetworks();
 
     final device = currentDevice;
     if (device == null || networks.isEmpty) {
