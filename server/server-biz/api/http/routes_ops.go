@@ -13,7 +13,7 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 	ops := api.Group("")
 
 	// POST /login 使用管理员登录名和密码换取 ops access token。
-	ops.POST("/login", func(c *gin.Context) {
+	ops.POST("/login", rateLimitByIP(10, authRateLimitWindow), func(c *gin.Context) {
 		var req dto.OpsLoginRequest
 		if !bindJSON(c, &req) {
 			return
