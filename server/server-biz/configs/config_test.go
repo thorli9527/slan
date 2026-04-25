@@ -15,6 +15,11 @@ func TestLoadConfig_AllowsDevelopmentDefaults(t *testing.T) {
 	if cfg.Ops.AccessToken != DefaultConfig().Ops.AccessToken {
 		t.Fatalf("expected development defaults, got %q", cfg.Ops.AccessToken)
 	}
+	if cfg.Redis.DialTimeoutSeconds != 5 ||
+		cfg.Redis.ReadTimeoutSeconds != 3 ||
+		cfg.Redis.WriteTimeoutSeconds != 3 {
+		t.Fatalf("expected redis timeout defaults, got %+v", cfg.Redis)
+	}
 }
 
 func TestLoadConfig_RejectsProductionDefaults(t *testing.T) {

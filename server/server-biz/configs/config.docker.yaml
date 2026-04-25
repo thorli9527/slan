@@ -59,3 +59,6 @@ redis:
   database: 1
   pool_size: 10
   min_idle_conns: 2
+  dial_timeout_seconds: 5
+  read_timeout_seconds: 3
+  write_timeout_seconds: 3

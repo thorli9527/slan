@@ -146,6 +146,12 @@ type RedisConfig struct {
 	PoolSize int `yaml:"pool_size"`
 	// MinIdleConns 是最小空闲连接数。
 	MinIdleConns int `yaml:"min_idle_conns"`
+	// DialTimeoutSeconds 是 Redis 建连超时时间。
+	DialTimeoutSeconds int `yaml:"dial_timeout_seconds"`
+	// ReadTimeoutSeconds 是 Redis 读超时时间。
+	ReadTimeoutSeconds int `yaml:"read_timeout_seconds"`
+	// WriteTimeoutSeconds 是 Redis 写超时时间。
+	WriteTimeoutSeconds int `yaml:"write_timeout_seconds"`
 }
 
 // Config 是 server-biz 的运行时配置。
@@ -223,6 +229,9 @@ func DefaultConfig() Config {
 	cfg.Redis.Database = 1
 	cfg.Redis.PoolSize = 10
 	cfg.Redis.MinIdleConns = 2
+	cfg.Redis.DialTimeoutSeconds = 5
+	cfg.Redis.ReadTimeoutSeconds = 3
+	cfg.Redis.WriteTimeoutSeconds = 3
 	return cfg
 }
 
@@ -321,6 +330,15 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.Redis.MinIdleConns == 0 {
 		cfg.Redis.MinIdleConns = DefaultConfig().Redis.MinIdleConns
+	}
+	if cfg.Redis.DialTimeoutSeconds == 0 {
+		cfg.Redis.DialTimeoutSeconds = DefaultConfig().Redis.DialTimeoutSeconds
+	}
+	if cfg.Redis.ReadTimeoutSeconds == 0 {
+		cfg.Redis.ReadTimeoutSeconds = DefaultConfig().Redis.ReadTimeoutSeconds
+	}
+	if cfg.Redis.WriteTimeoutSeconds == 0 {
+		cfg.Redis.WriteTimeoutSeconds = DefaultConfig().Redis.WriteTimeoutSeconds
 	}
 	applyEnvOverrides(&cfg)
 	if err := validateProductionConfig(cfg); err != nil {

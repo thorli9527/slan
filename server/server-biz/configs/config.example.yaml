@@ -95,3 +95,9 @@ redis:
   pool_size: 10
   # 最小空闲连接数。
   min_idle_conns: 2
+  # Redis 建连超时时间，单位秒。
+  dial_timeout_seconds: 5
+  # Redis 读超时时间，单位秒。
+  read_timeout_seconds: 3
+  # Redis 写超时时间，单位秒。
+  write_timeout_seconds: 3

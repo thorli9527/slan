@@ -84,6 +84,8 @@ func connectPostgres(ctx context.Context, cfg Config) (*gorm.DB, error) {
 	}
 	sqlDB.SetMaxOpenConns(cfg.Postgres.MaxOpenConns)
 	sqlDB.SetMaxIdleConns(cfg.Postgres.MinIdleConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(cfg.Postgres.ConnMaxLifetimeSeconds) * time.Second)
+	sqlDB.SetConnMaxIdleTime(time.Duration(cfg.Postgres.ConnMaxIdleTimeSeconds) * time.Second)
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := sqlDB.PingContext(pingCtx); err != nil {
@@ -99,6 +101,9 @@ func connectRedis(ctx context.Context, cfg Config) (*redis.Client, error) {
 		DB:           cfg.Redis.Database,
 		PoolSize:     cfg.Redis.PoolSize,
 		MinIdleConns: cfg.Redis.MinIdleConns,
+		DialTimeout:  time.Duration(cfg.Redis.DialTimeoutSeconds) * time.Second,
+		ReadTimeout:  time.Duration(cfg.Redis.ReadTimeoutSeconds) * time.Second,
+		WriteTimeout: time.Duration(cfg.Redis.WriteTimeoutSeconds) * time.Second,
 	})
 
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
