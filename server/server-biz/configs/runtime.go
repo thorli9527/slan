@@ -145,7 +145,7 @@ func migrateSubnetAttachmentIndexes(ctx context.Context, db *gorm.DB) error {
 	if err := tx.Exec(`DROP INDEX IF EXISTS idx_subnet_ip`).Error; err != nil {
 		return fmt.Errorf("drop idx_subnet_ip: %w", err)
 	}
-	if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subnet_ip ON subnet_attachments (subnet_id, virtual_ip)`).Error; err != nil {
+	if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subnet_ip ON subnet_attachments (subnet_id, virtual_ip) WHERE virtual_ip <> ''`).Error; err != nil {
 		return fmt.Errorf("create idx_subnet_ip: %w", err)
 	}
 	return nil

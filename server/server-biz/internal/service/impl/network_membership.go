@@ -155,27 +155,40 @@ func (s *dbState) ensureAttachment(ctx context.Context, networkID, subnetID, dev
 		return dto.SubnetAttachment{}, err
 	}
 
-	virtualIP, err := s.allocateIP(ctx, subnet)
-	if err != nil {
-		return dto.SubnetAttachment{}, err
-	}
-	if member, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, deviceID); err == nil && member.Role == "owner" {
-		if preferred, ok, err := s.preferredOwnerIP(ctx, subnet); err != nil {
+	const maxAttachmentCreateAttempts = 8
+	for attempt := 0; attempt < maxAttachmentCreateAttempts; attempt++ {
+		virtualIP, err := s.allocateIP(ctx, subnet)
+		if err != nil {
 			return dto.SubnetAttachment{}, err
-		} else if ok {
-			virtualIP = preferred
+		}
+		if member, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, deviceID); err == nil && member.Role == "owner" {
+			if preferred, ok, err := s.preferredOwnerIP(ctx, subnet); err != nil {
+				return dto.SubnetAttachment{}, err
+			} else if ok {
+				virtualIP = preferred
+			}
+		}
+
+		attachment = dto.SubnetAttachment{
+			AttachmentID: util.NewID("att"),
+			NetworkID:    networkID,
+			SubnetID:     subnetID,
+			DeviceID:     deviceID,
+			VirtualIP:    virtualIP,
+			Status:       "active",
+		}
+		if err := s.pg.CreateAttachment(ctx, attachment); err == nil {
+			return attachment, nil
+		} else if !repo.IsUniqueViolation(err) {
+			return dto.SubnetAttachment{}, err
+		}
+		if current, err := s.pg.GetAttachmentBySubnetDevice(ctx, subnetID, deviceID); err == nil {
+			return current, nil
+		} else if !repo.IsNotFound(err) {
+			return dto.SubnetAttachment{}, err
 		}
 	}
-
-	attachment = dto.SubnetAttachment{
-		AttachmentID: util.NewID("att"),
-		NetworkID:    networkID,
-		SubnetID:     subnetID,
-		DeviceID:     deviceID,
-		VirtualIP:    virtualIP,
-		Status:       "active",
-	}
-	return attachment, s.pg.CreateAttachment(ctx, attachment)
+	return dto.SubnetAttachment{}, fmt.Errorf("%w: virtual ip allocation conflicted too many times", ErrConflict)
 }
 
 func (s *dbState) requireActiveNetworkAttachment(ctx context.Context, networkID, deviceID string, missingErr error, label string) (dto.SubnetAttachment, error) {

@@ -6,9 +6,9 @@ import (
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
-	_ "modernc.org/sqlite"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	_ "modernc.org/sqlite"
 )
 
 func TestMigrateSubnetAttachmentIndexes_AllowsReuseAcrossSubnets(t *testing.T) {
@@ -62,5 +62,28 @@ func TestMigrateSubnetAttachmentIndexes_AllowsReuseAcrossSubnets(t *testing.T) {
 	}
 	if err := pg.CreateAttachment(ctx, duplicateInSubnet); err == nil {
 		t.Fatal("expected duplicate virtual ip in same subnet to fail")
+	}
+
+	releasedFirst := dto.SubnetAttachment{
+		AttachmentID: "att-4",
+		NetworkID:    "net-1",
+		SubnetID:     "subnet-1",
+		DeviceID:     "device-4",
+		VirtualIP:    "",
+		Status:       "active",
+	}
+	releasedSecond := dto.SubnetAttachment{
+		AttachmentID: "att-5",
+		NetworkID:    "net-1",
+		SubnetID:     "subnet-1",
+		DeviceID:     "device-5",
+		VirtualIP:    "",
+		Status:       "active",
+	}
+	if err := pg.CreateAttachment(ctx, releasedFirst); err != nil {
+		t.Fatalf("create first empty attachment: %v", err)
+	}
+	if err := pg.CreateAttachment(ctx, releasedSecond); err != nil {
+		t.Fatalf("create second empty attachment: %v", err)
 	}
 }
