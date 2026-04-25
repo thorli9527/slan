@@ -28,8 +28,14 @@ var controlWSDeliveryRetryOnce sync.Once
 var defaultConnectPlanThrottle = newConnectPlanThrottle()
 var defaultPeerCandidateWindow = newPeerCandidateWindow()
 
+const (
+	maxControlWSMessageBytes = 64 * 1024
+	controlWSReadIdleTimeout = 90 * time.Second
+)
+
 func serveControlWS(conn *websocket.Conn, deps routerDeps) {
 	defer conn.Close()
+	conn.MaxPayloadBytes = maxControlWSMessageBytes
 	metricAdd("ws_connection_total", 1)
 
 	var session wsSession
@@ -45,6 +51,7 @@ func serveControlWS(conn *websocket.Conn, deps routerDeps) {
 		fanoutPeerRemove(deps, session.networkID, session.nodeID)
 	}()
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(controlWSReadIdleTimeout))
 		var env wsEnvelope
 		if err := websocket.JSON.Receive(conn, &env); err != nil {
 			metricAdd("ws_receive_error_total", 1)
