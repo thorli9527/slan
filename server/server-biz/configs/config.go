@@ -3,6 +3,7 @@ package configs
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -229,6 +230,10 @@ func DefaultConfig() Config {
 func LoadConfig(path string) (Config, error) {
 	cfg := DefaultConfig()
 	if path == "" {
+		applyEnvOverrides(&cfg)
+		if err := validateProductionConfig(cfg); err != nil {
+			return Config{}, err
+		}
 		return cfg, nil
 	}
 
@@ -318,6 +323,9 @@ func LoadConfig(path string) (Config, error) {
 		cfg.Redis.MinIdleConns = DefaultConfig().Redis.MinIdleConns
 	}
 	applyEnvOverrides(&cfg)
+	if err := validateProductionConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -343,6 +351,68 @@ func applyEnvOverrides(cfg *Config) {
 	if value := os.Getenv("SLAN_REDIS_PASSWORD"); value != "" {
 		cfg.Redis.Password = value
 	}
+}
+
+func validateProductionConfig(cfg Config) error {
+	if !isProductionEnv() {
+		return nil
+	}
+	defaults := DefaultConfig()
+	var problems []string
+	if strings.ToLower(strings.TrimSpace(cfg.HTTP.PublicScheme)) != "https" {
+		problems = append(problems, "http.public_scheme must be https")
+	}
+	if isLoopbackPublicHost(cfg.HTTP.PublicHost) {
+		problems = append(problems, "http.public_host must not be a loopback host")
+	}
+	if weakSecret(cfg.Relay.TicketSigningSecret, defaults.Relay.TicketSigningSecret, "change-me") {
+		problems = append(problems, "relay.ticket_signing_secret must be replaced")
+	}
+	if weakSecret(cfg.Ops.AccessToken, defaults.Ops.AccessToken, "change-me") {
+		problems = append(problems, "ops.access_token must be replaced")
+	}
+	if cfg.Ops.DefaultAdmin.Enabled &&
+		weakSecret(cfg.Ops.DefaultAdmin.Password, defaults.Ops.DefaultAdmin.Password, "change-me") {
+		problems = append(problems, "ops.default_admin.password must be replaced or default admin disabled")
+	}
+	if weakSecret(cfg.Postgres.Password, defaults.Postgres.Password, "change-me") {
+		problems = append(problems, "postgres.password must be replaced")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid production config: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func isProductionEnv() bool {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("SLAN_ENV")))
+	return env == "prod" || env == "production"
+}
+
+func weakSecret(value, defaultValue, placeholder string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == defaultValue {
+		return true
+	}
+	return strings.Contains(strings.ToLower(trimmed), placeholder)
+}
+
+func isLoopbackPublicHost(host string) bool {
+	value := strings.ToLower(strings.TrimSpace(host))
+	if value == "" {
+		return true
+	}
+	hostOnly := value
+	if strings.HasPrefix(hostOnly, "[::1]") {
+		return true
+	}
+	if index := strings.LastIndex(hostOnly, ":"); index > -1 {
+		hostOnly = hostOnly[:index]
+	}
+	return hostOnly == "localhost" ||
+		hostOnly == "127.0.0.1" ||
+		strings.HasPrefix(hostOnly, "127.") ||
+		hostOnly == "::1"
 }
 
 // DSN 返回 PostgreSQL DSN。
