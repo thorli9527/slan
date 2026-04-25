@@ -16,9 +16,20 @@ const userIDContextKey = "userId"
 const opsAdminIDContextKey = "opsAdminId"
 const opsStaticTokenContextKey = "opsStaticToken"
 
+const maxHTTPJSONBodyBytes = 1 << 20
+
 // healthz 返回轻量级就绪探针响应。
 func healthz(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func limitRequestBody(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil && maxBytes > 0 {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		}
+		c.Next()
+	}
 }
 
 // authenticate 是受保护接口使用的 Bearer Token 鉴权中间件。
@@ -114,6 +125,13 @@ func authorizeOpsMenu(deps routerDeps, menuCode string) gin.HandlerFunc {
 // 当绑定失败时，直接按控制面约定输出 INVALID_ARGUMENT 错误。
 func bindJSON(c *gin.Context, out any) bool {
 	if err := c.ShouldBindJSON(out); err != nil {
+		if strings.Contains(err.Error(), "http: request body too large") {
+			c.JSON(http.StatusRequestEntityTooLarge, dto.ErrorResponse{
+				Code:    "REQUEST_TOO_LARGE",
+				Message: "request body exceeds 1 MiB limit",
+			})
+			return false
+		}
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{
 			Code:    "INVALID_ARGUMENT",
 			Message: err.Error(),

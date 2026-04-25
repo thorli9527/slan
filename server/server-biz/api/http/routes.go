@@ -65,6 +65,7 @@ func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	}
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery(), allowCORS())
+	router.Use(limitRequestBody(maxHTTPJSONBodyBytes))
 	registerControlWS(router, cfg.WS.Path, deps)
 	registerAuthCallbackWS(router, deps)
 
@@ -84,6 +85,7 @@ func NewOpsRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	}
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery(), allowCORS())
+	router.Use(limitRequestBody(maxHTTPJSONBodyBytes))
 
 	router.GET("/healthz", healthz)
 	router.GET("/debug/vars", gin.WrapH(expvar.Handler()))
