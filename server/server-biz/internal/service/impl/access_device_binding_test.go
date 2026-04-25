@@ -123,6 +123,23 @@ func TestRefresh_RejectsDeviceBoundToAnotherUser(t *testing.T) {
 	}
 }
 
+func TestIssueAuthResponseUsesConfiguredAccessTTL(t *testing.T) {
+	state := newNetworkTestState(t)
+	state.cfg.Auth.AccessTokenTTLSeconds = 120
+	state.cfg.Auth.RefreshTokenTTLSeconds = 240
+
+	resp, err := state.issueAuthResponse(context.Background(), "user-1", "")
+	if err != nil {
+		t.Fatalf("issue auth response: %v", err)
+	}
+	if resp.ExpiresIn != 120 {
+		t.Fatalf("expected configured access ttl, got %d", resp.ExpiresIn)
+	}
+	if _, err := state.tokens.AuthenticateRefreshToken(context.Background(), resp.RefreshToken); err != nil {
+		t.Fatalf("expected refresh token to be stored: %v", err)
+	}
+}
+
 func TestAuthenticate_InvalidatesExpiredDeviceBoundSession(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()

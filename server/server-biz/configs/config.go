@@ -3,6 +3,7 @@ package configs
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -86,6 +87,14 @@ type BootstrapConfig struct {
 	STUNServers []string `yaml:"stun_servers"`
 }
 
+// AuthConfig 描述业务认证令牌有效期。
+type AuthConfig struct {
+	// AccessTokenTTLSeconds 是业务 access token 的有效期。
+	AccessTokenTTLSeconds int `yaml:"access_token_ttl_seconds"`
+	// RefreshTokenTTLSeconds 是业务 refresh token 的有效期。
+	RefreshTokenTTLSeconds int `yaml:"refresh_token_ttl_seconds"`
+}
+
 // OpsConfig 描述运营管理入口相关配置。
 type OpsConfig struct {
 	// AccessToken 是运营入口使用的静态访问令牌。
@@ -164,6 +173,8 @@ type Config struct {
 	Relay RelayConfig `yaml:"relay"`
 	// Bootstrap 包含客户端启动阶段的默认配置。
 	Bootstrap BootstrapConfig `yaml:"bootstrap"`
+	// Auth 包含业务认证令牌有效期配置。
+	Auth AuthConfig `yaml:"auth"`
 	// Ops 包含运营入口鉴权配置。
 	Ops OpsConfig `yaml:"ops"`
 	// Postgres 是 PostgreSQL 连接配置。
@@ -205,6 +216,8 @@ func DefaultConfig() Config {
 		},
 	}
 	cfg.Bootstrap.STUNServers = []string{"stun:stun.l.google.com:19302"}
+	cfg.Auth.AccessTokenTTLSeconds = 3600
+	cfg.Auth.RefreshTokenTTLSeconds = 86400
 	cfg.Ops.AccessToken = "dev-ops-token"
 	cfg.Ops.DefaultAdmin = OpsDefaultAdminConfig{
 		Enabled:     true,
@@ -276,6 +289,12 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if len(cfg.Bootstrap.STUNServers) == 0 {
 		cfg.Bootstrap.STUNServers = DefaultConfig().Bootstrap.STUNServers
+	}
+	if cfg.Auth.AccessTokenTTLSeconds == 0 {
+		cfg.Auth.AccessTokenTTLSeconds = DefaultConfig().Auth.AccessTokenTTLSeconds
+	}
+	if cfg.Auth.RefreshTokenTTLSeconds == 0 {
+		cfg.Auth.RefreshTokenTTLSeconds = DefaultConfig().Auth.RefreshTokenTTLSeconds
 	}
 	if cfg.Ops.AccessToken == "" {
 		cfg.Ops.AccessToken = DefaultConfig().Ops.AccessToken
@@ -353,6 +372,16 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if value := os.Getenv("SLAN_HTTP_PUBLIC_SCHEME"); value != "" {
 		cfg.HTTP.PublicScheme = value
+	}
+	if value := os.Getenv("SLAN_ACCESS_TOKEN_TTL_SECONDS"); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+			cfg.Auth.AccessTokenTTLSeconds = seconds
+		}
+	}
+	if value := os.Getenv("SLAN_REFRESH_TOKEN_TTL_SECONDS"); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+			cfg.Auth.RefreshTokenTTLSeconds = seconds
+		}
 	}
 	if value := os.Getenv("SLAN_RELAY_TICKET_SIGNING_SECRET"); value != "" {
 		cfg.Relay.TicketSigningSecret = value

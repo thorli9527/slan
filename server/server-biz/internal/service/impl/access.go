@@ -175,18 +175,27 @@ func (s dbAuthService) MarkCallbackReceived(callbackID string) error {
 func (s *dbState) issueAuthResponse(ctx context.Context, userID, deviceID string) (dto.AuthResponse, error) {
 	accessToken := util.OpaqueToken("access", userID)
 	refreshToken := util.OpaqueToken("refresh", userID)
-	if err := s.tokens.StoreAccessToken(ctx, accessToken, userID, deviceID, time.Hour); err != nil {
+	accessTTL := tokenTTL(s.cfg.Auth.AccessTokenTTLSeconds, time.Hour)
+	refreshTTL := tokenTTL(s.cfg.Auth.RefreshTokenTTLSeconds, 24*time.Hour)
+	if err := s.tokens.StoreAccessToken(ctx, accessToken, userID, deviceID, accessTTL); err != nil {
 		return dto.AuthResponse{}, err
 	}
-	if err := s.tokens.StoreRefreshToken(ctx, refreshToken, userID, 24*time.Hour); err != nil {
+	if err := s.tokens.StoreRefreshToken(ctx, refreshToken, userID, refreshTTL); err != nil {
 		return dto.AuthResponse{}, err
 	}
 	return dto.AuthResponse{
 		UserID:       userID,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		ExpiresIn:    3600,
+		ExpiresIn:    int64(accessTTL / time.Second),
 	}, nil
+}
+
+func tokenTTL(seconds int, fallback time.Duration) time.Duration {
+	if seconds <= 0 {
+		return fallback
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func (v dbTokenVerifier) Authenticate(accessToken string) (string, error) {

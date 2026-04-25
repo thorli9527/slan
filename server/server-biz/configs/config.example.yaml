@@ -46,6 +46,11 @@ bootstrap:
   # Bootstrap 返回的默认 STUN 列表。
   stun_servers:
     - "stun:stun.l.google.com:19302"
+auth:
+  # Access token TTL in seconds.
+  access_token_ttl_seconds: 3600
+  # Refresh token TTL in seconds.
+  refresh_token_ttl_seconds: 86400
 ops:
   # 运营入口静态令牌，生产环境必须替换。
   access_token: "change-me-ops-token"

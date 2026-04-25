@@ -20,6 +20,23 @@ func TestLoadConfig_AllowsDevelopmentDefaults(t *testing.T) {
 		cfg.Redis.WriteTimeoutSeconds != 3 {
 		t.Fatalf("expected redis timeout defaults, got %+v", cfg.Redis)
 	}
+	if cfg.Auth.AccessTokenTTLSeconds != 3600 || cfg.Auth.RefreshTokenTTLSeconds != 86400 {
+		t.Fatalf("expected auth token ttl defaults, got %+v", cfg.Auth)
+	}
+}
+
+func TestLoadConfig_AppliesAuthTTLOverrides(t *testing.T) {
+	t.Setenv("SLAN_ENV", "")
+	t.Setenv("SLAN_ACCESS_TOKEN_TTL_SECONDS", "120")
+	t.Setenv("SLAN_REFRESH_TOKEN_TTL_SECONDS", "240")
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("load default config with auth ttl overrides: %v", err)
+	}
+	if cfg.Auth.AccessTokenTTLSeconds != 120 || cfg.Auth.RefreshTokenTTLSeconds != 240 {
+		t.Fatalf("expected auth token ttl overrides, got %+v", cfg.Auth)
+	}
 }
 
 func TestLoadConfig_RejectsProductionDefaults(t *testing.T) {
