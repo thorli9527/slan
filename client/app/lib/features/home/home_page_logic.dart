@@ -21,8 +21,7 @@ extension _HomePageLogic on _HomePageState {
       return;
     }
 
-    final activeNetwork =
-        sessionStore.networks.isNotEmpty ? sessionStore.networks.first : null;
+    final activeNetwork = sessionStore.selectedNetwork;
     _stopMissingNetworkPolling();
     if (activeNetwork == null) {
       await StartupLog.write('home ensureWorkspaceReady no active network');
@@ -83,7 +82,8 @@ extension _HomePageLogic on _HomePageState {
     if (authenticatedAtMs == null || authenticatedAtMs <= 0) {
       return 'Unknown';
     }
-    final time = DateTime.fromMillisecondsSinceEpoch(authenticatedAtMs).toLocal();
+    final time =
+        DateTime.fromMillisecondsSinceEpoch(authenticatedAtMs).toLocal();
     final two = (int value) => value.toString().padLeft(2, '0');
     return '${time.year}-${two(time.month)}-${two(time.day)} ${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
   }

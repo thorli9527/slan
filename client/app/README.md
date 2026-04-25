@@ -40,6 +40,24 @@ Notes:
   helper process.
 - `SLAN_CONTROL_BASE_URL` is passed through to the helper so Rust `HttpControllerClient` can reach the control plane.
 
+## Main Client Flow
+
+The desktop app keeps the public client flow aligned across mock, HTTP, and
+bridge modes:
+
+1. Authenticate or complete the browser callback.
+2. Register or recover the local device.
+3. Register the local node.
+4. Create an owned network, or join another network by owner email or join key.
+5. Optionally persist the device alias through attachment remark.
+6. Switch the selected network and activate the local device on that network.
+7. Bootstrap app_core with the selected `nodeId` and `networkId`.
+8. Connect to peers, trying direct paths first and using relay/DERP fallback when needed.
+
+The network page exposes join-by-owner-email, join-by-key, alias, refresh, and
+network switching controls. The device page owns bootstrap, connect, probe, send,
+tunnel, and platform diagnostics.
+
 ## Tunnel Host Modes
 
 Tunnel backend selection is controlled by Dart defines:

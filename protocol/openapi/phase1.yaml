@@ -1,21 +1,21 @@
-# SLAN 控制面 HTTP API 草案。
+﻿# SLAN 鎺у埗闈?HTTP API 鑽夋銆?
 #
-# 设计目标：
-# - HTTP 只承担管理面和一次性授权职责
-# - 节点实时同步改走控制通道 WebSocket / protobuf
-# - 节点身份、NetworkMap、relay ticket 都围绕“节点组网编排”展开
+# 璁捐鐩爣锛?
+# - HTTP 鍙壙鎷呯鐞嗛潰鍜屼竴娆℃€ф巿鏉冭亴璐?
+# - 鑺傜偣瀹炴椂鍚屾鏀硅蛋鎺у埗閫氶亾 WebSocket / protobuf
+# - 鑺傜偣韬唤銆丯etworkMap銆乺elay ticket 閮藉洿缁曗€滆妭鐐圭粍缃戠紪鎺掆€濆睍寮€
 openapi: 3.1.0
 info:
   title: SLAN Control Plane API
   version: 0.3.0
   description: >
-    当前协议参考 Tailscale 风格的控制面设计：
-    控制面负责用户、设备、节点、网络、NetworkMap 和 relay ticket 的授权与编排；
-    实时 peer 同步与连接计划通过控制通道下发；
-    数据面默认优先 P2P，失败后使用 relay 回退。
+    褰撳墠鍗忚鍙傝€?Tailscale 椋庢牸鐨勬帶鍒堕潰璁捐锛?
+    鎺у埗闈㈣礋璐ｇ敤鎴枫€佽澶囥€佽妭鐐广€佺綉缁溿€丯etworkMap 鍜?relay ticket 鐨勬巿鏉冧笌缂栨帓锛?
+    瀹炴椂 peer 鍚屾涓庤繛鎺ヨ鍒掗€氳繃鎺у埗閫氶亾涓嬪彂锛?
+    鏁版嵁闈㈤粯璁や紭鍏?P2P锛屽け璐ュ悗浣跨敤 relay 鍥為€€銆?
 servers:
   - url: http://localhost:8080
-    description: 本地开发控制面
+    description: 鏈湴寮€鍙戞帶鍒堕潰
 tags:
   - name: Auth
   - name: Devices
@@ -23,12 +23,42 @@ tags:
   - name: Nodes
   - name: Control
   - name: Relay
+  - name: System
 paths:
+  /healthz:
+    get:
+      tags: [System]
+      operationId: healthz
+      summary: Health check
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
+  /debug/vars:
+    get:
+      tags: [System]
+      operationId: debugVars
+      summary: Expvar diagnostics
+      description: Diagnostic endpoint exposed by the public router for local
+        debugging and deployment observability.
+      responses:
+        '200':
+          description: Expvar diagnostics
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
   /auth/register:
     post:
       tags: [Auth]
       operationId: register
-      summary: 注册用户
+      summary: 娉ㄥ唽鐢ㄦ埛
       requestBody:
         required: true
         content:
@@ -37,7 +67,7 @@ paths:
               $ref: '#/components/schemas/RegisterRequest'
       responses:
         '201':
-          description: 注册成功
+          description: 娉ㄥ唽鎴愬姛
           content:
             application/json:
               schema:
@@ -47,7 +77,7 @@ paths:
     post:
       tags: [Auth]
       operationId: login
-      summary: 用户登录
+      summary: 鐢ㄦ埛鐧诲綍
       requestBody:
         required: true
         content:
@@ -56,7 +86,26 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: 登录成功
+          description: 鐧诲綍鎴愬姛
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: 鍒锋柊璁块棶浠ょ墝
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: 鍒锋柊鎴愬姛
           content:
             application/json:
               schema:
@@ -66,35 +115,72 @@ paths:
     get:
       tags: [Auth]
       operationId: getAuthCallbackStatus
-      summary: 查询网页登录回调接收状态
+      summary: 鏌ヨ缃戦〉鐧诲綍鍥炶皟鎺ユ敹鐘舵€?
       parameters:
         - $ref: '#/components/parameters/CallbackId'
       responses:
         '200':
-          description: 回调状态
+          description: 鍥炶皟鐘舵€?
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthCallbackStatusResponse'
+  /auth/callback-status/{callbackId}/complete:
     post:
       tags: [Auth]
-      operationId: ackAuthCallbackStatus
-      summary: 标记桌面客户端已接收网页登录回调
+      operationId: completeAuthCallbackStatus
+      summary: Complete browser login callback
       parameters:
         - $ref: '#/components/parameters/CallbackId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteAuthCallbackRequest'
       responses:
         '200':
-          description: 已确认
+          description: Callback payload stored
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/StatusOKResponse'
 
+  /auth/callback-status/{callbackId}/ack:
+    post:
+      tags: [Auth]
+      operationId: ackAuthCallbackStatus
+      summary: Mark browser login callback as received
+      parameters:
+        - $ref: '#/components/parameters/CallbackId'
+      responses:
+        '200':
+          description: Callback acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
+  /auth/ws/{callbackId}:
+    get:
+      tags: [Auth]
+      operationId: authCallbackWebSocket
+      summary: Browser login callback WebSocket
+      description: >
+        WebSocket endpoint used by the desktop client to wait for browser login
+        callback completion. The server sends `auth_callback_ready` and accepts
+        an `ack` message from the client.
+      parameters:
+        - $ref: '#/components/parameters/CallbackId'
+      responses:
+        '101':
+          description: WebSocket upgrade accepted
+
   /devices/register:
     post:
       tags: [Devices]
       operationId: registerDevice
-      summary: 注册设备
+      summary: 娉ㄥ唽璁惧
       security:
         - bearerAuth: []
       requestBody:
@@ -105,7 +191,7 @@ paths:
               $ref: '#/components/schemas/RegisterDeviceRequest'
       responses:
         '201':
-          description: 设备注册成功
+          description: 璁惧娉ㄥ唽鎴愬姛
           content:
             application/json:
               schema:
@@ -115,12 +201,12 @@ paths:
     get:
       tags: [Devices]
       operationId: listDevices
-      summary: 获取当前用户拥有的设备列表
+      summary: 鑾峰彇褰撳墠鐢ㄦ埛鎷ユ湁鐨勮澶囧垪琛?
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: 设备列表
+          description: 璁惧鍒楄〃
           content:
             application/json:
               schema:
@@ -136,12 +222,12 @@ paths:
     get:
       tags: [Networks]
       operationId: listNetworks
-      summary: 获取用户可见网络列表
+      summary: 鑾峰彇鐢ㄦ埛鍙缃戠粶鍒楄〃
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: 网络列表
+          description: 缃戠粶鍒楄〃
           content:
             application/json:
               schema:
@@ -155,7 +241,7 @@ paths:
     post:
       tags: [Networks]
       operationId: createNetwork
-      summary: 创建网络
+      summary: 鍒涘缓缃戠粶
       security:
         - bearerAuth: []
       requestBody:
@@ -166,34 +252,134 @@ paths:
               $ref: '#/components/schemas/CreateNetworkRequest'
       responses:
         '201':
-          description: 网络创建成功
+          description: 缃戠粶鍒涘缓鎴愬姛
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Network'
 
+  /networks/home:
+    get:
+      tags: [Networks]
+      operationId: getNetworkHome
+      summary: 鑾峰彇褰撳墠鐢ㄦ埛鐨勬椿鍔ㄧ綉缁滃拰鑷湁缃戠粶鎽樿
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 缃戠粶棣栭〉鐘舵€?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkHome'
+
   /networks/{networkId}:
     get:
       tags: [Networks]
       operationId: getNetwork
-      summary: 获取网络详情
+      summary: 鑾峰彇缃戠粶璇︽儏
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/NetworkId'
       responses:
         '200':
-          description: 网络详情
+          description: 缃戠粶璇︽儏
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkDetail'
+    put:
+      tags: [Networks]
+      operationId: updateNetwork
+      summary: 淇敼缃戠粶鍩虹閰嶇疆
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNetworkRequest'
+      responses:
+        '200':
+          description: 缃戠粶宸叉洿鏂?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Network'
+
+  /networks/{networkId}/join-key:
+    put:
+      tags: [Networks]
+      operationId: updateNetworkJoinKey
+      summary: 璁剧疆鎴栧埛鏂扮綉缁?join key
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNetworkJoinKeyRequest'
+      responses:
+        '200':
+          description: join key 宸叉洿鏂?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkDetail'
+
+  /networks/{networkId}/dns:
+    put:
+      tags: [Networks]
+      operationId: updateNetworkDns
+      summary: 鏇存柊缃戠粶绾?DNS 閰嶇疆
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNetworkDNSRequest'
+      responses:
+        '200':
+          description: DNS 閰嶇疆宸叉洿鏂?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkDetail'
+
+  /networks/{networkId}/switch:
+    post:
+      tags: [Networks]
+      operationId: switchNetwork
+      summary: 鍒囨崲褰撳墠娲诲姩缃戠粶
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwitchNetworkRequest'
+      responses:
+        '200':
+          description: 缃戠粶宸插垏鎹?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkJoinResult'
 
   /networks/{networkId}/join:
     post:
       tags: [Networks]
       operationId: joinNetwork
-      summary: 让设备加入网络
+      summary: 璁╄澶囧姞鍏ョ綉缁?
       security:
         - bearerAuth: []
       parameters:
@@ -206,7 +392,91 @@ paths:
               $ref: '#/components/schemas/JoinNetworkRequest'
       responses:
         '200':
-          description: 加入网络成功
+          description: 鍔犲叆缃戠粶鎴愬姛
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkJoinResult'
+
+  /networks/{networkId}/activate:
+    post:
+      tags: [Networks]
+      operationId: activateNetwork
+      summary: 婵€娲昏澶囧湪鐩爣缃戠粶涓婄殑鏈湴鎺ュ叆
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinNetworkRequest'
+      responses:
+        '200':
+          description: 缃戠粶宸叉縺娲?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkJoinResult'
+
+  /networks/{networkId}/deactivate:
+    post:
+      tags: [Networks]
+      operationId: deactivateNetwork
+      summary: 閲婃斁璁惧褰撳墠缃戠粶鎺ュ叆鍜岃櫄鎷?IP
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeactivateNetworkRequest'
+      responses:
+        '200':
+          description: 缃戠粶宸插仠鐢?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkDeactivatedResponse'
+
+  /networks/join-by-owner-email:
+    post:
+      tags: [Networks]
+      operationId: joinNetworkByOwnerEmail
+      summary: 鎸?owner email 鍙戠幇骞跺姞鍏ョ綉缁?      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinNetworkByOwnerEmailRequest'
+      responses:
+        '200':
+          description: 鍔犲叆缃戠粶鎴愬姛
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkJoinByOwnerEmailResult'
+
+  /networks/join-by-key:
+    post:
+      tags: [Networks]
+      operationId: joinNetworkByKey
+      summary: 鎸?join key 鍙戠幇骞跺姞鍏ョ綉缁?      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinNetworkByKeyRequest'
+      responses:
+        '200':
+          description: 鍔犲叆缃戠粶鎴愬姛
           content:
             application/json:
               schema:
@@ -216,8 +486,7 @@ paths:
     put:
       tags: [Networks]
       operationId: updateNetworkMemberStatus
-      summary: 审批或拒绝网络加入申请
-      security:
+      summary: 瀹℃壒鎴栨嫆缁濈綉缁滃姞鍏ョ敵璇?      security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/NetworkId'
@@ -230,20 +499,178 @@ paths:
               $ref: '#/components/schemas/UpdateNetworkMemberStatusRequest'
       responses:
         '200':
-          description: 成员状态已更新
+          description: 鎴愬憳鐘舵€佸凡鏇存柊
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkMember'
 
+  /networks/{networkId}/members:
+    get:
+      tags: [Networks]
+      operationId: listNetworkMembers
+      summary: 鑾峰彇缃戠粶鎴愬憳鍒楄〃
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: 鎴愬憳鍒楄〃
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NetworkMember'
+
+  /networks/{networkId}/assignments:
+    get:
+      tags: [Networks]
+      operationId: listNetworkAssignments
+      summary: 鑾峰彇缃戠粶鍐呰澶囦笌铏氭嫙 IP 缁戝畾鍏崇郴
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: 缁戝畾鍏崇郴鍒楄〃
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NetworkAssignment'
+
+  /networks/{networkId}/subnets:
+    get:
+      tags: [Networks]
+      operationId: listSubnets
+      summary: 鑾峰彇缃戠粶涓嬬殑瀛愮綉鍒楄〃
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      responses:
+        '200':
+          description: 瀛愮綉鍒楄〃
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Subnet'
+    post:
+      tags: [Networks]
+      operationId: createSubnet
+      summary: 鍦ㄧ綉缁滃唴鍒涘缓瀛愮綉
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSubnetRequest'
+      responses:
+        '201':
+          description: 瀛愮綉宸插垱寤?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subnet'
+
+  /networks/{networkId}/subnets/{subnetId}/attachments:
+    post:
+      tags: [Networks]
+      operationId: attachDeviceToSubnet
+      summary: 灏嗚澶囨寕杞藉埌鎸囧畾瀛愮綉
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/SubnetId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachDeviceRequest'
+      responses:
+        '201':
+          description: 璁惧宸叉寕杞?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubnetAttachment'
+
+  /networks/{networkId}/attachments/{attachmentId}/ip:
+    put:
+      tags: [Networks]
+      operationId: updateAttachmentIp
+      summary: 淇敼 attachment 铏氭嫙 IP
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/AttachmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAttachmentIPRequest'
+      responses:
+        '200':
+          description: 铏氭嫙 IP 宸叉洿鏂?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubnetAttachment'
+
+  /networks/{networkId}/attachments/{attachmentId}/remark:
+    put:
+      tags: [Networks]
+      operationId: updateAttachmentRemark
+      summary: 淇敼缃戠粶鍐呰澶囧娉?      description: >
+        缃戠粶 owner 鍙互缁存姢浠绘剰鎴愬憳璁惧澶囨敞锛涜澶囨墍鏈夎€呬篃鍙互缁存姢鑷繁鐨?        attachment 澶囨敞锛岀敤浜庡姞鍏ョ綉缁滄椂淇濆瓨鏈満鍒悕銆?      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/AttachmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAttachmentRemarkRequest'
+      responses:
+        '200':
+          description: 澶囨敞宸叉洿鏂?          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkAssignment'
+
   /nodes/register:
     post:
       tags: [Nodes]
       operationId: registerNode
-      summary: 注册节点身份
+      summary: 娉ㄥ唽鑺傜偣韬唤
       description: >
-        节点身份独立于业务设备身份。客户端在拿到 deviceId 后，
-        需要再注册 nodeId 和 nodePublicKey，供控制通道与数据面使用。
+        鑺傜偣韬唤鐙珛浜庝笟鍔¤澶囪韩浠姐€傚鎴风鍦ㄦ嬁鍒?deviceId 鍚庯紝
+        闇€瑕佸啀娉ㄥ唽 nodeId 鍜?nodePublicKey锛屼緵鎺у埗閫氶亾涓庢暟鎹潰浣跨敤銆?
       security:
         - bearerAuth: []
       requestBody:
@@ -254,7 +681,7 @@ paths:
               $ref: '#/components/schemas/RegisterNodeRequest'
       responses:
         '201':
-          description: 节点注册成功
+          description: 鑺傜偣娉ㄥ唽鎴愬姛
           content:
             application/json:
               schema:
@@ -264,9 +691,9 @@ paths:
     post:
       tags: [Control]
       operationId: createControlSession
-      summary: 创建控制通道会话
+      summary: 鍒涘缓鎺у埗閫氶亾浼氳瘽
       description: >
-        控制面返回控制会话令牌、WebSocket 地址和初始 NetworkMap。
+        鎺у埗闈㈣繑鍥炴帶鍒朵細璇濅护鐗屻€乄ebSocket 鍦板潃鍜屽垵濮?NetworkMap銆?
       security:
         - bearerAuth: []
       requestBody:
@@ -277,20 +704,61 @@ paths:
               $ref: '#/components/schemas/CreateControlSessionRequest'
       responses:
         '201':
-          description: 控制会话创建成功
+          description: 鎺у埗浼氳瘽鍒涘缓鎴愬姛
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ControlSessionResponse'
 
+  /control/messages/{messageId}/ack:
+    post:
+      tags: [Control]
+      operationId: ackControlMessage
+      summary: Acknowledge a control message
+      description: >
+        Optional message-delivery acknowledgement endpoint. Deployments that do
+        not enable durable control-message delivery return `501 NOT_IMPLEMENTED`
+        with `ErrorResponse`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/MessageId'
+      responses:
+        '200':
+          description: Message acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+        '501':
+          description: Message delivery is disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /control/ws:
+    get:
+      tags: [Control]
+      operationId: controlWebSocket
+      summary: Control channel WebSocket
+      description: >
+        WebSocket endpoint for node hello, network map sync, peer updates,
+        connection planning, path health, and active-network events. The exact
+        message schemas live in `protocol/protobuf/control.proto` and
+        `server/server-biz/internal/ws`.
+      responses:
+        '101':
+          description: WebSocket upgrade accepted
+
   /bootstrap:
     post:
       tags: [Control]
       operationId: bootstrap
-      summary: 获取节点启动配置
+      summary: 鑾峰彇鑺傜偣鍚姩閰嶇疆
       description: >
-        返回当前节点所需的基础启动信息，包括控制通道、STUN、relay 区域
-        以及当前网络的初始 NetworkMap。
+        杩斿洖褰撳墠鑺傜偣鎵€闇€鐨勫熀纭€鍚姩淇℃伅锛屽寘鎷帶鍒堕€氶亾銆丼TUN銆乺elay 鍖哄煙
+        浠ュ強褰撳墠缃戠粶鐨勫垵濮?NetworkMap銆?
       security:
         - bearerAuth: []
       requestBody:
@@ -301,7 +769,7 @@ paths:
               $ref: '#/components/schemas/BootstrapRequest'
       responses:
         '200':
-          description: 启动配置
+          description: 鍚姩閰嶇疆
           content:
             application/json:
               schema:
@@ -311,7 +779,7 @@ paths:
     post:
       tags: [Relay]
       operationId: issueRelayTicket
-      summary: 签发 relay 回退票据
+      summary: 绛惧彂 relay 鍥為€€绁ㄦ嵁
       security:
         - bearerAuth: []
       requestBody:
@@ -322,7 +790,7 @@ paths:
               $ref: '#/components/schemas/RelayTicketRequest'
       responses:
         '201':
-          description: relay 票据
+          description: relay 绁ㄦ嵁
           content:
             application/json:
               schema:
@@ -348,8 +816,26 @@ components:
       required: true
       schema:
         type: string
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
     MemberId:
       name: memberId
+      in: path
+      required: true
+      schema:
+        type: string
+    SubnetId:
+      name: subnetId
+      in: path
+      required: true
+      schema:
+        type: string
+    AttachmentId:
+      name: attachmentId
       in: path
       required: true
       schema:
@@ -376,6 +862,17 @@ components:
           format: email
         password:
           type: string
+        deviceId:
+          type: string
+
+    RefreshTokenRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+        deviceId:
+          type: string
 
     AuthResponse:
       type: object
@@ -390,16 +887,39 @@ components:
         expiresIn:
           type: integer
 
+    CompleteAuthCallbackRequest:
+      type: object
+      required: [accessToken, userId, expiresIn]
+      properties:
+        accessToken:
+          type: string
+        userId:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+        deviceId:
+          type: string
+        userLabel:
+          type: string
+        action:
+          type: string
+
     AuthCallbackStatusResponse:
       type: object
-      required: [callbackId, received]
+      required: [callbackId, ready, received]
       properties:
         callbackId:
           type: string
+        ready:
+          type: boolean
         received:
           type: boolean
         receivedAt:
           type: integer
+        payload:
+          $ref: '#/components/schemas/CompleteAuthCallbackRequest'
 
     StatusOKResponse:
       type: object
@@ -430,10 +950,30 @@ components:
           type: string
         name:
           type: string
+        ownerEmail:
+          type: string
         platform:
+          type: string
+        machineId:
           type: string
         status:
           type: string
+        currentVirtualIp:
+          type: string
+        linkStatus:
+          type: string
+        connectivityProtocol:
+          type: string
+        joinedAt:
+          type: integer
+          format: int64
+        membershipStatus:
+          type: string
+        networkRole:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
         publicKey:
           type: string
         networkIds:
@@ -451,11 +991,57 @@ components:
           type: string
         cidr:
           type: string
+        bindDeviceId:
+          type: string
+
+    UpdateNetworkRequest:
+      type: object
+      required: [cidr]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        cidr:
+          type: string
+
+    SwitchNetworkRequest:
+      type: object
+      required: [deviceId]
+      properties:
+        deviceId:
+          type: string
+
+    DeactivateNetworkRequest:
+      type: object
+      required: [deviceId]
+      properties:
+        deviceId:
+          type: string
 
     JoinNetworkRequest:
       type: object
       required: [deviceId]
       properties:
+        deviceId:
+          type: string
+
+    JoinNetworkByOwnerEmailRequest:
+      type: object
+      required: [ownerEmail, deviceId]
+      properties:
+        ownerEmail:
+          type: string
+          format: email
+        deviceId:
+          type: string
+
+    JoinNetworkByKeyRequest:
+      type: object
+      required: [joinKey, deviceId]
+      properties:
+        joinKey:
+          type: string
         deviceId:
           type: string
 
@@ -466,6 +1052,59 @@ components:
         status:
           type: string
           enum: [active, rejected]
+
+    UpdateNetworkJoinKeyRequest:
+      type: object
+      properties:
+        joinKey:
+          type: string
+
+    UpdateNetworkDNSRequest:
+      type: object
+      properties:
+        servers:
+          type: array
+          items:
+            type: string
+        searchDomains:
+          type: array
+          items:
+            type: string
+
+    UpdateAttachmentIPRequest:
+      type: object
+      required: [virtualIp]
+      properties:
+        virtualIp:
+          type: string
+
+    UpdateAttachmentRemarkRequest:
+      type: object
+      properties:
+        remark:
+          type: string
+
+    CreateSubnetRequest:
+      type: object
+      required: [name, cidr]
+      properties:
+        name:
+          type: string
+        cidr:
+          type: string
+        gatewayIp:
+          type: string
+        allocationStartIp:
+          type: string
+        allocationEndIp:
+          type: string
+
+    AttachDeviceRequest:
+      type: object
+      required: [deviceId]
+      properties:
+        deviceId:
+          type: string
 
     Network:
       type: object
@@ -481,6 +1120,19 @@ components:
           type: string
         defaultSubnetCidr:
           type: string
+        joinKeyConfigured:
+          type: boolean
+
+    NetworkHome:
+      type: object
+      required: [hasNetwork]
+      properties:
+        activeNetwork:
+          $ref: '#/components/schemas/Network'
+        ownedNetwork:
+          $ref: '#/components/schemas/Network'
+        hasNetwork:
+          type: boolean
 
     NetworkMember:
       type: object
@@ -500,10 +1152,12 @@ components:
         status:
           type: string
           enum: [pending, active, rejected]
+        virtualIp:
+          type: string
 
     Subnet:
       type: object
-      required: [subnetId, networkId, name, cidr]
+      required: [subnetId, networkId, name, cidr, isDefault]
       properties:
         subnetId:
           type: string
@@ -521,13 +1175,21 @@ components:
           type: string
         isDefault:
           type: boolean
+        status:
+          type: string
 
     NetworkDetail:
       allOf:
         - $ref: '#/components/schemas/Network'
         - type: object
-          required: [members, subnets]
+          required: [ownedByCurrentUser, dns, members, subnets]
           properties:
+            ownedByCurrentUser:
+              type: boolean
+            dns:
+              $ref: '#/components/schemas/DNSConfig'
+            joinKey:
+              type: string
             members:
               type: array
               items:
@@ -551,6 +1213,8 @@ components:
           type: string
         virtualIp:
           type: string
+        remark:
+          type: string
         status:
           type: string
 
@@ -562,6 +1226,53 @@ components:
           $ref: '#/components/schemas/NetworkMember'
         attachment:
           $ref: '#/components/schemas/SubnetAttachment'
+
+    NetworkJoinByOwnerEmailResult:
+      type: object
+      required: [network, member, attachment]
+      properties:
+        network:
+          $ref: '#/components/schemas/Network'
+        member:
+          $ref: '#/components/schemas/NetworkMember'
+        attachment:
+          $ref: '#/components/schemas/SubnetAttachment'
+
+    NetworkAssignment:
+      type: object
+      required: [attachmentId, networkId, subnetId, deviceId, deviceName, userId, userEmail, role]
+      properties:
+        attachmentId:
+          type: string
+        networkId:
+          type: string
+        subnetId:
+          type: string
+        deviceId:
+          type: string
+        deviceName:
+          type: string
+        userId:
+          type: string
+        userEmail:
+          type: string
+          format: email
+        role:
+          type: string
+        remark:
+          type: string
+        virtualIp:
+          type: string
+        status:
+          type: string
+
+    NetworkDeactivatedResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [deactivated]
 
     RegisterNodeRequest:
       type: object
@@ -617,16 +1328,41 @@ components:
 
     BootstrapResponse:
       type: object
-      required: [controlSessionId, controlPlane, networkMap, derpMap]
+      required: [device, networks, controlPlane, stunServers, relay, derpMap, networkMap]
       properties:
         controlSessionId:
           type: string
+        sessionToken:
+          type: string
+        device:
+          $ref: '#/components/schemas/DeviceBootstrap'
+        networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkDetail'
         controlPlane:
           $ref: '#/components/schemas/ControlPlaneConfig'
+        stunServers:
+          type: array
+          items:
+            type: string
+        relay:
+          $ref: '#/components/schemas/RelayConfig'
         derpMap:
           $ref: '#/components/schemas/DerpMap'
         networkMap:
           $ref: '#/components/schemas/NetworkMap'
+
+    DeviceBootstrap:
+      type: object
+      required: [device, attachments]
+      properties:
+        device:
+          $ref: '#/components/schemas/Device'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubnetAttachment'
 
     ControlSessionResponse:
       type: object
@@ -653,7 +1389,7 @@ components:
     NetworkMap:
       type: object
       required:
-        [selfUserId, selfDeviceId, selfNodeId, networkId, revision, heartbeatSeconds, peers, stunServers, relayRegions]
+        [selfUserId, selfDeviceId, selfNodeId, networkId, revision, heartbeatSeconds, dns]
       properties:
         selfUserId:
           type: string
@@ -690,7 +1426,7 @@ components:
 
     Peer:
       type: object
-      required: [nodeId, deviceId, publicKey, status, relayAllowed, endpoints, virtualIps]
+      required: [nodeId, deviceId, publicKey, status, relayAllowed]
       properties:
         nodeId:
           type: string
@@ -739,6 +1475,7 @@ components:
 
     DNSConfig:
       type: object
+      required: [servers, searchDomains]
       properties:
         servers:
           type: array
@@ -751,11 +1488,23 @@ components:
 
     RelayRegion:
       type: object
-      required: [regionId, regionName, endpoints]
+      required: [regionId, regionName]
       properties:
         regionId:
           type: string
         regionName:
+          type: string
+        countryCode:
+          type: string
+        countryName:
+          type: string
+        cityCode:
+          type: string
+        cityName:
+          type: string
+        clusterId:
+          type: string
+        clusterName:
           type: string
         endpoints:
           type: array
@@ -772,6 +1521,73 @@ components:
           type: string
         address:
           type: string
+
+    RelayNode:
+      type: object
+      required: [nodeId, transport, address, priority]
+      properties:
+        nodeId:
+          type: string
+        transport:
+          type: string
+        address:
+          type: string
+        priority:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+
+    RelayCluster:
+      type: object
+      required: [clusterId, clusterName]
+      properties:
+        clusterId:
+          type: string
+        clusterName:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayNode'
+
+    RelayCity:
+      type: object
+      required: [cityCode, cityName]
+      properties:
+        cityCode:
+          type: string
+        cityName:
+          type: string
+        clusters:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayCluster'
+
+    RelayCountry:
+      type: object
+      required: [countryCode, countryName]
+      properties:
+        countryCode:
+          type: string
+        countryName:
+          type: string
+        cities:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayCity'
+
+    RelayConfig:
+      type: object
+      required: [defaultClusterId]
+      properties:
+        defaultClusterId:
+          type: string
+        countries:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayCountry'
 
     DerpNode:
       type: object
@@ -794,7 +1610,7 @@ components:
 
     DerpCluster:
       type: object
-      required: [clusterId, regionId, regionName, recommendedFanout, nodes]
+      required: [clusterId, regionId, regionName, recommendedFanout]
       properties:
         clusterId:
           type: string
@@ -821,7 +1637,7 @@ components:
 
     DerpMap:
       type: object
-      required: [probeIntervalSeconds, clusters]
+      required: [probeIntervalSeconds]
       properties:
         probeIntervalSeconds:
           type: integer

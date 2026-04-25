@@ -8,6 +8,7 @@ across:
 - `server/server-biz/api/dto` (backend source-of-truth today)
 - `server/server-ui/web/src/ui` (web API contracts)
 - `client/app/lib/infra` (Flutter request/response contracts and local models)
+- `client/app_core/crates/controller-client` (Rust controller transport DTOs)
 
 The goal is not to force one-step unification. The goal is to make the next
 round of protocol-source extraction concrete and low-risk.
@@ -15,10 +16,12 @@ round of protocol-source extraction concrete and low-risk.
 ## Drift Check
 
 The repository now includes a minimal field-level drift checker for web
-transport contracts:
+transport contracts. Targets can be passed one by one or repeated in a single
+run:
 
 ```bash
 go run ./scripts/check_protocol_contracts.go --target web
+go run ./scripts/check_protocol_contracts.go --target web --target flutter --target rust-controller --target go-server --target openapi --target protobuf --target http-routes
 ```
 
 Current scope:
@@ -35,17 +38,84 @@ Flutter drift check is also available:
 go run ./scripts/check_protocol_contracts.go --target flutter
 ```
 
-Current Flutter scope is intentionally narrower than web:
+Current Flutter scope:
 
 - Checks request contracts in
   `client/app/lib/infra/api_contracts/request_models.dart`
-- Checks only the Flutter response DTOs that are intended to remain close to
-  backend transport shape today:
-  `AuthResponseDto`, `CompleteAuthCallbackRequestDto`,
-  `AuthCallbackStatusResponseDto`, `NodeResponseDto`,
-  `ControlPlaneConfigResponseDto`, and `RelayTicketResponseDto`
-- Does not currently fail on reduced Flutter projection DTOs such as
-  `DeviceResponseDto`, `NetworkDetailResponseDto`, or `BootstrapResponseDto`
+- Checks Flutter response DTOs that mirror backend transport shape, including
+  auth, device/node, network detail/member/assignment/join, bootstrap,
+  control-plane, relay, route, peer, and subnet attachment DTOs.
+- App-local projection models such as `NetworkModel` can remain reduced, but
+  the transport DTO layer is expected to keep the protocol fields.
+
+Rust controller-client drift check is also available:
+
+```bash
+go run ./scripts/check_protocol_contracts.go --target rust-controller
+```
+
+Current Rust scope:
+
+- Checks request/response DTOs in
+  `client/app_core/crates/controller-client/src/dto.rs`
+- Applies known DTO name aliases such as `Device -> DeviceDto`,
+  `DeviceBootstrap -> BootstrapDeviceDto`, and `DNSConfig -> DnsConfigDto`
+- Respects explicit serde field renames such as the control-plane endpoint
+  JSON field `type`
+
+Go server DTO drift check is also available:
+
+```bash
+go run ./scripts/check_protocol_contracts.go --target go-server
+```
+
+Current Go server scope:
+
+- Checks JSON tags on structs in `server/server-biz/api/dto`
+- Expands embedded DTO structs such as `NetworkDetail` embedding `Network`
+- Verifies that backend request/response DTOs still carry every canonical
+  protocol field
+
+OpenAPI drift check is also available:
+
+```bash
+go run ./scripts/check_protocol_contracts.go --target openapi
+```
+
+Current OpenAPI scope:
+
+- Checks component schema properties in `protocol/openapi/phase1.yaml`
+- Expands `allOf` schema references such as `NetworkDetail -> Network`
+- Verifies that public API documentation exposes every canonical protocol
+  field
+
+HTTP route drift check is also available:
+
+```bash
+go run ./scripts/check_protocol_contracts.go --target http-routes
+```
+
+Current HTTP route scope:
+
+- Parses public Go route files in `server/server-biz/api/http`
+- Converts Gin parameters such as `:networkId` into OpenAPI
+  `{networkId}` form
+- Verifies that OpenAPI paths and methods match the public router, including
+  health, diagnostics, auth callback WebSocket, and control WebSocket entries
+
+Protobuf drift check is also available:
+
+```bash
+go run ./scripts/check_protocol_contracts.go --target protobuf
+```
+
+Current protobuf scope:
+
+- Checks message fields in `protocol/protobuf/control.proto`
+- Converts proto snake_case field names to canonical camelCase names
+- Only validates contracts that already exist as protobuf control-channel
+  messages, such as `NetworkMap`, `Peer`, `Route`, `RelayRegion`, and
+  `RelayTicket`
 
 See also:
 
@@ -65,6 +135,7 @@ See also:
 - `protocol/contracts/auth-registration.yaml`
 - `protocol/contracts/control-plane.yaml`
 - `protocol/contracts/network.yaml`
+- `protocol/contracts/system.yaml`
 
 ### Web
 
@@ -78,6 +149,12 @@ See also:
 - DTO -> app model mappers: `client/app/lib/infra/control_api_responses/response_mappers.dart`
 - App-local runtime models: `client/app/lib/infra/app_core/models/*`
 
+### Rust Controller Client
+
+- Request/response DTOs: `client/app_core/crates/controller-client/src/dto.rs`
+- HTTP endpoint calls: `client/app_core/crates/controller-client/src/client.rs`
+- Public controller API trait: `client/app_core/crates/controller-client/src/api.rs`
+
 ## Contract Groups
 
 ### Auth
@@ -86,6 +163,7 @@ Backend:
 
 - `RegisterRequest`
 - `LoginRequest`
+- `RefreshTokenRequest`
 - `AuthResponse`
 - `AuthCallbackStatusResponse`
 
@@ -96,7 +174,7 @@ Web:
 
 Flutter:
 
-- request contracts: `RegisterRequest`, `LoginRequest`
+- request contracts: `RegisterRequest`, `LoginRequest`, `RefreshTokenRequest`
 - response DTO: `AuthResponseDto`
 - local model: `SessionModel`
 
@@ -106,6 +184,30 @@ Status:
   Flutter.
 - The first canonical slice draft now lives at
   `protocol/contracts/auth-registration.yaml`.
+
+### System
+
+Backend:
+
+- `ErrorResponse`
+
+Web:
+
+- `ErrorResponse`
+
+Flutter:
+
+- response DTO: `ErrorResponseDto`
+
+Rust controller:
+
+- response DTO: `ErrorResponseDto`
+
+Status:
+
+- Public HTTP errors use the stable `code + message` shape documented in
+  `server/server-biz/docs/public-error-codes.md`.
+- A canonical slice draft now exists at `protocol/contracts/system.yaml`.
 
 ### Registration
 
@@ -139,10 +241,13 @@ Backend:
 
 - `CreateNetworkRequest`
 - `UpdateNetworkRequest`
+- `UpdateNetworkJoinKeyRequest`
+- `UpdateNetworkDNSRequest`
 - `SwitchNetworkRequest`
 - `DeactivateNetworkRequest`
 - `JoinNetworkByOwnerEmailRequest`
 - `UpdateAttachmentIPRequest`
+- `UpdateAttachmentRemarkRequest`
 - `CreateSubnetRequest`
 - `AttachDeviceRequest`
 - `JoinNetworkRequest`
@@ -163,12 +268,20 @@ Web:
 - `NetworkDetail`
 - `Subnet`
 - `NetworkAssignment`
+- `NetworkJoinResult`
+- `NetworkJoinByOwnerEmailResult`
 
 Flutter:
 
 - request contracts:
   - `CreateNetworkRequest`
+  - `UpdateNetworkRequest`
+  - `UpdateNetworkDNSRequest`
+  - `SwitchNetworkRequest`
+  - `DeactivateNetworkRequest`
+  - `JoinNetworkByOwnerEmailRequest`
   - `JoinNetworkRequest`
+  - `UpdateAttachmentRemarkRequest`
   - `BootstrapRequest` indirectly depends on network ids
 - response DTOs:
   - `NetworkSummaryResponseDto`
@@ -176,6 +289,9 @@ Flutter:
   - `SubnetResponseDto`
   - `NetworkMemberResponseDto`
   - `SubnetAttachmentResponseDto`
+  - `NetworkAssignmentResponseDto`
+  - `NetworkJoinResultResponseDto`
+  - `NetworkJoinByOwnerEmailResultResponseDto`
 - local models:
   - `NetworkModel`
   - `NetworkMemberModel`
@@ -186,8 +302,9 @@ Status:
 - Web now has explicit transport typings for `NetworkMember`,
   `SubnetAttachment`, `NetworkJoinResult`, and
   `NetworkJoinByOwnerEmailResult`.
-- Flutter currently models a reduced network view and folds attachment IP into
-  `DeviceModel` / `NetworkMemberModel`.
+- Flutter now keeps transport DTOs aligned for join, switch, activate,
+  deactivate, assignment, and owner-email join flows; UI-facing models remain
+  intentionally smaller projections.
 - Backend `NetworkDetail` includes `subnets` and `members`; web currently keeps
   those in separate fetches from `/subnets` and `/assignments` as well.
 
@@ -205,7 +322,9 @@ Backend:
 
 Web:
 
-- no explicit bootstrap contract layer yet
+- explicit transport types exist for `ControlPlaneConfig`,
+  `BootstrapResponse`, `RelayTicket`, and related runtime DTOs, although the
+  console does not yet consume all of them as first-class runtime flows.
 
 Flutter:
 
@@ -274,17 +393,11 @@ Status:
 
 ### Unintentional or Risky Drift
 
-- Web has no explicit contract for `AuthCallbackStatusResponse`.
-- Web `NetworkDetail` contract is a reduced subset of backend `NetworkDetail`,
-  which makes later feature expansion easy to forget.
-- Flutter request contracts do not yet include:
-  - `UpdateNetworkRequest`
-  - `DeactivateNetworkRequest`
-  - `JoinNetworkByOwnerEmailRequest`
-  - `CreateSubnetRequest`
-  - `AttachDeviceRequest`
-  - `UpdateAttachmentIPRequest`
-  because current mobile/desktop HTTP client does not expose those flows.
+- Web still treats some owner administration responses as refresh-driven UI
+  updates even though the transport layer now parses returned entities.
+- Flutter `NetworkModel` intentionally remains a reduced app projection; keep
+  expanding `*ResponseDto` transport coverage instead of adding backend-only
+  fields directly to UI models.
 
 ## Recommended Unification Order
 
@@ -339,12 +452,10 @@ Reason:
 
 ## Next Concrete Tasks
 
-1. Add missing web contract types for `AuthCallbackStatusResponse`,
-   `ControlPlaneConfig`, and `RelayTicket` if the web console will consume them.
-2. Add explicit Flutter request contract files for network-management requests
-   not yet represented.
-3. Decide whether shared protocol artifacts will be:
+1. Decide whether shared protocol artifacts will be:
    - generated from Go DTOs
    - manually maintained in a new repo directory such as `protocol/`
-4. Once a canonical source is chosen, migrate one vertical slice first:
+2. Once a canonical source is chosen, migrate one vertical slice first:
    `auth + registration`.
+3. Keep adding protocol drift coverage when a new public DTO becomes part of
+   the app, app-core, web, OpenAPI, or protobuf boundary.

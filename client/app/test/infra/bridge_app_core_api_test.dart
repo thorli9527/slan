@@ -103,7 +103,27 @@ void main() {
     expect(pluginPlatform.calls[1].args['reason'], 'p2p_failed');
   });
 
-  test('BridgeAppCoreApi routes auth, device, node, and network setup via plugin platform',
+  test('BridgeAppCoreApi routes refresh session via plugin platform', () async {
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
+      'refreshSession': _sessionPayload(accessToken: 'token-refreshed'),
+    });
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
+
+    final session = await api.refreshSession(
+      refreshToken: 'refresh-1',
+      deviceId: 'dev-1',
+    );
+
+    expect(session.accessToken, 'token-refreshed');
+    expect(pluginPlatform.calls.single.method, 'refreshSession');
+    expect(pluginPlatform.calls.single.args, {
+      'refreshToken': 'refresh-1',
+      'deviceId': 'dev-1',
+    });
+  });
+
+  test(
+      'BridgeAppCoreApi routes auth, device, node, and network setup via plugin platform',
       () async {
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'login': _sessionPayload(),
@@ -135,7 +155,47 @@ void main() {
         'name': 'home',
         'defaultSubnetCidr': '100.64.0.0/24',
       },
-      'joinNetwork': null,
+      'joinNetwork': {
+        'networkId': 'net-1',
+        'deviceId': 'dev-1',
+        'memberId': 'member-1',
+        'attachmentId': 'att-1',
+        'virtualIp': '100.64.0.10',
+      },
+      'joinNetworkByOwnerEmail': {
+        'networkId': 'net-owner',
+        'deviceId': 'dev-1',
+        'memberId': 'member-owner',
+        'attachmentId': 'att-owner',
+        'virtualIp': '100.64.0.11',
+      },
+      'joinNetworkByKey': {
+        'networkId': 'net-key',
+        'deviceId': 'dev-1',
+        'memberId': 'member-key',
+        'attachmentId': 'att-key',
+        'virtualIp': '100.64.0.12',
+      },
+      'updateAttachmentRemark': {
+        'attachmentId': 'att-key',
+        'networkId': 'net-key',
+        'subnetId': 'subnet-key',
+        'deviceId': 'dev-1',
+        'deviceName': 'thor-mac',
+        'userId': 'user-1',
+        'userEmail': 'user@example.com',
+        'role': 'member',
+        'remark': 'Thor laptop',
+        'virtualIp': '100.64.0.12',
+        'status': 'active',
+      },
+      'switchNetwork': {
+        'networkId': 'net-key',
+        'deviceId': 'dev-1',
+        'memberId': 'member-key',
+        'attachmentId': 'att-key',
+        'virtualIp': '100.64.0.12',
+      },
       'listDevices': {
         'items': [
           {
@@ -173,7 +233,21 @@ void main() {
       name: 'home',
       bindDeviceId: 'dev-1',
     );
-    await api.joinNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    final directJoin =
+        await api.joinNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    final ownerJoin = await api.joinNetworkByOwnerEmail(
+      ownerEmail: 'owner@example.com',
+      deviceId: 'dev-1',
+    );
+    final keyJoin =
+        await api.joinNetworkByKey(joinKey: 'join-key-1', deviceId: 'dev-1');
+    final remark = await api.updateAttachmentRemark(
+      networkId: 'net-key',
+      attachmentId: 'att-key',
+      remark: 'Thor laptop',
+    );
+    final switched =
+        await api.switchNetwork(networkId: 'net-key', deviceId: 'dev-1');
     final devices = await api.listDevices();
 
     expect(session.accessToken, 'token-1');
@@ -185,6 +259,11 @@ void main() {
     expect(device.networkIds, ['net-1']);
     expect(node.nodeId, 'node-1');
     expect(network.networkId, 'net-1');
+    expect(directJoin.attachmentId, 'att-1');
+    expect(ownerJoin.networkId, 'net-owner');
+    expect(keyJoin.virtualIp, '100.64.0.12');
+    expect(remark.remark, 'Thor laptop');
+    expect(switched.attachmentId, 'att-key');
     expect(devices.single.deviceId, 'dev-1');
     expect(devices.single.virtualIp, '100.64.0.10');
     expect(devices.single.membershipStatus, 'pending');
@@ -196,28 +275,66 @@ void main() {
       'registerNode',
       'createNetwork',
       'joinNetwork',
+      'joinNetworkByOwnerEmail',
+      'joinNetworkByKey',
+      'updateAttachmentRemark',
+      'switchNetwork',
       'listDevices',
     ]);
+    expect(pluginPlatform.calls[5].args, {
+      'ownerEmail': 'owner@example.com',
+      'deviceId': 'dev-1',
+    });
+    expect(pluginPlatform.calls[6].args, {
+      'joinKey': 'join-key-1',
+      'deviceId': 'dev-1',
+    });
+    expect(pluginPlatform.calls[7].args, {
+      'networkId': 'net-key',
+      'attachmentId': 'att-key',
+      'remark': 'Thor laptop',
+    });
+    expect(pluginPlatform.calls[8].args, {
+      'networkId': 'net-key',
+      'deviceId': 'dev-1',
+    });
   });
 
-  test('BridgeAppCoreApi routes activate/deactivate and controlSync via plugin platform',
+  test(
+      'BridgeAppCoreApi routes activate/deactivate and controlSync via plugin platform',
       () async {
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
-      'activateNetwork': null,
+      'activateNetwork': {
+        'networkId': 'net-1',
+        'deviceId': 'dev-1',
+        'attachmentId': 'att-1',
+      },
+      'switchNetwork': {
+        'networkId': 'net-1',
+        'deviceId': 'dev-1',
+        'attachmentId': 'att-1',
+      },
       'deactivateNetwork': null,
       'controlSync': _bootstrapPayload(),
     });
     final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
 
-    await api.activateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    final activated =
+        await api.activateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    final switched =
+        await api.switchNetwork(networkId: 'net-1', deviceId: 'dev-1');
     await api.deactivateNetwork(networkId: 'net-1', deviceId: 'dev-1');
-    final bootstrap = await api.controlSync(nodeId: 'node-1', networkId: 'net-1');
+    final bootstrap =
+        await api.controlSync(nodeId: 'node-1', networkId: 'net-1');
 
     expect(pluginPlatform.calls.map((call) => call.method), [
       'activateNetwork',
+      'switchNetwork',
       'deactivateNetwork',
       'controlSync',
     ]);
+    expect(activated.attachmentId, 'att-1');
+    expect(switched.attachmentId, 'att-1');
     expect(pluginPlatform.calls[0].args, {
       'networkId': 'net-1',
       'deviceId': 'dev-1',
@@ -227,6 +344,10 @@ void main() {
       'deviceId': 'dev-1',
     });
     expect(pluginPlatform.calls[2].args, {
+      'networkId': 'net-1',
+      'deviceId': 'dev-1',
+    });
+    expect(pluginPlatform.calls[3].args, {
       'nodeId': 'node-1',
       'networkId': 'net-1',
     });
@@ -523,9 +644,9 @@ void main() {
   });
 }
 
-Map<String, Object?> _sessionPayload() => {
+Map<String, Object?> _sessionPayload({String accessToken = 'token-1'}) => {
       'userId': 'user@example.com',
-      'accessToken': 'token-1',
+      'accessToken': accessToken,
       'refreshToken': 'refresh-1',
       'expiresIn': 3600,
     };
@@ -605,7 +726,62 @@ Map<String, Object?> _bootstrapPayload() => {
         ],
       },
       'networkMap': {
+        'selfUserId': 'user-1',
+        'selfDeviceId': 'dev-1',
+        'selfNodeId': 'node-1',
         'networkId': 'net-1',
+        'revision': 7,
+        'heartbeatSeconds': 15,
+        'stunServers': [kDevStunServer],
+        'peers': [
+          {
+            'nodeId': 'node-2',
+            'deviceId': 'dev-2',
+            'publicKey': 'node-2-pub',
+            'status': 'online',
+            'relayAllowed': true,
+            'virtualIps': ['100.64.0.11'],
+            'endpoints': [
+              {
+                'type': 'relay',
+                'address': kDevRelayUdpAddress,
+                'updatedAt': 1713340200,
+              },
+            ],
+            'allowedRoutes': ['100.64.0.11/32'],
+          },
+        ],
+        'routes': [
+          {
+            'cidr': '100.64.0.0/24',
+            'viaNodeId': 'node-1',
+            'metric': 'local',
+          },
+        ],
+        'relayRegions': [
+          {
+            'regionId': 'cn-local',
+            'regionName': 'CN Local',
+            'countryCode': 'CN',
+            'countryName': 'China',
+            'cityCode': 'local',
+            'cityName': 'Local',
+            'clusterId': 'cn-local-a',
+            'clusterName': 'CN Local A',
+            'endpoints': [
+              {
+                'endpointId': 'relay-cn-local-udp',
+                'transport': 'udp',
+                'address': kDevRelayUdpAddress,
+              },
+            ],
+          },
+        ],
+        'dns': {
+          'servers': ['100.64.0.1'],
+          'searchDomains': ['slan.local'],
+        },
+        'mtu': 1280,
       },
     };
 

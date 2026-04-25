@@ -32,9 +32,40 @@ class AuthSessionService {
   Future<AuthSessionHydrationResult> hydrateExternalSession(
     SessionModel session,
   ) async {
-    _api.restoreSession(session);
+    return _hydrateSession(session);
+  }
+
+  Future<AuthSessionHydrationResult> refreshAndHydrateSession(
+    SessionModel session,
+  ) async {
+    final refreshToken = session.refreshToken?.trim();
+    if (refreshToken == null || refreshToken.isEmpty) {
+      throw StateError('missing refresh token');
+    }
+    final refreshed = await _api.refreshSession(
+      refreshToken: refreshToken,
+      deviceId: session.deviceId,
+    );
+    return _hydrateSession(
+      refreshed.copyWith(
+        deviceId: refreshed.deviceId ?? session.deviceId,
+        userLabel: refreshed.userLabel ?? session.userLabel,
+        authenticatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  Future<AuthSessionHydrationResult> _hydrateSession(
+    SessionModel session,
+  ) async {
+    final hydratedSession = session.authenticatedAtMs == null
+        ? session.copyWith(
+            authenticatedAtMs: DateTime.now().millisecondsSinceEpoch,
+          )
+        : session;
+    _api.restoreSession(hydratedSession);
     final devices = await _api.listDevices();
-    final preferredDeviceId = session.deviceId?.trim();
+    final preferredDeviceId = hydratedSession.deviceId?.trim();
 
     DeviceModel? matchedDevice;
     if (preferredDeviceId == null || preferredDeviceId.isEmpty) {
@@ -52,7 +83,7 @@ class AuthSessionService {
     final notice = networks.isEmpty ? '登录成功，当前还没有活动网络。' : '登录成功，已进入默认主页。';
 
     return AuthSessionHydrationResult(
-      session: session,
+      session: hydratedSession,
       device: matchedDevice,
       devices: devices,
       networks: networks,

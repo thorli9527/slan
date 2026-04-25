@@ -141,7 +141,7 @@ func abortRateLimited(c *gin.Context, retryAfter time.Duration) {
 		c.Header("Retry-After", strconv.Itoa(ceilSeconds(retryAfter)))
 	}
 	c.JSON(http.StatusTooManyRequests, dto.ErrorResponse{
-		Code:    "RATE_LIMITED",
+		Code:    errorCodeRateLimited,
 		Message: "too many requests, please retry later",
 	})
 	c.Abort()
@@ -161,7 +161,7 @@ func rateLimitJSONFieldKey(field, value string) string {
 
 func abortRequestTooLarge(c *gin.Context) {
 	c.JSON(http.StatusRequestEntityTooLarge, dto.ErrorResponse{
-		Code:    "REQUEST_TOO_LARGE",
+		Code:    errorCodeRequestTooLarge,
 		Message: "request body exceeds 1 MiB limit",
 	})
 	c.Abort()

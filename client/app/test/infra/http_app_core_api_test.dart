@@ -70,7 +70,10 @@ void main() {
               {
                 'networkId': 'net-1',
                 'name': 'home',
+                'description': 'primary network',
+                'defaultSubnetId': 'subnet-1',
                 'defaultSubnetCidr': '100.64.0.0/24',
+                'joinKeyConfigured': true,
               },
             ],
           }));
@@ -192,8 +195,95 @@ void main() {
                 },
               ],
             },
+            'derpMap': {
+              'probeIntervalSeconds': 30,
+              'clusters': [
+                {
+                  'clusterId': 'cn-local-a',
+                  'clusterName': 'CN Local A',
+                  'regionId': 'cn-local',
+                  'regionName': 'CN Local',
+                  'countryCode': 'CN',
+                  'countryName': 'China',
+                  'cityCode': 'local',
+                  'cityName': 'Local',
+                  'recommendedFanout': 1,
+                  'nodes': [
+                    {
+                      'nodeId': 'relay-cn-local-udp',
+                      'host': '127.0.0.1',
+                      'port': 19000,
+                      'transport': 'udp',
+                      'priority': 10,
+                    },
+                    {
+                      'nodeId': 'relay-cn-local-tcp',
+                      'host': '127.0.0.1',
+                      'port': 19001,
+                      'transport': 'tcp',
+                      'priority': 20,
+                    },
+                  ],
+                },
+              ],
+            },
             'networkMap': {
+              'selfUserId': 'user-1',
+              'selfDeviceId': 'machine-1',
+              'selfNodeId': 'node-1',
               'networkId': 'net-1',
+              'revision': 7,
+              'heartbeatSeconds': 15,
+              'stunServers': [kDevStunServer],
+              'peers': [
+                {
+                  'nodeId': 'node-2',
+                  'deviceId': 'machine-2',
+                  'publicKey': 'node-2-pub',
+                  'status': 'online',
+                  'relayAllowed': true,
+                  'virtualIps': ['100.64.0.11'],
+                  'endpoints': [
+                    {
+                      'type': 'relay',
+                      'address': kDevRelayUdpAddress,
+                      'updatedAt': 1713340200,
+                    },
+                  ],
+                  'allowedRoutes': ['100.64.0.11/32'],
+                },
+              ],
+              'routes': [
+                {
+                  'cidr': '100.64.0.0/24',
+                  'viaNodeId': 'node-1',
+                  'metric': 'local',
+                },
+              ],
+              'relayRegions': [
+                {
+                  'regionId': 'cn-local',
+                  'regionName': 'CN Local',
+                  'countryCode': 'CN',
+                  'countryName': 'China',
+                  'cityCode': 'local',
+                  'cityName': 'Local',
+                  'clusterId': 'cn-local-a',
+                  'clusterName': 'CN Local A',
+                  'endpoints': [
+                    {
+                      'endpointId': 'relay-cn-local-udp',
+                      'transport': 'udp',
+                      'address': kDevRelayUdpAddress,
+                    },
+                  ],
+                },
+              ],
+              'dns': {
+                'servers': ['100.64.0.1'],
+                'searchDomains': ['slan.local'],
+              },
+              'mtu': 1280,
             },
           }));
       } else if (route == 'POST /relay/tickets') {
@@ -267,6 +357,9 @@ void main() {
     expect(device.networkIds, ['net-1']);
     expect(node.capabilities, ['relay']);
     expect(networks.single.cidr, '100.64.0.0/24');
+    expect(networks.single.description, 'primary network');
+    expect(networks.single.defaultSubnetId, 'subnet-1');
+    expect(networks.single.joinKeyConfigured, isTrue);
     expect(devices, hasLength(2));
     expect(devices.last.membershipStatus, 'pending');
     expect(devices.last.networkRole, 'member');
@@ -281,7 +374,7 @@ void main() {
     ]);
   });
 
-  test('HttpAppCoreApi sends network lifecycle bodies for activate/deactivate',
+  test('HttpAppCoreApi sends network lifecycle bodies for join and activation',
       () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);
@@ -304,8 +397,12 @@ void main() {
             'accessToken': 'token-2',
             'expiresIn': 3600,
           }));
-      } else if (route == 'POST /networks/net-1/activate' ||
-          route == 'POST /networks/net-1/deactivate') {
+      } else if (route == 'POST /networks/join-by-owner-email' ||
+          route == 'POST /networks/join-by-key' ||
+          route == 'POST /networks/net-1/activate' ||
+          route == 'POST /networks/net-1/switch' ||
+          route == 'POST /networks/net-1/deactivate' ||
+          route == 'PUT /networks/net-1/attachments/att-1/remark') {
         expect(request.headers.value(HttpHeaders.authorizationHeader),
             'Bearer token-2');
         seenRoutes[route] = json;
@@ -313,14 +410,26 @@ void main() {
           ..statusCode = HttpStatus.ok
           ..headers.contentType = ContentType.json
           ..write(jsonEncode({
-            if (route.endsWith('/activate'))
+            if (route == 'POST /networks/join-by-owner-email')
+              'network': {
+                'networkId': 'net-1',
+                'name': 'home',
+                'defaultSubnetCidr': '100.64.0.0/24',
+              },
+            if (route == 'POST /networks/join-by-owner-email' ||
+                route == 'POST /networks/join-by-key' ||
+                route.endsWith('/activate') ||
+                route.endsWith('/switch'))
               'member': {
                 'memberId': 'member-1',
                 'networkId': 'net-1',
                 'deviceId': 'dev-1',
                 'role': 'member',
               },
-            if (route.endsWith('/activate'))
+            if (route == 'POST /networks/join-by-owner-email' ||
+                route == 'POST /networks/join-by-key' ||
+                route.endsWith('/activate') ||
+                route.endsWith('/switch'))
               'attachment': {
                 'attachmentId': 'att-1',
                 'networkId': 'net-1',
@@ -329,6 +438,15 @@ void main() {
                 'virtualIp': '100.64.0.2',
               },
             if (route.endsWith('/deactivate')) 'status': 'deactivated',
+            if (route.endsWith('/remark')) 'attachmentId': 'att-1',
+            if (route.endsWith('/remark')) 'networkId': 'net-1',
+            if (route.endsWith('/remark')) 'subnetId': 'subnet-1',
+            if (route.endsWith('/remark')) 'deviceId': 'dev-1',
+            if (route.endsWith('/remark')) 'deviceName': 'dev-1',
+            if (route.endsWith('/remark')) 'userId': 'user-1',
+            if (route.endsWith('/remark')) 'userEmail': 'user@example.com',
+            if (route.endsWith('/remark')) 'role': 'member',
+            if (route.endsWith('/remark')) 'remark': json['remark'],
           }));
       } else {
         request.response.statusCode = HttpStatus.notFound;
@@ -342,13 +460,91 @@ void main() {
     );
 
     await api.login(email: 'user@example.com', password: 'password123');
-    await api.activateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    await api.joinNetworkByOwnerEmail(
+      ownerEmail: 'owner@example.com',
+      deviceId: 'dev-1',
+    );
+    await api.joinNetworkByKey(joinKey: 'join-key-1', deviceId: 'dev-1');
+    final remark = await api.updateAttachmentRemark(
+      networkId: 'net-1',
+      attachmentId: 'att-1',
+      remark: 'Thor laptop',
+    );
+    final activated =
+        await api.activateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    final switched =
+        await api.switchNetwork(networkId: 'net-1', deviceId: 'dev-1');
     await api.deactivateNetwork(networkId: 'net-1', deviceId: 'dev-1');
 
+    expect(seenRoutes['POST /networks/join-by-owner-email'], {
+      'ownerEmail': 'owner@example.com',
+      'deviceId': 'dev-1',
+    });
+    expect(seenRoutes['POST /networks/join-by-key'], {
+      'joinKey': 'join-key-1',
+      'deviceId': 'dev-1',
+    });
+    expect(seenRoutes['PUT /networks/net-1/attachments/att-1/remark'], {
+      'remark': 'Thor laptop',
+    });
+    expect(remark.attachmentId, 'att-1');
+    expect(remark.remark, 'Thor laptop');
     expect(seenRoutes['POST /networks/net-1/activate'], {
       'deviceId': 'dev-1',
     });
+    expect(activated.attachmentId, 'att-1');
+    expect(seenRoutes['POST /networks/net-1/switch'], {
+      'deviceId': 'dev-1',
+    });
+    expect(switched.attachmentId, 'att-1');
     expect(seenRoutes['POST /networks/net-1/deactivate'], {
+      'deviceId': 'dev-1',
+    });
+  });
+
+  test('HttpAppCoreApi refreshes session with refresh token body', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+
+    Map<String, dynamic>? seenRefreshBody;
+
+    server.listen((request) async {
+      final body = await utf8.decoder.bind(request).join();
+      final json = body.isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(body) as Map<String, dynamic>;
+      final route = '${request.method} ${request.uri.path}';
+
+      if (route == 'POST /auth/refresh') {
+        seenRefreshBody = json;
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            'userId': 'user-1',
+            'accessToken': 'token-refreshed',
+            'refreshToken': 'refresh-2',
+            'expiresIn': 3600,
+          }));
+      } else {
+        request.response.statusCode = HttpStatus.notFound;
+      }
+
+      await request.response.close();
+    });
+
+    final api = HttpAppCoreApi(
+      baseUrl: 'http://${server.address.host}:${server.port}',
+    );
+
+    final session = await api.refreshSession(
+      refreshToken: 'refresh-1',
+      deviceId: 'dev-1',
+    );
+
+    expect(session.accessToken, 'token-refreshed');
+    expect(seenRefreshBody, {
+      'refreshToken': 'refresh-1',
       'deviceId': 'dev-1',
     });
   });

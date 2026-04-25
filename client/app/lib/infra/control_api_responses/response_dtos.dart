@@ -1,5 +1,21 @@
 import 'json_readers.dart';
 
+class ErrorResponseDto {
+  const ErrorResponseDto({
+    required this.code,
+    required this.message,
+  });
+
+  factory ErrorResponseDto.fromJson(Map<String, dynamic> json) =>
+      ErrorResponseDto(
+        code: readString(json, 'code'),
+        message: readString(json, 'message'),
+      );
+
+  final String code;
+  final String message;
+}
+
 class AuthResponseDto {
   const AuthResponseDto({
     required this.userId,
@@ -78,7 +94,6 @@ class AuthCallbackStatusResponseDto {
   final bool received;
   final int? receivedAt;
   final CompleteAuthCallbackRequestDto? payload;
-
 }
 
 class DeviceResponseDto {
@@ -88,6 +103,7 @@ class DeviceResponseDto {
     required this.platform,
     required this.status,
     this.ownerEmail,
+    this.machineId,
     this.currentVirtualIp,
     this.linkStatus,
     this.connectivityProtocol,
@@ -106,6 +122,7 @@ class DeviceResponseDto {
         platform: readString(json, 'platform'),
         status: readString(json, 'status'),
         ownerEmail: readNullableString(json, 'ownerEmail'),
+        machineId: readNullableString(json, 'machineId'),
         currentVirtualIp: readNullableString(json, 'currentVirtualIp'),
         linkStatus: readNullableString(json, 'linkStatus'),
         connectivityProtocol: readNullableString(json, 'connectivityProtocol'),
@@ -122,6 +139,7 @@ class DeviceResponseDto {
   final String platform;
   final String status;
   final String? ownerEmail;
+  final String? machineId;
   final String? currentVirtualIp;
   final String? linkStatus;
   final String? connectivityProtocol;
@@ -131,7 +149,6 @@ class DeviceResponseDto {
   final int? createdAt;
   final String? publicKey;
   final List<String> networkIds;
-
 }
 
 class NodeResponseDto {
@@ -157,41 +174,53 @@ class NodeResponseDto {
   final String nodePublicKey;
   final List<String> networkIds;
   final List<String> capabilities;
-
 }
 
 class NetworkSummaryResponseDto {
   const NetworkSummaryResponseDto({
     required this.networkId,
     required this.name,
+    this.description,
+    this.defaultSubnetId,
     this.defaultSubnetCidr,
+    this.joinKeyConfigured,
   });
 
   factory NetworkSummaryResponseDto.fromJson(Map<String, dynamic> json) =>
       NetworkSummaryResponseDto(
         networkId: readString(json, 'networkId'),
         name: readString(json, 'name'),
+        description: readNullableString(json, 'description'),
+        defaultSubnetId: readNullableString(json, 'defaultSubnetId'),
         defaultSubnetCidr: readNullableString(json, 'defaultSubnetCidr'),
+        joinKeyConfigured: readNullableBool(json, 'joinKeyConfigured'),
       );
 
   final String networkId;
   final String name;
+  final String? description;
+  final String? defaultSubnetId;
   final String? defaultSubnetCidr;
-
+  final bool? joinKeyConfigured;
 }
 
 class BootstrapResponseDto {
   const BootstrapResponseDto({
+    this.controlSessionId,
+    this.sessionToken,
     required this.device,
     this.networks = const [],
     required this.controlPlane,
     this.stunServers = const [],
     required this.relay,
+    required this.derpMap,
     this.networkMap,
   });
 
   factory BootstrapResponseDto.fromJson(Map<String, dynamic> json) =>
       BootstrapResponseDto(
+        controlSessionId: readNullableString(json, 'controlSessionId'),
+        sessionToken: readNullableString(json, 'sessionToken'),
         device: DeviceBootstrapResponseDto.fromJson(readMap(json, 'device')),
         networks: readMapList(json, 'networks')
             .map(NetworkDetailResponseDto.fromJson)
@@ -200,18 +229,21 @@ class BootstrapResponseDto {
             readMap(json, 'controlPlane')),
         stunServers: readStringList(json, 'stunServers'),
         relay: RelayConfigResponseDto.fromJson(readMap(json, 'relay')),
+        derpMap: DerpMapResponseDto.fromJson(readMap(json, 'derpMap')),
         networkMap: readNullableMap(json, 'networkMap') == null
             ? null
             : NetworkMapResponseDto.fromJson(readMap(json, 'networkMap')),
       );
 
+  final String? controlSessionId;
+  final String? sessionToken;
   final DeviceBootstrapResponseDto device;
   final List<NetworkDetailResponseDto> networks;
   final ControlPlaneConfigResponseDto controlPlane;
   final List<String> stunServers;
   final RelayConfigResponseDto relay;
+  final DerpMapResponseDto derpMap;
   final NetworkMapResponseDto? networkMap;
-
 }
 
 class DeviceBootstrapResponseDto {
@@ -230,33 +262,132 @@ class DeviceBootstrapResponseDto {
 
   final DeviceResponseDto device;
   final List<SubnetAttachmentResponseDto> attachments;
-
 }
 
 class SubnetAttachmentResponseDto {
   const SubnetAttachmentResponseDto({
+    this.attachmentId,
     required this.networkId,
+    this.subnetId,
     required this.deviceId,
     this.virtualIp,
+    this.remark,
+    this.status,
   });
 
   factory SubnetAttachmentResponseDto.fromJson(Map<String, dynamic> json) =>
       SubnetAttachmentResponseDto(
+        attachmentId: readNullableString(json, 'attachmentId'),
         networkId: readString(json, 'networkId'),
+        subnetId: readNullableString(json, 'subnetId'),
         deviceId: readString(json, 'deviceId'),
         virtualIp: readNullableString(json, 'virtualIp'),
+        remark: readNullableString(json, 'remark'),
+        status: readNullableString(json, 'status'),
       );
 
+  final String? attachmentId;
   final String networkId;
+  final String? subnetId;
   final String deviceId;
   final String? virtualIp;
+  final String? remark;
+  final String? status;
+}
+
+class NetworkAssignmentResponseDto {
+  const NetworkAssignmentResponseDto({
+    required this.attachmentId,
+    required this.networkId,
+    required this.subnetId,
+    required this.deviceId,
+    required this.deviceName,
+    required this.userId,
+    required this.userEmail,
+    required this.role,
+    this.remark,
+    this.virtualIp,
+    this.status,
+  });
+
+  factory NetworkAssignmentResponseDto.fromJson(Map<String, dynamic> json) =>
+      NetworkAssignmentResponseDto(
+        attachmentId: readString(json, 'attachmentId'),
+        networkId: readString(json, 'networkId'),
+        subnetId: readString(json, 'subnetId'),
+        deviceId: readString(json, 'deviceId'),
+        deviceName: readString(json, 'deviceName'),
+        userId: readString(json, 'userId'),
+        userEmail: readString(json, 'userEmail'),
+        role: readString(json, 'role'),
+        remark: readNullableString(json, 'remark'),
+        virtualIp: readNullableString(json, 'virtualIp'),
+        status: readNullableString(json, 'status'),
+      );
+
+  final String attachmentId;
+  final String networkId;
+  final String subnetId;
+  final String deviceId;
+  final String deviceName;
+  final String userId;
+  final String userEmail;
+  final String role;
+  final String? remark;
+  final String? virtualIp;
+  final String? status;
+}
+
+class NetworkJoinResultResponseDto {
+  const NetworkJoinResultResponseDto({
+    required this.member,
+    required this.attachment,
+  });
+
+  factory NetworkJoinResultResponseDto.fromJson(Map<String, dynamic> json) =>
+      NetworkJoinResultResponseDto(
+        member: NetworkMemberResponseDto.fromJson(readMap(json, 'member')),
+        attachment:
+            SubnetAttachmentResponseDto.fromJson(readMap(json, 'attachment')),
+      );
+
+  final NetworkMemberResponseDto member;
+  final SubnetAttachmentResponseDto attachment;
+}
+
+class NetworkJoinByOwnerEmailResultResponseDto {
+  const NetworkJoinByOwnerEmailResultResponseDto({
+    required this.network,
+    required this.member,
+    required this.attachment,
+  });
+
+  factory NetworkJoinByOwnerEmailResultResponseDto.fromJson(
+    Map<String, dynamic> json,
+  ) =>
+      NetworkJoinByOwnerEmailResultResponseDto(
+        network: NetworkSummaryResponseDto.fromJson(readMap(json, 'network')),
+        member: NetworkMemberResponseDto.fromJson(readMap(json, 'member')),
+        attachment:
+            SubnetAttachmentResponseDto.fromJson(readMap(json, 'attachment')),
+      );
+
+  final NetworkSummaryResponseDto network;
+  final NetworkMemberResponseDto member;
+  final SubnetAttachmentResponseDto attachment;
 }
 
 class NetworkDetailResponseDto {
   const NetworkDetailResponseDto({
     required this.networkId,
     required this.name,
+    this.description,
+    this.defaultSubnetId,
     this.defaultSubnetCidr,
+    this.joinKeyConfigured,
+    this.ownedByCurrentUser,
+    this.dns,
+    this.joinKey,
     this.subnets = const [],
     this.members = const [],
   });
@@ -265,7 +396,15 @@ class NetworkDetailResponseDto {
       NetworkDetailResponseDto(
         networkId: readString(json, 'networkId'),
         name: readString(json, 'name'),
+        description: readNullableString(json, 'description'),
+        defaultSubnetId: readNullableString(json, 'defaultSubnetId'),
         defaultSubnetCidr: readNullableString(json, 'defaultSubnetCidr'),
+        joinKeyConfigured: readNullableBool(json, 'joinKeyConfigured'),
+        ownedByCurrentUser: readNullableBool(json, 'ownedByCurrentUser'),
+        dns: readNullableMap(json, 'dns') == null
+            ? null
+            : DNSConfigResponseDto.fromJson(readMap(json, 'dns')),
+        joinKey: readNullableString(json, 'joinKey'),
         subnets: readMapList(json, 'subnets')
             .map(SubnetResponseDto.fromJson)
             .toList(growable: false),
@@ -276,58 +415,89 @@ class NetworkDetailResponseDto {
 
   final String networkId;
   final String name;
+  final String? description;
+  final String? defaultSubnetId;
   final String? defaultSubnetCidr;
+  final bool? joinKeyConfigured;
+  final bool? ownedByCurrentUser;
+  final DNSConfigResponseDto? dns;
+  final String? joinKey;
   final List<SubnetResponseDto> subnets;
   final List<NetworkMemberResponseDto> members;
-
 }
 
 class SubnetResponseDto {
   const SubnetResponseDto({
+    this.subnetId,
     required this.networkId,
+    this.name,
     required this.cidr,
+    this.gatewayIp,
+    this.allocationStartIp,
+    this.allocationEndIp,
     required this.isDefault,
+    this.status,
   });
 
   factory SubnetResponseDto.fromJson(Map<String, dynamic> json) =>
       SubnetResponseDto(
+        subnetId: readNullableString(json, 'subnetId'),
         networkId: readString(json, 'networkId'),
+        name: readNullableString(json, 'name'),
         cidr: readString(json, 'cidr'),
+        gatewayIp: readNullableString(json, 'gatewayIp'),
+        allocationStartIp: readNullableString(json, 'allocationStartIp'),
+        allocationEndIp: readNullableString(json, 'allocationEndIp'),
         isDefault: readBool(json, 'isDefault'),
+        status: readNullableString(json, 'status'),
       );
 
+  final String? subnetId;
   final String networkId;
+  final String? name;
   final String cidr;
+  final String? gatewayIp;
+  final String? allocationStartIp;
+  final String? allocationEndIp;
   final bool isDefault;
+  final String? status;
 }
 
 class NetworkMemberResponseDto {
   const NetworkMemberResponseDto({
     this.memberId,
     this.networkId,
+    this.attachmentId,
     required this.deviceId,
     required this.role,
     this.createdAt,
     this.status,
+    this.remark,
+    this.virtualIp,
   });
 
   factory NetworkMemberResponseDto.fromJson(Map<String, dynamic> json) =>
       NetworkMemberResponseDto(
         memberId: readNullableString(json, 'memberId'),
         networkId: readNullableString(json, 'networkId'),
+        attachmentId: readNullableString(json, 'attachmentId'),
         deviceId: readString(json, 'deviceId'),
         role: readString(json, 'role'),
         createdAt: readNullableInt(json, 'createdAt'),
         status: readNullableString(json, 'status'),
+        remark: readNullableString(json, 'remark'),
+        virtualIp: readNullableString(json, 'virtualIp'),
       );
 
   final String? memberId;
   final String? networkId;
+  final String? attachmentId;
   final String deviceId;
   final String role;
   final int? createdAt;
   final String? status;
-
+  final String? remark;
+  final String? virtualIp;
 }
 
 class ControlPlaneConfigResponseDto {
@@ -347,7 +517,6 @@ class ControlPlaneConfigResponseDto {
   final String wsUrl;
   final String? sessionToken;
   final int heartbeatSeconds;
-
 }
 
 class RelayConfigResponseDto {
@@ -366,7 +535,94 @@ class RelayConfigResponseDto {
 
   final String defaultClusterId;
   final List<RelayCountryResponseDto> countries;
+}
 
+class DerpNodeResponseDto {
+  const DerpNodeResponseDto({
+    required this.nodeId,
+    required this.host,
+    required this.port,
+    required this.transport,
+    required this.priority,
+    this.tags = const [],
+  });
+
+  factory DerpNodeResponseDto.fromJson(Map<String, dynamic> json) =>
+      DerpNodeResponseDto(
+        nodeId: readString(json, 'nodeId'),
+        host: readString(json, 'host'),
+        port: readInt(json, 'port'),
+        transport: readString(json, 'transport'),
+        priority: readInt(json, 'priority'),
+        tags: readStringList(json, 'tags'),
+      );
+
+  final String nodeId;
+  final String host;
+  final int port;
+  final String transport;
+  final int priority;
+  final List<String> tags;
+}
+
+class DerpClusterResponseDto {
+  const DerpClusterResponseDto({
+    required this.clusterId,
+    this.clusterName,
+    required this.regionId,
+    required this.regionName,
+    this.countryCode,
+    this.countryName,
+    this.cityCode,
+    this.cityName,
+    required this.recommendedFanout,
+    this.nodes = const [],
+  });
+
+  factory DerpClusterResponseDto.fromJson(Map<String, dynamic> json) =>
+      DerpClusterResponseDto(
+        clusterId: readString(json, 'clusterId'),
+        clusterName: readNullableString(json, 'clusterName'),
+        regionId: readString(json, 'regionId'),
+        regionName: readString(json, 'regionName'),
+        countryCode: readNullableString(json, 'countryCode'),
+        countryName: readNullableString(json, 'countryName'),
+        cityCode: readNullableString(json, 'cityCode'),
+        cityName: readNullableString(json, 'cityName'),
+        recommendedFanout: readInt(json, 'recommendedFanout'),
+        nodes: readMapList(json, 'nodes')
+            .map(DerpNodeResponseDto.fromJson)
+            .toList(growable: false),
+      );
+
+  final String clusterId;
+  final String? clusterName;
+  final String regionId;
+  final String regionName;
+  final String? countryCode;
+  final String? countryName;
+  final String? cityCode;
+  final String? cityName;
+  final int recommendedFanout;
+  final List<DerpNodeResponseDto> nodes;
+}
+
+class DerpMapResponseDto {
+  const DerpMapResponseDto({
+    required this.probeIntervalSeconds,
+    this.clusters = const [],
+  });
+
+  factory DerpMapResponseDto.fromJson(Map<String, dynamic> json) =>
+      DerpMapResponseDto(
+        probeIntervalSeconds: readInt(json, 'probeIntervalSeconds'),
+        clusters: readMapList(json, 'clusters')
+            .map(DerpClusterResponseDto.fromJson)
+            .toList(growable: false),
+      );
+
+  final int probeIntervalSeconds;
+  final List<DerpClusterResponseDto> clusters;
 }
 
 class RelayCountryResponseDto {
@@ -388,7 +644,6 @@ class RelayCountryResponseDto {
   final String countryCode;
   final String countryName;
   final List<RelayCityResponseDto> cities;
-
 }
 
 class RelayCityResponseDto {
@@ -410,7 +665,6 @@ class RelayCityResponseDto {
   final String cityCode;
   final String cityName;
   final List<RelayClusterResponseDto> clusters;
-
 }
 
 class RelayClusterResponseDto {
@@ -432,7 +686,6 @@ class RelayClusterResponseDto {
   final String clusterId;
   final String clusterName;
   final List<RelayNodeResponseDto> nodes;
-
 }
 
 class RelayNodeResponseDto {
@@ -458,16 +711,206 @@ class RelayNodeResponseDto {
   final String address;
   final int priority;
   final List<String> tags;
-
 }
 
 class NetworkMapResponseDto {
-  const NetworkMapResponseDto({required this.networkId});
+  const NetworkMapResponseDto({
+    required this.selfUserId,
+    required this.selfDeviceId,
+    required this.selfNodeId,
+    required this.networkId,
+    required this.revision,
+    required this.heartbeatSeconds,
+    this.stunServers = const [],
+    this.peers = const [],
+    this.routes = const [],
+    this.relayRegions = const [],
+    required this.dns,
+    this.mtu,
+  });
 
   factory NetworkMapResponseDto.fromJson(Map<String, dynamic> json) =>
-      NetworkMapResponseDto(networkId: readString(json, 'networkId'));
+      NetworkMapResponseDto(
+        selfUserId: readString(json, 'selfUserId'),
+        selfDeviceId: readString(json, 'selfDeviceId'),
+        selfNodeId: readString(json, 'selfNodeId'),
+        networkId: readString(json, 'networkId'),
+        revision: readInt(json, 'revision'),
+        heartbeatSeconds: readInt(json, 'heartbeatSeconds'),
+        stunServers: readStringList(json, 'stunServers'),
+        peers: readMapList(json, 'peers')
+            .map(PeerResponseDto.fromJson)
+            .toList(growable: false),
+        routes: readMapList(json, 'routes')
+            .map(RouteResponseDto.fromJson)
+            .toList(growable: false),
+        relayRegions: readMapList(json, 'relayRegions')
+            .map(RelayRegionResponseDto.fromJson)
+            .toList(growable: false),
+        dns: DNSConfigResponseDto.fromJson(readMap(json, 'dns')),
+        mtu: readNullableInt(json, 'mtu'),
+      );
 
+  final String selfUserId;
+  final String selfDeviceId;
+  final String selfNodeId;
   final String networkId;
+  final int revision;
+  final int heartbeatSeconds;
+  final List<String> stunServers;
+  final List<PeerResponseDto> peers;
+  final List<RouteResponseDto> routes;
+  final List<RelayRegionResponseDto> relayRegions;
+  final DNSConfigResponseDto dns;
+  final int? mtu;
+}
+
+class PeerResponseDto {
+  const PeerResponseDto({
+    required this.nodeId,
+    required this.deviceId,
+    required this.publicKey,
+    required this.status,
+    required this.relayAllowed,
+    this.virtualIps = const [],
+    this.endpoints = const [],
+    this.allowedRoutes = const [],
+  });
+
+  factory PeerResponseDto.fromJson(Map<String, dynamic> json) =>
+      PeerResponseDto(
+        nodeId: readString(json, 'nodeId'),
+        deviceId: readString(json, 'deviceId'),
+        publicKey: readString(json, 'publicKey'),
+        status: readString(json, 'status'),
+        relayAllowed: readBool(json, 'relayAllowed'),
+        virtualIps: readStringList(json, 'virtualIps'),
+        endpoints: readMapList(json, 'endpoints')
+            .map(EndpointResponseDto.fromJson)
+            .toList(growable: false),
+        allowedRoutes: readStringList(json, 'allowedRoutes'),
+      );
+
+  final String nodeId;
+  final String deviceId;
+  final String publicKey;
+  final String status;
+  final bool relayAllowed;
+  final List<String> virtualIps;
+  final List<EndpointResponseDto> endpoints;
+  final List<String> allowedRoutes;
+}
+
+class EndpointResponseDto {
+  const EndpointResponseDto({
+    required this.type,
+    required this.address,
+    required this.updatedAt,
+  });
+
+  factory EndpointResponseDto.fromJson(Map<String, dynamic> json) =>
+      EndpointResponseDto(
+        type: readString(json, 'type'),
+        address: readString(json, 'address'),
+        updatedAt: readInt(json, 'updatedAt'),
+      );
+
+  final String type;
+  final String address;
+  final int updatedAt;
+}
+
+class RouteResponseDto {
+  const RouteResponseDto({
+    required this.cidr,
+    required this.viaNodeId,
+    this.metric,
+  });
+
+  factory RouteResponseDto.fromJson(Map<String, dynamic> json) =>
+      RouteResponseDto(
+        cidr: readString(json, 'cidr'),
+        viaNodeId: readString(json, 'viaNodeId'),
+        metric: readNullableString(json, 'metric'),
+      );
+
+  final String cidr;
+  final String viaNodeId;
+  final String? metric;
+}
+
+class DNSConfigResponseDto {
+  const DNSConfigResponseDto({
+    this.servers = const [],
+    this.searchDomains = const [],
+  });
+
+  factory DNSConfigResponseDto.fromJson(Map<String, dynamic> json) =>
+      DNSConfigResponseDto(
+        servers: readStringList(json, 'servers'),
+        searchDomains: readStringList(json, 'searchDomains'),
+      );
+
+  final List<String> servers;
+  final List<String> searchDomains;
+}
+
+class RelayRegionResponseDto {
+  const RelayRegionResponseDto({
+    required this.regionId,
+    required this.regionName,
+    this.countryCode,
+    this.countryName,
+    this.cityCode,
+    this.cityName,
+    this.clusterId,
+    this.clusterName,
+    this.endpoints = const [],
+  });
+
+  factory RelayRegionResponseDto.fromJson(Map<String, dynamic> json) =>
+      RelayRegionResponseDto(
+        regionId: readString(json, 'regionId'),
+        regionName: readString(json, 'regionName'),
+        countryCode: readNullableString(json, 'countryCode'),
+        countryName: readNullableString(json, 'countryName'),
+        cityCode: readNullableString(json, 'cityCode'),
+        cityName: readNullableString(json, 'cityName'),
+        clusterId: readNullableString(json, 'clusterId'),
+        clusterName: readNullableString(json, 'clusterName'),
+        endpoints: readMapList(json, 'endpoints')
+            .map(RelayEndpointResponseDto.fromJson)
+            .toList(growable: false),
+      );
+
+  final String regionId;
+  final String regionName;
+  final String? countryCode;
+  final String? countryName;
+  final String? cityCode;
+  final String? cityName;
+  final String? clusterId;
+  final String? clusterName;
+  final List<RelayEndpointResponseDto> endpoints;
+}
+
+class RelayEndpointResponseDto {
+  const RelayEndpointResponseDto({
+    required this.endpointId,
+    required this.transport,
+    required this.address,
+  });
+
+  factory RelayEndpointResponseDto.fromJson(Map<String, dynamic> json) =>
+      RelayEndpointResponseDto(
+        endpointId: readString(json, 'endpointId'),
+        transport: readString(json, 'transport'),
+        address: readString(json, 'address'),
+      );
+
+  final String endpointId;
+  final String transport;
+  final String address;
 }
 
 class RelayTicketResponseDto {
@@ -517,5 +960,4 @@ class RelayTicketResponseDto {
   final String expiresAt;
   final String? sessionKey;
   final String signature;
-
 }

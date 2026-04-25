@@ -14,7 +14,7 @@ use ffi_bridge::{
 use p2p::SocketP2PConnector;
 use relay_client::{InMemoryDerpPool, InMemoryPathManager, SocketRelayClient};
 use serde_json::{json, Value};
-use slan_app_core::{ConnectionPath, ConnectionState};
+use slan_app_core::{ConnectionPath, ConnectionState, NetworkJoinResult};
 use tunnel::{
     build_platform_tunnel_manager, detect_platform_tunnel_driver, TunnelDriverKind,
     TunnelDriverSelection, TunnelManager,
@@ -351,6 +351,84 @@ fn execute_command(
                 ),
             ))
         }
+        Command::Network {
+            command: NetworkCommand::Join(args),
+        } => {
+            let device_id = resolve_device_id(args.device_id.clone(), snapshot)?;
+            let joined = facade.join_network(args.network_id.clone(), device_id)?;
+            Ok((
+                serde_json::to_value(&joined).map_err(|err| err.to_string())?,
+                format_network_join("joined network", &joined),
+            ))
+        }
+        Command::Network {
+            command: NetworkCommand::JoinByOwnerEmail(args),
+        } => {
+            let device_id = resolve_device_id(args.device_id.clone(), snapshot)?;
+            let joined = facade.join_network_by_owner_email(args.owner_email.clone(), device_id)?;
+            maybe_update_join_alias(facade, &joined, args.alias.as_deref())?;
+            Ok((
+                serde_json::to_value(&joined).map_err(|err| err.to_string())?,
+                format_network_join("joined network by owner email", &joined),
+            ))
+        }
+        Command::Network {
+            command: NetworkCommand::JoinByKey(args),
+        } => {
+            let device_id = resolve_device_id(args.device_id.clone(), snapshot)?;
+            let joined = facade.join_network_by_key(args.join_key.clone(), device_id)?;
+            maybe_update_join_alias(facade, &joined, args.alias.as_deref())?;
+            Ok((
+                serde_json::to_value(&joined).map_err(|err| err.to_string())?,
+                format_network_join("joined network by key", &joined),
+            ))
+        }
+        Command::Network {
+            command: NetworkCommand::Remark(args),
+        } => {
+            let assignment = facade.update_attachment_remark(
+                args.network_id.clone(),
+                args.attachment_id.clone(),
+                args.remark.clone(),
+            )?;
+            Ok((
+                serde_json::to_value(&assignment).map_err(|err| err.to_string())?,
+                "updated attachment remark".to_string(),
+            ))
+        }
+        Command::Network {
+            command: NetworkCommand::Activate(args),
+        } => {
+            let device_id = resolve_device_id(args.device_id.clone(), snapshot)?;
+            let joined = facade.activate_network(args.network_id.clone(), device_id)?;
+            Ok((
+                serde_json::to_value(&joined).map_err(|err| err.to_string())?,
+                format_network_join("activated network", &joined),
+            ))
+        }
+        Command::Network {
+            command: NetworkCommand::Switch(args),
+        } => {
+            let device_id = resolve_device_id(args.device_id.clone(), snapshot)?;
+            let joined = facade.switch_network(args.network_id.clone(), device_id)?;
+            Ok((
+                serde_json::to_value(&joined).map_err(|err| err.to_string())?,
+                format_network_join("switched network", &joined),
+            ))
+        }
+        Command::Network {
+            command: NetworkCommand::Deactivate(args),
+        } => {
+            let device_id = resolve_device_id(args.device_id.clone(), snapshot)?;
+            facade.deactivate_network(args.network_id.clone(), device_id)?;
+            Ok((
+                json!({
+                    "status": "deactivated",
+                    "networkId": args.network_id,
+                }),
+                "deactivated network".to_string(),
+            ))
+        }
         Command::Bootstrap(args) => {
             let node_id = resolve_node_id(args.node_id.clone(), snapshot)?;
             let bootstrap = facade.bootstrap(node_id.clone(), args.network_id.clone())?;
@@ -368,7 +446,10 @@ fn execute_command(
                 args.network_id.clone(),
                 src_node_id.clone(),
                 args.dst_node_id.clone(),
+                args.derp_cluster_id.clone(),
+                args.preferred_derp_node_ids.clone(),
                 args.reason.clone(),
+                args.relay_region_id.clone(),
             )?;
             Ok((
                 serde_json::to_value(&ticket).map_err(|err| err.to_string())?,
@@ -533,6 +614,36 @@ fn format_network_list(networks: &[slan_app_core::Network]) -> String {
         .map(|network| format!("{} {} {}", network.network_id, network.name, network.cidr))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn format_network_join(action: &str, joined: &NetworkJoinResult) -> String {
+    format!(
+        "{} {} for device {} attachment {} ip {}",
+        action,
+        joined.network_id,
+        joined.device_id,
+        joined.attachment_id.as_deref().unwrap_or("none"),
+        joined.virtual_ip.as_deref().unwrap_or("none")
+    )
+}
+
+fn maybe_update_join_alias(
+    facade: &CliFacade,
+    joined: &NetworkJoinResult,
+    alias: Option<&str>,
+) -> Result<(), String> {
+    let Some(alias) = alias.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let Some(attachment_id) = joined.attachment_id.as_ref() else {
+        return Ok(());
+    };
+    let _ = facade.update_attachment_remark(
+        joined.network_id.clone(),
+        attachment_id.clone(),
+        Some(alias.to_string()),
+    )?;
+    Ok(())
 }
 
 fn format_state(snapshot: &AppCoreSnapshot) -> String {
@@ -1429,6 +1540,20 @@ fn resolve_node_id(explicit: Option<String>, snapshot: &AppCoreSnapshot) -> Resu
         .ok_or_else(|| "missing node id; pass --node-id or register a node first".to_string())
 }
 
+fn resolve_device_id(
+    explicit: Option<String>,
+    snapshot: &AppCoreSnapshot,
+) -> Result<String, String> {
+    explicit
+        .or_else(|| {
+            snapshot
+                .current_device
+                .as_ref()
+                .map(|device| device.device_id.clone())
+        })
+        .ok_or_else(|| "missing device id; pass --device-id or register a device first".to_string())
+}
+
 fn resolve_network_id(
     explicit: Option<String>,
     snapshot: &AppCoreSnapshot,
@@ -1602,6 +1727,13 @@ enum NodeCommand {
 enum NetworkCommand {
     List,
     Create(CreateNetworkArgs),
+    Join(JoinNetworkArgs),
+    JoinByOwnerEmail(JoinNetworkByOwnerEmailArgs),
+    JoinByKey(JoinNetworkByKeyArgs),
+    Remark(UpdateAttachmentRemarkArgs),
+    Activate(NetworkDeviceArgs),
+    Switch(NetworkDeviceArgs),
+    Deactivate(NetworkDeviceArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -1677,6 +1809,52 @@ struct CreateNetworkArgs {
 }
 
 #[derive(Args, Debug)]
+struct JoinNetworkArgs {
+    #[arg(long)]
+    network_id: String,
+    #[arg(long)]
+    device_id: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct JoinNetworkByOwnerEmailArgs {
+    #[arg(long)]
+    owner_email: String,
+    #[arg(long)]
+    device_id: Option<String>,
+    #[arg(long)]
+    alias: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct JoinNetworkByKeyArgs {
+    #[arg(long)]
+    join_key: String,
+    #[arg(long)]
+    device_id: Option<String>,
+    #[arg(long)]
+    alias: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct UpdateAttachmentRemarkArgs {
+    #[arg(long)]
+    network_id: String,
+    #[arg(long)]
+    attachment_id: String,
+    #[arg(long)]
+    remark: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct NetworkDeviceArgs {
+    #[arg(long)]
+    network_id: String,
+    #[arg(long)]
+    device_id: Option<String>,
+}
+
+#[derive(Args, Debug)]
 struct BootstrapArgs {
     #[arg(long)]
     node_id: Option<String>,
@@ -1693,7 +1871,13 @@ struct RelayTicketArgs {
     #[arg(long)]
     dst_node_id: String,
     #[arg(long)]
+    derp_cluster_id: Option<String>,
+    #[arg(long = "preferred-derp-node-id")]
+    preferred_derp_node_ids: Vec<String>,
+    #[arg(long)]
     reason: String,
+    #[arg(long)]
+    relay_region_id: Option<String>,
 }
 
 #[derive(Args, Debug)]

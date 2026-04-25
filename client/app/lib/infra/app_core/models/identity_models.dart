@@ -71,6 +71,7 @@ class DeviceModel {
     this.virtualIp,
     this.publicKey,
     this.ownerEmail,
+    this.machineId,
     this.linkStatus,
     this.connectivityProtocol,
     this.joinedAt,
@@ -87,6 +88,7 @@ class DeviceModel {
   final String? virtualIp;
   final String? publicKey;
   final String? ownerEmail;
+  final String? machineId;
   final String? linkStatus;
   final String? connectivityProtocol;
   final int? joinedAt;

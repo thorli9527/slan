@@ -260,7 +260,62 @@ class FakeHost {
             ],
           },
           'networkMap': {
+            'selfUserId': 'user-1',
+            'selfDeviceId': 'dev-1',
+            'selfNodeId': 'node-1',
             'networkId': 'net-1',
+            'revision': 7,
+            'heartbeatSeconds': 15,
+            'stunServers': [kDevStunServer],
+            'peers': [
+              {
+                'nodeId': 'fail-peer-node-1',
+                'deviceId': 'peer-device-1',
+                'publicKey': 'peer-node-pub',
+                'status': 'online',
+                'relayAllowed': true,
+                'virtualIps': ['100.64.0.2'],
+                'endpoints': [
+                  {
+                    'type': 'relay',
+                    'address': kDevRelayUdpAddress,
+                    'updatedAt': 1713340200,
+                  },
+                ],
+                'allowedRoutes': ['100.64.0.2/32'],
+              },
+            ],
+            'routes': [
+              {
+                'cidr': '100.64.0.0/24',
+                'viaNodeId': 'node-1',
+                'metric': 'local',
+              },
+            ],
+            'relayRegions': [
+              {
+                'regionId': 'cn-local',
+                'regionName': 'CN Local',
+                'countryCode': 'CN',
+                'countryName': 'China',
+                'cityCode': 'local',
+                'cityName': 'Local',
+                'clusterId': 'cn-local-a',
+                'clusterName': 'CN Local A',
+                'endpoints': [
+                  {
+                    'endpointId': 'relay-cn-local-udp',
+                    'transport': 'udp',
+                    'address': kDevRelayUdpAddress,
+                  },
+                ],
+              },
+            ],
+            'dns': {
+              'servers': ['100.64.0.1'],
+              'searchDomains': ['slan.local'],
+            },
+            'mtu': 1280,
           },
         };
       case 'controlStatus':

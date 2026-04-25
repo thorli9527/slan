@@ -108,7 +108,7 @@ server-relay / derp cluster
 
 ## 4.1 Bootstrap 新增 DERP 视图
 
-当前 `bootstrap` 只返回单个 relay 配置，建议扩展为 DERP 集群视图。
+当前 `bootstrap` 已包含 relay / DERP 集群视图；本节保留字段结构说明，后续重点是生产环境配置、探测和多节点运行时验证。
 
 建议新增结构：
 
@@ -542,12 +542,11 @@ pub enum DerpPoolEvent {
 
 ## 13. 推荐落地顺序
 
-1. 先在 `bootstrap` 中引入 `derp map`
-2. 再定义 `DerpTicket` 的集群授权语义
-3. 客户端新增 `derp-client` 和 `derp-pool`
-4. 实现多连接、单路径发送
-5. 实现每 5 秒 probe 与评分
-6. 最后再实现动态切换与状态上报
+1. 固化 `bootstrap.derp_map` 与 cluster-aware relay ticket 的协议回归。
+2. 扩展客户端 `derp-client` / `derp-pool` 的真实网络和故障注入测试。
+3. 完善多连接、单路径发送、probe 评分和切换的诊断输出。
+4. 补齐 server-relay 多节点部署、attach、转发和指标。
+5. 最后把动态切换与状态上报纳入常规 smoke。
 
 ## 14. 与当前代码结构的对应关系
 
@@ -556,11 +555,11 @@ pub enum DerpPoolEvent {
 ```text
 client/app_core/crates/
 ├── controller-client/
-│   └── 新增 derp map / derp ticket 获取
+│   └── 消费 derp map / cluster-aware relay ticket
 ├── relay-client/
-│   └── 拆为 derp-client + derp-pool
-├── core/
-│   └── 新增 DerpNodeMeta / DerpHealth / ActivePath
+│   └── derp-client / derp-pool / path-manager
+├── app-core/
+│   └── DerpNodeMeta / DerpHealth / ActivePath
 └── tunnel/
     └── send path 改为通过 path-manager 分发
 

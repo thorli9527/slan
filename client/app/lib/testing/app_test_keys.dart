@@ -39,6 +39,13 @@ abstract final class AppTestKeys {
       ValueKey<String>('networks.create_button');
   static const networksRefreshButton =
       ValueKey<String>('networks.refresh_button');
+  static const networksOwnerEmailField =
+      ValueKey<String>('networks.owner_email');
+  static const networksJoinKeyField = ValueKey<String>('networks.join_key');
+  static const networksAliasField = ValueKey<String>('networks.alias');
+  static const networksJoinButton = ValueKey<String>('networks.join_button');
+  static ValueKey<String> networksSwitchButton(String networkId) =>
+      ValueKey<String>('networks.switch_button.$networkId');
 
   static const devicesNameField = ValueKey<String>('devices.name');
   static const devicesScrollView = ValueKey<String>('devices.scroll_view');

@@ -144,26 +144,114 @@ class AppCoreNetworkPayload {
   const AppCoreNetworkPayload({
     required this.networkId,
     required this.name,
+    this.cidr,
     this.defaultSubnetCidr,
+    this.members = const [],
   });
 
   factory AppCoreNetworkPayload.fromJson(Map<String, dynamic> json) {
     return AppCoreNetworkPayload(
       networkId: json['networkId'] as String? ?? '',
       name: json['name'] as String? ?? '',
+      cidr: json['cidr'] as String?,
       defaultSubnetCidr: json['defaultSubnetCidr'] as String?,
+      members: _readMapList(json['members'])
+          .map(AppCoreNetworkMemberPayload.fromJson)
+          .toList(growable: false),
     );
   }
 
   final String networkId;
   final String name;
+  final String? cidr;
   final String? defaultSubnetCidr;
+  final List<AppCoreNetworkMemberPayload> members;
 
   Map<String, dynamic> toJson() => {
         'networkId': networkId,
         'name': name,
+        'cidr': cidr,
         'defaultSubnetCidr': defaultSubnetCidr,
+        'members': members.map((item) => item.toJson()).toList(),
       };
+}
+
+class AppCoreNetworkJoinPayload {
+  const AppCoreNetworkJoinPayload({
+    required this.networkId,
+    required this.deviceId,
+    this.memberId,
+    this.attachmentId,
+    this.virtualIp,
+  });
+
+  factory AppCoreNetworkJoinPayload.fromJson(Map<String, dynamic> json) {
+    return AppCoreNetworkJoinPayload(
+      networkId: json['networkId'] as String? ?? '',
+      deviceId: json['deviceId'] as String? ?? '',
+      memberId: json['memberId'] as String?,
+      attachmentId: json['attachmentId'] as String?,
+      virtualIp: json['virtualIp'] as String?,
+    );
+  }
+
+  final String networkId;
+  final String deviceId;
+  final String? memberId;
+  final String? attachmentId;
+  final String? virtualIp;
+
+  Map<String, dynamic> toJson() => {
+        'networkId': networkId,
+        'deviceId': deviceId,
+        'memberId': memberId,
+        'attachmentId': attachmentId,
+        'virtualIp': virtualIp,
+      };
+}
+
+class AppCoreNetworkAssignmentPayload {
+  const AppCoreNetworkAssignmentPayload({
+    required this.attachmentId,
+    required this.networkId,
+    required this.subnetId,
+    required this.deviceId,
+    required this.deviceName,
+    required this.userId,
+    required this.userEmail,
+    required this.role,
+    this.remark,
+    this.virtualIp,
+    this.status,
+  });
+
+  factory AppCoreNetworkAssignmentPayload.fromJson(Map<String, dynamic> json) {
+    return AppCoreNetworkAssignmentPayload(
+      attachmentId: json['attachmentId'] as String? ?? '',
+      networkId: json['networkId'] as String? ?? '',
+      subnetId: json['subnetId'] as String? ?? '',
+      deviceId: json['deviceId'] as String? ?? '',
+      deviceName: json['deviceName'] as String? ?? '',
+      userId: json['userId'] as String? ?? '',
+      userEmail: json['userEmail'] as String? ?? '',
+      role: json['role'] as String? ?? '',
+      remark: json['remark'] as String?,
+      virtualIp: json['virtualIp'] as String?,
+      status: json['status'] as String?,
+    );
+  }
+
+  final String attachmentId;
+  final String networkId;
+  final String subnetId;
+  final String deviceId;
+  final String deviceName;
+  final String userId;
+  final String userEmail;
+  final String role;
+  final String? remark;
+  final String? virtualIp;
+  final String? status;
 }
 
 class AppCoreRelayTicketPayload {
@@ -330,27 +418,35 @@ class AppCoreBootstrapDevicePayload {
 
 class AppCoreSubnetAttachmentPayload {
   const AppCoreSubnetAttachmentPayload({
+    this.attachmentId,
     required this.networkId,
     required this.deviceId,
     this.virtualIp,
+    this.remark,
   });
 
   factory AppCoreSubnetAttachmentPayload.fromJson(Map<String, dynamic> json) {
     return AppCoreSubnetAttachmentPayload(
+      attachmentId: json['attachmentId'] as String?,
       networkId: json['networkId'] as String? ?? '',
       deviceId: json['deviceId'] as String? ?? '',
       virtualIp: json['virtualIp'] as String?,
+      remark: json['remark'] as String?,
     );
   }
 
+  final String? attachmentId;
   final String networkId;
   final String deviceId;
   final String? virtualIp;
+  final String? remark;
 
   Map<String, dynamic> toJson() => {
+        'attachmentId': attachmentId,
         'networkId': networkId,
         'deviceId': deviceId,
         'virtualIp': virtualIp,
+        'remark': remark,
       };
 }
 
@@ -422,37 +518,49 @@ class AppCoreNetworkMemberPayload {
   const AppCoreNetworkMemberPayload({
     this.memberId,
     this.networkId,
+    this.attachmentId,
     required this.deviceId,
     required this.role,
     this.createdAt,
     this.status,
+    this.virtualIp,
+    this.remark,
   });
 
   factory AppCoreNetworkMemberPayload.fromJson(Map<String, dynamic> json) {
     return AppCoreNetworkMemberPayload(
       memberId: json['memberId'] as String?,
       networkId: json['networkId'] as String?,
+      attachmentId: json['attachmentId'] as String?,
       deviceId: json['deviceId'] as String? ?? '',
       role: json['role'] as String? ?? '',
       createdAt: (json['createdAt'] as num?)?.toInt(),
       status: json['status'] as String?,
+      virtualIp: json['virtualIp'] as String?,
+      remark: json['remark'] as String?,
     );
   }
 
   final String? memberId;
   final String? networkId;
+  final String? attachmentId;
   final String deviceId;
   final String role;
   final int? createdAt;
   final String? status;
+  final String? virtualIp;
+  final String? remark;
 
   Map<String, dynamic> toJson() => {
         'memberId': memberId,
         'networkId': networkId,
+        'attachmentId': attachmentId,
         'deviceId': deviceId,
         'role': role,
         'createdAt': createdAt,
         'status': status,
+        'virtualIp': virtualIp,
+        'remark': remark,
       };
 }
 

@@ -325,6 +325,142 @@ fn cli_rejects_network_create_without_session() {
 }
 
 #[test]
+fn cli_runs_network_join_alias_switch_and_deactivate_flow() {
+    let recorded_requests = Arc::new(Mutex::new(Vec::<RecordedRequest>::new()));
+    let server = FakeControlServer::start(
+        recorded_requests.clone(),
+        vec![
+            response(200, login_response()),
+            response(200, device_response()),
+            response(
+                200,
+                network_join_response("net-owner", "att-owner", "100.64.0.10"),
+            ),
+            response(
+                200,
+                network_assignment_response("net-owner", "att-owner", "desk"),
+            ),
+            response(
+                200,
+                network_join_response("net-key", "att-key", "100.64.0.11"),
+            ),
+            response(
+                200,
+                network_assignment_response("net-key", "att-key", "laptop"),
+            ),
+            response(
+                200,
+                network_join_response("net-key", "att-key", "100.64.0.11"),
+            ),
+            response(
+                200,
+                network_join_response("net-owner", "att-owner", "100.64.0.10"),
+            ),
+            response(200, "{}".to_string()),
+        ],
+    );
+    let state_file = unique_temp_path("app-core-cli-network-lifecycle.json");
+
+    prepare_registered_device(&server.base_url, &state_file);
+
+    let owner_join = run_cli(
+        &server.base_url,
+        &state_file,
+        &[
+            "--json",
+            "network",
+            "join-by-owner-email",
+            "--owner-email",
+            "owner@example.com",
+            "--alias",
+            "desk",
+        ],
+    );
+    assert_eq!(owner_join["networkId"], "net-owner");
+    assert_eq!(owner_join["attachmentId"], "att-owner");
+
+    let key_join = run_cli(
+        &server.base_url,
+        &state_file,
+        &[
+            "--json",
+            "network",
+            "join-by-key",
+            "--join-key",
+            "join-key-1",
+            "--alias",
+            "laptop",
+        ],
+    );
+    assert_eq!(key_join["networkId"], "net-key");
+    assert_eq!(key_join["virtualIp"], "100.64.0.11");
+
+    let activated = run_cli(
+        &server.base_url,
+        &state_file,
+        &["--json", "network", "activate", "--network-id", "net-key"],
+    );
+    assert_eq!(activated["networkId"], "net-key");
+
+    let status_after_activate = run_cli(&server.base_url, &state_file, &["--json", "status"]);
+    assert_eq!(status_after_activate["current_network_id"], "net-key");
+
+    let switched = run_cli(
+        &server.base_url,
+        &state_file,
+        &["--json", "network", "switch", "--network-id", "net-owner"],
+    );
+    assert_eq!(switched["networkId"], "net-owner");
+
+    let status_after_switch = run_cli(&server.base_url, &state_file, &["--json", "status"]);
+    assert_eq!(status_after_switch["current_network_id"], "net-owner");
+
+    let deactivated = run_cli(
+        &server.base_url,
+        &state_file,
+        &[
+            "--json",
+            "network",
+            "deactivate",
+            "--network-id",
+            "net-owner",
+        ],
+    );
+    assert_eq!(deactivated["status"], "deactivated");
+
+    let status_after_deactivate = run_cli(&server.base_url, &state_file, &["--json", "status"]);
+    assert_eq!(status_after_deactivate["current_network_id"], Value::Null);
+
+    server.join();
+    let requests = recorded_requests.lock().unwrap();
+    assert_eq!(requests.len(), 9);
+    assert_request(&requests[0], "POST", "/auth/login");
+    assert_request(&requests[1], "POST", "/devices/register");
+    assert_request(&requests[2], "POST", "/networks/join-by-owner-email");
+    assert_eq!(requests[2].json_body["ownerEmail"], "owner@example.com");
+    assert_eq!(requests[2].json_body["deviceId"], "dev-1");
+    assert_request(
+        &requests[3],
+        "PUT",
+        "/networks/net-owner/attachments/att-owner/remark",
+    );
+    assert_eq!(requests[3].json_body["remark"], "desk");
+    assert_request(&requests[4], "POST", "/networks/join-by-key");
+    assert_eq!(requests[4].json_body["joinKey"], "join-key-1");
+    assert_request(
+        &requests[5],
+        "PUT",
+        "/networks/net-key/attachments/att-key/remark",
+    );
+    assert_eq!(requests[5].json_body["remark"], "laptop");
+    assert_request(&requests[6], "POST", "/networks/net-key/activate");
+    assert_request(&requests[7], "POST", "/networks/net-owner/switch");
+    assert_request(&requests[8], "POST", "/networks/net-owner/deactivate");
+
+    let _ = fs::remove_file(&state_file);
+}
+
+#[test]
 fn cli_surfaces_control_plane_non_2xx_errors_for_network_create() {
     let recorded_requests = Arc::new(Mutex::new(Vec::<RecordedRequest>::new()));
     let server = FakeControlServer::start(
@@ -545,9 +681,13 @@ fn bootstrap_cli(base_url: &str, state_file: &Path) -> Value {
 }
 
 fn prepare_registered_node(base_url: &str, state_file: &Path) {
+    prepare_registered_device(base_url, state_file);
+    register_node_cli(base_url, state_file);
+}
+
+fn prepare_registered_device(base_url: &str, state_file: &Path) {
     login_cli(base_url, state_file);
     register_device_cli(base_url, state_file);
-    register_node_cli(base_url, state_file);
 }
 
 fn prepare_bootstrapped_node(base_url: &str, state_file: &Path) {
@@ -772,11 +912,58 @@ fn node_response() -> String {
     .to_string()
 }
 
+fn network_join_response(network_id: &str, attachment_id: &str, virtual_ip: &str) -> String {
+    format!(
+        r#"{{
+            "member":{{
+                "memberId":"member-1",
+                "networkId":"{network_id}",
+                "deviceId":"dev-1",
+                "role":"member",
+                "status":"active"
+            }},
+            "attachment":{{
+                "attachmentId":"{attachment_id}",
+                "networkId":"{network_id}",
+                "subnetId":"subnet-1",
+                "deviceId":"dev-1",
+                "virtualIp":"{virtual_ip}",
+                "status":"active"
+            }}
+        }}"#
+    )
+}
+
+fn network_assignment_response(network_id: &str, attachment_id: &str, remark: &str) -> String {
+    format!(
+        r#"{{
+            "attachmentId":"{attachment_id}",
+            "networkId":"{network_id}",
+            "subnetId":"subnet-1",
+            "deviceId":"dev-1",
+            "deviceName":"device-1",
+            "userId":"user-1",
+            "userEmail":"user@example.com",
+            "role":"member",
+            "remark":"{remark}",
+            "virtualIp":"100.64.0.10",
+            "status":"active"
+        }}"#
+    )
+}
+
 fn bootstrap_response(relay_url: &str) -> String {
     r#"{
             "device":{
                 "device":{"deviceId":"dev-1","name":"thor-mac","platform":"macos","status":"online","publicKey":"pubkey-1"},
-                "attachments":[{"networkId":"net-1","deviceId":"dev-1","virtualIp":"100.64.0.10"}]
+                "attachments":[{
+                    "attachmentId":"attach-1",
+                    "networkId":"net-1",
+                    "subnetId":"subnet-1",
+                    "deviceId":"dev-1",
+                    "virtualIp":"100.64.0.10",
+                    "status":"active"
+                }]
             },
             "networks":[{
                 "networkId":"net-1",
@@ -818,7 +1005,7 @@ fn bootstrap_response(relay_url: &str) -> String {
                     "status":"online",
                     "relayAllowed":true,
                     "virtualIps":["100.64.0.2"],
-                    "endpoints":[{"endpointType":"udp","address":"198.51.100.10:41641","updatedAt":1}],
+                    "endpoints":[{"type":"udp","address":"198.51.100.10:41641","updatedAt":1}],
                     "allowedRoutes":[]
                 }],
                 "routes":[],

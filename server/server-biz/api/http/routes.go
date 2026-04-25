@@ -65,6 +65,7 @@ func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	}
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery(), allowCORS())
+	installPublicErrorHandlers(router)
 	router.Use(limitRequestBody(maxHTTPJSONBodyBytes))
 	registerControlWS(router, cfg.WS.Path, deps)
 	registerAuthCallbackWS(router, deps)

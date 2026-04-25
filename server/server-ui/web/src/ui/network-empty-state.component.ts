@@ -42,6 +42,10 @@ import { FormsModule } from '@angular/forms';
             <span>宿主邮箱</span>
             <input [ngModel]="joinOwnerEmail" (ngModelChange)="joinOwnerEmailChange.emit($event)" placeholder="owner@company.com" />
           </label>
+          <label>
+            <span>设备别名</span>
+            <input [ngModel]="joinAlias" (ngModelChange)="joinAliasChange.emit($event)" placeholder="Thor laptop" />
+          </label>
           <p class="hint">加入成功后，当前活动网络会切换到目标宿主网络，当前设备会自动绑定到该网络默认子网。</p>
           <button class="ghost" (click)="joinNetwork.emit()">加入网络</button>
         </div>
@@ -54,11 +58,13 @@ export class NetworkEmptyStateComponent {
   @Input({ required: true }) createDescription!: string;
   @Input({ required: true }) createCidr!: string;
   @Input({ required: true }) joinOwnerEmail!: string;
+  @Input({ required: true }) joinAlias!: string;
 
   @Output() readonly createNameChange = new EventEmitter<string>();
   @Output() readonly createDescriptionChange = new EventEmitter<string>();
   @Output() readonly createCidrChange = new EventEmitter<string>();
   @Output() readonly joinOwnerEmailChange = new EventEmitter<string>();
+  @Output() readonly joinAliasChange = new EventEmitter<string>();
   @Output() readonly createNetwork = new EventEmitter<void>();
   @Output() readonly joinNetwork = new EventEmitter<void>();
 }

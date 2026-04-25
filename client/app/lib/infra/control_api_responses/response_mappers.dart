@@ -22,6 +22,7 @@ extension DeviceResponseDtoMapper on DeviceResponseDto {
         virtualIp: virtualIp ?? currentVirtualIp,
         publicKey: publicKey,
         ownerEmail: ownerEmail,
+        machineId: machineId,
         linkStatus: linkStatus,
         connectivityProtocol: connectivityProtocol,
         joinedAt: joinedAt,
@@ -47,6 +48,9 @@ extension NetworkSummaryResponseDtoMapper on NetworkSummaryResponseDto {
         networkId: networkId,
         name: name,
         cidr: defaultSubnetCidr ?? '',
+        description: description,
+        defaultSubnetId: defaultSubnetId,
+        joinKeyConfigured: joinKeyConfigured,
       );
 }
 
@@ -63,7 +67,7 @@ extension BootstrapResponseDtoMapper on BootstrapResponseDto {
             ),
           )
           .toList(growable: false),
-      controlPlane: controlPlane.toModel(),
+      controlPlane: controlPlane.toModel(sessionToken: sessionToken),
       stunServers: stunServers,
       relay: relay.toModel(),
     );
@@ -115,6 +119,9 @@ extension NetworkDetailResponseDtoMapper on NetworkDetailResponseDto {
       networkId: networkId,
       name: name,
       cidr: cidr,
+      description: description,
+      defaultSubnetId: defaultSubnetId,
+      joinKeyConfigured: joinKeyConfigured,
       members: members
           .map(
             (member) => member.toModel(
@@ -134,13 +141,18 @@ extension NetworkMemberResponseDtoMapper on NetworkMemberResponseDto {
     required String selfDeviceId,
     required List<SubnetAttachmentResponseDto> selfAttachments,
   }) {
-    String? virtualIp;
+    String? attachmentId;
+    String? remark = this.remark;
+    String? virtualIp = this.virtualIp;
     if (deviceId == selfDeviceId) {
       for (final attachment in selfAttachments) {
-        if (attachment.networkId == networkId &&
-            attachment.virtualIp != null &&
-            attachment.virtualIp!.isNotEmpty) {
-          virtualIp = attachment.virtualIp;
+        if (attachment.networkId == networkId) {
+          attachmentId = attachment.attachmentId;
+          remark ??= attachment.remark;
+          if (attachment.virtualIp != null &&
+              attachment.virtualIp!.isNotEmpty) {
+            virtualIp = attachment.virtualIp;
+          }
           break;
         }
       }
@@ -148,19 +160,59 @@ extension NetworkMemberResponseDtoMapper on NetworkMemberResponseDto {
     return NetworkMemberModel(
       memberId: memberId,
       networkId: this.networkId ?? networkId,
+      attachmentId: attachmentId ?? this.attachmentId,
       deviceId: deviceId,
       role: role,
       createdAt: createdAt,
       status: status,
       virtualIp: virtualIp,
+      remark: remark,
     );
   }
 }
 
+extension NetworkAssignmentResponseDtoMapper on NetworkAssignmentResponseDto {
+  NetworkAssignmentModel toModel() => NetworkAssignmentModel(
+        attachmentId: attachmentId,
+        networkId: networkId,
+        subnetId: subnetId,
+        deviceId: deviceId,
+        deviceName: deviceName,
+        userId: userId,
+        userEmail: userEmail,
+        role: role,
+        remark: remark,
+        virtualIp: virtualIp,
+        status: status,
+      );
+}
+
+extension NetworkJoinResultResponseDtoMapper on NetworkJoinResultResponseDto {
+  NetworkJoinModel toModel() => NetworkJoinModel(
+        networkId: attachment.networkId,
+        deviceId: attachment.deviceId,
+        memberId: member.memberId,
+        attachmentId: attachment.attachmentId,
+        virtualIp: attachment.virtualIp,
+      );
+}
+
+extension NetworkJoinByOwnerEmailResultResponseDtoMapper
+    on NetworkJoinByOwnerEmailResultResponseDto {
+  NetworkJoinModel toModel() => NetworkJoinModel(
+        networkId: attachment.networkId,
+        deviceId: attachment.deviceId,
+        memberId: member.memberId,
+        attachmentId: attachment.attachmentId,
+        virtualIp: attachment.virtualIp,
+      );
+}
+
 extension ControlPlaneConfigResponseDtoMapper on ControlPlaneConfigResponseDto {
-  ControlPlaneConfigModel toModel() => ControlPlaneConfigModel(
+  ControlPlaneConfigModel toModel({String? sessionToken}) =>
+      ControlPlaneConfigModel(
         wsUrl: wsUrl,
-        sessionToken: sessionToken,
+        sessionToken: sessionToken ?? this.sessionToken,
         heartbeatSeconds: heartbeatSeconds,
       );
 }

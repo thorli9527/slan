@@ -13,6 +13,8 @@ type Network interface {
 	List(userID string) ([]dto.Network, error)
 	// Update 修改当前用户自有网络的默认网段，并触发成员虚拟 IP 重分配。
 	Update(userID, networkID string, req dto.UpdateNetworkRequest) (dto.Network, error)
+	// UpdateDNS 修改网络级 DNS 配置；仅 owner 可访问。
+	UpdateDNS(userID, networkID string, req dto.UpdateNetworkDNSRequest) (dto.NetworkDetail, error)
 	// UpdateJoinKey 设置或清空网络加入 key；仅 owner 可访问。
 	UpdateJoinKey(userID, networkID string, req dto.UpdateNetworkJoinKeyRequest) (dto.NetworkDetail, error)
 	// Get 返回某个网络的完整详情，包括成员、子网和挂载关系视图。
@@ -44,7 +46,7 @@ type Network interface {
 	AttachDevice(userID, networkID, subnetID string, req dto.AttachDeviceRequest) (dto.SubnetAttachment, error)
 	// UpdateAttachmentIP 允许网络 owner 手动修改设备挂载的虚拟 IP。
 	UpdateAttachmentIP(userID, networkID, attachmentID string, req dto.UpdateAttachmentIPRequest) (dto.SubnetAttachment, error)
-	// UpdateAttachmentRemark 允许网络 owner 修改网络内设备备注。
+	// UpdateAttachmentRemark 允许网络 owner 修改网络内设备备注，或设备所有者维护自己的备注。
 	UpdateAttachmentRemark(userID, networkID, attachmentID string, req dto.UpdateAttachmentRemarkRequest) (dto.NetworkAssignment, error)
 }
 

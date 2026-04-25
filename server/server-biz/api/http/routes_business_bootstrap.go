@@ -19,7 +19,7 @@ func registerBootstrapRoutes(protected *gin.RouterGroup, deps routerDeps) {
 	control.POST("/messages/:messageId/ack", func(c *gin.Context) {
 		rc := currentRouteContext(c)
 		if deps.MessageDelivery == nil {
-			c.JSON(http.StatusNotImplemented, gin.H{"error": "message delivery disabled"})
+			writeErrorResponse(c, http.StatusNotImplemented, errorCodeNotImplemented, "message delivery disabled")
 			return
 		}
 		if err := deps.MessageDelivery.Ack(rc.user(), rc.messageID(c), time.Now().UnixMilli()); err != nil {

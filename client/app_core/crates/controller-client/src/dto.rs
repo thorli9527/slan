@@ -1,14 +1,23 @@
 use serde::{Deserialize, Serialize};
 use slan_app_core::{
     BootstrapConfig, ControlPlaneConfig, DerpCluster, DerpMap, DerpNodeMeta, DerpTransport, Device,
-    DnsConfig, Endpoint, Network, NetworkMap, NetworkMember, Node, Peer, RelayCity, RelayCluster,
-    RelayConfig, RelayCountry, RelayEndpoint, RelayNode, RelayRegion, RelayTicket, Route, Session,
+    DnsConfig, Endpoint, Network, NetworkAssignment, NetworkJoinResult, NetworkMap, NetworkMember,
+    Node, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry, RelayEndpoint, RelayNode,
+    RelayRegion, RelayTicket, Route, Session,
 };
 
 use crate::api::{
-    CreateNetworkRequest, LoginRequest, RegisterDeviceRequest, RegisterNodeRequest,
-    RegisterRequest, RelayTicketRequest,
+    CreateNetworkRequest, JoinNetworkByKeyRequest, JoinNetworkByOwnerEmailRequest, LoginRequest,
+    RefreshTokenRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest,
+    RelayTicketRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
 };
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorResponseDto {
+    pub code: String,
+    pub message: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +49,23 @@ impl From<LoginRequest> for LoginRequestDto {
         Self {
             email: value.email,
             password: value.password,
+            device_id: value.device_id.filter(|value| !value.trim().is_empty()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshTokenRequestDto {
+    pub refresh_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+}
+
+impl From<RefreshTokenRequest> for RefreshTokenRequestDto {
+    fn from(value: RefreshTokenRequest) -> Self {
+        Self {
+            refresh_token: value.refresh_token,
             device_id: value.device_id.filter(|value| !value.trim().is_empty()),
         }
     }
@@ -100,13 +126,33 @@ impl From<RegisterDeviceRequest> for RegisterDeviceRequestDto {
 pub struct DeviceDto {
     pub device_id: String,
     pub name: String,
+    #[serde(default)]
+    pub owner_email: Option<String>,
     pub platform: String,
     #[serde(default)]
+    pub machine_id: Option<String>,
+    #[serde(default)]
     pub status: String,
+    #[serde(default)]
+    pub current_virtual_ip: Option<String>,
+    #[serde(default)]
+    pub link_status: Option<String>,
+    #[serde(default)]
+    pub connectivity_protocol: Option<String>,
+    #[serde(default)]
+    pub joined_at: Option<i64>,
+    #[serde(default)]
+    pub membership_status: Option<String>,
+    #[serde(default)]
+    pub network_role: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<i64>,
     #[serde(default)]
     pub virtual_ip: Option<String>,
     #[serde(default)]
     pub public_key: Option<String>,
+    #[serde(default)]
+    pub network_ids: Vec<String>,
 }
 
 impl From<DeviceDto> for Device {
@@ -116,7 +162,7 @@ impl From<DeviceDto> for Device {
             name: value.name,
             platform: value.platform,
             status: value.status,
-            virtual_ip: value.virtual_ip,
+            virtual_ip: value.current_virtual_ip.or(value.virtual_ip),
             public_key: value.public_key,
         }
     }
@@ -170,14 +216,38 @@ impl From<NodeDto> for Node {
 #[serde(rename_all = "camelCase")]
 pub struct CreateNetworkRequestDto {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub cidr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind_device_id: Option<String>,
 }
 
 impl From<CreateNetworkRequest> for CreateNetworkRequestDto {
     fn from(value: CreateNetworkRequest) -> Self {
         Self {
             name: value.name,
+            description: value.description.filter(|value| !value.trim().is_empty()),
             cidr: value.cidr,
+            bind_device_id: value
+                .bind_device_id
+                .filter(|value| !value.trim().is_empty()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateNetworkDNSRequestDto {
+    pub servers: Vec<String>,
+    pub search_domains: Vec<String>,
+}
+
+impl From<UpdateNetworkDNSRequest> for UpdateNetworkDNSRequestDto {
+    fn from(value: UpdateNetworkDNSRequest) -> Self {
+        Self {
+            servers: value.servers,
+            search_domains: value.search_domains,
         }
     }
 }
@@ -188,15 +258,80 @@ pub struct JoinNetworkRequestDto {
     pub device_id: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchNetworkRequestDto {
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeactivateNetworkRequestDto {
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinNetworkByOwnerEmailRequestDto {
+    pub owner_email: String,
+    pub device_id: String,
+}
+
+impl From<JoinNetworkByOwnerEmailRequest> for JoinNetworkByOwnerEmailRequestDto {
+    fn from(value: JoinNetworkByOwnerEmailRequest) -> Self {
+        Self {
+            owner_email: value.owner_email,
+            device_id: value.device_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinNetworkByKeyRequestDto {
+    pub join_key: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAttachmentRemarkRequestDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remark: Option<String>,
+}
+
+impl From<UpdateAttachmentRemarkRequest> for UpdateAttachmentRemarkRequestDto {
+    fn from(value: UpdateAttachmentRemarkRequest) -> Self {
+        Self {
+            remark: value.remark.filter(|value| !value.trim().is_empty()),
+        }
+    }
+}
+
+impl From<JoinNetworkByKeyRequest> for JoinNetworkByKeyRequestDto {
+    fn from(value: JoinNetworkByKeyRequest) -> Self {
+        Self {
+            join_key: value.join_key,
+            device_id: value.device_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkDto {
     pub network_id: String,
     pub name: String,
     #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default_subnet_id: Option<String>,
+    #[serde(default)]
     pub cidr: String,
     #[serde(default)]
     pub default_subnet_cidr: Option<String>,
+    #[serde(default)]
+    pub join_key_configured: Option<bool>,
     #[serde(default)]
     pub subnets: Vec<SubnetDto>,
     #[serde(default)]
@@ -241,6 +376,76 @@ pub struct NetworkJoinResultDto {
     pub attachment: SubnetAttachmentDto,
 }
 
+impl From<NetworkJoinResultDto> for NetworkJoinResult {
+    fn from(value: NetworkJoinResultDto) -> Self {
+        Self {
+            network_id: value.attachment.network_id,
+            device_id: value.attachment.device_id,
+            member_id: value.member.member_id,
+            attachment_id: Some(value.attachment.attachment_id),
+            virtual_ip: value.attachment.virtual_ip,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkJoinByOwnerEmailResultDto {
+    pub network: NetworkDto,
+    pub member: NetworkMemberDto,
+    pub attachment: SubnetAttachmentDto,
+}
+
+impl From<NetworkJoinByOwnerEmailResultDto> for NetworkJoinResult {
+    fn from(value: NetworkJoinByOwnerEmailResultDto) -> Self {
+        Self {
+            network_id: value.attachment.network_id,
+            device_id: value.attachment.device_id,
+            member_id: value.member.member_id,
+            attachment_id: Some(value.attachment.attachment_id),
+            virtual_ip: value.attachment.virtual_ip,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkAssignmentDto {
+    pub attachment_id: String,
+    pub network_id: String,
+    pub subnet_id: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub user_id: String,
+    pub user_email: String,
+    pub role: String,
+    #[serde(default)]
+    pub remark: Option<String>,
+    #[serde(default)]
+    pub virtual_ip: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+impl From<NetworkAssignmentDto> for NetworkAssignment {
+    fn from(value: NetworkAssignmentDto) -> Self {
+        Self {
+            attachment_id: value.attachment_id,
+            network_id: value.network_id,
+            subnet_id: value.subnet_id,
+            device_id: value.device_id,
+            device_name: value.device_name,
+            user_id: value.user_id,
+            user_email: value.user_email,
+            role: value.role,
+            remark: value.remark,
+            virtual_ip: value.virtual_ip,
+            status: value.status,
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -252,15 +457,31 @@ pub struct SubnetAttachmentDto {
     #[serde(default)]
     pub virtual_ip: Option<String>,
     #[serde(default)]
+    pub remark: Option<String>,
+    #[serde(default)]
     pub status: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubnetDto {
+    #[serde(default)]
+    pub subnet_id: Option<String>,
+    #[serde(default)]
+    pub network_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
     pub cidr: String,
     #[serde(default)]
+    pub gateway_ip: Option<String>,
+    #[serde(default)]
+    pub allocation_start_ip: Option<String>,
+    #[serde(default)]
+    pub allocation_end_ip: Option<String>,
+    #[serde(default)]
     pub is_default: bool,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -273,6 +494,10 @@ pub struct BootstrapRequestDto {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapResponseDto {
+    #[serde(default)]
+    pub control_session_id: Option<String>,
+    #[serde(default)]
+    pub session_token: Option<String>,
     pub device: BootstrapDeviceDto,
     #[serde(default)]
     pub networks: Vec<NetworkDto>,
@@ -306,6 +531,8 @@ impl TryFrom<BootstrapResponseDto> for BootstrapConfig {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapDeviceDto {
     pub device: DeviceDto,
+    #[serde(default)]
+    pub attachments: Vec<SubnetAttachmentDto>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -491,19 +718,36 @@ impl TryFrom<NetworkMapDto> for NetworkMap {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkMemberDto {
+    #[serde(default)]
+    pub member_id: Option<String>,
+    #[serde(default)]
+    pub network_id: Option<String>,
     pub device_id: String,
     #[serde(default)]
     pub role: String,
     #[serde(default)]
+    pub created_at: Option<i64>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub attachment_id: Option<String>,
+    #[serde(default)]
     pub virtual_ip: Option<String>,
+    #[serde(default)]
+    pub remark: Option<String>,
 }
 
 impl From<NetworkMemberDto> for NetworkMember {
     fn from(value: NetworkMemberDto) -> Self {
         Self {
+            member_id: value.member_id,
+            network_id: value.network_id,
+            attachment_id: value.attachment_id,
             device_id: value.device_id,
             role: value.role,
+            status: value.status,
             virtual_ip: value.virtual_ip,
+            remark: value.remark,
         }
     }
 }
@@ -544,6 +788,7 @@ impl From<PeerDto> for Peer {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EndpointDto {
+    #[serde(rename = "type")]
     pub endpoint_type: String,
     pub address: String,
     #[serde(default)]
@@ -767,9 +1012,13 @@ pub struct RelayTicketRequestDto {
     pub network_id: String,
     pub src_node_id: String,
     pub dst_node_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub derp_cluster_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub preferred_derp_node_ids: Vec<String>,
     pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_region_id: Option<String>,
 }
 
 impl From<RelayTicketRequest> for RelayTicketRequestDto {
@@ -781,6 +1030,7 @@ impl From<RelayTicketRequest> for RelayTicketRequestDto {
             derp_cluster_id: value.derp_cluster_id,
             preferred_derp_node_ids: value.preferred_derp_node_ids,
             reason: value.reason,
+            relay_region_id: value.relay_region_id,
         }
     }
 }

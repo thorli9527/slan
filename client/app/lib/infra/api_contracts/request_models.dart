@@ -1,7 +1,6 @@
-/// Flutter 侧控制面请求合同定义。
+/// Flutter-side control-plane request contracts.
 library slan_app.infra.api_contracts.request_models;
 
-/// 注册请求体。
 class RegisterRequest {
   const RegisterRequest({required this.email, required this.password});
 
@@ -14,7 +13,6 @@ class RegisterRequest {
       };
 }
 
-/// 登录请求体。
 class LoginRequest {
   const LoginRequest({
     required this.email,
@@ -33,7 +31,21 @@ class LoginRequest {
       };
 }
 
-/// 创建网络请求体。
+class RefreshTokenRequest {
+  const RefreshTokenRequest({
+    required this.refreshToken,
+    this.deviceId,
+  });
+
+  final String refreshToken;
+  final String? deviceId;
+
+  Map<String, dynamic> toJson() => {
+        'refreshToken': refreshToken,
+        if (deviceId != null && deviceId!.isNotEmpty) 'deviceId': deviceId,
+      };
+}
+
 class CreateNetworkRequest {
   const CreateNetworkRequest({
     required this.name,
@@ -57,7 +69,6 @@ class CreateNetworkRequest {
       };
 }
 
-/// 设备加入网络请求体。
 class JoinNetworkRequest {
   const JoinNetworkRequest({required this.deviceId});
 
@@ -68,7 +79,6 @@ class JoinNetworkRequest {
       };
 }
 
-/// 显式切换活动网络请求体。
 class SwitchNetworkRequest {
   const SwitchNetworkRequest({required this.deviceId});
 
@@ -79,7 +89,6 @@ class SwitchNetworkRequest {
       };
 }
 
-/// 释放设备当前网络接入请求体。
 class DeactivateNetworkRequest {
   const DeactivateNetworkRequest({required this.deviceId});
 
@@ -90,7 +99,16 @@ class DeactivateNetworkRequest {
       };
 }
 
-/// 按 owner 邮箱加入网络请求体。
+class UpdateNetworkMemberStatusRequest {
+  const UpdateNetworkMemberStatusRequest({required this.status});
+
+  final String status;
+
+  Map<String, dynamic> toJson() => {
+        'status': status,
+      };
+}
+
 class JoinNetworkByOwnerEmailRequest {
   const JoinNetworkByOwnerEmailRequest({
     required this.ownerEmail,
@@ -106,7 +124,6 @@ class JoinNetworkByOwnerEmailRequest {
       };
 }
 
-/// 按 join key 加入网络请求体。
 class JoinNetworkByKeyRequest {
   const JoinNetworkByKeyRequest({
     required this.joinKey,
@@ -122,7 +139,6 @@ class JoinNetworkByKeyRequest {
       };
 }
 
-/// 修改网络基础配置请求体。
 class UpdateNetworkRequest {
   const UpdateNetworkRequest({
     this.name,
@@ -142,7 +158,21 @@ class UpdateNetworkRequest {
       };
 }
 
-/// 创建子网请求体。
+class UpdateNetworkDNSRequest {
+  const UpdateNetworkDNSRequest({
+    this.servers = const [],
+    this.searchDomains = const [],
+  });
+
+  final List<String> servers;
+  final List<String> searchDomains;
+
+  Map<String, dynamic> toJson() => {
+        'servers': servers,
+        'searchDomains': searchDomains,
+      };
+}
+
 class CreateSubnetRequest {
   const CreateSubnetRequest({
     required this.name,
@@ -169,7 +199,6 @@ class CreateSubnetRequest {
       };
 }
 
-/// 挂载设备到子网请求体。
 class AttachDeviceRequest {
   const AttachDeviceRequest({required this.deviceId});
 
@@ -180,7 +209,6 @@ class AttachDeviceRequest {
       };
 }
 
-/// 修改 attachment 虚拟 IP 请求体。
 class UpdateAttachmentIPRequest {
   const UpdateAttachmentIPRequest({required this.virtualIp});
 
@@ -191,7 +219,6 @@ class UpdateAttachmentIPRequest {
       };
 }
 
-/// 修改 attachment 备注请求体。
 class UpdateAttachmentRemarkRequest {
   const UpdateAttachmentRemarkRequest({this.remark});
 
@@ -202,7 +229,6 @@ class UpdateAttachmentRemarkRequest {
       };
 }
 
-/// 注册设备请求体。
 class RegisterDeviceRequest {
   const RegisterDeviceRequest({
     required this.name,
@@ -224,7 +250,6 @@ class RegisterDeviceRequest {
       };
 }
 
-/// 注册节点请求体。
 class RegisterNodeRequest {
   const RegisterNodeRequest({
     required this.deviceId,
@@ -246,7 +271,6 @@ class RegisterNodeRequest {
       };
 }
 
-/// 获取启动配置请求体。
 class BootstrapRequest {
   const BootstrapRequest({
     required this.nodeId,
@@ -262,24 +286,35 @@ class BootstrapRequest {
       };
 }
 
-/// 申请 relay 票据请求体。
 class RelayTicketRequest {
   const RelayTicketRequest({
     required this.networkId,
     required this.srcNodeId,
     required this.dstNodeId,
     required this.reason,
+    this.derpClusterId,
+    this.preferredDerpNodeIds = const [],
+    this.relayRegionId,
   });
 
   final String networkId;
   final String srcNodeId;
   final String dstNodeId;
+  final String? derpClusterId;
+  final List<String> preferredDerpNodeIds;
   final String reason;
+  final String? relayRegionId;
 
   Map<String, dynamic> toJson() => {
         'networkId': networkId,
         'srcNodeId': srcNodeId,
         'dstNodeId': dstNodeId,
+        if (derpClusterId != null && derpClusterId!.isNotEmpty)
+          'derpClusterId': derpClusterId,
+        if (preferredDerpNodeIds.isNotEmpty)
+          'preferredDerpNodeIds': preferredDerpNodeIds,
         'reason': reason,
+        if (relayRegionId != null && relayRegionId!.isNotEmpty)
+          'relayRegionId': relayRegionId,
       };
 }

@@ -456,12 +456,15 @@ fn service_log_path() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     return PathBuf::from(r"C:\ProgramData\SLAN\app-core-service.log");
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            return parent.join("app-core-service.log");
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(parent) = current_exe.parent() {
+                return parent.join("app-core-service.log");
+            }
         }
+        std::env::temp_dir().join("app-core-service.log")
     }
-    std::env::temp_dir().join("app-core-service.log")
 }
 
 #[cfg(target_os = "windows")]

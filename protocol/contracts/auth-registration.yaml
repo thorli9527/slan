@@ -21,6 +21,14 @@ contracts:
       deviceId:
         type: string
         required: false
+  RefreshTokenRequest:
+    fields:
+      refreshToken:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: false
   AuthResponse:
     fields:
       userId:
@@ -120,6 +128,12 @@ contracts:
         required: false
       joinedAt:
         type: int64
+        required: false
+      membershipStatus:
+        type: string
+        required: false
+      networkRole:
+        type: string
         required: false
       createdAt:
         type: int64

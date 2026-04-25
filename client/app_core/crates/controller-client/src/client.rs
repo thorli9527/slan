@@ -1,16 +1,24 @@
-use slan_app_core::{BootstrapConfig, Device, Network, Node, RelayTicket, Session};
+use slan_app_core::{
+    BootstrapConfig, Device, Network, NetworkAssignment, NetworkJoinResult, Node, RelayTicket,
+    Session,
+};
 
 use crate::api::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest,
-    LoginRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkByKeyRequest,
+    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
+    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    SwitchNetworkRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
 };
 use crate::dto::{
-    AuthResponseDto, BootstrapRequestDto, BootstrapResponseDto, CreateNetworkRequestDto, DeviceDto,
-    JoinNetworkRequestDto, ListNetworksResponseDto, LoginRequestDto, NetworkDto,
-    NetworkJoinResultDto, NodeDto, RegisterDeviceRequestDto, RegisterNodeRequestDto,
-    RegisterRequestDto, RelayTicketDto, RelayTicketRequestDto,
+    AuthResponseDto, BootstrapRequestDto, BootstrapResponseDto, CreateNetworkRequestDto,
+    DeactivateNetworkRequestDto, DeviceDto, JoinNetworkByKeyRequestDto,
+    JoinNetworkByOwnerEmailRequestDto, JoinNetworkRequestDto, ListNetworksResponseDto,
+    LoginRequestDto, NetworkAssignmentDto, NetworkDto, NetworkJoinByOwnerEmailResultDto,
+    NetworkJoinResultDto, NodeDto, RefreshTokenRequestDto, RegisterDeviceRequestDto,
+    RegisterNodeRequestDto, RegisterRequestDto, RelayTicketDto, RelayTicketRequestDto,
+    SwitchNetworkRequestDto, UpdateAttachmentRemarkRequestDto, UpdateNetworkDNSRequestDto,
 };
-use crate::http_runtime::{get_json, post_json};
+use crate::http_runtime::{get_json, post_json, put_json};
 use crate::transport::JsonHttpTransport;
 
 pub struct HttpControllerClient<T>
@@ -50,6 +58,17 @@ where
             "/auth/login",
             None,
             &LoginRequestDto::from(req),
+        )?;
+        dto.try_into()
+    }
+
+    fn refresh(&self, req: RefreshTokenRequest) -> Result<Session, String> {
+        let dto: AuthResponseDto = post_json(
+            &self.transport,
+            &self.base_url,
+            "/auth/refresh",
+            None,
+            &RefreshTokenRequestDto::from(req),
         )?;
         dto.try_into()
     }
@@ -105,8 +124,28 @@ where
         Ok(dto.into())
     }
 
-    fn join_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String> {
-        let _: NetworkJoinResultDto = post_json(
+    fn update_network_dns(
+        &self,
+        access_token: &str,
+        req: UpdateNetworkDNSRequest,
+    ) -> Result<Network, String> {
+        let network_id = req.network_id.clone();
+        let dto: NetworkDto = put_json(
+            &self.transport,
+            &self.base_url,
+            &format!("/networks/{network_id}/dns"),
+            Some(access_token),
+            &UpdateNetworkDNSRequestDto::from(req),
+        )?;
+        Ok(dto.into())
+    }
+
+    fn join_network(
+        &self,
+        access_token: &str,
+        req: JoinNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        let dto: NetworkJoinResultDto = post_json(
             &self.transport,
             &self.base_url,
             &format!("/networks/{}/join", req.network_id),
@@ -115,11 +154,62 @@ where
                 device_id: req.device_id,
             },
         )?;
-        Ok(())
+        Ok(dto.into())
     }
 
-    fn activate_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String> {
-        let _: NetworkJoinResultDto = post_json(
+    fn join_network_by_owner_email(
+        &self,
+        access_token: &str,
+        req: JoinNetworkByOwnerEmailRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        let dto: NetworkJoinByOwnerEmailResultDto = post_json(
+            &self.transport,
+            &self.base_url,
+            "/networks/join-by-owner-email",
+            Some(access_token),
+            &JoinNetworkByOwnerEmailRequestDto::from(req),
+        )?;
+        Ok(dto.into())
+    }
+
+    fn join_network_by_key(
+        &self,
+        access_token: &str,
+        req: JoinNetworkByKeyRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        let dto: NetworkJoinResultDto = post_json(
+            &self.transport,
+            &self.base_url,
+            "/networks/join-by-key",
+            Some(access_token),
+            &JoinNetworkByKeyRequestDto::from(req),
+        )?;
+        Ok(dto.into())
+    }
+
+    fn update_attachment_remark(
+        &self,
+        access_token: &str,
+        req: UpdateAttachmentRemarkRequest,
+    ) -> Result<NetworkAssignment, String> {
+        let network_id = req.network_id.clone();
+        let attachment_id = req.attachment_id.clone();
+        let dto: NetworkAssignmentDto = put_json(
+            &self.transport,
+            &self.base_url,
+            &format!("/networks/{network_id}/attachments/{attachment_id}/remark"),
+            Some(access_token),
+            &UpdateAttachmentRemarkRequestDto::from(req),
+        )?;
+        Ok(dto.into())
+    }
+
+    fn activate_network(
+        &self,
+        access_token: &str,
+        req: JoinNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        let dto: NetworkJoinResultDto = post_json(
             &self.transport,
             &self.base_url,
             &format!("/networks/{}/activate", req.network_id),
@@ -128,7 +218,24 @@ where
                 device_id: req.device_id,
             },
         )?;
-        Ok(())
+        Ok(dto.into())
+    }
+
+    fn switch_network(
+        &self,
+        access_token: &str,
+        req: SwitchNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        let dto: NetworkJoinResultDto = post_json(
+            &self.transport,
+            &self.base_url,
+            &format!("/networks/{}/switch", req.network_id),
+            Some(access_token),
+            &SwitchNetworkRequestDto {
+                device_id: req.device_id,
+            },
+        )?;
+        Ok(dto.into())
     }
 
     fn deactivate_network(
@@ -141,7 +248,7 @@ where
             &self.base_url,
             &format!("/networks/{}/deactivate", req.network_id),
             Some(access_token),
-            &JoinNetworkRequestDto {
+            &DeactivateNetworkRequestDto {
                 device_id: req.device_id,
             },
         )?;
@@ -195,6 +302,10 @@ where
         HttpControllerClient::login(self, req)
     }
 
+    fn refresh(&self, req: RefreshTokenRequest) -> Result<Session, String> {
+        HttpControllerClient::refresh(self, req)
+    }
+
     fn register_device(
         &self,
         access_token: &str,
@@ -219,12 +330,60 @@ where
         HttpControllerClient::create_network(self, access_token, req)
     }
 
-    fn join_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String> {
+    fn update_network_dns(
+        &self,
+        access_token: &str,
+        req: UpdateNetworkDNSRequest,
+    ) -> Result<Network, String> {
+        HttpControllerClient::update_network_dns(self, access_token, req)
+    }
+
+    fn join_network(
+        &self,
+        access_token: &str,
+        req: JoinNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
         HttpControllerClient::join_network(self, access_token, req)
     }
 
-    fn activate_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String> {
+    fn join_network_by_owner_email(
+        &self,
+        access_token: &str,
+        req: JoinNetworkByOwnerEmailRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        HttpControllerClient::join_network_by_owner_email(self, access_token, req)
+    }
+
+    fn join_network_by_key(
+        &self,
+        access_token: &str,
+        req: JoinNetworkByKeyRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        HttpControllerClient::join_network_by_key(self, access_token, req)
+    }
+
+    fn update_attachment_remark(
+        &self,
+        access_token: &str,
+        req: UpdateAttachmentRemarkRequest,
+    ) -> Result<NetworkAssignment, String> {
+        HttpControllerClient::update_attachment_remark(self, access_token, req)
+    }
+
+    fn activate_network(
+        &self,
+        access_token: &str,
+        req: JoinNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
         HttpControllerClient::activate_network(self, access_token, req)
+    }
+
+    fn switch_network(
+        &self,
+        access_token: &str,
+        req: SwitchNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        HttpControllerClient::switch_network(self, access_token, req)
     }
 
     fn deactivate_network(

@@ -41,6 +41,135 @@ func TestLoadConfig_AppliesAuthTTLOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_BackfillsClientFacingDefaultsForLegacyConfig(t *testing.T) {
+	t.Setenv("SLAN_ENV", "")
+
+	path := filepath.Join(t.TempDir(), "legacy.yaml")
+	if err := os.WriteFile(path, []byte(`
+http:
+  address: ":18080"
+postgres:
+  host: "postgres"
+  password: "legacy-postgres-password"
+redis:
+  host: "redis"
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("load legacy config: %v", err)
+	}
+	defaults := DefaultConfig()
+	if cfg.HTTP.Address != ":18080" {
+		t.Fatalf("expected explicit http address to survive, got %+v", cfg.HTTP)
+	}
+	if cfg.HTTP.OpsAddress != defaults.HTTP.OpsAddress ||
+		cfg.HTTP.PublicHost != defaults.HTTP.PublicHost ||
+		cfg.HTTP.PublicScheme != defaults.HTTP.PublicScheme {
+		t.Fatalf("expected missing public http fields to use defaults, got %+v", cfg.HTTP)
+	}
+	if cfg.WS.Path != defaults.WS.Path {
+		t.Fatalf("expected default ws path, got %+v", cfg.WS)
+	}
+	if cfg.Relay.DefaultClusterID != defaults.Relay.DefaultClusterID ||
+		cfg.Relay.TicketSigningSecret != defaults.Relay.TicketSigningSecret ||
+		len(cfg.Relay.Countries) == 0 {
+		t.Fatalf("expected relay defaults for legacy config, got %+v", cfg.Relay)
+	}
+	if len(cfg.Bootstrap.STUNServers) == 0 ||
+		cfg.Bootstrap.STUNServers[0] != defaults.Bootstrap.STUNServers[0] {
+		t.Fatalf("expected bootstrap stun defaults, got %+v", cfg.Bootstrap)
+	}
+	if cfg.Auth.AccessTokenTTLSeconds != defaults.Auth.AccessTokenTTLSeconds ||
+		cfg.Auth.RefreshTokenTTLSeconds != defaults.Auth.RefreshTokenTTLSeconds {
+		t.Fatalf("expected auth ttl defaults, got %+v", cfg.Auth)
+	}
+	if cfg.Postgres.Host != "postgres" || cfg.Postgres.Password != "legacy-postgres-password" {
+		t.Fatalf("expected explicit postgres fields to survive, got %+v", cfg.Postgres)
+	}
+	if cfg.Postgres.Port != defaults.Postgres.Port ||
+		cfg.Postgres.Database != defaults.Postgres.Database ||
+		cfg.Postgres.Username != defaults.Postgres.Username ||
+		cfg.Postgres.SSLMode != defaults.Postgres.SSLMode ||
+		cfg.Postgres.MaxOpenConns != defaults.Postgres.MaxOpenConns {
+		t.Fatalf("expected missing postgres fields to use defaults, got %+v", cfg.Postgres)
+	}
+	if cfg.Redis.Host != "redis" ||
+		cfg.Redis.Port != defaults.Redis.Port ||
+		cfg.Redis.PoolSize != defaults.Redis.PoolSize ||
+		cfg.Redis.DialTimeoutSeconds != defaults.Redis.DialTimeoutSeconds {
+		t.Fatalf("expected redis compatibility defaults, got %+v", cfg.Redis)
+	}
+}
+
+func TestLoadConfig_PreservesPartialClientFacingConfig(t *testing.T) {
+	t.Setenv("SLAN_ENV", "")
+
+	path := filepath.Join(t.TempDir(), "partial.yaml")
+	if err := os.WriteFile(path, []byte(`
+http:
+  public_host: "control.example.test"
+  public_scheme: "https"
+ws:
+  path: "/custom/ws"
+relay:
+  ticket_signing_secret: "custom-ticket-secret"
+auth:
+  access_token_ttl_seconds: 7200
+bootstrap:
+  stun_servers:
+    - "stun:custom.example.test:3478"
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("load partial config: %v", err)
+	}
+	defaults := DefaultConfig()
+	if cfg.HTTP.PublicHost != "control.example.test" ||
+		cfg.HTTP.PublicScheme != "https" ||
+		cfg.WS.Path != "/custom/ws" {
+		t.Fatalf("expected explicit public endpoint fields to survive, got http=%+v ws=%+v", cfg.HTTP, cfg.WS)
+	}
+	if cfg.Relay.TicketSigningSecret != "custom-ticket-secret" {
+		t.Fatalf("expected custom relay signing secret, got %+v", cfg.Relay)
+	}
+	if cfg.Relay.DefaultClusterID != defaults.Relay.DefaultClusterID ||
+		len(cfg.Relay.Countries) == 0 {
+		t.Fatalf("expected missing relay topology fields to use defaults, got %+v", cfg.Relay)
+	}
+	if len(cfg.Bootstrap.STUNServers) != 1 || cfg.Bootstrap.STUNServers[0] != "stun:custom.example.test:3478" {
+		t.Fatalf("expected custom stun servers, got %+v", cfg.Bootstrap)
+	}
+	if cfg.Auth.AccessTokenTTLSeconds != 7200 ||
+		cfg.Auth.RefreshTokenTTLSeconds != defaults.Auth.RefreshTokenTTLSeconds {
+		t.Fatalf("expected partial auth ttl defaults, got %+v", cfg.Auth)
+	}
+}
+
+func TestLoadConfig_EnvironmentOverridesBackfilledPublicEndpoint(t *testing.T) {
+	t.Setenv("SLAN_ENV", "")
+	t.Setenv("SLAN_HTTP_PUBLIC_HOST", "env-control.example.test")
+	t.Setenv("SLAN_HTTP_PUBLIC_SCHEME", "https")
+
+	path := filepath.Join(t.TempDir(), "legacy.yaml")
+	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.HTTP.PublicHost != "env-control.example.test" || cfg.HTTP.PublicScheme != "https" {
+		t.Fatalf("expected env public endpoint override, got %+v", cfg.HTTP)
+	}
+}
+
 func TestLoadConfig_AppliesOpsLoginRateLimitConfig(t *testing.T) {
 	t.Setenv("SLAN_ENV", "")
 

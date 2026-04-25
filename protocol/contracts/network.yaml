@@ -27,6 +27,19 @@ contracts:
       cidr:
         type: string
         required: true
+  UpdateNetworkJoinKeyRequest:
+    fields:
+      joinKey:
+        type: string
+        required: false
+  UpdateNetworkDNSRequest:
+    fields:
+      servers:
+        type: string[]
+        required: false
+      searchDomains:
+        type: string[]
+        required: false
   SwitchNetworkRequest:
     fields:
       deviceId:
@@ -69,6 +82,8 @@ contracts:
         type: string
         required: true
   UpdateAttachmentRemarkRequest:
+    # Network owners can update any member remark; device owners can update
+    # their own attachment remark so clients can store a local alias at join.
     fields:
       remark:
         type: string

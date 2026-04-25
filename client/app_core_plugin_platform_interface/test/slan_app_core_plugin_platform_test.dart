@@ -268,6 +268,55 @@ void main() {
             },
           ],
         },
+        'joinNetwork': {
+          'networkId': 'net-1',
+          'deviceId': 'dev-1',
+          'memberId': 'member-1',
+          'attachmentId': 'att-1',
+          'virtualIp': '10.0.0.2',
+        },
+        'joinNetworkByOwnerEmail': {
+          'networkId': 'net-owner',
+          'deviceId': 'dev-1',
+          'memberId': 'member-owner',
+          'attachmentId': 'att-owner',
+          'virtualIp': '10.0.1.2',
+        },
+        'joinNetworkByKey': {
+          'networkId': 'net-key',
+          'deviceId': 'dev-1',
+          'memberId': 'member-key',
+          'attachmentId': 'att-key',
+          'virtualIp': '10.0.2.2',
+        },
+        'updateAttachmentRemark': {
+          'attachmentId': 'att-key',
+          'networkId': 'net-key',
+          'subnetId': 'subnet-key',
+          'deviceId': 'dev-1',
+          'deviceName': 'desk',
+          'userId': 'user-1',
+          'userEmail': 'user@example.com',
+          'role': 'member',
+          'remark': 'desk',
+          'virtualIp': '10.0.2.2',
+          'status': 'active',
+        },
+        'activateNetwork': {
+          'networkId': 'net-key',
+          'deviceId': 'dev-1',
+          'memberId': 'member-key',
+          'attachmentId': 'att-key',
+          'virtualIp': '10.0.2.2',
+        },
+        'switchNetwork': {
+          'networkId': 'net-key',
+          'deviceId': 'dev-1',
+          'memberId': 'member-key',
+          'attachmentId': 'att-key',
+          'virtualIp': '10.0.2.2',
+        },
+        'deactivateNetwork': null,
         'connect': {
           'status': 'connected',
           'path': 'derp',
@@ -319,6 +368,32 @@ void main() {
         password: 'password123',
       );
       final devices = await platform.listDevices();
+      final joined = await platform.joinNetwork(
+        networkId: 'net-1',
+        deviceId: 'dev-1',
+      );
+      final ownerJoin = await platform.joinNetworkByOwnerEmail(
+        ownerEmail: 'owner@example.com',
+        deviceId: 'dev-1',
+      );
+      final keyJoin = await platform.joinNetworkByKey(
+        joinKey: 'join-key-1',
+        deviceId: 'dev-1',
+      );
+      final remark = await platform.updateAttachmentRemark(
+        networkId: 'net-key',
+        attachmentId: 'att-key',
+        remark: 'desk',
+      );
+      final activated = await platform.activateNetwork(
+        networkId: 'net-key',
+        deviceId: 'dev-1',
+      );
+      final switched = await platform.switchNetwork(
+        networkId: 'net-key',
+        deviceId: 'dev-1',
+      );
+      await platform.deactivateNetwork(networkId: 'net-key', deviceId: 'dev-1');
       final connect = await platform.connect(
         networkId: 'net-1',
         peerNodeId: 'node-2',
@@ -334,6 +409,12 @@ void main() {
 
       expect(session.accessToken, 'token-1');
       expect(devices.single.deviceId, 'dev-1');
+      expect(joined.attachmentId, 'att-1');
+      expect(ownerJoin.networkId, 'net-owner');
+      expect(keyJoin.virtualIp, '10.0.2.2');
+      expect(remark.remark, 'desk');
+      expect(activated.attachmentId, 'att-key');
+      expect(switched.attachmentId, 'att-key');
       expect(connect.path, 'derp');
       expect(probe.probeId, 'probe-1');
       expect(bytesSent, 5);
@@ -342,6 +423,13 @@ void main() {
       expect(platform.calls.map((call) => call.method), [
         'register',
         'listDevices',
+        'joinNetwork',
+        'joinNetworkByOwnerEmail',
+        'joinNetworkByKey',
+        'updateAttachmentRemark',
+        'activateNetwork',
+        'switchNetwork',
+        'deactivateNetwork',
         'connect',
         'probe',
         'send',
@@ -355,13 +443,42 @@ void main() {
       });
       expect(platform.calls[2].args, {
         'networkId': 'net-1',
-        'peerNodeId': 'node-2',
+        'deviceId': 'dev-1',
       });
       expect(platform.calls[3].args, {
+        'ownerEmail': 'owner@example.com',
+        'deviceId': 'dev-1',
+      });
+      expect(platform.calls[4].args, {
+        'joinKey': 'join-key-1',
+        'deviceId': 'dev-1',
+      });
+      expect(platform.calls[5].args, {
+        'networkId': 'net-key',
+        'attachmentId': 'att-key',
+        'remark': 'desk',
+      });
+      expect(platform.calls[6].args, {
+        'networkId': 'net-key',
+        'deviceId': 'dev-1',
+      });
+      expect(platform.calls[7].args, {
+        'networkId': 'net-key',
+        'deviceId': 'dev-1',
+      });
+      expect(platform.calls[8].args, {
+        'networkId': 'net-key',
+        'deviceId': 'dev-1',
+      });
+      expect(platform.calls[9].args, {
+        'networkId': 'net-1',
+        'peerNodeId': 'node-2',
+      });
+      expect(platform.calls[10].args, {
         'payload': 'hello',
         'probeTimeoutMs': 7,
       });
-      expect(platform.calls[4].args, {
+      expect(platform.calls[11].args, {
         'payload': 'hello',
       });
     });

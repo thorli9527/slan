@@ -88,6 +88,17 @@ bool readBool(Map<String, dynamic> json, String key) {
   throw FormatException('Expected bool for "$key", got ${value.runtimeType}');
 }
 
+bool? readNullableBool(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is bool) {
+    return value;
+  }
+  throw FormatException('Expected bool for "$key", got ${value.runtimeType}');
+}
+
 List<String> readStringList(Map<String, dynamic> json, String key) {
   final value = json[key];
   if (value == null) {

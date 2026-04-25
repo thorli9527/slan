@@ -18,10 +18,19 @@
 
 - `/auth/register`
 - `/auth/login`
+- `/auth/refresh`
 - `/devices/register`
+- `/devices`
 - `/nodes/register`
+- `/networks/home`
 - `/networks`
+- `/networks/join-by-owner-email`
+- `/networks/join-by-key`
+- `/networks/{networkId}/switch`
 - `/networks/{networkId}/join`
+- `/networks/{networkId}/activate`
+- `/networks/{networkId}/deactivate`
+- `/networks/{networkId}/attachments/{attachmentId}/remark`
 - `/bootstrap`
 - `/relay/tickets`
 - `/control/sessions`
@@ -58,7 +67,9 @@
 
 - `register`
 - `login`
+- `refresh_session`
 - `register_device`
+- `list_devices`
 - `register_node`
 
 ### 2.2 网络与配置
@@ -68,6 +79,12 @@
 - `list_networks`
 - `create_network`
 - `join_network`
+- `join_network_by_owner_email`
+- `join_network_by_key`
+- `switch_network`
+- `activate_network`
+- `deactivate_network`
+- `update_attachment_remark`
 - `bootstrap`
 
 ### 2.3 relay / DERP 授权
@@ -114,10 +131,18 @@ Flutter 当前不直接接入底层 crate，而是通过 `AppCoreFacade`。
 
 - `register`
 - `login`
+- `refresh_session`
 - `register_device`
 - `register_node`
 - `list_networks`
 - `create_network`
+- `join_network`
+- `join_network_by_owner_email`
+- `join_network_by_key`
+- `switch_network`
+- `activate_network`
+- `deactivate_network`
+- `update_attachment_remark`
 - `bootstrap`
 - `issue_relay_ticket`
 - `connect`

@@ -10,6 +10,14 @@ contracts:
       networkId:
         type: string
         required: true
+  CreateControlSessionRequest:
+    fields:
+      nodeId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
   ControlPlaneConfig:
     fields:
       wsUrl:
@@ -18,6 +26,132 @@ contracts:
       heartbeatSeconds:
         type: int
         required: true
+  Endpoint:
+    fields:
+      type:
+        type: string
+        required: true
+      address:
+        type: string
+        required: true
+      updatedAt:
+        type: int64
+        required: true
+  Peer:
+    fields:
+      nodeId:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: true
+      publicKey:
+        type: string
+        required: true
+      status:
+        type: string
+        required: true
+      relayAllowed:
+        type: bool
+        required: true
+      virtualIps:
+        type: string[]
+        required: false
+      endpoints:
+        type: Endpoint[]
+        required: false
+      allowedRoutes:
+        type: string[]
+        required: false
+  Route:
+    fields:
+      cidr:
+        type: string
+        required: true
+      viaNodeId:
+        type: string
+        required: true
+      metric:
+        type: string
+        required: false
+  RelayEndpoint:
+    fields:
+      endpointId:
+        type: string
+        required: true
+      transport:
+        type: string
+        required: true
+      address:
+        type: string
+        required: true
+  RelayRegion:
+    fields:
+      regionId:
+        type: string
+        required: true
+      regionName:
+        type: string
+        required: true
+      countryCode:
+        type: string
+        required: false
+      countryName:
+        type: string
+        required: false
+      cityCode:
+        type: string
+        required: false
+      cityName:
+        type: string
+        required: false
+      clusterId:
+        type: string
+        required: false
+      clusterName:
+        type: string
+        required: false
+      endpoints:
+        type: RelayEndpoint[]
+        required: false
+  NetworkMap:
+    fields:
+      selfUserId:
+        type: string
+        required: true
+      selfDeviceId:
+        type: string
+        required: true
+      selfNodeId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      revision:
+        type: int64
+        required: true
+      heartbeatSeconds:
+        type: int
+        required: true
+      stunServers:
+        type: string[]
+        required: false
+      peers:
+        type: Peer[]
+        required: false
+      routes:
+        type: Route[]
+        required: false
+      relayRegions:
+        type: RelayRegion[]
+        required: false
+      dns:
+        type: DNSConfig
+        required: true
+      mtu:
+        type: int
+        required: false
   RelayNode:
     fields:
       nodeId:
@@ -76,6 +210,66 @@ contracts:
       countries:
         type: RelayCountry[]
         required: false
+  DerpNode:
+    fields:
+      nodeId:
+        type: string
+        required: true
+      host:
+        type: string
+        required: true
+      port:
+        type: int
+        required: true
+      transport:
+        type: string
+        required: true
+      priority:
+        type: int
+        required: true
+      tags:
+        type: string[]
+        required: false
+  DerpCluster:
+    fields:
+      clusterId:
+        type: string
+        required: true
+      clusterName:
+        type: string
+        required: false
+      regionId:
+        type: string
+        required: true
+      regionName:
+        type: string
+        required: true
+      countryCode:
+        type: string
+        required: false
+      countryName:
+        type: string
+        required: false
+      cityCode:
+        type: string
+        required: false
+      cityName:
+        type: string
+        required: false
+      recommendedFanout:
+        type: int
+        required: true
+      nodes:
+        type: DerpNode[]
+        required: false
+  DerpMap:
+    fields:
+      probeIntervalSeconds:
+        type: int
+        required: true
+      clusters:
+        type: DerpCluster[]
+        required: false
   DeviceBootstrap:
     fields:
       device:
@@ -113,6 +307,43 @@ contracts:
       networkMap:
         type: NetworkMap
         required: true
+  ControlSessionResponse:
+    fields:
+      controlSessionId:
+        type: string
+        required: true
+      sessionToken:
+        type: string
+        required: true
+      controlPlane:
+        type: ControlPlaneConfig
+        required: true
+      networkMap:
+        type: NetworkMap
+        required: true
+  RelayTicketRequest:
+    fields:
+      networkId:
+        type: string
+        required: true
+      srcNodeId:
+        type: string
+        required: true
+      dstNodeId:
+        type: string
+        required: true
+      derpClusterId:
+        type: string
+        required: false
+      preferredDerpNodeIds:
+        type: string[]
+        required: false
+      reason:
+        type: string
+        required: true
+      relayRegionId:
+        type: string
+        required: false
   RelayTicket:
     fields:
       ticketId:

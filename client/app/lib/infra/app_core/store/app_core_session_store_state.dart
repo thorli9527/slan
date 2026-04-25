@@ -13,6 +13,7 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
   List<DeviceModel> devices = const [];
   NodeModel? node;
   List<NetworkModel> networks = const [];
+  String? selectedNetworkId;
   BootstrapModel? bootstrap;
   ControlStatusModel? controlStatus;
   RelayTicketModel? relayTicket;
@@ -29,6 +30,7 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
     devices = const [];
     node = null;
     networks = const [];
+    selectedNetworkId = null;
     bootstrap = null;
     controlStatus = null;
     relayTicket = null;
@@ -71,5 +73,41 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
     connectionState = const ConnectionStateModel.disconnected();
     relayTicket = null;
     controlStatus = null;
+  }
+
+  NetworkModel? get selectedNetwork {
+    if (networks.isEmpty) {
+      return null;
+    }
+    final targetId = selectedNetworkId;
+    if (targetId != null && targetId.isNotEmpty) {
+      for (final network in networks) {
+        if (network.networkId == targetId) {
+          return network;
+        }
+      }
+    }
+    return networks.first;
+  }
+
+  void syncSelectedNetworkId({String? preferredNetworkId}) {
+    if (networks.isEmpty) {
+      selectedNetworkId = null;
+      return;
+    }
+    final preferred = preferredNetworkId?.trim();
+    if (preferred != null &&
+        preferred.isNotEmpty &&
+        networks.any((network) => network.networkId == preferred)) {
+      selectedNetworkId = preferred;
+      return;
+    }
+    final current = selectedNetworkId?.trim();
+    if (current != null &&
+        current.isNotEmpty &&
+        networks.any((network) => network.networkId == current)) {
+      return;
+    }
+    selectedNetworkId = networks.first.networkId;
   }
 }

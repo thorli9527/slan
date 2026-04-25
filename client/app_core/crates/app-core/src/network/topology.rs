@@ -6,9 +6,14 @@ use super::{DnsConfig, RelayRegion};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkMember {
+    pub member_id: Option<String>,
+    pub network_id: Option<String>,
+    pub attachment_id: Option<String>,
     pub device_id: String,
     pub role: String,
+    pub status: Option<String>,
     pub virtual_ip: Option<String>,
+    pub remark: Option<String>,
 }
 
 /// 网络模型。
@@ -21,7 +26,33 @@ pub struct Network {
     pub members: Vec<NetworkMember>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkJoinResult {
+    pub network_id: String,
+    pub device_id: String,
+    pub member_id: Option<String>,
+    pub attachment_id: Option<String>,
+    pub virtual_ip: Option<String>,
+}
+
 /// 控制面下发的节点候选端点。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkAssignment {
+    pub attachment_id: String,
+    pub network_id: String,
+    pub subnet_id: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub user_id: String,
+    pub user_email: String,
+    pub role: String,
+    pub remark: Option<String>,
+    pub virtual_ip: Option<String>,
+    pub status: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Endpoint {

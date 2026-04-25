@@ -1,5 +1,18 @@
 # 系统边界与接口矩阵
 
+## Maintained Main-Flow Status
+
+The create / join / alias / switch / activate / bootstrap / control-session /
+relay-ticket main flow is now wired across:
+
+- Flutter app UI and app workspace services
+- app-core bridge, JSON facade, controller-client, and relay/path abstractions
+- server-biz HTTP routes, DTOs, service layer, OpenAPI, and protocol contracts
+- web console network lifecycle helpers
+
+Remaining gaps in this matrix should be read as production and real-network
+hardening unless a row explicitly says an API is missing.
+
 本文档把当前主链路中的三个核心子系统统一放到一张边界矩阵里：
 
 - `client/app_core`
@@ -116,15 +129,14 @@ app_core(path-manager / relay-client)
 
 ### `app_core`
 
-- 缺少真实 `controller-client` HTTP 实现
-- 缺少真实 `DerpClient` / `DerpPool` / `PathManager` 实现
-- 缺少与 `tunnel` 的完整打通
+- 已具备真实 `controller-client` HTTP 接入、join / switch / activate / bootstrap / ticket 主流程。
+- 仍需扩展生产级 `DerpClient` / `DerpPool` / `PathManager` 诊断与真实网络覆盖。
+- 仍需继续完善跨平台 `tunnel` 安装、权限和故障恢复路径。
 
 ### `server-biz`
 
-- 缺少真实 `control/sessions` 完整流程
-- 缺少 `NetworkMap` 与 `derp_map` 的真实编排
-- 缺少 cluster-aware ticket
+- 已具备 `bootstrap`、显式 `control/sessions`、`NetworkMap`、`derp_map` 与 cluster-aware ticket 主流程。
+- 仍需继续补强策略 / ACL、生产配置校验和更完整的控制通道事件覆盖。
 
 ### `server-relay`
 
@@ -134,11 +146,11 @@ app_core(path-manager / relay-client)
 
 ## 8. 推荐联动实现顺序
 
-1. 先补 `server-biz.bootstrap` 的 `NetworkMap + derp_map`
-2. 再补 `server-biz` 的 cluster-aware ticket
-3. 再补 `app_core.controller-client` 的真实消费
-4. 再补 `app_core.derp_pool`
-5. 最后补 `server-relay` 的集群接入能力
+1. 固化当前 client create / join / alias / switch / activate / bootstrap / relay 主流程回归测试。
+2. 扩展 `app_core.derp_pool` 的真实网络诊断和生产路径覆盖。
+3. 补强 `server-biz` 策略 / ACL 与控制通道事件覆盖。
+4. 补 `server-relay` 的集群接入能力和多节点运行时。
+5. 最后补跨平台隧道安装、权限和恢复体验。
 
 ## 9. 文档入口
 

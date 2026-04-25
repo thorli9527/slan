@@ -5,7 +5,7 @@ help:
 	@echo ""
 	@echo "  Flutter UI"
 	@echo "    make client-desktop-ui-test       # run widget tests covering the desktop client shell"
-	@echo "    make protocol-contract-check      # run web + Flutter protocol drift checks"
+	@echo "    make protocol-contract-check      # run web + Flutter + Rust + Go + OpenAPI + protobuf + route drift checks"
 	@echo ""
 	@echo "  Devices Integration"
 	@echo "    make cleanup-devices-integration  # kill lingering Flutter integration and slan_app processes"

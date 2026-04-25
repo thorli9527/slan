@@ -1,5 +1,23 @@
 # Relay 功能梳理
 
+## Maintained Status
+
+The current main relay fallback path is wired end to end:
+
+- `POST /bootstrap` returns control-plane config, `NetworkMap`, relay topology,
+  and `derp_map`.
+- `POST /relay/tickets` issues cluster-aware relay/DERP ticket fields.
+- `client/app_core/crates/controller-client` calls real bootstrap and ticket
+  HTTP APIs.
+- `client/app_core` has tested relay/DERP fallback routing through
+  `DerpPool`, `PathManager`, and relay client abstractions.
+- Flutter drives bootstrap and relay fallback through the app-core bridge in
+  the devices flow.
+
+The remaining work in this area is production hardening: real multi-node relay
+deployment, failure injection, observability, and cross-platform tunnel
+recovery. It is no longer a missing main-business API flow.
+
 ## 目标
 
 当客户端无法通过 P2P 直连时，由控制面签发短时效 `RelayTicket`，客户端再使用该票据接入 `server-relay`，通过中继完成数据转发。
@@ -160,20 +178,17 @@ Mock 已支持：
 
 ## 当前缺口
 
-- `client/app_core` 仍只有 trait，没有真实 HTTP `ControllerClient` 实现
-- `client/app_core` 还没有真实 `RelayClient` 实现去接 `server-relay`
-- Flutter 页面还没有把 relay ticket 申请和 fallback 状态展示出来
-- `ConnectDirective.relay_ticket` 还没有和 app/core 的连接流程真正打通
+当前 `/bootstrap`、`/relay/tickets`、controller-client、relay-client/path
+manager 的主流程已经具备测试覆盖。剩余缺口主要是生产化和可观测性：
+
+- Flutter 普通页面仍应只展示稳定连接状态，relay fallback 细节放到诊断视图。
+- 真实网络环境下的 relay / DERP 失败注入、恢复和切换测试还需要继续补强。
+- 多 relay / DERP 节点集群部署和运维指标还需要完善。
+- `ConnectionState` 上报与控制面观测面需要继续细化。
 
 ## 建议下一步
 
-1. 先实现 `client/app_core` 的 HTTP `ControllerClient`
-   - 对接 `/bootstrap`
-   - 对接 `/relay/tickets`
-2. 再实现 `client/app_core` 的 `RelayClient`
-   - 消费 `RelayTicket`
-   - 和 `server-relay` 建立 session
-3. 最后把 Flutter `connect()` 串成：
-   - 先 P2P
-   - 失败后申请 relay ticket
-   - 再走 relay
+1. 固化 direct -> relay / DERP fallback 的回归和 smoke 测试。
+2. 补充真实 relay / DERP 节点的故障注入和恢复验证。
+3. 把 fallback、active path、最近探测结果整理为诊断视图。
+4. 完善多节点 relay / DERP 集群部署和指标。

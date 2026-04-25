@@ -18,7 +18,12 @@ void main() {
     );
 
     expect(find.text('Desktop Access Gateway'), findsOneWidget);
-    expect(find.text('Connection Profile'), findsOneWidget);
+    expect(find.text('Sign In'), findsOneWidget);
+    expect(find.byKey(AppTestKeys.authServerConfigButton), findsOneWidget);
+    await tester.tap(find.byKey(AppTestKeys.authServerConfigButton));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Server Config'), findsOneWidget);
     expect(find.text('Server Host'), findsOneWidget);
     expect(find.byKey(AppTestKeys.authHostField), findsOneWidget);
     expect(find.byKey(AppTestKeys.authApplyHostButton), findsOneWidget);

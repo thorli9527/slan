@@ -51,6 +51,19 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     );
   }
 
+  Future<AppCoreSessionPayload> refreshSession({
+    required String refreshToken,
+    String? deviceId,
+  }) async {
+    final payload = await invoke('refreshSession', {
+      'refreshToken': refreshToken,
+      if (deviceId != null && deviceId.isNotEmpty) 'deviceId': deviceId,
+    });
+    return AppCoreSessionPayload.fromJson(
+      _expectMap(payload, method: 'refreshSession'),
+    );
+  }
+
   Future<AppCoreDevicePayload> registerDevice({
     required String name,
     required String platform,
@@ -117,24 +130,84 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     );
   }
 
-  Future<void> joinNetwork({
+  Future<AppCoreNetworkJoinPayload> joinNetwork({
     required String networkId,
     required String deviceId,
   }) async {
-    await invoke('joinNetwork', {
+    final payload = await invoke('joinNetwork', {
       'networkId': networkId,
       'deviceId': deviceId,
     });
+    return AppCoreNetworkJoinPayload.fromJson(
+      _expectMap(payload, method: 'joinNetwork'),
+    );
   }
 
-  Future<void> activateNetwork({
+  Future<AppCoreNetworkJoinPayload> joinNetworkByOwnerEmail({
+    required String ownerEmail,
+    required String deviceId,
+  }) async {
+    final payload = await invoke('joinNetworkByOwnerEmail', {
+      'ownerEmail': ownerEmail,
+      'deviceId': deviceId,
+    });
+    return AppCoreNetworkJoinPayload.fromJson(
+      _expectMap(payload, method: 'joinNetworkByOwnerEmail'),
+    );
+  }
+
+  Future<AppCoreNetworkJoinPayload> joinNetworkByKey({
+    required String joinKey,
+    required String deviceId,
+  }) async {
+    final payload = await invoke('joinNetworkByKey', {
+      'joinKey': joinKey,
+      'deviceId': deviceId,
+    });
+    return AppCoreNetworkJoinPayload.fromJson(
+      _expectMap(payload, method: 'joinNetworkByKey'),
+    );
+  }
+
+  Future<AppCoreNetworkAssignmentPayload> updateAttachmentRemark({
+    required String networkId,
+    required String attachmentId,
+    String? remark,
+  }) async {
+    final payload = await invoke('updateAttachmentRemark', {
+      'networkId': networkId,
+      'attachmentId': attachmentId,
+      if (remark != null && remark.isNotEmpty) 'remark': remark,
+    });
+    return AppCoreNetworkAssignmentPayload.fromJson(
+      _expectMap(payload, method: 'updateAttachmentRemark'),
+    );
+  }
+
+  Future<AppCoreNetworkJoinPayload> activateNetwork({
     required String networkId,
     required String deviceId,
   }) async {
-    await invoke('activateNetwork', {
+    final payload = await invoke('activateNetwork', {
       'networkId': networkId,
       'deviceId': deviceId,
     });
+    return AppCoreNetworkJoinPayload.fromJson(
+      _expectMap(payload, method: 'activateNetwork'),
+    );
+  }
+
+  Future<AppCoreNetworkJoinPayload> switchNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    final payload = await invoke('switchNetwork', {
+      'networkId': networkId,
+      'deviceId': deviceId,
+    });
+    return AppCoreNetworkJoinPayload.fromJson(
+      _expectMap(payload, method: 'switchNetwork'),
+    );
   }
 
   Future<void> deactivateNetwork({
@@ -185,12 +258,21 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     required String srcNodeId,
     required String dstNodeId,
     required String reason,
+    String? derpClusterId,
+    List<String> preferredDerpNodeIds = const [],
+    String? relayRegionId,
   }) async {
     final payload = await invoke('issueRelayTicket', {
       'networkId': networkId,
       'srcNodeId': srcNodeId,
       'dstNodeId': dstNodeId,
+      if (derpClusterId != null && derpClusterId.isNotEmpty)
+        'derpClusterId': derpClusterId,
+      if (preferredDerpNodeIds.isNotEmpty)
+        'preferredDerpNodeIds': preferredDerpNodeIds,
       'reason': reason,
+      if (relayRegionId != null && relayRegionId.isNotEmpty)
+        'relayRegionId': relayRegionId,
     });
     return AppCoreRelayTicketPayload.fromJson(
       _expectMap(payload, method: 'issueRelayTicket'),

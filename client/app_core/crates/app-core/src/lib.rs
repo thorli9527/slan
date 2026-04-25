@@ -16,8 +16,9 @@ pub use derp::{
 };
 pub use identity::{Device, Node, Session};
 pub use network::{
-    ControlPlaneConfig, DnsConfig, Endpoint, Network, NetworkMap, NetworkMember, Peer, RelayCity,
-    RelayCluster, RelayConfig, RelayCountry, RelayEndpoint, RelayNode, RelayRegion, Route,
+    ControlPlaneConfig, DnsConfig, Endpoint, Network, NetworkAssignment, NetworkJoinResult,
+    NetworkMap, NetworkMember, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry,
+    RelayEndpoint, RelayNode, RelayRegion, Route,
 };
 pub use wireguard::{
     AllowedIp, TunnelKeyMaterial, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair,

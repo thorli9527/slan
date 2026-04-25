@@ -120,6 +120,7 @@ export class ConsoleAppFacadeService {
   async joinByOwnerEmail(input: {
     token: string;
     ownerEmail: string;
+    alias?: string;
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<RefreshWorkspaceResult> {
     const ownerEmail = input.ownerEmail.trim();
@@ -132,6 +133,7 @@ export class ConsoleAppFacadeService {
     });
     const result = await this.api.joinByOwnerEmail(input.token, ownerEmail, managedDevice.deviceId);
     const networkId = result.network?.networkId;
+    await this.updateJoinAlias(input.token, networkId, result.attachment?.attachmentId, input.alias);
     if (networkId && result.member?.status === 'active') {
       await this.workspaceService.activateNetwork(input.token, networkId, managedDevice.deviceId);
     }
@@ -145,6 +147,7 @@ export class ConsoleAppFacadeService {
   async joinByKey(input: {
     token: string;
     joinKey: string;
+    alias?: string;
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<RefreshWorkspaceResult> {
     const joinKey = input.joinKey.trim();
@@ -156,8 +159,10 @@ export class ConsoleAppFacadeService {
       ...input.deviceState,
     });
     const result = await this.api.joinByKey(input.token, joinKey, managedDevice.deviceId);
-    if (result.member?.networkId && result.member.status === 'active') {
-      await this.workspaceService.activateNetwork(input.token, result.member.networkId, managedDevice.deviceId);
+    const networkId = result.attachment?.networkId || result.member?.networkId;
+    await this.updateJoinAlias(input.token, networkId, result.attachment?.attachmentId, input.alias);
+    if (networkId && result.member.status === 'active') {
+      await this.workspaceService.activateNetwork(input.token, networkId, managedDevice.deviceId);
     }
     return this.refreshWorkspace({
       token: input.token,
@@ -271,6 +276,19 @@ export class ConsoleAppFacadeService {
 
   private ensureManagementDevice(input: EnsureDeviceInput): Promise<ManagedDeviceState> {
     return this.sessionService.ensureManagementDevice(input);
+  }
+
+  private async updateJoinAlias(
+    token: string,
+    networkId?: string,
+    attachmentId?: string,
+    alias?: string,
+  ): Promise<void> {
+    const remark = alias?.trim();
+    if (!networkId || !attachmentId || !remark) {
+      return;
+    }
+    await this.api.updateAttachmentRemark(token, networkId, attachmentId, remark);
   }
 }
 

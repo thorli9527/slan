@@ -6,6 +6,7 @@ use std::time::Duration;
 pub enum HttpMethod {
     Get,
     Post,
+    Put,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +68,7 @@ impl JsonHttpTransport for TcpJsonHttpTransport {
         let method = match request.method {
             HttpMethod::Get => "GET",
             HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
         };
         let mut wire = format!(
             "{method} {} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nConnection: close\r\n",

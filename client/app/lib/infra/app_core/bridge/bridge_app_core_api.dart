@@ -13,8 +13,7 @@ import '../models/relay_models.dart';
 class BridgeAppCoreApi implements AppCoreApi {
   BridgeAppCoreApi({
     SlanAppCorePluginPlatform? pluginPlatform,
-  }) : _pluginPlatform =
-            pluginPlatform ?? SlanAppCorePluginPlatform.instance;
+  }) : _pluginPlatform = pluginPlatform ?? SlanAppCorePluginPlatform.instance;
   final SlanAppCorePluginPlatform _pluginPlatform;
 
   @override
@@ -45,6 +44,18 @@ class BridgeAppCoreApi implements AppCoreApi {
     final payload = await _pluginPlatform.login(
       email: email,
       password: password,
+    );
+    return _toSessionModel(payload);
+  }
+
+  @override
+  Future<SessionModel> refreshSession({
+    required String refreshToken,
+    String? deviceId,
+  }) async {
+    final payload = await _pluginPlatform.refreshSession(
+      refreshToken: refreshToken,
+      deviceId: deviceId,
     );
     return _toSessionModel(payload);
   }
@@ -108,25 +119,77 @@ class BridgeAppCoreApi implements AppCoreApi {
   }
 
   @override
-  Future<void> joinNetwork({
+  Future<NetworkJoinModel> joinNetwork({
     required String networkId,
     required String deviceId,
   }) async {
-    await _pluginPlatform.joinNetwork(
+    final payload = await _pluginPlatform.joinNetwork(
       networkId: networkId,
       deviceId: deviceId,
     );
+    return _toNetworkJoinModel(payload, fallbackNetworkId: networkId);
   }
 
   @override
-  Future<void> activateNetwork({
+  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
+    required String ownerEmail,
+    required String deviceId,
+  }) async {
+    final payload = await _pluginPlatform.joinNetworkByOwnerEmail(
+      ownerEmail: ownerEmail,
+      deviceId: deviceId,
+    );
+    return _toNetworkJoinModel(payload);
+  }
+
+  @override
+  Future<NetworkJoinModel> joinNetworkByKey({
+    required String joinKey,
+    required String deviceId,
+  }) async {
+    final payload = await _pluginPlatform.joinNetworkByKey(
+      joinKey: joinKey,
+      deviceId: deviceId,
+    );
+    return _toNetworkJoinModel(payload);
+  }
+
+  @override
+  Future<NetworkAssignmentModel> updateAttachmentRemark({
+    required String networkId,
+    required String attachmentId,
+    required String remark,
+  }) async {
+    final payload = await _pluginPlatform.updateAttachmentRemark(
+      networkId: networkId,
+      attachmentId: attachmentId,
+      remark: remark,
+    );
+    return _toNetworkAssignmentModel(payload);
+  }
+
+  @override
+  Future<NetworkJoinModel> activateNetwork({
     required String networkId,
     required String deviceId,
   }) async {
-    await _pluginPlatform.activateNetwork(
+    final payload = await _pluginPlatform.activateNetwork(
       networkId: networkId,
       deviceId: deviceId,
     );
+    return _toNetworkJoinModel(payload);
+  }
+
+  @override
+  Future<NetworkJoinModel> switchNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    final payload = await _pluginPlatform.switchNetwork(
+      networkId: networkId,
+      deviceId: deviceId,
+    );
+    return _toNetworkJoinModel(payload);
   }
 
   @override
@@ -176,12 +239,18 @@ class BridgeAppCoreApi implements AppCoreApi {
     required String srcNodeId,
     required String dstNodeId,
     required String reason,
+    String? derpClusterId,
+    List<String> preferredDerpNodeIds = const [],
+    String? relayRegionId,
   }) async {
     final payload = await _pluginPlatform.issueRelayTicket(
       networkId: networkId,
       srcNodeId: srcNodeId,
       dstNodeId: dstNodeId,
       reason: reason,
+      derpClusterId: derpClusterId,
+      preferredDerpNodeIds: preferredDerpNodeIds,
+      relayRegionId: relayRegionId,
     );
     return _toRelayTicketModel(payload);
   }
@@ -290,7 +359,49 @@ NetworkModel _toNetworkSummaryModel(AppCoreNetworkPayload payload) {
   return NetworkModel(
     networkId: payload.networkId,
     name: payload.name,
-    cidr: payload.defaultSubnetCidr ?? '',
+    cidr: payload.cidr ?? payload.defaultSubnetCidr ?? '',
+    members: payload.members
+        .map(
+          (member) => _toNetworkMemberModel(
+            member,
+            networkId: payload.networkId,
+            selfDeviceId: '',
+            selfAttachments: const [],
+          ),
+        )
+        .toList(growable: false),
+  );
+}
+
+NetworkJoinModel _toNetworkJoinModel(
+  AppCoreNetworkJoinPayload payload, {
+  String? fallbackNetworkId,
+}) {
+  return NetworkJoinModel(
+    networkId:
+        payload.networkId.isEmpty ? fallbackNetworkId ?? '' : payload.networkId,
+    deviceId: payload.deviceId,
+    memberId: payload.memberId,
+    attachmentId: payload.attachmentId,
+    virtualIp: payload.virtualIp,
+  );
+}
+
+NetworkAssignmentModel _toNetworkAssignmentModel(
+  AppCoreNetworkAssignmentPayload payload,
+) {
+  return NetworkAssignmentModel(
+    attachmentId: payload.attachmentId,
+    networkId: payload.networkId,
+    subnetId: payload.subnetId,
+    deviceId: payload.deviceId,
+    deviceName: payload.deviceName,
+    userId: payload.userId,
+    userEmail: payload.userEmail,
+    role: payload.role,
+    remark: payload.remark,
+    virtualIp: payload.virtualIp,
+    status: payload.status,
   );
 }
 
@@ -361,7 +472,8 @@ NetworkModel _toNetworkDetailModel(
           .cast<String?>()
           .firstWhere(
             (subnet) => subnet != null,
-            orElse: () => payload.subnets.isNotEmpty ? payload.subnets.first.cidr : '',
+            orElse: () =>
+                payload.subnets.isNotEmpty ? payload.subnets.first.cidr : '',
           ) ??
       '';
   return NetworkModel(
@@ -401,15 +513,18 @@ NetworkMemberModel _toNetworkMemberModel(
   return NetworkMemberModel(
     memberId: payload.memberId,
     networkId: payload.networkId ?? networkId,
+    attachmentId: payload.attachmentId,
     deviceId: payload.deviceId,
     role: payload.role,
     createdAt: payload.createdAt,
     status: payload.status,
-    virtualIp: virtualIp,
+    virtualIp: virtualIp ?? payload.virtualIp,
+    remark: payload.remark,
   );
 }
 
-ControlPlaneConfigModel _toControlPlaneModel(AppCoreControlPlanePayload payload) {
+ControlPlaneConfigModel _toControlPlaneModel(
+    AppCoreControlPlanePayload payload) {
   return ControlPlaneConfigModel(
     wsUrl: payload.wsUrl,
     sessionToken: payload.sessionToken,

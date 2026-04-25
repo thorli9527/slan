@@ -25,9 +25,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Login'), findsOneWidget);
-    expect(find.text('Server Config'), findsOneWidget);
     expect(find.byKey(AppTestKeys.homeLoginButton), findsOneWidget);
     expect(find.byKey(AppTestKeys.homeSettingsButton), findsOneWidget);
+
+    await tester.tap(find.byKey(AppTestKeys.homeSettingsButton));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Server Host'), findsWidgets);
+    expect(find.text('Save'), findsOneWidget);
   });
 
   testWidgets('HomePage renders minimal logged-in summary actions', (

@@ -129,6 +129,12 @@ message RelayRegion {
   string region_id = 1;
   string region_name = 2;
   repeated RelayEndpoint endpoints = 3;
+  string country_code = 4;
+  string country_name = 5;
+  string city_code = 6;
+  string city_name = 7;
+  string cluster_id = 8;
+  string cluster_name = 9;
 }
 
 // relay 区域内的具体端点。

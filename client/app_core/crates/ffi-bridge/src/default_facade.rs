@@ -4,14 +4,16 @@ use control_ws_client::{
     ControlWsPathHealthReport,
 };
 use controller_client::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest,
-    LoginRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkByKeyRequest,
+    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
+    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
 };
 use p2p::{P2PConnector, PeerCandidate};
 use relay_client::{DerpPool, PathManager, RelayClient};
 use slan_app_core::{
     ActivePath, BootstrapConfig, ConnectionPath, ConnectionState, DerpCluster, Device, Endpoint,
-    Network, Node, Peer, RelayTicket, Session,
+    Network, NetworkAssignment, NetworkJoinResult, Node, Peer, RelayTicket, Session,
 };
 use std::sync::Mutex;
 use tunnel::{TunnelConfig, TunnelManager};
@@ -187,6 +189,7 @@ where
         derp_cluster_id: Option<String>,
         preferred_derp_node_ids: Vec<String>,
         reason: String,
+        relay_region_id: Option<String>,
     ) -> Result<RelayTicket, String> {
         let access_token = self.with_access_token()?;
         self.controller.issue_relay_ticket(
@@ -198,6 +201,7 @@ where
                 derp_cluster_id,
                 preferred_derp_node_ids,
                 reason,
+                relay_region_id,
             },
         )
     }
@@ -238,6 +242,7 @@ where
             Some(cluster.cluster_id.clone()),
             preferred_derp_node_ids,
             "p2p_failed".to_string(),
+            None,
         )?;
         self.derp_pool
             .install_cluster(&cluster.cluster_id, cluster.nodes.clone(), ticket)?;
@@ -514,6 +519,7 @@ where
             plan.map(|plan| plan.preferred_derp_node_ids.clone())
                 .unwrap_or_default(),
             "p2p_failed".to_string(),
+            None,
         )
     }
 }
@@ -544,6 +550,23 @@ where
             email,
             password,
             device_id: None,
+        })?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?;
+        state.session = Some(session.clone());
+        Ok(session)
+    }
+
+    fn refresh_session(
+        &self,
+        refresh_token: String,
+        device_id: Option<String>,
+    ) -> Result<Session, String> {
+        let session = self.controller.refresh(RefreshTokenRequest {
+            refresh_token,
+            device_id,
         })?;
         let mut state = self
             .state
@@ -612,11 +635,22 @@ where
 
     fn create_network(&self, name: String, cidr: String) -> Result<Network, String> {
         let access_token = self.with_access_token()?;
-        self.controller
-            .create_network(&access_token, CreateNetworkRequest { name, cidr })
+        self.controller.create_network(
+            &access_token,
+            CreateNetworkRequest {
+                name,
+                cidr,
+                description: None,
+                bind_device_id: None,
+            },
+        )
     }
 
-    fn join_network(&self, network_id: String, device_id: String) -> Result<(), String> {
+    fn join_network(
+        &self,
+        network_id: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String> {
         let access_token = self.with_access_token()?;
         self.controller.join_network(
             &access_token,
@@ -627,15 +661,103 @@ where
         )
     }
 
-    fn activate_network(&self, network_id: String, device_id: String) -> Result<(), String> {
+    fn join_network_by_owner_email(
+        &self,
+        owner_email: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String> {
         let access_token = self.with_access_token()?;
-        self.controller.activate_network(
+        self.controller.join_network_by_owner_email(
             &access_token,
-            JoinNetworkRequest {
-                network_id,
+            JoinNetworkByOwnerEmailRequest {
+                owner_email,
                 device_id,
             },
         )
+    }
+
+    fn join_network_by_key(
+        &self,
+        join_key: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String> {
+        let access_token = self.with_access_token()?;
+        self.controller.join_network_by_key(
+            &access_token,
+            JoinNetworkByKeyRequest {
+                join_key,
+                device_id,
+            },
+        )
+    }
+
+    fn update_attachment_remark(
+        &self,
+        network_id: String,
+        attachment_id: String,
+        remark: Option<String>,
+    ) -> Result<NetworkAssignment, String> {
+        let access_token = self.with_access_token()?;
+        self.controller.update_attachment_remark(
+            &access_token,
+            UpdateAttachmentRemarkRequest {
+                network_id,
+                attachment_id,
+                remark,
+            },
+        )
+    }
+
+    fn activate_network(
+        &self,
+        network_id: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String> {
+        let access_token = self.with_access_token()?;
+        let joined = self.controller.activate_network(
+            &access_token,
+            JoinNetworkRequest {
+                network_id: network_id.clone(),
+                device_id,
+            },
+        )?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?;
+        state.current_network_id = Some(network_id);
+        if let Some(virtual_ip) = joined.virtual_ip.as_ref() {
+            if let Some(device) = state.current_device.as_mut() {
+                device.virtual_ip = Some(virtual_ip.clone());
+            }
+        }
+        Ok(joined)
+    }
+
+    fn switch_network(
+        &self,
+        network_id: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String> {
+        let access_token = self.with_access_token()?;
+        let joined = self.controller.switch_network(
+            &access_token,
+            SwitchNetworkRequest {
+                network_id: network_id.clone(),
+                device_id,
+            },
+        )?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?;
+        state.current_network_id = Some(network_id);
+        if let Some(virtual_ip) = joined.virtual_ip.as_ref() {
+            if let Some(device) = state.current_device.as_mut() {
+                device.virtual_ip = Some(virtual_ip.clone());
+            }
+        }
+        Ok(joined)
     }
 
     fn deactivate_network(&self, network_id: String, device_id: String) -> Result<(), String> {
@@ -643,10 +765,23 @@ where
         self.controller.deactivate_network(
             &access_token,
             DeactivateNetworkRequest {
-                network_id,
+                network_id: network_id.clone(),
                 device_id,
             },
-        )
+        )?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?;
+        if state.current_network_id.as_deref() == Some(network_id.as_str()) {
+            state.current_network_id = None;
+            state.current_bootstrap = None;
+            state.current_connect_plans.clear();
+            state.connection_state = Some(ConnectionState::Disconnected);
+            state.active_path = None;
+            state.tunnel_peer_virtual_ip = None;
+        }
+        Ok(())
     }
 
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String> {
@@ -1065,15 +1200,19 @@ where
         network_id: String,
         src_node_id: String,
         dst_node_id: String,
+        derp_cluster_id: Option<String>,
+        preferred_derp_node_ids: Vec<String>,
         reason: String,
+        relay_region_id: Option<String>,
     ) -> Result<RelayTicket, String> {
         self.issue_relay_ticket_with_options(
             network_id,
             src_node_id,
             dst_node_id,
-            None,
-            vec![],
+            derp_cluster_id,
+            preferred_derp_node_ids,
             reason,
+            relay_region_id,
         )
     }
 

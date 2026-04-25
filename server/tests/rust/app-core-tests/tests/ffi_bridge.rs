@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use controller_client::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkRequest,
-    LoginRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkByKeyRequest,
+    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
+    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
 };
 use ffi_bridge::{AppCoreFacade, DefaultAppCoreFacade};
 use p2p::{P2PConnector, PeerCandidate};
@@ -10,9 +12,9 @@ use relay_client::{DerpPool, PathManager, PathManagerError, RelayClient, RelayCl
 use slan_app_core::{
     ActivePath, BootstrapConfig, ConnectionPath, ConnectionState, ControlPlaneConfig, DerpCluster,
     DerpHealth, DerpLinkSnapshot, DerpLinkState, DerpMap, DerpNodeMeta, DerpPoolState,
-    DerpSwitchEvent, DerpTransport, Device, DnsConfig, Endpoint, Network, NetworkMap, Node, Peer,
-    RelayCity, RelayCluster, RelayConfig, RelayCountry, RelayNode, RelayTicket, Session,
-    SwitchReason,
+    DerpSwitchEvent, DerpTransport, Device, DnsConfig, Endpoint, Network, NetworkAssignment,
+    NetworkJoinResult, NetworkMap, Node, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry,
+    RelayNode, RelayTicket, Session, SwitchReason,
 };
 use tunnel::{TunnelConfig, TunnelManager};
 
@@ -54,6 +56,13 @@ impl ControllerClient for FakeController {
     }
 
     fn login(&self, _req: LoginRequest) -> Result<Session, String> {
+        self.register(RegisterRequest {
+            email: String::new(),
+            password: String::new(),
+        })
+    }
+
+    fn refresh(&self, _req: RefreshTokenRequest) -> Result<Session, String> {
         self.register(RegisterRequest {
             email: String::new(),
             password: String::new(),
@@ -102,16 +111,61 @@ impl ControllerClient for FakeController {
         })
     }
 
-    fn join_network(&self, _access_token: &str, _req: JoinNetworkRequest) -> Result<(), String> {
-        Ok(())
+    fn update_network_dns(
+        &self,
+        _access_token: &str,
+        req: UpdateNetworkDNSRequest,
+    ) -> Result<Network, String> {
+        Ok(Network {
+            network_id: req.network_id,
+            name: "home".into(),
+            cidr: "100.64.0.0/24".into(),
+            members: vec![],
+        })
+    }
+
+    fn join_network(
+        &self,
+        _access_token: &str,
+        req: JoinNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        Ok(join_result(req.network_id, req.device_id))
+    }
+
+    fn join_network_by_owner_email(
+        &self,
+        _access_token: &str,
+        _req: JoinNetworkByOwnerEmailRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        Ok(join_result("net-1".into(), _req.device_id))
+    }
+
+    fn join_network_by_key(
+        &self,
+        _access_token: &str,
+        _req: JoinNetworkByKeyRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        Ok(join_result("net-1".into(), _req.device_id))
+    }
+
+    fn update_attachment_remark(
+        &self,
+        _access_token: &str,
+        req: UpdateAttachmentRemarkRequest,
+    ) -> Result<NetworkAssignment, String> {
+        Ok(network_assignment(
+            req.network_id,
+            req.attachment_id,
+            req.remark,
+        ))
     }
 
     fn activate_network(
         &self,
         _access_token: &str,
-        _req: JoinNetworkRequest,
-    ) -> Result<(), String> {
-        Ok(())
+        req: JoinNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        Ok(join_result(req.network_id, req.device_id))
     }
 
     fn deactivate_network(
@@ -289,6 +343,36 @@ impl ControllerClient for FakeController {
             session_key: None,
             signature: "sig".into(),
         })
+    }
+}
+
+fn join_result(network_id: String, device_id: String) -> NetworkJoinResult {
+    NetworkJoinResult {
+        network_id,
+        device_id,
+        member_id: Some("member-1".into()),
+        attachment_id: Some("attach-1".into()),
+        virtual_ip: Some("100.64.0.10".into()),
+    }
+}
+
+fn network_assignment(
+    network_id: String,
+    attachment_id: String,
+    remark: Option<String>,
+) -> NetworkAssignment {
+    NetworkAssignment {
+        attachment_id,
+        network_id,
+        subnet_id: "subnet-1".into(),
+        device_id: "dev-1".into(),
+        device_name: "device-1".into(),
+        user_id: "user-1".into(),
+        user_email: "user@example.com".into(),
+        role: "member".into(),
+        remark,
+        virtual_ip: Some("100.64.0.10".into()),
+        status: Some("active".into()),
     }
 }
 

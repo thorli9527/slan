@@ -9,6 +9,14 @@ pub struct AuthArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RefreshSessionArgs {
+    pub refresh_token: String,
+    #[serde(default)]
+    pub device_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegisterDeviceArgs {
     pub name: String,
     pub platform: String,
@@ -42,6 +50,29 @@ pub struct JoinNetworkArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JoinNetworkByOwnerEmailArgs {
+    pub owner_email: String,
+    pub device_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinNetworkByKeyArgs {
+    pub join_key: String,
+    pub device_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAttachmentRemarkArgs {
+    pub network_id: String,
+    pub attachment_id: String,
+    #[serde(default)]
+    pub remark: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapArgs {
     pub node_id: String,
     pub network_id: String,
@@ -53,7 +84,13 @@ pub struct RelayTicketArgs {
     pub network_id: String,
     pub src_node_id: String,
     pub dst_node_id: String,
+    #[serde(default)]
+    pub derp_cluster_id: Option<String>,
+    #[serde(default)]
+    pub preferred_derp_node_ids: Vec<String>,
     pub reason: String,
+    #[serde(default)]
+    pub relay_region_id: Option<String>,
 }
 
 #[derive(Deserialize)]

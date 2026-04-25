@@ -1,5 +1,20 @@
 # 小规模上线检查清单
 
+## Maintained Main-Flow Status
+
+Before rollout, the repository-level main flow should be treated as available
+when these checks pass:
+
+- protocol contract checks, including `http-routes`
+- `server/server-biz` unit tests
+- `server/tests/go/server-biz-test` HTTP flow tests
+- `server/tests/rust/app-core-tests`
+- Flutter app tests
+- web console build
+
+The uncovered items near the end of this document are rollout hardening tasks,
+not missing create/join/switch/bootstrap APIs.
+
 本文档面向当前仓库的可运行形态，目标是把 `Mac 客户端 + server-biz + server-relay` 推到“小规模上线可控”的状态。
 
 这里不讨论大规模集群化、复杂高可用和正式多环境发布平台，只关注当前代码已经具备、并且已经在本地 Docker 栈里验证过的最小闭环。
@@ -20,9 +35,15 @@
 - [x] 默认管理员登录、改密、告警清零可用
 - [x] 控制面主链路可用：
   - register
+  - refresh token
   - device register
+  - device list
   - network create
-  - join
+  - join by owner email
+  - join by key
+  - device alias via attachment remark
+  - switch network
+  - activate / deactivate network
   - node register
   - control session
   - bootstrap

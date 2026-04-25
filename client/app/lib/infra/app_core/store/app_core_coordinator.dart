@@ -102,41 +102,60 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     required bool persistSession,
   }) async {
     await runAction(() async {
-      final hydratedSession = nextSession.authenticatedAtMs == null
-          ? nextSession.copyWith(
-              authenticatedAtMs: DateTime.now().millisecondsSinceEpoch,
-            )
-          : nextSession;
       debugPrint(
-        '[auth-callback] store applyExternalSessionInternal start userId=${hydratedSession.userId} deviceId=${hydratedSession.deviceId}',
+        '[auth-callback] store applyExternalSessionInternal start userId=${nextSession.userId} deviceId=${nextSession.deviceId}',
       );
       resetState();
-      sessionStore.session = hydratedSession;
-      if (persistSession) {
-        await AppCoreScope.persistSession(hydratedSession);
-      }
+      sessionStore.session = nextSession;
       sessionStore.notice = '已收到浏览器登录回调，正在恢复客户端会话。';
       emitStateChanged();
       debugPrint(
           '[auth-callback] store session assigned and listeners notified');
       final hydrated =
-          await _authSessionService.hydrateExternalSession(hydratedSession);
-      if (hydrated.device != null) {
-        sessionStore.devices = hydrated.devices;
-        sessionStore.syncDevice(hydrated.device);
-        emitStateChanged();
-        debugPrint(
-          '[auth-callback] store matched device=${hydrated.device!.deviceId}',
-        );
-      } else {
-        sessionStore.devices = hydrated.devices;
-      }
-      sessionStore.networks = hydrated.networks;
-      debugPrint(
-          '[auth-callback] store loaded networks count=${sessionStore.networks.length}');
-      sessionStore.notice = hydrated.notice;
-      debugPrint('[auth-callback] store final notice=${sessionStore.notice}');
+          await _authSessionService.hydrateExternalSession(nextSession);
+      await applyHydratedSession(hydrated, persistSession: persistSession);
     });
+  }
+
+  Future<void> refreshPersistedSession(SessionModel session) async {
+    await runAction(() async {
+      debugPrint(
+        '[auth-refresh] store refreshPersistedSession start userId=${session.userId} deviceId=${session.deviceId}',
+      );
+      resetState();
+      sessionStore.session = session;
+      sessionStore.notice = 'refreshing login session';
+      emitStateChanged();
+      final hydrated =
+          await _authSessionService.refreshAndHydrateSession(session);
+      await applyHydratedSession(hydrated, persistSession: true);
+    });
+  }
+
+  Future<void> applyHydratedSession(
+    AuthSessionHydrationResult hydrated, {
+    required bool persistSession,
+  }) async {
+    sessionStore.session = hydrated.session;
+    if (persistSession) {
+      await AppCoreScope.persistSession(hydrated.session);
+    }
+    if (hydrated.device != null) {
+      sessionStore.devices = hydrated.devices;
+      sessionStore.syncDevice(hydrated.device);
+      emitStateChanged();
+      debugPrint(
+        '[auth-callback] store matched device=${hydrated.device!.deviceId}',
+      );
+    } else {
+      sessionStore.devices = hydrated.devices;
+    }
+    sessionStore.networks = hydrated.networks;
+    sessionStore.syncSelectedNetworkId();
+    debugPrint(
+        '[auth-callback] store loaded networks count=${sessionStore.networks.length}');
+    sessionStore.notice = hydrated.notice;
+    debugPrint('[auth-callback] store final notice=${sessionStore.notice}');
   }
 
   Future<void> signOut() async {
@@ -178,8 +197,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       }
       final devices = await AppCoreScope.instance.listDevices();
       sessionStore.devices = devices;
-      final currentDeviceId = sessionStore.device?.deviceId ??
-          sessionStore.session?.deviceId;
+      final currentDeviceId =
+          sessionStore.device?.deviceId ?? sessionStore.session?.deviceId;
       if (currentDeviceId != null && currentDeviceId.isNotEmpty) {
         for (final device in devices) {
           if (device.deviceId == currentDeviceId) {
@@ -211,6 +230,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       );
       sessionStore.syncDevice(result.device);
       sessionStore.networks = result.networks;
+      sessionStore.syncSelectedNetworkId();
       statusMessage = result.statusMessage;
     });
     return statusMessage;
@@ -241,6 +261,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         sessionStore.syncDevice(result.bootstrap!.device);
       }
       sessionStore.networks = result.networks;
+      sessionStore.syncSelectedNetworkId();
     });
   }
 
@@ -249,6 +270,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     required String preferredNetworkId,
     required String fallbackNetworkName,
     String fallbackCidr = defaultAutoNetworkCidr,
+    NetworkJoinIntent? joinIntent,
   }) async {
     late String targetNetworkId;
     await runAction(() async {
@@ -258,11 +280,63 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         preferredNetworkId: preferredNetworkId,
         fallbackNetworkName: fallbackNetworkName,
         fallbackCidr: fallbackCidr,
+        joinIntent: joinIntent,
       );
       sessionStore.networks = result.networks;
+      sessionStore.syncSelectedNetworkId(preferredNetworkId: result.networkId);
       targetNetworkId = result.networkId;
     });
     return targetNetworkId;
+  }
+
+  Future<void> selectNetwork(String networkId) async {
+    await runAction(() async {
+      final target = networkId.trim();
+      if (target.isEmpty) {
+        throw StateError('networkId is required');
+      }
+      if (sessionStore.networks
+          .every((network) => network.networkId != target)) {
+        throw StateError('network not found: $target');
+      }
+      final result = await _workspaceService.switchNetwork(
+        session: sessionStore.session,
+        currentDevice: sessionStore.device,
+        currentNetworks: sessionStore.networks,
+        networkId: target,
+      );
+      sessionStore.networks = result.networks;
+      sessionStore.syncSelectedNetworkId(preferredNetworkId: result.networkId);
+    });
+  }
+
+  Future<void> joinNetwork({
+    String? ownerEmail,
+    String? joinKey,
+    String? alias,
+  }) async {
+    await runAction(() async {
+      final result = await _workspaceService.joinNetwork(
+        session: sessionStore.session,
+        currentDevice: sessionStore.device,
+        ownerEmail: ownerEmail,
+        joinKey: joinKey,
+        alias: alias,
+      );
+      sessionStore.networks = result.networks;
+      sessionStore.syncSelectedNetworkId(preferredNetworkId: result.networkId);
+      sessionStore.notice = 'Network joined: ${result.networkId}';
+    });
+  }
+
+  Future<void> refreshNetworks() async {
+    await runAction(() async {
+      if (sessionStore.session == null) {
+        throw StateError('login required');
+      }
+      sessionStore.networks = await AppCoreScope.instance.listNetworks();
+      sessionStore.syncSelectedNetworkId();
+    });
   }
 
   Future<void> enableActiveNetwork() async {
@@ -277,11 +351,13 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         sessionStore.notice = '当前账号还没有可启用的网络，请先在网页端创建或接入网络。';
         return;
       }
+      sessionStore.syncSelectedNetworkId();
       final runtime = await _workspaceService.prepareActiveNetworkRuntime(
         session: sessionStore.session,
         currentDevice: sessionStore.device,
         currentNode: sessionStore.node,
         currentNetworks: sessionStore.networks,
+        targetNetworkId: sessionStore.selectedNetworkId,
       );
       debugPrint(
         '[tunnel-enable] runtime ready activeNetwork=${runtime.activeNetwork.networkId} node=${runtime.node?.nodeId} device=${runtime.device?.deviceId}',
@@ -291,6 +367,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.controlStatus = runtime.controlStatus;
       sessionStore.syncDevice(runtime.device);
       sessionStore.networks = runtime.networks;
+      sessionStore.syncSelectedNetworkId(
+        preferredNetworkId: runtime.activeNetwork.networkId,
+      );
 
       final config =
           _tunnelConfigurationService.buildActiveNetworkConfiguration(
@@ -329,9 +408,11 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         session: sessionStore.session,
         currentDevice: sessionStore.device,
         currentNetworks: sessionStore.networks,
+        targetNetworkId: sessionStore.selectedNetworkId,
       );
       final currentDevice = result.device;
       sessionStore.networks = result.networks;
+      sessionStore.syncSelectedNetworkId();
       if (currentDevice != null) {
         sessionStore.syncDevice(DeviceModel(
           deviceId: currentDevice.deviceId,
@@ -367,14 +448,13 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     String? nodeId,
     String? networkId,
   }) async {
-    final targetNodeId =
-        nodeId?.trim().isNotEmpty == true
-            ? nodeId!.trim()
-            : sessionStore.node?.nodeId;
+    final targetNodeId = nodeId?.trim().isNotEmpty == true
+        ? nodeId!.trim()
+        : sessionStore.node?.nodeId;
     final targetNetworkId = networkId?.trim().isNotEmpty == true
         ? networkId!.trim()
         : sessionStore.networks.isNotEmpty
-            ? sessionStore.networks.first.networkId
+            ? sessionStore.selectedNetwork?.networkId
             : null;
     if (targetNodeId == null ||
         targetNodeId.isEmpty ||
@@ -391,6 +471,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.controlStatus = await AppCoreScope.instance.controlStatus();
       sessionStore.syncDevice(sessionStore.bootstrap!.device);
       sessionStore.networks = sessionStore.bootstrap!.networks;
+      sessionStore.syncSelectedNetworkId(preferredNetworkId: targetNetworkId);
     });
   }
 
@@ -406,6 +487,11 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.controlStatus = result.controlStatus;
       sessionStore.syncDevice(result.bootstrap.device);
       sessionStore.networks = result.bootstrap.networks;
+      sessionStore.syncSelectedNetworkId(
+        preferredNetworkId: result.bootstrap.networks.isEmpty
+            ? null
+            : result.bootstrap.networks.first.networkId,
+      );
       detail = result.detail;
     });
     return detail;

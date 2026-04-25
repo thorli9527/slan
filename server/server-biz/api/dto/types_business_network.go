@@ -77,7 +77,7 @@ type UpdateAttachmentIPRequest struct {
 	VirtualIP string `json:"virtualIp"`
 }
 
-// UpdateAttachmentRemarkRequest 允许网络 owner 调整网络内设备备注。
+// UpdateAttachmentRemarkRequest 允许网络 owner 调整网络内设备备注，或设备所有者维护自己的备注。
 type UpdateAttachmentRemarkRequest struct {
 	// Remark 是网络内显示的备注。
 	Remark string `json:"remark,omitempty"`
@@ -188,7 +188,7 @@ type SubnetAttachment struct {
 	DeviceID string `json:"deviceId"`
 	// VirtualIP 是在该子网内分配给设备的虚拟 IP。
 	VirtualIP string `json:"virtualIp,omitempty"`
-	// Remark 是网络 owner 维护的设备备注。
+	// Remark 是网络内显示的设备备注。
 	Remark string `json:"remark,omitempty"`
 	// Status 是挂载关系的生命周期状态。
 	Status string `json:"status,omitempty"`
@@ -246,7 +246,7 @@ type NetworkAssignment struct {
 	UserEmail string `json:"userEmail"`
 	// Role 是该设备在网络中的角色。
 	Role string `json:"role"`
-	// Remark 是网络 owner 维护的设备备注。
+	// Remark 是网络内显示的设备备注。
 	Remark string `json:"remark,omitempty"`
 	// VirtualIP 是当前分配到该设备的虚拟 IP。
 	VirtualIP string `json:"virtualIp,omitempty"`

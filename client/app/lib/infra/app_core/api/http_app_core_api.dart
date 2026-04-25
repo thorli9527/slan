@@ -67,6 +67,25 @@ class HttpAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<SessionModel> refreshSession({
+    required String refreshToken,
+    String? deviceId,
+  }) async {
+    final session = parseSessionResponse(
+      await _send(
+        'POST',
+        '/auth/refresh',
+        body: RefreshTokenRequest(
+          refreshToken: refreshToken,
+          deviceId: deviceId,
+        ).toJson(),
+      ),
+    );
+    _accessToken = session.accessToken;
+    return session;
+  }
+
+  @override
   Future<DeviceModel> registerDevice({
     required String name,
     required String platform,
@@ -143,29 +162,94 @@ class HttpAppCoreApi implements AppCoreApi {
   }
 
   @override
-  Future<void> joinNetwork({
+  Future<NetworkJoinModel> joinNetwork({
     required String networkId,
     required String deviceId,
   }) async {
-    await _send(
+    final json = await _send(
       'POST',
       '/networks/$networkId/join',
       body: JoinNetworkRequest(deviceId: deviceId).toJson(),
       authorized: true,
     );
+    return parseNetworkJoinResponse(json);
   }
 
   @override
-  Future<void> activateNetwork({
+  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
+    required String ownerEmail,
+    required String deviceId,
+  }) async {
+    final json = await _send(
+      'POST',
+      '/networks/join-by-owner-email',
+      body: JoinNetworkByOwnerEmailRequest(
+        ownerEmail: ownerEmail,
+        deviceId: deviceId,
+      ).toJson(),
+      authorized: true,
+    );
+    return parseNetworkJoinByOwnerEmailResponse(json);
+  }
+
+  @override
+  Future<NetworkJoinModel> joinNetworkByKey({
+    required String joinKey,
+    required String deviceId,
+  }) async {
+    final json = await _send(
+      'POST',
+      '/networks/join-by-key',
+      body: JoinNetworkByKeyRequest(
+        joinKey: joinKey,
+        deviceId: deviceId,
+      ).toJson(),
+      authorized: true,
+    );
+    return parseNetworkJoinResponse(json);
+  }
+
+  @override
+  Future<NetworkAssignmentModel> updateAttachmentRemark({
+    required String networkId,
+    required String attachmentId,
+    required String remark,
+  }) async {
+    final json = await _send(
+      'PUT',
+      '/networks/$networkId/attachments/$attachmentId/remark',
+      authorized: true,
+      body: UpdateAttachmentRemarkRequest(remark: remark).toJson(),
+    );
+    return parseNetworkAssignmentResponse(json);
+  }
+
+  @override
+  Future<NetworkJoinModel> activateNetwork({
     required String networkId,
     required String deviceId,
   }) async {
-    await _send(
+    final json = await _send(
       'POST',
       '/networks/$networkId/activate',
       body: JoinNetworkRequest(deviceId: deviceId).toJson(),
       authorized: true,
     );
+    return parseNetworkJoinResponse(json);
+  }
+
+  @override
+  Future<NetworkJoinModel> switchNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    final json = await _send(
+      'POST',
+      '/networks/$networkId/switch',
+      body: SwitchNetworkRequest(deviceId: deviceId).toJson(),
+      authorized: true,
+    );
+    return parseNetworkJoinResponse(json);
   }
 
   @override
@@ -221,6 +305,9 @@ class HttpAppCoreApi implements AppCoreApi {
     required String srcNodeId,
     required String dstNodeId,
     required String reason,
+    String? derpClusterId,
+    List<String> preferredDerpNodeIds = const [],
+    String? relayRegionId,
   }) async {
     return parseRelayTicketResponse(
       await _send(
@@ -231,6 +318,9 @@ class HttpAppCoreApi implements AppCoreApi {
           srcNodeId: srcNodeId,
           dstNodeId: dstNodeId,
           reason: reason,
+          derpClusterId: derpClusterId,
+          preferredDerpNodeIds: preferredDerpNodeIds,
+          relayRegionId: relayRegionId,
         ).toJson(),
         authorized: true,
       ),
@@ -321,9 +411,8 @@ class HttpAppCoreApi implements AppCoreApi {
   }) async {
     final target = _baseUri.resolve(path);
     await StartupLog.write('http $method $target start authorized=$authorized');
-    final request = await _httpClient
-        .openUrl(method, target)
-        .timeout(_requestTimeout);
+    final request =
+        await _httpClient.openUrl(method, target).timeout(_requestTimeout);
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     if (authorized) {
       final token = _accessToken;
@@ -338,10 +427,8 @@ class HttpAppCoreApi implements AppCoreApi {
     }
 
     final response = await request.close().timeout(_requestTimeout);
-    final payload = await response
-        .transform(utf8.decoder)
-        .join()
-        .timeout(_requestTimeout);
+    final payload =
+        await response.transform(utf8.decoder).join().timeout(_requestTimeout);
     final json = payload.isEmpty ? <String, dynamic>{} : _decodeObject(payload);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       await StartupLog.write(
@@ -354,7 +441,8 @@ class HttpAppCoreApi implements AppCoreApi {
             'HTTP $method $path failed with status ${response.statusCode}',
       );
     }
-    await StartupLog.write('http $method $target ok status=${response.statusCode}');
+    await StartupLog.write(
+        'http $method $target ok status=${response.statusCode}');
     return json;
   }
 }

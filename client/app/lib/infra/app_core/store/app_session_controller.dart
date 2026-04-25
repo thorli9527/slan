@@ -1,4 +1,5 @@
 import '../../../application/device_runtime_service.dart';
+import '../../../application/device_setup_service.dart';
 import '../models/identity_models.dart';
 import 'app_core_coordinator.dart';
 
@@ -9,6 +10,9 @@ class AppSessionController {
 
   Future<void> applyExternalSession(SessionModel nextSession) =>
       _coordinator.applyExternalSession(nextSession);
+
+  Future<void> refreshPersistedSession(SessionModel session) =>
+      _coordinator.refreshPersistedSession(session);
 
   Future<void> signOut() => _coordinator.signOut();
 
@@ -61,13 +65,31 @@ class AppSessionController {
     required String preferredNetworkId,
     required String fallbackNetworkName,
     String fallbackCidr = AppCoreCoordinator.defaultAutoNetworkCidr,
+    NetworkJoinIntent? joinIntent,
   }) =>
       _coordinator.ensureNetworkAvailableAndJoined(
         currentDevice: currentDevice,
         preferredNetworkId: preferredNetworkId,
         fallbackNetworkName: fallbackNetworkName,
         fallbackCidr: fallbackCidr,
+        joinIntent: joinIntent,
       );
+
+  Future<void> selectNetwork(String networkId) =>
+      _coordinator.selectNetwork(networkId);
+
+  Future<void> joinNetwork({
+    String? ownerEmail,
+    String? joinKey,
+    String? alias,
+  }) =>
+      _coordinator.joinNetwork(
+        ownerEmail: ownerEmail,
+        joinKey: joinKey,
+        alias: alias,
+      );
+
+  Future<void> refreshNetworks() => _coordinator.refreshNetworks();
 
   Future<void> enableActiveNetwork() => _coordinator.enableActiveNetwork();
 

@@ -13,6 +13,8 @@ import {
   NetworkJoinByOwnerEmailResult,
   NetworkJoinResult,
   Subnet,
+  SubnetAttachment,
+  UpdateNetworkDNSRequest,
 } from './api-contracts';
 import { AuthMode as AuthModeLocal } from './ui-models';
 
@@ -90,6 +92,10 @@ export class ConsoleApiService {
     return this.request<NetworkHome>('/networks/home', { token });
   }
 
+  listNetworks(token: string): Promise<{ items: Network[] }> {
+    return this.request<{ items: Network[] }>('/networks', { token });
+  }
+
   getNetworkDetail(token: string, networkId: string): Promise<NetworkDetail> {
     return this.request<NetworkDetail>(`/networks/${networkId}`, { token });
   }
@@ -132,8 +138,8 @@ export class ConsoleApiService {
     });
   }
 
-  updateNetwork(token: string, networkId: string, input: UpdateNetworkInput): Promise<void> {
-    return this.request(`/networks/${networkId}`, {
+  updateNetwork(token: string, networkId: string, input: UpdateNetworkInput): Promise<Network> {
+    return this.request<Network>(`/networks/${networkId}`, {
       token,
       init: {
         method: 'PUT',
@@ -152,6 +158,16 @@ export class ConsoleApiService {
     });
   }
 
+  updateNetworkDns(token: string, networkId: string, input: UpdateNetworkDNSRequest): Promise<NetworkDetail> {
+    return this.request<NetworkDetail>(`/networks/${networkId}/dns`, {
+      token,
+      init: {
+        method: 'PUT',
+        body: JSON.stringify(input)
+      }
+    });
+  }
+
   updateNetworkMemberStatus(token: string, networkId: string, memberId: string, status: 'active' | 'rejected'): Promise<NetworkMember> {
     return this.request<NetworkMember>(`/networks/${networkId}/members/${memberId}/status`, {
       token,
@@ -162,8 +178,8 @@ export class ConsoleApiService {
     });
   }
 
-  createSubnet(token: string, networkId: string, input: CreateSubnetInput): Promise<void> {
-    return this.request(`/networks/${networkId}/subnets`, {
+  createSubnet(token: string, networkId: string, input: CreateSubnetInput): Promise<Subnet> {
+    return this.request<Subnet>(`/networks/${networkId}/subnets`, {
       token,
       init: {
         method: 'POST',
@@ -172,8 +188,8 @@ export class ConsoleApiService {
     });
   }
 
-  updateAttachmentIp(token: string, networkId: string, attachmentId: string, virtualIp: string): Promise<void> {
-    return this.request(`/networks/${networkId}/attachments/${attachmentId}/ip`, {
+  updateAttachmentIp(token: string, networkId: string, attachmentId: string, virtualIp: string): Promise<SubnetAttachment> {
+    return this.request<SubnetAttachment>(`/networks/${networkId}/attachments/${attachmentId}/ip`, {
       token,
       init: {
         method: 'PUT',
@@ -192,8 +208,8 @@ export class ConsoleApiService {
     });
   }
 
-  switchNetwork(token: string, networkId: string, deviceId: string): Promise<void> {
-    return this.request(`/networks/${networkId}/switch`, {
+  switchNetwork(token: string, networkId: string, deviceId: string): Promise<NetworkJoinResult> {
+    return this.request<NetworkJoinResult>(`/networks/${networkId}/switch`, {
       token,
       init: {
         method: 'POST',
@@ -202,8 +218,8 @@ export class ConsoleApiService {
     });
   }
 
-  activateNetwork(token: string, networkId: string, deviceId: string): Promise<void> {
-    return this.request(`/networks/${networkId}/activate`, {
+  activateNetwork(token: string, networkId: string, deviceId: string): Promise<NetworkJoinResult> {
+    return this.request<NetworkJoinResult>(`/networks/${networkId}/activate`, {
       token,
       init: {
         method: 'POST',

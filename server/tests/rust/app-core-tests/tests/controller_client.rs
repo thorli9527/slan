@@ -2,8 +2,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use controller_client::{
-    ControllerClient, HttpControllerClient, HttpRequest, HttpResponse, JoinNetworkRequest,
-    JsonHttpTransport, LoginRequest, RelayTicketRequest, TcpJsonHttpTransport,
+    ControllerClient, HttpControllerClient, HttpRequest, HttpResponse,
+    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, JsonHttpTransport, LoginRequest,
+    RelayTicketRequest, SwitchNetworkRequest, TcpJsonHttpTransport,
 };
 use serde_json::Value;
 
@@ -78,6 +79,7 @@ fn relay_ticket_request_serializes_derp_fields() {
                     "relay-cn-local-tcp".into(),
                 ],
                 reason: "timeout".into(),
+                relay_region_id: None,
             },
         )
         .unwrap();
@@ -161,6 +163,105 @@ fn join_network_accepts_member_attachment_response() {
         request.path,
         format!("{}/networks/net-1/join", support::DEV_CONTROL_BASE_URL)
     );
+}
+
+#[test]
+fn join_by_owner_email_accepts_network_member_attachment_response() {
+    let transport = RecordingTransport::default();
+    transport.respond_with(
+        200,
+        r#"{
+            "network":{
+                "networkId":"net-1",
+                "name":"home",
+                "defaultSubnetCidr":"100.64.0.0/24"
+            },
+            "member":{
+                "memberId":"member-1",
+                "networkId":"net-1",
+                "deviceId":"dev-1",
+                "role":"member",
+                "status":"active"
+            },
+            "attachment":{
+                "attachmentId":"att-1",
+                "networkId":"net-1",
+                "subnetId":"subnet-1",
+                "deviceId":"dev-1",
+                "virtualIp":"100.64.0.2",
+                "status":"active"
+            }
+        }"#,
+    );
+
+    let client = HttpControllerClient::new(support::DEV_CONTROL_BASE_URL, transport);
+    let joined = client
+        .join_network_by_owner_email(
+            "token-1",
+            JoinNetworkByOwnerEmailRequest {
+                owner_email: "owner@example.com".into(),
+                device_id: "dev-1".into(),
+            },
+        )
+        .unwrap();
+
+    let request = client.transport.take_request();
+    assert_eq!(
+        request.path,
+        format!(
+            "{}/networks/join-by-owner-email",
+            support::DEV_CONTROL_BASE_URL
+        )
+    );
+    assert_eq!(joined.network_id, "net-1");
+    assert_eq!(joined.attachment_id.as_deref(), Some("att-1"));
+    assert_eq!(joined.virtual_ip.as_deref(), Some("100.64.0.2"));
+}
+
+#[test]
+fn switch_network_posts_to_switch_endpoint() {
+    let transport = RecordingTransport::default();
+    transport.respond_with(
+        200,
+        r#"{
+            "member":{
+                "memberId":"member-1",
+                "networkId":"net-1",
+                "deviceId":"dev-1",
+                "role":"member",
+                "status":"active"
+            },
+            "attachment":{
+                "attachmentId":"att-1",
+                "networkId":"net-1",
+                "subnetId":"subnet-1",
+                "deviceId":"dev-1",
+                "virtualIp":"100.64.0.2",
+                "status":"active"
+            }
+        }"#,
+    );
+
+    let client = HttpControllerClient::new(support::DEV_CONTROL_BASE_URL, transport);
+    let switched = client
+        .switch_network(
+            "token-1",
+            SwitchNetworkRequest {
+                network_id: "net-1".into(),
+                device_id: "dev-1".into(),
+            },
+        )
+        .unwrap();
+
+    let request = client.transport.take_request();
+    assert_eq!(
+        request.path,
+        format!("{}/networks/net-1/switch", support::DEV_CONTROL_BASE_URL)
+    );
+    let body: Value = serde_json::from_slice(&request.body_json.unwrap()).unwrap();
+    assert_eq!(body["deviceId"], "dev-1");
+    assert_eq!(switched.network_id, "net-1");
+    assert_eq!(switched.attachment_id.as_deref(), Some("att-1"));
 }
 
 #[test]

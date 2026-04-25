@@ -1217,6 +1217,63 @@ func TestUpdateAttachmentIP_UpdatesLease(t *testing.T) {
 	}
 }
 
+func TestUpdateAttachmentRemark_AllowsDeviceOwnerAlias(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	for _, user := range []repo.User{
+		{UserID: "owner-1", Email: "owner@local.slan", PasswordHash: "hash"},
+		{UserID: "user-2", Email: "member@local.slan", PasswordHash: "hash"},
+		{UserID: "user-3", Email: "other@local.slan", PasswordHash: "hash"},
+	} {
+		if err := state.pg.CreateUser(ctx, user); err != nil {
+			t.Fatalf("create user %s: %v", user.UserID, err)
+		}
+	}
+	for _, device := range []repo.Device{
+		{DeviceID: "dev-1", UserID: "owner-1", MachineID: "machine-1", Name: "owner-device", Platform: "macos", Status: "online"},
+		{DeviceID: "dev-2", UserID: "user-2", MachineID: "machine-2", Name: "member-device", Platform: "windows", Status: "online"},
+		{DeviceID: "dev-3", UserID: "user-3", MachineID: "machine-3", Name: "other-device", Platform: "linux", Status: "online"},
+	} {
+		if err := state.pg.InsertDevice(ctx, device); err != nil {
+			t.Fatalf("create device %s: %v", device.DeviceID, err)
+		}
+	}
+	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+	for _, member := range []dto.NetworkMember{
+		{MemberID: "member-1", NetworkID: "net-1", DeviceID: "dev-1", Role: "owner", Status: "active"},
+		{MemberID: "member-2", NetworkID: "net-1", DeviceID: "dev-2", Role: "member", Status: "active"},
+	} {
+		if err := state.pg.CreateMember(ctx, member); err != nil {
+			t.Fatalf("create member %s: %v", member.MemberID, err)
+		}
+	}
+	if err := state.pg.CreateAttachment(ctx, dto.SubnetAttachment{
+		AttachmentID: "att-2",
+		NetworkID:    "net-1",
+		SubnetID:     "subnet-1",
+		DeviceID:     "dev-2",
+		VirtualIP:    "10.0.0.3",
+		Status:       "active",
+	}); err != nil {
+		t.Fatalf("create member attachment: %v", err)
+	}
+
+	updated, err := (dbNetworkService{state: state}).UpdateAttachmentRemark("user-2", "net-1", "att-2", dto.UpdateAttachmentRemarkRequest{
+		Remark: "Thor laptop",
+	})
+	if err != nil {
+		t.Fatalf("member should update own attachment remark: %v", err)
+	}
+	if updated.Remark != "Thor laptop" {
+		t.Fatalf("expected updated remark, got %+v", updated)
+	}
+	if _, err := (dbNetworkService{state: state}).UpdateAttachmentRemark("user-3", "net-1", "att-2", dto.UpdateAttachmentRemarkRequest{
+		Remark: "not mine",
+	}); !errors.Is(err, service.ErrForbidden) {
+		t.Fatalf("expected other user to be forbidden, got %v", err)
+	}
+}
+
 func newNetworkTestState(t *testing.T) *dbState {
 	t.Helper()
 

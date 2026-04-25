@@ -41,6 +41,9 @@
 - 注册节点
 - 查询网络列表
 - 创建网络
+- 按网络 ID、宿主邮箱或 join key 加入网络
+- 激活 / 停用选中网络
+- 更新当前设备 attachment 备注，用于加入网络时保存别名
 
 ### 2.2 配置获取
 
@@ -75,10 +78,18 @@
 
 - `register`
 - `login`
+- `refresh_session`
 - `register_device`
 - `register_node`
 - `list_networks`
 - `create_network`
+- `join_network`
+- `join_network_by_owner_email`
+- `join_network_by_key`
+- `switch_network`
+- `activate_network`
+- `deactivate_network`
+- `update_attachment_remark`
 - `bootstrap`
 - `issue_relay_ticket`
 - `connect`
@@ -94,6 +105,7 @@
 - `Device`
 - `Node`
 - `Network`
+- `NetworkJoinResult`
 - `BootstrapConfig`
 - `RelayTicket`
 - `ConnectionState`

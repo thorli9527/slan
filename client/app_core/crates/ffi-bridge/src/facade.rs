@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use slan_app_core::{
-    ActivePath, BootstrapConfig, ConnectionState, Device, Network, Node, RelayTicket, Session,
-    TunnelTransport,
+    ActivePath, BootstrapConfig, ConnectionState, Device, Network, NetworkAssignment,
+    NetworkJoinResult, Node, RelayTicket, Session, TunnelTransport,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +128,11 @@ impl std::fmt::Display for DataPlaneError {
 pub trait AppCoreFacade: Send + Sync {
     fn register(&self, email: String, password: String) -> Result<Session, String>;
     fn login(&self, email: String, password: String) -> Result<Session, String>;
+    fn refresh_session(
+        &self,
+        refresh_token: String,
+        device_id: Option<String>,
+    ) -> Result<Session, String>;
     fn register_device(
         &self,
         name: String,
@@ -144,8 +149,39 @@ pub trait AppCoreFacade: Send + Sync {
     ) -> Result<Node, String>;
     fn list_networks(&self) -> Result<Vec<Network>, String>;
     fn create_network(&self, name: String, cidr: String) -> Result<Network, String>;
-    fn join_network(&self, network_id: String, device_id: String) -> Result<(), String>;
-    fn activate_network(&self, network_id: String, device_id: String) -> Result<(), String>;
+    fn join_network(
+        &self,
+        network_id: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String>;
+    fn join_network_by_owner_email(
+        &self,
+        owner_email: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String>;
+    fn join_network_by_key(
+        &self,
+        join_key: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String>;
+    fn update_attachment_remark(
+        &self,
+        network_id: String,
+        attachment_id: String,
+        remark: Option<String>,
+    ) -> Result<NetworkAssignment, String>;
+    fn activate_network(
+        &self,
+        network_id: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String>;
+    fn switch_network(
+        &self,
+        network_id: String,
+        device_id: String,
+    ) -> Result<NetworkJoinResult, String> {
+        self.activate_network(network_id, device_id)
+    }
     fn deactivate_network(&self, network_id: String, device_id: String) -> Result<(), String>;
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String>;
     fn control_sync(&self) -> Result<BootstrapConfig, String>;
@@ -155,7 +191,10 @@ pub trait AppCoreFacade: Send + Sync {
         network_id: String,
         src_node_id: String,
         dst_node_id: String,
+        derp_cluster_id: Option<String>,
+        preferred_derp_node_ids: Vec<String>,
         reason: String,
+        relay_region_id: Option<String>,
     ) -> Result<RelayTicket, String>;
     fn connect(&self, network_id: String, peer_node_id: String) -> Result<ConnectionState, String>;
     fn probe_with_timeout(

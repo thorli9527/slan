@@ -21,6 +21,11 @@ abstract class AppCoreApi {
     required String password,
   });
 
+  Future<SessionModel> refreshSession({
+    required String refreshToken,
+    String? deviceId,
+  });
+
   Future<DeviceModel> registerDevice({
     required String name,
     required String platform,
@@ -45,12 +50,33 @@ abstract class AppCoreApi {
     String? bindDeviceId,
   });
 
-  Future<void> joinNetwork({
+  Future<NetworkJoinModel> joinNetwork({
     required String networkId,
     required String deviceId,
   });
 
-  Future<void> activateNetwork({
+  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
+    required String ownerEmail,
+    required String deviceId,
+  });
+
+  Future<NetworkJoinModel> joinNetworkByKey({
+    required String joinKey,
+    required String deviceId,
+  });
+
+  Future<NetworkAssignmentModel> updateAttachmentRemark({
+    required String networkId,
+    required String attachmentId,
+    required String remark,
+  });
+
+  Future<NetworkJoinModel> activateNetwork({
+    required String networkId,
+    required String deviceId,
+  });
+
+  Future<NetworkJoinModel> switchNetwork({
     required String networkId,
     required String deviceId,
   });
@@ -77,6 +103,9 @@ abstract class AppCoreApi {
     required String srcNodeId,
     required String dstNodeId,
     required String reason,
+    String? derpClusterId,
+    List<String> preferredDerpNodeIds = const [],
+    String? relayRegionId,
   });
 
   Future<ConnectionStateModel> connect({

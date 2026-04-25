@@ -48,6 +48,16 @@ class DeactivatedNetworkResult {
   final List<NetworkModel> networks;
 }
 
+class NetworkJoinResult {
+  const NetworkJoinResult({
+    required this.networks,
+    required this.networkId,
+  });
+
+  final List<NetworkModel> networks;
+  final String networkId;
+}
+
 class AppWorkspaceService {
   const AppWorkspaceService({
     required AppCoreApi Function() apiProvider,
@@ -118,6 +128,7 @@ class AppWorkspaceService {
     required DeviceModel? currentDevice,
     required NodeModel? currentNode,
     required List<NetworkModel> currentNetworks,
+    String? targetNetworkId,
   }) async {
     if (session == null) {
       throw StateError('login required');
@@ -138,7 +149,7 @@ class AppWorkspaceService {
       capabilities: const ['desktop'],
     );
 
-    final activeNetwork = networks.first;
+    final activeNetwork = _resolveNetwork(networks, targetNetworkId);
     await _api.activateNetwork(
       networkId: activeNetwork.networkId,
       deviceId: device.deviceId,
@@ -170,12 +181,13 @@ class AppWorkspaceService {
     required SessionModel? session,
     required DeviceModel? currentDevice,
     required List<NetworkModel> currentNetworks,
+    String? targetNetworkId,
   }) async {
     final device = currentDevice;
     final networks =
         session == null ? currentNetworks : await _api.listNetworks();
     final activeNetwork =
-        networks.isNotEmpty ? networks.first : null;
+        networks.isEmpty ? null : _resolveNetwork(networks, targetNetworkId);
     if (device != null && activeNetwork != null) {
       await _api.deactivateNetwork(
         networkId: activeNetwork.networkId,
@@ -189,5 +201,145 @@ class AppWorkspaceService {
       device: device,
       networks: refreshedNetworks,
     );
+  }
+
+  Future<NetworkJoinResult> joinNetwork({
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    String? ownerEmail,
+    String? joinKey,
+    String? alias,
+  }) async {
+    if (session == null) {
+      throw StateError('login required');
+    }
+    final device = currentDevice;
+    if (device == null) {
+      throw StateError('device must be ready first');
+    }
+    final trimmedKey = joinKey?.trim() ?? '';
+    final trimmedOwnerEmail = ownerEmail?.trim() ?? '';
+    if (trimmedKey.isEmpty && trimmedOwnerEmail.isEmpty) {
+      throw StateError('owner email or join key is required');
+    }
+
+    final joinResult = trimmedKey.isNotEmpty
+        ? await _api.joinNetworkByKey(
+            joinKey: trimmedKey,
+            deviceId: device.deviceId,
+          )
+        : await _api.joinNetworkByOwnerEmail(
+            ownerEmail: trimmedOwnerEmail,
+            deviceId: device.deviceId,
+          );
+
+    var networks = await _api.listNetworks();
+    final joinedNetworkId = joinResult.networkId.trim().isEmpty
+        ? _findJoinedNetwork(
+            networks: networks,
+            deviceId: device.deviceId,
+          ).networkId
+        : joinResult.networkId;
+    final trimmedAlias = alias?.trim() ?? '';
+    final attachmentId = joinResult.attachmentId?.trim().isNotEmpty == true
+        ? joinResult.attachmentId!.trim()
+        : _attachmentIdForDevice(
+            _resolveNetwork(networks, joinedNetworkId),
+            device.deviceId,
+          );
+    if (trimmedAlias.isNotEmpty && attachmentId != null) {
+      try {
+        await _api.updateAttachmentRemark(
+          networkId: joinedNetworkId,
+          attachmentId: attachmentId,
+          remark: trimmedAlias,
+        );
+        networks = await _api.listNetworks();
+      } on UnsupportedError {
+        // Older test or fallback API implementations may not support remarks.
+      }
+    }
+
+    return NetworkJoinResult(
+      networks: networks,
+      networkId: joinedNetworkId,
+    );
+  }
+
+  Future<NetworkJoinResult> switchNetwork({
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    required List<NetworkModel> currentNetworks,
+    required String networkId,
+  }) async {
+    if (session == null) {
+      throw StateError('login required');
+    }
+    final device = currentDevice;
+    if (device == null) {
+      throw StateError('device must be ready first');
+    }
+    final target = networkId.trim();
+    if (target.isEmpty) {
+      throw StateError('networkId is required');
+    }
+    if (currentNetworks.every((network) => network.networkId != target)) {
+      throw StateError('network not found: $target');
+    }
+    final switched = await _api.switchNetwork(
+      networkId: target,
+      deviceId: device.deviceId,
+    );
+    final refreshedNetworks = await _api.listNetworks();
+    final networks =
+        refreshedNetworks.any((network) => network.networkId == target)
+            ? refreshedNetworks
+            : currentNetworks;
+    return NetworkJoinResult(
+      networks: networks,
+      networkId: switched.networkId.isNotEmpty ? switched.networkId : target,
+    );
+  }
+
+  NetworkModel _resolveNetwork(
+    List<NetworkModel> networks,
+    String? targetNetworkId,
+  ) {
+    final target = targetNetworkId?.trim();
+    if (target != null && target.isNotEmpty) {
+      for (final network in networks) {
+        if (network.networkId == target) {
+          return network;
+        }
+      }
+    }
+    return networks.first;
+  }
+
+  NetworkModel _findJoinedNetwork({
+    required List<NetworkModel> networks,
+    required String deviceId,
+  }) {
+    for (final network in networks) {
+      if (network.members.any((member) => member.deviceId == deviceId)) {
+        return network;
+      }
+    }
+    if (networks.isNotEmpty) {
+      return networks.first;
+    }
+    throw StateError('joined network was not returned by the server');
+  }
+
+  String? _attachmentIdForDevice(NetworkModel network, String deviceId) {
+    for (final member in network.members) {
+      if (member.deviceId == deviceId) {
+        final attachmentId = member.attachmentId?.trim();
+        return attachmentId == null || attachmentId.isEmpty
+            ? null
+            : attachmentId;
+      }
+    }
+    return null;
   }
 }

@@ -39,12 +39,12 @@
 
 - 校验 `nodeId + networkId`
 - 返回设备、网络、控制通道、STUN、relay / DERP 视图
-- 后续应扩展返回 `derp_map`
+- 返回 `derp_map`
 
 ### 2.4 票据签发
 
 - 签发 relay ticket
-- 后续扩展为 cluster-aware DERP ticket
+- 支持 cluster-aware DERP ticket 字段
 - 约束 `srcNodeId / dstNodeId / networkId`
 
 ### 2.5 控制通道编排
@@ -151,7 +151,15 @@ server-biz 需求模型
 │   ├── NET.9 NetworkJoinResult
 │   ├── NET.10 NetworkDetail
 │   ├── NET.11 虚拟 IP 分配
-│   └── NET.12 默认子网自动挂载
+│   ├── NET.12 默认子网自动挂载
+│   ├── NET.13 UpdateNetworkJoinKeyRequest
+│   ├── NET.14 UpdateNetworkDNSRequest
+│   ├── NET.15 SwitchNetworkRequest
+│   ├── NET.16 DeactivateNetworkRequest
+│   ├── NET.17 JoinNetworkByOwnerEmailRequest
+│   ├── NET.18 UpdateAttachmentIPRequest
+│   ├── NET.19 UpdateAttachmentRemarkRequest
+│   └── NET.20 NetworkAssignment
 ├── BOOT 启动配置
 │   ├── BOOT.1 BootstrapRequest
 │   ├── BOOT.2 BootstrapResponse
@@ -502,9 +510,9 @@ server-biz 需求模型
 - 面向客户端输出的模型必须是编排结果，而不是内部存储结构。
 - 任何新增字段都应补中文备注，并优先挂到上面的编号树里。
 
-## 6. DERP/集群相关新增内部需求
+## 6. DERP/集群相关内部需求
 
-为了支持 DERP 集群与客户端 `derp_pool`，`server-biz` 后续还需要承接：
+为了支持 DERP 集群与客户端 `derp_pool`，`server-biz` 当前已经承接：
 
 - `DerpMap`
 - `DerpCluster`
@@ -520,21 +528,24 @@ server-biz 需求模型
    - `derpClusterId`
    - `allowedDerpNodeIds`
 
+后续重点是生产配置、真实多节点运行时、观测指标和故障恢复验证。
+
 ## 7. 当前缺口
 
-当前接口已经基本成型，但实现上仍缺：
+当前主业务接口已经基本拉通：
 
-1. 持久化存储层
-2. 真实控制通道实现
-3. `control/sessions` 的完整业务流程
-4. `bootstrap` 中的 `NetworkMap` 和 `derp_map` 真实编排
-5. DERP 集群票据签发
-6. 更完整的策略与 ACL 约束
+1. `bootstrap` 能返回控制会话、设备 attachment、`NetworkMap` 和 `derp_map`
+2. `control/sessions` 保留为显式控制会话刷新入口
+3. join-by-owner-email / join-by-key / switch / activate / deactivate 已成为公开客户端流程
+4. attachment remark 支持网络 owner 维护所有备注，也支持设备所有者维护自己的别名
+5. DERP / relay ticket 已具备 cluster-aware 字段
 
 ## 8. 建议实现顺序
 
-1. 先补真实 `control/sessions`
-2. 再补 `bootstrap` 的 `NetworkMap`
-3. 再补 `derp_map`
-4. 再把 ticket 从单节点 relay 升级到 cluster-aware DERP
-5. 最后再接入更完整的控制通道事件流
+后续重点从“打通主流程”转为“补强生产约束”：
+
+1. 固化 create / join / alias / switch / activate / bootstrap / relay fallback 的回归测试矩阵
+2. 补强策略、ACL、成员审批和错误码一致性
+3. 扩展控制通道事件覆盖和连接状态上报
+4. 补充生产配置校验、限流和观测指标
+5. 与 app_core / server-relay 继续联调 DERP 集群和真实数据面路径

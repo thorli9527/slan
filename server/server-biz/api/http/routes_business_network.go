@@ -46,6 +46,11 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		rc := currentRouteContext(c)
 		return deps.Network.UpdateJoinKey(rc.user(), rc.networkID(c), req)
 	}))
+	// PUT /networks/:networkId/dns 修改网络级 DNS 配置。
+	networks.PUT("/:networkId/dns", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.UpdateNetworkDNSRequest) (dto.NetworkDetail, error) {
+		rc := currentRouteContext(c)
+		return deps.Network.UpdateDNS(rc.user(), rc.networkID(c), req)
+	}))
 	// POST /networks/:networkId/switch 显式切换当前活动网络。
 	networks.POST("/:networkId/switch", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.SwitchNetworkRequest) (dto.NetworkJoinResult, error) {
 		rc := currentRouteContext(c)
@@ -117,7 +122,7 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		})
 		return updated, nil
 	}))
-	// PUT /networks/:networkId/attachments/:attachmentId/remark 允许 owner 维护设备备注。
+	// PUT /networks/:networkId/attachments/:attachmentId/remark 允许 owner 或设备所有者维护设备备注。
 	networks.PUT("/:networkId/attachments/:attachmentId/remark", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.UpdateAttachmentRemarkRequest) (dto.NetworkAssignment, error) {
 		rc := currentRouteContext(c)
 		return deps.Network.UpdateAttachmentRemark(rc.user(), rc.networkID(c), rc.attachmentID(c), req)

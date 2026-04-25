@@ -153,6 +153,10 @@
               <span>通过宿主账户加入</span>
               <input [value]="joinOwnerEmail" (input)="joinOwnerEmail = $any($event.target).value" placeholder="owner@company.com" />
             </label>
+            <label>
+              <span>设备别名</span>
+              <input [value]="joinAlias" (input)="joinAlias = $any($event.target).value" placeholder="Thor laptop" />
+            </label>
             <div class="actions compact">
               <button class="ghost" (click)="joinByOwnerEmail()" [disabled]="isActionBusy('joinOwnerEmail')">
                 {{ isActionBusy('joinOwnerEmail') ? '处理中...' : '加入 / 切换' }}
@@ -206,10 +210,12 @@
           [createDescription]="createDescription"
           [createCidr]="createCidr"
           [joinOwnerEmail]="joinOwnerEmail"
+          [joinAlias]="joinAlias"
           (createNameChange)="createName = $event"
           (createDescriptionChange)="createDescription = $event"
           (createCidrChange)="createCidr = $event"
           (joinOwnerEmailChange)="joinOwnerEmail = $event"
+          (joinAliasChange)="joinAlias = $event"
           (createNetwork)="createOwnNetwork()"
           (joinNetwork)="joinByOwnerEmail()"
         />
@@ -221,7 +227,7 @@
               <p><strong>活动网络：</strong> {{ activeNetwork()?.name || '-' }}</p>
               <p><strong>可管理：</strong> {{ canManageNetwork() ? '是' : '否' }}</p>
               <p><strong>加入 Key 已配置：</strong> {{ detail()?.joinKey ? '是' : '否' }}</p>
-              <p class="hint">如果当前网络归你所有，可以修改默认 CIDR、创建子网、绑定设备 IP 和备注，并维护加入 key。</p>
+              <p class="hint">如果当前网络归你所有，可以修改默认 CIDR、创建子网、绑定设备 IP、维护所有备注和加入 key；成员加入网络时可以保存自己设备的别名。</p>
             </div>
 
             <div class="card section-card">
@@ -274,6 +280,7 @@
             [pendingMembers]="pendingMembers()"
             [selectedDeviceLabel]="selectedDeviceLabel()"
             [joinOwnerEmail]="joinOwnerEmail"
+            [joinAlias]="joinAlias"
             [updateName]="updateName"
             [updateDescription]="updateDescription"
             [updateCidr]="updateCidr"
@@ -289,6 +296,7 @@
             (refresh)="refreshWorkspace()"
             (switchToOwned)="switchToOwnedNetwork()"
             (joinOwnerEmailChange)="joinOwnerEmail = $event"
+            (joinAliasChange)="joinAlias = $event"
             (joinByOwnerEmail)="joinByOwnerEmail()"
             (updateNameChange)="updateName = $event"
             (updateDescriptionChange)="updateDescription = $event"

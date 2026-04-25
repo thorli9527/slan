@@ -56,6 +56,22 @@ class MockAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<SessionModel> refreshSession({
+    required String refreshToken,
+    String? deviceId,
+  }) async {
+    final current = _session;
+    _session = SessionModel(
+      userId: current?.userId ?? 'mock-user',
+      accessToken: 'mock-access-token-refreshed',
+      refreshToken: 'mock-refresh-token-refreshed',
+      expiresIn: 3600,
+      deviceId: deviceId ?? current?.deviceId ?? _device?.deviceId,
+    );
+    return _session!;
+  }
+
+  @override
   Future<DeviceModel> registerDevice({
     required String name,
     required String platform,
@@ -114,6 +130,8 @@ class MockAppCoreApi implements AppCoreApi {
           ? const []
           : [
               NetworkMemberModel(
+                attachmentId:
+                    'attach-${_device!.deviceId}-${_networks.length + 1}',
                 deviceId: _device!.deviceId,
                 role: 'owner',
                 virtualIp: _device!.virtualIp,
@@ -125,21 +143,31 @@ class MockAppCoreApi implements AppCoreApi {
   }
 
   @override
-  Future<void> joinNetwork({
+  Future<NetworkJoinModel> joinNetwork({
     required String networkId,
     required String deviceId,
   }) async {
     final index =
         _networks.indexWhere((network) => network.networkId == networkId);
     if (index < 0) {
-      return;
+      throw StateError('network not found: $networkId');
     }
     final current = _networks[index];
     final alreadyJoined =
         current.members.any((member) => member.deviceId == deviceId);
     if (alreadyJoined) {
-      return;
+      final member = current.members.firstWhere(
+        (member) => member.deviceId == deviceId,
+      );
+      return NetworkJoinModel(
+        networkId: current.networkId,
+        deviceId: member.deviceId,
+        memberId: member.memberId,
+        attachmentId: member.attachmentId,
+        virtualIp: member.virtualIp,
+      );
     }
+    final attachmentId = 'attach-$networkId-$deviceId';
     _networks[index] = NetworkModel(
       networkId: current.networkId,
       name: current.name,
@@ -147,22 +175,142 @@ class MockAppCoreApi implements AppCoreApi {
       members: [
         ...current.members,
         NetworkMemberModel(
+          attachmentId: attachmentId,
+          networkId: networkId,
           deviceId: deviceId,
           role: current.members.isEmpty ? 'owner' : 'member',
         ),
       ],
     );
+    return NetworkJoinModel(
+      networkId: networkId,
+      deviceId: deviceId,
+      attachmentId: attachmentId,
+    );
   }
 
   @override
-  Future<void> activateNetwork({
+  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
+    required String ownerEmail,
+    required String deviceId,
+  }) async {
+    final network = _networks.isNotEmpty
+        ? _networks.first
+        : NetworkModel(
+            networkId: 'mock-owner-network',
+            name: 'Owner network',
+            cidr: '10.0.0.0/16',
+          );
+    if (_networks.every((item) => item.networkId != network.networkId)) {
+      _networks.add(network);
+    }
+    return joinNetwork(networkId: network.networkId, deviceId: deviceId);
+  }
+
+  @override
+  Future<NetworkJoinModel> joinNetworkByKey({
+    required String joinKey,
+    required String deviceId,
+  }) async {
+    final network = _networks.isNotEmpty
+        ? _networks.first
+        : NetworkModel(
+            networkId: 'mock-key-network',
+            name: 'Joined network',
+            cidr: '10.0.0.0/16',
+          );
+    if (_networks.every((item) => item.networkId != network.networkId)) {
+      _networks.add(network);
+    }
+    return joinNetwork(networkId: network.networkId, deviceId: deviceId);
+  }
+
+  @override
+  Future<NetworkAssignmentModel> updateAttachmentRemark({
+    required String networkId,
+    required String attachmentId,
+    required String remark,
+  }) async {
+    final index =
+        _networks.indexWhere((network) => network.networkId == networkId);
+    if (index < 0) {
+      return NetworkAssignmentModel(
+        attachmentId: attachmentId,
+        networkId: networkId,
+        subnetId: 'mock-subnet',
+        deviceId: '',
+        deviceName: '',
+        userId: '',
+        userEmail: '',
+        role: 'member',
+        remark: remark,
+      );
+    }
+    final current = _networks[index];
+    _networks[index] = NetworkModel(
+      networkId: current.networkId,
+      name: current.name,
+      cidr: current.cidr,
+      description: current.description,
+      defaultSubnetId: current.defaultSubnetId,
+      joinKeyConfigured: current.joinKeyConfigured,
+      members: current.members
+          .map(
+            (member) => member.attachmentId == attachmentId
+                ? NetworkMemberModel(
+                    memberId: member.memberId,
+                    networkId: member.networkId,
+                    attachmentId: member.attachmentId,
+                    deviceId: member.deviceId,
+                    role: member.role,
+                    createdAt: member.createdAt,
+                    status: member.status,
+                    virtualIp: member.virtualIp,
+                    remark: remark,
+                  )
+                : member,
+          )
+          .toList(growable: false),
+    );
+    final member = _networks[index].members.firstWhere(
+      (member) => member.attachmentId == attachmentId,
+      orElse: () => NetworkMemberModel(
+        networkId: networkId,
+        attachmentId: attachmentId,
+        deviceId: '',
+        role: 'member',
+        remark: remark,
+      ),
+    );
+    return NetworkAssignmentModel(
+      attachmentId: attachmentId,
+      networkId: member.networkId ?? networkId,
+      subnetId: 'mock-subnet',
+      deviceId: member.deviceId,
+      deviceName: member.deviceId,
+      userId: '',
+      userEmail: '',
+      role: member.role,
+      remark: member.remark,
+      virtualIp: member.virtualIp,
+      status: member.status,
+    );
+  }
+
+  @override
+  Future<NetworkJoinModel> activateNetwork({
     required String networkId,
     required String deviceId,
   }) async {
     final index =
         _networks.indexWhere((network) => network.networkId == networkId);
     if (index < 0) {
-      return;
+      return NetworkJoinModel(
+        networkId: networkId,
+        deviceId: deviceId,
+        attachmentId: 'mock-attachment-$deviceId',
+        virtualIp: '100.64.0.10',
+      );
     }
     final current = _networks[index];
     final virtualIp =
@@ -171,13 +319,22 @@ class MockAppCoreApi implements AppCoreApi {
       networkId: current.networkId,
       name: current.name,
       cidr: current.cidr,
+      description: current.description,
+      defaultSubnetId: current.defaultSubnetId,
+      joinKeyConfigured: current.joinKeyConfigured,
       members: current.members
           .map(
             (member) => member.deviceId == deviceId
                 ? NetworkMemberModel(
+                    memberId: member.memberId,
+                    networkId: member.networkId,
+                    attachmentId: member.attachmentId,
                     deviceId: member.deviceId,
                     role: member.role,
+                    createdAt: member.createdAt,
+                    status: member.status,
                     virtualIp: virtualIp,
+                    remark: member.remark,
                   )
                 : member,
           )
@@ -193,6 +350,57 @@ class MockAppCoreApi implements AppCoreApi {
         virtualIp: virtualIp,
       );
     }
+    final activated = _networks[index].members.firstWhere(
+      (member) => member.deviceId == deviceId,
+      orElse: () => NetworkMemberModel(
+        networkId: networkId,
+        attachmentId: 'mock-attachment-$deviceId',
+        deviceId: deviceId,
+        role: 'member',
+        virtualIp: virtualIp,
+      ),
+    );
+    return NetworkJoinModel(
+      networkId: activated.networkId ?? networkId,
+      deviceId: activated.deviceId,
+      memberId: activated.memberId,
+      attachmentId: activated.attachmentId,
+      virtualIp: activated.virtualIp,
+    );
+  }
+
+  @override
+  Future<NetworkJoinModel> switchNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async {
+    await activateNetwork(networkId: networkId, deviceId: deviceId);
+    final network = _networks.firstWhere(
+      (network) => network.networkId == networkId,
+      orElse: () => NetworkModel(
+        networkId: networkId,
+        name: networkId,
+        cidr: '100.64.0.0/24',
+      ),
+    );
+    final member = network.members.firstWhere(
+      (member) => member.deviceId == deviceId,
+      orElse: () => NetworkMemberModel(
+        networkId: networkId,
+        attachmentId: 'mock-attachment-$deviceId',
+        deviceId: deviceId,
+        role: 'member',
+        status: 'active',
+        virtualIp: _device?.virtualIp,
+      ),
+    );
+    return NetworkJoinModel(
+      networkId: networkId,
+      deviceId: deviceId,
+      memberId: member.memberId,
+      attachmentId: member.attachmentId,
+      virtualIp: member.virtualIp,
+    );
   }
 
   @override
@@ -214,8 +422,14 @@ class MockAppCoreApi implements AppCoreApi {
           .map(
             (member) => member.deviceId == deviceId
                 ? NetworkMemberModel(
+                    memberId: member.memberId,
+                    networkId: member.networkId,
+                    attachmentId: member.attachmentId,
                     deviceId: member.deviceId,
                     role: member.role,
+                    createdAt: member.createdAt,
+                    status: member.status,
+                    remark: member.remark,
                   )
                 : member,
           )
@@ -338,6 +552,9 @@ class MockAppCoreApi implements AppCoreApi {
     required String srcNodeId,
     required String dstNodeId,
     required String reason,
+    String? derpClusterId,
+    List<String> preferredDerpNodeIds = const [],
+    String? relayRegionId,
   }) async {
     // mock 票据只保证字段齐全，便于前端验证 relay 回退链路。
     return RelayTicketModel(

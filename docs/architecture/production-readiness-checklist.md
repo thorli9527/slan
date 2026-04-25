@@ -103,7 +103,7 @@
 ### 日志与追踪
 
 - [ ] 结构化日志：requestId、userId、nodeId、networkId、remoteIP
-- [ ] 分布式追踪：login → register device/node → join → create session → ws handshake → fanout
+- [ ] 分布式追踪：login → register device/node → join-by-owner-email/join-by-key → alias remark → switch → activate/bootstrap → ws handshake → fanout
 
 ### 告警
 
@@ -120,7 +120,7 @@
 
 ### 限流与防刷
 
-- [ ] /auth、/devices/register、/nodes/register、/control/sessions、WS node_hello 全部限流
+- [ ] /auth、/devices/register、/nodes/register、/networks join/switch/activate、/bootstrap、/control/sessions、WS node_hello 全部限流
 - [ ] 防枚举（网络 ID、设备 ID）与异常访问封禁
 
 ## 最小验收标准（建议）

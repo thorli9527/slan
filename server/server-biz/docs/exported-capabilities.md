@@ -2,6 +2,29 @@
 
 本文档描述 `server-biz` 对客户端和其他外部系统输出什么能力。
 
+## Current Public Capabilities
+
+The main client-facing capabilities currently exported by `server-biz` are:
+
+- Auth lifecycle: register, login, refresh, browser-to-client callback status.
+- Device and node lifecycle: register/list devices, register nodes.
+- Network lifecycle: create, list visible networks, get active/owned home
+  summary, get network detail, update network metadata, join key, and DNS.
+- Join and switch: join by owner email, join by key, explicit join, switch,
+  activate, deactivate.
+- Membership and assignment management: list/update members, list assignments,
+  update attachment IP, update attachment remark.
+- Runtime bootstrap: bootstrap control-plane config, NetworkMap, relay/DERP
+  topology, and relay fallback tickets.
+- Explicit control session creation for clients that need to refresh only the
+  control-plane session after bootstrap.
+- Control WebSocket: node hello, network map updates, peer updates, connect
+  plans, path health, connection state, device IP reassignment, active network
+  notifications.
+
+See `client-core-flow.md` for how these capabilities compose into the public
+desktop app, app-core, and web-console client flow.
+
 ## 1. 输出目标
 
 `server-biz` 对外输出的不是底层存储或内部状态，而是：
@@ -19,18 +42,38 @@
 
 - `/auth/register`
 - `/auth/login`
+- `/auth/refresh`
+- `/auth/callback-status/{callbackId}`
+- `/auth/callback-status/{callbackId}/complete`
+- `/auth/callback-status/{callbackId}/ack`
+- `/auth/ws/{callbackId}`
 - `/devices/register`
 - `/devices`
 - `/nodes/register`
-- `/control/sessions`
+- `/networks/home`
 - `/networks`
 - `/networks/{networkId}`
+- `/networks/{networkId}/join-key`
+- `/networks/{networkId}/dns`
+- `/networks/join-by-owner-email`
+- `/networks/join-by-key`
+- `/networks/{networkId}/switch`
 - `/networks/{networkId}/join`
+- `/networks/{networkId}/activate`
+- `/networks/{networkId}/deactivate`
 - `/networks/{networkId}/members`
+- `/networks/{networkId}/members/{memberId}/status`
+- `/networks/{networkId}/assignments`
 - `/networks/{networkId}/subnets`
 - `/networks/{networkId}/subnets/{subnetId}/attachments`
+- `/networks/{networkId}/attachments/{attachmentId}/ip`
+- `/networks/{networkId}/attachments/{attachmentId}/remark`
 - `/bootstrap`
 - `/relay/tickets`
+- `/control/sessions`
+- `/control/messages/{messageId}/ack`
+- `/control/ws`
+- `/debug/vars`
 - `/healthz`
 
 ### 2.2 控制通道协议
@@ -107,14 +150,16 @@
 - WebSocket 控制通道
 - 标准 DTO / protobuf 消息
 
-## 6. 后续建议扩展的对外输出
+## 6. DERP / 集群输出状态
 
-为了支持 DERP 集群，后续应新增这些输出能力：
+当前协议已经具备这些 DERP / 集群相关输出：
 
 - `bootstrap.derp_map`
 - `ConnectPlan.derpClusterId`
 - `ConnectPlan.preferredDerpNodeIds`
 - cluster-aware `RelayTicket / DerpTicket`
+
+后续重点是生产配置、真实多节点运行时、观测指标和故障恢复验证。
 
 ## 7. 对外输出原则
 

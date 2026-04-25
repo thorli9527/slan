@@ -1,0 +1,12 @@
+version: 1
+slice: system
+source_of_truth: server/server-biz/api/dto
+contracts:
+  ErrorResponse:
+    fields:
+      code:
+        type: string
+        required: true
+      message:
+        type: string
+        required: true

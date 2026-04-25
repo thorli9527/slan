@@ -72,6 +72,31 @@ class JoinedNetworkResult {
   final List<NetworkModel> networks;
 }
 
+enum NetworkJoinMethod {
+  explicit,
+  ownerEmail,
+  joinKey,
+}
+
+class NetworkJoinIntent {
+  const NetworkJoinIntent.explicit(String networkId)
+      : method = NetworkJoinMethod.explicit,
+        value = networkId;
+
+  const NetworkJoinIntent.ownerEmail(String ownerEmail)
+      : method = NetworkJoinMethod.ownerEmail,
+        value = ownerEmail;
+
+  const NetworkJoinIntent.joinKey(String joinKey)
+      : method = NetworkJoinMethod.joinKey,
+        value = joinKey;
+
+  final NetworkJoinMethod method;
+  final String value;
+
+  bool get isEmpty => value.trim().isEmpty;
+}
+
 class DeviceSetupService {
   const DeviceSetupService({
     required AppCoreApi Function() apiProvider,
@@ -146,9 +171,14 @@ class DeviceSetupService {
     required String preferredNetworkId,
     required String fallbackNetworkName,
     String fallbackCidr = '10.0.0.0/16',
+    NetworkJoinIntent? joinIntent,
   }) async {
     var networks = currentNetworks;
-    if (networks.isEmpty) {
+    final intent = joinIntent;
+    final isDiscoveryJoin = intent != null &&
+        !intent.isEmpty &&
+        intent.method != NetworkJoinMethod.explicit;
+    if (networks.isEmpty && !isDiscoveryJoin) {
       await _api.createNetwork(
         name: fallbackNetworkName,
         cidr: fallbackCidr,
@@ -157,24 +187,79 @@ class DeviceSetupService {
     }
 
     var targetNetworkId = preferredNetworkId.trim();
+    if (targetNetworkId.isEmpty &&
+        intent != null &&
+        !intent.isEmpty &&
+        intent.method == NetworkJoinMethod.explicit) {
+      targetNetworkId = intent.value.trim();
+    }
     if (targetNetworkId.isEmpty && networks.isNotEmpty) {
       targetNetworkId = networks.first.networkId;
     }
-    if (targetNetworkId.isEmpty) {
+    if (targetNetworkId.isEmpty && !isDiscoveryJoin) {
       throw StateError('No target network is available.');
     }
 
-    await _api.joinNetwork(
-      networkId: targetNetworkId,
-      deviceId: device.deviceId,
-    );
+    if (intent != null && !intent.isEmpty) {
+      switch (intent.method) {
+        case NetworkJoinMethod.explicit:
+          await _api.joinNetwork(
+            networkId: intent.value.trim(),
+            deviceId: device.deviceId,
+          );
+          targetNetworkId = intent.value.trim();
+          break;
+        case NetworkJoinMethod.ownerEmail:
+          await _api.joinNetworkByOwnerEmail(
+            ownerEmail: intent.value.trim(),
+            deviceId: device.deviceId,
+          );
+          break;
+        case NetworkJoinMethod.joinKey:
+          await _api.joinNetworkByKey(
+            joinKey: intent.value.trim(),
+            deviceId: device.deviceId,
+          );
+          break;
+      }
+    } else {
+      await _api.joinNetwork(
+        networkId: targetNetworkId,
+        deviceId: device.deviceId,
+      );
+    }
     networks = await _api.listNetworks();
+    if (intent != null && intent.method != NetworkJoinMethod.explicit) {
+      targetNetworkId = _resolveJoinedNetworkId(
+        currentNetworks: currentNetworks,
+        refreshedNetworks: networks,
+        fallbackNetworkId: targetNetworkId,
+      );
+    }
 
     return JoinedNetworkResult(
       networkId: targetNetworkId,
       networks: networks,
     );
   }
+}
+
+String _resolveJoinedNetworkId({
+  required List<NetworkModel> currentNetworks,
+  required List<NetworkModel> refreshedNetworks,
+  required String fallbackNetworkId,
+}) {
+  for (final network in refreshedNetworks) {
+    final existed = currentNetworks.any(
+      (item) => item.networkId == network.networkId,
+    );
+    if (!existed) {
+      return network.networkId;
+    }
+  }
+  return refreshedNetworks.isNotEmpty
+      ? refreshedNetworks.first.networkId
+      : fallbackNetworkId;
 }
 
 String _generatedNodeId(String seed) {

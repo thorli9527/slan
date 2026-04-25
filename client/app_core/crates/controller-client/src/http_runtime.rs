@@ -24,6 +24,28 @@ where
     parse_success_response(response.status, &response.body_json)
 }
 
+pub fn put_json<T, Req, Resp>(
+    transport: &T,
+    base_url: &str,
+    path: &str,
+    bearer_token: Option<&str>,
+    body: &Req,
+) -> Result<Resp, String>
+where
+    T: JsonHttpTransport,
+    Req: Serialize,
+    Resp: for<'de> Deserialize<'de>,
+{
+    let request = HttpRequest {
+        method: HttpMethod::Put,
+        path: join_path(base_url, path),
+        bearer_token: bearer_token.map(ToOwned::to_owned),
+        body_json: Some(serde_json::to_vec(body).map_err(|err| err.to_string())?),
+    };
+    let response = transport.send(request)?;
+    parse_success_response(response.status, &response.body_json)
+}
+
 pub fn get_json<T, Resp>(
     transport: &T,
     base_url: &str,

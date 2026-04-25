@@ -1,4 +1,7 @@
-use slan_app_core::{BootstrapConfig, Device, Network, Node, RelayTicket, Session};
+use slan_app_core::{
+    BootstrapConfig, Device, Network, NetworkAssignment, NetworkJoinResult, Node, RelayTicket,
+    Session,
+};
 
 pub struct RegisterRequest {
     pub email: String,
@@ -8,6 +11,11 @@ pub struct RegisterRequest {
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
+    pub device_id: Option<String>,
+}
+
+pub struct RefreshTokenRequest {
+    pub refresh_token: String,
     pub device_id: Option<String>,
 }
 
@@ -28,6 +36,14 @@ pub struct RegisterNodeRequest {
 pub struct CreateNetworkRequest {
     pub name: String,
     pub cidr: String,
+    pub description: Option<String>,
+    pub bind_device_id: Option<String>,
+}
+
+pub struct UpdateNetworkDNSRequest {
+    pub network_id: String,
+    pub servers: Vec<String>,
+    pub search_domains: Vec<String>,
 }
 
 pub struct JoinNetworkRequest {
@@ -35,9 +51,30 @@ pub struct JoinNetworkRequest {
     pub device_id: String,
 }
 
+pub struct SwitchNetworkRequest {
+    pub network_id: String,
+    pub device_id: String,
+}
+
+pub struct JoinNetworkByOwnerEmailRequest {
+    pub owner_email: String,
+    pub device_id: String,
+}
+
+pub struct JoinNetworkByKeyRequest {
+    pub join_key: String,
+    pub device_id: String,
+}
+
 pub struct DeactivateNetworkRequest {
     pub network_id: String,
     pub device_id: String,
+}
+
+pub struct UpdateAttachmentRemarkRequest {
+    pub network_id: String,
+    pub attachment_id: String,
+    pub remark: Option<String>,
 }
 
 pub struct RelayTicketRequest {
@@ -47,11 +84,13 @@ pub struct RelayTicketRequest {
     pub derp_cluster_id: Option<String>,
     pub preferred_derp_node_ids: Vec<String>,
     pub reason: String,
+    pub relay_region_id: Option<String>,
 }
 
 pub trait ControllerClient: Send + Sync {
     fn register(&self, req: RegisterRequest) -> Result<Session, String>;
     fn login(&self, req: LoginRequest) -> Result<Session, String>;
+    fn refresh(&self, req: RefreshTokenRequest) -> Result<Session, String>;
     fn register_device(
         &self,
         access_token: &str,
@@ -64,8 +103,49 @@ pub trait ControllerClient: Send + Sync {
         access_token: &str,
         req: CreateNetworkRequest,
     ) -> Result<Network, String>;
-    fn join_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String>;
-    fn activate_network(&self, access_token: &str, req: JoinNetworkRequest) -> Result<(), String>;
+    fn update_network_dns(
+        &self,
+        access_token: &str,
+        req: UpdateNetworkDNSRequest,
+    ) -> Result<Network, String>;
+    fn join_network(
+        &self,
+        access_token: &str,
+        req: JoinNetworkRequest,
+    ) -> Result<NetworkJoinResult, String>;
+    fn join_network_by_owner_email(
+        &self,
+        access_token: &str,
+        req: JoinNetworkByOwnerEmailRequest,
+    ) -> Result<NetworkJoinResult, String>;
+    fn join_network_by_key(
+        &self,
+        access_token: &str,
+        req: JoinNetworkByKeyRequest,
+    ) -> Result<NetworkJoinResult, String>;
+    fn update_attachment_remark(
+        &self,
+        access_token: &str,
+        req: UpdateAttachmentRemarkRequest,
+    ) -> Result<NetworkAssignment, String>;
+    fn activate_network(
+        &self,
+        access_token: &str,
+        req: JoinNetworkRequest,
+    ) -> Result<NetworkJoinResult, String>;
+    fn switch_network(
+        &self,
+        access_token: &str,
+        req: SwitchNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        self.activate_network(
+            access_token,
+            JoinNetworkRequest {
+                network_id: req.network_id,
+                device_id: req.device_id,
+            },
+        )
+    }
     fn deactivate_network(
         &self,
         access_token: &str,

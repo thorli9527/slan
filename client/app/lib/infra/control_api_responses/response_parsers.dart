@@ -29,6 +29,19 @@ List<NetworkModel> parseNetworkListResponse(List<dynamic> json) => json
 NetworkModel parseNetworkResponse(Map<String, dynamic> json) =>
     NetworkSummaryResponseDto.fromJson(json).toModel();
 
+NetworkJoinModel parseNetworkJoinResponse(Map<String, dynamic> json) =>
+    NetworkJoinResultResponseDto.fromJson(json).toModel();
+
+NetworkJoinModel parseNetworkJoinByOwnerEmailResponse(
+  Map<String, dynamic> json,
+) =>
+    NetworkJoinByOwnerEmailResultResponseDto.fromJson(json).toModel();
+
+NetworkAssignmentModel parseNetworkAssignmentResponse(
+  Map<String, dynamic> json,
+) =>
+    NetworkAssignmentResponseDto.fromJson(json).toModel();
+
 BootstrapModel parseBootstrapResponse(Map<String, dynamic> json) =>
     BootstrapResponseDto.fromJson(json).toModel();
 

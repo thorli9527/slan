@@ -1,5 +1,20 @@
 # app_core 内部需求
 
+## Maintained Main-Flow Status
+
+`client/app_core` now has real control-plane access for the main client flow:
+
+- auth/session refresh
+- device and node registration
+- network create, join-by-owner-email, join-by-key, alias remark, switch,
+  activate, and deactivate
+- bootstrap/control sync
+- relay ticket issue and relay/DERP fallback routing tests
+
+Remaining requirements in this document are production runtime, diagnostics,
+and cross-platform tunnel hardening unless they explicitly call out a missing
+API.
+
 本文档描述 `client/app_core` 在系统中的内部职责、模块拆分和后续必须实现的核心能力。
 
 ## 1. 定位
@@ -27,6 +42,9 @@
 - 查询可见网络
 - 创建网络
 - 让设备加入网络
+- 按宿主邮箱或 join key 加入网络
+- 激活 / 停用当前选中的网络
+- 维护当前设备 attachment 备注，用于保存加入网络时的别名
 - 拉取 `bootstrap`
 
 ### 2.3 运行时连接管理
@@ -99,11 +117,19 @@
 
 - `register`
 - `login`
+- `refresh_session`
 - `register_device`
+- `list_devices`
 - `register_node`
 - `list_networks`
 - `create_network`
 - `join_network`
+- `join_network_by_owner_email`
+- `join_network_by_key`
+- `switch_network`
+- `activate_network`
+- `deactivate_network`
+- `update_attachment_remark`
 - `bootstrap`
 - `issue_relay_ticket`
 
@@ -164,20 +190,17 @@ DERP 场景下还要求：
 
 ## 7. 当前缺口
 
-当前接口已经定义，但实现上仍缺：
+当前主业务接口已经有真实控制面接入和测试覆盖；剩余缺口主要集中在更完整的数据面运行时与诊断能力：
 
-1. `controller-client` 的真实 HTTP 实现
-2. `bootstrap.derp_map` 的真实解析与消费
-3. `DerpClient` 的真实连接实现
-4. `DerpPool` 的健康检查、评分、选主、切换逻辑
-5. `PathManager` 与 `p2p` / `relay-client` / `tunnel` 的打通
-6. 上报控制面的连接状态扩展
+1. 更完整的 `DerpClient` / `DerpPool` 生产环境连接与诊断覆盖
+2. `PathManager` 与 `p2p` / `relay-client` / `tunnel` 的更多真实场景打通
+3. 上报控制面的连接状态扩展
+4. 跨平台隧道运行时的安装、权限和故障恢复路径
 
 ## 8. 建议实现顺序
 
-1. 完成 `controller-client` 对 `bootstrap` 和 `ticket` 的真实接入
-2. 完成 `DerpClient` 单连接能力
-3. 完成 `DerpPool.warm_up()` 与 `send_via_active()`
-4. 完成 `tick_health_check()` 与 `maybe_switch()`
-5. 完成 `PathManager`
-6. 最后再考虑是否把 DERP 诊断状态开放给 Flutter
+1. 固化当前 join / switch / activate / bootstrap 主流程的回归测试
+2. 扩展真实 DERP 连接与健康检查覆盖
+3. 完成更多 `PathManager` 与隧道联动场景
+4. 完善连接状态上报与诊断接口
+5. 最后再考虑是否把 DERP 诊断状态开放给 Flutter

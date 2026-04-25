@@ -67,7 +67,7 @@ class AppCoreScope {
   static Future<void> initialize() async {
     await StartupLog.write('app core initialize start mode=$_appCoreMode');
     await StartupLog.write(
-      'tunnel host mode=${_resolvedTunnelHostMode()} helperHost=${_resolvedTunnelHostAddress() ?? 'plugin'}',
+      'tunnel host mode=${_resolvedTunnelHostMode()} helperHost=${_resolvedHelperHostAddress() ?? 'plugin'}',
     );
     if (_appCoreMode == 'bridge') {
       await StartupLog.write('app core initialize skipped: bridge mode');
@@ -100,13 +100,14 @@ class AppCoreScope {
       await StartupLog.write(
         'persisted session found userId=${persistedSession.userId} deviceId=${persistedSession.deviceId}',
       );
-      final validationResult = await _validatePersistedSession(persistedSession);
+      final validationResult =
+          await _validatePersistedSession(persistedSession);
       await StartupLog.write(
         'persisted session validation result=${validationResult.isValid} clear=${validationResult.shouldClearPersistedSession}',
       );
       if (validationResult.isValid) {
         await _coordinator.applyExternalSessionInternal(
-          persistedSession,
+          validationResult.session ?? persistedSession,
           persistSession: false,
         );
         await StartupLog.write('persisted session applied');
@@ -312,10 +313,14 @@ class AppCoreScope {
       _instance.restoreSession(session);
       await _instance.listDevices();
       await StartupLog.write('validate persisted session success');
-      return _persistedSessionValid;
+      return _persistedSessionValid.withSession(session);
     } catch (error) {
       await StartupLog.write('validate persisted session failed: $error');
       if (_isUnauthorizedSessionError(error)) {
+        final refreshed = await _tryRefreshPersistedSession(session);
+        if (refreshed != null) {
+          return _persistedSessionValid.withSession(refreshed);
+        }
         return const _PersistedSessionValidationResult(
           isValid: false,
           shouldClearPersistedSession: true,
@@ -351,7 +356,9 @@ class AppCoreScope {
     if (uri == null || uri.host.isEmpty) {
       return null;
     }
-    if (uri.host == '127.0.0.1' || uri.host == 'localhost' || uri.host == '::1') {
+    if (uri.host == '127.0.0.1' ||
+        uri.host == 'localhost' ||
+        uri.host == '::1') {
       return 'https://web.slan.localhost:18443';
     }
     if (uri.host == 'slan.localhost') {
@@ -390,14 +397,53 @@ class AppCoreScope {
       );
     }
   }
+
+  static Future<SessionModel?> _tryRefreshPersistedSession(
+    SessionModel session,
+  ) async {
+    final refreshToken = session.refreshToken?.trim();
+    if (refreshToken == null || refreshToken.isEmpty) {
+      await StartupLog.write('persisted session refresh skipped: no token');
+      return null;
+    }
+    try {
+      await StartupLog.write('persisted session refresh start');
+      final refreshed = await _instance.refreshSession(
+        refreshToken: refreshToken,
+        deviceId: session.deviceId,
+      );
+      final merged = refreshed.copyWith(
+        deviceId: refreshed.deviceId ?? session.deviceId,
+        userLabel: refreshed.userLabel ?? session.userLabel,
+        authenticatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await persistSession(merged);
+      _instance.restoreSession(merged);
+      await _instance.listDevices();
+      await StartupLog.write('persisted session refresh success');
+      return merged;
+    } catch (error) {
+      await StartupLog.write('persisted session refresh failed: $error');
+      return null;
+    }
+  }
 }
 
 final class _PersistedSessionValidationResult {
   const _PersistedSessionValidationResult({
     required this.isValid,
     required this.shouldClearPersistedSession,
+    this.session,
   });
 
   final bool isValid;
   final bool shouldClearPersistedSession;
+  final SessionModel? session;
+
+  _PersistedSessionValidationResult withSession(SessionModel session) =>
+      _PersistedSessionValidationResult(
+        isValid: isValid,
+        shouldClearPersistedSession: shouldClearPersistedSession,
+        session: session,
+      );
 }

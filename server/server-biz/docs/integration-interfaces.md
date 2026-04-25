@@ -2,6 +2,61 @@
 
 本文档描述 `server-biz` 接入哪些外部系统和协议，以及这些接入点分别落在哪一层。
 
+## Current Public Client HTTP Endpoints
+
+This maintained summary is the source to check when wiring client, app-core, or
+web-console flows:
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh`
+- `GET /auth/callback-status/{callbackId}`
+- `POST /auth/callback-status/{callbackId}/complete`
+- `POST /auth/callback-status/{callbackId}/ack`
+- `GET /auth/ws/{callbackId}`
+- `POST /devices/register`
+- `GET /devices`
+- `POST /nodes/register`
+- `GET /networks/home`
+- `GET /networks`
+- `POST /networks`
+- `PUT /networks/{networkId}`
+- `PUT /networks/{networkId}/join-key`
+- `PUT /networks/{networkId}/dns`
+- `POST /networks/join-by-owner-email`
+- `POST /networks/join-by-key`
+- `POST /networks/{networkId}/switch`
+- `GET /networks/{networkId}`
+- `POST /networks/{networkId}/join`
+- `POST /networks/{networkId}/activate`
+- `POST /networks/{networkId}/deactivate`
+- `GET /networks/{networkId}/members`
+- `PUT /networks/{networkId}/members/{memberId}/status`
+- `GET /networks/{networkId}/assignments`
+- `GET /networks/{networkId}/subnets`
+- `POST /networks/{networkId}/subnets`
+- `POST /networks/{networkId}/subnets/{subnetId}/attachments`
+- `PUT /networks/{networkId}/attachments/{attachmentId}/ip`
+- `PUT /networks/{networkId}/attachments/{attachmentId}/remark`
+- `POST /bootstrap`
+- `POST /relay/tickets`
+- `POST /control/sessions`
+- `POST /control/messages/{messageId}/ack`
+- `GET /control/ws`
+- `GET /debug/vars`
+- `GET /healthz`
+
+The network join and switch flow depends on `GET /networks` returning every
+network visible to the authenticated user, including networks joined through
+owner email or join key.
+The recommended client path is `POST /bootstrap`, which already returns the
+control session token and WebSocket config. `POST /control/sessions` remains the
+explicit control-session endpoint for callers that need to refresh only the
+control-plane session.
+
+See `client-core-flow.md` for the end-to-end client create, join, alias,
+switch, activate, bootstrap, and relay fallback flow.
+
 ## 1. 外部接入总览
 
 `server-biz` 需要接入三类外部交互：
@@ -18,24 +73,45 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 
 - `POST /auth/register`
 - `POST /auth/login`
+- `POST /auth/refresh`
+- `GET /auth/callback-status/{callbackId}`
+- `POST /auth/callback-status/{callbackId}/complete`
+- `POST /auth/callback-status/{callbackId}/ack`
+- `GET /auth/ws/{callbackId}`
 - `GET /healthz`
+- `GET /debug/vars`
 
 ### 2.2 鉴权接口
 
 - `POST /devices/register`
 - `GET /devices`
 - `POST /nodes/register`
-- `POST /control/sessions`
+- `GET /networks/home`
 - `GET /networks`
 - `POST /networks`
+- `PUT /networks/{networkId}`
+- `PUT /networks/{networkId}/join-key`
+- `PUT /networks/{networkId}/dns`
+- `POST /networks/join-by-owner-email`
+- `POST /networks/join-by-key`
+- `POST /networks/{networkId}/switch`
 - `GET /networks/{networkId}`
 - `POST /networks/{networkId}/join`
+- `POST /networks/{networkId}/activate`
+- `POST /networks/{networkId}/deactivate`
 - `GET /networks/{networkId}/members`
+- `PUT /networks/{networkId}/members/{memberId}/status`
+- `GET /networks/{networkId}/assignments`
 - `GET /networks/{networkId}/subnets`
 - `POST /networks/{networkId}/subnets`
 - `POST /networks/{networkId}/subnets/{subnetId}/attachments`
+- `PUT /networks/{networkId}/attachments/{attachmentId}/ip`
+- `PUT /networks/{networkId}/attachments/{attachmentId}/remark`
 - `POST /bootstrap`
 - `POST /relay/tickets`
+- `POST /control/sessions`
+- `POST /control/messages/{messageId}/ack`
+- `GET /control/ws`
 
 ## 3. 控制通道接入接口
 

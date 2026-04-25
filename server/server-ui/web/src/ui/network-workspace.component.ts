@@ -50,6 +50,10 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember, Subnet } from
             <span>通过宿主邮箱加入</span>
             <input [ngModel]="joinOwnerEmail" (ngModelChange)="joinOwnerEmailChange.emit($event)" placeholder="owner@company.com" />
           </label>
+          <label>
+            <span>设备别名</span>
+            <input [ngModel]="joinAlias" (ngModelChange)="joinAliasChange.emit($event)" placeholder="Thor laptop" />
+          </label>
           <div class="actions compact">
             <button class="ghost" (click)="joinByOwnerEmail.emit()">加入 / 切换</button>
             <button class="ghost" *ngIf="showSwitchToOwned" (click)="switchToOwned.emit()">回到我的网络</button>
@@ -194,7 +198,7 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember, Subnet } from
       <div class="card section-card" *ngIf="detail?.ownedByCurrentUser">
         <div class="panel-title">
           <h3>网络 IP 管理</h3>
-          <p>只有宿主网络 owner 能管理成员虚拟 IP 和网络内设备备注。owner 设备固定为该默认子网的 x.x.x.2。</p>
+          <p>宿主网络 owner 可管理成员虚拟 IP 和所有设备备注。成员加入网络时也可以保存自己设备的别名。owner 设备固定为该默认子网的 x.x.x.2。</p>
         </div>
         <table *ngIf="assignments.length > 0">
           <thead>
@@ -248,6 +252,7 @@ export class NetworkWorkspaceComponent {
   @Input({ required: true }) pendingMembers!: NetworkMember[];
   @Input({ required: true }) selectedDeviceLabel!: string;
   @Input({ required: true }) joinOwnerEmail!: string;
+  @Input({ required: true }) joinAlias!: string;
   @Input({ required: true }) updateName!: string;
   @Input({ required: true }) updateDescription!: string;
   @Input({ required: true }) updateCidr!: string;
@@ -264,6 +269,7 @@ export class NetworkWorkspaceComponent {
   @Output() readonly refresh = new EventEmitter<void>();
   @Output() readonly switchToOwned = new EventEmitter<void>();
   @Output() readonly joinOwnerEmailChange = new EventEmitter<string>();
+  @Output() readonly joinAliasChange = new EventEmitter<string>();
   @Output() readonly joinByOwnerEmail = new EventEmitter<void>();
   @Output() readonly updateNameChange = new EventEmitter<string>();
   @Output() readonly updateDescriptionChange = new EventEmitter<string>();

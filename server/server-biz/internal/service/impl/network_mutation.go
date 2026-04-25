@@ -301,9 +301,6 @@ func (s dbNetworkService) UpdateAttachmentRemark(userID, networkID, attachmentID
 		}
 		return dto.NetworkAssignment{}, err
 	}
-	if record.OwnerUserID != userID {
-		return dto.NetworkAssignment{}, ErrForbidden
-	}
 	attachment, err := s.state.pg.GetAttachmentByID(ctx, attachmentID)
 	if err != nil {
 		if repo.IsNotFound(err) {
@@ -313,6 +310,11 @@ func (s dbNetworkService) UpdateAttachmentRemark(userID, networkID, attachmentID
 	}
 	if attachment.NetworkID != networkID {
 		return dto.NetworkAssignment{}, ErrNotFound
+	}
+	if record.OwnerUserID != userID {
+		if err := s.state.ensureDeviceOwner(ctx, userID, attachment.DeviceID); err != nil {
+			return dto.NetworkAssignment{}, err
+		}
 	}
 	remark := strings.TrimSpace(req.Remark)
 	if err := s.state.pg.UpdateAttachmentRemark(ctx, attachmentID, remark); err != nil {

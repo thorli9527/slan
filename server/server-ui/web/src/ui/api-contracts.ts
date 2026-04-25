@@ -5,6 +5,11 @@ export type AuthResponse = {
   expiresIn: number;
 };
 
+export type ErrorResponse = {
+  code: string;
+  message: string;
+};
+
 export type CompleteAuthCallbackRequest = {
   accessToken: string;
   userId: string;
@@ -53,6 +58,11 @@ export type Network = {
 export type DNSConfig = {
   servers: string[];
   searchDomains: string[];
+};
+
+export type UpdateNetworkDNSRequest = {
+  servers?: string[];
+  searchDomains?: string[];
 };
 
 export type NetworkHome = {

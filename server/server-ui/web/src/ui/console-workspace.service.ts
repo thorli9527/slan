@@ -1,10 +1,11 @@
 import { Injectable } from '@angular/core';
 
 import { ConsoleApiService } from './console-api.service';
-import { NetworkAssignment, NetworkDetail, NetworkHome, Subnet } from './api-contracts';
+import { Network, NetworkAssignment, NetworkDetail, NetworkHome, NetworkJoinResult, Subnet } from './api-contracts';
 
 export type WorkspaceSnapshot = {
   home: NetworkHome;
+  networks: Network[];
   detail: NetworkDetail | null;
   subnets: Subnet[];
   assignments: NetworkAssignment[];
@@ -16,10 +17,15 @@ export class ConsoleWorkspaceService {
   constructor(private readonly api: ConsoleApiService) {}
 
   async loadWorkspace(token: string): Promise<WorkspaceSnapshot> {
-    const home = await this.api.getHome(token);
+    const [home, networksResponse] = await Promise.all([
+      this.api.getHome(token),
+      this.api.listNetworks(token),
+    ]);
+    const networks = networksResponse.items;
     if (!home.activeNetwork) {
       return {
         home,
+        networks,
         detail: null,
         subnets: [],
         assignments: [],
@@ -36,6 +42,7 @@ export class ConsoleWorkspaceService {
     if (!detail.ownedByCurrentUser) {
       return {
         home,
+        networks,
         detail,
         subnets: subnets.items,
         assignments: [],
@@ -46,6 +53,7 @@ export class ConsoleWorkspaceService {
     const assignments = (await this.api.getAssignments(token, networkId)).items;
     return {
       home,
+      networks,
       detail,
       subnets: subnets.items,
       assignments,
@@ -53,11 +61,11 @@ export class ConsoleWorkspaceService {
     };
   }
 
-  switchNetwork(token: string, networkId: string, deviceId: string): Promise<void> {
+  switchNetwork(token: string, networkId: string, deviceId: string): Promise<NetworkJoinResult> {
     return this.api.switchNetwork(token, networkId, deviceId);
   }
 
-  activateNetwork(token: string, networkId: string, deviceId: string): Promise<void> {
+  activateNetwork(token: string, networkId: string, deviceId: string): Promise<NetworkJoinResult> {
     return this.api.activateNetwork(token, networkId, deviceId);
   }
 }

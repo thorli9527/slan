@@ -65,15 +65,14 @@ class _HomePageState extends State<HomePage> {
       animation: Listenable.merge([sessionStore, tunnelStore]),
       builder: (context, _) {
         final loggedIn = sessionStore.session != null;
-        final activeNetwork = sessionStore.networks.isNotEmpty
-            ? sessionStore.networks.first
-            : null;
+        final activeNetwork = sessionStore.selectedNetwork;
         final runtime = tunnelStore.tunnelRuntimeView;
-        final currentMember =
-            _memberForCurrentDevice(sessionStore.device?.deviceId, activeNetwork);
+        final currentMember = _memberForCurrentDevice(
+            sessionStore.device?.deviceId, activeNetwork);
         final virtualIp = switch (activeNetwork) {
           null => 'No network',
-          _ when currentMember?.virtualIp != null &&
+          _
+              when currentMember?.virtualIp != null &&
                   currentMember!.virtualIp!.trim().isNotEmpty =>
             currentMember.virtualIp!.trim(),
           _ => 'Pending allocation',

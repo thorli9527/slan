@@ -6,4 +6,6 @@ pub use control_plane::{ControlPlaneConfig, DnsConfig};
 pub use relay::{
     RelayCity, RelayCluster, RelayConfig, RelayCountry, RelayEndpoint, RelayNode, RelayRegion,
 };
-pub use topology::{Endpoint, Network, NetworkMap, NetworkMember, Peer, Route};
+pub use topology::{
+    Endpoint, Network, NetworkAssignment, NetworkJoinResult, NetworkMap, NetworkMember, Peer, Route,
+};

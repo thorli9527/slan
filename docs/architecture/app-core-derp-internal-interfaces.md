@@ -128,21 +128,20 @@
 - DERP 池内部状态属于诊断和调优数据
 - 先在 Rust 核心收敛，再决定是否开放给 UI
 
-## 5. 后续必须补实现的点
+## 5. 后续必须补强的点
 
-当前只是接口定义，后续还需要补：
+当前控制面消费、relay / DERP 票据字段、`DerpPool` / `PathManager` 基础路径已经具备测试覆盖。后续还需要补强：
 
-1. `controller-client` 的真实 HTTP 实现
-2. `DerpClient` 的真实连接实现
-3. `DerpPool` 的评分、选主、切换逻辑
-4. `PathManager` 与 `p2p` / `tunnel` 的打通
-5. `ConnectionState` 上报里增加 DERP 维度信息
+1. 真实网络环境下的 `DerpClient` 故障注入与恢复验证
+2. `DerpPool` 评分、选主、切换逻辑的长期运行与诊断覆盖
+3. `PathManager` 与 `p2p` / `tunnel` 的更多平台场景打通
+4. `ConnectionState` 上报里增加更完整的 DERP 维度信息
+5. 将 active path、最近 probe、fallback 原因整理成只读诊断接口
 
 ## 6. 建议的实现顺序
 
-1. 先让 `BootstrapConfig` 真正带回 `derp_map`
-2. 再让 `issue_relay_ticket()` 支持 cluster-aware ticket
-3. 实现单个 `DerpClient`
-4. 实现 `DerpPool.warm_up()` 和 `send_via_active()`
-5. 实现 `tick_health_check()` 和 `maybe_switch()`
-6. 最后接到 `PathManager`
+1. 固化 `BootstrapConfig.derp_map` 与 cluster-aware relay ticket 的协议回归
+2. 扩展 `DerpClient` / `DerpPool` 的真实网络和故障注入测试
+3. 完善 `tick_health_check()`、`maybe_switch()` 和 active path 诊断输出
+4. 扩展 `PathManager` 与 `p2p` / `tunnel` 联动场景
+5. 最后按需把 DERP 诊断状态开放给 Flutter

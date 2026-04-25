@@ -2,8 +2,9 @@ use serde_json::{json, Value};
 
 use crate::facade::AppCoreFacade;
 use crate::json_facade_args::{
-    AuthArgs, BootstrapArgs, ConnectArgs, CreateNetworkArgs, JoinNetworkArgs, RegisterDeviceArgs,
-    RegisterNodeArgs, RelayTicketArgs, SendArgs,
+    AuthArgs, BootstrapArgs, ConnectArgs, CreateNetworkArgs, JoinNetworkArgs, JoinNetworkByKeyArgs,
+    JoinNetworkByOwnerEmailArgs, RefreshSessionArgs, RegisterDeviceArgs, RegisterNodeArgs,
+    RelayTicketArgs, SendArgs, UpdateAttachmentRemarkArgs,
 };
 use crate::json_facade_runtime::{
     connection_state_value, data_plane_error_string, parse_args, to_value,
@@ -34,6 +35,13 @@ where
                 let args: AuthArgs = parse_args(args)?;
                 Ok(to_value(self.inner.login(args.email, args.password)?)?)
             }
+            "refreshSession" => {
+                let args: RefreshSessionArgs = parse_args(args)?;
+                Ok(to_value(
+                    self.inner
+                        .refresh_session(args.refresh_token, args.device_id)?,
+                )?)
+            }
             "registerDevice" => {
                 let args: RegisterDeviceArgs = parse_args(args)?;
                 Ok(to_value(self.inner.register_device(
@@ -62,14 +70,44 @@ where
             }
             "joinNetwork" => {
                 let args: JoinNetworkArgs = parse_args(args)?;
-                self.inner.join_network(args.network_id, args.device_id)?;
-                Ok(json!({}))
+                Ok(to_value(
+                    self.inner.join_network(args.network_id, args.device_id)?,
+                )?)
+            }
+            "joinNetworkByOwnerEmail" => {
+                let args: JoinNetworkByOwnerEmailArgs = parse_args(args)?;
+                Ok(to_value(self.inner.join_network_by_owner_email(
+                    args.owner_email,
+                    args.device_id,
+                )?)?)
+            }
+            "joinNetworkByKey" => {
+                let args: JoinNetworkByKeyArgs = parse_args(args)?;
+                Ok(to_value(
+                    self.inner
+                        .join_network_by_key(args.join_key, args.device_id)?,
+                )?)
+            }
+            "updateAttachmentRemark" => {
+                let args: UpdateAttachmentRemarkArgs = parse_args(args)?;
+                Ok(to_value(self.inner.update_attachment_remark(
+                    args.network_id,
+                    args.attachment_id,
+                    args.remark,
+                )?)?)
             }
             "activateNetwork" => {
                 let args: JoinNetworkArgs = parse_args(args)?;
-                self.inner
-                    .activate_network(args.network_id, args.device_id)?;
-                Ok(json!({}))
+                Ok(to_value(
+                    self.inner
+                        .activate_network(args.network_id, args.device_id)?,
+                )?)
+            }
+            "switchNetwork" => {
+                let args: JoinNetworkArgs = parse_args(args)?;
+                Ok(to_value(
+                    self.inner.switch_network(args.network_id, args.device_id)?,
+                )?)
             }
             "deactivateNetwork" => {
                 let args: JoinNetworkArgs = parse_args(args)?;
@@ -91,7 +129,10 @@ where
                     args.network_id,
                     args.src_node_id,
                     args.dst_node_id,
+                    args.derp_cluster_id,
+                    args.preferred_derp_node_ids,
                     args.reason,
+                    args.relay_region_id,
                 )?)?)
             }
             "connect" => {

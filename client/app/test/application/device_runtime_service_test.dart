@@ -11,7 +11,8 @@ import 'package:slan_app/infra/app_core/models/relay_models.dart';
 
 void main() {
   group('DeviceRuntimeService.connectWithFallback', () {
-    test('returns direct success hint when planned direct path connects', () async {
+    test('returns direct success hint when planned direct path connects',
+        () async {
       final api = _FakeAppCoreApi(
         connectResponses: [
           const ConnectionStateModel.connected(ConnectionPathModel.p2p),
@@ -159,6 +160,9 @@ class _FakeAppCoreApi implements AppCoreApi {
     required String srcNodeId,
     required String dstNodeId,
     required String reason,
+    String? derpClusterId,
+    List<String> preferredDerpNodeIds = const [],
+    String? relayRegionId,
   }) async {
     relayTicketRequests.add(
       _RelayTicketRequest(
@@ -178,10 +182,18 @@ class _FakeAppCoreApi implements AppCoreApi {
   void restoreSession(SessionModel session) {}
 
   @override
-  Future<void> activateNetwork({
+  Future<NetworkJoinModel> activateNetwork({
     required String networkId,
     required String deviceId,
-  }) async {}
+  }) async =>
+      NetworkJoinModel(networkId: networkId, deviceId: deviceId);
+
+  @override
+  Future<NetworkJoinModel> switchNetwork({
+    required String networkId,
+    required String deviceId,
+  }) async =>
+      NetworkJoinModel(networkId: networkId, deviceId: deviceId);
 
   @override
   Future<BootstrapModel> bootstrap({
@@ -223,10 +235,43 @@ class _FakeAppCoreApi implements AppCoreApi {
   Future<void> disconnect() async {}
 
   @override
-  Future<void> joinNetwork({
+  Future<NetworkJoinModel> joinNetwork({
     required String networkId,
     required String deviceId,
-  }) async {}
+  }) async =>
+      NetworkJoinModel(networkId: networkId, deviceId: deviceId);
+
+  @override
+  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
+    required String ownerEmail,
+    required String deviceId,
+  }) async =>
+      NetworkJoinModel(networkId: 'net-1', deviceId: deviceId);
+
+  @override
+  Future<NetworkJoinModel> joinNetworkByKey({
+    required String joinKey,
+    required String deviceId,
+  }) async =>
+      NetworkJoinModel(networkId: 'net-1', deviceId: deviceId);
+
+  @override
+  Future<NetworkAssignmentModel> updateAttachmentRemark({
+    required String networkId,
+    required String attachmentId,
+    required String remark,
+  }) async =>
+      NetworkAssignmentModel(
+        attachmentId: attachmentId,
+        networkId: networkId,
+        subnetId: 'subnet-1',
+        deviceId: 'dev-1',
+        deviceName: 'dev-1',
+        userId: 'user-1',
+        userEmail: 'user@example.com',
+        role: 'member',
+        remark: remark,
+      );
 
   @override
   Future<List<DeviceModel>> listDevices() {
@@ -242,6 +287,14 @@ class _FakeAppCoreApi implements AppCoreApi {
   Future<SessionModel> login({
     required String email,
     required String password,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<SessionModel> refreshSession({
+    required String refreshToken,
+    String? deviceId,
   }) {
     throw UnimplementedError();
   }

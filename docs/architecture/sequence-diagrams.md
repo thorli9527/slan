@@ -99,10 +99,20 @@ sequenceDiagram
         PG-->>Biz: Network(networkId, defaultSubnetId)
         Biz-->>App: Network(networkId, defaultSubnetId)
     else 用户加入一个已存在网络
-        User->>App: 选择 networkId
+        User->>App: 输入宿主邮箱或 join key，可选设备别名
+        alt 宿主邮箱
+            App->>Biz: POST /networks/join-by-owner-email
+        else join key
+            App->>Biz: POST /networks/join-by-key
+        end
+        Biz-->>App: NetworkJoinResult(member, attachment)
+        opt 用户填写设备别名
+            App->>Biz: PUT /networks/{networkId}/attachments/{attachmentId}/remark
+            Biz-->>App: NetworkAssignment
+        end
     end
 
-    User->>App: 让设备加入网络
+    User->>App: 让设备加入已知 networkId
     App->>Biz: POST /networks/{networkId}/join (Authorization: Bearer accessToken)
     Note right of App: body: { deviceId }
     Biz->>Redis: Authenticate(accessToken)
@@ -154,11 +164,22 @@ sequenceDiagram
     App->>Biz: POST /networks
     Biz-->>App: Network(networkId, defaultSubnetId)
 
-    User->>App: 让设备加入网络
-    App->>Biz: POST /networks/{networkId}/join
-    Note right of App: 带 deviceId
+    User->>App: 加入网络
+    alt 已知 networkId
+        App->>Biz: POST /networks/{networkId}/join
+    else 宿主邮箱
+        App->>Biz: POST /networks/join-by-owner-email
+    else join key
+        App->>Biz: POST /networks/join-by-key
+    end
+    Note right of App: 带 deviceId，可选别名后续写入 attachment remark
     Biz->>Biz: 建立成员关系
     Biz->>Biz: 分配默认子网虚拟 IP
+    Biz-->>App: NetworkJoinResult(member, attachment)
+
+    App->>Biz: POST /networks/{networkId}/switch
+    Biz-->>App: NetworkJoinResult(member, attachment)
+    App->>Biz: POST /networks/{networkId}/activate
     Biz-->>App: NetworkJoinResult(member, attachment)
 
     App->>Biz: GET /networks/{networkId}
@@ -191,9 +212,15 @@ sequenceDiagram
     participant Core as Core
     participant Biz as Biz
 
-    Core->>Biz: POST /control/sessions
-    Note right of Core: 带 nodeId、networkId
-    Biz-->>Core: ControlSessionResponse(sessionToken, wsUrl, networkMap)
+    alt 标准客户端启动
+        Core->>Biz: POST /bootstrap
+        Note right of Core: 带 nodeId、networkId
+        Biz-->>Core: BootstrapResponse(sessionToken, wsUrl, networkMap)
+    else 仅刷新控制会话
+        Core->>Biz: POST /control/sessions
+        Note right of Core: 已有 device/node/network 上下文
+        Biz-->>Core: ControlSessionResponse(sessionToken, wsUrl, networkMap)
+    end
 
     Core->>Biz: WebSocket connect wsUrl
     Core->>Biz: Envelope(NodeHello)
@@ -343,14 +370,21 @@ sequenceDiagram
     App->>Biz: register node
     Biz-->>App: nodeId
 
-    App->>Biz: create network / join network
+    App->>Biz: create network / join-by-owner-email / join-by-key
     Biz-->>App: network and attachment
+    opt 用户设置设备别名
+        App->>Biz: update attachment remark
+    end
+    App->>Biz: switch network
+    Biz-->>App: NetworkJoinResult(member, attachment)
+    App->>Biz: activate network
+    Biz-->>App: NetworkJoinResult(member, attachment)
 
     App->>Core: bootstrap(nodeId, networkId)
-    Core->>Biz: /bootstrap
+    Core->>Biz: POST /bootstrap
     Biz-->>Core: bootstrap config
 
-    Core->>Biz: create control session + ws hello
+    Core->>Biz: ws hello with bootstrap session token
     Biz-->>Core: network map / connect plan
 
     Core->>Peer: try p2p

@@ -47,6 +47,7 @@ export class AppComponent implements OnDestroy {
   createCidr = '10.0.0.0/16';
   joinOwnerEmail = '';
   joinKey = '';
+  joinAlias = '';
   deviceSearch = '';
   deviceSort = 'created_desc';
   deviceStatusFilter = 'all';
@@ -72,6 +73,7 @@ export class AppComponent implements OnDestroy {
   readonly error = signal('');
   readonly message = signal('');
   readonly home = signal<NetworkHome>({ hasNetwork: false });
+  readonly networks = signal<NonNullable<NetworkHome['activeNetwork']>[]>([]);
   readonly detail = signal<NetworkDetail | null>(null);
   readonly assignments = signal<NetworkAssignment[]>([]);
   readonly devices = signal<Device[]>([]);
@@ -90,7 +92,11 @@ export class AppComponent implements OnDestroy {
     return assignment ? this.subnets().find((item) => item.subnetId === assignment.subnetId) || null : null;
   });
   readonly joinedNetworks = computed(() => {
-    const items = [this.home().activeNetwork, this.home().ownedNetwork].filter(Boolean) as NonNullable<NetworkHome['activeNetwork']>[];
+    const items = [
+      ...this.networks(),
+      this.home().activeNetwork,
+      this.home().ownedNetwork,
+    ].filter(Boolean) as NonNullable<NetworkHome['activeNetwork']>[];
     return items.filter((item, index, list) => list.findIndex((candidate) => candidate.networkId === item.networkId) === index);
   });
   readonly canManageNetwork = computed(() => !!this.detail()?.ownedByCurrentUser);
@@ -338,6 +344,7 @@ export class AppComponent implements OnDestroy {
       const result = await this.facade.joinByOwnerEmail({
         token: this.token(),
         ownerEmail: this.joinOwnerEmail,
+        alias: this.joinAlias,
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
@@ -356,6 +363,7 @@ export class AppComponent implements OnDestroy {
       const result = await this.facade.joinByKey({
         token: this.token(),
         joinKey: this.joinKey,
+        alias: this.joinAlias,
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
@@ -636,6 +644,7 @@ export class AppComponent implements OnDestroy {
     this.clearCachedAuth();
     this.activeView.set('account');
     this.home.set({ hasNetwork: false });
+    this.networks.set([]);
     this.detail.set(null);
     this.subnets.set([]);
     this.assignments.set([]);
@@ -769,6 +778,7 @@ export class AppComponent implements OnDestroy {
     this.clearCachedAuth();
     this.activeView.set('account');
     this.home.set({ hasNetwork: false });
+    this.networks.set([]);
     this.detail.set(null);
     this.subnets.set([]);
     this.assignments.set([]);
@@ -800,6 +810,7 @@ export class AppComponent implements OnDestroy {
   private applyRefreshWorkspaceResult(result: RefreshWorkspaceResult): void {
     this.applyManagedDeviceState(result.managedDevice);
     this.home.set(result.workspace.home);
+    this.networks.set(result.workspace.networks);
     this.detail.set(result.workspace.detail);
     this.subnets.set(result.workspace.subnets);
     this.assignments.set(result.workspace.assignments);

@@ -127,7 +127,7 @@ type SubnetAttachment struct {
 	DeviceID string `gorm:"column:device_id;index;not null;uniqueIndex:idx_subnet_device"`
 	// VirtualIP 是分配给该挂载关系的虚拟 IP。
 	VirtualIP string `gorm:"column:virtual_ip;not null;default:'';uniqueIndex:idx_subnet_ip"`
-	// Remark 是 owner 维护的网络内设备备注。
+	// Remark 是网络内显示的设备备注。
 	Remark string `gorm:"column:remark;not null;default:''"`
 	// Status 是挂载状态。
 	Status string `gorm:"column:status;not null;default:'active'"`
