@@ -123,5 +123,22 @@ func (s dbNetworkService) Deactivate(userID, networkID string, req dto.Deactivat
 	if _, err := s.loadNetworkForDevice(ctx, userID, networkID, req.DeviceID, false); err != nil {
 		return err
 	}
-	return s.state.pg.DeleteAttachmentsByDeviceInNetwork(ctx, req.DeviceID, networkID)
+	return s.state.cleanupDeactivatedNetworkDevice(ctx, networkID, req.DeviceID)
+}
+
+func (s *dbState) cleanupDeactivatedNetworkDevice(ctx context.Context, networkID, deviceID string) error {
+	nodes, err := s.pg.ListNodesByDevice(ctx, deviceID)
+	if err != nil {
+		return err
+	}
+	if err := s.pg.DeleteAttachmentsByDeviceInNetwork(ctx, deviceID, networkID); err != nil {
+		return err
+	}
+	if err := s.pg.DeleteControlSessionsByDeviceInNetwork(ctx, deviceID, networkID); err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		s.publishPeerRemove(networkID, node.NodeID)
+	}
+	return nil
 }

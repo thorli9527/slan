@@ -1011,6 +1011,28 @@ func TestActivateAndDeactivate_AllocatesIpOnlyWhileEnabled(t *testing.T) {
 	if activated.Attachment.NetworkID != "net-1" || activated.Attachment.VirtualIP == "" {
 		t.Fatalf("expected attachment with allocated ip after activation, got %+v", activated.Attachment)
 	}
+	if err := state.pg.UpsertNode(ctx, repo.Node{
+		NodeID:        "node-1",
+		UserID:        "user-1",
+		DeviceID:      "dev-1",
+		NodePublicKey: "node-public-key",
+		Capabilities:  []string{"desktop"},
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	now := time.Now().Unix()
+	if err := state.pg.CreateControlSession(ctx, repo.ControlSession{
+		ControlSessionID: "ctrl-1",
+		UserID:           "user-1",
+		DeviceID:         "dev-1",
+		NodeID:           "node-1",
+		NetworkID:        "net-1",
+		SessionToken:     "token-1",
+		ConnectedAt:      now,
+		LastSeenAt:       now,
+	}); err != nil {
+		t.Fatalf("create control session: %v", err)
+	}
 
 	afterActivate, err := state.pg.ListAttachmentsByDevice(ctx, "dev-1")
 	if err != nil {
@@ -1030,6 +1052,13 @@ func TestActivateAndDeactivate_AllocatesIpOnlyWhileEnabled(t *testing.T) {
 	}
 	if len(afterDeactivate) != 0 {
 		t.Fatalf("expected no attachments after deactivation, got %+v", afterDeactivate)
+	}
+	if _, err := state.pg.GetLatestControlSessionByNode(ctx, "node-1", "net-1"); !repo.IsNotFound(err) {
+		t.Fatalf("expected control session to be deleted after deactivation, got %v", err)
+	}
+	tokenStore := state.tokens.(*memoryTokenStore)
+	if len(tokenStore.controlSyncEvents) != 1 || tokenStore.controlSyncEvents[0].Type != "peer_remove" {
+		t.Fatalf("expected peer_remove control sync event, got %+v", tokenStore.controlSyncEvents)
 	}
 }
 

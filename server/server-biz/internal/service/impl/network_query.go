@@ -135,14 +135,7 @@ func (s *dbState) cleanupRejectedNetworkMember(ctx context.Context, networkID st
 	if member.Role == "owner" {
 		return nil
 	}
-	nodes, err := s.pg.ListNodesByDevice(ctx, member.DeviceID)
-	if err != nil {
-		return err
-	}
-	if err := s.pg.DeleteAttachmentsByDeviceInNetwork(ctx, member.DeviceID, networkID); err != nil {
-		return err
-	}
-	if err := s.pg.DeleteControlSessionsByDeviceInNetwork(ctx, member.DeviceID, networkID); err != nil {
+	if err := s.cleanupDeactivatedNetworkDevice(ctx, networkID, member.DeviceID); err != nil {
 		return err
 	}
 	device, err := s.pg.GetDeviceByID(ctx, member.DeviceID)
@@ -171,9 +164,6 @@ func (s *dbState) cleanupRejectedNetworkMember(ctx context.Context, networkID st
 				return err
 			}
 		}
-	}
-	for _, node := range nodes {
-		s.publishPeerRemove(networkID, node.NodeID)
 	}
 	return nil
 }
