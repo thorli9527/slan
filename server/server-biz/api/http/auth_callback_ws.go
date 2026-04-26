@@ -49,12 +49,19 @@ func (h *authCallbackWSHub) unregister(callbackID string, conn *websocket.Conn) 
 
 func (h *authCallbackWSHub) broadcastReady(callbackID string, payload dto.CompleteAuthCallbackRequest) {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
+	conns := make([]*websocket.Conn, 0, len(h.sessions[callbackID]))
 	for conn := range h.sessions[callbackID] {
-		_ = websocket.JSON.Send(conn, authCallbackWSEnvelope{
+		conns = append(conns, conn)
+	}
+	h.mu.RUnlock()
+
+	for _, conn := range conns {
+		if err := websocket.JSON.Send(conn, authCallbackWSEnvelope{
 			Type:    "auth_callback_ready",
 			Payload: mustMarshalRaw(payload),
-		})
+		}); err != nil {
+			h.unregister(callbackID, conn)
+		}
 	}
 }
 
