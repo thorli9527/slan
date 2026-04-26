@@ -12,12 +12,12 @@ import (
 	"github.com/slan/server/server-biz/internal/util"
 )
 
-// 涓嬮潰杩欑粍 expvar 鎸囨爣缁熶竴鎵胯浇 Control MQTT 鐨勮娴嬩俊鎭€?
+// The expvar metrics below expose Control MQTT observability data.
 //
-// 璁捐鍘熷垯锛?
-// - 鎬婚噺鍜屽垎绫婚噺鍒嗗紑
-// - 鏈€杩戞牱鏈繚鐣欏皯閲?ring buffer
-// - 瀵圭儹鐐?pair 缁欏嚭鎽樿锛屼究浜庝竴鏈熸帓闅?
+// Design notes:
+// - keep total counters and categorized counters separate
+// - keep a small ring buffer for recent samples
+// - summarize hot peer pairs for first-pass troubleshooting
 var controlmsgMetrics = expvar.NewMap("control_mqtt_metrics")
 var controlmsgMessageTypeMetrics = expvar.NewMap("control_mqtt_message_type_total")
 var controlmsgErrorCodeMetrics = expvar.NewMap("control_mqtt_error_code_total")
@@ -58,12 +58,12 @@ var controlmsgFailedPairReasons = map[string]string{}
 var controlmsgDegradedPairCounts = map[string]int64{}
 var controlmsgDegradedPairReasons = map[string]string{}
 
-// metricAdd 涓洪《灞?control_mqtt_metrics 澧炲姞涓€涓暣鍨嬫寚鏍囥€?
+// metricAdd increments a top-level control_mqtt_metrics counter.
 func metricAdd(name string, delta int64) {
 	controlmsgMetrics.Add(name, delta)
 }
 
-// metricAddByType 鎸夊瓧绗︿覆鏍囩瀵?expvar.Map 鍋氱疮璁°€?
+// metricAddByType increments an expvar.Map counter keyed by a string label.
 func metricAddByType(metrics *expvar.Map, name string, delta int64) {
 	if metrics == nil {
 		return
@@ -72,7 +72,7 @@ func metricAddByType(metrics *expvar.Map, name string, delta int64) {
 	metrics.Add(name, delta)
 }
 
-// metricAddByPeer 浠?network|node|peer 缁村害绱 pair 鎸囨爣銆?
+// metricAddByPeer increments a pair metric keyed by network, node, and peer.
 func metricAddByPeer(metrics *expvar.Map, networkID, nodeID, peerNodeID string, delta int64) {
 	if metrics == nil {
 		return
@@ -83,7 +83,7 @@ func metricAddByPeer(metrics *expvar.Map, networkID, nodeID, peerNodeID string, 
 	metrics.Add(key, delta)
 }
 
-// metricAddConnectPlanByPeer 浠?network|node|peer|value 缁村害绱 connect-plan 鍋忓悜銆?
+// metricAddConnectPlanByPeer increments a connect-plan preference by peer.
 func metricAddConnectPlanByPeer(metrics *expvar.Map, networkID, nodeID, peerNodeID, value string, delta int64) {
 	if metrics == nil {
 		return
@@ -95,7 +95,7 @@ func metricAddConnectPlanByPeer(metrics *expvar.Map, networkID, nodeID, peerNode
 	metrics.Add(key, delta)
 }
 
-// metricSetJSON 灏嗕换鎰?payload 搴忓垪鍖栦负 JSON 鍚庡啓鍏?expvar.String銆?
+// metricSetJSON serializes a payload as JSON and stores it in expvar.String.
 func metricSetJSON(target *expvar.String, payload any) {
 	if target == nil {
 		return
@@ -108,7 +108,7 @@ func metricSetJSON(target *expvar.String, payload any) {
 	target.Set(string(data))
 }
 
-// metricAppendRecentJSON 鎶?payload 鎻掑叆鏈€杩戞牱鏈槦鍒楀ご閮紝骞跺洖鍐?JSON 鏁扮粍銆?
+// metricAppendRecentJSON prepends a payload to the recent sample queue.
 func metricAppendRecentJSON(target *expvar.String, items *[]any, payload any) {
 	if target == nil || items == nil {
 		return
@@ -124,7 +124,7 @@ func metricAppendRecentJSON(target *expvar.String, items *[]any, payload any) {
 	metricSetJSON(target, next)
 }
 
-// metricRecordConnectPlan 璁板綍涓€娆?connect-plan 涓嬪彂鍙婂叾 relay 鍋忓悜銆?
+// metricRecordConnectPlan records a delivered connect plan and relay preference.
 func metricRecordConnectPlan(networkID, sourceNodeID, targetNodeID string, plan controlmsg.ConnectPlan) {
 	metricAdd("connect_plan_sent_total", 1)
 	clusterID := util.FirstNonEmpty(plan.DerpClusterID, "none")
@@ -167,7 +167,7 @@ func metricRecordConnectPlan(networkID, sourceNodeID, targetNodeID string, plan 
 	}
 }
 
-// metricRecordConnectionState 璁板綍瀹㈡埛绔笂鎶ョ殑杩炴帴鐘舵€佹牱鏈€?
+// metricRecordConnectionState records a client connection-state sample.
 func metricRecordConnectionState(session *controlSession, state controlmsg.ConnectionState) {
 	metricAdd("connection_state_report_total", 1)
 	metricAddByType(controlmsgConnectionStateMetrics, state.State, 1)
@@ -218,7 +218,7 @@ func metricRecordConnectionState(session *controlSession, state controlmsg.Conne
 	}
 }
 
-// metricRecordPathHealth 璁板綍瀹㈡埛绔笂鎶ョ殑璺緞鍋ュ悍搴︽牱鏈€?
+// metricRecordPathHealth records a client path-health sample.
 func metricRecordPathHealth(session *controlSession, report controlmsg.PathHealthReport) {
 	metricAddByType(controlmsgPathHealthMetrics, util.FirstNonEmpty(report.PathType, "unknown"), 1)
 	metricAdd("path_health_report_total", 1)
