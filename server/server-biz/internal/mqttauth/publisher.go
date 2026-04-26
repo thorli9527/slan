@@ -44,12 +44,8 @@ func publish(ctx context.Context, cfg configs.MQTTConfig, clientID, username, pa
 	if _, err := conn.Write(connectPacket(clientID, username, password)); err != nil {
 		return err
 	}
-	ack := make([]byte, 4)
-	if _, err := conn.Read(ack); err != nil {
+	if err := readConnAck(conn); err != nil {
 		return err
-	}
-	if len(ack) < 4 || ack[0] != 0x20 || ack[3] != 0x00 {
-		return fmt.Errorf("mqtt connect rejected")
 	}
 	if _, err := conn.Write(publishPacket(topic, payload)); err != nil {
 		return err
@@ -66,7 +62,10 @@ func brokerAddress(raw string) (string, error) {
 	if parsed.Host == "" {
 		return "", fmt.Errorf("mqtt broker url missing host")
 	}
-	return parsed.Host, nil
+	if parsed.Port() != "" {
+		return parsed.Host, nil
+	}
+	return net.JoinHostPort(parsed.Hostname(), "1883"), nil
 }
 
 func connectPacket(clientID, username, password string) []byte {
