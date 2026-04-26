@@ -42,6 +42,9 @@ func Subscribe(ctx context.Context, cfg configs.MQTTConfig, clientID, username, 
 	if _, err := conn.Write(subscribePacket(1, topicFilter)); err != nil {
 		return err
 	}
+	if err := readSubAck(conn, 1); err != nil {
+		return err
+	}
 	_ = conn.SetDeadline(time.Time{})
 	done := make(chan struct{})
 	defer close(done)
@@ -112,6 +115,36 @@ func subscribePacket(packetID uint16, topicFilter string) []byte {
 	packet.Write(remainingLength(variable.Len()))
 	packet.Write(variable.Bytes())
 	return packet.Bytes()
+}
+
+func readSubAck(reader io.Reader, packetID uint16) error {
+	header := []byte{0}
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return err
+	}
+	if header[0]&0xf0 != 0x90 {
+		return fmt.Errorf("mqtt subscribe rejected")
+	}
+	remaining, err := readRemainingLength(reader)
+	if err != nil {
+		return err
+	}
+	body := make([]byte, remaining)
+	if _, err := io.ReadFull(reader, body); err != nil {
+		return err
+	}
+	if len(body) < 3 {
+		return fmt.Errorf("mqtt subscribe rejected")
+	}
+	if binary.BigEndian.Uint16(body[:2]) != packetID {
+		return fmt.Errorf("mqtt subscribe rejected")
+	}
+	for _, code := range body[2:] {
+		if code == 0x80 {
+			return fmt.Errorf("mqtt subscribe rejected")
+		}
+	}
+	return nil
 }
 
 func readRemainingLength(reader io.Reader) (int, error) {

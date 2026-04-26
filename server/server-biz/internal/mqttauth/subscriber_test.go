@@ -3,6 +3,7 @@ package mqttauth
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,33 @@ func TestParsePublishQoS1SkipsPacketID(t *testing.T) {
 	}
 	if topic != "slan/devices/dev-1/networks/net-1/state" || string(payload) != `{"ok":true}` {
 		t.Fatalf("unexpected topic=%s payload=%s", topic, payload)
+	}
+}
+
+func TestReadSubAckAcceptsQoS0(t *testing.T) {
+	if err := readSubAck(bytes.NewReader([]byte{0x90, 0x03, 0x00, 0x01, 0x00}), 1); err != nil {
+		t.Fatalf("read suback: %v", err)
+	}
+}
+
+func TestReadSubAckRejectsFailureCode(t *testing.T) {
+	err := readSubAck(bytes.NewReader([]byte{0x90, 0x03, 0x00, 0x01, 0x80}), 1)
+	if err == nil || !strings.Contains(err.Error(), "subscribe rejected") {
+		t.Fatalf("expected rejected suback, got %v", err)
+	}
+}
+
+func TestReadSubAckRejectsPacketIDMismatch(t *testing.T) {
+	err := readSubAck(bytes.NewReader([]byte{0x90, 0x03, 0x00, 0x02, 0x00}), 1)
+	if err == nil || !strings.Contains(err.Error(), "subscribe rejected") {
+		t.Fatalf("expected rejected suback, got %v", err)
+	}
+}
+
+func TestReadSubAckRejectsWrongPacketType(t *testing.T) {
+	err := readSubAck(bytes.NewReader([]byte{0x30, 0x00}), 1)
+	if err == nil || !strings.Contains(err.Error(), "subscribe rejected") {
+		t.Fatalf("expected rejected suback, got %v", err)
 	}
 }
 
