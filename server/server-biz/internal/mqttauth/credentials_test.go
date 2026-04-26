@@ -50,6 +50,12 @@ func TestAllowTopicAccess(t *testing.T) {
 	if AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-2/networks/net-1/state", false) {
 		t.Fatal("expected device publish to another device topic to be denied")
 	}
+	if AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-1/anything", false) {
+		t.Fatal("expected device publish outside network state topics to be denied")
+	}
+	if AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-1/networks//state", false) {
+		t.Fatal("expected device publish with empty network id to be denied")
+	}
 	if !AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-1/#", true) {
 		t.Fatal("expected device subscribe to own topic prefix to be allowed")
 	}

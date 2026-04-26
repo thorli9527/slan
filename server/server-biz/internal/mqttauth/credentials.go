@@ -111,7 +111,16 @@ func AllowTopicAccess(cfg configs.MQTTConfig, principal, deviceID, topic string,
 	if subscribe && topic == devicePrefix+"/#" {
 		return true
 	}
-	return strings.HasPrefix(topic, devicePrefix+"/")
+	return !subscribe && isDeviceNetworkStateTopic(devicePrefix, topic)
+}
+
+func isDeviceNetworkStateTopic(devicePrefix, topic string) bool {
+	suffix := strings.TrimPrefix(topic, devicePrefix+"/")
+	if suffix == topic || suffix == "" {
+		return false
+	}
+	parts := strings.Split(suffix, "/")
+	return len(parts) == 3 && parts[0] == "networks" && parts[1] != "" && parts[2] == "state"
 }
 
 func validateServerSubscriber(cfg configs.MQTTConfig, clientID, username, givenPassword string) bool {
