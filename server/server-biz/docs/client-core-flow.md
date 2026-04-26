@@ -42,7 +42,6 @@ credential:
    for credential validation and `POST /mqtt/bifromq/check` for topic access
    checks. A successful auth check marks only the device control channel as
    reachable.
-   `/auth/ws/{callbackId}` is kept only as a compatibility endpoint.
 
 Device runtime state is split into three meanings:
 

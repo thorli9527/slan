@@ -210,22 +210,6 @@ paths:
               schema:
                 type: boolean
 
-  /auth/ws/{callbackId}:
-    get:
-      tags: [Auth]
-      operationId: authCallbackWebSocket
-      summary: Browser login callback WebSocket
-      description: >
-        Compatibility endpoint. Current desktop clients use
-        `/auth/callback-status/{callbackId}` polling for browser login
-        completion and connect MQTT only after device registration
-        returns a device credential.
-      parameters:
-        - $ref: '#/components/parameters/CallbackId'
-      responses:
-        '101':
-          description: WebSocket upgrade accepted
-
   /devices/register:
     post:
       tags: [Devices]

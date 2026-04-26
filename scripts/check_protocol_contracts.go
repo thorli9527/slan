@@ -746,7 +746,6 @@ func parsePublicGoRoutes(dir string) (map[routeSpec]struct{}, error) {
 		"routes_business_registration.go",
 		"routes_business_network.go",
 		"routes_business_bootstrap.go",
-		"auth_callback_ws.go",
 		"control_ws_sync.go",
 	}
 

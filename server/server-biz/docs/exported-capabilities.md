@@ -50,7 +50,6 @@ desktop app, app-core, and web-console client flow.
 - `/mqtt/auth/check`
 - `/mqtt/bifromq/auth`
 - `/mqtt/bifromq/check`
-- `/auth/ws/{callbackId}` (deprecated compatibility path)
 - `/devices/register`
 - `/devices`
 - `/devices/{deviceId}/networks/{networkId}/state`

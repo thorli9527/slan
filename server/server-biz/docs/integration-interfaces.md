@@ -15,7 +15,6 @@ web-console flows:
 - `POST /mqtt/auth/check`
 - `POST /mqtt/bifromq/auth`
 - `POST /mqtt/bifromq/check`
-- `GET /auth/ws/{callbackId}` (deprecated compatibility path)
 - `POST /devices/register`
 - `GET /devices`
 - `PUT /devices/{deviceId}/networks/{networkId}/state`
@@ -104,7 +103,6 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `POST /mqtt/auth/check`
 - `POST /mqtt/bifromq/auth`
 - `POST /mqtt/bifromq/check`
-- `GET /auth/ws/{callbackId}` (deprecated compatibility path)
 - `GET /healthz`
 - `GET /debug/vars`
 

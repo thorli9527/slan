@@ -33,11 +33,7 @@ func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	auth.POST("/callback-status/:callbackId/complete", respondWithBodyStatus(http.StatusOK, gin.H{"status": "ok"}, func(c *gin.Context, req dto.CompleteAuthCallbackRequest) error {
 		rc := currentRouteContext(c)
 		callbackID := rc.callbackID(c)
-		if err := deps.Auth.CompleteCallback(callbackID, req); err != nil {
-			return err
-		}
-		defaultAuthCallbackWSHub.broadcastReady(callbackID, req)
-		return nil
+		return deps.Auth.CompleteCallback(callbackID, req)
 	}))
 	api.POST("/mqtt/auth/check", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.MQTTAuthCheckRequest) (dto.MQTTAuthCheckResponse, error) {
 		response, ok := mqttauth.ValidateCredential(deps.Config.MQTT, req.ClientID, req.Username, req.Password)

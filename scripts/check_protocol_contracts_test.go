@@ -24,7 +24,6 @@ func TestParsePublicGoRoutes(t *testing.T) {
 		{Method: "POST", Path: "/mqtt/bifromq/auth"},
 		{Method: "POST", Path: "/mqtt/bifromq/check"},
 		{Method: "PUT", Path: "/devices/{deviceId}/networks/{networkId}/state"},
-		{Method: "GET", Path: "/auth/ws/{callbackId}"},
 		{Method: "GET", Path: "/control/ws"},
 	} {
 		if _, ok := routes[route]; !ok {
@@ -58,8 +57,6 @@ paths:
     put: {}
   /networks/{networkId}/dns:
     put: {}
-  /auth/ws/{callbackId}:
-    get: {}
 components:
   schemas: {}
 `)
@@ -106,11 +103,6 @@ func routes(protected interface{}) {
 		"routes_business_bootstrap.go": `package httpapi
 
 func routes(protected interface{}) {
-}`,
-		"auth_callback_ws.go": `package httpapi
-
-func routes(router interface{}) {
-	router.GET("/auth/ws/:callbackId", handler)
 }`,
 		"control_ws_sync.go": `package httpapi
 
