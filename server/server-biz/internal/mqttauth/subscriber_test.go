@@ -56,6 +56,13 @@ func TestReadSubAckRejectsWrongPacketType(t *testing.T) {
 	}
 }
 
+func TestSubscribePacketRejectsLongTopicFilter(t *testing.T) {
+	_, err := subscribePacket(1, strings.Repeat("a", 65536))
+	if err == nil || !strings.Contains(err.Error(), "mqtt string too long") {
+		t.Fatalf("expected long MQTT string error, got %v", err)
+	}
+}
+
 func publishBody(topic string, packetID []byte, payload []byte) []byte {
 	var body bytes.Buffer
 	_ = binary.Write(&body, binary.BigEndian, uint16(len(topic)))

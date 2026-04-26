@@ -33,13 +33,21 @@ func Subscribe(ctx context.Context, cfg configs.MQTTConfig, clientID, username, 
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
-	if _, err := conn.Write(connectPacket(clientID, username, password)); err != nil {
+	connect, err := connectPacket(clientID, username, password)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.Write(connect); err != nil {
 		return err
 	}
 	if err := readConnAck(conn); err != nil {
 		return err
 	}
-	if _, err := conn.Write(subscribePacket(1, topicFilter)); err != nil {
+	subscribe, err := subscribePacket(1, topicFilter)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.Write(subscribe); err != nil {
 		return err
 	}
 	if err := readSubAck(conn, 1); err != nil {
@@ -104,17 +112,23 @@ func readConnAck(conn net.Conn) error {
 	return nil
 }
 
-func subscribePacket(packetID uint16, topicFilter string) []byte {
+func subscribePacket(packetID uint16, topicFilter string) ([]byte, error) {
 	var variable bytes.Buffer
 	_ = binary.Write(&variable, binary.BigEndian, packetID)
-	writeString(&variable, topicFilter)
+	if err := writeString(&variable, topicFilter); err != nil {
+		return nil, err
+	}
 	variable.WriteByte(0x00)
+	remaining, err := remainingLength(variable.Len())
+	if err != nil {
+		return nil, err
+	}
 
 	var packet bytes.Buffer
 	packet.WriteByte(0x82)
-	packet.Write(remainingLength(variable.Len()))
+	packet.Write(remaining)
 	packet.Write(variable.Bytes())
-	return packet.Bytes()
+	return packet.Bytes(), nil
 }
 
 func readSubAck(reader io.Reader, packetID uint16) error {

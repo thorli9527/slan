@@ -14,6 +14,8 @@ import (
 	"github.com/slan/server/server-biz/configs"
 )
 
+const maxMQTTRemainingLength = 268435455
+
 func PublishJSON(ctx context.Context, cfg configs.MQTTConfig, credentialClientID, credentialUsername, credentialPassword, topic string, payload any) error {
 	if !cfg.Enabled {
 		return nil
@@ -41,13 +43,21 @@ func publish(ctx context.Context, cfg configs.MQTTConfig, clientID, username, pa
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
-	if _, err := conn.Write(connectPacket(clientID, username, password)); err != nil {
+	connect, err := connectPacket(clientID, username, password)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.Write(connect); err != nil {
 		return err
 	}
 	if err := readConnAck(conn); err != nil {
 		return err
 	}
-	if _, err := conn.Write(publishPacket(topic, payload)); err != nil {
+	publish, err := publishPacket(topic, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.Write(publish); err != nil {
 		return err
 	}
 	_, _ = conn.Write([]byte{0xe0, 0x00})
@@ -68,41 +78,66 @@ func brokerAddress(raw string) (string, error) {
 	return net.JoinHostPort(parsed.Hostname(), "1883"), nil
 }
 
-func connectPacket(clientID, username, password string) []byte {
+func connectPacket(clientID, username, password string) ([]byte, error) {
 	var variable bytes.Buffer
-	writeString(&variable, "MQTT")
+	if err := writeString(&variable, "MQTT"); err != nil {
+		return nil, err
+	}
 	variable.WriteByte(0x04)
 	variable.WriteByte(0x02 | 0x80 | 0x40)
 	_ = binary.Write(&variable, binary.BigEndian, uint16(30))
-	writeString(&variable, clientID)
-	writeString(&variable, username)
-	writeString(&variable, password)
+	if err := writeString(&variable, clientID); err != nil {
+		return nil, err
+	}
+	if err := writeString(&variable, username); err != nil {
+		return nil, err
+	}
+	if err := writeString(&variable, password); err != nil {
+		return nil, err
+	}
+	remaining, err := remainingLength(variable.Len())
+	if err != nil {
+		return nil, err
+	}
 
 	var packet bytes.Buffer
 	packet.WriteByte(0x10)
-	packet.Write(remainingLength(variable.Len()))
+	packet.Write(remaining)
 	packet.Write(variable.Bytes())
-	return packet.Bytes()
+	return packet.Bytes(), nil
 }
 
-func publishPacket(topic string, payload []byte) []byte {
+func publishPacket(topic string, payload []byte) ([]byte, error) {
 	var variable bytes.Buffer
-	writeString(&variable, topic)
+	if err := writeString(&variable, topic); err != nil {
+		return nil, err
+	}
 	variable.Write(payload)
+	remaining, err := remainingLength(variable.Len())
+	if err != nil {
+		return nil, err
+	}
 
 	var packet bytes.Buffer
 	packet.WriteByte(0x30)
-	packet.Write(remainingLength(variable.Len()))
+	packet.Write(remaining)
 	packet.Write(variable.Bytes())
-	return packet.Bytes()
+	return packet.Bytes(), nil
 }
 
-func writeString(buf *bytes.Buffer, value string) {
+func writeString(buf *bytes.Buffer, value string) error {
+	if len(value) > 65535 {
+		return fmt.Errorf("mqtt string too long")
+	}
 	_ = binary.Write(buf, binary.BigEndian, uint16(len(value)))
 	buf.WriteString(value)
+	return nil
 }
 
-func remainingLength(length int) []byte {
+func remainingLength(length int) ([]byte, error) {
+	if length < 0 || length > maxMQTTRemainingLength {
+		return nil, fmt.Errorf("mqtt remaining length out of range")
+	}
 	var encoded []byte
 	for {
 		digit := byte(length % 128)
@@ -112,7 +147,7 @@ func remainingLength(length int) []byte {
 		}
 		encoded = append(encoded, digit)
 		if length == 0 {
-			return encoded
+			return encoded, nil
 		}
 	}
 }
