@@ -50,7 +50,7 @@
 ### 2.5 控制通道编排
 
 - 控制会话创建
-- WebSocket 握手
+- MQTT 控制握手
 - NetworkMap 下发
 - PeerUpdate / PeerRemove
 - EndpointReport
@@ -67,7 +67,7 @@
   HTTP 路由层
 - `api/dto`
   请求响应模型
-- `internal/ws`
+- `internal/controlmsg`
   控制通道消息模型
 - `internal/service`
   服务接口与数据库实现
@@ -175,7 +175,7 @@ server-biz 需求模型
 │   ├── CTRL.3 ControlSessionID
 │   ├── CTRL.4 SessionToken
 │   ├── CTRL.5 初始 NetworkMap
-│   └── CTRL.6 WebSocket 入口
+│   └── CTRL.6 MQTT 控制入口
 ├── MAP 网络地图模型
 │   ├── MAP.1 NetworkMap
 │   ├── MAP.2 Peer
@@ -205,7 +205,7 @@ server-biz 需求模型
 │   └── SVC.9 Ops
 └── INFRA 基础设施
     ├── INFRA.1 HTTP Address
-    ├── INFRA.2 WS Path
+    ├── INFRA.2 MQTT broker endpoint
     ├── INFRA.3 Relay Region
     ├── INFRA.4 Relay Endpoint
     └── INFRA.5 Bootstrap STUNServers
@@ -374,7 +374,7 @@ server-biz 需求模型
 - `networks`
   中文备注：当前设备可见的网络拓扑详情，便于客户端本地建立初始缓存。
 - `controlPlane`
-  中文备注：控制通道接入配置，至少包含 WebSocket 地址和心跳参数。
+  中文备注：控制通道接入配置，至少包含 MQTT broker 地址和心跳参数。
 - `stunServers`
   中文备注：NAT 探测使用的 STUN 服务器列表。
 - `relay`
@@ -389,7 +389,7 @@ server-biz 需求模型
 - `controlSessionId`
   中文备注：控制面分配的控制通道会话主键。
 - `sessionToken`
-  中文备注：控制通道握手令牌，用于 WebSocket 或后续长连接鉴权。
+  中文备注：控制通道握手令牌，用于 MQTT 控制通道鉴权。
 - `controlPlane`
   中文备注：控制面连接配置，和 `bootstrap` 中的同类字段保持一致语义。
 - `networkMap`

@@ -76,7 +76,7 @@ not missing create/join/switch/bootstrap APIs.
 
 - [ ] `caddy` 仅作为本地 / 小规模入口示例
 - [ ] 生产环境必须使用真实证书和真实域名
-- [ ] `control/ws` 必须通过 `wss://` 暴露
+- [ ] MQTT broker 必须通过受控端口暴露并启用鉴权
 - [ ] `ops` 面不要直接暴露公网，至少放到内网或白名单入口后
 
 ### 4. 数据持久化
@@ -103,7 +103,7 @@ not missing create/join/switch/bootstrap APIs.
 - [ ] 给 `server-biz` 增加最少监控面板：
   - HTTP 健康
   - Redis / PostgreSQL 可用性
-  - `control_ws` 最近错误和热点 peer
+  - `control_mqtt` 最近错误和热点 peer
 - [ ] 收集容器日志
 - [ ] 明确崩溃后自动重启策略
 

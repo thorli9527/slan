@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand};
-use control_ws_client::{ControlSessionBootstrap, ControlWsClient, ControlWsConfig};
+use control_mqtt_client::{ControlMqttClient, ControlMqttConfig, ControlSessionBootstrap};
 use controller_client::{HttpControllerClient, TcpJsonHttpTransport};
 use ffi_bridge::{
     AppCoreFacade, AppCoreSnapshot, DataPlaneErrorCode, DataPlaneProbe, DefaultAppCoreFacade,
@@ -242,8 +242,8 @@ fn run_control_command(
             format_control_status(snapshot),
         )),
         ControlCommand::Sync => {
-            let config = control_ws_config_from_snapshot(snapshot)?;
-            let mut client = ControlWsClient::connect(&config)?;
+            let config = control_mqtt_config_from_snapshot(snapshot)?;
+            let mut client = ControlMqttClient::connect(&config)?;
             let bootstrap = client.bootstrap_session(&config)?;
             if let Some(current_bootstrap) = snapshot.current_bootstrap.as_mut() {
                 current_bootstrap.network_map = Some(bootstrap.network_map.clone());
@@ -1006,7 +1006,7 @@ fn format_control_status(snapshot: &AppCoreSnapshot) -> String {
         Some(bootstrap) => {
             let network_map = bootstrap.network_map.as_ref();
             let mut summary = format!(
-                "control ws {} heartbeat {} token {} network-map {} peers {}",
+                "control mqtt {} heartbeat {} token {} network-map {} peers {}",
                 bootstrap.control_plane.ws_url,
                 bootstrap.control_plane.heartbeat_seconds,
                 bootstrap
@@ -1126,7 +1126,9 @@ fn format_tunnel_keys(snapshot: &AppCoreSnapshot) -> String {
     }
 }
 
-fn control_ws_config_from_snapshot(snapshot: &AppCoreSnapshot) -> Result<ControlWsConfig, String> {
+fn control_mqtt_config_from_snapshot(
+    snapshot: &AppCoreSnapshot,
+) -> Result<ControlMqttConfig, String> {
     let bootstrap = snapshot
         .current_bootstrap
         .as_ref()
@@ -1164,8 +1166,7 @@ fn control_ws_config_from_snapshot(snapshot: &AppCoreSnapshot) -> Result<Control
         .and_then(|device| device.mqtt.clone())
         .ok_or_else(|| "missing MQTT credential in current device".to_string())?;
 
-    Ok(ControlWsConfig {
-        ws_url: bootstrap.control_plane.ws_url.clone(),
+    Ok(ControlMqttConfig {
         access_token,
         session_token,
         user_id,
@@ -2035,7 +2036,7 @@ mod tests {
                     },
                     "networks": [],
                     "controlPlane": {
-                        "wsUrl": "ws://127.0.0.1:18081/ws",
+                        "wsUrl": "mqtt://127.0.0.1:1883",
                         "sessionToken": "ctrl-token-1",
                         "heartbeatSeconds": 15
                     },

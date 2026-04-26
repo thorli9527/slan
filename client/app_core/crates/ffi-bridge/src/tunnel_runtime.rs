@@ -132,7 +132,7 @@ mod tests {
                 members: vec![],
             }],
             control_plane: ControlPlaneConfig {
-                ws_url: "ws://127.0.0.1".into(),
+                ws_url: "mqtt://127.0.0.1:1883".into(),
                 session_token: None,
                 heartbeat_seconds: 15,
             },

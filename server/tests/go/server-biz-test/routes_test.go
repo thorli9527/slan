@@ -14,8 +14,8 @@ import (
 	"github.com/slan/server/server-biz/api/dto"
 	httpapi "github.com/slan/server/server-biz/api/http"
 	"github.com/slan/server/server-biz/configs"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/service"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
 func TestPhase1Flow(t *testing.T) {
@@ -879,7 +879,7 @@ func (s *phase1Services) Bootstrap(userID string, req dto.BootstrapRequest) (dto
 		},
 		Networks: []dto.NetworkDetail{s.networkDetailLocked(userID, network.NetworkID)},
 		ControlPlane: dto.ControlPlaneConfig{
-			WSURL:            "mqtt://127.0.0.1:1883",
+			ControlURL:       "mqtt://127.0.0.1:1883",
 			HeartbeatSeconds: 30,
 		},
 		STUNServers: []string{"stun:example.org:3478"},
@@ -938,8 +938,8 @@ func (s *phase1Services) IssueRelayTicket(userID string, req dto.RelayTicketRequ
 	return ticket, nil
 }
 
-func (s *phase1Services) Handshake(hello controlws.NodeHello) (controlws.NodeHelloAck, dto.NetworkMap, error) {
-	return controlws.NodeHelloAck{}, dto.NetworkMap{}, service.ErrInvalidArgument
+func (s *phase1Services) Handshake(hello controlmsg.NodeHello) (controlmsg.NodeHelloAck, dto.NetworkMap, error) {
+	return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, service.ErrInvalidArgument
 }
 
 func (s *phase1Services) NetworkMap(userID, nodeID, networkID string) (dto.NetworkMap, error) {
@@ -952,19 +952,19 @@ func (s *phase1Services) NetworkMap(userID, nodeID, networkID string) (dto.Netwo
 	return s.networkMapLocked(userID, node, networkID), nil
 }
 
-func (s *phase1Services) ReportEndpoints(userID string, report controlws.EndpointReport) (dto.NetworkMap, error) {
+func (s *phase1Services) ReportEndpoints(userID string, report controlmsg.EndpointReport) (dto.NetworkMap, error) {
 	return dto.NetworkMap{}, service.ErrInvalidArgument
 }
 
-func (s *phase1Services) ReportConnectionState(userID, nodeID string, state controlws.ConnectionState) error {
+func (s *phase1Services) ReportConnectionState(userID, nodeID string, state controlmsg.ConnectionState) error {
 	return nil
 }
 
-func (s *phase1Services) ReportPathHealth(userID, nodeID string, report controlws.PathHealthReport) error {
+func (s *phase1Services) ReportPathHealth(userID, nodeID string, report controlmsg.PathHealthReport) error {
 	return nil
 }
 
-func (s *phase1Services) Disconnect(userID, nodeID string, notice controlws.DisconnectNotice) error {
+func (s *phase1Services) Disconnect(userID, nodeID string, notice controlmsg.DisconnectNotice) error {
 	return nil
 }
 
@@ -980,12 +980,16 @@ func (s *phase1Services) PeerSnapshot(userID, nodeID, networkID, peerNodeID stri
 	return dto.Peer{}, service.ErrInvalidArgument
 }
 
-func (s *phase1Services) ConnectPlan(userID, nodeID, networkID, peerNodeID string) (controlws.ConnectPlan, error) {
-	return controlws.ConnectPlan{}, service.ErrInvalidArgument
+func (s *phase1Services) ConnectPlan(userID, nodeID, networkID, peerNodeID string) (controlmsg.ConnectPlan, error) {
+	return controlmsg.ConnectPlan{}, service.ErrInvalidArgument
 }
 
-func (s *phase1Services) ConnectPlanByNode(nodeID, networkID, peerNodeID string) (controlws.ConnectPlan, error) {
-	return controlws.ConnectPlan{}, service.ErrInvalidArgument
+func (s *phase1Services) ConnectPlanByNode(nodeID, networkID, peerNodeID string) (controlmsg.ConnectPlan, error) {
+	return controlmsg.ConnectPlan{}, service.ErrInvalidArgument
+}
+
+func (s *phase1Services) ActiveSessions(networkID, excludeNodeID string) ([]service.ControlSession, error) {
+	return nil, nil
 }
 
 func (s *phase1Services) issueAuthLocked(userID string) dto.AuthResponse {

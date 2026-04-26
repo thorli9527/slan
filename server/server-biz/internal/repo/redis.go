@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	controlws "github.com/slan/server/server-biz/internal/ws"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 )
 
 type RedisTokenStore struct {
@@ -165,7 +165,7 @@ func (s *RedisTokenStore) AuthenticateOpsAccessToken(ctx context.Context, token 
 	return adminID, nil
 }
 
-func (s *RedisTokenStore) PublishControlSyncEvent(ctx context.Context, event controlws.ControlSyncEvent) error {
+func (s *RedisTokenStore) PublishControlSyncEvent(ctx context.Context, event controlmsg.ControlSyncEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func (s *RedisTokenStore) PublishControlSyncEvent(ctx context.Context, event con
 	return s.client.Publish(ctx, controlSyncChannel, payload).Err()
 }
 
-func (s *RedisTokenStore) SubscribeControlSyncEvents(ctx context.Context, handler func(controlws.ControlSyncEvent)) error {
+func (s *RedisTokenStore) SubscribeControlSyncEvents(ctx context.Context, handler func(controlmsg.ControlSyncEvent)) error {
 	go func() {
 		for {
 			if ctx.Err() != nil {
@@ -204,7 +204,7 @@ func (s *RedisTokenStore) SubscribeControlSyncEvents(ctx context.Context, handle
 						reconnect = true
 						break
 					}
-					var event controlws.ControlSyncEvent
+					var event controlmsg.ControlSyncEvent
 					if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
 						log.Printf("redis control-sync decode failed channel=%s err=%v", controlSyncChannel, err)
 						continue
@@ -278,7 +278,7 @@ func (s *RedisTokenStore) ResetConnectPlanRetry(ctx context.Context, networkID, 
 	).Err()
 }
 
-func (s *RedisTokenStore) AcquirePeerCandidateDelivery(ctx context.Context, networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate, ttl time.Duration) (bool, error) {
+func (s *RedisTokenStore) AcquirePeerCandidateDelivery(ctx context.Context, networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate, ttl time.Duration) (bool, error) {
 	if ttl <= 0 {
 		ttl = 10 * time.Second
 	}
@@ -293,7 +293,7 @@ func connectPlanRetryPairKey(networkID, nodeID, peerNodeID string) string {
 	return networkID + ":" + nodeID + ":" + peerNodeID
 }
 
-func peerCandidateDeliveryKey(networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate) string {
+func peerCandidateDeliveryKey(networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate) string {
 	return networkID + ":" + sourceNodeID + ":" + targetNodeID + ":" + candidate.CandidateType + ":" + candidate.Endpoint + ":" + fmt.Sprintf("%d", candidate.Priority)
 }
 

@@ -1,15 +1,15 @@
 package httpapi
 
-import controlws "github.com/slan/server/server-biz/internal/ws"
+import controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 
 func startControlSync(deps routerDeps) {
-	controlWSDeliveryRetryOnce.Do(func() {
-		startControlWSDeliveryRetryLoop(deps)
+	controlmsgDeliveryRetryOnce.Do(func() {
+		startcontrolmsgDeliveryRetryLoop(deps)
 	})
-	controlWSSyncOnce.Do(func() {
+	controlmsgSyncOnce.Do(func() {
 		if deps.ControlSync != nil {
-			_ = deps.ControlSync.Subscribe(func(event controlws.ControlSyncEvent) {
-				if event.InstanceID == controlWSInstanceID {
+			_ = deps.ControlSync.Subscribe(func(event controlmsg.ControlSyncEvent) {
+				if event.InstanceID == controlmsgInstanceID {
 					return
 				}
 				metricAdd("sync_event_received_total", 1)

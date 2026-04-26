@@ -56,7 +56,7 @@ client/
 └─ app_core/
    ├─ crates/
    │  ├─ core/                          # 核心模型、状态机、错误定义
-   │  ├─ controller-client/             # 对接控制面 HTTP/WS
+   │  ├─ controller-client/             # 对接控制面 HTTP/MQTT
    │  ├─ nat/                           # STUN、NAT 检测、打洞
    │  ├─ p2p/                           # P2P 连接管理
    │  ├─ relay-client/                  # Relay 客户端
@@ -84,7 +84,7 @@ server/
 │  │  ├─ ipam/                          # 虚拟 IP 分配
 │  │  ├─ acl/                           # ACL 策略
 │  │  ├─ control/                       # 配置下发与控制逻辑
-│  │  ├─ ws/                            # WebSocket 控制信道
+│  │  ├─ mqtt/                          # MQTT 控制信道
 │  │  ├─ service/                       # 跨模块编排
 │  │  ├─ repo/                          # 数据访问
 │  │  └─ infra/                         # DB、Redis、配置、日志、监控
@@ -135,7 +135,7 @@ deploy/
 ### `server/server-biz`
 
 - 负责控制面业务
-- 包括用户、网络、设备、成员权限、IP 分配、ACL、WebSocket 控制信道、配置下发
+- 包括用户、网络、设备、成员权限、IP 分配、ACL、MQTT 控制信道、配置下发
 - 不负责业务流量中继
 
 ### `server/server-relay`

@@ -6,31 +6,24 @@ import (
 	"sync"
 	"time"
 
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/util"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
-// connectPlanThrottle 是进程内 connect-plan 重试退避表。
+// connectPlanThrottle tracks connect-plan retry backoff in this process.
 type connectPlanThrottle struct {
-	// mu 保护状态表并发访问。
-	mu sync.Mutex
-	// states 记录每个节点对当前的重试状态。
+	mu     sync.Mutex
 	states map[string]connectPlanRetryState
 }
 
-// connectPlanRetryState 记录一个节点对当前的失败次数和下次允许时间。
 type connectPlanRetryState struct {
-	// failures 是连续失败次数。
-	failures int
-	// nextAllowedAt 是下一次允许生成 connect plan 的时间点。
+	failures      int
 	nextAllowedAt time.Time
 }
 
-// peerCandidateWindow 是进程内 peer candidate 去重窗口。
+// peerCandidateWindow deduplicates peer-candidate delivery in this process.
 type peerCandidateWindow struct {
-	// mu 保护去重窗口映射。
-	mu sync.Mutex
-	// expires 保存每条去重键的失效时间。
+	mu      sync.Mutex
 	expires map[string]time.Time
 }
 
@@ -93,7 +86,7 @@ func connectPlanBackoff(failures int) time.Duration {
 	}
 }
 
-func (w *peerCandidateWindow) acquire(networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate, ttl time.Duration) bool {
+func (w *peerCandidateWindow) acquire(networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate, ttl time.Duration) bool {
 	if ttl <= 0 {
 		ttl = 10 * time.Second
 	}
@@ -115,7 +108,7 @@ func (w *peerCandidateWindow) acquire(networkID, sourceNodeID, targetNodeID stri
 	return true
 }
 
-func peerCandidateKey(networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate) string {
+func peerCandidateKey(networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate) string {
 	return networkID + "|" + sourceNodeID + "|" + targetNodeID + "|" + candidate.CandidateType + "|" + candidate.Endpoint + "|" + strconv.Itoa(candidate.Priority)
 }
 
@@ -130,7 +123,7 @@ func allowConnectPlanRetry(deps routerDeps, networkID, nodeID, peerNodeID string
 			}
 			return allowed
 		}
-		log.Printf("control-ws connect-plan retry sync fallback network=%s node=%s peer=%s err=%v", networkID, nodeID, peerNodeID, err)
+		log.Printf("control-mqtt connect-plan retry sync fallback network=%s node=%s peer=%s err=%v", networkID, nodeID, peerNodeID, err)
 		metricAdd("connect_plan_retry_sync_error_total", 1)
 	}
 	allowed := defaultConnectPlanThrottle.allow(networkID, nodeID, peerNodeID)
@@ -150,7 +143,7 @@ func resetConnectPlanRetry(deps routerDeps, networkID, nodeID, peerNodeID string
 	}
 }
 
-func allowPeerCandidateDelivery(deps routerDeps, networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate) bool {
+func allowPeerCandidateDelivery(deps routerDeps, networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate) bool {
 	const candidateTTL = 10 * time.Second
 	if deps.ControlSync != nil {
 		allowed, err := deps.ControlSync.AcquirePeerCandidateDelivery(networkID, sourceNodeID, targetNodeID, candidate, candidateTTL)
@@ -162,7 +155,7 @@ func allowPeerCandidateDelivery(deps routerDeps, networkID, sourceNodeID, target
 			}
 			return allowed
 		}
-		log.Printf("control-ws peer-candidate sync fallback network=%s source=%s target=%s endpoint=%s err=%v", networkID, sourceNodeID, targetNodeID, candidate.Endpoint, err)
+		log.Printf("control-mqtt peer-candidate sync fallback network=%s source=%s target=%s endpoint=%s err=%v", networkID, sourceNodeID, targetNodeID, candidate.Endpoint, err)
 		metricAdd("peer_candidate_delivery_sync_error_total", 1)
 	}
 	allowed := defaultPeerCandidateWindow.acquire(networkID, sourceNodeID, targetNodeID, candidate, candidateTTL)
@@ -174,7 +167,7 @@ func allowPeerCandidateDelivery(deps routerDeps, networkID, sourceNodeID, target
 	return allowed
 }
 
-func forwardPeerCandidate(deps routerDeps, session wsSession, candidate controlws.PeerCandidate) {
+func forwardPeerCandidate(deps routerDeps, session controlSession, candidate controlmsg.PeerCandidate) {
 	if !allowPeerCandidateDelivery(deps, session.networkID, session.nodeID, candidate.PeerNodeID, candidate) {
 		return
 	}
@@ -182,8 +175,8 @@ func forwardPeerCandidate(deps routerDeps, session wsSession, candidate controlw
 	sendPeerCandidateToNode(deps, session.networkID, candidate.PeerNodeID, candidate)
 	if deps.ControlSync != nil {
 		rev, _ := deps.ControlSync.CurrentRevision(session.networkID)
-		_ = deps.ControlSync.Publish(controlws.ControlSyncEvent{
-			InstanceID:   controlWSInstanceID,
+		_ = deps.ControlSync.Publish(controlmsg.ControlSyncEvent{
+			InstanceID:   controlmsgInstanceID,
 			Type:         "peer_candidate",
 			NetworkID:    session.networkID,
 			SourceNodeID: session.nodeID,

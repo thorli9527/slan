@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/slan/server/server-biz/api/dto"
-	controlws "github.com/slan/server/server-biz/internal/ws"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 )
 
 // registerNetworkRoutes 注册逻辑网络、子网和挂载关系相关入口。
@@ -113,7 +113,7 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		if err != nil {
 			return dto.SubnetAttachment{}, err
 		}
-		broadcastDeviceIPReassigned(deps, rc.networkID(c), controlws.DeviceIPReassigned{
+		broadcastDeviceIPReassigned(deps, rc.networkID(c), controlmsg.DeviceIPReassigned{
 			NetworkID:    rc.networkID(c),
 			DeviceID:     updated.DeviceID,
 			AttachmentID: updated.AttachmentID,

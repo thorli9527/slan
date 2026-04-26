@@ -8,8 +8,8 @@ import (
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/configs"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/repo"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
 // connectPlanInputs 汇总构建 connect plan 所需的全部即时输入。
@@ -51,14 +51,14 @@ type pathHealthWindow struct {
 
 // buildConnectPlan gathers peer state, NAT information and recent health
 // samples before delegating to the final plan composer.
-func (s dbControlChannelService) buildConnectPlan(ctx context.Context, userID, nodeID, networkID, peerNodeID string) (controlws.ConnectPlan, error) {
+func (s dbControlChannelService) buildConnectPlan(ctx context.Context, userID, nodeID, networkID, peerNodeID string) (controlmsg.ConnectPlan, error) {
 	if _, err := s.state.requireNodeSession(ctx, userID, nodeID, networkID); err != nil {
-		return controlws.ConnectPlan{}, err
+		return controlmsg.ConnectPlan{}, err
 	}
 
 	peer, err := s.PeerSnapshot(userID, nodeID, networkID, peerNodeID)
 	if err != nil {
-		return controlws.ConnectPlan{}, err
+		return controlmsg.ConnectPlan{}, err
 	}
 
 	inputs := connectPlanInputs{
@@ -75,14 +75,14 @@ func (s dbControlChannelService) buildConnectPlan(ctx context.Context, userID, n
 
 // composeConnectPlan decides path ordering, relay preference and ticket usage
 // for the final control-plane response.
-func (s dbControlChannelService) composeConnectPlan(ctx context.Context, userID, nodeID, networkID, peerNodeID string, inputs connectPlanInputs) controlws.ConnectPlan {
+func (s dbControlChannelService) composeConnectPlan(ctx context.Context, userID, nodeID, networkID, peerNodeID string, inputs connectPlanInputs) controlmsg.ConnectPlan {
 	paths, nextPriority := directPathOptions(inputs.peer.Endpoints, inputs.pathHealth)
 	preferDirect, needRelayTicket := connectPlanPolicy(inputs.sourceNatType, inputs.peerNatType, inputs.connectionState, len(paths) > 0)
 
 	preferredRelayNodeID := preferredRelayNodeID(inputs.pathHealth, inputs.connectionState)
 	avoidedRelayNodeID := avoidedRelayNodeID(inputs.connectionState)
 	relayCluster := s.relayClusterForPreferredNode(preferredRelayNodeID, avoidedRelayNodeID, inputs.relayCluster)
-	var relayTicket *controlws.RelayTicket
+	var relayTicket *controlmsg.RelayTicket
 	if needRelayTicket {
 		relayTicket, relayCluster = s.relayTicketForConnectPlan(ctx, userID, nodeID, networkID, peerNodeID, relayCluster, inputs.connectionState)
 	}
@@ -90,7 +90,7 @@ func (s dbControlChannelService) composeConnectPlan(ctx context.Context, userID,
 	relayPaths, preferredNodeIDs := relayPathOptions(relayCluster.nodes, preferredRelayNodeID, avoidedRelayNodeID, nextPriority)
 	paths = append(paths, relayPaths...)
 
-	return controlws.ConnectPlan{
+	return controlmsg.ConnectPlan{
 		PeerNodeID:           peerNodeID,
 		PreferDirect:         preferDirect,
 		Paths:                paths,
@@ -112,9 +112,9 @@ func (s dbControlChannelService) relayClusterForPreferredNode(preferredRelayNode
 
 // directPathOptions converts visible non-relay endpoints into ordered path
 // options and returns the next priority slot for relay paths.
-func directPathOptions(endpoints []dto.Endpoint, pathHealth []pathHealthWindow) ([]controlws.PathOption, int) {
+func directPathOptions(endpoints []dto.Endpoint, pathHealth []pathHealthWindow) ([]controlmsg.PathOption, int) {
 	sortedEndpoints := prioritizeDirectEndpoints(endpoints, pathHealth)
-	paths := make([]controlws.PathOption, 0, len(sortedEndpoints)+1)
+	paths := make([]controlmsg.PathOption, 0, len(sortedEndpoints)+1)
 	priority := 10
 	for _, endpoint := range sortedEndpoints {
 		if endpoint.Type == "relay" {
@@ -131,7 +131,7 @@ func directPathOptions(endpoints []dto.Endpoint, pathHealth []pathHealthWindow) 
 			pathPriority = 30
 		}
 
-		paths = append(paths, controlws.PathOption{
+		paths = append(paths, controlmsg.PathOption{
 			PathType: endpoint.Type,
 			Endpoint: endpoint.Address,
 			Priority: pathPriority,
@@ -222,13 +222,13 @@ func connectPlanPolicy(sourceNatType, peerNatType string, connectionState repo.N
 
 // relayPathOptions converts ordered relay nodes into connect-plan path options
 // and returns the preferred relay node id list alongside them.
-func relayPathOptions(nodes []configs.RelayNodeConfig, preferredNodeID, avoidedNodeID string, startPriority int) ([]controlws.PathOption, []string) {
+func relayPathOptions(nodes []configs.RelayNodeConfig, preferredNodeID, avoidedNodeID string, startPriority int) ([]controlmsg.PathOption, []string) {
 	nodes = prioritizeRelayNodes(nodes, preferredNodeID, avoidedNodeID, nil)
-	paths := make([]controlws.PathOption, 0, len(nodes))
+	paths := make([]controlmsg.PathOption, 0, len(nodes))
 	preferredNodeIDs := make([]string, 0, len(nodes))
 	priority := startPriority
 	for _, node := range nodes {
-		paths = append(paths, controlws.PathOption{
+		paths = append(paths, controlmsg.PathOption{
 			PathType: "relay_" + node.Transport,
 			Endpoint: node.Address,
 			Priority: priority,
@@ -292,7 +292,7 @@ func isDirectPathType(pathType string) bool {
 	}
 }
 
-func (s dbControlChannelService) relayTicketForConnectPlan(ctx context.Context, userID, nodeID, networkID, peerNodeID string, relayCluster relayClusterView, connectionState repo.NodeConnectionState) (*controlws.RelayTicket, relayClusterView) {
+func (s dbControlChannelService) relayTicketForConnectPlan(ctx context.Context, userID, nodeID, networkID, peerNodeID string, relayCluster relayClusterView, connectionState repo.NodeConnectionState) (*controlmsg.RelayTicket, relayClusterView) {
 	ticket, err := s.state.issueRelayTicket(ctx, userID, dto.RelayTicketRequest{
 		NetworkID:     networkID,
 		SrcNodeID:     nodeID,
@@ -304,11 +304,11 @@ func (s dbControlChannelService) relayTicketForConnectPlan(ctx context.Context, 
 		return nil, relayCluster
 	}
 
-	return relayTicketDTOToWS(ticket), s.state.relayClusterForRequest(ticket.DerpClusterID)
+	return relayTicketDTOToControl(ticket), s.state.relayClusterForRequest(ticket.DerpClusterID)
 }
 
-func relayTicketDTOToWS(ticket dto.RelayTicket) *controlws.RelayTicket {
-	return &controlws.RelayTicket{
+func relayTicketDTOToControl(ticket dto.RelayTicket) *controlmsg.RelayTicket {
+	return &controlmsg.RelayTicket{
 		TicketID:           ticket.TicketID,
 		NetworkID:          ticket.NetworkID,
 		SessionID:          ticket.SessionID,

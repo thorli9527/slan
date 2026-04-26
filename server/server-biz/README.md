@@ -32,7 +32,7 @@ Phase 1 MVP 的 Go 控制面服务。
   - `routes_business*.go`：客户业务 HTTP 接口
   - `routes_ops.go`：运营管理接口
   - `routes_common.go`：HTTP 公共鉴权与错误处理
-  - `control_ws*.go`：控制通道相关实现
+  - `control_mqtt*.go`：控制通道相关实现
 - `internal/service`
   - `access.go`：身份与 token 接口
   - `registration.go`：设备/节点注册接口
@@ -118,7 +118,7 @@ MQTT/BifroMQ notes:
 
 `server-biz` 当前拆成两个独立 HTTP 实例：
 
-- public：对外客户接口 + control WS
+- public：对外客户接口 + control MQTT
 - ops：运营管理接口
 
 不再依赖独立 `server-ops` 项目。

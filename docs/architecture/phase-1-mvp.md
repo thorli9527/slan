@@ -32,7 +32,7 @@
 - 设备加入网络
 - 查询网络成员
 - 虚拟 IP 分配
-- WebSocket 控制信道
+- MQTT 控制信道
 - 下发客户端连接配置
 
 #### 数据面 `server-relay`
@@ -47,7 +47,7 @@
 
 - 登录并保存凭证
 - 获取网络与设备配置
-- 建立 WebSocket 控制信道
+- 建立 MQTT 控制信道
 - NAT 检测
 - P2P 尝试
 - P2P 失败切换 Relay
@@ -93,7 +93,7 @@
 - 网络创建、加入、查询 API
 - 设备注册、设备上线 API
 - 客户端启动后拉取配置 API
-- WebSocket 控制消息
+- MQTT 控制消息
 - Relay 鉴权票据结构
 - 通用错误码
 
@@ -105,7 +105,7 @@
 - 网络管理
 - 设备管理
 - IP 分配
-- WebSocket 控制信道
+- MQTT 控制信道
 - 连接配置下发
 
 原因：
@@ -188,7 +188,7 @@ app
  -> server-biz 登录
  -> server-biz 返回 token 和设备初始化信息
  -> app_core 获取网络配置
- -> app_core 建立 WebSocket 控制信道
+ -> app_core 建立 MQTT 控制信道
  -> app_core 执行 NAT 检测
  -> app_core 尝试 P2P
  -> 若失败则申请 Relay 票据

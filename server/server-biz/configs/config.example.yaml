@@ -6,13 +6,10 @@ http:
   address: ":8080"
   # 运营管理 HTTP API 监听地址。
   ops_address: ":8081"
-  # 客户端生成 control-plane WSURL 时使用的公网可访问地址。
+  # 客户端生成 control-plane URL 时使用的公网可访问地址。
   public_host: "127.0.0.1:8080"
   # 客户端访问控制面的外部协议；生产环境通常应为 https。
   public_scheme: "http"
-ws:
-  # Deprecated: control traffic uses MQTT.
-  path: ""
 mqtt:
   enabled: false
   broker_url: "mqtt://127.0.0.1:1883"

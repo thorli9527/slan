@@ -18,7 +18,7 @@ plugin bridge 和控制面 `server-biz` 串起来。
 - `app-core-helper`: Flutter/native plugin 可启动的 helper 进程。
 - `app-core-service`: helper TCP service 入口。
 - `controller-client`: 控制面 HTTP client trait、DTO 和 transport。
-- `control-ws-client`: 控制 WebSocket client。
+- `control-mqtt-client`: 控制 MQTT client。
 - `ffi-bridge`: 面向 Flutter/JSON bridge 的统一 facade。
 - `nat`, `p2p`, `relay-client`, `tunnel`: 连接路径与本地隧道 runtime。
 

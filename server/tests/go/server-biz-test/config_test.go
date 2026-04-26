@@ -14,8 +14,6 @@ func TestLoadConfig(t *testing.T) {
 	payload := []byte(`
 http:
   address: ":18080"
-ws:
-  path: "/control/custom-ws"
 relay:
   default_cluster_id: "cn-bj-a"
   countries:
@@ -51,9 +49,6 @@ bootstrap:
 
 	if cfg.HTTP.Address != ":18080" {
 		t.Fatalf("unexpected http address: %q", cfg.HTTP.Address)
-	}
-	if cfg.WS.Path != "/control/custom-ws" {
-		t.Fatalf("unexpected ws path: %q", cfg.WS.Path)
 	}
 	if cfg.Relay.DefaultClusterID != "cn-bj-a" {
 		t.Fatalf("unexpected default relay cluster: %+v", cfg.Relay)

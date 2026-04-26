@@ -1,4 +1,4 @@
-package ws
+package controlmsg
 
 // Envelope 是控制通道使用的通用消息封装，当前通过 MQTT 传输。
 type Envelope struct {

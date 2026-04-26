@@ -69,9 +69,9 @@ recovery. It is no longer a missing main-business API flow.
 定义位置：
 
 - `protocol/protobuf/control.proto`
-- `server/server-biz/internal/ws/messages_handshake.go`
-- `server/server-biz/internal/ws/messages_topology.go`
-- `server/server-biz/internal/ws/messages_control.go`
+- `server/server-biz/internal/controlmsg/messages_handshake.go`
+- `server/server-biz/internal/controlmsg/messages_topology.go`
+- `server/server-biz/internal/controlmsg/messages_control.go`
 
 ## 当前服务端实现
 

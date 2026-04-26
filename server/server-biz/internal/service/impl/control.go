@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/service"
 	"github.com/slan/server/server-biz/internal/util"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
 type dbControlChannelService struct{ state *dbState }
@@ -29,45 +29,45 @@ type cachedRelayTicket struct {
 }
 
 // Handshake verifies the control-plane session token, marks the backing device
-// reachable, and returns the latest network map snapshot for the WS session.
-func (s dbControlChannelService) Handshake(hello controlws.NodeHello) (controlws.NodeHelloAck, dto.NetworkMap, error) {
+// reachable, and returns the latest network map snapshot for the MQTT control session.
+func (s dbControlChannelService) Handshake(hello controlmsg.NodeHello) (controlmsg.NodeHelloAck, dto.NetworkMap, error) {
 	if strings.TrimSpace(hello.SessionToken) == "" || strings.TrimSpace(hello.NodeID) == "" || strings.TrimSpace(hello.NetworkID) == "" {
-		return controlws.NodeHelloAck{}, dto.NetworkMap{}, fmt.Errorf("%w: sessionToken, nodeId, and networkId are required", ErrInvalidArgument)
+		return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, fmt.Errorf("%w: sessionToken, nodeId, and networkId are required", ErrInvalidArgument)
 	}
 
 	ctx := context.Background()
 	userID, err := s.state.tokens.AuthenticateControlSessionToken(ctx, hello.SessionToken)
 	if err != nil {
-		return controlws.NodeHelloAck{}, dto.NetworkMap{}, ErrUnauthorized
+		return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, ErrUnauthorized
 	}
 	if hello.UserID != "" && hello.UserID != userID {
-		return controlws.NodeHelloAck{}, dto.NetworkMap{}, ErrForbidden
+		return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, ErrForbidden
 	}
 
 	session, err := s.state.pg.GetControlSessionByToken(ctx, hello.SessionToken)
 	if err != nil {
 		if repo.IsNotFound(err) {
-			return controlws.NodeHelloAck{}, dto.NetworkMap{}, ErrUnauthorized
+			return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, ErrUnauthorized
 		}
-		return controlws.NodeHelloAck{}, dto.NetworkMap{}, err
+		return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, err
 	}
 	if session.UserID != userID || session.NodeID != hello.NodeID || session.NetworkID != hello.NetworkID {
-		return controlws.NodeHelloAck{}, dto.NetworkMap{}, ErrForbidden
+		return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, ErrForbidden
 	}
 	if hello.DeviceID != "" && session.DeviceID != hello.DeviceID {
-		return controlws.NodeHelloAck{}, dto.NetworkMap{}, ErrForbidden
+		return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, ErrForbidden
 	}
 	s.state.touchControlSessionByToken(ctx, hello.SessionToken)
 	if err := s.state.pg.UpdateDeviceStatus(ctx, session.DeviceID, "reachable"); err != nil {
-		return controlws.NodeHelloAck{}, dto.NetworkMap{}, err
+		return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, err
 	}
 
 	networkMap, err := s.NetworkMap(userID, hello.NodeID, hello.NetworkID)
 	if err != nil {
-		return controlws.NodeHelloAck{}, dto.NetworkMap{}, err
+		return controlmsg.NodeHelloAck{}, dto.NetworkMap{}, err
 	}
 
-	return controlws.NodeHelloAck{
+	return controlmsg.NodeHelloAck{
 		ControlSessionID: session.ControlSessionID,
 		HeartbeatSeconds: networkMap.HeartbeatSeconds,
 		NetworkRevision:  networkMap.Revision,
@@ -86,7 +86,7 @@ func (s dbControlChannelService) NetworkMap(userID, nodeID, networkID string) (d
 
 // ReportEndpoints replaces the node's advertised endpoints and NAT observation
 // for the target network, then returns an updated network map.
-func (s dbControlChannelService) ReportEndpoints(userID string, report controlws.EndpointReport) (dto.NetworkMap, error) {
+func (s dbControlChannelService) ReportEndpoints(userID string, report controlmsg.EndpointReport) (dto.NetworkMap, error) {
 	if strings.TrimSpace(report.NodeID) == "" || strings.TrimSpace(report.NetworkID) == "" {
 		return dto.NetworkMap{}, fmt.Errorf("%w: nodeId and networkId are required", ErrInvalidArgument)
 	}
@@ -120,7 +120,7 @@ func (s dbControlChannelService) ReportEndpoints(userID string, report controlws
 
 // ReportConnectionState stores the latest path outcome reported by the client
 // for a specific peer pair.
-func (s dbControlChannelService) ReportConnectionState(userID, nodeID string, state controlws.ConnectionState) error {
+func (s dbControlChannelService) ReportConnectionState(userID, nodeID string, state controlmsg.ConnectionState) error {
 	if strings.TrimSpace(state.NetworkID) == "" || strings.TrimSpace(state.PeerNodeID) == "" || strings.TrimSpace(state.State) == "" {
 		return fmt.Errorf("%w: networkId, peerNodeId, and state are required", ErrInvalidArgument)
 	}
@@ -161,7 +161,7 @@ func (s dbControlChannelService) ReportConnectionState(userID, nodeID string, st
 
 // ReportPathHealth persists direct or relay path quality samples that later
 // influence connect-plan sorting.
-func (s dbControlChannelService) ReportPathHealth(userID, nodeID string, report controlws.PathHealthReport) error {
+func (s dbControlChannelService) ReportPathHealth(userID, nodeID string, report controlmsg.PathHealthReport) error {
 	if strings.TrimSpace(report.NetworkID) == "" || strings.TrimSpace(report.PeerNodeID) == "" || strings.TrimSpace(report.PathType) == "" {
 		return fmt.Errorf("%w: networkId, peerNodeId, and pathType are required", ErrInvalidArgument)
 	}
@@ -207,7 +207,7 @@ func (s dbControlChannelService) ReportPathHealth(userID, nodeID string, report 
 }
 
 // Disconnect records a closed connection state and marks the device offline.
-func (s dbControlChannelService) Disconnect(userID, nodeID string, notice controlws.DisconnectNotice) error {
+func (s dbControlChannelService) Disconnect(userID, nodeID string, notice controlmsg.DisconnectNotice) error {
 	if strings.TrimSpace(nodeID) == "" || strings.TrimSpace(notice.NetworkID) == "" || strings.TrimSpace(notice.PeerNodeID) == "" {
 		return fmt.Errorf("%w: nodeId, networkId, and peerNodeId are required", ErrInvalidArgument)
 	}
@@ -322,20 +322,20 @@ func (s dbControlChannelService) PeerSnapshot(userID, nodeID, networkID, peerNod
 
 // ConnectPlan builds a routing recommendation for the source node to reach the
 // peer node.
-func (s dbControlChannelService) ConnectPlan(userID, nodeID, networkID, peerNodeID string) (controlws.ConnectPlan, error) {
+func (s dbControlChannelService) ConnectPlan(userID, nodeID, networkID, peerNodeID string) (controlmsg.ConnectPlan, error) {
 	return s.buildConnectPlan(context.Background(), userID, nodeID, networkID, peerNodeID)
 }
 
 // ConnectPlanByNode is a convenience wrapper for call sites that only know the
 // source node id and not its owning user id.
-func (s dbControlChannelService) ConnectPlanByNode(nodeID, networkID, peerNodeID string) (controlws.ConnectPlan, error) {
+func (s dbControlChannelService) ConnectPlanByNode(nodeID, networkID, peerNodeID string) (controlmsg.ConnectPlan, error) {
 	ctx := context.Background()
 	node, err := s.state.pg.GetNodeByID(ctx, nodeID)
 	if err != nil {
 		if repo.IsNotFound(err) {
-			return controlws.ConnectPlan{}, ErrNotFound
+			return controlmsg.ConnectPlan{}, ErrNotFound
 		}
-		return controlws.ConnectPlan{}, err
+		return controlmsg.ConnectPlan{}, err
 	}
 	return s.ConnectPlan(node.UserID, nodeID, networkID, peerNodeID)
 }
@@ -394,13 +394,13 @@ func (s *dbState) requireNodeSession(ctx context.Context, userID, nodeID, networ
 }
 
 // Publish emits a control-sync event into the shared pub/sub channel.
-func (s dbControlSyncService) Publish(event controlws.ControlSyncEvent) error {
+func (s dbControlSyncService) Publish(event controlmsg.ControlSyncEvent) error {
 	return s.state.tokens.PublishControlSyncEvent(context.Background(), event)
 }
 
 // Subscribe registers a callback that receives control-sync events published by
 // any biz instance.
-func (s dbControlSyncService) Subscribe(handler func(controlws.ControlSyncEvent)) error {
+func (s dbControlSyncService) Subscribe(handler func(controlmsg.ControlSyncEvent)) error {
 	return s.state.tokens.SubscribeControlSyncEvents(context.Background(), handler)
 }
 
@@ -428,7 +428,7 @@ func (s dbControlSyncService) ResetConnectPlanRetry(networkID, nodeID, peerNodeI
 
 // AcquirePeerCandidateDelivery de-duplicates repeated candidate forwarding for
 // a short TTL window.
-func (s dbControlSyncService) AcquirePeerCandidateDelivery(networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate, ttl time.Duration) (bool, error) {
+func (s dbControlSyncService) AcquirePeerCandidateDelivery(networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate, ttl time.Duration) (bool, error) {
 	return s.state.tokens.AcquirePeerCandidateDelivery(context.Background(), networkID, sourceNodeID, targetNodeID, candidate, ttl)
 }
 

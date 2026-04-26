@@ -2,12 +2,12 @@ package httpapi
 
 import (
 	"github.com/slan/server/server-biz/api/dto"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/service"
 	"github.com/slan/server/server-biz/internal/util"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
-func fanoutPeerUpdate(deps routerDeps, session wsSession) {
+func fanoutPeerUpdate(deps routerDeps, session controlSession) {
 	peer, err := deps.ControlChannel.PeerSnapshot(session.userID, session.nodeID, session.networkID, session.nodeID)
 	if err != nil {
 		return
@@ -18,17 +18,17 @@ func fanoutPeerUpdate(deps routerDeps, session wsSession) {
 			revision = next
 		}
 	}
-	wsPeer := dtoPeerToWSPeer(peer)
-	broadcastPeerUpdateToSessions(deps, session.networkID, session.nodeID, revision, wsPeer)
+	controlPeer := dtoPeerToControlPeer(peer)
+	broadcastPeerUpdateToSessions(deps, session.networkID, session.nodeID, revision, controlPeer)
 	metricAdd("peer_update_broadcast_total", 1)
 	if deps.ControlSync != nil {
-		_ = deps.ControlSync.Publish(controlws.ControlSyncEvent{
-			InstanceID:   controlWSInstanceID,
+		_ = deps.ControlSync.Publish(controlmsg.ControlSyncEvent{
+			InstanceID:   controlmsgInstanceID,
 			Type:         "peer_update",
 			NetworkID:    session.networkID,
 			SourceNodeID: session.nodeID,
 			Revision:     revision,
-			Peer:         util.Ptr(wsPeer),
+			Peer:         util.Ptr(controlPeer),
 		})
 		metricAdd("sync_event_published_total", 1)
 	}
@@ -44,8 +44,8 @@ func fanoutPeerRemove(deps routerDeps, networkID, sourceNodeID string) {
 	broadcastPeerRemoveToSessions(deps, networkID, sourceNodeID, revision)
 	metricAdd("peer_remove_broadcast_total", 1)
 	if deps.ControlSync != nil {
-		_ = deps.ControlSync.Publish(controlws.ControlSyncEvent{
-			InstanceID:   controlWSInstanceID,
+		_ = deps.ControlSync.Publish(controlmsg.ControlSyncEvent{
+			InstanceID:   controlmsgInstanceID,
 			Type:         "peer_remove",
 			NetworkID:    networkID,
 			SourceNodeID: sourceNodeID,
@@ -56,7 +56,7 @@ func fanoutPeerRemove(deps routerDeps, networkID, sourceNodeID string) {
 	}
 }
 
-func fanoutConnectPlans(deps routerDeps, session wsSession) {
+func fanoutConnectPlans(deps routerDeps, session controlSession) {
 	peerSessions, err := deps.ControlChannel.ActiveSessions(session.networkID, session.nodeID)
 	if err != nil {
 		return
@@ -75,7 +75,7 @@ func fanoutConnectPlans(deps routerDeps, session wsSession) {
 	}
 }
 
-func fanoutConnectPlanPair(deps routerDeps, session wsSession, peerNodeID string) {
+func fanoutConnectPlanPair(deps routerDeps, session controlSession, peerNodeID string) {
 	if peerNodeID == "" {
 		return
 	}
@@ -92,13 +92,13 @@ func fanoutConnectPlanPair(deps routerDeps, session wsSession, peerNodeID string
 	}
 }
 
-func publishConnectPlan(deps routerDeps, networkID, sourceNodeID, targetNodeID string, plan controlws.ConnectPlan) {
+func publishConnectPlan(deps routerDeps, networkID, sourceNodeID, targetNodeID string, plan controlmsg.ConnectPlan) {
 	if deps.ControlSync == nil {
 		return
 	}
 	rev, _ := deps.ControlSync.CurrentRevision(networkID)
-	_ = deps.ControlSync.Publish(controlws.ControlSyncEvent{
-		InstanceID:   controlWSInstanceID,
+	_ = deps.ControlSync.Publish(controlmsg.ControlSyncEvent{
+		InstanceID:   controlmsgInstanceID,
 		Type:         "connect_plan",
 		NetworkID:    networkID,
 		SourceNodeID: sourceNodeID,
@@ -109,7 +109,7 @@ func publishConnectPlan(deps routerDeps, networkID, sourceNodeID, targetNodeID s
 	metricAdd("sync_event_published_total", 1)
 }
 
-func sendPeerCandidateToNode(deps routerDeps, networkID, targetNodeID string, candidate controlws.PeerCandidate) {
+func sendPeerCandidateToNode(deps routerDeps, networkID, targetNodeID string, candidate controlmsg.PeerCandidate) {
 	if targetNodeID == "" {
 		return
 	}
@@ -120,7 +120,7 @@ func sendPeerCandidateToNode(deps routerDeps, networkID, targetNodeID string, ca
 	_ = publishControlMQTTEnvelope(deps, session.DeviceID, "peer_candidate", "", candidate)
 }
 
-func sendConnectPlanToNode(deps routerDeps, networkID, sourceNodeID, targetNodeID string, plan controlws.ConnectPlan) {
+func sendConnectPlanToNode(deps routerDeps, networkID, sourceNodeID, targetNodeID string, plan controlmsg.ConnectPlan) {
 	if targetNodeID == "" {
 		return
 	}
@@ -132,9 +132,9 @@ func sendConnectPlanToNode(deps routerDeps, networkID, sourceNodeID, targetNodeI
 	_ = publishControlMQTTEnvelope(deps, session.DeviceID, "connect_plan", "", plan)
 }
 
-func broadcastPeerUpdateToSessions(deps routerDeps, networkID, sourceNodeID string, revision uint64, peer controlws.Peer) {
+func broadcastPeerUpdateToSessions(deps routerDeps, networkID, sourceNodeID string, revision uint64, peer controlmsg.Peer) {
 	for _, peerSession := range mqttSessionsInNetwork(deps, networkID, sourceNodeID) {
-		_ = publishControlMQTTEnvelope(deps, peerSession.DeviceID, "peer_update", "", controlws.PeerUpdate{
+		_ = publishControlMQTTEnvelope(deps, peerSession.DeviceID, "peer_update", "", controlmsg.PeerUpdate{
 			NetworkID: networkID,
 			Revision:  revision,
 			Peer:      peer,
@@ -147,7 +147,7 @@ func broadcastPeerRemoveToSessions(deps routerDeps, networkID, sourceNodeID stri
 		return
 	}
 	for _, peerSession := range mqttSessionsInNetwork(deps, networkID, sourceNodeID) {
-		_ = publishControlMQTTEnvelope(deps, peerSession.DeviceID, "peer_remove", "", controlws.PeerRemove{
+		_ = publishControlMQTTEnvelope(deps, peerSession.DeviceID, "peer_remove", "", controlmsg.PeerRemove{
 			NetworkID:  networkID,
 			Revision:   revision,
 			PeerNodeID: sourceNodeID,
@@ -155,19 +155,19 @@ func broadcastPeerRemoveToSessions(deps routerDeps, networkID, sourceNodeID stri
 	}
 }
 
-func broadcastNetworkRestartRequired(deps routerDeps, networkID string, restart controlws.NetworkRestartRequired) {
+func broadcastNetworkRestartRequired(deps routerDeps, networkID string, restart controlmsg.NetworkRestartRequired) {
 	for _, peerSession := range mqttSessionsInNetwork(deps, networkID, "") {
 		_ = publishControlMQTTEnvelope(deps, peerSession.DeviceID, "network_restart_required", "", restart)
 	}
 }
 
-func broadcastDeviceIPReassigned(deps routerDeps, networkID string, deviceIP controlws.DeviceIPReassigned) {
+func broadcastDeviceIPReassigned(deps routerDeps, networkID string, deviceIP controlmsg.DeviceIPReassigned) {
 	for _, peerSession := range mqttSessionsInNetwork(deps, networkID, "") {
 		_ = publishControlMQTTEnvelope(deps, peerSession.DeviceID, "device_ip_reassigned", "", deviceIP)
 	}
 }
 
-func broadcastActiveNetworkEnabled(deps routerDeps, userID string, enabled controlws.ActiveNetworkEnabled) {
+func broadcastActiveNetworkEnabled(deps routerDeps, userID string, enabled controlmsg.ActiveNetworkEnabled) {
 	if userID == "" {
 		return
 	}
@@ -198,16 +198,16 @@ func mqttSessionByNode(deps routerDeps, networkID, nodeID string) (service.Contr
 	return service.ControlSession{}, false
 }
 
-func dtoPeerToWSPeer(peer dto.Peer) controlws.Peer {
-	endpoints := make([]controlws.Endpoint, 0, len(peer.Endpoints))
+func dtoPeerToControlPeer(peer dto.Peer) controlmsg.Peer {
+	endpoints := make([]controlmsg.Endpoint, 0, len(peer.Endpoints))
 	for _, endpoint := range peer.Endpoints {
-		endpoints = append(endpoints, controlws.Endpoint{
+		endpoints = append(endpoints, controlmsg.Endpoint{
 			Type:      endpoint.Type,
 			Address:   endpoint.Address,
 			UpdatedAt: endpoint.UpdatedAt,
 		})
 	}
-	return controlws.Peer{
+	return controlmsg.Peer{
 		NodeID:        peer.NodeID,
 		DeviceID:      peer.DeviceID,
 		PublicKey:     peer.PublicKey,

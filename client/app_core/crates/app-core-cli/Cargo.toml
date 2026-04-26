@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "env"] }
-control-ws-client = { path = "../control-ws-client" }
+control-mqtt-client = { path = "../control-mqtt-client" }
 controller-client = { path = "../controller-client" }
 ffi-bridge = { path = "../ffi-bridge" }
 p2p = { path = "../p2p" }

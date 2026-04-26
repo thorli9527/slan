@@ -70,9 +70,6 @@ redis:
 		cfg.HTTP.PublicScheme != defaults.HTTP.PublicScheme {
 		t.Fatalf("expected missing public http fields to use defaults, got %+v", cfg.HTTP)
 	}
-	if cfg.WS.Path != defaults.WS.Path {
-		t.Fatalf("expected default ws path, got %+v", cfg.WS)
-	}
 	if cfg.Relay.DefaultClusterID != defaults.Relay.DefaultClusterID ||
 		cfg.Relay.TicketSigningSecret != defaults.Relay.TicketSigningSecret ||
 		len(cfg.Relay.Countries) == 0 {
@@ -112,8 +109,6 @@ func TestLoadConfig_PreservesPartialClientFacingConfig(t *testing.T) {
 http:
   public_host: "control.example.test"
   public_scheme: "https"
-ws:
-  path: "/custom/ws"
 relay:
   ticket_signing_secret: "custom-ticket-secret"
 auth:
@@ -131,9 +126,8 @@ bootstrap:
 	}
 	defaults := DefaultConfig()
 	if cfg.HTTP.PublicHost != "control.example.test" ||
-		cfg.HTTP.PublicScheme != "https" ||
-		cfg.WS.Path != "/custom/ws" {
-		t.Fatalf("expected explicit public endpoint fields to survive, got http=%+v ws=%+v", cfg.HTTP, cfg.WS)
+		cfg.HTTP.PublicScheme != "https" {
+		t.Fatalf("expected explicit public endpoint fields to survive, got http=%+v", cfg.HTTP)
 	}
 	if cfg.Relay.TicketSigningSecret != "custom-ticket-secret" {
 		t.Fatalf("expected custom relay signing secret, got %+v", cfg.Relay)

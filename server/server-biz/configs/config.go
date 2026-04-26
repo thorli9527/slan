@@ -22,16 +22,10 @@ type HTTPConfig struct {
 	Address string `yaml:"address"`
 	// OpsAddress 是运营管理 HTTP API 服务的监听地址。
 	OpsAddress string `yaml:"ops_address"`
-	// PublicHost 是客户端生成控制面 WSURL 时使用的可访问主机名或 host:port。
+	// PublicHost 是客户端生成控制面 URL 时使用的可访问主机名或 host:port。
 	PublicHost string `yaml:"public_host"`
 	// PublicScheme 是客户端访问控制面的外部协议，例如 http 或 https。
 	PublicScheme string `yaml:"public_scheme"`
-}
-
-// WSConfig is kept for backward-compatible config parsing; MQTT now carries the control channel.
-type WSConfig struct {
-	// Path is deprecated and no longer registers a control route.
-	Path string `yaml:"path"`
 }
 
 // MQTTConfig describes MQTT broker connection and credential settings.
@@ -202,8 +196,6 @@ type RedisConfig struct {
 type Config struct {
 	// HTTP 包含 public/ops 两套 HTTP listener 配置。
 	HTTP HTTPConfig `yaml:"http"`
-	// WS is deprecated; control traffic uses MQTT.
-	WS WSConfig `yaml:"ws"`
 	// MQTT contains broker connection and credential settings.
 	MQTT MQTTConfig `yaml:"mqtt"`
 	// Relay 包含 relay/DERP 拓扑与票据签名配置。
@@ -227,7 +219,6 @@ func DefaultConfig() Config {
 	cfg.HTTP.OpsAddress = ":8081"
 	cfg.HTTP.PublicHost = "127.0.0.1:8080"
 	cfg.HTTP.PublicScheme = "http"
-	cfg.WS.Path = ""
 	cfg.MQTT.Enabled = false
 	cfg.MQTT.BrokerURL = "mqtt://127.0.0.1:1883"
 	cfg.MQTT.PublicBrokerURL = "mqtt://127.0.0.1:1883"
@@ -328,9 +319,6 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.HTTP.PublicScheme == "" {
 		cfg.HTTP.PublicScheme = DefaultConfig().HTTP.PublicScheme
-	}
-	if cfg.WS.Path == "" {
-		cfg.WS.Path = DefaultConfig().WS.Path
 	}
 	if cfg.MQTT.BrokerURL == "" {
 		cfg.MQTT.BrokerURL = DefaultConfig().MQTT.BrokerURL

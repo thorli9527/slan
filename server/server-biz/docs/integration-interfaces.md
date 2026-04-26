@@ -141,9 +141,9 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 控制通道消息结构由：
 
 - `protocol/protobuf/control.proto`
-- `internal/ws/messages_handshake.go`
-- `internal/ws/messages_topology.go`
-- `internal/ws/messages_control.go`
+- `internal/controlmsg/messages_handshake.go`
+- `internal/controlmsg/messages_topology.go`
+- `internal/controlmsg/messages_control.go`
 
 承接消息：
 

@@ -9,24 +9,24 @@ import (
 	"github.com/slan/server/server-biz/internal/service"
 )
 
-type wsSession struct {
+type controlSession struct {
 	userID    string
 	deviceID  string
 	nodeID    string
 	networkID string
 }
 
-func (s wsSession) authorized() bool {
+func (s controlSession) authorized() bool {
 	return s.userID != "" && s.nodeID != "" && s.networkID != ""
 }
 
-var controlWSInstanceID = newControlWSInstanceID()
-var controlWSSyncOnce sync.Once
-var controlWSDeliveryRetryOnce sync.Once
+var controlmsgInstanceID = newcontrolmsgInstanceID()
+var controlmsgSyncOnce sync.Once
+var controlmsgDeliveryRetryOnce sync.Once
 var defaultConnectPlanThrottle = newConnectPlanThrottle()
 var defaultPeerCandidateWindow = newPeerCandidateWindow()
 
-func startControlWSDeliveryRetryLoop(deps routerDeps) {
+func startcontrolmsgDeliveryRetryLoop(deps routerDeps) {
 }
 
 func controlErrorCode(err error) string {
@@ -46,7 +46,7 @@ func controlErrorCode(err error) string {
 	return code
 }
 
-func newControlWSInstanceID() string {
+func newcontrolmsgInstanceID() string {
 	var buf [6]byte
 	if _, err := rand.Read(buf[:]); err != nil {
 		return "instance"

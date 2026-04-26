@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/repo"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
 type memoryTokenStore struct {
@@ -20,7 +20,7 @@ type memoryTokenStore struct {
 	controlSessionTokens map[string]string
 	authCallbackPayloads map[string][]byte
 	networkRevisions     map[string]uint64
-	controlSyncEvents    []controlws.ControlSyncEvent
+	controlSyncEvents    []controlmsg.ControlSyncEvent
 	connectPlanGate      map[string]struct{}
 	peerCandidateGate    map[string]struct{}
 }
@@ -33,7 +33,7 @@ func newMemoryTokenStore() *memoryTokenStore {
 		controlSessionTokens: make(map[string]string),
 		authCallbackPayloads: make(map[string][]byte),
 		networkRevisions:     make(map[string]uint64),
-		controlSyncEvents:    []controlws.ControlSyncEvent{},
+		controlSyncEvents:    []controlmsg.ControlSyncEvent{},
 		connectPlanGate:      make(map[string]struct{}),
 		peerCandidateGate:    make(map[string]struct{}),
 	}
@@ -160,14 +160,14 @@ func (s *memoryTokenStore) AuthenticateOpsAccessToken(_ context.Context, token s
 	return adminID, nil
 }
 
-func (s *memoryTokenStore) PublishControlSyncEvent(_ context.Context, event controlws.ControlSyncEvent) error {
+func (s *memoryTokenStore) PublishControlSyncEvent(_ context.Context, event controlmsg.ControlSyncEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.controlSyncEvents = append(s.controlSyncEvents, event)
 	return nil
 }
 
-func (s *memoryTokenStore) SubscribeControlSyncEvents(_ context.Context, _ func(controlws.ControlSyncEvent)) error {
+func (s *memoryTokenStore) SubscribeControlSyncEvents(_ context.Context, _ func(controlmsg.ControlSyncEvent)) error {
 	return nil
 }
 
@@ -203,7 +203,7 @@ func (s *memoryTokenStore) ResetConnectPlanRetry(_ context.Context, networkID, n
 	return nil
 }
 
-func (s *memoryTokenStore) AcquirePeerCandidateDelivery(_ context.Context, networkID, sourceNodeID, targetNodeID string, candidate controlws.PeerCandidate, _ time.Duration) (bool, error) {
+func (s *memoryTokenStore) AcquirePeerCandidateDelivery(_ context.Context, networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate, _ time.Duration) (bool, error) {
 	key := networkID + ":" + sourceNodeID + ":" + targetNodeID + ":" + candidate.CandidateType + ":" + candidate.Endpoint
 	s.mu.Lock()
 	defer s.mu.Unlock()

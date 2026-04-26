@@ -8,15 +8,15 @@ import (
 	"sync"
 	"time"
 
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/mqttauth"
 	"github.com/slan/server/server-biz/internal/service"
 	"github.com/slan/server/server-biz/internal/util"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
-var controlMQTTOnce sync.Once
+var controlmsgOnce sync.Once
 
-type controlMQTTEnvelope struct {
+type controlmsgEnvelope struct {
 	Type         string          `json:"type"`
 	RequestID    string          `json:"requestId,omitempty"`
 	MessageID    string          `json:"messageId,omitempty"`
@@ -29,7 +29,7 @@ func startControlMQTT(deps routerDeps) {
 	if !deps.Config.MQTT.Enabled || deps.ControlChannel == nil {
 		return
 	}
-	controlMQTTOnce.Do(func() {
+	controlmsgOnce.Do(func() {
 		go func() {
 			for {
 				credential := mqttauth.ServerSubscriberCredential(deps.Config.MQTT, time.Now())
@@ -63,11 +63,11 @@ func handleControlMQTTMessage(deps routerDeps, topic string, payload []byte) err
 	if !ok {
 		return service.ErrInvalidArgument
 	}
-	var env controlMQTTEnvelope
+	var env controlmsgEnvelope
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return err
 	}
-	session := wsSession{
+	session := controlSession{
 		deviceID:  deviceID,
 		nodeID:    strings.TrimSpace(env.SourceNodeID),
 		networkID: strings.TrimSpace(env.NetworkID),
@@ -75,10 +75,10 @@ func handleControlMQTTMessage(deps routerDeps, topic string, payload []byte) err
 	return handleControlMQTTEnvelope(deps, deviceID, &session, env)
 }
 
-func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSession, env controlMQTTEnvelope) error {
+func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *controlSession, env controlmsgEnvelope) error {
 	switch env.Type {
 	case "node_hello":
-		var hello controlws.NodeHello
+		var hello controlmsg.NodeHello
 		if err := json.Unmarshal(env.Payload, &hello); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
 		}
@@ -91,8 +91,8 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		metricAdd("handshake_success_total", 1)
-		metricAddByType(controlWSMessageTypeMetrics, "node_hello_ack", 1)
-		*session = wsSession{
+		metricAddByType(controlmsgMessageTypeMetrics, "node_hello_ack", 1)
+		*session = controlSession{
 			userID:    util.FirstNonEmpty(hello.UserID, networkMap.SelfUserID),
 			deviceID:  deviceID,
 			nodeID:    hello.NodeID,
@@ -101,8 +101,8 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 		if err := publishControlMQTTEnvelope(deps, deviceID, "node_hello_ack", env.RequestID, ack); err != nil {
 			return err
 		}
-		if err := publishControlMQTTEnvelope(deps, deviceID, "network_map_response", env.RequestID, controlws.NetworkMapResponse{
-			Map: dtoNetworkMapToWS(networkMap),
+		if err := publishControlMQTTEnvelope(deps, deviceID, "network_map_response", env.RequestID, controlmsg.NetworkMapResponse{
+			Map: dtoNetworkMapToControl(networkMap),
 		}); err != nil {
 			return err
 		}
@@ -113,17 +113,17 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		_ = deps.ControlChannel.Heartbeat(session.userID, session.nodeID, session.networkID)
-		var ping controlws.Ping
+		var ping controlmsg.Ping
 		if err := json.Unmarshal(env.Payload, &ping); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
 		}
-		return publishControlMQTTEnvelope(deps, deviceID, "pong", env.RequestID, controlws.Pong{Timestamp: ping.Timestamp})
+		return publishControlMQTTEnvelope(deps, deviceID, "pong", env.RequestID, controlmsg.Pong{Timestamp: ping.Timestamp})
 	case "network_map_request":
 		if err := hydrateMQTTSession(deps, session); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		_ = deps.ControlChannel.Heartbeat(session.userID, session.nodeID, session.networkID)
-		var req controlws.NetworkMapRequest
+		var req controlmsg.NetworkMapRequest
 		if err := json.Unmarshal(env.Payload, &req); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
 		}
@@ -132,15 +132,15 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 		if err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
-		return publishControlMQTTEnvelope(deps, deviceID, "network_map_response", env.RequestID, controlws.NetworkMapResponse{
-			Map: dtoNetworkMapToWS(networkMap),
+		return publishControlMQTTEnvelope(deps, deviceID, "network_map_response", env.RequestID, controlmsg.NetworkMapResponse{
+			Map: dtoNetworkMapToControl(networkMap),
 		})
 	case "endpoint_report":
 		if err := hydrateMQTTSession(deps, session); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		_ = deps.ControlChannel.Heartbeat(session.userID, session.nodeID, session.networkID)
-		var report controlws.EndpointReport
+		var report controlmsg.EndpointReport
 		if err := json.Unmarshal(env.Payload, &report); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
 		}
@@ -150,8 +150,8 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 		if err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
-		if err := publishControlMQTTEnvelope(deps, deviceID, "network_map_response", env.RequestID, controlws.NetworkMapResponse{
-			Map: dtoNetworkMapToWS(networkMap),
+		if err := publishControlMQTTEnvelope(deps, deviceID, "network_map_response", env.RequestID, controlmsg.NetworkMapResponse{
+			Map: dtoNetworkMapToControl(networkMap),
 		}); err != nil {
 			return err
 		}
@@ -162,7 +162,7 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		_ = deps.ControlChannel.Heartbeat(session.userID, session.nodeID, session.networkID)
-		var state controlws.ConnectionState
+		var state controlmsg.ConnectionState
 		if err := json.Unmarshal(env.Payload, &state); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
 		}
@@ -184,7 +184,7 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		_ = deps.ControlChannel.Heartbeat(session.userID, session.nodeID, session.networkID)
-		var report controlws.PathHealthReport
+		var report controlmsg.PathHealthReport
 		if err := json.Unmarshal(env.Payload, &report); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
 		}
@@ -198,7 +198,7 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		_ = deps.ControlChannel.Heartbeat(session.userID, session.nodeID, session.networkID)
-		var notice controlws.DisconnectNotice
+		var notice controlmsg.DisconnectNotice
 		if err := json.Unmarshal(env.Payload, &notice); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
 		}
@@ -212,7 +212,7 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		_ = deps.ControlChannel.Heartbeat(session.userID, session.nodeID, session.networkID)
-		var candidate controlws.PeerCandidate
+		var candidate controlmsg.PeerCandidate
 		if err := json.Unmarshal(env.Payload, &candidate); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
 		}
@@ -226,7 +226,7 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *wsSess
 	return nil
 }
 
-func hydrateMQTTSession(deps routerDeps, session *wsSession) error {
+func hydrateMQTTSession(deps routerDeps, session *controlSession) error {
 	if session.nodeID == "" || session.networkID == "" {
 		return service.ErrUnauthorized
 	}
@@ -246,8 +246,8 @@ func hydrateMQTTSession(deps routerDeps, session *wsSession) error {
 
 func publishControlMQTTError(deps routerDeps, deviceID, requestID string, err error) error {
 	code := controlErrorCode(err)
-	metricAddByType(controlWSErrorCodeMetrics, code, 1)
-	return publishControlMQTTEnvelope(deps, deviceID, "error", requestID, controlws.ErrorMessage{
+	metricAddByType(controlmsgErrorCodeMetrics, code, 1)
+	return publishControlMQTTEnvelope(deps, deviceID, "error", requestID, controlmsg.ErrorMessage{
 		Code:    code,
 		Message: err.Error(),
 	})
@@ -260,7 +260,7 @@ func publishControlMQTTEnvelope(deps routerDeps, deviceID, msgType, requestID st
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(deps.Config.MQTT.PublishTimeoutMilliseconds)*time.Millisecond)
 	defer cancel()
-	return mqttauth.PublishJSON(ctx, deps.Config.MQTT, credential.ClientID, credential.Username, credential.Password, mqttauth.ControlDownTopic(deps.Config.MQTT, deviceID), controlws.Envelope{
+	return mqttauth.PublishJSON(ctx, deps.Config.MQTT, credential.ClientID, credential.Username, credential.Password, mqttauth.ControlDownTopic(deps.Config.MQTT, deviceID), controlmsg.Envelope{
 		Type:      msgType,
 		RequestID: requestID,
 		Payload:   payload,

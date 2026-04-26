@@ -26,8 +26,8 @@ type DeviceBootstrap struct {
 
 // ControlPlaneConfig 包含控制通道所需的端点配置。
 type ControlPlaneConfig struct {
-	// WSURL keeps the legacy JSON field name; the value is now the MQTT broker URL.
-	WSURL string `json:"wsUrl"`
+	// ControlURL keeps the legacy JSON field name; the value is now the MQTT broker URL.
+	ControlURL string `json:"wsUrl"`
 	// HeartbeatSeconds 是服务端期望的保活心跳间隔。
 	HeartbeatSeconds int `json:"heartbeatSeconds"`
 }

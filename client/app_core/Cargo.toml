@@ -4,7 +4,7 @@ members = [
     "crates/app-core-cli",
     "crates/app-core-helper",
     "crates/app-core-service",
-    "crates/control-ws-client",
+    "crates/control-mqtt-client",
     "crates/controller-client",
     "crates/nat",
     "crates/p2p",

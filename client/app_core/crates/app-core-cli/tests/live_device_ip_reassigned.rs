@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use control_ws_client::{ControlWsClient, ControlWsConfig, ControlWsEvent};
+use control_mqtt_client::{ControlMqttClient, ControlMqttConfig, ControlMqttEvent};
 use controller_client::{
     ControllerClient, HttpControllerClient, RegisterDeviceRequest, RegisterNodeRequest,
     RegisterRequest, TcpJsonHttpTransport,
@@ -21,7 +21,7 @@ use tunnel::InMemoryTunnelManager;
 
 #[test]
 #[ignore = "requires local docker stack on 127.0.0.1:28080"]
-fn live_control_ws_receives_device_ip_reassigned() {
+fn live_control_mqtt_receives_device_ip_reassigned() {
     let base_url = std::env::var("SLAN_LIVE_BASE_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:28080".to_string());
     let client = HttpControllerClient::new(base_url.clone(), TcpJsonHttpTransport::default());
@@ -138,7 +138,7 @@ fn live_control_ws_receives_device_ip_reassigned() {
         }),
     )
     .expect("bootstrap member");
-    let ws_url = local_ws_url(
+    let control_mqtt_url = local_control_mqtt_url(
         bootstrap["controlPlane"]["wsUrl"]
             .as_str()
             .expect("controlPlane.wsUrl"),
@@ -148,8 +148,7 @@ fn live_control_ws_receives_device_ip_reassigned() {
         .expect("sessionToken")
         .to_string();
 
-    let mut ws_client = ControlWsClient::connect(&ControlWsConfig {
-        ws_url: ws_url.clone(),
+    let mut control_mqtt_client = ControlMqttClient::connect(&ControlMqttConfig {
         access_token: member_session.access_token.clone(),
         session_token: session_token.clone(),
         user_id: member_session.user_id.clone(),
@@ -160,10 +159,9 @@ fn live_control_ws_receives_device_ip_reassigned() {
         capabilities: member_node.capabilities.clone(),
         mqtt: member_device.mqtt.clone().expect("member mqtt credential"),
     })
-    .expect("connect control ws");
-    ws_client
-        .bootstrap_session(&ControlWsConfig {
-            ws_url,
+    .expect("connect control mqtt");
+    control_mqtt_client
+        .bootstrap_session(&ControlMqttConfig {
             access_token: member_session.access_token.clone(),
             session_token,
             user_id: member_session.user_id.clone(),
@@ -174,7 +172,7 @@ fn live_control_ws_receives_device_ip_reassigned() {
             capabilities: member_node.capabilities.clone(),
             mqtt: member_device.mqtt.clone().expect("member mqtt credential"),
         })
-        .expect("bootstrap control ws session");
+        .expect("bootstrap control mqtt session");
 
     let assignments = send_json(
         &base_url,
@@ -206,12 +204,12 @@ fn live_control_ws_receives_device_ip_reassigned() {
     .expect("update member virtual ip");
     assert_eq!(updated["virtualIp"].as_str(), Some(next_ip));
 
-    let events = ws_client
+    let events = control_mqtt_client
         .drain_pending_events(Duration::from_secs(2), 8)
         .expect("read pending events");
     let update = events.into_iter().find_map(|event| match event {
-        ControlWsEvent::DeviceIPReassigned(update) => Some(update),
-        ControlWsEvent::PeerUpdate(update)
+        ControlMqttEvent::DeviceIPReassigned(update) => Some(update),
+        ControlMqttEvent::PeerUpdate(update)
             if update
                 .peer
                 .virtual_ips
@@ -512,7 +510,7 @@ fn unique_suffix() -> u128 {
         .as_millis()
 }
 
-fn local_ws_url(raw: &str) -> String {
+fn local_control_mqtt_url(raw: &str) -> String {
     if raw.starts_with("mqtt://") {
         return "mqtt://127.0.0.1:1883".to_string();
     }
@@ -598,7 +596,7 @@ fn bootstrap_config_from_json(raw: &Value) -> BootstrapConfig {
     let mut control_plane: ControlPlaneConfig =
         serde_json::from_value(raw["controlPlane"].clone()).expect("controlPlane");
     control_plane.session_token = raw["sessionToken"].as_str().map(ToString::to_string);
-    control_plane.ws_url = local_ws_url(&control_plane.ws_url);
+    control_plane.ws_url = local_control_mqtt_url(&control_plane.ws_url);
     BootstrapConfig {
         device,
         networks: Vec::new(),

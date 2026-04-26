@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use control_ws_client::ControlWsConnectPlan;
+use control_mqtt_client::ControlMqttConnectPlan;
 use serde::{Deserialize, Serialize};
 use slan_app_core::{
     ActivePath, BootstrapConfig, ConnectionState, Device, Node, Session, TunnelKeyMaterial,
@@ -18,7 +18,7 @@ pub struct AppCoreSnapshot {
     pub current_network_id: Option<String>,
     pub connection_state: Option<ConnectionState>,
     #[serde(default)]
-    pub current_connect_plans: HashMap<String, ControlWsConnectPlan>,
+    pub current_connect_plans: HashMap<String, ControlMqttConnectPlan>,
     pub active_path: Option<ActivePath>,
     pub tunnel_peer_virtual_ip: Option<String>,
     pub tunnel_runtime: Option<TunnelRuntimeView>,

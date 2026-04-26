@@ -30,7 +30,7 @@
 
 ### 传输安全与配置安全
 
-- [ ] HTTP/WS 必须在 TLS 下运行（或由反向代理终止 TLS），并确保 WS 使用 WSS
+- [ ] HTTP/MQTT 必须在 TLS 下运行（或由反向代理终止 TLS），MQTT broker 需启用鉴权
 - [ ] 正确处理反向代理场景的真实 IP（X-Forwarded-For / X-Real-IP）与信任边界
 - [ ] 默认配置仅用于开发环境；生产环境禁止默认弱口令与默认连接串
 - [ ] 所有密钥/凭证从环境或密钥系统注入（而不是写在配置样例里）
@@ -50,16 +50,16 @@
 - 网络编排：[network.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/service/impl/network.go)
 - 网络模型：[network_models.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/repo/network_models.go)
 
-### 控制通道（WebSocket）稳定性与防滥用
+### 控制通道（MQTT）稳定性与防滥用
 
-- [ ] WS 握手严格鉴权（control session token）且可吊销
+- [ ] MQTT 控制握手严格鉴权（control session token）且可吊销
 - [ ] 心跳/超时与断线收敛策略明确
 - [ ] 最大消息大小限制、反序列化防护、输入校验
 - [ ] 写入背压/发送队列：广播不阻塞业务线程；必要时丢弃或降级
 - [ ] 连接数/速率限制（按 IP/用户/网络）
 
 落点参考：
-- WS 接入与扇出：[control_ws.go](file:///Users/thorli/workspace/slan/server/server-biz/api/http/control_ws.go)
+- MQTT 接入与扇出：`server/server-biz/api/http/control_mqtt*.go`
 
 ## P1 上线前必备（稳定上线）
 
@@ -77,15 +77,15 @@
 
 ### 错误码与协议兼容
 
-- [ ] HTTP/WS 错误码稳定且文档化（客户端可据此做 UI/重试）
-- [ ] DTO/WS 消息具备版本字段或能力协商，避免升级不兼容
+- [ ] HTTP/MQTT 错误码稳定且文档化（客户端可据此做 UI/重试）
+- [ ] DTO/MQTT 消息具备版本字段或能力协商，避免升级不兼容
 
 落点参考：
 - HTTP 错误映射：[routes.go](file:///Users/thorli/workspace/slan/server/server-biz/api/http/routes.go)
-- WS 消息定义：
-  - [messages_handshake.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/ws/messages_handshake.go)
-  - [messages_topology.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/ws/messages_topology.go)
-  - [messages_control.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/ws/messages_control.go)
+- 控制消息定义：
+  - [messages_handshake.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/controlmsg/messages_handshake.go)
+  - [messages_topology.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/controlmsg/messages_topology.go)
+  - [messages_control.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/controlmsg/messages_control.go)
 
 ### 配置与密钥管理
 
@@ -97,18 +97,18 @@
 ### 指标（Metrics）
 
 - [ ] HTTP：QPS、P95/P99、按错误码聚合
-- [ ] WS：在线数、握手成功率、广播量、队列长度、丢弃数
+- [ ] MQTT：在线数、握手成功率、发布量、队列长度、丢弃数
 - [ ] PG/Redis：连接池、延迟、超时、错误率
 
 ### 日志与追踪
 
 - [ ] 结构化日志：requestId、userId、nodeId、networkId、remoteIP
-- [ ] 分布式追踪：login → register device/node → join-by-owner-email/join-by-key → alias remark → switch → activate/bootstrap → ws handshake → fanout
+- [ ] 分布式追踪：login → register device/node → join-by-owner-email/join-by-key → alias remark → switch → activate/bootstrap → mqtt node_hello → fanout
 
 ### 告警
 
 - [ ] Redis/PG 不可用告警
-- [ ] 错误率/延迟/WS 在线数异常告警
+- [ ] 错误率/延迟/MQTT 在线数异常告警
 - [ ] 入网失败率高与 IP 池耗尽告警
 
 ## P3 可靠性与扩展（规模上来不崩）
@@ -120,7 +120,7 @@
 
 ### 限流与防刷
 
-- [ ] /auth、/devices/register、/nodes/register、/networks join/switch/activate、/bootstrap、/control/sessions、WS node_hello 全部限流
+- [ ] /auth、/devices/register、/nodes/register、/networks join/switch/activate、/bootstrap、/control/sessions、MQTT node_hello 全部限流
 - [ ] 防枚举（网络 ID、设备 ID）与异常访问封禁
 
 ## 最小验收标准（建议）

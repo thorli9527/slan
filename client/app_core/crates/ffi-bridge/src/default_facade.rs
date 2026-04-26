@@ -1,7 +1,7 @@
-use control_ws_client::{
-    ControlWsActiveNetworkEnabled, ControlWsClient, ControlWsConfig, ControlWsConnectPlan,
-    ControlWsConnectionStateReport, ControlWsDeviceIPReassigned, ControlWsEvent,
-    ControlWsPathHealthReport,
+use control_mqtt_client::{
+    ControlMqttActiveNetworkEnabled, ControlMqttClient, ControlMqttConfig, ControlMqttConnectPlan,
+    ControlMqttConnectionStateReport, ControlMqttDeviceIPReassigned, ControlMqttEvent,
+    ControlMqttPathHealthReport,
 };
 use controller_client::{
     ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
@@ -52,7 +52,7 @@ where
     tunnel_manager: T,
     tunnel_key_provider: Box<dyn TunnelKeyProvider>,
     state: Mutex<AppCoreSnapshot>,
-    control_ws: Mutex<Option<ControlWsClient>>,
+    control_mqtt: Mutex<Option<ControlMqttClient>>,
     current_tunnel_peer_virtual_ip: Mutex<Option<String>>,
     probe_sequence: Mutex<u64>,
     default_probe_reply_timeout_ms: u64,
@@ -107,7 +107,7 @@ where
             tunnel_manager,
             tunnel_key_provider,
             state: Mutex::new(AppCoreSnapshot::default()),
-            control_ws: Mutex::new(None),
+            control_mqtt: Mutex::new(None),
             current_tunnel_peer_virtual_ip: Mutex::new(None),
             probe_sequence: Mutex::new(0),
             default_probe_reply_timeout_ms: Self::DEFAULT_PROBE_REPLY_TIMEOUT_MS,
@@ -154,7 +154,7 @@ where
             tunnel_manager,
             tunnel_key_provider,
             state: Mutex::new(AppCoreSnapshot::default()),
-            control_ws: Mutex::new(None),
+            control_mqtt: Mutex::new(None),
             current_tunnel_peer_virtual_ip: Mutex::new(None),
             probe_sequence: Mutex::new(0),
             default_probe_reply_timeout_ms,
@@ -269,11 +269,11 @@ where
     }
 
     pub fn restore_snapshot(&self, snapshot: AppCoreSnapshot) -> Result<(), String> {
-        let mut control_ws = self
-            .control_ws
+        let mut control_mqtt = self
+            .control_mqtt
             .lock()
-            .map_err(|_| "app core control ws state poisoned".to_string())?;
-        *control_ws = None;
+            .map_err(|_| "app core control mqtt state poisoned".to_string())?;
+        *control_mqtt = None;
         let mut current_tunnel = self
             .current_tunnel_peer_virtual_ip
             .lock()
@@ -312,7 +312,7 @@ where
         Ok(format!("probe-{sampled_at_ms}-{}", *sequence))
     }
 
-    fn control_ws_config(&self) -> Result<ControlWsConfig, String> {
+    fn control_mqtt_config(&self) -> Result<ControlMqttConfig, String> {
         let state = self
             .state
             .lock()
@@ -354,8 +354,7 @@ where
             .and_then(|device| device.mqtt.clone())
             .ok_or_else(|| "missing MQTT credential in current device".to_string())?;
 
-        Ok(ControlWsConfig {
-            ws_url: bootstrap.control_plane.ws_url.clone(),
+        Ok(ControlMqttConfig {
             access_token,
             session_token,
             user_id,
@@ -374,7 +373,7 @@ where
     fn connect_plan_for_peer(
         &self,
         peer_node_id: &str,
-    ) -> Result<Option<ControlWsConnectPlan>, String> {
+    ) -> Result<Option<ControlMqttConnectPlan>, String> {
         let state = self
             .state
             .lock()
@@ -406,9 +405,9 @@ where
     }
 
     fn emit_control_observations(
-        client: &mut ControlWsClient,
+        client: &mut ControlMqttClient,
         state: &AppCoreSnapshot,
-        config: &ControlWsConfig,
+        config: &ControlMqttConfig,
     ) -> Result<(), String> {
         let Some(peer_node_id) = Self::infer_control_report_peer_node_id(state) else {
             return Ok(());
@@ -447,7 +446,7 @@ where
                     )
                 })
                 .unwrap_or((None, None, None, None));
-            client.send_connection_state(&ControlWsConnectionStateReport {
+            client.send_connection_state(&ControlMqttConnectionStateReport {
                 network_id: config.network_id.clone(),
                 peer_node_id: peer_node_id.clone(),
                 path,
@@ -467,7 +466,7 @@ where
                 ActivePath::Relay { .. } => "relay".to_string(),
                 ActivePath::Derp { .. } => "derp".to_string(),
             };
-            client.send_path_health_report(&ControlWsPathHealthReport {
+            client.send_path_health_report(&ControlMqttPathHealthReport {
                 network_id: config.network_id.clone(),
                 peer_node_id,
                 path_type,
@@ -482,7 +481,7 @@ where
         Ok(())
     }
 
-    fn ordered_peer_endpoints(peer: &Peer, plan: Option<&ControlWsConnectPlan>) -> Vec<Endpoint> {
+    fn ordered_peer_endpoints(peer: &Peer, plan: Option<&ControlMqttConnectPlan>) -> Vec<Endpoint> {
         let mut endpoints = peer.endpoints.clone();
         let Some(plan) = plan else {
             return endpoints;
@@ -505,7 +504,7 @@ where
         network_id: String,
         src_node_id: String,
         peer_node_id: String,
-        plan: Option<&ControlWsConnectPlan>,
+        plan: Option<&ControlMqttConnectPlan>,
     ) -> Result<RelayTicket, String> {
         if let Some(ticket) = plan.and_then(|plan| plan.relay_ticket.clone()) {
             return Ok(ticket);
@@ -833,7 +832,7 @@ where
     }
 
     fn control_sync(&self) -> Result<BootstrapConfig, String> {
-        let config = self.control_ws_config()?;
+        let config = self.control_mqtt_config()?;
         let current_revision = {
             let state = self
                 .state
@@ -846,11 +845,11 @@ where
                 .map(|network_map| network_map.revision)
                 .unwrap_or(0)
         };
-        let mut control_ws = self
-            .control_ws
+        let mut control_mqtt = self
+            .control_mqtt
             .lock()
-            .map_err(|_| "app core control ws state poisoned".to_string())?;
-        let bootstrap = if let Some(client) = control_ws.as_mut() {
+            .map_err(|_| "app core control mqtt state poisoned".to_string())?;
+        let bootstrap = if let Some(client) = control_mqtt.as_mut() {
             match client.ping(now_ms() as i64).and_then(|_| {
                 let snapshot = self
                     .state
@@ -873,7 +872,7 @@ where
                     for event in
                         client.drain_pending_events(std::time::Duration::from_millis(200), 32)?
                     {
-                        apply_control_ws_event(
+                        apply_control_mqtt_event(
                             &mut network_map,
                             &mut pending_connect_plans,
                             &mut device_ip_updates,
@@ -881,7 +880,7 @@ where
                             event,
                         );
                     }
-                    ControlWsBootstrapUpdate {
+                    ControlMqttBootstrapUpdate {
                         bootstrap_override: None,
                         network_map,
                         heartbeat_seconds: 0,
@@ -891,7 +890,7 @@ where
                     }
                 }
                 Err(_) => {
-                    let mut client = ControlWsClient::connect(&config)?;
+                    let mut client = ControlMqttClient::connect(&config)?;
                     let mut bootstrap = client.bootstrap_session(&config)?;
                     let snapshot = self
                         .state
@@ -905,7 +904,7 @@ where
                     for event in
                         client.drain_pending_events(std::time::Duration::from_millis(200), 32)?
                     {
-                        apply_control_ws_event(
+                        apply_control_mqtt_event(
                             &mut bootstrap.network_map,
                             &mut pending_connect_plans,
                             &mut device_ip_updates,
@@ -913,8 +912,8 @@ where
                             event,
                         );
                     }
-                    *control_ws = Some(client);
-                    ControlWsBootstrapUpdate {
+                    *control_mqtt = Some(client);
+                    ControlMqttBootstrapUpdate {
                         bootstrap_override: None,
                         network_map: bootstrap.network_map,
                         heartbeat_seconds: bootstrap.ack.heartbeat_seconds,
@@ -925,7 +924,7 @@ where
                 }
             }
         } else {
-            let mut client = ControlWsClient::connect(&config)?;
+            let mut client = ControlMqttClient::connect(&config)?;
             let mut bootstrap = client.bootstrap_session(&config)?;
             let snapshot = self
                 .state
@@ -937,7 +936,7 @@ where
             let mut device_ip_updates = Vec::new();
             let mut active_network_enabled = None;
             for event in client.drain_pending_events(std::time::Duration::from_millis(200), 32)? {
-                apply_control_ws_event(
+                apply_control_mqtt_event(
                     &mut bootstrap.network_map,
                     &mut pending_connect_plans,
                     &mut device_ip_updates,
@@ -945,8 +944,8 @@ where
                     event,
                 );
             }
-            *control_ws = Some(client);
-            ControlWsBootstrapUpdate {
+            *control_mqtt = Some(client);
+            ControlMqttBootstrapUpdate {
                 bootstrap_override: None,
                 network_map: bootstrap.network_map,
                 heartbeat_seconds: bootstrap.ack.heartbeat_seconds,
@@ -990,7 +989,7 @@ where
                     &config.node_id,
                     &enabled.network_id,
                 )?;
-                ControlWsBootstrapUpdate {
+                ControlMqttBootstrapUpdate {
                     bootstrap_override: Some(refreshed.clone()),
                     network_map: refreshed.network_map.clone().ok_or_else(|| {
                         "missing network map after active network enable".to_string()
@@ -1419,11 +1418,11 @@ where
     }
 
     fn disconnect(&self) -> Result<(), String> {
-        let mut control_ws = self
-            .control_ws
+        let mut control_mqtt = self
+            .control_mqtt
             .lock()
-            .map_err(|_| "app core control ws state poisoned".to_string())?;
-        *control_ws = None;
+            .map_err(|_| "app core control mqtt state poisoned".to_string())?;
+        *control_mqtt = None;
         let peer_virtual_ip = self
             .current_tunnel_peer_virtual_ip
             .lock()
@@ -1436,24 +1435,24 @@ where
     }
 }
 
-struct ControlWsBootstrapUpdate {
+struct ControlMqttBootstrapUpdate {
     bootstrap_override: Option<BootstrapConfig>,
     network_map: slan_app_core::NetworkMap,
     heartbeat_seconds: u32,
-    connect_plans: std::collections::HashMap<String, ControlWsConnectPlan>,
-    device_ip_updates: Vec<ControlWsDeviceIPReassigned>,
-    active_network_enabled: Option<ControlWsActiveNetworkEnabled>,
+    connect_plans: std::collections::HashMap<String, ControlMqttConnectPlan>,
+    device_ip_updates: Vec<ControlMqttDeviceIPReassigned>,
+    active_network_enabled: Option<ControlMqttActiveNetworkEnabled>,
 }
 
-fn apply_control_ws_event(
+fn apply_control_mqtt_event(
     network_map: &mut slan_app_core::NetworkMap,
-    connect_plans: &mut std::collections::HashMap<String, ControlWsConnectPlan>,
-    device_ip_updates: &mut Vec<ControlWsDeviceIPReassigned>,
-    active_network_enabled: &mut Option<ControlWsActiveNetworkEnabled>,
-    event: ControlWsEvent,
+    connect_plans: &mut std::collections::HashMap<String, ControlMqttConnectPlan>,
+    device_ip_updates: &mut Vec<ControlMqttDeviceIPReassigned>,
+    active_network_enabled: &mut Option<ControlMqttActiveNetworkEnabled>,
+    event: ControlMqttEvent,
 ) {
     match event {
-        ControlWsEvent::PeerUpdate(update) => {
+        ControlMqttEvent::PeerUpdate(update) => {
             network_map.revision = network_map.revision.max(update.revision);
             if let Some(existing) = network_map
                 .peers
@@ -1465,18 +1464,18 @@ fn apply_control_ws_event(
                 network_map.peers.push(update.peer);
             }
         }
-        ControlWsEvent::PeerRemove(remove) => {
+        ControlMqttEvent::PeerRemove(remove) => {
             network_map.revision = network_map.revision.max(remove.revision);
             network_map
                 .peers
                 .retain(|peer| peer.node_id != remove.peer_node_id);
             connect_plans.remove(&remove.peer_node_id);
         }
-        ControlWsEvent::ConnectPlan(plan) => {
+        ControlMqttEvent::ConnectPlan(plan) => {
             connect_plans.insert(plan.peer_node_id.clone(), plan);
         }
-        ControlWsEvent::NetworkRestartRequired(_restart) => {}
-        ControlWsEvent::DeviceIPReassigned(update) => {
+        ControlMqttEvent::NetworkRestartRequired(_restart) => {}
+        ControlMqttEvent::DeviceIPReassigned(update) => {
             if update.network_id == network_map.network_id {
                 for peer in network_map
                     .peers
@@ -1488,7 +1487,7 @@ fn apply_control_ws_event(
             }
             device_ip_updates.push(update);
         }
-        ControlWsEvent::ActiveNetworkEnabled(enabled) => {
+        ControlMqttEvent::ActiveNetworkEnabled(enabled) => {
             *active_network_enabled = Some(enabled);
         }
     }

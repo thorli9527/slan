@@ -9,9 +9,9 @@ import (
 	"github.com/lib/pq"
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/configs"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/service"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
 func TestRuntimeControlRejectsPendingNetworkMember(t *testing.T) {
@@ -106,7 +106,7 @@ func TestRuntimePeerReportsRejectPendingPeerMember(t *testing.T) {
 	seedRuntimePeer(t, state, "pending")
 
 	channel := dbControlChannelService{state: state}
-	if err := channel.ReportConnectionState("user-1", "node-1", controlws.ConnectionState{
+	if err := channel.ReportConnectionState("user-1", "node-1", controlmsg.ConnectionState{
 		NetworkID:  "net-1",
 		PeerNodeID: "node-2",
 		Path:       "relay",
@@ -115,7 +115,7 @@ func TestRuntimePeerReportsRejectPendingPeerMember(t *testing.T) {
 		t.Fatalf("expected forbidden for pending peer connection state, got %v", err)
 	}
 
-	if err := channel.ReportPathHealth("user-1", "node-1", controlws.PathHealthReport{
+	if err := channel.ReportPathHealth("user-1", "node-1", controlmsg.PathHealthReport{
 		NetworkID:  "net-1",
 		PeerNodeID: "node-2",
 		PathType:   "relay",

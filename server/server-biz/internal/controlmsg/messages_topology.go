@@ -1,4 +1,4 @@
-package ws
+package controlmsg
 
 // Endpoint 描述节点当前可用的一个候选网络端点。
 type Endpoint struct {

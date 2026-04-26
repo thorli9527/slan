@@ -1,5 +1,5 @@
 [package]
-name = "control-ws-client"
+name = "control-mqtt-client"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

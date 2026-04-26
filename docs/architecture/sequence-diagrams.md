@@ -222,7 +222,7 @@ sequenceDiagram
         Biz-->>Core: ControlSessionResponse(sessionToken, wsUrl, networkMap)
     end
 
-    Core->>Biz: WebSocket connect wsUrl
+    Core->>MQTT: connect broker via MQTT credential
     Core->>Biz: Envelope(NodeHello)
     Biz-->>Core: Envelope(NodeHelloAck)
 
@@ -384,7 +384,7 @@ sequenceDiagram
     Core->>Biz: POST /bootstrap
     Biz-->>Core: bootstrap config
 
-    Core->>Biz: ws hello with bootstrap session token
+    Core->>MQTT: node hello with bootstrap session token
     Biz-->>Core: network map / connect plan
 
     Core->>Peer: try p2p

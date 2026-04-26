@@ -4,7 +4,7 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
-control-ws-client = { path = "../control-ws-client" }
+control-mqtt-client = { path = "../control-mqtt-client" }
 controller-client = { path = "../controller-client" }
 nat = { path = "../nat" }
 p2p = { path = "../p2p" }

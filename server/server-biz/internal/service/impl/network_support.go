@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/repo"
-	controlws "github.com/slan/server/server-biz/internal/ws"
 )
 
 func (s *dbState) allocateIP(ctx context.Context, subnet dto.Subnet) (string, error) {
@@ -110,11 +110,11 @@ func (s *dbState) publishNetworkRestartRequired(networkID, cidr string) {
 	if err != nil || revision == 0 {
 		revision = 1
 	}
-	_ = s.tokens.PublishControlSyncEvent(ctx, controlws.ControlSyncEvent{
+	_ = s.tokens.PublishControlSyncEvent(ctx, controlmsg.ControlSyncEvent{
 		Type:      "network_restart_required",
 		NetworkID: networkID,
 		Revision:  revision,
-		Restart: &controlws.NetworkRestartRequired{
+		Restart: &controlmsg.NetworkRestartRequired{
 			NetworkID:         networkID,
 			Revision:          revision,
 			Reason:            "network configuration changed, tunnel restart required",
@@ -128,10 +128,10 @@ func (s *dbState) publishDeviceIPReassigned(networkID, deviceID, attachmentID, v
 		return
 	}
 
-	_ = s.tokens.PublishControlSyncEvent(context.Background(), controlws.ControlSyncEvent{
+	_ = s.tokens.PublishControlSyncEvent(context.Background(), controlmsg.ControlSyncEvent{
 		Type:      "device_ip_reassigned",
 		NetworkID: networkID,
-		DeviceIP: &controlws.DeviceIPReassigned{
+		DeviceIP: &controlmsg.DeviceIPReassigned{
 			NetworkID:    networkID,
 			DeviceID:     deviceID,
 			AttachmentID: attachmentID,
@@ -146,11 +146,11 @@ func (s *dbState) publishActiveNetworkEnabled(userID, networkID, reason string) 
 		return
 	}
 
-	_ = s.tokens.PublishControlSyncEvent(context.Background(), controlws.ControlSyncEvent{
+	_ = s.tokens.PublishControlSyncEvent(context.Background(), controlmsg.ControlSyncEvent{
 		Type:         "active_network_enabled",
 		NetworkID:    networkID,
 		TargetUserID: userID,
-		ActiveNetwork: &controlws.ActiveNetworkEnabled{
+		ActiveNetwork: &controlmsg.ActiveNetworkEnabled{
 			UserID:    userID,
 			NetworkID: networkID,
 			Reason:    reason,
@@ -168,7 +168,7 @@ func (s *dbState) publishPeerRemove(networkID, nodeID string) {
 	if err != nil || revision == 0 {
 		revision = 1
 	}
-	_ = s.tokens.PublishControlSyncEvent(ctx, controlws.ControlSyncEvent{
+	_ = s.tokens.PublishControlSyncEvent(ctx, controlmsg.ControlSyncEvent{
 		Type:         "peer_remove",
 		NetworkID:    networkID,
 		SourceNodeID: nodeID,
@@ -179,7 +179,7 @@ func (s *dbState) publishPeerRemove(networkID, nodeID string) {
 
 func (s *dbState) controlPlaneConfig() dto.ControlPlaneConfig {
 	return dto.ControlPlaneConfig{
-		WSURL:            s.wsURL(),
+		ControlURL:       s.controlURL(),
 		HeartbeatSeconds: defaultControlHeartbeatSeconds,
 	}
 }
@@ -281,7 +281,7 @@ func (s *dbState) routesForNetwork(ctx context.Context, networkID string) []dto.
 	return routes
 }
 
-func (s *dbState) wsURL() string {
+func (s *dbState) controlURL() string {
 	if strings.TrimSpace(s.cfg.MQTT.PublicBrokerURL) != "" {
 		return strings.TrimSpace(s.cfg.MQTT.PublicBrokerURL)
 	}

@@ -7,15 +7,14 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slan_app_core::{
-    DnsConfig, Endpoint, MqttCredential, NetworkMap, Peer, RelayEndpoint, RelayRegion,
-    RelayTicket, Route,
+    DnsConfig, Endpoint, MqttCredential, NetworkMap, Peer, RelayEndpoint, RelayRegion, RelayTicket,
+    Route,
 };
 
 const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
-pub struct ControlWsConfig {
-    pub ws_url: String,
+pub struct ControlMqttConfig {
     pub access_token: String,
     pub session_token: String,
     pub user_id: String,
@@ -49,24 +48,24 @@ pub struct ControlSessionBootstrap {
 }
 
 #[derive(Debug, Clone)]
-pub enum ControlWsEvent {
-    PeerUpdate(ControlWsPeerUpdate),
-    PeerRemove(ControlWsPeerRemove),
-    ConnectPlan(ControlWsConnectPlan),
-    NetworkRestartRequired(ControlWsNetworkRestartRequired),
-    DeviceIPReassigned(ControlWsDeviceIPReassigned),
-    ActiveNetworkEnabled(ControlWsActiveNetworkEnabled),
+pub enum ControlMqttEvent {
+    PeerUpdate(ControlMqttPeerUpdate),
+    PeerRemove(ControlMqttPeerRemove),
+    ConnectPlan(ControlMqttConnectPlan),
+    NetworkRestartRequired(ControlMqttNetworkRestartRequired),
+    DeviceIPReassigned(ControlMqttDeviceIPReassigned),
+    ActiveNetworkEnabled(ControlMqttActiveNetworkEnabled),
 }
 
 #[derive(Debug, Clone)]
-pub struct ControlWsPeerUpdate {
+pub struct ControlMqttPeerUpdate {
     pub network_id: String,
     pub revision: u64,
     pub peer: Peer,
 }
 
 #[derive(Debug, Clone)]
-pub struct ControlWsPeerRemove {
+pub struct ControlMqttPeerRemove {
     pub network_id: String,
     pub revision: u64,
     pub peer_node_id: String,
@@ -74,7 +73,7 @@ pub struct ControlWsPeerRemove {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlWsActiveNetworkEnabled {
+pub struct ControlMqttActiveNetworkEnabled {
     pub user_id: String,
     pub network_id: String,
     #[serde(default)]
@@ -83,7 +82,7 @@ pub struct ControlWsActiveNetworkEnabled {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlWsNetworkRestartRequired {
+pub struct ControlMqttNetworkRestartRequired {
     pub network_id: String,
     #[serde(default)]
     pub revision: u64,
@@ -95,7 +94,7 @@ pub struct ControlWsNetworkRestartRequired {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlWsDeviceIPReassigned {
+pub struct ControlMqttDeviceIPReassigned {
     pub network_id: String,
     pub device_id: String,
     pub attachment_id: String,
@@ -106,11 +105,11 @@ pub struct ControlWsDeviceIPReassigned {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlWsConnectPlan {
+pub struct ControlMqttConnectPlan {
     pub peer_node_id: String,
     pub prefer_direct: bool,
     #[serde(default)]
-    pub paths: Vec<ControlWsPathOption>,
+    pub paths: Vec<ControlMqttPathOption>,
     #[serde(default)]
     pub derp_cluster_id: String,
     #[serde(default)]
@@ -121,7 +120,7 @@ pub struct ControlWsConnectPlan {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlWsPathOption {
+pub struct ControlMqttPathOption {
     pub path_type: String,
     pub endpoint: String,
     pub priority: i32,
@@ -129,7 +128,7 @@ pub struct ControlWsPathOption {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlWsConnectionStateReport {
+pub struct ControlMqttConnectionStateReport {
     pub network_id: String,
     pub peer_node_id: String,
     pub path: String,
@@ -148,7 +147,7 @@ pub struct ControlWsConnectionStateReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ControlWsPathHealthReport {
+pub struct ControlMqttPathHealthReport {
     pub network_id: String,
     pub peer_node_id: String,
     pub path_type: String,
@@ -166,16 +165,16 @@ pub struct ControlWsPathHealthReport {
 }
 
 #[derive(Debug)]
-pub struct ControlWsClient {
+pub struct ControlMqttClient {
     stream: TcpStream,
     up_topic: String,
     source_node_id: String,
     network_id: String,
-    queued_events: VecDeque<ControlWsEvent>,
+    queued_events: VecDeque<ControlMqttEvent>,
 }
 
-impl ControlWsClient {
-    pub fn connect(config: &ControlWsConfig) -> Result<Self, String> {
+impl ControlMqttClient {
+    pub fn connect(config: &ControlMqttConfig) -> Result<Self, String> {
         let endpoint = parse_mqtt_url(&config.mqtt.broker_url)?;
         let mut stream = TcpStream::connect(endpoint.authority.as_str())
             .map_err(|err| format!("connect control mqtt {}: {err}", endpoint.authority))?;
@@ -199,7 +198,10 @@ impl ControlWsClient {
             .map_err(|err| format!("flush mqtt connect: {err}"))?;
         read_mqtt_connack(&mut stream)?;
 
-        let down_topic = format!("{}/control/down", config.mqtt.topic_prefix.trim_end_matches('/'));
+        let down_topic = format!(
+            "{}/control/down",
+            config.mqtt.topic_prefix.trim_end_matches('/')
+        );
         let subscribe = mqtt_subscribe_packet(1, &down_topic)?;
         stream
             .write_all(&subscribe)
@@ -211,7 +213,10 @@ impl ControlWsClient {
 
         Ok(Self {
             stream,
-            up_topic: format!("{}/control/up", config.mqtt.topic_prefix.trim_end_matches('/')),
+            up_topic: format!(
+                "{}/control/up",
+                config.mqtt.topic_prefix.trim_end_matches('/')
+            ),
             source_node_id: config.node_id.clone(),
             network_id: config.network_id.clone(),
             queued_events: VecDeque::new(),
@@ -220,7 +225,7 @@ impl ControlWsClient {
 
     pub fn bootstrap_session(
         &mut self,
-        config: &ControlWsConfig,
+        config: &ControlMqttConfig,
     ) -> Result<ControlSessionBootstrap, String> {
         let hello = Envelope {
             msg_type: "node_hello".to_string(),
@@ -236,7 +241,7 @@ impl ControlWsClient {
         let ack_env = self.read_response_envelope("node_hello_ack")?;
         if ack_env.msg_type != "node_hello_ack" {
             return Err(format!(
-                "unexpected control ws response: {}",
+                "unexpected control mqtt response: {}",
                 ack_env.msg_type
             ));
         }
@@ -246,7 +251,7 @@ impl ControlWsClient {
         let network_env = self.read_response_envelope("network_map_response")?;
         if network_env.msg_type != "network_map_response" {
             return Err(format!(
-                "unexpected control ws response after node_hello_ack: {}",
+                "unexpected control mqtt response after node_hello_ack: {}",
                 network_env.msg_type
             ));
         }
@@ -301,7 +306,7 @@ impl ControlWsClient {
         let response = self.read_response_envelope("pong")?;
         if response.msg_type != "pong" {
             return Err(format!(
-                "unexpected control ws response to ping: {}",
+                "unexpected control mqtt response to ping: {}",
                 response.msg_type
             ));
         }
@@ -310,7 +315,7 @@ impl ControlWsClient {
 
     pub fn send_connection_state(
         &mut self,
-        report: &ControlWsConnectionStateReport,
+        report: &ControlMqttConnectionStateReport,
     ) -> Result<(), String> {
         let request = Envelope {
             msg_type: "connection_state".to_string(),
@@ -326,7 +331,7 @@ impl ControlWsClient {
 
     pub fn send_path_health_report(
         &mut self,
-        report: &ControlWsPathHealthReport,
+        report: &ControlMqttPathHealthReport,
     ) -> Result<(), String> {
         let request = Envelope {
             msg_type: "path_health_report".to_string(),
@@ -340,7 +345,7 @@ impl ControlWsClient {
         self.send_envelope(&request)
     }
 
-    pub fn read_event(&mut self) -> Result<ControlWsEvent, String> {
+    pub fn read_event(&mut self) -> Result<ControlMqttEvent, String> {
         if let Some(event) = self.queued_events.pop_front() {
             return Ok(event);
         }
@@ -348,14 +353,14 @@ impl ControlWsClient {
         if response.msg_type == "error" {
             return Err(format_control_error(response.payload));
         }
-        decode_control_ws_event(response)
+        decode_control_mqtt_event(response)
     }
 
     pub fn drain_pending_events(
         &mut self,
         timeout: Duration,
         limit: usize,
-    ) -> Result<Vec<ControlWsEvent>, String> {
+    ) -> Result<Vec<ControlMqttEvent>, String> {
         self.stream
             .set_read_timeout(Some(timeout))
             .map_err(|err| format!("set drain read timeout: {err}"))?;
@@ -363,7 +368,7 @@ impl ControlWsClient {
         for _ in 0..limit {
             match self.read_event() {
                 Ok(event) => events.push(event),
-                Err(err) if is_control_ws_timeout_error(&err) => break,
+                Err(err) if is_control_mqtt_timeout_error(&err) => break,
                 Err(err) => {
                     self.stream
                         .set_read_timeout(Some(DEFAULT_IO_TIMEOUT))
@@ -415,11 +420,11 @@ impl ControlWsClient {
             if response.msg_type == expected_type {
                 return Ok(response);
             }
-            match decode_control_ws_event(response) {
+            match decode_control_mqtt_event(response) {
                 Ok(event) => self.queued_events.push_back(event),
                 Err(_) => {
                     return Err(format!(
-                        "unexpected control ws response while waiting for {expected_type}"
+                        "unexpected control mqtt response while waiting for {expected_type}"
                     ));
                 }
             }
@@ -427,40 +432,41 @@ impl ControlWsClient {
     }
 }
 
-fn decode_control_ws_event(response: Envelope) -> Result<ControlWsEvent, String> {
+fn decode_control_mqtt_event(response: Envelope) -> Result<ControlMqttEvent, String> {
     match response.msg_type.as_str() {
         "peer_update" => {
             let update: PeerUpdateWire = serde_json::from_value(response.payload)
                 .map_err(|err| format!("decode peer_update: {err}"))?;
-            Ok(ControlWsEvent::PeerUpdate(update.into()))
+            Ok(ControlMqttEvent::PeerUpdate(update.into()))
         }
         "peer_remove" => {
             let remove: PeerRemoveWire = serde_json::from_value(response.payload)
                 .map_err(|err| format!("decode peer_remove: {err}"))?;
-            Ok(ControlWsEvent::PeerRemove(remove.into()))
+            Ok(ControlMqttEvent::PeerRemove(remove.into()))
         }
         "connect_plan" => {
-            let plan: ControlWsConnectPlan = serde_json::from_value(response.payload)
+            let plan: ControlMqttConnectPlan = serde_json::from_value(response.payload)
                 .map_err(|err| format!("decode connect_plan: {err}"))?;
-            Ok(ControlWsEvent::ConnectPlan(plan))
+            Ok(ControlMqttEvent::ConnectPlan(plan))
         }
         "network_restart_required" => {
-            let restart: ControlWsNetworkRestartRequired = serde_json::from_value(response.payload)
-                .map_err(|err| format!("decode network_restart_required: {err}"))?;
-            Ok(ControlWsEvent::NetworkRestartRequired(restart))
+            let restart: ControlMqttNetworkRestartRequired =
+                serde_json::from_value(response.payload)
+                    .map_err(|err| format!("decode network_restart_required: {err}"))?;
+            Ok(ControlMqttEvent::NetworkRestartRequired(restart))
         }
         "device_ip_reassigned" => {
-            let updated: ControlWsDeviceIPReassigned = serde_json::from_value(response.payload)
-                .map_err(|err| format!("decode device_ip_reassigned: {err}"))?;
-            Ok(ControlWsEvent::DeviceIPReassigned(updated))
+            let updated: ControlMqttDeviceIPReassigned =
+                serde_json::from_value(response.payload)
+                    .map_err(|err| format!("decode device_ip_reassigned: {err}"))?;
+            Ok(ControlMqttEvent::DeviceIPReassigned(updated))
         }
         "active_network_enabled" => {
-            let enabled: ControlWsActiveNetworkEnabled =
-                serde_json::from_value(response.payload)
-                    .map_err(|err| format!("decode active_network_enabled: {err}"))?;
-            Ok(ControlWsEvent::ActiveNetworkEnabled(enabled))
+            let enabled: ControlMqttActiveNetworkEnabled = serde_json::from_value(response.payload)
+                .map_err(|err| format!("decode active_network_enabled: {err}"))?;
+            Ok(ControlMqttEvent::ActiveNetworkEnabled(enabled))
         }
-        other => Err(format!("unexpected control ws event: {other}")),
+        other => Err(format!("unexpected control mqtt event: {other}")),
     }
 }
 
@@ -493,8 +499,8 @@ struct NodeHelloPayload {
     capabilities: Vec<String>,
 }
 
-impl From<ControlWsConfig> for NodeHelloPayload {
-    fn from(value: ControlWsConfig) -> Self {
+impl From<ControlMqttConfig> for NodeHelloPayload {
+    fn from(value: ControlMqttConfig) -> Self {
         Self {
             user_id: value.user_id,
             device_id: value.device_id,
@@ -700,7 +706,7 @@ fn format_control_error(payload: Value) -> String {
     payload.to_string()
 }
 
-fn is_control_ws_timeout_error(error: &str) -> bool {
+fn is_control_mqtt_timeout_error(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     lower.contains("timed out")
         || lower.contains("would block")
@@ -736,7 +742,7 @@ struct PeerUpdateWire {
     peer: PeerWire,
 }
 
-impl From<PeerUpdateWire> for ControlWsPeerUpdate {
+impl From<PeerUpdateWire> for ControlMqttPeerUpdate {
     fn from(value: PeerUpdateWire) -> Self {
         Self {
             network_id: value.network_id,
@@ -754,7 +760,7 @@ struct PeerRemoveWire {
     peer_node_id: String,
 }
 
-impl From<PeerRemoveWire> for ControlWsPeerRemove {
+impl From<PeerRemoveWire> for ControlMqttPeerRemove {
     fn from(value: PeerRemoveWire) -> Self {
         Self {
             network_id: value.network_id,

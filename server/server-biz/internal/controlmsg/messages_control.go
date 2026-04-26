@@ -1,4 +1,4 @@
-package ws
+package controlmsg
 
 // EndpointReport 用于节点向控制面上报本地端点和 NAT 观测结果。
 type EndpointReport struct {
