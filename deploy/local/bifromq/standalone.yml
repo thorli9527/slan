@@ -4,6 +4,8 @@
 # ownership.  The ASF licenses this file to you under the Apache License,
 # Version 2.0.
 
+# Local-only webhook auth provider. Production deployments should use a
+# dedicated BifroMQ Auth Provider plugin instead of the demo provider.
 authProviderFQN: "org.apache.bifromq.demo.plugin.DemoAuthProvider"
 
 mqttServiceConfig:
