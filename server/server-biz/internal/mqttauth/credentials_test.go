@@ -10,24 +10,29 @@ import (
 func TestValidateCredentialDevice(t *testing.T) {
 	cfg := configs.DefaultConfig()
 	cfg.MQTT.Enabled = true
-	credential := DeviceCredential(cfg.MQTT, "dev-1", "machine-1", time.Unix(100, 0))
+	now := time.Unix(100, 0)
+	credential := DeviceCredential(cfg.MQTT, "dev-1", "machine-1", now)
 	if credential.ClientID != "slan-dev-1" {
 		t.Fatalf("unexpected bifromq-compatible client id: %s", credential.ClientID)
 	}
-	response, ok := ValidateCredential(cfg.MQTT, credential.ClientID, credential.Username, credential.Password)
+	response, ok := validateCredentialAt(cfg.MQTT, credential.ClientID, credential.Username, credential.Password, now)
 	if !ok || !response.Allow || response.Principal != "device" || response.DeviceID != "dev-1" {
 		t.Fatalf("unexpected auth response: %+v ok=%v", response, ok)
+	}
+	if credential.ExpiresAt != now.Unix()+int64(cfg.MQTT.CredentialTTLSeconds) {
+		t.Fatalf("unexpected expiry: %d", credential.ExpiresAt)
 	}
 }
 
 func TestValidateCredentialServerSubscriber(t *testing.T) {
 	cfg := configs.DefaultConfig()
 	cfg.MQTT.Enabled = true
-	credential := ServerSubscriberCredential(cfg.MQTT, time.Unix(100, 0))
+	now := time.Unix(100, 0)
+	credential := ServerSubscriberCredential(cfg.MQTT, now)
 	if credential.ClientID != "slan-server" {
 		t.Fatalf("unexpected bifromq-compatible server client id: %s", credential.ClientID)
 	}
-	response, ok := ValidateCredential(cfg.MQTT, credential.ClientID, credential.Username, credential.Password)
+	response, ok := validateCredentialAt(cfg.MQTT, credential.ClientID, credential.Username, credential.Password, now)
 	if !ok || !response.Allow || response.Principal != "server" || response.DeviceID != "" {
 		t.Fatalf("unexpected auth response: %+v ok=%v", response, ok)
 	}
@@ -36,9 +41,22 @@ func TestValidateCredentialServerSubscriber(t *testing.T) {
 func TestValidateCredentialRejectsServerAsDevice(t *testing.T) {
 	cfg := configs.DefaultConfig()
 	cfg.MQTT.Enabled = true
-	credential := ServerSubscriberCredential(cfg.MQTT, time.Unix(100, 0))
-	if deviceID, ok := ValidateDevice(cfg.MQTT, credential.ClientID, credential.Username, credential.Password); ok || deviceID != "" {
+	now := time.Unix(100, 0)
+	credential := ServerSubscriberCredential(cfg.MQTT, now)
+	if deviceID, ok := validateDeviceAt(cfg.MQTT, credential.ClientID, credential.Username, credential.Password, now); ok || deviceID != "" {
 		t.Fatalf("server subscriber must not validate as device, got device=%s ok=%v", deviceID, ok)
+	}
+}
+
+func TestValidateCredentialRejectsExpiredDevice(t *testing.T) {
+	cfg := configs.DefaultConfig()
+	cfg.MQTT.Enabled = true
+	cfg.MQTT.CredentialTTLSeconds = 10
+	issuedAt := time.Unix(100, 0)
+	credential := DeviceCredential(cfg.MQTT, "dev-1", "machine-1", issuedAt)
+	response, ok := validateCredentialAt(cfg.MQTT, credential.ClientID, credential.Username, credential.Password, issuedAt.Add(11*time.Second))
+	if ok || response.Allow {
+		t.Fatalf("expected expired credential to be rejected, got %+v ok=%v", response, ok)
 	}
 }
 

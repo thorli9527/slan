@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +21,7 @@ func DeviceCredential(cfg configs.MQTTConfig, deviceID, _ string, now time.Time)
 	}
 	expiresAt := expiresAtUnix(cfg, now)
 	clientID := joinClientID(cfg, deviceID)
-	username := joinUsername(cfg, deviceID)
+	username := joinUsername(cfg, deviceID, expiresAt)
 	return &dto.MQTTCredential{
 		BrokerURL:   publicBrokerURL(cfg),
 		ClientID:    clientID,
@@ -37,7 +38,7 @@ func ServerSubscriberCredential(cfg configs.MQTTConfig, now time.Time) *dto.MQTT
 	}
 	expiresAt := expiresAtUnix(cfg, now)
 	clientID := joinClientID(cfg, "server")
-	username := joinSystemUsername(cfg, serverSubscriberID)
+	username := joinSystemUsername(cfg, serverSubscriberID, expiresAt)
 	return &dto.MQTTCredential{
 		BrokerURL:   brokerURL(cfg),
 		ClientID:    clientID,
@@ -54,6 +55,10 @@ func Validate(cfg configs.MQTTConfig, clientID, username, givenPassword string) 
 }
 
 func ValidateDevice(cfg configs.MQTTConfig, clientID, username, givenPassword string) (string, bool) {
+	return validateDeviceAt(cfg, clientID, username, givenPassword, time.Now())
+}
+
+func validateDeviceAt(cfg configs.MQTTConfig, clientID, username, givenPassword string, now time.Time) (string, bool) {
 	if !cfg.Enabled {
 		return "", false
 	}
@@ -65,7 +70,8 @@ func ValidateDevice(cfg configs.MQTTConfig, clientID, username, givenPassword st
 	if deviceID == "" {
 		return "", false
 	}
-	if username != joinUsername(cfg, deviceID) {
+	expiresAt, ok := parseUsernameExpiry(cfg, username, deviceID)
+	if !ok || expiresAt < now.Unix() {
 		return "", false
 	}
 	want := password(cfg, clientID, username, deviceID)
@@ -76,10 +82,14 @@ func ValidateDevice(cfg configs.MQTTConfig, clientID, username, givenPassword st
 }
 
 func ValidateCredential(cfg configs.MQTTConfig, clientID, username, givenPassword string) (dto.MQTTAuthCheckResponse, bool) {
-	if deviceID, ok := ValidateDevice(cfg, clientID, username, givenPassword); ok {
+	return validateCredentialAt(cfg, clientID, username, givenPassword, time.Now())
+}
+
+func validateCredentialAt(cfg configs.MQTTConfig, clientID, username, givenPassword string, now time.Time) (dto.MQTTAuthCheckResponse, bool) {
+	if deviceID, ok := validateDeviceAt(cfg, clientID, username, givenPassword, now); ok {
 		return dto.MQTTAuthCheckResponse{Allow: true, DeviceID: deviceID, Principal: "device"}, true
 	}
-	if validateServerSubscriber(cfg, clientID, username, givenPassword) {
+	if validateServerSubscriberAt(cfg, clientID, username, givenPassword, now) {
 		return dto.MQTTAuthCheckResponse{Allow: true, Principal: "server"}, true
 	}
 	return dto.MQTTAuthCheckResponse{Allow: false}, false
@@ -124,10 +134,18 @@ func isDeviceNetworkStateTopic(devicePrefix, topic string) bool {
 }
 
 func validateServerSubscriber(cfg configs.MQTTConfig, clientID, username, givenPassword string) bool {
+	return validateServerSubscriberAt(cfg, clientID, username, givenPassword, time.Now())
+}
+
+func validateServerSubscriberAt(cfg configs.MQTTConfig, clientID, username, givenPassword string, now time.Time) bool {
 	if !cfg.Enabled {
 		return false
 	}
-	if clientID != joinClientID(cfg, "server") || username != joinSystemUsername(cfg, serverSubscriberID) {
+	if clientID != joinClientID(cfg, "server") {
+		return false
+	}
+	expiresAt, ok := parseSystemUsernameExpiry(cfg, username, serverSubscriberID)
+	if !ok || expiresAt < now.Unix() {
 		return false
 	}
 	want := password(cfg, clientID, username, serverSubscriberID)
@@ -156,12 +174,33 @@ func joinClientID(cfg configs.MQTTConfig, id string) string {
 	return strings.TrimSpace(cfg.UsernamePrefix) + "-" + strings.TrimSpace(id)
 }
 
-func joinUsername(cfg configs.MQTTConfig, id string) string {
-	return strings.TrimSpace(cfg.UsernamePrefix) + "/" + strings.TrimSpace(id)
+func joinUsername(cfg configs.MQTTConfig, id string, expiresAt int64) string {
+	return fmt.Sprintf("%s/%s/%d", strings.TrimSpace(cfg.UsernamePrefix), strings.TrimSpace(id), expiresAt)
 }
 
-func joinSystemUsername(cfg configs.MQTTConfig, name string) string {
-	return fmt.Sprintf("%s/system/%s", strings.TrimSpace(cfg.UsernamePrefix), strings.TrimSpace(name))
+func joinSystemUsername(cfg configs.MQTTConfig, name string, expiresAt int64) string {
+	return fmt.Sprintf("%s/system/%s/%d", strings.TrimSpace(cfg.UsernamePrefix), strings.TrimSpace(name), expiresAt)
+}
+
+func parseUsernameExpiry(cfg configs.MQTTConfig, username, id string) (int64, bool) {
+	prefix := fmt.Sprintf("%s/%s/", strings.TrimSpace(cfg.UsernamePrefix), strings.TrimSpace(id))
+	return parseExpirySuffix(username, prefix)
+}
+
+func parseSystemUsernameExpiry(cfg configs.MQTTConfig, username, name string) (int64, bool) {
+	prefix := fmt.Sprintf("%s/system/%s/", strings.TrimSpace(cfg.UsernamePrefix), strings.TrimSpace(name))
+	return parseExpirySuffix(username, prefix)
+}
+
+func parseExpirySuffix(username, prefix string) (int64, bool) {
+	if !strings.HasPrefix(username, prefix) {
+		return 0, false
+	}
+	expiresAt, err := strconv.ParseInt(strings.TrimPrefix(username, prefix), 10, 64)
+	if err != nil || expiresAt <= 0 {
+		return 0, false
+	}
+	return expiresAt, true
 }
 
 func publicBrokerURL(cfg configs.MQTTConfig) string {

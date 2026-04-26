@@ -42,7 +42,7 @@ func TestBifroMQAuthAcceptsBase64Password(t *testing.T) {
 	cfg.MQTT.Enabled = true
 	device := &fakeMQTTDeviceService{}
 	router := mqttAccessTestRouter(cfg, device)
-	credential := mqttauth.DeviceCredential(cfg.MQTT, "dev-1", "machine-1", time.Unix(100, 0))
+	credential := mqttauth.DeviceCredential(cfg.MQTT, "dev-1", "machine-1", time.Now())
 
 	rec := postJSON(router, "/mqtt/bifromq/auth", map[string]any{
 		"clientId": credential.ClientID,

@@ -16,13 +16,13 @@ func (s *dbState) startMQTTNetworkStateSubscriber() {
 	if !s.cfg.MQTT.Enabled {
 		return
 	}
-	credential := mqttauth.ServerSubscriberCredential(s.cfg.MQTT, time.Now())
-	if credential == nil {
-		return
-	}
 	topicFilter := mqttauth.NetworkStateTopicFilter(s.cfg.MQTT)
 	go func() {
 		for {
+			credential := mqttauth.ServerSubscriberCredential(s.cfg.MQTT, time.Now())
+			if credential == nil {
+				return
+			}
 			err := mqttauth.Subscribe(
 				context.Background(),
 				s.cfg.MQTT,
