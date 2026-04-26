@@ -41,3 +41,22 @@ func TestValidateCredentialRejectsServerAsDevice(t *testing.T) {
 		t.Fatalf("server subscriber must not validate as device, got device=%s ok=%v", deviceID, ok)
 	}
 }
+
+func TestAllowTopicAccess(t *testing.T) {
+	cfg := configs.DefaultConfig()
+	if !AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-1/networks/net-1/state", false) {
+		t.Fatal("expected device publish to own topic to be allowed")
+	}
+	if AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-2/networks/net-1/state", false) {
+		t.Fatal("expected device publish to another device topic to be denied")
+	}
+	if !AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-1/#", true) {
+		t.Fatal("expected device subscribe to own topic prefix to be allowed")
+	}
+	if !AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/+/networks/+/state", true) {
+		t.Fatal("expected server state subscription to be allowed")
+	}
+	if AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/#", true) {
+		t.Fatal("expected broad server subscription to be denied")
+	}
+}

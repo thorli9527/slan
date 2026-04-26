@@ -81,9 +81,11 @@ MQTT/BifroMQ notes:
 - When enabling SLAN MQTT, provide a BifroMQ endpoint reachable from
   `server-biz` as `bifromq:1883`, or override `SLAN_MQTT_BROKER_URL`.
 - `SLAN_MQTT_PUBLIC_BROKER_URL` is the broker URL returned to the desktop app.
-- Local BifroMQ runs without the SLAN auth provider by default. For production,
-  configure a BifroMQ Auth Provider to validate credentials through
-  `POST /mqtt/auth/check` and enforce topic permissions.
+- Local BifroMQ uses the built-in WebHook demo Auth Provider against
+  `server-biz` endpoints under `/mqtt/bifromq/*`. This validates SLAN-generated
+  credentials and enforces device/server topic permissions for the local stack.
+  For production, replace the demo provider with a dedicated BifroMQ Auth
+  Provider plugin.
   A successful auth check marks only `controlReachable=true`; virtual network
   online state still comes from the client heartbeat after the local tunnel is
   up.

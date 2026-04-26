@@ -20,7 +20,7 @@ func (s *dbState) startMQTTNetworkStateSubscriber() {
 	if credential == nil {
 		return
 	}
-	topicFilter := strings.Trim(s.cfg.MQTT.TopicPrefix, "/") + "/+/networks/+/state"
+	topicFilter := mqttauth.NetworkStateTopicFilter(s.cfg.MQTT)
 	go func() {
 		for {
 			err := mqttauth.Subscribe(

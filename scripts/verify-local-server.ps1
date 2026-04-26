@@ -339,6 +339,13 @@ if ($device.mqtt) {
     Add-Result 'mqtt generated allowed check' ($mqttValid.allow -eq $true) "allow=$($mqttValid.allow)"
 
     if ($VerifyMqttBroker) {
+        try {
+            Send-MqttPublish $device.mqtt.brokerUrl $device.mqtt.clientId $device.mqtt.username 'bad-password' "$($device.mqtt.topicPrefix)/networks/$networkId/state" '{}'
+            Add-Result 'mqtt broker rejects invalid credential' $false 'invalid credential unexpectedly connected'
+        } catch {
+            Add-Result 'mqtt broker rejects invalid credential' $true $_.Exception.Message
+        }
+
         $mqttPayload = @{
             controlReachable = $true
             networkOnline    = $true

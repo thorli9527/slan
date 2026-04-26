@@ -85,6 +85,35 @@ func ValidateCredential(cfg configs.MQTTConfig, clientID, username, givenPasswor
 	return dto.MQTTAuthCheckResponse{Allow: false}, false
 }
 
+func DeviceTopicPrefix(cfg configs.MQTTConfig, deviceID string) string {
+	return trimTopic(cfg.TopicPrefix) + "/" + strings.TrimSpace(deviceID)
+}
+
+func NetworkStateTopicFilter(cfg configs.MQTTConfig) string {
+	return trimTopic(cfg.TopicPrefix) + "/+/networks/+/state"
+}
+
+func AllowTopicAccess(cfg configs.MQTTConfig, principal, deviceID, topic string, subscribe bool) bool {
+	topic = trimTopic(topic)
+	if topic == "" {
+		return false
+	}
+	if principal == "server" {
+		if subscribe {
+			return topic == NetworkStateTopicFilter(cfg)
+		}
+		return strings.HasPrefix(topic, trimTopic(cfg.TopicPrefix)+"/")
+	}
+	if principal != "device" || strings.TrimSpace(deviceID) == "" {
+		return false
+	}
+	devicePrefix := DeviceTopicPrefix(cfg, deviceID)
+	if subscribe && topic == devicePrefix+"/#" {
+		return true
+	}
+	return strings.HasPrefix(topic, devicePrefix+"/")
+}
+
 func validateServerSubscriber(cfg configs.MQTTConfig, clientID, username, givenPassword string) bool {
 	if !cfg.Enabled {
 		return false
