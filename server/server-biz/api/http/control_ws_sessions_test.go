@@ -14,12 +14,16 @@ func TestControlWSHubUnregisterKeepsReplacementSession(t *testing.T) {
 	hub.register(&controlWSSession{conn: oldConn, nodeID: "node-1"})
 	hub.register(&controlWSSession{conn: newConn, nodeID: "node-1"})
 
-	hub.unregister("node-1", oldConn)
+	if removed := hub.unregister("node-1", oldConn); removed {
+		t.Fatal("expected old connection unregister to be ignored")
+	}
 	if got := hub.session("node-1"); got == nil || got.conn != newConn {
 		t.Fatalf("expected replacement session to remain, got %+v", got)
 	}
 
-	hub.unregister("node-1", newConn)
+	if removed := hub.unregister("node-1", newConn); !removed {
+		t.Fatal("expected current connection unregister to remove session")
+	}
 	if got := hub.session("node-1"); got != nil {
 		t.Fatalf("expected replacement session to be removed, got %+v", got)
 	}

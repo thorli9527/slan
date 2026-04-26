@@ -44,21 +44,25 @@ func (h *controlWSHub) register(session *controlWSSession) {
 	metricAdd("session_register_total", 1)
 }
 
-func (h *controlWSHub) unregister(nodeID string, conn ...*websocket.Conn) {
+func (h *controlWSHub) unregister(nodeID string, conn ...*websocket.Conn) bool {
 	if nodeID == "" {
-		return
+		return false
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	current := h.sessions[nodeID]
 	if len(conn) > 0 {
-		current := h.sessions[nodeID]
-		if current != nil && current.conn != conn[0] {
-			return
+		if current == nil || current.conn != conn[0] {
+			return false
 		}
+	}
+	if current == nil {
+		return false
 	}
 	delete(h.sessions, nodeID)
 	controlWSActiveSessions.Set(int64(len(h.sessions)))
 	metricAdd("session_unregister_total", 1)
+	return true
 }
 
 func (h *controlWSHub) session(nodeID string) *controlWSSession {

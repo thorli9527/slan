@@ -46,9 +46,10 @@ func serveControlWS(conn *websocket.Conn, deps routerDeps) {
 		}
 	}
 	defer func() {
-		defaultControlWSHub.unregister(session.nodeID, conn)
-		_ = deps.ControlChannel.CloseSession(session.userID, session.nodeID, session.networkID)
-		fanoutPeerRemove(deps, session.networkID, session.nodeID)
+		if defaultControlWSHub.unregister(session.nodeID, conn) {
+			_ = deps.ControlChannel.CloseSession(session.userID, session.nodeID, session.networkID)
+			fanoutPeerRemove(deps, session.networkID, session.nodeID)
+		}
 	}()
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(controlWSReadIdleTimeout))
