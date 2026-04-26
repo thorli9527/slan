@@ -21,6 +21,8 @@ func TestParsePublicGoRoutes(t *testing.T) {
 		{Method: "POST", Path: "/auth/register"},
 		{Method: "PUT", Path: "/networks/{networkId}/dns"},
 		{Method: "POST", Path: "/mqtt/auth/check"},
+		{Method: "POST", Path: "/mqtt/bifromq/auth"},
+		{Method: "POST", Path: "/mqtt/bifromq/check"},
 		{Method: "PUT", Path: "/devices/{deviceId}/networks/{networkId}/state"},
 		{Method: "GET", Path: "/auth/ws/{callbackId}"},
 		{Method: "GET", Path: "/control/ws"},
@@ -47,6 +49,10 @@ paths:
   /auth/register:
     post: {}
   /mqtt/auth/check:
+    post: {}
+  /mqtt/bifromq/auth:
+    post: {}
+  /mqtt/bifromq/check:
     post: {}
   /devices/{deviceId}/networks/{networkId}/state:
     put: {}
@@ -81,6 +87,8 @@ func routes(api interface{}) {
 	auth := api.Group("/auth")
 	auth.POST("/register", handler)
 	api.POST("/mqtt/auth/check", handler)
+	api.POST("/mqtt/bifromq/auth", handler)
+	api.POST("/mqtt/bifromq/check", handler)
 }`,
 		"routes_business_registration.go": `package httpapi
 

@@ -165,6 +165,51 @@ paths:
               schema:
                 $ref: '#/components/schemas/MQTTAuthCheckResponse'
 
+  /mqtt/bifromq/auth:
+    post:
+      tags: [Auth]
+      operationId: authenticateBifroMQ
+      summary: Validate a SLAN MQTT credential from the BifroMQ Auth Provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MQTTAuthCheckRequest'
+      responses:
+        '200':
+          description: BifroMQ authentication accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BifroMQAuthResponse'
+        '403':
+          description: BifroMQ authentication rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BifroMQAuthResponse'
+
+  /mqtt/bifromq/check:
+    post:
+      tags: [Auth]
+      operationId: authorizeBifroMQ
+      summary: Authorize BifroMQ MQTT actions for a previously authenticated principal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Plain text `true` when the action is allowed, otherwise `false`
+          content:
+            text/plain:
+              schema:
+                type: boolean
+
   /auth/ws/{callbackId}:
     get:
       tags: [Auth]
@@ -958,6 +1003,27 @@ components:
           type: string
         principal:
           type: string
+
+    BifroMQAuthResponse:
+      type: object
+      properties:
+        ok:
+          $ref: '#/components/schemas/BifroMQAuthOK'
+        reject:
+          type: string
+
+    BifroMQAuthOK:
+      type: object
+      required: [tenantId, userId]
+      properties:
+        tenantId:
+          type: string
+        userId:
+          type: string
+        attrs:
+          type: object
+          additionalProperties:
+            type: string
 
     StatusOKResponse:
       type: object
