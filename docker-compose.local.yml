@@ -40,6 +40,11 @@ services:
       - "${BIFROMQ_MQTT_PORT:-1883}:1883"
     volumes:
       - ./deploy/local/bifromq/standalone.yml:/home/bifromq/conf/standalone.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   server-biz:
     build:
@@ -69,7 +74,7 @@ services:
       redis:
         condition: service_healthy
       bifromq:
-        condition: service_started
+        condition: service_healthy
 
   server-relay:
     build:
