@@ -39,7 +39,7 @@
 - `/control/ws`
 
 `/devices/register` now may return a device-scoped MQTT credential (`mqtt`) for
-RocketMQ MQTT access. The desktop app connects MQTT only after that successful
+BifroMQ access. The desktop app connects MQTT only after that successful
 device registration. Browser login callback delivery remains HTTP polling via
 `/auth/callback-status/{callbackId}` before the device exists.
 

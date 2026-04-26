@@ -195,7 +195,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         tunnelUp: false,
       );
     } catch (_) {
-      // RocketMQ AuthManager also marks the control channel reachable.
+      // The MQTT auth provider also marks the control channel reachable.
     }
     _startDeviceNetworkHeartbeat(networkOnline: false, tunnelUp: false);
   }

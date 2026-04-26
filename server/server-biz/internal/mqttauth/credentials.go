@@ -36,7 +36,7 @@ func ServerSubscriberCredential(cfg configs.MQTTConfig, now time.Time) *dto.MQTT
 		return nil
 	}
 	expiresAt := expiresAtUnix(cfg, now)
-	clientID := joinClientID(cfg, "$server")
+	clientID := joinClientID(cfg, "server")
 	username := joinSystemUsername(cfg, serverSubscriberID)
 	return &dto.MQTTCredential{
 		BrokerURL:   brokerURL(cfg),
@@ -57,11 +57,14 @@ func ValidateDevice(cfg configs.MQTTConfig, clientID, username, givenPassword st
 	if !cfg.Enabled {
 		return "", false
 	}
-	parts := strings.Split(clientID, ":")
-	if len(parts) != 2 || parts[0] != strings.TrimSpace(cfg.UsernamePrefix) {
+	prefix := strings.TrimSpace(cfg.UsernamePrefix) + "-"
+	if !strings.HasPrefix(clientID, prefix) {
 		return "", false
 	}
-	deviceID := parts[1]
+	deviceID := strings.TrimPrefix(clientID, prefix)
+	if deviceID == "" {
+		return "", false
+	}
 	if username != joinUsername(cfg, deviceID) {
 		return "", false
 	}
@@ -86,7 +89,7 @@ func validateServerSubscriber(cfg configs.MQTTConfig, clientID, username, givenP
 	if !cfg.Enabled {
 		return false
 	}
-	if clientID != joinClientID(cfg, "$server") || username != joinSystemUsername(cfg, serverSubscriberID) {
+	if clientID != joinClientID(cfg, "server") || username != joinSystemUsername(cfg, serverSubscriberID) {
 		return false
 	}
 	want := password(cfg, clientID, username, serverSubscriberID)
@@ -112,7 +115,7 @@ func password(cfg configs.MQTTConfig, clientID, username, id string) string {
 }
 
 func joinClientID(cfg configs.MQTTConfig, id string) string {
-	return strings.TrimSpace(cfg.UsernamePrefix) + ":" + strings.TrimSpace(id)
+	return strings.TrimSpace(cfg.UsernamePrefix) + "-" + strings.TrimSpace(id)
 }
 
 func joinUsername(cfg configs.MQTTConfig, id string) string {

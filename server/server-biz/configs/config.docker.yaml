@@ -11,7 +11,7 @@ ws:
   path: "/control/ws"
 mqtt:
   enabled: false
-  broker_url: "mqtt://rocketmq-mqtt:1883"
+  broker_url: "mqtt://bifromq:1883"
   public_broker_url: "mqtt://127.0.0.1:1883"
   username_prefix: "slan"
   password_secret: "docker-mqtt-secret"

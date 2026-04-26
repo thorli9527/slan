@@ -104,7 +104,7 @@ desktop app, app-core, and web-console client flow.
 - `NetworkMap`
 - `RelayTicket`
 - `Device.networkState`, which separates control reachability from virtual
-  network online state and tunnel health. MQTT AuthManager success only sets
+  network online state and tunnel health. MQTT auth success only sets
   the control reachability side; the app heartbeat promotes the network side
   after the local tunnel is up.
 

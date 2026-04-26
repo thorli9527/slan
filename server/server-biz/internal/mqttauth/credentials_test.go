@@ -11,6 +11,9 @@ func TestValidateCredentialDevice(t *testing.T) {
 	cfg := configs.DefaultConfig()
 	cfg.MQTT.Enabled = true
 	credential := DeviceCredential(cfg.MQTT, "dev-1", "machine-1", time.Unix(100, 0))
+	if credential.ClientID != "slan-dev-1" {
+		t.Fatalf("unexpected bifromq-compatible client id: %s", credential.ClientID)
+	}
 	response, ok := ValidateCredential(cfg.MQTT, credential.ClientID, credential.Username, credential.Password)
 	if !ok || !response.Allow || response.Principal != "device" || response.DeviceID != "dev-1" {
 		t.Fatalf("unexpected auth response: %+v ok=%v", response, ok)
@@ -21,6 +24,9 @@ func TestValidateCredentialServerSubscriber(t *testing.T) {
 	cfg := configs.DefaultConfig()
 	cfg.MQTT.Enabled = true
 	credential := ServerSubscriberCredential(cfg.MQTT, time.Unix(100, 0))
+	if credential.ClientID != "slan-server" {
+		t.Fatalf("unexpected bifromq-compatible server client id: %s", credential.ClientID)
+	}
 	response, ok := ValidateCredential(cfg.MQTT, credential.ClientID, credential.Username, credential.Password)
 	if !ok || !response.Allow || response.Principal != "server" || response.DeviceID != "" {
 		t.Fatalf("unexpected auth response: %+v ok=%v", response, ok)

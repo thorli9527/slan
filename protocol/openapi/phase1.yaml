@@ -173,7 +173,7 @@ paths:
       description: >
         Compatibility endpoint. Current desktop clients use
         `/auth/callback-status/{callbackId}` polling for browser login
-        completion and connect RocketMQ MQTT only after device registration
+        completion and connect MQTT only after device registration
         returns a device credential.
       parameters:
         - $ref: '#/components/parameters/CallbackId'

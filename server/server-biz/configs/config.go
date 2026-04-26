@@ -34,7 +34,7 @@ type WSConfig struct {
 	Path string `yaml:"path"`
 }
 
-// MQTTConfig describes RocketMQ MQTT connection and credential settings.
+// MQTTConfig describes MQTT broker connection and credential settings.
 type MQTTConfig struct {
 	Enabled                    bool   `yaml:"enabled"`
 	BrokerURL                  string `yaml:"broker_url"`
@@ -204,7 +204,7 @@ type Config struct {
 	HTTP HTTPConfig `yaml:"http"`
 	// WS 包含控制面 WebSocket 端点配置。
 	WS WSConfig `yaml:"ws"`
-	// MQTT contains RocketMQ MQTT connection and credential settings.
+	// MQTT contains broker connection and credential settings.
 	MQTT MQTTConfig `yaml:"mqtt"`
 	// Relay 包含 relay/DERP 拓扑与票据签名配置。
 	Relay RelayConfig `yaml:"relay"`

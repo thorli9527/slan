@@ -14,7 +14,7 @@
 - Flutter Linux GUI 还没有完整 Docker 化构建链路；目前 Docker 镜像定位为控制台/接入端，不是桌面 GUI 包。
 - Linux 桌面 plugin 的端到端 UI 自动化还未接到 Docker smoke；现有 smoke 验证 helper/CLI，不启动 Flutter 窗口。
 - 真机级网络联通测试还缺一组双容器/双节点场景：当前 smoke 验证接口创建和 WireGuard 配置，不验证跨节点真实收发包。
-- MQTT gateway 默认未启用；Docker Linux 客户端可使用 HTTP 主链路，MQTT 设备状态上报需要启用 `rocketmq-mqtt` profile 并提供可用镜像。
+- MQTT 默认未启用；Docker Linux 客户端可使用 HTTP 主链路，MQTT 设备状态上报需要启用 `SLAN_MQTT_ENABLED=true` 并运行 BifroMQ。
 - 容器内启用真实隧道需要运行参数：`--cap-add NET_ADMIN --device /dev/net/tun`。无这些权限时只能跑 CLI/doctor/dry-run。
 
 ## Docker 验证入口

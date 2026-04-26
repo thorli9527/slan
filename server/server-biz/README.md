@@ -73,25 +73,30 @@ docker compose -f docker-compose.local.yml up --build server-biz
 - `postgres`: `15432`
 - `redis`: `16379`
 
-MQTT/RocketMQ notes:
+MQTT/BifroMQ notes:
 
 - MQTT is disabled by default in local compose (`SLAN_MQTT_ENABLED=false`).
-- Local compose starts RocketMQ NameServer and Broker with LMQ enabled. Broker
-  ports are exposed as `9876`, `10909`, `10911`, `10912`, `18080`, and `18081`
-  by default.
-- RocketMQ-MQTT is a separate gateway. To start it, provide a concrete
-  `ROCKETMQ_MQTT_IMAGE` and enable the `rocketmq-mqtt` profile, for example:
-  `ROCKETMQ_MQTT_IMAGE=<your-image> docker compose -f docker-compose.local.yml --profile rocketmq-mqtt up -d`.
-- When enabling SLAN MQTT, provide a RocketMQ MQTT endpoint reachable from
-  `server-biz` as `rocketmq-mqtt:1883`, or override `SLAN_MQTT_BROKER_URL`.
+- Local compose starts BifroMQ as the MQTT broker. Port `1883` is exposed by
+  default and can be changed with `BIFROMQ_MQTT_PORT`.
+- When enabling SLAN MQTT, provide a BifroMQ endpoint reachable from
+  `server-biz` as `bifromq:1883`, or override `SLAN_MQTT_BROKER_URL`.
 - `SLAN_MQTT_PUBLIC_BROKER_URL` is the broker URL returned to the desktop app.
-- Configure RocketMQ MQTT AuthManager to call `POST /mqtt/auth/check`.
+- Local BifroMQ runs without the SLAN auth provider by default. For production,
+  configure a BifroMQ Auth Provider to validate credentials through
+  `POST /mqtt/auth/check` and enforce topic permissions.
   A successful auth check marks only `controlReachable=true`; virtual network
   online state still comes from the client heartbeat after the local tunnel is
   up.
 - When MQTT is enabled, `server-biz` subscribes to
   `{topic_prefix}/{deviceId}/networks/{networkId}/state` and persists the same
   `DeviceNetworkState` record as the HTTP fallback endpoint.
+- To verify the local BifroMQ path, start compose with MQTT enabled:
+  `SLAN_MQTT_ENABLED=true docker compose -f docker-compose.local.yml up --build -d`
+  on Unix shells, or
+  `$env:SLAN_MQTT_ENABLED='true'; docker compose -f docker-compose.local.yml up --build -d`
+  in PowerShell,
+  and then run:
+  `powershell -ExecutionPolicy Bypass -File scripts/verify-local-server.ps1 -ExpectMqttCredential -VerifyMqttBroker`.
 
 相关文件：
 

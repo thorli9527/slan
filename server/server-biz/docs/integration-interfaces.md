@@ -56,7 +56,7 @@ control-plane session.
 
 Device runtime state is intentionally separated:
 
-- RocketMQ AuthManager calls `POST /mqtt/auth/check`; MQTT authentication
+- In production, BifroMQ Auth Provider calls `POST /mqtt/auth/check`; MQTT authentication
   success marks only the control channel as reachable.
 - `PUT /devices/{deviceId}/networks/{networkId}/state` reports whether the
   virtual network is enabled, whether the local tunnel is up, and the latest

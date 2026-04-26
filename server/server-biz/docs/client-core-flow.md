@@ -26,7 +26,7 @@ the control token, WebSocket config, device attachment view, and initial
 NetworkMap together.
 
 Browser login callback delivery stays on HTTP status polling before the device
-exists. RocketMQ MQTT starts only after device registration returns a device
+exists. MQTT starts only after device registration returns a device
 credential:
 
 1. The desktop app creates or reuses a pending callback id.
@@ -36,10 +36,10 @@ credential:
 3. The app polls `GET /auth/callback-status/{callbackId}` and applies the
    session without a separate ACK request.
 4. The app registers the device with `POST /devices/register`.
-5. If the registration response contains `mqtt`, the app connects to RocketMQ
-   MQTT with that device credential and subscribes to the device topic prefix.
-   The RocketMQ AuthManager calls `POST /mqtt/auth/check`; a successful check
-   marks only the device control channel as reachable.
+5. If the registration response contains `mqtt`, the app connects to BifroMQ
+   with that device credential and subscribes to the device topic prefix.
+   In production, the BifroMQ Auth Provider calls `POST /mqtt/auth/check`; a
+   successful check marks only the device control channel as reachable.
    `/auth/ws/{callbackId}` is kept only as a compatibility endpoint.
 
 Device runtime state is split into three meanings:
