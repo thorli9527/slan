@@ -12,6 +12,29 @@
 - [server/server-relay/configs/relay-daemon.example.json](/Users/thorli/workspace/slan/server/server-relay/configs/relay-daemon.example.json)
 - [deploy/local/Caddyfile](/Users/thorli/workspace/slan/deploy/local/Caddyfile)
 
+Maintained local entry points:
+
+- [`docker-compose.local.yml`](../../docker-compose.local.yml)
+- [`.env.local.example`](../../.env.local.example)
+- [`server/server-biz/configs/config.docker.yaml`](../../server/server-biz/configs/config.docker.yaml)
+- [`server/server-relay/configs/relay-daemon.example.json`](../../server/server-relay/configs/relay-daemon.example.json)
+- [`deploy/local/Caddyfile`](../../deploy/local/Caddyfile)
+- [`deploy/local/bifromq/standalone.yml`](../../deploy/local/bifromq/standalone.yml)
+
+MQTT/BifroMQ production notes:
+
+- Local compose uses Apache BifroMQ with the built-in WebHook demo Auth Provider.
+  Do not reuse `org.apache.bifromq.demo.plugin.DemoAuthProvider` as-is for
+  production.
+- Production BifroMQ should use a dedicated Auth Provider plugin or equivalent
+  deployment wiring that calls `POST /mqtt/bifromq/auth` for authentication and
+  `POST /mqtt/bifromq/check` for topic authorization.
+- Replace `SLAN_MQTT_PASSWORD_SECRET`, set `SLAN_MQTT_BROKER_URL` to the broker
+  address reachable from `server-biz`, and set `SLAN_MQTT_PUBLIC_BROKER_URL` to
+  the broker address reachable from desktop clients.
+- Expose only the required MQTT listener externally, and keep BifroMQ management
+  or plugin internals on trusted networks.
+
 ## 必须替换的值
 
 ### server-biz
