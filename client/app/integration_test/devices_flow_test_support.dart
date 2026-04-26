@@ -226,7 +226,7 @@ class FakeHost {
             },
           ],
           'controlPlane': {
-            'wsUrl': kDevControlWsUrl,
+            'wsUrl': kDevControlMqttUrl,
             'heartbeatSeconds': 15,
           },
           'stunServers': [kDevStunServer],
@@ -321,7 +321,7 @@ class FakeHost {
       case 'controlStatus':
         return {
           'status': 'connected',
-          'wsUrl': kDevControlWsUrl,
+          'wsUrl': kDevControlMqttUrl,
           'heartbeatSeconds': 15,
           'sessionTokenPresent': true,
           'networkMapPresent': true,

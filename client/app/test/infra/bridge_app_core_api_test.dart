@@ -380,7 +380,7 @@ void main() {
     final pluginPlatform = _FakeSlanAppCorePluginPlatform({
       'controlStatus': {
         'status': 'connected',
-        'wsUrl': kDevControlWsUrl,
+        'wsUrl': kDevControlMqttUrl,
         'heartbeatSeconds': 15,
         'sessionTokenPresent': true,
         'networkMapPresent': true,
@@ -714,7 +714,7 @@ Map<String, Object?> _bootstrapPayload() => {
         },
       ],
       'controlPlane': {
-        'wsUrl': kDevControlWsUrl,
+        'wsUrl': kDevControlMqttUrl,
         'heartbeatSeconds': 15,
       },
       'stunServers': [kDevStunServer],

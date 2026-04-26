@@ -498,7 +498,7 @@ class MockAppCoreApi implements AppCoreApi {
       device: device,
       networks: List.unmodifiable(_networks),
       controlPlane: const ControlPlaneConfigModel(
-        wsUrl: kDevControlWsUrl,
+        wsUrl: kDevControlMqttUrl,
         sessionToken: 'mock-control-session-token',
         heartbeatSeconds: 15,
       ),
@@ -553,7 +553,7 @@ class MockAppCoreApi implements AppCoreApi {
   Future<ControlStatusModel> controlStatus() async {
     return const ControlStatusModel(
       status: 'configured',
-      wsUrl: kDevControlWsUrl,
+      wsUrl: kDevControlMqttUrl,
       heartbeatSeconds: 15,
       sessionTokenPresent: true,
       networkMapPresent: true,

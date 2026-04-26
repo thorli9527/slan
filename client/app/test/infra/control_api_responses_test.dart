@@ -60,7 +60,7 @@ void main() {
         },
       ],
       'controlPlane': {
-        'wsUrl': kDevControlWsUrl,
+        'wsUrl': kDevControlMqttUrl,
         'heartbeatSeconds': 15,
       },
       'stunServers': [kDevStunServer],
@@ -233,7 +233,7 @@ void main() {
       },
       'networks': const [],
       'controlPlane': {
-        'wsUrl': kDevControlWsUrl,
+        'wsUrl': kDevControlMqttUrl,
         'heartbeatSeconds': 15,
       },
       'stunServers': [kDevStunServer],

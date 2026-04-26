@@ -249,7 +249,7 @@ class _AuthHero extends StatelessWidget {
           ),
           DesktopMetricPill(
             label: 'Transport',
-            value: hostConfig?.secure == true ? 'HTTPS / WSS' : 'HTTP / WS',
+            value: hostConfig?.secure == true ? 'HTTPS / MQTT TLS' : 'HTTP / MQTT',
             backgroundColor: Colors.white,
           ),
         ],
