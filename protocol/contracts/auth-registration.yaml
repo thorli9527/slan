@@ -74,12 +74,6 @@ contracts:
       ready:
         type: bool
         required: true
-      received:
-        type: bool
-        required: true
-      receivedAt:
-        type: int64
-        required: false
       payload:
         type: CompleteAuthCallbackRequest
         required: false
@@ -96,6 +90,61 @@ contracts:
         required: true
       publicKey:
         type: string
+        required: true
+  DeviceNetworkStateRequest:
+    fields:
+      deviceId:
+        type: string
+        required: false
+      networkId:
+        type: string
+        required: false
+      controlReachable:
+        type: bool
+        required: true
+      networkOnline:
+        type: bool
+        required: true
+      tunnelUp:
+        type: bool
+        required: true
+      lastProbeOk:
+        type: bool
+        required: true
+      virtualIp:
+        type: string
+        required: false
+      reportedAt:
+        type: int64
+        required: false
+  DeviceNetworkState:
+    fields:
+      deviceId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      controlReachable:
+        type: bool
+        required: true
+      networkOnline:
+        type: bool
+        required: true
+      tunnelUp:
+        type: bool
+        required: true
+      lastProbeOk:
+        type: bool
+        required: true
+      virtualIp:
+        type: string
+        required: false
+      lastSeenAt:
+        type: int64
+        required: true
+      updatedAt:
+        type: int64
         required: true
   Device:
     fields:
@@ -143,6 +192,54 @@ contracts:
         required: false
       networkIds:
         type: string[]
+        required: false
+      mqtt:
+        type: MQTTCredential
+        required: false
+      networkState:
+        type: DeviceNetworkState
+        required: false
+  MQTTCredential:
+    fields:
+      brokerUrl:
+        type: string
+        required: true
+      clientId:
+        type: string
+        required: true
+      username:
+        type: string
+        required: true
+      password:
+        type: string
+        required: true
+      topicPrefix:
+        type: string
+        required: true
+      expiresAt:
+        type: int64
+        required: false
+  MQTTAuthCheckRequest:
+    fields:
+      clientId:
+        type: string
+        required: true
+      username:
+        type: string
+        required: true
+      password:
+        type: string
+        required: true
+  MQTTAuthCheckResponse:
+    fields:
+      allow:
+        type: bool
+        required: true
+      deviceId:
+        type: string
+        required: false
+      principal:
+        type: string
         required: false
   RegisterNodeRequest:
     fields:

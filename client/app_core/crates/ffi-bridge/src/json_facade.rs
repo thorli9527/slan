@@ -2,9 +2,9 @@ use serde_json::{json, Value};
 
 use crate::facade::AppCoreFacade;
 use crate::json_facade_args::{
-    AuthArgs, BootstrapArgs, ConnectArgs, CreateNetworkArgs, JoinNetworkArgs, JoinNetworkByKeyArgs,
-    JoinNetworkByOwnerEmailArgs, RefreshSessionArgs, RegisterDeviceArgs, RegisterNodeArgs,
-    RelayTicketArgs, SendArgs, UpdateAttachmentRemarkArgs,
+    AuthArgs, BootstrapArgs, ConnectArgs, CreateNetworkArgs, DeviceNetworkStateArgs,
+    JoinNetworkArgs, JoinNetworkByKeyArgs, JoinNetworkByOwnerEmailArgs, RefreshSessionArgs,
+    RegisterDeviceArgs, RegisterNodeArgs, RelayTicketArgs, SendArgs, UpdateAttachmentRemarkArgs,
 };
 use crate::json_facade_runtime::{
     connection_state_value, data_plane_error_string, parse_args, to_value,
@@ -113,6 +113,20 @@ where
                 let args: JoinNetworkArgs = parse_args(args)?;
                 self.inner
                     .deactivate_network(args.network_id, args.device_id)?;
+                Ok(json!({}))
+            }
+            "setDeviceNetworkState" => {
+                let args: DeviceNetworkStateArgs = parse_args(args)?;
+                self.inner.set_device_network_state(
+                    args.device_id,
+                    args.network_id,
+                    args.control_reachable,
+                    args.network_online,
+                    args.tunnel_up,
+                    args.last_probe_ok,
+                    args.virtual_ip,
+                    args.reported_at,
+                )?;
                 Ok(json!({}))
             }
             "bootstrap" => {

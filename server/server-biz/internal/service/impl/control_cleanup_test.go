@@ -102,6 +102,35 @@ func TestCleanupExpiredControlPlaneStateKeepsDeviceOnlineWithFreshSession(t *tes
 	}
 }
 
+func TestCleanupExpiredControlPlaneStateExpiresStaleDeviceNetworkReachability(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if err := state.pg.UpsertDeviceNetworkState(ctx, repo.DeviceNetworkState{
+		DeviceID:         "dev-1",
+		NetworkID:        "net-1",
+		ControlReachable: true,
+		NetworkOnline:    false,
+		TunnelUp:         false,
+		LastProbeOK:      false,
+		LastSeenAt:       now.Add(-2 * time.Minute).Unix(),
+		UpdatedAt:        now.Add(-2 * time.Minute).Unix(),
+	}); err != nil {
+		t.Fatalf("upsert stale device network state: %v", err)
+	}
+
+	state.cleanupExpiredControlPlaneState(ctx, now)
+
+	got, err := state.pg.GetDeviceNetworkState(ctx, "dev-1", "net-1")
+	if err != nil {
+		t.Fatalf("load device network state: %v", err)
+	}
+	if got.ControlReachable || got.NetworkOnline || got.TunnelUp || got.LastProbeOK {
+		t.Fatalf("expected stale reachability to expire, got %+v", got)
+	}
+}
+
 func TestCloseSessionKeepsDeviceOnlineWithAnotherFreshSession(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()

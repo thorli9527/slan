@@ -315,6 +315,7 @@ void main() {
         'attachmentId': 'att-1',
       },
       'deactivateNetwork': null,
+      'setDeviceNetworkState': null,
       'controlSync': _bootstrapPayload(),
     });
     final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
@@ -324,6 +325,16 @@ void main() {
     final switched =
         await api.switchNetwork(networkId: 'net-1', deviceId: 'dev-1');
     await api.deactivateNetwork(networkId: 'net-1', deviceId: 'dev-1');
+    await api.setDeviceNetworkState(
+      deviceId: 'dev-1',
+      networkId: 'net-1',
+      controlReachable: true,
+      networkOnline: true,
+      tunnelUp: true,
+      lastProbeOk: true,
+      virtualIp: '10.0.0.2',
+      reportedAt: 123,
+    );
     final bootstrap =
         await api.controlSync(nodeId: 'node-1', networkId: 'net-1');
 
@@ -331,6 +342,7 @@ void main() {
       'activateNetwork',
       'switchNetwork',
       'deactivateNetwork',
+      'setDeviceNetworkState',
       'controlSync',
     ]);
     expect(activated.attachmentId, 'att-1');
@@ -348,6 +360,16 @@ void main() {
       'deviceId': 'dev-1',
     });
     expect(pluginPlatform.calls[3].args, {
+      'deviceId': 'dev-1',
+      'networkId': 'net-1',
+      'controlReachable': true,
+      'networkOnline': true,
+      'tunnelUp': true,
+      'lastProbeOk': true,
+      'virtualIp': '10.0.0.2',
+      'reportedAt': 123,
+    });
+    expect(pluginPlatform.calls[4].args, {
       'nodeId': 'node-1',
       'networkId': 'net-1',
     });

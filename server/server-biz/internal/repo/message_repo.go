@@ -48,31 +48,6 @@ func (r *PostgresRepository) UpdateControlOutboundMessageAttempt(
 		}).Error
 }
 
-func (r *PostgresRepository) AckControlOutboundMessage(
-	ctx context.Context,
-	messageID string,
-	targetUserID string,
-	ackedAt int64,
-) (ControlOutboundMessage, error) {
-	var record ControlOutboundMessage
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("message_id = ? AND status = ?", messageID, "pending").First(&record).Error; err != nil {
-			return err
-		}
-		if targetUserID != "" && record.TargetUserID != "" && record.TargetUserID != targetUserID {
-			return gorm.ErrRecordNotFound
-		}
-		return tx.Model(&ControlOutboundMessage{}).
-			Where("message_id = ? AND status = ?", messageID, "pending").
-			Updates(map[string]any{
-				"status":     "acked",
-				"acked_at":   ackedAt,
-				"updated_at": ackedAt,
-			}).Error
-	})
-	return record, err
-}
-
 func (r *PostgresRepository) ArchiveControlOutboundMessage(
 	ctx context.Context,
 	record ControlOutboundMessage,

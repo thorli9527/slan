@@ -114,6 +114,32 @@ class HttpAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<void> setDeviceNetworkState({
+    required String deviceId,
+    required String networkId,
+    required bool controlReachable,
+    required bool networkOnline,
+    required bool tunnelUp,
+    required bool lastProbeOk,
+    String? virtualIp,
+    int? reportedAt,
+  }) async {
+    await _send(
+      'PUT',
+      '/devices/$deviceId/networks/$networkId/state',
+      body: {
+        'controlReachable': controlReachable,
+        'networkOnline': networkOnline,
+        'tunnelUp': tunnelUp,
+        'lastProbeOk': lastProbeOk,
+        if (virtualIp != null) 'virtualIp': virtualIp,
+        if (reportedAt != null) 'reportedAt': reportedAt,
+      },
+      authorized: true,
+    );
+  }
+
+  @override
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,

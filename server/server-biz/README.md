@@ -73,6 +73,26 @@ docker compose -f docker-compose.local.yml up --build server-biz
 - `postgres`: `15432`
 - `redis`: `16379`
 
+MQTT/RocketMQ notes:
+
+- MQTT is disabled by default in local compose (`SLAN_MQTT_ENABLED=false`).
+- Local compose starts RocketMQ NameServer and Broker with LMQ enabled. Broker
+  ports are exposed as `9876`, `10909`, `10911`, `10912`, `18080`, and `18081`
+  by default.
+- RocketMQ-MQTT is a separate gateway. To start it, provide a concrete
+  `ROCKETMQ_MQTT_IMAGE` and enable the `rocketmq-mqtt` profile, for example:
+  `ROCKETMQ_MQTT_IMAGE=<your-image> docker compose -f docker-compose.local.yml --profile rocketmq-mqtt up -d`.
+- When enabling SLAN MQTT, provide a RocketMQ MQTT endpoint reachable from
+  `server-biz` as `rocketmq-mqtt:1883`, or override `SLAN_MQTT_BROKER_URL`.
+- `SLAN_MQTT_PUBLIC_BROKER_URL` is the broker URL returned to the desktop app.
+- Configure RocketMQ MQTT AuthManager to call `POST /mqtt/auth/check`.
+  A successful auth check marks only `controlReachable=true`; virtual network
+  online state still comes from the client heartbeat after the local tunnel is
+  up.
+- When MQTT is enabled, `server-biz` subscribes to
+  `{topic_prefix}/{deviceId}/networks/{networkId}/state` and persists the same
+  `DeviceNetworkState` record as the HTTP fallback endpoint.
+
 相关文件：
 
 - `Dockerfile`

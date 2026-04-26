@@ -146,20 +146,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/StatusOKResponse'
 
-  /auth/callback-status/{callbackId}/ack:
+  /mqtt/auth/check:
     post:
       tags: [Auth]
-      operationId: ackAuthCallbackStatus
-      summary: Mark browser login callback as received
-      parameters:
-        - $ref: '#/components/parameters/CallbackId'
+      operationId: checkMQTTAuth
+      summary: Validate a generated SLAN MQTT credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MQTTAuthCheckRequest'
       responses:
         '200':
-          description: Callback acknowledged
+          description: MQTT auth decision
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StatusOKResponse'
+                $ref: '#/components/schemas/MQTTAuthCheckResponse'
 
   /auth/ws/{callbackId}:
     get:
@@ -167,9 +171,10 @@ paths:
       operationId: authCallbackWebSocket
       summary: Browser login callback WebSocket
       description: >
-        WebSocket endpoint used by the desktop client to wait for browser login
-        callback completion. The server sends `auth_callback_ready` and accepts
-        an `ack` message from the client.
+        Compatibility endpoint. Current desktop clients use
+        `/auth/callback-status/{callbackId}` polling for browser login
+        completion and connect RocketMQ MQTT only after device registration
+        returns a device credential.
       parameters:
         - $ref: '#/components/parameters/CallbackId'
       responses:
@@ -217,6 +222,30 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Device'
+
+  /devices/{deviceId}/networks/{networkId}/state:
+    put:
+      tags: [Devices]
+      operationId: updateDeviceNetworkState
+      summary: Report device network runtime state
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceNetworkStateRequest'
+      responses:
+        '200':
+          description: Device network state updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceNetworkState'
 
   /networks:
     get:
@@ -710,33 +739,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ControlSessionResponse'
 
-  /control/messages/{messageId}/ack:
-    post:
-      tags: [Control]
-      operationId: ackControlMessage
-      summary: Acknowledge a control message
-      description: >
-        Optional message-delivery acknowledgement endpoint. Deployments that do
-        not enable durable control-message delivery return `501 NOT_IMPLEMENTED`
-        with `ErrorResponse`.
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/MessageId'
-      responses:
-        '200':
-          description: Message acknowledged
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusOKResponse'
-        '501':
-          description: Message delivery is disabled
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
   /control/ws:
     get:
       tags: [Control]
@@ -908,18 +910,54 @@ components:
 
     AuthCallbackStatusResponse:
       type: object
-      required: [callbackId, ready, received]
+      required: [callbackId, ready]
       properties:
         callbackId:
           type: string
         ready:
           type: boolean
-        received:
-          type: boolean
-        receivedAt:
-          type: integer
         payload:
           $ref: '#/components/schemas/CompleteAuthCallbackRequest'
+
+    MQTTCredential:
+      type: object
+      required: [brokerUrl, clientId, username, password, topicPrefix]
+      properties:
+        brokerUrl:
+          type: string
+        clientId:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        topicPrefix:
+          type: string
+        expiresAt:
+          type: integer
+          format: int64
+
+    MQTTAuthCheckRequest:
+      type: object
+      required: [clientId, username, password]
+      properties:
+        clientId:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+
+    MQTTAuthCheckResponse:
+      type: object
+      required: [allow]
+      properties:
+        allow:
+          type: boolean
+        deviceId:
+          type: string
+        principal:
+          type: string
 
     StatusOKResponse:
       type: object
@@ -941,6 +979,53 @@ components:
           type: string
         publicKey:
           type: string
+
+    DeviceNetworkStateRequest:
+      type: object
+      required: [controlReachable, networkOnline, tunnelUp, lastProbeOk]
+      properties:
+        deviceId:
+          type: string
+        networkId:
+          type: string
+        controlReachable:
+          type: boolean
+        networkOnline:
+          type: boolean
+        tunnelUp:
+          type: boolean
+        lastProbeOk:
+          type: boolean
+        virtualIp:
+          type: string
+        reportedAt:
+          type: integer
+          format: int64
+
+    DeviceNetworkState:
+      type: object
+      required: [deviceId, networkId, controlReachable, networkOnline, tunnelUp, lastProbeOk, lastSeenAt, updatedAt]
+      properties:
+        deviceId:
+          type: string
+        networkId:
+          type: string
+        controlReachable:
+          type: boolean
+        networkOnline:
+          type: boolean
+        tunnelUp:
+          type: boolean
+        lastProbeOk:
+          type: boolean
+        virtualIp:
+          type: string
+        lastSeenAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
 
     Device:
       type: object
@@ -980,6 +1065,10 @@ components:
           type: array
           items:
             type: string
+        mqtt:
+          $ref: '#/components/schemas/MQTTCredential'
+        networkState:
+          $ref: '#/components/schemas/DeviceNetworkState'
 
     CreateNetworkRequest:
       type: object

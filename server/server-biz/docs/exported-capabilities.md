@@ -8,6 +8,8 @@ The main client-facing capabilities currently exported by `server-biz` are:
 
 - Auth lifecycle: register, login, refresh, browser-to-client callback status.
 - Device and node lifecycle: register/list devices, register nodes.
+- Device runtime state: report control reachability, virtual network enabled
+  state, tunnel state, health probe state, and heartbeat freshness.
 - Network lifecycle: create, list visible networks, get active/owned home
   summary, get network detail, update network metadata, join key, and DNS.
 - Join and switch: join by owner email, join by key, explicit join, switch,
@@ -45,10 +47,11 @@ desktop app, app-core, and web-console client flow.
 - `/auth/refresh`
 - `/auth/callback-status/{callbackId}`
 - `/auth/callback-status/{callbackId}/complete`
-- `/auth/callback-status/{callbackId}/ack`
-- `/auth/ws/{callbackId}`
+- `/mqtt/auth/check`
+- `/auth/ws/{callbackId}` (deprecated compatibility path)
 - `/devices/register`
 - `/devices`
+- `/devices/{deviceId}/networks/{networkId}/state`
 - `/nodes/register`
 - `/networks/home`
 - `/networks`
@@ -71,7 +74,6 @@ desktop app, app-core, and web-console client flow.
 - `/bootstrap`
 - `/relay/tickets`
 - `/control/sessions`
-- `/control/messages/{messageId}/ack`
 - `/control/ws`
 - `/debug/vars`
 - `/healthz`
@@ -101,6 +103,10 @@ desktop app, app-core, and web-console client flow.
 - `ControlSessionResponse`
 - `NetworkMap`
 - `RelayTicket`
+- `Device.networkState`, which separates control reachability from virtual
+  network online state and tunnel health. MQTT AuthManager success only sets
+  the control reachability side; the app heartbeat promotes the network side
+  after the local tunnel is up.
 
 ## 3. 输出给谁
 

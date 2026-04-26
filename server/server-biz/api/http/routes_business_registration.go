@@ -20,6 +20,10 @@ func registerRegistrationRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		rc := currentRouteContext(c)
 		return deps.Device.ListByUser(rc.user())
 	}))
+	devices.PUT("/:deviceId/networks/:networkId/state", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.DeviceNetworkStateRequest) (dto.DeviceNetworkState, error) {
+		rc := currentRouteContext(c)
+		return deps.Device.SetDeviceNetworkState(rc.user(), c.Param("deviceId"), c.Param("networkId"), req)
+	}))
 
 	nodes := protected.Group("/nodes")
 	// POST /nodes/register 为当前用户某台设备注册一个通信节点。

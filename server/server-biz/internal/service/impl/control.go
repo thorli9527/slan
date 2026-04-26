@@ -29,7 +29,7 @@ type cachedRelayTicket struct {
 }
 
 // Handshake verifies the control-plane session token, marks the backing device
-// online, and returns the latest network map snapshot for the WS session.
+// reachable, and returns the latest network map snapshot for the WS session.
 func (s dbControlChannelService) Handshake(hello controlws.NodeHello) (controlws.NodeHelloAck, dto.NetworkMap, error) {
 	if strings.TrimSpace(hello.SessionToken) == "" || strings.TrimSpace(hello.NodeID) == "" || strings.TrimSpace(hello.NetworkID) == "" {
 		return controlws.NodeHelloAck{}, dto.NetworkMap{}, fmt.Errorf("%w: sessionToken, nodeId, and networkId are required", ErrInvalidArgument)
@@ -58,7 +58,7 @@ func (s dbControlChannelService) Handshake(hello controlws.NodeHello) (controlws
 		return controlws.NodeHelloAck{}, dto.NetworkMap{}, ErrForbidden
 	}
 	s.state.touchControlSessionByToken(ctx, hello.SessionToken)
-	if err := s.state.pg.UpdateDeviceStatus(ctx, session.DeviceID, "online"); err != nil {
+	if err := s.state.pg.UpdateDeviceStatus(ctx, session.DeviceID, "reachable"); err != nil {
 		return controlws.NodeHelloAck{}, dto.NetworkMap{}, err
 	}
 
@@ -112,7 +112,7 @@ func (s dbControlChannelService) ReportEndpoints(userID string, report controlws
 	if err := s.state.pg.ReplaceNodeEndpoints(ctx, node.NodeID, report.NetworkID, report.NatType, endpoints); err != nil {
 		return dto.NetworkMap{}, err
 	}
-	if err := s.state.pg.UpdateDeviceStatus(ctx, node.DeviceID, "online"); err != nil {
+	if err := s.state.pg.UpdateDeviceStatus(ctx, node.DeviceID, "reachable"); err != nil {
 		return dto.NetworkMap{}, err
 	}
 	return s.state.buildNetworkMap(ctx, userID, node.ToDTO(nil), report.NetworkID), nil
@@ -475,6 +475,7 @@ func relayTicketCacheKey(req dto.RelayTicketRequest) string {
 }
 
 const controlSessionFreshnessWindow = 45 * time.Second
+const deviceNetworkStateFreshnessWindow = 45 * time.Second
 const deviceBoundWebSessionFreshnessWindow = 2 * time.Minute
 const nodeEndpointFreshnessWindow = 2 * time.Minute
 const nodeConnectionStateFreshnessWindow = 2 * time.Minute
@@ -592,6 +593,10 @@ func controlSessionCutoffUnix(now time.Time) int64 {
 	return now.Add(-controlSessionFreshnessWindow).Unix()
 }
 
+func deviceNetworkStateCutoffUnix(now time.Time) int64 {
+	return now.Add(-deviceNetworkStateFreshnessWindow).Unix()
+}
+
 // startControlStateCleanupLoop starts the background janitor that periodically
 // trims transient control-plane state.
 func (s *dbState) startControlStateCleanupLoop() {
@@ -609,6 +614,7 @@ func (s *dbState) startControlStateCleanupLoop() {
 // control-plane rows and in-memory relay ticket cache.
 func (s *dbState) cleanupExpiredControlPlaneState(ctx context.Context, now time.Time) {
 	_ = s.pg.MarkDevicesOfflineWithoutFreshControlSession(ctx, controlSessionCutoffUnix(now))
+	_ = s.pg.MarkStaleDeviceNetworkStatesOffline(ctx, deviceNetworkStateCutoffUnix(now), now.Unix())
 	_ = s.pg.DeleteControlSessionsBefore(ctx, controlSessionCutoffUnix(now))
 	_ = s.pg.DeleteNodeEndpointsBeforeAll(ctx, endpointCutoffUnix(now))
 	_ = s.pg.DeleteNodeConnectionStatesBeforeAll(ctx, connectionStateCutoffUnix(now))

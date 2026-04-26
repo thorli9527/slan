@@ -7,7 +7,8 @@ of scope here.
 
 1. `POST /auth/register` or `POST /auth/login`
 2. `POST /auth/refresh` when the access token expires
-3. `POST /devices/register`
+3. `POST /devices/register`; when MQTT is enabled the response includes the
+   device MQTT `clientId`, `username`, `password`, broker URL, and topic prefix.
 4. `POST /nodes/register`
 5. `GET /networks/home`
 6. If `ownedNetwork` is empty, call `POST /networks` with `bindDeviceId`.
@@ -23,6 +24,52 @@ node, and network context and only needs to refresh the control-plane session.
 The normal public client flow should prefer `POST /bootstrap` because it returns
 the control token, WebSocket config, device attachment view, and initial
 NetworkMap together.
+
+Browser login callback delivery stays on HTTP status polling before the device
+exists. RocketMQ MQTT starts only after device registration returns a device
+credential:
+
+1. The desktop app creates or reuses a pending callback id.
+2. The web login completion calls
+   `POST /auth/callback-status/{callbackId}/complete`; server-biz stores the
+   payload.
+3. The app polls `GET /auth/callback-status/{callbackId}` and applies the
+   session without a separate ACK request.
+4. The app registers the device with `POST /devices/register`.
+5. If the registration response contains `mqtt`, the app connects to RocketMQ
+   MQTT with that device credential and subscribes to the device topic prefix.
+   The RocketMQ AuthManager calls `POST /mqtt/auth/check`; a successful check
+   marks only the device control channel as reachable.
+   `/auth/ws/{callbackId}` is kept only as a compatibility endpoint.
+
+Device runtime state is split into three meanings:
+
+1. MQTT connect success means the device control channel is reachable
+   (`controlReachable=true`).
+2. The device becomes network-online only after the user enables the network
+   and the local tunnel is up (`networkOnline=true`, `tunnelUp=true`).
+3. After MQTT is connected, the app keeps reporting
+   `controlReachable=true` every 15 seconds for the selected network. Before
+   the tunnel is enabled this report carries `networkOnline=false`.
+4. While the network is enabled, the same heartbeat reports
+   `networkOnline=true`, `tunnelUp=true`, and the latest probe result. The
+   server marks stale control/network state offline when no report arrives for
+   more than 45 seconds.
+
+The preferred transport for the state heartbeat is MQTT topic
+`{topicPrefix}/networks/{networkId}/state`, where the credential-specific
+`topicPrefix` already contains the device id. `PUT
+/devices/{deviceId}/networks/{networkId}/state` remains the HTTP fallback and
+compatibility path. Both transports write the same `DeviceNetworkState` record.
+
+When disabling a network, the app reports `networkOnline=false` immediately and
+then calls `POST /networks/{networkId}/deactivate`. If MQTT remains connected,
+the app continues the 15-second control reachability heartbeat with
+`networkOnline=false`.
+
+Legacy `Device.status` is kept only as a compatibility field. New management
+views should treat `Device.networkState.networkOnline` as the source of truth
+for online devices.
 
 Implementation checkpoints:
 
@@ -86,9 +133,12 @@ join and activate:
    `GET /networks`.
 4. `Enable Network` calls `POST /networks/{networkId}/activate`, then
    `POST /bootstrap` with the same `networkId`.
-5. `Disable Network` brings down the local tunnel, then calls
-   `POST /networks/{networkId}/deactivate`.
-6. Control sync and connection fallback must continue using the selected
+5. After the local tunnel is up, the app reports network state through
+   `PUT /devices/{deviceId}/networks/{networkId}/state` and starts the
+   15-second heartbeat.
+6. `Disable Network` reports `networkOnline=false`, brings down the local
+   tunnel, then calls `POST /networks/{networkId}/deactivate`.
+7. Control sync and connection fallback must continue using the selected
    network from the current bootstrap/network map.
 
 The web console also uses `GET /networks` for its switch list, then calls the

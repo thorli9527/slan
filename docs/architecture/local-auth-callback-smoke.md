@@ -25,7 +25,7 @@ verified on Windows on April 22, 2026.
 - Opened the real local web entry:
   `https://web.slan.localhost:18443/?auth=register&callbackId=<id>&deviceId=<clientMachineId>`
 - Submitted a real registration in Chrome.
-- Server callback status later showed `received=true`.
+- Server callback status later showed a ready callback payload.
 - Desktop `shared_preferences.json` contained a real `flutter.slan.session`.
 
 Observed session payload:
@@ -40,7 +40,7 @@ Observed session payload:
 - Opened the real local web entry:
   `https://web.slan.localhost:18443/?auth=login&callbackId=<id>&deviceId=<clientMachineId>`
 - Submitted a real login in Chrome with the same smoke account.
-- Server callback status later showed `received=true`.
+- Server callback status later showed a ready callback payload.
 - Desktop `shared_preferences.json` was updated with a fresh session token set.
 
 ## Evidence Used

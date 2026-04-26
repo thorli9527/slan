@@ -12,10 +12,11 @@ web-console flows:
 - `POST /auth/refresh`
 - `GET /auth/callback-status/{callbackId}`
 - `POST /auth/callback-status/{callbackId}/complete`
-- `POST /auth/callback-status/{callbackId}/ack`
-- `GET /auth/ws/{callbackId}`
+- `POST /mqtt/auth/check`
+- `GET /auth/ws/{callbackId}` (deprecated compatibility path)
 - `POST /devices/register`
 - `GET /devices`
+- `PUT /devices/{deviceId}/networks/{networkId}/state`
 - `POST /nodes/register`
 - `GET /networks/home`
 - `GET /networks`
@@ -41,7 +42,6 @@ web-console flows:
 - `POST /bootstrap`
 - `POST /relay/tickets`
 - `POST /control/sessions`
-- `POST /control/messages/{messageId}/ack`
 - `GET /control/ws`
 - `GET /debug/vars`
 - `GET /healthz`
@@ -53,6 +53,26 @@ The recommended client path is `POST /bootstrap`, which already returns the
 control session token and WebSocket config. `POST /control/sessions` remains the
 explicit control-session endpoint for callers that need to refresh only the
 control-plane session.
+
+Device runtime state is intentionally separated:
+
+- RocketMQ AuthManager calls `POST /mqtt/auth/check`; MQTT authentication
+  success marks only the control channel as reachable.
+- `PUT /devices/{deviceId}/networks/{networkId}/state` reports whether the
+  virtual network is enabled, whether the local tunnel is up, and the latest
+  health probe result.
+- The client keeps sending that state every 15 seconds after MQTT is connected.
+  The preferred path is MQTT topic
+  `{topicPrefix}/networks/{networkId}/state`; the HTTP `PUT` endpoint remains a
+  fallback and writes the same state record. Before the tunnel is enabled it
+  reports `networkOnline=false`; after local tunnel up it reports
+  `networkOnline=true`.
+- Server cleanup marks stale control/network state offline after the freshness
+  window expires, so management views do not treat an old MQTT connection as
+  network online.
+- Legacy `Device.status` may be `reachable` for compatibility with older
+  control-channel views. Management online counts and green online state should
+  use `Device.networkState.networkOnline`.
 
 See `client-core-flow.md` for the end-to-end client create, join, alias,
 switch, activate, bootstrap, and relay fallback flow.
@@ -76,8 +96,8 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `POST /auth/refresh`
 - `GET /auth/callback-status/{callbackId}`
 - `POST /auth/callback-status/{callbackId}/complete`
-- `POST /auth/callback-status/{callbackId}/ack`
-- `GET /auth/ws/{callbackId}`
+- `POST /mqtt/auth/check`
+- `GET /auth/ws/{callbackId}` (deprecated compatibility path)
 - `GET /healthz`
 - `GET /debug/vars`
 
@@ -85,6 +105,7 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 
 - `POST /devices/register`
 - `GET /devices`
+- `PUT /devices/{deviceId}/networks/{networkId}/state`
 - `POST /nodes/register`
 - `GET /networks/home`
 - `GET /networks`
@@ -110,7 +131,6 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `POST /bootstrap`
 - `POST /relay/tickets`
 - `POST /control/sessions`
-- `POST /control/messages/{messageId}/ack`
 - `GET /control/ws`
 
 ## 3. 控制通道接入接口

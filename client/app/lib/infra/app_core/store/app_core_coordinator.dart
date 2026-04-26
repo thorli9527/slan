@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
@@ -8,6 +10,7 @@ import '../../../application/device_runtime_service.dart';
 import '../../../application/tunnel_configuration_service.dart';
 import '../../../application/tunnel_host_gateway.dart';
 import '../../../application/tunnel_runtime_service.dart';
+import '../../mqtt/device_mqtt_service.dart';
 import '../scope/app_core_scope.dart';
 import '../models/diagnostic_models.dart';
 import '../models/identity_models.dart';
@@ -39,6 +42,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   final TunnelRuntimeService _tunnelRuntimeService;
   final TunnelConfigurationService _tunnelConfigurationService =
       const TunnelConfigurationService();
+  Timer? _networkStateTimer;
 
   @override
   bool get busy => sessionStore.busy;
@@ -84,6 +88,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   void resetState() {
+    _networkStateTimer?.cancel();
+    _networkStateTimer = null;
+    unawaited(DeviceMqttService.instance.close());
     sessionStore.resetAll();
     tunnelStore.resetAll();
   }
@@ -143,15 +150,18 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     if (hydrated.device != null) {
       sessionStore.devices = hydrated.devices;
       sessionStore.syncDevice(hydrated.device);
+      sessionStore.networks = hydrated.networks;
+      sessionStore.syncSelectedNetworkId();
+      await _connectMqttAndMarkOnline(hydrated.device!);
       emitStateChanged();
       debugPrint(
         '[auth-callback] store matched device=${hydrated.device!.deviceId}',
       );
     } else {
       sessionStore.devices = hydrated.devices;
+      sessionStore.networks = hydrated.networks;
+      sessionStore.syncSelectedNetworkId();
     }
-    sessionStore.networks = hydrated.networks;
-    sessionStore.syncSelectedNetworkId();
     debugPrint(
         '[auth-callback] store loaded networks count=${sessionStore.networks.length}');
     sessionStore.notice = hydrated.notice;
@@ -166,8 +176,84 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         // Best effort. Local state still needs to be cleared even if the
         // tunnel runtime is already gone or not initialized.
       }
+      await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
       await AppCoreScope.clearPersistedSession();
       resetState();
+    });
+  }
+
+  Future<void> _connectMqttAndMarkOnline(DeviceModel device) async {
+    final connected = await DeviceMqttService.instance.connectForDevice(device);
+    if (!connected) {
+      return;
+    }
+    try {
+      await _reportDeviceNetworkState(
+        deviceId: device.deviceId,
+        controlReachable: true,
+        networkOnline: false,
+        tunnelUp: false,
+      );
+    } catch (_) {
+      // RocketMQ AuthManager also marks the control channel reachable.
+    }
+    _startDeviceNetworkHeartbeat(networkOnline: false, tunnelUp: false);
+  }
+
+  Future<void> _reportDeviceNetworkState({
+    String? deviceId,
+    bool controlReachable = true,
+    required bool networkOnline,
+    required bool tunnelUp,
+    bool? lastProbeOk,
+  }) async {
+    final targetDevice = deviceId ?? sessionStore.device?.deviceId;
+    final targetNetwork = sessionStore.selectedNetworkId;
+    if (targetDevice == null ||
+        targetDevice.isEmpty ||
+        targetNetwork == null ||
+        targetNetwork.isEmpty) {
+      return;
+    }
+    final virtualIp = sessionStore.device?.virtualIp;
+    final probeOk = lastProbeOk ?? tunnelStore.lastProbe?.replyObserved ?? false;
+    final reportedAt = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    try {
+      await DeviceMqttService.instance.publishNetworkState(
+        device: sessionStore.device,
+        networkId: targetNetwork,
+        controlReachable: controlReachable,
+        networkOnline: networkOnline,
+        tunnelUp: tunnelUp,
+        lastProbeOk: probeOk,
+        virtualIp: virtualIp,
+        reportedAt: reportedAt,
+      );
+    } catch (error) {
+      debugPrint('[device-mqtt] network state publish failed: $error');
+    }
+    await AppCoreScope.instance.setDeviceNetworkState(
+      deviceId: targetDevice,
+      networkId: targetNetwork,
+      controlReachable: controlReachable,
+      networkOnline: networkOnline,
+      tunnelUp: tunnelUp,
+      lastProbeOk: probeOk,
+      virtualIp: virtualIp,
+      reportedAt: reportedAt,
+    );
+  }
+
+  void _startDeviceNetworkHeartbeat({
+    required bool networkOnline,
+    required bool tunnelUp,
+  }) {
+    _networkStateTimer?.cancel();
+    _networkStateTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      unawaited(_reportDeviceNetworkState(
+        networkOnline: networkOnline,
+        tunnelUp: tunnelUp,
+      ));
     });
   }
 
@@ -186,7 +272,10 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
           publicKey: publicKey,
         ),
       );
-      sessionStore.syncDevice(result.device);
+      if (result.device != null) {
+        sessionStore.syncDevice(result.device);
+        await _connectMqttAndMarkOnline(result.device!);
+      }
     });
   }
 
@@ -228,7 +317,10 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         machineId: machineId,
         devicePublicKey: devicePublicKey,
       );
-      sessionStore.syncDevice(result.device);
+      if (result.device != null) {
+        sessionStore.syncDevice(result.device);
+        await _connectMqttAndMarkOnline(result.device!);
+      }
       sessionStore.networks = result.networks;
       sessionStore.syncSelectedNetworkId();
       statusMessage = result.statusMessage;
@@ -393,6 +485,12 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       }
       debugPrint('[tunnel-enable] bring-up start peerVirtualIp=$peerVirtualIp');
       await bringTunnelUp(verifyPeerVirtualIp: peerVirtualIp);
+      await _reportDeviceNetworkState(
+        networkOnline: true,
+        tunnelUp: true,
+        lastProbeOk: true,
+      );
+      _startDeviceNetworkHeartbeat(networkOnline: true, tunnelUp: true);
       debugPrint('[tunnel-enable] bring-up done peerVirtualIp=$peerVirtualIp');
     });
   }
@@ -404,6 +502,10 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         return;
       }
       await bringTunnelDown();
+      _networkStateTimer?.cancel();
+      _networkStateTimer = null;
+      await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
+      _startDeviceNetworkHeartbeat(networkOnline: false, tunnelUp: false);
       final result = await _workspaceService.deactivateActiveNetwork(
         session: sessionStore.session,
         currentDevice: sessionStore.device,
@@ -428,6 +530,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
           networkRole: currentDevice.networkRole,
           createdAt: currentDevice.createdAt,
           networkIds: currentDevice.networkIds,
+          mqtt: currentDevice.mqtt,
         ));
       }
       sessionStore.notice = '当前网络已停用，本地隧道和虚拟 IP 已释放。';

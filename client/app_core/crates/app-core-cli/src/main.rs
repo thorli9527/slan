@@ -1935,6 +1935,7 @@ mod tests {
                 status: "online".into(),
                 virtual_ip: None,
                 public_key: None,
+                mqtt: None,
             }),
             ..AppCoreSnapshot::default()
         };

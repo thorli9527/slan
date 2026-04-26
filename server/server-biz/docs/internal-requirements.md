@@ -284,7 +284,7 @@ server-biz 需求模型
 - `platform`
   中文备注：设备所属平台，例如 `macos`、`linux`、`windows`。
 - `status`
-  中文备注：设备粗粒度在线状态，当前更接近控制面视角快照，而不是实时链路状态。
+  中文备注：兼容字段，最多表示控制可达快照；网络在线应以 `networkState.networkOnline` 为准。
 - `publicKey`
   中文备注：设备层公钥，用于隧道或后续身份扩展，允许为空表示尚未完成密钥初始化。
 - `networkIds`
@@ -431,7 +431,7 @@ server-biz 需求模型
 - `publicKey`
   中文备注：对等节点公钥，用于建立直连或中继会话。
 - `status`
-  中文备注：节点在线状态，是控制面视角下的当前快照。
+  中文备注：节点控制面可达状态，是拓扑规划视角下的当前快照。
 - `relayAllowed`
   中文备注：是否允许对该 peer 走 relay/DERP 回退。
 - `virtualIps`

@@ -95,6 +95,40 @@ class MockAppCoreApi implements AppCoreApi {
       _device == null ? const [] : [_device!];
 
   @override
+  Future<void> setDeviceNetworkState({
+    required String deviceId,
+    required String networkId,
+    required bool controlReachable,
+    required bool networkOnline,
+    required bool tunnelUp,
+    required bool lastProbeOk,
+    String? virtualIp,
+    int? reportedAt,
+  }) async {
+    final current = _device;
+    if (current == null || current.deviceId != deviceId) {
+      throw StateError('device not found: $deviceId');
+    }
+    _device = DeviceModel(
+      deviceId: current.deviceId,
+      name: current.name,
+      platform: current.platform,
+      status: controlReachable ? 'reachable' : 'offline',
+      virtualIp: virtualIp ?? current.virtualIp,
+      publicKey: current.publicKey,
+      ownerEmail: current.ownerEmail,
+      linkStatus: networkOnline ? 'online' : 'offline',
+      connectivityProtocol: current.connectivityProtocol,
+      joinedAt: current.joinedAt,
+      membershipStatus: current.membershipStatus,
+      networkRole: current.networkRole,
+      createdAt: current.createdAt,
+      networkIds: current.networkIds,
+      mqtt: current.mqtt,
+    );
+  }
+
+  @override
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,

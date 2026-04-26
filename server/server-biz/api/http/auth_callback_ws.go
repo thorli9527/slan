@@ -88,13 +88,6 @@ func registerAuthCallbackWS(router *gin.Engine, deps routerDeps) {
 				if err := websocket.JSON.Receive(conn, &env); err != nil {
 					return
 				}
-				switch env.Type {
-				case "ack":
-					_ = deps.Auth.MarkCallbackReceived(callbackID)
-					_ = websocket.JSON.Send(conn, authCallbackWSEnvelope{
-						Type: "acknowledged",
-					})
-				}
 			}
 		}).ServeHTTP(c.Writer, c.Request)
 	})

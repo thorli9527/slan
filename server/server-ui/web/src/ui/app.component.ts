@@ -207,6 +207,10 @@ export class AppComponent implements OnDestroy {
     return this.detail()?.ownedByCurrentUser ? 'owner' : (this.home().hasNetwork ? 'member' : 'none');
   }
 
+  onlineDeviceCount(): number {
+    return this.devices().filter((device) => this.deviceStatusTone(device) === 'success').length;
+  }
+
   currentVirtualIp(): string {
     return this.currentAssignment()?.virtualIp || '未分配';
   }
@@ -565,12 +569,19 @@ export class AppComponent implements OnDestroy {
   }
 
   deviceStatusLabel(device: Device): string {
+    if (device.networkState?.networkOnline) {
+      return '网络在线';
+    }
+    if (device.networkState?.controlReachable) {
+      return '控制可达';
+    }
     const value = (device.linkStatus || device.status || '').toLowerCase();
     switch (value) {
       case 'connected':
-        return '已连接';
+      case 'reachable':
+        return '控制可达';
       case 'online':
-        return '在线';
+        return '控制可达';
       case 'disconnected':
         return '已断开';
       case 'offline':
@@ -597,6 +608,71 @@ export class AppComponent implements OnDestroy {
     }
   }
 
+  deviceControlLabel(device: Device): string {
+    if (device.networkState) {
+      return device.networkState.controlReachable ? '可达' : '不可达';
+    }
+    const value = (device.status || '').toLowerCase();
+    return value === 'online' || value === 'connected' || value === 'reachable' ? '可达' : '未知';
+  }
+
+  deviceControlTone(device: Device): string {
+    if (device.networkState?.controlReachable) {
+      return 'success';
+    }
+    const value = (device.status || '').toLowerCase();
+    return value === 'online' || value === 'connected' || value === 'reachable' ? 'success' : 'muted';
+  }
+
+  deviceNetworkLabel(device: Device): string {
+    if (!device.networkState) {
+      return this.deviceStatusLabel(device);
+    }
+    return device.networkState.networkOnline ? '已启用' : '已停用';
+  }
+
+  deviceNetworkTone(device: Device): string {
+    if (device.networkState?.networkOnline) {
+      return 'success';
+    }
+    if (device.networkState?.controlReachable) {
+      return 'warn';
+    }
+    return 'muted';
+  }
+
+  deviceTunnelLabel(device: Device): string {
+    const state = device.networkState;
+    if (!state) {
+      return this.deviceProtocol(device);
+    }
+    if (state.tunnelUp && state.lastProbeOk) {
+      return '健康';
+    }
+    if (state.tunnelUp) {
+      return '隧道已起';
+    }
+    return '未启用';
+  }
+
+  deviceTunnelTone(device: Device): string {
+    const state = device.networkState;
+    if (!state) {
+      return 'muted';
+    }
+    if (state.tunnelUp && state.lastProbeOk) {
+      return 'success';
+    }
+    if (state.tunnelUp || state.controlReachable) {
+      return 'warn';
+    }
+    return 'muted';
+  }
+
+  deviceLastSeenLabel(device: Device): string {
+    return device.networkState?.lastSeenAt ? this.formatTimestamp(device.networkState.lastSeenAt) : '-';
+  }
+
   membershipStatusTone(device: Device): string {
     const value = (device.membershipStatus || '').toLowerCase();
     switch (value) {
@@ -613,11 +689,18 @@ export class AppComponent implements OnDestroy {
   }
 
   deviceStatusTone(device: Device): string {
+    if (device.networkState?.networkOnline) {
+      return 'success';
+    }
+    if (device.networkState?.controlReachable) {
+      return 'warn';
+    }
     const value = (device.linkStatus || device.status || '').toLowerCase();
     switch (value) {
       case 'connected':
       case 'online':
-        return 'success';
+      case 'reachable':
+        return 'warn';
       case 'disconnected':
         return 'warn';
       case 'offline':

@@ -62,6 +62,30 @@ class SessionModel {
 }
 
 /// 设备模型。
+class DeviceNetworkStateModel {
+  const DeviceNetworkStateModel({
+    required this.deviceId,
+    required this.networkId,
+    required this.controlReachable,
+    required this.networkOnline,
+    required this.tunnelUp,
+    required this.lastProbeOk,
+    this.virtualIp,
+    required this.lastSeenAt,
+    required this.updatedAt,
+  });
+
+  final String deviceId;
+  final String networkId;
+  final bool controlReachable;
+  final bool networkOnline;
+  final bool tunnelUp;
+  final bool lastProbeOk;
+  final String? virtualIp;
+  final int lastSeenAt;
+  final int updatedAt;
+}
+
 class DeviceModel {
   const DeviceModel({
     required this.deviceId,
@@ -79,6 +103,8 @@ class DeviceModel {
     this.networkRole,
     this.createdAt,
     this.networkIds = const [],
+    this.mqtt,
+    this.networkState,
   });
 
   final String deviceId;
@@ -96,6 +122,26 @@ class DeviceModel {
   final String? networkRole;
   final int? createdAt;
   final List<String> networkIds;
+  final MqttCredentialModel? mqtt;
+  final DeviceNetworkStateModel? networkState;
+}
+
+class MqttCredentialModel {
+  const MqttCredentialModel({
+    required this.brokerUrl,
+    required this.clientId,
+    required this.username,
+    required this.password,
+    required this.topicPrefix,
+    this.expiresAt,
+  });
+
+  final String brokerUrl;
+  final String clientId;
+  final String username;
+  final String password;
+  final String topicPrefix;
+  final int? expiresAt;
 }
 
 /// 节点模型。

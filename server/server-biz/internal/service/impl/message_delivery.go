@@ -23,14 +23,6 @@ func (s dbMessageDeliveryService) RecordAttempt(messageID string, attemptCount i
 	return s.state.pg.UpdateControlOutboundMessageAttempt(context.Background(), messageID, attemptCount, attemptedAt)
 }
 
-func (s dbMessageDeliveryService) Ack(targetUserID, messageID string, ackedAt int64) error {
-	record, err := s.state.pg.AckControlOutboundMessage(context.Background(), messageID, targetUserID, ackedAt)
-	if err != nil {
-		return err
-	}
-	return s.state.pg.ArchiveControlOutboundMessage(context.Background(), record, "delivered", "", ackedAt)
-}
-
 func (s dbMessageDeliveryService) Archive(
 	record repo.ControlOutboundMessage,
 	finalStatus,

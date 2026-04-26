@@ -183,6 +183,17 @@ pub trait AppCoreFacade: Send + Sync {
         self.activate_network(network_id, device_id)
     }
     fn deactivate_network(&self, network_id: String, device_id: String) -> Result<(), String>;
+    fn set_device_network_state(
+        &self,
+        device_id: String,
+        network_id: String,
+        control_reachable: bool,
+        network_online: bool,
+        tunnel_up: bool,
+        last_probe_ok: bool,
+        virtual_ip: Option<String>,
+        reported_at: Option<i64>,
+    ) -> Result<(), String>;
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String>;
     fn control_sync(&self) -> Result<BootstrapConfig, String>;
     fn control_status(&self) -> Result<ControlStatusView, String>;

@@ -19,8 +19,10 @@
 - `/auth/register`
 - `/auth/login`
 - `/auth/refresh`
+- `/auth/callback-status/{callbackId}`
 - `/devices/register`
 - `/devices`
+- `/devices/{deviceId}/networks/{networkId}/state`
 - `/nodes/register`
 - `/networks/home`
 - `/networks`
@@ -35,6 +37,20 @@
 - `/relay/tickets`
 - `/control/sessions`
 - `/control/ws`
+
+`/devices/register` now may return a device-scoped MQTT credential (`mqtt`) for
+RocketMQ MQTT access. The desktop app connects MQTT only after that successful
+device registration. Browser login callback delivery remains HTTP polling via
+`/auth/callback-status/{callbackId}` before the device exists.
+
+MQTT reachability and virtual network availability are not the same state. The
+app reports `controlReachable`, `networkOnline`, `tunnelUp`, and `lastProbeOk`
+through MQTT topic `{topicPrefix}/networks/{networkId}/state` after MQTT is
+connected, with `/devices/{deviceId}/networks/{networkId}/state` kept as the
+HTTP fallback. The app sends the report every 15 seconds. Before the local
+tunnel is enabled it reports `networkOnline=false`; after tunnel up it reports
+`networkOnline=true`. The server treats reports older than 45 seconds as
+offline.
 
 在 `app_core` 内部主要由 `crates/controller-client` 承接。
 
@@ -84,6 +100,7 @@
 - `switch_network`
 - `activate_network`
 - `deactivate_network`
+- `set_device_network_state`
 - `update_attachment_remark`
 - `bootstrap`
 

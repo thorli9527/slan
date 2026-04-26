@@ -36,7 +36,5 @@ type CompleteAuthCallbackRequest struct {
 type AuthCallbackStatusResponse struct {
 	CallbackID string                       `json:"callbackId"`
 	Ready      bool                         `json:"ready"`
-	Received   bool                         `json:"received"`
-	ReceivedAt int64                        `json:"receivedAt,omitempty"`
 	Payload    *CompleteAuthCallbackRequest `json:"payload,omitempty"`
 }

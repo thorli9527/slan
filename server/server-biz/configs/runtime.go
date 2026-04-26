@@ -125,6 +125,7 @@ func migratePostgres(ctx context.Context, db *gorm.DB) error {
 		&repo.Menu{},
 		&repo.RoleMenu{},
 		&repo.Device{},
+		&repo.DeviceNetworkState{},
 		&repo.Node{},
 		&repo.NodeEndpoint{},
 		&repo.NodeConnectionState{},

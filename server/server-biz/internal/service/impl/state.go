@@ -30,8 +30,6 @@ type tokenStore interface {
 	StoreOpsAccessToken(ctx context.Context, token, adminID string, ttl time.Duration) error
 	StoreControlSessionToken(ctx context.Context, token, userID string, ttl time.Duration) error
 	DeleteControlSessionToken(ctx context.Context, token string) error
-	MarkAuthCallbackReceived(ctx context.Context, callbackID string, receivedAt int64, ttl time.Duration) error
-	AuthCallbackReceivedAt(ctx context.Context, callbackID string) (int64, error)
 	StoreAuthCallbackPayload(ctx context.Context, callbackID string, payload any, ttl time.Duration) error
 	LoadAuthCallbackPayload(ctx context.Context, callbackID string, target any) (bool, error)
 	Authenticate(ctx context.Context, accessToken string) (repo.AccessTokenSession, error)
@@ -72,6 +70,7 @@ func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 	}
 	state.cleanupExpiredControlPlaneState(context.Background(), time.Now())
 	state.startControlStateCleanupLoop()
+	state.startMQTTNetworkStateSubscriber()
 	return dbAuthService{state: state},
 		dbDeviceService{state: state},
 		dbNetworkService{state: state},

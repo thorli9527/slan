@@ -1003,6 +1003,7 @@ class _DevicesPageState extends State<DevicesPage> {
     final localVirtualIp = _tunnelLocalIpController.text.trim();
     final peerVirtualIp = _tunnelPeerIpController.text.trim();
     final debugEngineMode = _tunnelDebugEngineModeController.text.trim();
+    final interfacePrefix = _activeNetworkPrefixLength();
     return WireGuardTunnelConfiguration(
       transport: 'relay',
       localVirtualIp: localVirtualIp,
@@ -1015,7 +1016,7 @@ class _DevicesPageState extends State<DevicesPage> {
         ),
         listenPort: 51820,
         mtu: 1280,
-        addresses: ['$localVirtualIp/32'],
+        addresses: ['$localVirtualIp/$interfacePrefix'],
         dnsServers: const ['1.1.1.1'],
       ),
       peer: WireGuardTunnelPeerConfiguration(
@@ -1025,8 +1026,31 @@ class _DevicesPageState extends State<DevicesPage> {
       ),
     );
   }
-}
 
+  int _activeNetworkPrefixLength() {
+    final sessionStore = AppCoreScope.sessionStore;
+    final currentNetworkId = _networkIdController.text.trim();
+    final network = sessionStore.networks
+            .where((item) => item.networkId == currentNetworkId)
+            .isNotEmpty
+        ? sessionStore.networks.firstWhere(
+            (item) => item.networkId == currentNetworkId,
+          )
+        : (sessionStore.networks.isNotEmpty
+            ? sessionStore.networks.first
+            : null);
+    final cidr = network?.cidr.trim() ?? '';
+    final slash = cidr.lastIndexOf('/');
+    if (slash <= 0 || slash == cidr.length - 1) {
+      return 32;
+    }
+    final parsed = int.tryParse(cidr.substring(slash + 1).trim());
+    if (parsed == null || parsed < 0 || parsed > 32) {
+      return 32;
+    }
+    return parsed;
+  }
+}
 
 class _DevicesWorkbenchCard extends StatelessWidget {
   const _DevicesWorkbenchCard({

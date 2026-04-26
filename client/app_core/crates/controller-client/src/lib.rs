@@ -9,10 +9,11 @@ mod http_runtime;
 mod transport;
 
 pub use api::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkByKeyRequest,
-    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
-    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
-    SwitchNetworkRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
+    JoinNetworkByKeyRequest, JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest,
+    RefreshTokenRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest,
+    RelayTicketRequest, SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
+    UpdateNetworkDNSRequest,
 };
 pub use client::HttpControllerClient;
 pub use dto::ErrorResponseDto;

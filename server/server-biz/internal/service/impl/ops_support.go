@@ -31,12 +31,7 @@ func (s dbOpsService) Overview() (dto.OpsOverview, error) {
 		clusterCount++
 		relayNodeCount += len(cluster.nodes)
 	}
-	onlineCount := 0
-	for _, device := range devices {
-		if device.Status == "online" {
-			onlineCount++
-		}
-	}
+	onlineCount := s.networkOnlineDeviceCount(ctx)
 	defaultAdminSeeded, defaultAdminRoleBound, err := s.defaultAdminSeedStatus(ctx)
 	if err != nil {
 		return dto.OpsOverview{}, err
@@ -57,6 +52,18 @@ func (s dbOpsService) Overview() (dto.OpsOverview, error) {
 		DefaultAdminRoleBound: defaultAdminRoleBound,
 		SecurityWarnings:      warnings,
 	}, nil
+}
+
+func (s dbOpsService) networkOnlineDeviceCount(ctx context.Context) int {
+	states, err := s.state.pg.ListFreshOnlineDeviceNetworkStates(ctx, deviceNetworkStateCutoffUnix(time.Now()))
+	if err != nil {
+		return 0
+	}
+	seen := make(map[string]struct{}, len(states))
+	for _, state := range states {
+		seen[state.DeviceID] = struct{}{}
+	}
+	return len(seen)
 }
 
 func (s dbOpsService) ListUsers() ([]dto.OpsUser, error) {

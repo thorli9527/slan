@@ -1,126 +1,113 @@
-# 控制面、节点控制通道和 relay 数据面的统一错误码定义。
-#
-# 错误码按职责分层：
-# - 认证与会话
-# - 设备与节点
-# - 网络与成员关系
-# - IPAM / 子网
-# - 控制通道
-# - relay / 连接编排
 version: 0.3.0
 codes:
   - code: AUTH_INVALID_CREDENTIALS
     http_status: 401
-    message: 邮箱或密码无效
+    message: Invalid email or password
 
   - code: AUTH_TOKEN_EXPIRED
     http_status: 401
-    message: 访问令牌已过期
+    message: Access token expired
 
   - code: AUTH_TOKEN_INVALID
     http_status: 401
-    message: 访问令牌无效
+    message: Access token invalid
 
   - code: AUTH_CALLBACK_NOT_FOUND
     http_status: 404
-    message: 登录回调不存在
+    message: Auth callback not found
 
   - code: DEVICE_ALREADY_REGISTERED
     http_status: 409
-    message: 设备已注册
+    message: Device already registered
 
   - code: DEVICE_NOT_FOUND
     http_status: 404
-    message: 设备不存在
+    message: Device not found
 
   - code: NODE_NOT_REGISTERED
     http_status: 404
-    message: 节点未注册
+    message: Node not registered
 
   - code: NODE_KEY_INVALID
     http_status: 401
-    message: 节点公钥无效
+    message: Node key invalid
 
   - code: NODE_KEY_EXPIRED
     http_status: 401
-    message: 节点密钥已过期
+    message: Node key expired
 
   - code: NETWORK_NOT_FOUND
     http_status: 404
-    message: 网络不存在
+    message: Network not found
 
   - code: NETWORK_MEMBER_EXISTS
     http_status: 409
-    message: 设备已是该网络成员
+    message: Device is already a network member
 
   - code: NETWORK_MEMBER_NOT_FOUND
     http_status: 404
-    message: 网络成员不存在
+    message: Network member not found
 
   - code: SUBNET_NOT_FOUND
     http_status: 404
-    message: 子网不存在
+    message: Subnet not found
 
   - code: ATTACHMENT_NOT_FOUND
     http_status: 404
-    message: 子网挂载关系不存在
+    message: Subnet attachment not found
 
   - code: IPAM_NO_AVAILABLE_ADDRESS
     http_status: 409
-    message: 没有可分配的虚拟 IP
+    message: No available virtual IP address
 
   - code: CONTROL_SESSION_INVALID
     http_status: 401
-    message: 控制会话无效
+    message: Control session invalid
 
   - code: CONTROL_SESSION_EXPIRED
     http_status: 401
-    message: 控制会话已过期
-
-  - code: CONTROL_MESSAGE_ACK_TIMEOUT
-    http_status: 504
-    message: 控制消息确认超时
+    message: Control session expired
 
   - code: CONTROL_MESSAGE_UNDELIVERED
     http_status: 410
-    message: 控制消息未送达并已归档
+    message: Control message undelivered and archived
 
   - code: NETWORK_MAP_STALE
     http_status: 409
-    message: 网络地图版本过旧
+    message: Network map revision is stale
 
   - code: PATH_HEALTH_REPORT_INVALID
     http_status: 400
-    message: 路径健康上报无效
+    message: Path health report invalid
 
   - code: PEER_NOT_REACHABLE
     http_status: 409
-    message: 当前对等节点不可达
+    message: Peer is not reachable
 
   - code: CONNECT_PLAN_MISSING
     http_status: 404
-    message: 未找到连接计划
+    message: Connect plan missing
 
   - code: RELAY_TICKET_INVALID
     http_status: 401
-    message: Relay 票据无效
+    message: Relay ticket invalid
 
   - code: RELAY_TICKET_EXPIRED
     http_status: 401
-    message: Relay 票据已过期
+    message: Relay ticket expired
 
   - code: RELAY_SESSION_NOT_FOUND
     http_status: 404
-    message: Relay 会话不存在
+    message: Relay session not found
 
   - code: RELAY_SESSION_EXISTS
     http_status: 409
-    message: Relay 会话已存在
+    message: Relay session already exists
 
   - code: RELAY_PEER_UNAUTHORIZED
     http_status: 403
-    message: 节点不属于该 Relay 会话
+    message: Peer is not authorized for relay session
 
   - code: RELAY_PAYLOAD_INVALID
     http_status: 400
-    message: Relay 负载无效
+    message: Relay payload invalid

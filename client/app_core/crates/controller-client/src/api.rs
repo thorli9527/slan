@@ -71,6 +71,17 @@ pub struct DeactivateNetworkRequest {
     pub device_id: String,
 }
 
+pub struct DeviceNetworkStateRequest {
+    pub device_id: String,
+    pub network_id: String,
+    pub control_reachable: bool,
+    pub network_online: bool,
+    pub tunnel_up: bool,
+    pub last_probe_ok: bool,
+    pub virtual_ip: Option<String>,
+    pub reported_at: Option<i64>,
+}
+
 pub struct UpdateAttachmentRemarkRequest {
     pub network_id: String,
     pub attachment_id: String,
@@ -150,6 +161,11 @@ pub trait ControllerClient: Send + Sync {
         &self,
         access_token: &str,
         req: DeactivateNetworkRequest,
+    ) -> Result<(), String>;
+    fn set_device_network_state(
+        &self,
+        access_token: &str,
+        req: DeviceNetworkStateRequest,
     ) -> Result<(), String>;
     fn bootstrap(
         &self,

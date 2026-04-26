@@ -35,6 +35,17 @@ abstract class AppCoreApi {
 
   Future<List<DeviceModel>> listDevices();
 
+  Future<void> setDeviceNetworkState({
+    required String deviceId,
+    required String networkId,
+    required bool controlReachable,
+    required bool networkOnline,
+    required bool tunnelUp,
+    required bool lastProbeOk,
+    String? virtualIp,
+    int? reportedAt,
+  });
+
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,

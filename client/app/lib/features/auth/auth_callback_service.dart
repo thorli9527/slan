@@ -16,8 +16,6 @@ class AuthCallbackService {
   static bool _initialized = false;
   static Timer? _pollTimer;
   static String? _lastAppliedCallbackId;
-  static WebSocket? _socket;
-  static String? _socketCallbackId;
 
   static Future<String> preparePendingServerCallback({String? preferredKey}) async {
     final callbackId = (preferredKey?.trim().isNotEmpty == true)
@@ -91,66 +89,40 @@ class AuthCallbackService {
     await preferences.reload();
     final callbackId = preferences.getString(_pendingCallbackIdKey)?.trim() ?? '';
     if (callbackId.isEmpty) {
-      await _closeSocket();
       return;
     }
-    if (_socket != null && _socketCallbackId == callbackId) {
-      return;
-    }
-    await _closeSocket();
     try {
-      final socket = await WebSocket.connect(
-        _buildAuthWebSocketUrl(callbackId),
-        headers: {
-          'Origin': _buildAuthWebSocketOrigin(),
-        },
-      );
-      _socket = socket;
-      _socketCallbackId = callbackId;
-      socket.listen(
-        (message) async {
-          if (message is! String || message.isEmpty) {
-            return;
-          }
-          final decoded = jsonDecode(message);
-          if (decoded is! Map<String, dynamic>) {
-            return;
-          }
-          final type = (decoded['type'] as String? ?? '').trim();
-          if (type == 'acknowledged') {
-            await _closeSocket();
-            return;
-          }
-          if (type != 'auth_callback_ready') {
-            return;
-          }
-          final payload = decoded['payload'];
-          if (payload is! Map<String, dynamic>) {
-            return;
-          }
-          await _applyServerCallback(callbackId: callbackId, payload: payload);
-          socket.add(jsonEncode({'type': 'ack'}));
-        },
-        onDone: () {
-          if (_socket == socket) {
-            _socket = null;
-            _socketCallbackId = null;
-          }
-        },
-        onError: (_) {
-          if (_socket == socket) {
-            _socket = null;
-            _socketCallbackId = null;
-          }
-        },
-        cancelOnError: true,
-      );
+      await _pollServerCallbackStatus(callbackId);
     } catch (_) {
-      debugPrint('[auth-callback] auth websocket connect failed');
+      debugPrint('[auth-callback] callback status polling failed');
     }
   }
 
-  static String _buildAuthWebSocketUrl(String callbackId) {
+  static Future<void> _pollServerCallbackStatus(String callbackId) async {
+    final uri = _buildControlUri('/auth/callback-status/$callbackId');
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(uri);
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return;
+      }
+      final body = await utf8.decodeStream(response);
+      final decoded = jsonDecode(body);
+      if (decoded is! Map<String, dynamic> || decoded['ready'] != true) {
+        return;
+      }
+      final payload = decoded['payload'];
+      if (payload is! Map<String, dynamic>) {
+        return;
+      }
+      await _applyServerCallback(callbackId: callbackId, payload: payload);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Uri _buildControlUri(String path) {
     final baseUrl = AppCoreScope.controlBaseUrl?.trim() ?? '';
     final base = Uri.tryParse(baseUrl);
     if (base == null) {
@@ -163,47 +135,14 @@ class AuthCallbackService {
         host == 'slan.localhost' ||
         host == 'web.slan.localhost';
     if (isLocal) {
-      return 'ws://127.0.0.1:28080/auth/ws/$callbackId';
+      return Uri.parse('http://127.0.0.1:28080$path');
     }
-    final scheme = base.scheme == 'https' ? 'wss' : 'ws';
     return base
         .replace(
-          scheme: scheme,
-          path: '/auth/ws/$callbackId',
+          path: path,
           query: null,
           fragment: null,
-        )
-        .toString();
-  }
-
-  static String _buildAuthWebSocketOrigin() {
-    final baseUrl = AppCoreScope.controlBaseUrl?.trim() ?? '';
-    final base = Uri.tryParse(baseUrl);
-    if (base == null || base.host.isEmpty) {
-      return 'http://127.0.0.1:28080';
-    }
-    if (base.host == '127.0.0.1' ||
-        base.host == 'localhost' ||
-        base.host == '::1' ||
-        base.host == 'slan.localhost' ||
-        base.host == 'web.slan.localhost') {
-      return 'http://127.0.0.1:28080';
-    }
-    return base.replace(path: '', query: null, fragment: null).toString();
-  }
-
-  static Future<void> _closeSocket() async {
-    final socket = _socket;
-    _socket = null;
-    _socketCallbackId = null;
-    if (socket == null) {
-      return;
-    }
-    try {
-      await socket.close();
-    } catch (_) {
-      debugPrint('[auth-callback] close auth websocket failed');
-    }
+        );
   }
 
   static Future<void> _activateActiveNetworkAfterCallback() async {

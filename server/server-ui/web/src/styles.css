@@ -1,12 +1,12 @@
 :root {
-  --bg: #f5f0e8;
+  --bg: #f5f6f8;
   --panel: rgba(255, 255, 255, 0.86);
   --panel-strong: rgba(255, 255, 255, 0.94);
   --text: #17202a;
   --text-soft: #2a3640;
   --muted: #5f6b76;
-  --accent: #a23c24;
-  --accent-soft: #f0c3a3;
+  --accent: #ff6900;
+  --accent-soft: #ffd7bd;
   --line: rgba(23, 32, 42, 0.12);
   --line-strong: rgba(23, 32, 42, 0.18);
   --ok: #1f7a53;
@@ -23,10 +23,7 @@ body {
   min-height: 100%;
   font-family: "Avenir Next", "Helvetica Neue", sans-serif;
   color: var(--text);
-  background:
-    radial-gradient(circle at top left, rgba(240, 195, 163, 0.65), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(162, 60, 36, 0.12), transparent 28%),
-    linear-gradient(180deg, #f7f2eb 0%, #efe4d6 100%);
+  background: #f5f6f8;
 }
 
 button,

@@ -83,6 +83,29 @@ class BridgeAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<void> setDeviceNetworkState({
+    required String deviceId,
+    required String networkId,
+    required bool controlReachable,
+    required bool networkOnline,
+    required bool tunnelUp,
+    required bool lastProbeOk,
+    String? virtualIp,
+    int? reportedAt,
+  }) async {
+    await _pluginPlatform.setDeviceNetworkState(
+      deviceId: deviceId,
+      networkId: networkId,
+      controlReachable: controlReachable,
+      networkOnline: networkOnline,
+      tunnelUp: tunnelUp,
+      lastProbeOk: lastProbeOk,
+      virtualIp: virtualIp,
+      reportedAt: reportedAt,
+    );
+  }
+
+  @override
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,

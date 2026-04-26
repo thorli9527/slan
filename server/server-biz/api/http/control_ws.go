@@ -66,39 +66,6 @@ func serveControlWS(conn *websocket.Conn, deps routerDeps) {
 }
 
 func startControlWSDeliveryRetryLoop(deps routerDeps) {
-	if deps.MessageDelivery == nil {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(3 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			messages, err := deps.MessageDelivery.ListRetryable(time.Now().Add(-3*time.Second).UnixMilli(), 64)
-			if err != nil {
-				continue
-			}
-			for _, message := range messages {
-				if message.AttemptCount >= 5 {
-					_ = deps.MessageDelivery.Archive(
-						message,
-						"undelivered",
-						"http_ack_not_received_after_5_attempts",
-						time.Now().UnixMilli(),
-					)
-					continue
-				}
-				session := defaultControlWSHub.session(message.TargetNodeID)
-				if session != nil {
-					_ = session.resendStored(message)
-				}
-				_ = deps.MessageDelivery.RecordAttempt(
-					message.MessageID,
-					message.AttemptCount+1,
-					time.Now().UnixMilli(),
-				)
-			}
-		}
-	}()
 }
 
 func writeWSEnvelope(conn *websocket.Conn, msgType, requestID string, payload any) error {

@@ -30,6 +30,33 @@ extension DeviceResponseDtoMapper on DeviceResponseDto {
         networkRole: networkRole,
         createdAt: createdAt,
         networkIds: networkIds,
+        mqtt: mqtt?.toModel(),
+        networkState: networkState?.toModel(),
+      );
+}
+
+extension MqttCredentialResponseDtoMapper on MqttCredentialResponseDto {
+  MqttCredentialModel toModel() => MqttCredentialModel(
+        brokerUrl: brokerUrl,
+        clientId: clientId,
+        username: username,
+        password: password,
+        topicPrefix: topicPrefix,
+        expiresAt: expiresAt,
+      );
+}
+
+extension DeviceNetworkStateResponseDtoMapper on DeviceNetworkStateResponseDto {
+  DeviceNetworkStateModel toModel() => DeviceNetworkStateModel(
+        deviceId: deviceId,
+        networkId: networkId,
+        controlReachable: controlReachable,
+        networkOnline: networkOnline,
+        tunnelUp: tunnelUp,
+        lastProbeOk: lastProbeOk,
+        virtualIp: virtualIp,
+        lastSeenAt: lastSeenAt,
+        updatedAt: updatedAt,
       );
 }
 

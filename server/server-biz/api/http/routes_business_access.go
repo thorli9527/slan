@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/slan/server/server-biz/api/dto"
+	"github.com/slan/server/server-biz/internal/mqttauth"
 )
 
 // registerAccessRoutes 注册无需业务鉴权即可访问的账号入口。
@@ -34,8 +35,11 @@ func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 		defaultAuthCallbackWSHub.broadcastReady(callbackID, req)
 		return nil
 	}))
-	auth.POST("/callback-status/:callbackId/ack", respondWithStatus(http.StatusOK, gin.H{"status": "ok"}, func(c *gin.Context) error {
-		rc := currentRouteContext(c)
-		return deps.Auth.MarkCallbackReceived(rc.callbackID(c))
+	api.POST("/mqtt/auth/check", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.MQTTAuthCheckRequest) (dto.MQTTAuthCheckResponse, error) {
+		response, ok := mqttauth.ValidateCredential(deps.Config.MQTT, req.ClientID, req.Username, req.Password)
+		if ok && response.Principal == "device" && deps.Device != nil {
+			_ = deps.Device.MarkMQTTReachable(response.DeviceID)
+		}
+		return response, nil
 	}))
 }

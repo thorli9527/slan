@@ -2,6 +2,7 @@ package impl
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
@@ -32,7 +33,9 @@ func (s dbDeviceService) Register(userID string, req dto.RegisterDeviceRequest) 
 	if err := s.state.ensureDeviceProvisionedInActiveNetwork(ctx, userID, record.DeviceID); err != nil {
 		return dto.Device{}, err
 	}
-	return s.state.buildDeviceDTO(ctx, record), nil
+	device := s.state.buildDeviceDTO(ctx, record)
+	device.MQTT = s.state.buildDeviceMQTTCredential(record)
+	return device, nil
 }
 
 func (s dbDeviceService) ListByUser(userID string) ([]dto.Device, error) {
@@ -79,6 +82,75 @@ func (s dbDeviceService) ListByUser(userID string) ([]dto.Device, error) {
 		))
 	}
 	return out, nil
+}
+
+func (s dbDeviceService) SetDeviceNetworkState(userID, deviceID, networkID string, req dto.DeviceNetworkStateRequest) (dto.DeviceNetworkState, error) {
+	ctx := context.Background()
+	record, err := s.state.pg.GetDeviceByID(ctx, deviceID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return dto.DeviceNetworkState{}, ErrNotFound
+		}
+		return dto.DeviceNetworkState{}, err
+	}
+	if record.UserID != userID {
+		return dto.DeviceNetworkState{}, ErrForbidden
+	}
+	if err := s.state.ensureNetworkAccess(ctx, userID, networkID); err != nil {
+		return dto.DeviceNetworkState{}, err
+	}
+	if _, err := s.state.requireActiveNetworkMember(ctx, networkID, deviceID, ErrForbidden, "device"); err != nil {
+		return dto.DeviceNetworkState{}, err
+	}
+	if _, err := s.state.requireActiveNetworkAttachment(ctx, networkID, deviceID, ErrForbidden, "device"); err != nil {
+		return dto.DeviceNetworkState{}, err
+	}
+	if err := s.state.upsertTrustedDeviceNetworkState(ctx, deviceID, networkID, req); err != nil {
+		return dto.DeviceNetworkState{}, err
+	}
+	state, err := s.state.pg.GetDeviceNetworkState(ctx, deviceID, networkID)
+	if err != nil {
+		return dto.DeviceNetworkState{}, err
+	}
+	return state.ToDTO(), nil
+}
+
+func (s dbDeviceService) MarkMQTTReachable(deviceID string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return ErrInvalidArgument
+	}
+	ctx := context.Background()
+	if _, err := s.state.pg.GetDeviceByID(ctx, deviceID); err != nil {
+		if repo.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	networkIDs, err := s.state.activeDeviceNetworkIDs(ctx, deviceID)
+	if err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	for _, networkID := range networkIDs {
+		state, err := s.state.pg.GetDeviceNetworkState(ctx, deviceID, networkID)
+		if err != nil {
+			if !repo.IsNotFound(err) {
+				return err
+			}
+			state = repo.DeviceNetworkState{
+				DeviceID:  deviceID,
+				NetworkID: networkID,
+			}
+		}
+		state.ControlReachable = true
+		state.LastSeenAt = now
+		state.UpdatedAt = now
+		if err := s.state.pg.UpsertDeviceNetworkState(ctx, state); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s dbNodeService) Register(userID string, req dto.RegisterNodeRequest) (dto.Node, error) {

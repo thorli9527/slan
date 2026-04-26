@@ -420,10 +420,6 @@ func (fakeAuthService) CompleteCallback(callbackID string, req dto.CompleteAuthC
 	return nil
 }
 
-func (fakeAuthService) MarkCallbackReceived(callbackID string) error {
-	return nil
-}
-
 type fakeOpsService struct{}
 
 func (fakeOpsService) LoginAdmin(req dto.OpsLoginRequest, remoteIP string) (dto.OpsLoginResponse, error) {

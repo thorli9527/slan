@@ -324,7 +324,7 @@ func (s *dbState) networkPeerDTO(ctx context.Context, self dto.Node, networkID s
 	}
 
 	device, err := s.pg.GetDeviceByID(ctx, record.DeviceID)
-	if err != nil || device.Status != "online" {
+	if err != nil {
 		return dto.Peer{}, false
 	}
 	if _, err := s.requireActiveNetworkAttachment(ctx, networkID, record.DeviceID, ErrForbidden, "peer node device"); err != nil {

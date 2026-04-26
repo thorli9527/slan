@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use slan_app_core::{
     BootstrapConfig, ControlPlaneConfig, DerpCluster, DerpMap, DerpNodeMeta, DerpTransport, Device,
-    DnsConfig, Endpoint, Network, NetworkAssignment, NetworkJoinResult, NetworkMap, NetworkMember,
-    Node, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry, RelayEndpoint, RelayNode,
-    RelayRegion, RelayTicket, Route, Session,
+    DnsConfig, Endpoint, MqttCredential, Network, NetworkAssignment, NetworkJoinResult, NetworkMap,
+    NetworkMember, Node, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry, RelayEndpoint,
+    RelayNode, RelayRegion, RelayTicket, Route, Session,
 };
 
 use crate::api::{
@@ -153,6 +153,10 @@ pub struct DeviceDto {
     pub public_key: Option<String>,
     #[serde(default)]
     pub network_ids: Vec<String>,
+    #[serde(default)]
+    pub mqtt: Option<MqttCredentialDto>,
+    #[serde(default)]
+    pub network_state: Option<DeviceNetworkStateDto>,
 }
 
 impl From<DeviceDto> for Device {
@@ -164,6 +168,47 @@ impl From<DeviceDto> for Device {
             status: value.status,
             virtual_ip: value.current_virtual_ip.or(value.virtual_ip),
             public_key: value.public_key,
+            mqtt: value.mqtt.map(Into::into),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceNetworkStateDto {
+    pub device_id: String,
+    pub network_id: String,
+    pub control_reachable: bool,
+    pub network_online: bool,
+    pub tunnel_up: bool,
+    pub last_probe_ok: bool,
+    #[serde(default)]
+    pub virtual_ip: Option<String>,
+    pub last_seen_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MqttCredentialDto {
+    pub broker_url: String,
+    pub client_id: String,
+    pub username: String,
+    pub password: String,
+    pub topic_prefix: String,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+}
+
+impl From<MqttCredentialDto> for MqttCredential {
+    fn from(value: MqttCredentialDto) -> Self {
+        Self {
+            broker_url: value.broker_url,
+            client_id: value.client_id,
+            username: value.username,
+            password: value.password,
+            topic_prefix: value.topic_prefix,
+            expires_at: value.expires_at,
         }
     }
 }
@@ -268,6 +313,23 @@ pub struct SwitchNetworkRequestDto {
 #[serde(rename_all = "camelCase")]
 pub struct DeactivateNetworkRequestDto {
     pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceNetworkStateRequestDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_id: Option<String>,
+    pub control_reachable: bool,
+    pub network_online: bool,
+    pub tunnel_up: bool,
+    pub last_probe_ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub virtual_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reported_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -392,7 +454,8 @@ impl From<NetworkJoinResultDto> for NetworkJoinResult {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkJoinByOwnerEmailResultDto {
-    pub network: NetworkDto,
+    #[serde(default)]
+    pub network: Option<NetworkDto>,
     pub member: NetworkMemberDto,
     pub attachment: SubnetAttachmentDto,
 }

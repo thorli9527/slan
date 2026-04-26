@@ -396,10 +396,6 @@ func (s phase1AuthService) CompleteCallback(callbackID string, req dto.CompleteA
 	return s.svc.CompleteCallback(callbackID, req)
 }
 
-func (s phase1AuthService) MarkCallbackReceived(callbackID string) error {
-	return s.svc.MarkCallbackReceived(callbackID)
-}
-
 type phase1DeviceService struct {
 	svc *phase1Services
 }
@@ -410,6 +406,14 @@ func (s phase1DeviceService) Register(userID string, req dto.RegisterDeviceReque
 
 func (s phase1DeviceService) ListByUser(userID string) ([]dto.Device, error) {
 	return s.svc.ListByUser(userID)
+}
+
+func (s phase1DeviceService) SetDeviceNetworkState(userID, deviceID, networkID string, req dto.DeviceNetworkStateRequest) (dto.DeviceNetworkState, error) {
+	return s.svc.SetDeviceNetworkState(userID, deviceID, networkID, req)
+}
+
+func (s phase1DeviceService) MarkMQTTReachable(deviceID string) error {
+	return s.svc.MarkMQTTReachable(deviceID)
 }
 
 type phase1NodeService struct {
@@ -518,10 +522,6 @@ func (s *phase1Services) CompleteCallback(callbackID string, req dto.CompleteAut
 	return nil
 }
 
-func (s *phase1Services) MarkCallbackReceived(callbackID string) error {
-	return nil
-}
-
 func (s *phase1Services) Authenticate(accessToken string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -564,6 +564,54 @@ func (s *phase1Services) ListByUser(userID string) ([]dto.Device, error) {
 		}
 	}
 	return items, nil
+}
+
+func (s *phase1Services) SetDeviceNetworkState(userID, deviceID, networkID string, req dto.DeviceNetworkStateRequest) (dto.DeviceNetworkState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device := s.devices[deviceID]
+	if device == nil {
+		return dto.DeviceNetworkState{}, service.ErrNotFound
+	}
+	if device.userID != userID {
+		return dto.DeviceNetworkState{}, service.ErrForbidden
+	}
+	return dto.DeviceNetworkState{
+		DeviceID:         deviceID,
+		NetworkID:        networkID,
+		ControlReachable: req.ControlReachable,
+		NetworkOnline:    req.NetworkOnline,
+		TunnelUp:         req.TunnelUp,
+		LastProbeOK:      req.LastProbeOK,
+		VirtualIP:        req.VirtualIP,
+		LastSeenAt:       req.ReportedAt,
+		UpdatedAt:        req.ReportedAt,
+	}, nil
+}
+
+func (s *phase1Services) MarkMQTTReachable(deviceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device := s.devices[deviceID]
+	if device == nil {
+		return service.ErrNotFound
+	}
+	for networkID, members := range s.members {
+		member := members[deviceID]
+		if member == nil || member.Status != "active" {
+			continue
+		}
+		device.NetworkState = &dto.DeviceNetworkState{
+			DeviceID:         deviceID,
+			NetworkID:        networkID,
+			ControlReachable: true,
+			NetworkOnline:    false,
+			TunnelUp:         false,
+			LastProbeOK:      false,
+		}
+		break
+	}
+	return nil
 }
 
 func (s *phase1Services) registerNode(userID string, req dto.RegisterNodeRequest) (dto.Node, error) {

@@ -118,10 +118,6 @@ func (s dbAuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackSta
 	if err != nil {
 		return dto.AuthCallbackStatusResponse{}, err
 	}
-	receivedAt, err := s.state.tokens.AuthCallbackReceivedAt(context.Background(), callbackID)
-	if err != nil {
-		return dto.AuthCallbackStatusResponse{}, err
-	}
 	var responsePayload *dto.CompleteAuthCallbackRequest
 	if ready {
 		responsePayload = &payload
@@ -129,8 +125,6 @@ func (s dbAuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackSta
 	return dto.AuthCallbackStatusResponse{
 		CallbackID: callbackID,
 		Ready:      ready,
-		Received:   receivedAt > 0,
-		ReceivedAt: receivedAt,
 		Payload:    responsePayload,
 	}, nil
 }
@@ -155,19 +149,6 @@ func (s dbAuthService) CompleteCallback(callbackID string, req dto.CompleteAuthC
 		context.Background(),
 		callbackID,
 		req,
-		10*time.Minute,
-	)
-}
-
-func (s dbAuthService) MarkCallbackReceived(callbackID string) error {
-	callbackID = strings.TrimSpace(callbackID)
-	if callbackID == "" {
-		return ErrInvalidArgument
-	}
-	return s.state.tokens.MarkAuthCallbackReceived(
-		context.Background(),
-		callbackID,
-		time.Now().UnixMilli(),
 		10*time.Minute,
 	)
 }

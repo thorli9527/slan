@@ -50,6 +50,21 @@ pub struct JoinNetworkArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DeviceNetworkStateArgs {
+    pub device_id: String,
+    pub network_id: String,
+    pub control_reachable: bool,
+    pub network_online: bool,
+    pub tunnel_up: bool,
+    pub last_probe_ok: bool,
+    #[serde(default)]
+    pub virtual_ip: Option<String>,
+    #[serde(default)]
+    pub reported_at: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JoinNetworkByOwnerEmailArgs {
     pub owner_email: String,
     pub device_id: String,

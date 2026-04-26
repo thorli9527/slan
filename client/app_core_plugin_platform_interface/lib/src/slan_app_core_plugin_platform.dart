@@ -220,6 +220,28 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     });
   }
 
+  Future<void> setDeviceNetworkState({
+    required String deviceId,
+    required String networkId,
+    required bool controlReachable,
+    required bool networkOnline,
+    required bool tunnelUp,
+    required bool lastProbeOk,
+    String? virtualIp,
+    int? reportedAt,
+  }) async {
+    await invoke('setDeviceNetworkState', {
+      'deviceId': deviceId,
+      'networkId': networkId,
+      'controlReachable': controlReachable,
+      'networkOnline': networkOnline,
+      'tunnelUp': tunnelUp,
+      'lastProbeOk': lastProbeOk,
+      if (virtualIp != null && virtualIp.isNotEmpty) 'virtualIp': virtualIp,
+      if (reportedAt != null) 'reportedAt': reportedAt,
+    });
+  }
+
   Future<AppCoreBootstrapPayload> bootstrap({
     required String nodeId,
     required String networkId,

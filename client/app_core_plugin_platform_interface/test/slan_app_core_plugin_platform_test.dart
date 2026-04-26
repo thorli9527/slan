@@ -317,6 +317,7 @@ void main() {
           'virtualIp': '10.0.2.2',
         },
         'deactivateNetwork': null,
+        'setDeviceNetworkState': null,
         'connect': {
           'status': 'connected',
           'path': 'derp',
@@ -394,6 +395,16 @@ void main() {
         deviceId: 'dev-1',
       );
       await platform.deactivateNetwork(networkId: 'net-key', deviceId: 'dev-1');
+      await platform.setDeviceNetworkState(
+        deviceId: 'dev-1',
+        networkId: 'net-key',
+        controlReachable: true,
+        networkOnline: true,
+        tunnelUp: true,
+        lastProbeOk: true,
+        virtualIp: '10.0.2.2',
+        reportedAt: 123,
+      );
       final connect = await platform.connect(
         networkId: 'net-1',
         peerNodeId: 'node-2',
@@ -430,6 +441,7 @@ void main() {
         'activateNetwork',
         'switchNetwork',
         'deactivateNetwork',
+        'setDeviceNetworkState',
         'connect',
         'probe',
         'send',
@@ -471,14 +483,24 @@ void main() {
         'deviceId': 'dev-1',
       });
       expect(platform.calls[9].args, {
+        'deviceId': 'dev-1',
+        'networkId': 'net-key',
+        'controlReachable': true,
+        'networkOnline': true,
+        'tunnelUp': true,
+        'lastProbeOk': true,
+        'virtualIp': '10.0.2.2',
+        'reportedAt': 123,
+      });
+      expect(platform.calls[10].args, {
         'networkId': 'net-1',
         'peerNodeId': 'node-2',
       });
-      expect(platform.calls[10].args, {
+      expect(platform.calls[11].args, {
         'payload': 'hello',
         'probeTimeoutMs': 7,
       });
-      expect(platform.calls[11].args, {
+      expect(platform.calls[12].args, {
         'payload': 'hello',
       });
     });

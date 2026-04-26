@@ -10,6 +10,7 @@ import (
 
 // routerDeps 聚合路由层需要显式注入的全部 service 依赖。
 type routerDeps struct {
+	Config configs.Config
 	// Auth 提供注册和登录能力。
 	Auth service.Auth
 	// Device 提供设备注册和查询能力。
@@ -26,7 +27,7 @@ type routerDeps struct {
 	ControlChannel service.ControlChannel
 	// ControlSync 提供跨实例控制事件同步能力。
 	ControlSync service.ControlSync
-	// MessageDelivery 提供下行消息 ACK/重试/归档能力。
+	// MessageDelivery 提供下行消息投递、重试和归档能力。
 	MessageDelivery service.MessageDelivery
 	// Ops 提供运营管理视图和 RBAC 管理能力。
 	Ops service.Ops
@@ -60,6 +61,7 @@ func NewRouterDeps(
 
 // NewPublicRouter 构建对外客户使用的 HTTP 路由。
 func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
+	deps.Config = cfg
 	if deps.Auth == nil || deps.Device == nil || deps.Network == nil || deps.Node == nil || deps.Bootstrap == nil || deps.Tokens == nil || deps.ControlChannel == nil {
 		panic("http public router requires explicit services")
 	}
@@ -81,6 +83,7 @@ func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 
 // NewOpsRouter 构建运营管理 HTTP 路由。
 func NewOpsRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
+	deps.Config = cfg
 	if deps.Ops == nil {
 		panic("http ops router requires ops service")
 	}

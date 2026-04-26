@@ -4,7 +4,10 @@
   gap: 28px;
   align-items: stretch;
   padding: 30px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid rgba(15, 23, 42, .09);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 14px 40px rgba(15, 23, 42, .07);
 }
 
 .auth-copy {
@@ -15,7 +18,7 @@
 
 .auth-kicker {
   margin: 0;
-  color: var(--accent);
+  color: #ff6900;
   text-transform: uppercase;
   letter-spacing: 0.14em;
   font-size: 12px;
@@ -30,7 +33,7 @@
 
 .auth-description {
   margin: 0;
-  color: var(--muted);
+  color: #6b7280;
   font-size: 18px;
   line-height: 1.65;
   max-width: 620px;
@@ -46,7 +49,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  color: var(--text);
+  color: #111827;
   font-size: 15px;
   font-weight: 600;
 }
@@ -54,9 +57,8 @@
 .point-dot {
   width: 10px;
   height: 10px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, var(--accent), #d98d64);
-  box-shadow: 0 0 0 6px rgba(162, 60, 36, 0.08);
+  border-radius: 3px;
+  background: #ff6900;
   flex: none;
 }
 
@@ -65,11 +67,10 @@
   align-content: start;
   gap: 16px;
   padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: 28px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 241, 230, 0.92));
-  box-shadow: 0 18px 60px rgba(23, 32, 42, 0.10);
+  border: 1px solid rgba(15, 23, 42, .09);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, .07);
 }
 
 .segmented {
@@ -84,7 +85,7 @@
 .segmented button {
   border: none;
   background: transparent;
-  color: var(--muted);
+  color: #6b7280;
   padding: 12px 18px;
   border-radius: 999px;
   font-weight: 700;
@@ -95,15 +96,15 @@
 .segmented button:hover { transform: translateY(-1px); }
 
 .segmented button.active {
-  background: var(--panel-strong);
-  color: var(--text);
+  background: #fff;
+  color: #111827;
   box-shadow: 0 6px 18px rgba(23, 32, 42, 0.10);
 }
 
 .field {
   display: grid;
   gap: 8px;
-  color: var(--muted);
+  color: #6b7280;
   font-size: 13px;
   font-weight: 700;
 }
@@ -112,25 +113,25 @@
   width: 100%;
   border: 1px solid rgba(23, 32, 42, 0.12);
   background: rgba(255, 255, 255, 0.98);
-  border-radius: 18px;
+  border-radius: 12px;
   padding: 16px 18px;
-  color: var(--text);
+  color: #111827;
   font-size: 16px;
   outline: none;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
 .field input:focus {
-  border-color: rgba(162, 60, 36, 0.42);
-  box-shadow: 0 0 0 4px rgba(162, 60, 36, 0.10);
+  border-color: rgba(255, 105, 0, 0.5);
+  box-shadow: 0 0 0 4px rgba(255, 105, 0, 0.11);
   transform: translateY(-1px);
 }
 
 .submit {
   border: none;
-  border-radius: 20px;
+  border-radius: 12px;
   padding: 15px 18px;
-  background: linear-gradient(135deg, #17202a, #2a3847);
+  background: #ff6900;
   color: #fff;
   font-weight: 800;
   font-size: 16px;
@@ -147,7 +148,7 @@
 
 .auth-hint {
   margin: 0;
-  color: var(--muted);
+  color: #6b7280;
   font-size: 13px;
   line-height: 1.5;
 }

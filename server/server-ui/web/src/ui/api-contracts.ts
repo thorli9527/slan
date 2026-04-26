@@ -23,9 +23,28 @@ export type CompleteAuthCallbackRequest = {
 export type AuthCallbackStatusResponse = {
   callbackId: string;
   ready: boolean;
-  received: boolean;
-  receivedAt?: number;
   payload?: CompleteAuthCallbackRequest;
+};
+
+export type MQTTCredential = {
+  brokerUrl: string;
+  clientId: string;
+  username: string;
+  password: string;
+  topicPrefix: string;
+  expiresAt?: number;
+};
+
+export type DeviceNetworkState = {
+  deviceId: string;
+  networkId: string;
+  controlReachable: boolean;
+  networkOnline: boolean;
+  tunnelUp: boolean;
+  lastProbeOk: boolean;
+  virtualIp?: string;
+  lastSeenAt: number;
+  updatedAt: number;
 };
 
 export type Device = {
@@ -44,6 +63,8 @@ export type Device = {
   createdAt?: number;
   publicKey?: string;
   networkIds?: string[];
+  mqtt?: MQTTCredential;
+  networkState?: DeviceNetworkState;
 };
 
 export type Network = {

@@ -591,6 +591,7 @@ fn bootstrap_config_from_json(raw: &Value) -> BootstrapConfig {
             .and_then(|item| item["virtualIp"].as_str())
             .map(ToString::to_string),
         public_key: device_value["publicKey"].as_str().map(ToString::to_string),
+        mqtt: None,
     };
     let mut control_plane: ControlPlaneConfig =
         serde_json::from_value(raw["controlPlane"].clone()).expect("controlPlane");

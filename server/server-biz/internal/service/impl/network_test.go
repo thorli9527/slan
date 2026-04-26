@@ -1297,6 +1297,7 @@ func newNetworkTestState(t *testing.T) *dbState {
 		&repo.NodeConnectionState{},
 		&repo.NodePathHealth{},
 		&repo.ControlSession{},
+		&repo.DeviceNetworkState{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}

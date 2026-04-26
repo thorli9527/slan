@@ -18,7 +18,7 @@ class SlanApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF1E6B52),
+      seedColor: const Color(0xFFFF6900),
       brightness: Brightness.light,
     );
     return MaterialApp(
@@ -27,9 +27,9 @@ class SlanApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: colorScheme,
-        scaffoldBackgroundColor: const Color(0xFFF3F6F8),
+        scaffoldBackgroundColor: const Color(0xFFF5F6F8),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF3F6F8),
+          backgroundColor: Color(0xFFF5F6F8),
           surfaceTintColor: Colors.transparent,
         ),
         cardTheme: CardThemeData(
@@ -39,19 +39,27 @@ class SlanApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(24),
           ),
         ),
+        chipTheme: ChipThemeData(
+          backgroundColor: const Color(0xFFFFF5ED),
+          selectedColor: const Color(0xFFFFE3D1),
+          side: BorderSide(color: colorScheme.primary.withValues(alpha: 0.24)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFFFCFDFD),
+          fillColor: Colors.white,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: colorScheme.outlineVariant),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: colorScheme.outlineVariant),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(
               color: colorScheme.primary,
               width: 1.4,
@@ -62,7 +70,7 @@ class SlanApp extends StatelessWidget {
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(12),
             ),
           ),
         ),
@@ -70,7 +78,7 @@ class SlanApp extends StatelessWidget {
           style: OutlinedButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(12),
             ),
           ),
         ),

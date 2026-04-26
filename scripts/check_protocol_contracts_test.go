@@ -20,7 +20,8 @@ func TestParsePublicGoRoutes(t *testing.T) {
 		{Method: "GET", Path: "/healthz"},
 		{Method: "POST", Path: "/auth/register"},
 		{Method: "PUT", Path: "/networks/{networkId}/dns"},
-		{Method: "POST", Path: "/control/messages/{messageId}/ack"},
+		{Method: "POST", Path: "/mqtt/auth/check"},
+		{Method: "PUT", Path: "/devices/{deviceId}/networks/{networkId}/state"},
 		{Method: "GET", Path: "/auth/ws/{callbackId}"},
 		{Method: "GET", Path: "/control/ws"},
 	} {
@@ -45,10 +46,12 @@ paths:
     get: {}
   /auth/register:
     post: {}
+  /mqtt/auth/check:
+    post: {}
+  /devices/{deviceId}/networks/{networkId}/state:
+    put: {}
   /networks/{networkId}/dns:
     put: {}
-  /control/messages/{messageId}/ack:
-    post: {}
   /auth/ws/{callbackId}:
     get: {}
 components:
@@ -77,8 +80,14 @@ func routes(router interface{}) {
 func routes(api interface{}) {
 	auth := api.Group("/auth")
 	auth.POST("/register", handler)
+	api.POST("/mqtt/auth/check", handler)
 }`,
 		"routes_business_registration.go": `package httpapi
+
+func routes(protected interface{}) {
+	devices := protected.Group("/devices")
+	devices.PUT("/:deviceId/networks/:networkId/state", handler)
+}
 `,
 		"routes_business_network.go": `package httpapi
 
@@ -89,8 +98,6 @@ func routes(protected interface{}) {
 		"routes_business_bootstrap.go": `package httpapi
 
 func routes(protected interface{}) {
-	control := protected.Group("/control")
-	control.POST("/messages/:messageId/ack", handler)
 }`,
 		"auth_callback_ws.go": `package httpapi
 

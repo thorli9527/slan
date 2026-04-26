@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -167,7 +167,6 @@ pub struct ControlWsPathHealthReport {
 #[derive(Debug)]
 pub struct ControlWsClient {
     stream: TcpStream,
-    ack_target: Option<AckTarget>,
     queued_events: VecDeque<ControlWsEvent>,
 }
 
@@ -206,7 +205,6 @@ impl ControlWsClient {
 
         Ok(Self {
             stream,
-            ack_target: AckTarget::from_ws_url(&config.ws_url, &config.access_token).ok(),
             queued_events: VecDeque::new(),
         })
     }
@@ -378,14 +376,8 @@ impl ControlWsClient {
 
     fn read_envelope(&mut self) -> Result<Envelope, String> {
         let payload = decode_text_frame(&mut self.stream)?;
-        let envelope = serde_json::from_slice::<Envelope>(&payload)
-            .map_err(|err| format!("decode ws envelope: {err}"))?;
-        if let (Some(ack_target), Some(message_id)) =
-            (self.ack_target.as_ref(), envelope.message_id.as_deref())
-        {
-            let _ = ack_control_message(ack_target, message_id);
-        }
-        Ok(envelope)
+        serde_json::from_slice::<Envelope>(&payload)
+            .map_err(|err| format!("decode ws envelope: {err}"))
     }
 
     fn read_response_envelope(&mut self, expected_type: &str) -> Result<Envelope, String> {
@@ -503,33 +495,6 @@ struct WsEndpoint {
     path: String,
 }
 
-#[derive(Debug, Clone)]
-struct AckTarget {
-    base_url: String,
-    access_token: String,
-}
-
-impl AckTarget {
-    fn from_ws_url(ws_url: &str, access_token: &str) -> Result<Self, String> {
-        let trimmed = ws_url.trim();
-        let rest = trimmed
-            .strip_prefix("ws://")
-            .ok_or_else(|| "only ws:// control plane URLs are currently supported".to_string())?;
-        let authority = rest
-            .split_once('/')
-            .map(|(authority, _)| authority)
-            .unwrap_or(rest)
-            .trim();
-        if authority.is_empty() || access_token.trim().is_empty() {
-            return Err("missing ack target".to_string());
-        }
-        Ok(Self {
-            base_url: format!("http://{authority}"),
-            access_token: access_token.to_string(),
-        })
-    }
-}
-
 fn parse_ws_url(url: &str) -> Result<WsEndpoint, String> {
     let trimmed = url.trim();
     let stripped = trimmed
@@ -565,45 +530,6 @@ fn read_http_response(stream: &mut TcpStream) -> Result<String, String> {
 
 fn first_response_line(response: &str) -> &str {
     response.lines().next().unwrap_or("invalid response")
-}
-
-fn ack_control_message(target: &AckTarget, message_id: &str) -> Result<(), String> {
-    let authority = target
-        .base_url
-        .trim()
-        .strip_prefix("http://")
-        .ok_or_else(|| "unsupported ack url scheme".to_string())?;
-    let socket_addr = authority
-        .to_socket_addrs()
-        .map_err(|err| format!("resolve ack authority {authority}: {err}"))?
-        .next()
-        .ok_or_else(|| format!("no ack address resolved for {authority}"))?;
-    let mut stream = TcpStream::connect_timeout(&socket_addr, DEFAULT_IO_TIMEOUT)
-        .map_err(|err| format!("connect ack endpoint {authority}: {err}"))?;
-    stream
-        .set_read_timeout(Some(DEFAULT_IO_TIMEOUT))
-        .map_err(|err| format!("set ack read timeout: {err}"))?;
-    stream
-        .set_write_timeout(Some(DEFAULT_IO_TIMEOUT))
-        .map_err(|err| format!("set ack write timeout: {err}"))?;
-
-    let body = b"{}";
-    let request = format!(
-        "POST /control/messages/{message_id}/ack HTTP/1.1\r\nHost: {authority}\r\nAccept: application/json\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        target.access_token,
-        body.len()
-    );
-    stream
-        .write_all(request.as_bytes())
-        .and_then(|_| stream.write_all(body))
-        .map_err(|err| format!("write ack request: {err}"))?;
-    let _ = stream.shutdown(Shutdown::Write);
-
-    let response = read_http_response(&mut stream)?;
-    if !response.starts_with("HTTP/1.1 200") && !response.starts_with("HTTP/1.0 200") {
-        return Err(format!("ack rejected: {}", first_response_line(&response)));
-    }
-    Ok(())
 }
 
 fn encode_text_frame(payload: &[u8]) -> Vec<u8> {

@@ -4,19 +4,21 @@ use slan_app_core::{
 };
 
 use crate::api::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkByKeyRequest,
-    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
-    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
-    SwitchNetworkRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
+    JoinNetworkByKeyRequest, JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest,
+    RefreshTokenRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest,
+    RelayTicketRequest, SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
+    UpdateNetworkDNSRequest,
 };
 use crate::dto::{
     AuthResponseDto, BootstrapRequestDto, BootstrapResponseDto, CreateNetworkRequestDto,
-    DeactivateNetworkRequestDto, DeviceDto, JoinNetworkByKeyRequestDto,
-    JoinNetworkByOwnerEmailRequestDto, JoinNetworkRequestDto, ListNetworksResponseDto,
-    LoginRequestDto, NetworkAssignmentDto, NetworkDto, NetworkJoinByOwnerEmailResultDto,
-    NetworkJoinResultDto, NodeDto, RefreshTokenRequestDto, RegisterDeviceRequestDto,
-    RegisterNodeRequestDto, RegisterRequestDto, RelayTicketDto, RelayTicketRequestDto,
-    SwitchNetworkRequestDto, UpdateAttachmentRemarkRequestDto, UpdateNetworkDNSRequestDto,
+    DeactivateNetworkRequestDto, DeviceDto, DeviceNetworkStateRequestDto,
+    JoinNetworkByKeyRequestDto, JoinNetworkByOwnerEmailRequestDto, JoinNetworkRequestDto,
+    ListNetworksResponseDto, LoginRequestDto, NetworkAssignmentDto, NetworkDto,
+    NetworkJoinByOwnerEmailResultDto, NetworkJoinResultDto, NodeDto, RefreshTokenRequestDto,
+    RegisterDeviceRequestDto, RegisterNodeRequestDto, RegisterRequestDto, RelayTicketDto,
+    RelayTicketRequestDto, SwitchNetworkRequestDto, UpdateAttachmentRemarkRequestDto,
+    UpdateNetworkDNSRequestDto,
 };
 use crate::http_runtime::{get_json, post_json, put_json};
 use crate::transport::JsonHttpTransport;
@@ -255,6 +257,33 @@ where
         Ok(())
     }
 
+    fn set_device_network_state(
+        &self,
+        access_token: &str,
+        req: DeviceNetworkStateRequest,
+    ) -> Result<(), String> {
+        let _: serde_json::Value = put_json(
+            &self.transport,
+            &self.base_url,
+            &format!(
+                "/devices/{}/networks/{}/state",
+                req.device_id, req.network_id
+            ),
+            Some(access_token),
+            &DeviceNetworkStateRequestDto {
+                device_id: Some(req.device_id),
+                network_id: Some(req.network_id),
+                control_reachable: req.control_reachable,
+                network_online: req.network_online,
+                tunnel_up: req.tunnel_up,
+                last_probe_ok: req.last_probe_ok,
+                virtual_ip: req.virtual_ip,
+                reported_at: req.reported_at,
+            },
+        )?;
+        Ok(())
+    }
+
     fn bootstrap(
         &self,
         access_token: &str,
@@ -392,6 +421,14 @@ where
         req: DeactivateNetworkRequest,
     ) -> Result<(), String> {
         HttpControllerClient::deactivate_network(self, access_token, req)
+    }
+
+    fn set_device_network_state(
+        &self,
+        access_token: &str,
+        req: DeviceNetworkStateRequest,
+    ) -> Result<(), String> {
+        HttpControllerClient::set_device_network_state(self, access_token, req)
     }
 
     fn bootstrap(

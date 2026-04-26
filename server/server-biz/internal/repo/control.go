@@ -107,7 +107,7 @@ func (r *PostgresRepository) DeleteControlSessionsBefore(ctx context.Context, cu
 func (r *PostgresRepository) MarkDevicesOfflineWithoutFreshControlSession(ctx context.Context, cutoff int64) error {
 	return r.db.WithContext(ctx).
 		Model(&Device{}).
-		Where("status = ?", "online").
+		Where("status IN ?", []string{"online", "reachable"}).
 		Where("NOT EXISTS (?)",
 			r.db.Model(&ControlSession{}).
 				Select("1").

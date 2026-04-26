@@ -14,7 +14,7 @@ type OpsOverview struct {
 	UserCount int `json:"userCount"`
 	// DeviceCount 是当前系统中的设备总数。
 	DeviceCount int `json:"deviceCount"`
-	// OnlineDeviceCount 是最近仍处于在线状态的设备数。
+	// OnlineDeviceCount 是最近仍处于虚拟网络在线状态的设备数。
 	OnlineDeviceCount int `json:"onlineDeviceCount"`
 	// NodeCount 是当前注册的节点总数。
 	NodeCount int `json:"nodeCount"`

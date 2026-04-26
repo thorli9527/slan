@@ -4,10 +4,10 @@ use control_ws_client::{
     ControlWsPathHealthReport,
 };
 use controller_client::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkByKeyRequest,
-    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
-    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
-    SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
+    JoinNetworkByKeyRequest, JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest,
+    RefreshTokenRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest,
+    RelayTicketRequest, SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
 };
 use p2p::{P2PConnector, PeerCandidate};
 use relay_client::{DerpPool, PathManager, RelayClient};
@@ -782,6 +782,33 @@ where
             state.tunnel_peer_virtual_ip = None;
         }
         Ok(())
+    }
+
+    fn set_device_network_state(
+        &self,
+        device_id: String,
+        network_id: String,
+        control_reachable: bool,
+        network_online: bool,
+        tunnel_up: bool,
+        last_probe_ok: bool,
+        virtual_ip: Option<String>,
+        reported_at: Option<i64>,
+    ) -> Result<(), String> {
+        let access_token = self.with_access_token()?;
+        self.controller.set_device_network_state(
+            &access_token,
+            DeviceNetworkStateRequest {
+                device_id,
+                network_id,
+                control_reachable,
+                network_online,
+                tunnel_up,
+                last_probe_ok,
+                virtual_ip,
+                reported_at,
+            },
+        )
     }
 
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String> {

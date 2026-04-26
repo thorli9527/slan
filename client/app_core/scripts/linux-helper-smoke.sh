@@ -3,6 +3,7 @@ set -eu
 
 interface_name="${SLAN_LINUX_SMOKE_INTERFACE:-slan0}"
 local_ip="${SLAN_LINUX_SMOKE_LOCAL_IP:-100.64.0.10}"
+local_cidr="${SLAN_LINUX_SMOKE_LOCAL_CIDR:-$local_ip/24}"
 peer_ip="${SLAN_LINUX_SMOKE_PEER_IP:-100.64.0.2}"
 endpoint="${SLAN_LINUX_SMOKE_ENDPOINT:-127.0.0.1:51820}"
 
@@ -19,7 +20,7 @@ cleanup
 trap cleanup EXIT
 
 request_apply=$(cat <<EOF
-{"method":"applyTunnelConfiguration","args":{"transport":"relay","localVirtualIp":"$local_ip","peerVirtualIp":"$peer_ip","wireguardInterface":{"interfaceName":"$interface_name","keyPair":{"publicKey":"$public_key","privateKey":"$private_key"},"listenPort":51820,"mtu":1280,"addresses":["$local_ip/32"],"dnsServers":[],"peers":[]},"wireguardPeer":{"peerNodeId":"linux-smoke-peer","publicKey":"$peer_public_key","endpoint":"$endpoint","allowedIps":[{"cidr":"$peer_ip/32"}],"persistentKeepaliveSeconds":15}}}
+{"method":"applyTunnelConfiguration","args":{"transport":"relay","localVirtualIp":"$local_ip","peerVirtualIp":"$peer_ip","wireguardInterface":{"interfaceName":"$interface_name","keyPair":{"publicKey":"$public_key","privateKey":"$private_key"},"listenPort":51820,"mtu":1280,"addresses":["$local_cidr"],"dnsServers":[],"peers":[]},"wireguardPeer":{"peerNodeId":"linux-smoke-peer","publicKey":"$peer_public_key","endpoint":"$endpoint","allowedIps":[{"cidr":"$peer_ip/32"}],"persistentKeepaliveSeconds":15}}}
 EOF
 )
 
@@ -55,7 +56,7 @@ printf '%s\n' "$responses" | grep -q '"name":"tun_device"'
 printf '%s\n' "$responses" | grep -q '"linux-kernel"'
 printf '%s\n' "$responses" | grep -q '"wireguard-tools"'
 ip link show "$interface_name" >/dev/null
-ip address show dev "$interface_name" | grep -q "$local_ip/32"
+ip address show dev "$interface_name" | grep -q "$local_cidr"
 wg show "$interface_name" >/dev/null
 
-echo "linux-helper-smoke ok: $interface_name has $local_ip/32 and platform diagnostics"
+echo "linux-helper-smoke ok: $interface_name has $local_cidr and platform diagnostics"

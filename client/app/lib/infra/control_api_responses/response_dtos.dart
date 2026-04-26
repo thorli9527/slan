@@ -73,8 +73,6 @@ class AuthCallbackStatusResponseDto {
   const AuthCallbackStatusResponseDto({
     required this.callbackId,
     required this.ready,
-    required this.received,
-    this.receivedAt,
     this.payload,
   });
 
@@ -82,8 +80,6 @@ class AuthCallbackStatusResponseDto {
       AuthCallbackStatusResponseDto(
         callbackId: readString(json, 'callbackId'),
         ready: readBool(json, 'ready'),
-        received: readBool(json, 'received'),
-        receivedAt: readNullableInt(json, 'receivedAt'),
         payload: readNullableMap(json, 'payload') == null
             ? null
             : CompleteAuthCallbackRequestDto.fromJson(readMap(json, 'payload')),
@@ -91,9 +87,72 @@ class AuthCallbackStatusResponseDto {
 
   final String callbackId;
   final bool ready;
-  final bool received;
-  final int? receivedAt;
   final CompleteAuthCallbackRequestDto? payload;
+}
+
+class MqttCredentialResponseDto {
+  const MqttCredentialResponseDto({
+    required this.brokerUrl,
+    required this.clientId,
+    required this.username,
+    required this.password,
+    required this.topicPrefix,
+    this.expiresAt,
+  });
+
+  factory MqttCredentialResponseDto.fromJson(Map<String, dynamic> json) =>
+      MqttCredentialResponseDto(
+        brokerUrl: readString(json, 'brokerUrl'),
+        clientId: readString(json, 'clientId'),
+        username: readString(json, 'username'),
+        password: readString(json, 'password'),
+        topicPrefix: readString(json, 'topicPrefix'),
+        expiresAt: readNullableInt(json, 'expiresAt'),
+      );
+
+  final String brokerUrl;
+  final String clientId;
+  final String username;
+  final String password;
+  final String topicPrefix;
+  final int? expiresAt;
+}
+
+class DeviceNetworkStateResponseDto {
+  const DeviceNetworkStateResponseDto({
+    required this.deviceId,
+    required this.networkId,
+    required this.controlReachable,
+    required this.networkOnline,
+    required this.tunnelUp,
+    required this.lastProbeOk,
+    this.virtualIp,
+    required this.lastSeenAt,
+    required this.updatedAt,
+  });
+
+  factory DeviceNetworkStateResponseDto.fromJson(Map<String, dynamic> json) =>
+      DeviceNetworkStateResponseDto(
+        deviceId: readString(json, 'deviceId'),
+        networkId: readString(json, 'networkId'),
+        controlReachable: readBool(json, 'controlReachable'),
+        networkOnline: readBool(json, 'networkOnline'),
+        tunnelUp: readBool(json, 'tunnelUp'),
+        lastProbeOk: readBool(json, 'lastProbeOk'),
+        virtualIp: readNullableString(json, 'virtualIp'),
+        lastSeenAt: readInt(json, 'lastSeenAt'),
+        updatedAt: readInt(json, 'updatedAt'),
+      );
+
+  final String deviceId;
+  final String networkId;
+  final bool controlReachable;
+  final bool networkOnline;
+  final bool tunnelUp;
+  final bool lastProbeOk;
+  final String? virtualIp;
+  final int lastSeenAt;
+  final int updatedAt;
 }
 
 class DeviceResponseDto {
@@ -113,6 +172,8 @@ class DeviceResponseDto {
     this.createdAt,
     this.publicKey,
     this.networkIds = const [],
+    this.mqtt,
+    this.networkState,
   });
 
   factory DeviceResponseDto.fromJson(Map<String, dynamic> json) =>
@@ -132,6 +193,14 @@ class DeviceResponseDto {
         createdAt: readNullableInt(json, 'createdAt'),
         publicKey: readNullableString(json, 'publicKey'),
         networkIds: readStringList(json, 'networkIds'),
+        mqtt: readNullableMap(json, 'mqtt') == null
+            ? null
+            : MqttCredentialResponseDto.fromJson(readMap(json, 'mqtt')),
+        networkState: readNullableMap(json, 'networkState') == null
+            ? null
+            : DeviceNetworkStateResponseDto.fromJson(
+                readMap(json, 'networkState'),
+              ),
       );
 
   final String deviceId;
@@ -149,6 +218,8 @@ class DeviceResponseDto {
   final int? createdAt;
   final String? publicKey;
   final List<String> networkIds;
+  final MqttCredentialResponseDto? mqtt;
+  final DeviceNetworkStateResponseDto? networkState;
 }
 
 class NodeResponseDto {

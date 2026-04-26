@@ -34,6 +34,18 @@ type WSConfig struct {
 	Path string `yaml:"path"`
 }
 
+// MQTTConfig describes RocketMQ MQTT connection and credential settings.
+type MQTTConfig struct {
+	Enabled                    bool   `yaml:"enabled"`
+	BrokerURL                  string `yaml:"broker_url"`
+	PublicBrokerURL            string `yaml:"public_broker_url"`
+	UsernamePrefix             string `yaml:"username_prefix"`
+	PasswordSecret             string `yaml:"password_secret"`
+	TopicPrefix                string `yaml:"topic_prefix"`
+	CredentialTTLSeconds       int    `yaml:"credential_ttl_seconds"`
+	PublishTimeoutMilliseconds int    `yaml:"publish_timeout_milliseconds"`
+}
+
 // RelayNodeConfig 描述配置文件中的一个 relay 节点。
 type RelayNodeConfig struct {
 	// NodeID 是 relay 节点唯一标识。
@@ -192,6 +204,8 @@ type Config struct {
 	HTTP HTTPConfig `yaml:"http"`
 	// WS 包含控制面 WebSocket 端点配置。
 	WS WSConfig `yaml:"ws"`
+	// MQTT contains RocketMQ MQTT connection and credential settings.
+	MQTT MQTTConfig `yaml:"mqtt"`
 	// Relay 包含 relay/DERP 拓扑与票据签名配置。
 	Relay RelayConfig `yaml:"relay"`
 	// Bootstrap 包含客户端启动阶段的默认配置。
@@ -214,6 +228,14 @@ func DefaultConfig() Config {
 	cfg.HTTP.PublicHost = "127.0.0.1:8080"
 	cfg.HTTP.PublicScheme = "http"
 	cfg.WS.Path = "/control/ws"
+	cfg.MQTT.Enabled = false
+	cfg.MQTT.BrokerURL = "mqtt://127.0.0.1:1883"
+	cfg.MQTT.PublicBrokerURL = "mqtt://127.0.0.1:1883"
+	cfg.MQTT.UsernamePrefix = "slan"
+	cfg.MQTT.PasswordSecret = "dev-mqtt-secret"
+	cfg.MQTT.TopicPrefix = "slan/devices"
+	cfg.MQTT.CredentialTTLSeconds = 86400
+	cfg.MQTT.PublishTimeoutMilliseconds = 3000
 	cfg.Relay.DefaultClusterID = "cn-local-a"
 	cfg.Relay.TicketSigningSecret = "dev-relay-ticket-secret"
 	cfg.Relay.Countries = []RelayCountryConfig{
@@ -309,6 +331,27 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.WS.Path == "" {
 		cfg.WS.Path = DefaultConfig().WS.Path
+	}
+	if cfg.MQTT.BrokerURL == "" {
+		cfg.MQTT.BrokerURL = DefaultConfig().MQTT.BrokerURL
+	}
+	if cfg.MQTT.PublicBrokerURL == "" {
+		cfg.MQTT.PublicBrokerURL = cfg.MQTT.BrokerURL
+	}
+	if cfg.MQTT.UsernamePrefix == "" {
+		cfg.MQTT.UsernamePrefix = DefaultConfig().MQTT.UsernamePrefix
+	}
+	if cfg.MQTT.PasswordSecret == "" {
+		cfg.MQTT.PasswordSecret = DefaultConfig().MQTT.PasswordSecret
+	}
+	if cfg.MQTT.TopicPrefix == "" {
+		cfg.MQTT.TopicPrefix = DefaultConfig().MQTT.TopicPrefix
+	}
+	if cfg.MQTT.CredentialTTLSeconds == 0 {
+		cfg.MQTT.CredentialTTLSeconds = DefaultConfig().MQTT.CredentialTTLSeconds
+	}
+	if cfg.MQTT.PublishTimeoutMilliseconds == 0 {
+		cfg.MQTT.PublishTimeoutMilliseconds = DefaultConfig().MQTT.PublishTimeoutMilliseconds
 	}
 	if cfg.Relay.DefaultClusterID == "" || len(cfg.Relay.Countries) == 0 {
 		cfg.Relay = DefaultConfig().Relay
@@ -427,6 +470,18 @@ func applyEnvOverrides(cfg *Config) {
 	if value := os.Getenv("SLAN_RELAY_TICKET_SIGNING_SECRET"); value != "" {
 		cfg.Relay.TicketSigningSecret = value
 	}
+	if value := os.Getenv("SLAN_MQTT_ENABLED"); value != "" {
+		cfg.MQTT.Enabled = strings.EqualFold(value, "true") || value == "1"
+	}
+	if value := os.Getenv("SLAN_MQTT_BROKER_URL"); value != "" {
+		cfg.MQTT.BrokerURL = value
+	}
+	if value := os.Getenv("SLAN_MQTT_PUBLIC_BROKER_URL"); value != "" {
+		cfg.MQTT.PublicBrokerURL = value
+	}
+	if value := os.Getenv("SLAN_MQTT_PASSWORD_SECRET"); value != "" {
+		cfg.MQTT.PasswordSecret = value
+	}
 	if value := os.Getenv("SLAN_OPS_ACCESS_TOKEN"); value != "" {
 		cfg.Ops.AccessToken = value
 	}
@@ -455,6 +510,9 @@ func validateProductionConfig(cfg Config) error {
 	}
 	if weakSecret(cfg.Relay.TicketSigningSecret, defaults.Relay.TicketSigningSecret, "change-me") {
 		problems = append(problems, "relay.ticket_signing_secret must be replaced")
+	}
+	if cfg.MQTT.Enabled && weakSecret(cfg.MQTT.PasswordSecret, defaults.MQTT.PasswordSecret, "change-me") {
+		problems = append(problems, "mqtt.password_secret must be replaced when mqtt is enabled")
 	}
 	if weakSecret(cfg.Ops.AccessToken, defaults.Ops.AccessToken, "change-me") {
 		problems = append(problems, "ops.access_token must be replaced")

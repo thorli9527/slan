@@ -77,24 +77,6 @@ func TestPublicErrorHandlersReturnJSON(t *testing.T) {
 	}
 }
 
-func TestControlMessageAckDisabledUsesErrorResponse(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.POST("/control/messages/:messageId/ack", func(c *gin.Context) {
-		writeErrorResponse(c, http.StatusNotImplemented, errorCodeNotImplemented, "message delivery disabled")
-	})
-
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/control/messages/msg-1/ack", strings.NewReader(`{}`)))
-
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	if resp := decodeErrorResponse(t, rec); resp.Code != errorCodeNotImplemented {
-		t.Fatalf("expected NOT_IMPLEMENTED, got %+v", resp)
-	}
-}
-
 func decodeErrorResponse(t *testing.T, rec *httptest.ResponseRecorder) dto.ErrorResponse {
 	t.Helper()
 	var resp dto.ErrorResponse

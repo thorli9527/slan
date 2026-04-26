@@ -279,6 +279,20 @@ class _FakeAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<void> setDeviceNetworkState({
+    required String deviceId,
+    required String networkId,
+    required bool controlReachable,
+    required bool networkOnline,
+    required bool tunnelUp,
+    required bool lastProbeOk,
+    String? virtualIp,
+    int? reportedAt,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<List<NetworkModel>> listNetworks() {
     throw UnimplementedError();
   }

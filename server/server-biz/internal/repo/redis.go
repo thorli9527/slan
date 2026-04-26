@@ -27,7 +27,6 @@ const networkRevisionKeyPrefix = "network_revision:"
 const connectPlanRetryCountKeyPrefix = "connect_plan_retry_count:"
 const connectPlanRetryGateKeyPrefix = "connect_plan_retry_gate:"
 const peerCandidateDeliveryKeyPrefix = "peer_candidate_delivery:"
-const authCallbackStatusKeyPrefix = "auth_callback_status:"
 const authCallbackPayloadKeyPrefix = "auth_callback_payload:"
 
 func NewRedisTokenStore(client *redis.Client) *RedisTokenStore {
@@ -83,27 +82,6 @@ func (s *RedisTokenStore) StoreControlSessionToken(ctx context.Context, token, u
 
 func (s *RedisTokenStore) DeleteControlSessionToken(ctx context.Context, token string) error {
 	return s.client.Del(ctx, "control_session_token:"+token).Err()
-}
-
-func (s *RedisTokenStore) MarkAuthCallbackReceived(ctx context.Context, callbackID string, receivedAt int64, ttl time.Duration) error {
-	if ttl <= 0 {
-		ttl = 10 * time.Minute
-	}
-	if err := s.client.Set(ctx, authCallbackStatusKeyPrefix+callbackID, receivedAt, ttl).Err(); err != nil {
-		return err
-	}
-	return s.client.Del(ctx, authCallbackPayloadKeyPrefix+callbackID).Err()
-}
-
-func (s *RedisTokenStore) AuthCallbackReceivedAt(ctx context.Context, callbackID string) (int64, error) {
-	value, err := s.client.Get(ctx, authCallbackStatusKeyPrefix+callbackID).Int64()
-	if err != nil {
-		if err == redis.Nil {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return value, nil
 }
 
 func (s *RedisTokenStore) StoreAuthCallbackPayload(ctx context.Context, callbackID string, payload any, ttl time.Duration) error {

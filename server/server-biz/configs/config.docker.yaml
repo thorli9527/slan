@@ -9,6 +9,15 @@ http:
   public_scheme: "https"
 ws:
   path: "/control/ws"
+mqtt:
+  enabled: false
+  broker_url: "mqtt://rocketmq-mqtt:1883"
+  public_broker_url: "mqtt://127.0.0.1:1883"
+  username_prefix: "slan"
+  password_secret: "docker-mqtt-secret"
+  topic_prefix: "slan/devices"
+  credential_ttl_seconds: 86400
+  publish_timeout_milliseconds: 3000
 relay:
   default_cluster_id: "cn-local-a"
   ticket_signing_secret: "docker-relay-ticket-secret"

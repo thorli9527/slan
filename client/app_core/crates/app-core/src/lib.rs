@@ -14,7 +14,7 @@ pub use derp::{
     DerpNodeMeta, DerpPoolState, DerpSwitchEvent, DerpTransport, ProbeSample, RelayTicket,
     SwitchReason,
 };
-pub use identity::{Device, Node, Session};
+pub use identity::{Device, MqttCredential, Node, Session};
 pub use network::{
     ControlPlaneConfig, DnsConfig, Endpoint, Network, NetworkAssignment, NetworkJoinResult,
     NetworkMap, NetworkMember, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry,

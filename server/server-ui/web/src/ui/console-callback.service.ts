@@ -30,7 +30,7 @@ export class ConsoleCallbackService {
     const statusTimer = setInterval(async () => {
       try {
         const status = await this.api.getCallbackStatus(input.callbackId);
-        if (!status.received) {
+        if (!status.ready) {
           return;
         }
         clearTimeout(fallbackTimer);

@@ -19,7 +19,6 @@ type memoryTokenStore struct {
 	opsTokens            map[string]string
 	controlSessionTokens map[string]string
 	authCallbackPayloads map[string][]byte
-	authCallbackReceived map[string]int64
 	networkRevisions     map[string]uint64
 	controlSyncEvents    []controlws.ControlSyncEvent
 	connectPlanGate      map[string]struct{}
@@ -33,7 +32,6 @@ func newMemoryTokenStore() *memoryTokenStore {
 		opsTokens:            make(map[string]string),
 		controlSessionTokens: make(map[string]string),
 		authCallbackPayloads: make(map[string][]byte),
-		authCallbackReceived: make(map[string]int64),
 		networkRevisions:     make(map[string]uint64),
 		controlSyncEvents:    []controlws.ControlSyncEvent{},
 		connectPlanGate:      make(map[string]struct{}),
@@ -106,20 +104,6 @@ func (s *memoryTokenStore) DeleteControlSessionToken(_ context.Context, token st
 	defer s.mu.Unlock()
 	delete(s.controlSessionTokens, token)
 	return nil
-}
-
-func (s *memoryTokenStore) MarkAuthCallbackReceived(_ context.Context, callbackID string, receivedAt int64, _ time.Duration) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.authCallbackReceived[callbackID] = receivedAt
-	delete(s.authCallbackPayloads, callbackID)
-	return nil
-}
-
-func (s *memoryTokenStore) AuthCallbackReceivedAt(_ context.Context, callbackID string) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.authCallbackReceived[callbackID], nil
 }
 
 func (s *memoryTokenStore) StoreAuthCallbackPayload(_ context.Context, callbackID string, payload any, _ time.Duration) error {

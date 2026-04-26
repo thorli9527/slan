@@ -18,7 +18,7 @@ type Peer struct {
 	DeviceID string `json:"deviceId"`
 	// PublicKey 是节点公钥。
 	PublicKey string `json:"publicKey"`
-	// Status 是节点在线状态。
+	// Status 是节点控制面可达状态；虚拟网络在线状态以 device network state 为准。
 	Status string `json:"status"`
 	// RelayAllowed 表示该节点是否允许 relay 回退。
 	RelayAllowed bool `json:"relayAllowed"`

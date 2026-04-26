@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
+	"github.com/slan/server/server-biz/internal/mqttauth"
 	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/util"
 )
@@ -138,13 +139,35 @@ func (s *dbState) buildDeviceDTOForNetwork(ctx context.Context, record repo.Devi
 		device.MembershipStatus = member.Status
 		device.NetworkRole = member.Role
 	}
+	hasFreshNetworkState := false
+	if state, err := s.pg.GetDeviceNetworkState(ctx, record.DeviceID, activeNetworkID); err == nil {
+		if time.Now().Unix()-state.LastSeenAt <= int64(deviceNetworkStateFreshnessWindow/time.Second) {
+			hasFreshNetworkState = true
+			stateDTO := state.ToDTO()
+			device.NetworkState = &stateDTO
+			if state.NetworkOnline {
+				device.LinkStatus = "online"
+			} else if state.ControlReachable {
+				device.LinkStatus = "reachable"
+			} else {
+				device.LinkStatus = "offline"
+			}
+			if state.VirtualIP != "" {
+				device.CurrentVirtualIP = state.VirtualIP
+			}
+		}
+	}
 	if state, err := s.pg.GetLatestDeviceConnectionState(ctx, activeNetworkID, record.DeviceID); err == nil {
-		if strings.TrimSpace(state.State) != "" {
+		if !hasFreshNetworkState && strings.TrimSpace(state.State) != "" {
 			device.LinkStatus = state.State
 		}
 		device.ConnectivityProtocol = normalizeConnectivityProtocol(state.Path)
 	}
 	return device
+}
+
+func (s *dbState) buildDeviceMQTTCredential(record repo.Device) *dto.MQTTCredential {
+	return mqttauth.DeviceCredential(s.cfg.MQTT, record.DeviceID, record.MachineID, time.Now())
 }
 
 func (s dbNodeService) buildNodeDTO(ctx context.Context, req dto.RegisterNodeRequest) dto.Node {

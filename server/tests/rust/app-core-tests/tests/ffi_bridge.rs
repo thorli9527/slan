@@ -81,6 +81,7 @@ impl ControllerClient for FakeController {
             status: "online".into(),
             virtual_ip: None,
             public_key: Some("device-pk".into()),
+            mqtt: None,
         })
     }
 
@@ -190,6 +191,7 @@ impl ControllerClient for FakeController {
                 status: "online".into(),
                 virtual_ip: self.device_virtual_ip.clone(),
                 public_key: Some("device-pk".into()),
+                mqtt: None,
             },
             networks: vec![],
             control_plane: ControlPlaneConfig {

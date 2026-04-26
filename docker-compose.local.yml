@@ -29,6 +29,58 @@ services:
       timeout: 5s
       retries: 10
 
+  rocketmq-namesrv:
+    image: apache/rocketmq:${ROCKETMQ_VERSION:-5.4.0}
+    container_name: slan-rocketmq-namesrv
+    user: root
+    command: sh mqnamesrv
+    ports:
+      - "${ROCKETMQ_NAMESRV_PORT:-9876}:9876"
+    volumes:
+      - slan-rocketmq-namesrv-logs:/home/rocketmq/logs/rocketmqlogs
+    healthcheck:
+      test: ["CMD-SHELL", "sh -c 'test -d /home/rocketmq/logs'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  rocketmq-broker:
+    image: apache/rocketmq:${ROCKETMQ_VERSION:-5.4.0}
+    container_name: slan-rocketmq-broker
+    user: root
+    command: sh mqbroker --enable-proxy -c /home/rocketmq/rocketmq-${ROCKETMQ_VERSION:-5.4.0}/conf/broker.conf
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+    ports:
+      - "${ROCKETMQ_BROKER_FAST_PORT:-10909}:10909"
+      - "${ROCKETMQ_BROKER_PORT:-10911}:10911"
+      - "${ROCKETMQ_BROKER_HA_PORT:-10912}:10912"
+      - "${ROCKETMQ_PROXY_GRPC_PORT:-18080}:8080"
+      - "${ROCKETMQ_PROXY_REMOTING_PORT:-18081}:8081"
+    volumes:
+      - ./deploy/local/rocketmq/broker.conf:/home/rocketmq/rocketmq-${ROCKETMQ_VERSION:-5.4.0}/conf/broker.conf:ro
+      - slan-rocketmq-broker-logs:/home/rocketmq/logs/rocketmqlogs
+      - slan-rocketmq-broker-store:/home/rocketmq/store
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_started
+
+  rocketmq-mqtt:
+    image: ${ROCKETMQ_MQTT_IMAGE:-rocketmq-mqtt:local}
+    container_name: slan-rocketmq-mqtt
+    profiles:
+      - rocketmq-mqtt
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      ROCKETMQ_MQTT_AUTH_CHECK_URL: "http://server-biz:8080/mqtt/auth/check"
+    ports:
+      - "${ROCKETMQ_MQTT_PORT:-1883}:1883"
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_started
+      rocketmq-broker:
+        condition: service_started
+
   server-biz:
     build:
       context: ./server/server-biz
@@ -39,6 +91,10 @@ services:
       SLAN_HTTP_PUBLIC_HOST: "${SLAN_HTTP_PUBLIC_HOST:-slan.localhost:18443}"
       SLAN_HTTP_PUBLIC_SCHEME: "${SLAN_HTTP_PUBLIC_SCHEME:-https}"
       SLAN_RELAY_TICKET_SIGNING_SECRET: "${SLAN_RELAY_TICKET_SIGNING_SECRET:-change-me-relay-ticket-secret}"
+      SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-false}"
+      SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://rocketmq-mqtt:1883}"
+      SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
+      SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-change-me-mqtt-secret}"
       SLAN_OPS_ACCESS_TOKEN: "${SLAN_OPS_ACCESS_TOKEN:-change-me-ops-token}"
       SLAN_OPS_DEFAULT_ADMIN_PASSWORD: "${SLAN_OPS_DEFAULT_ADMIN_PASSWORD:-change-me-admin-password}"
       SLAN_POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
@@ -52,6 +108,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rocketmq-namesrv:
+        condition: service_started
+      rocketmq-broker:
+        condition: service_started
 
   server-relay:
     build:
@@ -99,5 +159,8 @@ services:
 volumes:
   slan-postgres-data:
   slan-redis-data:
+  slan-rocketmq-namesrv-logs:
+  slan-rocketmq-broker-logs:
+  slan-rocketmq-broker-store:
   slan-caddy-data:
   slan-caddy-config:

@@ -21,6 +21,18 @@ pub struct Device {
     pub status: String,
     pub virtual_ip: Option<String>,
     pub public_key: Option<String>,
+    pub mqtt: Option<MqttCredential>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MqttCredential {
+    pub broker_url: String,
+    pub client_id: String,
+    pub username: String,
+    pub password: String,
+    pub topic_prefix: String,
+    pub expires_at: Option<i64>,
 }
 
 /// 节点模型。

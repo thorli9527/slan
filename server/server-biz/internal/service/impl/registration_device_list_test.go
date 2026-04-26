@@ -173,6 +173,65 @@ func TestRegisterNodeOnlyReturnsActiveNetworkIDs(t *testing.T) {
 	}
 }
 
+func TestMarkMQTTReachableUpdatesControlReachabilityOnly(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:          "user-1",
+		Email:           "user@example.com",
+		PasswordHash:    "hash",
+		ActiveNetworkID: "net-1",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	createNetworkFixture(t, state, "user-1", "net-1", "subnet-1", "10.0.0.0/16")
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-1",
+		UserID:    "user-1",
+		MachineID: "machine-1",
+		Name:      "device",
+		Platform:  "windows",
+		Status:    "offline",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("insert device: %v", err)
+	}
+	if err := state.pg.CreateMember(ctx, dto.NetworkMember{
+		MemberID:  "member-1",
+		NetworkID: "net-1",
+		DeviceID:  "dev-1",
+		Role:      "owner",
+		CreatedAt: now,
+		Status:    "active",
+	}); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+
+	if err := (dbDeviceService{state: state}).MarkMQTTReachable("dev-1"); err != nil {
+		t.Fatalf("mark mqtt reachable: %v", err)
+	}
+
+	device, err := state.pg.GetDeviceByID(ctx, "dev-1")
+	if err != nil {
+		t.Fatalf("load device: %v", err)
+	}
+	if device.Status != "offline" {
+		t.Fatalf("expected legacy device status unchanged, got %s", device.Status)
+	}
+	got, err := state.pg.GetDeviceNetworkState(ctx, "dev-1", "net-1")
+	if err != nil {
+		t.Fatalf("load device network state: %v", err)
+	}
+	if !got.ControlReachable {
+		t.Fatalf("expected control channel reachable, got %+v", got)
+	}
+	if got.NetworkOnline || got.TunnelUp || got.LastProbeOK {
+		t.Fatalf("expected network state to stay offline, got %+v", got)
+	}
+}
+
 func TestListDevicesRefreshesStalePresenceBeforeReturning(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
