@@ -106,11 +106,17 @@ func (s *controlWSSession) sendTracked(
 ) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return websocket.JSON.Send(s.conn, controlws.Envelope{
+	err := websocket.JSON.Send(s.conn, controlws.Envelope{
 		Type:      msgType,
 		RequestID: requestID,
 		Payload:   payload,
 	})
+	if err != nil {
+		defaultControlWSHub.unregister(s.nodeID, s.conn)
+		metricAdd("ws_send_error_total", 1)
+		return err
+	}
+	return nil
 }
 
 func newControlWSInstanceID() string {
