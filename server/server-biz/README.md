@@ -85,7 +85,8 @@ MQTT/BifroMQ notes:
   `server-biz` endpoints under `/mqtt/bifromq/*`. This validates SLAN-generated
   credentials and enforces device/server topic permissions for the local stack.
   For production, replace the demo provider with a dedicated BifroMQ Auth
-  Provider plugin.
+  Provider plugin that calls `POST /mqtt/bifromq/auth` for authentication and
+  `POST /mqtt/bifromq/check` for authorization.
   A successful auth check marks only `controlReachable=true`; virtual network
   online state still comes from the client heartbeat after the local tunnel is
   up.

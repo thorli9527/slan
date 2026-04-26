@@ -38,8 +38,10 @@ credential:
 4. The app registers the device with `POST /devices/register`.
 5. If the registration response contains `mqtt`, the app connects to BifroMQ
    with that device credential and subscribes to the device topic prefix.
-   In production, the BifroMQ Auth Provider calls `POST /mqtt/auth/check`; a
-   successful check marks only the device control channel as reachable.
+   In production, the BifroMQ Auth Provider calls `POST /mqtt/bifromq/auth`
+   for credential validation and `POST /mqtt/bifromq/check` for topic access
+   checks. A successful auth check marks only the device control channel as
+   reachable.
    `/auth/ws/{callbackId}` is kept only as a compatibility endpoint.
 
 Device runtime state is split into three meanings:

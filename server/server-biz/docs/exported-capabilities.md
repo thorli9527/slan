@@ -48,6 +48,8 @@ desktop app, app-core, and web-console client flow.
 - `/auth/callback-status/{callbackId}`
 - `/auth/callback-status/{callbackId}/complete`
 - `/mqtt/auth/check`
+- `/mqtt/bifromq/auth`
+- `/mqtt/bifromq/check`
 - `/auth/ws/{callbackId}` (deprecated compatibility path)
 - `/devices/register`
 - `/devices`

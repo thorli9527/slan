@@ -13,6 +13,8 @@ web-console flows:
 - `GET /auth/callback-status/{callbackId}`
 - `POST /auth/callback-status/{callbackId}/complete`
 - `POST /mqtt/auth/check`
+- `POST /mqtt/bifromq/auth`
+- `POST /mqtt/bifromq/check`
 - `GET /auth/ws/{callbackId}` (deprecated compatibility path)
 - `POST /devices/register`
 - `GET /devices`
@@ -56,8 +58,11 @@ control-plane session.
 
 Device runtime state is intentionally separated:
 
-- In production, BifroMQ Auth Provider calls `POST /mqtt/auth/check`; MQTT authentication
-  success marks only the control channel as reachable.
+- In production, BifroMQ Auth Provider should call `POST /mqtt/bifromq/auth`
+  for credential validation and `POST /mqtt/bifromq/check` for topic access
+  checks. `POST /mqtt/auth/check` remains as the legacy compatibility
+  credential-check endpoint. MQTT authentication success marks only the control
+  channel as reachable.
 - `PUT /devices/{deviceId}/networks/{networkId}/state` reports whether the
   virtual network is enabled, whether the local tunnel is up, and the latest
   health probe result.
@@ -97,6 +102,8 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `GET /auth/callback-status/{callbackId}`
 - `POST /auth/callback-status/{callbackId}/complete`
 - `POST /mqtt/auth/check`
+- `POST /mqtt/bifromq/auth`
+- `POST /mqtt/bifromq/check`
 - `GET /auth/ws/{callbackId}` (deprecated compatibility path)
 - `GET /healthz`
 - `GET /debug/vars`
