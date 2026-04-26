@@ -102,7 +102,7 @@ func AllowTopicAccess(cfg configs.MQTTConfig, principal, deviceID, topic string,
 		if subscribe {
 			return topic == NetworkStateTopicFilter(cfg)
 		}
-		return strings.HasPrefix(topic, trimTopic(cfg.TopicPrefix)+"/")
+		return false
 	}
 	if principal != "device" || strings.TrimSpace(deviceID) == "" {
 		return false

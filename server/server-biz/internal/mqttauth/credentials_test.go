@@ -62,6 +62,9 @@ func TestAllowTopicAccess(t *testing.T) {
 	if !AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/+/networks/+/state", true) {
 		t.Fatal("expected server state subscription to be allowed")
 	}
+	if AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/dev-1/networks/net-1/state", false) {
+		t.Fatal("expected server publisher credential to be denied")
+	}
 	if AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/#", true) {
 		t.Fatal("expected broad server subscription to be denied")
 	}
