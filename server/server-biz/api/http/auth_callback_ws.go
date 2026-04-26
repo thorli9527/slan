@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/slan/server/server-biz/api/dto"
@@ -75,11 +76,17 @@ func mustMarshalRaw(payload any) json.RawMessage {
 
 var defaultAuthCallbackWSHub = newAuthCallbackWSHub()
 
+const (
+	maxAuthCallbackWSMessageBytes = 4 * 1024
+	authCallbackWSReadIdleTimeout = 5 * time.Minute
+)
+
 func registerAuthCallbackWS(router *gin.Engine, deps routerDeps) {
 	router.GET("/auth/ws/:callbackId", func(c *gin.Context) {
 		callbackID := currentRouteContext(c).callbackID(c)
 		websocket.Handler(func(conn *websocket.Conn) {
 			defer conn.Close()
+			conn.MaxPayloadBytes = maxAuthCallbackWSMessageBytes
 			defaultAuthCallbackWSHub.register(callbackID, conn)
 			defer defaultAuthCallbackWSHub.unregister(callbackID, conn)
 
@@ -91,6 +98,7 @@ func registerAuthCallbackWS(router *gin.Engine, deps routerDeps) {
 			}
 
 			for {
+				_ = conn.SetReadDeadline(time.Now().Add(authCallbackWSReadIdleTimeout))
 				var env authCallbackWSEnvelope
 				if err := websocket.JSON.Receive(conn, &env); err != nil {
 					return

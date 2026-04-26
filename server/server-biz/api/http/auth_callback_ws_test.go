@@ -20,6 +20,15 @@ func TestAuthCallbackWSHubRegisterUnregister(t *testing.T) {
 	}
 }
 
+func TestAuthCallbackWSLimitsAreSmall(t *testing.T) {
+	if maxAuthCallbackWSMessageBytes <= 0 || maxAuthCallbackWSMessageBytes > 4*1024 {
+		t.Fatalf("unexpected auth callback ws message limit: %d", maxAuthCallbackWSMessageBytes)
+	}
+	if authCallbackWSReadIdleTimeout <= 0 {
+		t.Fatalf("expected positive auth callback ws timeout")
+	}
+}
+
 func (h *authCallbackWSHub) sessionCount(callbackID string) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
