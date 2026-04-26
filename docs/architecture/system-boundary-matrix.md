@@ -56,7 +56,7 @@ hardening unless a row explicitly says an API is missing.
 
 | 维度 | 内容 |
 | --- | --- |
-| 输入 | Flutter FFI 调用、控制面 HTTP/WS、relay/DERP 数据面 |
+| 输入 | Flutter FFI 调用、控制面 HTTP/MQTT、relay/DERP 数据面 |
 | 输出 | `Session`、`Device`、`Node`、`Network`、`BootstrapConfig`、`RelayTicket`、`ConnectionState` |
 | 内部核心 | `controller-client`、`p2p`、`relay-client`、`tunnel`、`ffi-bridge` |
 | 内部新增重点 | `DerpMap`、`DerpPool`、`PathManager` |
@@ -103,7 +103,7 @@ Flutter
 ```text
 Flutter
 -> app_core(controller-client)
--> server-biz(bootstrap/control/ws)
+-> server-biz(bootstrap/MQTT control)
 ```
 
 ### 5.3 回退与数据面

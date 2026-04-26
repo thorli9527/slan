@@ -28,9 +28,9 @@ type HTTPConfig struct {
 	PublicScheme string `yaml:"public_scheme"`
 }
 
-// WSConfig 描述控制面 WebSocket 相关配置。
+// WSConfig is kept for backward-compatible config parsing; MQTT now carries the control channel.
 type WSConfig struct {
-	// Path 是控制通道使用的 WebSocket 升级端点路径。
+	// Path is deprecated and no longer registers a control route.
 	Path string `yaml:"path"`
 }
 
@@ -202,7 +202,7 @@ type RedisConfig struct {
 type Config struct {
 	// HTTP 包含 public/ops 两套 HTTP listener 配置。
 	HTTP HTTPConfig `yaml:"http"`
-	// WS 包含控制面 WebSocket 端点配置。
+	// WS is deprecated; control traffic uses MQTT.
 	WS WSConfig `yaml:"ws"`
 	// MQTT contains broker connection and credential settings.
 	MQTT MQTTConfig `yaml:"mqtt"`
@@ -227,7 +227,7 @@ func DefaultConfig() Config {
 	cfg.HTTP.OpsAddress = ":8081"
 	cfg.HTTP.PublicHost = "127.0.0.1:8080"
 	cfg.HTTP.PublicScheme = "http"
-	cfg.WS.Path = "/control/ws"
+	cfg.WS.Path = ""
 	cfg.MQTT.Enabled = false
 	cfg.MQTT.BrokerURL = "mqtt://127.0.0.1:1883"
 	cfg.MQTT.PublicBrokerURL = "mqtt://127.0.0.1:1883"

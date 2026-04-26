@@ -746,7 +746,6 @@ func parsePublicGoRoutes(dir string) (map[routeSpec]struct{}, error) {
 		"routes_business_registration.go",
 		"routes_business_network.go",
 		"routes_business_bootstrap.go",
-		"control_ws_sync.go",
 	}
 
 	routes := map[routeSpec]struct{}{}
@@ -772,8 +771,6 @@ func parseGoRoutesFile(path string) (map[routeSpec]struct{}, error) {
 
 	groupDecl := regexp.MustCompile(`^([A-Za-z0-9_]+)\s*:=\s*([A-Za-z0-9_]+)\.Group\("([^"]*)"\)`)
 	routeDecl := regexp.MustCompile(`^([A-Za-z0-9_]+)\.(GET|POST|PUT|DELETE|PATCH)\("([^"]*)"`)
-	controlWSDecl := regexp.MustCompile(`^router\.GET\(path,`)
-
 	prefixes := map[string]string{
 		"api":       "",
 		"protected": "",
@@ -799,9 +796,6 @@ func parseGoRoutesFile(path string) (map[routeSpec]struct{}, error) {
 				Path:   normalizeGinPath(joinRoutePath(basePrefix, matches[3])),
 			}] = struct{}{}
 			continue
-		}
-		if controlWSDecl.MatchString(trimmed) {
-			routes[routeSpec{Method: "GET", Path: "/control/ws"}] = struct{}{}
 		}
 	}
 	if err := scanner.Err(); err != nil {

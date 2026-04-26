@@ -41,7 +41,7 @@ void main() {
           },
         ],
         'controlPlane': {
-          'wsUrl': 'ws://127.0.0.1:8080/control/ws',
+          'wsUrl': 'mqtt://127.0.0.1:1883',
           'heartbeatSeconds': 15,
         },
         'stunServers': ['stun:stun.l.google.com:19302'],
@@ -82,7 +82,7 @@ void main() {
       expect(payload.device.device.deviceId, 'dev-1');
       expect(payload.device.attachments.single.virtualIp, '100.64.0.10');
       expect(payload.networks.single.subnets.single.isDefault, isTrue);
-      expect(payload.controlPlane.wsUrl, 'ws://127.0.0.1:8080/control/ws');
+      expect(payload.controlPlane.wsUrl, 'mqtt://127.0.0.1:1883');
       expect(payload.relay.defaultClusterId, 'cn-local-a');
       expect(payload.networkMap?.networkId, 'net-1');
     });
@@ -90,7 +90,7 @@ void main() {
     test('decodes control status payload', () {
       final payload = AppCoreControlStatusPayload.fromJson({
         'status': 'connected',
-        'wsUrl': 'ws://127.0.0.1:8080/control/ws',
+        'wsUrl': 'mqtt://127.0.0.1:1883',
         'heartbeatSeconds': 15,
         'sessionTokenPresent': true,
         'networkMapPresent': true,

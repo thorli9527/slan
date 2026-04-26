@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 pub const DEV_CONTROL_BASE_URL: &str = "http://127.0.0.1:8080";
-pub const DEV_CONTROL_WS_URL: &str = "ws://127.0.0.1:8080/control/ws";
+pub const DEV_CONTROL_WS_URL: &str = "mqtt://127.0.0.1:1883";
 pub const DEV_STUN_SERVER: &str = "stun:127.0.0.1:3478";
 pub const DEV_RELAY_UDP_ADDRESS: &str = "127.0.0.1:9000";
 pub const DEV_RELAY_TCP_ADDRESS: &str = "127.0.0.1:9001";

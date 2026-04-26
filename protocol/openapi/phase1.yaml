@@ -2,7 +2,7 @@
 #
 # 璁捐鐩爣锛?
 # - HTTP 鍙壙鎷呯鐞嗛潰鍜屼竴娆℃€ф巿鏉冭亴璐?
-# - 鑺傜偣瀹炴椂鍚屾鏀硅蛋鎺у埗閫氶亾 WebSocket / protobuf
+# - 鑺傜偣瀹炴椂鍚屾璧走 MQTT control envelope / protobuf
 # - 鑺傜偣韬唤銆丯etworkMap銆乺elay ticket 閮藉洿缁曗€滆妭鐐圭粍缃戠紪鎺掆€濆睍寮€
 openapi: 3.1.0
 info:
@@ -767,20 +767,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ControlSessionResponse'
-
-  /control/ws:
-    get:
-      tags: [Control]
-      operationId: controlWebSocket
-      summary: Control channel WebSocket
-      description: >
-        WebSocket endpoint for node hello, network map sync, peer updates,
-        connection planning, path health, and active-network events. The exact
-        message schemas live in `protocol/protobuf/control.proto` and
-        `server/server-biz/internal/ws`.
-      responses:
-        '101':
-          description: WebSocket upgrade accepted
 
   /bootstrap:
     post:

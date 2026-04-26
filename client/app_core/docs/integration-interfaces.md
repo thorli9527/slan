@@ -36,7 +36,7 @@
 - `/bootstrap`
 - `/relay/tickets`
 - `/control/sessions`
-- `/control/ws`
+- MQTT control topic `{topicPrefix}/control/up` and `{topicPrefix}/control/down`
 
 `/devices/register` now may return a device-scoped MQTT credential (`mqtt`) for
 BifroMQ access. The desktop app connects MQTT only after that successful
@@ -185,7 +185,7 @@ Flutter 当前不直接接入底层 crate，而是通过 `AppCoreFacade`。
 
 ### `crates/controller-client`
 
-- 接 HTTP / WebSocket 控制面
+- 接 HTTP / MQTT 控制面
 - 不负责真实数据面流量
 
 ### `crates/p2p`

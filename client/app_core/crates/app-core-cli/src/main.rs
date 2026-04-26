@@ -1158,6 +1158,11 @@ fn control_ws_config_from_snapshot(snapshot: &AppCoreSnapshot) -> Result<Control
         .as_ref()
         .map(|device| device.device_id.clone())
         .unwrap_or_else(|| network_map.self_device_id.clone());
+    let mqtt = snapshot
+        .current_device
+        .as_ref()
+        .and_then(|device| device.mqtt.clone())
+        .ok_or_else(|| "missing MQTT credential in current device".to_string())?;
 
     Ok(ControlWsConfig {
         ws_url: bootstrap.control_plane.ws_url.clone(),
@@ -1172,6 +1177,7 @@ fn control_ws_config_from_snapshot(snapshot: &AppCoreSnapshot) -> Result<Control
             .clone()
             .unwrap_or_else(|| network_map.network_id.clone()),
         capabilities: node.capabilities.clone(),
+        mqtt,
     })
 }
 

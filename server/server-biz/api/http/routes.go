@@ -69,7 +69,8 @@ func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	router.Use(gin.Logger(), gin.Recovery(), allowCORS())
 	installPublicErrorHandlers(router)
 	router.Use(limitRequestBody(maxHTTPJSONBodyBytes))
-	registerControlWS(router, cfg.WS.Path, deps)
+	startControlSync(deps)
+	startControlMQTT(deps)
 
 	router.GET("/healthz", healthz)
 	router.GET("/debug/vars", gin.WrapH(expvar.Handler()))

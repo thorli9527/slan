@@ -879,7 +879,7 @@ func (s *phase1Services) Bootstrap(userID string, req dto.BootstrapRequest) (dto
 		},
 		Networks: []dto.NetworkDetail{s.networkDetailLocked(userID, network.NetworkID)},
 		ControlPlane: dto.ControlPlaneConfig{
-			WSURL:            "/control/ws",
+			WSURL:            "mqtt://127.0.0.1:1883",
 			HeartbeatSeconds: 30,
 		},
 		STUNServers: []string{"stun:example.org:3478"},

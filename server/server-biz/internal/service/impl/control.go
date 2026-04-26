@@ -340,6 +340,32 @@ func (s dbControlChannelService) ConnectPlanByNode(nodeID, networkID, peerNodeID
 	return s.ConnectPlan(node.UserID, nodeID, networkID, peerNodeID)
 }
 
+func (s dbControlChannelService) ActiveSessions(networkID, excludeNodeID string) ([]service.ControlSession, error) {
+	ctx := context.Background()
+	nodes, err := s.state.pg.ListNodesByNetwork(ctx, networkID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	out := make([]service.ControlSession, 0, len(nodes))
+	for _, node := range nodes {
+		if node.NodeID == excludeNodeID {
+			continue
+		}
+		session, err := s.state.pg.GetLatestControlSessionByNode(ctx, node.NodeID, networkID)
+		if err != nil || !controlSessionIsFresh(session, now) {
+			continue
+		}
+		out = append(out, service.ControlSession{
+			UserID:    session.UserID,
+			DeviceID:  session.DeviceID,
+			NodeID:    session.NodeID,
+			NetworkID: session.NetworkID,
+		})
+	}
+	return out, nil
+}
+
 // requireNodeSession verifies ownership and network membership for a node.
 func (s *dbState) requireNodeSession(ctx context.Context, userID, nodeID, networkID string) (repo.Node, error) {
 	if strings.TrimSpace(nodeID) == "" || strings.TrimSpace(networkID) == "" {

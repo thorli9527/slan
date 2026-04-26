@@ -28,7 +28,7 @@ class _DeviceStateControlPlaneSection extends StatelessWidget {
           label: 'Connection',
           value: connectionState.status,
         ),
-        DesktopKeyValueEntry(label: 'Control WS', value: control?.status ?? 'none'),
+        DesktopKeyValueEntry(label: 'Control MQTT', value: control?.status ?? 'none'),
         DesktopKeyValueEntry(
           label: 'Path',
           value: connectionState.path?.name ?? '-',

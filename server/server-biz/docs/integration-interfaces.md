@@ -43,7 +43,6 @@ web-console flows:
 - `POST /bootstrap`
 - `POST /relay/tickets`
 - `POST /control/sessions`
-- `GET /control/ws`
 - `GET /debug/vars`
 - `GET /healthz`
 
@@ -51,7 +50,7 @@ The network join and switch flow depends on `GET /networks` returning every
 network visible to the authenticated user, including networks joined through
 owner email or join key.
 The recommended client path is `POST /bootstrap`, which already returns the
-control session token and WebSocket config. `POST /control/sessions` remains the
+control session token and MQTT config. `POST /control/sessions` remains the
 explicit control-session endpoint for callers that need to refresh only the
 control-plane session.
 
@@ -136,7 +135,6 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `POST /bootstrap`
 - `POST /relay/tickets`
 - `POST /control/sessions`
-- `GET /control/ws`
 
 ## 3. 控制通道接入接口
 
@@ -198,7 +196,7 @@ HTTP 层并不直接做业务处理，而是接入内部服务：
 通过：
 
 - HTTP
-- WebSocket 控制通道
+- MQTT 控制通道
 
 交互。
 

@@ -158,6 +158,7 @@ fn live_control_ws_receives_device_ip_reassigned() {
         node_public_key: member_node.node_public_key.clone(),
         network_id: network_id.clone(),
         capabilities: member_node.capabilities.clone(),
+        mqtt: member_device.mqtt.clone().expect("member mqtt credential"),
     })
     .expect("connect control ws");
     ws_client
@@ -171,6 +172,7 @@ fn live_control_ws_receives_device_ip_reassigned() {
             node_public_key: member_node.node_public_key.clone(),
             network_id: network_id.clone(),
             capabilities: member_node.capabilities.clone(),
+            mqtt: member_device.mqtt.clone().expect("member mqtt credential"),
         })
         .expect("bootstrap control ws session");
 
@@ -511,10 +513,10 @@ fn unique_suffix() -> u128 {
 }
 
 fn local_ws_url(raw: &str) -> String {
-    if let Some((_, path)) = raw.split_once("/control/ws") {
-        return format!("ws://127.0.0.1:28080/control/ws{path}");
+    if raw.starts_with("mqtt://") {
+        return "mqtt://127.0.0.1:1883".to_string();
     }
-    "ws://127.0.0.1:28080/control/ws".to_string()
+    "mqtt://127.0.0.1:1883".to_string()
 }
 
 fn build_live_facade(

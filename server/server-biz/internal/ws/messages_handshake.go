@@ -1,6 +1,6 @@
 package ws
 
-// Envelope 是控制通道使用的通用 WebSocket 消息封装。
+// Envelope 是控制通道使用的通用消息封装，当前通过 MQTT 传输。
 type Envelope struct {
 	// Type 标识负载类型，例如 node_hello、network_map_response 或 connect_plan。
 	Type string `json:"type"`

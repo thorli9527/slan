@@ -24,7 +24,6 @@ func TestParsePublicGoRoutes(t *testing.T) {
 		{Method: "POST", Path: "/mqtt/bifromq/auth"},
 		{Method: "POST", Path: "/mqtt/bifromq/check"},
 		{Method: "PUT", Path: "/devices/{deviceId}/networks/{networkId}/state"},
-		{Method: "GET", Path: "/control/ws"},
 	} {
 		if _, ok := routes[route]; !ok {
 			t.Fatalf("expected route %s, got %#v", route.String(), routes)
@@ -45,8 +44,6 @@ func TestCheckHTTPRoutesDetectsDrift(t *testing.T) {
 paths:
   /healthz:
     get: {}
-  /auth/register:
-    post: {}
   /mqtt/auth/check:
     post: {}
   /mqtt/bifromq/auth:
@@ -65,8 +62,8 @@ components:
 	if err == nil {
 		t.Fatal("expected route drift error")
 	}
-	if !strings.Contains(err.Error(), "GET /control/ws") {
-		t.Fatalf("expected missing control websocket route, got %v", err)
+	if !strings.Contains(err.Error(), "POST /auth/register") {
+		t.Fatalf("expected missing auth route, got %v", err)
 	}
 }
 
@@ -103,11 +100,6 @@ func routes(protected interface{}) {
 		"routes_business_bootstrap.go": `package httpapi
 
 func routes(protected interface{}) {
-}`,
-		"control_ws_sync.go": `package httpapi
-
-func routes(router interface{}, path string) {
-	router.GET(path, handler)
 }`,
 	}
 

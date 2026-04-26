@@ -40,6 +40,15 @@ type ControlChannel interface {
 	ConnectPlan(userID, nodeID, networkID, peerNodeID string) (controlws.ConnectPlan, error)
 	// ConnectPlanByNode 在只知道源节点 ID 的场景下生成对应的连接规划。
 	ConnectPlanByNode(nodeID, networkID, peerNodeID string) (controlws.ConnectPlan, error)
+	// ActiveSessions returns fresh control sessions in a network for MQTT fanout.
+	ActiveSessions(networkID, excludeNodeID string) ([]ControlSession, error)
+}
+
+type ControlSession struct {
+	UserID    string
+	DeviceID  string
+	NodeID    string
+	NetworkID string
 }
 
 // ControlSync 抽象了多实例控制通道事件同步。

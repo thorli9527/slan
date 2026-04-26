@@ -1,12 +1,8 @@
 package httpapi
 
-import (
-	"github.com/gin-gonic/gin"
-	controlws "github.com/slan/server/server-biz/internal/ws"
-	"golang.org/x/net/websocket"
-)
+import controlws "github.com/slan/server/server-biz/internal/ws"
 
-func registerControlWS(router *gin.Engine, path string, deps routerDeps) {
+func startControlSync(deps routerDeps) {
 	controlWSDeliveryRetryOnce.Do(func() {
 		startControlWSDeliveryRetryLoop(deps)
 	})
@@ -26,7 +22,7 @@ func registerControlWS(router *gin.Engine, path string, deps routerDeps) {
 					broadcastPeerRemoveToSessions(deps, event.NetworkID, event.SourceNodeID, event.Revision)
 				case "peer_candidate":
 					if event.Candidate != nil {
-						sendPeerCandidateToNode(deps, event.TargetNodeID, *event.Candidate)
+						sendPeerCandidateToNode(deps, event.NetworkID, event.TargetNodeID, *event.Candidate)
 					}
 				case "connect_plan":
 					if event.Plan != nil {
@@ -47,11 +43,5 @@ func registerControlWS(router *gin.Engine, path string, deps routerDeps) {
 				}
 			})
 		}
-	})
-
-	router.GET(path, func(c *gin.Context) {
-		websocket.Handler(func(conn *websocket.Conn) {
-			serveControlWS(conn, deps)
-		}).ServeHTTP(c.Writer, c.Request)
 	})
 }

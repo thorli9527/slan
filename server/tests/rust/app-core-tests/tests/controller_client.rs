@@ -272,7 +272,7 @@ fn bootstrap_response_parses_derp_map() {
         r#"{
             "device": {"device":{"deviceId":"dev-1","name":"mac","platform":"macos","status":"online","publicKey":"pk"}},
             "networks": [],
-            "controlPlane": {"wsUrl":"ws://127.0.0.1:8080/control/ws","heartbeatSeconds":15},
+            "controlPlane": {"wsUrl":"mqtt://127.0.0.1:1883","heartbeatSeconds":15},
             "stunServers": ["stun:127.0.0.1:3478"],
             "relay": {
                 "defaultClusterId":"cn-local-a",

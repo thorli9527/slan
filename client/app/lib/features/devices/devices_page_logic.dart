@@ -80,7 +80,7 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
           'Control session is configured, but the latest control-plane sync has not produced a usable network map yet.',
       supportingSignal: controlStatus?.wsUrl == null
           ? 'A control session token exists, but no synced peer/runtime view is available yet.'
-          : 'Control WS is configured at ${controlStatus!.wsUrl}, but peer state has not been refreshed yet.',
+          : 'Control MQTT is configured, but peer state has not been refreshed yet.',
       recommendedAction:
           'Refresh bootstrap or run control sync first so the latest peer map and path recommendation reach the client before retrying tunnel or relay recovery.',
       primaryAction: _TunnelActionKind.bootstrap,

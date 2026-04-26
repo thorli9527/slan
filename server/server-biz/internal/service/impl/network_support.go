@@ -282,11 +282,10 @@ func (s *dbState) routesForNetwork(ctx context.Context, networkID string) []dto.
 }
 
 func (s *dbState) wsURL() string {
-	scheme := strings.ToLower(strings.TrimSpace(s.cfg.HTTP.PublicScheme))
-	if scheme == "https" {
-		return "wss://" + s.cfg.HTTP.PublicHost + s.cfg.WS.Path
+	if strings.TrimSpace(s.cfg.MQTT.PublicBrokerURL) != "" {
+		return strings.TrimSpace(s.cfg.MQTT.PublicBrokerURL)
 	}
-	return "ws://" + s.cfg.HTTP.PublicHost + s.cfg.WS.Path
+	return strings.TrimSpace(s.cfg.MQTT.BrokerURL)
 }
 
 func (s *dbState) currentNetworkRevision(ctx context.Context, networkID string) uint64 {

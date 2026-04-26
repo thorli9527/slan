@@ -26,7 +26,7 @@ type DeviceBootstrap struct {
 
 // ControlPlaneConfig 包含控制通道所需的端点配置。
 type ControlPlaneConfig struct {
-	// WSURL 是控制通道使用的 WebSocket 端点。
+	// WSURL keeps the legacy JSON field name; the value is now the MQTT broker URL.
 	WSURL string `json:"wsUrl"`
 	// HeartbeatSeconds 是服务端期望的保活心跳间隔。
 	HeartbeatSeconds int `json:"heartbeatSeconds"`
@@ -268,7 +268,7 @@ type ControlSessionResponse struct {
 	ControlSessionID string `json:"controlSessionId"`
 	// SessionToken 是控制通道鉴权令牌。
 	SessionToken string `json:"sessionToken"`
-	// ControlPlane 是控制面 WebSocket 配置。
+	// ControlPlane 是控制面 MQTT 配置。
 	ControlPlane ControlPlaneConfig `json:"controlPlane"`
 	// NetworkMap 是当前会话的初始网络地图。
 	NetworkMap NetworkMap `json:"networkMap"`

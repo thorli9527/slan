@@ -101,7 +101,7 @@ Current HTTP route scope:
 - Converts Gin parameters such as `:networkId` into OpenAPI
   `{networkId}` form
 - Verifies that OpenAPI paths and methods match the public router, including
-  health, diagnostics, and control WebSocket entries
+  health, diagnostics, and MQTT control entries
 
 Protobuf drift check is also available:
 

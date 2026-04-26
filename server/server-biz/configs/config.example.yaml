@@ -11,8 +11,8 @@ http:
   # 客户端访问控制面的外部协议；生产环境通常应为 https。
   public_scheme: "http"
 ws:
-  # 控制通道 WebSocket 路径。
-  path: "/control/ws"
+  # Deprecated: control traffic uses MQTT.
+  path: ""
 mqtt:
   enabled: false
   broker_url: "mqtt://127.0.0.1:1883"

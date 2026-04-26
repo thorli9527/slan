@@ -24,6 +24,17 @@ func TestValidateCredentialDevice(t *testing.T) {
 	}
 }
 
+func TestValidateCredentialAllowsDerivedControlClientID(t *testing.T) {
+	cfg := configs.DefaultConfig()
+	cfg.MQTT.Enabled = true
+	now := time.Unix(100, 0)
+	credential := DeviceCredential(cfg.MQTT, "dev-1", "machine-1", now)
+	response, ok := validateCredentialAt(cfg.MQTT, credential.ClientID+"-control", credential.Username, credential.Password, now)
+	if !ok || !response.Allow || response.Principal != "device" || response.DeviceID != "dev-1" {
+		t.Fatalf("unexpected auth response for control client id: %+v ok=%v", response, ok)
+	}
+}
+
 func TestValidateCredentialServerSubscriber(t *testing.T) {
 	cfg := configs.DefaultConfig()
 	cfg.MQTT.Enabled = true
@@ -77,8 +88,20 @@ func TestAllowTopicAccess(t *testing.T) {
 	if !AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-1/#", true) {
 		t.Fatal("expected device subscribe to own topic prefix to be allowed")
 	}
+	if !AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-1/control/up", false) {
+		t.Fatal("expected device publish to own control up topic to be allowed")
+	}
+	if !AllowTopicAccess(cfg.MQTT, "device", "dev-1", "slan/devices/dev-1/control/down", true) {
+		t.Fatal("expected device subscribe to own control down topic to be allowed")
+	}
 	if !AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/+/networks/+/state", true) {
 		t.Fatal("expected server state subscription to be allowed")
+	}
+	if !AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/+/control/up", true) {
+		t.Fatal("expected server control up subscription to be allowed")
+	}
+	if !AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/dev-1/control/down", false) {
+		t.Fatal("expected server publish to control down topic to be allowed")
 	}
 	if AllowTopicAccess(cfg.MQTT, "server", "", "slan/devices/dev-1/networks/net-1/state", false) {
 		t.Fatal("expected server publisher credential to be denied")

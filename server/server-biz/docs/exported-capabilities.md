@@ -20,7 +20,7 @@ The main client-facing capabilities currently exported by `server-biz` are:
   topology, and relay fallback tickets.
 - Explicit control session creation for clients that need to refresh only the
   control-plane session after bootstrap.
-- Control WebSocket: node hello, network map updates, peer updates, connect
+- MQTT control channel: node hello, network map updates, peer updates, connect
   plans, path health, connection state, device IP reassignment, active network
   notifications.
 
@@ -75,7 +75,6 @@ desktop app, app-core, and web-console client flow.
 - `/bootstrap`
 - `/relay/tickets`
 - `/control/sessions`
-- `/control/ws`
 - `/debug/vars`
 - `/healthz`
 
@@ -154,7 +153,7 @@ desktop app, app-core, and web-console client flow.
 对外应始终通过：
 
 - HTTP API
-- WebSocket 控制通道
+- MQTT 控制通道
 - 标准 DTO / protobuf 消息
 
 ## 6. DERP / 集群输出状态

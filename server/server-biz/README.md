@@ -10,7 +10,7 @@ Phase 1 MVP 的 Go 控制面服务。
 - 子网与虚拟 IP 分配
 - 控制通道 bootstrap 配置下发
 - relay 票据签发
-- 控制通道 WebSocket、路径健康与 connect-plan
+- MQTT 控制通道、路径健康与 connect-plan
 - 内嵌 `/ops` 运营管理入口
 
 ## 目录说明
@@ -75,7 +75,7 @@ docker compose -f docker-compose.local.yml up --build server-biz
 
 MQTT/BifroMQ notes:
 
-- MQTT is disabled by default in local compose (`SLAN_MQTT_ENABLED=false`).
+- MQTT is enabled by default in local compose because it carries the control channel.
 - Local compose starts BifroMQ as the MQTT broker. Port `1883` is exposed by
   default and can be changed with `BIFROMQ_MQTT_PORT`.
 - When enabling SLAN MQTT, provide a BifroMQ endpoint reachable from
@@ -111,7 +111,7 @@ MQTT/BifroMQ notes:
 
 - `server-biz` 容器会在启动时自动做 PostgreSQL `AutoMigrate`
 - `config.docker.yaml` 里的 relay 地址会返回宿主机公开端口 `127.0.0.1:19000`
-- `caddy` 提供本地 `https://slan.localhost:18443` 和 `wss://slan.localhost:18443/control/ws`
+- `caddy` 提供本地 `https://slan.localhost:18443`，控制通道走 BifroMQ MQTT
 - compose 使用环境变量覆盖敏感配置，建议先复制根目录 `.env.local.example` 再启动
 
 ## 运营入口

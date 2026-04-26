@@ -13,7 +13,7 @@ const String kDevStunServer = 'stun:stun.l.google.com:19302';
 const String kDevTunnelEndpoint = '203.0.113.10:51820';
 
 const String kDevControlWsUrl =
-    'ws://$kDevControlHost:$kDevControlPort/control/ws';
+    'mqtt://$kDevControlHost:1883';
 const String kDevRelayUdpAddress = '$kDevControlHost:$kDevRelayUdpPort';
 const String kDevRelayTcpAddress = '$kDevControlHost:$kDevRelayTcpPort';
 const String kDevPeerEndpointAddress = '$kDevControlHost:$kDevPeerEndpointPort';

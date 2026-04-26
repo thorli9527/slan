@@ -8,7 +8,7 @@ http:
   public_host: "slan.localhost:18443"
   public_scheme: "https"
 ws:
-  path: "/control/ws"
+  path: ""
 mqtt:
   enabled: false
   broker_url: "mqtt://bifromq:1883"

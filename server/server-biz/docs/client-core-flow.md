@@ -15,14 +15,14 @@ of scope here.
    If the server already created an owned network during registration, reuse
    the `ownedNetwork` returned by `/networks/home`.
 7. `POST /bootstrap` with the selected `nodeId` and `networkId`
-8. Use the returned control session token to open the control WebSocket.
+8. Use the returned control session token to start the MQTT control channel.
 9. Call `POST /relay/tickets` only when direct path setup fails and a relay
    fallback is needed.
 
 `POST /control/sessions` is still available when a client already has device,
 node, and network context and only needs to refresh the control-plane session.
 The normal public client flow should prefer `POST /bootstrap` because it returns
-the control token, WebSocket config, device attachment view, and initial
+the control token, MQTT config, device attachment view, and initial
 NetworkMap together.
 
 Browser login callback delivery stays on HTTP status polling before the device

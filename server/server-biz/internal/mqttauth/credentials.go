@@ -62,20 +62,16 @@ func validateDeviceAt(cfg configs.MQTTConfig, clientID, username, givenPassword 
 	if !cfg.Enabled {
 		return "", false
 	}
-	prefix := strings.TrimSpace(cfg.UsernamePrefix) + "-"
-	if !strings.HasPrefix(clientID, prefix) {
-		return "", false
-	}
-	deviceID := strings.TrimPrefix(clientID, prefix)
-	if deviceID == "" {
-		return "", false
-	}
-	expiresAt, ok := parseUsernameExpiry(cfg, username, deviceID)
+	deviceID, expiresAt, ok := parseDeviceUsername(cfg, username)
 	if !ok || expiresAt < now.Unix() {
 		return "", false
 	}
-	want := password(cfg, clientID, username, deviceID)
-	if hmac.Equal([]byte(want), []byte(givenPassword)) {
+	baseClientID := joinClientID(cfg, deviceID)
+	if clientID != baseClientID && !strings.HasPrefix(clientID, baseClientID+"-") {
+		return "", false
+	}
+	if hmac.Equal([]byte(password(cfg, clientID, username, deviceID)), []byte(givenPassword)) ||
+		hmac.Equal([]byte(password(cfg, baseClientID, username, deviceID)), []byte(givenPassword)) {
 		return deviceID, true
 	}
 	return "", false
@@ -103,6 +99,18 @@ func NetworkStateTopicFilter(cfg configs.MQTTConfig) string {
 	return trimTopic(cfg.TopicPrefix) + "/+/networks/+/state"
 }
 
+func ControlUpTopicFilter(cfg configs.MQTTConfig) string {
+	return trimTopic(cfg.TopicPrefix) + "/+/control/up"
+}
+
+func ControlUpTopic(cfg configs.MQTTConfig, deviceID string) string {
+	return DeviceTopicPrefix(cfg, deviceID) + "/control/up"
+}
+
+func ControlDownTopic(cfg configs.MQTTConfig, deviceID string) string {
+	return DeviceTopicPrefix(cfg, deviceID) + "/control/down"
+}
+
 func AllowTopicAccess(cfg configs.MQTTConfig, principal, deviceID, topic string, subscribe bool) bool {
 	topic = trimTopic(topic)
 	if topic == "" {
@@ -110,9 +118,9 @@ func AllowTopicAccess(cfg configs.MQTTConfig, principal, deviceID, topic string,
 	}
 	if principal == "server" {
 		if subscribe {
-			return topic == NetworkStateTopicFilter(cfg)
+			return topic == NetworkStateTopicFilter(cfg) || topic == ControlUpTopicFilter(cfg)
 		}
-		return false
+		return isServerControlDownTopic(cfg, topic)
 	}
 	if principal != "device" || strings.TrimSpace(deviceID) == "" {
 		return false
@@ -121,7 +129,10 @@ func AllowTopicAccess(cfg configs.MQTTConfig, principal, deviceID, topic string,
 	if subscribe && topic == devicePrefix+"/#" {
 		return true
 	}
-	return !subscribe && isDeviceNetworkStateTopic(devicePrefix, topic)
+	if subscribe {
+		return topic == ControlDownTopic(cfg, deviceID)
+	}
+	return topic == ControlUpTopic(cfg, deviceID) || isDeviceNetworkStateTopic(devicePrefix, topic)
 }
 
 func isDeviceNetworkStateTopic(devicePrefix, topic string) bool {
@@ -131,6 +142,16 @@ func isDeviceNetworkStateTopic(devicePrefix, topic string) bool {
 	}
 	parts := strings.Split(suffix, "/")
 	return len(parts) == 3 && parts[0] == "networks" && parts[1] != "" && parts[2] == "state"
+}
+
+func isServerControlDownTopic(cfg configs.MQTTConfig, topic string) bool {
+	prefix := trimTopic(cfg.TopicPrefix)
+	suffix := strings.TrimPrefix(topic, prefix+"/")
+	if suffix == topic || suffix == "" {
+		return false
+	}
+	parts := strings.Split(suffix, "/")
+	return len(parts) == 3 && parts[0] != "" && parts[1] == "control" && parts[2] == "down"
 }
 
 func validateServerSubscriber(cfg configs.MQTTConfig, clientID, username, givenPassword string) bool {
@@ -185,6 +206,23 @@ func joinSystemUsername(cfg configs.MQTTConfig, name string, expiresAt int64) st
 func parseUsernameExpiry(cfg configs.MQTTConfig, username, id string) (int64, bool) {
 	prefix := fmt.Sprintf("%s/%s/", strings.TrimSpace(cfg.UsernamePrefix), strings.TrimSpace(id))
 	return parseExpirySuffix(username, prefix)
+}
+
+func parseDeviceUsername(cfg configs.MQTTConfig, username string) (string, int64, bool) {
+	prefix := strings.TrimSpace(cfg.UsernamePrefix) + "/"
+	rest := strings.TrimPrefix(username, prefix)
+	if rest == username {
+		return "", 0, false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return "", 0, false
+	}
+	expiresAt, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || expiresAt <= 0 {
+		return "", 0, false
+	}
+	return strings.TrimSpace(parts[0]), expiresAt, true
 }
 
 func parseSystemUsernameExpiry(cfg configs.MQTTConfig, username, name string) (int64, bool) {

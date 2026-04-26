@@ -7,10 +7,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slan_app_core::{
-    DnsConfig, Endpoint, NetworkMap, Peer, RelayEndpoint, RelayRegion, RelayTicket, Route,
+    DnsConfig, Endpoint, MqttCredential, NetworkMap, Peer, RelayEndpoint, RelayRegion,
+    RelayTicket, Route,
 };
 
-const STATIC_WS_KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
@@ -24,6 +24,7 @@ pub struct ControlWsConfig {
     pub node_public_key: String,
     pub network_id: String,
     pub capabilities: Vec<String>,
+    pub mqtt: MqttCredential,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,14 +168,17 @@ pub struct ControlWsPathHealthReport {
 #[derive(Debug)]
 pub struct ControlWsClient {
     stream: TcpStream,
+    up_topic: String,
+    source_node_id: String,
+    network_id: String,
     queued_events: VecDeque<ControlWsEvent>,
 }
 
 impl ControlWsClient {
     pub fn connect(config: &ControlWsConfig) -> Result<Self, String> {
-        let endpoint = parse_ws_url(&config.ws_url)?;
+        let endpoint = parse_mqtt_url(&config.mqtt.broker_url)?;
         let mut stream = TcpStream::connect(endpoint.authority.as_str())
-            .map_err(|err| format!("connect control ws {}: {err}", endpoint.authority))?;
+            .map_err(|err| format!("connect control mqtt {}: {err}", endpoint.authority))?;
         stream
             .set_read_timeout(Some(DEFAULT_IO_TIMEOUT))
             .map_err(|err| format!("set read timeout: {err}"))?;
@@ -182,29 +186,34 @@ impl ControlWsClient {
             .set_write_timeout(Some(DEFAULT_IO_TIMEOUT))
             .map_err(|err| format!("set write timeout: {err}"))?;
 
-        let request_path = append_device_id_query(&endpoint.path, &config.device_id);
-        let request_origin = ws_origin(&endpoint.authority);
-        let request = format!(
-            "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: {}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {}\r\nX-Slan-Device-Id: {}\r\n\r\n",
-            request_path, endpoint.authority, request_origin, STATIC_WS_KEY, config.device_id
-        );
+        let connect = mqtt_connect_packet(
+            &format!("{}-control", config.mqtt.client_id),
+            &config.mqtt.username,
+            &config.mqtt.password,
+        )?;
         stream
-            .write_all(request.as_bytes())
-            .map_err(|err| format!("write websocket handshake: {err}"))?;
+            .write_all(&connect)
+            .map_err(|err| format!("write mqtt connect: {err}"))?;
         stream
             .flush()
-            .map_err(|err| format!("flush websocket handshake: {err}"))?;
+            .map_err(|err| format!("flush mqtt connect: {err}"))?;
+        read_mqtt_connack(&mut stream)?;
 
-        let response = read_http_response(&mut stream)?;
-        if !response.starts_with("HTTP/1.1 101") && !response.starts_with("HTTP/1.0 101") {
-            return Err(format!(
-                "control ws upgrade rejected: {}",
-                first_response_line(&response)
-            ));
-        }
+        let down_topic = format!("{}/control/down", config.mqtt.topic_prefix.trim_end_matches('/'));
+        let subscribe = mqtt_subscribe_packet(1, &down_topic)?;
+        stream
+            .write_all(&subscribe)
+            .map_err(|err| format!("write mqtt subscribe: {err}"))?;
+        stream
+            .flush()
+            .map_err(|err| format!("flush mqtt subscribe: {err}"))?;
+        read_mqtt_suback(&mut stream, 1)?;
 
         Ok(Self {
             stream,
+            up_topic: format!("{}/control/up", config.mqtt.topic_prefix.trim_end_matches('/')),
+            source_node_id: config.node_id.clone(),
+            network_id: config.network_id.clone(),
             queued_events: VecDeque::new(),
         })
     }
@@ -217,6 +226,8 @@ impl ControlWsClient {
             msg_type: "node_hello".to_string(),
             request_id: Some("node-hello".to_string()),
             message_id: None,
+            source_node_id: None,
+            network_id: None,
             payload: serde_json::to_value(NodeHelloPayload::from(config.clone()))
                 .map_err(|err| format!("encode node_hello payload: {err}"))?,
         };
@@ -257,6 +268,8 @@ impl ControlWsClient {
             msg_type: "network_map_request".to_string(),
             request_id: Some("network-map".to_string()),
             message_id: None,
+            source_node_id: None,
+            network_id: None,
             payload: serde_json::json!({
                 "networkId": network_id,
                 "lastRevision": last_revision,
@@ -278,6 +291,8 @@ impl ControlWsClient {
             msg_type: "ping".to_string(),
             request_id: Some("ping".to_string()),
             message_id: None,
+            source_node_id: None,
+            network_id: None,
             payload: serde_json::json!({
                 "timestamp": timestamp,
             }),
@@ -301,6 +316,8 @@ impl ControlWsClient {
             msg_type: "connection_state".to_string(),
             request_id: Some("connection-state".to_string()),
             message_id: None,
+            source_node_id: None,
+            network_id: None,
             payload: serde_json::to_value(report)
                 .map_err(|err| format!("encode connection_state payload: {err}"))?,
         };
@@ -315,6 +332,8 @@ impl ControlWsClient {
             msg_type: "path_health_report".to_string(),
             request_id: Some("path-health".to_string()),
             message_id: None,
+            source_node_id: None,
+            network_id: None,
             payload: serde_json::to_value(report)
                 .map_err(|err| format!("encode path_health_report payload: {err}"))?,
         };
@@ -362,22 +381,29 @@ impl ControlWsClient {
     }
 
     fn send_envelope(&mut self, envelope: &Envelope) -> Result<(), String> {
+        let mut envelope = envelope.clone();
+        if envelope.source_node_id.is_none() {
+            envelope.source_node_id = Some(self.source_node_id.clone());
+        }
+        if envelope.network_id.is_none() {
+            envelope.network_id = Some(self.network_id.clone());
+        }
         let payload =
-            serde_json::to_vec(envelope).map_err(|err| format!("encode ws envelope: {err}"))?;
-        let frame = encode_text_frame(&payload);
+            serde_json::to_vec(&envelope).map_err(|err| format!("encode mqtt envelope: {err}"))?;
+        let packet = mqtt_publish_packet(&self.up_topic, &payload)?;
         self.stream
-            .write_all(&frame)
-            .map_err(|err| format!("write websocket frame: {err}"))?;
+            .write_all(&packet)
+            .map_err(|err| format!("write mqtt publish: {err}"))?;
         self.stream
             .flush()
-            .map_err(|err| format!("flush websocket frame: {err}"))?;
+            .map_err(|err| format!("flush mqtt publish: {err}"))?;
         Ok(())
     }
 
     fn read_envelope(&mut self) -> Result<Envelope, String> {
-        let payload = decode_text_frame(&mut self.stream)?;
+        let (_topic, payload) = read_mqtt_publish(&mut self.stream)?;
         serde_json::from_slice::<Envelope>(&payload)
-            .map_err(|err| format!("decode ws envelope: {err}"))
+            .map_err(|err| format!("decode mqtt envelope: {err}"))
     }
 
     fn read_response_envelope(&mut self, expected_type: &str) -> Result<Envelope, String> {
@@ -438,18 +464,6 @@ fn decode_control_ws_event(response: Envelope) -> Result<ControlWsEvent, String>
     }
 }
 
-fn append_device_id_query(path: &str, device_id: &str) -> String {
-    if device_id.trim().is_empty() {
-        return path.to_string();
-    }
-    let separator = if path.contains('?') { '&' } else { '?' };
-    format!("{path}{separator}deviceId={device_id}")
-}
-
-fn ws_origin(authority: &str) -> String {
-    format!("http://{authority}")
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Envelope {
@@ -459,6 +473,10 @@ struct Envelope {
     request_id: Option<String>,
     #[serde(default)]
     message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    network_id: Option<String>,
     #[serde(default)]
     payload: Value,
 }
@@ -490,115 +508,186 @@ impl From<ControlWsConfig> for NodeHelloPayload {
 }
 
 #[derive(Debug, Clone)]
-struct WsEndpoint {
+struct MqttEndpoint {
     authority: String,
-    path: String,
 }
 
-fn parse_ws_url(url: &str) -> Result<WsEndpoint, String> {
+fn parse_mqtt_url(url: &str) -> Result<MqttEndpoint, String> {
     let trimmed = url.trim();
     let stripped = trimmed
-        .strip_prefix("ws://")
-        .ok_or_else(|| "only ws:// control plane URLs are currently supported".to_string())?;
-    let (authority, path) = match stripped.split_once('/') {
-        Some((authority, rest)) => (authority.to_string(), format!("/{}", rest)),
-        None => (stripped.to_string(), "/".to_string()),
-    };
-    if authority.trim().is_empty() {
-        return Err("invalid control plane ws url".to_string());
+        .strip_prefix("mqtt://")
+        .ok_or_else(|| "only mqtt:// control broker URLs are currently supported".to_string())?;
+    let authority = stripped.split('/').next().unwrap_or(stripped).trim();
+    if authority.is_empty() {
+        return Err("invalid mqtt broker url".to_string());
     }
-    Ok(WsEndpoint { authority, path })
-}
-
-fn read_http_response(stream: &mut TcpStream) -> Result<String, String> {
-    let mut buf = Vec::with_capacity(1024);
-    let mut chunk = [0_u8; 512];
-    loop {
-        let read = stream
-            .read(&mut chunk)
-            .map_err(|err| format!("read websocket handshake response: {err}"))?;
-        if read == 0 {
-            return Err("control ws closed during handshake".to_string());
-        }
-        buf.extend_from_slice(&chunk[..read]);
-        if buf.windows(4).any(|window| window == b"\r\n\r\n") {
-            return String::from_utf8(buf)
-                .map_err(|err| format!("invalid handshake response utf8: {err}"));
-        }
-    }
-}
-
-fn first_response_line(response: &str) -> &str {
-    response.lines().next().unwrap_or("invalid response")
-}
-
-fn encode_text_frame(payload: &[u8]) -> Vec<u8> {
-    let mut frame = Vec::with_capacity(payload.len() + 16);
-    frame.push(0x81);
-    let mask_key = [0x12_u8, 0x34, 0x56, 0x78];
-    if payload.len() < 126 {
-        frame.push(0x80 | payload.len() as u8);
-    } else if payload.len() <= u16::MAX as usize {
-        frame.push(0x80 | 126);
-        frame.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    let authority = if authority.contains(':') {
+        authority.to_string()
     } else {
-        frame.push(0x80 | 127);
-        frame.extend_from_slice(&(payload.len() as u64).to_be_bytes());
-    }
-    frame.extend_from_slice(&mask_key);
-    for (idx, byte) in payload.iter().enumerate() {
-        frame.push(*byte ^ mask_key[idx % 4]);
-    }
-    frame
+        format!("{authority}:1883")
+    };
+    Ok(MqttEndpoint { authority })
 }
 
-fn decode_text_frame(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
-    let mut header = [0_u8; 2];
+fn mqtt_connect_packet(client_id: &str, username: &str, password: &str) -> Result<Vec<u8>, String> {
+    let mut variable = Vec::new();
+    mqtt_write_string(&mut variable, "MQTT")?;
+    variable.push(0x04);
+    variable.push(0x02 | 0x80 | 0x40);
+    variable.extend_from_slice(&30_u16.to_be_bytes());
+    mqtt_write_string(&mut variable, client_id)?;
+    mqtt_write_string(&mut variable, username)?;
+    mqtt_write_string(&mut variable, password)?;
+    let mut packet = vec![0x10];
+    packet.extend_from_slice(&mqtt_remaining_length(variable.len())?);
+    packet.extend_from_slice(&variable);
+    Ok(packet)
+}
+
+fn mqtt_publish_packet(topic: &str, payload: &[u8]) -> Result<Vec<u8>, String> {
+    let mut variable = Vec::new();
+    mqtt_write_string(&mut variable, topic)?;
+    variable.extend_from_slice(payload);
+    let mut packet = vec![0x30];
+    packet.extend_from_slice(&mqtt_remaining_length(variable.len())?);
+    packet.extend_from_slice(&variable);
+    Ok(packet)
+}
+
+fn mqtt_subscribe_packet(packet_id: u16, topic_filter: &str) -> Result<Vec<u8>, String> {
+    let mut variable = Vec::new();
+    variable.extend_from_slice(&packet_id.to_be_bytes());
+    mqtt_write_string(&mut variable, topic_filter)?;
+    variable.push(0x00);
+    let mut packet = vec![0x82];
+    packet.extend_from_slice(&mqtt_remaining_length(variable.len())?);
+    packet.extend_from_slice(&variable);
+    Ok(packet)
+}
+
+fn mqtt_write_string(buf: &mut Vec<u8>, value: &str) -> Result<(), String> {
+    let len = value.as_bytes().len();
+    if len > u16::MAX as usize {
+        return Err("mqtt string too long".to_string());
+    }
+    buf.extend_from_slice(&(len as u16).to_be_bytes());
+    buf.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+fn mqtt_remaining_length(mut length: usize) -> Result<Vec<u8>, String> {
+    if length > 268_435_455 {
+        return Err("mqtt remaining length out of range".to_string());
+    }
+    let mut out = Vec::new();
+    loop {
+        let mut digit = (length % 128) as u8;
+        length /= 128;
+        if length > 0 {
+            digit |= 128;
+        }
+        out.push(digit);
+        if length == 0 {
+            return Ok(out);
+        }
+    }
+}
+
+fn read_mqtt_connack(stream: &mut TcpStream) -> Result<(), String> {
+    let packet = read_mqtt_packet(stream)?;
+    if packet.header != 0x20 || packet.body.len() != 2 || packet.body[1] != 0 {
+        return Err("mqtt broker rejected connection".to_string());
+    }
+    Ok(())
+}
+
+fn read_mqtt_suback(stream: &mut TcpStream, packet_id: u16) -> Result<(), String> {
+    let packet = read_mqtt_packet(stream)?;
+    if packet.header & 0xf0 != 0x90 || packet.body.len() < 3 {
+        return Err("mqtt subscribe rejected".to_string());
+    }
+    if u16::from_be_bytes([packet.body[0], packet.body[1]]) != packet_id {
+        return Err("mqtt subscribe packet id mismatch".to_string());
+    }
+    if packet.body[2..].iter().any(|code| *code == 0x80) {
+        return Err("mqtt subscribe rejected".to_string());
+    }
+    Ok(())
+}
+
+fn read_mqtt_publish(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String> {
+    loop {
+        let packet = read_mqtt_packet(stream)?;
+        match packet.header & 0xf0 {
+            0x30 => return parse_mqtt_publish(packet.header, &packet.body),
+            0xd0 => continue,
+            0xc0 => {
+                stream
+                    .write_all(&[0xd0, 0x00])
+                    .map_err(|err| format!("write mqtt ping response: {err}"))?;
+            }
+            _ => continue,
+        }
+    }
+}
+
+struct MqttPacket {
+    header: u8,
+    body: Vec<u8>,
+}
+
+fn read_mqtt_packet(stream: &mut TcpStream) -> Result<MqttPacket, String> {
+    let mut header = [0_u8; 1];
     stream
         .read_exact(&mut header)
-        .map_err(|err| format!("read websocket frame header: {err}"))?;
-
-    let opcode = header[0] & 0x0f;
-    if opcode == 0x8 {
-        return Err("control ws closed by server".to_string());
-    }
-    if opcode != 0x1 {
-        return Err(format!("unsupported websocket opcode: {opcode}"));
-    }
-
-    let masked = (header[1] & 0x80) != 0;
-    let mut payload_len = (header[1] & 0x7f) as usize;
-    if payload_len == 126 {
-        let mut ext = [0_u8; 2];
-        stream
-            .read_exact(&mut ext)
-            .map_err(|err| format!("read websocket extended length: {err}"))?;
-        payload_len = u16::from_be_bytes(ext) as usize;
-    } else if payload_len == 127 {
-        let mut ext = [0_u8; 8];
-        stream
-            .read_exact(&mut ext)
-            .map_err(|err| format!("read websocket extended length: {err}"))?;
-        payload_len = u64::from_be_bytes(ext) as usize;
-    }
-
-    let mut mask = [0_u8; 4];
-    if masked {
-        stream
-            .read_exact(&mut mask)
-            .map_err(|err| format!("read websocket mask: {err}"))?;
-    }
-
-    let mut payload = vec![0_u8; payload_len];
+        .map_err(|err| format!("read mqtt packet header: {err}"))?;
+    let remaining = read_mqtt_remaining_length(stream)?;
+    let mut body = vec![0_u8; remaining];
     stream
-        .read_exact(&mut payload)
-        .map_err(|err| format!("read websocket payload: {err}"))?;
-    if masked {
-        for (idx, byte) in payload.iter_mut().enumerate() {
-            *byte ^= mask[idx % 4];
+        .read_exact(&mut body)
+        .map_err(|err| format!("read mqtt packet payload: {err}"))?;
+    Ok(MqttPacket {
+        header: header[0],
+        body,
+    })
+}
+
+fn read_mqtt_remaining_length(stream: &mut TcpStream) -> Result<usize, String> {
+    let mut multiplier = 1_usize;
+    let mut value = 0_usize;
+    for _ in 0..4 {
+        let mut encoded = [0_u8; 1];
+        stream
+            .read_exact(&mut encoded)
+            .map_err(|err| format!("read mqtt remaining length: {err}"))?;
+        value += ((encoded[0] & 127) as usize) * multiplier;
+        if encoded[0] & 128 == 0 {
+            return Ok(value);
         }
+        multiplier *= 128;
     }
-    Ok(payload)
+    Err("malformed mqtt remaining length".to_string())
+}
+
+fn parse_mqtt_publish(header: u8, body: &[u8]) -> Result<(String, Vec<u8>), String> {
+    if body.len() < 2 {
+        return Err("mqtt publish too short".to_string());
+    }
+    let topic_len = u16::from_be_bytes([body[0], body[1]]) as usize;
+    if body.len() < 2 + topic_len {
+        return Err("mqtt publish topic truncated".to_string());
+    }
+    let topic = String::from_utf8(body[2..2 + topic_len].to_vec())
+        .map_err(|err| format!("mqtt publish topic utf8: {err}"))?;
+    let mut payload_offset = 2 + topic_len;
+    let qos = (header >> 1) & 0x03;
+    if qos > 0 {
+        if body.len() < payload_offset + 2 {
+            return Err("mqtt publish packet id truncated".to_string());
+        }
+        payload_offset += 2;
+    }
+    Ok((topic, body[payload_offset..].to_vec()))
 }
 
 fn format_control_error(payload: Value) -> String {

@@ -179,7 +179,7 @@ func forwardPeerCandidate(deps routerDeps, session wsSession, candidate controlw
 		return
 	}
 	metricAdd("peer_candidate_forward_total", 1)
-	sendPeerCandidateToNode(deps, candidate.PeerNodeID, candidate)
+	sendPeerCandidateToNode(deps, session.networkID, candidate.PeerNodeID, candidate)
 	if deps.ControlSync != nil {
 		rev, _ := deps.ControlSync.CurrentRevision(session.networkID)
 		_ = deps.ControlSync.Publish(controlws.ControlSyncEvent{

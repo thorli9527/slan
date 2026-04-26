@@ -972,7 +972,7 @@ fn bootstrap_response(relay_url: &str) -> String {
                 "subnets":[{"networkId":"net-1","cidr":"100.64.0.0/24","isDefault":true}],
                 "members":[{"deviceId":"dev-1","role":"owner"}]
             }],
-            "controlPlane":{"wsUrl":"ws://127.0.0.1:8080/control/ws","heartbeatSeconds":15},
+            "controlPlane":{"wsUrl":"mqtt://127.0.0.1:1883","heartbeatSeconds":15},
             "stunServers":["stun:stun.l.google.com:19302"],
             "relay":{
                 "defaultClusterId":"cn-local-a",
