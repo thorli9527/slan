@@ -399,13 +399,13 @@
       <ng-container *ngIf="networkDialog() === 'dns'">
         <div class="dns-dialog">
           <section class="dialog-section">
-            <p class="dialog-copy">配置后客户端会启用本地轻量 DNS；server 行仅保存为配置项，当前客户端不做上游 DNS 转发。</p>
+            <p class="dialog-copy">客户端固定使用本机轻量 DNS，这里只配置域名到虚拟 IP 的通配符映射。</p>
             <label class="dns-document-field">
               <span>DNS 配置</span>
               <textarea
                 [value]="dnsDocumentText"
                 (input)="dnsDocumentText = $any($event.target).value"
-                placeholder="server 10.0.0.2&#10;domain slan&#10;wildcard *.xx.com=10.0.0.2"
+                placeholder="*.xx.com=10.0.0.2&#10;*.*.xx.com=10.0.0.2"
               ></textarea>
             </label>
           </section>

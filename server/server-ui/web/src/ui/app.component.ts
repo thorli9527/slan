@@ -1221,40 +1221,23 @@ export class AppComponent implements OnDestroy {
 
   private buildDnsDocument(detail: NetworkDetail): string {
     const dns = detail.dns || { servers: [], searchDomains: [], wildcards: [] };
-    return [
-      ...(dns.servers || []).map((item) => `server ${item}`),
-      ...(dns.searchDomains || []).map((item) => `domain ${item}`),
-      ...(dns.wildcards || []).map((item) => `wildcard ${item}`),
-    ].join('\n');
+    return (dns.wildcards || []).join('\n');
   }
 
   private parseDnsDocument(value: string): { servers: string[]; searchDomains: string[]; wildcards: string[] } {
-    const servers: string[] = [];
-    const searchDomains: string[] = [];
     const wildcards: string[] = [];
     for (const raw of value.split(/\r?\n/)) {
-      const line = raw.trim();
+      let line = raw.trim();
       if (!line || line.startsWith('#')) {
         continue;
       }
-      const match = line.match(/^(server|dns|domain|search|wildcard)\s+(.+)$/i);
-      if (!match) {
-        throw new Error('DNS 配置格式错误，请使用 server/domain/wildcard 开头');
+      line = line.replace(/^wildcard\s+/i, '');
+      if (!line.includes('=')) {
+        throw new Error('DNS 配置格式错误，请使用 *.xx.com=10.0.0.2 这样的通配符映射');
       }
-      const key = match[1].toLowerCase();
-      const payload = match[2].trim();
-      if (!payload) {
-        continue;
-      }
-      if (key === 'server' || key === 'dns') {
-        servers.push(payload);
-      } else if (key === 'domain' || key === 'search') {
-        searchDomains.push(payload);
-      } else {
-        wildcards.push(payload);
-      }
+      wildcards.push(line);
     }
-    return { servers, searchDomains, wildcards };
+    return { servers: [], searchDomains: [], wildcards };
   }
 
   private applyManagedDeviceState(managedDevice: { devices: Device[]; currentDeviceId: string; callbackDeviceId: string }): void {

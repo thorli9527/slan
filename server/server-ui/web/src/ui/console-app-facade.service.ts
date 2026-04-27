@@ -55,9 +55,6 @@ export class ConsoleAppFacadeService {
       token: auth.accessToken,
       ...input.tokenDeviceState,
     });
-    if (input.mode === 'login') {
-      return { auth, managedDevice };
-    }
     const workspace = await this.workspaceService.loadWorkspace(auth.accessToken);
     return { auth, managedDevice, workspace };
   }
