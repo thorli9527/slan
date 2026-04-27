@@ -345,8 +345,6 @@ fn execute_command(
             let network = facade.create_network(
                 args.name.clone(),
                 Some(args.cidr.clone()),
-                args.expected_devices,
-                args.gateway_ip.clone(),
                 args.allocation_start_ip.clone(),
                 args.allocation_end_ip.clone(),
             )?;
@@ -1820,10 +1818,6 @@ struct CreateNetworkArgs {
     name: String,
     #[arg(long, default_value = "100.64.0.0/24")]
     cidr: String,
-    #[arg(long)]
-    expected_devices: Option<u32>,
-    #[arg(long)]
-    gateway_ip: Option<String>,
     #[arg(long)]
     allocation_start_ip: Option<String>,
     #[arg(long)]

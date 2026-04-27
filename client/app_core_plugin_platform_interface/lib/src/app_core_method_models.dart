@@ -41,6 +41,7 @@ class AppCoreDevicePayload {
     required this.deviceId,
     required this.name,
     required this.platform,
+    this.deviceVersion,
     required this.status,
     this.currentVirtualIp,
     this.publicKey,
@@ -59,6 +60,7 @@ class AppCoreDevicePayload {
       deviceId: json['deviceId'] as String? ?? '',
       name: json['name'] as String? ?? '',
       platform: json['platform'] as String? ?? '',
+      deviceVersion: json['deviceVersion'] as String?,
       status: json['status'] as String? ?? '',
       currentVirtualIp: json['currentVirtualIp'] as String?,
       publicKey: json['publicKey'] as String?,
@@ -76,6 +78,7 @@ class AppCoreDevicePayload {
   final String deviceId;
   final String name;
   final String platform;
+  final String? deviceVersion;
   final String status;
   final String? currentVirtualIp;
   final String? publicKey;
@@ -92,6 +95,7 @@ class AppCoreDevicePayload {
         'deviceId': deviceId,
         'name': name,
         'platform': platform,
+        'deviceVersion': deviceVersion,
         'status': status,
         'currentVirtualIp': currentVirtualIp,
         'publicKey': publicKey,
@@ -231,6 +235,9 @@ class AppCoreNetworkAssignmentPayload {
     required this.subnetId,
     required this.deviceId,
     required this.deviceName,
+    this.devicePlatform,
+    this.deviceVersion,
+    this.connectionType,
     required this.userId,
     required this.userEmail,
     required this.role,
@@ -246,6 +253,9 @@ class AppCoreNetworkAssignmentPayload {
       subnetId: json['subnetId'] as String? ?? '',
       deviceId: json['deviceId'] as String? ?? '',
       deviceName: json['deviceName'] as String? ?? '',
+      devicePlatform: json['devicePlatform'] as String?,
+      deviceVersion: json['deviceVersion'] as String?,
+      connectionType: json['connectionType'] as String?,
       userId: json['userId'] as String? ?? '',
       userEmail: json['userEmail'] as String? ?? '',
       role: json['role'] as String? ?? '',
@@ -260,6 +270,9 @@ class AppCoreNetworkAssignmentPayload {
   final String subnetId;
   final String deviceId;
   final String deviceName;
+  final String? devicePlatform;
+  final String? deviceVersion;
+  final String? connectionType;
   final String userId;
   final String userEmail;
   final String role;

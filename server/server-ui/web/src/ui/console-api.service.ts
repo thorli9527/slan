@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import {
   AuthCallbackStatusResponse,
   AuthResponse,
+  ChangePasswordRequest,
   CompleteAuthCallbackRequest,
   Device,
   Network,
@@ -10,8 +11,10 @@ import {
   NetworkMember,
   NetworkDetail,
   NetworkHome,
-  NetworkJoinByOwnerEmailResult,
   NetworkJoinResult,
+  PurchaseOrder,
+  PurchaseProduct,
+  ProductEntitlement,
   Subnet,
   SubnetAttachment,
   UpdateNetworkDNSRequest,
@@ -29,6 +32,10 @@ export class ConsoleApiError extends Error {
 
   get isUnauthorized(): boolean {
     return this.status === 401 || this.code === 'UNAUTHORIZED';
+  }
+
+  get isPaymentRequired(): boolean {
+    return this.status === 402 || this.code === 'PAYMENT_REQUIRED';
   }
 }
 
@@ -48,8 +55,6 @@ type CreateNetworkInput = {
   name: string;
   description: string;
   cidr?: string;
-  expectedDevices?: number;
-  gatewayIp?: string;
   allocationStartIp?: string;
   allocationEndIp?: string;
   bindDeviceId: string;
@@ -59,6 +64,8 @@ type UpdateNetworkInput = {
   name: string;
   description: string;
   cidr: string;
+  allocationStartIp?: string;
+  allocationEndIp?: string;
 };
 
 @Injectable({ providedIn: 'root' })
@@ -110,16 +117,6 @@ export class ConsoleApiService {
       init: {
         method: 'POST',
         body: JSON.stringify(input)
-      }
-    });
-  }
-
-  joinByOwnerEmail(token: string, ownerEmail: string, deviceId: string): Promise<NetworkJoinByOwnerEmailResult> {
-    return this.request<NetworkJoinByOwnerEmailResult>('/networks/join-by-owner-email', {
-      token,
-      init: {
-        method: 'POST',
-        body: JSON.stringify({ ownerEmail, deviceId })
       }
     });
   }
@@ -214,6 +211,38 @@ export class ConsoleApiService {
     });
   }
 
+  changePassword(token: string, input: ChangePasswordRequest): Promise<void> {
+    return this.request<void>('/auth/password', {
+      token,
+      init: {
+        method: 'PUT',
+        body: JSON.stringify(input)
+      }
+    });
+  }
+
+  listPurchaseProducts(token: string): Promise<{ items: PurchaseProduct[] }> {
+    return this.request<{ items: PurchaseProduct[] }>('/products', { token });
+  }
+
+  getProductEntitlement(token: string, productCode: string): Promise<ProductEntitlement> {
+    return this.request<ProductEntitlement>(`/entitlements/${encodeURIComponent(productCode)}`, { token });
+  }
+
+  listPurchaseOrders(token: string): Promise<{ items: PurchaseOrder[] }> {
+    return this.request<{ items: PurchaseOrder[] }>('/orders', { token });
+  }
+
+  createPurchaseOrder(token: string, productCode: string, quantity = 1, months = 1): Promise<PurchaseOrder> {
+    return this.request<PurchaseOrder>('/orders', {
+      token,
+      init: {
+        method: 'POST',
+        body: JSON.stringify({ productCode, quantity, months })
+      }
+    });
+  }
+
   registerDevice(token: string, input: RegisterDeviceInput): Promise<Device> {
     return this.request<Device>('/devices/register', {
       token,
@@ -273,6 +302,7 @@ export class ConsoleApiService {
       .replace(/^conflict:\s*/i, '')
       .replace(/^unauthorized:\s*/i, '')
       .replace(/^forbidden:\s*/i, '')
+      .replace(/^payment required:\s*/i, '')
       .replace(/^not found:\s*/i, '');
   }
 }

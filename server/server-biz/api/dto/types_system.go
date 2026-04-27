@@ -269,3 +269,126 @@ type AssignRoleMenusRequest struct {
 	// MenuIDs 是角色最终应绑定的菜单 ID 列表。
 	MenuIDs []string `json:"menuIds"`
 }
+
+type OpsProduct struct {
+	ProductID          string `json:"productId"`
+	MerchantID         string `json:"merchantId,omitempty"`
+	MerchantName       string `json:"merchantName,omitempty"`
+	ProductCode        string `json:"productCode"`
+	ProductName        string `json:"productName"`
+	Description        string `json:"description,omitempty"`
+	ProductType        string `json:"productType"`
+	PriceCents         int64  `json:"priceCents"`
+	Currency           string `json:"currency"`
+	BillingCycle       string `json:"billingCycle"`
+	UnitQuantity       int    `json:"unitQuantity"`
+	MaxActiveDevices   int    `json:"maxActiveDevices"`
+	BandwidthLimitMbps int    `json:"bandwidthLimitMbps"`
+	IsDefault          bool   `json:"isDefault"`
+	Status             string `json:"status"`
+	CreatedAt          int64  `json:"createdAt,omitempty"`
+	UpdatedAt          int64  `json:"updatedAt,omitempty"`
+}
+
+type UpsertProductRequest struct {
+	MerchantID         string `json:"merchantId,omitempty"`
+	MerchantName       string `json:"merchantName,omitempty"`
+	ProductCode        string `json:"productCode"`
+	ProductName        string `json:"productName"`
+	Description        string `json:"description,omitempty"`
+	ProductType        string `json:"productType,omitempty"`
+	PriceCents         int64  `json:"priceCents,omitempty"`
+	Currency           string `json:"currency,omitempty"`
+	BillingCycle       string `json:"billingCycle,omitempty"`
+	UnitQuantity       int    `json:"unitQuantity,omitempty"`
+	MaxActiveDevices   int    `json:"maxActiveDevices,omitempty"`
+	BandwidthLimitMbps int    `json:"bandwidthLimitMbps,omitempty"`
+	IsDefault          bool   `json:"isDefault,omitempty"`
+	Status             string `json:"status,omitempty"`
+}
+
+type PurchaseProduct struct {
+	MerchantID         string `json:"merchantId,omitempty"`
+	MerchantName       string `json:"merchantName,omitempty"`
+	ProductCode        string `json:"productCode"`
+	ProductName        string `json:"productName"`
+	Description        string `json:"description,omitempty"`
+	ProductType        string `json:"productType"`
+	PriceCents         int64  `json:"priceCents"`
+	Currency           string `json:"currency"`
+	BillingCycle       string `json:"billingCycle"`
+	UnitQuantity       int    `json:"unitQuantity"`
+	MaxActiveDevices   int    `json:"maxActiveDevices,omitempty"`
+	BandwidthLimitMbps int    `json:"bandwidthLimitMbps,omitempty"`
+}
+
+type CreatePurchaseOrderRequest struct {
+	ProductCode string `json:"productCode"`
+	Quantity    int    `json:"quantity,omitempty"`
+	Months      int    `json:"months,omitempty"`
+}
+
+type PurchaseOrder struct {
+	OrderID      string `json:"orderId"`
+	MerchantID   string `json:"merchantId,omitempty"`
+	MerchantName string `json:"merchantName,omitempty"`
+	ProductID    string `json:"productId,omitempty"`
+	ProductCode  string `json:"productCode"`
+	ProductName  string `json:"productName"`
+	ProductType  string `json:"productType,omitempty"`
+	Quantity     int    `json:"quantity"`
+	Months       int    `json:"months"`
+	UnitCents    int64  `json:"unitCents,omitempty"`
+	AmountCents  int64  `json:"amountCents"`
+	Currency     string `json:"currency"`
+	BillingCycle string `json:"billingCycle"`
+	Status       string `json:"status"`
+	PaidAt       int64  `json:"paidAt,omitempty"`
+	CancelledAt  int64  `json:"cancelledAt,omitempty"`
+	RefundedAt   int64  `json:"refundedAt,omitempty"`
+	ExpiresAt    int64  `json:"expiresAt,omitempty"`
+	CreatedAt    int64  `json:"createdAt,omitempty"`
+	UpdatedAt    int64  `json:"updatedAt,omitempty"`
+}
+
+type OpsPurchaseOrder struct {
+	OrderID      string `json:"orderId"`
+	UserID       string `json:"userId"`
+	UserEmail    string `json:"userEmail,omitempty"`
+	MerchantID   string `json:"merchantId,omitempty"`
+	MerchantName string `json:"merchantName,omitempty"`
+	ProductID    string `json:"productId,omitempty"`
+	ProductCode  string `json:"productCode"`
+	ProductName  string `json:"productName"`
+	ProductType  string `json:"productType,omitempty"`
+	Quantity     int    `json:"quantity"`
+	Months       int    `json:"months"`
+	UnitCents    int64  `json:"unitCents,omitempty"`
+	AmountCents  int64  `json:"amountCents"`
+	Currency     string `json:"currency"`
+	BillingCycle string `json:"billingCycle"`
+	Status       string `json:"status"`
+	PaidAt       int64  `json:"paidAt,omitempty"`
+	CancelledAt  int64  `json:"cancelledAt,omitempty"`
+	RefundedAt   int64  `json:"refundedAt,omitempty"`
+	ExpiresAt    int64  `json:"expiresAt,omitempty"`
+	CreatedAt    int64  `json:"createdAt,omitempty"`
+	UpdatedAt    int64  `json:"updatedAt,omitempty"`
+}
+
+type UpdatePurchaseOrderStatusRequest struct {
+	Status string `json:"status"`
+}
+
+type OpsCreatePaidOrderRequest struct {
+	UserID      string `json:"userId"`
+	ProductCode string `json:"productCode"`
+	Quantity    int    `json:"quantity,omitempty"`
+	Months      int    `json:"months,omitempty"`
+}
+
+type ProductEntitlement struct {
+	ProductCode string `json:"productCode"`
+	Active      bool   `json:"active"`
+	ExpiresAt   int64  `json:"expiresAt,omitempty"`
+}

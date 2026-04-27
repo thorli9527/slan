@@ -69,8 +69,6 @@ where
                 Ok(to_value(self.inner.create_network(
                     args.name,
                     args.cidr,
-                    args.expected_devices,
-                    args.gateway_ip,
                     args.allocation_start_ip,
                     args.allocation_end_ip,
                 )?)?)

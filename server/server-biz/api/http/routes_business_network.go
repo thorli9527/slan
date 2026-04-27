@@ -5,7 +5,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/slan/server/server-biz/api/dto"
-	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 )
 
 // registerNetworkRoutes registers logical network, subnet, and attachment APIs.
@@ -82,6 +81,11 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		return deps.Network.ListMembers(rc.user(), rc.networkID(c))
 	}))
 
+	networks.POST("/:networkId/invitations", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.InviteNetworkMemberRequest) (dto.NetworkMember, error) {
+		rc := currentRouteContext(c)
+		return deps.Network.InviteMember(rc.user(), rc.networkID(c), req)
+	}))
+
 	networks.PUT("/:networkId/members/:memberId/status", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.UpdateNetworkMemberStatusRequest) (dto.NetworkMember, error) {
 		rc := currentRouteContext(c)
 		return deps.Network.UpdateMemberStatus(rc.user(), rc.networkID(c), rc.memberID(c), req)
@@ -104,18 +108,7 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 
 	networks.PUT("/:networkId/attachments/:attachmentId/ip", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.UpdateAttachmentIPRequest) (dto.SubnetAttachment, error) {
 		rc := currentRouteContext(c)
-		updated, err := deps.Network.UpdateAttachmentIP(rc.user(), rc.networkID(c), rc.attachmentID(c), req)
-		if err != nil {
-			return dto.SubnetAttachment{}, err
-		}
-		broadcastDeviceIPReassigned(deps, rc.networkID(c), controlmsg.DeviceIPReassigned{
-			NetworkID:    rc.networkID(c),
-			DeviceID:     updated.DeviceID,
-			AttachmentID: updated.AttachmentID,
-			VirtualIP:    updated.VirtualIP,
-			Reason:       "attachment virtual ip updated",
-		})
-		return updated, nil
+		return deps.Network.UpdateAttachmentIP(rc.user(), rc.networkID(c), rc.attachmentID(c), req)
 	}))
 
 	networks.PUT("/:networkId/attachments/:attachmentId/remark", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.UpdateAttachmentRemarkRequest) (dto.NetworkAssignment, error) {

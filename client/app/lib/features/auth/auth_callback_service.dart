@@ -151,6 +151,7 @@ class AuthCallbackService {
       await AppCoreScope.sessionController.ensureHomeWorkspaceReady(
         deviceName: host,
         platform: DesktopPlatform.currentId,
+        deviceVersion: DesktopPlatform.currentVersion,
         machineId: AppCoreScope.clientMachineId,
         devicePublicKey: 'device-key-${DateTime.now().microsecondsSinceEpoch}',
       );

@@ -16,8 +16,14 @@ type RefreshTokenRequest struct {
 	DeviceID     string `json:"deviceId,omitempty"`
 }
 
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
 type AuthResponse struct {
 	UserID       string `json:"userId"`
+	Email        string `json:"email,omitempty"`
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken,omitempty"`
 	ExpiresIn    int64  `json:"expiresIn"`

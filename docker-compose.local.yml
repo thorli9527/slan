@@ -104,6 +104,17 @@ services:
       server-biz:
         condition: service_started
 
+  server-main:
+    build:
+      context: ./server/server-main
+      dockerfile: Dockerfile
+    container_name: slan-server-main
+    ports:
+      - "${SLAN_MAIN_PORT:-24201}:80"
+    depends_on:
+      server-biz:
+        condition: service_started
+
   caddy:
     image: caddy:2-alpine
     container_name: slan-caddy
@@ -117,6 +128,8 @@ services:
       server-biz:
         condition: service_started
       server-ui-web:
+        condition: service_started
+      server-main:
         condition: service_started
 
 volumes:

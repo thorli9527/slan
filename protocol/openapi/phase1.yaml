@@ -23,6 +23,8 @@ tags:
   - name: Nodes
   - name: Control
   - name: Relay
+  - name: Commerce
+  - name: Ops
   - name: System
 paths:
   /healthz:
@@ -53,6 +55,88 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+
+  /products:
+    get:
+      tags: [Commerce]
+      operationId: listPurchaseProducts
+      summary: List purchasable products
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PurchaseProduct'
+
+  /entitlements/{productCode}:
+    get:
+      tags: [Commerce]
+      operationId: getProductEntitlement
+      summary: Get current user's entitlement for a product
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: productCode
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product entitlement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductEntitlement'
+
+  /orders:
+    get:
+      tags: [Commerce]
+      operationId: listPurchaseOrders
+      summary: List current user's purchase orders
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Order list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PurchaseOrder'
+    post:
+      tags: [Commerce]
+      operationId: createPurchaseOrder
+      summary: Create a purchase order
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePurchaseOrderRequest'
+      responses:
+        '201':
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseOrder'
 
   /auth/register:
     post:
@@ -505,6 +589,8 @@ paths:
       tags: [Networks]
       operationId: joinNetworkByOwnerEmail
       summary: Join network by owner email
+      description: Legacy compatibility endpoint. Current web/app clients should join by invite code / join key.
+      deprecated: true
       security:
         - bearerAuth: []
       requestBody:
@@ -589,6 +675,29 @@ paths:
                     items:
                       $ref: '#/components/schemas/NetworkMember'
 
+  /networks/{networkId}/invitations:
+    post:
+      tags: [Networks]
+      operationId: inviteNetworkMember
+      summary: Invite a user to join the network
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteNetworkMemberRequest'
+      responses:
+        '201':
+          description: Invitation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkMember'
+
   /networks/{networkId}/assignments:
     get:
       tags: [Networks]
@@ -639,6 +748,8 @@ paths:
       tags: [Networks]
       operationId: attachDeviceToSubnet
       summary: Attach device to subnet
+      description: Internal compatibility endpoint. Current clients use join, approval and activation flows.
+      deprecated: true
       security:
         - bearerAuth: []
       parameters:
@@ -798,6 +909,428 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RelayTicket'
+
+  /ops-api/login:
+    post:
+      tags: [Ops]
+      operationId: opsLogin
+      summary: Login to operations console
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpsLoginRequest'
+      responses:
+        '200':
+          description: Operations session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsLoginResponse'
+
+  /ops-api/overview:
+    get:
+      tags: [Ops]
+      operationId: opsOverview
+      summary: Get operations overview
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Operations overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsOverview'
+
+  /ops-api/users:
+    get:
+      tags: [Ops]
+      operationId: opsListUsers
+      summary: List users for operations
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsUser'
+
+  /ops-api/devices:
+    get:
+      tags: [Ops]
+      operationId: opsListDevices
+      summary: List devices for operations
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsDevice'
+
+  /ops-api/admins:
+    get:
+      tags: [Ops]
+      operationId: opsListAdmins
+      summary: List operations administrators
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Administrator list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsAdminInfo'
+    post:
+      tags: [Ops]
+      operationId: opsUpsertAdmin
+      summary: Create or update an operations administrator
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertAdminInfoRequest'
+      responses:
+        '201':
+          description: Administrator saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsAdminInfo'
+
+  /ops-api/admins/{adminId}/password:
+    put:
+      tags: [Ops]
+      operationId: opsChangeAdminPassword
+      summary: Change operations administrator password
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: adminId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeAdminPasswordRequest'
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
+  /ops-api/admins/{adminId}/unlock:
+    post:
+      tags: [Ops]
+      operationId: opsUnlockAdmin
+      summary: Unlock an operations administrator
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: adminId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Administrator unlocked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
+  /ops-api/roles:
+    get:
+      tags: [Ops]
+      operationId: opsListRoles
+      summary: List operations roles
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Role list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsRole'
+    post:
+      tags: [Ops]
+      operationId: opsCreateRole
+      summary: Create operations role
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+      responses:
+        '201':
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsRole'
+
+  /ops-api/users/{userId}/roles:
+    put:
+      tags: [Ops]
+      operationId: opsAssignUserRoles
+      summary: Replace a user's operations roles
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignUserRolesRequest'
+      responses:
+        '200':
+          description: User roles assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
+  /ops-api/menus:
+    get:
+      tags: [Ops]
+      operationId: opsListMenus
+      summary: List operations menus
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Menu list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsMenu'
+    post:
+      tags: [Ops]
+      operationId: opsCreateMenu
+      summary: Create operations menu
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMenuRequest'
+      responses:
+        '201':
+          description: Menu created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsMenu'
+
+  /ops-api/roles/{roleId}/menus:
+    put:
+      tags: [Ops]
+      operationId: opsAssignRoleMenus
+      summary: Replace a role's operations menus
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roleId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignRoleMenusRequest'
+      responses:
+        '200':
+          description: Role menus assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
+  /ops-api/relays:
+    get:
+      tags: [Ops]
+      operationId: opsRelayTopology
+      summary: Get operations relay topology
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Relay topology
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsRelayTopology'
+
+  /ops-api/products:
+    get:
+      tags: [Ops]
+      operationId: opsListProducts
+      summary: List managed products
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsProduct'
+    post:
+      tags: [Ops]
+      operationId: opsUpsertProduct
+      summary: Create or update a product
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertProductRequest'
+      responses:
+        '201':
+          description: Product saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsProduct'
+
+  /ops-api/orders:
+    get:
+      tags: [Ops]
+      operationId: opsListPurchaseOrders
+      summary: List purchase orders for operations
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Order list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OpsPurchaseOrder'
+
+  /ops-api/orders/paid:
+    post:
+      tags: [Ops]
+      operationId: opsCreatePaidPurchaseOrder
+      summary: Create a paid purchase order for a user
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpsCreatePaidOrderRequest'
+      responses:
+        '201':
+          description: Paid order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsPurchaseOrder'
+
+  /ops-api/orders/{orderId}/status:
+    put:
+      tags: [Ops]
+      operationId: opsUpdatePurchaseOrderStatus
+      summary: Update purchase order status
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePurchaseOrderStatusRequest'
+      responses:
+        '200':
+          description: Order updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsPurchaseOrder'
 
 components:
   securitySchemes:
@@ -989,6 +1522,525 @@ components:
           type: string
           enum: [ok]
 
+    PurchaseProduct:
+      type: object
+      required: [productCode, productName, productType, priceCents, currency, billingCycle, unitQuantity]
+      properties:
+        merchantId:
+          type: string
+        merchantName:
+          type: string
+        productCode:
+          type: string
+        productName:
+          type: string
+        description:
+          type: string
+        productType:
+          type: string
+          enum: [free, addon_device, addon_dns]
+        priceCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        billingCycle:
+          type: string
+          enum: [month, quarter, year]
+        unitQuantity:
+          type: integer
+        maxActiveDevices:
+          type: integer
+        bandwidthLimitMbps:
+          type: integer
+
+    CreatePurchaseOrderRequest:
+      type: object
+      required: [productCode]
+      properties:
+        productCode:
+          type: string
+        quantity:
+          type: integer
+          description: Device expansion quantity. DNS products ignore quantity and always use 1.
+        months:
+          type: integer
+          description: Number of billing periods/months requested.
+
+    PurchaseOrder:
+      type: object
+      required: [orderId, productCode, productName, quantity, months, amountCents, currency, billingCycle, status]
+      properties:
+        orderId:
+          type: string
+        merchantId:
+          type: string
+        merchantName:
+          type: string
+        productId:
+          type: string
+        productCode:
+          type: string
+        productName:
+          type: string
+        productType:
+          type: string
+          enum: [addon_device, addon_dns]
+        quantity:
+          type: integer
+        months:
+          type: integer
+        unitCents:
+          type: integer
+          format: int64
+        amountCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        billingCycle:
+          type: string
+          enum: [month, quarter, year]
+        status:
+          type: string
+          enum: [pending, paid, cancelled, refunded]
+        paidAt:
+          type: integer
+          format: int64
+        cancelledAt:
+          type: integer
+          format: int64
+        refundedAt:
+          type: integer
+          format: int64
+        expiresAt:
+          type: integer
+          format: int64
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+
+    ProductEntitlement:
+      type: object
+      required: [productCode, active]
+      properties:
+        productCode:
+          type: string
+        active:
+          type: boolean
+        expiresAt:
+          type: integer
+          format: int64
+
+    OpsLoginRequest:
+      type: object
+      required: [loginName, password]
+      properties:
+        loginName:
+          type: string
+        password:
+          type: string
+          format: password
+
+    OpsLoginResponse:
+      type: object
+      required: [adminId, userId, loginName, displayName, accessToken, expiresIn]
+      properties:
+        adminId:
+          type: string
+        userId:
+          type: string
+        loginName:
+          type: string
+        displayName:
+          type: string
+        accessToken:
+          type: string
+        expiresIn:
+          type: integer
+          format: int64
+
+    OpsOverview:
+      type: object
+      required: [userCount, deviceCount, onlineDeviceCount, nodeCount, relayClusterCount, relayNodeCount, defaultAdminSeeded, defaultAdminRoleBound]
+      properties:
+        userCount:
+          type: integer
+        deviceCount:
+          type: integer
+        onlineDeviceCount:
+          type: integer
+        nodeCount:
+          type: integer
+        relayClusterCount:
+          type: integer
+        relayNodeCount:
+          type: integer
+        defaultAdminSeeded:
+          type: boolean
+        defaultAdminLoginName:
+          type: string
+        defaultAdminRoleBound:
+          type: boolean
+        securityWarnings:
+          type: array
+          items:
+            type: string
+
+    OpsUser:
+      type: object
+      required: [userId, email, deviceCount, nodeCount]
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+          format: email
+        deviceCount:
+          type: integer
+        nodeCount:
+          type: integer
+        roleIds:
+          type: array
+          items:
+            type: string
+        roleCodes:
+          type: array
+          items:
+            type: string
+        roleNames:
+          type: array
+          items:
+            type: string
+
+    OpsDevice:
+      allOf:
+        - $ref: '#/components/schemas/Device'
+        - type: object
+          required: [userId, nodeCount]
+          properties:
+            userId:
+              type: string
+            nodeCount:
+              type: integer
+            nodeIds:
+              type: array
+              items:
+                type: string
+
+    OpsAdminInfo:
+      type: object
+      required: [adminId, userId, loginName, displayName, status]
+      properties:
+        adminId:
+          type: string
+        userId:
+          type: string
+        loginName:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        phone:
+          type: string
+        title:
+          type: string
+        department:
+          type: string
+        status:
+          type: string
+        passwordUpdatedAt:
+          type: integer
+          format: int64
+        lastLoginAt:
+          type: integer
+          format: int64
+        lastLoginIp:
+          type: string
+        failedLoginCount:
+          type: integer
+        lockedUntil:
+          type: integer
+          format: int64
+        usingSeedPassword:
+          type: boolean
+        roleIds:
+          type: array
+          items:
+            type: string
+        roleCodes:
+          type: array
+          items:
+            type: string
+        roleNames:
+          type: array
+          items:
+            type: string
+
+    UpsertAdminInfoRequest:
+      type: object
+      required: [userId, loginName, displayName]
+      properties:
+        userId:
+          type: string
+        loginName:
+          type: string
+        password:
+          type: string
+          format: password
+        displayName:
+          type: string
+        phone:
+          type: string
+        title:
+          type: string
+        department:
+          type: string
+        status:
+          type: string
+
+    ChangeAdminPasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+
+    OpsRole:
+      type: object
+      required: [roleId, roleCode, roleName, builtin]
+      properties:
+        roleId:
+          type: string
+        roleCode:
+          type: string
+        roleName:
+          type: string
+        description:
+          type: string
+        builtin:
+          type: boolean
+        menuIds:
+          type: array
+          items:
+            type: string
+        menuCodes:
+          type: array
+          items:
+            type: string
+        menuNames:
+          type: array
+          items:
+            type: string
+
+    CreateRoleRequest:
+      type: object
+      required: [roleCode, roleName]
+      properties:
+        roleCode:
+          type: string
+        roleName:
+          type: string
+        description:
+          type: string
+
+    AssignUserRolesRequest:
+      type: object
+      required: [roleIds]
+      properties:
+        roleIds:
+          type: array
+          items:
+            type: string
+
+    OpsMenu:
+      type: object
+      required: [menuId, menuCode, menuName, sort, status]
+      properties:
+        menuId:
+          type: string
+        menuCode:
+          type: string
+        menuName:
+          type: string
+        path:
+          type: string
+        parentId:
+          type: string
+        sort:
+          type: integer
+        status:
+          type: string
+
+    CreateMenuRequest:
+      type: object
+      required: [menuCode, menuName]
+      properties:
+        menuCode:
+          type: string
+        menuName:
+          type: string
+        path:
+          type: string
+        parentId:
+          type: string
+        sort:
+          type: integer
+        status:
+          type: string
+
+    AssignRoleMenusRequest:
+      type: object
+      required: [menuIds]
+      properties:
+        menuIds:
+          type: array
+          items:
+            type: string
+
+    OpsRelayNode:
+      type: object
+      required: [nodeId, clusterId, clusterName, transport, address, priority]
+      properties:
+        nodeId:
+          type: string
+        clusterId:
+          type: string
+        clusterName:
+          type: string
+        countryCode:
+          type: string
+        countryName:
+          type: string
+        cityCode:
+          type: string
+        cityName:
+          type: string
+        transport:
+          type: string
+        address:
+          type: string
+        priority:
+          type: integer
+        observedRttMs:
+          type: integer
+        packetLossPpm:
+          type: integer
+        pathScore:
+          type: integer
+        sampleCount:
+          type: integer
+
+    OpsRelayTopology:
+      type: object
+      required: [defaultClusterId]
+      properties:
+        defaultClusterId:
+          type: string
+        regions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayRegion'
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpsRelayNode'
+
+    OpsProduct:
+      allOf:
+        - $ref: '#/components/schemas/PurchaseProduct'
+        - type: object
+          required: [productId, isDefault, status]
+          properties:
+            productId:
+              type: string
+            isDefault:
+              type: boolean
+            status:
+              type: string
+            createdAt:
+              type: integer
+              format: int64
+            updatedAt:
+              type: integer
+              format: int64
+
+    UpsertProductRequest:
+      type: object
+      required: [productCode, productName]
+      properties:
+        merchantId:
+          type: string
+        merchantName:
+          type: string
+        productCode:
+          type: string
+        productName:
+          type: string
+        description:
+          type: string
+        productType:
+          type: string
+          enum: [free, addon_device, addon_dns]
+        priceCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        billingCycle:
+          type: string
+          enum: [month, quarter, year]
+        unitQuantity:
+          type: integer
+        maxActiveDevices:
+          type: integer
+        bandwidthLimitMbps:
+          type: integer
+        isDefault:
+          type: boolean
+        status:
+          type: string
+
+    OpsPurchaseOrder:
+      allOf:
+        - $ref: '#/components/schemas/PurchaseOrder'
+        - type: object
+          required: [userId]
+          properties:
+            userId:
+              type: string
+            userEmail:
+              type: string
+              format: email
+
+    OpsCreatePaidOrderRequest:
+      type: object
+      required: [userId, productCode]
+      properties:
+        userId:
+          type: string
+        productCode:
+          type: string
+        quantity:
+          type: integer
+          description: Device expansion quantity. DNS products ignore quantity and always use 1.
+        months:
+          type: integer
+
+    UpdatePurchaseOrderStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, paid, cancelled, refunded]
+
     RegisterDeviceRequest:
       type: object
       required: [name, platform, machineId, publicKey]
@@ -1102,10 +2154,6 @@ components:
           type: string
         cidr:
           type: string
-        expectedDevices:
-          type: integer
-        gatewayIp:
-          type: string
         allocationStartIp:
           type: string
         allocationEndIp:
@@ -1147,6 +2195,7 @@ components:
 
     JoinNetworkByOwnerEmailRequest:
       type: object
+      description: Legacy request shape kept for compatibility. Prefer JoinNetworkByKeyRequest.
       required: [ownerEmail, deviceId]
       properties:
         ownerEmail:
@@ -1163,6 +2212,14 @@ components:
           type: string
         deviceId:
           type: string
+
+    InviteNetworkMemberRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
 
     UpdateNetworkMemberStatusRequest:
       type: object
@@ -1189,6 +2246,10 @@ components:
           type: array
           items:
             type: string
+        wildcards:
+          type: array
+          items:
+            type: string
 
     UpdateAttachmentIPRequest:
       type: object
@@ -1205,6 +2266,7 @@ components:
 
     AttachDeviceRequest:
       type: object
+      description: Internal compatibility request. Web/app clients should not call this directly.
       required: [deviceId]
       properties:
         deviceId:
@@ -1588,6 +2650,10 @@ components:
           items:
             type: string
         searchDomains:
+          type: array
+          items:
+            type: string
+        wildcards:
           type: array
           items:
             type: string

@@ -3,6 +3,7 @@ package impl
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/slan/server/server-biz/api/dto"
@@ -35,7 +36,7 @@ func (s dbNetworkService) Create(userID string, req dto.CreateNetworkRequest) (d
 		return dto.Network{}, err
 	}
 	networkID := util.NewID("net")
-	subnets, err := defaultSubnetsForNetwork(networkID, createNetworkCIDR(req.CIDR, req.ExpectedDevices), func() string {
+	subnets, err := defaultSubnetsForNetwork(networkID, createNetworkCIDR(req.CIDR), func() string {
 		return util.NewID("subnet")
 	})
 	if err != nil {
@@ -47,7 +48,7 @@ func (s dbNetworkService) Create(userID string, req dto.CreateNetworkRequest) (d
 			subnets[0].SubnetID,
 			subnets[0].Name,
 			subnets[0].CIDR,
-			strings.TrimSpace(req.GatewayIP),
+			"",
 			strings.TrimSpace(req.AllocationStartIP),
 			strings.TrimSpace(req.AllocationEndIP),
 			true,
@@ -114,8 +115,8 @@ func (s dbNetworkService) Update(userID, networkID string, req dto.UpdateNetwork
 		"default",
 		cidr,
 		"",
-		"",
-		"",
+		strings.TrimSpace(req.AllocationStartIP),
+		strings.TrimSpace(req.AllocationEndIP),
 		true,
 	)
 	if err != nil {
@@ -149,10 +150,18 @@ func (s dbNetworkService) UpdateDNS(userID, networkID string, req dto.UpdateNetw
 	if record.OwnerUserID != userID {
 		return dto.NetworkDetail{}, ErrForbidden
 	}
+	if err := s.state.requireActiveProductEntitlement(ctx, userID, "dns"); err != nil {
+		return dto.NetworkDetail{}, err
+	}
 	dns := dto.DNSConfig{
 		Servers:       sanitizeValues(req.Servers),
 		SearchDomains: sanitizeValues(req.SearchDomains),
 	}
+	wildcards, err := sanitizeDNSWildcards(req.Wildcards)
+	if err != nil {
+		return dto.NetworkDetail{}, err
+	}
+	dns.Wildcards = wildcards
 	if err := s.state.pg.UpdateNetworkDNS(ctx, networkID, dns); err != nil {
 		return dto.NetworkDetail{}, err
 	}
@@ -332,8 +341,75 @@ func sanitizeValues(items []string) []string {
 	return out
 }
 
+func sanitizeDNSWildcards(items []string) ([]string, error) {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.ToLower(strings.TrimSpace(item))
+		if value == "" {
+			continue
+		}
+		host, ip, ok := strings.Cut(value, "=")
+		if !ok {
+			return nil, fmt.Errorf("%w: dns wildcard must use pattern=ip", ErrInvalidArgument)
+		}
+		host = normalizeDNSWildcardHost(host)
+		ip = strings.TrimSpace(ip)
+		if !isAllowedDNSWildcardHost(host) {
+			return nil, fmt.Errorf("%w: dns wildcard only supports *.xx.com or *.*.xx.com style domains", ErrInvalidArgument)
+		}
+		if parsed := net.ParseIP(ip); parsed == nil || parsed.To4() == nil {
+			return nil, fmt.Errorf("%w: dns wildcard target must be an IPv4 address", ErrInvalidArgument)
+		}
+		out = append(out, host+"="+ip)
+	}
+	return out, nil
+}
+
+func normalizeDNSWildcardHost(host string) string {
+	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), ".")
+	if strings.HasPrefix(host, "*") && !strings.HasPrefix(host, "*.") {
+		host = "*." + strings.TrimPrefix(host, "*")
+	}
+	return host
+}
+
+func isAllowedDNSWildcardHost(host string) bool {
+	if strings.Contains(host, "..") {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	wildcardCount := 0
+	for wildcardCount < len(labels) && labels[wildcardCount] == "*" {
+		wildcardCount++
+	}
+	if wildcardCount == 0 || wildcardCount == len(labels) {
+		return false
+	}
+	for _, label := range labels[wildcardCount:] {
+		if label == "*" || !isDNSLabel(label) {
+			return false
+		}
+	}
+	return len(labels)-wildcardCount >= 2
+}
+
+func isDNSLabel(label string) bool {
+	if label == "" || len(label) > 63 {
+		return false
+	}
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	for _, ch := range label {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func hasCreateNetworkDHCPOptions(req dto.CreateNetworkRequest) bool {
-	return strings.TrimSpace(req.GatewayIP) != "" ||
-		strings.TrimSpace(req.AllocationStartIP) != "" ||
+	return strings.TrimSpace(req.AllocationStartIP) != "" ||
 		strings.TrimSpace(req.AllocationEndIP) != ""
 }

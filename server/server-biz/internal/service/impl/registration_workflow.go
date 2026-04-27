@@ -38,14 +38,15 @@ func (s *dbState) requireUser(ctx context.Context, userID string) error {
 
 func (s dbDeviceService) upsertDeviceRecord(ctx context.Context, userID string, req dto.RegisterDeviceRequest) (repo.Device, error) {
 	return s.state.pg.UpsertDeviceByUserMachine(ctx, repo.Device{
-		DeviceID:  util.NewID("dev"),
-		UserID:    userID,
-		MachineID: req.MachineID,
-		Name:      req.Name,
-		Platform:  req.Platform,
-		Status:    "offline",
-		PublicKey: &req.PublicKey,
-		CreatedAt: time.Now().Unix(),
+		DeviceID:      util.NewID("dev"),
+		UserID:        userID,
+		MachineID:     req.MachineID,
+		Name:          req.Name,
+		Platform:      req.Platform,
+		DeviceVersion: strings.TrimSpace(req.DeviceVersion),
+		Status:        "offline",
+		PublicKey:     &req.PublicKey,
+		CreatedAt:     time.Now().Unix(),
 	})
 }
 

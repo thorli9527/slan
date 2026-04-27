@@ -33,29 +33,22 @@ abstract final class AppTestKeys {
   static const authHostField = ValueKey<String>('auth.host');
   static const authApplyHostButton = ValueKey<String>('auth.apply_host');
 
-  static const networksNameField = ValueKey<String>('networks.name');
-  static const networksCidrField = ValueKey<String>('networks.cidr');
+  static const networksIpAddressField = ValueKey<String>('networks.ip_address');
+  static const networksSubnetMaskField =
+      ValueKey<String>('networks.subnet_mask');
   static const networksCreateButton =
       ValueKey<String>('networks.create_button');
   static const networksOpenCreateDialogButton =
       ValueKey<String>('networks.open_create_dialog_button');
   static const networksOpenJoinDialogButton =
       ValueKey<String>('networks.open_join_dialog_button');
-  static const networksExpectedDevicesField =
-      ValueKey<String>('networks.expected_devices');
-  static const networksGatewayIpField = ValueKey<String>('networks.gateway_ip');
   static const networksAllocationStartIpField =
       ValueKey<String>('networks.allocation_start_ip');
   static const networksAllocationEndIpField =
       ValueKey<String>('networks.allocation_end_ip');
-  static const networksDhcpCustomSwitch =
-      ValueKey<String>('networks.dhcp_custom_switch');
   static const networksRefreshButton =
       ValueKey<String>('networks.refresh_button');
-  static const networksOwnerEmailField =
-      ValueKey<String>('networks.owner_email');
   static const networksJoinKeyField = ValueKey<String>('networks.join_key');
-  static const networksAliasField = ValueKey<String>('networks.alias');
   static const networksJoinButton = ValueKey<String>('networks.join_button');
   static ValueKey<String> networksSwitchButton(String networkId) =>
       ValueKey<String>('networks.switch_button.$networkId');

@@ -75,6 +75,7 @@ class MockAppCoreApi implements AppCoreApi {
   Future<DeviceModel> registerDevice({
     required String name,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String publicKey,
   }) async {
@@ -83,6 +84,7 @@ class MockAppCoreApi implements AppCoreApi {
       deviceId: machineId,
       name: name,
       platform: platform,
+      deviceVersion: deviceVersion,
       status: 'online',
       virtualIp: '100.64.0.10',
       publicKey: publicKey,
@@ -153,8 +155,6 @@ class MockAppCoreApi implements AppCoreApi {
   Future<NetworkModel> createNetwork({
     required String name,
     String? cidr,
-    int? expectedDevices,
-    String? gatewayIp,
     String? allocationStartIp,
     String? allocationEndIp,
     String? bindDeviceId,
@@ -319,15 +319,15 @@ class MockAppCoreApi implements AppCoreApi {
           .toList(growable: false),
     );
     final member = _networks[index].members.firstWhere(
-      (member) => member.attachmentId == attachmentId,
-      orElse: () => NetworkMemberModel(
-        networkId: networkId,
-        attachmentId: attachmentId,
-        deviceId: '',
-        role: 'member',
-        remark: remark,
-      ),
-    );
+          (member) => member.attachmentId == attachmentId,
+          orElse: () => NetworkMemberModel(
+            networkId: networkId,
+            attachmentId: attachmentId,
+            deviceId: '',
+            role: 'member',
+            remark: remark,
+          ),
+        );
     return NetworkAssignmentModel(
       attachmentId: attachmentId,
       networkId: member.networkId ?? networkId,
@@ -398,15 +398,15 @@ class MockAppCoreApi implements AppCoreApi {
       );
     }
     final activated = _networks[index].members.firstWhere(
-      (member) => member.deviceId == deviceId,
-      orElse: () => NetworkMemberModel(
-        networkId: networkId,
-        attachmentId: 'mock-attachment-$deviceId',
-        deviceId: deviceId,
-        role: 'member',
-        virtualIp: virtualIp,
-      ),
-    );
+          (member) => member.deviceId == deviceId,
+          orElse: () => NetworkMemberModel(
+            networkId: networkId,
+            attachmentId: 'mock-attachment-$deviceId',
+            deviceId: deviceId,
+            role: 'member',
+            virtualIp: virtualIp,
+          ),
+        );
     return NetworkJoinModel(
       networkId: activated.networkId ?? networkId,
       deviceId: activated.deviceId,

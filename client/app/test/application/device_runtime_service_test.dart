@@ -220,8 +220,6 @@ class _FakeAppCoreApi implements AppCoreApi {
   Future<NetworkModel> createNetwork({
     required String name,
     String? cidr,
-    int? expectedDevices,
-    String? gatewayIp,
     String? allocationStartIp,
     String? allocationEndIp,
     String? bindDeviceId,
@@ -347,6 +345,7 @@ class _FakeAppCoreApi implements AppCoreApi {
   Future<DeviceModel> registerDevice({
     required String name,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String publicKey,
   }) {

@@ -89,6 +89,7 @@ class HttpAppCoreApi implements AppCoreApi {
   Future<DeviceModel> registerDevice({
     required String name,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String publicKey,
   }) async {
@@ -99,6 +100,7 @@ class HttpAppCoreApi implements AppCoreApi {
         body: RegisterDeviceRequest(
           name: name,
           platform: platform,
+          deviceVersion: deviceVersion,
           machineId: machineId,
           publicKey: publicKey,
         ).toJson(),
@@ -171,8 +173,6 @@ class HttpAppCoreApi implements AppCoreApi {
   Future<NetworkModel> createNetwork({
     required String name,
     String? cidr,
-    int? expectedDevices,
-    String? gatewayIp,
     String? allocationStartIp,
     String? allocationEndIp,
     String? bindDeviceId,
@@ -184,8 +184,6 @@ class HttpAppCoreApi implements AppCoreApi {
         body: CreateNetworkRequest(
           name: name,
           cidr: cidr,
-          expectedDevices: expectedDevices,
-          gatewayIp: gatewayIp,
           allocationStartIp: allocationStartIp,
           allocationEndIp: allocationEndIp,
           bindDeviceId: bindDeviceId,

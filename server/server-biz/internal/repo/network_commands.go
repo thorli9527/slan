@@ -22,6 +22,7 @@ func (r *PostgresRepository) CreateNetworkWithSubnets(ctx context.Context, owner
 			DefaultSubnetCIDR: network.DefaultSubnetCIDR,
 			DNSServers:        "",
 			DNSSearchDomains:  "",
+			DNSWildcards:      "",
 			JoinKey:           "",
 		}
 		if err := tx.Create(&networkModel).Error; err != nil {
@@ -143,6 +144,7 @@ func (r *PostgresRepository) UpdateNetworkDNS(ctx context.Context, networkID str
 		Updates(map[string]any{
 			"dns_servers":        encodeCSVList(dns.Servers),
 			"dns_search_domains": encodeCSVList(dns.SearchDomains),
+			"dns_wildcards":      encodeCSVList(dns.Wildcards),
 		}).Error
 }
 
@@ -189,6 +191,16 @@ func (r *PostgresRepository) UpdateAttachmentVirtualIP(ctx context.Context, atta
 		Model(&SubnetAttachment{}).
 		Where("attachment_id = ?", attachmentID).
 		Update("virtual_ip", virtualIP).Error
+}
+
+func (r *PostgresRepository) SuspendAttachment(ctx context.Context, attachmentID string) error {
+	return r.db.WithContext(ctx).
+		Model(&SubnetAttachment{}).
+		Where("attachment_id = ?", attachmentID).
+		Updates(map[string]any{
+			"status":     "suspended",
+			"virtual_ip": "",
+		}).Error
 }
 
 func (r *PostgresRepository) UpdateAttachmentRemark(ctx context.Context, attachmentID, remark string) error {

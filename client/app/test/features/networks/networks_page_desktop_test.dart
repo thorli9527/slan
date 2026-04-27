@@ -30,7 +30,7 @@ void main() {
         find.text('No active network has been prepared yet.'), findsOneWidget);
   });
 
-  testWidgets('NetworksPage joins by key and applies alias', (
+  testWidgets('NetworksPage joins by invite code', (
     WidgetTester tester,
   ) async {
     AppCoreScope.configureForTest(appCoreApi: MockAppCoreApi());
@@ -44,15 +44,10 @@ void main() {
       find.byKey(AppTestKeys.networksJoinKeyField),
       'join-key-1',
     );
-    await tester.enterText(
-      find.byKey(AppTestKeys.networksAliasField),
-      'Thor laptop',
-    );
     await tester.tap(find.byKey(AppTestKeys.networksJoinButton));
     await tester.pumpAndSettle();
 
     expect(find.text('Joined network'), findsWidgets);
-    expect(find.text('Thor laptop'), findsWidgets);
     expect(AppCoreScope.sessionStore.selectedNetworkId, 'mock-key-network');
   });
 
@@ -66,13 +61,14 @@ void main() {
     await tester.tap(find.byKey(AppTestKeys.networksOpenCreateDialogButton));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byKey(AppTestKeys.networksNameField), 'Lab');
     await tester.enterText(
-        find.byKey(AppTestKeys.networksCidrField), '10.9.0.0/24');
+        find.byKey(AppTestKeys.networksIpAddressField), '10.9.0.0');
+    await tester.enterText(
+        find.byKey(AppTestKeys.networksSubnetMaskField), '255.255.252.0');
     await tester.tap(find.byKey(AppTestKeys.networksCreateButton));
     await tester.pumpAndSettle();
 
-    expect(find.text('Lab'), findsWidgets);
+    expect(find.text('My Network'), findsWidgets);
     expect(AppCoreScope.sessionStore.selectedNetworkId, 'net-1');
   });
 

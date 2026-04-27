@@ -91,6 +91,7 @@ class DeviceModel {
     required this.deviceId,
     required this.name,
     required this.platform,
+    this.deviceVersion,
     required this.status,
     this.virtualIp,
     this.publicKey,
@@ -110,6 +111,7 @@ class DeviceModel {
   final String deviceId;
   final String name;
   final String platform;
+  final String? deviceVersion;
   final String status;
   final String? virtualIp;
   final String? publicKey;

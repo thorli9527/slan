@@ -15,7 +15,9 @@ func registerBusinessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	protected := api.Group("")
 	protected.Use(authenticate(deps))
 
+	registerProtectedAccessRoutes(protected, deps)
 	registerRegistrationRoutes(protected, deps)
 	registerNetworkRoutes(protected, deps)
+	registerCommerceRoutes(protected, deps)
 	registerBootstrapRoutes(protected, deps)
 }

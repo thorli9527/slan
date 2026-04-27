@@ -7,6 +7,7 @@ import '../../../application/app_workspace_service.dart';
 import '../../../application/auth_session_service.dart';
 import '../../../application/device_setup_service.dart';
 import '../../../application/device_runtime_service.dart';
+import '../../../application/local_dns_service.dart';
 import '../../../application/tunnel_configuration_service.dart';
 import '../../../application/tunnel_host_gateway.dart';
 import '../../../application/tunnel_runtime_service.dart';
@@ -43,6 +44,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   final TunnelConfigurationService _tunnelConfigurationService =
       const TunnelConfigurationService();
   Timer? _networkStateTimer;
+  Timer? _controlSyncTimer;
+  bool _controlSyncInFlight = false;
 
   @override
   bool get busy => sessionStore.busy;
@@ -90,6 +93,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   void resetState() {
     _networkStateTimer?.cancel();
     _networkStateTimer = null;
+    _controlSyncTimer?.cancel();
+    _controlSyncTimer = null;
+    _controlSyncInFlight = false;
     unawaited(DeviceMqttService.instance.close());
     sessionStore.resetAll();
     tunnelStore.resetAll();
@@ -176,6 +182,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         // Best effort. Local state still needs to be cleared even if the
         // tunnel runtime is already gone or not initialized.
       }
+      await LocalDnsService.instance.stop();
       await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
       await AppCoreScope.clearPersistedSession();
       resetState();
@@ -261,6 +268,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   Future<void> registerDevice({
     required String name,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String publicKey,
   }) async {
@@ -269,6 +277,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         DeviceRegistrationInput(
           name: name,
           platform: platform,
+          deviceVersion: deviceVersion,
           machineId: machineId,
           publicKey: publicKey,
         ),
@@ -305,6 +314,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   Future<String?> ensureHomeWorkspaceReady({
     required String deviceName,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String devicePublicKey,
   }) async {
@@ -315,6 +325,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         currentDevice: sessionStore.device,
         deviceName: deviceName,
         platform: platform,
+        deviceVersion: deviceVersion,
         machineId: machineId,
         devicePublicKey: devicePublicKey,
       );
@@ -406,7 +417,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   Future<void> joinNetwork({
     String? ownerEmail,
     String? joinKey,
-    String? alias,
   }) async {
     await runAction(() async {
       final result = await _workspaceService.joinNetwork(
@@ -414,7 +424,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         currentDevice: sessionStore.device,
         ownerEmail: ownerEmail,
         joinKey: joinKey,
-        alias: alias,
       );
       sessionStore.networks = result.networks;
       sessionStore.syncSelectedNetworkId(preferredNetworkId: result.networkId);
@@ -425,8 +434,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   Future<void> createNetwork({
     required String name,
     String? cidr,
-    int? expectedDevices,
-    String? gatewayIp,
     String? allocationStartIp,
     String? allocationEndIp,
   }) async {
@@ -441,8 +448,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       final network = await AppCoreScope.instance.createNetwork(
         name: name,
         cidr: cidr,
-        expectedDevices: expectedDevices,
-        gatewayIp: gatewayIp,
         allocationStartIp: allocationStartIp,
         allocationEndIp: allocationEndIp,
         bindDeviceId: device.deviceId,
@@ -517,12 +522,14 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       }
       debugPrint('[tunnel-enable] bring-up start peerVirtualIp=$peerVirtualIp');
       await bringTunnelUp(verifyPeerVirtualIp: peerVirtualIp);
+      await LocalDnsService.instance.configureFromNetwork(runtime.activeNetwork);
       await _reportDeviceNetworkState(
         networkOnline: true,
         tunnelUp: true,
         lastProbeOk: true,
       );
       _startDeviceNetworkHeartbeat(networkOnline: true, tunnelUp: true);
+      _syncControlSyncPollingState();
       debugPrint('[tunnel-enable] bring-up done peerVirtualIp=$peerVirtualIp');
     });
   }
@@ -534,8 +541,10 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         return;
       }
       await bringTunnelDown();
+      await LocalDnsService.instance.stop();
       _networkStateTimer?.cancel();
       _networkStateTimer = null;
+      _stopControlSyncPolling();
       await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
       _startDeviceNetworkHeartbeat(networkOnline: false, tunnelUp: false);
       final result = await _workspaceService.deactivateActiveNetwork(
@@ -552,6 +561,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
           deviceId: currentDevice.deviceId,
           name: currentDevice.name,
           platform: currentDevice.platform,
+          deviceVersion: currentDevice.deviceVersion,
           status: currentDevice.status,
           publicKey: currentDevice.publicKey,
           ownerEmail: currentDevice.ownerEmail,
@@ -612,24 +622,119 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
 
   Future<String> refreshBootstrapOrControlSync() async {
     late String detail;
+    final previousLocalVirtualIp = tunnelStore.tunnelRuntimeView?.localVirtualIp;
     await runAction(() async {
-      final result = await _deviceRuntimeService.refreshBootstrap(
-        node: sessionStore.node,
-        currentBootstrap: sessionStore.bootstrap,
-        currentNetworks: sessionStore.networks,
-      );
-      sessionStore.bootstrap = result.bootstrap;
-      sessionStore.controlStatus = result.controlStatus;
-      sessionStore.syncDevice(result.bootstrap.device);
-      sessionStore.networks = result.bootstrap.networks;
-      sessionStore.syncSelectedNetworkId(
-        preferredNetworkId: result.bootstrap.networks.isEmpty
-            ? null
-            : result.bootstrap.networks.first.networkId,
-      );
-      detail = result.detail;
+      detail = await _refreshBootstrapOrControlSyncState();
     });
+    await _reapplyActiveNetworkTunnelIfVirtualIpChanged(previousLocalVirtualIp);
+    _syncControlSyncPollingState();
     return detail;
+  }
+
+  Future<String> _refreshBootstrapOrControlSyncState() async {
+    final result = await _deviceRuntimeService.refreshBootstrap(
+      node: sessionStore.node,
+      currentBootstrap: sessionStore.bootstrap,
+      currentNetworks: sessionStore.networks,
+    );
+    sessionStore.bootstrap = result.bootstrap;
+    sessionStore.controlStatus = result.controlStatus;
+    sessionStore.syncDevice(result.bootstrap.device);
+    sessionStore.networks = result.bootstrap.networks;
+    sessionStore.syncSelectedNetworkId(
+      preferredNetworkId: result.bootstrap.networks.isEmpty
+          ? null
+          : result.bootstrap.networks.first.networkId,
+    );
+    return result.detail;
+  }
+
+  void _startControlSyncPolling() {
+    _controlSyncTimer?.cancel();
+    _controlSyncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      unawaited(_backgroundControlSyncOnce());
+    });
+  }
+
+  void _syncControlSyncPollingState() {
+    if (_canRunControlSync() && tunnelStore.tunnelRuntimeView != null) {
+      _startControlSyncPolling();
+      return;
+    }
+    _stopControlSyncPolling();
+  }
+
+  void _stopControlSyncPolling() {
+    _controlSyncTimer?.cancel();
+    _controlSyncTimer = null;
+    _controlSyncInFlight = false;
+  }
+
+  Future<void> _backgroundControlSyncOnce() async {
+    if (_controlSyncInFlight ||
+        sessionStore.session == null ||
+        sessionStore.device == null ||
+        sessionStore.selectedNetworkId == null ||
+        !_canRunControlSync()) {
+      return;
+    }
+    _controlSyncInFlight = true;
+    final previousLocalVirtualIp = tunnelStore.tunnelRuntimeView?.localVirtualIp;
+    try {
+      await _refreshBootstrapOrControlSyncState();
+      emitStateChanged();
+      await _reapplyActiveNetworkTunnelIfVirtualIpChanged(previousLocalVirtualIp);
+    } catch (error) {
+      debugPrint('[control-sync] background sync skipped: $error');
+    } finally {
+      _controlSyncInFlight = false;
+    }
+  }
+
+  bool _canRunControlSync() {
+    final controlPlane = sessionStore.bootstrap?.controlPlane;
+    return controlPlane?.sessionToken?.isNotEmpty == true &&
+        controlPlane?.wsUrl.trim().isNotEmpty == true;
+  }
+
+  Future<void> _reapplyActiveNetworkTunnelIfVirtualIpChanged(
+    String? previousLocalVirtualIp,
+  ) async {
+    final runtime = tunnelStore.tunnelRuntimeView;
+    final device = sessionStore.device;
+    final network = sessionStore.selectedNetwork;
+    if (runtime == null || device == null || network == null) {
+      return;
+    }
+    final config = _tunnelConfigurationService.buildActiveNetworkConfiguration(
+      network: network,
+      deviceId: device.deviceId,
+      devicePublicKey: device.publicKey,
+    );
+    if (previousLocalVirtualIp == config.localVirtualIp &&
+        runtime.localVirtualIp == config.localVirtualIp) {
+      return;
+    }
+    final peerVirtualIp = config.peer.allowedIps.first.split('/').first;
+    debugPrint(
+      '[tunnel-refresh] virtual ip changed from ${previousLocalVirtualIp ?? runtime.localVirtualIp} to ${config.localVirtualIp}; reapplying tunnel',
+    );
+    final applyReport = await applyTunnelConfiguration(
+      configuration: config,
+      verifyPeerVirtualIp: peerVirtualIp,
+    );
+    if (!applyReport.succeeded) {
+      await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
+      return;
+    }
+    await bringTunnelUp(verifyPeerVirtualIp: peerVirtualIp);
+    await LocalDnsService.instance.configureFromNetwork(network);
+    await _reportDeviceNetworkState(
+      networkOnline: true,
+      tunnelUp: true,
+      lastProbeOk: true,
+    );
+    _startDeviceNetworkHeartbeat(networkOnline: true, tunnelUp: true);
   }
 
   Future<ConnectAttemptResult> connectUsingControlPlan({

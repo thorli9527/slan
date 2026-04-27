@@ -13,21 +13,15 @@ class NetworksPage extends StatefulWidget {
 }
 
 class _NetworksPageState extends State<NetworksPage> {
-  final TextEditingController _nameController = TextEditingController(
-    text: 'My Network',
-  );
-  final TextEditingController _cidrController = TextEditingController();
-  final TextEditingController _expectedDevicesController =
-      TextEditingController(text: '120');
-  final TextEditingController _gatewayIpController = TextEditingController();
+  final TextEditingController _ipAddressController =
+      TextEditingController(text: '10.0.0.0');
+  final TextEditingController _subnetMaskController =
+      TextEditingController(text: '255.255.252.0');
   final TextEditingController _allocationStartIpController =
       TextEditingController();
   final TextEditingController _allocationEndIpController =
       TextEditingController();
-  final TextEditingController _ownerEmailController = TextEditingController();
   final TextEditingController _joinKeyController = TextEditingController();
-  final TextEditingController _aliasController = TextEditingController();
-  bool _customDhcp = false;
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +39,7 @@ class _NetworksPageState extends State<NetworksPage> {
               DesktopHeroPanel(
                 title: 'Network Details',
                 description:
-                    'Join a network with an owner email or join key, add a device alias, and switch the client between joined networks.',
+                    'Create a network plan, confirm access with an invite code, and switch the client between joined networks.',
                 trailing: IconButton.filledTonal(
                   key: AppTestKeys.networksRefreshButton,
                   onPressed: sessionStore.busy || sessionStore.session == null
@@ -76,7 +70,7 @@ class _NetworksPageState extends State<NetworksPage> {
                           ? null
                           : _openCreateNetworkDialog,
                       icon: const Icon(Icons.add_rounded),
-                      label: const Text('Create network'),
+                      label: const Text('Network plan'),
                     ),
                     OutlinedButton.icon(
                       key: AppTestKeys.networksOpenJoinDialogButton,
@@ -86,7 +80,7 @@ class _NetworksPageState extends State<NetworksPage> {
                           ? null
                           : _openJoinNetworkDialog,
                       icon: const Icon(Icons.group_add_rounded),
-                      label: const Text('Join network'),
+                      label: const Text('Access confirmation'),
                     ),
                     if (sessionStore.error != null)
                       Text(
@@ -139,21 +133,76 @@ class _NetworksPageState extends State<NetworksPage> {
 
   Future<void> _joinNetwork() async {
     await AppCoreScope.sessionController.joinNetwork(
-      ownerEmail: _ownerEmailController.text,
       joinKey: _joinKeyController.text,
-      alias: _aliasController.text,
     );
   }
 
   Future<void> _createNetwork() async {
     await AppCoreScope.sessionController.createNetwork(
-      name: _nameController.text,
-      cidr: _cidrController.text,
-      expectedDevices: int.tryParse(_expectedDevicesController.text),
-      gatewayIp: _customDhcp ? _gatewayIpController.text : null,
-      allocationStartIp: _customDhcp ? _allocationStartIpController.text : null,
-      allocationEndIp: _customDhcp ? _allocationEndIpController.text : null,
+      name: _defaultNetworkName,
+      cidr: _cidrFromAddressAndMask(
+        _ipAddressController.text,
+        _subnetMaskController.text,
+      ),
+      allocationStartIp: _allocationStartIpController.text,
+      allocationEndIp: _allocationEndIpController.text,
     );
+  }
+
+  static const String _defaultNetworkName = 'My Network';
+
+  String _cidrFromAddressAndMask(String address, String mask) {
+    final ipValue = _parseIpv4(address, 'IP address is invalid');
+    final maskValue = _parseIpv4(mask, 'Subnet mask is invalid');
+    final prefix = _subnetMaskPrefix(maskValue);
+    final network = ipValue & maskValue;
+    return '${_formatIpv4(network)}/$prefix';
+  }
+
+  int _parseIpv4(String value, String message) {
+    final parts = value.trim().split('.');
+    if (parts.length != 4) {
+      throw FormatException(message);
+    }
+    var result = 0;
+    for (final part in parts) {
+      final octet = int.tryParse(part);
+      if (octet == null || octet < 0 || octet > 255) {
+        throw FormatException(message);
+      }
+      result = (result << 8) | octet;
+    }
+    return result;
+  }
+
+  int _subnetMaskPrefix(int mask) {
+    var seenZero = false;
+    var prefix = 0;
+    for (var bit = 31; bit >= 0; bit--) {
+      final isOne = ((mask >> bit) & 1) == 1;
+      if (isOne && seenZero) {
+        throw const FormatException('Subnet mask is invalid');
+      }
+      if (isOne) {
+        prefix++;
+      } else {
+        seenZero = true;
+      }
+    }
+    if (prefix < 1 || prefix > 30) {
+      throw const FormatException(
+          'Subnet mask must allow usable host addresses');
+    }
+    return prefix;
+  }
+
+  String _formatIpv4(int value) {
+    return [
+      (value >> 24) & 255,
+      (value >> 16) & 255,
+      (value >> 8) & 255,
+      value & 255,
+    ].join('.');
   }
 
   Future<void> _openCreateNetworkDialog() async {
@@ -163,81 +212,71 @@ class _NetworksPageState extends State<NetworksPage> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Create network'),
+              title: const Text('Network plan'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     TextField(
-                      key: AppTestKeys.networksNameField,
-                      controller: _nameController,
-                      decoration: const InputDecoration(labelText: 'Name'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      key: AppTestKeys.networksCidrField,
-                      controller: _cidrController,
+                      key: AppTestKeys.networksIpAddressField,
+                      controller: _ipAddressController,
                       decoration: const InputDecoration(
-                        labelText: 'CIDR',
-                        hintText: 'Auto when empty',
+                        labelText: 'IP address',
+                        hintText: '10.0.0.0',
                       ),
                     ),
                     const SizedBox(height: 12),
                     TextField(
-                      key: AppTestKeys.networksExpectedDevicesField,
-                      controller: _expectedDevicesController,
-                      keyboardType: TextInputType.number,
+                      key: AppTestKeys.networksSubnetMaskField,
+                      controller: _subnetMaskController,
                       decoration: const InputDecoration(
-                        labelText: 'Expected devices',
+                        labelText: 'Subnet mask',
+                        hintText: '255.255.252.0',
                       ),
                     ),
                     const SizedBox(height: 12),
-                    SwitchListTile(
-                      key: AppTestKeys.networksDhcpCustomSwitch,
-                      value: _customDhcp,
-                      onChanged: (value) {
-                        setDialogState(() => _customDhcp = value);
-                      },
-                      title: const Text('Custom DHCP pool'),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'DHCP',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
                     ),
-                    if (_customDhcp) ...[
-                      TextField(
-                        key: AppTestKeys.networksGatewayIpField,
-                        controller: _gatewayIpController,
-                        decoration:
-                            const InputDecoration(labelText: 'Gateway IP'),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        key: AppTestKeys.networksAllocationStartIpField,
-                        controller: _allocationStartIpController,
-                        decoration:
-                            const InputDecoration(labelText: 'Start IP'),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        key: AppTestKeys.networksAllocationEndIpField,
-                        controller: _allocationEndIpController,
-                        decoration: const InputDecoration(labelText: 'End IP'),
-                      ),
-                    ],
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: AppTestKeys.networksAllocationStartIpField,
+                      controller: _allocationStartIpController,
+                      decoration: const InputDecoration(labelText: 'Start IP'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      key: AppTestKeys.networksAllocationEndIpField,
+                      controller: _allocationEndIpController,
+                      decoration: const InputDecoration(labelText: 'End IP'),
+                    ),
                   ],
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                SizedBox(
+                  width: 120,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
                 ),
-                FilledButton(
-                  key: AppTestKeys.networksCreateButton,
-                  onPressed: () async {
-                    await _createNetwork();
-                    if (context.mounted) {
-                      Navigator.of(context).pop();
-                    }
-                  },
-                  child: const Text('Create'),
+                SizedBox(
+                  width: 160,
+                  child: FilledButton(
+                    key: AppTestKeys.networksCreateButton,
+                    onPressed: () async {
+                      await _createNetwork();
+                      if (context.mounted) {
+                        Navigator.of(context).pop();
+                      }
+                    },
+                    child: const Text('Save'),
+                  ),
                 ),
               ],
             );
@@ -252,35 +291,17 @@ class _NetworksPageState extends State<NetworksPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Join network'),
+          title: const Text('Access confirmation'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
-                  key: AppTestKeys.networksOwnerEmailField,
-                  controller: _ownerEmailController,
-                  decoration: const InputDecoration(
-                    labelText: 'Owner email',
-                    hintText: 'owner@example.com',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
                   key: AppTestKeys.networksJoinKeyField,
                   controller: _joinKeyController,
                   decoration: const InputDecoration(
-                    labelText: 'Join key',
-                    hintText: 'Paste invite key',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  key: AppTestKeys.networksAliasField,
-                  controller: _aliasController,
-                  decoration: const InputDecoration(
-                    labelText: 'Device alias',
-                    hintText: 'Thor laptop',
+                    labelText: 'Invite code',
+                    hintText: 'Paste invite code',
                   ),
                 ),
               ],
@@ -299,7 +320,7 @@ class _NetworksPageState extends State<NetworksPage> {
                   Navigator.of(context).pop();
                 }
               },
-              child: const Text('Join'),
+              child: const Text('Confirm'),
             ),
           ],
         );
@@ -309,15 +330,11 @@ class _NetworksPageState extends State<NetworksPage> {
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _cidrController.dispose();
-    _expectedDevicesController.dispose();
-    _gatewayIpController.dispose();
+    _ipAddressController.dispose();
+    _subnetMaskController.dispose();
     _allocationStartIpController.dispose();
     _allocationEndIpController.dispose();
-    _ownerEmailController.dispose();
     _joinKeyController.dispose();
-    _aliasController.dispose();
     super.dispose();
   }
 }
@@ -339,21 +356,6 @@ class _NetworkDetails extends StatelessWidget {
         _Line(label: 'CIDR', value: network.cidr),
         _Line(label: 'Members', value: '${network.members.length}'),
         const SizedBox(height: 16),
-        const Text('Subnets'),
-        const SizedBox(height: 8),
-        if (network.subnets.isEmpty)
-          const Text('No subnets have been loaded yet.')
-        else
-          ...network.subnets.map(
-            (subnet) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: DesktopInsetBlock(
-                title: _subnetTitle(subnet),
-                child: Text(_subnetSummary(subnet)),
-              ),
-            ),
-          ),
-        const SizedBox(height: 16),
         const Text('Members'),
         const SizedBox(height: 8),
         if (network.members.isEmpty)
@@ -370,23 +372,6 @@ class _NetworkDetails extends StatelessWidget {
           ),
       ],
     );
-  }
-
-  String _subnetTitle(SubnetModel subnet) {
-    final name = subnet.name?.trim();
-    if (name == null || name.isEmpty) {
-      return subnet.subnetId ?? subnet.cidr;
-    }
-    return subnet.isDefault ? '$name / Default' : name;
-  }
-
-  String _subnetSummary(SubnetModel subnet) {
-    final parts = [
-      subnet.cidr,
-      if (subnet.remark != null && subnet.remark!.isNotEmpty) subnet.remark!,
-      if (subnet.status != null && subnet.status!.isNotEmpty) subnet.status!,
-    ];
-    return parts.join(' / ');
   }
 
   String _memberTitle(NetworkMemberModel member) {

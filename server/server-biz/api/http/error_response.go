@@ -16,6 +16,7 @@ const (
 	errorCodeForbidden       = "FORBIDDEN"
 	errorCodeNotFound        = "NOT_FOUND"
 	errorCodeConflict        = "CONFLICT"
+	errorCodePaymentRequired = "PAYMENT_REQUIRED"
 	errorCodeRequestTooLarge = "REQUEST_TOO_LARGE"
 	errorCodeRateLimited     = "RATE_LIMITED"
 	errorCodeNotImplemented  = "NOT_IMPLEMENTED"
@@ -47,6 +48,9 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrConflict):
 		status = http.StatusConflict
 		code = errorCodeConflict
+	case errors.Is(err, service.ErrPaymentRequired):
+		status = http.StatusPaymentRequired
+		code = errorCodePaymentRequired
 	case errors.Is(err, service.ErrNotImplemented):
 		status = http.StatusNotImplemented
 		code = errorCodeNotImplemented

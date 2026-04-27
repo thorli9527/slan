@@ -687,6 +687,7 @@ fn network_map_from_json(raw: &Value) -> NetworkMap {
         dns: serde_json::from_value::<DnsConfig>(raw["dns"].clone()).unwrap_or(DnsConfig {
             servers: Vec::new(),
             search_domains: Vec::new(),
+            wildcards: Vec::new(),
         }),
         mtu: raw["mtu"].as_u64().map(|value| value as u32),
     }

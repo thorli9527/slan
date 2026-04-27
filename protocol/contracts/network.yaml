@@ -13,12 +13,6 @@ contracts:
       cidr:
         type: string
         required: false
-      expectedDevices:
-        type: int
-        required: false
-      gatewayIp:
-        type: string
-        required: false
       allocationStartIp:
         type: string
         required: false
@@ -52,6 +46,9 @@ contracts:
       searchDomains:
         type: string[]
         required: false
+      wildcards:
+        type: string[]
+        required: false
   SwitchNetworkRequest:
     fields:
       deviceId:
@@ -72,7 +69,14 @@ contracts:
       status:
         type: string
         required: true
+  InviteNetworkMemberRequest:
+    fields:
+      email:
+        type: string
+        required: true
   JoinNetworkByOwnerEmailRequest:
+    lifecycle: legacy
+    note: Prefer JoinNetworkByKeyRequest for the current invite-code flow.
     fields:
       ownerEmail:
         type: string
@@ -101,6 +105,8 @@ contracts:
         type: string
         required: false
   AttachDeviceRequest:
+    lifecycle: internal
+    note: Web and app clients now use join/activate flows; direct subnet attach remains for compatibility.
     fields:
       deviceId:
         type: string
@@ -144,6 +150,9 @@ contracts:
       searchDomains:
         type: string[]
         required: true
+      wildcards:
+        type: string[]
+        required: false
   Subnet:
     fields:
       subnetId:

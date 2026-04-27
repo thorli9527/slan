@@ -266,10 +266,6 @@ pub struct CreateNetworkRequestDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cidr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_devices: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gateway_ip: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub allocation_start_ip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allocation_end_ip: Option<String>,
@@ -283,8 +279,6 @@ impl From<CreateNetworkRequest> for CreateNetworkRequestDto {
             name: value.name,
             description: value.description.filter(|value| !value.trim().is_empty()),
             cidr: value.cidr.filter(|value| !value.trim().is_empty()),
-            expected_devices: value.expected_devices.filter(|value| *value > 0),
-            gateway_ip: value.gateway_ip.filter(|value| !value.trim().is_empty()),
             allocation_start_ip: value
                 .allocation_start_ip
                 .filter(|value| !value.trim().is_empty()),
@@ -303,6 +297,7 @@ impl From<CreateNetworkRequest> for CreateNetworkRequestDto {
 pub struct UpdateNetworkDNSRequestDto {
     pub servers: Vec<String>,
     pub search_domains: Vec<String>,
+    pub wildcards: Vec<String>,
 }
 
 impl From<UpdateNetworkDNSRequest> for UpdateNetworkDNSRequestDto {
@@ -310,6 +305,7 @@ impl From<UpdateNetworkDNSRequest> for UpdateNetworkDNSRequestDto {
         Self {
             servers: value.servers,
             search_domains: value.search_domains,
+            wildcards: value.wildcards,
         }
     }
 }
@@ -762,6 +758,8 @@ pub struct DnsConfigDto {
     pub servers: Vec<String>,
     #[serde(default)]
     pub search_domains: Vec<String>,
+    #[serde(default)]
+    pub wildcards: Vec<String>,
 }
 
 impl From<DnsConfigDto> for DnsConfig {
@@ -769,6 +767,7 @@ impl From<DnsConfigDto> for DnsConfig {
         Self {
             servers: value.servers,
             search_domains: value.search_domains,
+            wildcards: value.wildcards,
         }
     }
 }

@@ -25,6 +25,7 @@ func TestWriteErrorMapsServiceErrors(t *testing.T) {
 		{name: "forbidden", err: service.ErrForbidden, status: http.StatusForbidden, code: errorCodeForbidden},
 		{name: "not found", err: service.ErrNotFound, status: http.StatusNotFound, code: errorCodeNotFound},
 		{name: "conflict", err: service.ErrConflict, status: http.StatusConflict, code: errorCodeConflict},
+		{name: "payment required", err: service.ErrPaymentRequired, status: http.StatusPaymentRequired, code: errorCodePaymentRequired},
 		{name: "internal", err: errors.New("boom"), status: http.StatusInternalServerError, code: errorCodeInternal},
 	}
 

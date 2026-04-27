@@ -3,9 +3,12 @@ package repo
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
 )
+
+const assignmentRuntimeFreshnessWindow = 60 * time.Second
 
 // GetAttachmentByID loads one subnet attachment by its stable public id.
 func (r *PostgresRepository) GetAttachmentByID(ctx context.Context, attachmentID string) (dto.SubnetAttachment, error) {
@@ -186,20 +189,45 @@ func (r *PostgresRepository) ListAttachmentsBySubnet(ctx context.Context, subnet
 	return out, nil
 }
 
+func (r *PostgresRepository) ListActiveAttachmentsByUser(ctx context.Context, userID string) ([]dto.SubnetAttachment, error) {
+	var models []SubnetAttachment
+	err := r.db.WithContext(ctx).
+		Table("subnet_attachments").
+		Select("subnet_attachments.*").
+		Joins("join devices on devices.device_id = subnet_attachments.device_id").
+		Where("devices.user_id = ? AND subnet_attachments.status = ?", userID, "active").
+		Order("subnet_attachments.attachment_id").
+		Find(&models).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dto.SubnetAttachment, 0, len(models))
+	for _, model := range models {
+		out = append(out, model.ToDTO())
+	}
+	return out, nil
+}
+
 // ListAssignmentsByNetwork returns the flattened device-to-virtual-ip view for owner management pages.
 func (r *PostgresRepository) ListAssignmentsByNetwork(ctx context.Context, networkID string) ([]dto.NetworkAssignment, error) {
 	type row struct {
-		AttachmentID string
-		NetworkID    string
-		SubnetID     string
-		DeviceID     string
-		DeviceName   string
-		UserID       string
-		UserEmail    string
-		Role         string
-		Remark       string
-		VirtualIP    string
-		Status       string
+		AttachmentID         string
+		NetworkID            string
+		SubnetID             string
+		DeviceID             string
+		DeviceName           string
+		DevicePlatform       string
+		DeviceVersion        string
+		UserID               string
+		UserEmail            string
+		Role                 string
+		Remark               string
+		VirtualIP            string
+		Status               string
+		RuntimeNetworkOnline bool
+		RuntimeTunnelUp      bool
+		RuntimeVirtualIP     string
+		RuntimeLastSeenAt    int64
 	}
 
 	var rows []row
@@ -211,16 +239,23 @@ func (r *PostgresRepository) ListAssignmentsByNetwork(ctx context.Context, netwo
 			subnet_attachments.subnet_id,
 			subnet_attachments.device_id,
 			devices.name AS device_name,
+			devices.platform AS device_platform,
+			devices.device_version AS device_version,
 			devices.user_id,
 			users.email AS user_email,
 			network_members.role,
 			subnet_attachments.remark,
 			subnet_attachments.virtual_ip,
-			subnet_attachments.status
+			subnet_attachments.status,
+			COALESCE(device_network_states.network_online, false) AS runtime_network_online,
+			COALESCE(device_network_states.tunnel_up, false) AS runtime_tunnel_up,
+			COALESCE(device_network_states.virtual_ip, '') AS runtime_virtual_ip,
+			COALESCE(device_network_states.last_seen_at, 0) AS runtime_last_seen_at
 		`).
 		Joins("join devices on devices.device_id = subnet_attachments.device_id").
 		Joins("join users on users.user_id = devices.user_id").
 		Joins("left join network_members on network_members.network_id = subnet_attachments.network_id and network_members.device_id = subnet_attachments.device_id").
+		Joins("left join device_network_states on device_network_states.network_id = subnet_attachments.network_id and device_network_states.device_id = subnet_attachments.device_id").
 		Where("subnet_attachments.network_id = ?", networkID).
 		Order("subnet_attachments.attachment_id").
 		Scan(&rows).Error
@@ -228,21 +263,37 @@ func (r *PostgresRepository) ListAssignmentsByNetwork(ctx context.Context, netwo
 		return nil, err
 	}
 
+	freshCutoff := time.Now().Add(-assignmentRuntimeFreshnessWindow).Unix()
 	out := make([]dto.NetworkAssignment, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, dto.NetworkAssignment{
-			AttachmentID: row.AttachmentID,
-			NetworkID:    row.NetworkID,
-			SubnetID:     row.SubnetID,
-			DeviceID:     row.DeviceID,
-			DeviceName:   row.DeviceName,
-			UserID:       row.UserID,
-			UserEmail:    row.UserEmail,
-			Role:         row.Role,
-			Remark:       row.Remark,
-			VirtualIP:    row.VirtualIP,
-			Status:       row.Status,
+			AttachmentID:         row.AttachmentID,
+			NetworkID:            row.NetworkID,
+			SubnetID:             row.SubnetID,
+			DeviceID:             row.DeviceID,
+			DeviceName:           row.DeviceName,
+			DevicePlatform:       row.DevicePlatform,
+			DeviceVersion:        row.DeviceVersion,
+			ConnectionType:       assignmentConnectionType(row.DevicePlatform),
+			RuntimeNetworkOnline: row.RuntimeNetworkOnline,
+			RuntimeTunnelUp:      row.RuntimeTunnelUp,
+			RuntimeVirtualIP:     row.RuntimeVirtualIP,
+			RuntimeLastSeenAt:    row.RuntimeLastSeenAt,
+			RuntimeStateFresh:    row.RuntimeLastSeenAt >= freshCutoff,
+			UserID:               row.UserID,
+			UserEmail:            row.UserEmail,
+			Role:                 row.Role,
+			Remark:               row.Remark,
+			VirtualIP:            row.VirtualIP,
+			Status:               row.Status,
 		})
 	}
 	return out, nil
+}
+
+func assignmentConnectionType(platform string) string {
+	if strings.EqualFold(strings.TrimSpace(platform), "web") {
+		return "console"
+	}
+	return "app"
 }

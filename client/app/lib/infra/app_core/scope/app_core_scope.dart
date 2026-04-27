@@ -23,6 +23,7 @@ import '../api/http_app_core_api.dart';
 import '../api/mock_app_core_api.dart';
 import '../../logging/startup_log.dart';
 import 'app_host_config.dart';
+import 'machine_identity.dart';
 
 class AppCoreScope {
   AppCoreScope._();
@@ -82,13 +83,9 @@ class AppCoreScope {
       _runtimeServerUiUrl = null;
       await StartupLog.write('persisted host restored: $_runtimeHostInput');
     }
-    final persistedMachineId =
-        preferences.getString(_clientMachineIdKey)?.trim();
-    if (persistedMachineId != null && persistedMachineId.isNotEmpty) {
-      _runtimeClientMachineId = persistedMachineId;
-    }
-    _runtimeClientMachineId ??=
-        'client-${DateTime.now().microsecondsSinceEpoch}';
+    _runtimeClientMachineId = await MachineIdentity.resolve(
+      persistedMachineId: preferences.getString(_clientMachineIdKey),
+    );
     _instance = _buildDefaultInstance();
     await StartupLog.write(
       'app core api ready controlBaseUrl=${controlBaseUrl ?? 'mock'} clientMachineId=$clientMachineId',

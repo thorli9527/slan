@@ -7,6 +7,7 @@ type Auth interface {
 	Register(req dto.RegisterRequest) (dto.AuthResponse, error)
 	Login(req dto.LoginRequest) (dto.AuthResponse, error)
 	Refresh(req dto.RefreshTokenRequest) (dto.AuthResponse, error)
+	ChangePassword(userID string, req dto.ChangePasswordRequest) error
 	GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error)
 	CompleteCallback(callbackID string, req dto.CompleteAuthCallbackRequest) error
 }

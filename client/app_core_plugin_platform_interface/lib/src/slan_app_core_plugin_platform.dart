@@ -67,12 +67,15 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
   Future<AppCoreDevicePayload> registerDevice({
     required String name,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String publicKey,
   }) async {
     final payload = await invoke('registerDevice', {
       'name': name,
       'platform': platform,
+      if (deviceVersion != null && deviceVersion.isNotEmpty)
+        'deviceVersion': deviceVersion,
       'machineId': machineId,
       'publicKey': publicKey,
     });
@@ -117,8 +120,6 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
   Future<AppCoreNetworkPayload> createNetwork({
     required String name,
     String? cidr,
-    int? expectedDevices,
-    String? gatewayIp,
     String? allocationStartIp,
     String? allocationEndIp,
     String? bindDeviceId,
@@ -126,9 +127,6 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     final payload = await invoke('createNetwork', {
       'name': name,
       if (cidr != null && cidr.isNotEmpty) 'cidr': cidr,
-      if (expectedDevices != null && expectedDevices > 0)
-        'expectedDevices': expectedDevices,
-      if (gatewayIp != null && gatewayIp.isNotEmpty) 'gatewayIp': gatewayIp,
       if (allocationStartIp != null && allocationStartIp.isNotEmpty)
         'allocationStartIp': allocationStartIp,
       if (allocationEndIp != null && allocationEndIp.isNotEmpty)

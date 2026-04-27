@@ -51,8 +51,6 @@ class CreateNetworkRequest {
     required this.name,
     this.description,
     this.cidr,
-    this.expectedDevices,
-    this.gatewayIp,
     this.allocationStartIp,
     this.allocationEndIp,
     this.bindDeviceId,
@@ -61,8 +59,6 @@ class CreateNetworkRequest {
   final String name;
   final String? description;
   final String? cidr;
-  final int? expectedDevices;
-  final String? gatewayIp;
   final String? allocationStartIp;
   final String? allocationEndIp;
   final String? bindDeviceId;
@@ -72,9 +68,6 @@ class CreateNetworkRequest {
         if (description != null && description!.isNotEmpty)
           'description': description,
         if (cidr != null && cidr!.isNotEmpty) 'cidr': cidr,
-        if (expectedDevices != null && expectedDevices! > 0)
-          'expectedDevices': expectedDevices,
-        if (gatewayIp != null && gatewayIp!.isNotEmpty) 'gatewayIp': gatewayIp,
         if (allocationStartIp != null && allocationStartIp!.isNotEmpty)
           'allocationStartIp': allocationStartIp,
         if (allocationEndIp != null && allocationEndIp!.isNotEmpty)
@@ -177,14 +170,17 @@ class UpdateNetworkDNSRequest {
   const UpdateNetworkDNSRequest({
     this.servers = const [],
     this.searchDomains = const [],
+    this.wildcards = const [],
   });
 
   final List<String> servers;
   final List<String> searchDomains;
+  final List<String> wildcards;
 
   Map<String, dynamic> toJson() => {
         'servers': servers,
         'searchDomains': searchDomains,
+        'wildcards': wildcards,
       };
 }
 
@@ -222,18 +218,22 @@ class RegisterDeviceRequest {
   const RegisterDeviceRequest({
     required this.name,
     required this.platform,
+    this.deviceVersion,
     required this.machineId,
     required this.publicKey,
   });
 
   final String name;
   final String platform;
+  final String? deviceVersion;
   final String machineId;
   final String publicKey;
 
   Map<String, dynamic> toJson() => {
         'name': name,
         'platform': platform,
+        if (deviceVersion != null && deviceVersion!.isNotEmpty)
+          'deviceVersion': deviceVersion,
         'machineId': machineId,
         'publicKey': publicKey,
       };

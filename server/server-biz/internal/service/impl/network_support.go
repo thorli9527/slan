@@ -196,9 +196,26 @@ func (s *dbState) buildNetworkMap(ctx context.Context, userID string, self dto.N
 		Peers:            s.buildNetworkMapPeers(ctx, self, networkID),
 		Routes:           s.routesForNetwork(ctx, networkID),
 		RelayRegions:     s.relayRegions(),
-		DNS:              s.buildNetworkMapDNS(ctx, networkID),
+		DNS:              s.buildNetworkMapDNS(ctx, userID, networkID),
+		Policy:           s.buildAccessPolicy(ctx, userID),
 		MTU:              defaultTunnelMTU,
 	}
+}
+
+func (s *dbState) buildAccessPolicy(ctx context.Context, userID string) dto.AccessPolicy {
+	product := s.currentDefaultProduct(ctx)
+	policy := dto.AccessPolicy{
+		ProductCode:        product.ProductCode,
+		MaxActiveDevices:   product.MaxActiveDevices,
+		BandwidthLimitMbps: product.BandwidthLimitMbps,
+	}
+	if user, err := s.pg.GetUserByID(ctx, userID); err == nil {
+		if user.AvailableDeviceCount > 0 {
+			policy.MaxActiveDevices = user.AvailableDeviceCount
+		}
+		policy.DNSAvailable = user.DNSAvailable
+	}
+	return policy
 }
 
 func (s *dbState) endpointsForNodeInNetwork(ctx context.Context, nodeID, networkID string) []dto.Endpoint {
@@ -345,7 +362,10 @@ func (s *dbState) networkPeerDTO(ctx context.Context, self dto.Node, networkID s
 	}, true
 }
 
-func (s *dbState) buildNetworkMapDNS(ctx context.Context, networkID string) dto.DNSConfig {
+func (s *dbState) buildNetworkMapDNS(ctx context.Context, userID, networkID string) dto.DNSConfig {
+	if user, err := s.pg.GetUserByID(ctx, userID); err == nil && !user.DNSAvailable {
+		return dto.DNSConfig{}
+	}
 	record, err := s.pg.GetNetworkByID(ctx, networkID)
 	if err != nil {
 		return dto.DNSConfig{
@@ -523,22 +543,11 @@ var defaultSubnetTemplates = []subnetTemplate{
 	{name: "人事部", remark: "人事、行政、财务相关设备"},
 }
 
-func createNetworkCIDR(cidr string, expectedDevices int) string {
+func createNetworkCIDR(cidr string) string {
 	if strings.TrimSpace(cidr) != "" {
 		return strings.TrimSpace(cidr)
 	}
-	switch {
-	case expectedDevices <= 0:
-		return "10.0.0.0/22"
-	case expectedDevices <= 250:
-		return "10.0.0.0/22"
-	case expectedDevices <= 500:
-		return "10.0.0.0/21"
-	case expectedDevices <= 1000:
-		return "10.0.0.0/20"
-	default:
-		return "10.0.0.0/16"
-	}
+	return "10.0.0.0/22"
 }
 
 func defaultSubnetsForNetwork(networkID, cidr string, newID func() string) ([]dto.Subnet, error) {

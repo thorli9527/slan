@@ -46,7 +46,7 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 			writeError(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"items": items})
+		writeItems(c, items)
 	})
 	// GET /devices 返回设备聚合视图。
 	ops.GET("/devices", authorizeOpsMenu(deps, "ops.devices"), func(c *gin.Context) {
@@ -55,7 +55,7 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 			writeError(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"items": items})
+		writeItems(c, items)
 	})
 	// GET /admins 返回管理员扩展资料列表。
 	ops.GET("/admins", authorizeOpsMenu(deps, "ops.admins"), func(c *gin.Context) {
@@ -64,7 +64,7 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 			writeError(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"items": items})
+		writeItems(c, items)
 	})
 	// POST /admins 创建或更新管理员扩展资料。
 	ops.POST("/admins", authorizeOpsMenu(deps, "ops.admins"), func(c *gin.Context) {
@@ -106,7 +106,7 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 			writeError(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"items": items})
+		writeItems(c, items)
 	})
 	// POST /roles 创建角色。
 	ops.POST("/roles", authorizeOpsMenu(deps, "ops.roles"), func(c *gin.Context) {
@@ -140,7 +140,7 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 			writeError(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"items": items})
+		writeItems(c, items)
 	})
 	// POST /menus 创建功能菜单。
 	ops.POST("/menus", authorizeOpsMenu(deps, "ops.menus"), func(c *gin.Context) {
@@ -170,6 +170,58 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 	// GET /relays 返回 relay 拓扑与健康摘要。
 	ops.GET("/relays", authorizeOpsMenu(deps, "ops.relays"), func(c *gin.Context) {
 		resp, err := deps.Ops.RelayTopology()
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+	ops.GET("/products", authorizeOpsMenu(deps, "ops.products"), func(c *gin.Context) {
+		items, err := deps.Ops.ListProducts()
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		writeItems(c, items)
+	})
+	ops.POST("/products", authorizeOpsMenu(deps, "ops.products"), func(c *gin.Context) {
+		var req dto.UpsertProductRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		resp, err := deps.Ops.UpsertProduct(req)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, resp)
+	})
+	ops.GET("/orders", authorizeOpsMenu(deps, "ops.orders"), func(c *gin.Context) {
+		items, err := deps.Ops.ListPurchaseOrders()
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		writeItems(c, items)
+	})
+	ops.POST("/orders/paid", authorizeOpsMenu(deps, "ops.orders"), func(c *gin.Context) {
+		var req dto.OpsCreatePaidOrderRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		resp, err := deps.Ops.CreatePaidPurchaseOrder(req)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, resp)
+	})
+	ops.PUT("/orders/:orderId/status", authorizeOpsMenu(deps, "ops.orders"), func(c *gin.Context) {
+		var req dto.UpdatePurchaseOrderStatusRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		resp, err := deps.Ops.UpdatePurchaseOrderStatus(c.Param("orderId"), req)
 		if err != nil {
 			writeError(c, err)
 			return

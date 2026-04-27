@@ -16,11 +16,11 @@ import { Component, EventEmitter, Output } from '@angular/core';
       <div class="empty-grid">
         <button class="empty-card" type="button" (click)="openCreateNetwork.emit()">
           <strong>创建网络</strong>
-          <span>设置名称、网段、预计设备数和 DHCP 地址池。</span>
+          <span>设置名称、IP 地址、子网掩码和 DHCP 地址池。</span>
         </button>
         <button class="empty-card" type="button" (click)="openJoinNetwork.emit()">
           <strong>加入别人的网络</strong>
-          <span>通过 owner 邮箱或 Join Key 提交加入申请。</span>
+          <span>填写邀请码提交加入申请。</span>
         </button>
       </div>
     </section>

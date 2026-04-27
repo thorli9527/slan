@@ -84,14 +84,14 @@ export class ConsoleAppFacadeService {
     token: string;
     createName: string;
     createDescription: string;
-    createCidr: string;
-    createExpectedDevices: number;
-    gatewayIp?: string;
+    createNetworkIp: string;
+    createSubnetMask: string;
     allocationStartIp?: string;
     allocationEndIp?: string;
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<{ network: Network; refreshed: RefreshWorkspaceResult }> {
-    this.networkFormService.validateNetworkCidr(input.createCidr);
+    const cidr = this.networkFormService.cidrFromAddressAndMask(input.createNetworkIp, input.createSubnetMask);
+    this.networkFormService.validateNetworkCidr(cidr);
     const managedDevice = await this.ensureManagementDevice({
       token: input.token,
       ...input.deviceState,
@@ -99,9 +99,7 @@ export class ConsoleAppFacadeService {
     const network = await this.api.createNetwork(input.token, {
       name: input.createName.trim(),
       description: input.createDescription.trim(),
-      cidr: this.networkFormService.optionalValue(input.createCidr),
-      expectedDevices: input.createExpectedDevices > 0 ? input.createExpectedDevices : undefined,
-      gatewayIp: this.networkFormService.optionalValue(input.gatewayIp || ''),
+      cidr,
       allocationStartIp: this.networkFormService.optionalValue(input.allocationStartIp || ''),
       allocationEndIp: this.networkFormService.optionalValue(input.allocationEndIp || ''),
       bindDeviceId: managedDevice.deviceId,
@@ -121,42 +119,14 @@ export class ConsoleAppFacadeService {
     return { network, refreshed: switched };
   }
 
-  async joinByOwnerEmail(input: {
-    token: string;
-    ownerEmail: string;
-    alias?: string;
-    deviceState: Omit<EnsureDeviceInput, 'token'>;
-  }): Promise<RefreshWorkspaceResult> {
-    const ownerEmail = input.ownerEmail.trim();
-    if (!ownerEmail) {
-      throw new Error('owner email is required');
-    }
-    const managedDevice = await this.ensureManagementDevice({
-      token: input.token,
-      ...input.deviceState,
-    });
-    const result = await this.api.joinByOwnerEmail(input.token, ownerEmail, managedDevice.deviceId);
-    const networkId = result.network?.networkId;
-    await this.updateJoinAlias(input.token, networkId, result.attachment?.attachmentId, input.alias);
-    if (networkId && result.member?.status === 'active') {
-      await this.workspaceService.activateNetwork(input.token, networkId, managedDevice.deviceId);
-    }
-    return this.refreshWorkspace({
-      token: input.token,
-      ...managedDeviceToEnsureInput(managedDevice, input.deviceState),
-      callbackDeviceId: managedDevice.callbackDeviceId || input.deviceState.callbackDeviceId,
-    });
-  }
-
   async joinByKey(input: {
     token: string;
     joinKey: string;
-    alias?: string;
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<RefreshWorkspaceResult> {
     const joinKey = input.joinKey.trim();
     if (!joinKey) {
-      throw new Error('join key is required');
+      throw new Error('invite code is required');
     }
     const managedDevice = await this.ensureManagementDevice({
       token: input.token,
@@ -164,7 +134,6 @@ export class ConsoleAppFacadeService {
     });
     const result = await this.api.joinByKey(input.token, joinKey, managedDevice.deviceId);
     const networkId = result.attachment?.networkId || result.member?.networkId;
-    await this.updateJoinAlias(input.token, networkId, result.attachment?.attachmentId, input.alias);
     if (networkId && result.member.status === 'active') {
       await this.workspaceService.activateNetwork(input.token, networkId, managedDevice.deviceId);
     }
@@ -181,6 +150,8 @@ export class ConsoleAppFacadeService {
     name: string;
     description: string;
     cidr: string;
+    allocationStartIp?: string;
+    allocationEndIp?: string;
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<RefreshWorkspaceResult> {
     this.networkFormService.validateNetworkCidr(input.cidr);
@@ -188,6 +159,8 @@ export class ConsoleAppFacadeService {
       name: input.name.trim(),
       description: input.description.trim(),
       cidr: input.cidr.trim(),
+      allocationStartIp: this.networkFormService.optionalValue(input.allocationStartIp || ''),
+      allocationEndIp: this.networkFormService.optionalValue(input.allocationEndIp || ''),
     });
     return this.refreshWorkspace({
       token: input.token,
@@ -218,6 +191,25 @@ export class ConsoleAppFacadeService {
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<RefreshWorkspaceResult> {
     await this.api.updateNetworkJoinKey(input.token, input.networkId, input.joinKey.trim());
+    return this.refreshWorkspace({
+      token: input.token,
+      ...input.deviceState,
+    });
+  }
+
+  async updateNetworkDns(input: {
+    token: string;
+    networkId: string;
+    servers: string[];
+    searchDomains: string[];
+    wildcards: string[];
+    deviceState: Omit<EnsureDeviceInput, 'token'>;
+  }): Promise<RefreshWorkspaceResult> {
+    await this.api.updateNetworkDns(input.token, input.networkId, {
+      servers: input.servers,
+      searchDomains: input.searchDomains,
+      wildcards: input.wildcards,
+    });
     return this.refreshWorkspace({
       token: input.token,
       ...input.deviceState,
@@ -256,18 +248,6 @@ export class ConsoleAppFacadeService {
     return this.sessionService.ensureManagementDevice(input);
   }
 
-  private async updateJoinAlias(
-    token: string,
-    networkId?: string,
-    attachmentId?: string,
-    alias?: string,
-  ): Promise<void> {
-    const remark = alias?.trim();
-    if (!networkId || !attachmentId || !remark) {
-      return;
-    }
-    await this.api.updateAttachmentRemark(token, networkId, attachmentId, remark);
-  }
 }
 
 type EnsureDeviceInput = {

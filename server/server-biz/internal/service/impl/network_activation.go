@@ -108,11 +108,38 @@ func (s dbNetworkService) Activate(userID, networkID string, req dto.JoinNetwork
 	if err := s.state.ensureSingleActiveNetworkForUser(ctx, userID, networkID); err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
+	if err := s.state.ensureProductAllowsActivation(ctx, userID, record.DefaultSubnetID, req.DeviceID); err != nil {
+		return dto.NetworkJoinResult{}, err
+	}
 	attachment, err := s.state.ensureAttachment(ctx, networkID, record.DefaultSubnetID, req.DeviceID)
 	if err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
 	return dto.NetworkJoinResult{Member: member, Attachment: attachment}, nil
+}
+
+func (s *dbState) ensureProductAllowsActivation(ctx context.Context, userID, subnetID, deviceID string) error {
+	product := s.currentDefaultProduct(ctx)
+	limit := product.MaxActiveDevices
+	if user, err := s.pg.GetUserByID(ctx, userID); err == nil {
+		limit = minimumAvailableDeviceCount(user.AvailableDeviceCount)
+	}
+	if limit <= 0 {
+		return nil
+	}
+	if attachment, err := s.pg.GetAttachmentBySubnetDevice(ctx, subnetID, deviceID); err == nil && attachment.Status == "active" && attachment.VirtualIP != "" {
+		return nil
+	} else if err != nil && !repo.IsNotFound(err) {
+		return err
+	}
+	activeCount, err := s.pg.CountActiveAttachmentsByUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if activeCount >= int64(limit) {
+		return fmt.Errorf("%w: product %s allows at most %d active devices", ErrPaymentRequired, product.ProductCode, limit)
+	}
+	return nil
 }
 
 func (s dbNetworkService) Deactivate(userID, networkID string, req dto.DeactivateNetworkRequest) error {

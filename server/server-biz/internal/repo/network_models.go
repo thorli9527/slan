@@ -24,6 +24,8 @@ type Network struct {
 	DNSServers string `gorm:"column:dns_servers;not null;default:''"`
 	// DNSSearchDomains 存储网络级 DNS 搜索域，使用逗号分隔。
 	DNSSearchDomains string `gorm:"column:dns_search_domains;not null;default:''"`
+	// DNSWildcards 存储网络级 DNS 通配解析记录，使用逗号分隔。
+	DNSWildcards string `gorm:"column:dns_wildcards;not null;default:''"`
 	// JoinKey 是当前网络 owner 定义的接入 key。
 	JoinKey string `gorm:"column:join_key;index"`
 }
@@ -45,6 +47,7 @@ func (m Network) DNSConfig() dto.DNSConfig {
 	return dto.DNSConfig{
 		Servers:       decodeCSVList(m.DNSServers),
 		SearchDomains: decodeCSVList(m.DNSSearchDomains),
+		Wildcards:     decodeCSVList(m.DNSWildcards),
 	}
 }
 

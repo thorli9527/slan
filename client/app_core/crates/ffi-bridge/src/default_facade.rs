@@ -642,8 +642,6 @@ where
         &self,
         name: String,
         cidr: Option<String>,
-        expected_devices: Option<u32>,
-        gateway_ip: Option<String>,
         allocation_start_ip: Option<String>,
         allocation_end_ip: Option<String>,
     ) -> Result<Network, String> {
@@ -653,9 +651,7 @@ where
             CreateNetworkRequest {
                 name,
                 cidr,
-                expected_devices,
                 description: None,
-                gateway_ip,
                 allocation_start_ip,
                 allocation_end_ip,
                 bind_device_id: None,
@@ -1502,5 +1498,6 @@ fn apply_control_mqtt_event(
         ControlMqttEvent::ActiveNetworkEnabled(enabled) => {
             *active_network_enabled = Some(enabled);
         }
+        ControlMqttEvent::UserEntitlementChanged(_changed) => {}
     }
 }

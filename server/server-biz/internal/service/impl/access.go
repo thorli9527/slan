@@ -105,6 +105,28 @@ func (s dbAuthService) Refresh(req dto.RefreshTokenRequest) (dto.AuthResponse, e
 	return s.state.issueAuthResponse(ctx, userID, deviceID)
 }
 
+func (s dbAuthService) ChangePassword(userID string, req dto.ChangePasswordRequest) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return ErrUnauthorized
+	}
+	if strings.TrimSpace(req.CurrentPassword) == "" || len(req.NewPassword) < 8 {
+		return fmt.Errorf("%w: currentPassword and newPassword are required, newPassword must be at least 8 characters", ErrInvalidArgument)
+	}
+	ctx := context.Background()
+	user, err := s.state.pg.GetUserByID(ctx, userID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return ErrUnauthorized
+		}
+		return err
+	}
+	if user.PasswordHash != util.HashPassword(req.CurrentPassword) {
+		return ErrUnauthorized
+	}
+	return s.state.pg.UpdateUserPassword(ctx, userID, util.HashPassword(req.NewPassword))
+}
+
 func (s dbAuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error) {
 	callbackID = strings.TrimSpace(callbackID)
 	if callbackID == "" {
@@ -151,6 +173,13 @@ func (s dbAuthService) CompleteCallback(callbackID string, req dto.CompleteAuthC
 }
 
 func (s *dbState) issueAuthResponse(ctx context.Context, userID, deviceID string) (dto.AuthResponse, error) {
+	email := ""
+	user, err := s.pg.GetUserByID(ctx, userID)
+	if err == nil {
+		email = user.Email
+	} else if !repo.IsNotFound(err) {
+		return dto.AuthResponse{}, err
+	}
 	accessToken := util.OpaqueToken("access", userID)
 	refreshToken := util.OpaqueToken("refresh", userID)
 	accessTTL := tokenTTL(s.cfg.Auth.AccessTokenTTLSeconds, time.Hour)
@@ -163,6 +192,7 @@ func (s *dbState) issueAuthResponse(ctx context.Context, userID, deviceID string
 	}
 	return dto.AuthResponse{
 		UserID:       userID,
+		Email:        email,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    int64(accessTTL / time.Second),

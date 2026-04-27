@@ -40,6 +40,10 @@ func startControlSync(deps routerDeps) {
 					if event.ActiveNetwork != nil {
 						broadcastActiveNetworkEnabled(deps, event.TargetUserID, *event.ActiveNetwork)
 					}
+				case "user_entitlement_changed":
+					if event.Entitlement != nil {
+						broadcastUserEntitlementChanged(deps, event.TargetUserID, *event.Entitlement)
+					}
 				}
 			})
 		}

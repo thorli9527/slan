@@ -64,12 +64,14 @@ class BridgeAppCoreApi implements AppCoreApi {
   Future<DeviceModel> registerDevice({
     required String name,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String publicKey,
   }) async {
     final payload = await _pluginPlatform.registerDevice(
       name: name,
       platform: platform,
+      deviceVersion: deviceVersion,
       machineId: machineId,
       publicKey: publicKey,
     );
@@ -131,8 +133,6 @@ class BridgeAppCoreApi implements AppCoreApi {
   Future<NetworkModel> createNetwork({
     required String name,
     String? cidr,
-    int? expectedDevices,
-    String? gatewayIp,
     String? allocationStartIp,
     String? allocationEndIp,
     String? bindDeviceId,
@@ -140,8 +140,6 @@ class BridgeAppCoreApi implements AppCoreApi {
     final payload = await _pluginPlatform.createNetwork(
       name: name,
       cidr: cidr,
-      expectedDevices: expectedDevices,
-      gatewayIp: gatewayIp,
       allocationStartIp: allocationStartIp,
       allocationEndIp: allocationEndIp,
       bindDeviceId: bindDeviceId,
@@ -362,6 +360,7 @@ DeviceModel _toDeviceModel(
     deviceId: payload.deviceId,
     name: payload.name,
     platform: payload.platform,
+    deviceVersion: payload.deviceVersion,
     status: payload.status,
     virtualIp: virtualIp ?? payload.currentVirtualIp,
     publicKey: payload.publicKey,
@@ -430,6 +429,9 @@ NetworkAssignmentModel _toNetworkAssignmentModel(
     subnetId: payload.subnetId,
     deviceId: payload.deviceId,
     deviceName: payload.deviceName,
+    devicePlatform: payload.devicePlatform,
+    deviceVersion: payload.deviceVersion,
+    connectionType: payload.connectionType,
     userId: payload.userId,
     userEmail: payload.userEmail,
     role: payload.role,
@@ -516,6 +518,7 @@ NetworkModel _toNetworkDetailModel(
     cidr: cidr,
     description: payload.description,
     defaultSubnetId: payload.defaultSubnetId,
+    dns: const DNSConfigModel(),
     subnets: payload.subnets.map(_toSubnetModel).toList(growable: false),
     members: payload.members
         .map(

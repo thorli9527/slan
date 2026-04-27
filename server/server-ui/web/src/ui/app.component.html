@@ -1,5 +1,5 @@
 ﻿<div class="router-console">
-  <header class="router-topbar">
+  <header class="router-topbar" *ngIf="!token() || loading() || home().hasNetwork">
     <div class="brand-lockup">
       <span class="brand-mark">S</span>
       <div>
@@ -11,6 +11,7 @@
       <button class="icon-button" type="button" (click)="refreshWorkspace()" [disabled]="loading()" title="刷新">
         ↻
       </button>
+      <button class="ghost" type="button" (click)="openPasswordDialog()">修改密码</button>
       <button class="ghost danger" type="button" (click)="logout()">退出登录</button>
     </div>
   </header>
@@ -30,37 +31,40 @@
     <strong>操作失败</strong>
     <p>{{ error() }}</p>
   </section>
-  <section class="notice notice-ok" *ngIf="message()">
-    <strong>操作成功</strong>
-    <p>{{ message() }}</p>
-  </section>
-
   <section class="loading-panel" *ngIf="token() && loading()">
     <strong>正在同步网络状态</strong>
     <p>正在拉取账户、网络、设备和接入关系。</p>
   </section>
 
-  <section class="router-layout" *ngIf="token() && !loading()">
+  <section class="network-only-empty" *ngIf="token() && !loading() && !home().hasNetwork">
+    <slan-network-empty-state
+      (openCreateNetwork)="openCreateNetworkDialog()"
+      (openJoinNetwork)="openJoinNetworkDialog()"
+    />
+  </section>
+
+  <section class="router-layout" *ngIf="token() && !loading() && home().hasNetwork">
     <aside class="router-sidebar">
       <section class="side-card account-card">
-        <div class="avatar">{{ userId() ? userId().slice(0, 1).toUpperCase() : 'U' }}</div>
+        <div class="avatar">{{ userEmail() ? userEmail().slice(0, 1).toUpperCase() : (userId() ? userId().slice(0, 1).toUpperCase() : 'U') }}</div>
         <div>
           <span>当前账户</span>
-          <strong>{{ userId() || '-' }}</strong>
+          <strong>{{ userEmail() || userId() || '-' }}</strong>
         </div>
       </section>
 
       <nav class="router-nav" aria-label="控制台导航">
-        <button
-          *ngFor="let item of navItems"
-          type="button"
-          class="nav-item"
-          [class.nav-item-active]="activeView() === item.id"
-          (click)="switchView(item.id)"
-        >
-          <strong>{{ item.label }}</strong>
-          <span>{{ item.caption }}</span>
-        </button>
+        <ng-container *ngFor="let item of navItems">
+          <button
+            type="button"
+            class="nav-item"
+            [class.nav-item-active]="activeView() === item.id"
+            (click)="switchView(item.id)"
+          >
+            <strong>{{ item.label }}</strong>
+            <span>{{ item.caption }}</span>
+          </button>
+        </ng-container>
       </nav>
 
       <section class="side-card compact-metrics">
@@ -86,34 +90,22 @@
             <span></span>
           </div>
           <div>
-            <p class="eyebrow">当前网络</p>
-            <h2>{{ activeNetwork()?.name || '尚未接入网络' }}</h2>
-            <p>{{ activeNetwork()?.description || '创建自己的网络，或通过 owner 邮箱 / Join Key 加入团队网络。' }}</p>
+            <p class="eyebrow">当前所有的网络</p>
+            <h2>{{ userEmail() || userId() || '-' }}</h2>
+            <p>{{ joinedNetworks().length }} 个网络</p>
           </div>
         </div>
-        <div class="overview-stats">
-          <button type="button" class="stat-tile" (click)="openView('network')">
-            <span>网络</span>
-            <strong>{{ joinedNetworks().length }}</strong>
-            <small>{{ currentSubnetLabel() }}</small>
-          </button>
-          <button type="button" class="stat-tile" (click)="openView('network')">
-            <span>成员</span>
-            <strong>{{ assignments().length }}</strong>
-            <small>{{ pendingMembers().length }} 个待审批</small>
+        <div class="overview-actions">
+          <button class="invite-action-button" type="button" (click)="openInviteNetworkDialog()" [disabled]="!canManageNetwork()">邀请入网</button>
+          <button
+            class="invite-action-button"
+            type="button"
+            (click)="openJoinNetworkDialog()"
+            [disabled]="!canManageNetwork()"
+          >
+            入网确认
           </button>
         </div>
-      </section>
-
-      <section class="tab-strip">
-        <button
-          *ngFor="let item of navItems"
-          type="button"
-          [class.active]="activeView() === item.id"
-          (click)="switchView(item.id)"
-        >
-          {{ item.label }}
-        </button>
       </section>
 
       <section class="dashboard-grid" *ngIf="activeView() === 'account'">
@@ -144,58 +136,50 @@
           </div>
         </article>
 
-        <article class="panel">
-          <div class="panel-title">
-            <h2>快速加入网络</h2>
-            <p>加入后会自动切换到目标网络，并保存当前设备别名。</p>
-          </div>
-          <label>
-            <span>Owner 邮箱</span>
-            <input [value]="joinOwnerEmail" (input)="joinOwnerEmail = $any($event.target).value" placeholder="owner@company.com" />
-          </label>
-          <label>
-            <span>设备别名</span>
-            <input [value]="joinAlias" (input)="joinAlias = $any($event.target).value" placeholder="客厅主机 / Thor laptop" />
-          </label>
-          <button class="primary-action" type="button" (click)="joinByOwnerEmail()" [disabled]="isActionBusy('joinOwnerEmail')">
-            {{ isActionBusy('joinOwnerEmail') ? '加入中...' : '通过 Owner 加入' }}
-          </button>
-          <label>
-            <span>Join Key</span>
-            <input [value]="joinKey" (input)="joinKey = $any($event.target).value" placeholder="team-alpha-join-key" />
-          </label>
-          <button class="ghost full" type="button" (click)="joinByKey()" [disabled]="isActionBusy('joinByKey')">
-            {{ isActionBusy('joinByKey') ? '加入中...' : '通过 Key 加入' }}
-          </button>
-        </article>
+      </section>
 
-        <article class="panel">
-          <div class="panel-title">
-            <h2>切换网络</h2>
-            <p>在已接入网络之间切换当前设备的活动网络。</p>
+      <section class="panel orders-panel" *ngIf="activeView() === 'orders'">
+        <div class="panel-title split">
+          <div>
+            <h2>订单管理</h2>
+            <p>查看设备扩容和 DNS 服务订单，未支付订单可联系运营确认开通。</p>
           </div>
-          <div class="network-list" *ngIf="networkSwitchTargets().length > 0; else noJoinedNetwork">
-            <button
-              type="button"
-              class="network-switch-card"
-              *ngFor="let network of networkSwitchTargets()"
-              [class.network-switch-card-active]="activeNetwork()?.networkId === network.networkId"
-              (click)="switchToNetwork(network.networkId)"
-            >
-              <strong>{{ network.name }}</strong>
-              <span>{{ network.description || network.networkId }}</span>
-            </button>
+          <div class="order-actions">
+            <button class="ghost" type="button" (click)="openPurchaseDialog('extra-device')">设备扩容</button>
+            <button class="ghost" type="button" (click)="openPurchaseDialog('dns')">购买 DNS</button>
+            <button class="ghost" type="button" (click)="loadPurchaseOrders()" [disabled]="isActionBusy('loadOrders')">刷新</button>
           </div>
-          <ng-template #noJoinedNetwork>
-            <div class="empty-card">
-              <strong>暂无可切换网络</strong>
-              <p>先创建网络或加入其它网络。</p>
-            </div>
-          </ng-template>
-          <button class="ghost full" type="button" *ngIf="showSwitchToOwned()" (click)="switchToOwnedNetwork()">
-            切回我的网络
-          </button>
-        </article>
+        </div>
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th>订单号</th>
+              <th>商品</th>
+              <th>数量 / 月数</th>
+              <th>金额</th>
+              <th>状态</th>
+              <th>创建时间</th>
+              <th>到期时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let order of pagedPurchaseOrders()">
+              <td><code>{{ order.orderId }}</code></td>
+              <td>{{ order.productName }} <span>{{ order.productCode }}</span></td>
+              <td>{{ orderQuantityLabel(order) }}</td>
+              <td>{{ formatMoney(order.amountCents, order.currency) }}</td>
+              <td><span class="status-pill">{{ order.status }}</span></td>
+              <td>{{ formatTimestamp(order.createdAt) }}</td>
+              <td>{{ formatTimestamp(order.expiresAt) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="pager" *ngIf="purchaseOrders().length > pageSize">
+          <span>{{ pageSummary(purchaseOrderPage(), purchaseOrders().length) }}</span>
+          <button type="button" class="ghost" (click)="previousPurchaseOrderPage()" [disabled]="purchaseOrderPage() <= 1">上一页</button>
+          <button type="button" class="ghost" (click)="nextPurchaseOrderPage()" [disabled]="purchaseOrderPage() >= totalPages(purchaseOrders().length)">下一页</button>
+        </div>
+        <p class="empty-copy" *ngIf="!purchaseOrders().length && !isActionBusy('loadOrders')">当前还没有订单。</p>
       </section>
 
       <section *ngIf="activeView() === 'network'">
@@ -206,69 +190,22 @@
         />
 
         <ng-container *ngIf="home().hasNetwork">
-          <section class="dashboard-grid">
-            <article class="panel">
-              <div class="panel-title">
-                <h2>网络设置</h2>
-                <p>管理网络名称、默认网段、Join Key 和成员接入。</p>
-              </div>
-              <div class="setting-list">
-                <div><span>活动网络</span><strong>{{ activeNetwork()?.name || '-' }}</strong></div>
-                <div><span>可管理</span><strong>{{ canManageNetwork() ? '是' : '否' }}</strong></div>
-                <div><span>Join Key</span><strong>{{ detail()?.joinKey ? '已生成' : '未生成' }}</strong></div>
-              </div>
-              <button
-                class="ghost full"
-                type="button"
-                (click)="openCreateNetworkDialog()"
-                [disabled]="!!home().ownedNetwork"
-                [title]="home().ownedNetwork ? '当前账户已经拥有自己的网络' : '创建我的网络'"
-              >
-                {{ home().ownedNetwork ? '已有自己的网络，不能重复创建' : '创建我的网络' }}
-              </button>
-            </article>
-
-            <article class="panel">
-              <div class="panel-title">
-                <h2>Join Key</h2>
-                <p>用于让新设备快速加入当前网络。</p>
-              </div>
-              <input [value]="networkJoinKey" readonly placeholder="点击生成新的 Join Key" />
-              <div class="actions">
-                <button class="ghost" type="button" (click)="updateNetworkJoinKey()" [disabled]="isActionBusy('updateJoinKey')">
-                  {{ isActionBusy('updateJoinKey') ? '生成中...' : '生成 Join Key' }}
-                </button>
-                <button class="ghost" type="button" (click)="copyNetworkJoinKey()" [disabled]="!networkJoinKey.trim()">复制</button>
-              </div>
-            </article>
-          </section>
-
-          <section class="panel management-toolbar" *ngIf="detail()?.ownedByCurrentUser">
-            <div class="grid two">
-              <label>
-                <span>筛选成员</span>
-                <input
-                  [value]="assignmentSearch"
-                  (input)="assignmentSearch = $any($event.target).value"
-                  placeholder="邮箱 / 设备名 / 备注 / IP / 角色"
-                />
-              </label>
-              <label>
-                <span>角色过滤</span>
-                <select [value]="assignmentRoleFilter" (change)="assignmentRoleFilter = $any($event.target).value">
-                  <option value="all">全部角色</option>
-                  <option value="owner">只看 owner</option>
-                  <option value="member">只看成员</option>
-                </select>
-              </label>
-            </div>
+          <section class="network-management-actions">
+            <button class="network-tool-button primary-tool" type="button" (click)="openManageNetworkDialog()" [disabled]="!canManageNetwork()">
+              网络管理
+            </button>
+            <button class="network-tool-button" type="button" (click)="openCurrentNetworkDialog()" [disabled]="networkSwitchTargets().length <= 1">
+              切换网络
+            </button>
+            <button class="network-tool-button" type="button" (click)="openDnsNetworkDialog()" [disabled]="!canManageNetwork()">
+              DNS 管理
+            </button>
           </section>
 
           <slan-network-workspace
             [activeNetwork]="activeNetwork()"
             [detail]="detail()"
-            [subnets]="subnets()"
-            [assignments]="filteredAssignments()"
+            [assignments]="pagedAssignments()"
             [pendingMembers]="pendingMembers()"
             [selectedDeviceLabel]="selectedDeviceLabel()"
             [updateName]="updateName"
@@ -289,8 +226,14 @@
             (saveAttachmentIp)="updateAttachmentIp($event)"
             (draftRemarkChange)="setDraftRemark($event.attachmentId, $event.value)"
             (saveAttachmentRemark)="updateAttachmentRemark($event)"
+            (saveAttachmentEdit)="updateAttachmentEdit($event)"
             (updateMemberStatus)="updateMemberStatus($event.memberId, $event.status)"
           />
+          <div class="pager" *ngIf="filteredAssignments().length > pageSize">
+            <span>{{ pageSummary(assignmentPage(), filteredAssignments().length) }}</span>
+            <button type="button" class="ghost" (click)="previousAssignmentPage()" [disabled]="assignmentPage() <= 1">上一页</button>
+            <button type="button" class="ghost" (click)="nextAssignmentPage()" [disabled]="assignmentPage() >= totalPages(filteredAssignments().length)">下一页</button>
+          </div>
         </ng-container>
       </section>
 
@@ -301,51 +244,39 @@
     <article class="dialog-panel" (click)="$event.stopPropagation()">
       <div class="dialog-title">
         <div>
-          <p class="eyebrow">{{ networkDialog() === 'create' ? '创建网络' : '加入网络' }}</p>
-          <h2>{{ networkDialog() === 'create' ? '创建我的网络' : '加入别人的网络' }}</h2>
+          <h2>{{ networkDialogTitle() }}</h2>
         </div>
         <button class="icon-button" type="button" (click)="closeNetworkDialog()" [disabled]="!!actionBusy()" title="关闭">×</button>
       </div>
 
       <ng-container *ngIf="networkDialog() === 'create'">
-        <div class="form-grid two">
-          <label>
-            <span>网络名称</span>
-            <input [value]="createName" (input)="createName = $any($event.target).value" placeholder="My Network" />
-          </label>
-          <label>
-            <span>预计设备数</span>
-            <input type="number" min="1" [value]="createExpectedDevices" (input)="createExpectedDevices = +$any($event.target).value || 0" placeholder="120" />
-          </label>
-          <label class="span-2">
-            <span>描述</span>
-            <input [value]="createDescription" (input)="createDescription = $any($event.target).value" placeholder="Personal host network" />
-          </label>
-          <label class="span-2">
-            <span>网络 CIDR</span>
-            <input [value]="createCidr" (input)="createCidr = $any($event.target).value" placeholder="留空时按预计设备数自动选择，例如 10.0.0.0/24" />
-          </label>
-        </div>
+        <div class="create-network-form">
+          <section class="dialog-section">
+            <div class="form-grid two">
+              <label>
+                <span>IP 地址</span>
+                <input [value]="createNetworkIp" (input)="createNetworkIp = $any($event.target).value" placeholder="10.0.0.0" />
+              </label>
+              <label>
+                <span>子网掩码</span>
+                <input [value]="createSubnetMask" (input)="createSubnetMask = $any($event.target).value" placeholder="255.255.252.0" />
+              </label>
+            </div>
+          </section>
 
-        <div class="dhcp-box">
-          <div class="segmented">
-            <button type="button" [class.active]="createDhcpMode === 'auto'" (click)="createDhcpMode = 'auto'">自动 DHCP</button>
-            <button type="button" [class.active]="createDhcpMode === 'manual'" (click)="createDhcpMode = 'manual'">自定义地址池</button>
-          </div>
-          <div class="form-grid three" *ngIf="createDhcpMode === 'manual'">
-            <label>
-              <span>网关 IP</span>
-              <input [value]="createGatewayIp" (input)="createGatewayIp = $any($event.target).value" placeholder="10.0.0.1" />
-            </label>
-            <label>
-              <span>起始地址</span>
-              <input [value]="createAllocationStartIp" (input)="createAllocationStartIp = $any($event.target).value" placeholder="10.0.0.2" />
-            </label>
-            <label>
-              <span>结束地址</span>
-              <input [value]="createAllocationEndIp" (input)="createAllocationEndIp = $any($event.target).value" placeholder="10.0.0.126" />
-            </label>
-          </div>
+          <section class="dialog-section">
+            <div class="field-group-label">DHCP</div>
+            <div class="form-grid two">
+              <label>
+                <span>起始地址</span>
+                <input [value]="createAllocationStartIp" (input)="createAllocationStartIp = $any($event.target).value" placeholder="10.0.0.2" />
+              </label>
+              <label>
+                <span>结束地址</span>
+                <input [value]="createAllocationEndIp" (input)="createAllocationEndIp = $any($event.target).value" placeholder="10.0.0.254" />
+              </label>
+            </div>
+          </section>
         </div>
 
         <div class="dialog-actions">
@@ -356,32 +287,220 @@
         </div>
       </ng-container>
 
+      <ng-container *ngIf="networkDialog() === 'manage'">
+        <div class="create-network-form">
+          <section class="dialog-section">
+            <div class="form-grid two">
+              <label>
+                <span>IP 地址</span>
+                <input [value]="manageNetworkIp" (input)="manageNetworkIp = $any($event.target).value" placeholder="10.0.0.0" />
+              </label>
+              <label>
+                <span>子网掩码</span>
+                <input [value]="manageSubnetMask" (input)="manageSubnetMask = $any($event.target).value" placeholder="255.255.255.0" />
+              </label>
+            </div>
+          </section>
+
+          <section class="dialog-section">
+            <div class="field-group-label">DHCP</div>
+            <div class="form-grid two">
+              <label>
+                <span>起始地址</span>
+                <input [value]="manageAllocationStartIp" (input)="manageAllocationStartIp = $any($event.target).value" placeholder="10.0.0.2" />
+              </label>
+              <label>
+                <span>结束地址</span>
+                <input [value]="manageAllocationEndIp" (input)="manageAllocationEndIp = $any($event.target).value" placeholder="10.0.0.254" />
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()">取消</button>
+          <button class="primary-action" type="button" (click)="updateManagedNetworkPlan()">
+            保存网络
+          </button>
+        </div>
+      </ng-container>
+
       <ng-container *ngIf="networkDialog() === 'join'">
         <div class="form-grid">
           <label>
-            <span>设备别名</span>
-            <input [value]="joinAlias" (input)="joinAlias = $any($event.target).value" placeholder="客厅主机 / Thor laptop" />
+            <span>邀请码</span>
+            <input [value]="joinKey" (input)="joinKey = $any($event.target).value" placeholder="输入邀请人生成的邀请码" />
           </label>
-          <label>
-            <span>Owner 邮箱</span>
-            <input [value]="joinOwnerEmail" (input)="joinOwnerEmail = $any($event.target).value" placeholder="owner@company.com" />
-          </label>
-          <button class="primary-action" type="button" (click)="joinByOwnerEmail()" [disabled]="isActionBusy('joinOwnerEmail')">
-            {{ isActionBusy('joinOwnerEmail') ? '提交中...' : '通过 Owner 邮箱加入' }}
+          <button class="primary-action" type="button" (click)="joinByKey()" [disabled]="isActionBusy('joinByKey')">
+            {{ isActionBusy('joinByKey') ? '提交中...' : '确认入网' }}
           </button>
-          <label>
-            <span>Join Key</span>
-            <input [value]="joinKey" (input)="joinKey = $any($event.target).value" placeholder="team-alpha-join-key" />
-          </label>
-          <button class="ghost full" type="button" (click)="joinByKey()" [disabled]="isActionBusy('joinByKey')">
-            {{ isActionBusy('joinByKey') ? '提交中...' : '通过 Join Key 加入' }}
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'invite'">
+        <div class="form-grid invite-network-dialog">
+          <section class="dialog-section">
+            <button class="primary-action invite-generate-button" type="button" (click)="generateInviteCode()" [disabled]="isActionBusy('generateInviteCode')">
+              {{ isActionBusy('generateInviteCode') ? '生成中...' : '生成邀请码' }}
+            </button>
+            <div class="invite-code-panel" *ngIf="generatedInviteCode">
+              <div class="qr-box">
+                <img [src]="inviteQrUrl()" alt="邀请入网二维码" />
+              </div>
+              <label>
+                <span>邀请码</span>
+                <input [value]="generatedInviteCode" readonly />
+              </label>
+            </div>
+          </section>
+        </div>
+        <div class="dialog-actions dialog-actions-single">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()" [disabled]="isActionBusy('generateInviteCode')">关闭</button>
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'current'">
+        <div class="current-network-dialog">
+          <section class="dialog-section">
+            <div class="current-network-summary">
+              <div>
+                <span>当前网络</span>
+                <strong>{{ activeNetwork()?.name || '-' }}</strong>
+                <p>{{ activeNetwork()?.networkId || '-' }}</p>
+              </div>
+              <span class="status-pill">{{ canManageNetwork() ? 'Owner' : 'Member' }}</span>
+            </div>
+          </section>
+
+          <section class="dialog-section" *ngIf="networkSwitchTargets().length > 0">
+            <div class="field-group-label">切换网络</div>
+            <div class="network-dialog-list">
+              <button
+                type="button"
+                class="network-dialog-item"
+                *ngFor="let network of networkSwitchTargets()"
+                [class.network-dialog-item-active]="activeNetwork()?.networkId === network.networkId"
+                [disabled]="activeNetwork()?.networkId === network.networkId"
+                (click)="switchToNetwork(network.networkId); closeNetworkDialog()"
+              >
+                <strong>{{ network.name }}</strong>
+                <span>{{ network.description || network.networkId }}</span>
+              </button>
+            </div>
+          </section>
+
+        </div>
+
+        <div class="dialog-actions dialog-actions-single">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()">关闭</button>
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'dns'">
+        <div class="dns-dialog">
+          <section class="dialog-section">
+            <p class="dialog-copy">配置后客户端会启用本地轻量 DNS；server 行仅保存为配置项，当前客户端不做上游 DNS 转发。</p>
+            <label class="dns-document-field">
+              <span>DNS 配置</span>
+              <textarea
+                [value]="dnsDocumentText"
+                (input)="dnsDocumentText = $any($event.target).value"
+                placeholder="server 10.0.0.2&#10;domain slan&#10;wildcard *.xx.com=10.0.0.2"
+              ></textarea>
+            </label>
+          </section>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()" [disabled]="isActionBusy('saveDns')">取消</button>
+          <button class="primary-action" type="button" (click)="updateNetworkDns()" [disabled]="isActionBusy('saveDns')">
+            {{ isActionBusy('saveDns') ? '保存中...' : '保存 DNS' }}
           </button>
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'purchase'">
+        <div class="purchase-dialog">
+          <section class="dialog-section">
+            <div class="purchase-products" *ngIf="purchaseProducts().length; else productsLoading">
+              <article class="purchase-card" *ngFor="let product of purchaseProducts()">
+                <div>
+                  <span>{{ product.productType === 'addon_device' ? '设备扩容' : (product.productCode === 'dns' ? 'DNS 服务' : product.productName) }}</span>
+                  <strong>{{ product.productName }}</strong>
+                  <p>{{ product.description || '按月订购，到期前可续费。' }}</p>
+                  <label class="purchase-months" *ngIf="product.productCode === 'dns'">
+                    <span>月数</span>
+                    <input type="number" min="1" [value]="purchaseMonthsValue" (input)="setPurchaseMonths($any($event.target).value)" />
+                  </label>
+                </div>
+                <div class="purchase-card-action">
+                  <strong>{{ formatMoney(product.priceCents, product.currency) }} / {{ orderDurationLabel(product.billingCycle, 1) }}</strong>
+                  <label class="purchase-quantity" *ngIf="isDeviceAddonProduct(product)">
+                    <span>下单数量</span>
+                    <input type="number" min="1" [value]="purchaseQuantityValue" (input)="setPurchaseQuantity($any($event.target).value)" />
+                  </label>
+                  <button
+                    class="primary-action"
+                    type="button"
+                    (click)="createPurchaseProductOrder(product)"
+                    [disabled]="isActionBusy('order:' + product.productCode)"
+                  >
+                    {{ isActionBusy('order:' + product.productCode) ? '下单中...' : '立即下单' }}
+                  </button>
+                </div>
+              </article>
+            </div>
+            <ng-template #productsLoading>
+              <p class="dialog-copy">正在读取可购买商品...</p>
+            </ng-template>
+          </section>
+
+          <section class="dialog-section" *ngIf="purchaseOrder() as order">
+            <div class="order-summary">
+              <span>待支付订单</span>
+              <strong>{{ order.orderId }}</strong>
+              <p>{{ order.productName }} · {{ orderQuantityLabel(order) }} · {{ formatMoney(order.amountCents, order.currency) }} · {{ order.status }}</p>
+            </div>
+          </section>
+        </div>
+
+        <div class="dialog-actions dialog-actions-single">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()" [disabled]="!!actionBusy()">关闭</button>
         </div>
       </ng-container>
     </article>
   </section>
 
-  <section class="panel callback-panel" *ngIf="pendingCallbackId()">
+  <section class="dialog-backdrop" *ngIf="passwordDialog()" (click)="closePasswordDialog()">
+    <article class="dialog-panel password-dialog" (click)="$event.stopPropagation()">
+      <div class="dialog-title">
+        <h2>修改密码</h2>
+        <button class="icon-button" type="button" (click)="closePasswordDialog()" [disabled]="!!actionBusy()" title="关闭">×</button>
+      </div>
+      <div class="form-grid password-form">
+        <label>
+          <span>当前密码</span>
+          <input type="password" [value]="currentPassword" (input)="currentPassword = $any($event.target).value" autocomplete="current-password" />
+        </label>
+        <label>
+          <span>新密码</span>
+          <input type="password" [value]="newPassword" (input)="newPassword = $any($event.target).value" autocomplete="new-password" />
+        </label>
+        <label>
+          <span>确认新密码</span>
+          <input type="password" [value]="confirmPassword" (input)="confirmPassword = $any($event.target).value" autocomplete="new-password" />
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button class="ghost" type="button" (click)="closePasswordDialog()" [disabled]="isActionBusy('changePassword')">取消</button>
+        <button class="primary-action" type="button" (click)="changePassword()" [disabled]="isActionBusy('changePassword')">
+          {{ isActionBusy('changePassword') ? '保存中...' : '保存密码' }}
+        </button>
+      </div>
+    </article>
+  </section>
+
+  <section class="panel callback-panel" *ngIf="pendingCallbackId() && (!token() || loading() || home().hasNetwork)">
     <p class="callback-title">等待客户端确认</p>
     <p class="callback-copy">
       网页端已经把认证结果转交给服务端，桌面客户端会主动取回并确认。

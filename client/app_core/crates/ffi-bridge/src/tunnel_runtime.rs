@@ -159,6 +159,7 @@ mod tests {
                 dns: DnsConfig {
                     servers: vec![],
                     search_domains: vec![],
+                    wildcards: vec![],
                 },
                 mtu: Some(1280),
             }),

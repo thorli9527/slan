@@ -45,11 +45,15 @@ export class ConsoleSessionService {
   persistAuth(auth: AuthResponse): void {
     localStorage.setItem('slan.accessToken', auth.accessToken);
     localStorage.setItem('slan.userId', auth.userId);
+    if (auth.email?.trim()) {
+      localStorage.setItem('slan.userEmail', auth.email.trim());
+    }
   }
 
   clearCachedAuth(): void {
     localStorage.removeItem('slan.accessToken');
     localStorage.removeItem('slan.userId');
+    localStorage.removeItem('slan.userEmail');
     localStorage.removeItem('slan.deviceId');
   }
 

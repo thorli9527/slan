@@ -247,9 +247,6 @@ class _LoggedInHome extends StatelessWidget {
       currentDeviceId,
       activeNetwork,
     );
-    final subnetLabel = activeNetwork == null
-        ? '-'
-        : ' - ';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -278,9 +275,9 @@ class _LoggedInHome extends StatelessWidget {
                       detail: activeNetwork?.networkId ?? 'No active network',
                     ),
                     _OverviewTile(
-                      label: 'Default Network',
+                      label: 'Network Range',
                       value: activeNetwork?.cidr ?? '-',
-                      detail: subnetLabel,
+                      detail: member?.virtualIp ?? virtualIp,
                     ),
                     _OverviewTile(
                       label: 'Current Device',

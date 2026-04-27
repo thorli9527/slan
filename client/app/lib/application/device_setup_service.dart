@@ -10,12 +10,14 @@ class DeviceRegistrationInput {
   const DeviceRegistrationInput({
     required this.name,
     required this.platform,
+    this.deviceVersion,
     required this.machineId,
     required this.publicKey,
   });
 
   final String name;
   final String platform;
+  final String? deviceVersion;
   final String machineId;
   final String publicKey;
 }
@@ -112,6 +114,7 @@ class DeviceSetupService {
     final device = await _api.registerDevice(
       name: input.name,
       platform: input.platform,
+      deviceVersion: input.deviceVersion,
       machineId: input.machineId,
       publicKey: input.publicKey,
     );

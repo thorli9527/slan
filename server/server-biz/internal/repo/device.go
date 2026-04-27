@@ -7,24 +7,16 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// Device 是业务设备的持久化模型。
 type Device struct {
-	// DeviceID 是设备唯一标识。
-	DeviceID string `gorm:"column:device_id;primaryKey"`
-	// UserID 是设备所属用户。
-	UserID string `gorm:"column:user_id;index;not null;uniqueIndex:idx_user_machine"`
-	// MachineID 是设备安装实例的机器标识。
-	MachineID string `gorm:"column:machine_id;not null;uniqueIndex:idx_user_machine"`
-	// Name 是设备展示名称。
-	Name string `gorm:"column:name;not null"`
-	// Platform 是设备平台，例如 macos 或 linux。
-	Platform string `gorm:"column:platform;not null"`
-	// Status 是设备状态。
-	Status string `gorm:"column:status;not null"`
-	// PublicKey 是设备隧道公钥。
-	PublicKey *string `gorm:"column:public_key"`
-	// CreatedAt 是设备创建时间。
-	CreatedAt int64 `gorm:"column:created_at;not null;default:0"`
+	DeviceID      string  `gorm:"column:device_id;primaryKey"`
+	UserID        string  `gorm:"column:user_id;index;not null;uniqueIndex:idx_user_machine"`
+	MachineID     string  `gorm:"column:machine_id;not null;uniqueIndex:idx_user_machine"`
+	Name          string  `gorm:"column:name;not null"`
+	Platform      string  `gorm:"column:platform;not null"`
+	DeviceVersion string  `gorm:"column:device_version;not null;default:''"`
+	Status        string  `gorm:"column:status;not null"`
+	PublicKey     *string `gorm:"column:public_key"`
+	CreatedAt     int64   `gorm:"column:created_at;not null;default:0"`
 }
 
 func (Device) TableName() string { return "devices" }
@@ -35,14 +27,15 @@ func (m Device) ToDTO(networkIDs []string) dto.Device {
 		publicKey = *m.PublicKey
 	}
 	return dto.Device{
-		DeviceID:   m.DeviceID,
-		Name:       m.Name,
-		Platform:   m.Platform,
-		MachineID:  m.MachineID,
-		Status:     m.Status,
-		CreatedAt:  m.CreatedAt,
-		PublicKey:  publicKey,
-		NetworkIDs: networkIDs,
+		DeviceID:      m.DeviceID,
+		Name:          m.Name,
+		Platform:      m.Platform,
+		DeviceVersion: m.DeviceVersion,
+		MachineID:     m.MachineID,
+		Status:        m.Status,
+		CreatedAt:     m.CreatedAt,
+		PublicKey:     publicKey,
+		NetworkIDs:    networkIDs,
 	}
 }
 
@@ -66,10 +59,11 @@ func (r *PostgresRepository) UpsertDeviceByUserMachine(ctx context.Context, reco
 				{Name: "machine_id"},
 			},
 			DoUpdates: clause.Assignments(map[string]any{
-				"name":       record.Name,
-				"platform":   record.Platform,
-				"status":     record.Status,
-				"public_key": record.PublicKey,
+				"name":           record.Name,
+				"platform":       record.Platform,
+				"device_version": record.DeviceVersion,
+				"status":         record.Status,
+				"public_key":     record.PublicKey,
 			}),
 		}).
 		Create(&record).Error; err != nil {
@@ -83,10 +77,11 @@ func (r *PostgresRepository) UpdateDevice(ctx context.Context, record Device) er
 		Model(&Device{}).
 		Where("device_id = ?", record.DeviceID).
 		Updates(map[string]any{
-			"name":       record.Name,
-			"platform":   record.Platform,
-			"status":     record.Status,
-			"public_key": record.PublicKey,
+			"name":           record.Name,
+			"platform":       record.Platform,
+			"device_version": record.DeviceVersion,
+			"status":         record.Status,
+			"public_key":     record.PublicKey,
 		}).Error
 }
 

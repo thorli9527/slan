@@ -9,11 +9,8 @@ type CreateNetworkRequest struct {
 	Description string `json:"description,omitempty"`
 	// CIDR 是该网络创建时默认子网的 CIDR。
 	CIDR string `json:"cidr"`
-	// ExpectedDevices 是预计需要分配的地址数量；CIDR 为空时服务端据此自动选择网段。
-	ExpectedDevices int `json:"expectedDevices,omitempty"`
 	// BindDeviceID 允许在创建网络成功后立即把当前设备绑定到默认子网。
 	BindDeviceID      string `json:"bindDeviceId,omitempty"`
-	GatewayIP         string `json:"gatewayIp,omitempty"`
 	AllocationStartIP string `json:"allocationStartIp,omitempty"`
 	AllocationEndIP   string `json:"allocationEndIp,omitempty"`
 }
@@ -25,7 +22,9 @@ type UpdateNetworkRequest struct {
 	// Description 允许一并修改网络说明；为空时保留原值。
 	Description string `json:"description,omitempty"`
 	// CIDR 是新的默认子网 CIDR。
-	CIDR string `json:"cidr"`
+	CIDR              string `json:"cidr"`
+	AllocationStartIP string `json:"allocationStartIp,omitempty"`
+	AllocationEndIP   string `json:"allocationEndIp,omitempty"`
 }
 
 // UpdateNetworkDNSRequest 用于修改网络级 DNS 配置。
@@ -34,6 +33,8 @@ type UpdateNetworkDNSRequest struct {
 	Servers []string `json:"servers,omitempty"`
 	// SearchDomains 是 DNS 搜索域列表。
 	SearchDomains []string `json:"searchDomains,omitempty"`
+	// Wildcards 是通配解析记录，格式如 *.xx.com=10.0.0.2。
+	Wildcards []string `json:"wildcards,omitempty"`
 }
 
 // UpdateNetworkJoinKeyRequest 用于设置或清空网络加入 key。
@@ -74,6 +75,11 @@ type JoinNetworkByKeyRequest struct {
 	JoinKey string `json:"joinKey"`
 	// DeviceID 是当前用户要加入目标网络的设备 ID。
 	DeviceID string `json:"deviceId"`
+}
+
+// InviteNetworkMemberRequest invites a registered user into an owner network.
+type InviteNetworkMemberRequest struct {
+	Email string `json:"email"`
 }
 
 // UpdateAttachmentIPRequest 允许网络 owner 手动调整某个设备的虚拟 IP。
@@ -233,6 +239,22 @@ type NetworkAssignment struct {
 	DeviceID string `json:"deviceId"`
 	// DeviceName 是设备展示名。
 	DeviceName string `json:"deviceName"`
+	// DevicePlatform 是设备注册时上报的平台。
+	DevicePlatform string `json:"devicePlatform,omitempty"`
+	// DeviceVersion 预留给客户端后续上报系统或应用版本。
+	DeviceVersion string `json:"deviceVersion,omitempty"`
+	// ConnectionType 标识连接方式，当前为 app 或 console。
+	ConnectionType string `json:"connectionType,omitempty"`
+	// RuntimeNetworkOnline 是客户端上报的当前网络在线状态。
+	RuntimeNetworkOnline bool `json:"runtimeNetworkOnline,omitempty"`
+	// RuntimeTunnelUp 是客户端上报的本地隧道启用状态。
+	RuntimeTunnelUp bool `json:"runtimeTunnelUp,omitempty"`
+	// RuntimeVirtualIP 是客户端确认本机已应用的虚拟 IP。
+	RuntimeVirtualIP string `json:"runtimeVirtualIp,omitempty"`
+	// RuntimeLastSeenAt 是客户端最近一次状态上报时间。
+	RuntimeLastSeenAt int64 `json:"runtimeLastSeenAt,omitempty"`
+	// RuntimeStateFresh 标识最近一次状态上报是否仍在有效窗口内。
+	RuntimeStateFresh bool `json:"runtimeStateFresh,omitempty"`
 	// UserID 是设备所属用户 ID。
 	UserID string `json:"userId"`
 	// UserEmail 是设备所属用户邮箱。

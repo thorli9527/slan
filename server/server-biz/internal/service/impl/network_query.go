@@ -112,16 +112,22 @@ func (s dbNetworkService) UpdateMemberStatus(userID, networkID, memberID string,
 	if member.Role == "owner" && status != "active" {
 		return dto.NetworkMember{}, fmt.Errorf("%w: owner membership cannot be rejected", ErrInvalidArgument)
 	}
+	var memberDevice repo.Device
+	if status == "active" && member.Role != "owner" {
+		memberDevice, err = s.state.pg.GetDeviceByID(ctx, member.DeviceID)
+		if err != nil {
+			return dto.NetworkMember{}, err
+		}
+		if err := s.state.ensureProductAllowsActivation(ctx, memberDevice.UserID, record.DefaultSubnetID, member.DeviceID); err != nil {
+			return dto.NetworkMember{}, err
+		}
+	}
 	if err := s.state.pg.UpdateMemberStatus(ctx, memberID, status); err != nil {
 		return dto.NetworkMember{}, err
 	}
 	member.Status = status
 	if status == "active" && member.Role != "owner" {
-		device, err := s.state.pg.GetDeviceByID(ctx, member.DeviceID)
-		if err != nil {
-			return dto.NetworkMember{}, err
-		}
-		s.state.publishActiveNetworkEnabled(device.UserID, networkID, "network join approved")
+		s.state.publishActiveNetworkEnabled(memberDevice.UserID, networkID, "network join approved")
 	}
 	if status == "rejected" {
 		if err := s.state.cleanupRejectedNetworkMember(ctx, networkID, member); err != nil {
@@ -129,6 +135,39 @@ func (s dbNetworkService) UpdateMemberStatus(userID, networkID, memberID string,
 		}
 	}
 	return member, nil
+}
+
+func (s dbNetworkService) InviteMember(userID, networkID string, req dto.InviteNetworkMemberRequest) (dto.NetworkMember, error) {
+	email := strings.TrimSpace(req.Email)
+	if email == "" {
+		return dto.NetworkMember{}, fmt.Errorf("%w: email is required", ErrInvalidArgument)
+	}
+	ctx := context.Background()
+	record, err := s.state.pg.GetNetworkByID(ctx, networkID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return dto.NetworkMember{}, ErrNotFound
+		}
+		return dto.NetworkMember{}, err
+	}
+	if record.OwnerUserID != userID {
+		return dto.NetworkMember{}, ErrForbidden
+	}
+	invited, err := s.state.pg.GetUserByEmail(ctx, email)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return dto.NetworkMember{}, ErrNotFound
+		}
+		return dto.NetworkMember{}, err
+	}
+	devices, err := s.state.pg.ListDevicesByUser(ctx, invited.UserID)
+	if err != nil {
+		return dto.NetworkMember{}, err
+	}
+	if len(devices) == 0 {
+		return dto.NetworkMember{}, fmt.Errorf("%w: invited user has no registered device", ErrInvalidArgument)
+	}
+	return s.requestMemberForNetwork(ctx, invited.UserID, devices[0].DeviceID, record)
 }
 
 func (s *dbState) cleanupRejectedNetworkMember(ctx context.Context, networkID string, member dto.NetworkMember) error {

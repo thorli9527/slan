@@ -10,6 +10,27 @@ export type NetworkUpdateDraft = {
 
 @Injectable({ providedIn: 'root' })
 export class ConsoleNetworkFormService {
+  cidrFromAddressAndMask(address: string, subnetMask: string): string {
+    const addressValue = this.parseIPv4(address, 'ip address is invalid');
+    const maskValue = this.parseIPv4(subnetMask, 'subnet mask is invalid');
+    const prefix = this.subnetMaskToPrefix(maskValue);
+    const network = addressValue & maskValue;
+    return `${this.formatIPv4(network)}/${prefix}`;
+  }
+
+  addressAndMaskFromCidr(cidr: string): { address: string; subnetMask: string } {
+    const [address, prefixText] = cidr.trim().split('/');
+    if (!this.isLikelyIPv4(address || '')) {
+      return { address: '10.0.0.0', subnetMask: '255.255.252.0' };
+    }
+    const prefix = Number(prefixText);
+    if (!Number.isInteger(prefix) || prefix < 1 || prefix > 30) {
+      return { address, subnetMask: '255.255.255.0' };
+    }
+    const mask = (0xffffffff << (32 - prefix)) >>> 0;
+    return { address, subnetMask: this.formatIPv4(mask) };
+  }
+
   validateNetworkCidr(cidr: string): void {
     if (!cidr.trim()) {
       return;
@@ -48,5 +69,42 @@ export class ConsoleNetworkFormService {
       return false;
     }
     return trimmed.split('.').every((item) => Number(item) >= 0 && Number(item) <= 255);
+  }
+
+  private parseIPv4(value: string, errorMessage: string): number {
+    const trimmed = value.trim();
+    if (!this.isLikelyIPv4(trimmed)) {
+      throw new Error(errorMessage);
+    }
+    return trimmed.split('.').reduce((acc, item) => ((acc << 8) | Number(item)) >>> 0, 0);
+  }
+
+  private subnetMaskToPrefix(mask: number): number {
+    let seenZero = false;
+    let prefix = 0;
+    for (let bit = 31; bit >= 0; bit--) {
+      const isOne = ((mask >>> bit) & 1) === 1;
+      if (isOne && seenZero) {
+        throw new Error('subnet mask is invalid');
+      }
+      if (isOne) {
+        prefix++;
+      } else {
+        seenZero = true;
+      }
+    }
+    if (prefix < 1 || prefix > 30) {
+      throw new Error('subnet mask must allow usable host addresses');
+    }
+    return prefix;
+  }
+
+  private formatIPv4(value: number): string {
+    return [
+      (value >>> 24) & 255,
+      (value >>> 16) & 255,
+      (value >>> 8) & 255,
+      value & 255,
+    ].join('.');
   }
 }

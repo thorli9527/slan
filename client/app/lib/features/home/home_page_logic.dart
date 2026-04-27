@@ -14,6 +14,7 @@ extension _HomePageLogic on _HomePageState {
         await AppCoreScope.sessionController.ensureHomeWorkspaceReady(
       deviceName: host,
       platform: DesktopPlatform.currentId,
+      deviceVersion: DesktopPlatform.currentVersion,
       machineId: AppCoreScope.clientMachineId,
       devicePublicKey: 'device-key-${DateTime.now().microsecondsSinceEpoch}',
     );
@@ -146,7 +147,7 @@ extension _HomePageLogic on _HomePageState {
     }
     _openedNetworkConsole = false;
     _setNetworkConsoleStatus(
-      'No network is assigned yet. Open the web console manually if you want to manage networks, subnets, or DHCP: $target',
+      'No network is assigned yet. Open the web console manually to create a network, confirm invitations, or manage DNS: $target',
     );
   }
 

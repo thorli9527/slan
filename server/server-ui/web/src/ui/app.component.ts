@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 
-import { AuthResponse, Device, NetworkAssignment, NetworkDetail, NetworkHome, NetworkMember, Subnet } from './api-contracts';
+import { AuthResponse, Device, NetworkAssignment, NetworkDetail, NetworkHome, NetworkMember, PurchaseOrder, PurchaseProduct, Subnet } from './api-contracts';
 import { AuthPanelComponent } from './auth-panel.component';
 import { ConsoleApiError, ConsoleApiService } from './console-api.service';
 import { AuthenticateResult, ConsoleAppFacadeService, RefreshWorkspaceResult } from './console-app-facade.service';
@@ -28,8 +28,10 @@ import { AuthMode, ConsoleView } from './ui-models';
 export class AppComponent implements OnDestroy {
   private static readonly SESSION_CHECK_INTERVAL_MS = 30_000;
   readonly navItems: Array<{ id: ConsoleView; label: string; caption: string }> = [
-    { id: 'account', label: '账户概览', caption: '账号、设备、接入网络、切换与接入入口' },
-    { id: 'network', label: '网络管理', caption: '子网、IP 绑定、设备接入和加入 key 管理' }
+    { id: 'account', label: '账户概览', caption: '账号、设备、接入状态' },
+    { id: 'network', label: '网络管理', caption: 'IP 绑定、设备接入和邀请码管理' }
+    ,
+    { id: 'orders', label: '订单管理', caption: '设备扩容和 DNS 服务订单' }
   ];
   private readonly facade = inject(ConsoleAppFacadeService);
   private readonly callbackService = inject(ConsoleCallbackService);
@@ -39,29 +41,39 @@ export class AppComponent implements OnDestroy {
   private readonly workspaceService = inject(ConsoleWorkspaceService);
   email = '';
   password = '';
+  currentPassword = '';
+  newPassword = '';
+  confirmPassword = '';
   createName = 'My Network';
-  createDescription = 'Personal host network';
-  createCidr = '';
-  createExpectedDevices = 120;
-  createDhcpMode: 'auto' | 'manual' = 'auto';
-  createGatewayIp = '';
+  createDescription = '';
+  createNetworkIp = '10.0.0.0';
+  createSubnetMask = '255.255.252.0';
+  manageNetworkIp = '10.0.0.0';
+  manageSubnetMask = '255.255.255.0';
+  manageAllocationStartIp = '';
+  manageAllocationEndIp = '';
   createAllocationStartIp = '';
   createAllocationEndIp = '';
-  joinOwnerEmail = '';
   joinKey = '';
-  joinAlias = '';
+  generatedInviteCode = '';
   assignmentSearch = '';
   assignmentRoleFilter = 'all';
+  readonly pageSize = 10;
   updateName = '';
   updateDescription = '';
   updateCidr = '';
   networkJoinKey = '';
+  dnsDocumentText = '';
+  purchaseQuantityValue = 1;
+  purchaseMonthsValue = 1;
 
   readonly token = signal(localStorage.getItem('slan.accessToken') || '');
   readonly userId = signal(localStorage.getItem('slan.userId') || '');
+  readonly userEmail = signal(localStorage.getItem('slan.userEmail') || '');
   readonly authMode = signal<AuthMode>('login');
   readonly activeView = signal<ConsoleView>('account');
-  readonly networkDialog = signal<'create' | 'join' | ''>('');
+  readonly networkDialog = signal<'create' | 'join' | 'current' | 'invite' | 'manage' | 'dns' | 'purchase' | ''>('');
+  readonly passwordDialog = signal(false);
   readonly loading = signal(false);
   readonly actionBusy = signal('');
   readonly error = signal('');
@@ -72,6 +84,11 @@ export class AppComponent implements OnDestroy {
   readonly assignments = signal<NetworkAssignment[]>([]);
   readonly devices = signal<Device[]>([]);
   readonly subnets = signal<Subnet[]>([]);
+  readonly purchaseProducts = signal<PurchaseProduct[]>([]);
+  readonly purchaseOrders = signal<PurchaseOrder[]>([]);
+  readonly purchaseOrder = signal<PurchaseOrder | null>(null);
+  readonly assignmentPage = signal(1);
+  readonly purchaseOrderPage = signal(1);
   readonly currentDeviceId = signal(localStorage.getItem('slan.deviceId') || '');
   readonly draftIps = signal<Record<string, string>>({});
   readonly draftRemarks = signal<Record<string, string>>({});
@@ -110,6 +127,8 @@ export class AppComponent implements OnDestroy {
         .includes(keyword);
     });
   });
+  readonly pagedAssignments = computed(() => this.pageRows(this.filteredAssignments(), this.assignmentPage()));
+  readonly pagedPurchaseOrders = computed(() => this.pageRows(this.purchaseOrders(), this.purchaseOrderPage()));
   readonly pendingMembers = computed((): NetworkMember[] => {
     return (this.detail()?.members || []).filter((item) => item.status === 'pending');
   });
@@ -165,7 +184,7 @@ export class AppComponent implements OnDestroy {
   currentSubnetLabel(): string {
     const subnet = this.currentSubnet();
     if (!subnet) {
-      return '未接入子网';
+      return '未接入网络';
     }
     return `${subnet.name} · ${subnet.cidr}`;
   }
@@ -178,25 +197,125 @@ export class AppComponent implements OnDestroy {
     }));
   }
 
-  pendingCapabilityNotes(): Array<{ title: string; detail: string }> {
-    return [
-      {
-        title: '当前已接通',
-        detail: '网络加入 key、设备备注和设备 IP 绑定都已经可以直接在这个管理视图里维护。'
-      },
-      {
-        title: '加入审批已接入',
-        detail: '其它设备提交加入申请后，会先进入待审批状态；owner 在网络管理页通过后，客户端才能启用网络并分配虚拟 IP。'
-      }
-    ];
-  }
-
   switchView(view: ConsoleView): void {
     this.activeView.set(view);
+    if (view === 'orders') {
+      this.purchaseOrderPage.set(1);
+      void this.loadPurchaseOrders();
+    }
   }
 
-  openView(view: ConsoleView): void {
-    this.activeView.set(view);
+  setAssignmentSearch(value: string): void {
+    this.assignmentSearch = value;
+    this.assignmentPage.set(1);
+  }
+
+  setAssignmentRoleFilter(value: string): void {
+    this.assignmentRoleFilter = value;
+    this.assignmentPage.set(1);
+  }
+
+  pageSummary(page: number, total: number): string {
+    if (!total) {
+      return '0 / 0';
+    }
+    const current = Math.min(Math.max(1, page), this.totalPages(total));
+    const start = (current - 1) * this.pageSize + 1;
+    const end = Math.min(current * this.pageSize, total);
+    return `${start}-${end} / ${total}`;
+  }
+
+  totalPages(total: number): number {
+    return Math.max(1, Math.ceil(total / this.pageSize));
+  }
+
+  previousAssignmentPage(): void {
+    this.assignmentPage.set(Math.max(1, this.assignmentPage() - 1));
+  }
+
+  nextAssignmentPage(): void {
+    this.assignmentPage.set(Math.min(this.totalPages(this.filteredAssignments().length), this.assignmentPage() + 1));
+  }
+
+  previousPurchaseOrderPage(): void {
+    this.purchaseOrderPage.set(Math.max(1, this.purchaseOrderPage() - 1));
+  }
+
+  nextPurchaseOrderPage(): void {
+    this.purchaseOrderPage.set(Math.min(this.totalPages(this.purchaseOrders().length), this.purchaseOrderPage() + 1));
+  }
+
+  openCurrentNetworkDialog(): void {
+    this.clearNotices();
+    this.networkDialog.set('current');
+  }
+
+  async openDnsNetworkDialog(): Promise<void> {
+    this.clearNotices();
+    if (!this.canManageNetwork()) {
+      this.error.set('只有当前网络 owner 可以管理 DNS。');
+      return;
+    }
+    const allowed = await this.ensureDnsEntitlement();
+    if (!allowed) {
+      return;
+    }
+    this.networkDialog.set('dns');
+  }
+
+  openInviteNetworkDialog(): void {
+    this.clearNotices();
+    if (!this.canManageNetwork()) {
+      this.error.set('只有当前网络 owner 可以邀请用户入网。');
+      return;
+    }
+    this.generatedInviteCode = this.networkJoinKey.trim();
+    this.networkDialog.set('invite');
+  }
+
+  networkDialogTitle(): string {
+    switch (this.networkDialog()) {
+      case 'create':
+        return '网络规划';
+      case 'current':
+        return '网络切换';
+      case 'invite':
+        return '邀请入网';
+      case 'manage':
+        return '网络管理';
+      case 'dns':
+        return 'DNS 管理';
+      case 'purchase':
+        return '购买下单';
+      default:
+        return '加入网络';
+    }
+  }
+
+  async openPurchaseDialog(productCode = 'extra-device'): Promise<void> {
+    this.purchaseOrder.set(null);
+    this.purchaseQuantityValue = 1;
+    this.purchaseMonthsValue = 1;
+    this.networkDialog.set('purchase');
+    await this.loadPurchaseProducts(productCode);
+  }
+
+  async loadPurchaseOrders(): Promise<void> {
+    if (!this.token()) {
+      return;
+    }
+    this.actionBusy.set('loadOrders');
+    try {
+      const result = await this.api.listPurchaseOrders(this.token());
+      this.purchaseOrders.set(result.items || []);
+      if (this.purchaseOrderPage() > this.totalPages(this.purchaseOrders().length)) {
+        this.purchaseOrderPage.set(this.totalPages(this.purchaseOrders().length));
+      }
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.actionBusy.set('');
+    }
   }
 
   openCreateNetworkDialog(): void {
@@ -208,8 +327,28 @@ export class AppComponent implements OnDestroy {
     this.networkDialog.set('create');
   }
 
+  openManageNetworkDialog(): void {
+    this.clearNotices();
+    if (!this.canManageNetwork()) {
+      this.error.set('只有当前网络 owner 可以管理网络。');
+      return;
+    }
+    const cidr = this.activeNetwork()?.defaultSubnetCidr || this.updateCidr || '';
+    const plan = this.networkFormService.addressAndMaskFromCidr(cidr);
+    const subnet = this.currentSubnet() || this.subnets().find((item) => item.isDefault) || null;
+    this.manageNetworkIp = plan.address;
+    this.manageSubnetMask = plan.subnetMask;
+    this.manageAllocationStartIp = subnet?.allocationStartIp || '';
+    this.manageAllocationEndIp = subnet?.allocationEndIp || '';
+    this.networkDialog.set('manage');
+  }
+
   openJoinNetworkDialog(): void {
     this.clearNotices();
+    if (this.home().hasNetwork && !this.canManageNetwork()) {
+      this.error.set('只有当前网络 owner 可以进行入网确认。');
+      return;
+    }
     this.networkDialog.set('join');
   }
 
@@ -218,6 +357,21 @@ export class AppComponent implements OnDestroy {
       return;
     }
     this.networkDialog.set('');
+  }
+
+  openPasswordDialog(): void {
+    this.clearNotices();
+    this.currentPassword = '';
+    this.newPassword = '';
+    this.confirmPassword = '';
+    this.passwordDialog.set(true);
+  }
+
+  closePasswordDialog(): void {
+    if (this.actionBusy()) {
+      return;
+    }
+    this.passwordDialog.set(false);
   }
 
   isActionBusy(key: string): boolean {
@@ -287,40 +441,19 @@ export class AppComponent implements OnDestroy {
         token: this.token(),
         createName: this.createName,
         createDescription: this.createDescription,
-        createCidr: this.createCidr,
-        createExpectedDevices: this.createExpectedDevices,
-        gatewayIp: this.createDhcpMode === 'manual' ? this.createGatewayIp : '',
-        allocationStartIp: this.createDhcpMode === 'manual' ? this.createAllocationStartIp : '',
-        allocationEndIp: this.createDhcpMode === 'manual' ? this.createAllocationEndIp : '',
+        createNetworkIp: this.createNetworkIp,
+        createSubnetMask: this.createSubnetMask,
+        allocationStartIp: this.createAllocationStartIp,
+        allocationEndIp: this.createAllocationEndIp,
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result.refreshed);
       this.networkDialog.set('');
       this.message.set(`created network ${result.network.name}, created default DHCP plan and bound the current device`);
     } catch (error) {
-      this.setError(error);
+      this.handleActionError(error);
     } finally {
       this.actionBusy.set(''); 
-    }
-  }
-
-  async joinByOwnerEmail(): Promise<void> {
-    this.clearNotices();
-    this.actionBusy.set('joinOwnerEmail');
-    try {
-      const result = await this.facade.joinByOwnerEmail({
-        token: this.token(),
-        ownerEmail: this.joinOwnerEmail,
-        alias: this.joinAlias,
-        deviceState: this.currentDeviceState(),
-      });
-      this.applyRefreshWorkspaceResult(result);
-      this.networkDialog.set('');
-      this.message.set('已提交加入申请，请等待网络 owner 审批后再启用网络');
-    } catch (error) {
-      this.setError(error);
-    } finally {
-      this.actionBusy.set('');
     }
   }
 
@@ -331,17 +464,47 @@ export class AppComponent implements OnDestroy {
       const result = await this.facade.joinByKey({
         token: this.token(),
         joinKey: this.joinKey,
-        alias: this.joinAlias,
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
       this.networkDialog.set('');
-      this.message.set('已通过 Join Key 提交加入申请，请等待网络 owner 审批');
+      this.message.set('已通过邀请码提交加入申请，请等待网络 owner 审批');
     } catch (error) {
       this.setError(error);
     } finally {
       this.actionBusy.set('');
     }
+  }
+
+  async generateInviteCode(): Promise<void> {
+    this.clearNotices();
+    const active = this.activeNetwork();
+    if (!active) {
+      return;
+    }
+    this.actionBusy.set('generateInviteCode');
+    try {
+      const result = await this.facade.updateNetworkJoinKey({
+        token: this.token(),
+        networkId: active.networkId,
+        joinKey: '',
+        deviceState: this.currentDeviceState(),
+      });
+      this.applyRefreshWorkspaceResult(result);
+      this.generatedInviteCode = this.detail()?.joinKey || this.networkJoinKey;
+    } catch (error) {
+      this.handleActionError(error);
+    } finally {
+      this.actionBusy.set('');
+    }
+  }
+
+  inviteQrUrl(): string {
+    const code = this.generatedInviteCode.trim();
+    if (!code) {
+      return '';
+    }
+    return `https://api.qrserver.com/v1/create-qr-code/?size=196x196&margin=12&data=${encodeURIComponent(code)}`;
   }
 
   async updateOwnedNetwork(): Promise<void> {
@@ -357,12 +520,57 @@ export class AppComponent implements OnDestroy {
         name: this.updateName,
         description: this.updateDescription,
         cidr: this.updateCidr,
+        allocationStartIp: this.manageAllocationStartIp,
+        allocationEndIp: this.manageAllocationEndIp,
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
       this.message.set('network updated, clients should restart tunnel to pick up the new network plan');
+      if (this.networkDialog() === 'manage') {
+        this.networkDialog.set('');
+      }
     } catch (error) {
       this.setError(error);
+    }
+  }
+
+  async updateManagedNetworkPlan(): Promise<void> {
+    this.updateCidr = this.networkFormService.cidrFromAddressAndMask(this.manageNetworkIp, this.manageSubnetMask);
+    await this.updateOwnedNetwork();
+  }
+
+  async updateNetworkDns(): Promise<void> {
+    this.clearNotices();
+    const active = this.activeNetwork();
+    if (!active) {
+      return;
+    }
+    const allowed = await this.ensureDnsEntitlement();
+    if (!allowed) {
+      return;
+    }
+    this.actionBusy.set('saveDns');
+    try {
+      const result = await this.facade.updateNetworkDns({
+        token: this.token(),
+        networkId: active.networkId,
+        ...this.parseDnsDocument(this.dnsDocumentText),
+        deviceState: this.currentDeviceState(),
+      });
+      this.applyRefreshWorkspaceResult(result);
+      this.message.set('DNS 配置已保存，客户端下次启用网络时会按配置启动本地 DNS');
+      if (this.networkDialog() === 'dns') {
+        this.networkDialog.set('');
+      }
+    } catch (error) {
+      if (error instanceof ConsoleApiError && error.isPaymentRequired) {
+        void this.openPurchaseDialog('dns');
+        this.error.set('DNS 管理需要购买 DNS 服务，或当前 DNS 服务已过期。');
+      } else {
+        this.setError(error);
+      }
+    } finally {
+      this.actionBusy.set('');
     }
   }
 
@@ -425,30 +633,35 @@ export class AppComponent implements OnDestroy {
     }
   }
 
-  async updateNetworkJoinKey(): Promise<void> {
+  async updateAttachmentEdit(input: { attachmentId: string; virtualIp: string; remark: string }): Promise<void> {
     const active = this.activeNetwork();
     if (!active) {
       return;
     }
-    this.actionBusy.set('updateJoinKey');
+    const virtualIp = input.virtualIp.trim();
+    const remark = input.remark.trim();
+    this.setDraftIp(input.attachmentId, virtualIp);
+    this.setDraftRemark(input.attachmentId, remark);
     try {
-      const result = await this.facade.updateNetworkJoinKey({
+      let result = await this.facade.updateAttachmentIp({
         token: this.token(),
         networkId: active.networkId,
-        joinKey: '',
+        attachmentId: input.attachmentId,
+        virtualIp,
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
-      if (this.networkJoinKey.trim()) {
-        await this.callbackService.copyTarget(this.networkJoinKey.trim());
-        this.message.set('已生成新的 32 位 Join Key，并自动复制到剪贴板');
-      } else {
-        this.message.set('已生成新的 32 位 Join Key');
-      }
+      result = await this.facade.updateAttachmentRemark({
+        token: this.token(),
+        networkId: active.networkId,
+        attachmentId: input.attachmentId,
+        remark,
+        deviceState: this.currentDeviceState(),
+      });
+      this.applyRefreshWorkspaceResult(result);
+      this.message.set('设备绑定已保存');
     } catch (error) {
       this.setError(error);
-    } finally {
-      this.actionBusy.set('');
     }
   }
 
@@ -471,6 +684,54 @@ export class AppComponent implements OnDestroy {
       });
       this.applyRefreshWorkspaceResult(result);
       this.message.set(status === 'active' ? '加入申请已通过' : '加入申请已拒绝');
+    } catch (error) {
+      this.handleActionError(error);
+    } finally {
+      this.actionBusy.set('');
+    }
+  }
+
+  async createExtraDeviceOrder(): Promise<void> {
+    await this.createOrder('extra-device', this.purchaseQuantityValue, 1);
+  }
+
+  async createDnsOrder(): Promise<void> {
+    await this.createOrder('dns', 1, this.purchaseMonthsValue);
+  }
+
+  async createPurchaseProductOrder(product: PurchaseProduct): Promise<void> {
+    if (this.isDnsProduct(product)) {
+      await this.createOrder(product.productCode, 1, this.purchaseMonthsValue);
+      return;
+    }
+    await this.createOrder(product.productCode, this.purchaseQuantityValue, 1);
+  }
+
+  isDeviceAddonProduct(product: PurchaseProduct): boolean {
+    return !this.isDnsProduct(product);
+  }
+
+  isDnsProduct(product: PurchaseProduct): boolean {
+    return product.productType === 'addon_dns' || product.productCode === 'dns';
+  }
+
+  async changePassword(): Promise<void> {
+    this.clearNotices();
+    if (this.newPassword !== this.confirmPassword) {
+      this.error.set('两次输入的新密码不一致。');
+      return;
+    }
+    this.actionBusy.set('changePassword');
+    try {
+      await this.api.changePassword(this.token(), {
+        currentPassword: this.currentPassword,
+        newPassword: this.newPassword,
+      });
+      this.passwordDialog.set(false);
+      this.currentPassword = '';
+      this.newPassword = '';
+      this.confirmPassword = '';
+      this.message.set('密码已修改，请妥善保存新密码。');
     } catch (error) {
       this.setError(error);
     } finally {
@@ -502,8 +763,49 @@ export class AppComponent implements OnDestroy {
     return device.linkStatus || device.status || '-';
   }
 
+  formatMoney(cents: number, currency = 'CNY'): string {
+    const amount = (Number(cents || 0) / 100).toFixed(2);
+    return currency === 'CNY' ? `¥${amount}` : `${currency} ${amount}`;
+  }
+
   deviceProtocol(device: Device): string {
     return device.connectivityProtocol || '-';
+  }
+
+  orderQuantityLabel(order: PurchaseOrder): string {
+    const duration = this.orderDurationLabel(order.billingCycle, order.months);
+    if (order.productCode === 'dns' || order.productType === 'addon_dns') {
+      return duration;
+    }
+    return `${Math.max(1, Number(order.quantity || 1))} 台 / ${duration}`;
+  }
+
+  orderDurationLabel(billingCycle = 'month', months = 1): string {
+    const count = Math.max(1, Number(months || 1));
+    switch ((billingCycle || '').toLowerCase()) {
+      case 'quarter':
+      case 'quarterly':
+        return `${count} 季度`;
+      case 'year':
+      case 'yearly':
+      case 'annual':
+        return `${count} 年`;
+      case 'day':
+      case 'daily':
+        return `${count} 天`;
+      default:
+        return `${count} 个月`;
+    }
+  }
+
+  setPurchaseMonths(value: string | number): void {
+    const months = Number(value);
+    this.purchaseMonthsValue = Number.isFinite(months) && months > 0 ? Math.floor(months) : 1;
+  }
+
+  setPurchaseQuantity(value: string | number): void {
+    const quantity = Number(value);
+    this.purchaseQuantityValue = Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1;
   }
 
   deviceStatusLabel(device: Device): string {
@@ -588,7 +890,7 @@ export class AppComponent implements OnDestroy {
       return '健康';
     }
     if (state.tunnelUp) {
-      return '隧道已起';
+      return '隧道已启动';
     }
     return '未启用';
   }
@@ -647,20 +949,6 @@ export class AppComponent implements OnDestroy {
     }
   }
 
-  async copyNetworkJoinKey(): Promise<void> {
-    if (!this.networkJoinKey.trim()) {
-      return;
-    }
-    try {
-      await this.callbackService.copyTarget(this.networkJoinKey.trim());
-      this.message.set('Join Key 已复制到剪贴板');
-      this.error.set('');
-    } catch (_) {
-      this.error.set('复制 Join Key 失败，请手动复制');
-      this.message.set('');
-    }
-  }
-
   logout(): void {
     this.clearCachedAuth();
     this.activeView.set('account');
@@ -697,19 +985,24 @@ export class AppComponent implements OnDestroy {
   }
 
   async switchToNetwork(networkId: string): Promise<void> {
-    const result = await this.facade.refreshWorkspace({
-      token: this.token(),
-      ...this.currentDeviceState(),
-    });
-    this.applyManagedDeviceState(result.managedDevice);
-    await this.workspaceService.switchNetwork(this.token(), networkId, result.managedDevice.deviceId);
-    await this.workspaceService.activateNetwork(this.token(), networkId, result.managedDevice.deviceId);
-    const switched = await this.facade.refreshWorkspace({
-      token: this.token(),
-      ...this.currentDeviceState(),
-    });
-    this.applyRefreshWorkspaceResult(switched);
-    this.message.set(`已切换到网络 ${switched.workspace.home.activeNetwork?.name || networkId}`);
+    this.clearNotices();
+    try {
+      const result = await this.facade.refreshWorkspace({
+        token: this.token(),
+        ...this.currentDeviceState(),
+      });
+      this.applyManagedDeviceState(result.managedDevice);
+      await this.workspaceService.switchNetwork(this.token(), networkId, result.managedDevice.deviceId);
+      await this.workspaceService.activateNetwork(this.token(), networkId, result.managedDevice.deviceId);
+      const switched = await this.facade.refreshWorkspace({
+        token: this.token(),
+        ...this.currentDeviceState(),
+      });
+      this.applyRefreshWorkspaceResult(switched);
+      this.message.set(`已切换到网络 ${switched.workspace.home.activeNetwork?.name || networkId}`);
+    } catch (error) {
+      this.handleActionError(error);
+    }
   }
 
   private hydrateNetworkDrafts(detail: NetworkDetail): void {
@@ -718,6 +1011,7 @@ export class AppComponent implements OnDestroy {
     this.updateDescription = draft.description;
     this.updateCidr = draft.cidr;
     this.networkJoinKey = detail.joinKey || '';
+    this.dnsDocumentText = this.buildDnsDocument(detail);
   }
 
   private async forwardCallbackToServer(auth: AuthResponse, deviceId?: string, action?: string): Promise<void> {
@@ -786,6 +1080,76 @@ export class AppComponent implements OnDestroy {
     this.message.set('');
   }
 
+  private handleActionError(error: unknown): void {
+    if (error instanceof ConsoleApiError && error.isPaymentRequired) {
+      void this.openPurchaseDialog('extra-device');
+      this.error.set('免费套餐最多支持 2 台设备同时接入，请先购买附加设备后再继续。');
+      return;
+    }
+    this.setError(error);
+  }
+
+  private async ensureDnsEntitlement(): Promise<boolean> {
+    if (!this.token()) {
+      return false;
+    }
+    this.actionBusy.set('checkDnsEntitlement');
+    try {
+      const entitlement = await this.api.getProductEntitlement(this.token(), 'dns');
+      if (entitlement.active) {
+        return true;
+      }
+      await this.openPurchaseDialog('dns');
+      this.error.set('DNS 管理需要购买 DNS 服务，或当前 DNS 服务已过期。');
+      return false;
+    } catch (error) {
+      this.setError(error);
+      return false;
+    } finally {
+      if (this.actionBusy() === 'checkDnsEntitlement') {
+        this.actionBusy.set('');
+      }
+    }
+  }
+
+  private async loadPurchaseProducts(preferredProductCode = 'extra-device'): Promise<void> {
+    if (!this.token()) {
+      return;
+    }
+    this.actionBusy.set('loadProducts');
+    try {
+      const result = await this.api.listPurchaseProducts(this.token());
+      const items = (result.items || []).filter((item) => {
+        if (preferredProductCode === 'extra-device') {
+          return item.productType === 'addon_device';
+        }
+        return item.productCode === preferredProductCode;
+      });
+      this.purchaseProducts.set(items);
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.actionBusy.set('');
+    }
+  }
+
+  private async createOrder(productCode: string, quantity = 1, months = 1): Promise<void> {
+    if (!this.token()) {
+      return;
+    }
+    this.actionBusy.set(`order:${productCode}`);
+    try {
+      const order = await this.api.createPurchaseOrder(this.token(), productCode, quantity, months);
+      this.purchaseOrder.set(order);
+      await this.loadPurchaseOrders();
+      this.message.set(`订单已生成：${order.orderId}`);
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.actionBusy.set('');
+    }
+  }
+
   private handleUnauthorizedSession(message: string): void {
     this.clearCachedAuth();
     this.activeView.set('account');
@@ -815,6 +1179,10 @@ export class AppComponent implements OnDestroy {
   private applyAuthentication(result: AuthenticateResult): void {
     this.token.set(result.auth.accessToken);
     this.userId.set(result.auth.userId);
+    this.userEmail.set(result.auth.email || this.email.trim());
+    if (this.userEmail()) {
+      localStorage.setItem('slan.userEmail', this.userEmail());
+    }
     this.startSessionMonitor();
     this.applyManagedDeviceState(result.managedDevice);
   }
@@ -826,6 +1194,9 @@ export class AppComponent implements OnDestroy {
     this.detail.set(result.workspace.detail);
     this.subnets.set(result.workspace.subnets);
     this.assignments.set(result.workspace.assignments);
+    if (this.assignmentPage() > this.totalPages(result.workspace.assignments.length)) {
+      this.assignmentPage.set(this.totalPages(result.workspace.assignments.length));
+    }
     this.draftIps.set(result.workspace.draftIps);
     this.draftRemarks.set(
       Object.fromEntries(result.workspace.assignments.map((item) => [item.attachmentId, item.remark || '']))
@@ -840,6 +1211,50 @@ export class AppComponent implements OnDestroy {
       .split(/\r?\n|,/)
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  private pageRows<T>(rows: T[], page: number): T[] {
+    const current = Math.min(Math.max(1, page), this.totalPages(rows.length));
+    const start = (current - 1) * this.pageSize;
+    return rows.slice(start, start + this.pageSize);
+  }
+
+  private buildDnsDocument(detail: NetworkDetail): string {
+    const dns = detail.dns || { servers: [], searchDomains: [], wildcards: [] };
+    return [
+      ...(dns.servers || []).map((item) => `server ${item}`),
+      ...(dns.searchDomains || []).map((item) => `domain ${item}`),
+      ...(dns.wildcards || []).map((item) => `wildcard ${item}`),
+    ].join('\n');
+  }
+
+  private parseDnsDocument(value: string): { servers: string[]; searchDomains: string[]; wildcards: string[] } {
+    const servers: string[] = [];
+    const searchDomains: string[] = [];
+    const wildcards: string[] = [];
+    for (const raw of value.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) {
+        continue;
+      }
+      const match = line.match(/^(server|dns|domain|search|wildcard)\s+(.+)$/i);
+      if (!match) {
+        throw new Error('DNS 配置格式错误，请使用 server/domain/wildcard 开头');
+      }
+      const key = match[1].toLowerCase();
+      const payload = match[2].trim();
+      if (!payload) {
+        continue;
+      }
+      if (key === 'server' || key === 'dns') {
+        servers.push(payload);
+      } else if (key === 'domain' || key === 'search') {
+        searchDomains.push(payload);
+      } else {
+        wildcards.push(payload);
+      }
+    }
+    return { servers, searchDomains, wildcards };
   }
 
   private applyManagedDeviceState(managedDevice: { devices: Device[]; currentDeviceId: string; callbackDeviceId: string }): void {

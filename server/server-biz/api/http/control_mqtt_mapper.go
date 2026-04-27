@@ -21,6 +21,13 @@ func dtoNetworkMapToControl(m dto.NetworkMap) controlmsg.NetworkMap {
 		DNS: controlmsg.DNSConfig{
 			Servers:       append([]string(nil), m.DNS.Servers...),
 			SearchDomains: append([]string(nil), m.DNS.SearchDomains...),
+			Wildcards:     append([]string(nil), m.DNS.Wildcards...),
+		},
+		Policy: controlmsg.AccessPolicy{
+			ProductCode:        m.Policy.ProductCode,
+			MaxActiveDevices:   m.Policy.MaxActiveDevices,
+			BandwidthLimitMbps: m.Policy.BandwidthLimitMbps,
+			DNSAvailable:       m.Policy.DNSAvailable,
 		},
 		MTU: m.MTU,
 	}

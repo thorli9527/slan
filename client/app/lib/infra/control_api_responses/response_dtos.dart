@@ -160,6 +160,7 @@ class DeviceResponseDto {
     required this.deviceId,
     required this.name,
     required this.platform,
+    this.deviceVersion,
     required this.status,
     this.ownerEmail,
     this.machineId,
@@ -181,6 +182,7 @@ class DeviceResponseDto {
         deviceId: readString(json, 'deviceId'),
         name: readString(json, 'name'),
         platform: readString(json, 'platform'),
+        deviceVersion: readNullableString(json, 'deviceVersion'),
         status: readString(json, 'status'),
         ownerEmail: readNullableString(json, 'ownerEmail'),
         machineId: readNullableString(json, 'machineId'),
@@ -206,6 +208,7 @@ class DeviceResponseDto {
   final String deviceId;
   final String name;
   final String platform;
+  final String? deviceVersion;
   final String status;
   final String? ownerEmail;
   final String? machineId;
@@ -378,6 +381,9 @@ class NetworkAssignmentResponseDto {
     required this.subnetId,
     required this.deviceId,
     required this.deviceName,
+    this.devicePlatform,
+    this.deviceVersion,
+    this.connectionType,
     required this.userId,
     required this.userEmail,
     required this.role,
@@ -393,6 +399,9 @@ class NetworkAssignmentResponseDto {
         subnetId: readString(json, 'subnetId'),
         deviceId: readString(json, 'deviceId'),
         deviceName: readString(json, 'deviceName'),
+        devicePlatform: readNullableString(json, 'devicePlatform'),
+        deviceVersion: readNullableString(json, 'deviceVersion'),
+        connectionType: readNullableString(json, 'connectionType'),
         userId: readString(json, 'userId'),
         userEmail: readString(json, 'userEmail'),
         role: readString(json, 'role'),
@@ -406,6 +415,9 @@ class NetworkAssignmentResponseDto {
   final String subnetId;
   final String deviceId;
   final String deviceName;
+  final String? devicePlatform;
+  final String? deviceVersion;
+  final String? connectionType;
   final String userId;
   final String userEmail;
   final String role;
@@ -922,16 +934,19 @@ class DNSConfigResponseDto {
   const DNSConfigResponseDto({
     this.servers = const [],
     this.searchDomains = const [],
+    this.wildcards = const [],
   });
 
   factory DNSConfigResponseDto.fromJson(Map<String, dynamic> json) =>
       DNSConfigResponseDto(
         servers: readStringList(json, 'servers'),
         searchDomains: readStringList(json, 'searchDomains'),
+        wildcards: readStringList(json, 'wildcards'),
       );
 
   final List<String> servers;
   final List<String> searchDomains;
+  final List<String> wildcards;
 }
 
 class RelayRegionResponseDto {

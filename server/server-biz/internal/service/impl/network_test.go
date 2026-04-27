@@ -102,8 +102,8 @@ func TestCreateNetwork_CreatesTemplatedSubnets(t *testing.T) {
 	}
 
 	created, err := dbNetworkService{state: state}.Create("user-1", dto.CreateNetworkRequest{
-		Name:            "office",
-		ExpectedDevices: 120,
+		Name: "office",
+		CIDR: "10.0.0.0/22",
 	})
 	if err != nil {
 		t.Fatalf("create network: %v", err)
@@ -142,7 +142,6 @@ func TestCreateNetwork_AppliesDHCPOptionsToDefaultSubnet(t *testing.T) {
 	created, err := dbNetworkService{state: state}.Create("user-1", dto.CreateNetworkRequest{
 		Name:              "office",
 		CIDR:              "10.8.0.0/24",
-		GatewayIP:         "10.8.0.1",
 		AllocationStartIP: "10.8.0.2",
 		AllocationEndIP:   "10.8.0.62",
 	})
@@ -154,8 +153,7 @@ func TestCreateNetwork_AppliesDHCPOptionsToDefaultSubnet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load default subnet: %v", err)
 	}
-	if subnet.GatewayIP != "10.8.0.1" ||
-		subnet.AllocationStartIP != "10.8.0.2" ||
+	if subnet.AllocationStartIP != "10.8.0.2" ||
 		subnet.AllocationEndIP != "10.8.0.62" {
 		t.Fatalf("expected custom dhcp options, got %+v", subnet)
 	}
@@ -521,9 +519,11 @@ func TestUpdateNetwork_ReassignsVirtualIPsForAllMembers(t *testing.T) {
 	}
 
 	updated, err := dbNetworkService{state: state}.Update("owner-1", "net-1", dto.UpdateNetworkRequest{
-		Name:        "office",
-		Description: "updated",
-		CIDR:        "10.9.0.0/24",
+		Name:              "office",
+		Description:       "updated",
+		CIDR:              "10.9.0.0/24",
+		AllocationStartIP: "10.9.0.2",
+		AllocationEndIP:   "10.9.0.20",
 	})
 	if err != nil {
 		t.Fatalf("update network: %v", err)
@@ -538,6 +538,9 @@ func TestUpdateNetwork_ReassignsVirtualIPsForAllMembers(t *testing.T) {
 	}
 	if subnet.CIDR != "10.9.0.0/24" {
 		t.Fatalf("expected subnet cidr updated, got %s", subnet.CIDR)
+	}
+	if subnet.AllocationStartIP != "10.9.0.2" || subnet.AllocationEndIP != "10.9.0.20" {
+		t.Fatalf("expected subnet dhcp range updated, got %+v", subnet)
 	}
 
 	attachments, err := state.pg.ListAttachmentsBySubnet(ctx, "subnet-1")
@@ -628,6 +631,46 @@ func TestJoinByOwnerEmail_JoinsOwnedNetwork(t *testing.T) {
 	}
 	if result.Attachment.VirtualIP != "" {
 		t.Fatalf("expected no ip before activation, got %+v", result.Attachment)
+	}
+}
+
+func TestInviteMember_CreatesPendingMemberForRegisteredUser(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "owner-1",
+		Email:        "owner@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-2",
+		Email:        "member@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create member user: %v", err)
+	}
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-2",
+		UserID:    "user-2",
+		MachineID: "machine-2",
+		Name:      "member-device",
+		Platform:  "macos",
+		Status:    "online",
+	}); err != nil {
+		t.Fatalf("create member device: %v", err)
+	}
+	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+
+	member, err := dbNetworkService{state: state}.InviteMember("owner-1", "net-1", dto.InviteNetworkMemberRequest{
+		Email: "member@local.slan",
+	})
+	if err != nil {
+		t.Fatalf("invite member: %v", err)
+	}
+	if member.NetworkID != "net-1" || member.DeviceID != "dev-2" || member.Status != "pending" {
+		t.Fatalf("expected pending member for dev-2 in net-1, got %+v", member)
 	}
 }
 
@@ -1120,6 +1163,54 @@ func TestActivateAndDeactivate_AllocatesIpOnlyWhileEnabled(t *testing.T) {
 	}
 }
 
+func TestActivate_RejectsThirdFreeActiveDevice(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-1",
+		Email:        "user@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	for i := 1; i <= 3; i++ {
+		deviceID := fmt.Sprintf("dev-%d", i)
+		if err := state.pg.InsertDevice(ctx, repo.Device{
+			DeviceID:  deviceID,
+			UserID:    "user-1",
+			MachineID: fmt.Sprintf("machine-%d", i),
+			Name:      deviceID,
+			Platform:  "windows",
+			Status:    "online",
+		}); err != nil {
+			t.Fatalf("create device %s: %v", deviceID, err)
+		}
+	}
+	createNetworkFixture(t, state, "user-1", "net-1", "subnet-1", "10.0.0.0/24")
+
+	networkService := dbNetworkService{state: state}
+	for _, deviceID := range []string{"dev-1", "dev-2"} {
+		if _, err := networkService.Join("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: deviceID}); err != nil {
+			t.Fatalf("join %s: %v", deviceID, err)
+		}
+		if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: deviceID}); err != nil {
+			t.Fatalf("activate %s: %v", deviceID, err)
+		}
+	}
+	if _, err := networkService.Join("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); err != nil {
+		t.Fatalf("join dev-3: %v", err)
+	}
+	if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); !errors.Is(err, service.ErrPaymentRequired) {
+		t.Fatalf("expected free product limit to reject third active device, got %v", err)
+	}
+	if err := state.pg.UpdateUserEntitlements(ctx, "user-1", 3, false, time.Now().Unix()); err != nil {
+		t.Fatalf("extend user entitlement: %v", err)
+	}
+	if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); err != nil {
+		t.Fatalf("paid device entitlement should allow third active device: %v", err)
+	}
+}
+
 func TestBootstrap_IncludesAttachmentsAfterActivation(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
@@ -1343,6 +1434,10 @@ func newNetworkTestState(t *testing.T) *dbState {
 		&repo.NodePathHealth{},
 		&repo.ControlSession{},
 		&repo.DeviceNetworkState{},
+		&repo.Merchant{},
+		&repo.Product{},
+		&repo.PurchaseOrder{},
+		&repo.PurchaseOrderDeviceBinding{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}

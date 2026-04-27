@@ -1,5 +1,6 @@
 export type AuthResponse = {
   userId: string;
+  email?: string;
   accessToken: string;
   refreshToken?: string;
   expiresIn: number;
@@ -18,6 +19,11 @@ export type CompleteAuthCallbackRequest = {
   deviceId?: string;
   userLabel?: string;
   action?: string;
+};
+
+export type ChangePasswordRequest = {
+  currentPassword: string;
+  newPassword: string;
 };
 
 export type AuthCallbackStatusResponse = {
@@ -79,11 +85,13 @@ export type Network = {
 export type DNSConfig = {
   servers: string[];
   searchDomains: string[];
+  wildcards?: string[];
 };
 
 export type UpdateNetworkDNSRequest = {
   servers?: string[];
   searchDomains?: string[];
+  wildcards?: string[];
 };
 
 export type NetworkHome = {
@@ -125,6 +133,14 @@ export type NetworkAssignment = {
   subnetId: string;
   deviceId: string;
   deviceName: string;
+  devicePlatform?: string;
+  deviceVersion?: string;
+  connectionType?: string;
+  runtimeNetworkOnline?: boolean;
+  runtimeTunnelUp?: boolean;
+  runtimeVirtualIp?: string;
+  runtimeLastSeenAt?: number;
+  runtimeStateFresh?: boolean;
   userId: string;
   userEmail: string;
   role: string;
@@ -319,4 +335,46 @@ export type NetworkMap = {
   relayRegions?: RelayRegion[];
   dns: DNSConfig;
   mtu?: number;
+};
+
+export type PurchaseProduct = {
+  productCode: string;
+  productName: string;
+  description?: string;
+  productType: string;
+  priceCents: number;
+  currency: string;
+  billingCycle: string;
+  unitQuantity: number;
+  maxActiveDevices?: number;
+  bandwidthLimitMbps?: number;
+};
+
+export type PurchaseOrder = {
+  orderId: string;
+  merchantId?: string;
+  merchantName?: string;
+  productId?: string;
+  productCode: string;
+  productName: string;
+  productType?: string;
+  quantity: number;
+  months: number;
+  unitCents?: number;
+  amountCents: number;
+  currency: string;
+  billingCycle: string;
+  status: string;
+  paidAt?: number;
+  cancelledAt?: number;
+  refundedAt?: number;
+  expiresAt?: number;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+export type ProductEntitlement = {
+  productCode: string;
+  active: boolean;
+  expiresAt?: number;
 };

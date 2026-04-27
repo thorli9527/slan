@@ -19,12 +19,14 @@ class AppSessionController {
   Future<void> registerDevice({
     required String name,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String publicKey,
   }) =>
       _coordinator.registerDevice(
         name: name,
         platform: platform,
+        deviceVersion: deviceVersion,
         machineId: machineId,
         publicKey: publicKey,
       );
@@ -35,12 +37,14 @@ class AppSessionController {
   Future<String?> ensureHomeWorkspaceReady({
     required String deviceName,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String devicePublicKey,
   }) =>
       _coordinator.ensureHomeWorkspaceReady(
         deviceName: deviceName,
         platform: platform,
+        deviceVersion: deviceVersion,
         machineId: machineId,
         devicePublicKey: devicePublicKey,
       );
@@ -81,27 +85,21 @@ class AppSessionController {
   Future<void> joinNetwork({
     String? ownerEmail,
     String? joinKey,
-    String? alias,
   }) =>
       _coordinator.joinNetwork(
         ownerEmail: ownerEmail,
         joinKey: joinKey,
-        alias: alias,
       );
 
   Future<void> createNetwork({
     required String name,
     String? cidr,
-    int? expectedDevices,
-    String? gatewayIp,
     String? allocationStartIp,
     String? allocationEndIp,
   }) =>
       _coordinator.createNetwork(
         name: name,
         cidr: cidr,
-        expectedDevices: expectedDevices,
-        gatewayIp: gatewayIp,
         allocationStartIp: allocationStartIp,
         allocationEndIp: allocationEndIp,
       );

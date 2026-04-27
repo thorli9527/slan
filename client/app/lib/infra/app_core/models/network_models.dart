@@ -1,4 +1,19 @@
 /// 网络成员模型。
+class DNSConfigModel {
+  const DNSConfigModel({
+    this.servers = const [],
+    this.searchDomains = const [],
+    this.wildcards = const [],
+  });
+
+  final List<String> servers;
+  final List<String> searchDomains;
+  final List<String> wildcards;
+
+  bool get enabled =>
+      servers.isNotEmpty || searchDomains.isNotEmpty || wildcards.isNotEmpty;
+}
+
 class NetworkMemberModel {
   const NetworkMemberModel({
     this.memberId,
@@ -32,6 +47,7 @@ class NetworkModel {
     this.description,
     this.defaultSubnetId,
     this.joinKeyConfigured,
+    this.dns = const DNSConfigModel(),
     this.subnets = const [],
     this.members = const [],
   });
@@ -42,6 +58,7 @@ class NetworkModel {
   final String? description;
   final String? defaultSubnetId;
   final bool? joinKeyConfigured;
+  final DNSConfigModel dns;
   final List<SubnetModel> subnets;
   final List<NetworkMemberModel> members;
 }
@@ -95,6 +112,9 @@ class NetworkAssignmentModel {
     required this.subnetId,
     required this.deviceId,
     required this.deviceName,
+    this.devicePlatform,
+    this.deviceVersion,
+    this.connectionType,
     required this.userId,
     required this.userEmail,
     required this.role,
@@ -108,6 +128,9 @@ class NetworkAssignmentModel {
   final String subnetId;
   final String deviceId;
   final String deviceName;
+  final String? devicePlatform;
+  final String? deviceVersion;
+  final String? connectionType;
   final String userId;
   final String userEmail;
   final String role;

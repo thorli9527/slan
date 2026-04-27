@@ -17,8 +17,13 @@ type Network interface {
 	Switch(userID, networkID string, req dto.SwitchNetworkRequest) (dto.NetworkJoinResult, error)
 	Activate(userID, networkID string, req dto.JoinNetworkRequest) (dto.NetworkJoinResult, error)
 	Deactivate(userID, networkID string, req dto.DeactivateNetworkRequest) error
+	ListPurchaseProducts(userID string) ([]dto.PurchaseProduct, error)
+	ListPurchaseOrders(userID string) ([]dto.PurchaseOrder, error)
+	CreatePurchaseOrder(userID string, req dto.CreatePurchaseOrderRequest) (dto.PurchaseOrder, error)
+	GetProductEntitlement(userID, productCode string) (dto.ProductEntitlement, error)
 	ListMembers(userID, networkID string) ([]dto.NetworkMember, error)
 	UpdateMemberStatus(userID, networkID, memberID string, req dto.UpdateNetworkMemberStatusRequest) (dto.NetworkMember, error)
+	InviteMember(userID, networkID string, req dto.InviteNetworkMemberRequest) (dto.NetworkMember, error)
 	ListAssignments(userID, networkID string) ([]dto.NetworkAssignment, error)
 	ListSubnets(userID, networkID string) ([]dto.Subnet, error)
 	AttachDevice(userID, networkID, subnetID string, req dto.AttachDeviceRequest) (dto.SubnetAttachment, error)

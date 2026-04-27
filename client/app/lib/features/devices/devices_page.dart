@@ -370,6 +370,7 @@ class _DevicesPageState extends State<DevicesPage> {
     await sessionController.registerDevice(
       name: _nameController.text.trim(),
       platform: _platformController.text.trim(),
+      deviceVersion: DesktopPlatform.currentVersion,
       machineId: machineId,
       publicKey: publicKey,
     );
@@ -559,8 +560,7 @@ class _DevicesPageState extends State<DevicesPage> {
   }
 
   String _generatedMachineId() {
-    final host = Platform.localHostname.replaceAll('.', '-');
-    return '$host-${DateTime.now().millisecondsSinceEpoch}';
+    return AppCoreScope.clientMachineId;
   }
 
   String _generatedNodeId(String seed) {

@@ -178,6 +178,17 @@ func broadcastActiveNetworkEnabled(deps routerDeps, userID string, enabled contr
 	}
 }
 
+func broadcastUserEntitlementChanged(deps routerDeps, userID string, entitlement controlmsg.UserEntitlementChanged) {
+	if userID == "" || entitlement.NetworkID == "" {
+		return
+	}
+	for _, session := range mqttSessionsInNetwork(deps, entitlement.NetworkID, "") {
+		if session.UserID == userID {
+			_ = publishControlMQTTEnvelope(deps, session.DeviceID, "user_entitlement_changed", "", entitlement)
+		}
+	}
+}
+
 func mqttSessionsInNetwork(deps routerDeps, networkID, excludeNodeID string) []service.ControlSession {
 	if deps.ControlChannel == nil {
 		return nil

@@ -152,8 +152,6 @@ pub trait AppCoreFacade: Send + Sync {
         &self,
         name: String,
         cidr: Option<String>,
-        expected_devices: Option<u32>,
-        gateway_ip: Option<String>,
         allocation_start_ip: Option<String>,
         allocation_end_ip: Option<String>,
     ) -> Result<Network, String>;

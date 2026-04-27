@@ -18,6 +18,8 @@ final class DesktopPlatform {
     return 'unknown';
   }
 
+  static String get currentVersion => Platform.operatingSystemVersion;
+
   static String get currentLabel {
     if (Platform.isWindows) {
       return 'Windows';

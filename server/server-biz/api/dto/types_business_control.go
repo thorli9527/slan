@@ -178,6 +178,15 @@ type DNSConfig struct {
 	Servers []string `json:"servers,omitempty"`
 	// SearchDomains 是搜索域列表。
 	SearchDomains []string `json:"searchDomains,omitempty"`
+	// Wildcards 是通配解析记录，格式如 *.xx.com=10.0.0.2。
+	Wildcards []string `json:"wildcards,omitempty"`
+}
+
+type AccessPolicy struct {
+	ProductCode        string `json:"productCode,omitempty"`
+	MaxActiveDevices   int    `json:"maxActiveDevices,omitempty"`
+	BandwidthLimitMbps int    `json:"bandwidthLimitMbps,omitempty"`
+	DNSAvailable       bool   `json:"dnsAvailable,omitempty"`
 }
 
 // RelayEndpoint 描述一个 relay 区域下的具体接入点。
@@ -235,7 +244,8 @@ type NetworkMap struct {
 	// RelayRegions 是可用 relay 区域列表。
 	RelayRegions []RelayRegion `json:"relayRegions,omitempty"`
 	// DNS 是可选 DNS 配置。
-	DNS DNSConfig `json:"dns"`
+	DNS    DNSConfig    `json:"dns"`
+	Policy AccessPolicy `json:"policy,omitempty"`
 	// MTU 是建议 MTU。
 	MTU int `json:"mtu,omitempty"`
 }

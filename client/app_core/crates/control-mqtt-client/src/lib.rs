@@ -55,6 +55,7 @@ pub enum ControlMqttEvent {
     NetworkRestartRequired(ControlMqttNetworkRestartRequired),
     DeviceIPReassigned(ControlMqttDeviceIPReassigned),
     ActiveNetworkEnabled(ControlMqttActiveNetworkEnabled),
+    UserEntitlementChanged(ControlMqttUserEntitlementChanged),
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +77,18 @@ pub struct ControlMqttPeerRemove {
 pub struct ControlMqttActiveNetworkEnabled {
     pub user_id: String,
     pub network_id: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlMqttUserEntitlementChanged {
+    pub user_id: String,
+    #[serde(default)]
+    pub network_id: String,
+    pub available_device_count: u32,
+    pub dns_available: bool,
     #[serde(default)]
     pub reason: String,
 }
@@ -465,6 +478,12 @@ fn decode_control_mqtt_event(response: Envelope) -> Result<ControlMqttEvent, Str
             let enabled: ControlMqttActiveNetworkEnabled = serde_json::from_value(response.payload)
                 .map_err(|err| format!("decode active_network_enabled: {err}"))?;
             Ok(ControlMqttEvent::ActiveNetworkEnabled(enabled))
+        }
+        "user_entitlement_changed" => {
+            let changed: ControlMqttUserEntitlementChanged =
+                serde_json::from_value(response.payload)
+                    .map_err(|err| format!("decode user_entitlement_changed: {err}"))?;
+            Ok(ControlMqttEvent::UserEntitlementChanged(changed))
         }
         other => Err(format!("unexpected control mqtt event: {other}")),
     }
@@ -887,6 +906,8 @@ struct DnsConfigWire {
     servers: Vec<String>,
     #[serde(default)]
     search_domains: Vec<String>,
+    #[serde(default)]
+    wildcards: Vec<String>,
 }
 
 impl From<DnsConfigWire> for DnsConfig {
@@ -894,6 +915,7 @@ impl From<DnsConfigWire> for DnsConfig {
         Self {
             servers: value.servers,
             search_domains: value.search_domains,
+            wildcards: value.wildcards,
         }
     }
 }

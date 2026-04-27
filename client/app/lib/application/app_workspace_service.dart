@@ -72,6 +72,7 @@ class AppWorkspaceService {
     required DeviceModel? currentDevice,
     required String deviceName,
     required String platform,
+    String? deviceVersion,
     required String machineId,
     required String devicePublicKey,
   }) async {
@@ -88,6 +89,7 @@ class AppWorkspaceService {
     device ??= await _api.registerDevice(
       name: deviceName,
       platform: platform,
+      deviceVersion: deviceVersion,
       machineId: machineId,
       publicKey: devicePublicKey,
     );
@@ -208,7 +210,6 @@ class AppWorkspaceService {
     required DeviceModel? currentDevice,
     String? ownerEmail,
     String? joinKey,
-    String? alias,
   }) async {
     if (session == null) {
       throw StateError('login required');
@@ -220,7 +221,7 @@ class AppWorkspaceService {
     final trimmedKey = joinKey?.trim() ?? '';
     final trimmedOwnerEmail = ownerEmail?.trim() ?? '';
     if (trimmedKey.isEmpty && trimmedOwnerEmail.isEmpty) {
-      throw StateError('owner email or join key is required');
+      throw StateError('invite code is required');
     }
 
     final joinResult = trimmedKey.isNotEmpty
@@ -240,25 +241,6 @@ class AppWorkspaceService {
             deviceId: device.deviceId,
           ).networkId
         : joinResult.networkId;
-    final trimmedAlias = alias?.trim() ?? '';
-    final attachmentId = joinResult.attachmentId?.trim().isNotEmpty == true
-        ? joinResult.attachmentId!.trim()
-        : _attachmentIdForDevice(
-            _resolveNetwork(networks, joinedNetworkId),
-            device.deviceId,
-          );
-    if (trimmedAlias.isNotEmpty && attachmentId != null) {
-      try {
-        await _api.updateAttachmentRemark(
-          networkId: joinedNetworkId,
-          attachmentId: attachmentId,
-          remark: trimmedAlias,
-        );
-        networks = await _api.listNetworks();
-      } on UnsupportedError {
-        // Older test or fallback API implementations may not support remarks.
-      }
-    }
 
     return NetworkJoinResult(
       networks: networks,
@@ -331,15 +313,4 @@ class AppWorkspaceService {
     throw StateError('joined network was not returned by the server');
   }
 
-  String? _attachmentIdForDevice(NetworkModel network, String deviceId) {
-    for (final member in network.members) {
-      if (member.deviceId == deviceId) {
-        final attachmentId = member.attachmentId?.trim();
-        return attachmentId == null || attachmentId.isEmpty
-            ? null
-            : attachmentId;
-      }
-    }
-    return null;
-  }
 }

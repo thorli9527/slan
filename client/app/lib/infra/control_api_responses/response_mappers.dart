@@ -18,6 +18,7 @@ extension DeviceResponseDtoMapper on DeviceResponseDto {
         deviceId: deviceId,
         name: name,
         platform: platform,
+        deviceVersion: deviceVersion,
         status: status,
         virtualIp: virtualIp ?? currentVirtualIp,
         publicKey: publicKey,
@@ -78,6 +79,7 @@ extension NetworkSummaryResponseDtoMapper on NetworkSummaryResponseDto {
         description: description,
         defaultSubnetId: defaultSubnetId,
         joinKeyConfigured: joinKeyConfigured,
+        dns: const DNSConfigModel(),
         subnets: subnets.map((subnet) => subnet.toModel()).toList(growable: false),
       );
 }
@@ -150,6 +152,7 @@ extension NetworkDetailResponseDtoMapper on NetworkDetailResponseDto {
       description: description,
       defaultSubnetId: defaultSubnetId,
       joinKeyConfigured: joinKeyConfigured,
+      dns: dns?.toModel() ?? const DNSConfigModel(),
       subnets: subnets.map((subnet) => subnet.toModel()).toList(growable: false),
       members: members
           .map(
@@ -162,6 +165,14 @@ extension NetworkDetailResponseDtoMapper on NetworkDetailResponseDto {
           .toList(growable: false),
     );
   }
+}
+
+extension DNSConfigResponseDtoMapper on DNSConfigResponseDto {
+  DNSConfigModel toModel() => DNSConfigModel(
+        servers: servers,
+        searchDomains: searchDomains,
+        wildcards: wildcards,
+      );
 }
 
 extension NetworkMemberResponseDtoMapper on NetworkMemberResponseDto {
@@ -222,6 +233,9 @@ extension NetworkAssignmentResponseDtoMapper on NetworkAssignmentResponseDto {
         subnetId: subnetId,
         deviceId: deviceId,
         deviceName: deviceName,
+        devicePlatform: devicePlatform,
+        deviceVersion: deviceVersion,
+        connectionType: connectionType,
         userId: userId,
         userEmail: userEmail,
         role: role,

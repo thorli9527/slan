@@ -101,6 +101,14 @@ func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	})
 }
 
+func registerProtectedAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
+	auth := api.Group("/auth")
+	auth.PUT("/password", respondWithBodyStatus(http.StatusOK, gin.H{"status": "ok"}, func(c *gin.Context, req dto.ChangePasswordRequest) error {
+		rc := currentRouteContext(c)
+		return deps.Auth.ChangePassword(rc.user(), req)
+	}))
+}
+
 func stringValue(values map[string]any, key string) string {
 	value, ok := values[key]
 	if !ok {
