@@ -254,7 +254,14 @@ export class AppComponent {
     }
   }
 
-  logout(): void {
+  async logout(): Promise<void> {
+    if (this.token()) {
+      try {
+        await this.request('/logout', { method: 'POST' });
+      } catch {
+        // Local logout still clears the browser session when the server token is already invalid.
+      }
+    }
     localStorage.removeItem('slan.opsToken');
     localStorage.removeItem('slan.opsAdminId');
     localStorage.removeItem('slan.opsAdminName');
@@ -282,7 +289,7 @@ export class AppComponent {
     }
     this.loading.set(true);
     try {
-      await this.request(`/admins/${encodeURIComponent(this.adminId())}/password`, {
+      await this.request('/me/password', {
         method: 'PUT',
         body: JSON.stringify({ password: this.opsNewPassword }),
       });

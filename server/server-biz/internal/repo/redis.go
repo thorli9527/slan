@@ -165,6 +165,10 @@ func (s *RedisTokenStore) AuthenticateOpsAccessToken(ctx context.Context, token 
 	return adminID, nil
 }
 
+func (s *RedisTokenStore) DeleteOpsAccessToken(ctx context.Context, token string) error {
+	return s.client.Del(ctx, "ops_access_token:"+token).Err()
+}
+
 func (s *RedisTokenStore) PublishControlSyncEvent(ctx context.Context, event controlmsg.ControlSyncEvent) error {
 	payload, err := json.Marshal(event)
 	if err != nil {

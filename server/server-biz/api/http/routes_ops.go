@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/configs"
+	"github.com/slan/server/server-biz/internal/service"
 )
 
 // registerOpsRoutes 注册运营管理入口使用的只读和 RBAC 管理路由。
@@ -29,6 +30,31 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 	ops.POST("/login", opsLoginHandlers...)
 
 	ops.Use(authenticateOps(cfg, deps))
+
+	ops.POST("/logout", func(c *gin.Context) {
+		if err := deps.Ops.LogoutAdmin(bearerToken(c)); err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	ops.PUT("/me/password", func(c *gin.Context) {
+		adminID := opsAdminID(c)
+		if adminID == "" {
+			writeError(c, service.ErrUnauthorized)
+			return
+		}
+		var req dto.ChangeAdminPasswordRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		if err := deps.Ops.ChangeOwnAdminPassword(adminID, req); err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 
 	// GET /overview 返回运营首页摘要。
 	ops.GET("/overview", authorizeOpsMenu(deps, "ops.overview"), func(c *gin.Context) {

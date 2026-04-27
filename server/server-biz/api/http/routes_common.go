@@ -124,3 +124,18 @@ func userID(c *gin.Context) string {
 	userID, _ := value.(string)
 	return userID
 }
+
+func opsAdminID(c *gin.Context) string {
+	value, _ := c.Get(opsAdminIDContextKey)
+	adminID, _ := value.(string)
+	return adminID
+}
+
+func bearerToken(c *gin.Context) string {
+	authz := strings.TrimSpace(c.GetHeader("Authorization"))
+	token := strings.TrimPrefix(authz, "Bearer ")
+	if token == authz {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}

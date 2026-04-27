@@ -117,6 +117,18 @@ func (s dbOpsService) ChangeAdminPassword(adminID string, req dto.ChangeAdminPas
 }
 
 // UnlockAdmin 清除管理员锁定状态和失败计数。
+func (s dbOpsService) ChangeOwnAdminPassword(adminID string, req dto.ChangeAdminPasswordRequest) error {
+	return s.ChangeAdminPassword(adminID, req)
+}
+
+func (s dbOpsService) LogoutAdmin(accessToken string) error {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return nil
+	}
+	return s.state.tokens.DeleteOpsAccessToken(context.Background(), accessToken)
+}
+
 func (s dbOpsService) UnlockAdmin(adminID string) error {
 	adminID = strings.TrimSpace(adminID)
 	if adminID == "" {

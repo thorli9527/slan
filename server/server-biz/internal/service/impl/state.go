@@ -35,6 +35,7 @@ type tokenStore interface {
 	Authenticate(ctx context.Context, accessToken string) (repo.AccessTokenSession, error)
 	AuthenticateControlSessionToken(ctx context.Context, token string) (string, error)
 	AuthenticateOpsAccessToken(ctx context.Context, token string) (string, error)
+	DeleteOpsAccessToken(ctx context.Context, token string) error
 	PublishControlSyncEvent(ctx context.Context, event controlmsg.ControlSyncEvent) error
 	SubscribeControlSyncEvents(ctx context.Context, handler func(controlmsg.ControlSyncEvent)) error
 	NextNetworkRevision(ctx context.Context, networkID string) (uint64, error)

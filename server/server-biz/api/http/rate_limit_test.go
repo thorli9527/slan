@@ -473,6 +473,14 @@ func (fakeOpsService) ChangeAdminPassword(adminID string, req dto.ChangeAdminPas
 	return nil
 }
 
+func (fakeOpsService) ChangeOwnAdminPassword(adminID string, req dto.ChangeAdminPasswordRequest) error {
+	return nil
+}
+
+func (fakeOpsService) LogoutAdmin(accessToken string) error {
+	return nil
+}
+
 func (fakeOpsService) UnlockAdmin(adminID string) error {
 	return nil
 }

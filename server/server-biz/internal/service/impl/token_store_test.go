@@ -160,6 +160,13 @@ func (s *memoryTokenStore) AuthenticateOpsAccessToken(_ context.Context, token s
 	return adminID, nil
 }
 
+func (s *memoryTokenStore) DeleteOpsAccessToken(_ context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.opsTokens, token)
+	return nil
+}
+
 func (s *memoryTokenStore) PublishControlSyncEvent(_ context.Context, event controlmsg.ControlSyncEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
