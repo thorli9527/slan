@@ -47,7 +47,11 @@ type RegisterDeviceInput = {
 type CreateNetworkInput = {
   name: string;
   description: string;
-  cidr: string;
+  cidr?: string;
+  expectedDevices?: number;
+  gatewayIp?: string;
+  allocationStartIp?: string;
+  allocationEndIp?: string;
   bindDeviceId: string;
 };
 
@@ -55,14 +59,6 @@ type UpdateNetworkInput = {
   name: string;
   description: string;
   cidr: string;
-};
-
-type CreateSubnetInput = {
-  name: string;
-  cidr: string;
-  gatewayIp?: string;
-  allocationStartIp?: string;
-  allocationEndIp?: string;
 };
 
 @Injectable({ providedIn: 'root' })
@@ -174,16 +170,6 @@ export class ConsoleApiService {
       init: {
         method: 'PUT',
         body: JSON.stringify({ status })
-      }
-    });
-  }
-
-  createSubnet(token: string, networkId: string, input: CreateSubnetInput): Promise<Subnet> {
-    return this.request<Subnet>(`/networks/${networkId}/subnets`, {
-      token,
-      init: {
-        method: 'POST',
-        body: JSON.stringify(input)
       }
     });
   }

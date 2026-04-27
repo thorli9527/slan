@@ -4,15 +4,15 @@
     <h2>{{ mode === 'login' ? '登录网络控制台' : '创建控制台账号' }}</h2>
     <p class="auth-description">
       {{ mode === 'login'
-        ? '登录后可以查看当前网络、网络在线设备、虚拟 IP、子网和加入申请。'
-        : '注册后会直接进入网络控制台，可以创建自己的网络或加入已有网络。'
+        ? '登录后可以查看当前网络、在线状态、虚拟 IP、默认地址池和加入申请。'
+        : '注册后可以直接进入网络控制台，创建自己的网络或加入已有网络。'
       }}
     </p>
 
     <div class="auth-points">
       <div class="auth-point">
         <span class="point-dot"></span>
-        <span>统一管理网络、子网、设备接入和 Join Key</span>
+        <span>统一管理网络、地址绑定、接入审批和 Join Key</span>
       </div>
       <div class="auth-point">
         <span class="point-dot"></span>
@@ -20,7 +20,7 @@
       </div>
       <div class="auth-point">
         <span class="point-dot"></span>
-        <span>创建网络后可立即绑定当前设备并生成默认规划</span>
+        <span>创建网络时可配置 DHCP 地址池，并立即绑定当前设备</span>
       </div>
     </div>
   </div>
@@ -58,7 +58,7 @@
 
     <p class="auth-hint">
       {{ mode === 'login'
-        ? '推荐先登录，再进入网络创建、切换和设备管理。'
+        ? '推荐先登录，再进入网络创建、切换和接入管理。'
         : '注册密码至少 8 位，注册后可直接进入网络创建和加入流程。'
       }}
     </p>

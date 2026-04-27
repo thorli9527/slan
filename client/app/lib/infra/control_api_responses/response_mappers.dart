@@ -78,6 +78,7 @@ extension NetworkSummaryResponseDtoMapper on NetworkSummaryResponseDto {
         description: description,
         defaultSubnetId: defaultSubnetId,
         joinKeyConfigured: joinKeyConfigured,
+        subnets: subnets.map((subnet) => subnet.toModel()).toList(growable: false),
       );
 }
 
@@ -149,6 +150,7 @@ extension NetworkDetailResponseDtoMapper on NetworkDetailResponseDto {
       description: description,
       defaultSubnetId: defaultSubnetId,
       joinKeyConfigured: joinKeyConfigured,
+      subnets: subnets.map((subnet) => subnet.toModel()).toList(growable: false),
       members: members
           .map(
             (member) => member.toModel(
@@ -196,6 +198,21 @@ extension NetworkMemberResponseDtoMapper on NetworkMemberResponseDto {
       remark: remark,
     );
   }
+}
+
+extension SubnetResponseDtoMapper on SubnetResponseDto {
+  SubnetModel toModel() => SubnetModel(
+        subnetId: subnetId,
+        networkId: networkId,
+        name: name,
+        cidr: cidr,
+        remark: remark,
+        gatewayIp: gatewayIp,
+        allocationStartIp: allocationStartIp,
+        allocationEndIp: allocationEndIp,
+        isDefault: isDefault,
+        status: status,
+      );
 }
 
 extension NetworkAssignmentResponseDtoMapper on NetworkAssignmentResponseDto {

@@ -12,7 +12,19 @@ contracts:
         required: false
       cidr:
         type: string
-        required: true
+        required: false
+      expectedDevices:
+        type: int
+        required: false
+      gatewayIp:
+        type: string
+        required: false
+      allocationStartIp:
+        type: string
+        required: false
+      allocationEndIp:
+        type: string
+        required: false
       bindDeviceId:
         type: string
         required: false
@@ -88,23 +100,6 @@ contracts:
       remark:
         type: string
         required: false
-  CreateSubnetRequest:
-    fields:
-      name:
-        type: string
-        required: true
-      cidr:
-        type: string
-        required: true
-      gatewayIp:
-        type: string
-        required: false
-      allocationStartIp:
-        type: string
-        required: false
-      allocationEndIp:
-        type: string
-        required: false
   AttachDeviceRequest:
     fields:
       deviceId:
@@ -163,6 +158,9 @@ contracts:
       cidr:
         type: string
         required: true
+      remark:
+        type: string
+        required: false
       gatewayIp:
         type: string
         required: false

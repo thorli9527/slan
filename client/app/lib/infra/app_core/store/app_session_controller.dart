@@ -89,6 +89,23 @@ class AppSessionController {
         alias: alias,
       );
 
+  Future<void> createNetwork({
+    required String name,
+    String? cidr,
+    int? expectedDevices,
+    String? gatewayIp,
+    String? allocationStartIp,
+    String? allocationEndIp,
+  }) =>
+      _coordinator.createNetwork(
+        name: name,
+        cidr: cidr,
+        expectedDevices: expectedDevices,
+        gatewayIp: gatewayIp,
+        allocationStartIp: allocationStartIp,
+        allocationEndIp: allocationEndIp,
+      );
+
   Future<void> refreshNetworks() => _coordinator.refreshNetworks();
 
   Future<void> enableActiveNetwork() => _coordinator.enableActiveNetwork();

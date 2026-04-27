@@ -45,11 +45,20 @@ func TestApplyMQTTNetworkStateUpsertsTrustedState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register device: %v", err)
 	}
-	user, err := state.pg.GetUserByID(ctx, auth.UserID)
+	network, err := (dbNetworkService{state: state}).Create(auth.UserID, dto.CreateNetworkRequest{
+		Name:         "mqtt-net",
+		CIDR:         "10.0.0.0/24",
+		BindDeviceID: device.DeviceID,
+	})
 	if err != nil {
-		t.Fatalf("load user: %v", err)
+		t.Fatalf("create network: %v", err)
 	}
-	networkID := user.ActiveNetworkID
+	if _, err := (dbNetworkService{state: state}).Activate(auth.UserID, network.NetworkID, dto.JoinNetworkRequest{
+		DeviceID: device.DeviceID,
+	}); err != nil {
+		t.Fatalf("activate network: %v", err)
+	}
+	networkID := network.NetworkID
 
 	payload, _ := json.Marshal(dto.DeviceNetworkStateRequest{
 		DeviceID:         device.DeviceID,

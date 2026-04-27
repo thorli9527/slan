@@ -1,114 +1,71 @@
-# 组网软件完整需求范围
+# SLAN Product Scope
 
-## 1. 产品定位
+## Positioning
 
-跨平台安全组网平台，面向开发者与企业，支持内网穿透、设备互联、私有 DNS 与远程访问。
+SLAN is a cross-platform secure networking platform for developers and teams. It supports private connectivity, device-to-device access, relay fallback, and operational network management.
 
-## 2. 系统架构
+## Architecture
 
-- 客户端：Rust 网络核心 + Flutter UI
-- 数据面：Rust，负责 P2P、Relay、加密隧道
-- 控制面：Go，负责用户、网络、设备、策略
-- 运营平台：Go + Python
+- Client: Rust networking core plus Flutter UI.
+- Control plane: Go `server-biz`, responsible for users, networks, devices, membership, policy, bootstrap, and MQTT control.
+- Data plane: Rust relay and tunnel components for P2P, relay fallback, and encrypted traffic.
+- Operations: Go/Python tooling for observability and administration.
 
-## 3. 完整功能范围
+## Client Scope
 
-### 3.1 客户端功能
+### Connection
 
-#### 基础连接
+- Connect and disconnect.
+- Automatic reconnect.
+- Network status display.
+- Latency, bandwidth, and loss indicators.
 
-- 一键连接和断开
-- 自动重连
-- 状态展示：延迟、带宽、丢包
+### Network Management
 
-#### 设备管理
+- Create one owned network per account.
+- Join another network by owner email or Join Key.
+- Switch active network.
+- Show network detail, status, virtual IPs, and remarks.
+- Manage address binding and member approval from the network view.
 
-- 设备列表
-- 设备在线状态
-- 设备重命名
-- 设备分组
+### DNS and Diagnostics
 
-#### 网络管理
+- Private DNS resolution.
+- Hosts import/export.
+- NAT detection.
+- Ping, traceroute, and troubleshooting views.
 
-- 创建网络
-- 加入网络
-- 网络列表
-- 网络详情
+## Control Plane Scope
 
-#### DNS 功能
+- User registration, login, and JWT authentication.
+- Device and node registration.
+- Network ownership and membership.
+- Join approval.
+- Default subnet and DHCP-style virtual IP allocation.
+- MQTT control channel.
+- ACL policy.
+- Bootstrap, NetworkMap, and relay ticket APIs.
 
-- 内网域名解析
-- hosts 导入
-- hosts 导出
+## Data Plane Scope
 
-#### 网络诊断
+- STUN and UDP hole punching.
+- P2P connection management.
+- UDP/TCP relay fallback.
+- Encrypted tunnel using Noise or WireGuard-style primitives.
+- TUN/TAP integration.
 
-- NAT 检测
-- Ping
-- Traceroute
-- 故障分析
+## Operations Scope
 
-### 3.2 Rust 数据面功能
+- User analytics.
+- Network monitoring.
+- Billing support.
+- Administrative reports.
 
-- NAT 穿透：STUN、UDP 打洞
-- P2P 连接管理
-- Relay 中继：UDP、TCP
-- 加密隧道：Noise 或 WireGuard
-- 虚拟网卡：TUN 或 TAP
+## Current Product Decisions
 
-### 3.3 Go 控制面功能
-
-- 用户系统：注册、登录、JWT
-- 网络管理：创建、成员、权限
-- 设备管理：注册、IP 分配
-- 控制信道：MQTT
-- ACL 策略：IP 和端口控制
-
-### 3.4 安全体系
-
-- TLS 1.3 加密
-- 设备认证
-- 异常检测与封禁
-
-### 3.5 运营平台
-
-- 用户分析：DAU、MAU
-- 网络监控：延迟、带宽
-- 计费系统：设备计费、流量计费
-
-## 4. 核心流程
-
-### 4.1 登录建连流程
-
-1. 用户登录
-2. 客户端获取配置
-3. 建立控制信道
-4. 执行 NAT 检测
-5. 优先尝试 P2P
-6. P2P 失败后切换到 Relay
-7. 建立加密隧道
-8. 维持设备在线和状态同步
-
-### 4.2 连接策略
-
-- P2P 优先
-- Relay 兜底
-
-## 5. 产品分层
-
-### 客户端
-
-- Flutter 负责 UI 和交互
-- Rust 负责网络能力、平台能力和系统集成
-
-### 服务端
-
-- `server-biz` 负责控制面
-- `server-relay` 负责中继数据面
-
-## 6. 设计原则
-
-- 业务边界优先于语言边界
-- 控制面与数据面严格分离
-- 协议定义集中管理，避免多端各自维护
-- MVP 先打通最短闭环，再逐步扩展 DNS、诊断、ACL、运营能力
+- The web console does not expose a dedicated device management page.
+- The web console does not expose manual subnet creation.
+- Network creation is explicit and dialog based.
+- Joining another user's network is dialog based.
+- DHCP options are configured during network creation.
+- If an account already owns a network, creating another owned network is disabled.

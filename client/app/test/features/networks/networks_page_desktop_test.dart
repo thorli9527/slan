@@ -37,6 +37,8 @@ void main() {
     _seedLoggedInDevice();
 
     await _pumpNetworksPage(tester);
+    await tester.tap(find.byKey(AppTestKeys.networksOpenJoinDialogButton));
+    await tester.pumpAndSettle();
 
     await tester.enterText(
       find.byKey(AppTestKeys.networksJoinKeyField),
@@ -52,6 +54,26 @@ void main() {
     expect(find.text('Joined network'), findsWidgets);
     expect(find.text('Thor laptop'), findsWidgets);
     expect(AppCoreScope.sessionStore.selectedNetworkId, 'mock-key-network');
+  });
+
+  testWidgets('NetworksPage creates network from dialog', (
+    WidgetTester tester,
+  ) async {
+    AppCoreScope.configureForTest(appCoreApi: MockAppCoreApi());
+    _seedLoggedInDevice();
+
+    await _pumpNetworksPage(tester);
+    await tester.tap(find.byKey(AppTestKeys.networksOpenCreateDialogButton));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(AppTestKeys.networksNameField), 'Lab');
+    await tester.enterText(
+        find.byKey(AppTestKeys.networksCidrField), '10.9.0.0/24');
+    await tester.tap(find.byKey(AppTestKeys.networksCreateButton));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Lab'), findsWidgets);
+    expect(AppCoreScope.sessionStore.selectedNetworkId, 'net-1');
   });
 
   testWidgets('NetworksPage switches selected network', (

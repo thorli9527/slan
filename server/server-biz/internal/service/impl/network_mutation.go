@@ -35,11 +35,29 @@ func (s dbNetworkService) Create(userID string, req dto.CreateNetworkRequest) (d
 		return dto.Network{}, err
 	}
 	networkID := util.NewID("net")
-	subnetID := util.NewID("subnet")
-	defaultSubnet, err := newSubnet(networkID, subnetID, "default", req.CIDR, "", "", "", true)
+	subnets, err := defaultSubnetsForNetwork(networkID, createNetworkCIDR(req.CIDR, req.ExpectedDevices), func() string {
+		return util.NewID("subnet")
+	})
 	if err != nil {
 		return dto.Network{}, err
 	}
+	if hasCreateNetworkDHCPOptions(req) {
+		subnets[0], err = newSubnet(
+			networkID,
+			subnets[0].SubnetID,
+			subnets[0].Name,
+			subnets[0].CIDR,
+			strings.TrimSpace(req.GatewayIP),
+			strings.TrimSpace(req.AllocationStartIP),
+			strings.TrimSpace(req.AllocationEndIP),
+			true,
+		)
+		if err != nil {
+			return dto.Network{}, err
+		}
+		subnets[0].Remark = "Default network for shared access and DHCP allocation"
+	}
+	defaultSubnet := subnets[0]
 	network := dto.Network{
 		NetworkID:         networkID,
 		Name:              name,
@@ -47,7 +65,7 @@ func (s dbNetworkService) Create(userID string, req dto.CreateNetworkRequest) (d
 		DefaultSubnetID:   defaultSubnet.SubnetID,
 		DefaultSubnetCIDR: defaultSubnet.CIDR,
 	}
-	if err := s.state.pg.CreateNetworkWithDefaultSubnet(ctx, userID, network, defaultSubnet); err != nil {
+	if err := s.state.pg.CreateNetworkWithSubnets(ctx, userID, network, subnets); err != nil {
 		return dto.Network{}, err
 	}
 	if strings.TrimSpace(user.ActiveNetworkID) == "" {
@@ -164,36 +182,6 @@ func (s dbNetworkService) UpdateJoinKey(userID, networkID string, req dto.Update
 		return dto.NetworkDetail{}, err
 	}
 	return s.Get(userID, networkID)
-}
-
-func (s dbNetworkService) CreateSubnet(userID, networkID string, req dto.CreateSubnetRequest) (dto.Subnet, error) {
-	if strings.TrimSpace(req.Name) == "" {
-		return dto.Subnet{}, fmt.Errorf("%w: name is required", ErrInvalidArgument)
-	}
-	ctx := context.Background()
-	record, err := s.state.pg.GetNetworkByID(ctx, networkID)
-	if err != nil {
-		if repo.IsNotFound(err) {
-			return dto.Subnet{}, ErrNotFound
-		}
-		return dto.Subnet{}, err
-	}
-	if record.OwnerUserID != userID {
-		return dto.Subnet{}, ErrForbidden
-	}
-	if _, err := s.state.pg.FindSubnetByName(ctx, networkID, req.Name); err == nil {
-		return dto.Subnet{}, fmt.Errorf("%w: subnet name already exists", ErrConflict)
-	} else if !repo.IsNotFound(err) {
-		return dto.Subnet{}, err
-	}
-	subnet, err := newSubnet(networkID, util.NewID("subnet"), req.Name, req.CIDR, req.GatewayIP, req.AllocationStartIP, req.AllocationEndIP, false)
-	if err != nil {
-		return dto.Subnet{}, err
-	}
-	if err := s.state.pg.CreateSubnet(ctx, subnet); err != nil {
-		return dto.Subnet{}, err
-	}
-	return subnet, nil
 }
 
 func (s dbNetworkService) AttachDevice(userID, networkID, subnetID string, req dto.AttachDeviceRequest) (dto.SubnetAttachment, error) {
@@ -342,4 +330,10 @@ func sanitizeValues(items []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func hasCreateNetworkDHCPOptions(req dto.CreateNetworkRequest) bool {
+	return strings.TrimSpace(req.GatewayIP) != "" ||
+		strings.TrimSpace(req.AllocationStartIP) != "" ||
+		strings.TrimSpace(req.AllocationEndIP) != ""
 }

@@ -248,7 +248,6 @@ Backend:
 - `JoinNetworkByOwnerEmailRequest`
 - `UpdateAttachmentIPRequest`
 - `UpdateAttachmentRemarkRequest`
-- `CreateSubnetRequest`
 - `AttachDeviceRequest`
 - `JoinNetworkRequest`
 - `Network`

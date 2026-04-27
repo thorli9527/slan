@@ -1,21 +1,21 @@
-﻿# SLAN 鎺у埗闈?HTTP API 鑽夋銆?
+# SLAN control plane HTTP API draft.
 #
-# 璁捐鐩爣锛?
-# - HTTP 鍙壙鎷呯鐞嗛潰鍜屼竴娆℃€ф巿鏉冭亴璐?
-# - 鑺傜偣瀹炴椂鍚屾璧走 MQTT control envelope / protobuf
-# - 鑺傜偣韬唤銆丯etworkMap銆乺elay ticket 閮藉洿缁曗€滆妭鐐圭粍缃戠紪鎺掆€濆睍寮€
+# Design goals:
+# - HTTP handles management and one-time authorization.
+# - Node realtime sync uses MQTT control envelopes and protobuf.
+# - Node identity, NetworkMap, and relay tickets are coordinated around node orchestration.
 openapi: 3.1.0
 info:
   title: SLAN Control Plane API
   version: 0.3.0
   description: >
-    褰撳墠鍗忚鍙傝€?Tailscale 椋庢牸鐨勬帶鍒堕潰璁捐锛?
-    鎺у埗闈㈣礋璐ｇ敤鎴枫€佽澶囥€佽妭鐐广€佺綉缁溿€丯etworkMap 鍜?relay ticket 鐨勬巿鏉冧笌缂栨帓锛?
-    瀹炴椂 peer 鍚屾涓庤繛鎺ヨ鍒掗€氳繃鎺у埗閫氶亾涓嬪彂锛?
-    鏁版嵁闈㈤粯璁や紭鍏?P2P锛屽け璐ュ悗浣跨敤 relay 鍥為€€銆?
+    The protocol follows a Tailscale-style control plane design.
+    HTTP manages users, devices, nodes, networks, NetworkMap authorization, and relay tickets.
+    Realtime peer sync and connection plans are delivered through the control channel.
+    The data plane prefers P2P and falls back to relay when needed.
 servers:
   - url: http://localhost:8080
-    description: 鏈湴寮€鍙戞帶鍒堕潰
+    description: Local development control plane
 tags:
   - name: Auth
   - name: Devices
@@ -58,7 +58,7 @@ paths:
     post:
       tags: [Auth]
       operationId: register
-      summary: 娉ㄥ唽鐢ㄦ埛
+      summary: Register user
       requestBody:
         required: true
         content:
@@ -67,7 +67,7 @@ paths:
               $ref: '#/components/schemas/RegisterRequest'
       responses:
         '201':
-          description: 娉ㄥ唽鎴愬姛
+          description: User registered
           content:
             application/json:
               schema:
@@ -77,7 +77,7 @@ paths:
     post:
       tags: [Auth]
       operationId: login
-      summary: 鐢ㄦ埛鐧诲綍
+      summary: Login user
       requestBody:
         required: true
         content:
@@ -86,7 +86,7 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: 鐧诲綍鎴愬姛
+          description: Login succeeded
           content:
             application/json:
               schema:
@@ -96,7 +96,7 @@ paths:
     post:
       tags: [Auth]
       operationId: refreshToken
-      summary: 鍒锋柊璁块棶浠ょ墝
+      summary: Refresh access token
       requestBody:
         required: true
         content:
@@ -105,7 +105,7 @@ paths:
               $ref: '#/components/schemas/RefreshTokenRequest'
       responses:
         '200':
-          description: 鍒锋柊鎴愬姛
+          description: Token refreshed
           content:
             application/json:
               schema:
@@ -115,12 +115,12 @@ paths:
     get:
       tags: [Auth]
       operationId: getAuthCallbackStatus
-      summary: 鏌ヨ缃戦〉鐧诲綍鍥炶皟鎺ユ敹鐘舵€?
+      summary: Get browser login callback status
       parameters:
         - $ref: '#/components/parameters/CallbackId'
       responses:
         '200':
-          description: 鍥炶皟鐘舵€?
+          description: Callback status
           content:
             application/json:
               schema:
@@ -214,7 +214,7 @@ paths:
     post:
       tags: [Devices]
       operationId: registerDevice
-      summary: 娉ㄥ唽璁惧
+      summary: Register device
       security:
         - bearerAuth: []
       requestBody:
@@ -225,7 +225,7 @@ paths:
               $ref: '#/components/schemas/RegisterDeviceRequest'
       responses:
         '201':
-          description: 璁惧娉ㄥ唽鎴愬姛
+          description: Device registered
           content:
             application/json:
               schema:
@@ -235,12 +235,12 @@ paths:
     get:
       tags: [Devices]
       operationId: listDevices
-      summary: 鑾峰彇褰撳墠鐢ㄦ埛鎷ユ湁鐨勮澶囧垪琛?
+      summary: List current user devices
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: 璁惧鍒楄〃
+          description: Device list
           content:
             application/json:
               schema:
@@ -280,12 +280,12 @@ paths:
     get:
       tags: [Networks]
       operationId: listNetworks
-      summary: 鑾峰彇鐢ㄦ埛鍙缃戠粶鍒楄〃
+      summary: List visible networks
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: 缃戠粶鍒楄〃
+          description: Network list
           content:
             application/json:
               schema:
@@ -299,7 +299,7 @@ paths:
     post:
       tags: [Networks]
       operationId: createNetwork
-      summary: 鍒涘缓缃戠粶
+      summary: Create network
       security:
         - bearerAuth: []
       requestBody:
@@ -310,7 +310,7 @@ paths:
               $ref: '#/components/schemas/CreateNetworkRequest'
       responses:
         '201':
-          description: 缃戠粶鍒涘缓鎴愬姛
+          description: Network created
           content:
             application/json:
               schema:
@@ -320,12 +320,12 @@ paths:
     get:
       tags: [Networks]
       operationId: getNetworkHome
-      summary: 鑾峰彇褰撳墠鐢ㄦ埛鐨勬椿鍔ㄧ綉缁滃拰鑷湁缃戠粶鎽樿
+      summary: Get current user's active and owned network summary
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: 缃戠粶棣栭〉鐘舵€?          content:
+          description: Network home state
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkHome'
@@ -334,14 +334,14 @@ paths:
     get:
       tags: [Networks]
       operationId: getNetwork
-      summary: 鑾峰彇缃戠粶璇︽儏
+      summary: Get network detail
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/NetworkId'
       responses:
         '200':
-          description: 缃戠粶璇︽儏
+          description: Network detail
           content:
             application/json:
               schema:
@@ -349,7 +349,7 @@ paths:
     put:
       tags: [Networks]
       operationId: updateNetwork
-      summary: 淇敼缃戠粶鍩虹閰嶇疆
+      summary: Update network settings
       security:
         - bearerAuth: []
       parameters:
@@ -362,7 +362,7 @@ paths:
               $ref: '#/components/schemas/UpdateNetworkRequest'
       responses:
         '200':
-          description: 缃戠粶宸叉洿鏂?          content:
+          description: Network updated
             application/json:
               schema:
                 $ref: '#/components/schemas/Network'
@@ -371,7 +371,7 @@ paths:
     put:
       tags: [Networks]
       operationId: updateNetworkJoinKey
-      summary: 璁剧疆鎴栧埛鏂扮綉缁?join key
+      summary: Set or refresh network join key
       security:
         - bearerAuth: []
       parameters:
@@ -384,7 +384,7 @@ paths:
               $ref: '#/components/schemas/UpdateNetworkJoinKeyRequest'
       responses:
         '200':
-          description: join key 宸叉洿鏂?          content:
+          description: Join key updated
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkDetail'
@@ -393,7 +393,7 @@ paths:
     put:
       tags: [Networks]
       operationId: updateNetworkDns
-      summary: 鏇存柊缃戠粶绾?DNS 閰嶇疆
+      summary: Update network DNS settings
       security:
         - bearerAuth: []
       parameters:
@@ -406,7 +406,7 @@ paths:
               $ref: '#/components/schemas/UpdateNetworkDNSRequest'
       responses:
         '200':
-          description: DNS 閰嶇疆宸叉洿鏂?          content:
+          description: DNS settings updated
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkDetail'
@@ -415,7 +415,7 @@ paths:
     post:
       tags: [Networks]
       operationId: switchNetwork
-      summary: 鍒囨崲褰撳墠娲诲姩缃戠粶
+      summary: Switch active network
       security:
         - bearerAuth: []
       parameters:
@@ -428,7 +428,7 @@ paths:
               $ref: '#/components/schemas/SwitchNetworkRequest'
       responses:
         '200':
-          description: 缃戠粶宸插垏鎹?          content:
+          description: Network switched
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkJoinResult'
@@ -437,7 +437,7 @@ paths:
     post:
       tags: [Networks]
       operationId: joinNetwork
-      summary: 璁╄澶囧姞鍏ョ綉缁?
+      summary: Join device to network
       security:
         - bearerAuth: []
       parameters:
@@ -450,7 +450,7 @@ paths:
               $ref: '#/components/schemas/JoinNetworkRequest'
       responses:
         '200':
-          description: 鍔犲叆缃戠粶鎴愬姛
+          description: Network joined
           content:
             application/json:
               schema:
@@ -460,7 +460,7 @@ paths:
     post:
       tags: [Networks]
       operationId: activateNetwork
-      summary: 婵€娲昏澶囧湪鐩爣缃戠粶涓婄殑鏈湴鎺ュ叆
+      summary: Activate device access on target network
       security:
         - bearerAuth: []
       parameters:
@@ -473,7 +473,7 @@ paths:
               $ref: '#/components/schemas/JoinNetworkRequest'
       responses:
         '200':
-          description: 缃戠粶宸叉縺娲?          content:
+          description: Network activated
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkJoinResult'
@@ -482,7 +482,7 @@ paths:
     post:
       tags: [Networks]
       operationId: deactivateNetwork
-      summary: 閲婃斁璁惧褰撳墠缃戠粶鎺ュ叆鍜岃櫄鎷?IP
+      summary: Deactivate device network access and virtual IP
       security:
         - bearerAuth: []
       parameters:
@@ -495,7 +495,7 @@ paths:
               $ref: '#/components/schemas/DeactivateNetworkRequest'
       responses:
         '200':
-          description: 缃戠粶宸插仠鐢?          content:
+          description: Network deactivated
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkDeactivatedResponse'
@@ -504,7 +504,8 @@ paths:
     post:
       tags: [Networks]
       operationId: joinNetworkByOwnerEmail
-      summary: 鎸?owner email 鍙戠幇骞跺姞鍏ョ綉缁?      security:
+      summary: Join network by owner email
+      security:
         - bearerAuth: []
       requestBody:
         required: true
@@ -514,7 +515,7 @@ paths:
               $ref: '#/components/schemas/JoinNetworkByOwnerEmailRequest'
       responses:
         '200':
-          description: 鍔犲叆缃戠粶鎴愬姛
+          description: Network joined
           content:
             application/json:
               schema:
@@ -524,7 +525,8 @@ paths:
     post:
       tags: [Networks]
       operationId: joinNetworkByKey
-      summary: 鎸?join key 鍙戠幇骞跺姞鍏ョ綉缁?      security:
+      summary: Join network by join key
+      security:
         - bearerAuth: []
       requestBody:
         required: true
@@ -534,7 +536,7 @@ paths:
               $ref: '#/components/schemas/JoinNetworkByKeyRequest'
       responses:
         '200':
-          description: 鍔犲叆缃戠粶鎴愬姛
+          description: Network joined
           content:
             application/json:
               schema:
@@ -544,7 +546,8 @@ paths:
     put:
       tags: [Networks]
       operationId: updateNetworkMemberStatus
-      summary: 瀹℃壒鎴栨嫆缁濈綉缁滃姞鍏ョ敵璇?      security:
+      summary: Approve or reject network join request
+      security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/NetworkId'
@@ -557,7 +560,7 @@ paths:
               $ref: '#/components/schemas/UpdateNetworkMemberStatusRequest'
       responses:
         '200':
-          description: 鎴愬憳鐘舵€佸凡鏇存柊
+          description: Member status updated
           content:
             application/json:
               schema:
@@ -567,14 +570,14 @@ paths:
     get:
       tags: [Networks]
       operationId: listNetworkMembers
-      summary: 鑾峰彇缃戠粶鎴愬憳鍒楄〃
+      summary: List network members
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/NetworkId'
       responses:
         '200':
-          description: 鎴愬憳鍒楄〃
+          description: Member list
           content:
             application/json:
               schema:
@@ -590,14 +593,14 @@ paths:
     get:
       tags: [Networks]
       operationId: listNetworkAssignments
-      summary: 鑾峰彇缃戠粶鍐呰澶囦笌铏氭嫙 IP 缁戝畾鍏崇郴
+      summary: List network device and virtual IP assignments
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/NetworkId'
       responses:
         '200':
-          description: 缁戝畾鍏崇郴鍒楄〃
+          description: Assignment list
           content:
             application/json:
               schema:
@@ -613,14 +616,14 @@ paths:
     get:
       tags: [Networks]
       operationId: listSubnets
-      summary: 鑾峰彇缃戠粶涓嬬殑瀛愮綉鍒楄〃
+      summary: List network subnets
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/NetworkId'
       responses:
         '200':
-          description: 瀛愮綉鍒楄〃
+          description: Subnet list
           content:
             application/json:
               schema:
@@ -631,32 +634,11 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Subnet'
-    post:
-      tags: [Networks]
-      operationId: createSubnet
-      summary: 鍦ㄧ綉缁滃唴鍒涘缓瀛愮綉
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/NetworkId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateSubnetRequest'
-      responses:
-        '201':
-          description: 瀛愮綉宸插垱寤?          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Subnet'
-
   /networks/{networkId}/subnets/{subnetId}/attachments:
     post:
       tags: [Networks]
       operationId: attachDeviceToSubnet
-      summary: 灏嗚澶囨寕杞藉埌鎸囧畾瀛愮綉
+      summary: Attach device to subnet
       security:
         - bearerAuth: []
       parameters:
@@ -670,7 +652,7 @@ paths:
               $ref: '#/components/schemas/AttachDeviceRequest'
       responses:
         '201':
-          description: 璁惧宸叉寕杞?          content:
+          description: Device attached
             application/json:
               schema:
                 $ref: '#/components/schemas/SubnetAttachment'
@@ -679,7 +661,7 @@ paths:
     put:
       tags: [Networks]
       operationId: updateAttachmentIp
-      summary: 淇敼 attachment 铏氭嫙 IP
+      summary: Update attachment virtual IP
       security:
         - bearerAuth: []
       parameters:
@@ -693,7 +675,7 @@ paths:
               $ref: '#/components/schemas/UpdateAttachmentIPRequest'
       responses:
         '200':
-          description: 铏氭嫙 IP 宸叉洿鏂?          content:
+          description: Virtual IP updated
             application/json:
               schema:
                 $ref: '#/components/schemas/SubnetAttachment'
@@ -702,8 +684,11 @@ paths:
     put:
       tags: [Networks]
       operationId: updateAttachmentRemark
-      summary: 淇敼缃戠粶鍐呰澶囧娉?      description: >
-        缃戠粶 owner 鍙互缁存姢浠绘剰鎴愬憳璁惧澶囨敞锛涜澶囨墍鏈夎€呬篃鍙互缁存姢鑷繁鐨?        attachment 澶囨敞锛岀敤浜庡姞鍏ョ綉缁滄椂淇濆瓨鏈満鍒悕銆?      security:
+      summary: Update network device remark
+      description: >
+        Network owners can maintain remarks for any member device.
+        Device owners can also maintain their own attachment remark.
+      security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/NetworkId'
@@ -716,7 +701,8 @@ paths:
               $ref: '#/components/schemas/UpdateAttachmentRemarkRequest'
       responses:
         '200':
-          description: 澶囨敞宸叉洿鏂?          content:
+          description: Operation completed
+          content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkAssignment'
@@ -725,10 +711,10 @@ paths:
     post:
       tags: [Nodes]
       operationId: registerNode
-      summary: 娉ㄥ唽鑺傜偣韬唤
+      summary: Register node identity
       description: >
-        鑺傜偣韬唤鐙珛浜庝笟鍔¤澶囪韩浠姐€傚鎴风鍦ㄦ嬁鍒?deviceId 鍚庯紝
-        闇€瑕佸啀娉ㄥ唽 nodeId 鍜?nodePublicKey锛屼緵鎺у埗閫氶亾涓庢暟鎹潰浣跨敤銆?
+        Node identity is separate from the business device identity.
+        After receiving a deviceId, the client registers nodeId and nodePublicKey for control and data plane use.
       security:
         - bearerAuth: []
       requestBody:
@@ -739,7 +725,7 @@ paths:
               $ref: '#/components/schemas/RegisterNodeRequest'
       responses:
         '201':
-          description: 鑺傜偣娉ㄥ唽鎴愬姛
+          description: Node registered
           content:
             application/json:
               schema:
@@ -749,9 +735,9 @@ paths:
     post:
       tags: [Control]
       operationId: createControlSession
-      summary: 鍒涘缓鎺у埗閫氶亾浼氳瘽
+      summary: Create control channel session
       description: >
-        鎺у埗闈㈣繑鍥炴帶鍒朵細璇濅护鐗屻€乄ebSocket 鍦板潃鍜屽垵濮?NetworkMap銆?
+        The control plane returns the control session token, WebSocket address, and initial NetworkMap.
       security:
         - bearerAuth: []
       requestBody:
@@ -762,7 +748,7 @@ paths:
               $ref: '#/components/schemas/CreateControlSessionRequest'
       responses:
         '201':
-          description: 鎺у埗浼氳瘽鍒涘缓鎴愬姛
+          description: Control session created
           content:
             application/json:
               schema:
@@ -772,10 +758,10 @@ paths:
     post:
       tags: [Control]
       operationId: bootstrap
-      summary: 鑾峰彇鑺傜偣鍚姩閰嶇疆
+      summary: Get node bootstrap configuration
       description: >
-        杩斿洖褰撳墠鑺傜偣鎵€闇€鐨勫熀纭€鍚姩淇℃伅锛屽寘鎷帶鍒堕€氶亾銆丼TUN銆乺elay 鍖哄煙
-        浠ュ強褰撳墠缃戠粶鐨勫垵濮?NetworkMap銆?
+        Returns bootstrap data required by the current node, including control channel, STUN, relay regions,
+        and the initial NetworkMap for the current network.
       security:
         - bearerAuth: []
       requestBody:
@@ -786,7 +772,7 @@ paths:
               $ref: '#/components/schemas/BootstrapRequest'
       responses:
         '200':
-          description: 鍚姩閰嶇疆
+          description: Bootstrap configuration
           content:
             application/json:
               schema:
@@ -796,7 +782,7 @@ paths:
     post:
       tags: [Relay]
       operationId: issueRelayTicket
-      summary: 绛惧彂 relay 鍥為€€绁ㄦ嵁
+      summary: Issue relay fallback ticket
       security:
         - bearerAuth: []
       requestBody:
@@ -807,7 +793,7 @@ paths:
               $ref: '#/components/schemas/RelayTicketRequest'
       responses:
         '201':
-          description: relay 绁ㄦ嵁
+          description: Relay ticket
           content:
             application/json:
               schema:
@@ -1108,13 +1094,21 @@ components:
 
     CreateNetworkRequest:
       type: object
-      required: [name, cidr]
+      required: [name]
       properties:
         name:
           type: string
         description:
           type: string
         cidr:
+          type: string
+        expectedDevices:
+          type: integer
+        gatewayIp:
+          type: string
+        allocationStartIp:
+          type: string
+        allocationEndIp:
           type: string
         bindDeviceId:
           type: string
@@ -1209,21 +1203,6 @@ components:
         remark:
           type: string
 
-    CreateSubnetRequest:
-      type: object
-      required: [name, cidr]
-      properties:
-        name:
-          type: string
-        cidr:
-          type: string
-        gatewayIp:
-          type: string
-        allocationStartIp:
-          type: string
-        allocationEndIp:
-          type: string
-
     AttachDeviceRequest:
       type: object
       required: [deviceId]
@@ -1291,6 +1270,8 @@ components:
         name:
           type: string
         cidr:
+          type: string
+        remark:
           type: string
         gatewayIp:
           type: string

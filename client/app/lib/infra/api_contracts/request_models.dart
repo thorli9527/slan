@@ -50,20 +50,35 @@ class CreateNetworkRequest {
   const CreateNetworkRequest({
     required this.name,
     this.description,
-    this.cidr = '10.0.0.0/16',
+    this.cidr,
+    this.expectedDevices,
+    this.gatewayIp,
+    this.allocationStartIp,
+    this.allocationEndIp,
     this.bindDeviceId,
   });
 
   final String name;
   final String? description;
-  final String cidr;
+  final String? cidr;
+  final int? expectedDevices;
+  final String? gatewayIp;
+  final String? allocationStartIp;
+  final String? allocationEndIp;
   final String? bindDeviceId;
 
   Map<String, dynamic> toJson() => {
         'name': name,
         if (description != null && description!.isNotEmpty)
           'description': description,
-        'cidr': cidr,
+        if (cidr != null && cidr!.isNotEmpty) 'cidr': cidr,
+        if (expectedDevices != null && expectedDevices! > 0)
+          'expectedDevices': expectedDevices,
+        if (gatewayIp != null && gatewayIp!.isNotEmpty) 'gatewayIp': gatewayIp,
+        if (allocationStartIp != null && allocationStartIp!.isNotEmpty)
+          'allocationStartIp': allocationStartIp,
+        if (allocationEndIp != null && allocationEndIp!.isNotEmpty)
+          'allocationEndIp': allocationEndIp,
         if (bindDeviceId != null && bindDeviceId!.isNotEmpty)
           'bindDeviceId': bindDeviceId,
       };
@@ -170,32 +185,6 @@ class UpdateNetworkDNSRequest {
   Map<String, dynamic> toJson() => {
         'servers': servers,
         'searchDomains': searchDomains,
-      };
-}
-
-class CreateSubnetRequest {
-  const CreateSubnetRequest({
-    required this.name,
-    required this.cidr,
-    this.gatewayIp,
-    this.allocationStartIp,
-    this.allocationEndIp,
-  });
-
-  final String name;
-  final String cidr;
-  final String? gatewayIp;
-  final String? allocationStartIp;
-  final String? allocationEndIp;
-
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        'cidr': cidr,
-        if (gatewayIp != null && gatewayIp!.isNotEmpty) 'gatewayIp': gatewayIp,
-        if (allocationStartIp != null && allocationStartIp!.isNotEmpty)
-          'allocationStartIp': allocationStartIp,
-        if (allocationEndIp != null && allocationEndIp!.isNotEmpty)
-          'allocationEndIp': allocationEndIp,
       };
 }
 

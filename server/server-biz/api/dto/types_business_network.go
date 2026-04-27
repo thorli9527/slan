@@ -9,8 +9,13 @@ type CreateNetworkRequest struct {
 	Description string `json:"description,omitempty"`
 	// CIDR 是该网络创建时默认子网的 CIDR。
 	CIDR string `json:"cidr"`
+	// ExpectedDevices 是预计需要分配的地址数量；CIDR 为空时服务端据此自动选择网段。
+	ExpectedDevices int `json:"expectedDevices,omitempty"`
 	// BindDeviceID 允许在创建网络成功后立即把当前设备绑定到默认子网。
-	BindDeviceID string `json:"bindDeviceId,omitempty"`
+	BindDeviceID      string `json:"bindDeviceId,omitempty"`
+	GatewayIP         string `json:"gatewayIp,omitempty"`
+	AllocationStartIP string `json:"allocationStartIp,omitempty"`
+	AllocationEndIP   string `json:"allocationEndIp,omitempty"`
 }
 
 // UpdateNetworkRequest 用于修改用户自有网络的默认网段。
@@ -83,20 +88,6 @@ type UpdateAttachmentRemarkRequest struct {
 	Remark string `json:"remark,omitempty"`
 }
 
-// CreateSubnetRequest 用于在已有网络中创建额外子网。
-type CreateSubnetRequest struct {
-	// Name 是网络内唯一的子网名称。
-	Name string `json:"name"`
-	// CIDR 是该子网管理的地址段。
-	CIDR string `json:"cidr"`
-	// GatewayIP 是预留的网关或虚拟路由地址。
-	GatewayIP string `json:"gatewayIp,omitempty"`
-	// AllocationStartIP 定义可分配地址范围的起始地址。
-	AllocationStartIP string `json:"allocationStartIp,omitempty"`
-	// AllocationEndIP 定义可分配地址范围的结束地址。
-	AllocationEndIP string `json:"allocationEndIp,omitempty"`
-}
-
 // AttachDeviceRequest 用于把设备挂载到指定子网。
 type AttachDeviceRequest struct {
 	// DeviceID 是要挂载到子网的设备 ID。
@@ -140,6 +131,8 @@ type Subnet struct {
 	Name string `json:"name"`
 	// CIDR 是子网地址段。
 	CIDR string `json:"cidr"`
+	// Remark 是子网备注或业务用途说明。
+	Remark string `json:"remark,omitempty"`
 	// GatewayIP 是预留网关或路由 IP。
 	GatewayIP string `json:"gatewayIp,omitempty"`
 	// AllocationStartIP 是可分配范围中的起始 IP。

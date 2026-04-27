@@ -8,17 +8,12 @@ export type NetworkUpdateDraft = {
   cidr: string;
 };
 
-export type SubnetCreateDraft = {
-  name: string;
-  cidr: string;
-  gatewayIp: string;
-  allocationStartIp: string;
-  allocationEndIp: string;
-};
-
 @Injectable({ providedIn: 'root' })
 export class ConsoleNetworkFormService {
   validateNetworkCidr(cidr: string): void {
+    if (!cidr.trim()) {
+      return;
+    }
     if (!this.isLikelyCIDR(cidr)) {
       throw new Error('default cidr is invalid');
     }
@@ -30,45 +25,11 @@ export class ConsoleNetworkFormService {
     }
   }
 
-  validateSubnetDraft(draft: SubnetCreateDraft): void {
-    if (!draft.name.trim()) {
-      throw new Error('subnet name is required');
-    }
-    if (!this.isLikelyCIDR(draft.cidr)) {
-      throw new Error('subnet cidr is invalid');
-    }
-    const hasStart = draft.allocationStartIp.trim().length > 0;
-    const hasEnd = draft.allocationEndIp.trim().length > 0;
-    if (hasStart !== hasEnd) {
-      throw new Error('allocationStartIp and allocationEndIp must be provided together');
-    }
-    for (const [label, value] of [
-      ['gatewayIp', draft.gatewayIp],
-      ['allocationStartIp', draft.allocationStartIp],
-      ['allocationEndIp', draft.allocationEndIp],
-    ] as const) {
-      const trimmed = value.trim();
-      if (trimmed && !this.isLikelyIPv4(trimmed)) {
-        throw new Error(`${label} is invalid`);
-      }
-    }
-  }
-
   buildNetworkUpdateDraft(detail: NetworkDetail): NetworkUpdateDraft {
     return {
       name: detail.name,
       description: detail.description || '',
       cidr: detail.defaultSubnetCidr || '',
-    };
-  }
-
-  emptySubnetDraft(): SubnetCreateDraft {
-    return {
-      name: '',
-      cidr: '',
-      gatewayIp: '',
-      allocationStartIp: '',
-      allocationEndIp: '',
     };
   }
 

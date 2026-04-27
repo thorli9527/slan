@@ -148,7 +148,15 @@ pub trait AppCoreFacade: Send + Sync {
         capabilities: Vec<String>,
     ) -> Result<Node, String>;
     fn list_networks(&self) -> Result<Vec<Network>, String>;
-    fn create_network(&self, name: String, cidr: String) -> Result<Network, String>;
+    fn create_network(
+        &self,
+        name: String,
+        cidr: Option<String>,
+        expected_devices: Option<u32>,
+        gateway_ip: Option<String>,
+        allocation_start_ip: Option<String>,
+        allocation_end_ip: Option<String>,
+    ) -> Result<Network, String>;
     fn join_network(
         &self,
         network_id: String,

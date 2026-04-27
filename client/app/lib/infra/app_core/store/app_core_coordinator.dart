@@ -216,7 +216,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       return;
     }
     final virtualIp = sessionStore.device?.virtualIp;
-    final probeOk = lastProbeOk ?? tunnelStore.lastProbe?.replyObserved ?? false;
+    final probeOk =
+        lastProbeOk ?? tunnelStore.lastProbe?.replyObserved ?? false;
     final reportedAt = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     try {
       await DeviceMqttService.instance.publishNetworkState(
@@ -418,6 +419,37 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.networks = result.networks;
       sessionStore.syncSelectedNetworkId(preferredNetworkId: result.networkId);
       sessionStore.notice = 'Network joined: ${result.networkId}';
+    });
+  }
+
+  Future<void> createNetwork({
+    required String name,
+    String? cidr,
+    int? expectedDevices,
+    String? gatewayIp,
+    String? allocationStartIp,
+    String? allocationEndIp,
+  }) async {
+    await runAction(() async {
+      if (sessionStore.session == null) {
+        throw StateError('login required');
+      }
+      final device = sessionStore.device;
+      if (device == null) {
+        throw StateError('device must be ready first');
+      }
+      final network = await AppCoreScope.instance.createNetwork(
+        name: name,
+        cidr: cidr,
+        expectedDevices: expectedDevices,
+        gatewayIp: gatewayIp,
+        allocationStartIp: allocationStartIp,
+        allocationEndIp: allocationEndIp,
+        bindDeviceId: device.deviceId,
+      );
+      sessionStore.networks = await AppCoreScope.instance.listNetworks();
+      sessionStore.syncSelectedNetworkId(preferredNetworkId: network.networkId);
+      sessionStore.notice = 'Network created: ${network.networkId}';
     });
   }
 

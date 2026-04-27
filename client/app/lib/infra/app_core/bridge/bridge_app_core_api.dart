@@ -130,12 +130,20 @@ class BridgeAppCoreApi implements AppCoreApi {
   @override
   Future<NetworkModel> createNetwork({
     required String name,
-    String cidr = '10.0.0.0/16',
+    String? cidr,
+    int? expectedDevices,
+    String? gatewayIp,
+    String? allocationStartIp,
+    String? allocationEndIp,
     String? bindDeviceId,
   }) async {
     final payload = await _pluginPlatform.createNetwork(
       name: name,
       cidr: cidr,
+      expectedDevices: expectedDevices,
+      gatewayIp: gatewayIp,
+      allocationStartIp: allocationStartIp,
+      allocationEndIp: allocationEndIp,
       bindDeviceId: bindDeviceId,
     );
     return _toNetworkSummaryModel(payload);
@@ -383,6 +391,9 @@ NetworkModel _toNetworkSummaryModel(AppCoreNetworkPayload payload) {
     networkId: payload.networkId,
     name: payload.name,
     cidr: payload.cidr ?? payload.defaultSubnetCidr ?? '',
+    description: payload.description,
+    defaultSubnetId: payload.defaultSubnetId,
+    subnets: payload.subnets.map(_toSubnetModel).toList(growable: false),
     members: payload.members
         .map(
           (member) => _toNetworkMemberModel(
@@ -503,6 +514,9 @@ NetworkModel _toNetworkDetailModel(
     networkId: payload.networkId,
     name: payload.name,
     cidr: cidr,
+    description: payload.description,
+    defaultSubnetId: payload.defaultSubnetId,
+    subnets: payload.subnets.map(_toSubnetModel).toList(growable: false),
     members: payload.members
         .map(
           (member) => _toNetworkMemberModel(
@@ -513,6 +527,21 @@ NetworkModel _toNetworkDetailModel(
           ),
         )
         .toList(growable: false),
+  );
+}
+
+SubnetModel _toSubnetModel(AppCoreSubnetPayload payload) {
+  return SubnetModel(
+    subnetId: payload.subnetId,
+    networkId: payload.networkId,
+    name: payload.name,
+    cidr: payload.cidr,
+    remark: payload.remark,
+    gatewayIp: payload.gatewayIp,
+    allocationStartIp: payload.allocationStartIp,
+    allocationEndIp: payload.allocationEndIp,
+    isDefault: payload.isDefault,
+    status: payload.status,
   );
 }
 

@@ -22,8 +22,26 @@ pub struct NetworkMember {
 pub struct Network {
     pub network_id: String,
     pub name: String,
+    pub description: Option<String>,
     pub cidr: String,
+    pub default_subnet_id: Option<String>,
+    pub subnets: Vec<Subnet>,
     pub members: Vec<NetworkMember>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subnet {
+    pub subnet_id: Option<String>,
+    pub network_id: String,
+    pub name: Option<String>,
+    pub cidr: String,
+    pub remark: Option<String>,
+    pub gateway_ip: Option<String>,
+    pub allocation_start_ip: Option<String>,
+    pub allocation_end_ip: Option<String>,
+    pub is_default: bool,
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

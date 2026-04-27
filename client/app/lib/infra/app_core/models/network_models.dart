@@ -32,6 +32,7 @@ class NetworkModel {
     this.description,
     this.defaultSubnetId,
     this.joinKeyConfigured,
+    this.subnets = const [],
     this.members = const [],
   });
 
@@ -41,7 +42,34 @@ class NetworkModel {
   final String? description;
   final String? defaultSubnetId;
   final bool? joinKeyConfigured;
+  final List<SubnetModel> subnets;
   final List<NetworkMemberModel> members;
+}
+
+class SubnetModel {
+  const SubnetModel({
+    this.subnetId,
+    required this.networkId,
+    this.name,
+    required this.cidr,
+    this.remark,
+    this.gatewayIp,
+    this.allocationStartIp,
+    this.allocationEndIp,
+    required this.isDefault,
+    this.status,
+  });
+
+  final String? subnetId;
+  final String networkId;
+  final String? name;
+  final String cidr;
+  final String? remark;
+  final String? gatewayIp;
+  final String? allocationStartIp;
+  final String? allocationEndIp;
+  final bool isDefault;
+  final String? status;
 }
 
 class NetworkJoinModel {

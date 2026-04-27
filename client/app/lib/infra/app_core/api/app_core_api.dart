@@ -57,7 +57,11 @@ abstract class AppCoreApi {
 
   Future<NetworkModel> createNetwork({
     required String name,
-    String cidr = '10.0.0.0/16',
+    String? cidr,
+    int? expectedDevices,
+    String? gatewayIp,
+    String? allocationStartIp,
+    String? allocationEndIp,
     String? bindDeviceId,
   });
 

@@ -35,8 +35,12 @@ pub struct RegisterNodeRequest {
 
 pub struct CreateNetworkRequest {
     pub name: String,
-    pub cidr: String,
+    pub cidr: Option<String>,
+    pub expected_devices: Option<u32>,
     pub description: Option<String>,
+    pub gateway_ip: Option<String>,
+    pub allocation_start_ip: Option<String>,
+    pub allocation_end_ip: Option<String>,
     pub bind_device_id: Option<String>,
 }
 

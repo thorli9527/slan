@@ -8,4 +8,5 @@ var (
 	ErrNotFound        = service.ErrNotFound
 	ErrConflict        = service.ErrConflict
 	ErrInvalidArgument = service.ErrInvalidArgument
+	ErrNotImplemented  = service.ErrNotImplemented
 )

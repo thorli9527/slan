@@ -510,3 +510,81 @@ func mustParseAddr(raw string) netip.Addr {
 	addr, _ := netip.ParseAddr(strings.TrimSpace(raw))
 	return addr
 }
+
+type subnetTemplate struct {
+	name   string
+	remark string
+}
+
+var defaultSubnetTemplates = []subnetTemplate{
+	{name: "总网络", remark: "默认主子网，适合未分组设备和通用接入"},
+	{name: "开发部", remark: "开发、测试、运维相关设备"},
+	{name: "营销部", remark: "销售、市场、外勤相关设备"},
+	{name: "人事部", remark: "人事、行政、财务相关设备"},
+}
+
+func createNetworkCIDR(cidr string, expectedDevices int) string {
+	if strings.TrimSpace(cidr) != "" {
+		return strings.TrimSpace(cidr)
+	}
+	switch {
+	case expectedDevices <= 0:
+		return "10.0.0.0/22"
+	case expectedDevices <= 250:
+		return "10.0.0.0/22"
+	case expectedDevices <= 500:
+		return "10.0.0.0/21"
+	case expectedDevices <= 1000:
+		return "10.0.0.0/20"
+	default:
+		return "10.0.0.0/16"
+	}
+}
+
+func defaultSubnetsForNetwork(networkID, cidr string, newID func() string) ([]dto.Subnet, error) {
+	cidrs, err := subdivideSubnetCIDRs(cidr, len(defaultSubnetTemplates))
+	if err != nil {
+		return nil, err
+	}
+	templates := defaultSubnetTemplates
+	if len(cidrs) == 1 {
+		templates = templates[:1]
+	}
+	subnets := make([]dto.Subnet, 0, len(cidrs))
+	for index, subnetCIDR := range cidrs {
+		template := templates[index]
+		subnet, err := newSubnet(networkID, newID(), template.name, subnetCIDR, "", "", "", index == 0)
+		if err != nil {
+			return nil, err
+		}
+		subnet.Remark = template.remark
+		subnets = append(subnets, subnet)
+	}
+	return subnets, nil
+}
+
+func subdivideSubnetCIDRs(cidr string, count int) ([]string, error) {
+	prefix, _, _, err := subnetRange(cidr, "", "", "")
+	if err != nil {
+		return nil, err
+	}
+	if count <= 1 {
+		return []string{prefix.String()}, nil
+	}
+	extraBits := 0
+	for slots := 1; slots < count; slots <<= 1 {
+		extraBits++
+	}
+	childBits := prefix.Bits() + extraBits
+	if childBits > 29 {
+		return []string{prefix.String()}, nil
+	}
+	base := networkBase(prefix)
+	step := uint32(1) << uint(32-childBits)
+	out := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		child := netip.PrefixFrom(uint32ToAddr(base+uint32(i)*step), childBits).Masked()
+		out = append(out, child.String())
+	}
+	return out, nil
+}

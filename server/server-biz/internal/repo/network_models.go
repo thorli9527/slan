@@ -58,6 +58,8 @@ type Subnet struct {
 	Name string `gorm:"column:name;not null"`
 	// CIDR 是子网地址段。
 	CIDR string `gorm:"column:cidr;not null"`
+	// Remark 是子网备注或业务用途说明。
+	Remark string `gorm:"column:remark;not null;default:''"`
 	// GatewayIP 是网关地址。
 	GatewayIP string `gorm:"column:gateway_ip;not null;default:''"`
 	// AllocationStartIP 是可分配地址起点。
@@ -78,6 +80,7 @@ func (m Subnet) ToDTO() dto.Subnet {
 		NetworkID:         m.NetworkID,
 		Name:              m.Name,
 		CIDR:              m.CIDR,
+		Remark:            m.Remark,
 		GatewayIP:         m.GatewayIP,
 		AllocationStartIP: m.AllocationStartIP,
 		AllocationEndIP:   m.AllocationEndIP,

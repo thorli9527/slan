@@ -37,6 +37,19 @@ abstract final class AppTestKeys {
   static const networksCidrField = ValueKey<String>('networks.cidr');
   static const networksCreateButton =
       ValueKey<String>('networks.create_button');
+  static const networksOpenCreateDialogButton =
+      ValueKey<String>('networks.open_create_dialog_button');
+  static const networksOpenJoinDialogButton =
+      ValueKey<String>('networks.open_join_dialog_button');
+  static const networksExpectedDevicesField =
+      ValueKey<String>('networks.expected_devices');
+  static const networksGatewayIpField = ValueKey<String>('networks.gateway_ip');
+  static const networksAllocationStartIpField =
+      ValueKey<String>('networks.allocation_start_ip');
+  static const networksAllocationEndIpField =
+      ValueKey<String>('networks.allocation_end_ip');
+  static const networksDhcpCustomSwitch =
+      ValueKey<String>('networks.dhcp_custom_switch');
   static const networksRefreshButton =
       ValueKey<String>('networks.refresh_button');
   static const networksOwnerEmailField =

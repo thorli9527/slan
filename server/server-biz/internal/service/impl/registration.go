@@ -30,9 +30,6 @@ func (s dbDeviceService) Register(userID string, req dto.RegisterDeviceRequest) 
 	if err != nil {
 		return dto.Device{}, err
 	}
-	if err := s.state.ensureDeviceProvisionedInActiveNetwork(ctx, userID, record.DeviceID); err != nil {
-		return dto.Device{}, err
-	}
 	device := s.state.buildDeviceDTO(ctx, record)
 	device.MQTT = s.state.buildDeviceMQTTCredential(record)
 	return device, nil

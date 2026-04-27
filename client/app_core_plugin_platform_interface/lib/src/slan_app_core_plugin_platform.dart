@@ -116,12 +116,23 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
 
   Future<AppCoreNetworkPayload> createNetwork({
     required String name,
-    String cidr = '10.0.0.0/16',
+    String? cidr,
+    int? expectedDevices,
+    String? gatewayIp,
+    String? allocationStartIp,
+    String? allocationEndIp,
     String? bindDeviceId,
   }) async {
     final payload = await invoke('createNetwork', {
       'name': name,
-      'cidr': cidr,
+      if (cidr != null && cidr.isNotEmpty) 'cidr': cidr,
+      if (expectedDevices != null && expectedDevices > 0)
+        'expectedDevices': expectedDevices,
+      if (gatewayIp != null && gatewayIp.isNotEmpty) 'gatewayIp': gatewayIp,
+      if (allocationStartIp != null && allocationStartIp.isNotEmpty)
+        'allocationStartIp': allocationStartIp,
+      if (allocationEndIp != null && allocationEndIp.isNotEmpty)
+        'allocationEndIp': allocationEndIp,
       if (bindDeviceId != null && bindDeviceId.isNotEmpty)
         'bindDeviceId': bindDeviceId,
     });

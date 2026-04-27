@@ -227,7 +227,6 @@ func checkFlutterContracts(specs []contractSpec, requestPath, responsePath strin
 		"AttachDeviceRequest":              "AttachDeviceRequest",
 		"BootstrapRequest":                 "BootstrapRequest",
 		"CreateNetworkRequest":             "CreateNetworkRequest",
-		"CreateSubnetRequest":              "CreateSubnetRequest",
 		"DeactivateNetworkRequest":         "DeactivateNetworkRequest",
 		"JoinNetworkByKeyRequest":          "JoinNetworkByKeyRequest",
 		"JoinNetworkByOwnerEmailRequest":   "JoinNetworkByOwnerEmailRequest",

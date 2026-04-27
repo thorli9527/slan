@@ -128,7 +128,10 @@ mod tests {
             networks: vec![Network {
                 network_id: "net-1".into(),
                 name: "default".into(),
+                description: None,
                 cidr: "10.0.0.0/16".into(),
+                default_subnet_id: None,
+                subnets: vec![],
                 members: vec![],
             }],
             control_plane: ControlPlaneConfig {

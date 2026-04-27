@@ -111,6 +111,7 @@ export type Subnet = {
   networkId: string;
   name: string;
   cidr: string;
+  remark?: string;
   gatewayIp?: string;
   allocationStartIp?: string;
   allocationEndIp?: string;

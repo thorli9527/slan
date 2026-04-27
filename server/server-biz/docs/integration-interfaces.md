@@ -36,7 +36,6 @@ web-console flows:
 - `PUT /networks/{networkId}/members/{memberId}/status`
 - `GET /networks/{networkId}/assignments`
 - `GET /networks/{networkId}/subnets`
-- `POST /networks/{networkId}/subnets`
 - `POST /networks/{networkId}/subnets/{subnetId}/attachments`
 - `PUT /networks/{networkId}/attachments/{attachmentId}/ip`
 - `PUT /networks/{networkId}/attachments/{attachmentId}/remark`
@@ -128,7 +127,6 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `PUT /networks/{networkId}/members/{memberId}/status`
 - `GET /networks/{networkId}/assignments`
 - `GET /networks/{networkId}/subnets`
-- `POST /networks/{networkId}/subnets`
 - `POST /networks/{networkId}/subnets/{subnetId}/attachments`
 - `PUT /networks/{networkId}/attachments/{attachmentId}/ip`
 - `PUT /networks/{networkId}/attachments/{attachmentId}/remark`

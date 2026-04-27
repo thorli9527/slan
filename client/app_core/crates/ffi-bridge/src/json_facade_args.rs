@@ -38,7 +38,16 @@ pub struct RegisterNodeArgs {
 #[serde(rename_all = "camelCase")]
 pub struct CreateNetworkArgs {
     pub name: String,
-    pub cidr: String,
+    #[serde(default)]
+    pub cidr: Option<String>,
+    #[serde(default)]
+    pub expected_devices: Option<u32>,
+    #[serde(default)]
+    pub gateway_ip: Option<String>,
+    #[serde(default)]
+    pub allocation_start_ip: Option<String>,
+    #[serde(default)]
+    pub allocation_end_ip: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -69,7 +69,10 @@ func (r *PostgresRepository) ListVisibleNetworksByUser(ctx context.Context, user
 // ListSubnetsByNetwork returns all declared subnets inside a network as DTOs.
 func (r *PostgresRepository) ListSubnetsByNetwork(ctx context.Context, networkID string) ([]dto.Subnet, error) {
 	var models []Subnet
-	err := r.db.WithContext(ctx).Where("network_id = ?", networkID).Order("subnet_id").Find(&models).Error
+	err := r.db.WithContext(ctx).
+		Where("network_id = ?", networkID).
+		Order("is_default desc, cidr, subnet_id").
+		Find(&models).Error
 	if err != nil {
 		return nil, err
 	}

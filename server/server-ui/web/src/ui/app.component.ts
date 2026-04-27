@@ -9,7 +9,6 @@ import { CallbackTrackingHandle, ConsoleCallbackService } from './console-callba
 import { ConsoleNetworkFormService } from './console-network-form.service';
 import { ConsoleSessionService } from './console-session.service';
 import { ConsoleWorkspaceService } from './console-workspace.service';
-import { DeviceContextComponent } from './device-context.component';
 import { NetworkEmptyStateComponent } from './network-empty-state.component';
 import { NetworkWorkspaceComponent } from './network-workspace.component';
 import { AuthMode, ConsoleView } from './ui-models';
@@ -20,7 +19,6 @@ import { AuthMode, ConsoleView } from './ui-models';
   imports: [
     CommonModule,
     AuthPanelComponent,
-    DeviceContextComponent,
     NetworkEmptyStateComponent,
     NetworkWorkspaceComponent
   ],
@@ -31,8 +29,7 @@ export class AppComponent implements OnDestroy {
   private static readonly SESSION_CHECK_INTERVAL_MS = 30_000;
   readonly navItems: Array<{ id: ConsoleView; label: string; caption: string }> = [
     { id: 'account', label: '账户概览', caption: '账号、设备、接入网络、切换与接入入口' },
-    { id: 'network', label: '网络管理', caption: '子网、IP 绑定、设备接入和加入 key 管理' },
-    { id: 'devices', label: '设备管理', caption: '邮箱、当前 IP、链接状态、协议、加入时间、创建时间' }
+    { id: 'network', label: '网络管理', caption: '子网、IP 绑定、设备接入和加入 key 管理' }
   ];
   private readonly facade = inject(ConsoleAppFacadeService);
   private readonly callbackService = inject(ConsoleCallbackService);
@@ -44,30 +41,27 @@ export class AppComponent implements OnDestroy {
   password = '';
   createName = 'My Network';
   createDescription = 'Personal host network';
-  createCidr = '10.0.0.0/16';
+  createCidr = '';
+  createExpectedDevices = 120;
+  createDhcpMode: 'auto' | 'manual' = 'auto';
+  createGatewayIp = '';
+  createAllocationStartIp = '';
+  createAllocationEndIp = '';
   joinOwnerEmail = '';
   joinKey = '';
   joinAlias = '';
-  deviceSearch = '';
-  deviceSort = 'created_desc';
-  deviceStatusFilter = 'all';
-  deviceMembershipFilter = 'all';
   assignmentSearch = '';
   assignmentRoleFilter = 'all';
   updateName = '';
   updateDescription = '';
   updateCidr = '';
   networkJoinKey = '';
-  subnetName = '';
-  subnetCidr = '';
-  subnetGatewayIp = '';
-  subnetAllocationStartIp = '';
-  subnetAllocationEndIp = '';
 
   readonly token = signal(localStorage.getItem('slan.accessToken') || '');
   readonly userId = signal(localStorage.getItem('slan.userId') || '');
   readonly authMode = signal<AuthMode>('login');
   readonly activeView = signal<ConsoleView>('account');
+  readonly networkDialog = signal<'create' | 'join' | ''>('');
   readonly loading = signal(false);
   readonly actionBusy = signal('');
   readonly error = signal('');
@@ -118,53 +112,6 @@ export class AppComponent implements OnDestroy {
   });
   readonly pendingMembers = computed((): NetworkMember[] => {
     return (this.detail()?.members || []).filter((item) => item.status === 'pending');
-  });
-  readonly filteredDevices = computed(() => {
-    const keyword = this.deviceSearch.trim().toLowerCase();
-    const statusFilter = this.deviceStatusFilter;
-    const membershipFilter = this.deviceMembershipFilter;
-    const filtered = this.devices().filter((item) => {
-      if (statusFilter !== 'all') {
-        const tone = this.deviceStatusTone(item);
-        if (statusFilter === 'online' && tone !== 'success') {
-          return false;
-        }
-        if (statusFilter === 'offline' && tone === 'success') {
-          return false;
-        }
-      }
-      if (membershipFilter !== 'all') {
-        const membership = (item.membershipStatus || '').toLowerCase();
-        if (membershipFilter === 'none') {
-          if (membership) {
-            return false;
-          }
-        } else if (membership !== membershipFilter) {
-          return false;
-        }
-      }
-      if (!keyword) {
-        return true;
-      }
-      return [item.name, item.deviceId, item.ownerEmail || '', item.platform, item.machineId || '']
-        .join(' ')
-        .toLowerCase()
-        .includes(keyword);
-    });
-    const items = [...filtered];
-    switch (this.deviceSort) {
-      case 'created_asc':
-        return items.sort((left, right) => (left.createdAt || 0) - (right.createdAt || 0));
-      case 'joined_desc':
-        return items.sort((left, right) => (right.joinedAt || 0) - (left.joinedAt || 0));
-      case 'name_asc':
-        return items.sort((left, right) => left.name.localeCompare(right.name));
-      case 'status_asc':
-        return items.sort((left, right) => this.deviceLinkStatus(left).localeCompare(this.deviceLinkStatus(right)));
-      case 'created_desc':
-      default:
-        return items.sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0));
-    }
   });
   readonly loginClientDeviceId = signal<string>('');
   readonly loginCallbackId = signal<string>('');
@@ -252,6 +199,27 @@ export class AppComponent implements OnDestroy {
     this.activeView.set(view);
   }
 
+  openCreateNetworkDialog(): void {
+    this.clearNotices();
+    if (this.home().ownedNetwork) {
+      this.error.set('当前账户已经拥有自己的网络，不能重复创建。');
+      return;
+    }
+    this.networkDialog.set('create');
+  }
+
+  openJoinNetworkDialog(): void {
+    this.clearNotices();
+    this.networkDialog.set('join');
+  }
+
+  closeNetworkDialog(): void {
+    if (this.actionBusy()) {
+      return;
+    }
+    this.networkDialog.set('');
+  }
+
   isActionBusy(key: string): boolean {
     return this.actionBusy() === key;
   }
@@ -306,23 +274,13 @@ export class AppComponent implements OnDestroy {
     }
   }
 
-  async reloadDevices(): Promise<void> {
-    this.clearNotices();
-    this.actionBusy.set('reloadDevices');
-    try {
-      const loaded = await this.facade.reloadDevices(this.token(), this.currentDeviceId());
-      this.devices.set(loaded.devices);
-      this.currentDeviceId.set(loaded.currentDeviceId);
-      this.message.set('设备列表已刷新');
-    } catch (error) {
-      this.setError(error);
-    } finally {
-      this.actionBusy.set('');
-    }
-  }
-
   async createOwnNetwork(): Promise<void> {
     this.clearNotices();
+    if (this.home().ownedNetwork) {
+      this.error.set('当前账户已经拥有自己的网络，不能重复创建。');
+      this.networkDialog.set('');
+      return;
+    }
     this.actionBusy.set('createNetwork');
     try {
       const result = await this.facade.createOwnNetwork({
@@ -330,9 +288,14 @@ export class AppComponent implements OnDestroy {
         createName: this.createName,
         createDescription: this.createDescription,
         createCidr: this.createCidr,
+        createExpectedDevices: this.createExpectedDevices,
+        gatewayIp: this.createDhcpMode === 'manual' ? this.createGatewayIp : '',
+        allocationStartIp: this.createDhcpMode === 'manual' ? this.createAllocationStartIp : '',
+        allocationEndIp: this.createDhcpMode === 'manual' ? this.createAllocationEndIp : '',
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result.refreshed);
+      this.networkDialog.set('');
       this.message.set(`created network ${result.network.name}, created default DHCP plan and bound the current device`);
     } catch (error) {
       this.setError(error);
@@ -352,6 +315,7 @@ export class AppComponent implements OnDestroy {
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
+      this.networkDialog.set('');
       this.message.set('已提交加入申请，请等待网络 owner 审批后再启用网络');
     } catch (error) {
       this.setError(error);
@@ -371,6 +335,7 @@ export class AppComponent implements OnDestroy {
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
+      this.networkDialog.set('');
       this.message.set('已通过 Join Key 提交加入申请，请等待网络 owner 审批');
     } catch (error) {
       this.setError(error);
@@ -396,33 +361,6 @@ export class AppComponent implements OnDestroy {
       });
       this.applyRefreshWorkspaceResult(result);
       this.message.set('network updated, clients should restart tunnel to pick up the new network plan');
-    } catch (error) {
-      this.setError(error);
-    }
-  }
-
-  async createSubnet(): Promise<void> {
-    this.clearNotices();
-    const active = this.activeNetwork();
-    if (!active) {
-      return;
-    }
-    try {
-      const result = await this.facade.createSubnet({
-        token: this.token(),
-        networkId: active.networkId,
-        draft: {
-          name: this.subnetName,
-          cidr: this.subnetCidr,
-          gatewayIp: this.subnetGatewayIp,
-          allocationStartIp: this.subnetAllocationStartIp,
-          allocationEndIp: this.subnetAllocationEndIp,
-        },
-        deviceState: this.currentDeviceState(),
-      });
-      this.resetSubnetDraft();
-      this.applyRefreshWorkspaceResult(result);
-      this.message.set('subnet and dhcp plan created');
     } catch (error) {
       this.setError(error);
     }
@@ -780,15 +718,6 @@ export class AppComponent implements OnDestroy {
     this.updateDescription = draft.description;
     this.updateCidr = draft.cidr;
     this.networkJoinKey = detail.joinKey || '';
-  }
-
-  private resetSubnetDraft(): void {
-    const draft = this.networkFormService.emptySubnetDraft();
-    this.subnetName = draft.name;
-    this.subnetCidr = draft.cidr;
-    this.subnetGatewayIp = draft.gatewayIp;
-    this.subnetAllocationStartIp = draft.allocationStartIp;
-    this.subnetAllocationEndIp = draft.allocationEndIp;
   }
 
   private async forwardCallbackToServer(auth: AuthResponse, deviceId?: string, action?: string): Promise<void> {

@@ -3,7 +3,7 @@ use slan_app_core::{
     BootstrapConfig, ControlPlaneConfig, DerpCluster, DerpMap, DerpNodeMeta, DerpTransport, Device,
     DnsConfig, Endpoint, MqttCredential, Network, NetworkAssignment, NetworkJoinResult, NetworkMap,
     NetworkMember, Node, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry, RelayEndpoint,
-    RelayNode, RelayRegion, RelayTicket, Route, Session,
+    RelayNode, RelayRegion, RelayTicket, Route, Session, Subnet,
 };
 
 use crate::api::{
@@ -263,7 +263,16 @@ pub struct CreateNetworkRequestDto {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub cidr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cidr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_devices: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gateway_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocation_start_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocation_end_ip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bind_device_id: Option<String>,
 }
@@ -273,7 +282,15 @@ impl From<CreateNetworkRequest> for CreateNetworkRequestDto {
         Self {
             name: value.name,
             description: value.description.filter(|value| !value.trim().is_empty()),
-            cidr: value.cidr,
+            cidr: value.cidr.filter(|value| !value.trim().is_empty()),
+            expected_devices: value.expected_devices.filter(|value| *value > 0),
+            gateway_ip: value.gateway_ip.filter(|value| !value.trim().is_empty()),
+            allocation_start_ip: value
+                .allocation_start_ip
+                .filter(|value| !value.trim().is_empty()),
+            allocation_end_ip: value
+                .allocation_end_ip
+                .filter(|value| !value.trim().is_empty()),
             bind_device_id: value
                 .bind_device_id
                 .filter(|value| !value.trim().is_empty()),
@@ -403,8 +420,8 @@ pub struct NetworkDto {
 impl From<NetworkDto> for Network {
     fn from(value: NetworkDto) -> Self {
         let cidr = if !value.cidr.is_empty() {
-            value.cidr
-        } else if let Some(default_subnet_cidr) = value.default_subnet_cidr {
+            value.cidr.clone()
+        } else if let Some(default_subnet_cidr) = value.default_subnet_cidr.clone() {
             default_subnet_cidr
         } else {
             value
@@ -418,7 +435,10 @@ impl From<NetworkDto> for Network {
         Self {
             network_id: value.network_id,
             name: value.name,
+            description: value.description,
             cidr,
+            default_subnet_id: value.default_subnet_id,
+            subnets: value.subnets.into_iter().map(Into::into).collect(),
             members: value.members.into_iter().map(Into::into).collect(),
         }
     }
@@ -536,6 +556,8 @@ pub struct SubnetDto {
     pub name: Option<String>,
     pub cidr: String,
     #[serde(default)]
+    pub remark: Option<String>,
+    #[serde(default)]
     pub gateway_ip: Option<String>,
     #[serde(default)]
     pub allocation_start_ip: Option<String>,
@@ -545,6 +567,23 @@ pub struct SubnetDto {
     pub is_default: bool,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+impl From<SubnetDto> for Subnet {
+    fn from(value: SubnetDto) -> Self {
+        Self {
+            subnet_id: value.subnet_id,
+            network_id: value.network_id.unwrap_or_default(),
+            name: value.name,
+            cidr: value.cidr,
+            remark: value.remark,
+            gateway_ip: value.gateway_ip,
+            allocation_start_ip: value.allocation_start_ip,
+            allocation_end_ip: value.allocation_end_ip,
+            is_default: value.is_default,
+            status: value.status,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

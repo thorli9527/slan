@@ -68,10 +68,6 @@ export class ConsoleAppFacadeService {
     return { managedDevice, workspace };
   }
 
-  reloadDevices(token: string, currentDeviceId: string) {
-    return this.sessionService.loadDevices(token, currentDeviceId);
-  }
-
   completeCallback(callbackId: string, payload: {
     accessToken: string;
     userId: string;
@@ -89,6 +85,10 @@ export class ConsoleAppFacadeService {
     createName: string;
     createDescription: string;
     createCidr: string;
+    createExpectedDevices: number;
+    gatewayIp?: string;
+    allocationStartIp?: string;
+    allocationEndIp?: string;
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<{ network: Network; refreshed: RefreshWorkspaceResult }> {
     this.networkFormService.validateNetworkCidr(input.createCidr);
@@ -99,7 +99,11 @@ export class ConsoleAppFacadeService {
     const network = await this.api.createNetwork(input.token, {
       name: input.createName.trim(),
       description: input.createDescription.trim(),
-      cidr: input.createCidr.trim(),
+      cidr: this.networkFormService.optionalValue(input.createCidr),
+      expectedDevices: input.createExpectedDevices > 0 ? input.createExpectedDevices : undefined,
+      gatewayIp: this.networkFormService.optionalValue(input.gatewayIp || ''),
+      allocationStartIp: this.networkFormService.optionalValue(input.allocationStartIp || ''),
+      allocationEndIp: this.networkFormService.optionalValue(input.allocationEndIp || ''),
       bindDeviceId: managedDevice.deviceId,
     });
     const refreshed = await this.refreshWorkspace({
@@ -184,32 +188,6 @@ export class ConsoleAppFacadeService {
       name: input.name.trim(),
       description: input.description.trim(),
       cidr: input.cidr.trim(),
-    });
-    return this.refreshWorkspace({
-      token: input.token,
-      ...input.deviceState,
-    });
-  }
-
-  async createSubnet(input: {
-    token: string;
-    networkId: string;
-    draft: {
-      name: string;
-      cidr: string;
-      gatewayIp: string;
-      allocationStartIp: string;
-      allocationEndIp: string;
-    };
-    deviceState: Omit<EnsureDeviceInput, 'token'>;
-  }): Promise<RefreshWorkspaceResult> {
-    this.networkFormService.validateSubnetDraft(input.draft);
-    await this.api.createSubnet(input.token, input.networkId, {
-      name: input.draft.name.trim(),
-      cidr: input.draft.cidr.trim(),
-      gatewayIp: this.networkFormService.optionalValue(input.draft.gatewayIp),
-      allocationStartIp: this.networkFormService.optionalValue(input.draft.allocationStartIp),
-      allocationEndIp: this.networkFormService.optionalValue(input.draft.allocationEndIp),
     });
     return this.refreshWorkspace({
       token: input.token,

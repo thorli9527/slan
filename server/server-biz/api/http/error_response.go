@@ -47,6 +47,9 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrConflict):
 		status = http.StatusConflict
 		code = errorCodeConflict
+	case errors.Is(err, service.ErrNotImplemented):
+		status = http.StatusNotImplemented
+		code = errorCodeNotImplemented
 	}
 
 	writeErrorResponse(c, status, code, err.Error())

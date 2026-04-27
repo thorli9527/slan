@@ -145,7 +145,6 @@ server-biz 需求模型
 │   ├── NET.3 NetworkMember
 │   ├── NET.4 SubnetAttachment
 │   ├── NET.5 CreateNetworkRequest
-│   ├── NET.6 CreateSubnetRequest
 │   ├── NET.7 AttachDeviceRequest
 │   ├── NET.8 JoinNetworkRequest
 │   ├── NET.9 NetworkJoinResult

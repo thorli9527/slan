@@ -8,6 +8,10 @@ import (
 )
 
 func (r *PostgresRepository) CreateNetworkWithDefaultSubnet(ctx context.Context, ownerUserID string, network dto.Network, subnet dto.Subnet) error {
+	return r.CreateNetworkWithSubnets(ctx, ownerUserID, network, []dto.Subnet{subnet})
+}
+
+func (r *PostgresRepository) CreateNetworkWithSubnets(ctx context.Context, ownerUserID string, network dto.Network, subnets []dto.Subnet) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		networkModel := Network{
 			NetworkID:         network.NetworkID,
@@ -20,21 +24,27 @@ func (r *PostgresRepository) CreateNetworkWithDefaultSubnet(ctx context.Context,
 			DNSSearchDomains:  "",
 			JoinKey:           "",
 		}
-		subnetModel := Subnet{
-			SubnetID:          subnet.SubnetID,
-			NetworkID:         subnet.NetworkID,
-			Name:              subnet.Name,
-			CIDR:              subnet.CIDR,
-			GatewayIP:         subnet.GatewayIP,
-			AllocationStartIP: subnet.AllocationStartIP,
-			AllocationEndIP:   subnet.AllocationEndIP,
-			IsDefault:         subnet.IsDefault,
-			Status:            subnet.Status,
-		}
 		if err := tx.Create(&networkModel).Error; err != nil {
 			return err
 		}
-		return tx.Create(&subnetModel).Error
+		for _, subnet := range subnets {
+			subnetModel := Subnet{
+				SubnetID:          subnet.SubnetID,
+				NetworkID:         subnet.NetworkID,
+				Name:              subnet.Name,
+				CIDR:              subnet.CIDR,
+				Remark:            subnet.Remark,
+				GatewayIP:         subnet.GatewayIP,
+				AllocationStartIP: subnet.AllocationStartIP,
+				AllocationEndIP:   subnet.AllocationEndIP,
+				IsDefault:         subnet.IsDefault,
+				Status:            subnet.Status,
+			}
+			if err := tx.Create(&subnetModel).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -44,6 +54,7 @@ func (r *PostgresRepository) CreateSubnet(ctx context.Context, subnet dto.Subnet
 		NetworkID:         subnet.NetworkID,
 		Name:              subnet.Name,
 		CIDR:              subnet.CIDR,
+		Remark:            subnet.Remark,
 		GatewayIP:         subnet.GatewayIP,
 		AllocationStartIP: subnet.AllocationStartIP,
 		AllocationEndIP:   subnet.AllocationEndIP,
@@ -164,6 +175,7 @@ func (r *PostgresRepository) UpdateSubnetRange(ctx context.Context, subnet dto.S
 		Where("subnet_id = ?", subnet.SubnetID).
 		Updates(map[string]any{
 			"cidr":                subnet.CIDR,
+			"remark":              subnet.Remark,
 			"gateway_ip":          subnet.GatewayIP,
 			"allocation_start_ip": subnet.AllocationStartIP,
 			"allocation_end_ip":   subnet.AllocationEndIP,

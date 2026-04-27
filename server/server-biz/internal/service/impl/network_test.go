@@ -62,7 +62,7 @@ func TestCreateNetwork_RejectsSecondOwnedNetwork(t *testing.T) {
 	}
 }
 
-func TestRegister_CreatesDefaultOwnedNetwork(t *testing.T) {
+func TestRegister_DoesNotCreateDefaultOwnedNetwork(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
 
@@ -81,31 +81,87 @@ func TestRegister_CreatesDefaultOwnedNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load user: %v", err)
 	}
-	if user.ActiveNetworkID == "" {
-		t.Fatalf("expected active network to be initialized")
+	if user.ActiveNetworkID != "" {
+		t.Fatalf("expected active network to stay empty, got %s", user.ActiveNetworkID)
 	}
 
-	owned, err := state.pg.GetOwnedNetworkByUser(ctx, auth.UserID)
-	if err != nil {
-		t.Fatalf("load owned network: %v", err)
-	}
-	if owned.Name != defaultOwnedNetworkName {
-		t.Fatalf("expected default network name %q, got %q", defaultOwnedNetworkName, owned.Name)
-	}
-	if owned.NetworkID != user.ActiveNetworkID {
-		t.Fatalf("expected active network %s to match owned network %s", user.ActiveNetworkID, owned.NetworkID)
-	}
-
-	subnets, err := state.pg.ListSubnetsByNetwork(ctx, owned.NetworkID)
-	if err != nil {
-		t.Fatalf("list default subnets: %v", err)
-	}
-	if len(subnets) != 1 || !subnets[0].IsDefault {
-		t.Fatalf("expected one default subnet, got %+v", subnets)
+	if _, err := state.pg.GetOwnedNetworkByUser(ctx, auth.UserID); !repo.IsNotFound(err) {
+		t.Fatalf("expected no owned network after register, got %v", err)
 	}
 }
 
-func TestRegisterDevice_ProvisionsIntoActiveNetwork(t *testing.T) {
+func TestCreateNetwork_CreatesTemplatedSubnets(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-1",
+		Email:        "owner@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	created, err := dbNetworkService{state: state}.Create("user-1", dto.CreateNetworkRequest{
+		Name:            "office",
+		ExpectedDevices: 120,
+	})
+	if err != nil {
+		t.Fatalf("create network: %v", err)
+	}
+	if created.DefaultSubnetCIDR != "10.0.0.0/24" {
+		t.Fatalf("expected default subnet /24, got %+v", created)
+	}
+
+	subnets, err := state.pg.ListSubnetsByNetwork(ctx, created.NetworkID)
+	if err != nil {
+		t.Fatalf("list subnets: %v", err)
+	}
+	if len(subnets) != 4 {
+		t.Fatalf("expected four subnets, got %+v", subnets)
+	}
+	wantNames := []string{"总网络", "开发部", "营销部", "人事部"}
+	wantCIDRs := []string{"10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"}
+	for index, subnet := range subnets {
+		if subnet.Name != wantNames[index] || subnet.CIDR != wantCIDRs[index] || subnet.Remark == "" {
+			t.Fatalf("unexpected subnet at %d: %+v", index, subnet)
+		}
+	}
+}
+
+func TestCreateNetwork_AppliesDHCPOptionsToDefaultSubnet(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-1",
+		Email:        "owner@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	created, err := dbNetworkService{state: state}.Create("user-1", dto.CreateNetworkRequest{
+		Name:              "office",
+		CIDR:              "10.8.0.0/24",
+		GatewayIP:         "10.8.0.1",
+		AllocationStartIP: "10.8.0.2",
+		AllocationEndIP:   "10.8.0.62",
+	})
+	if err != nil {
+		t.Fatalf("create network: %v", err)
+	}
+
+	subnet, err := state.pg.GetSubnetByID(ctx, created.DefaultSubnetID)
+	if err != nil {
+		t.Fatalf("load default subnet: %v", err)
+	}
+	if subnet.GatewayIP != "10.8.0.1" ||
+		subnet.AllocationStartIP != "10.8.0.2" ||
+		subnet.AllocationEndIP != "10.8.0.62" {
+		t.Fatalf("expected custom dhcp options, got %+v", subnet)
+	}
+}
+
+func TestRegisterDevice_DoesNotProvisionIntoNetwork(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
 
@@ -131,31 +187,20 @@ func TestRegisterDevice_ProvisionsIntoActiveNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load user: %v", err)
 	}
-	if user.ActiveNetworkID == "" {
-		t.Fatalf("expected active network after register")
-	}
-
-	member, err := state.pg.GetMemberByNetworkDevice(ctx, user.ActiveNetworkID, device.DeviceID)
-	if err != nil {
-		t.Fatalf("load auto-created member: %v", err)
-	}
-	if member.Role != "owner" {
-		t.Fatalf("expected first device to become owner member, got %+v", member)
+	if user.ActiveNetworkID != "" {
+		t.Fatalf("expected active network to stay empty, got %s", user.ActiveNetworkID)
 	}
 
 	attachments, err := state.pg.ListAttachmentsByDevice(ctx, device.DeviceID)
 	if err != nil {
 		t.Fatalf("list device attachments: %v", err)
 	}
-	if len(attachments) != 1 {
-		t.Fatalf("expected one attachment, got %+v", attachments)
-	}
-	if attachments[0].NetworkID != user.ActiveNetworkID || attachments[0].VirtualIP == "" {
-		t.Fatalf("expected active-network attachment with ip, got %+v", attachments[0])
+	if len(attachments) != 0 {
+		t.Fatalf("expected no attachment before explicit network activation, got %+v", attachments)
 	}
 
-	if device.CurrentVirtualIP == "" {
-		t.Fatalf("expected device dto to expose current virtual ip, got %+v", device)
+	if device.CurrentVirtualIP != "" {
+		t.Fatalf("expected no current virtual ip before explicit network activation, got %+v", device)
 	}
 }
 

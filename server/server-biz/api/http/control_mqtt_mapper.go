@@ -26,7 +26,7 @@ func dtoNetworkMapToControl(m dto.NetworkMap) controlmsg.NetworkMap {
 	}
 }
 
-// dtoPeersToControlPeers 鎵归噺杞崲 peer 鍒楄〃銆?
+// dtoPeersToControlPeers maps peer DTOs into control payload peers.
 func dtoPeersToControlPeers(peers []dto.Peer) []controlmsg.Peer {
 	out := make([]controlmsg.Peer, 0, len(peers))
 	for _, peer := range peers {
@@ -44,7 +44,7 @@ func dtoPeersToControlPeers(peers []dto.Peer) []controlmsg.Peer {
 	return out
 }
 
-// dtoEndpointsToControlEndpoints 鎵归噺杞崲 endpoint 鍒楄〃銆?
+// dtoEndpointsToControlEndpoints maps endpoint DTOs into control payload endpoints.
 func dtoEndpointsToControlEndpoints(endpoints []dto.Endpoint) []controlmsg.Endpoint {
 	out := make([]controlmsg.Endpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {
@@ -57,7 +57,7 @@ func dtoEndpointsToControlEndpoints(endpoints []dto.Endpoint) []controlmsg.Endpo
 	return out
 }
 
-// dtoRoutesToControlRoutes 鎵归噺杞崲璺敱鍒楄〃銆?
+// dtoRoutesToControlRoutes maps route DTOs into control payload routes.
 func dtoRoutesToControlRoutes(routes []dto.Route) []controlmsg.Route {
 	out := make([]controlmsg.Route, 0, len(routes))
 	for _, route := range routes {
@@ -70,7 +70,7 @@ func dtoRoutesToControlRoutes(routes []dto.Route) []controlmsg.Route {
 	return out
 }
 
-// dtoRelayRegionsToControlRelayRegions 鎵归噺杞崲 relay 鍖哄煙鍒楄〃銆?
+// dtoRelayRegionsToControlRelayRegions maps relay region DTOs into control payload regions.
 func dtoRelayRegionsToControlRelayRegions(regions []dto.RelayRegion) []controlmsg.RelayRegion {
 	out := make([]controlmsg.RelayRegion, 0, len(regions))
 	for _, region := range regions {
@@ -89,7 +89,7 @@ func dtoRelayRegionsToControlRelayRegions(regions []dto.RelayRegion) []controlms
 	return out
 }
 
-// dtoRelayEndpointsToControlRelayEndpoints 鎵归噺杞崲 relay 绔偣鍒楄〃銆?
+// dtoRelayEndpointsToControlRelayEndpoints maps relay endpoint DTOs into control payload endpoints.
 func dtoRelayEndpointsToControlRelayEndpoints(endpoints []dto.RelayEndpoint) []controlmsg.RelayEndpoint {
 	out := make([]controlmsg.RelayEndpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {

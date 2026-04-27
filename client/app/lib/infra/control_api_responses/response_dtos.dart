@@ -255,6 +255,7 @@ class NetworkSummaryResponseDto {
     this.defaultSubnetId,
     this.defaultSubnetCidr,
     this.joinKeyConfigured,
+    this.subnets = const [],
   });
 
   factory NetworkSummaryResponseDto.fromJson(Map<String, dynamic> json) =>
@@ -265,6 +266,9 @@ class NetworkSummaryResponseDto {
         defaultSubnetId: readNullableString(json, 'defaultSubnetId'),
         defaultSubnetCidr: readNullableString(json, 'defaultSubnetCidr'),
         joinKeyConfigured: readNullableBool(json, 'joinKeyConfigured'),
+        subnets: readMapList(json, 'subnets')
+            .map(SubnetResponseDto.fromJson)
+            .toList(growable: false),
       );
 
   final String networkId;
@@ -273,6 +277,7 @@ class NetworkSummaryResponseDto {
   final String? defaultSubnetId;
   final String? defaultSubnetCidr;
   final bool? joinKeyConfigured;
+  final List<SubnetResponseDto> subnets;
 }
 
 class BootstrapResponseDto {
@@ -503,6 +508,7 @@ class SubnetResponseDto {
     required this.networkId,
     this.name,
     required this.cidr,
+    this.remark,
     this.gatewayIp,
     this.allocationStartIp,
     this.allocationEndIp,
@@ -516,6 +522,7 @@ class SubnetResponseDto {
         networkId: readString(json, 'networkId'),
         name: readNullableString(json, 'name'),
         cidr: readString(json, 'cidr'),
+        remark: readNullableString(json, 'remark'),
         gatewayIp: readNullableString(json, 'gatewayIp'),
         allocationStartIp: readNullableString(json, 'allocationStartIp'),
         allocationEndIp: readNullableString(json, 'allocationEndIp'),
@@ -527,6 +534,7 @@ class SubnetResponseDto {
   final String networkId;
   final String? name;
   final String cidr;
+  final String? remark;
   final String? gatewayIp;
   final String? allocationStartIp;
   final String? allocationEndIp;

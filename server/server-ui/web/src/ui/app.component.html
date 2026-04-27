@@ -1,4 +1,4 @@
-<div class="router-console">
+﻿<div class="router-console">
   <header class="router-topbar">
     <div class="brand-lockup">
       <span class="brand-mark">S</span>
@@ -63,19 +63,6 @@
         </button>
       </nav>
 
-      <section class="side-card">
-        <div class="side-title">管理设备</div>
-        <select [value]="currentDeviceId()" (change)="setCurrentDeviceId($any($event.target).value)">
-          <option value="">未选择设备</option>
-          <option *ngFor="let device of devices()" [value]="device.deviceId">
-            {{ device.name }} / {{ device.currentVirtualIp || '无 IP' }}
-          </option>
-        </select>
-        <button class="ghost full" type="button" (click)="reloadDevices()" [disabled]="isActionBusy('reloadDevices')">
-          {{ isActionBusy('reloadDevices') ? '刷新中...' : '刷新设备' }}
-        </button>
-      </section>
-
       <section class="side-card compact-metrics">
         <div>
           <span>网络在线设备</span>
@@ -105,11 +92,6 @@
           </div>
         </div>
         <div class="overview-stats">
-          <button type="button" class="stat-tile" (click)="openView('devices')">
-            <span>设备</span>
-            <strong>{{ devices().length }}</strong>
-            <small>{{ onlineDeviceCount() }} 台网络在线</small>
-          </button>
           <button type="button" class="stat-tile" (click)="openView('network')">
             <span>网络</span>
             <strong>{{ joinedNetworks().length }}</strong>
@@ -219,18 +201,8 @@
       <section *ngIf="activeView() === 'network'">
         <slan-network-empty-state
           *ngIf="!home().hasNetwork"
-          [createName]="createName"
-          [createDescription]="createDescription"
-          [createCidr]="createCidr"
-          [joinOwnerEmail]="joinOwnerEmail"
-          [joinAlias]="joinAlias"
-          (createNameChange)="createName = $event"
-          (createDescriptionChange)="createDescription = $event"
-          (createCidrChange)="createCidr = $event"
-          (joinOwnerEmailChange)="joinOwnerEmail = $event"
-          (joinAliasChange)="joinAlias = $event"
-          (createNetwork)="createOwnNetwork()"
-          (joinNetwork)="joinByOwnerEmail()"
+          (openCreateNetwork)="openCreateNetworkDialog()"
+          (openJoinNetwork)="openJoinNetworkDialog()"
         />
 
         <ng-container *ngIf="home().hasNetwork">
@@ -245,6 +217,15 @@
                 <div><span>可管理</span><strong>{{ canManageNetwork() ? '是' : '否' }}</strong></div>
                 <div><span>Join Key</span><strong>{{ detail()?.joinKey ? '已生成' : '未生成' }}</strong></div>
               </div>
+              <button
+                class="ghost full"
+                type="button"
+                (click)="openCreateNetworkDialog()"
+                [disabled]="!!home().ownedNetwork"
+                [title]="home().ownedNetwork ? '当前账户已经拥有自己的网络' : '创建我的网络'"
+              >
+                {{ home().ownedNetwork ? '已有自己的网络，不能重复创建' : '创建我的网络' }}
+              </button>
             </article>
 
             <article class="panel">
@@ -290,35 +271,20 @@
             [assignments]="filteredAssignments()"
             [pendingMembers]="pendingMembers()"
             [selectedDeviceLabel]="selectedDeviceLabel()"
-            [joinOwnerEmail]="joinOwnerEmail"
-            [joinAlias]="joinAlias"
             [updateName]="updateName"
             [updateDescription]="updateDescription"
             [updateCidr]="updateCidr"
-            [subnetName]="subnetName"
-            [subnetCidr]="subnetCidr"
-            [subnetGatewayIp]="subnetGatewayIp"
-            [subnetAllocationStartIp]="subnetAllocationStartIp"
-            [subnetAllocationEndIp]="subnetAllocationEndIp"
             [draftIps]="draftIps()"
             [draftRemarks]="draftRemarks()"
             [showSwitchToOwned]="showSwitchToOwned()"
             [actionBusy]="actionBusy()"
             (refresh)="refreshWorkspace()"
             (switchToOwned)="switchToOwnedNetwork()"
-            (joinOwnerEmailChange)="joinOwnerEmail = $event"
-            (joinAliasChange)="joinAlias = $event"
-            (joinByOwnerEmail)="joinByOwnerEmail()"
+            (openJoinNetwork)="openJoinNetworkDialog()"
             (updateNameChange)="updateName = $event"
             (updateDescriptionChange)="updateDescription = $event"
             (updateCidrChange)="updateCidr = $event"
             (saveNetwork)="updateOwnedNetwork()"
-            (subnetNameChange)="subnetName = $event"
-            (subnetCidrChange)="subnetCidr = $event"
-            (subnetGatewayIpChange)="subnetGatewayIp = $event"
-            (subnetAllocationStartIpChange)="subnetAllocationStartIp = $event"
-            (subnetAllocationEndIpChange)="subnetAllocationEndIp = $event"
-            (createSubnet)="createSubnet()"
             (draftIpChange)="setDraftIp($event.attachmentId, $event.value)"
             (saveAttachmentIp)="updateAttachmentIp($event)"
             (draftRemarkChange)="setDraftRemark($event.attachmentId, $event.value)"
@@ -328,83 +294,91 @@
         </ng-container>
       </section>
 
-      <section class="panel" *ngIf="activeView() === 'devices'">
-        <div class="panel-title split">
-          <div>
-            <h2>设备状态</h2>
-            <p>查看所有设备的网络在线、控制可达、虚拟 IP 和最近心跳。</p>
+    </main>
+  </section>
+
+  <section class="dialog-backdrop" *ngIf="networkDialog()" (click)="closeNetworkDialog()">
+    <article class="dialog-panel" (click)="$event.stopPropagation()">
+      <div class="dialog-title">
+        <div>
+          <p class="eyebrow">{{ networkDialog() === 'create' ? '创建网络' : '加入网络' }}</p>
+          <h2>{{ networkDialog() === 'create' ? '创建我的网络' : '加入别人的网络' }}</h2>
+        </div>
+        <button class="icon-button" type="button" (click)="closeNetworkDialog()" [disabled]="!!actionBusy()" title="关闭">×</button>
+      </div>
+
+      <ng-container *ngIf="networkDialog() === 'create'">
+        <div class="form-grid two">
+          <label>
+            <span>网络名称</span>
+            <input [value]="createName" (input)="createName = $any($event.target).value" placeholder="My Network" />
+          </label>
+          <label>
+            <span>预计设备数</span>
+            <input type="number" min="1" [value]="createExpectedDevices" (input)="createExpectedDevices = +$any($event.target).value || 0" placeholder="120" />
+          </label>
+          <label class="span-2">
+            <span>描述</span>
+            <input [value]="createDescription" (input)="createDescription = $any($event.target).value" placeholder="Personal host network" />
+          </label>
+          <label class="span-2">
+            <span>网络 CIDR</span>
+            <input [value]="createCidr" (input)="createCidr = $any($event.target).value" placeholder="留空时按预计设备数自动选择，例如 10.0.0.0/24" />
+          </label>
+        </div>
+
+        <div class="dhcp-box">
+          <div class="segmented">
+            <button type="button" [class.active]="createDhcpMode === 'auto'" (click)="createDhcpMode = 'auto'">自动 DHCP</button>
+            <button type="button" [class.active]="createDhcpMode === 'manual'" (click)="createDhcpMode = 'manual'">自定义地址池</button>
           </div>
-          <button class="ghost" type="button" (click)="reloadDevices()" [disabled]="isActionBusy('reloadDevices')">
-            {{ isActionBusy('reloadDevices') ? '刷新中...' : '刷新设备' }}
+          <div class="form-grid three" *ngIf="createDhcpMode === 'manual'">
+            <label>
+              <span>网关 IP</span>
+              <input [value]="createGatewayIp" (input)="createGatewayIp = $any($event.target).value" placeholder="10.0.0.1" />
+            </label>
+            <label>
+              <span>起始地址</span>
+              <input [value]="createAllocationStartIp" (input)="createAllocationStartIp = $any($event.target).value" placeholder="10.0.0.2" />
+            </label>
+            <label>
+              <span>结束地址</span>
+              <input [value]="createAllocationEndIp" (input)="createAllocationEndIp = $any($event.target).value" placeholder="10.0.0.126" />
+            </label>
+          </div>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()" [disabled]="isActionBusy('createNetwork')">取消</button>
+          <button class="primary-action" type="button" (click)="createOwnNetwork()" [disabled]="isActionBusy('createNetwork') || !!home().ownedNetwork">
+            {{ home().ownedNetwork ? '已有自己的网络' : (isActionBusy('createNetwork') ? '创建中...' : '创建网络') }}
           </button>
         </div>
+      </ng-container>
 
-        <div class="filter-bar">
+      <ng-container *ngIf="networkDialog() === 'join'">
+        <div class="form-grid">
           <label>
-            <span>搜索设备</span>
-            <input [value]="deviceSearch" (input)="deviceSearch = $any($event.target).value" placeholder="设备名 / deviceId / 邮箱 / 平台" />
+            <span>设备别名</span>
+            <input [value]="joinAlias" (input)="joinAlias = $any($event.target).value" placeholder="客厅主机 / Thor laptop" />
           </label>
           <label>
-            <span>排序</span>
-            <select [value]="deviceSort" (change)="deviceSort = $any($event.target).value">
-              <option value="created_desc">创建时间：新到旧</option>
-              <option value="created_asc">创建时间：旧到新</option>
-              <option value="joined_desc">加入时间：新到旧</option>
-              <option value="name_asc">设备名</option>
-              <option value="status_asc">状态</option>
-            </select>
+            <span>Owner 邮箱</span>
+            <input [value]="joinOwnerEmail" (input)="joinOwnerEmail = $any($event.target).value" placeholder="owner@company.com" />
           </label>
+          <button class="primary-action" type="button" (click)="joinByOwnerEmail()" [disabled]="isActionBusy('joinOwnerEmail')">
+            {{ isActionBusy('joinOwnerEmail') ? '提交中...' : '通过 Owner 邮箱加入' }}
+          </button>
           <label>
-            <span>连接状态</span>
-            <select [value]="deviceStatusFilter" (change)="deviceStatusFilter = $any($event.target).value">
-              <option value="all">全部</option>
-              <option value="online">网络在线</option>
-              <option value="offline">离线 / 已断开</option>
-            </select>
+            <span>Join Key</span>
+            <input [value]="joinKey" (input)="joinKey = $any($event.target).value" placeholder="team-alpha-join-key" />
           </label>
-          <label>
-            <span>加入状态</span>
-            <select [value]="deviceMembershipFilter" (change)="deviceMembershipFilter = $any($event.target).value">
-              <option value="all">全部</option>
-              <option value="active">已加入</option>
-              <option value="pending">申请中</option>
-              <option value="rejected">已拒绝</option>
-              <option value="none">未加入</option>
-            </select>
-          </label>
+          <button class="ghost full" type="button" (click)="joinByKey()" [disabled]="isActionBusy('joinByKey')">
+            {{ isActionBusy('joinByKey') ? '提交中...' : '通过 Join Key 加入' }}
+          </button>
         </div>
-
-        <div class="device-grid" *ngIf="filteredDevices().length > 0; else noDevices">
-          <article class="device-card" *ngFor="let device of filteredDevices()">
-            <div class="device-card-head">
-              <div>
-                <strong>{{ device.name }}</strong>
-                <span>{{ device.platform }} / {{ device.machineId || 'no machine id' }}</span>
-              </div>
-              <span class="status-dot" [attr.data-tone]="deviceStatusTone(device)"></span>
-            </div>
-            <div class="device-meta">
-              <div><span>虚拟 IP</span><strong>{{ device.currentVirtualIp || '-' }}</strong></div>
-              <div><span>控制通道</span><strong [attr.data-tone]="deviceControlTone(device)">{{ deviceControlLabel(device) }}</strong></div>
-              <div><span>网络状态</span><strong [attr.data-tone]="deviceNetworkTone(device)">{{ deviceNetworkLabel(device) }}</strong></div>
-              <div><span>隧道健康</span><strong [attr.data-tone]="deviceTunnelTone(device)">{{ deviceTunnelLabel(device) }}</strong></div>
-              <div><span>接入</span><strong>{{ membershipStatusLabel(device) }}</strong></div>
-              <div><span>协议</span><strong>{{ deviceProtocol(device) }}</strong></div>
-              <div><span>最后心跳</span><strong>{{ deviceLastSeenLabel(device) }}</strong></div>
-            </div>
-            <p class="hint">{{ device.ownerEmail || '-' }}</p>
-            <small>{{ device.deviceId }}</small>
-          </article>
-        </div>
-
-        <ng-template #noDevices>
-          <div class="empty-card">
-            <strong>{{ devices().length > 0 ? '没有匹配的设备' : '当前账户还没有设备' }}</strong>
-            <p>{{ devices().length > 0 ? '调整筛选条件后再试。' : '登录客户端并注册设备后，这里会显示完整设备状态。' }}</p>
-          </div>
-        </ng-template>
-      </section>
-    </main>
+      </ng-container>
+    </article>
   </section>
 
   <section class="panel callback-panel" *ngIf="pendingCallbackId()">

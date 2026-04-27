@@ -106,8 +106,7 @@ h1 {
 .compact-metrics span,
 .setting-list span,
 .health-card span,
-.stat-tile span,
-.device-meta span {
+.stat-tile span {
   color: #6b7280;
   font-size: 12px;
   font-weight: 800;
@@ -242,7 +241,7 @@ h1 {
 
 .overview-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -475,74 +474,6 @@ button:disabled {
   margin-bottom: 16px;
 }
 
-.device-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.device-card {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid rgba(15, 23, 42, .09);
-  border-radius: 16px;
-  background: #fff;
-}
-
-.device-card-head {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.device-card-head strong,
-.device-card-head span {
-  display: block;
-}
-
-.device-card-head span,
-.device-card small {
-  color: #6b7280;
-  overflow-wrap: anywhere;
-}
-
-.device-meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.device-meta div {
-  min-width: 0;
-  padding: 10px;
-  border-radius: 12px;
-  background: #f8fafc;
-}
-
-.device-meta strong {
-  display: block;
-  margin-top: 4px;
-  overflow-wrap: anywhere;
-}
-
-.device-meta strong[data-tone="success"] {
-  color: #13553a;
-}
-
-.device-meta strong[data-tone="warn"] {
-  color: #8a5514;
-}
-
-.device-meta strong[data-tone="danger"] {
-  color: #9f2d20;
-}
-
-.device-meta strong[data-tone="muted"] {
-  color: #6b7280;
-}
-
 .status-dot {
   width: 12px;
   height: 12px;
@@ -606,6 +537,84 @@ button:disabled {
   background: #f8fafc;
 }
 
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, .46);
+}
+
+.dialog-panel {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid rgba(15, 23, 42, .1);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .22);
+}
+
+.dialog-title,
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialog-title {
+  margin-bottom: 16px;
+}
+
+.dialog-title h2 {
+  margin: 0;
+}
+
+.dialog-actions {
+  margin-top: 18px;
+  justify-content: flex-end;
+}
+
+.dhcp-box {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid rgba(15, 23, 42, .08);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.segmented {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  width: min(360px, 100%);
+  padding: 4px;
+  border: 1px solid rgba(15, 23, 42, .1);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.segmented button {
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+}
+
+.segmented button.active {
+  color: #fff;
+  background: #111827;
+}
+
+.span-2 {
+  grid-column: span 2;
+}
+
 @media (max-width: 1100px) {
   .router-layout,
   .overview-band {
@@ -620,9 +629,6 @@ button:disabled {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .device-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 720px) {
@@ -642,7 +648,7 @@ button:disabled {
   .overview-stats,
   .grid.two,
   .filter-bar,
-  .device-grid {
+  .filter-bar {
     grid-template-columns: 1fr;
   }
 
@@ -652,5 +658,9 @@ button:disabled {
 
   .tab-strip button {
     min-width: 96px;
+  }
+
+  .span-2 {
+    grid-column: span 1;
   }
 }

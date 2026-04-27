@@ -13,4 +13,5 @@ var (
 	ErrConflict = errors.New("conflict")
 	// ErrInvalidArgument 表示请求参数缺失、非法或不满足约束。
 	ErrInvalidArgument = errors.New("invalid argument")
+	ErrNotImplemented  = errors.New("not implemented")
 )

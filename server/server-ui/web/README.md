@@ -1,32 +1,35 @@
 # server-ui/web
 
-Angular 用户网络控制台。
+Angular network control console.
 
-当前功能：
+Current capabilities:
 
-- 用户登录 / 注册
-- 无网络时创建自己的网络
-- 按宿主邮箱加入别人的网络
-- 切回自己的网络
-- 查看当前管理设备
-- 当当前网络属于自己时：
-  - 修改默认网段
-  - 创建额外子网
-  - 配置子网 DHCP 范围
-  - 查看并修改成员设备绑定的虚拟 IP
-- 对 CIDR / DHCP 起止地址做前端校验
-- 把后端错误文案整理成页面可读提示
+- User login and registration.
+- Create an owned network from a dialog.
+- Disable network creation when the account already owns a network.
+- Join another network from a dialog by owner email or Join Key.
+- Configure DHCP options when creating a network.
+- Switch back to the owned network when viewing a joined network.
+- View the active network, default subnet, DHCP range, Join Key state, pending join requests, address bindings, network status, and remarks.
+- Maintain member approval, virtual IP binding, and attachment remarks.
+- Display readable backend validation errors in the page.
 
-默认服务端地址：
+Removed from the console:
 
-- 同源 `/api/*`
-- 本地 Docker 中由 `nginx` 反代到 `server-biz:8080`
+- Dedicated device management page.
+- Manual subnet creation.
+- Automatic network creation flow.
 
-本地 Docker / Caddy 入口：
+Default backend:
+
+- Same-origin `/api/*`.
+- Local Docker routes requests through `nginx` to `server-biz:8080`.
+
+Local Docker / Caddy entry:
 
 - `https://web.slan.localhost:18443`
 
-启动：
+Development:
 
 ```bash
 npm install

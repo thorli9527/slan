@@ -144,8 +144,11 @@ class AppCoreNetworkPayload {
   const AppCoreNetworkPayload({
     required this.networkId,
     required this.name,
+    this.description,
+    this.defaultSubnetId,
     this.cidr,
     this.defaultSubnetCidr,
+    this.subnets = const [],
     this.members = const [],
   });
 
@@ -153,8 +156,13 @@ class AppCoreNetworkPayload {
     return AppCoreNetworkPayload(
       networkId: json['networkId'] as String? ?? '',
       name: json['name'] as String? ?? '',
+      description: json['description'] as String?,
+      defaultSubnetId: json['defaultSubnetId'] as String?,
       cidr: json['cidr'] as String?,
       defaultSubnetCidr: json['defaultSubnetCidr'] as String?,
+      subnets: _readMapList(json['subnets'])
+          .map(AppCoreSubnetPayload.fromJson)
+          .toList(growable: false),
       members: _readMapList(json['members'])
           .map(AppCoreNetworkMemberPayload.fromJson)
           .toList(growable: false),
@@ -163,15 +171,21 @@ class AppCoreNetworkPayload {
 
   final String networkId;
   final String name;
+  final String? description;
+  final String? defaultSubnetId;
   final String? cidr;
   final String? defaultSubnetCidr;
+  final List<AppCoreSubnetPayload> subnets;
   final List<AppCoreNetworkMemberPayload> members;
 
   Map<String, dynamic> toJson() => {
         'networkId': networkId,
         'name': name,
+        'description': description,
+        'defaultSubnetId': defaultSubnetId,
         'cidr': cidr,
         'defaultSubnetCidr': defaultSubnetCidr,
+        'subnets': subnets.map((item) => item.toJson()).toList(),
         'members': members.map((item) => item.toJson()).toList(),
       };
 }
@@ -454,6 +468,8 @@ class AppCoreNetworkDetailPayload {
   const AppCoreNetworkDetailPayload({
     required this.networkId,
     required this.name,
+    this.description,
+    this.defaultSubnetId,
     this.defaultSubnetCidr,
     this.subnets = const [],
     this.members = const [],
@@ -463,6 +479,8 @@ class AppCoreNetworkDetailPayload {
     return AppCoreNetworkDetailPayload(
       networkId: json['networkId'] as String? ?? '',
       name: json['name'] as String? ?? '',
+      description: json['description'] as String?,
+      defaultSubnetId: json['defaultSubnetId'] as String?,
       defaultSubnetCidr: json['defaultSubnetCidr'] as String?,
       subnets: _readMapList(json['subnets'])
           .map(AppCoreSubnetPayload.fromJson)
@@ -475,6 +493,8 @@ class AppCoreNetworkDetailPayload {
 
   final String networkId;
   final String name;
+  final String? description;
+  final String? defaultSubnetId;
   final String? defaultSubnetCidr;
   final List<AppCoreSubnetPayload> subnets;
   final List<AppCoreNetworkMemberPayload> members;
@@ -482,6 +502,8 @@ class AppCoreNetworkDetailPayload {
   Map<String, dynamic> toJson() => {
         'networkId': networkId,
         'name': name,
+        'description': description,
+        'defaultSubnetId': defaultSubnetId,
         'defaultSubnetCidr': defaultSubnetCidr,
         'subnets': subnets.map((item) => item.toJson()).toList(),
         'members': members.map((item) => item.toJson()).toList(),
@@ -490,27 +512,55 @@ class AppCoreNetworkDetailPayload {
 
 class AppCoreSubnetPayload {
   const AppCoreSubnetPayload({
+    this.subnetId,
     required this.networkId,
+    this.name,
     required this.cidr,
+    this.remark,
+    this.gatewayIp,
+    this.allocationStartIp,
+    this.allocationEndIp,
     required this.isDefault,
+    this.status,
   });
 
   factory AppCoreSubnetPayload.fromJson(Map<String, dynamic> json) {
     return AppCoreSubnetPayload(
+      subnetId: json['subnetId'] as String?,
       networkId: json['networkId'] as String? ?? '',
+      name: json['name'] as String?,
       cidr: json['cidr'] as String? ?? '',
+      remark: json['remark'] as String?,
+      gatewayIp: json['gatewayIp'] as String?,
+      allocationStartIp: json['allocationStartIp'] as String?,
+      allocationEndIp: json['allocationEndIp'] as String?,
       isDefault: json['isDefault'] as bool? ?? false,
+      status: json['status'] as String?,
     );
   }
 
+  final String? subnetId;
   final String networkId;
+  final String? name;
   final String cidr;
+  final String? remark;
+  final String? gatewayIp;
+  final String? allocationStartIp;
+  final String? allocationEndIp;
   final bool isDefault;
+  final String? status;
 
   Map<String, dynamic> toJson() => {
+        'subnetId': subnetId,
         'networkId': networkId,
+        'name': name,
         'cidr': cidr,
+        'remark': remark,
+        'gatewayIp': gatewayIp,
+        'allocationStartIp': allocationStartIp,
+        'allocationEndIp': allocationEndIp,
         'isDefault': isDefault,
+        'status': status,
       };
 }
 

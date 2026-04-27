@@ -41,9 +41,6 @@ func (s dbAuthService) Register(req dto.RegisterRequest) (dto.AuthResponse, erro
 	}); err != nil {
 		return dto.AuthResponse{}, err
 	}
-	if _, err := s.state.ensureOwnedNetwork(ctx, userID); err != nil {
-		return dto.AuthResponse{}, err
-	}
 	return s.state.issueAuthResponse(ctx, userID, "")
 }
 

@@ -638,14 +638,26 @@ where
         self.controller.list_networks(&access_token)
     }
 
-    fn create_network(&self, name: String, cidr: String) -> Result<Network, String> {
+    fn create_network(
+        &self,
+        name: String,
+        cidr: Option<String>,
+        expected_devices: Option<u32>,
+        gateway_ip: Option<String>,
+        allocation_start_ip: Option<String>,
+        allocation_end_ip: Option<String>,
+    ) -> Result<Network, String> {
         let access_token = self.with_access_token()?;
         self.controller.create_network(
             &access_token,
             CreateNetworkRequest {
                 name,
                 cidr,
+                expected_devices,
                 description: None,
+                gateway_ip,
+                allocation_start_ip,
+                allocation_end_ip,
                 bind_device_id: None,
             },
         )

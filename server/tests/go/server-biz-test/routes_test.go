@@ -806,10 +806,6 @@ func (s *phase1Services) ListAssignments(userID, networkID string) ([]dto.Networ
 	return s.assignmentsLocked(networkID), nil
 }
 
-func (s *phase1Services) CreateSubnet(userID, networkID string, req dto.CreateSubnetRequest) (dto.Subnet, error) {
-	return dto.Subnet{}, service.ErrInvalidArgument
-}
-
 func (s *phase1Services) ListSubnets(userID, networkID string) ([]dto.Subnet, error) {
 	return nil, nil
 }

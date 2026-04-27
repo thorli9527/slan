@@ -152,14 +152,19 @@ class MockAppCoreApi implements AppCoreApi {
   @override
   Future<NetworkModel> createNetwork({
     required String name,
-    String cidr = '10.0.0.0/16',
+    String? cidr,
+    int? expectedDevices,
+    String? gatewayIp,
+    String? allocationStartIp,
+    String? allocationEndIp,
     String? bindDeviceId,
   }) async {
     // mock 创建网络时，如果当前设备已存在，则自动把它放进成员列表。
     final network = NetworkModel(
       networkId: 'net-${_networks.length + 1}',
       name: name,
-      cidr: cidr,
+      cidr: cidr ?? '10.0.0.0/24',
+      subnets: _mockSubnets('net-${_networks.length + 1}'),
       members: _device == null
           ? const []
           : [
@@ -206,6 +211,10 @@ class MockAppCoreApi implements AppCoreApi {
       networkId: current.networkId,
       name: current.name,
       cidr: current.cidr,
+      description: current.description,
+      defaultSubnetId: current.defaultSubnetId,
+      joinKeyConfigured: current.joinKeyConfigured,
+      subnets: current.subnets,
       members: [
         ...current.members,
         NetworkMemberModel(
@@ -234,6 +243,7 @@ class MockAppCoreApi implements AppCoreApi {
             networkId: 'mock-owner-network',
             name: 'Owner network',
             cidr: '10.0.0.0/16',
+            subnets: _mockSubnets('mock-owner-network'),
           );
     if (_networks.every((item) => item.networkId != network.networkId)) {
       _networks.add(network);
@@ -252,6 +262,7 @@ class MockAppCoreApi implements AppCoreApi {
             networkId: 'mock-key-network',
             name: 'Joined network',
             cidr: '10.0.0.0/16',
+            subnets: _mockSubnets('mock-key-network'),
           );
     if (_networks.every((item) => item.networkId != network.networkId)) {
       _networks.add(network);
@@ -288,6 +299,7 @@ class MockAppCoreApi implements AppCoreApi {
       description: current.description,
       defaultSubnetId: current.defaultSubnetId,
       joinKeyConfigured: current.joinKeyConfigured,
+      subnets: current.subnets,
       members: current.members
           .map(
             (member) => member.attachmentId == attachmentId
@@ -356,6 +368,7 @@ class MockAppCoreApi implements AppCoreApi {
       description: current.description,
       defaultSubnetId: current.defaultSubnetId,
       joinKeyConfigured: current.joinKeyConfigured,
+      subnets: current.subnets,
       members: current.members
           .map(
             (member) => member.deviceId == deviceId
@@ -415,6 +428,7 @@ class MockAppCoreApi implements AppCoreApi {
         networkId: networkId,
         name: networkId,
         cidr: '100.64.0.0/24',
+        subnets: _mockSubnets(networkId),
       ),
     );
     final member = network.members.firstWhere(
@@ -452,6 +466,10 @@ class MockAppCoreApi implements AppCoreApi {
       networkId: current.networkId,
       name: current.name,
       cidr: current.cidr,
+      description: current.description,
+      defaultSubnetId: current.defaultSubnetId,
+      joinKeyConfigured: current.joinKeyConfigured,
+      subnets: current.subnets,
       members: current.members
           .map(
             (member) => member.deviceId == deviceId
@@ -700,3 +718,42 @@ class MockAppCoreApi implements AppCoreApi {
   @override
   Future<void> disconnect() async {}
 }
+
+List<SubnetModel> _mockSubnets(String networkId) => [
+      SubnetModel(
+        subnetId: '$networkId-subnet-general',
+        networkId: networkId,
+        name: '总网络',
+        cidr: '10.0.0.0/24',
+        remark: '默认主子网，适合未分组设备和通用接入',
+        isDefault: true,
+        status: 'active',
+      ),
+      SubnetModel(
+        subnetId: '$networkId-subnet-dev',
+        networkId: networkId,
+        name: '开发部',
+        cidr: '10.0.1.0/24',
+        remark: '开发、测试、运维相关设备',
+        isDefault: false,
+        status: 'active',
+      ),
+      SubnetModel(
+        subnetId: '$networkId-subnet-marketing',
+        networkId: networkId,
+        name: '营销部',
+        cidr: '10.0.2.0/24',
+        remark: '销售、市场、外勤相关设备',
+        isDefault: false,
+        status: 'active',
+      ),
+      SubnetModel(
+        subnetId: '$networkId-subnet-hr',
+        networkId: networkId,
+        name: '人事部',
+        cidr: '10.0.3.0/24',
+        remark: '人事、行政、财务相关设备',
+        isDefault: false,
+        status: 'active',
+      ),
+    ];
