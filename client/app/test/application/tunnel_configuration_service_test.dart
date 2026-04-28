@@ -48,4 +48,31 @@ void main() {
 
     expect(config.interface.addresses, ['10.0.0.2/32']);
   });
+
+  test('uses localhost DNS only when wildcard DNS is configured', () {
+    const service = TunnelConfigurationService();
+
+    final disabled = service.buildActiveNetworkConfiguration(
+      network: const NetworkModel(
+        networkId: 'net-1',
+        name: 'default',
+        cidr: '10.0.0.0/24',
+      ),
+      deviceId: 'dev-1',
+      devicePublicKey: 'pub',
+    );
+    final enabled = service.buildActiveNetworkConfiguration(
+      network: const NetworkModel(
+        networkId: 'net-1',
+        name: 'default',
+        cidr: '10.0.0.0/24',
+        dns: DNSConfigModel(wildcards: ['*.xx.com=10.0.0.2']),
+      ),
+      deviceId: 'dev-1',
+      devicePublicKey: 'pub',
+    );
+
+    expect(disabled.interface.dnsServers, isEmpty);
+    expect(enabled.interface.dnsServers, ['127.0.0.1']);
+  });
 }

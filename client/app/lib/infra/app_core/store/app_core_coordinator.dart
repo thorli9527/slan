@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
 import '../../../application/app_workspace_service.dart';
@@ -499,6 +499,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.syncSelectedNetworkId(
         preferredNetworkId: runtime.activeNetwork.networkId,
       );
+      await LocalDnsService.instance.configureFromNetwork(runtime.activeNetwork);
 
       final config =
           _tunnelConfigurationService.buildActiveNetworkConfiguration(
@@ -625,6 +626,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     final previousLocalVirtualIp = tunnelStore.tunnelRuntimeView?.localVirtualIp;
     await runAction(() async {
       detail = await _refreshBootstrapOrControlSyncState();
+      await _configureLocalDnsForActiveTunnel();
     });
     await _reapplyActiveNetworkTunnelIfVirtualIpChanged(previousLocalVirtualIp);
     _syncControlSyncPollingState();
@@ -683,7 +685,10 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     try {
       await _refreshBootstrapOrControlSyncState();
       emitStateChanged();
-      await _reapplyActiveNetworkTunnelIfVirtualIpChanged(previousLocalVirtualIp);
+      await _configureLocalDnsForActiveTunnel();
+      await _reapplyActiveNetworkTunnelIfVirtualIpChanged(
+        previousLocalVirtualIp,
+      );
     } catch (error) {
       debugPrint('[control-sync] background sync skipped: $error');
     } finally {
@@ -711,13 +716,21 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       deviceId: device.deviceId,
       devicePublicKey: device.publicKey,
     );
+    final dnsUnchanged = listEquals(
+      runtime.dnsServers,
+      config.interface.dnsServers,
+    );
     if (previousLocalVirtualIp == config.localVirtualIp &&
-        runtime.localVirtualIp == config.localVirtualIp) {
+        runtime.localVirtualIp == config.localVirtualIp &&
+        dnsUnchanged) {
       return;
     }
     final peerVirtualIp = config.peer.allowedIps.first.split('/').first;
     debugPrint(
-      '[tunnel-refresh] virtual ip changed from ${previousLocalVirtualIp ?? runtime.localVirtualIp} to ${config.localVirtualIp}; reapplying tunnel',
+      '[tunnel-refresh] runtime config changed '
+      'localVirtualIp=${previousLocalVirtualIp ?? runtime.localVirtualIp}'
+      '->${config.localVirtualIp} '
+      'dnsServers=${config.interface.dnsServers}; reapplying tunnel',
     );
     final applyReport = await applyTunnelConfiguration(
       configuration: config,
@@ -735,6 +748,18 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       lastProbeOk: true,
     );
     _startDeviceNetworkHeartbeat(networkOnline: true, tunnelUp: true);
+  }
+
+  Future<void> _configureLocalDnsForActiveTunnel() async {
+    if (tunnelStore.tunnelRuntimeView == null) {
+      return;
+    }
+    final network = sessionStore.selectedNetwork;
+    if (network == null) {
+      await LocalDnsService.instance.stop();
+      return;
+    }
+    await LocalDnsService.instance.configureFromNetwork(network);
   }
 
   Future<ConnectAttemptResult> connectUsingControlPlan({

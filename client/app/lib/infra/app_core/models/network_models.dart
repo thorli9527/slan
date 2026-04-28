@@ -10,8 +10,7 @@ class DNSConfigModel {
   final List<String> searchDomains;
   final List<String> wildcards;
 
-  bool get enabled =>
-      servers.isNotEmpty || searchDomains.isNotEmpty || wildcards.isNotEmpty;
+  bool get enabled => wildcards.isNotEmpty;
 }
 
 class NetworkMemberModel {

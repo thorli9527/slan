@@ -33,7 +33,7 @@ class TunnelConfigurationService {
         listenPort: 51820,
         mtu: 1280,
         addresses: [interfaceAddress],
-        dnsServers: const [],
+        dnsServers: network.dns.enabled ? const ['127.0.0.1'] : const [],
       ),
       peer: WireGuardTunnelPeerConfiguration(
         publicKey: 'peer-debug-public-key',

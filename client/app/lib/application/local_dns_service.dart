@@ -34,7 +34,7 @@ class LocalDnsService {
   Future<void> start({
     required Map<String, String> records,
     InternetAddress? bindAddress,
-    int bindPort = 53535,
+    int bindPort = 53,
   }) async {
     _records = Map.unmodifiable(records.map(
       (key, value) => MapEntry(normalizeName(key), value.trim()),
@@ -74,33 +74,11 @@ class LocalDnsService {
     if (!network.dns.enabled) {
       return const {};
     }
-    final domains = network.dns.searchDomains
-        .map(normalizeName)
-        .where((item) => item.isNotEmpty)
-        .toList(growable: false);
-    final suffixes = domains.isEmpty ? const ['slan'] : domains;
     final records = <String, String>{};
     for (final wildcard in network.dns.wildcards) {
       final record = normalizeWildcardRecord(wildcard);
       if (record != null) {
         records[record.key] = record.value;
-      }
-    }
-    for (final member in network.members) {
-      final ip = member.virtualIp?.trim();
-      if (ip == null || ip.isEmpty || InternetAddress.tryParse(ip) == null) {
-        continue;
-      }
-      for (final suffix in suffixes) {
-        for (final label in [
-          member.deviceId,
-          if ((member.remark ?? '').trim().isNotEmpty) member.remark!,
-        ]) {
-          final host = sanitizeLabel(label);
-          if (host.isNotEmpty) {
-            records['$host.$suffix'] = ip;
-          }
-        }
       }
     }
     return records;
@@ -228,14 +206,6 @@ class LocalDnsService {
       }
     }
     return true;
-  }
-
-  static String sanitizeLabel(String value) {
-    return value
-        .trim()
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9-]+'), '-')
-        .replaceAll(RegExp(r'^-+|-+$'), '');
   }
 
   static _DnsQuestion? _readQuestion(Uint8List data, int offset) {

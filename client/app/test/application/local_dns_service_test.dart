@@ -23,7 +23,7 @@ void main() {
     expect(records, isEmpty);
   });
 
-  test('buildRecords maps device id and remark under configured domains', () {
+  test('buildRecords ignores legacy search domains without wildcard records', () {
     final records = LocalDnsService.buildRecords(const NetworkModel(
       networkId: 'net-1',
       name: 'My Network',
@@ -39,8 +39,7 @@ void main() {
       ],
     ));
 
-    expect(records['dev-1.slan'], '10.0.0.2');
-    expect(records['living-room-pc.slan'], '10.0.0.2');
+    expect(records, isEmpty);
   });
 
   test('buildResponse answers A record without forwarding public DNS', () {
