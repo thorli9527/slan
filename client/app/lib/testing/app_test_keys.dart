@@ -8,10 +8,8 @@ abstract final class AppTestKeys {
       ValueKey<String>('home.open_networks_button');
   static const homeOpenDevicesButton =
       ValueKey<String>('home.open_devices_button');
-  static const homeEnableNetworkButton =
-      ValueKey<String>('home.enable_network_button');
-  static const homeDisableNetworkButton =
-      ValueKey<String>('home.disable_network_button');
+  static const homeNetworkSwitchButton =
+      ValueKey<String>('home.network_switch_button');
   static const homeManageNetworkButton =
       ValueKey<String>('home.manage_network_button');
   static const homeLoginButton = ValueKey<String>('home.login_button');

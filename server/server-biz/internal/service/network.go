@@ -12,7 +12,6 @@ type Network interface {
 	UpdateJoinKey(userID, networkID string, req dto.UpdateNetworkJoinKeyRequest) (dto.NetworkDetail, error)
 	Get(userID, networkID string) (dto.NetworkDetail, error)
 	Join(userID, networkID string, req dto.JoinNetworkRequest) (dto.NetworkJoinResult, error)
-	JoinByOwnerEmail(userID string, req dto.JoinNetworkByOwnerEmailRequest) (dto.NetworkJoinByOwnerEmailResult, error)
 	JoinByKey(userID string, req dto.JoinNetworkByKeyRequest) (dto.NetworkJoinResult, error)
 	Switch(userID, networkID string, req dto.SwitchNetworkRequest) (dto.NetworkJoinResult, error)
 	Activate(userID, networkID string, req dto.JoinNetworkRequest) (dto.NetworkJoinResult, error)
@@ -23,10 +22,9 @@ type Network interface {
 	InviteMember(userID, networkID string, req dto.InviteNetworkMemberRequest) (dto.NetworkMember, error)
 	ListAssignments(userID, networkID string) ([]dto.NetworkAssignment, error)
 	ListSubnets(userID, networkID string) ([]dto.Subnet, error)
-	AttachDevice(userID, networkID, subnetID string, req dto.AttachDeviceRequest) (dto.SubnetAttachment, error)
 	UpdateAttachmentIP(userID, networkID, attachmentID string, req dto.UpdateAttachmentIPRequest) (dto.SubnetAttachment, error)
 	UpdateAttachmentRemark(userID, networkID, attachmentID string, req dto.UpdateAttachmentRemarkRequest) (dto.NetworkAssignment, error)
-	DeleteAttachment(userID, networkID, attachmentID string) error
+	UpdateAttachmentStatus(userID, networkID, attachmentID string, req dto.UpdateAttachmentStatusRequest) (dto.NetworkAssignment, error)
 }
 
 // Allocator defines server-side DHCP-style virtual IP allocation.

@@ -88,7 +88,7 @@ class _AuthPageState extends State<AuthPage> {
                     ?.authLoginUrl)
         : hostConfig?.webConsoleUrl ?? AppCoreScope.webConsoleUrl;
     final sessionStore = AppCoreScope.sessionStore;
-    final currentDeviceId = sessionStore.device?.deviceId?.trim();
+    final currentDeviceId = sessionStore.device?.deviceId.trim();
     final loginTargetDeviceId =
         currentDeviceId != null && currentDeviceId.isNotEmpty
             ? currentDeviceId
@@ -249,7 +249,8 @@ class _AuthHero extends StatelessWidget {
           ),
           DesktopMetricPill(
             label: 'Transport',
-            value: hostConfig?.secure == true ? 'HTTPS / MQTT TLS' : 'HTTP / MQTT',
+            value:
+                hostConfig?.secure == true ? 'HTTPS / MQTT TLS' : 'HTTP / MQTT',
             backgroundColor: Colors.white,
           ),
         ],

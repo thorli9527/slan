@@ -78,13 +78,13 @@
 
 - `register`
 - `login`
+- `restore_session`
 - `refresh_session`
 - `register_device`
 - `register_node`
 - `list_networks`
 - `create_network`
 - `join_network`
-- `join_network_by_owner_email`
 - `join_network_by_key`
 - `switch_network`
 - `activate_network`
@@ -94,12 +94,33 @@
 - `issue_relay_ticket`
 - `connect`
 - `disconnect`
+- `control_sync`
+- `control_status`
+- `enable_local_network`
+- `disable_local_network`
+- `report_device_network_state`
 
 这意味着上层看到的是“动作型接口”，而不是直接操作底层模块。
 
 ## 4. 对外输出模型
 
 当前主要对外模型包括：
+
+### 4.0 Service-owned runtime command notes
+
+In bridge/service mode, these actions are owned by the service boundary:
+
+- `restore_session` injects a persisted access token into the native snapshot
+  before startup validation; stale tokens fall back to `refresh_session`.
+- `enable_local_network` activates the selected network, reuses or registers
+  the node, fetches bootstrap, replaces the local tunnel, starts local DNS, and
+  reports `networkOnline=true`.
+- `disable_local_network` reports `networkOnline=false`, stops local tunnel/DNS,
+  and deactivates the selected network for the current device.
+- `report_device_network_state` is called by the service task runner every 15
+  seconds while runtime context is available.
+- Flutter should treat these as command/result APIs and should not directly
+  mutate OS tunnel or DNS state in bridge mode.
 
 - `Session`
 - `Device`

@@ -59,11 +59,6 @@ pub struct SwitchNetworkRequest {
     pub device_id: String,
 }
 
-pub struct JoinNetworkByOwnerEmailRequest {
-    pub owner_email: String,
-    pub device_id: String,
-}
-
 pub struct JoinNetworkByKeyRequest {
     pub join_key: String,
     pub device_id: String,
@@ -126,11 +121,6 @@ pub trait ControllerClient: Send + Sync {
         &self,
         access_token: &str,
         req: JoinNetworkRequest,
-    ) -> Result<NetworkJoinResult, String>;
-    fn join_network_by_owner_email(
-        &self,
-        access_token: &str,
-        req: JoinNetworkByOwnerEmailRequest,
     ) -> Result<NetworkJoinResult, String>;
     fn join_network_by_key(
         &self,

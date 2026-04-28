@@ -19,6 +19,7 @@ class ErrorResponseDto {
 class AuthResponseDto {
   const AuthResponseDto({
     required this.userId,
+    this.email,
     required this.accessToken,
     this.refreshToken,
     required this.expiresIn,
@@ -27,12 +28,14 @@ class AuthResponseDto {
   factory AuthResponseDto.fromJson(Map<String, dynamic> json) =>
       AuthResponseDto(
         userId: readString(json, 'userId'),
+        email: readNullableString(json, 'email'),
         accessToken: readString(json, 'accessToken'),
         refreshToken: readNullableString(json, 'refreshToken'),
         expiresIn: readInt(json, 'expiresIn'),
       );
 
   final String userId;
+  final String? email;
   final String accessToken;
   final String? refreshToken;
   final int expiresIn;
@@ -439,28 +442,6 @@ class NetworkJoinResultResponseDto {
             SubnetAttachmentResponseDto.fromJson(readMap(json, 'attachment')),
       );
 
-  final NetworkMemberResponseDto member;
-  final SubnetAttachmentResponseDto attachment;
-}
-
-class NetworkJoinByOwnerEmailResultResponseDto {
-  const NetworkJoinByOwnerEmailResultResponseDto({
-    required this.network,
-    required this.member,
-    required this.attachment,
-  });
-
-  factory NetworkJoinByOwnerEmailResultResponseDto.fromJson(
-    Map<String, dynamic> json,
-  ) =>
-      NetworkJoinByOwnerEmailResultResponseDto(
-        network: NetworkSummaryResponseDto.fromJson(readMap(json, 'network')),
-        member: NetworkMemberResponseDto.fromJson(readMap(json, 'member')),
-        attachment:
-            SubnetAttachmentResponseDto.fromJson(readMap(json, 'attachment')),
-      );
-
-  final NetworkSummaryResponseDto network;
   final NetworkMemberResponseDto member;
   final SubnetAttachmentResponseDto attachment;
 }

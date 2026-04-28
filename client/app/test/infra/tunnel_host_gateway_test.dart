@@ -4,11 +4,11 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_app/application/tunnel_host_gateway.dart';
-import 'package:slan_app/infra/logging/startup_log.dart';
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 
 void main() {
-  test('HelperServiceTunnelHostGateway parses action results over TCP', () async {
+  test('HelperServiceTunnelHostGateway parses action results over TCP',
+      () async {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);
     server.listen((client) {
@@ -48,7 +48,8 @@ void main() {
     expect(result.configurationPeerVirtualIp, '100.64.0.2');
   });
 
-  test('HelperServiceTunnelHostGateway surfaces structured helper errors', () async {
+  test('HelperServiceTunnelHostGateway surfaces structured helper errors',
+      () async {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);
     server.listen((client) {
@@ -74,7 +75,8 @@ void main() {
     );
   });
 
-  test('HelperServiceTunnelHostGateway returns null runtime view payloads', () async {
+  test('HelperServiceTunnelHostGateway returns null runtime view payloads',
+      () async {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);
     server.listen((client) {
@@ -92,8 +94,9 @@ void main() {
     expect(runtime, isNull);
   });
 
-  test('HelperServiceTunnelHostGateway rejects invalid helper host addresses', () async {
-    final gateway = HelperServiceTunnelHostGateway(address: 'not-a-host');
+  test('HelperServiceTunnelHostGateway rejects invalid helper host addresses',
+      () async {
+    const gateway = HelperServiceTunnelHostGateway(address: 'not-a-host');
 
     await expectLater(
       gateway.bringTunnelUp(),
@@ -105,11 +108,11 @@ void main() {
       () async {
     final platform = _FakeTunnelPluginPlatform();
     final gateway = PluginTunnelHostGateway(pluginPlatform: platform);
-    final configuration = WireGuardTunnelConfiguration(
+    const configuration = WireGuardTunnelConfiguration(
       transport: 'relay',
       localVirtualIp: '100.64.0.10',
       peerVirtualIp: '100.64.0.2',
-      interface: const WireGuardTunnelInterfaceConfiguration(
+      interface: WireGuardTunnelInterfaceConfiguration(
         interfaceName: 'utun9',
         keyPair: WireGuardTunnelKeyPair(
           publicKey: 'pub',
@@ -120,7 +123,7 @@ void main() {
         addresses: ['100.64.0.10/32'],
         dnsServers: ['1.1.1.1'],
       ),
-      peer: const WireGuardTunnelPeerConfiguration(
+      peer: WireGuardTunnelPeerConfiguration(
         publicKey: 'peer-pub',
         endpoint: '203.0.113.10:51820',
         allowedIps: ['100.64.0.2/32'],

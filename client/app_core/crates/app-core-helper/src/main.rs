@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use controller_client::{HttpControllerClient, TcpJsonHttpTransport};
 use ffi_bridge::{DefaultAppCoreFacade, FileTunnelKeyProvider, JsonAppCoreFacade};
@@ -358,6 +361,7 @@ fn default_bind_prefix_len() -> u8 {
 struct HelperTunnelHost {
     backend: Box<dyn TunnelBackend>,
     state: Mutex<HelperTunnelState>,
+    dns_server: Mutex<Option<HelperLocalDnsServer>>,
 }
 
 impl HelperTunnelHost {
@@ -365,6 +369,7 @@ impl HelperTunnelHost {
         Self {
             backend: default_tunnel_backend(),
             state: Mutex::new(HelperTunnelState::default()),
+            dns_server: Mutex::new(None),
         }
     }
 
@@ -818,6 +823,235 @@ impl TunnelManager for HelperTunnelHost {
         }
         Ok(())
     }
+
+    fn start_local_dns(&self, records: Vec<(String, String)>) -> Result<(), String> {
+        let mut dns_server = self
+            .dns_server
+            .lock()
+            .map_err(|_| "local dns state poisoned".to_string())?;
+        if let Some(existing) = dns_server.take() {
+            existing.stop();
+        }
+        if records.is_empty() {
+            write_helper_log("local dns skipped: no records");
+            return Ok(());
+        }
+        let server = HelperLocalDnsServer::start(records)?;
+        *dns_server = Some(server);
+        Ok(())
+    }
+
+    fn stop_local_dns(&self) -> Result<(), String> {
+        let mut dns_server = self
+            .dns_server
+            .lock()
+            .map_err(|_| "local dns state poisoned".to_string())?;
+        if let Some(existing) = dns_server.take() {
+            existing.stop();
+        }
+        Ok(())
+    }
+}
+
+struct HelperLocalDnsServer {
+    stop_signal: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl HelperLocalDnsServer {
+    fn start(records: Vec<(String, String)>) -> Result<Self, String> {
+        let records = normalize_dns_records(records);
+        if records.is_empty() {
+            return Err("local dns requires at least one valid record".to_string());
+        }
+        let socket = UdpSocket::bind(("127.0.0.1", 53))
+            .map_err(|err| format!("local dns bind 127.0.0.1:53 failed: {err}"))?;
+        socket
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .map_err(|err| format!("local dns set read timeout failed: {err}"))?;
+        let stop_signal = Arc::new(AtomicBool::new(false));
+        let thread_stop = stop_signal.clone();
+        let handle = thread::spawn(move || {
+            write_helper_log(&format!("local dns started records={}", records.len()));
+            run_local_dns(socket, records, thread_stop);
+            write_helper_log("local dns stopped");
+        });
+        Ok(Self {
+            stop_signal,
+            handle: Some(handle),
+        })
+    }
+
+    fn stop(mut self) {
+        self.stop_signal.store(true, Ordering::SeqCst);
+        let _ = UdpSocket::bind(("127.0.0.1", 0))
+            .and_then(|socket| socket.send_to(&[0], ("127.0.0.1", 53)));
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for HelperLocalDnsServer {
+    fn drop(&mut self) {
+        self.stop_signal.store(true, Ordering::SeqCst);
+    }
+}
+
+fn run_local_dns(
+    socket: UdpSocket,
+    records: HashMap<String, String>,
+    stop_signal: Arc<AtomicBool>,
+) {
+    let mut buffer = [0_u8; 512];
+    while !stop_signal.load(Ordering::SeqCst) {
+        match socket.recv_from(&mut buffer) {
+            Ok((len, remote)) => {
+                if let Some(response) = build_dns_response(&buffer[..len], &records) {
+                    let _ = send_dns_response(&socket, &response, remote);
+                }
+            }
+            Err(err)
+                if err.kind() == io::ErrorKind::WouldBlock
+                    || err.kind() == io::ErrorKind::TimedOut => {}
+            Err(err) => {
+                write_helper_log(&format!("local dns recv failed: {err}"));
+                break;
+            }
+        }
+    }
+}
+
+fn send_dns_response(socket: &UdpSocket, response: &[u8], remote: SocketAddr) -> io::Result<usize> {
+    socket.send_to(response, remote)
+}
+
+fn normalize_dns_records(records: Vec<(String, String)>) -> HashMap<String, String> {
+    records
+        .into_iter()
+        .filter_map(|(name, ip)| normalize_dns_record(&name, &ip))
+        .collect()
+}
+
+fn normalize_dns_record(name: &str, ip: &str) -> Option<(String, String)> {
+    let host = normalize_dns_name(name);
+    if !is_allowed_wildcard_host(&host) {
+        return None;
+    }
+    let parsed = ip.trim().parse::<Ipv4Addr>().ok()?;
+    Some((host, parsed.to_string()))
+}
+
+fn normalize_dns_name(value: &str) -> String {
+    value.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn is_allowed_wildcard_host(host: &str) -> bool {
+    let labels = host.split('.').collect::<Vec<_>>();
+    let wildcard_count = labels.iter().take_while(|label| **label == "*").count();
+    if wildcard_count == 0 || labels.len().saturating_sub(wildcard_count) < 2 {
+        return false;
+    }
+    labels[wildcard_count..]
+        .iter()
+        .all(|label| !label.is_empty() && *label != "*")
+}
+
+fn resolve_dns_name(name: &str, records: &HashMap<String, String>) -> Option<String> {
+    let normalized = normalize_dns_name(name);
+    if let Some(ip) = records.get(&normalized) {
+        return Some(ip.clone());
+    }
+    let mut matched: Option<(&String, usize)> = None;
+    for pattern in records.keys() {
+        if !pattern.starts_with("*.") && !pattern.starts_with("*.*.") {
+            continue;
+        }
+        if !wildcard_matches(pattern, &normalized) {
+            continue;
+        }
+        let labels = pattern.split('.').count();
+        if matched.map(|(_, count)| labels > count).unwrap_or(true) {
+            matched = Some((pattern, labels));
+        }
+    }
+    matched.and_then(|(pattern, _)| records.get(pattern).cloned())
+}
+
+fn wildcard_matches(pattern: &str, name: &str) -> bool {
+    let pattern_labels = pattern.split('.').collect::<Vec<_>>();
+    let name_labels = name.split('.').collect::<Vec<_>>();
+    pattern_labels.len() == name_labels.len()
+        && pattern_labels
+            .iter()
+            .zip(name_labels.iter())
+            .all(|(pattern, name)| *pattern == "*" || pattern == name)
+}
+
+struct DnsQuestion {
+    name: String,
+    qtype: u16,
+    end_offset: usize,
+}
+
+fn build_dns_response(request: &[u8], records: &HashMap<String, String>) -> Option<Vec<u8>> {
+    if request.len() < 12 || read_u16(request, 4)? == 0 {
+        return None;
+    }
+    let question = read_dns_question(request, 12)?;
+    let address =
+        resolve_dns_name(&question.name, records).and_then(|ip| ip.parse::<Ipv4Addr>().ok());
+    let can_answer = question.qtype == 1 && address.is_some();
+    let mut response = Vec::new();
+    response.extend_from_slice(&request[0..2]);
+    response.extend_from_slice(&u16_bytes(if can_answer { 0x8180 } else { 0x8183 }));
+    response.extend_from_slice(&u16_bytes(1));
+    response.extend_from_slice(&u16_bytes(if can_answer { 1 } else { 0 }));
+    response.extend_from_slice(&u16_bytes(0));
+    response.extend_from_slice(&u16_bytes(0));
+    response.extend_from_slice(&request[12..question.end_offset]);
+    if let Some(address) = address.filter(|_| can_answer) {
+        response.extend_from_slice(&u16_bytes(0xc00c));
+        response.extend_from_slice(&u16_bytes(1));
+        response.extend_from_slice(&u16_bytes(1));
+        response.extend_from_slice(&30_u32.to_be_bytes());
+        response.extend_from_slice(&u16_bytes(4));
+        response.extend_from_slice(&address.octets());
+    }
+    Some(response)
+}
+
+fn read_dns_question(data: &[u8], offset: usize) -> Option<DnsQuestion> {
+    let mut labels = Vec::new();
+    let mut cursor = offset;
+    while cursor < data.len() {
+        let len = *data.get(cursor)? as usize;
+        cursor += 1;
+        if len == 0 {
+            break;
+        }
+        if (len & 0xc0) != 0 || cursor + len > data.len() {
+            return None;
+        }
+        labels.push(String::from_utf8_lossy(&data[cursor..cursor + len]).to_string());
+        cursor += len;
+    }
+    if labels.is_empty() || cursor + 4 > data.len() {
+        return None;
+    }
+    Some(DnsQuestion {
+        name: labels.join("."),
+        qtype: read_u16(data, cursor)?,
+        end_offset: cursor + 4,
+    })
+}
+
+fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
+    Some(((*data.get(offset)? as u16) << 8) | (*data.get(offset + 1)? as u16))
+}
+
+fn u16_bytes(value: u16) -> [u8; 2] {
+    value.to_be_bytes()
 }
 
 fn default_tunnel_backend() -> Box<dyn TunnelBackend> {
@@ -1103,11 +1337,52 @@ fn current_timestamp_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_rpc_response, classify_helper_error, classify_structured_error, current_timestamp_ms,
-        linux_family, linux_package_manager, maybe_test_override_result, parse_os_release,
-        HelperTunnelConfiguration, HelperTunnelHost,
+        build_dns_response, build_rpc_response, classify_helper_error, classify_structured_error,
+        current_timestamp_ms, linux_family, linux_package_manager, maybe_test_override_result,
+        normalize_dns_records, parse_os_release, resolve_dns_name, HelperTunnelConfiguration,
+        HelperTunnelHost,
     };
     use serde_json::{json, Value};
+
+    fn dns_query(name: &str) -> Vec<u8> {
+        let mut request = vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
+        for label in name.split('.') {
+            request.push(label.len() as u8);
+            request.extend_from_slice(label.as_bytes());
+        }
+        request.push(0);
+        request.extend_from_slice(&1_u16.to_be_bytes());
+        request.extend_from_slice(&1_u16.to_be_bytes());
+        request
+    }
+
+    #[test]
+    fn local_dns_resolves_specific_wildcard_records() {
+        let records = normalize_dns_records(vec![
+            ("*.xx.com".to_string(), "10.0.0.2".to_string()),
+            ("*.*.xx.net".to_string(), "10.0.0.3".to_string()),
+        ]);
+        assert_eq!(
+            resolve_dns_name("api.xx.com", &records).as_deref(),
+            Some("10.0.0.2")
+        );
+        assert_eq!(
+            resolve_dns_name("a.b.xx.net", &records).as_deref(),
+            Some("10.0.0.3")
+        );
+        assert_eq!(resolve_dns_name("xx.com", &records), None);
+        assert_eq!(resolve_dns_name("api.foo.xx.com", &records), None);
+    }
+
+    #[test]
+    fn local_dns_builds_a_record_response() {
+        let records = normalize_dns_records(vec![("*.xx.com".into(), "10.0.0.2".into())]);
+        let response = build_dns_response(&dns_query("api.xx.com"), &records).expect("response");
+        assert_eq!(&response[0..2], &[0x12, 0x34]);
+        assert_eq!(&response[2..4], &[0x81, 0x80]);
+        assert_eq!(&response[6..8], &[0x00, 0x01]);
+        assert!(response.ends_with(&[10, 0, 0, 2]));
+    }
 
     #[test]
     fn classifies_probe_timeout_errors() {

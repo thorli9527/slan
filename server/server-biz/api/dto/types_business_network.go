@@ -61,14 +61,6 @@ type UpdateNetworkMemberStatusRequest struct {
 	Status string `json:"status"`
 }
 
-// JoinNetworkByOwnerEmailRequest 允许用户按宿主邮箱加入其网络。
-type JoinNetworkByOwnerEmailRequest struct {
-	// OwnerEmail 是目标网络宿主用户的邮箱。
-	OwnerEmail string `json:"ownerEmail"`
-	// DeviceID 是当前用户要加入目标网络的设备 ID。
-	DeviceID string `json:"deviceId"`
-}
-
 // JoinNetworkByKeyRequest 允许用户按网络加入 key 接入目标网络。
 type JoinNetworkByKeyRequest struct {
 	// JoinKey 是目标网络 owner 设置的加入 key。
@@ -94,10 +86,9 @@ type UpdateAttachmentRemarkRequest struct {
 	Remark string `json:"remark,omitempty"`
 }
 
-// AttachDeviceRequest 用于把设备挂载到指定子网。
-type AttachDeviceRequest struct {
-	// DeviceID 是要挂载到子网的设备 ID。
-	DeviceID string `json:"deviceId"`
+// UpdateAttachmentStatusRequest allows the network owner to enable or disable a bound device.
+type UpdateAttachmentStatusRequest struct {
+	Status string `json:"status"`
 }
 
 // Network 表示成员、权限与子网归属关系的逻辑分组。
@@ -132,6 +123,10 @@ type PlanStatus struct {
 	FreeDeviceLimit         int    `json:"freeDeviceLimit"`
 	MaxActiveDevices        int    `json:"maxActiveDevices"`
 	RelayBandwidthLimitKbps int    `json:"relayBandwidthLimitKbps,omitempty"`
+	RelayIngressKbps        int    `json:"relayIngressKbps,omitempty"`
+	RelayEgressKbps         int    `json:"relayEgressKbps,omitempty"`
+	UDPIngressKbps          int    `json:"udpIngressKbps,omitempty"`
+	UDPEgressKbps           int    `json:"udpEgressKbps,omitempty"`
 	P2PUnlimited            bool   `json:"p2pUnlimited,omitempty"`
 	DNSAvailable            bool   `json:"dnsAvailable"`
 }
@@ -207,16 +202,6 @@ type NetworkJoinResult struct {
 	// Member 是新创建或已存在的网络层级成员关系。
 	Member NetworkMember `json:"member"`
 	// Attachment 是设备落到默认子网后的挂载结果。
-	Attachment SubnetAttachment `json:"attachment"`
-}
-
-// NetworkJoinByOwnerEmailResult 返回按邮箱加入别人网络后的网络与挂载结果。
-type NetworkJoinByOwnerEmailResult struct {
-	// Network 是按邮箱解析到的目标宿主网络。
-	Network Network `json:"network"`
-	// Member 是当前设备在目标网络中的成员关系。
-	Member NetworkMember `json:"member"`
-	// Attachment 是当前设备加入默认子网后的挂载结果。
 	Attachment SubnetAttachment `json:"attachment"`
 }
 

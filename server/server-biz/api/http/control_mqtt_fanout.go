@@ -162,7 +162,13 @@ func broadcastNetworkRestartRequired(deps routerDeps, networkID string, restart 
 }
 
 func broadcastDeviceIPReassigned(deps routerDeps, networkID string, deviceIP controlmsg.DeviceIPReassigned) {
+	if deviceIP.DeviceID != "" {
+		_ = publishControlMQTTEnvelope(deps, deviceIP.DeviceID, "device_ip_reassigned", "", deviceIP)
+	}
 	for _, peerSession := range mqttSessionsInNetwork(deps, networkID, "") {
+		if peerSession.DeviceID == deviceIP.DeviceID {
+			continue
+		}
 		_ = publishControlMQTTEnvelope(deps, peerSession.DeviceID, "device_ip_reassigned", "", deviceIP)
 	}
 }

@@ -3,7 +3,8 @@ import 'package:slan_app/infra/app_core/scope/app_host_config.dart';
 
 void main() {
   test('authLoginUrl rewrites console path to root login entrypoint', () {
-    final config = AppHostConfig.tryParse('https://demo.slan.example:4200/console');
+    final config =
+        AppHostConfig.tryParse('https://demo.slan.example:4200/console');
 
     expect(config, isNotNull);
     expect(

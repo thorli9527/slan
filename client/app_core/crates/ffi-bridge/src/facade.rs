@@ -126,6 +126,7 @@ impl std::fmt::Display for DataPlaneError {
 }
 
 pub trait AppCoreFacade: Send + Sync {
+    fn restore_session(&self, session: Session) -> Result<(), String>;
     fn register(&self, email: String, password: String) -> Result<Session, String>;
     fn login(&self, email: String, password: String) -> Result<Session, String>;
     fn refresh_session(
@@ -158,11 +159,6 @@ pub trait AppCoreFacade: Send + Sync {
     fn join_network(
         &self,
         network_id: String,
-        device_id: String,
-    ) -> Result<NetworkJoinResult, String>;
-    fn join_network_by_owner_email(
-        &self,
-        owner_email: String,
         device_id: String,
     ) -> Result<NetworkJoinResult, String>;
     fn join_network_by_key(
@@ -200,6 +196,9 @@ pub trait AppCoreFacade: Send + Sync {
         virtual_ip: Option<String>,
         reported_at: Option<i64>,
     ) -> Result<(), String>;
+    fn report_device_network_state(&self) -> Result<(), String>;
+    fn enable_local_network(&self, network_id: Option<String>) -> Result<BootstrapConfig, String>;
+    fn disable_local_network(&self, network_id: Option<String>) -> Result<(), String>;
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String>;
     fn control_sync(&self) -> Result<BootstrapConfig, String>;
     fn control_status(&self) -> Result<ControlStatusView, String>;

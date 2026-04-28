@@ -15,8 +15,11 @@ of scope here.
    If the server already created an owned network during registration, reuse
    the `ownedNetwork` returned by `/networks/home`.
 7. `POST /bootstrap` with the selected `nodeId` and `networkId`
-8. Use the returned control session token to start the MQTT control channel.
-9. Call `POST /relay/tickets` only when direct path setup fails and a relay
+8. In bridge/service desktop mode, `app-core-service` owns MQTT control,
+   control-sync, local tunnel, local DNS, and network-state reporting. Flutter
+   only asks the service to enable or disable the selected network.
+9. Use the returned control session token to start the MQTT control channel.
+10. Call `POST /relay/tickets` only when direct path setup fails and a relay
    fallback is needed.
 
 `POST /control/sessions` is still available when a client already has device,
@@ -49,7 +52,7 @@ Device runtime state is split into three meanings:
    (`controlReachable=true`).
 2. The device becomes network-online only after the user enables the network
    and the local tunnel is up (`networkOnline=true`, `tunnelUp=true`).
-3. After MQTT is connected, the app keeps reporting
+3. After MQTT is connected, the client runtime keeps reporting
    `controlReachable=true` every 15 seconds for the selected network. Before
    the tunnel is enabled this report carries `networkOnline=false`.
 4. While the network is enabled, the same heartbeat reports
@@ -60,17 +63,27 @@ Device runtime state is split into three meanings:
 The preferred transport for the state heartbeat is MQTT topic
 `{topicPrefix}/networks/{networkId}/state`, where the credential-specific
 `topicPrefix` already contains the device id. `PUT
-/devices/{deviceId}/networks/{networkId}/state` remains the HTTP fallback and
-compatibility path. Both transports write the same `DeviceNetworkState` record.
+/devices/{deviceId}/networks/{networkId}/state` remains the HTTP fallback. Both
+transports write the same `DeviceNetworkState` record.
 
 When disabling a network, the app reports `networkOnline=false` immediately and
 then calls `POST /networks/{networkId}/deactivate`. If MQTT remains connected,
 the app continues the 15-second control reachability heartbeat with
 `networkOnline=false`.
 
-Legacy `Device.status` is kept only as a compatibility field. New management
-views should treat `Device.networkState.networkOnline` as the source of truth
-for online devices.
+Management views should treat `Device.networkState.networkOnline` as the
+source of truth for online devices.
+
+In the current desktop bridge/service architecture, the 15-second heartbeat and
+45-second freshness semantics are implemented below Flutter:
+
+- Flutter persists the user's last requested network usage state and, after a
+  valid login/session refresh, asks `app-core-service` to restore the last
+  enabled network.
+- `app-core-service` runs the recurring control-sync and network-state report
+  jobs.
+- `app-core-helper` owns the OS-facing tunnel and local DNS runtime.
+- Flutter must not directly mutate tunnel peers or local DNS in bridge mode.
 
 Implementation checkpoints:
 
@@ -78,8 +91,8 @@ Implementation checkpoints:
   `HomePage` enables or disables the selected network.
 - App coordinator: `AppCoreCoordinator` keeps `selectedNetworkId` and passes it
   to activate, deactivate, bootstrap, and control refresh flows.
-- Native bridge: `joinNetwork`, `joinNetworkByOwnerEmail`,
-  `joinNetworkByKey`, `switchNetwork`, and `activateNetwork` return
+- Native bridge: `joinNetwork`, `joinNetworkByKey`, `switchNetwork`, and
+  `activateNetwork` return
   `NetworkJoinResult`.
 - Controller client: join, switch, and activate parse the server
   `member + attachment` response so the app can keep `networkId`,
@@ -90,9 +103,7 @@ Implementation checkpoints:
 1. `POST /auth/register` or `POST /auth/login`
 2. `POST /devices/register`
 3. `POST /nodes/register`
-4. Use one discovery path:
-   - `POST /networks/join-by-owner-email` when the user typed an owner email.
-   - `POST /networks/join-by-key` when the user has an explicit join key.
+4. Call `POST /networks/join-by-key` with the invitation code.
 5. Use the returned `networkId` and attachment result as the active network.
 6. `POST /bootstrap` with the joined `networkId` and local `nodeId`.
 7. Use `POST /relay/tickets` only after direct connection attempts fail.
@@ -105,14 +116,12 @@ If the user provides an alias, the app updates the joined attachment remark:
    the device behind that attachment.
 4. Refresh `GET /networks` so the member list displays the alias.
 
-The web console follows the same rule for its owner-email and join-key entry
-points: alias is optional, but when provided it is persisted through the
+The web console follows the same rule for its join-key entry point: alias is
+optional, but when provided it is persisted through the
 attachment remark API before the workspace is refreshed.
 
 ## Join Semantics
 
-- `join-by-owner-email` discovers the target network by owner email and then
-  performs the same membership and attachment work as `join`.
 - `join-by-key` discovers the target network by join key and then performs the
   same membership and attachment work as `join`.
 - `join` is the explicit form used when the client already knows `networkId`.
@@ -134,11 +143,12 @@ join and activate:
    `GET /networks`.
 4. `Enable Network` calls `POST /networks/{networkId}/activate`, then
    `POST /bootstrap` with the same `networkId`.
-5. After the local tunnel is up, the app reports network state through
+5. After the local tunnel is up, the client runtime reports network state through
    `PUT /devices/{deviceId}/networks/{networkId}/state` and starts the
    15-second heartbeat.
-6. `Disable Network` reports `networkOnline=false`, brings down the local
-   tunnel, then calls `POST /networks/{networkId}/deactivate`.
+6. `Disable Network` asks the client runtime to report `networkOnline=false`,
+   bring down the local tunnel/DNS, then call
+   `POST /networks/{networkId}/deactivate`.
 7. Control sync and connection fallback must continue using the selected
    network from the current bootstrap/network map.
 

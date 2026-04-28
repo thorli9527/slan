@@ -604,7 +604,7 @@ func TestHome_ReturnsOwnedAndActiveNetworks(t *testing.T) {
 	}
 }
 
-func TestJoinByOwnerEmail_JoinsOwnedNetwork(t *testing.T) {
+func TestJoinByKey_CreatesPendingMember(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
 	if err := state.pg.CreateUser(ctx, repo.User{
@@ -632,16 +632,14 @@ func TestJoinByOwnerEmail_JoinsOwnedNetwork(t *testing.T) {
 		t.Fatalf("create member device: %v", err)
 	}
 	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+	setNetworkJoinKey(t, state, "net-1", "0123456789abcdef0123456789abcdef")
 
-	result, err := dbNetworkService{state: state}.JoinByOwnerEmail("user-2", dto.JoinNetworkByOwnerEmailRequest{
-		OwnerEmail: "owner@local.slan",
-		DeviceID:   "dev-2",
+	result, err := dbNetworkService{state: state}.JoinByKey("user-2", dto.JoinNetworkByKeyRequest{
+		JoinKey:  "0123456789abcdef0123456789abcdef",
+		DeviceID: "dev-2",
 	})
 	if err != nil {
-		t.Fatalf("join by owner email: %v", err)
-	}
-	if result.Network.NetworkID != "net-1" {
-		t.Fatalf("expected joined net-1, got %+v", result)
+		t.Fatalf("join by key: %v", err)
 	}
 	if result.Member.Status != "pending" {
 		t.Fatalf("expected pending join request, got %+v", result.Member)
@@ -804,14 +802,15 @@ func TestPendingJoinRequiresOwnerApprovalBeforeActivation(t *testing.T) {
 		t.Fatalf("create member device: %v", err)
 	}
 	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+	setNetworkJoinKey(t, state, "net-1", "0123456789abcdef0123456789abcdef")
 
 	networkService := dbNetworkService{state: state}
-	joined, err := networkService.JoinByOwnerEmail("user-2", dto.JoinNetworkByOwnerEmailRequest{
-		OwnerEmail: "owner@local.slan",
-		DeviceID:   "dev-2",
+	joined, err := networkService.JoinByKey("user-2", dto.JoinNetworkByKeyRequest{
+		JoinKey:  "0123456789abcdef0123456789abcdef",
+		DeviceID: "dev-2",
 	})
 	if err != nil {
-		t.Fatalf("join by owner email: %v", err)
+		t.Fatalf("join by key: %v", err)
 	}
 	if joined.Member.Status != "pending" {
 		t.Fatalf("expected pending member, got %+v", joined.Member)
@@ -891,26 +890,28 @@ func TestRejectedJoinCanBeRequestedAgain(t *testing.T) {
 		t.Fatalf("create member device: %v", err)
 	}
 	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+	setNetworkJoinKey(t, state, "net-1", "0123456789abcdef0123456789abcdef")
 
 	networkService := dbNetworkService{state: state}
-	first, err := networkService.JoinByOwnerEmail("user-2", dto.JoinNetworkByOwnerEmailRequest{
-		OwnerEmail: "owner@local.slan",
-		DeviceID:   "dev-2",
+	first, err := networkService.JoinByKey("user-2", dto.JoinNetworkByKeyRequest{
+		JoinKey:  "0123456789abcdef0123456789abcdef",
+		DeviceID: "dev-2",
 	})
 	if err != nil {
-		t.Fatalf("join by owner email: %v", err)
+		t.Fatalf("join by key: %v", err)
 	}
 	if _, err := networkService.UpdateMemberStatus("owner-1", "net-1", first.Member.MemberID, dto.UpdateNetworkMemberStatusRequest{
 		Status: "rejected",
 	}); err != nil {
 		t.Fatalf("reject member: %v", err)
 	}
-	second, err := networkService.JoinByOwnerEmail("user-2", dto.JoinNetworkByOwnerEmailRequest{
-		OwnerEmail: "owner@local.slan",
-		DeviceID:   "dev-2",
+	setNetworkJoinKey(t, state, "net-1", "0123456789abcdef0123456789abcdef")
+	second, err := networkService.JoinByKey("user-2", dto.JoinNetworkByKeyRequest{
+		JoinKey:  "0123456789abcdef0123456789abcdef",
+		DeviceID: "dev-2",
 	})
 	if err != nil {
-		t.Fatalf("re-request join by owner email: %v", err)
+		t.Fatalf("re-request join by key: %v", err)
 	}
 	if second.Member.MemberID != first.Member.MemberID || second.Member.Status != "pending" {
 		t.Fatalf("expected rejected membership to reopen as pending, got first=%+v second=%+v", first.Member, second.Member)
@@ -1045,14 +1046,15 @@ func TestSwitch_ActivatesOwnedNetwork(t *testing.T) {
 	}
 	createNetworkFixture(t, state, "user-1", "net-1", "subnet-1", "10.0.0.0/16")
 	createNetworkFixture(t, state, "owner-2", "net-2", "subnet-2", "10.1.0.0/16")
+	setNetworkJoinKey(t, state, "net-2", "fedcba9876543210fedcba9876543210")
 
 	service := dbNetworkService{state: state}
-	joined, err := service.JoinByOwnerEmail("user-1", dto.JoinNetworkByOwnerEmailRequest{
-		OwnerEmail: "owner-2@local.slan",
-		DeviceID:   "dev-1",
+	joined, err := service.JoinByKey("user-1", dto.JoinNetworkByKeyRequest{
+		JoinKey:  "fedcba9876543210fedcba9876543210",
+		DeviceID: "dev-1",
 	})
 	if err != nil {
-		t.Fatalf("join foreign network: %v", err)
+		t.Fatalf("join foreign network by key: %v", err)
 	}
 	if joined.Member.Status != "pending" {
 		t.Fatalf("expected pending foreign network request, got %+v", joined.Member)
@@ -1180,7 +1182,49 @@ func TestActivateAndDeactivate_AllocatesIpOnlyWhileEnabled(t *testing.T) {
 	}
 }
 
-func TestActivate_RejectsThirdFreeActiveDevice(t *testing.T) {
+func TestActivate_RejectsSixthFreeActiveDevice(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-1",
+		Email:        "user@local.slan",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	for i := 1; i <= 6; i++ {
+		deviceID := fmt.Sprintf("dev-%d", i)
+		if err := state.pg.InsertDevice(ctx, repo.Device{
+			DeviceID:  deviceID,
+			UserID:    "user-1",
+			MachineID: fmt.Sprintf("machine-%d", i),
+			Name:      deviceID,
+			Platform:  "windows",
+			Status:    "online",
+		}); err != nil {
+			t.Fatalf("create device %s: %v", deviceID, err)
+		}
+	}
+	createNetworkFixture(t, state, "user-1", "net-1", "subnet-1", "10.0.0.0/24")
+
+	networkService := dbNetworkService{state: state}
+	for _, deviceID := range []string{"dev-1", "dev-2", "dev-3", "dev-4", "dev-5"} {
+		if _, err := networkService.Join("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: deviceID}); err != nil {
+			t.Fatalf("join %s: %v", deviceID, err)
+		}
+		if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: deviceID}); err != nil {
+			t.Fatalf("activate %s: %v", deviceID, err)
+		}
+	}
+	if _, err := networkService.Join("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-6"}); err != nil {
+		t.Fatalf("join dev-6: %v", err)
+	}
+	if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-6"}); !errors.Is(err, service.ErrDeviceLimitExceeded) {
+		t.Fatalf("expected fixed free limit to reject sixth active device, got %v", err)
+	}
+}
+
+func TestActivate_UsesGlobalAndUserDeviceLimitConfig(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
 	if err := state.pg.CreateUser(ctx, repo.User{
@@ -1203,6 +1247,16 @@ func TestActivate_RejectsThirdFreeActiveDevice(t *testing.T) {
 			t.Fatalf("create device %s: %v", deviceID, err)
 		}
 	}
+	if err := state.pg.UpsertPlanConfig(ctx, repo.PlanConfig{
+		ConfigID:         globalPlanConfigID,
+		MaxActiveDevices: 2,
+		RelayIngressKbps: 100,
+		RelayEgressKbps:  200,
+		UDPIngressKbps:   300,
+		UDPEgressKbps:    400,
+	}); err != nil {
+		t.Fatalf("set global plan: %v", err)
+	}
 	createNetworkFixture(t, state, "user-1", "net-1", "subnet-1", "10.0.0.0/24")
 
 	networkService := dbNetworkService{state: state}
@@ -1218,7 +1272,29 @@ func TestActivate_RejectsThirdFreeActiveDevice(t *testing.T) {
 		t.Fatalf("join dev-3: %v", err)
 	}
 	if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); !errors.Is(err, service.ErrDeviceLimitExceeded) {
-		t.Fatalf("expected fixed free limit to reject third active device, got %v", err)
+		t.Fatalf("expected global limit to reject third active device, got %v", err)
+	}
+	if err := state.pg.UpsertUserPlanOverride(ctx, repo.UserPlanOverride{
+		UserID:           "user-1",
+		MaxActiveDevices: 3,
+		RelayIngressKbps: 1000,
+		RelayEgressKbps:  1001,
+		UDPIngressKbps:   1002,
+		UDPEgressKbps:    1003,
+	}); err != nil {
+		t.Fatalf("set user plan override: %v", err)
+	}
+	if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); err != nil {
+		t.Fatalf("expected user override to allow third active device, got %v", err)
+	}
+	plan := state.planStatusForUser(ctx, "user-1")
+	if plan.MaxActiveDevices != 3 ||
+		plan.RelayIngressKbps != 1000 ||
+		plan.RelayEgressKbps != 1001 ||
+		plan.UDPIngressKbps != 1002 ||
+		plan.UDPEgressKbps != 1003 ||
+		plan.P2PUnlimited {
+		t.Fatalf("expected user override plan to win over global config, got %+v", plan)
 	}
 }
 
@@ -1373,7 +1449,7 @@ func TestUpdateAttachmentIP_UpdatesLease(t *testing.T) {
 	}
 }
 
-func TestDeleteAttachment_RemovesMemberAndNotifiesDevice(t *testing.T) {
+func TestUpdateAttachmentStatus_DisablesMemberAndNotifiesDevice(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
 	for _, user := range []repo.User{
@@ -1436,18 +1512,25 @@ func TestDeleteAttachment_RemovesMemberAndNotifiesDevice(t *testing.T) {
 		t.Fatalf("store control token: %v", err)
 	}
 
-	if err := (dbNetworkService{state: state}).DeleteAttachment("owner-1", "net-1", "att-2"); err != nil {
-		t.Fatalf("delete attachment: %v", err)
+	updated, err := (dbNetworkService{state: state}).UpdateAttachmentStatus("owner-1", "net-1", "att-2", dto.UpdateAttachmentStatusRequest{Status: "disabled"})
+	if err != nil {
+		t.Fatalf("disable attachment: %v", err)
 	}
-	if _, err := state.pg.GetMemberByID(ctx, "member-2"); !repo.IsNotFound(err) {
-		t.Fatalf("expected member to be deleted, got %v", err)
+	if updated.Status != "disabled" || updated.VirtualIP != "" {
+		t.Fatalf("expected disabled assignment without virtual ip, got %+v", updated)
+	}
+	if member, err := state.pg.GetMemberByID(ctx, "member-2"); err != nil || member.Status != "active" {
+		t.Fatalf("expected member to remain active for later re-enable, got member=%+v err=%v", member, err)
 	}
 	attachments, err := state.pg.ListAttachmentsByDevice(ctx, "dev-2")
 	if err != nil {
 		t.Fatalf("list attachments: %v", err)
 	}
-	if len(attachments) != 0 {
-		t.Fatalf("expected attachments to be deleted, got %+v", attachments)
+	if len(attachments) != 1 || attachments[0].Status != "disabled" || attachments[0].VirtualIP != "" {
+		t.Fatalf("expected disabled attachment to be kept, got %+v", attachments)
+	}
+	if _, err := (dbNetworkService{state: state}).Activate("user-2", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-2"}); !errors.Is(err, service.ErrForbidden) || !strings.Contains(err.Error(), "device unavailable") {
+		t.Fatalf("expected disabled device activation to be blocked, got %v", err)
 	}
 	if _, err := state.pg.GetLatestControlSessionByNode(ctx, "node-2", "net-1"); !repo.IsNotFound(err) {
 		t.Fatalf("expected control session to be deleted, got %v", err)
@@ -1473,6 +1556,119 @@ func TestDeleteAttachment_RemovesMemberAndNotifiesDevice(t *testing.T) {
 	}
 	if event := tokenStore.controlSyncEvents[0]; event.DeviceIP == nil || event.DeviceIP.DeviceID != "dev-2" || event.DeviceIP.VirtualIP != "" {
 		t.Fatalf("expected blank device ip reassignment, got %+v", event)
+	}
+
+	reenabled, err := (dbNetworkService{state: state}).UpdateAttachmentStatus("owner-1", "net-1", "att-2", dto.UpdateAttachmentStatusRequest{Status: "active"})
+	if err != nil {
+		t.Fatalf("re-enable attachment: %v", err)
+	}
+	if reenabled.Status != "active" || reenabled.VirtualIP == "" {
+		t.Fatalf("expected re-enabled assignment with virtual ip, got %+v", reenabled)
+	}
+	memberUser, err = state.pg.GetUserByID(ctx, "user-2")
+	if err != nil {
+		t.Fatalf("reload member user: %v", err)
+	}
+	if memberUser.ActiveNetworkID != "net-1" {
+		t.Fatalf("expected member active network restored, got %s", memberUser.ActiveNetworkID)
+	}
+}
+
+func TestUpdateAttachmentStatus_AllowsOwnerDeviceDisable(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:          "owner-1",
+		Email:           "owner@local.slan",
+		PasswordHash:    "hash",
+		ActiveNetworkID: "net-1",
+	}); err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-1",
+		UserID:    "owner-1",
+		MachineID: "machine-1",
+		Name:      "owner-device",
+		Platform:  "windows",
+		Status:    "online",
+	}); err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+	if err := state.pg.CreateMember(ctx, dto.NetworkMember{
+		MemberID:  "member-1",
+		NetworkID: "net-1",
+		DeviceID:  "dev-1",
+		Role:      "owner",
+		Status:    "active",
+	}); err != nil {
+		t.Fatalf("create owner member: %v", err)
+	}
+	if err := state.pg.CreateAttachment(ctx, dto.SubnetAttachment{
+		AttachmentID: "att-1",
+		NetworkID:    "net-1",
+		SubnetID:     "subnet-1",
+		DeviceID:     "dev-1",
+		VirtualIP:    "10.0.0.2",
+		Status:       "active",
+	}); err != nil {
+		t.Fatalf("create owner attachment: %v", err)
+	}
+	if err := state.pg.UpsertNode(ctx, repo.Node{
+		NodeID:        "node-1",
+		UserID:        "owner-1",
+		DeviceID:      "dev-1",
+		NodePublicKey: "node-key-1",
+		Capabilities:  []string{"desktop"},
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if err := state.pg.CreateControlSession(ctx, repo.ControlSession{
+		ControlSessionID: "ctrl-1",
+		UserID:           "owner-1",
+		DeviceID:         "dev-1",
+		NodeID:           "node-1",
+		NetworkID:        "net-1",
+		SessionToken:     "token-1",
+		ConnectedAt:      time.Now().Unix(),
+		LastSeenAt:       time.Now().Unix(),
+	}); err != nil {
+		t.Fatalf("create control session: %v", err)
+	}
+	if err := state.tokens.StoreControlSessionToken(ctx, "token-1", "owner-1", time.Hour); err != nil {
+		t.Fatalf("store control token: %v", err)
+	}
+
+	updated, err := (dbNetworkService{state: state}).UpdateAttachmentStatus("owner-1", "net-1", "att-1", dto.UpdateAttachmentStatusRequest{Status: "disabled"})
+	if err != nil {
+		t.Fatalf("owner device should be disabled: %v", err)
+	}
+	if updated.Status != "disabled" || updated.VirtualIP != "" {
+		t.Fatalf("expected owner assignment disabled, got %+v", updated)
+	}
+	if member, err := state.pg.GetMemberByID(ctx, "member-1"); err != nil || member.Status != "active" {
+		t.Fatalf("expected owner member to remain active for later re-enable, got member=%+v err=%v", member, err)
+	}
+	user, err := state.pg.GetUserByID(ctx, "owner-1")
+	if err != nil {
+		t.Fatalf("load owner: %v", err)
+	}
+	if user.ActiveNetworkID != "" {
+		t.Fatalf("expected owner active network cleared, got %s", user.ActiveNetworkID)
+	}
+	if _, err := state.pg.GetLatestControlSessionByNode(ctx, "node-1", "net-1"); !repo.IsNotFound(err) {
+		t.Fatalf("expected owner control session to be deleted, got %v", err)
+	}
+	if _, err := state.tokens.AuthenticateControlSessionToken(ctx, "token-1"); err == nil {
+		t.Fatal("expected owner control session token to be revoked")
+	}
+	tokenStore := state.tokens.(*memoryTokenStore)
+	if len(tokenStore.controlSyncEvents) < 1 || tokenStore.controlSyncEvents[0].DeviceIP == nil {
+		t.Fatalf("expected device ip reassignment event, got %+v", tokenStore.controlSyncEvents)
+	}
+	if event := tokenStore.controlSyncEvents[0]; event.DeviceIP.DeviceID != "dev-1" || event.DeviceIP.VirtualIP != "" {
+		t.Fatalf("expected owner device to receive blank virtual ip, got %+v", event)
 	}
 }
 
@@ -1557,6 +1753,8 @@ func newNetworkTestState(t *testing.T) *dbState {
 		&repo.NodePathHealth{},
 		&repo.ControlSession{},
 		&repo.DeviceNetworkState{},
+		&repo.PlanConfig{},
+		&repo.UserPlanOverride{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
@@ -1582,5 +1780,12 @@ func createNetworkFixture(t *testing.T, state *dbState, ownerUserID, networkID, 
 		DefaultSubnetCIDR: subnet.CIDR,
 	}, subnet); err != nil {
 		t.Fatalf("create network fixture: %v", err)
+	}
+}
+
+func setNetworkJoinKey(t *testing.T, state *dbState, networkID, joinKey string) {
+	t.Helper()
+	if err := state.pg.UpdateNetworkJoinKey(context.Background(), networkID, joinKey); err != nil {
+		t.Fatalf("set join key: %v", err)
 	}
 }

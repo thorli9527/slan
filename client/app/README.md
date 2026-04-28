@@ -48,15 +48,22 @@ bridge modes:
 1. Authenticate or complete the browser callback.
 2. Register or recover the local device.
 3. Register the local node.
-4. Create an owned network, or join another network by owner email or join key.
+4. Create an owned network, or join another network by join key.
 5. Optionally persist the device alias through attachment remark.
 6. Switch the selected network and activate the local device on that network.
 7. Bootstrap app_core with the selected `nodeId` and `networkId`.
 8. Connect to peers, trying direct paths first and using relay/DERP fallback when needed.
 
-The network page exposes join-by-owner-email, join-by-key, alias, refresh, and
-network switching controls. The device page owns bootstrap, connect, probe, send,
-tunnel, and platform diagnostics.
+The network page exposes join-by-key, alias, refresh, and network switching
+controls. In bridge/service mode, the home and device pages only trigger service
+actions such as enable, sync, disable, connect, probe, and send. The actual
+tunnel, DNS, MQTT control sync, and network-state heartbeat are owned by
+`app-core-service` and `app-core-helper`.
+
+The device page still keeps the legacy WireGuard tunnel debug form for non-bridge
+development modes. In bridge/service mode that form is hidden; the page shows
+only service runtime controls and status views so Flutter stays a UI/action
+layer instead of mutating local tunnel configuration directly.
 
 ## Tunnel Host Modes
 
@@ -91,6 +98,20 @@ Notes:
   service. Native desktop plugins also read it from the process environment and
   connect to it without trying to start local helper processes or OS services.
 - Windows runner build copies `app-core-helper.exe` into the app output directory after build.
+
+## Bridge Runtime Boundary
+
+When `SLAN_APP_CORE_MODE=bridge` is enabled:
+
+- Flutter persists the user's last requested enable/disable choice.
+- A valid restored session may ask `app-core-service` to re-enable the last
+  selected network.
+- `Enable Network`, `Sync State`, and `Disable Network` call the app-core
+  bridge APIs.
+- Flutter does not apply WireGuard configuration, start/stop local DNS, or own
+  the 15-second network-state heartbeat.
+- Device-page tunnel/IP/key/endpoint inputs are hidden because those values are
+  derived and applied by the service/helper runtime.
 
 ## Linux Helper In Docker From Windows
 

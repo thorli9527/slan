@@ -12,8 +12,7 @@ The main client-facing capabilities currently exported by `server-biz` are:
   state, tunnel state, health probe state, and heartbeat freshness.
 - Network lifecycle: create, list visible networks, get active/owned home
   summary, get network detail, update network metadata, join key, and DNS.
-- Join and switch: join by owner email, join by key, explicit join, switch,
-  activate, deactivate.
+- Join and switch: join by key, explicit join, switch, activate, deactivate.
 - Membership and assignment management: list/update members, list assignments,
   update attachment IP, update attachment remark.
 - Runtime bootstrap: bootstrap control-plane config, NetworkMap, relay/DERP
@@ -47,7 +46,6 @@ desktop app, app-core, and web-console client flow.
 - `/auth/refresh`
 - `/auth/callback-status/{callbackId}`
 - `/auth/callback-status/{callbackId}/complete`
-- `/mqtt/auth/check`
 - `/mqtt/bifromq/auth`
 - `/mqtt/bifromq/check`
 - `/devices/register`
@@ -59,7 +57,6 @@ desktop app, app-core, and web-console client flow.
 - `/networks/{networkId}`
 - `/networks/{networkId}/join-key`
 - `/networks/{networkId}/dns`
-- `/networks/join-by-owner-email`
 - `/networks/join-by-key`
 - `/networks/{networkId}/switch`
 - `/networks/{networkId}/join`
@@ -69,7 +66,6 @@ desktop app, app-core, and web-console client flow.
 - `/networks/{networkId}/members/{memberId}/status`
 - `/networks/{networkId}/assignments`
 - `/networks/{networkId}/subnets`
-- `/networks/{networkId}/subnets/{subnetId}/attachments`
 - `/networks/{networkId}/attachments/{attachmentId}/ip`
 - `/networks/{networkId}/attachments/{attachmentId}/remark`
 - `/bootstrap`

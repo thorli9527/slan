@@ -145,7 +145,6 @@ server-biz 需求模型
 │   ├── NET.3 NetworkMember
 │   ├── NET.4 SubnetAttachment
 │   ├── NET.5 CreateNetworkRequest
-│   ├── NET.7 AttachDeviceRequest
 │   ├── NET.8 JoinNetworkRequest
 │   ├── NET.9 NetworkJoinResult
 │   ├── NET.10 NetworkDetail
@@ -155,7 +154,6 @@ server-biz 需求模型
 │   ├── NET.14 UpdateNetworkDNSRequest
 │   ├── NET.15 SwitchNetworkRequest
 │   ├── NET.16 DeactivateNetworkRequest
-│   ├── NET.17 JoinNetworkByOwnerEmailRequest
 │   ├── NET.18 UpdateAttachmentIPRequest
 │   ├── NET.19 UpdateAttachmentRemarkRequest
 │   └── NET.20 NetworkAssignment
@@ -533,7 +531,7 @@ server-biz 需求模型
 
 1. `bootstrap` 能返回控制会话、设备 attachment、`NetworkMap` 和 `derp_map`
 2. `control/sessions` 保留为显式控制会话刷新入口
-3. join-by-owner-email / join-by-key / switch / activate / deactivate 已成为公开客户端流程
+3. join-by-key / switch / activate / deactivate 已成为公开客户端流程
 4. attachment remark 支持网络 owner 维护所有备注，也支持设备所有者维护自己的别名
 5. DERP / relay ticket 已具备 cluster-aware 字段
 

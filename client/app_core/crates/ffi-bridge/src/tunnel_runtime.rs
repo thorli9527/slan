@@ -51,7 +51,13 @@ pub fn build_tunnel_config(
             dns_servers: bootstrap
                 .network_map
                 .as_ref()
-                .map(|map| map.dns.servers.clone())
+                .map(|map| {
+                    if map.dns.wildcards.is_empty() {
+                        map.dns.servers.clone()
+                    } else {
+                        vec!["127.0.0.1".to_string()]
+                    }
+                })
                 .unwrap_or_default(),
             peers: vec![],
         },

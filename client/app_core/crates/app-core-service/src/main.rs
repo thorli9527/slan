@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,8 +23,14 @@ use windows_service::service_dispatcher;
 
 use tunnel::{TunnelBackend, WindowsEmbeddableServiceBackend};
 
+mod tasks;
+
+use tasks::{ServiceTask, ServiceTaskRunner};
+
 const DEFAULT_TCP_HOST: &str = "127.0.0.1:46391";
 const DEFAULT_CONTROL_BASE_URL: &str = "http://127.0.0.1:28080";
+const CONTROL_SYNC_AGENT_INTERVAL: Duration = Duration::from_secs(5);
+const NETWORK_STATE_REPORT_INTERVAL: Duration = Duration::from_secs(15);
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "SLANAppCoreService";
 
@@ -334,6 +341,7 @@ fn spawn_helper(
     let mut command = Command::new(helper_path);
     command.arg("--tcp-host").arg(tcp_host);
     command.env("SLAN_CONTROL_BASE_URL", control_base_url);
+    command.env("SLAN_APP_CORE_HELPER_LOG", helper_log_path());
     if let Some(driver) = driver.map(str::trim).filter(|value| !value.is_empty()) {
         command.env("SLAN_WINDOWS_TUNNEL_DRIVER", driver);
     }
@@ -375,17 +383,20 @@ fn run_supervisor(
             child.id(),
             config.tcp_host
         ));
+        let service_tasks = start_service_tasks(config.tcp_host.clone());
 
         loop {
             if is_stop_requested(stop_signal.as_ref()) {
                 write_service_log("stop requested; terminating helper");
                 let _ = child.kill();
                 let _ = child.wait();
+                service_tasks.stop_and_join();
                 return Ok(());
             }
 
             match child.try_wait() {
                 Ok(Some(status)) => {
+                    service_tasks.stop_and_join();
                     write_service_log(&format!("helper exited status={status}"));
                     if config.once {
                         if status.success() {
@@ -416,6 +427,73 @@ fn run_supervisor(
         write_service_log("helper exited unexpectedly; restarting after backoff");
         thread::sleep(Duration::from_secs(1));
     }
+}
+
+fn start_service_tasks(tcp_host: String) -> ServiceTaskRunner {
+    let control_sync_host = tcp_host.clone();
+    let network_state_host = tcp_host;
+    ServiceTaskRunner::start(
+        vec![
+            ServiceTask::periodic("control-sync", CONTROL_SYNC_AGENT_INTERVAL, move || {
+                invoke_helper_control_sync(&control_sync_host)
+            }),
+            ServiceTask::periodic(
+                "network-state-report",
+                NETWORK_STATE_REPORT_INTERVAL,
+                move || invoke_helper_report_device_network_state(&network_state_host),
+            ),
+        ],
+        Arc::new(|message| write_service_log(&message)),
+    )
+}
+
+fn invoke_helper_control_sync(tcp_host: &str) -> Result<(), String> {
+    invoke_helper_method(tcp_host, "controlSync")
+}
+
+fn invoke_helper_report_device_network_state(tcp_host: &str) -> Result<(), String> {
+    invoke_helper_method(tcp_host, "reportDeviceNetworkState")
+}
+
+fn invoke_helper_method(tcp_host: &str, method: &str) -> Result<(), String> {
+    let mut stream = TcpStream::connect(tcp_host)
+        .map_err(|err| format!("connect helper rpc {tcp_host}: {err}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .map_err(|err| format!("set helper read timeout: {err}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(4)))
+        .map_err(|err| format!("set helper write timeout: {err}"))?;
+    stream
+        .write_all(format!(r#"{{"method":"{method}","args":{{}}}}"#).as_bytes())
+        .map_err(|err| format!("write {method} rpc: {err}"))?;
+    stream
+        .write_all(b"\n")
+        .map_err(|err| format!("write {method} rpc newline: {err}"))?;
+    stream
+        .flush()
+        .map_err(|err| format!("flush {method} rpc: {err}"))?;
+    let reader_stream = stream
+        .try_clone()
+        .map_err(|err| format!("clone helper rpc stream: {err}"))?;
+    let mut reader = BufReader::new(reader_stream);
+    let mut line = String::new();
+    let bytes = reader
+        .read_line(&mut line)
+        .map_err(|err| format!("read {method} rpc response: {err}"))?;
+    if bytes == 0 {
+        return Err(format!("helper rpc closed before {method} response"));
+    }
+    let response: serde_json::Value = serde_json::from_str(line.trim())
+        .map_err(|err| format!("decode {method} rpc response: {err}"))?;
+    if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+        return Ok(());
+    }
+    let error = response
+        .get("error")
+        .and_then(|value| value.as_str())
+        .unwrap_or("helper rpc failed");
+    Err(error.to_string())
 }
 
 fn is_stop_requested(stop_signal: Option<&Arc<AtomicBool>>) -> bool {
@@ -464,6 +542,35 @@ fn service_log_path() -> PathBuf {
             }
         }
         std::env::temp_dir().join("app-core-service.log")
+    }
+}
+
+fn helper_log_path() -> PathBuf {
+    if let Ok(configured) = std::env::var("SLAN_APP_CORE_HELPER_LOG") {
+        let trimmed = configured.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(program_data) = std::env::var("ProgramData") {
+        let trimmed = program_data.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed)
+                .join("SLAN")
+                .join("app-core-helper.log");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    return PathBuf::from(r"C:\ProgramData\SLAN\app-core-helper.log");
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(parent) = current_exe.parent() {
+                return parent.join("app-core-helper.log");
+            }
+        }
+        std::env::temp_dir().join("app-core-helper.log")
     }
 }
 
@@ -536,4 +643,65 @@ fn set_windows_service_status(
             process_id: None,
         })
         .map_err(|err| format!("failed to update Windows service status: {err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    fn run_single_rpc_server(response: &'static str) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test helper rpc server");
+        let address = listener.local_addr().expect("read listener address");
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept helper rpc client");
+            let reader_stream = stream.try_clone().expect("clone helper rpc stream");
+            let mut reader = BufReader::new(reader_stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("read helper rpc line");
+            tx.send(line).expect("send captured helper rpc line");
+            let mut writer = stream;
+            writer
+                .write_all(response.as_bytes())
+                .expect("write helper rpc response");
+            writer
+                .write_all(b"\n")
+                .expect("write helper rpc response newline");
+        });
+        (address.to_string(), rx)
+    }
+
+    #[test]
+    fn invoke_helper_method_sends_method_name_and_accepts_ok_response() {
+        let (address, rx) = run_single_rpc_server(r#"{"ok":true,"result":{"done":true}}"#);
+
+        invoke_helper_method(&address, "controlSync").expect("control sync rpc should succeed");
+
+        let request = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("helper rpc request");
+        let json: serde_json::Value =
+            serde_json::from_str(request.trim()).expect("decode helper rpc request");
+        assert_eq!(json["method"], "controlSync");
+        assert_eq!(json["args"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn invoke_helper_method_returns_helper_error() {
+        let (address, rx) =
+            run_single_rpc_server(r#"{"ok":false,"error":"missing active session"}"#);
+
+        let error = invoke_helper_method(&address, "reportDeviceNetworkState")
+            .expect_err("helper rpc should return error");
+
+        let request = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("helper rpc request");
+        let json: serde_json::Value =
+            serde_json::from_str(request.trim()).expect("decode helper rpc request");
+        assert_eq!(json["method"], "reportDeviceNetworkState");
+        assert_eq!(error, "missing active session");
+    }
 }

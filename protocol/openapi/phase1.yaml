@@ -125,6 +125,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/AuthResponse'
 
+  /auth/password:
+    put:
+      tags: [Auth]
+      operationId: changePassword
+      summary: Change current user password
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
   /auth/callback-status/{callbackId}:
     get:
       tags: [Auth]
@@ -160,25 +181,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/StatusOKResponse'
 
-  /mqtt/auth/check:
-    post:
-      tags: [Auth]
-      operationId: checkMQTTAuth
-      summary: Validate a generated SLAN MQTT credential
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MQTTAuthCheckRequest'
-      responses:
-        '200':
-          description: MQTT auth decision
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MQTTAuthCheckResponse'
-
   /mqtt/bifromq/auth:
     post:
       tags: [Auth]
@@ -189,7 +191,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MQTTAuthCheckRequest'
+              type: object
+              required: [clientId, username, password]
+              properties:
+                clientId:
+                  type: string
+                username:
+                  type: string
+                password:
+                  type: string
       responses:
         '200':
           description: BifroMQ authentication accepted
@@ -530,29 +540,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/NetworkDeactivatedResponse'
 
-  /networks/join-by-owner-email:
-    post:
-      tags: [Networks]
-      operationId: joinNetworkByOwnerEmail
-      summary: Join network by owner email
-      description: Legacy compatibility endpoint. Current web/app clients should join by invite code / join key.
-      deprecated: true
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JoinNetworkByOwnerEmailRequest'
-      responses:
-        '200':
-          description: Network joined
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NetworkJoinByOwnerEmailResult'
-
   /networks/join-by-key:
     post:
       tags: [Networks]
@@ -689,31 +676,6 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Subnet'
-  /networks/{networkId}/subnets/{subnetId}/attachments:
-    post:
-      tags: [Networks]
-      operationId: attachDeviceToSubnet
-      summary: Attach device to subnet
-      description: Internal compatibility endpoint. Current clients use join, approval and activation flows.
-      deprecated: true
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/NetworkId'
-        - $ref: '#/components/parameters/SubnetId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AttachDeviceRequest'
-      responses:
-        '201':
-          description: Device attached
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SubnetAttachment'
-
   /networks/{networkId}/attachments/{attachmentId}/ip:
     put:
       tags: [Networks]
@@ -764,6 +726,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/NetworkAssignment'
 
+  /networks/{networkId}/attachments/{attachmentId}/status:
+    put:
+      tags: [Networks]
+      operationId: updateAttachmentStatus
+      summary: Enable or disable a network device attachment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NetworkId'
+        - $ref: '#/components/parameters/AttachmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAttachmentStatusRequest'
+      responses:
+        '200':
+          description: Attachment status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkAssignment'
+
   /nodes/register:
     post:
       tags: [Nodes]
@@ -794,7 +780,7 @@ paths:
       operationId: createControlSession
       summary: Create control channel session
       description: >
-        The control plane returns the control session token, WebSocket address, and initial NetworkMap.
+        The control plane returns the control session token, MQTT control channel credentials, and initial NetworkMap.
       security:
         - bearerAuth: []
       requestBody:
@@ -875,6 +861,42 @@ paths:
               schema:
                 $ref: '#/components/schemas/OpsLoginResponse'
 
+  /ops-api/logout:
+    post:
+      tags: [Ops]
+      operationId: opsLogout
+      summary: Logout from operations console
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
+  /ops-api/me/password:
+    put:
+      tags: [Ops]
+      operationId: opsChangeOwnPassword
+      summary: Change current operations administrator password
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeAdminPasswordRequest'
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
+
   /ops-api/overview:
     get:
       tags: [Ops]
@@ -910,6 +932,86 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/OpsUser'
+
+  /ops-api/plan-config:
+    get:
+      tags: [Ops]
+      operationId: opsGetPlanConfig
+      summary: Get global operations plan configuration
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Plan configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanConfig'
+    put:
+      tags: [Ops]
+      operationId: opsUpdatePlanConfig
+      summary: Update global operations plan configuration
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePlanConfigRequest'
+      responses:
+        '200':
+          description: Plan configuration updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanConfig'
+
+  /ops-api/users/{userId}/plan:
+    put:
+      tags: [Ops]
+      operationId: opsUpdateUserPlan
+      summary: Set a user-specific plan override
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePlanConfigRequest'
+      responses:
+        '200':
+          description: User plan override
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPlanOverride'
+    delete:
+      tags: [Ops]
+      operationId: opsDeleteUserPlan
+      summary: Delete a user-specific plan override
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User plan override deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusOKResponse'
 
   /ops-api/devices:
     get:
@@ -1247,6 +1349,16 @@ components:
         deviceId:
           type: string
 
+    ChangePasswordRequest:
+      type: object
+      required: [oldPassword, newPassword]
+      properties:
+        oldPassword:
+          type: string
+        newPassword:
+          type: string
+          minLength: 8
+
     AuthResponse:
       type: object
       required: [userId, accessToken, expiresIn]
@@ -1307,28 +1419,6 @@ components:
         expiresAt:
           type: integer
           format: int64
-
-    MQTTAuthCheckRequest:
-      type: object
-      required: [clientId, username, password]
-      properties:
-        clientId:
-          type: string
-        username:
-          type: string
-        password:
-          type: string
-
-    MQTTAuthCheckResponse:
-      type: object
-      required: [allow]
-      properties:
-        allow:
-          type: boolean
-        deviceId:
-          type: string
-        principal:
-          type: string
 
     BifroMQAuthResponse:
       type: object
@@ -1467,6 +1557,36 @@ components:
           type: array
           items:
             type: string
+        planOverride:
+          $ref: '#/components/schemas/PlanConfig'
+
+    PlanConfig:
+      type: object
+      required: [maxActiveDevices, relayIngressKbps, relayEgressKbps, udpIngressKbps, udpEgressKbps]
+      properties:
+        maxActiveDevices:
+          type: integer
+        relayIngressKbps:
+          type: integer
+        relayEgressKbps:
+          type: integer
+        udpIngressKbps:
+          type: integer
+        udpEgressKbps:
+          type: integer
+
+    UpdatePlanConfigRequest:
+      allOf:
+        - $ref: '#/components/schemas/PlanConfig'
+
+    UserPlanOverride:
+      allOf:
+        - $ref: '#/components/schemas/PlanConfig'
+        - type: object
+          required: [userId]
+          properties:
+            userId:
+              type: string
 
     OpsDevice:
       allOf:
@@ -1856,17 +1976,6 @@ components:
         deviceId:
           type: string
 
-    JoinNetworkByOwnerEmailRequest:
-      type: object
-      description: Legacy request shape kept for compatibility. Prefer JoinNetworkByKeyRequest.
-      required: [ownerEmail, deviceId]
-      properties:
-        ownerEmail:
-          type: string
-          format: email
-        deviceId:
-          type: string
-
     JoinNetworkByKeyRequest:
       type: object
       required: [joinKey, deviceId]
@@ -1927,12 +2036,11 @@ components:
         remark:
           type: string
 
-    AttachDeviceRequest:
+    UpdateAttachmentStatusRequest:
       type: object
-      description: Internal compatibility request. Web/app clients should not call this directly.
-      required: [deviceId]
+      required: [status]
       properties:
-        deviceId:
+        status:
           type: string
 
     Network:
@@ -2053,17 +2161,6 @@ components:
       type: object
       required: [member, attachment]
       properties:
-        member:
-          $ref: '#/components/schemas/NetworkMember'
-        attachment:
-          $ref: '#/components/schemas/SubnetAttachment'
-
-    NetworkJoinByOwnerEmailResult:
-      type: object
-      required: [network, member, attachment]
-      properties:
-        network:
-          $ref: '#/components/schemas/Network'
         member:
           $ref: '#/components/schemas/NetworkMember'
         attachment:

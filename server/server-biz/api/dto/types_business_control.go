@@ -26,7 +26,7 @@ type DeviceBootstrap struct {
 
 // ControlPlaneConfig 包含控制通道所需的端点配置。
 type ControlPlaneConfig struct {
-	// ControlURL keeps the legacy JSON field name; the value is now the MQTT broker URL.
+	// ControlURL is the MQTT broker URL exposed with the public wsUrl JSON field.
 	ControlURL string `json:"wsUrl"`
 	// HeartbeatSeconds 是服务端期望的保活心跳间隔。
 	HeartbeatSeconds int `json:"heartbeatSeconds"`
@@ -187,6 +187,10 @@ type AccessPolicy struct {
 	MaxActiveDevices        int    `json:"maxActiveDevices,omitempty"`
 	BandwidthLimitMbps      int    `json:"bandwidthLimitMbps,omitempty"`
 	RelayBandwidthLimitKbps int    `json:"relayBandwidthLimitKbps,omitempty"`
+	RelayIngressKbps        int    `json:"relayIngressKbps,omitempty"`
+	RelayEgressKbps         int    `json:"relayEgressKbps,omitempty"`
+	UDPIngressKbps          int    `json:"udpIngressKbps,omitempty"`
+	UDPEgressKbps           int    `json:"udpEgressKbps,omitempty"`
 	P2PUnlimited            bool   `json:"p2pUnlimited,omitempty"`
 	DNSAvailable            bool   `json:"dnsAvailable,omitempty"`
 }

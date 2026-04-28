@@ -48,6 +48,23 @@ type OpsUser struct {
 	RoleCodes []string `json:"roleCodes,omitempty"`
 	// RoleNames 是当前绑定到用户的角色名称列表。
 	RoleNames []string `json:"roleNames,omitempty"`
+	// PlanOverride 是该用户的专属配额覆盖配置；为空时继承全局配置。
+	PlanOverride *PlanConfig `json:"planOverride,omitempty"`
+}
+
+type PlanConfig struct {
+	MaxActiveDevices int `json:"maxActiveDevices"`
+	RelayIngressKbps int `json:"relayIngressKbps"`
+	RelayEgressKbps  int `json:"relayEgressKbps"`
+	UDPIngressKbps   int `json:"udpIngressKbps"`
+	UDPEgressKbps    int `json:"udpEgressKbps"`
+}
+
+type UpdatePlanConfigRequest = PlanConfig
+
+type UserPlanOverride struct {
+	UserID string `json:"userId"`
+	PlanConfig
 }
 
 // OpsDevice 描述运营入口查看到的设备摘要。

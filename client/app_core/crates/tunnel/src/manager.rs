@@ -2,12 +2,17 @@ use std::sync::Arc;
 
 use crate::TunnelConfig;
 
-/// 隧道管理能力。
 pub trait TunnelManager: Send + Sync {
-    /// 建立到对端的隧道。
     fn establish(&self, config: &TunnelConfig) -> Result<(), String>;
-    /// 按对端虚拟 IP 关闭隧道。
     fn close(&self, peer_virtual_ip: &str) -> Result<(), String>;
+
+    fn start_local_dns(&self, _records: Vec<(String, String)>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn stop_local_dns(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 impl<T> TunnelManager for Arc<T>
@@ -20,5 +25,13 @@ where
 
     fn close(&self, peer_virtual_ip: &str) -> Result<(), String> {
         self.as_ref().close(peer_virtual_ip)
+    }
+
+    fn start_local_dns(&self, records: Vec<(String, String)>) -> Result<(), String> {
+        self.as_ref().start_local_dns(records)
+    }
+
+    fn stop_local_dns(&self) -> Result<(), String> {
+        self.as_ref().stop_local_dns()
     }
 }

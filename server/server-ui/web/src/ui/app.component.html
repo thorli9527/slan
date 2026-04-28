@@ -71,7 +71,7 @@
       <section class="side-card compact-metrics">
         <div>
           <span>网络在线设备</span>
-          <strong>{{ onlineDeviceCount() }}/{{ devices().length }}</strong>
+          <strong>{{ onlineNetworkDeviceCount() }}/{{ networkDeviceCount() }}</strong>
         </div>
         <div>
           <span>当前角色</span>
@@ -189,7 +189,7 @@
             (draftRemarkChange)="setDraftRemark($event.attachmentId, $event.value)"
             (saveAttachmentRemark)="updateAttachmentRemark($event)"
             (saveAttachmentEdit)="updateAttachmentEdit($event)"
-            (deleteAttachment)="deleteAttachment($event)"
+            (toggleAttachmentStatus)="toggleAttachmentStatus($event.attachmentId, $event.status)"
             (updateMemberStatus)="updateMemberStatus($event.memberId, $event.status)"
           />
           <div class="pager" *ngIf="filteredAssignments().length > pageSize">

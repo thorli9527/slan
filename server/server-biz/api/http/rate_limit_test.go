@@ -453,6 +453,22 @@ func (fakeOpsService) ListUsers() ([]dto.OpsUser, error) {
 	return nil, nil
 }
 
+func (fakeOpsService) PlanConfig() (dto.PlanConfig, error) {
+	return dto.PlanConfig{}, nil
+}
+
+func (fakeOpsService) UpdatePlanConfig(req dto.UpdatePlanConfigRequest) (dto.PlanConfig, error) {
+	return dto.PlanConfig(req), nil
+}
+
+func (fakeOpsService) UpdateUserPlanOverride(userID string, req dto.UpdatePlanConfigRequest) (dto.UserPlanOverride, error) {
+	return dto.UserPlanOverride{UserID: userID, PlanConfig: dto.PlanConfig(req)}, nil
+}
+
+func (fakeOpsService) DeleteUserPlanOverride(userID string) error {
+	return nil
+}
+
 func (fakeOpsService) ListDevices() ([]dto.OpsDevice, error) {
 	return nil, nil
 }

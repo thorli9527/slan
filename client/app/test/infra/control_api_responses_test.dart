@@ -365,35 +365,6 @@ void main() {
     expect(ticket.signature, 'signed-payload');
   });
 
-  test('parseNetworkJoinByOwnerEmailResponse accepts network wrapper', () {
-    final join = parseNetworkJoinByOwnerEmailResponse({
-      'network': {
-        'networkId': 'net-1',
-        'name': 'home',
-        'defaultSubnetCidr': '100.64.0.0/24',
-      },
-      'member': {
-        'memberId': 'member-1',
-        'networkId': 'net-1',
-        'deviceId': 'dev-1',
-        'role': 'member',
-        'status': 'active',
-      },
-      'attachment': {
-        'attachmentId': 'att-1',
-        'networkId': 'net-1',
-        'subnetId': 'subnet-1',
-        'deviceId': 'dev-1',
-        'virtualIp': '100.64.0.2',
-      },
-    });
-
-    expect(join.networkId, 'net-1');
-    expect(join.memberId, 'member-1');
-    expect(join.attachmentId, 'att-1');
-    expect(join.virtualIp, '100.64.0.2');
-  });
-
   test('parseNetworkJoinResponse maps member attachment response', () {
     final join = parseNetworkJoinResponse({
       'member': {

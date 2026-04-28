@@ -1,6 +1,27 @@
 part of 'home_page.dart';
 
 extension _HomePageLogic on _HomePageState {
+  String _currentUserLabel(
+    AppSessionStore sessionStore, {
+    required String virtualIp,
+  }) {
+    final sessionLabel = sessionStore.session?.userLabel?.trim();
+    final ownerEmail = sessionStore.device?.ownerEmail?.trim();
+    final userId = sessionStore.session?.userId.trim();
+    final label = sessionLabel != null && sessionLabel.isNotEmpty
+        ? sessionLabel
+        : ownerEmail != null && ownerEmail.isNotEmpty
+            ? ownerEmail
+            : userId != null && userId.isNotEmpty
+                ? userId
+                : 'Unknown user';
+    final ip = virtualIp.trim();
+    if (ip.isEmpty || ip == 'No network' || ip == 'Pending allocation') {
+      return label;
+    }
+    return '$label ($ip)';
+  }
+
   Future<void> _ensureWorkspaceReady(AppSessionStore sessionStore) async {
     if (sessionStore.session == null) {
       return;
@@ -30,7 +51,7 @@ extension _HomePageLogic on _HomePageState {
       return;
     }
     if (statusMessage != null) {
-      _setNetworkConsoleStatus(statusMessage);
+      await StartupLog.write('home network status: $statusMessage');
     }
     await StartupLog.write(
       'home ensureWorkspaceReady done activeNetwork=${activeNetwork.networkId} status=${statusMessage ?? '-'}',
@@ -43,7 +64,7 @@ extension _HomePageLogic on _HomePageState {
     if (target == null || target.isEmpty) {
       return;
     }
-    final currentDeviceId = AppCoreScope.sessionStore.device?.deviceId?.trim();
+    final currentDeviceId = AppCoreScope.sessionStore.device?.deviceId.trim();
     final loginTargetDeviceId =
         currentDeviceId != null && currentDeviceId.isNotEmpty
             ? currentDeviceId
@@ -67,26 +88,76 @@ extension _HomePageLogic on _HomePageState {
     await _openExternalUrl(target);
   }
 
-  Future<void> _logoutFromClient({required bool hasActiveNetwork}) async {
-    final sessionController = AppCoreScope.sessionController;
-    if (hasActiveNetwork) {
-      try {
-        await sessionController.disableActiveNetwork();
-      } catch (_) {
-        // Best effort. Still continue with local sign out.
-      }
-    }
-    await sessionController.signOut();
+  Future<void> _logoutFromClient() async {
+    await AuthCallbackService.clearPendingServerCallback();
+    await AppCoreScope.sessionController.signOut();
   }
 
-  String _formatLoginTime(int? authenticatedAtMs) {
-    if (authenticatedAtMs == null || authenticatedAtMs <= 0) {
-      return 'Unknown';
+  Future<void> _enableActiveNetworkWithPrompt(
+    NetworkMemberModel? currentMember,
+  ) async {
+    if (_memberIsDisabled(currentMember)) {
+      await _showManagedDeviceDisabledDialog();
+      return;
     }
-    final time =
-        DateTime.fromMillisecondsSinceEpoch(authenticatedAtMs).toLocal();
-    final two = (int value) => value.toString().padLeft(2, '0');
-    return '${time.year}-${two(time.month)}-${two(time.day)} ${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
+    await AppCoreScope.sessionController.enableActiveNetwork();
+    if (!mounted) {
+      return;
+    }
+    if (_isDeviceUnavailableError(AppCoreScope.sessionStore.error)) {
+      await _showManagedDeviceDisabledDialog();
+    }
+  }
+
+  bool _memberIsDisabled(NetworkMemberModel? currentMember) {
+    final status = currentMember?.status?.trim().toLowerCase();
+    return status == 'disabled' || status == 'suspended';
+  }
+
+  bool _isDeviceUnavailableError(String? error) {
+    final normalized = error?.toLowerCase() ?? '';
+    return normalized.contains('device unavailable') ||
+        normalized.contains('contact administrator') ||
+        (normalized.contains('forbidden') && normalized.contains('disabled'));
+  }
+
+  Future<void> _showManagedDeviceDisabledDialog() async {
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('设备不可用'),
+        content: const Text('当前设备已被网络管理员停用，请联系管理员重新启用后再连接。'),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Future<void> _showDeviceUnavailableDialog() async {
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('设备不可用'),
+        content: const Text('当前设备已被管理员停用，请联系管理员启用。'),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showServerSettingsDialog(BuildContext context) async {
@@ -140,13 +211,12 @@ extension _HomePageLogic on _HomePageState {
   Future<void> _openNetworkConsoleIfNeeded() async {
     final target = AppCoreScope.webConsoleUrl;
     if (target == null || target.isEmpty) {
-      _setNetworkConsoleStatus(
+      await StartupLog.write(
         'No network is assigned and no web console URL is configured.',
       );
       return;
     }
-    _openedNetworkConsole = false;
-    _setNetworkConsoleStatus(
+    await StartupLog.write(
       'No network is assigned yet. Open the web console manually to create a network, confirm invitations, or manage DNS: $target',
     );
   }

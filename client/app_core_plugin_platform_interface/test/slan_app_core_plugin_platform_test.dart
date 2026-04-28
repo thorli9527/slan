@@ -317,7 +317,41 @@ void main() {
           'virtualIp': '10.0.2.2',
         },
         'deactivateNetwork': null,
+        'restoreSession': null,
         'setDeviceNetworkState': null,
+        'reportDeviceNetworkState': null,
+        'enableLocalNetwork': {
+          'device': {
+            'device': {
+              'deviceId': 'dev-1',
+              'name': 'desk',
+              'platform': 'desktop',
+              'status': 'online',
+              'virtualIp': '10.0.2.2',
+            },
+            'attachments': [],
+          },
+          'networks': [
+            {
+              'networkId': 'net-key',
+              'name': 'home',
+              'defaultSubnetCidr': '10.0.0.0/16',
+              'members': [],
+            },
+          ],
+          'controlPlane': {
+            'wsUrl': 'mqtt://127.0.0.1:1883',
+            'heartbeatSeconds': 15,
+          },
+          'relay': {
+            'defaultClusterId': 'local',
+            'countries': [],
+          },
+          'networkMap': {
+            'networkId': 'net-key',
+          },
+        },
+        'disableLocalNetwork': null,
         'connect': {
           'status': 'connected',
           'path': 'derp',
@@ -368,6 +402,7 @@ void main() {
         email: 'user@example.com',
         password: 'password123',
       );
+      await platform.restoreSession(session);
       final devices = await platform.listDevices();
       final joined = await platform.joinNetwork(
         networkId: 'net-1',
@@ -405,6 +440,10 @@ void main() {
         virtualIp: '10.0.2.2',
         reportedAt: 123,
       );
+      await platform.reportDeviceNetworkState();
+      final localBootstrap =
+          await platform.enableLocalNetwork(networkId: 'net-key');
+      await platform.disableLocalNetwork(networkId: 'net-key');
       final connect = await platform.connect(
         networkId: 'net-1',
         peerNodeId: 'node-2',
@@ -426,6 +465,7 @@ void main() {
       expect(remark.remark, 'desk');
       expect(activated.attachmentId, 'att-key');
       expect(switched.attachmentId, 'att-key');
+      expect(localBootstrap.networkMap?.networkId, 'net-key');
       expect(connect.path, 'derp');
       expect(probe.probeId, 'probe-1');
       expect(bytesSent, 5);
@@ -433,6 +473,7 @@ void main() {
       expect(installPlan.packages, ['wireguard-tools']);
       expect(platform.calls.map((call) => call.method), [
         'register',
+        'restoreSession',
         'listDevices',
         'joinNetwork',
         'joinNetworkByOwnerEmail',
@@ -442,6 +483,9 @@ void main() {
         'switchNetwork',
         'deactivateNetwork',
         'setDeviceNetworkState',
+        'reportDeviceNetworkState',
+        'enableLocalNetwork',
+        'disableLocalNetwork',
         'connect',
         'probe',
         'send',
@@ -453,26 +497,24 @@ void main() {
         'email': 'user@example.com',
         'password': 'password123',
       });
-      expect(platform.calls[2].args, {
+      expect(platform.calls[1].args['accessToken'], 'token-1');
+      expect(platform.calls[2].args, {});
+      expect(platform.calls[3].args, {
         'networkId': 'net-1',
         'deviceId': 'dev-1',
       });
-      expect(platform.calls[3].args, {
+      expect(platform.calls[4].args, {
         'ownerEmail': 'owner@example.com',
         'deviceId': 'dev-1',
       });
-      expect(platform.calls[4].args, {
+      expect(platform.calls[5].args, {
         'joinKey': 'join-key-1',
         'deviceId': 'dev-1',
       });
-      expect(platform.calls[5].args, {
+      expect(platform.calls[6].args, {
         'networkId': 'net-key',
         'attachmentId': 'att-key',
         'remark': 'desk',
-      });
-      expect(platform.calls[6].args, {
-        'networkId': 'net-key',
-        'deviceId': 'dev-1',
       });
       expect(platform.calls[7].args, {
         'networkId': 'net-key',
@@ -483,6 +525,10 @@ void main() {
         'deviceId': 'dev-1',
       });
       expect(platform.calls[9].args, {
+        'networkId': 'net-key',
+        'deviceId': 'dev-1',
+      });
+      expect(platform.calls[10].args, {
         'deviceId': 'dev-1',
         'networkId': 'net-key',
         'controlReachable': true,
@@ -492,15 +538,22 @@ void main() {
         'virtualIp': '10.0.2.2',
         'reportedAt': 123,
       });
-      expect(platform.calls[10].args, {
+      expect(platform.calls[11].args, {});
+      expect(platform.calls[12].args, {
+        'networkId': 'net-key',
+      });
+      expect(platform.calls[13].args, {
+        'networkId': 'net-key',
+      });
+      expect(platform.calls[14].args, {
         'networkId': 'net-1',
         'peerNodeId': 'node-2',
       });
-      expect(platform.calls[11].args, {
+      expect(platform.calls[15].args, {
         'payload': 'hello',
         'probeTimeoutMs': 7,
       });
-      expect(platform.calls[12].args, {
+      expect(platform.calls[16].args, {
         'payload': 'hello',
       });
     });

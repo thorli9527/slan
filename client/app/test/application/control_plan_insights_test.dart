@@ -63,7 +63,9 @@ void main() {
       expect(connectPlanForPeer(status, 'missing'), isNull);
     });
 
-    test('marks relay recommendation as matched when connection or probe looks relay', () {
+    test(
+        'marks relay recommendation as matched when connection or probe looks relay',
+        () {
       const plan = ControlConnectPlanModel(
         peerNodeId: 'peer-1',
         preferDirect: false,

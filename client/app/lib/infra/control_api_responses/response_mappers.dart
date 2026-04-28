@@ -10,6 +10,7 @@ extension AuthResponseDtoMapper on AuthResponseDto {
         accessToken: accessToken,
         refreshToken: refreshToken,
         expiresIn: expiresIn,
+        userLabel: email,
       );
 }
 
@@ -80,7 +81,8 @@ extension NetworkSummaryResponseDtoMapper on NetworkSummaryResponseDto {
         defaultSubnetId: defaultSubnetId,
         joinKeyConfigured: joinKeyConfigured,
         dns: const DNSConfigModel(),
-        subnets: subnets.map((subnet) => subnet.toModel()).toList(growable: false),
+        subnets:
+            subnets.map((subnet) => subnet.toModel()).toList(growable: false),
       );
 }
 
@@ -153,7 +155,8 @@ extension NetworkDetailResponseDtoMapper on NetworkDetailResponseDto {
       defaultSubnetId: defaultSubnetId,
       joinKeyConfigured: joinKeyConfigured,
       dns: dns?.toModel() ?? const DNSConfigModel(),
-      subnets: subnets.map((subnet) => subnet.toModel()).toList(growable: false),
+      subnets:
+          subnets.map((subnet) => subnet.toModel()).toList(growable: false),
       members: members
           .map(
             (member) => member.toModel(
@@ -184,11 +187,17 @@ extension NetworkMemberResponseDtoMapper on NetworkMemberResponseDto {
     String? attachmentId;
     String? remark = this.remark;
     String? virtualIp = this.virtualIp;
+    String? effectiveStatus = status;
     if (deviceId == selfDeviceId) {
       for (final attachment in selfAttachments) {
         if (attachment.networkId == networkId) {
           attachmentId = attachment.attachmentId;
           remark ??= attachment.remark;
+          final attachmentStatus = attachment.status?.trim().toLowerCase();
+          if (attachmentStatus == 'disabled' ||
+              attachmentStatus == 'suspended') {
+            effectiveStatus = attachment.status;
+          }
           if (attachment.virtualIp != null &&
               attachment.virtualIp!.isNotEmpty) {
             virtualIp = attachment.virtualIp;
@@ -204,7 +213,7 @@ extension NetworkMemberResponseDtoMapper on NetworkMemberResponseDto {
       deviceId: deviceId,
       role: role,
       createdAt: createdAt,
-      status: status,
+      status: effectiveStatus,
       virtualIp: virtualIp,
       remark: remark,
     );
@@ -246,17 +255,6 @@ extension NetworkAssignmentResponseDtoMapper on NetworkAssignmentResponseDto {
 }
 
 extension NetworkJoinResultResponseDtoMapper on NetworkJoinResultResponseDto {
-  NetworkJoinModel toModel() => NetworkJoinModel(
-        networkId: attachment.networkId,
-        deviceId: attachment.deviceId,
-        memberId: member.memberId,
-        attachmentId: attachment.attachmentId,
-        virtualIp: attachment.virtualIp,
-      );
-}
-
-extension NetworkJoinByOwnerEmailResultResponseDtoMapper
-    on NetworkJoinByOwnerEmailResultResponseDto {
   NetworkJoinModel toModel() => NetworkJoinModel(
         networkId: attachment.networkId,
         deviceId: attachment.deviceId,

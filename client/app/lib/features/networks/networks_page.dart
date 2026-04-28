@@ -103,7 +103,7 @@ class _NetworksPageState extends State<NetworksPage> {
               const SizedBox(height: 16),
               DesktopSurfaceCard(
                 title: 'Joined Networks',
-                subtitle: 'Switch changes which network Enable/Disable uses.',
+                subtitle: 'Switch changes which network the home toggle uses.',
                 child: sessionStore.networks.isEmpty
                     ? const Text('No joined networks yet.')
                     : Column(

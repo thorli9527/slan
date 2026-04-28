@@ -31,11 +31,6 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		return deps.Network.Create(rc.user(), req)
 	}))
 
-	networks.POST("/join-by-owner-email", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.JoinNetworkByOwnerEmailRequest) (dto.NetworkJoinByOwnerEmailResult, error) {
-		rc := currentRouteContext(c)
-		return deps.Network.JoinByOwnerEmail(rc.user(), req)
-	}))
-
 	networks.POST("/join-by-key", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.JoinNetworkByKeyRequest) (dto.NetworkJoinResult, error) {
 		rc := currentRouteContext(c)
 		return deps.Network.JoinByKey(rc.user(), req)
@@ -106,11 +101,6 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		return deps.Network.ListSubnets(rc.user(), rc.networkID(c))
 	}))
 
-	networks.POST("/:networkId/subnets/:subnetId/attachments", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.AttachDeviceRequest) (dto.SubnetAttachment, error) {
-		rc := currentRouteContext(c)
-		return deps.Network.AttachDevice(rc.user(), rc.networkID(c), rc.subnetID(c), req)
-	}))
-
 	networks.PUT("/:networkId/attachments/:attachmentId/ip", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.UpdateAttachmentIPRequest) (dto.SubnetAttachment, error) {
 		rc := currentRouteContext(c)
 		return deps.Network.UpdateAttachmentIP(rc.user(), rc.networkID(c), rc.attachmentID(c), req)
@@ -121,8 +111,9 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		return deps.Network.UpdateAttachmentRemark(rc.user(), rc.networkID(c), rc.attachmentID(c), req)
 	}))
 
-	networks.DELETE("/:networkId/attachments/:attachmentId", respondWithStatus(http.StatusOK, gin.H{"status": "deleted"}, func(c *gin.Context) error {
+	networks.PUT("/:networkId/attachments/:attachmentId/status", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.UpdateAttachmentStatusRequest) (dto.NetworkAssignment, error) {
 		rc := currentRouteContext(c)
-		return deps.Network.DeleteAttachment(rc.user(), rc.networkID(c), rc.attachmentID(c))
+		return deps.Network.UpdateAttachmentStatus(rc.user(), rc.networkID(c), rc.attachmentID(c), req)
 	}))
+
 }

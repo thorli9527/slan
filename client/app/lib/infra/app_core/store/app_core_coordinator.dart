@@ -11,7 +11,6 @@ import '../../../application/local_dns_service.dart';
 import '../../../application/tunnel_configuration_service.dart';
 import '../../../application/tunnel_host_gateway.dart';
 import '../../../application/tunnel_runtime_service.dart';
-import '../../mqtt/device_mqtt_service.dart';
 import '../scope/app_core_scope.dart';
 import '../models/diagnostic_models.dart';
 import '../models/identity_models.dart';
@@ -43,10 +42,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   final TunnelRuntimeService _tunnelRuntimeService;
   final TunnelConfigurationService _tunnelConfigurationService =
       const TunnelConfigurationService();
-  Timer? _networkStateTimer;
-  Timer? _controlSyncTimer;
-  bool _controlSyncInFlight = false;
-
+  bool get _serviceOwnsLocalNetwork => AppCoreScope.mode == 'bridge';
   @override
   bool get busy => sessionStore.busy;
   @override
@@ -91,12 +87,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   void resetState() {
-    _networkStateTimer?.cancel();
-    _networkStateTimer = null;
-    _controlSyncTimer?.cancel();
-    _controlSyncTimer = null;
-    _controlSyncInFlight = false;
-    unawaited(DeviceMqttService.instance.close());
     sessionStore.resetAll();
     tunnelStore.resetAll();
   }
@@ -107,12 +97,17 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   Future<void> applyExternalSession(SessionModel nextSession) async {
-    await applyExternalSessionInternal(nextSession, persistSession: true);
+    await applyExternalSessionInternal(
+      nextSession,
+      persistSession: true,
+      autoEnableLastNetwork: true,
+    );
   }
 
   Future<void> applyExternalSessionInternal(
     SessionModel nextSession, {
     required bool persistSession,
+    bool autoEnableLastNetwork = false,
   }) async {
     await runAction(() async {
       debugPrint(
@@ -127,6 +122,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       final hydrated =
           await _authSessionService.hydrateExternalSession(nextSession);
       await applyHydratedSession(hydrated, persistSession: persistSession);
+      if (autoEnableLastNetwork) {
+        await _autoEnableLastNetworkIfRequested();
+      }
     });
   }
 
@@ -176,35 +174,72 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
 
   Future<void> signOut() async {
     await runAction(() async {
-      try {
-        await bringTunnelDown();
-      } catch (_) {
-        // Best effort. Local state still needs to be cleared even if the
-        // tunnel runtime is already gone or not initialized.
+      final peerVirtualIp = tunnelStore.tunnelRuntimeView?.peerVirtualIp.trim();
+      await _persistNetworkUsageState(enabled: false);
+      if (_serviceOwnsLocalNetwork) {
+        try {
+          await AppCoreScope.instance.disableLocalNetwork(
+            networkId: sessionStore.selectedNetworkId,
+          );
+        } catch (error) {
+          debugPrint('[logout] service disable network skipped: $error');
+        }
+      } else {
+        try {
+          await bringTunnelDown();
+        } catch (_) {
+          // Best effort. Local state still needs to be cleared even if the
+          // tunnel runtime is already gone or not initialized.
+        }
+        if (peerVirtualIp != null && peerVirtualIp.isNotEmpty) {
+          try {
+            await removeTunnelPeer(peerVirtualIp: peerVirtualIp);
+          } catch (_) {
+            // Best effort. The app-core disconnect below also attempts to close
+            // the current tunnel peer.
+          }
+        }
+        try {
+          await LocalDnsService.instance.stop();
+        } catch (error) {
+          debugPrint('[logout] stop dns skipped: $error');
+        }
+        try {
+          await _reportDeviceNetworkState(
+              networkOnline: false, tunnelUp: false);
+        } catch (error) {
+          debugPrint('[logout] offline report skipped: $error');
+        }
       }
-      await LocalDnsService.instance.stop();
-      await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
-      await AppCoreScope.clearPersistedSession();
+      try {
+        await AppCoreScope.instance.disconnect();
+      } catch (error) {
+        debugPrint('[logout] app-core disconnect skipped: $error');
+        // Best effort. Signing out must clear the Flutter session even if the
+        // embedded core has already torn down its runtime.
+      }
+      try {
+        await AppCoreScope.clearPersistedSession();
+      } catch (error) {
+        debugPrint('[logout] clear persisted session skipped: $error');
+      }
       resetState();
     });
   }
 
   Future<void> _connectMqttAndMarkOnline(DeviceModel device) async {
-    final connected = await DeviceMqttService.instance.connectForDevice(device);
-    if (!connected) {
-      return;
-    }
+    final networkOnline = _hasActiveTunnelRuntime();
     try {
       await _reportDeviceNetworkState(
         deviceId: device.deviceId,
         controlReachable: true,
-        networkOnline: false,
-        tunnelUp: false,
+        networkOnline: networkOnline,
+        tunnelUp: networkOnline,
+        lastProbeOk: networkOnline ? true : null,
       );
     } catch (_) {
       // The MQTT auth provider also marks the control channel reachable.
     }
-    _startDeviceNetworkHeartbeat(networkOnline: false, tunnelUp: false);
   }
 
   Future<void> _reportDeviceNetworkState({
@@ -226,20 +261,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     final probeOk =
         lastProbeOk ?? tunnelStore.lastProbe?.replyObserved ?? false;
     final reportedAt = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    try {
-      await DeviceMqttService.instance.publishNetworkState(
-        device: sessionStore.device,
-        networkId: targetNetwork,
-        controlReachable: controlReachable,
-        networkOnline: networkOnline,
-        tunnelUp: tunnelUp,
-        lastProbeOk: probeOk,
-        virtualIp: virtualIp,
-        reportedAt: reportedAt,
-      );
-    } catch (error) {
-      debugPrint('[device-mqtt] network state publish failed: $error');
-    }
     await AppCoreScope.instance.setDeviceNetworkState(
       deviceId: targetDevice,
       networkId: targetNetwork,
@@ -252,17 +273,63 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     );
   }
 
-  void _startDeviceNetworkHeartbeat({
-    required bool networkOnline,
-    required bool tunnelUp,
-  }) {
-    _networkStateTimer?.cancel();
-    _networkStateTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      unawaited(_reportDeviceNetworkState(
-        networkOnline: networkOnline,
-        tunnelUp: tunnelUp,
-      ));
-    });
+  bool _hasActiveTunnelRuntime() {
+    if (sessionStore.selectedNetworkId == null ||
+        tunnelStore.tunnelRuntimeView == null) {
+      return false;
+    }
+    final state = tunnelStore.tunnelRuntimeView!.state.toLowerCase().trim();
+    return state != 'idle' && state != 'inactive' && state != 'disabled';
+  }
+
+  Future<void> _persistNetworkUsageState({required bool enabled}) async {
+    final userId = sessionStore.session?.userId.trim();
+    if (userId == null || userId.isEmpty) {
+      return;
+    }
+    await AppCoreScope.persistNetworkUsageState(
+      userId: userId,
+      enabled: enabled,
+      networkId: sessionStore.selectedNetworkId,
+    );
+  }
+
+  Future<void> _autoEnableLastNetworkIfRequested() async {
+    final session = sessionStore.session;
+    if (session == null) {
+      return;
+    }
+    final usageState = await AppCoreScope.readNetworkUsageState(session.userId);
+    if (usageState?.enabled != true) {
+      return;
+    }
+    final preferredNetworkId = usageState?.networkId?.trim();
+    if (preferredNetworkId != null && preferredNetworkId.isNotEmpty) {
+      sessionStore.syncSelectedNetworkId(
+        preferredNetworkId: preferredNetworkId,
+      );
+    } else {
+      sessionStore.syncSelectedNetworkId();
+    }
+    if (sessionStore.selectedNetworkId == null ||
+        sessionStore.networks.isEmpty) {
+      debugPrint('[startup] skip auto enable: no selected network');
+      return;
+    }
+    if (_hasActiveTunnelRuntime()) {
+      await _reportDeviceNetworkState(
+        networkOnline: true,
+        tunnelUp: true,
+        lastProbeOk: true,
+      );
+      return;
+    }
+    debugPrint(
+      '[startup] last network state enabled; auto enabling ${sessionStore.selectedNetworkId}',
+    );
+    sessionStore.notice = 'Restoring last enabled network';
+    emitStateChanged();
+    await _enableActiveNetworkCore();
   }
 
   Future<void> registerDevice({
@@ -282,10 +349,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
           publicKey: publicKey,
         ),
       );
-      if (result.device != null) {
-        sessionStore.syncDevice(result.device);
-        await _connectMqttAndMarkOnline(result.device!);
-      }
+      sessionStore.syncDevice(result.device);
+      await _connectMqttAndMarkOnline(result.device);
     });
   }
 
@@ -415,14 +480,12 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   Future<void> joinNetwork({
-    String? ownerEmail,
     String? joinKey,
   }) async {
     await runAction(() async {
       final result = await _workspaceService.joinNetwork(
         session: sessionStore.session,
         currentDevice: sessionStore.device,
-        ownerEmail: ownerEmail,
         joinKey: joinKey,
       );
       sessionStore.networks = result.networks;
@@ -469,70 +532,106 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   Future<void> enableActiveNetwork() async {
-    await runAction(() async {
-      if (sessionStore.session == null) {
-        throw StateError('login required');
-      }
-      if (sessionStore.device == null) {
-        throw StateError('当前设备尚未注册完成。');
-      }
-      if (sessionStore.networks.isEmpty) {
-        sessionStore.notice = '当前账号还没有可启用的网络，请先在网页端创建或接入网络。';
-        return;
-      }
-      sessionStore.syncSelectedNetworkId();
-      final runtime = await _workspaceService.prepareActiveNetworkRuntime(
-        session: sessionStore.session,
-        currentDevice: sessionStore.device,
-        currentNode: sessionStore.node,
-        currentNetworks: sessionStore.networks,
-        targetNetworkId: sessionStore.selectedNetworkId,
-      );
-      debugPrint(
-        '[tunnel-enable] runtime ready activeNetwork=${runtime.activeNetwork.networkId} node=${runtime.node?.nodeId} device=${runtime.device?.deviceId}',
-      );
-      sessionStore.node = runtime.node;
-      sessionStore.bootstrap = runtime.bootstrap;
-      sessionStore.controlStatus = runtime.controlStatus;
-      sessionStore.syncDevice(runtime.device);
-      sessionStore.networks = runtime.networks;
-      sessionStore.syncSelectedNetworkId(
-        preferredNetworkId: runtime.activeNetwork.networkId,
-      );
-      await LocalDnsService.instance.configureFromNetwork(runtime.activeNetwork);
+    await runAction(_enableActiveNetworkCore);
+  }
 
-      final config =
-          _tunnelConfigurationService.buildActiveNetworkConfiguration(
-        network: runtime.activeNetwork,
-        deviceId: sessionStore.device!.deviceId,
-        devicePublicKey: sessionStore.device!.publicKey,
+  Future<void> _enableActiveNetworkCore() async {
+    if (sessionStore.session == null) {
+      throw StateError('login required');
+    }
+    if (sessionStore.device == null) {
+      throw StateError('当前设备尚未注册完成。');
+    }
+    if (sessionStore.networks.isEmpty) {
+      sessionStore.notice = '当前账号还没有可启用的网络，请先在网页端创建或接入网络。';
+      return;
+    }
+    sessionStore.syncSelectedNetworkId();
+    final requestedNetworkId = sessionStore.selectedNetworkId;
+    if (_serviceOwnsLocalNetwork) {
+      final serviceBootstrap = await AppCoreScope.instance.enableLocalNetwork(
+        networkId: requestedNetworkId,
       );
-      final peerVirtualIp = config.peer.allowedIps.first.split('/').first;
-      debugPrint(
-        '[tunnel-enable] apply start peerVirtualIp=$peerVirtualIp listenPort=${config.interface.listenPort}',
-      );
-      final applyReport = await applyTunnelConfiguration(
-        configuration: config,
-        verifyPeerVirtualIp: peerVirtualIp,
-      );
-      debugPrint(
-        '[tunnel-enable] apply done succeeded=${applyReport.succeeded} phase=${applyReport.phase} error=${applyReport.errorMessage}',
-      );
-      if (!applyReport.succeeded) {
-        return;
+      if (serviceBootstrap == null) {
+        throw StateError('app-core-service failed to enable local network');
       }
-      debugPrint('[tunnel-enable] bring-up start peerVirtualIp=$peerVirtualIp');
-      await bringTunnelUp(verifyPeerVirtualIp: peerVirtualIp);
-      await LocalDnsService.instance.configureFromNetwork(runtime.activeNetwork);
-      await _reportDeviceNetworkState(
-        networkOnline: true,
-        tunnelUp: true,
-        lastProbeOk: true,
+      sessionStore.bootstrap = serviceBootstrap;
+      sessionStore.controlStatus = await AppCoreScope.instance.controlStatus();
+      sessionStore.syncDevice(serviceBootstrap.device);
+      sessionStore.networks = serviceBootstrap.networks;
+      sessionStore.syncSelectedNetworkId(
+        preferredNetworkId: requestedNetworkId,
       );
-      _startDeviceNetworkHeartbeat(networkOnline: true, tunnelUp: true);
-      _syncControlSyncPollingState();
-      debugPrint('[tunnel-enable] bring-up done peerVirtualIp=$peerVirtualIp');
-    });
+      await _persistNetworkUsageState(enabled: true);
+      sessionStore.notice = 'Network enabled';
+      debugPrint(
+        '[tunnel-enable] service handled network=${sessionStore.selectedNetworkId}',
+      );
+      return;
+    }
+    final runtime = await _workspaceService.prepareActiveNetworkRuntime(
+      session: sessionStore.session,
+      currentDevice: sessionStore.device,
+      currentNode: sessionStore.node,
+      currentNetworks: sessionStore.networks,
+      targetNetworkId: sessionStore.selectedNetworkId,
+    );
+    debugPrint(
+      '[tunnel-enable] runtime ready activeNetwork=${runtime.activeNetwork.networkId} node=${runtime.node.nodeId} device=${runtime.device.deviceId}',
+    );
+    sessionStore.node = runtime.node;
+    sessionStore.bootstrap = runtime.bootstrap;
+    sessionStore.controlStatus = runtime.controlStatus;
+    sessionStore.syncDevice(runtime.device);
+    sessionStore.networks = runtime.networks;
+    sessionStore.syncSelectedNetworkId(
+      preferredNetworkId: runtime.activeNetwork.networkId,
+    );
+    await LocalDnsService.instance.configureFromNetwork(runtime.activeNetwork);
+
+    final config = _tunnelConfigurationService.buildActiveNetworkConfiguration(
+      network: runtime.activeNetwork,
+      deviceId: sessionStore.device!.deviceId,
+      devicePublicKey: sessionStore.device!.publicKey,
+    );
+    final peerVirtualIp = config.peer.allowedIps.first.split('/').first;
+    debugPrint(
+      '[tunnel-enable] apply start peerVirtualIp=$peerVirtualIp listenPort=${config.interface.listenPort}',
+    );
+    final applyReport = await applyTunnelConfiguration(
+      configuration: config,
+      verifyPeerVirtualIp: peerVirtualIp,
+    );
+    debugPrint(
+      '[tunnel-enable] apply done succeeded=${applyReport.succeeded} phase=${applyReport.phase} error=${applyReport.errorMessage}',
+    );
+    if (!applyReport.succeeded) {
+      return;
+    }
+    debugPrint('[tunnel-enable] bring-up start peerVirtualIp=$peerVirtualIp');
+    final bringUpReport = await bringTunnelUp(
+      verifyPeerVirtualIp: peerVirtualIp,
+    );
+    debugPrint(
+      '[tunnel-enable] bring-up report succeeded=${bringUpReport.succeeded} phase=${bringUpReport.phase} error=${bringUpReport.errorMessage}',
+    );
+    if (!bringUpReport.succeeded) {
+      await _reportDeviceNetworkState(
+        networkOnline: false,
+        tunnelUp: false,
+        lastProbeOk: false,
+      );
+      await _persistNetworkUsageState(enabled: false);
+      return;
+    }
+    await LocalDnsService.instance.configureFromNetwork(runtime.activeNetwork);
+    await _reportDeviceNetworkState(
+      networkOnline: true,
+      tunnelUp: true,
+      lastProbeOk: true,
+    );
+    await _persistNetworkUsageState(enabled: true);
+    debugPrint('[tunnel-enable] bring-up done peerVirtualIp=$peerVirtualIp');
   }
 
   Future<void> disableActiveNetwork() async {
@@ -541,19 +640,34 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         sessionStore.notice = '当前没有已接入的活动网络。';
         return;
       }
-      await bringTunnelDown();
-      await LocalDnsService.instance.stop();
-      _networkStateTimer?.cancel();
-      _networkStateTimer = null;
-      _stopControlSyncPolling();
-      await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
-      _startDeviceNetworkHeartbeat(networkOnline: false, tunnelUp: false);
-      final result = await _workspaceService.deactivateActiveNetwork(
-        session: sessionStore.session,
-        currentDevice: sessionStore.device,
-        currentNetworks: sessionStore.networks,
-        targetNetworkId: sessionStore.selectedNetworkId,
-      );
+      late final DeactivatedNetworkResult result;
+      if (_serviceOwnsLocalNetwork) {
+        final disabledByService =
+            await AppCoreScope.instance.disableLocalNetwork(
+          networkId: sessionStore.selectedNetworkId,
+        );
+        if (!disabledByService) {
+          throw StateError('app-core-service failed to disable local network');
+        }
+        await _persistNetworkUsageState(enabled: false);
+        result = DeactivatedNetworkResult(
+          device: sessionStore.device,
+          networks: sessionStore.session == null
+              ? sessionStore.networks
+              : await AppCoreScope.instance.listNetworks(),
+        );
+      } else {
+        await bringTunnelDown();
+        await LocalDnsService.instance.stop();
+        await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
+        await _persistNetworkUsageState(enabled: false);
+        result = await _workspaceService.deactivateActiveNetwork(
+          session: sessionStore.session,
+          currentDevice: sessionStore.device,
+          currentNetworks: sessionStore.networks,
+          targetNetworkId: sessionStore.selectedNetworkId,
+        );
+      }
       final currentDevice = result.device;
       sessionStore.networks = result.networks;
       sessionStore.syncSelectedNetworkId();
@@ -623,22 +737,65 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
 
   Future<String> refreshBootstrapOrControlSync() async {
     late String detail;
-    final previousLocalVirtualIp = tunnelStore.tunnelRuntimeView?.localVirtualIp;
+    if (_serviceOwnsLocalNetwork) {
+      await runAction(() async {
+        detail = await _refreshBootstrapOrControlSyncState();
+      });
+      return detail;
+    }
+    final previousLocalVirtualIp =
+        tunnelStore.tunnelRuntimeView?.localVirtualIp;
     await runAction(() async {
       detail = await _refreshBootstrapOrControlSyncState();
       await _configureLocalDnsForActiveTunnel();
     });
     await _reapplyActiveNetworkTunnelIfVirtualIpChanged(previousLocalVirtualIp);
-    _syncControlSyncPollingState();
     return detail;
   }
 
   Future<String> _refreshBootstrapOrControlSyncState() async {
+    if (_serviceOwnsLocalNetwork) {
+      final targetNodeId =
+          sessionStore.node?.nodeId ?? sessionStore.controlStatus?.nodeId;
+      final targetNetworkId = sessionStore.selectedNetworkId ??
+          sessionStore.controlStatus?.networkId;
+      if (targetNodeId == null ||
+          targetNodeId.trim().isEmpty ||
+          targetNetworkId == null ||
+          targetNetworkId.trim().isEmpty) {
+        throw StateError('nodeId and networkId are required');
+      }
+      final bootstrap = await AppCoreScope.instance.controlSync(
+        nodeId: targetNodeId,
+        networkId: targetNetworkId,
+      );
+      final controlStatus = await AppCoreScope.instance.controlStatus();
+      if (!controlStatus.networkMapPresent) {
+        await _forceDisableLocalNetwork(
+          reason: '当前设备已被服务端移出网络，本地网络已自动禁用。',
+        );
+        return '当前设备已被服务端移出网络，本地网络已自动禁用。';
+      }
+      sessionStore.bootstrap = bootstrap;
+      sessionStore.controlStatus = controlStatus;
+      sessionStore.syncDevice(bootstrap.device);
+      sessionStore.networks = bootstrap.networks;
+      sessionStore.syncSelectedNetworkId(
+        preferredNetworkId: controlStatus.networkId ?? targetNetworkId,
+      );
+      return 'Control session synchronized by app-core-service.';
+    }
     final result = await _deviceRuntimeService.refreshBootstrap(
       node: sessionStore.node,
       currentBootstrap: sessionStore.bootstrap,
       currentNetworks: sessionStore.networks,
     );
+    if (result.usedControlSync && !result.controlStatus.networkMapPresent) {
+      await _forceDisableLocalNetwork(
+        reason: '当前设备已被服务端移出网络，本地网络已自动禁用。',
+      );
+      return '当前设备已被服务端移出网络，本地网络已自动禁用。';
+    }
     sessionStore.bootstrap = result.bootstrap;
     sessionStore.controlStatus = result.controlStatus;
     sessionStore.syncDevice(result.bootstrap.device);
@@ -651,55 +808,71 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     return result.detail;
   }
 
-  void _startControlSyncPolling() {
-    _controlSyncTimer?.cancel();
-    _controlSyncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      unawaited(_backgroundControlSyncOnce());
-    });
-  }
-
-  void _syncControlSyncPollingState() {
-    if (_canRunControlSync() && tunnelStore.tunnelRuntimeView != null) {
-      _startControlSyncPolling();
-      return;
-    }
-    _stopControlSyncPolling();
-  }
-
-  void _stopControlSyncPolling() {
-    _controlSyncTimer?.cancel();
-    _controlSyncTimer = null;
-    _controlSyncInFlight = false;
-  }
-
-  Future<void> _backgroundControlSyncOnce() async {
-    if (_controlSyncInFlight ||
-        sessionStore.session == null ||
-        sessionStore.device == null ||
-        sessionStore.selectedNetworkId == null ||
-        !_canRunControlSync()) {
-      return;
-    }
-    _controlSyncInFlight = true;
-    final previousLocalVirtualIp = tunnelStore.tunnelRuntimeView?.localVirtualIp;
-    try {
-      await _refreshBootstrapOrControlSyncState();
-      emitStateChanged();
-      await _configureLocalDnsForActiveTunnel();
-      await _reapplyActiveNetworkTunnelIfVirtualIpChanged(
-        previousLocalVirtualIp,
+  Future<void> _forceDisableLocalNetwork({required String reason}) async {
+    if (_serviceOwnsLocalNetwork) {
+      try {
+        await AppCoreScope.instance.disableLocalNetwork(
+          networkId: sessionStore.selectedNetworkId,
+        );
+      } catch (error) {
+        debugPrint('[control-sync] service force disable skipped: $error');
+      }
+      sessionStore.bootstrap = null;
+      sessionStore.controlStatus = null;
+      sessionStore.networks = const [];
+      sessionStore.selectedNetworkId = null;
+      sessionStore.clearConnection();
+      tunnelStore.clearConnection();
+      tunnelStore.lastTunnelActionReport = TunnelActionReport(
+        succeeded: true,
+        detail: reason,
+        source: TunnelActionReportSource.runtimeSnapshot,
+        phase: TunnelActionPhase.verified,
       );
-    } catch (error) {
-      debugPrint('[control-sync] background sync skipped: $error');
-    } finally {
-      _controlSyncInFlight = false;
+      sessionStore.notice = reason;
+      return;
     }
-  }
-
-  bool _canRunControlSync() {
-    final controlPlane = sessionStore.bootstrap?.controlPlane;
-    return controlPlane?.sessionToken?.isNotEmpty == true &&
-        controlPlane?.wsUrl.trim().isNotEmpty == true;
+    final peerVirtualIp = tunnelStore.tunnelRuntimeView?.peerVirtualIp.trim();
+    try {
+      await bringTunnelDown();
+    } catch (error) {
+      debugPrint('[control-sync] force bring down skipped: $error');
+    }
+    if (peerVirtualIp != null && peerVirtualIp.isNotEmpty) {
+      try {
+        await removeTunnelPeer(peerVirtualIp: peerVirtualIp);
+      } catch (error) {
+        debugPrint('[control-sync] force remove peer skipped: $error');
+      }
+    }
+    try {
+      await LocalDnsService.instance.stop();
+    } catch (error) {
+      debugPrint('[control-sync] force stop dns skipped: $error');
+    }
+    try {
+      await AppCoreScope.instance.disconnect();
+    } catch (error) {
+      debugPrint('[control-sync] force app-core disconnect skipped: $error');
+    }
+    try {
+      await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
+    } catch (error) {
+      debugPrint('[control-sync] force offline report skipped: $error');
+    }
+    sessionStore.bootstrap = null;
+    sessionStore.controlStatus = null;
+    sessionStore.networks = const [];
+    sessionStore.selectedNetworkId = null;
+    sessionStore.clearConnection();
+    tunnelStore.clearConnection();
+    tunnelStore.lastTunnelActionReport = TunnelActionReport(
+      succeeded: true,
+      detail: reason,
+      source: TunnelActionReportSource.runtimeSnapshot,
+      phase: TunnelActionPhase.verified,
+    );
+    sessionStore.notice = reason;
   }
 
   Future<void> _reapplyActiveNetworkTunnelIfVirtualIpChanged(
@@ -747,7 +920,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       tunnelUp: true,
       lastProbeOk: true,
     );
-    _startDeviceNetworkHeartbeat(networkOnline: true, tunnelUp: true);
   }
 
   Future<void> _configureLocalDnsForActiveTunnel() async {
@@ -769,14 +941,28 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }) async {
     late ConnectAttemptResult result;
     await runAction(() async {
-      result = await _deviceRuntimeService.connectWithFallback(
-        networkId: networkId,
-        peerNodeId: peerNodeId,
-        reason: reason,
-        currentNode: sessionStore.node,
-        controlStatus: sessionStore.controlStatus,
-        lastProbe: lastProbe,
-      );
+      if (_serviceOwnsLocalNetwork) {
+        final connectionState = await AppCoreScope.instance.connect(
+          networkId: networkId,
+          peerNodeId: peerNodeId,
+        );
+        result = ConnectAttemptResult(
+          connectionState: connectionState,
+          relayTicket: null,
+          preflightHint: 'Connection planning is handled by app-core-service.',
+          resultHint:
+              'Connection state is ${connectionState.status}; app-core-service applied the control-plane path and fallback policy.',
+        );
+      } else {
+        result = await _deviceRuntimeService.connectWithFallback(
+          networkId: networkId,
+          peerNodeId: peerNodeId,
+          reason: reason,
+          currentNode: sessionStore.node,
+          controlStatus: sessionStore.controlStatus,
+          lastProbe: lastProbe,
+        );
+      }
       sessionStore.relayTicket = result.relayTicket;
       sessionStore.connectionState = result.connectionState;
     });
@@ -786,6 +972,13 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   Future<void> disconnect() async {
     await runAction(() async {
       await AppCoreScope.instance.disconnect();
+      if (!_serviceOwnsLocalNetwork) {
+        try {
+          await LocalDnsService.instance.stop();
+        } catch (error) {
+          debugPrint('[disconnect] stop dns skipped: $error');
+        }
+      }
       sessionStore.clearConnection();
       tunnelStore.clearConnection();
     });
@@ -795,6 +988,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     required WireGuardTunnelConfiguration configuration,
     String? verifyPeerVirtualIp,
   }) async {
+    if (_serviceOwnsLocalNetwork) {
+      return _serviceOwnedTunnelActionReport('applyTunnelConfiguration');
+    }
     final report = await runTunnelAction<TunnelActionReport>(() async {
       final result = await _tunnelRuntimeService.applyTunnelConfiguration(
         configuration: configuration,
@@ -810,6 +1006,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   Future<TunnelActionReport> bringTunnelUp({
     String? verifyPeerVirtualIp,
   }) async {
+    if (_serviceOwnsLocalNetwork) {
+      return _serviceOwnedTunnelActionReport('bringTunnelUp');
+    }
     final report = await runTunnelAction<TunnelActionReport>(() async {
       final result = await _tunnelRuntimeService.bringTunnelUp(
         verifyPeerVirtualIp: verifyPeerVirtualIp,
@@ -822,6 +1021,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   Future<TunnelActionReport> bringTunnelDown() async {
+    if (_serviceOwnsLocalNetwork) {
+      return _serviceOwnedTunnelActionReport('bringTunnelDown');
+    }
     final report = await runTunnelAction<TunnelActionReport>(() async {
       final result = await _tunnelRuntimeService.bringTunnelDown();
       tunnelStore.tunnelRuntimeView = result.runtimeView;
@@ -834,6 +1036,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   Future<TunnelActionReport> removeTunnelPeer({
     required String peerVirtualIp,
   }) async {
+    if (_serviceOwnsLocalNetwork) {
+      return _serviceOwnedTunnelActionReport('removeTunnelPeer');
+    }
     final report = await runTunnelAction<TunnelActionReport>(() async {
       final result = await _tunnelRuntimeService.removeTunnelPeer(
         peerVirtualIp: peerVirtualIp,
@@ -843,6 +1048,20 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     });
     tunnelStore.lastTunnelActionReport = report ?? _failedTunnelActionReport();
     return tunnelStore.lastTunnelActionReport!;
+  }
+
+  TunnelActionReport _serviceOwnedTunnelActionReport(String action) {
+    final report = TunnelActionReport(
+      succeeded: true,
+      detail:
+          '$action skipped because app-core-service owns local network runtime.',
+      source: TunnelActionReportSource.runtimeSnapshot,
+      phase: TunnelActionPhase.verified,
+      runtimeSnapshot: tunnelStore.tunnelRuntimeView,
+    );
+    tunnelStore.lastTunnelActionReport = report;
+    emitStateChanged();
+    return report;
   }
 
   Future<TunnelActionReport> refreshTunnelRuntime({

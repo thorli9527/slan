@@ -10,10 +10,9 @@ mod transport;
 
 pub use api::{
     ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
-    JoinNetworkByKeyRequest, JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest,
-    RefreshTokenRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest,
-    RelayTicketRequest, SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
-    UpdateNetworkDNSRequest,
+    JoinNetworkByKeyRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
+    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    SwitchNetworkRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
 };
 pub use client::HttpControllerClient;
 pub use dto::ErrorResponseDto;

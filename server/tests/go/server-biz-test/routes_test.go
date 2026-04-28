@@ -107,14 +107,14 @@ func TestPhase1JoinExistingNetworkFlow(t *testing.T) {
 		NodePublicKey: "guest-node-key",
 	}, http.StatusCreated, &dto.Node{})
 
-	byEmail := postAuth(t, app, "/networks/join-by-owner-email", guestAuth.AccessToken, dto.JoinNetworkByOwnerEmailRequest{
-		OwnerEmail: "owner@example.com",
-		DeviceID:   guestDevice.DeviceID,
-	}, http.StatusOK, &dto.NetworkJoinByOwnerEmailResult{})
-	if byEmail.Network.NetworkID != owner.networkID || byEmail.Attachment.VirtualIP == "" {
-		t.Fatalf("expected join-by-owner-email to activate guest device, got %+v", byEmail)
+	joined := postAuth(t, app, "/networks/join-by-key", guestAuth.AccessToken, dto.JoinNetworkByKeyRequest{
+		JoinKey:  "shared-join-key",
+		DeviceID: guestDevice.DeviceID,
+	}, http.StatusOK, &dto.NetworkJoinResult{})
+	if joined.Member.NetworkID != owner.networkID || joined.Attachment.VirtualIP == "" {
+		t.Fatalf("expected join-by-key to activate guest device, got %+v", joined)
 	}
-	remark := putAuth(t, app, "/networks/"+owner.networkID+"/attachments/"+byEmail.Attachment.AttachmentID+"/remark", guestAuth.AccessToken, dto.UpdateAttachmentRemarkRequest{
+	remark := putAuth(t, app, "/networks/"+owner.networkID+"/attachments/"+joined.Attachment.AttachmentID+"/remark", guestAuth.AccessToken, dto.UpdateAttachmentRemarkRequest{
 		Remark: "Guest Laptop Alias",
 	}, http.StatusOK, &dto.NetworkAssignment{})
 	if remark.Remark != "Guest Laptop Alias" || remark.DeviceID != guestDevice.DeviceID {
@@ -125,7 +125,7 @@ func TestPhase1JoinExistingNetworkFlow(t *testing.T) {
 		JoinKey:  "shared-join-key",
 		DeviceID: guestDevice.DeviceID,
 	}, http.StatusOK, &dto.NetworkJoinResult{})
-	if byKey.Member.NetworkID != owner.networkID || byKey.Attachment.AttachmentID != byEmail.Attachment.AttachmentID {
+	if byKey.Member.NetworkID != owner.networkID || byKey.Attachment.AttachmentID != joined.Attachment.AttachmentID {
 		t.Fatalf("expected join-by-key to be idempotent for same device, got %+v", byKey)
 	}
 
@@ -139,14 +139,14 @@ func TestPhase1JoinExistingNetworkFlow(t *testing.T) {
 	explicitJoin := postAuth(t, app, "/networks/"+owner.networkID+"/join", guestAuth.AccessToken, dto.JoinNetworkRequest{
 		DeviceID: guestDevice.DeviceID,
 	}, http.StatusOK, &dto.NetworkJoinResult{})
-	if explicitJoin.Attachment.AttachmentID != byEmail.Attachment.AttachmentID {
+	if explicitJoin.Attachment.AttachmentID != joined.Attachment.AttachmentID {
 		t.Fatalf("expected explicit join to reuse existing attachment, got %+v", explicitJoin)
 	}
 
 	reactivated := postAuth(t, app, "/networks/"+owner.networkID+"/activate", guestAuth.AccessToken, dto.JoinNetworkRequest{
 		DeviceID: guestDevice.DeviceID,
 	}, http.StatusOK, &dto.NetworkJoinResult{})
-	if reactivated.Attachment.AttachmentID != byEmail.Attachment.AttachmentID {
+	if reactivated.Attachment.AttachmentID != joined.Attachment.AttachmentID {
 		t.Fatalf("expected activate to reuse existing membership and attachment, got %+v", reactivated)
 	}
 
@@ -386,6 +386,10 @@ func (s phase1AuthService) Login(req dto.LoginRequest) (dto.AuthResponse, error)
 
 func (s phase1AuthService) Refresh(req dto.RefreshTokenRequest) (dto.AuthResponse, error) {
 	return s.svc.Refresh(req)
+}
+
+func (s phase1AuthService) ChangePassword(userID string, req dto.ChangePasswordRequest) error {
+	return nil
 }
 
 func (s phase1AuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error) {
@@ -739,30 +743,6 @@ func (s *phase1Services) Join(userID, networkID string, req dto.JoinNetworkReque
 	return s.joinResultLocked(networkID, req.DeviceID), nil
 }
 
-func (s *phase1Services) JoinByOwnerEmail(userID string, req dto.JoinNetworkByOwnerEmailRequest) (dto.NetworkJoinByOwnerEmailResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	owner := s.usersByEmail[strings.ToLower(strings.TrimSpace(req.OwnerEmail))]
-	if owner == nil {
-		return dto.NetworkJoinByOwnerEmailResult{}, service.ErrNotFound
-	}
-	for _, network := range s.networks {
-		if network.ownerUserID != owner.userID {
-			continue
-		}
-		if _, _, err := s.ensureJoinedLocked(userID, network.NetworkID, req.DeviceID, "member"); err != nil {
-			return dto.NetworkJoinByOwnerEmailResult{}, err
-		}
-		result := s.joinResultLocked(network.NetworkID, req.DeviceID)
-		return dto.NetworkJoinByOwnerEmailResult{
-			Network:    network.Network,
-			Member:     result.Member,
-			Attachment: result.Attachment,
-		}, nil
-	}
-	return dto.NetworkJoinByOwnerEmailResult{}, service.ErrNotFound
-}
-
 func (s *phase1Services) JoinByKey(userID string, req dto.JoinNetworkByKeyRequest) (dto.NetworkJoinResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -789,11 +769,19 @@ func (s *phase1Services) Deactivate(userID, networkID string, req dto.Deactivate
 	return nil
 }
 
+func (s *phase1Services) PlanStatus(userID string) (dto.PlanStatus, error) {
+	return dto.PlanStatus{}, nil
+}
+
 func (s *phase1Services) ListMembers(userID, networkID string) ([]dto.NetworkMember, error) {
 	return nil, nil
 }
 
 func (s *phase1Services) UpdateMemberStatus(userID, networkID, memberID string, req dto.UpdateNetworkMemberStatusRequest) (dto.NetworkMember, error) {
+	return dto.NetworkMember{}, service.ErrInvalidArgument
+}
+
+func (s *phase1Services) InviteMember(userID, networkID string, req dto.InviteNetworkMemberRequest) (dto.NetworkMember, error) {
 	return dto.NetworkMember{}, service.ErrInvalidArgument
 }
 
@@ -808,10 +796,6 @@ func (s *phase1Services) ListAssignments(userID, networkID string) ([]dto.Networ
 
 func (s *phase1Services) ListSubnets(userID, networkID string) ([]dto.Subnet, error) {
 	return nil, nil
-}
-
-func (s *phase1Services) AttachDevice(userID, networkID, subnetID string, req dto.AttachDeviceRequest) (dto.SubnetAttachment, error) {
-	return dto.SubnetAttachment{}, service.ErrInvalidArgument
 }
 
 func (s *phase1Services) UpdateAttachmentIP(userID, networkID, attachmentID string, req dto.UpdateAttachmentIPRequest) (dto.SubnetAttachment, error) {
@@ -842,6 +826,10 @@ func (s *phase1Services) UpdateAttachmentRemark(userID, networkID, attachmentID 
 		}
 	}
 	return dto.NetworkAssignment{}, service.ErrNotFound
+}
+
+func (s *phase1Services) UpdateAttachmentStatus(userID, networkID, attachmentID string, req dto.UpdateAttachmentStatusRequest) (dto.NetworkAssignment, error) {
+	return dto.NetworkAssignment{}, service.ErrInvalidArgument
 }
 
 func (s *phase1Services) CreateControlSession(userID string, req dto.CreateControlSessionRequest) (dto.ControlSessionResponse, error) {

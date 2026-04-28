@@ -9,9 +9,6 @@ func startControlSync(deps routerDeps) {
 	controlmsgSyncOnce.Do(func() {
 		if deps.ControlSync != nil {
 			_ = deps.ControlSync.Subscribe(func(event controlmsg.ControlSyncEvent) {
-				if event.InstanceID == controlmsgInstanceID {
-					return
-				}
 				metricAdd("sync_event_received_total", 1)
 				switch event.Type {
 				case "peer_update":

@@ -2,8 +2,8 @@
 import { Component, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-type ViewKey = 'overview' | 'users' | 'devices' | 'admins' | 'roles' | 'menus' | 'relays';
-type PagedViewKey = Exclude<ViewKey, 'overview' | 'relays'>;
+type ViewKey = 'overview' | 'users' | 'devices' | 'admins' | 'roles' | 'menus' | 'relays' | 'settings';
+type PagedViewKey = Exclude<ViewKey, 'overview' | 'relays' | 'settings'>;
 
 type OpsOverview = {
   userCount: number;
@@ -33,6 +33,15 @@ type OpsUser = {
   deviceCount: number;
   nodeCount: number;
   roleCodes?: string[];
+  planOverride?: PlanConfig;
+};
+
+type PlanConfig = {
+  maxActiveDevices: number;
+  relayIngressKbps: number;
+  relayEgressKbps: number;
+  udpIngressKbps: number;
+  udpEgressKbps: number;
 };
 
 type OpsDevice = {
@@ -119,6 +128,7 @@ export class AppComponent {
     { key: 'roles', label: '角色权限', caption: 'RBAC 角色' },
     { key: 'menus', label: '菜单权限', caption: '运营菜单' },
     { key: 'relays', label: 'Relay 拓扑', caption: '中继节点健康' },
+    { key: 'settings', label: '配置管理', caption: '设备与流量全局限制' },
   ];
 
   readonly token = signal(localStorage.getItem('slan.opsToken') || '');
@@ -135,6 +145,13 @@ export class AppComponent {
   readonly roles = signal<OpsRole[]>([]);
   readonly menus = signal<OpsMenu[]>([]);
   readonly relays = signal<OpsRelayTopology | null>(null);
+  readonly planConfig = signal<PlanConfig>({
+    maxActiveDevices: 5,
+    relayIngressKbps: 512,
+    relayEgressKbps: 512,
+    udpIngressKbps: 0,
+    udpEgressKbps: 0,
+  });
   readonly keyword = signal('');
   readonly pageSize = 10;
   readonly listPages = signal<Record<PagedViewKey, number>>({
@@ -151,6 +168,8 @@ export class AppComponent {
   opsNewPassword = '';
   opsConfirmPassword = '';
   showPasswordPanel = false;
+  editingUserPlan: OpsUser | null = null;
+  userPlanDraft: PlanConfig = this.emptyPlanConfig();
 
   readonly filteredUsers = computed(() => filterRows(this.users(), this.keyword()));
   readonly filteredDevices = computed(() => filterRows(this.devices(), this.keyword()));
@@ -316,6 +335,9 @@ export class AppComponent {
         case 'relays':
           this.relays.set(await this.request<OpsRelayTopology>('/relays'));
           break;
+        case 'settings':
+          this.planConfig.set(await this.request<PlanConfig>('/plan-config'));
+          break;
       }
     } catch (error) {
       this.setError(error);
@@ -328,6 +350,80 @@ export class AppComponent {
       return '-';
     }
     return new Date(seconds * 1000).toLocaleString();
+  }
+
+  async saveGlobalPlanConfig(): Promise<void> {
+    this.clearNotices();
+    this.loading.set(true);
+    try {
+      const saved = await this.request<PlanConfig>('/plan-config', {
+        method: 'PUT',
+        body: JSON.stringify(this.normalizePlanConfig(this.planConfig())),
+      });
+      this.planConfig.set(saved);
+      this.message.set('全局设备与流量配置已保存。');
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  updateGlobalPlanField(key: keyof PlanConfig, value: number): void {
+    this.planConfig.update((config) => ({
+      ...config,
+      [key]: Number(value) || 0,
+    }));
+  }
+
+  openUserPlanDialog(user: OpsUser): void {
+    this.clearNotices();
+    this.editingUserPlan = user;
+    this.userPlanDraft = this.normalizePlanConfig(user.planOverride || this.planConfig());
+  }
+
+  closeUserPlanDialog(): void {
+    this.editingUserPlan = null;
+    this.userPlanDraft = this.emptyPlanConfig();
+  }
+
+  async saveUserPlanOverride(): Promise<void> {
+    const user = this.editingUserPlan;
+    if (!user) {
+      return;
+    }
+    this.loading.set(true);
+    try {
+      await this.request(`/users/${encodeURIComponent(user.userId)}/plan`, {
+        method: 'PUT',
+        body: JSON.stringify(this.normalizePlanConfig(this.userPlanDraft)),
+      });
+      this.closeUserPlanDialog();
+      await this.refreshView('users');
+      this.message.set('用户专属设备与流量配置已保存。');
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  async clearUserPlanOverride(): Promise<void> {
+    const user = this.editingUserPlan;
+    if (!user) {
+      return;
+    }
+    this.loading.set(true);
+    try {
+      await this.request(`/users/${encodeURIComponent(user.userId)}/plan`, { method: 'DELETE' });
+      this.closeUserPlanDialog();
+      await this.refreshView('users');
+      this.message.set('用户已恢复使用全局配置。');
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.loading.set(false);
+    }
   }
 
   private setToken(token: string, adminId = '', adminName = ''): void {
@@ -362,7 +458,27 @@ export class AppComponent {
   }
 
   private isPagedView(view: ViewKey): view is PagedViewKey {
-    return view !== 'overview' && view !== 'relays';
+    return view !== 'overview' && view !== 'relays' && view !== 'settings';
+  }
+
+  private emptyPlanConfig(): PlanConfig {
+    return {
+      maxActiveDevices: 5,
+      relayIngressKbps: 512,
+      relayEgressKbps: 512,
+      udpIngressKbps: 0,
+      udpEgressKbps: 0,
+    };
+  }
+
+  private normalizePlanConfig(input: PlanConfig): PlanConfig {
+    return {
+      maxActiveDevices: Math.max(1, Number(input.maxActiveDevices) || 5),
+      relayIngressKbps: Math.max(0, Number(input.relayIngressKbps) || 0),
+      relayEgressKbps: Math.max(0, Number(input.relayEgressKbps) || 0),
+      udpIngressKbps: Math.max(0, Number(input.udpIngressKbps) || 0),
+      udpEgressKbps: Math.max(0, Number(input.udpEgressKbps) || 0),
+    };
   }
 
   private async request<T>(path: string, init: RequestInit = {}, auth = true): Promise<T> {

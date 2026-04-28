@@ -5,17 +5,15 @@ use slan_app_core::{
 
 use crate::api::{
     ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
-    JoinNetworkByKeyRequest, JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest,
-    RefreshTokenRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest,
-    RelayTicketRequest, SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
-    UpdateNetworkDNSRequest,
+    JoinNetworkByKeyRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
+    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    SwitchNetworkRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
 };
 use crate::dto::{
     AuthResponseDto, BootstrapRequestDto, BootstrapResponseDto, CreateNetworkRequestDto,
     DeactivateNetworkRequestDto, DeviceDto, DeviceNetworkStateRequestDto,
-    JoinNetworkByKeyRequestDto, JoinNetworkByOwnerEmailRequestDto, JoinNetworkRequestDto,
-    ListNetworksResponseDto, LoginRequestDto, NetworkAssignmentDto, NetworkDto,
-    NetworkJoinByOwnerEmailResultDto, NetworkJoinResultDto, NodeDto, RefreshTokenRequestDto,
+    JoinNetworkByKeyRequestDto, JoinNetworkRequestDto, ListNetworksResponseDto, LoginRequestDto,
+    NetworkAssignmentDto, NetworkDto, NetworkJoinResultDto, NodeDto, RefreshTokenRequestDto,
     RegisterDeviceRequestDto, RegisterNodeRequestDto, RegisterRequestDto, RelayTicketDto,
     RelayTicketRequestDto, SwitchNetworkRequestDto, UpdateAttachmentRemarkRequestDto,
     UpdateNetworkDNSRequestDto,
@@ -155,21 +153,6 @@ where
             &JoinNetworkRequestDto {
                 device_id: req.device_id,
             },
-        )?;
-        Ok(dto.into())
-    }
-
-    fn join_network_by_owner_email(
-        &self,
-        access_token: &str,
-        req: JoinNetworkByOwnerEmailRequest,
-    ) -> Result<NetworkJoinResult, String> {
-        let dto: NetworkJoinByOwnerEmailResultDto = post_json(
-            &self.transport,
-            &self.base_url,
-            "/networks/join-by-owner-email",
-            Some(access_token),
-            &JoinNetworkByOwnerEmailRequestDto::from(req),
         )?;
         Ok(dto.into())
     }
@@ -373,14 +356,6 @@ where
         req: JoinNetworkRequest,
     ) -> Result<NetworkJoinResult, String> {
         HttpControllerClient::join_network(self, access_token, req)
-    }
-
-    fn join_network_by_owner_email(
-        &self,
-        access_token: &str,
-        req: JoinNetworkByOwnerEmailRequest,
-    ) -> Result<NetworkJoinResult, String> {
-        HttpControllerClient::join_network_by_owner_email(self, access_token, req)
     }
 
     fn join_network_by_key(

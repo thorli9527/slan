@@ -76,7 +76,6 @@ class JoinedNetworkResult {
 
 enum NetworkJoinMethod {
   explicit,
-  ownerEmail,
   joinKey,
 }
 
@@ -84,10 +83,6 @@ class NetworkJoinIntent {
   const NetworkJoinIntent.explicit(String networkId)
       : method = NetworkJoinMethod.explicit,
         value = networkId;
-
-  const NetworkJoinIntent.ownerEmail(String ownerEmail)
-      : method = NetworkJoinMethod.ownerEmail,
-        value = ownerEmail;
 
   const NetworkJoinIntent.joinKey(String joinKey)
       : method = NetworkJoinMethod.joinKey,
@@ -211,12 +206,6 @@ class DeviceSetupService {
             deviceId: device.deviceId,
           );
           targetNetworkId = intent.value.trim();
-          break;
-        case NetworkJoinMethod.ownerEmail:
-          await _api.joinNetworkByOwnerEmail(
-            ownerEmail: intent.value.trim(),
-            deviceId: device.deviceId,
-          );
           break;
         case NetworkJoinMethod.joinKey:
           await _api.joinNetworkByKey(

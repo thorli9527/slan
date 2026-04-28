@@ -199,6 +199,16 @@ func (r *PostgresRepository) UpdateAttachmentVirtualIP(ctx context.Context, atta
 		Update("virtual_ip", virtualIP).Error
 }
 
+func (r *PostgresRepository) UpdateAttachmentLease(ctx context.Context, attachmentID, status, virtualIP string) error {
+	return r.db.WithContext(ctx).
+		Model(&SubnetAttachment{}).
+		Where("attachment_id = ?", attachmentID).
+		Updates(map[string]any{
+			"status":     status,
+			"virtual_ip": virtualIP,
+		}).Error
+}
+
 func (r *PostgresRepository) SuspendAttachment(ctx context.Context, attachmentID string) error {
 	return r.db.WithContext(ctx).
 		Model(&SubnetAttachment{}).

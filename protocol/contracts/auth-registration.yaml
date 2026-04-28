@@ -219,28 +219,6 @@ contracts:
       expiresAt:
         type: int64
         required: false
-  MQTTAuthCheckRequest:
-    fields:
-      clientId:
-        type: string
-        required: true
-      username:
-        type: string
-        required: true
-      password:
-        type: string
-        required: true
-  MQTTAuthCheckResponse:
-    fields:
-      allow:
-        type: bool
-        required: true
-      deviceId:
-        type: string
-        required: false
-      principal:
-        type: string
-        required: false
   RegisterNodeRequest:
     fields:
       deviceId:

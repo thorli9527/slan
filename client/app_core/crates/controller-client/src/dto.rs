@@ -7,9 +7,9 @@ use slan_app_core::{
 };
 
 use crate::api::{
-    CreateNetworkRequest, JoinNetworkByKeyRequest, JoinNetworkByOwnerEmailRequest, LoginRequest,
-    RefreshTokenRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest,
-    RelayTicketRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
+    CreateNetworkRequest, JoinNetworkByKeyRequest, LoginRequest, RefreshTokenRequest,
+    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -347,22 +347,6 @@ pub struct DeviceNetworkStateRequestDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JoinNetworkByOwnerEmailRequestDto {
-    pub owner_email: String,
-    pub device_id: String,
-}
-
-impl From<JoinNetworkByOwnerEmailRequest> for JoinNetworkByOwnerEmailRequestDto {
-    fn from(value: JoinNetworkByOwnerEmailRequest) -> Self {
-        Self {
-            owner_email: value.owner_email,
-            device_id: value.device_id,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct JoinNetworkByKeyRequestDto {
     pub join_key: String,
     pub device_id: String,
@@ -456,28 +440,6 @@ pub struct NetworkJoinResultDto {
 
 impl From<NetworkJoinResultDto> for NetworkJoinResult {
     fn from(value: NetworkJoinResultDto) -> Self {
-        Self {
-            network_id: value.attachment.network_id,
-            device_id: value.attachment.device_id,
-            member_id: value.member.member_id,
-            attachment_id: Some(value.attachment.attachment_id),
-            virtual_ip: value.attachment.virtual_ip,
-        }
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkJoinByOwnerEmailResultDto {
-    #[serde(default)]
-    pub network: Option<NetworkDto>,
-    pub member: NetworkMemberDto,
-    pub attachment: SubnetAttachmentDto,
-}
-
-impl From<NetworkJoinByOwnerEmailResultDto> for NetworkJoinResult {
-    fn from(value: NetworkJoinByOwnerEmailResultDto) -> Self {
         Self {
             network_id: value.attachment.network_id,
             device_id: value.attachment.device_id,

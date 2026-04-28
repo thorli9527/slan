@@ -60,21 +60,3 @@ func (s dbNetworkService) requestMemberForNetwork(ctx context.Context, userID, d
 	}
 	return s.state.ensureMemberWithStatus(ctx, record.NetworkID, deviceID, role, status)
 }
-
-func (s dbNetworkService) lookupOwnedNetworkByOwnerEmail(ctx context.Context, ownerEmail string) (repo.Network, error) {
-	owner, err := s.state.pg.GetUserByEmail(ctx, ownerEmail)
-	if err != nil {
-		if repo.IsNotFound(err) {
-			return repo.Network{}, ErrNotFound
-		}
-		return repo.Network{}, err
-	}
-	target, err := s.state.pg.GetOwnedNetworkByUser(ctx, owner.UserID)
-	if err != nil {
-		if repo.IsNotFound(err) {
-			return repo.Network{}, ErrNotFound
-		}
-		return repo.Network{}, err
-	}
-	return target, nil
-}

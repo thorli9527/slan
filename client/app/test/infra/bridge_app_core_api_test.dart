@@ -122,6 +122,32 @@ void main() {
     });
   });
 
+  test('BridgeAppCoreApi restores persisted session via plugin platform', () {
+    final pluginPlatform = _FakeSlanAppCorePluginPlatform({
+      'restoreSession': {'restored': true},
+    });
+    final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
+
+    api.restoreSession(const SessionModel(
+      userId: 'user-1',
+      accessToken: 'token-1',
+      refreshToken: 'refresh-1',
+      expiresIn: 3600,
+      deviceId: 'dev-1',
+      userLabel: 'user@example.com',
+    ));
+
+    expect(pluginPlatform.calls.single.method, 'restoreSession');
+    expect(pluginPlatform.calls.single.args, {
+      'userId': 'user-1',
+      'accessToken': 'token-1',
+      'refreshToken': 'refresh-1',
+      'expiresIn': 3600,
+      'deviceId': 'dev-1',
+      'userLabel': 'user@example.com',
+    });
+  });
+
   test(
       'BridgeAppCoreApi routes auth, device, node, and network setup via plugin platform',
       () async {
@@ -161,13 +187,6 @@ void main() {
         'memberId': 'member-1',
         'attachmentId': 'att-1',
         'virtualIp': '100.64.0.10',
-      },
-      'joinNetworkByOwnerEmail': {
-        'networkId': 'net-owner',
-        'deviceId': 'dev-1',
-        'memberId': 'member-owner',
-        'attachmentId': 'att-owner',
-        'virtualIp': '100.64.0.11',
       },
       'joinNetworkByKey': {
         'networkId': 'net-key',
@@ -235,10 +254,6 @@ void main() {
     );
     final directJoin =
         await api.joinNetwork(networkId: 'net-1', deviceId: 'dev-1');
-    final ownerJoin = await api.joinNetworkByOwnerEmail(
-      ownerEmail: 'owner@example.com',
-      deviceId: 'dev-1',
-    );
     final keyJoin =
         await api.joinNetworkByKey(joinKey: 'join-key-1', deviceId: 'dev-1');
     final remark = await api.updateAttachmentRemark(
@@ -260,7 +275,6 @@ void main() {
     expect(node.nodeId, 'node-1');
     expect(network.networkId, 'net-1');
     expect(directJoin.attachmentId, 'att-1');
-    expect(ownerJoin.networkId, 'net-owner');
     expect(keyJoin.virtualIp, '100.64.0.12');
     expect(remark.remark, 'Thor laptop');
     expect(switched.attachmentId, 'att-key');
@@ -275,26 +289,21 @@ void main() {
       'registerNode',
       'createNetwork',
       'joinNetwork',
-      'joinNetworkByOwnerEmail',
       'joinNetworkByKey',
       'updateAttachmentRemark',
       'switchNetwork',
       'listDevices',
     ]);
     expect(pluginPlatform.calls[5].args, {
-      'ownerEmail': 'owner@example.com',
-      'deviceId': 'dev-1',
-    });
-    expect(pluginPlatform.calls[6].args, {
       'joinKey': 'join-key-1',
       'deviceId': 'dev-1',
     });
-    expect(pluginPlatform.calls[7].args, {
+    expect(pluginPlatform.calls[6].args, {
       'networkId': 'net-key',
       'attachmentId': 'att-key',
       'remark': 'Thor laptop',
     });
-    expect(pluginPlatform.calls[8].args, {
+    expect(pluginPlatform.calls[7].args, {
       'networkId': 'net-key',
       'deviceId': 'dev-1',
     });
@@ -316,6 +325,9 @@ void main() {
       },
       'deactivateNetwork': null,
       'setDeviceNetworkState': null,
+      'reportDeviceNetworkState': null,
+      'enableLocalNetwork': _bootstrapPayload(),
+      'disableLocalNetwork': null,
       'controlSync': _bootstrapPayload(),
     });
     final api = BridgeAppCoreApi(pluginPlatform: pluginPlatform);
@@ -335,6 +347,9 @@ void main() {
       virtualIp: '10.0.0.2',
       reportedAt: 123,
     );
+    final reportHandled = await api.reportDeviceNetworkState();
+    final serviceBootstrap = await api.enableLocalNetwork(networkId: 'net-1');
+    final disableHandled = await api.disableLocalNetwork(networkId: 'net-1');
     final bootstrap =
         await api.controlSync(nodeId: 'node-1', networkId: 'net-1');
 
@@ -343,8 +358,13 @@ void main() {
       'switchNetwork',
       'deactivateNetwork',
       'setDeviceNetworkState',
+      'reportDeviceNetworkState',
+      'enableLocalNetwork',
+      'disableLocalNetwork',
       'controlSync',
     ]);
+    expect(reportHandled, isTrue);
+    expect(disableHandled, isTrue);
     expect(activated.attachmentId, 'att-1');
     expect(switched.attachmentId, 'att-1');
     expect(pluginPlatform.calls[0].args, {
@@ -369,10 +389,18 @@ void main() {
       'virtualIp': '10.0.0.2',
       'reportedAt': 123,
     });
-    expect(pluginPlatform.calls[4].args, {
+    expect(pluginPlatform.calls[4].args, {});
+    expect(pluginPlatform.calls[5].args, {
+      'networkId': 'net-1',
+    });
+    expect(pluginPlatform.calls[6].args, {
+      'networkId': 'net-1',
+    });
+    expect(pluginPlatform.calls[7].args, {
       'nodeId': 'node-1',
       'networkId': 'net-1',
     });
+    expect(serviceBootstrap?.networks.single.networkId, 'net-1');
     expect(bootstrap.networks.single.networkId, 'net-1');
   });
 

@@ -367,17 +367,6 @@ fn execute_command(
             ))
         }
         Command::Network {
-            command: NetworkCommand::JoinByOwnerEmail(args),
-        } => {
-            let device_id = resolve_device_id(args.device_id.clone(), snapshot)?;
-            let joined = facade.join_network_by_owner_email(args.owner_email.clone(), device_id)?;
-            maybe_update_join_alias(facade, &joined, args.alias.as_deref())?;
-            Ok((
-                serde_json::to_value(&joined).map_err(|err| err.to_string())?,
-                format_network_join("joined network by owner email", &joined),
-            ))
-        }
-        Command::Network {
             command: NetworkCommand::JoinByKey(args),
         } => {
             let device_id = resolve_device_id(args.device_id.clone(), snapshot)?;
@@ -1740,7 +1729,6 @@ enum NetworkCommand {
     List,
     Create(CreateNetworkArgs),
     Join(JoinNetworkArgs),
-    JoinByOwnerEmail(JoinNetworkByOwnerEmailArgs),
     JoinByKey(JoinNetworkByKeyArgs),
     Remark(UpdateAttachmentRemarkArgs),
     Activate(NetworkDeviceArgs),
@@ -1830,16 +1818,6 @@ struct JoinNetworkArgs {
     network_id: String,
     #[arg(long)]
     device_id: Option<String>,
-}
-
-#[derive(Args, Debug)]
-struct JoinNetworkByOwnerEmailArgs {
-    #[arg(long)]
-    owner_email: String,
-    #[arg(long)]
-    device_id: Option<String>,
-    #[arg(long)]
-    alias: Option<String>,
 }
 
 #[derive(Args, Debug)]

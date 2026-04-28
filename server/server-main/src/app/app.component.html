@@ -34,7 +34,7 @@
       </div>
       <div class="topbar-actions">
         <input
-          *ngIf="activeView() !== 'overview' && activeView() !== 'relays'"
+          *ngIf="activeView() !== 'overview' && activeView() !== 'relays' && activeView() !== 'settings'"
           [ngModel]="keyword()"
           (ngModelChange)="setKeyword($event)"
           placeholder="搜索当前列表"
@@ -90,7 +90,7 @@
 
       <section class="panel" *ngSwitchCase="'users'">
         <table>
-          <thead><tr><th>邮箱</th><th>用户 ID</th><th>设备</th><th>节点</th><th>角色</th></tr></thead>
+          <thead><tr><th>邮箱</th><th>用户 ID</th><th>设备</th><th>节点</th><th>角色</th><th>专属配置</th><th>操作</th></tr></thead>
           <tbody>
             <tr *ngFor="let user of pagedUsers()">
               <td>{{ user.email }}</td>
@@ -98,6 +98,8 @@
               <td>{{ user.deviceCount }}</td>
               <td>{{ user.nodeCount }}</td>
               <td>{{ user.roleCodes?.join(', ') || '-' }}</td>
+              <td>{{ user.planOverride ? '已配置' : '继承全局' }}</td>
+              <td><button type="button" (click)="openUserPlanDialog(user)">配置</button></td>
             </tr>
           </tbody>
         </table>
@@ -205,10 +207,80 @@
           </tbody>
         </table>
       </section>
+
+      <section class="panel" *ngSwitchCase="'settings'">
+        <div class="panel-title">
+          <div>
+            <h2>全局设备与流量配置</h2>
+            <p class="muted">用户未设置专属配置时，统一使用这里的全局限制。</p>
+          </div>
+          <button type="button" class="primary narrow-primary" (click)="saveGlobalPlanConfig()" [disabled]="loading()">保存配置</button>
+        </div>
+        <div class="form-grid">
+          <label>
+            <span>最大设备数</span>
+            <input type="number" min="1" [ngModel]="planConfig().maxActiveDevices" (ngModelChange)="updateGlobalPlanField('maxActiveDevices', $event)" />
+          </label>
+          <label>
+            <span>转发接收 Kbps</span>
+            <input type="number" min="0" [ngModel]="planConfig().relayIngressKbps" (ngModelChange)="updateGlobalPlanField('relayIngressKbps', $event)" />
+          </label>
+          <label>
+            <span>转发发送 Kbps</span>
+            <input type="number" min="0" [ngModel]="planConfig().relayEgressKbps" (ngModelChange)="updateGlobalPlanField('relayEgressKbps', $event)" />
+          </label>
+          <label>
+            <span>UDP/打洞接收 Kbps</span>
+            <input type="number" min="0" [ngModel]="planConfig().udpIngressKbps" (ngModelChange)="updateGlobalPlanField('udpIngressKbps', $event)" />
+          </label>
+          <label>
+            <span>UDP/打洞发送 Kbps</span>
+            <input type="number" min="0" [ngModel]="planConfig().udpEgressKbps" (ngModelChange)="updateGlobalPlanField('udpEgressKbps', $event)" />
+          </label>
+        </div>
+      </section>
     </ng-container>
   </section>
 
 </main>
+
+<section class="modal-backdrop" *ngIf="editingUserPlan" (click)="closeUserPlanDialog()">
+  <article class="modal-panel" (click)="$event.stopPropagation()">
+    <div class="modal-title">
+      <div>
+        <h2>用户专属配置</h2>
+        <p>{{ editingUserPlan.email }} · {{ editingUserPlan.userId }}</p>
+      </div>
+      <button type="button" (click)="closeUserPlanDialog()">×</button>
+    </div>
+    <div class="form-grid">
+      <label>
+        <span>最大设备数</span>
+        <input type="number" min="1" [(ngModel)]="userPlanDraft.maxActiveDevices" />
+      </label>
+      <label>
+        <span>转发接收 Kbps</span>
+        <input type="number" min="0" [(ngModel)]="userPlanDraft.relayIngressKbps" />
+      </label>
+      <label>
+        <span>转发发送 Kbps</span>
+        <input type="number" min="0" [(ngModel)]="userPlanDraft.relayEgressKbps" />
+      </label>
+      <label>
+        <span>UDP/打洞接收 Kbps</span>
+        <input type="number" min="0" [(ngModel)]="userPlanDraft.udpIngressKbps" />
+      </label>
+      <label>
+        <span>UDP/打洞发送 Kbps</span>
+        <input type="number" min="0" [(ngModel)]="userPlanDraft.udpEgressKbps" />
+      </label>
+    </div>
+    <div class="inline-actions">
+      <button type="button" class="primary narrow-primary" (click)="saveUserPlanOverride()" [disabled]="loading()">保存专属配置</button>
+      <button type="button" (click)="clearUserPlanOverride()" [disabled]="loading()">恢复全局配置</button>
+    </div>
+  </article>
+</section>
 
 <ng-template #loginPanel>
   <main class="login-shell">

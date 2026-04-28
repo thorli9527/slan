@@ -117,21 +117,6 @@ class UpdateNetworkMemberStatusRequest {
       };
 }
 
-class JoinNetworkByOwnerEmailRequest {
-  const JoinNetworkByOwnerEmailRequest({
-    required this.ownerEmail,
-    required this.deviceId,
-  });
-
-  final String ownerEmail;
-  final String deviceId;
-
-  Map<String, dynamic> toJson() => {
-        'ownerEmail': ownerEmail,
-        'deviceId': deviceId,
-      };
-}
-
 class JoinNetworkByKeyRequest {
   const JoinNetworkByKeyRequest({
     required this.joinKey,
@@ -181,16 +166,6 @@ class UpdateNetworkDNSRequest {
         'servers': servers,
         'searchDomains': searchDomains,
         'wildcards': wildcards,
-      };
-}
-
-class AttachDeviceRequest {
-  const AttachDeviceRequest({required this.deviceId});
-
-  final String deviceId;
-
-  Map<String, dynamic> toJson() => {
-        'deviceId': deviceId,
       };
 }
 

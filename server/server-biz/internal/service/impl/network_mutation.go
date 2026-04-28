@@ -194,36 +194,6 @@ func (s dbNetworkService) UpdateJoinKey(userID, networkID string, req dto.Update
 	return s.Get(userID, networkID)
 }
 
-func (s dbNetworkService) AttachDevice(userID, networkID, subnetID string, req dto.AttachDeviceRequest) (dto.SubnetAttachment, error) {
-	if strings.TrimSpace(req.DeviceID) == "" {
-		return dto.SubnetAttachment{}, fmt.Errorf("%w: deviceId is required", ErrInvalidArgument)
-	}
-	ctx := context.Background()
-	if err := s.state.ensureNetworkAccess(ctx, userID, networkID); err != nil {
-		return dto.SubnetAttachment{}, err
-	}
-	if err := s.state.ensureDeviceOwner(ctx, userID, req.DeviceID); err != nil {
-		return dto.SubnetAttachment{}, err
-	}
-	subnet, err := s.state.pg.GetSubnetByID(ctx, subnetID)
-	if err != nil {
-		if repo.IsNotFound(err) {
-			return dto.SubnetAttachment{}, ErrNotFound
-		}
-		return dto.SubnetAttachment{}, err
-	}
-	if subnet.NetworkID != networkID {
-		return dto.SubnetAttachment{}, ErrNotFound
-	}
-	if _, err := s.state.pg.GetMemberByNetworkDevice(ctx, networkID, req.DeviceID); err != nil {
-		if repo.IsNotFound(err) {
-			return dto.SubnetAttachment{}, fmt.Errorf("%w: device must join network first", ErrForbidden)
-		}
-		return dto.SubnetAttachment{}, err
-	}
-	return s.state.ensureAttachment(ctx, networkID, subnetID, req.DeviceID)
-}
-
 func (s dbNetworkService) UpdateAttachmentIP(userID, networkID, attachmentID string, req dto.UpdateAttachmentIPRequest) (dto.SubnetAttachment, error) {
 	ctx := context.Background()
 	record, err := s.state.pg.GetNetworkByID(ctx, networkID)
@@ -304,50 +274,99 @@ func (s dbNetworkService) UpdateAttachmentRemark(userID, networkID, attachmentID
 	return dto.NetworkAssignment{}, ErrNotFound
 }
 
-func (s dbNetworkService) DeleteAttachment(userID, networkID, attachmentID string) error {
+func (s dbNetworkService) UpdateAttachmentStatus(userID, networkID, attachmentID string, req dto.UpdateAttachmentStatusRequest) (dto.NetworkAssignment, error) {
 	ctx := context.Background()
 	record, err := s.state.pg.GetNetworkByID(ctx, networkID)
 	if err != nil {
 		if repo.IsNotFound(err) {
-			return ErrNotFound
+			return dto.NetworkAssignment{}, ErrNotFound
 		}
-		return err
+		return dto.NetworkAssignment{}, err
 	}
 	if record.OwnerUserID != userID {
-		return ErrForbidden
+		return dto.NetworkAssignment{}, ErrForbidden
 	}
 	attachment, err := s.state.pg.GetAttachmentByID(ctx, attachmentID)
 	if err != nil {
 		if repo.IsNotFound(err) {
-			return ErrNotFound
+			return dto.NetworkAssignment{}, ErrNotFound
 		}
-		return err
+		return dto.NetworkAssignment{}, err
 	}
 	if attachment.NetworkID != networkID {
-		return ErrNotFound
+		return dto.NetworkAssignment{}, ErrNotFound
 	}
 	member, err := s.state.pg.GetMemberByNetworkDevice(ctx, networkID, attachment.DeviceID)
 	if err != nil {
 		if repo.IsNotFound(err) {
-			return ErrNotFound
+			return dto.NetworkAssignment{}, ErrNotFound
 		}
-		return err
+		return dto.NetworkAssignment{}, err
 	}
-	if member.Role == "owner" {
-		return fmt.Errorf("%w: owner device cannot be removed", ErrInvalidArgument)
+	if member.Status != "active" {
+		return dto.NetworkAssignment{}, fmt.Errorf("%w: device membership is not active", ErrForbidden)
 	}
-	s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, "")
-	if err := s.state.cleanupDeactivatedNetworkDevice(ctx, networkID, attachment.DeviceID); err != nil {
-		return err
-	}
-	if err := s.state.pg.DeleteMemberByID(ctx, member.MemberID); err != nil {
-		return err
-	}
-	if err := s.state.clearDeviceOwnerActiveNetworkIfNoActiveMembership(ctx, networkID, attachment.DeviceID); err != nil {
-		return err
+
+	status := strings.ToLower(strings.TrimSpace(req.Status))
+	switch status {
+	case "active", "enabled":
+		if err := s.state.ensureFixedDeviceLimitAllowsActivation(ctx, record.OwnerUserID, networkID, attachment.SubnetID, attachment.DeviceID); err != nil {
+			return dto.NetworkAssignment{}, err
+		}
+		virtualIP := strings.TrimSpace(attachment.VirtualIP)
+		if virtualIP == "" {
+			subnet, err := s.state.pg.GetSubnetByID(ctx, attachment.SubnetID)
+			if err != nil {
+				if repo.IsNotFound(err) {
+					return dto.NetworkAssignment{}, ErrNotFound
+				}
+				return dto.NetworkAssignment{}, err
+			}
+			virtualIP, err = s.state.allocateIP(ctx, subnet)
+			if err != nil {
+				return dto.NetworkAssignment{}, err
+			}
+			if member.Role == "owner" {
+				if preferred, ok, err := s.state.preferredOwnerIP(ctx, subnet); err != nil {
+					return dto.NetworkAssignment{}, err
+				} else if ok {
+					virtualIP = preferred
+				}
+			}
+		}
+		if err := s.state.pg.UpdateAttachmentLease(ctx, attachmentID, "active", virtualIP); err != nil {
+			return dto.NetworkAssignment{}, err
+		}
+		if device, err := s.state.pg.GetDeviceByID(ctx, attachment.DeviceID); err == nil {
+			_ = s.state.pg.UpdateUserActiveNetwork(ctx, device.UserID, networkID)
+		}
+		s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, virtualIP)
+	case "disabled", "suspended":
+		s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, "")
+		if err := s.state.cleanupNetworkDeviceRuntime(ctx, networkID, attachment.DeviceID); err != nil {
+			return dto.NetworkAssignment{}, err
+		}
+		if err := s.state.pg.UpdateAttachmentLease(ctx, attachmentID, "disabled", ""); err != nil {
+			return dto.NetworkAssignment{}, err
+		}
+		if device, err := s.state.pg.GetDeviceByID(ctx, attachment.DeviceID); err == nil {
+			_ = s.state.clearUserActiveNetworkIfNoAttachments(ctx, device.UserID, networkID)
+		}
+	default:
+		return dto.NetworkAssignment{}, fmt.Errorf("%w: status must be active or disabled", ErrInvalidArgument)
 	}
 	s.state.publishNetworkRestartRequired(networkID, record.DefaultSubnetCIDR)
-	return nil
+
+	assignments, err := s.state.pg.ListAssignmentsByNetwork(ctx, networkID)
+	if err != nil {
+		return dto.NetworkAssignment{}, err
+	}
+	for _, item := range assignments {
+		if item.AttachmentID == attachmentID {
+			return item, nil
+		}
+	}
+	return dto.NetworkAssignment{}, ErrNotFound
 }
 
 func sanitizeValues(items []string) []string {

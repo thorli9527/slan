@@ -132,6 +132,10 @@ button:disabled {
   background: #ff6900;
 }
 
+.narrow-primary {
+  width: auto;
+}
+
 .panel,
 .metric,
 .notice,

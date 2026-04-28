@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -224,12 +225,10 @@ func checkFlutterContracts(specs []contractSpec, requestPath, responsePath strin
 	}
 
 	requestNameMap := map[string]string{
-		"AttachDeviceRequest":              "AttachDeviceRequest",
 		"BootstrapRequest":                 "BootstrapRequest",
 		"CreateNetworkRequest":             "CreateNetworkRequest",
 		"DeactivateNetworkRequest":         "DeactivateNetworkRequest",
 		"JoinNetworkByKeyRequest":          "JoinNetworkByKeyRequest",
-		"JoinNetworkByOwnerEmailRequest":   "JoinNetworkByOwnerEmailRequest",
 		"JoinNetworkRequest":               "JoinNetworkRequest",
 		"LoginRequest":                     "LoginRequest",
 		"RefreshTokenRequest":              "RefreshTokenRequest",
@@ -246,33 +245,32 @@ func checkFlutterContracts(specs []contractSpec, requestPath, responsePath strin
 	}
 
 	responseNameMap := map[string]string{
-		"AuthResponse":                  "AuthResponseDto",
-		"CompleteAuthCallbackRequest":   "CompleteAuthCallbackRequestDto",
-		"AuthCallbackStatusResponse":    "AuthCallbackStatusResponseDto",
-		"BootstrapResponse":             "BootstrapResponseDto",
-		"DerpCluster":                   "DerpClusterResponseDto",
-		"DerpMap":                       "DerpMapResponseDto",
-		"DerpNode":                      "DerpNodeResponseDto",
-		"Device":                        "DeviceResponseDto",
-		"DeviceBootstrap":               "DeviceBootstrapResponseDto",
-		"Node":                          "NodeResponseDto",
-		"ControlPlaneConfig":            "ControlPlaneConfigResponseDto",
-		"DNSConfig":                     "DNSConfigResponseDto",
-		"Endpoint":                      "EndpointResponseDto",
-		"Network":                       "NetworkSummaryResponseDto",
-		"NetworkAssignment":             "NetworkAssignmentResponseDto",
-		"NetworkDetail":                 "NetworkDetailResponseDto",
-		"NetworkJoinByOwnerEmailResult": "NetworkJoinByOwnerEmailResultResponseDto",
-		"NetworkJoinResult":             "NetworkJoinResultResponseDto",
-		"NetworkMap":                    "NetworkMapResponseDto",
-		"NetworkMember":                 "NetworkMemberResponseDto",
-		"Peer":                          "PeerResponseDto",
-		"RelayEndpoint":                 "RelayEndpointResponseDto",
-		"RelayRegion":                   "RelayRegionResponseDto",
-		"RelayTicket":                   "RelayTicketResponseDto",
-		"Route":                         "RouteResponseDto",
-		"Subnet":                        "SubnetResponseDto",
-		"SubnetAttachment":              "SubnetAttachmentResponseDto",
+		"AuthResponse":                "AuthResponseDto",
+		"CompleteAuthCallbackRequest": "CompleteAuthCallbackRequestDto",
+		"AuthCallbackStatusResponse":  "AuthCallbackStatusResponseDto",
+		"BootstrapResponse":           "BootstrapResponseDto",
+		"DerpCluster":                 "DerpClusterResponseDto",
+		"DerpMap":                     "DerpMapResponseDto",
+		"DerpNode":                    "DerpNodeResponseDto",
+		"Device":                      "DeviceResponseDto",
+		"DeviceBootstrap":             "DeviceBootstrapResponseDto",
+		"Node":                        "NodeResponseDto",
+		"ControlPlaneConfig":          "ControlPlaneConfigResponseDto",
+		"DNSConfig":                   "DNSConfigResponseDto",
+		"Endpoint":                    "EndpointResponseDto",
+		"Network":                     "NetworkSummaryResponseDto",
+		"NetworkAssignment":           "NetworkAssignmentResponseDto",
+		"NetworkDetail":               "NetworkDetailResponseDto",
+		"NetworkJoinResult":           "NetworkJoinResultResponseDto",
+		"NetworkMap":                  "NetworkMapResponseDto",
+		"NetworkMember":               "NetworkMemberResponseDto",
+		"Peer":                        "PeerResponseDto",
+		"RelayEndpoint":               "RelayEndpointResponseDto",
+		"RelayRegion":                 "RelayRegionResponseDto",
+		"RelayTicket":                 "RelayTicketResponseDto",
+		"Route":                       "RouteResponseDto",
+		"Subnet":                      "SubnetResponseDto",
+		"SubnetAttachment":            "SubnetAttachmentResponseDto",
 	}
 
 	var problems []string
@@ -332,46 +330,45 @@ func checkRustControllerContracts(specs []contractSpec, path string) error {
 	}
 
 	nameMap := map[string]string{
-		"AuthResponse":                  "AuthResponseDto",
-		"BootstrapRequest":              "BootstrapRequestDto",
-		"BootstrapResponse":             "BootstrapResponseDto",
-		"ControlPlaneConfig":            "ControlPlaneConfigDto",
-		"CreateNetworkRequest":          "CreateNetworkRequestDto",
-		"DeactivateNetworkRequest":      "DeactivateNetworkRequestDto",
-		"DerpCluster":                   "DerpClusterDto",
-		"DerpMap":                       "DerpMapDto",
-		"DerpNode":                      "DerpNodeDto",
-		"Device":                        "DeviceDto",
-		"DeviceBootstrap":               "BootstrapDeviceDto",
-		"DNSConfig":                     "DnsConfigDto",
-		"Endpoint":                      "EndpointDto",
-		"JoinNetworkRequest":            "JoinNetworkRequestDto",
-		"LoginRequest":                  "LoginRequestDto",
-		"Network":                       "NetworkDto",
-		"NetworkJoinByOwnerEmailResult": "NetworkJoinByOwnerEmailResultDto",
-		"NetworkJoinResult":             "NetworkJoinResultDto",
-		"NetworkMap":                    "NetworkMapDto",
-		"NetworkMember":                 "NetworkMemberDto",
-		"Node":                          "NodeDto",
-		"Peer":                          "PeerDto",
-		"RefreshTokenRequest":           "RefreshTokenRequestDto",
-		"RegisterDeviceRequest":         "RegisterDeviceRequestDto",
-		"RegisterNodeRequest":           "RegisterNodeRequestDto",
-		"RegisterRequest":               "RegisterRequestDto",
-		"RelayCity":                     "RelayCityDto",
-		"RelayCluster":                  "RelayClusterDto",
-		"RelayConfig":                   "RelayConfigDto",
-		"RelayCountry":                  "RelayCountryDto",
-		"RelayEndpoint":                 "RelayEndpointDto",
-		"RelayNode":                     "RelayNodeDto",
-		"RelayRegion":                   "RelayRegionDto",
-		"RelayTicket":                   "RelayTicketDto",
-		"RelayTicketRequest":            "RelayTicketRequestDto",
-		"Route":                         "RouteDto",
-		"Subnet":                        "SubnetDto",
-		"SubnetAttachment":              "SubnetAttachmentDto",
-		"SwitchNetworkRequest":          "SwitchNetworkRequestDto",
-		"UpdateNetworkDNSRequest":       "UpdateNetworkDNSRequestDto",
+		"AuthResponse":             "AuthResponseDto",
+		"BootstrapRequest":         "BootstrapRequestDto",
+		"BootstrapResponse":        "BootstrapResponseDto",
+		"ControlPlaneConfig":       "ControlPlaneConfigDto",
+		"CreateNetworkRequest":     "CreateNetworkRequestDto",
+		"DeactivateNetworkRequest": "DeactivateNetworkRequestDto",
+		"DerpCluster":              "DerpClusterDto",
+		"DerpMap":                  "DerpMapDto",
+		"DerpNode":                 "DerpNodeDto",
+		"Device":                   "DeviceDto",
+		"DeviceBootstrap":          "BootstrapDeviceDto",
+		"DNSConfig":                "DnsConfigDto",
+		"Endpoint":                 "EndpointDto",
+		"JoinNetworkRequest":       "JoinNetworkRequestDto",
+		"LoginRequest":             "LoginRequestDto",
+		"Network":                  "NetworkDto",
+		"NetworkJoinResult":        "NetworkJoinResultDto",
+		"NetworkMap":               "NetworkMapDto",
+		"NetworkMember":            "NetworkMemberDto",
+		"Node":                     "NodeDto",
+		"Peer":                     "PeerDto",
+		"RefreshTokenRequest":      "RefreshTokenRequestDto",
+		"RegisterDeviceRequest":    "RegisterDeviceRequestDto",
+		"RegisterNodeRequest":      "RegisterNodeRequestDto",
+		"RegisterRequest":          "RegisterRequestDto",
+		"RelayCity":                "RelayCityDto",
+		"RelayCluster":             "RelayClusterDto",
+		"RelayConfig":              "RelayConfigDto",
+		"RelayCountry":             "RelayCountryDto",
+		"RelayEndpoint":            "RelayEndpointDto",
+		"RelayNode":                "RelayNodeDto",
+		"RelayRegion":              "RelayRegionDto",
+		"RelayTicket":              "RelayTicketDto",
+		"RelayTicketRequest":       "RelayTicketRequestDto",
+		"Route":                    "RouteDto",
+		"Subnet":                   "SubnetDto",
+		"SubnetAttachment":         "SubnetAttachmentDto",
+		"SwitchNetworkRequest":     "SwitchNetworkRequestDto",
+		"UpdateNetworkDNSRequest":  "UpdateNetworkDNSRequestDto",
 	}
 
 	var problems []string
@@ -741,6 +738,7 @@ func parseOpenAPIPaths(path string) (map[routeSpec]struct{}, error) {
 func parsePublicGoRoutes(dir string) (map[routeSpec]struct{}, error) {
 	files := []string{
 		"routes.go",
+		"routes_business.go",
 		"routes_business_access.go",
 		"routes_business_registration.go",
 		"routes_business_network.go",
@@ -750,6 +748,9 @@ func parsePublicGoRoutes(dir string) (map[routeSpec]struct{}, error) {
 	routes := map[routeSpec]struct{}{}
 	for _, name := range files {
 		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		fileRoutes, err := parseGoRoutesFile(path)
 		if err != nil {
 			return nil, err
@@ -757,6 +758,19 @@ func parsePublicGoRoutes(dir string) (map[routeSpec]struct{}, error) {
 		for route := range fileRoutes {
 			routes[route] = struct{}{}
 		}
+	}
+	opsPath := filepath.Join(dir, "routes_ops.go")
+	if _, err := os.Stat(opsPath); err == nil {
+		opsRoutes, err := parseGoRoutesFile(opsPath)
+		if err != nil {
+			return nil, err
+		}
+		for route := range opsRoutes {
+			route.Path = joinRoutePath("/ops-api", route.Path)
+			routes[route] = struct{}{}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
 	return routes, nil
 }
@@ -769,7 +783,7 @@ func parseGoRoutesFile(path string) (map[routeSpec]struct{}, error) {
 	defer file.Close()
 
 	groupDecl := regexp.MustCompile(`^([A-Za-z0-9_]+)\s*:=\s*([A-Za-z0-9_]+)\.Group\("([^"]*)"\)`)
-	routeDecl := regexp.MustCompile(`^([A-Za-z0-9_]+)\.(GET|POST|PUT|DELETE|PATCH)\("([^"]*)"`)
+	routeDecl := regexp.MustCompile(`([A-Za-z0-9_]+)\.(GET|POST|PUT|DELETE|PATCH)\("([^"]*)"`)
 	prefixes := map[string]string{
 		"api":       "",
 		"protected": "",

@@ -12,7 +12,6 @@ web-console flows:
 - `POST /auth/refresh`
 - `GET /auth/callback-status/{callbackId}`
 - `POST /auth/callback-status/{callbackId}/complete`
-- `POST /mqtt/auth/check`
 - `POST /mqtt/bifromq/auth`
 - `POST /mqtt/bifromq/check`
 - `POST /devices/register`
@@ -25,7 +24,6 @@ web-console flows:
 - `PUT /networks/{networkId}`
 - `PUT /networks/{networkId}/join-key`
 - `PUT /networks/{networkId}/dns`
-- `POST /networks/join-by-owner-email`
 - `POST /networks/join-by-key`
 - `POST /networks/{networkId}/switch`
 - `GET /networks/{networkId}`
@@ -36,7 +34,6 @@ web-console flows:
 - `PUT /networks/{networkId}/members/{memberId}/status`
 - `GET /networks/{networkId}/assignments`
 - `GET /networks/{networkId}/subnets`
-- `POST /networks/{networkId}/subnets/{subnetId}/attachments`
 - `PUT /networks/{networkId}/attachments/{attachmentId}/ip`
 - `PUT /networks/{networkId}/attachments/{attachmentId}/remark`
 - `POST /bootstrap`
@@ -47,7 +44,7 @@ web-console flows:
 
 The network join and switch flow depends on `GET /networks` returning every
 network visible to the authenticated user, including networks joined through
-owner email or join key.
+join key.
 The recommended client path is `POST /bootstrap`, which already returns the
 control session token and MQTT config. `POST /control/sessions` remains the
 explicit control-session endpoint for callers that need to refresh only the
@@ -57,9 +54,8 @@ Device runtime state is intentionally separated:
 
 - In production, BifroMQ Auth Provider should call `POST /mqtt/bifromq/auth`
   for credential validation and `POST /mqtt/bifromq/check` for topic access
-  checks. `POST /mqtt/auth/check` remains as the legacy compatibility
-  credential-check endpoint. MQTT authentication success marks only the control
-  channel as reachable.
+  checks. MQTT authentication success marks only the control channel as
+  reachable.
 - `PUT /devices/{deviceId}/networks/{networkId}/state` reports whether the
   virtual network is enabled, whether the local tunnel is up, and the latest
   health probe result.
@@ -72,9 +68,18 @@ Device runtime state is intentionally separated:
 - Server cleanup marks stale control/network state offline after the freshness
   window expires, so management views do not treat an old MQTT connection as
   network online.
-- Legacy `Device.status` may be `reachable` for compatibility with older
-  control-channel views. Management online counts and green online state should
-  use `Device.networkState.networkOnline`.
+- Management online counts and green online state should use
+  `Device.networkState.networkOnline`.
+
+Current desktop bridge/service ownership:
+
+- Flutter is only the UI/action layer. It may persist the user's last requested
+  network usage state, then ask the service to restore it after login.
+- `app-core-service` owns control-sync jobs and the 15-second network-state
+  report job.
+- `app-core-helper` owns OS-facing tunnel mutation and local DNS.
+- Bridge-mode clients must not fall back to Flutter-side tunnel or DNS mutation
+  when service enable/disable fails.
 
 See `client-core-flow.md` for the end-to-end client create, join, alias,
 switch, activate, bootstrap, and relay fallback flow.
@@ -98,7 +103,6 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `POST /auth/refresh`
 - `GET /auth/callback-status/{callbackId}`
 - `POST /auth/callback-status/{callbackId}/complete`
-- `POST /mqtt/auth/check`
 - `POST /mqtt/bifromq/auth`
 - `POST /mqtt/bifromq/check`
 - `GET /healthz`
@@ -116,7 +120,6 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `PUT /networks/{networkId}`
 - `PUT /networks/{networkId}/join-key`
 - `PUT /networks/{networkId}/dns`
-- `POST /networks/join-by-owner-email`
 - `POST /networks/join-by-key`
 - `POST /networks/{networkId}/switch`
 - `GET /networks/{networkId}`
@@ -127,7 +130,6 @@ HTTP 接入由 `api/http/routes.go` 和 `api/http/routes_business*.go` 承接。
 - `PUT /networks/{networkId}/members/{memberId}/status`
 - `GET /networks/{networkId}/assignments`
 - `GET /networks/{networkId}/subnets`
-- `POST /networks/{networkId}/subnets/{subnetId}/attachments`
 - `PUT /networks/{networkId}/attachments/{attachmentId}/ip`
 - `PUT /networks/{networkId}/attachments/{attachmentId}/remark`
 - `POST /bootstrap`

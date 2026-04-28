@@ -397,8 +397,7 @@ void main() {
             'accessToken': 'token-2',
             'expiresIn': 3600,
           }));
-      } else if (route == 'POST /networks/join-by-owner-email' ||
-          route == 'POST /networks/join-by-key' ||
+      } else if (route == 'POST /networks/join-by-key' ||
           route == 'POST /networks/net-1/activate' ||
           route == 'POST /networks/net-1/switch' ||
           route == 'POST /networks/net-1/deactivate' ||
@@ -410,14 +409,7 @@ void main() {
           ..statusCode = HttpStatus.ok
           ..headers.contentType = ContentType.json
           ..write(jsonEncode({
-            if (route == 'POST /networks/join-by-owner-email')
-              'network': {
-                'networkId': 'net-1',
-                'name': 'home',
-                'defaultSubnetCidr': '100.64.0.0/24',
-              },
-            if (route == 'POST /networks/join-by-owner-email' ||
-                route == 'POST /networks/join-by-key' ||
+            if (route == 'POST /networks/join-by-key' ||
                 route.endsWith('/activate') ||
                 route.endsWith('/switch'))
               'member': {
@@ -426,8 +418,7 @@ void main() {
                 'deviceId': 'dev-1',
                 'role': 'member',
               },
-            if (route == 'POST /networks/join-by-owner-email' ||
-                route == 'POST /networks/join-by-key' ||
+            if (route == 'POST /networks/join-by-key' ||
                 route.endsWith('/activate') ||
                 route.endsWith('/switch'))
               'attachment': {
@@ -460,10 +451,6 @@ void main() {
     );
 
     await api.login(email: 'user@example.com', password: 'password123');
-    await api.joinNetworkByOwnerEmail(
-      ownerEmail: 'owner@example.com',
-      deviceId: 'dev-1',
-    );
     await api.joinNetworkByKey(joinKey: 'join-key-1', deviceId: 'dev-1');
     final remark = await api.updateAttachmentRemark(
       networkId: 'net-1',
@@ -476,10 +463,6 @@ void main() {
         await api.switchNetwork(networkId: 'net-1', deviceId: 'dev-1');
     await api.deactivateNetwork(networkId: 'net-1', deviceId: 'dev-1');
 
-    expect(seenRoutes['POST /networks/join-by-owner-email'], {
-      'ownerEmail': 'owner@example.com',
-      'deviceId': 'dev-1',
-    });
     expect(seenRoutes['POST /networks/join-by-key'], {
       'joinKey': 'join-key-1',
       'deviceId': 'dev-1',

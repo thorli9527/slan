@@ -47,6 +47,12 @@ abstract class AppCoreApi {
     int? reportedAt,
   });
 
+  Future<bool> reportDeviceNetworkState();
+
+  Future<BootstrapModel?> enableLocalNetwork({String? networkId});
+
+  Future<bool> disableLocalNetwork({String? networkId});
+
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,
@@ -66,11 +72,6 @@ abstract class AppCoreApi {
 
   Future<NetworkJoinModel> joinNetwork({
     required String networkId,
-    required String deviceId,
-  });
-
-  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
-    required String ownerEmail,
     required String deviceId,
   });
 

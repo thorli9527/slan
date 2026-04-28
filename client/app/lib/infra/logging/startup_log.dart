@@ -12,8 +12,7 @@ final class StartupLog {
   );
 
   static Future<void> write(String message) async {
-    final line =
-        '${DateTime.now().toIso8601String()} ${message.trimRight()}\n';
+    final line = '${DateTime.now().toIso8601String()} ${message.trimRight()}\n';
     debugPrint(line.trimRight());
     try {
       await _file.parent.create(recursive: true);

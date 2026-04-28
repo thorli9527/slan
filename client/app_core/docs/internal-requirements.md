@@ -5,15 +5,24 @@
 `client/app_core` now has real control-plane access for the main client flow:
 
 - auth/session refresh
+- persisted session restore into the native snapshot
 - device and node registration
-- network create, join-by-owner-email, join-by-key, alias remark, switch,
+- network create, join-by-key, alias remark, switch,
   activate, and deactivate
 - bootstrap/control sync
 - relay ticket issue and relay/DERP fallback routing tests
+- service-owned local network enable/disable
+- service task runner for periodic control sync and network-state reporting
+- helper-owned local DNS runtime
 
 Remaining requirements in this document are production runtime, diagnostics,
 and cross-platform tunnel hardening unless they explicitly call out a missing
 API.
+
+Flutter should remain a UI/action layer in bridge/service mode. It may persist
+the user's last requested network usage state, but app-core-service decides and
+applies the actual tunnel, DNS, MQTT control sync, and device network-state
+heartbeat work.
 
 本文档描述 `client/app_core` 在系统中的内部职责、模块拆分和后续必须实现的核心能力。
 
@@ -124,7 +133,6 @@ API.
 - `list_networks`
 - `create_network`
 - `join_network`
-- `join_network_by_owner_email`
 - `join_network_by_key`
 - `switch_network`
 - `activate_network`

@@ -194,11 +194,12 @@ export class ConsoleApiService {
     });
   }
 
-  deleteAttachment(token: string, networkId: string, attachmentId: string): Promise<{ status: string }> {
-    return this.request<{ status: string }>(`/networks/${networkId}/attachments/${attachmentId}`, {
+  updateAttachmentStatus(token: string, networkId: string, attachmentId: string, status: 'active' | 'disabled'): Promise<NetworkAssignment> {
+    return this.request<NetworkAssignment>(`/networks/${networkId}/attachments/${attachmentId}/status`, {
       token,
       init: {
-        method: 'DELETE'
+        method: 'PUT',
+        body: JSON.stringify({ status })
       }
     });
   }

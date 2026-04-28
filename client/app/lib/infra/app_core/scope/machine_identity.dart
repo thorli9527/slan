@@ -38,8 +38,7 @@ class MachineIdentity {
     final host = (localHostname ?? Platform.localHostname)
         .trim()
         .replaceAll(RegExp(r'[^a-zA-Z0-9-]'), '-');
-    final timestamp =
-        (now ?? DateTime.now)().microsecondsSinceEpoch.toString();
+    final timestamp = (now ?? DateTime.now)().microsecondsSinceEpoch.toString();
     return 'client-$host-$timestamp';
   }
 
@@ -91,8 +90,8 @@ class MachineIdentity {
         return null;
       }
       final output = '${result.stdout}\n${result.stderr}';
-      final match = RegExp(r'"IOPlatformUUID"\s+=\s+"([^"]+)"')
-          .firstMatch(output);
+      final match =
+          RegExp(r'"IOPlatformUUID"\s+=\s+"([^"]+)"').firstMatch(output);
       return match?.group(1);
     } catch (_) {
       return null;

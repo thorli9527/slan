@@ -19,7 +19,8 @@ Future<void> main() async {
   final initialization = AppCoreScope.initialize();
   await StartupLog.write('runApp');
   FlutterError.onError = (details) {
-    unawaited(StartupLog.write('flutter error: ${details.exceptionAsString()}'));
+    unawaited(
+        StartupLog.write('flutter error: ${details.exceptionAsString()}'));
     FlutterError.presentError(details);
   };
   runApp(SlanApp(initialization: initialization));

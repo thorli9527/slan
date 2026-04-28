@@ -92,6 +92,10 @@ export class AppComponent implements OnDestroy {
     const deviceId = this.currentDeviceId();
     return this.assignments().find((item) => item.deviceId === deviceId) || null;
   });
+  readonly networkDevices = computed(() => {
+    const boundDeviceIds = new Set(this.assignments().map((item) => item.deviceId));
+    return this.devices().filter((item) => boundDeviceIds.has(item.deviceId));
+  });
   readonly currentSubnet = computed(() => {
     const assignment = this.currentAssignment();
     return assignment ? this.subnets().find((item) => item.subnetId === assignment.subnetId) || null : null;
@@ -171,13 +175,26 @@ export class AppComponent implements OnDestroy {
     return this.devices().filter((device) => this.deviceStatusTone(device) === 'success').length;
   }
 
+  networkDeviceCount(): number {
+    return this.networkDevices().length;
+  }
+
+  onlineNetworkDeviceCount(): number {
+    return this.assignments().filter((item) => {
+      if (!item.virtualIp) {
+        return false;
+      }
+      return item.runtimeStateFresh && item.runtimeNetworkOnline && item.runtimeTunnelUp && item.runtimeVirtualIp === item.virtualIp;
+    }).length;
+  }
+
   currentVirtualIp(): string {
     return this.currentAssignment()?.virtualIp || '未分配';
   }
 
   deviceLimitLabel(): string {
     const status = this.plan();
-    return `最多 ${status?.maxActiveDevices || 2} 台设备`;
+    return '最多 ' + (status?.maxActiveDevices || 5) + ' 台设备';
   }
 
   currentSubnetLabel(): string {
@@ -185,7 +202,7 @@ export class AppComponent implements OnDestroy {
     if (!subnet) {
       return '未接入网络';
     }
-    return `${subnet.name} · ${subnet.cidr}`;
+    return subnet.name + ' · ' + subnet.cidr;
   }
 
   networkSwitchTargets(): Array<{ networkId: string; name: string; description?: string }> {
@@ -524,7 +541,7 @@ export class AppComponent implements OnDestroy {
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
-      this.message.set('DNS 配置已保存，客户端下次启用网络时会按配置启动本地 DNS');
+      this.message.set('DNS 配置已保存，客户端会在下次网络同步时应用最新规则。');
       if (this.networkDialog() === 'dns') {
         this.networkDialog.set('');
       }
@@ -626,24 +643,26 @@ export class AppComponent implements OnDestroy {
     }
   }
 
-  async deleteAttachment(attachmentId: string): Promise<void> {
+  async toggleAttachmentStatus(attachmentId: string, status: 'active' | 'disabled'): Promise<void> {
     const active = this.activeNetwork();
     if (!active || !this.canManageNetwork()) {
       return;
     }
-    if (!window.confirm('确认删除该设备？删除后会释放虚拟 IP，并通知客户端下线。')) {
+    const actionLabel = status === 'active' ? '启用' : '停用';
+    if (!window.confirm('确认' + actionLabel + '该设备的网络接入？')) {
       return;
     }
-    this.actionBusy.set(`deleteAttachment:${attachmentId}`);
+    this.actionBusy.set(`attachmentStatus:${attachmentId}`);
     try {
-      const result = await this.facade.deleteAttachment({
+      const result = await this.facade.updateAttachmentStatus({
         token: this.token(),
         networkId: active.networkId,
         attachmentId,
+        status,
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
-      this.message.set('device removed from network');
+      this.message.set(status === 'active' ? '设备网络已启用' : '设备网络已停用');
     } catch (error) {
       this.handleActionError(error);
     } finally {
@@ -711,7 +730,7 @@ export class AppComponent implements OnDestroy {
 
   selectedDeviceLabel(): string {
     const device = this.selectedDevice();
-    return device ? `${device.name} · ${device.deviceId}` : '';
+    return device ? `${device.name} 閻?${device.deviceId}` : '';
   }
 
   formatTimestamp(value?: number): string {
@@ -921,7 +940,7 @@ export class AppComponent implements OnDestroy {
         ...this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(switched);
-      this.message.set(`已切换到网络 ${switched.workspace.home.activeNetwork?.name || networkId}`);
+      this.message.set('已切换到网络 ' + (switched.workspace.home.activeNetwork?.name || networkId));
     } catch (error) {
       this.handleActionError(error);
     }
@@ -1004,7 +1023,7 @@ export class AppComponent implements OnDestroy {
 
   private handleActionError(error: unknown): void {
     if (error instanceof ConsoleApiError && error.isDeviceLimitExceeded) {
-      this.error.set(`免费版最多支持 ${this.plan()?.freeDeviceLimit || 2} 台设备接入。需要更多设备时，请下载产品并自行部署。`);
+      this.error.set('免费版最多支持 ' + (this.plan()?.freeDeviceLimit || 5) + ' 台设备接入。需要更多设备时，请下载产品并自行部署。');
       return;
     }
     this.setError(error);

@@ -67,15 +67,15 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
                     ✎
                   </button>
                   <button
-                    class="edit-icon-button danger"
+                    class="status-action-button"
                     type="button"
-                    *ngIf="canDeleteAssignment(item)"
-                    (click)="deleteAttachment.emit(item.attachmentId)"
-                    [disabled]="isDeleteBusy(item.attachmentId)"
-                    title="删除设备"
-                    aria-label="删除设备"
+                    (click)="toggleAttachmentStatus.emit({ attachmentId: item.attachmentId, status: isAttachmentActive(item) ? 'disabled' : 'active' })"
+                    [disabled]="isStatusBusy(item.attachmentId)"
+                    [title]="isAttachmentActive(item) ? '停用设备' : '启用设备'"
+                    [attr.aria-label]="isAttachmentActive(item) ? '停用设备' : '启用设备'"
+                    [attr.data-mode]="isAttachmentActive(item) ? 'disable' : 'enable'"
                   >
-                    ×
+                    {{ isStatusBusy(item.attachmentId) ? '处理中...' : (isAttachmentActive(item) ? '停用' : '启用') }}
                   </button>
                 </td>
               </tr>
@@ -129,10 +129,12 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
     tr:last-child td { border-bottom: 0; }
     td strong { display: block; overflow-wrap: anywhere; }
     .remark-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .edit-col, .edit-cell { width: 100px; }
+    .edit-col, .edit-cell { width: 148px; }
     .actions-col { width: 168px; }
     .edit-icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; font-size: 17px; line-height: 1; }
-    .edit-icon-button.danger { color: #991b1b; border-color: rgba(153, 27, 27, .18); background: #fff7f7; font-size: 20px; }
+    .status-action-button { min-width: 72px; height: 34px; padding: 0 12px; font-size: 13px; font-weight: 900; }
+    .status-action-button[data-mode="disable"] { color: #991b1b; border-color: rgba(239, 68, 68, .3); background: #fff7f7; }
+    .status-action-button[data-mode="enable"] { color: #14532d; border-color: rgba(34, 197, 94, .32); background: #f0fdf4; }
     .status-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 800; }
     .status-badge[data-tone="success"] { color: #14532d; background: #dcfce7; }
     .status-badge[data-tone="info"] { color: #1e3a8a; background: #dbeafe; }
@@ -178,7 +180,7 @@ export class NetworkWorkspaceComponent {
   @Output() readonly saveAttachmentIp = new EventEmitter<string>();
   @Output() readonly saveAttachmentRemark = new EventEmitter<string>();
   @Output() readonly saveAttachmentEdit = new EventEmitter<{ attachmentId: string; virtualIp: string; remark: string }>();
-  @Output() readonly deleteAttachment = new EventEmitter<string>();
+  @Output() readonly toggleAttachmentStatus = new EventEmitter<{ attachmentId: string; status: 'active' | 'disabled' }>();
   @Output() readonly updateMemberStatus = new EventEmitter<{ memberId: string; status: 'active' | 'rejected' }>();
 
   editingAssignment: NetworkAssignment | null = null;
@@ -237,10 +239,6 @@ export class NetworkWorkspaceComponent {
       remark: this.editRemark,
     });
     this.closeEditDialog();
-  }
-
-  canDeleteAssignment(item: NetworkAssignment): boolean {
-    return (item.role || '').toLowerCase() !== 'owner';
   }
 
   roleLabel(role: string): string {
@@ -303,6 +301,9 @@ export class NetworkWorkspaceComponent {
     if (status === 'rejected') {
       return '已拒绝';
     }
+    if (status === 'disabled' || status === 'suspended') {
+      return '已停用';
+    }
     if (!item.virtualIp) {
       return status || '-';
     }
@@ -321,6 +322,9 @@ export class NetworkWorkspaceComponent {
       return 'warn';
     }
     if (status === 'rejected') {
+      return 'danger';
+    }
+    if (status === 'disabled' || status === 'suspended') {
       return 'danger';
     }
     if (!item.virtualIp) {
@@ -347,7 +351,11 @@ export class NetworkWorkspaceComponent {
     return busy.startsWith(`member:${memberId}:`);
   }
 
-  isDeleteBusy(attachmentId: string): boolean {
-    return this.actionBusy === `deleteAttachment:${attachmentId}`;
+  isAttachmentActive(item: NetworkAssignment): boolean {
+    return (item.status || '').toLowerCase() === 'active' && !!item.virtualIp;
+  }
+
+  isStatusBusy(attachmentId: string): boolean {
+    return this.actionBusy === `attachmentStatus:${attachmentId}`;
   }
 }

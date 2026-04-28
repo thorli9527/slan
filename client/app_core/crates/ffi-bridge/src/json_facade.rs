@@ -3,8 +3,9 @@ use serde_json::{json, Value};
 use crate::facade::AppCoreFacade;
 use crate::json_facade_args::{
     AuthArgs, BootstrapArgs, ConnectArgs, CreateNetworkArgs, DeviceNetworkStateArgs,
-    JoinNetworkArgs, JoinNetworkByKeyArgs, JoinNetworkByOwnerEmailArgs, RefreshSessionArgs,
-    RegisterDeviceArgs, RegisterNodeArgs, RelayTicketArgs, SendArgs, UpdateAttachmentRemarkArgs,
+    JoinNetworkArgs, JoinNetworkByKeyArgs, LocalNetworkArgs, RefreshSessionArgs,
+    RegisterDeviceArgs, RegisterNodeArgs, RelayTicketArgs, RestoreSessionArgs, SendArgs,
+    UpdateAttachmentRemarkArgs,
 };
 use crate::json_facade_runtime::{
     connection_state_value, data_plane_error_string, parse_args, to_value,
@@ -15,6 +16,237 @@ where
     F: AppCoreFacade,
 {
     inner: F,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use serde_json::json;
+    use slan_app_core::{
+        BootstrapConfig, ConnectionState, Device, Network, NetworkAssignment, NetworkJoinResult,
+        Node, RelayTicket, Session,
+    };
+
+    use crate::facade::{AppCoreFacade, ControlStatusView, DataPlaneError, DataPlaneProbe};
+
+    use super::JsonAppCoreFacade;
+
+    #[test]
+    fn restore_session_routes_to_inner_facade() {
+        let inner = RecordingFacade::default();
+        let facade = JsonAppCoreFacade::new(inner);
+
+        let result = facade
+            .invoke(
+                "restoreSession",
+                json!({
+                    "userId": "user-1",
+                    "accessToken": "token-1",
+                    "refreshToken": "refresh-1",
+                    "expiresIn": 3600,
+                    "deviceId": "dev-1",
+                    "userLabel": "ignored@example.com"
+                }),
+            )
+            .expect("restore session should succeed");
+
+        assert_eq!(result, json!({ "restored": true }));
+        let restored = facade.inner.restored.lock().expect("restore lock").clone();
+        let restored = restored.expect("restored session");
+        assert_eq!(restored.user_id, "user-1");
+        assert_eq!(restored.access_token, "token-1");
+        assert_eq!(restored.refresh_token.as_deref(), Some("refresh-1"));
+        assert_eq!(restored.device_id.as_deref(), Some("dev-1"));
+    }
+
+    #[derive(Default)]
+    struct RecordingFacade {
+        restored: Mutex<Option<Session>>,
+    }
+
+    impl AppCoreFacade for RecordingFacade {
+        fn restore_session(&self, session: Session) -> Result<(), String> {
+            *self
+                .restored
+                .lock()
+                .map_err(|_| "lock poisoned".to_string())? = Some(session);
+            Ok(())
+        }
+
+        fn register(&self, _email: String, _password: String) -> Result<Session, String> {
+            unimplemented!()
+        }
+
+        fn login(&self, _email: String, _password: String) -> Result<Session, String> {
+            unimplemented!()
+        }
+
+        fn refresh_session(
+            &self,
+            _refresh_token: String,
+            _device_id: Option<String>,
+        ) -> Result<Session, String> {
+            unimplemented!()
+        }
+
+        fn register_device(
+            &self,
+            _name: String,
+            _platform: String,
+            _machine_id: String,
+            _public_key: String,
+        ) -> Result<Device, String> {
+            unimplemented!()
+        }
+
+        fn register_node(
+            &self,
+            _device_id: String,
+            _node_id: String,
+            _node_public_key: String,
+            _capabilities: Vec<String>,
+        ) -> Result<Node, String> {
+            unimplemented!()
+        }
+
+        fn list_networks(&self) -> Result<Vec<Network>, String> {
+            unimplemented!()
+        }
+
+        fn create_network(
+            &self,
+            _name: String,
+            _cidr: Option<String>,
+            _allocation_start_ip: Option<String>,
+            _allocation_end_ip: Option<String>,
+        ) -> Result<Network, String> {
+            unimplemented!()
+        }
+
+        fn join_network(
+            &self,
+            _network_id: String,
+            _device_id: String,
+        ) -> Result<NetworkJoinResult, String> {
+            unimplemented!()
+        }
+
+        fn join_network_by_key(
+            &self,
+            _join_key: String,
+            _device_id: String,
+        ) -> Result<NetworkJoinResult, String> {
+            unimplemented!()
+        }
+
+        fn update_attachment_remark(
+            &self,
+            _network_id: String,
+            _attachment_id: String,
+            _remark: Option<String>,
+        ) -> Result<NetworkAssignment, String> {
+            unimplemented!()
+        }
+
+        fn activate_network(
+            &self,
+            _network_id: String,
+            _device_id: String,
+        ) -> Result<NetworkJoinResult, String> {
+            unimplemented!()
+        }
+
+        fn deactivate_network(
+            &self,
+            _network_id: String,
+            _device_id: String,
+        ) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn set_device_network_state(
+            &self,
+            _device_id: String,
+            _network_id: String,
+            _control_reachable: bool,
+            _network_online: bool,
+            _tunnel_up: bool,
+            _last_probe_ok: bool,
+            _virtual_ip: Option<String>,
+            _reported_at: Option<i64>,
+        ) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn report_device_network_state(&self) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn enable_local_network(
+            &self,
+            _network_id: Option<String>,
+        ) -> Result<BootstrapConfig, String> {
+            unimplemented!()
+        }
+
+        fn disable_local_network(&self, _network_id: Option<String>) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn bootstrap(
+            &self,
+            _node_id: String,
+            _network_id: String,
+        ) -> Result<BootstrapConfig, String> {
+            unimplemented!()
+        }
+
+        fn control_sync(&self) -> Result<BootstrapConfig, String> {
+            unimplemented!()
+        }
+
+        fn control_status(&self) -> Result<ControlStatusView, String> {
+            unimplemented!()
+        }
+
+        fn issue_relay_ticket(
+            &self,
+            _network_id: String,
+            _src_node_id: String,
+            _dst_node_id: String,
+            _derp_cluster_id: Option<String>,
+            _preferred_derp_node_ids: Vec<String>,
+            _reason: String,
+            _relay_region_id: Option<String>,
+        ) -> Result<RelayTicket, String> {
+            unimplemented!()
+        }
+
+        fn connect(
+            &self,
+            _network_id: String,
+            _peer_node_id: String,
+        ) -> Result<ConnectionState, String> {
+            unimplemented!()
+        }
+
+        fn probe_with_timeout(
+            &self,
+            _packet: Vec<u8>,
+            _reply_timeout_ms: Option<u64>,
+        ) -> Result<DataPlaneProbe, DataPlaneError> {
+            unimplemented!()
+        }
+
+        fn send(&self, _packet: Vec<u8>) -> Result<usize, DataPlaneError> {
+            unimplemented!()
+        }
+
+        fn disconnect(&self) -> Result<(), String> {
+            unimplemented!()
+        }
+    }
 }
 
 impl<F> JsonAppCoreFacade<F>
@@ -30,6 +262,11 @@ where
             "register" => {
                 let args: AuthArgs = parse_args(args)?;
                 Ok(to_value(self.inner.register(args.email, args.password)?)?)
+            }
+            "restoreSession" => {
+                let args: RestoreSessionArgs = parse_args(args)?;
+                self.inner.restore_session(args.session)?;
+                Ok(json!({ "restored": true }))
             }
             "login" => {
                 let args: AuthArgs = parse_args(args)?;
@@ -79,13 +316,6 @@ where
                     self.inner.join_network(args.network_id, args.device_id)?,
                 )?)
             }
-            "joinNetworkByOwnerEmail" => {
-                let args: JoinNetworkByOwnerEmailArgs = parse_args(args)?;
-                Ok(to_value(self.inner.join_network_by_owner_email(
-                    args.owner_email,
-                    args.device_id,
-                )?)?)
-            }
             "joinNetworkByKey" => {
                 let args: JoinNetworkByKeyArgs = parse_args(args)?;
                 Ok(to_value(
@@ -132,6 +362,19 @@ where
                     args.virtual_ip,
                     args.reported_at,
                 )?;
+                Ok(json!({}))
+            }
+            "reportDeviceNetworkState" => {
+                self.inner.report_device_network_state()?;
+                Ok(json!({}))
+            }
+            "enableLocalNetwork" => {
+                let args: LocalNetworkArgs = parse_args(args)?;
+                Ok(to_value(self.inner.enable_local_network(args.network_id)?)?)
+            }
+            "disableLocalNetwork" => {
+                let args: LocalNetworkArgs = parse_args(args)?;
+                self.inner.disable_local_network(args.network_id)?;
                 Ok(json!({}))
             }
             "bootstrap" => {

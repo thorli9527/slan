@@ -17,7 +17,8 @@ class _DeviceStateControlPlaneSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return DesktopKeyValueList(
       entries: [
-        DesktopKeyValueEntry(label: 'Device', value: device?.deviceId ?? 'none'),
+        DesktopKeyValueEntry(
+            label: 'Device', value: device?.deviceId ?? 'none'),
         DesktopKeyValueEntry(label: 'Platform', value: device?.platform ?? '-'),
         DesktopKeyValueEntry(
           label: 'Virtual IP',
@@ -28,7 +29,8 @@ class _DeviceStateControlPlaneSection extends StatelessWidget {
           label: 'Connection',
           value: connectionState.status,
         ),
-        DesktopKeyValueEntry(label: 'Control MQTT', value: control?.status ?? 'none'),
+        DesktopKeyValueEntry(
+            label: 'Control MQTT', value: control?.status ?? 'none'),
         DesktopKeyValueEntry(
           label: 'Path',
           value: connectionState.path?.name ?? '-',
@@ -164,9 +166,8 @@ String _deviceInventoryLine(DeviceModel device) {
   final status = device.membershipStatus?.isNotEmpty == true
       ? _membershipStatusLabel(device.membershipStatus)
       : device.status;
-  final role = device.networkRole?.isNotEmpty == true
-      ? device.networkRole!
-      : '-';
+  final role =
+      device.networkRole?.isNotEmpty == true ? device.networkRole! : '-';
   final ip = device.virtualIp?.isNotEmpty == true ? device.virtualIp! : '-';
   return '${device.name} $status/$role $ip';
 }
@@ -210,7 +211,8 @@ class _DeviceStatePipelineStatusSection extends StatelessWidget {
       entries: [
         DesktopKeyValueEntry(
           label: 'Current phase',
-          value: phaseGuidance.currentPhaseLabel ?? _fallbackCurrentPhaseTitle(),
+          value:
+              phaseGuidance.currentPhaseLabel ?? _fallbackCurrentPhaseTitle(),
         ),
         DesktopKeyValueEntry(
           label: 'Next step',
@@ -341,7 +343,8 @@ class _DeviceStateEventsErrorsSection extends StatelessWidget {
         children: [
           Text('Backend error: ${runtime?.backendLastError ?? '-'}'),
           const SizedBox(height: 8),
-          Text('Tunnel error: ${runtime?.lastError ?? tunnelDebugError ?? '-'}'),
+          Text(
+              'Tunnel error: ${runtime?.lastError ?? tunnelDebugError ?? '-'}'),
           const SizedBox(height: 8),
           Text('Client error: ${error ?? '-'}'),
         ],

@@ -53,11 +53,6 @@ cargo run -p app-core-cli -- \
   network create --name home --cidr 100.64.0.0/24
 
 cargo run -p app-core-cli -- \
-  network join-by-owner-email \
-  --owner-email owner@example.com \
-  --alias "Thor laptop"
-
-cargo run -p app-core-cli -- \
   network join-by-key \
   --join-key team-alpha-join-key \
   --alias "Thor laptop"
@@ -77,7 +72,6 @@ cargo run -p app-core-cli -- \
 - `network list`
 - `network create`
 - `network join`
-- `network join-by-owner-email`
 - `network join-by-key`
 - `network remark`
 - `network activate`
@@ -91,7 +85,7 @@ cargo run -p app-core-cli -- \
 - 可用 `--json` 输出 JSON，方便脚本消费。
 - `network switch` 调用控制面的 `/networks/{networkId}/switch`，并更新本地当前网络。
 - `network activate` 调用 `/networks/{networkId}/activate`，适合显式恢复当前设备在目标网络的接入。
-- `network join-by-owner-email` 和 `network join-by-key` 的 `--alias` 会写入 attachment remark。
+- `network join-by-key` 的 `--alias` 会写入 attachment remark。
 
 ## 测试
 
@@ -101,7 +95,6 @@ cargo run -p app-core-cli -- \
 - `device register`
 - `node register`
 - `network create`
-- `network join-by-owner-email`
 - `network join-by-key`
 - `network remark`
 - `network activate`

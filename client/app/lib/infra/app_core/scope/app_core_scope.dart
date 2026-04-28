@@ -30,6 +30,7 @@ class AppCoreScope {
   static const _hostPreferenceKey = 'slan.server_host';
   static const _clientMachineIdKey = 'slan.client_machine_id';
   static const _sessionPreferenceKey = 'slan.session';
+  static const _networkUsagePreferenceKey = 'slan.last_network_usage_state';
 
   static const String _appCoreMode =
       String.fromEnvironment('SLAN_APP_CORE_MODE');
@@ -50,6 +51,7 @@ class AppCoreScope {
   static String? _runtimeServerUiUrl =
       _serverUiUrl.isEmpty ? null : _serverUiUrl;
   static String? _runtimeClientMachineId;
+  static String? _runtimeModeOverride;
 
   static AppCoreApi _instance = _buildDefaultInstance();
   static TunnelHostGateway _tunnelHostGateway = _buildTunnelHostGateway();
@@ -70,10 +72,6 @@ class AppCoreScope {
     await StartupLog.write(
       'tunnel host mode=${_resolvedTunnelHostMode()} helperHost=${_resolvedHelperHostAddress() ?? 'plugin'}',
     );
-    if (_appCoreMode == 'bridge') {
-      await StartupLog.write('app core initialize skipped: bridge mode');
-      return;
-    }
     final preferences = await SharedPreferences.getInstance();
     await StartupLog.write('preferences loaded');
     final persistedHost = preferences.getString(_hostPreferenceKey)?.trim();
@@ -106,6 +104,7 @@ class AppCoreScope {
         await _coordinator.applyExternalSessionInternal(
           validationResult.session ?? persistedSession,
           persistSession: false,
+          autoEnableLastNetwork: true,
         );
         await StartupLog.write('persisted session applied');
       } else {
@@ -120,11 +119,15 @@ class AppCoreScope {
             'persisted session skipped after transient validation failure',
           );
         }
-        await _cleanupInactiveTunnelBackend('invalid persisted session');
+        if (!_isBridgeMode) {
+          await _cleanupInactiveTunnelBackend('invalid persisted session');
+        }
       }
     } else {
       await StartupLog.write('no persisted session');
-      await _cleanupInactiveTunnelBackend('no persisted session');
+      if (!_isBridgeMode) {
+        await _cleanupInactiveTunnelBackend('no persisted session');
+      }
     }
     await StartupLog.write('app core initialize done');
   }
@@ -135,7 +138,7 @@ class AppCoreScope {
   static AppSessionController get sessionController => _sessionController;
   static AppTunnelController get tunnelController => _tunnelController;
   static TunnelHostGateway get tunnelHostGateway => _tunnelHostGateway;
-  static String get mode => _appCoreMode;
+  static String get mode => _runtimeModeOverride ?? _appCoreMode;
   static AppHostConfig? get hostConfig =>
       AppHostConfig.tryParse(_runtimeHostInput) ??
       AppHostConfig.tryParse(_runtimeControlBaseUrl);
@@ -146,12 +149,13 @@ class AppCoreScope {
       _runtimeServerUiUrl ??
       hostConfig?.webConsoleUrl ??
       _deriveWebConsoleUrl(_runtimeControlBaseUrl);
+  static bool get _isBridgeMode => mode == 'bridge';
   static String get clientMachineId => _runtimeClientMachineId ??=
       'client-${DateTime.now().microsecondsSinceEpoch}';
 
   static AppCoreApi _buildDefaultInstance() {
     final controlBaseUrl = AppCoreScope.controlBaseUrl;
-    return switch (_appCoreMode) {
+    return switch (mode) {
       'bridge' => BridgeAppCoreApi(),
       _ => controlBaseUrl == null || controlBaseUrl.isEmpty
           ? MockAppCoreApi()
@@ -162,7 +166,7 @@ class AppCoreScope {
   static void configureHost({
     required String host,
   }) {
-    if (_appCoreMode == 'bridge') {
+    if (_isBridgeMode) {
       return;
     }
     final normalized = host.trim();
@@ -178,7 +182,7 @@ class AppCoreScope {
     required String baseUrl,
     String? webBaseUrl,
   }) {
-    if (_appCoreMode == 'bridge') {
+    if (_isBridgeMode) {
       return;
     }
     _runtimeHostInput = null;
@@ -195,7 +199,9 @@ class AppCoreScope {
   static void configureForTest({
     required AppCoreApi appCoreApi,
     TunnelHostGateway? tunnelHostGateway,
+    String? mode,
   }) {
+    _runtimeModeOverride = mode?.trim().isEmpty == true ? null : mode?.trim();
     _instance = appCoreApi;
     _tunnelHostGateway = tunnelHostGateway ?? _buildTunnelHostGateway();
     _resetStoreBindings();
@@ -207,6 +213,7 @@ class AppCoreScope {
     _runtimeControlBaseUrl = _controlBaseUrl.isEmpty ? null : _controlBaseUrl;
     _runtimeServerUiUrl = _serverUiUrl.isEmpty ? null : _serverUiUrl;
     _runtimeClientMachineId = null;
+    _runtimeModeOverride = null;
     _instance = _buildDefaultInstance();
     _tunnelHostGateway = _buildTunnelHostGateway();
     _resetStoreBindings();
@@ -265,9 +272,6 @@ class AppCoreScope {
   }
 
   static Future<void> persistSession(SessionModel session) async {
-    if (_appCoreMode == 'bridge') {
-      return;
-    }
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString(
       _sessionPreferenceKey,
@@ -276,11 +280,62 @@ class AppCoreScope {
   }
 
   static Future<void> clearPersistedSession() async {
-    if (_appCoreMode == 'bridge') {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_sessionPreferenceKey);
+  }
+
+  static Future<void> persistNetworkUsageState({
+    required String userId,
+    required bool enabled,
+    String? networkId,
+  }) async {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
       return;
     }
     final preferences = await SharedPreferences.getInstance();
-    await preferences.remove(_sessionPreferenceKey);
+    await preferences.setString(
+      _networkUsagePreferenceKey,
+      jsonEncode({
+        'userId': normalizedUserId,
+        'networkId': networkId?.trim(),
+        'state': enabled ? 'enabled' : 'disabled',
+        'updatedAtMs': DateTime.now().millisecondsSinceEpoch,
+      }),
+    );
+  }
+
+  static Future<PersistedNetworkUsageState?> readNetworkUsageState(
+    String userId,
+  ) async {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
+      return null;
+    }
+    final preferences = await SharedPreferences.getInstance();
+    final raw = preferences.getString(_networkUsagePreferenceKey);
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+      final storedUserId = (decoded['userId'] as String? ?? '').trim();
+      if (storedUserId != normalizedUserId) {
+        return null;
+      }
+      final state = (decoded['state'] as String? ?? '').trim().toLowerCase();
+      return PersistedNetworkUsageState(
+        userId: storedUserId,
+        networkId: (decoded['networkId'] as String?)?.trim(),
+        enabled: state == 'enabled',
+        updatedAtMs: (decoded['updatedAtMs'] as num?)?.toInt(),
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   static SessionModel? _readPersistedSession(String? raw) {
@@ -307,6 +362,30 @@ class AppCoreScope {
   ) async {
     try {
       await StartupLog.write('validate persisted session start');
+      if (_isBridgeMode) {
+        try {
+          _instance.restoreSession(session);
+          await _instance.listDevices();
+          await StartupLog.write('validate persisted bridge session success');
+          return _persistedSessionValid.withSession(session);
+        } catch (error) {
+          await StartupLog.write(
+            'validate persisted bridge session restore failed: $error',
+          );
+        }
+        final refreshed = await _tryRefreshPersistedSession(session);
+        if (refreshed != null) {
+          await StartupLog.write(
+            'validate persisted bridge session refresh success',
+          );
+          return _persistedSessionValid.withSession(refreshed);
+        }
+        await StartupLog.write('validate persisted bridge session skipped');
+        return const _PersistedSessionValidationResult(
+          isValid: false,
+          shouldClearPersistedSession: false,
+        );
+      }
       _instance.restoreSession(session);
       await _instance.listDevices();
       await StartupLog.write('validate persisted session success');
@@ -424,6 +503,20 @@ class AppCoreScope {
       return null;
     }
   }
+}
+
+final class PersistedNetworkUsageState {
+  const PersistedNetworkUsageState({
+    required this.userId,
+    required this.enabled,
+    this.networkId,
+    this.updatedAtMs,
+  });
+
+  final String userId;
+  final bool enabled;
+  final String? networkId;
+  final int? updatedAtMs;
 }
 
 final class _PersistedSessionValidationResult {

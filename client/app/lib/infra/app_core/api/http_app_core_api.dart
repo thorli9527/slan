@@ -142,6 +142,15 @@ class HttpAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<bool> reportDeviceNetworkState() async => false;
+
+  @override
+  Future<BootstrapModel?> enableLocalNetwork({String? networkId}) async => null;
+
+  @override
+  Future<bool> disableLocalNetwork({String? networkId}) async => false;
+
+  @override
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,
@@ -205,23 +214,6 @@ class HttpAppCoreApi implements AppCoreApi {
       authorized: true,
     );
     return parseNetworkJoinResponse(json);
-  }
-
-  @override
-  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
-    required String ownerEmail,
-    required String deviceId,
-  }) async {
-    final json = await _send(
-      'POST',
-      '/networks/join-by-owner-email',
-      body: JoinNetworkByOwnerEmailRequest(
-        ownerEmail: ownerEmail,
-        deviceId: deviceId,
-      ).toJson(),
-      authorized: true,
-    );
-    return parseNetworkJoinByOwnerEmailResponse(json);
   }
 
   @override

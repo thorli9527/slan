@@ -122,6 +122,7 @@ message Route {
 message DNSConfig {
   repeated string servers = 1;
   repeated string search_domains = 2;
+  repeated string wildcards = 3;
 }
 
 // relay 区域定义。

@@ -52,11 +52,14 @@ class LocalDnsService {
       if (event != RawSocketEvent.read) {
         return;
       }
-      Datagram? datagram;
-      while ((datagram = socket.receive()) != null) {
-        final response = buildResponse(datagram!.data, _records);
+      while (true) {
+        final packet = socket.receive();
+        if (packet == null) {
+          break;
+        }
+        final response = buildResponse(packet.data, _records);
         if (response != null) {
-          socket.send(response, datagram!.address, datagram!.port);
+          socket.send(response, packet.address, packet.port);
         }
       }
     });
@@ -114,12 +117,13 @@ class LocalDnsService {
     builder.add(_u16(0));
     builder.add(request.sublist(12, question.endOffset));
     if (canAnswer) {
+      final answerAddress = address;
       builder.add(_u16(0xc00c));
       builder.add(_u16(1));
       builder.add(_u16(1));
       builder.add(_u32(30));
       builder.add(_u16(4));
-      builder.add(address!.rawAddress);
+      builder.add(answerAddress.rawAddress);
     }
     return builder.toBytes();
   }

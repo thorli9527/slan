@@ -23,7 +23,8 @@ void main() {
     expect(records, isEmpty);
   });
 
-  test('buildRecords ignores legacy search domains without wildcard records', () {
+  test('buildRecords ignores legacy search domains without wildcard records',
+      () {
     final records = LocalDnsService.buildRecords(const NetworkModel(
       networkId: 'net-1',
       name: 'My Network',

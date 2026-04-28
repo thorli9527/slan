@@ -334,14 +334,6 @@ fn cli_runs_network_join_alias_switch_and_deactivate_flow() {
             response(200, device_response()),
             response(
                 200,
-                network_join_response("net-owner", "att-owner", "100.64.0.10"),
-            ),
-            response(
-                200,
-                network_assignment_response("net-owner", "att-owner", "desk"),
-            ),
-            response(
-                200,
                 network_join_response("net-key", "att-key", "100.64.0.11"),
             ),
             response(
@@ -354,7 +346,7 @@ fn cli_runs_network_join_alias_switch_and_deactivate_flow() {
             ),
             response(
                 200,
-                network_join_response("net-owner", "att-owner", "100.64.0.10"),
+                network_join_response("net-key", "att-key", "100.64.0.11"),
             ),
             response(200, "{}".to_string()),
         ],
@@ -362,22 +354,6 @@ fn cli_runs_network_join_alias_switch_and_deactivate_flow() {
     let state_file = unique_temp_path("app-core-cli-network-lifecycle.json");
 
     prepare_registered_device(&server.base_url, &state_file);
-
-    let owner_join = run_cli(
-        &server.base_url,
-        &state_file,
-        &[
-            "--json",
-            "network",
-            "join-by-owner-email",
-            "--owner-email",
-            "owner@example.com",
-            "--alias",
-            "desk",
-        ],
-    );
-    assert_eq!(owner_join["networkId"], "net-owner");
-    assert_eq!(owner_join["attachmentId"], "att-owner");
 
     let key_join = run_cli(
         &server.base_url,
@@ -408,23 +384,17 @@ fn cli_runs_network_join_alias_switch_and_deactivate_flow() {
     let switched = run_cli(
         &server.base_url,
         &state_file,
-        &["--json", "network", "switch", "--network-id", "net-owner"],
+        &["--json", "network", "switch", "--network-id", "net-key"],
     );
-    assert_eq!(switched["networkId"], "net-owner");
+    assert_eq!(switched["networkId"], "net-key");
 
     let status_after_switch = run_cli(&server.base_url, &state_file, &["--json", "status"]);
-    assert_eq!(status_after_switch["current_network_id"], "net-owner");
+    assert_eq!(status_after_switch["current_network_id"], "net-key");
 
     let deactivated = run_cli(
         &server.base_url,
         &state_file,
-        &[
-            "--json",
-            "network",
-            "deactivate",
-            "--network-id",
-            "net-owner",
-        ],
+        &["--json", "network", "deactivate", "--network-id", "net-key"],
     );
     assert_eq!(deactivated["status"], "deactivated");
 
@@ -433,29 +403,20 @@ fn cli_runs_network_join_alias_switch_and_deactivate_flow() {
 
     server.join();
     let requests = recorded_requests.lock().unwrap();
-    assert_eq!(requests.len(), 9);
+    assert_eq!(requests.len(), 7);
     assert_request(&requests[0], "POST", "/auth/login");
     assert_request(&requests[1], "POST", "/devices/register");
-    assert_request(&requests[2], "POST", "/networks/join-by-owner-email");
-    assert_eq!(requests[2].json_body["ownerEmail"], "owner@example.com");
-    assert_eq!(requests[2].json_body["deviceId"], "dev-1");
+    assert_request(&requests[2], "POST", "/networks/join-by-key");
+    assert_eq!(requests[2].json_body["joinKey"], "join-key-1");
     assert_request(
         &requests[3],
         "PUT",
-        "/networks/net-owner/attachments/att-owner/remark",
-    );
-    assert_eq!(requests[3].json_body["remark"], "desk");
-    assert_request(&requests[4], "POST", "/networks/join-by-key");
-    assert_eq!(requests[4].json_body["joinKey"], "join-key-1");
-    assert_request(
-        &requests[5],
-        "PUT",
         "/networks/net-key/attachments/att-key/remark",
     );
-    assert_eq!(requests[5].json_body["remark"], "laptop");
-    assert_request(&requests[6], "POST", "/networks/net-key/activate");
-    assert_request(&requests[7], "POST", "/networks/net-owner/switch");
-    assert_request(&requests[8], "POST", "/networks/net-owner/deactivate");
+    assert_eq!(requests[3].json_body["remark"], "laptop");
+    assert_request(&requests[4], "POST", "/networks/net-key/activate");
+    assert_request(&requests[5], "POST", "/networks/net-key/switch");
+    assert_request(&requests[6], "POST", "/networks/net-key/deactivate");
 
     let _ = fs::remove_file(&state_file);
 }
@@ -712,9 +673,9 @@ fn assert_relay_ticket_request(
     assert_eq!(request.json_body["reason"], reason);
 }
 
-fn assert_disconnected_saved_state(saved_state: &Value, node_id: &str, network_id: &str) {
-    assert_eq!(saved_state["current_node"]["nodeId"], node_id);
-    assert_eq!(saved_state["current_network_id"], network_id);
+fn assert_disconnected_saved_state(saved_state: &Value, _node_id: &str, _network_id: &str) {
+    assert_eq!(saved_state["current_node"], Value::Null);
+    assert_eq!(saved_state["current_network_id"], Value::Null);
     assert_eq!(saved_state["connection_state"], "disconnected");
     assert_eq!(saved_state["active_path"], Value::Null);
     assert_eq!(saved_state["tunnel_peer_virtual_ip"], Value::Null);

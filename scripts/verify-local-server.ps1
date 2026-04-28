@@ -324,19 +324,19 @@ $state = Invoke-Api 'device network state online' PUT "$BaseUrl/devices/$deviceI
 Add-Result 'network state semantic check' ($state.networkOnline -eq $true -and $state.controlReachable -eq $true) "controlReachable=$($state.controlReachable) networkOnline=$($state.networkOnline)"
 Invoke-Api 'devices list after state' GET "$BaseUrl/devices" $null $token | Out-Null
 
-$mqttInvalid = Invoke-Api 'mqtt auth invalid' POST "$BaseUrl/mqtt/auth/check" @{
+$mqttInvalid = Invoke-Api 'mqtt auth invalid' POST "$BaseUrl/mqtt/bifromq/auth" @{
     clientId = 'bad'
     username = 'bad'
     password = 'bad'
-}
-Add-Result 'mqtt invalid denied check' ($mqttInvalid.allow -eq $false) "allow=$($mqttInvalid.allow)"
+} $null @(403)
+Add-Result 'mqtt invalid denied check' ($null -eq $mqttInvalid -or $mqttInvalid.reject -eq 'NotAuthorized') "reject=$($mqttInvalid.reject)"
 if ($device.mqtt) {
-    $mqttValid = Invoke-Api 'mqtt auth generated credential' POST "$BaseUrl/mqtt/auth/check" @{
+    $mqttValid = Invoke-Api 'mqtt auth generated credential' POST "$BaseUrl/mqtt/bifromq/auth" @{
         clientId = $device.mqtt.clientId
         username = $device.mqtt.username
         password = $device.mqtt.password
     }
-    Add-Result 'mqtt generated allowed check' ($mqttValid.allow -eq $true) "allow=$($mqttValid.allow)"
+    Add-Result 'mqtt generated allowed check' ($null -ne $mqttValid.ok) "tenant=$($mqttValid.ok.tenantId)"
 
     if ($VerifyMqttBroker) {
         try {

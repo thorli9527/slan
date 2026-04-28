@@ -469,7 +469,8 @@ class DesktopWorkspaceFrame extends StatelessWidget {
     final theme = Theme.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: backgroundColor ?? theme.colorScheme.surface.withValues(alpha: 0.94),
+        color: backgroundColor ??
+            theme.colorScheme.surface.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(borderRadius),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),

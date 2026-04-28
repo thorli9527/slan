@@ -3,6 +3,7 @@ package impl
 import (
 	"context"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
@@ -88,6 +89,18 @@ func (s dbOpsService) ListUsers() ([]dto.OpsUser, error) {
 	if err != nil {
 		return nil, err
 	}
+	userPlanOverrides := make(map[string]dto.PlanConfig)
+	for _, user := range users {
+		if override, err := s.state.pg.GetUserPlanOverride(ctx, user.UserID); err == nil {
+			userPlanOverrides[user.UserID] = dto.PlanConfig{
+				MaxActiveDevices: override.MaxActiveDevices,
+				RelayIngressKbps: override.RelayIngressKbps,
+				RelayEgressKbps:  override.RelayEgressKbps,
+				UDPIngressKbps:   override.UDPIngressKbps,
+				UDPEgressKbps:    override.UDPEgressKbps,
+			}
+		}
+	}
 	deviceCountByUser := make(map[string]int, len(users))
 	nodeCountByUser := make(map[string]int, len(users))
 	roleByID := make(map[string]repo.Role, len(roles))
@@ -112,7 +125,7 @@ func (s dbOpsService) ListUsers() ([]dto.OpsUser, error) {
 	}
 	out := make([]dto.OpsUser, 0, len(users))
 	for _, user := range users {
-		out = append(out, dto.OpsUser{
+		item := dto.OpsUser{
 			UserID:      user.UserID,
 			Email:       user.Email,
 			DeviceCount: deviceCountByUser[user.UserID],
@@ -120,9 +133,56 @@ func (s dbOpsService) ListUsers() ([]dto.OpsUser, error) {
 			RoleIDs:     append([]string(nil), roleIDsByUser[user.UserID]...),
 			RoleCodes:   append([]string(nil), roleCodesByUser[user.UserID]...),
 			RoleNames:   append([]string(nil), roleNamesByUser[user.UserID]...),
-		})
+		}
+		if override, ok := userPlanOverrides[user.UserID]; ok {
+			copy := override
+			item.PlanOverride = &copy
+		}
+		out = append(out, item)
 	}
 	return out, nil
+}
+
+func (s dbOpsService) PlanConfig() (dto.PlanConfig, error) {
+	return s.state.globalPlanConfig(context.Background()), nil
+}
+
+func (s dbOpsService) UpdatePlanConfig(req dto.UpdatePlanConfigRequest) (dto.PlanConfig, error) {
+	ctx := context.Background()
+	record := repoPlanConfigFromDTO(globalPlanConfigID, dto.PlanConfig(req))
+	if err := s.state.pg.UpsertPlanConfig(ctx, record); err != nil {
+		return dto.PlanConfig{}, err
+	}
+	return s.state.globalPlanConfig(ctx), nil
+}
+
+func (s dbOpsService) UpdateUserPlanOverride(userID string, req dto.UpdatePlanConfigRequest) (dto.UserPlanOverride, error) {
+	ctx := context.Background()
+	userID = strings.TrimSpace(userID)
+	if _, err := s.state.pg.GetUserByID(ctx, userID); err != nil {
+		if repo.IsNotFound(err) {
+			return dto.UserPlanOverride{}, ErrNotFound
+		}
+		return dto.UserPlanOverride{}, err
+	}
+	record := repoUserPlanOverrideFromDTO(userID, dto.PlanConfig(req))
+	if err := s.state.pg.UpsertUserPlanOverride(ctx, record); err != nil {
+		return dto.UserPlanOverride{}, err
+	}
+	return dto.UserPlanOverride{
+		UserID: userID,
+		PlanConfig: dto.PlanConfig{
+			MaxActiveDevices: record.MaxActiveDevices,
+			RelayIngressKbps: record.RelayIngressKbps,
+			RelayEgressKbps:  record.RelayEgressKbps,
+			UDPIngressKbps:   record.UDPIngressKbps,
+			UDPEgressKbps:    record.UDPEgressKbps,
+		},
+	}, nil
+}
+
+func (s dbOpsService) DeleteUserPlanOverride(userID string) error {
+	return s.state.pg.DeleteUserPlanOverride(context.Background(), strings.TrimSpace(userID))
 }
 
 func (s dbOpsService) ListDevices() ([]dto.OpsDevice, error) {

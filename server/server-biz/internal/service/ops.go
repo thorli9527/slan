@@ -9,6 +9,10 @@ type Ops interface {
 	AuthorizeAdminMenu(adminID string, menuCode string) error
 	Overview() (dto.OpsOverview, error)
 	ListUsers() ([]dto.OpsUser, error)
+	PlanConfig() (dto.PlanConfig, error)
+	UpdatePlanConfig(req dto.UpdatePlanConfigRequest) (dto.PlanConfig, error)
+	UpdateUserPlanOverride(userID string, req dto.UpdatePlanConfigRequest) (dto.UserPlanOverride, error)
+	DeleteUserPlanOverride(userID string) error
 	ListDevices() ([]dto.OpsDevice, error)
 	RelayTopology() (dto.OpsRelayTopology, error)
 	ListAdmins() ([]dto.OpsAdminInfo, error)

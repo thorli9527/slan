@@ -37,7 +37,8 @@ class _TunnelRuntimeSummary extends StatelessWidget {
               label: 'Transport',
               value: runtime?.transport ?? '-',
             ),
-            DesktopKeyValueEntry(label: 'Peer', value: runtime?.peerVirtualIp ?? '-'),
+            DesktopKeyValueEntry(
+                label: 'Peer', value: runtime?.peerVirtualIp ?? '-'),
             DesktopKeyValueEntry(
               label: 'Endpoint',
               value: runtime?.selectedEndpoint ?? '-',
@@ -286,7 +287,8 @@ class _TunnelOperationsMetrics extends StatelessWidget {
           spacing: 10,
           runSpacing: 10,
           children: [
-            DesktopMetricPill(label: 'Runtime', value: runtime?.state ?? 'idle'),
+            DesktopMetricPill(
+                label: 'Runtime', value: runtime?.state ?? 'idle'),
             DesktopMetricPill(
               label: 'Backend',
               value: runtime?.backendState ?? 'unavailable',

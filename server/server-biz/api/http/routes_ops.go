@@ -74,6 +74,45 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 		}
 		writeItems(c, items)
 	})
+	ops.GET("/plan-config", authorizeOpsMenu(deps, "ops.settings"), func(c *gin.Context) {
+		resp, err := deps.Ops.PlanConfig()
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+	ops.PUT("/plan-config", authorizeOpsMenu(deps, "ops.settings"), func(c *gin.Context) {
+		var req dto.UpdatePlanConfigRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		resp, err := deps.Ops.UpdatePlanConfig(req)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+	ops.PUT("/users/:userId/plan", authorizeOpsMenu(deps, "ops.users"), func(c *gin.Context) {
+		var req dto.UpdatePlanConfigRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		resp, err := deps.Ops.UpdateUserPlanOverride(c.Param("userId"), req)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+	ops.DELETE("/users/:userId/plan", authorizeOpsMenu(deps, "ops.users"), func(c *gin.Context) {
+		if err := deps.Ops.DeleteUserPlanOverride(c.Param("userId")); err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 	// GET /devices 返回设备聚合视图。
 	ops.GET("/devices", authorizeOpsMenu(deps, "ops.devices"), func(c *gin.Context) {
 		items, err := deps.Ops.ListDevices()

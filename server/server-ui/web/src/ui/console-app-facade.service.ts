@@ -241,13 +241,14 @@ export class ConsoleAppFacadeService {
     });
   }
 
-  async deleteAttachment(input: {
+  async updateAttachmentStatus(input: {
     token: string;
     networkId: string;
     attachmentId: string;
+    status: 'active' | 'disabled';
     deviceState: Omit<EnsureDeviceInput, 'token'>;
   }): Promise<RefreshWorkspaceResult> {
-    await this.api.deleteAttachment(input.token, input.networkId, input.attachmentId);
+    await this.api.updateAttachmentStatus(input.token, input.networkId, input.attachmentId, input.status);
     return this.refreshWorkspace({
       token: input.token,
       ...input.deviceState,

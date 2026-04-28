@@ -5,6 +5,7 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
+serde_json = "1"
 slan-app-core = { path = "../app-core" }
 tunnel = { path = "../tunnel" }
 

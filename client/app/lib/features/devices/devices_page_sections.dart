@@ -98,10 +98,10 @@ extension _DevicesPageSections on _DevicesPageState {
                       ),
                       OutlinedButton(
                         key: AppTestKeys.devicesRefreshInventoryButton,
-                        onPressed: sessionStore.busy ||
-                                sessionStore.session == null
-                            ? null
-                            : sessionController.refreshDeviceInventory,
+                        onPressed:
+                            sessionStore.busy || sessionStore.session == null
+                                ? null
+                                : sessionController.refreshDeviceInventory,
                         child: const Text('Refresh Devices'),
                       ),
                     ],
@@ -192,7 +192,8 @@ extension _DevicesPageSections on _DevicesPageState {
     AppSessionController sessionController,
   ) {
     final peerNodeId = _peerNodeIdController.text.trim();
-    final controlPlan = connectPlanForPeer(sessionStore.controlStatus, peerNodeId);
+    final controlPlan =
+        connectPlanForPeer(sessionStore.controlStatus, peerNodeId);
     final recommendationMatch = connectRecommendationMatchLabel(
       controlPlan: controlPlan,
       connectionState: sessionStore.connectionState,
@@ -235,7 +236,8 @@ extension _DevicesPageSections on _DevicesPageState {
               ),
               OutlinedButton(
                 key: AppTestKeys.devicesDisconnectButton,
-                onPressed: sessionStore.busy ? null : sessionController.disconnect,
+                onPressed:
+                    sessionStore.busy ? null : sessionController.disconnect,
                 child: const Text('Disconnect'),
               ),
             ],
@@ -368,8 +370,7 @@ extension _DevicesPageSections on _DevicesPageState {
                       key: AppTestKeys.devicesPlatformInstallPlanButton,
                       onPressed: sessionStore.busy
                           ? null
-                          : () =>
-                              tunnelController.refreshPlatformInstallPlan(),
+                          : () => tunnelController.refreshPlatformInstallPlan(),
                       child: const Text('Install Plan'),
                     ),
                   ],
@@ -379,9 +380,9 @@ extension _DevicesPageSections on _DevicesPageState {
                   entries: [
                     DesktopKeyValueEntry(
                       label: 'Platform',
-                      value: _formatPlatformSummary(tunnelStore.platformDoctor
-                              ?.platform ??
-                          tunnelStore.platformInstallPlan?.platform),
+                      value: _formatPlatformSummary(
+                          tunnelStore.platformDoctor?.platform ??
+                              tunnelStore.platformInstallPlan?.platform),
                     ),
                     DesktopKeyValueEntry(
                       label: 'Tunnel backend',
@@ -397,22 +398,22 @@ extension _DevicesPageSections on _DevicesPageState {
                     ),
                     DesktopKeyValueEntry(
                       label: 'Packages',
-                      value:
-                          tunnelStore.platformInstallPlan?.packages.join(', ') ??
-                              '-',
+                      value: tunnelStore.platformInstallPlan?.packages
+                              .join(', ') ??
+                          '-',
                     ),
                     DesktopKeyValueEntry(
                       label: 'Driver modes',
-                      value: tunnelStore.platformInstallPlan
-                              ?.supportedDriverModes
+                      value: tunnelStore
+                              .platformInstallPlan?.supportedDriverModes
                               .join(', ') ??
                           '-',
                     ),
                     DesktopKeyValueEntry(
                       label: 'Warnings',
-                      value:
-                          tunnelStore.platformInstallPlan?.warnings.join('; ') ??
-                              '-',
+                      value: tunnelStore.platformInstallPlan?.warnings
+                              .join('; ') ??
+                          '-',
                     ),
                   ],
                 ),
@@ -485,9 +486,7 @@ extension _DevicesPageSections on _DevicesPageState {
     if (checks.isEmpty) {
       return '-';
     }
-    return checks
-        .map((check) => '${check.name}:${check.status}')
-        .join(', ');
+    return checks.map((check) => '${check.name}:${check.status}').join(', ');
   }
 
   Widget _buildTunnelSection(
@@ -498,8 +497,77 @@ extension _DevicesPageSections on _DevicesPageState {
     required AppTunnelController tunnelController,
     bool isDesktop = false,
   }) {
+    final serviceOwned = AppCoreScope.mode == 'bridge';
     final actionButtons =
         _buildTunnelActionButtons(sessionStore, tunnelController);
+    if (serviceOwned) {
+      return _DevicesWorkbenchCard(
+        title: 'Service Network Runtime',
+        subtitle:
+            'app-core-service owns tunnel, DNS, control-sync, and network-state reporting; Flutter only triggers enable, sync, and disable actions.',
+        child: Column(
+          children: [
+            _DevicesSubsection(
+              title: 'Runtime Control',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  actionButtons,
+                  const SizedBox(height: 12),
+                  Text(
+                    sessionStore.notice ??
+                        tunnelStore.lastTunnelActionReport?.detail ??
+                        'Service runtime is ready for network actions.',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _DevicesSubsection(
+              title: 'Operations Desk',
+              child: _TunnelOperationsDesk(
+                tunnelRuntimeView: tunnelStore.tunnelRuntimeView,
+                controlStatus: sessionStore.controlStatus,
+                tunnelDebugError: tunnelStore.tunnelDebugError,
+                error: sessionStore.error,
+                busy: sessionStore.busy,
+                connectionState: sessionStore.connectionState,
+                peerVirtualIp: tunnelStore.tunnelRuntimeView?.peerVirtualIp ??
+                    sessionStore.device?.virtualIp ??
+                    '-',
+                activeAction: _activeTunnelAction,
+                recentActions: _recentTunnelActions,
+                recentHealthSnapshots: _recentHealthSnapshots,
+                lastTunnelActionReport: tunnelStore.lastTunnelActionReport,
+                lastProbe: tunnelStore.lastProbe,
+                lastSendFailure: tunnelStore.lastSendFailure,
+                lastProbeFailure: tunnelStore.lastProbeFailure,
+                onRecover: () => _handleRecoverSession(tunnelController),
+                onBootstrap: () => _handleBootstrapRefresh(sessionController),
+                onApply: () => _handleTunnelApply(tunnelController),
+                onUp: () => _handleTunnelUp(tunnelController),
+                onInspect: () => _handleTunnelInspect(tunnelController),
+                onDown: () => _handleTunnelDown(tunnelController),
+                runtimeMonitorEnabled: _runtimeMonitorEnabled,
+                onToggleRuntimeMonitor: (enabled) =>
+                    _setRuntimeMonitorEnabled(enabled),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _DevicesSubsection(
+              title: 'Runtime Snapshot',
+              child: _TunnelRuntimeSummary(
+                tunnelRuntimeView: tunnelStore.tunnelRuntimeView,
+                tunnelDebugError: tunnelStore.tunnelDebugError,
+                error: sessionStore.error,
+                dense: false,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return _DevicesWorkbenchCard(
       title: 'WireGuard Tunnel Debug',
       subtitle:
@@ -722,6 +790,7 @@ extension _DevicesPageSections on _DevicesPageState {
     AppSessionStore sessionStore,
     AppTunnelController tunnelController,
   ) {
+    final serviceOwned = AppCoreScope.mode == 'bridge';
     return Wrap(
       spacing: 12,
       runSpacing: 12,
@@ -731,38 +800,37 @@ extension _DevicesPageSections on _DevicesPageState {
           onPressed: sessionStore.busy
               ? null
               : () => _handleTunnelApply(tunnelController),
-          child: const Text('Apply Tunnel'),
+          child: Text(serviceOwned ? 'Enable Network' : 'Apply Tunnel'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelUpButton,
           onPressed: sessionStore.busy
               ? null
               : () => _handleTunnelUp(tunnelController),
-          child: const Text('Bring Up'),
+          child: Text(serviceOwned ? 'Start Runtime' : 'Bring Up'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelViewButton,
           onPressed: sessionStore.busy
               ? null
               : () => _handleTunnelInspect(tunnelController),
-          child: const Text('View Runtime'),
+          child: Text(serviceOwned ? 'Sync State' : 'View Runtime'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelDownButton,
           onPressed: sessionStore.busy
               ? null
               : () => _handleTunnelDown(tunnelController),
-          child: const Text('Bring Down'),
+          child: Text(serviceOwned ? 'Disable Network' : 'Bring Down'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelRemoveButton,
           onPressed: sessionStore.busy
               ? null
               : () => _handleTunnelRemovePeer(tunnelController),
-          child: const Text('Remove Peer'),
+          child: Text(serviceOwned ? 'Clear Runtime' : 'Remove Peer'),
         ),
       ],
     );
   }
-
 }

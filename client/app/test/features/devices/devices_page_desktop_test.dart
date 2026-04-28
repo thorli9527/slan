@@ -4,10 +4,12 @@ import 'package:slan_app/application/tunnel_host_gateway.dart';
 import 'package:slan_app/features/devices/devices_page.dart';
 import 'package:slan_app/infra/app_core/api/app_core_api.dart';
 import 'package:slan_app/infra/app_core/api/mock_app_core_api.dart';
+import 'package:slan_app/infra/app_core/models/models.dart';
 import 'package:slan_app/infra/app_core/scope/app_core_scope.dart';
 import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
 import 'package:slan_app/testing/app_test_keys.dart';
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('DevicesPage renders desktop workbench sections', (
@@ -36,12 +38,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Run Doctor'), findsOneWidget);
-    expect(find.textContaining('mock / family mock / pkg mock'), findsOneWidget);
+    expect(
+        find.textContaining('mock / family mock / pkg mock'), findsOneWidget);
     expect(find.textContaining('in-memory / memory / memory'), findsOneWidget);
     expect(find.textContaining('mock_backend:ok'), findsOneWidget);
   });
 
-  testWidgets('DevicesPage shows control plan guidance after quick setup and connect', (
+  testWidgets(
+      'DevicesPage shows control plan guidance after quick setup and connect', (
     WidgetTester tester,
   ) async {
     await _pumpDevicesPageWithMockAppCore(tester);
@@ -53,8 +57,8 @@ void main() {
       publicKey: 'device-pub-1',
     );
     final currentDevice = AppCoreScope.sessionStore.device!;
-    final networkId = await AppCoreScope.sessionController
-        .ensureNetworkAvailableAndJoined(
+    final networkId =
+        await AppCoreScope.sessionController.ensureNetworkAvailableAndJoined(
       currentDevice: currentDevice,
       preferredNetworkId: 'net-1',
       fallbackNetworkName: 'home',
@@ -81,10 +85,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('matched'), findsWidgets);
-    expect(find.textContaining('Control plane suggested direct direct_udp'), findsOneWidget);
+    expect(find.textContaining('Control plane suggested direct direct_udp'),
+        findsOneWidget);
   });
 
-  testWidgets('DevicesPage renders runtime snapshot from injected tunnel gateway', (
+  testWidgets(
+      'DevicesPage renders runtime snapshot from injected tunnel gateway', (
     WidgetTester tester,
   ) async {
     final gateway = _FakeTunnelHostGateway.healthy();
@@ -101,7 +107,8 @@ void main() {
     expect(find.text('203.0.113.10:51820'), findsWidgets);
   });
 
-  testWidgets('DevicesPage derives healthy guidance from injected runtime snapshot', (
+  testWidgets(
+      'DevicesPage derives healthy guidance from injected runtime snapshot', (
     WidgetTester tester,
   ) async {
     final gateway = _FakeTunnelHostGateway.healthy();
@@ -125,7 +132,8 @@ void main() {
     expect(find.text('Run Bring Down'), findsOneWidget);
   });
 
-  testWidgets('DevicesPage derives degraded guidance when runtime has no endpoint', (
+  testWidgets(
+      'DevicesPage derives degraded guidance when runtime has no endpoint', (
     WidgetTester tester,
   ) async {
     final gateway = _FakeTunnelHostGateway.missingEndpoint();
@@ -147,7 +155,8 @@ void main() {
     expect(find.text('View Runtime'), findsWidgets);
   });
 
-  testWidgets('DevicesPage derives failed guidance when backend reports failure', (
+  testWidgets(
+      'DevicesPage derives failed guidance when backend reports failure', (
     WidgetTester tester,
   ) async {
     final gateway = _FakeTunnelHostGateway.failedBackend();
@@ -167,7 +176,8 @@ void main() {
     expect(find.text('Apply Tunnel Again'), findsWidgets);
   });
 
-  testWidgets('DevicesPage derives staged guidance when backend is not started yet', (
+  testWidgets(
+      'DevicesPage derives staged guidance when backend is not started yet', (
     WidgetTester tester,
   ) async {
     final gateway = _FakeTunnelHostGateway.notStartedYet();
@@ -189,7 +199,8 @@ void main() {
     expect(find.text('Run Bring Up'), findsOneWidget);
   });
 
-  testWidgets('DevicesPage derives no-traffic guidance when runtime is up but idle', (
+  testWidgets(
+      'DevicesPage derives no-traffic guidance when runtime is up but idle', (
     WidgetTester tester,
   ) async {
     final gateway = _FakeTunnelHostGateway.noTraffic();
@@ -209,6 +220,117 @@ void main() {
       findsWidgets,
     );
     expect(find.text('View Runtime'), findsWidgets);
+  });
+
+  testWidgets('DevicesPage uses service runtime actions in bridge mode', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final appCore = _BridgeRuntimeMockAppCoreApi();
+    final gateway = _ThrowingTunnelHostGateway();
+    await _pumpDevicesPageWithScope(
+      tester,
+      appCoreApi: appCore,
+      tunnelHostGateway: gateway,
+      mode: 'bridge',
+    );
+
+    AppCoreScope.sessionStore.session = const SessionModel(
+      userId: 'user-1',
+      accessToken: 'token-1',
+      expiresIn: 3600,
+      deviceId: 'dev-1',
+    );
+    AppCoreScope.sessionStore.device = appCore.device;
+    AppCoreScope.sessionStore.node = appCore.node;
+    AppCoreScope.sessionStore.networks = appCore.networks;
+    AppCoreScope.sessionStore.selectedNetworkId = 'net-1';
+    AppCoreScope.sessionStore.emit();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Service Network Runtime'), findsOneWidget);
+    expect(find.text('Enable Network'), findsOneWidget);
+    expect(find.text('Sync State'), findsOneWidget);
+    expect(find.text('Disable Network'), findsOneWidget);
+    expect(find.text('Local Virtual IP'), findsNothing);
+    expect(find.text('Interface Private Key'), findsNothing);
+    expect(find.text('Peer Endpoint'), findsNothing);
+
+    await tester
+        .ensureVisible(find.byKey(AppTestKeys.devicesTunnelApplyButton));
+    await tester.tap(find.byKey(AppTestKeys.devicesTunnelApplyButton));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(appCore.enableLocalNetworkCalls, 1);
+    expect(gateway.tunnelActionCalls, 0);
+    expect(find.text('Enable network'), findsWidgets);
+    var usageState = await AppCoreScope.readNetworkUsageState('user-1');
+    expect(usageState, isNotNull);
+    expect(usageState!.enabled, isTrue);
+    expect(usageState.networkId, 'net-1');
+
+    final syncButton = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Sync State'),
+    );
+    expect(syncButton.onPressed, isNotNull);
+    syncButton.onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(appCore.controlSyncCalls, 1);
+    expect(gateway.tunnelActionCalls, 0);
+    expect(find.text('Sync service state'), findsWidgets);
+
+    final disableButton = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Disable Network'),
+    );
+    expect(disableButton.onPressed, isNotNull);
+    disableButton.onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(appCore.disableLocalNetworkCalls, 1);
+    expect(gateway.tunnelActionCalls, 0);
+    expect(find.text('Disable network'), findsWidgets);
+    usageState = await AppCoreScope.readNetworkUsageState('user-1');
+    expect(usageState, isNotNull);
+    expect(usageState!.enabled, isFalse);
+    expect(usageState.networkId, 'net-1');
+  });
+
+  testWidgets('DevicesPage quick setup uses service runtime in bridge mode', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final appCore = _BridgeRuntimeMockAppCoreApi();
+    final gateway = _ThrowingTunnelHostGateway();
+    await _pumpDevicesPageWithScope(
+      tester,
+      appCoreApi: appCore,
+      tunnelHostGateway: gateway,
+      mode: 'bridge',
+    );
+
+    AppCoreScope.sessionStore.session = const SessionModel(
+      userId: 'user-1',
+      accessToken: 'token-1',
+      expiresIn: 3600,
+    );
+    AppCoreScope.sessionStore.emit();
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Quick Setup Client'));
+    await tester.tap(find.text('Quick Setup Client'));
+    await tester.pumpAndSettle();
+
+    expect(appCore.enableLocalNetworkCalls, 1);
+    expect(appCore.controlSyncCalls, 1);
+    expect(gateway.tunnelActionCalls, 0);
+    expect(find.text('Quick setup client'), findsWidgets);
+    final usageState = await AppCoreScope.readNetworkUsageState('user-1');
+    expect(usageState, isNotNull);
+    expect(usageState!.enabled, isTrue);
+    expect(usageState.networkId, 'net-1');
   });
 }
 
@@ -255,14 +377,144 @@ Future<void> _pumpDevicesPageWithScope(
   WidgetTester tester, {
   required AppCoreApi appCoreApi,
   TunnelHostGateway? tunnelHostGateway,
+  String? mode,
 }) async {
   _configureDesktopViewport(tester);
   AppCoreScope.configureForTest(
     appCoreApi: appCoreApi,
     tunnelHostGateway: tunnelHostGateway,
+    mode: mode,
   );
   addTearDown(AppCoreScope.resetForTest);
   await _pumpDevicesPage(tester, configureViewport: false);
+}
+
+class _BridgeRuntimeMockAppCoreApi extends MockAppCoreApi {
+  _BridgeRuntimeMockAppCoreApi();
+
+  int enableLocalNetworkCalls = 0;
+  int controlSyncCalls = 0;
+  int disableLocalNetworkCalls = 0;
+
+  final DeviceModel device = const DeviceModel(
+    deviceId: 'dev-1',
+    name: 'desktop',
+    platform: 'windows',
+    status: 'reachable',
+    virtualIp: '10.0.0.2',
+    publicKey: 'device-pub-1',
+    networkIds: ['net-1'],
+  );
+
+  final NodeModel node = const NodeModel(
+    nodeId: 'node-1',
+    deviceId: 'dev-1',
+    nodePublicKey: 'node-pub-1',
+    networkIds: ['net-1'],
+  );
+
+  final List<NetworkModel> networks = const [
+    NetworkModel(
+      networkId: 'net-1',
+      name: 'default',
+      cidr: '10.0.0.0/16',
+      members: [
+        NetworkMemberModel(
+          deviceId: 'dev-1',
+          role: 'owner',
+          status: 'enabled',
+          virtualIp: '10.0.0.2',
+        ),
+      ],
+    ),
+  ];
+
+  @override
+  Future<BootstrapModel?> enableLocalNetwork({String? networkId}) async {
+    enableLocalNetworkCalls += 1;
+    return _bootstrap();
+  }
+
+  @override
+  Future<bool> disableLocalNetwork({String? networkId}) async {
+    disableLocalNetworkCalls += 1;
+    return true;
+  }
+
+  @override
+  Future<BootstrapModel> controlSync({
+    required String nodeId,
+    required String networkId,
+  }) async {
+    controlSyncCalls += 1;
+    return _bootstrap();
+  }
+
+  BootstrapModel _bootstrap() {
+    return BootstrapModel(
+      device: device,
+      networks: networks,
+      controlPlane: const ControlPlaneConfigModel(
+        wsUrl: kDevControlMqttUrl,
+        heartbeatSeconds: 15,
+        sessionToken: 'session-token',
+      ),
+      stunServers: const [kDevStunServer],
+      relay: const RelayConfigModel(
+        defaultClusterId: 'local',
+        countries: [],
+      ),
+    );
+  }
+
+  @override
+  Future<ControlStatusModel> controlStatus() async => const ControlStatusModel(
+        status: 'configured',
+        wsUrl: kDevControlMqttUrl,
+        heartbeatSeconds: 15,
+        sessionTokenPresent: true,
+        networkMapPresent: true,
+        networkId: 'net-1',
+        nodeId: 'node-1',
+        deviceId: 'dev-1',
+        peerCount: 0,
+        connectPlanCount: 0,
+        connectPlans: [],
+      );
+}
+
+class _ThrowingTunnelHostGateway extends TunnelHostGateway {
+  int tunnelActionCalls = 0;
+
+  Never _unexpected() {
+    tunnelActionCalls += 1;
+    throw StateError(
+        'Flutter tunnel gateway should not be used in bridge mode');
+  }
+
+  @override
+  Future<WireGuardTunnelActionResult> applyTunnelConfiguration(
+    WireGuardTunnelConfiguration configuration,
+  ) async =>
+      _unexpected();
+
+  @override
+  Future<WireGuardTunnelActionResult> bringTunnelDown() async => _unexpected();
+
+  @override
+  Future<WireGuardTunnelActionResult> bringTunnelUp() async => _unexpected();
+
+  @override
+  Future<WireGuardTunnelActionResult> removeTunnelPeer(
+    String peerVirtualIp,
+  ) async =>
+      _unexpected();
+
+  @override
+  Future<WireGuardTunnelRuntimeView?> tunnelRuntimeView(
+    String peerVirtualIp,
+  ) async =>
+      _unexpected();
 }
 
 Future<void> _inspectTunnelRuntime(WidgetTester tester) async {
@@ -277,16 +529,14 @@ class _FakeTunnelHostGateway extends TunnelHostGateway {
   factory _FakeTunnelHostGateway.healthy() =>
       _FakeTunnelHostGateway(_healthyRuntimePayload);
 
-  factory _FakeTunnelHostGateway.missingEndpoint() =>
-      _FakeTunnelHostGateway({
+  factory _FakeTunnelHostGateway.missingEndpoint() => _FakeTunnelHostGateway({
         ..._healthyRuntimePayload,
         'selectedEndpoint': null,
         'backendSelectedEndpoint': null,
         'remoteAddress': '',
       });
 
-  factory _FakeTunnelHostGateway.failedBackend() =>
-      _FakeTunnelHostGateway({
+  factory _FakeTunnelHostGateway.failedBackend() => _FakeTunnelHostGateway({
         ..._healthyRuntimePayload,
         'state': 'configured',
         'backendState': 'failed',
@@ -298,8 +548,7 @@ class _FakeTunnelHostGateway extends TunnelHostGateway {
         'packetTxBytes': 0,
       });
 
-  factory _FakeTunnelHostGateway.notStartedYet() =>
-      _FakeTunnelHostGateway({
+  factory _FakeTunnelHostGateway.notStartedYet() => _FakeTunnelHostGateway({
         ..._healthyRuntimePayload,
         'state': 'configured',
         'backendState': 'idle',
@@ -311,8 +560,7 @@ class _FakeTunnelHostGateway extends TunnelHostGateway {
         'packetTxBytes': 0,
       });
 
-  factory _FakeTunnelHostGateway.noTraffic() =>
-      _FakeTunnelHostGateway({
+  factory _FakeTunnelHostGateway.noTraffic() => _FakeTunnelHostGateway({
         ..._healthyRuntimePayload,
         'packetRxCount': 0,
         'packetRxBytes': 0,
@@ -347,7 +595,8 @@ class _FakeTunnelHostGateway extends TunnelHostGateway {
   }
 
   @override
-  Future<WireGuardTunnelRuntimeView?> tunnelRuntimeView(String peerVirtualIp) async {
+  Future<WireGuardTunnelRuntimeView?> tunnelRuntimeView(
+      String peerVirtualIp) async {
     lastRuntimePeerVirtualIp = peerVirtualIp;
     final payload = Map<Object?, Object?>.from(_runtimePayload)
       ..['peerVirtualIp'] = peerVirtualIp;

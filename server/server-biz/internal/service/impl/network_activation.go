@@ -25,31 +25,6 @@ func (s dbNetworkService) Join(userID, networkID string, req dto.JoinNetworkRequ
 	return dto.NetworkJoinResult{Member: member}, nil
 }
 
-func (s dbNetworkService) JoinByOwnerEmail(userID string, req dto.JoinNetworkByOwnerEmailRequest) (dto.NetworkJoinByOwnerEmailResult, error) {
-	if strings.TrimSpace(req.OwnerEmail) == "" {
-		return dto.NetworkJoinByOwnerEmailResult{}, fmt.Errorf("%w: ownerEmail is required", ErrInvalidArgument)
-	}
-	if err := s.requireDeviceID(req.DeviceID); err != nil {
-		return dto.NetworkJoinByOwnerEmailResult{}, err
-	}
-	ctx := context.Background()
-	target, err := s.lookupOwnedNetworkByOwnerEmail(ctx, req.OwnerEmail)
-	if err != nil {
-		return dto.NetworkJoinByOwnerEmailResult{}, err
-	}
-	if err := s.state.ensureDeviceOwner(ctx, userID, req.DeviceID); err != nil {
-		return dto.NetworkJoinByOwnerEmailResult{}, err
-	}
-	member, err := s.requestMemberForNetwork(ctx, userID, req.DeviceID, target)
-	if err != nil {
-		return dto.NetworkJoinByOwnerEmailResult{}, err
-	}
-	return dto.NetworkJoinByOwnerEmailResult{
-		Network: target.ToDTO(),
-		Member:  member,
-	}, nil
-}
-
 func (s dbNetworkService) JoinByKey(userID string, req dto.JoinNetworkByKeyRequest) (dto.NetworkJoinResult, error) {
 	joinKey := strings.TrimSpace(req.JoinKey)
 	if joinKey == "" {
@@ -105,10 +80,13 @@ func (s dbNetworkService) Activate(userID, networkID string, req dto.JoinNetwork
 	if err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
+	if err := s.state.requireAttachmentAvailableForActivation(ctx, record.DefaultSubnetID, req.DeviceID); err != nil {
+		return dto.NetworkJoinResult{}, err
+	}
 	if err := s.state.ensureSingleActiveNetworkForUser(ctx, userID, networkID); err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
-	if err := s.state.ensureFixedDeviceLimitAllowsActivation(ctx, userID, record.DefaultSubnetID, req.DeviceID); err != nil {
+	if err := s.state.ensureFixedDeviceLimitAllowsActivation(ctx, record.OwnerUserID, networkID, record.DefaultSubnetID, req.DeviceID); err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
 	attachment, err := s.state.ensureAttachment(ctx, networkID, record.DefaultSubnetID, req.DeviceID)
@@ -118,14 +96,30 @@ func (s dbNetworkService) Activate(userID, networkID string, req dto.JoinNetwork
 	return dto.NetworkJoinResult{Member: member, Attachment: attachment}, nil
 }
 
-func (s *dbState) ensureFixedDeviceLimitAllowsActivation(ctx context.Context, userID, subnetID, deviceID string) error {
-	limit := fixedDeviceLimit()
+func (s *dbState) requireAttachmentAvailableForActivation(ctx context.Context, subnetID, deviceID string) error {
+	attachment, err := s.pg.GetAttachmentBySubnetDevice(ctx, subnetID, deviceID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(attachment.Status)) {
+	case "disabled", "suspended":
+		return fmt.Errorf("%w: device unavailable, contact administrator", ErrForbidden)
+	default:
+		return nil
+	}
+}
+
+func (s *dbState) ensureFixedDeviceLimitAllowsActivation(ctx context.Context, ownerUserID, networkID, subnetID, deviceID string) error {
+	limit := s.effectivePlanConfig(ctx, ownerUserID).MaxActiveDevices
 	if attachment, err := s.pg.GetAttachmentBySubnetDevice(ctx, subnetID, deviceID); err == nil && attachment.Status == "active" && attachment.VirtualIP != "" {
 		return nil
 	} else if err != nil && !repo.IsNotFound(err) {
 		return err
 	}
-	activeCount, err := s.pg.CountActiveAttachmentsByUser(ctx, userID)
+	activeCount, err := s.pg.CountActiveAttachmentsByNetwork(ctx, networkID)
 	if err != nil {
 		return err
 	}
@@ -150,11 +144,15 @@ func (s dbNetworkService) Deactivate(userID, networkID string, req dto.Deactivat
 }
 
 func (s *dbState) cleanupDeactivatedNetworkDevice(ctx context.Context, networkID, deviceID string) error {
-	nodes, err := s.pg.ListNodesByDevice(ctx, deviceID)
-	if err != nil {
+	if err := s.cleanupNetworkDeviceRuntime(ctx, networkID, deviceID); err != nil {
 		return err
 	}
-	if err := s.pg.DeleteAttachmentsByDeviceInNetwork(ctx, deviceID, networkID); err != nil {
+	return s.pg.DeleteAttachmentsByDeviceInNetwork(ctx, deviceID, networkID)
+}
+
+func (s *dbState) cleanupNetworkDeviceRuntime(ctx context.Context, networkID, deviceID string) error {
+	nodes, err := s.pg.ListNodesByDevice(ctx, deviceID)
+	if err != nil {
 		return err
 	}
 	if sessions, err := s.pg.ListControlSessionsByDeviceInNetwork(ctx, deviceID, networkID); err != nil {

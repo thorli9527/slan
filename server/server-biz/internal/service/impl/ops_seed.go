@@ -16,6 +16,7 @@ var builtinOpsMenus = []repo.Menu{
 	{MenuCode: "ops.roles", MenuName: "Roles", Path: "/roles", Sort: 50, Status: "active"},
 	{MenuCode: "ops.menus", MenuName: "Menus", Path: "/menus", Sort: 60, Status: "active"},
 	{MenuCode: "ops.relays", MenuName: "Relays", Path: "/relays", Sort: 70, Status: "active"},
+	{MenuCode: "ops.settings", MenuName: "Settings", Path: "/settings", Sort: 80, Status: "active"},
 }
 
 type builtinOpsRoleSeed struct {
@@ -38,6 +39,7 @@ var builtinOpsRoles = []builtinOpsRoleSeed{
 			"ops.roles",
 			"ops.menus",
 			"ops.relays",
+			"ops.settings",
 		},
 	},
 	{

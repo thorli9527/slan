@@ -5,7 +5,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../../features/shared/desktop_client_widgets.dart';
 import '../../infra/app_core/models/network_models.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
 import '../../infra/app_core/store/app_session_store.dart';
@@ -31,18 +30,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   bool _autoSetupStarted = false;
-  bool _openedNetworkConsole = false;
-  String? _networkConsoleStatus;
   Timer? _networkPollingTimer;
-
-  void _setNetworkConsoleStatus(String message) {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _networkConsoleStatus = message;
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -60,7 +48,6 @@ class _HomePageState extends State<HomePage> {
         _ensureWorkspaceReady(sessionStore);
       });
     }
-
     return AnimatedBuilder(
       animation: Listenable.merge([sessionStore, tunnelStore]),
       builder: (context, _) {
@@ -81,57 +68,39 @@ class _HomePageState extends State<HomePage> {
             activeNetwork == null ? 'inactive' : runtime?.state ?? 'idle';
 
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('SLAN'),
-            actions: [
-              if (!loggedIn)
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: Tooltip(
-                    message:
-                        'Server Config: ${AppCoreScope.hostConfig?.displayHost ?? 'mock'}',
-                    child: IconButton.filledTonal(
-                      key: AppTestKeys.homeSettingsButton,
-                      onPressed: () => _showServerSettingsDialog(context),
-                      icon: const Icon(Icons.settings_suggest_rounded),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          body: Center(
+          body: Align(
+            alignment: loggedIn ? Alignment.topCenter : Alignment.center,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1120),
+              constraints: BoxConstraints(maxWidth: loggedIn ? 460 : 520),
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
+                padding: EdgeInsets.fromLTRB(
+                  loggedIn ? 14 : 18,
+                  loggedIn ? 12 : 18,
+                  loggedIn ? 14 : 18,
+                  loggedIn ? 12 : 18,
+                ),
                 child: loggedIn
-                    ? _LoggedInHome(
-                        userLabel: sessionStore.session?.userLabel ??
-                            sessionStore.session?.userId ??
-                            'Unknown user',
-                        loginTimeLabel: _formatLoginTime(
-                          sessionStore.session?.authenticatedAtMs,
+                    ? _LoggedInHomeV4(
+                        userLabel: _currentUserLabel(
+                          sessionStore,
+                          virtualIp: virtualIp,
                         ),
                         virtualIp: virtualIp,
                         runtimeState: runtimeState,
-                        activeNetwork: activeNetwork,
-                        currentDeviceId: sessionStore.device?.deviceId ??
-                            sessionStore.session?.deviceId ??
-                            '',
-                        notice: sessionStore.notice,
-                        error: sessionStore.error,
                         hasActiveNetwork: activeNetwork != null,
                         busy: sessionStore.busy,
-                        onEnable: sessionController.enableActiveNetwork,
-                        onDisable: sessionController.disableActiveNetwork,
-                        onRefresh: sessionController.refreshNetworks,
-                        onLogout: () => _logoutFromClient(
-                          hasActiveNetwork: activeNetwork != null,
+                        onEnable: () => _enableActiveNetworkWithPrompt(
+                          currentMember,
                         ),
+                        onDisable: sessionController.disableActiveNetwork,
+                        onLogout: _logoutFromClient,
                         onDetails: _openWebDetails,
                       )
                     : _LoggedOutHome(
                         onLogin: _openBrowserLogin,
+                        onSettings: () => _showServerSettingsDialog(context),
+                        serverLabel:
+                            AppCoreScope.hostConfig?.displayHost ?? 'mock',
                       ),
               ),
             ),
@@ -151,54 +120,71 @@ class _HomePageState extends State<HomePage> {
 class _LoggedOutHome extends StatelessWidget {
   const _LoggedOutHome({
     required this.onLogin,
+    required this.onSettings,
+    required this.serverLabel,
   });
 
   final VoidCallback onLogin;
+  final VoidCallback onSettings;
+  final String serverLabel;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return _RouterPanel(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const _BrandMark(),
-          const SizedBox(width: 18),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'SLAN Console',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w800,
-                  ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Network Console',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Network Console',
-                  style: theme.textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Manage access, local tunnel state, and the web console from one compact desktop client.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  height: 1.4,
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'View the current network, device status, and access state in one router-style dashboard.',
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    height: 1.45,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          const SizedBox(width: 24),
-          FilledButton.icon(
-            key: AppTestKeys.homeLoginButton,
-            onPressed: onLogin,
-            icon: const Icon(Icons.lock_open_rounded),
-            label: const Text('Login'),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 42,
+                  child: FilledButton.icon(
+                    key: AppTestKeys.homeLoginButton,
+                    onPressed: onLogin,
+                    icon: const Icon(Icons.lock_open_rounded, size: 18),
+                    label: const Text('Login'),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Tooltip(
+                message: 'Server Config: $serverLabel',
+                child: SizedBox(
+                  width: 46,
+                  height: 42,
+                  child: OutlinedButton(
+                    key: AppTestKeys.homeSettingsButton,
+                    onPressed: onSettings,
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: const Icon(Icons.settings_suggest_rounded, size: 20),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -206,182 +192,249 @@ class _LoggedOutHome extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _LoggedInHome extends StatelessWidget {
   const _LoggedInHome({
     required this.userLabel,
-    required this.loginTimeLabel,
     required this.virtualIp,
     required this.runtimeState,
-    required this.activeNetwork,
-    required this.currentDeviceId,
-    required this.notice,
-    required this.error,
     required this.hasActiveNetwork,
     required this.busy,
     required this.onEnable,
     required this.onDisable,
-    required this.onRefresh,
     required this.onLogout,
     required this.onDetails,
   });
 
   final String userLabel;
-  final String loginTimeLabel;
   final String virtualIp;
   final String runtimeState;
-  final NetworkModel? activeNetwork;
-  final String currentDeviceId;
-  final String? notice;
-  final String? error;
   final bool hasActiveNetwork;
   final bool busy;
   final Future<void> Function() onEnable;
   final Future<void> Function() onDisable;
-  final Future<void> Function() onRefresh;
   final Future<void> Function() onLogout;
   final Future<void> Function() onDetails;
 
   @override
   Widget build(BuildContext context) {
-    final member = _networkMemberForCurrentDevice(
-      currentDeviceId,
-      activeNetwork,
-    );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _RouterPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    final normalizedState = runtimeState.toLowerCase().trim();
+    final networkEnabled = hasActiveNetwork &&
+        normalizedState != 'idle' &&
+        normalizedState != 'inactive' &&
+        normalizedState != 'disabled';
+
+    return _RouterPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
             children: [
-              _SectionHeader(
-                title: 'Network Overview',
-                subtitle: 'Like a router console, start with the active network, online device, and access status.',
-                trailing: OutlinedButton(
-                  key: AppTestKeys.networksRefreshButton,
-                  onPressed: busy ? null : () => onRefresh(),
-                  child: const Text('Refresh Status'),
+              _BrandMark(),
+              SizedBox(width: 16),
+              Expanded(
+                child: _SectionHeader(
+                  title: '当前用户邮箱',
+                  subtitle: '当前账户、本机 IP 和隧道控制。',
                 ),
-              ),
-              const SizedBox(height: 28),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final wide = constraints.maxWidth >= 820;
-                  final cards = [
-                    _OverviewTile(
-                      tone: _OverviewTone.success,
-                      label: 'Runtime Status',
-                      value: activeNetwork == null ? 'Not joined' : 'Joined',
-                      detail: activeNetwork?.networkId ?? 'No active network',
-                    ),
-                    _OverviewTile(
-                      label: 'Network Range',
-                      value: activeNetwork?.cidr ?? '-',
-                      detail: member?.virtualIp ?? virtualIp,
-                    ),
-                    _OverviewTile(
-                      label: 'Current Device',
-                      value: currentDeviceId.isEmpty
-                          ? 'No registered device'
-                          : 'SLAN Client - ',
-                      detail: member?.virtualIp ?? virtualIp,
-                    ),
-                  ];
-                  return GridView.count(
-                    crossAxisCount: wide ? 3 : 1,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                    childAspectRatio: wide ? 2.9 : 4.8,
-                    children: cards,
-                  );
-                },
-              ),
-              if (notice != null || error != null) ...[
-                const SizedBox(height: 16),
-                _InlineNotice(
-                  message: error ?? notice!,
-                  isError: error != null,
-                ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _RouterPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _SectionHeader(
-                title: 'Current Session',
-                subtitle: 'Current account, network runtime, and local client actions.',
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  _InfoPill(label: 'Current User', value: userLabel),
-                  _InfoPill(label: 'Login Time', value: loginTimeLabel),
-                  _InfoPill(label: 'Current IP', value: virtualIp),
-                  _InfoPill(label: 'Network State', value: runtimeState),
-                ],
-              ),
-              const SizedBox(height: 18),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  FilledButton.icon(
-                    key: AppTestKeys.homeEnableNetworkButton,
-                    onPressed:
-                        busy || !hasActiveNetwork ? null : () => onEnable(),
-                    icon: const Icon(Icons.play_circle_outline_rounded),
-                    label: const Text('Enable'),
-                  ),
-                  OutlinedButton.icon(
-                    key: AppTestKeys.homeDisableNetworkButton,
-                    onPressed:
-                        busy || !hasActiveNetwork ? null : () => onDisable(),
-                    icon: const Icon(Icons.pause_circle_outline_rounded),
-                    label: const Text('Disable'),
-                  ),
-                  OutlinedButton.icon(
-                    key: AppTestKeys.homeDetailsButton,
-                    onPressed: busy ? null : () => onDetails(),
-                    icon: const Icon(Icons.open_in_browser_rounded),
-                    label: const Text('Web Console'),
-                  ),
-                  OutlinedButton.icon(
-                    key: AppTestKeys.homeLogoutButton,
-                    onPressed: busy ? null : () => onLogout(),
-                    icon: const Icon(Icons.logout_rounded),
-                    label: const Text('Logout'),
-                  ),
-                ],
               ),
             ],
           ),
-        ),
-      ],
+          const SizedBox(height: 18),
+          GridView.count(
+            crossAxisCount: 3,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 2.7,
+            children: [
+              _InfoPill(
+                icon: Icons.account_circle_outlined,
+                label: '当前用户邮箱',
+                value: userLabel,
+              ),
+              _InfoPill(
+                icon: Icons.router_rounded,
+                label: '当前IP',
+                value: virtualIp,
+              ),
+              _InfoPill(
+                icon: Icons.network_check_rounded,
+                label: 'Network State',
+                value: networkEnabled ? 'enable' : 'disable',
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: networkEnabled
+                    ? OutlinedButton.icon(
+                        key: AppTestKeys.homeNetworkSwitchButton,
+                        onPressed: busy || !hasActiveNetwork
+                            ? null
+                            : () => onDisable(),
+                        icon: const Icon(Icons.toggle_on_rounded),
+                        label: const Text('Disable'),
+                      )
+                    : FilledButton.icon(
+                        key: AppTestKeys.homeNetworkSwitchButton,
+                        onPressed:
+                            busy || !hasActiveNetwork ? null : () => onEnable(),
+                        icon: const Icon(Icons.toggle_off_rounded),
+                        label: const Text('Enable'),
+                      ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: AppTestKeys.homeDetailsButton,
+                  onPressed: busy ? null : () => onDetails(),
+                  icon: const Icon(Icons.open_in_browser_rounded),
+                  label: const Text('Web Console'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: AppTestKeys.homeLogoutButton,
+                  onPressed: busy ? null : () => onLogout(),
+                  icon: const Icon(Icons.logout_rounded),
+                  label: const Text('Logout'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
 
-NetworkMemberModel? _networkMemberForCurrentDevice(
-  String? deviceId,
-  NetworkModel? network,
-) {
-  if (deviceId == null || network == null) {
-    return null;
+// ignore: unused_element
+class _LoggedInHomeV2 extends StatelessWidget {
+  const _LoggedInHomeV2({
+    required this.userLabel,
+    required this.virtualIp,
+    required this.runtimeState,
+    required this.hasActiveNetwork,
+    required this.busy,
+    required this.onEnable,
+    required this.onDisable,
+    required this.onLogout,
+    required this.onDetails,
+  });
+
+  final String userLabel;
+  final String virtualIp;
+  final String runtimeState;
+  final bool hasActiveNetwork;
+  final bool busy;
+  final Future<void> Function() onEnable;
+  final Future<void> Function() onDisable;
+  final Future<void> Function() onLogout;
+  final Future<void> Function() onDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedState = runtimeState.toLowerCase().trim();
+    final networkEnabled = hasActiveNetwork &&
+        normalizedState != 'idle' &&
+        normalizedState != 'inactive' &&
+        normalizedState != 'disabled';
+
+    final networkToggle = _NetworkEnableSwitch(
+      enabled: networkEnabled,
+      disabled: busy || !hasActiveNetwork,
+      onEnable: onEnable,
+      onDisable: onDisable,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 520;
+            final userInfo = _UserIdentitySummary(userLabel: userLabel);
+            final toggle = SizedBox(
+              width: compact ? double.infinity : 86,
+              height: 58,
+              child: networkToggle,
+            );
+
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  userInfo,
+                  const SizedBox(height: 12),
+                  toggle,
+                ],
+              );
+            }
+
+            return IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: userInfo),
+                  const SizedBox(width: 12),
+                  toggle,
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 2.7,
+          children: [
+            _InfoPill(
+              icon: Icons.router_rounded,
+              label: '当前 IP',
+              value: virtualIp,
+            ),
+            _InfoPill(
+              icon: Icons.network_check_rounded,
+              label: 'Network State',
+              value: networkEnabled ? 'enable' : 'disable',
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                key: AppTestKeys.homeDetailsButton,
+                onPressed: busy ? null : () => onDetails(),
+                icon: const Icon(Icons.open_in_browser_rounded),
+                label: const Text('Web Console'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: AppTestKeys.homeLogoutButton,
+                onPressed: busy ? null : () => onLogout(),
+                icon: const Icon(Icons.logout_rounded),
+                label: const Text('Logout'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
-  for (final member in network.members) {
-    if (member.deviceId == deviceId) {
-      return member;
-    }
-  }
-  return null;
 }
 
 class _RouterPanel extends StatelessWidget {
@@ -394,10 +447,10 @@ class _RouterPanel extends StatelessWidget {
     final theme = Theme.of(context);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: theme.colorScheme.outlineVariant),
         boxShadow: [
           BoxShadow(
@@ -412,18 +465,419 @@ class _RouterPanel extends StatelessWidget {
   }
 }
 
+class _LoggedInHomeV4 extends StatelessWidget {
+  const _LoggedInHomeV4({
+    required this.userLabel,
+    required this.virtualIp,
+    required this.runtimeState,
+    required this.hasActiveNetwork,
+    required this.busy,
+    required this.onEnable,
+    required this.onDisable,
+    required this.onLogout,
+    required this.onDetails,
+  });
+
+  final String userLabel;
+  final String virtualIp;
+  final String runtimeState;
+  final bool hasActiveNetwork;
+  final bool busy;
+  final Future<void> Function() onEnable;
+  final Future<void> Function() onDisable;
+  final Future<void> Function() onLogout;
+  final Future<void> Function() onDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedState = runtimeState.toLowerCase().trim();
+    final networkEnabled = hasActiveNetwork &&
+        normalizedState != 'idle' &&
+        normalizedState != 'inactive' &&
+        normalizedState != 'disabled';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 360;
+            final userInfo = _CompactIdentity(userLabel: userLabel);
+            final toggle = SizedBox(
+              width: compact ? double.infinity : 72,
+              height: 40,
+              child: _NetworkEnableSwitch(
+                enabled: networkEnabled,
+                disabled: busy || !hasActiveNetwork,
+                onEnable: onEnable,
+                onDisable: onDisable,
+              ),
+            );
+
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(height: 44, child: userInfo),
+                  const SizedBox(height: 8),
+                  toggle,
+                ],
+              );
+            }
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(child: userInfo),
+                const SizedBox(width: 8),
+                Align(alignment: Alignment.centerRight, child: toggle),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        _CompactInfoPill(
+          icon: Icons.router_rounded,
+          label: '当前 IP',
+          value: virtualIp,
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 38,
+                child: OutlinedButton.icon(
+                  key: AppTestKeys.homeDetailsButton,
+                  onPressed: busy ? null : () => onDetails(),
+                  icon: const Icon(Icons.open_in_browser_rounded, size: 17),
+                  label: const Text('Web Console'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: 38,
+                child: OutlinedButton.icon(
+                  key: AppTestKeys.homeLogoutButton,
+                  onPressed: busy ? null : () => onLogout(),
+                  icon: const Icon(Icons.logout_rounded, size: 17),
+                  label: const Text('Logout'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _CompactIdentity extends StatelessWidget {
+  const _CompactIdentity({required this.userLabel});
+
+  final String userLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Icon(
+          Icons.account_circle_outlined,
+          size: 22,
+          color: theme.colorScheme.primary,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '当前用户邮箱',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                userLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CompactInfoPill extends StatelessWidget {
+  const _CompactInfoPill({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ignore: unused_element
+class _LoggedInHomeV3 extends StatelessWidget {
+  const _LoggedInHomeV3({
+    required this.userLabel,
+    required this.virtualIp,
+    required this.runtimeState,
+    required this.hasActiveNetwork,
+    required this.busy,
+    required this.onEnable,
+    required this.onDisable,
+    required this.onLogout,
+    required this.onDetails,
+  });
+
+  final String userLabel;
+  final String virtualIp;
+  final String runtimeState;
+  final bool hasActiveNetwork;
+  final bool busy;
+  final Future<void> Function() onEnable;
+  final Future<void> Function() onDisable;
+  final Future<void> Function() onLogout;
+  final Future<void> Function() onDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedState = runtimeState.toLowerCase().trim();
+    final networkEnabled = hasActiveNetwork &&
+        normalizedState != 'idle' &&
+        normalizedState != 'inactive' &&
+        normalizedState != 'disabled';
+
+    return _RouterPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 520;
+              final userInfo = _UserIdentitySummary(userLabel: userLabel);
+              final toggle = SizedBox(
+                width: compact ? double.infinity : 72,
+                height: 42,
+                child: _NetworkEnableSwitch(
+                  enabled: networkEnabled,
+                  disabled: busy || !hasActiveNetwork,
+                  onEnable: onEnable,
+                  onDisable: onDisable,
+                ),
+              );
+
+              if (compact) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    userInfo,
+                    const SizedBox(height: 8),
+                    toggle,
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: SizedBox(height: 44, child: userInfo)),
+                  const SizedBox(width: 8),
+                  toggle,
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          _InfoPill(
+            icon: Icons.router_rounded,
+            label: '当前 IP',
+            value: virtualIp,
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: AppTestKeys.homeDetailsButton,
+                  onPressed: busy ? null : () => onDetails(),
+                  icon: const Icon(Icons.open_in_browser_rounded),
+                  label: const Text('Web Console'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: AppTestKeys.homeLogoutButton,
+                  onPressed: busy ? null : () => onLogout(),
+                  icon: const Icon(Icons.logout_rounded),
+                  label: const Text('Logout'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NetworkEnableSwitch extends StatelessWidget {
+  const _NetworkEnableSwitch({
+    required this.enabled,
+    required this.disabled,
+    required this.onEnable,
+    required this.onDisable,
+  });
+
+  final bool enabled;
+  final bool disabled;
+  final Future<void> Function() onEnable;
+  final Future<void> Function() onDisable;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Switch(
+        key: AppTestKeys.homeNetworkSwitchButton,
+        value: enabled,
+        onChanged: disabled
+            ? null
+            : (value) {
+                if (value) {
+                  onEnable();
+                } else {
+                  onDisable();
+                }
+              },
+      ),
+    );
+  }
+}
+
+class _UserIdentitySummary extends StatelessWidget {
+  const _UserIdentitySummary({required this.userLabel});
+
+  final String userLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Icon(
+          Icons.account_circle_outlined,
+          size: 24,
+          color: theme.colorScheme.primary,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '当前用户邮箱',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                userLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _BrandMark extends StatelessWidget {
   const _BrandMark();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 56,
-      height: 56,
+      width: 58,
+      height: 58,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.primary,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: const Text(
         'S',
@@ -441,6 +895,7 @@ class _SectionHeader extends StatelessWidget {
   const _SectionHeader({
     required this.title,
     required this.subtitle,
+    // ignore: unused_element_parameter
     this.trailing,
   });
 
@@ -484,254 +939,58 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-enum _OverviewTone { normal, success }
-
-class _OverviewTile extends StatelessWidget {
-  const _OverviewTile({
-    required this.label,
-    required this.value,
-    required this.detail,
-    this.tone = _OverviewTone.normal,
-  });
-
-  final String label;
-  final String value;
-  final String detail;
-  final _OverviewTone tone;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final success = tone == _OverviewTone.success;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: success
-            ? const Color(0xFFEFFAF4)
-            : theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: success
-              ? const Color(0xFFB9E8CB)
-              : theme.colorScheme.outlineVariant,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            detail,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InlineNotice extends StatelessWidget {
-  const _InlineNotice({
-    required this.message,
-    required this.isError,
-  });
-
-  final String message;
-  final bool isError;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: isError ? scheme.errorContainer : const Color(0xFFEFFAF4),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isError ? scheme.error : const Color(0xFFB9E8CB),
-        ),
-      ),
-      child: Text(
-        message,
-        style: TextStyle(
-          color: isError ? scheme.onErrorContainer : const Color(0xFF14532D),
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-}
-
 class _InfoPill extends StatelessWidget {
   const _InfoPill({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusRow extends StatelessWidget {
-  const _StatusRow({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 104,
-          child: Text(
-            label,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ActionTile extends StatelessWidget {
-  const _ActionTile({
-    super.key,
     required this.icon,
     required this.label,
-    required this.subtitle,
-    required this.color,
-    required this.onTap,
+    required this.value,
   });
 
   final IconData icon;
   final String label;
-  final String subtitle;
-  final Color color;
-  final VoidCallback? onTap;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(28),
-      onTap: onTap,
-      child: Ink(
-        padding: const EdgeInsets.all(22),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(
-            color: color.withValues(alpha: 0.18),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: color.withValues(alpha: 0.08),
-              blurRadius: 28,
-              offset: const Offset(0, 12),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Icon(icon, color: color, size: 32),
-            ),
-            const SizedBox(height: 18),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w800,
                   ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              subtitle,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    height: 1.45,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
                   ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

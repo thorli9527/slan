@@ -64,6 +64,10 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     );
   }
 
+  Future<void> restoreSession(AppCoreSessionPayload session) async {
+    await invoke('restoreSession', session.toJson());
+  }
+
   Future<AppCoreDevicePayload> registerDevice({
     required String name,
     required String platform,
@@ -248,6 +252,26 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
       'lastProbeOk': lastProbeOk,
       if (virtualIp != null && virtualIp.isNotEmpty) 'virtualIp': virtualIp,
       if (reportedAt != null) 'reportedAt': reportedAt,
+    });
+  }
+
+  Future<void> reportDeviceNetworkState() async {
+    await invoke('reportDeviceNetworkState');
+  }
+
+  Future<AppCoreBootstrapPayload> enableLocalNetwork(
+      {String? networkId}) async {
+    final payload = await invoke('enableLocalNetwork', {
+      if (networkId != null) 'networkId': networkId,
+    });
+    return AppCoreBootstrapPayload.fromJson(
+      _expectMap(payload, method: 'enableLocalNetwork'),
+    );
+  }
+
+  Future<void> disableLocalNetwork({String? networkId}) async {
+    await invoke('disableLocalNetwork', {
+      if (networkId != null) 'networkId': networkId,
     });
   }
 

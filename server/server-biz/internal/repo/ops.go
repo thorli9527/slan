@@ -69,6 +69,30 @@ type UserRole struct {
 
 func (UserRole) TableName() string { return "user_roles" }
 
+type PlanConfig struct {
+	ConfigID         string `gorm:"column:config_id;primaryKey"`
+	MaxActiveDevices int    `gorm:"column:max_active_devices;not null;default:5"`
+	RelayIngressKbps int    `gorm:"column:relay_ingress_kbps;not null;default:512"`
+	RelayEgressKbps  int    `gorm:"column:relay_egress_kbps;not null;default:512"`
+	UDPIngressKbps   int    `gorm:"column:udp_ingress_kbps;not null;default:0"`
+	UDPEgressKbps    int    `gorm:"column:udp_egress_kbps;not null;default:0"`
+	UpdatedAt        int64  `gorm:"column:updated_at;not null;default:0"`
+}
+
+func (PlanConfig) TableName() string { return "plan_configs" }
+
+type UserPlanOverride struct {
+	UserID           string `gorm:"column:user_id;primaryKey"`
+	MaxActiveDevices int    `gorm:"column:max_active_devices;not null;default:0"`
+	RelayIngressKbps int    `gorm:"column:relay_ingress_kbps;not null;default:0"`
+	RelayEgressKbps  int    `gorm:"column:relay_egress_kbps;not null;default:0"`
+	UDPIngressKbps   int    `gorm:"column:udp_ingress_kbps;not null;default:0"`
+	UDPEgressKbps    int    `gorm:"column:udp_egress_kbps;not null;default:0"`
+	UpdatedAt        int64  `gorm:"column:updated_at;not null;default:0"`
+}
+
+func (UserPlanOverride) TableName() string { return "user_plan_overrides" }
+
 // Menu 是运营平台功能菜单的持久化模型。
 type Menu struct {
 	// MenuID 是菜单唯一标识。
@@ -232,6 +256,50 @@ func (r *PostgresRepository) ListUserRolesByUser(ctx context.Context, userID str
 	return out, err
 }
 
+func (r *PostgresRepository) GetPlanConfig(ctx context.Context, configID string) (PlanConfig, error) {
+	var record PlanConfig
+	err := r.db.WithContext(ctx).Where("config_id = ?", configID).First(&record).Error
+	return record, err
+}
+
+func (r *PostgresRepository) UpsertPlanConfig(ctx context.Context, record PlanConfig) error {
+	return r.db.WithContext(ctx).
+		Where("config_id = ?", record.ConfigID).
+		Assign(map[string]any{
+			"max_active_devices": record.MaxActiveDevices,
+			"relay_ingress_kbps": record.RelayIngressKbps,
+			"relay_egress_kbps":  record.RelayEgressKbps,
+			"udp_ingress_kbps":   record.UDPIngressKbps,
+			"udp_egress_kbps":    record.UDPEgressKbps,
+			"updated_at":         record.UpdatedAt,
+		}).
+		FirstOrCreate(&record).Error
+}
+
+func (r *PostgresRepository) GetUserPlanOverride(ctx context.Context, userID string) (UserPlanOverride, error) {
+	var record UserPlanOverride
+	err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&record).Error
+	return record, err
+}
+
+func (r *PostgresRepository) UpsertUserPlanOverride(ctx context.Context, record UserPlanOverride) error {
+	return r.db.WithContext(ctx).
+		Where("user_id = ?", record.UserID).
+		Assign(map[string]any{
+			"max_active_devices": record.MaxActiveDevices,
+			"relay_ingress_kbps": record.RelayIngressKbps,
+			"relay_egress_kbps":  record.RelayEgressKbps,
+			"udp_ingress_kbps":   record.UDPIngressKbps,
+			"udp_egress_kbps":    record.UDPEgressKbps,
+			"updated_at":         record.UpdatedAt,
+		}).
+		FirstOrCreate(&record).Error
+}
+
+func (r *PostgresRepository) DeleteUserPlanOverride(ctx context.Context, userID string) error {
+	return r.db.WithContext(ctx).Where("user_id = ?", userID).Delete(&UserPlanOverride{}).Error
+}
+
 func (r *PostgresRepository) InsertMenu(ctx context.Context, record Menu) error {
 	return r.db.WithContext(ctx).Create(&record).Error
 }
@@ -293,6 +361,15 @@ func (r *PostgresRepository) CountActiveAttachmentsByUser(ctx context.Context, u
 		Table("subnet_attachments").
 		Joins("join devices on devices.device_id = subnet_attachments.device_id").
 		Where("devices.user_id = ? AND subnet_attachments.status = ? AND subnet_attachments.virtual_ip <> ''", userID, "active").
+		Count(&count).Error
+	return count, err
+}
+
+func (r *PostgresRepository) CountActiveAttachmentsByNetwork(ctx context.Context, networkID string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Table("subnet_attachments").
+		Where("network_id = ? AND status = ? AND virtual_ip <> ''", networkID, "active").
 		Count(&count).Error
 	return count, err
 }

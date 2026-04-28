@@ -77,18 +77,18 @@ func validateDeviceAt(cfg configs.MQTTConfig, clientID, username, givenPassword 
 	return "", false
 }
 
-func ValidateCredential(cfg configs.MQTTConfig, clientID, username, givenPassword string) (dto.MQTTAuthCheckResponse, bool) {
+func ValidateCredential(cfg configs.MQTTConfig, clientID, username, givenPassword string) (dto.MQTTCredentialAuthResult, bool) {
 	return validateCredentialAt(cfg, clientID, username, givenPassword, time.Now())
 }
 
-func validateCredentialAt(cfg configs.MQTTConfig, clientID, username, givenPassword string, now time.Time) (dto.MQTTAuthCheckResponse, bool) {
+func validateCredentialAt(cfg configs.MQTTConfig, clientID, username, givenPassword string, now time.Time) (dto.MQTTCredentialAuthResult, bool) {
 	if deviceID, ok := validateDeviceAt(cfg, clientID, username, givenPassword, now); ok {
-		return dto.MQTTAuthCheckResponse{Allow: true, DeviceID: deviceID, Principal: "device"}, true
+		return dto.MQTTCredentialAuthResult{Allow: true, DeviceID: deviceID, Principal: "device"}, true
 	}
 	if validateServerSubscriberAt(cfg, clientID, username, givenPassword, now) {
-		return dto.MQTTAuthCheckResponse{Allow: true, Principal: "server"}, true
+		return dto.MQTTCredentialAuthResult{Allow: true, Principal: "server"}, true
 	}
-	return dto.MQTTAuthCheckResponse{Allow: false}, false
+	return dto.MQTTCredentialAuthResult{Allow: false}, false
 }
 
 func DeviceTopicPrefix(cfg configs.MQTTConfig, deviceID string) string {

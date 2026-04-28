@@ -122,6 +122,8 @@ func migratePostgres(ctx context.Context, db *gorm.DB) error {
 		&repo.AdminInfo{},
 		&repo.Role{},
 		&repo.UserRole{},
+		&repo.PlanConfig{},
+		&repo.UserPlanOverride{},
 		&repo.Menu{},
 		&repo.RoleMenu{},
 		&repo.Device{},

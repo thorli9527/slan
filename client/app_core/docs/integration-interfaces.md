@@ -26,7 +26,6 @@
 - `/nodes/register`
 - `/networks/home`
 - `/networks`
-- `/networks/join-by-owner-email`
 - `/networks/join-by-key`
 - `/networks/{networkId}/switch`
 - `/networks/{networkId}/join`
@@ -83,6 +82,7 @@ offline.
 
 - `register`
 - `login`
+- `restore_session`
 - `refresh_session`
 - `register_device`
 - `list_devices`
@@ -95,7 +95,6 @@ offline.
 - `list_networks`
 - `create_network`
 - `join_network`
-- `join_network_by_owner_email`
 - `join_network_by_key`
 - `switch_network`
 - `activate_network`
@@ -154,7 +153,6 @@ Flutter 当前不直接接入底层 crate，而是通过 `AppCoreFacade`。
 - `list_networks`
 - `create_network`
 - `join_network`
-- `join_network_by_owner_email`
 - `join_network_by_key`
 - `switch_network`
 - `activate_network`
@@ -164,6 +162,33 @@ Flutter 当前不直接接入底层 crate，而是通过 `AppCoreFacade`。
 - `issue_relay_ticket`
 - `connect`
 - `disconnect`
+- `control_sync`
+- `control_status`
+- `enable_local_network`
+- `disable_local_network`
+- `report_device_network_state`
+
+### 4.1.1 Maintained startup and service boundary
+
+In bridge/service mode, Flutter is only the UI and action trigger. Runtime
+ownership sits in `app-core-service` and `app-core-helper`:
+
+- Startup recovery calls `restore_session` to inject the persisted access token
+  into the native snapshot before validation. If that token is stale, the
+  client falls back to `refresh_session` when a refresh token is available.
+- `enable_local_network` performs network activation, node/bootstrap reuse,
+  local tunnel replacement, local DNS start, and online state reporting.
+- `disable_local_network` tears down local tunnel/DNS, reports
+  `networkOnline=false`, and deactivates the current device attachment.
+- `app-core-service` runs periodic jobs for control sync and device network
+  state reporting. Flutter does not own the MQTT heartbeat or control-sync
+  timer in bridge mode.
+- Flutter may keep HTTP/mock fallback paths for development, but bridge mode
+  must not silently fall back to Flutter-side tunnel or DNS mutation when a
+  service call fails.
+- Bridge-mode UI must not expose local WireGuard IP/key/endpoint inputs as
+  runtime controls. Those values are derived and applied inside the
+  service/helper runtime; Flutter should show service actions and status only.
 
 ### 4.2 Flutter 暂不直接接入的接口
 

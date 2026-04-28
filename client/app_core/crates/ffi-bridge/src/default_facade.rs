@@ -5,15 +5,16 @@ use control_mqtt_client::{
 };
 use controller_client::{
     ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
-    JoinNetworkByKeyRequest, JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest,
-    RefreshTokenRequest, RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest,
-    RelayTicketRequest, SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
+    JoinNetworkByKeyRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
+    RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
+    SwitchNetworkRequest, UpdateAttachmentRemarkRequest,
 };
 use p2p::{P2PConnector, PeerCandidate};
 use relay_client::{DerpPool, PathManager, RelayClient};
 use slan_app_core::{
-    ActivePath, BootstrapConfig, ConnectionPath, ConnectionState, DerpCluster, Device, Endpoint,
-    Network, NetworkAssignment, NetworkJoinResult, Node, Peer, RelayTicket, Session,
+    ActivePath, AllowedIp, BootstrapConfig, ConnectionPath, ConnectionState, DerpCluster, Device,
+    Endpoint, Network, NetworkAssignment, NetworkJoinResult, Node, Peer, RelayTicket, Session,
+    TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair, WireGuardPeerConfig,
 };
 use std::sync::Mutex;
 use tunnel::{TunnelConfig, TunnelManager};
@@ -303,6 +304,53 @@ where
         Ok(build_tunnel_config(active_path, bootstrap, peer, key_pair))
     }
 
+    fn build_local_network_tunnel_config(
+        &self,
+        network: &Network,
+        device: &Device,
+    ) -> TunnelConfig {
+        let local_virtual_ip =
+            local_virtual_ip_for(network, device).unwrap_or_else(|| "10.0.0.10".to_string());
+        let peer_virtual_ip =
+            peer_virtual_ip_for(network, device.device_id.as_str(), &local_virtual_ip);
+        let key_pair = WireGuardKeyPair {
+            public_key: device
+                .public_key
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "debug-public-key".to_string()),
+            private_key: "debug-private-key".to_string(),
+        };
+        TunnelConfig {
+            transport: TunnelTransport::Relay,
+            local_virtual_ip: local_virtual_ip.clone(),
+            peer_virtual_ip: peer_virtual_ip.clone(),
+            wireguard_interface: WireGuardInterfaceConfig {
+                interface_name: Some("SLAN LAN Adapter".to_string()),
+                key_pair,
+                listen_port: Some(51820),
+                mtu: Some(1280),
+                addresses: vec![format!(
+                    "{}/{}",
+                    local_virtual_ip,
+                    prefix_len_from_cidr(network.cidr.as_str()).unwrap_or(32)
+                )],
+                dns_servers: vec![],
+                peers: vec![],
+            },
+            wireguard_peer: WireGuardPeerConfig {
+                peer_node_id: None,
+                public_key: "peer-debug-public-key".to_string(),
+                preshared_key: None,
+                endpoint: Some(default_tunnel_endpoint()),
+                allowed_ips: vec![AllowedIp {
+                    cidr: format!("{peer_virtual_ip}/32"),
+                }],
+                persistent_keepalive_seconds: None,
+            },
+        }
+    }
+
     fn next_probe_id(&self, sampled_at_ms: u64) -> Result<String, String> {
         let mut sequence = self
             .probe_sequence
@@ -538,6 +586,15 @@ where
     M: PathManager,
     T: TunnelManager,
 {
+    fn restore_session(&self, session: Session) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?;
+        state.session = Some(session);
+        Ok(())
+    }
+
     fn register(&self, email: String, password: String) -> Result<Session, String> {
         let session = self
             .controller
@@ -669,21 +726,6 @@ where
             &access_token,
             JoinNetworkRequest {
                 network_id,
-                device_id,
-            },
-        )
-    }
-
-    fn join_network_by_owner_email(
-        &self,
-        owner_email: String,
-        device_id: String,
-    ) -> Result<NetworkJoinResult, String> {
-        let access_token = self.with_access_token()?;
-        self.controller.join_network_by_owner_email(
-            &access_token,
-            JoinNetworkByOwnerEmailRequest {
-                owner_email,
                 device_id,
             },
         )
@@ -822,6 +864,216 @@ where
                 reported_at,
             },
         )
+    }
+
+    fn report_device_network_state(&self) -> Result<(), String> {
+        let access_token = self.with_access_token()?;
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?
+            .clone();
+        let device = state
+            .current_device
+            .as_ref()
+            .ok_or_else(|| "missing current device".to_string())?;
+        let network_id = state
+            .current_network_id
+            .clone()
+            .or_else(|| {
+                state
+                    .current_bootstrap
+                    .as_ref()
+                    .and_then(|bootstrap| bootstrap.network_map.as_ref())
+                    .map(|network_map| network_map.network_id.clone())
+            })
+            .ok_or_else(|| "missing current network".to_string())?;
+        let tunnel_online = state.tunnel_runtime.is_some();
+        let last_probe_ok = state
+            .last_probe
+            .as_ref()
+            .map(|probe| probe.reply_observed)
+            .unwrap_or(tunnel_online);
+        self.controller.set_device_network_state(
+            &access_token,
+            DeviceNetworkStateRequest {
+                device_id: device.device_id.clone(),
+                network_id,
+                control_reachable: true,
+                network_online: tunnel_online,
+                tunnel_up: tunnel_online,
+                last_probe_ok,
+                virtual_ip: device.virtual_ip.clone(),
+                reported_at: Some((now_ms() / 1000) as i64),
+            },
+        )
+    }
+
+    fn enable_local_network(&self, network_id: Option<String>) -> Result<BootstrapConfig, String> {
+        let access_token = self.with_access_token()?;
+        let networks = self.controller.list_networks(&access_token)?;
+        let device = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "app core state poisoned".to_string())?;
+            state
+                .current_device
+                .clone()
+                .ok_or_else(|| "missing current device, register device first".to_string())?
+        };
+        let target_network = resolve_target_network(
+            &networks,
+            network_id.as_deref(),
+            Some(device.device_id.as_str()),
+        )?;
+        let node = {
+            let existing_node = self
+                .state
+                .lock()
+                .map_err(|_| "app core state poisoned".to_string())?
+                .current_node
+                .clone();
+            match existing_node {
+                Some(node) if node.device_id == device.device_id => node,
+                _ => self.controller.register_node(
+                    &access_token,
+                    RegisterNodeRequest {
+                        device_id: device.device_id.clone(),
+                        node_id: format!("node-{}", now_ms()),
+                        node_public_key: format!("node-key-{}", now_ms()),
+                        capabilities: vec!["desktop".to_string()],
+                    },
+                )?,
+            }
+        };
+        self.controller.activate_network(
+            &access_token,
+            JoinNetworkRequest {
+                network_id: target_network.network_id.clone(),
+                device_id: device.device_id.clone(),
+            },
+        )?;
+        let bootstrap =
+            self.controller
+                .bootstrap(&access_token, &node.node_id, &target_network.network_id)?;
+        let active_network = bootstrap
+            .networks
+            .iter()
+            .find(|network| network.network_id == target_network.network_id)
+            .cloned()
+            .unwrap_or(target_network);
+        let active_device = bootstrap.device.clone();
+        let mut config = self.build_local_network_tunnel_config(&active_network, &active_device);
+        let dns_records = dns_records_from_bootstrap(&bootstrap);
+        if !dns_records.is_empty() {
+            config.wireguard_interface.dns_servers = vec!["127.0.0.1".to_string()];
+        }
+        replace_tunnel(
+            &self.current_tunnel_peer_virtual_ip,
+            &self.tunnel_manager,
+            Some(config.clone()),
+        )?;
+        self.tunnel_manager.start_local_dns(dns_records)?;
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| "app core state poisoned".to_string())?;
+            state.current_node = Some(node);
+            state.current_device = Some(active_device.clone());
+            state.current_bootstrap = Some(bootstrap.clone());
+            state.current_network_id = Some(active_network.network_id.clone());
+            state.current_connect_plans.clear();
+            state.tunnel_peer_virtual_ip = Some(config.peer_virtual_ip.clone());
+            state.tunnel_runtime = Some(build_tunnel_runtime(&config));
+        }
+        self.controller.set_device_network_state(
+            &access_token,
+            DeviceNetworkStateRequest {
+                device_id: active_device.device_id.clone(),
+                network_id: active_network.network_id.clone(),
+                control_reachable: true,
+                network_online: true,
+                tunnel_up: true,
+                last_probe_ok: true,
+                virtual_ip: active_device.virtual_ip.clone(),
+                reported_at: Some((now_ms() / 1000) as i64),
+            },
+        )?;
+        Ok(bootstrap)
+    }
+
+    fn disable_local_network(&self, network_id: Option<String>) -> Result<(), String> {
+        let access_token = self.with_access_token()?;
+        let (device, current_network_id, peer_virtual_ip) = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "app core state poisoned".to_string())?;
+            (
+                state.current_device.clone(),
+                state.current_network_id.clone().or_else(|| {
+                    state
+                        .current_bootstrap
+                        .as_ref()
+                        .and_then(|bootstrap| bootstrap.network_map.as_ref())
+                        .map(|network_map| network_map.network_id.clone())
+                }),
+                state.tunnel_peer_virtual_ip.clone(),
+            )
+        };
+        if let Some(peer_virtual_ip) = peer_virtual_ip {
+            replace_tunnel(
+                &self.current_tunnel_peer_virtual_ip,
+                &self.tunnel_manager,
+                None,
+            )?;
+            let _ = self.tunnel_manager.stop_local_dns();
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| "app core state poisoned".to_string())?;
+            if state.tunnel_peer_virtual_ip.as_deref() == Some(peer_virtual_ip.as_str()) {
+                state.tunnel_peer_virtual_ip = None;
+                state.tunnel_runtime = None;
+            }
+        }
+        let target_network_id = network_id
+            .filter(|value| !value.trim().is_empty())
+            .or(current_network_id);
+        if let (Some(device), Some(network_id)) = (device.as_ref(), target_network_id.as_ref()) {
+            let _ = self.controller.set_device_network_state(
+                &access_token,
+                DeviceNetworkStateRequest {
+                    device_id: device.device_id.clone(),
+                    network_id: network_id.clone(),
+                    control_reachable: true,
+                    network_online: false,
+                    tunnel_up: false,
+                    last_probe_ok: false,
+                    virtual_ip: device.virtual_ip.clone(),
+                    reported_at: Some((now_ms() / 1000) as i64),
+                },
+            );
+            self.controller.deactivate_network(
+                &access_token,
+                DeactivateNetworkRequest {
+                    network_id: network_id.clone(),
+                    device_id: device.device_id.clone(),
+                },
+            )?;
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?;
+        state.current_bootstrap = None;
+        state.current_network_id = None;
+        state.current_connect_plans.clear();
+        state.tunnel_peer_virtual_ip = None;
+        state.tunnel_runtime = None;
+        Ok(())
     }
 
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String> {
@@ -1013,7 +1265,7 @@ where
         } else {
             bootstrap
         };
-        let (updated_bootstrap, tunnel_reapply) = {
+        let (updated_bootstrap, tunnel_reapply, should_disable_current_network) = {
             let mut state = self
                 .state
                 .lock()
@@ -1043,13 +1295,21 @@ where
                     continue;
                 }
                 if current_bootstrap.device.device_id == update.device_id {
-                    current_bootstrap.device.virtual_ip = Some(update.virtual_ip.clone());
+                    current_bootstrap.device.virtual_ip = if update.virtual_ip.trim().is_empty() {
+                        None
+                    } else {
+                        Some(update.virtual_ip.clone())
+                    };
                     should_reapply_tunnel = true;
                 }
                 if current_device_id.as_deref() == Some(update.device_id.as_str()) {
                     updated_current_device_virtual_ip = Some(update.virtual_ip.clone());
                 }
             }
+            let should_disable_current_network = updated_current_device_virtual_ip
+                .as_ref()
+                .map(|virtual_ip| virtual_ip.trim().is_empty())
+                .unwrap_or(false);
             let updated_bootstrap = current_bootstrap.clone();
             let tunnel_reapply = match active_path.clone() {
                 Some(ActivePath::P2P { ref peer_node_id })
@@ -1131,15 +1391,48 @@ where
             };
             if let Some(virtual_ip) = updated_current_device_virtual_ip {
                 if let Some(device) = state.current_device.as_mut() {
-                    device.virtual_ip = Some(virtual_ip);
+                    device.virtual_ip = if virtual_ip.trim().is_empty() {
+                        None
+                    } else {
+                        Some(virtual_ip)
+                    };
                 }
             } else if bootstrap.bootstrap_override.is_some() {
                 state.current_device = Some(override_device);
             }
-            state.current_network_id = Some(bootstrap.network_map.network_id.clone());
-            state.current_connect_plans = bootstrap.connect_plans.clone();
-            (updated_bootstrap, tunnel_reapply)
+            if should_disable_current_network {
+                state.current_network_id = None;
+                state.current_connect_plans.clear();
+                if let Some(current_bootstrap) = state.current_bootstrap.as_mut() {
+                    current_bootstrap.network_map = None;
+                }
+            } else {
+                state.current_network_id = Some(bootstrap.network_map.network_id.clone());
+                state.current_connect_plans = bootstrap.connect_plans.clone();
+            }
+            (
+                updated_bootstrap,
+                if should_disable_current_network {
+                    None
+                } else {
+                    tunnel_reapply
+                },
+                should_disable_current_network,
+            )
         };
+        if should_disable_current_network {
+            replace_tunnel(
+                &self.current_tunnel_peer_virtual_ip,
+                &self.tunnel_manager,
+                None,
+            )?;
+            let _ = self.tunnel_manager.stop_local_dns();
+            update_disconnected_snapshot(&self.state)?;
+            if let Ok(mut control_mqtt) = self.control_mqtt.lock() {
+                *control_mqtt = None;
+            }
+            return Ok(updated_bootstrap);
+        }
         if let Some((active_path, bootstrap, peer)) = tunnel_reapply {
             if let Some(config) = self.build_tunnel_config(&active_path, &bootstrap, &peer)? {
                 replace_tunnel(
@@ -1147,6 +1440,8 @@ where
                     &self.tunnel_manager,
                     Some(config.clone()),
                 )?;
+                self.tunnel_manager
+                    .start_local_dns(dns_records_from_bootstrap(&bootstrap))?;
                 let mut state = self
                     .state
                     .lock()
@@ -1439,6 +1734,18 @@ where
         if let Some(peer_virtual_ip) = peer_virtual_ip {
             self.tunnel_manager.close(&peer_virtual_ip)?;
         }
+        let _ = self.tunnel_manager.stop_local_dns();
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?;
+        state.session = None;
+        state.current_device = None;
+        state.current_node = None;
+        state.current_bootstrap = None;
+        state.current_network_id = None;
+        state.current_connect_plans.clear();
+        drop(state);
         update_disconnected_snapshot(&self.state)
     }
 }
@@ -1450,6 +1757,111 @@ struct ControlMqttBootstrapUpdate {
     connect_plans: std::collections::HashMap<String, ControlMqttConnectPlan>,
     device_ip_updates: Vec<ControlMqttDeviceIPReassigned>,
     active_network_enabled: Option<ControlMqttActiveNetworkEnabled>,
+}
+
+fn resolve_target_network(
+    networks: &[Network],
+    requested_network_id: Option<&str>,
+    device_id: Option<&str>,
+) -> Result<Network, String> {
+    let requested = requested_network_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(network_id) = requested {
+        return networks
+            .iter()
+            .find(|network| network.network_id == network_id)
+            .cloned()
+            .ok_or_else(|| format!("network not found: {network_id}"));
+    }
+    if let Some(device_id) = device_id {
+        if let Some(network) = networks.iter().find(|network| {
+            network
+                .members
+                .iter()
+                .any(|member| member.device_id == device_id)
+        }) {
+            return Ok(network.clone());
+        }
+    }
+    networks
+        .first()
+        .cloned()
+        .ok_or_else(|| "no network is available".to_string())
+}
+
+fn local_virtual_ip_for(network: &Network, device: &Device) -> Option<String> {
+    network
+        .members
+        .iter()
+        .find(|member| member.device_id == device.device_id)
+        .and_then(|member| member.virtual_ip.clone())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| device.virtual_ip.clone())
+}
+
+fn peer_virtual_ip_for(network: &Network, device_id: &str, local_virtual_ip: &str) -> String {
+    network
+        .members
+        .iter()
+        .find(|member| {
+            member.device_id != device_id
+                && member
+                    .virtual_ip
+                    .as_ref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
+        })
+        .and_then(|member| member.virtual_ip.clone())
+        .unwrap_or_else(|| {
+            if local_virtual_ip == "10.0.0.2" {
+                "10.0.0.3".to_string()
+            } else {
+                "10.0.0.2".to_string()
+            }
+        })
+}
+
+fn prefix_len_from_cidr(cidr: &str) -> Option<u8> {
+    let (_, prefix) = cidr.trim().rsplit_once('/')?;
+    let parsed = prefix.trim().parse::<u8>().ok()?;
+    (parsed <= 32).then_some(parsed)
+}
+
+fn default_tunnel_endpoint() -> String {
+    std::env::var("SLAN_DEV_TUNNEL_ENDPOINT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "203.0.113.10:51820".to_string())
+}
+
+fn dns_records_from_bootstrap(bootstrap: &BootstrapConfig) -> Vec<(String, String)> {
+    bootstrap
+        .network_map
+        .as_ref()
+        .map(|network_map| {
+            network_map
+                .dns
+                .wildcards
+                .iter()
+                .filter_map(|wildcard| parse_dns_wildcard(wildcard))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_dns_wildcard(value: &str) -> Option<(String, String)> {
+    let (host, ip) = value.split_once('=')?;
+    let mut host = host.trim().to_ascii_lowercase();
+    if host.starts_with('*') && !host.starts_with("*.") {
+        host = format!("*.{}", host.trim_start_matches('*').trim_start_matches('.'));
+    }
+    let ip = ip.trim().to_string();
+    if host.is_empty() || ip.is_empty() {
+        return None;
+    }
+    Some((host, ip))
 }
 
 fn apply_control_mqtt_event(

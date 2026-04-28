@@ -18,9 +18,7 @@ class BridgeAppCoreApi implements AppCoreApi {
 
   @override
   void restoreSession(SessionModel session) {
-    // Bridge mode owns session state on the Rust/native side. The desktop
-    // callback path currently targets HTTP mode, so no extra local state is
-    // required here.
+    _pluginPlatform.restoreSession(_toSessionPayload(session));
   }
 
   // Plugin-platform-backed app-core flows.
@@ -108,6 +106,26 @@ class BridgeAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<bool> reportDeviceNetworkState() async {
+    await _pluginPlatform.reportDeviceNetworkState();
+    return true;
+  }
+
+  @override
+  Future<BootstrapModel?> enableLocalNetwork({String? networkId}) async {
+    final payload = await _pluginPlatform.enableLocalNetwork(
+      networkId: networkId,
+    );
+    return _toBootstrapModel(payload);
+  }
+
+  @override
+  Future<bool> disableLocalNetwork({String? networkId}) async {
+    await _pluginPlatform.disableLocalNetwork(networkId: networkId);
+    return true;
+  }
+
+  @override
   Future<NodeModel> registerNode({
     required String deviceId,
     required String nodeId,
@@ -157,18 +175,6 @@ class BridgeAppCoreApi implements AppCoreApi {
       deviceId: deviceId,
     );
     return _toNetworkJoinModel(payload, fallbackNetworkId: networkId);
-  }
-
-  @override
-  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
-    required String ownerEmail,
-    required String deviceId,
-  }) async {
-    final payload = await _pluginPlatform.joinNetworkByOwnerEmail(
-      ownerEmail: ownerEmail,
-      deviceId: deviceId,
-    );
-    return _toNetworkJoinModel(payload);
   }
 
   @override
@@ -349,6 +355,17 @@ SessionModel _toSessionModel(AppCoreSessionPayload payload) {
     expiresIn: payload.expiresIn,
     deviceId: payload.deviceId,
     userLabel: payload.userLabel,
+  );
+}
+
+AppCoreSessionPayload _toSessionPayload(SessionModel model) {
+  return AppCoreSessionPayload(
+    userId: model.userId,
+    accessToken: model.accessToken,
+    refreshToken: model.refreshToken,
+    expiresIn: model.expiresIn,
+    deviceId: model.deviceId,
+    userLabel: model.userLabel,
   );
 }
 

@@ -99,8 +99,3 @@ func NewOpsRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 
 	return router
 }
-
-// NewRouter 保留为兼容入口，当前返回 public router。
-func NewRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
-	return NewPublicRouter(cfg, deps)
-}

@@ -32,11 +32,6 @@ NetworkModel parseNetworkResponse(Map<String, dynamic> json) =>
 NetworkJoinModel parseNetworkJoinResponse(Map<String, dynamic> json) =>
     NetworkJoinResultResponseDto.fromJson(json).toModel();
 
-NetworkJoinModel parseNetworkJoinByOwnerEmailResponse(
-  Map<String, dynamic> json,
-) =>
-    NetworkJoinByOwnerEmailResultResponseDto.fromJson(json).toModel();
-
 NetworkAssignmentModel parseNetworkAssignmentResponse(
   Map<String, dynamic> json,
 ) =>

@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use slan_app_core::Session;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +14,13 @@ pub struct RefreshSessionArgs {
     pub refresh_token: String,
     #[serde(default)]
     pub device_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreSessionArgs {
+    #[serde(flatten)]
+    pub session: Session,
 }
 
 #[derive(Deserialize)]
@@ -70,9 +78,9 @@ pub struct DeviceNetworkStateArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JoinNetworkByOwnerEmailArgs {
-    pub owner_email: String,
-    pub device_id: String,
+pub struct LocalNetworkArgs {
+    #[serde(default)]
+    pub network_id: Option<String>,
 }
 
 #[derive(Deserialize)]

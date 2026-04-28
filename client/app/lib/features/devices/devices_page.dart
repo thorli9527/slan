@@ -72,6 +72,7 @@ class _DevicesPageState extends State<DevicesPage> {
   Timer? _runtimeMonitorTimer;
   bool _runtimeMonitorEnabled = false;
   String? _localClientIp;
+  bool get _serviceOwnsRuntime => AppCoreScope.mode == 'bridge';
 
   @override
   void initState() {
@@ -334,12 +335,14 @@ class _DevicesPageState extends State<DevicesPage> {
                         activeAction: _activeTunnelAction,
                         recentActions: _recentTunnelActions,
                         recentHealthSnapshots: _recentHealthSnapshots,
-                        lastTunnelActionReport: tunnelStore.lastTunnelActionReport,
+                        lastTunnelActionReport:
+                            tunnelStore.lastTunnelActionReport,
                         runtimeMonitorEnabled: _runtimeMonitorEnabled,
                         onBootstrap: () =>
                             _handleBootstrapRefresh(sessionController),
                         onApply: () => _handleTunnelApply(tunnelController),
-                        onRecover: () => _handleRecoverSession(tunnelController),
+                        onRecover: () =>
+                            _handleRecoverSession(tunnelController),
                         onUp: () => _handleTunnelUp(tunnelController),
                         onInspect: () => _handleTunnelInspect(tunnelController),
                         onDown: () => _handleTunnelDown(tunnelController),
@@ -495,16 +498,48 @@ class _DevicesPageState extends State<DevicesPage> {
         await _handleNodeRegistration();
       },
       applyConfiguration: () async {
+        if (_serviceOwnsRuntime) {
+          await AppCoreScope.sessionController.enableActiveNetwork();
+          final error = sessionStore.error;
+          return TunnelActionReport(
+            succeeded: error == null || error.isEmpty,
+            detail: error == null || error.isEmpty
+                ? 'app-core-service enabled the selected network runtime.'
+                : error,
+            errorMessage: error,
+            source: TunnelActionReportSource.runtimeSnapshot,
+            phase: error == null || error.isEmpty
+                ? TunnelActionPhase.started
+                : TunnelActionPhase.failed,
+          );
+        }
         _syncTunnelDefaultsFromState();
         return tunnelController.applyTunnelConfiguration(
           configuration: _buildTunnelConfiguration(),
           verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
         );
       },
-      bringTunnelUp: () => tunnelController.bringTunnelUp(
-        verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
-      ),
-      readCurrentFailure: () => sessionStore.error ?? tunnelStore.tunnelDebugError,
+      bringTunnelUp: () async {
+        if (_serviceOwnsRuntime) {
+          final detail = await AppCoreScope.sessionController
+              .refreshBootstrapOrControlSync();
+          final error = sessionStore.error;
+          return TunnelActionReport(
+            succeeded: error == null || error.isEmpty,
+            detail: error == null || error.isEmpty ? detail : error,
+            errorMessage: error,
+            source: TunnelActionReportSource.runtimeSnapshot,
+            phase: error == null || error.isEmpty
+                ? TunnelActionPhase.verified
+                : TunnelActionPhase.failed,
+          );
+        }
+        return tunnelController.bringTunnelUp(
+          verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
+        );
+      },
+      readCurrentFailure: () =>
+          sessionStore.error ?? tunnelStore.tunnelDebugError,
     );
 
     final failureMessage = sessionStore.error ?? tunnelStore.tunnelDebugError;
@@ -580,7 +615,9 @@ class _DevicesPageState extends State<DevicesPage> {
             .isNotEmpty
         ? sessionStore.networks
             .firstWhere((item) => item.networkId == currentNetworkId)
-        : (sessionStore.networks.isNotEmpty ? sessionStore.networks.first : null);
+        : (sessionStore.networks.isNotEmpty
+            ? sessionStore.networks.first
+            : null);
     final selfDeviceId = sessionStore.device?.deviceId;
     String? localVirtualIp;
     if (selfDeviceId != null && network != null) {
@@ -622,6 +659,13 @@ class _DevicesPageState extends State<DevicesPage> {
   Future<void> _handleTunnelApply(
     AppTunnelController tunnelController,
   ) {
+    if (_serviceOwnsRuntime) {
+      return _handleServiceEnableNetwork(
+        kind: _TunnelActionKind.apply,
+        label: 'Enable network',
+        detail: 'Ask app-core-service to apply the selected network runtime',
+      );
+    }
     return _runTunnelWorkbenchAction(
       kind: _TunnelActionKind.apply,
       label: 'Apply configuration',
@@ -637,6 +681,14 @@ class _DevicesPageState extends State<DevicesPage> {
   Future<void> _handleTunnelUp(
     AppTunnelController tunnelController,
   ) {
+    if (_serviceOwnsRuntime) {
+      return _handleServiceEnableNetwork(
+        kind: _TunnelActionKind.up,
+        label: 'Enable network',
+        detail:
+            'Ask app-core-service to start tunnel, DNS, and state reporting',
+      );
+    }
     return _runTunnelWorkbenchAction(
       kind: _TunnelActionKind.up,
       label: 'Bring tunnel up',
@@ -650,6 +702,9 @@ class _DevicesPageState extends State<DevicesPage> {
   Future<void> _handleTunnelInspect(
     AppTunnelController tunnelController,
   ) {
+    if (_serviceOwnsRuntime) {
+      return _handleServiceRefreshRuntime();
+    }
     return _runTunnelWorkbenchAction(
       kind: _TunnelActionKind.inspect,
       label: 'Refresh runtime',
@@ -663,6 +718,13 @@ class _DevicesPageState extends State<DevicesPage> {
   Future<void> _handleTunnelDown(
     AppTunnelController tunnelController,
   ) {
+    if (_serviceOwnsRuntime) {
+      return _handleServiceDisableNetwork(
+        kind: _TunnelActionKind.down,
+        label: 'Disable network',
+        detail: 'Ask app-core-service to stop tunnel, DNS, and online state',
+      );
+    }
     return _runTunnelWorkbenchAction(
       kind: _TunnelActionKind.down,
       label: 'Bring tunnel down',
@@ -674,6 +736,13 @@ class _DevicesPageState extends State<DevicesPage> {
   Future<void> _handleTunnelRemovePeer(
     AppTunnelController tunnelController,
   ) {
+    if (_serviceOwnsRuntime) {
+      return _handleServiceDisableNetwork(
+        kind: _TunnelActionKind.removePeer,
+        label: 'Disable network',
+        detail: 'Service-owned runtime does not remove peers from Flutter',
+      );
+    }
     return _runTunnelWorkbenchAction(
       kind: _TunnelActionKind.removePeer,
       label: 'Remove peer',
@@ -682,6 +751,82 @@ class _DevicesPageState extends State<DevicesPage> {
       action: () => tunnelController.removeTunnelPeer(
         peerVirtualIp: _tunnelPeerIpController.text.trim(),
       ),
+    );
+  }
+
+  Future<void> _handleServiceEnableNetwork({
+    required _TunnelActionKind kind,
+    required String label,
+    required String detail,
+  }) {
+    return _runTunnelWorkbenchAction(
+      kind: kind,
+      label: label,
+      detail: detail,
+      action: () async {
+        await AppCoreScope.sessionController.enableActiveNetwork();
+        final error = AppCoreScope.sessionStore.error;
+        return TunnelActionReport(
+          succeeded: error == null || error.isEmpty,
+          detail: error == null || error.isEmpty
+              ? 'app-core-service enabled the selected network runtime.'
+              : error,
+          errorMessage: error,
+          source: TunnelActionReportSource.runtimeSnapshot,
+          phase: error == null || error.isEmpty
+              ? TunnelActionPhase.started
+              : TunnelActionPhase.failed,
+        );
+      },
+    );
+  }
+
+  Future<void> _handleServiceDisableNetwork({
+    required _TunnelActionKind kind,
+    required String label,
+    required String detail,
+  }) {
+    return _runTunnelWorkbenchAction(
+      kind: kind,
+      label: label,
+      detail: detail,
+      action: () async {
+        await AppCoreScope.sessionController.disableActiveNetwork();
+        final error = AppCoreScope.sessionStore.error;
+        return TunnelActionReport(
+          succeeded: error == null || error.isEmpty,
+          detail: error == null || error.isEmpty
+              ? 'app-core-service disabled the selected network runtime.'
+              : error,
+          errorMessage: error,
+          source: TunnelActionReportSource.runtimeSnapshot,
+          phase: error == null || error.isEmpty
+              ? TunnelActionPhase.verified
+              : TunnelActionPhase.failed,
+        );
+      },
+    );
+  }
+
+  Future<void> _handleServiceRefreshRuntime() {
+    return _runTunnelWorkbenchAction(
+      kind: _TunnelActionKind.inspect,
+      label: 'Sync service state',
+      detail: 'Refresh control-sync and service-owned runtime status',
+      action: () async {
+        final detail = await AppCoreScope.sessionController
+            .refreshBootstrapOrControlSync();
+        final error = AppCoreScope.sessionStore.error;
+        return TunnelActionReport(
+          succeeded: error == null || error.isEmpty,
+          detail: error == null || error.isEmpty ? detail : error,
+          errorMessage: error,
+          source: TunnelActionReportSource.runtimeSnapshot,
+          phase: error == null || error.isEmpty
+              ? TunnelActionPhase.verified
+              : TunnelActionPhase.failed,
+        );
+      },
     );
   }
 
@@ -716,12 +861,12 @@ class _DevicesPageState extends State<DevicesPage> {
 
     setState(() {
       _activeTunnelAction = completedEvent;
-        _recentTunnelActions.insert(0, completedEvent);
-        if (_recentTunnelActions.length > 6) {
-          _recentTunnelActions.removeRange(6, _recentTunnelActions.length);
-        }
-        _captureHealthSnapshot();
-      });
+      _recentTunnelActions.insert(0, completedEvent);
+      if (_recentTunnelActions.length > 6) {
+        _recentTunnelActions.removeRange(6, _recentTunnelActions.length);
+      }
+      _captureHealthSnapshot();
+    });
   }
 
   Future<void> _handleConnect(
@@ -758,6 +903,13 @@ class _DevicesPageState extends State<DevicesPage> {
   Future<void> _handleRecoverSession(
     AppTunnelController tunnelController,
   ) {
+    if (_serviceOwnsRuntime) {
+      return _handleServiceEnableNetwork(
+        kind: _TunnelActionKind.recover,
+        label: 'Recover network',
+        detail: 'Ask app-core-service to rebuild the selected network runtime',
+      );
+    }
     final sessionStore = AppCoreScope.sessionStore;
     final tunnelStore = AppCoreScope.tunnelStore;
     final startedAt = DateTime.now();
@@ -779,10 +931,9 @@ class _DevicesPageState extends State<DevicesPage> {
     }
 
     Future<void> finishRecovery(TunnelActionReport? finalReport) async {
-      final failureMessage =
-          finalReport?.errorMessage ??
-              tunnelStore.tunnelDebugError ??
-              sessionStore.error;
+      final failureMessage = finalReport?.errorMessage ??
+          tunnelStore.tunnelDebugError ??
+          sessionStore.error;
       final automationNote = failureMessage == null
           ? await _applyTunnelLifecycleAutomation(_TunnelActionKind.recover)
           : null;
@@ -875,8 +1026,7 @@ class _DevicesPageState extends State<DevicesPage> {
     });
   }
 
-  Future<void> _runTunnelWorkbenchAction(
-   {
+  Future<void> _runTunnelWorkbenchAction({
     required _TunnelActionKind kind,
     required String label,
     required String detail,
@@ -897,8 +1047,9 @@ class _DevicesPageState extends State<DevicesPage> {
 
     final report = await action();
 
-    final failureMessage =
-        report.errorMessage ?? tunnelStore.tunnelDebugError ?? sessionStore.error;
+    final failureMessage = report.errorMessage ??
+        tunnelStore.tunnelDebugError ??
+        sessionStore.error;
     final automationNote = failureMessage == null
         ? await _applyTunnelLifecycleAutomation(kind)
         : null;
@@ -1090,4 +1241,3 @@ class _DevicesSubsection extends StatelessWidget {
     );
   }
 }
-

@@ -55,6 +55,10 @@ type AccessPolicy struct {
 	MaxActiveDevices        int    `json:"maxActiveDevices,omitempty"`
 	BandwidthLimitMbps      int    `json:"bandwidthLimitMbps,omitempty"`
 	RelayBandwidthLimitKbps int    `json:"relayBandwidthLimitKbps,omitempty"`
+	RelayIngressKbps        int    `json:"relayIngressKbps,omitempty"`
+	RelayEgressKbps         int    `json:"relayEgressKbps,omitempty"`
+	UDPIngressKbps          int    `json:"udpIngressKbps,omitempty"`
+	UDPEgressKbps           int    `json:"udpEgressKbps,omitempty"`
 	P2PUnlimited            bool   `json:"p2pUnlimited,omitempty"`
 	DNSAvailable            bool   `json:"dnsAvailable,omitempty"`
 }

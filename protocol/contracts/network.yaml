@@ -74,16 +74,6 @@ contracts:
       email:
         type: string
         required: true
-  JoinNetworkByOwnerEmailRequest:
-    lifecycle: legacy
-    note: Prefer JoinNetworkByKeyRequest for the current invite-code flow.
-    fields:
-      ownerEmail:
-        type: string
-        required: true
-      deviceId:
-        type: string
-        required: true
   JoinNetworkByKeyRequest:
     fields:
       joinKey:
@@ -104,13 +94,6 @@ contracts:
       remark:
         type: string
         required: false
-  AttachDeviceRequest:
-    lifecycle: internal
-    note: Web and app clients now use join/activate flows; direct subnet attach remains for compatibility.
-    fields:
-      deviceId:
-        type: string
-        required: true
   Network:
     fields:
       networkId:
@@ -230,17 +213,6 @@ contracts:
         required: false
   NetworkJoinResult:
     fields:
-      member:
-        type: NetworkMember
-        required: true
-      attachment:
-        type: SubnetAttachment
-        required: true
-  NetworkJoinByOwnerEmailResult:
-    fields:
-      network:
-        type: Network
-        required: true
       member:
         type: NetworkMember
         required: true

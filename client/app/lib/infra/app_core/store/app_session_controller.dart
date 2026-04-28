@@ -83,11 +83,9 @@ class AppSessionController {
       _coordinator.selectNetwork(networkId);
 
   Future<void> joinNetwork({
-    String? ownerEmail,
     String? joinKey,
   }) =>
       _coordinator.joinNetwork(
-        ownerEmail: ownerEmail,
         joinKey: joinKey,
       );
 

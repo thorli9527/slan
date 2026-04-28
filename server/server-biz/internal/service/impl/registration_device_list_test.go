@@ -218,7 +218,7 @@ func TestMarkMQTTReachableUpdatesControlReachabilityOnly(t *testing.T) {
 		t.Fatalf("load device: %v", err)
 	}
 	if device.Status != "offline" {
-		t.Fatalf("expected legacy device status unchanged, got %s", device.Status)
+		t.Fatalf("expected device record status unchanged, got %s", device.Status)
 	}
 	got, err := state.pg.GetDeviceNetworkState(ctx, "dev-1", "net-1")
 	if err != nil {

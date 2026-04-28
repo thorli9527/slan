@@ -208,7 +208,6 @@ class AppWorkspaceService {
   Future<NetworkJoinResult> joinNetwork({
     required SessionModel? session,
     required DeviceModel? currentDevice,
-    String? ownerEmail,
     String? joinKey,
   }) async {
     if (session == null) {
@@ -219,20 +218,14 @@ class AppWorkspaceService {
       throw StateError('device must be ready first');
     }
     final trimmedKey = joinKey?.trim() ?? '';
-    final trimmedOwnerEmail = ownerEmail?.trim() ?? '';
-    if (trimmedKey.isEmpty && trimmedOwnerEmail.isEmpty) {
+    if (trimmedKey.isEmpty) {
       throw StateError('invite code is required');
     }
 
-    final joinResult = trimmedKey.isNotEmpty
-        ? await _api.joinNetworkByKey(
-            joinKey: trimmedKey,
-            deviceId: device.deviceId,
-          )
-        : await _api.joinNetworkByOwnerEmail(
-            ownerEmail: trimmedOwnerEmail,
-            deviceId: device.deviceId,
-          );
+    final joinResult = await _api.joinNetworkByKey(
+      joinKey: trimmedKey,
+      deviceId: device.deviceId,
+    );
 
     var networks = await _api.listNetworks();
     final joinedNetworkId = joinResult.networkId.trim().isEmpty
@@ -312,5 +305,4 @@ class AppWorkspaceService {
     }
     throw StateError('joined network was not returned by the server');
   }
-
 }

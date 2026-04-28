@@ -85,8 +85,7 @@ class WireGuardTunnelRuntimeView {
       backendRecentCommandCount:
           (json['backendRecentCommandCount'] as num?)?.toInt(),
       backendLastError: json['backendLastError'] as String?,
-      backendLastStartedAtMs:
-          (json['backendLastStartedAtMs'] as num?)?.toInt(),
+      backendLastStartedAtMs: (json['backendLastStartedAtMs'] as num?)?.toInt(),
       backendPeerVirtualIp: json['backendPeerVirtualIp'] as String?,
       backendSelectedEndpoint: json['backendSelectedEndpoint'] as String?,
       peerVirtualIp: json['peerVirtualIp'] as String,

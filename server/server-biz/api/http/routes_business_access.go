@@ -39,13 +39,6 @@ func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 		callbackID := rc.callbackID(c)
 		return deps.Auth.CompleteCallback(callbackID, req)
 	}))
-	api.POST("/mqtt/auth/check", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.MQTTAuthCheckRequest) (dto.MQTTAuthCheckResponse, error) {
-		response, ok := mqttauth.ValidateCredential(deps.Config.MQTT, req.ClientID, req.Username, req.Password)
-		if ok && response.Principal == "device" && deps.Device != nil {
-			_ = deps.Device.MarkMQTTReachable(response.DeviceID)
-		}
-		return response, nil
-	}))
 	api.POST("/mqtt/bifromq/auth", func(c *gin.Context) {
 		var req map[string]any
 		if !bindJSON(c, &req) {
@@ -126,13 +119,13 @@ func stringValue(values map[string]any, key string) string {
 	}
 }
 
-func validateBifroMQCredential(deps routerDeps, clientID, username, password string) (dto.MQTTAuthCheckResponse, bool) {
+func validateBifroMQCredential(deps routerDeps, clientID, username, password string) (dto.MQTTCredentialAuthResult, bool) {
 	if response, ok := mqttauth.ValidateCredential(deps.Config.MQTT, clientID, username, password); ok {
 		return response, true
 	}
 	decoded, err := base64.StdEncoding.DecodeString(password)
 	if err != nil {
-		return dto.MQTTAuthCheckResponse{}, false
+		return dto.MQTTCredentialAuthResult{}, false
 	}
 	return mqttauth.ValidateCredential(deps.Config.MQTT, clientID, username, string(decoded))
 }

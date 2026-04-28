@@ -35,6 +35,7 @@ class MockAppCoreApi implements AppCoreApi {
       accessToken: 'mock-access-token',
       refreshToken: 'mock-refresh-token',
       expiresIn: 3600,
+      userLabel: email,
     );
     return _session!;
   }
@@ -51,6 +52,7 @@ class MockAppCoreApi implements AppCoreApi {
       refreshToken: 'mock-refresh-token',
       expiresIn: 3600,
       deviceId: _device?.deviceId,
+      userLabel: email,
     );
     return _session!;
   }
@@ -67,6 +69,7 @@ class MockAppCoreApi implements AppCoreApi {
       refreshToken: 'mock-refresh-token-refreshed',
       expiresIn: 3600,
       deviceId: deviceId ?? current?.deviceId ?? _device?.deviceId,
+      userLabel: current?.userLabel,
     );
     return _session!;
   }
@@ -129,6 +132,15 @@ class MockAppCoreApi implements AppCoreApi {
       mqtt: current.mqtt,
     );
   }
+
+  @override
+  Future<bool> reportDeviceNetworkState() async => false;
+
+  @override
+  Future<BootstrapModel?> enableLocalNetwork({String? networkId}) async => null;
+
+  @override
+  Future<bool> disableLocalNetwork({String? networkId}) async => false;
 
   @override
   Future<NodeModel> registerNode({
@@ -230,25 +242,6 @@ class MockAppCoreApi implements AppCoreApi {
       deviceId: deviceId,
       attachmentId: attachmentId,
     );
-  }
-
-  @override
-  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
-    required String ownerEmail,
-    required String deviceId,
-  }) async {
-    final network = _networks.isNotEmpty
-        ? _networks.first
-        : NetworkModel(
-            networkId: 'mock-owner-network',
-            name: 'Owner network',
-            cidr: '10.0.0.0/16',
-            subnets: _mockSubnets('mock-owner-network'),
-          );
-    if (_networks.every((item) => item.networkId != network.networkId)) {
-      _networks.add(network);
-    }
-    return joinNetwork(networkId: network.networkId, deviceId: deviceId);
   }
 
   @override

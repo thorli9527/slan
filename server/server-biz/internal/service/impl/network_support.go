@@ -219,12 +219,17 @@ func (s *dbState) buildNetworkMap(ctx context.Context, userID string, self dto.N
 }
 
 func (s *dbState) buildAccessPolicy(ctx context.Context, userID string) dto.AccessPolicy {
+	plan := s.planStatusForUser(ctx, userID)
 	policy := dto.AccessPolicy{
-		PlanCode:                "free",
-		MaxActiveDevices:        fixedDeviceLimit(),
-		RelayBandwidthLimitKbps: defaultRelayBandwidthLimitKbps,
-		P2PUnlimited:            true,
-		DNSAvailable:            true,
+		PlanCode:                plan.PlanName,
+		MaxActiveDevices:        plan.MaxActiveDevices,
+		RelayBandwidthLimitKbps: plan.RelayBandwidthLimitKbps,
+		RelayIngressKbps:        plan.RelayIngressKbps,
+		RelayEgressKbps:         plan.RelayEgressKbps,
+		UDPIngressKbps:          plan.UDPIngressKbps,
+		UDPEgressKbps:           plan.UDPEgressKbps,
+		P2PUnlimited:            plan.P2PUnlimited,
+		DNSAvailable:            plan.DNSAvailable,
 	}
 	return policy
 }

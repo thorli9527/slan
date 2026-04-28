@@ -17,7 +17,8 @@ class AuthCallbackService {
   static Timer? _pollTimer;
   static String? _lastAppliedCallbackId;
 
-  static Future<String> preparePendingServerCallback({String? preferredKey}) async {
+  static Future<String> preparePendingServerCallback(
+      {String? preferredKey}) async {
     final callbackId = (preferredKey?.trim().isNotEmpty == true)
         ? preferredKey!.trim()
         : 'cb-${DateTime.now().microsecondsSinceEpoch}';
@@ -28,9 +29,16 @@ class AuthCallbackService {
     return callbackId;
   }
 
+  static Future<void> clearPendingServerCallback() async {
+    _lastAppliedCallbackId = null;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_pendingCallbackIdKey);
+  }
+
   static Future<void> ensureInitialized() async {
     if (_initialized) {
-      debugPrint('[auth-callback] ensureInitialized skipped: already initialized');
+      debugPrint(
+          '[auth-callback] ensureInitialized skipped: already initialized');
       return;
     }
     _initialized = true;
@@ -62,7 +70,8 @@ class AuthCallbackService {
     final action = (payload['action'] as String?)?.trim();
     final expiresIn = (payload['expiresIn'] as num?)?.toInt() ?? 3600;
     if (accessToken.isEmpty || userId.isEmpty) {
-      debugPrint('[auth-callback] server payload missing accessToken or userId');
+      debugPrint(
+          '[auth-callback] server payload missing accessToken or userId');
       return;
     }
     await AppCoreScope.sessionController.applyExternalSession(
@@ -81,13 +90,15 @@ class AuthCallbackService {
     final preferences = await SharedPreferences.getInstance();
     await preferences.remove(_pendingCallbackIdKey);
     _lastAppliedCallbackId = callbackId;
-    debugPrint('[auth-callback] server callback applied callbackId=$callbackId');
+    debugPrint(
+        '[auth-callback] server callback applied callbackId=$callbackId');
   }
 
   static Future<void> _ensurePendingServerCallbackSocket() async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.reload();
-    final callbackId = preferences.getString(_pendingCallbackIdKey)?.trim() ?? '';
+    final callbackId =
+        preferences.getString(_pendingCallbackIdKey)?.trim() ?? '';
     if (callbackId.isEmpty) {
       return;
     }
@@ -137,12 +148,11 @@ class AuthCallbackService {
     if (isLocal) {
       return Uri.parse('http://127.0.0.1:28080$path');
     }
-    return base
-        .replace(
-          path: path,
-          query: null,
-          fragment: null,
-        );
+    return base.replace(
+      path: path,
+      query: null,
+      fragment: null,
+    );
   }
 
   static Future<void> _activateActiveNetworkAfterCallback() async {
@@ -156,7 +166,8 @@ class AuthCallbackService {
         devicePublicKey: 'device-key-${DateTime.now().microsecondsSinceEpoch}',
       );
       if (AppCoreScope.sessionStore.networks.isEmpty) {
-        debugPrint('[auth-callback] skip activate_active_network: no active network');
+        debugPrint(
+            '[auth-callback] skip activate_active_network: no active network');
         return;
       }
       await AppCoreScope.sessionController.enableActiveNetwork();

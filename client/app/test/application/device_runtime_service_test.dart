@@ -244,13 +244,6 @@ class _FakeAppCoreApi implements AppCoreApi {
       NetworkJoinModel(networkId: networkId, deviceId: deviceId);
 
   @override
-  Future<NetworkJoinModel> joinNetworkByOwnerEmail({
-    required String ownerEmail,
-    required String deviceId,
-  }) async =>
-      NetworkJoinModel(networkId: 'net-1', deviceId: deviceId);
-
-  @override
   Future<NetworkJoinModel> joinNetworkByKey({
     required String joinKey,
     required String deviceId,
@@ -293,6 +286,15 @@ class _FakeAppCoreApi implements AppCoreApi {
   }) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<bool> reportDeviceNetworkState() async => false;
+
+  @override
+  Future<BootstrapModel?> enableLocalNetwork({String? networkId}) async => null;
+
+  @override
+  Future<bool> disableLocalNetwork({String? networkId}) async => false;
 
   @override
   Future<List<NetworkModel>> listNetworks() {
