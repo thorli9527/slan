@@ -106,6 +106,8 @@ type AuthConfig struct {
 	AccessTokenTTLSeconds int `yaml:"access_token_ttl_seconds"`
 	// RefreshTokenTTLSeconds 是业务 refresh token 的有效期。
 	RefreshTokenTTLSeconds int `yaml:"refresh_token_ttl_seconds"`
+	// AllowRegistration 控制是否允许用户自助注册。
+	AllowRegistration bool `yaml:"allow_registration"`
 }
 
 // OpsConfig 描述运营管理入口相关配置。
@@ -254,6 +256,7 @@ func DefaultConfig() Config {
 	cfg.Bootstrap.STUNServers = []string{"stun:stun.l.google.com:19302"}
 	cfg.Auth.AccessTokenTTLSeconds = 3600
 	cfg.Auth.RefreshTokenTTLSeconds = 86400
+	cfg.Auth.AllowRegistration = true
 	cfg.Ops.AccessToken = "dev-ops-token"
 	cfg.Ops.DefaultAdmin = OpsDefaultAdminConfig{
 		Enabled:     true,
@@ -454,6 +457,9 @@ func applyEnvOverrides(cfg *Config) {
 		if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
 			cfg.Auth.RefreshTokenTTLSeconds = seconds
 		}
+	}
+	if value := os.Getenv("SLAN_AUTH_ALLOW_REGISTRATION"); value != "" {
+		cfg.Auth.AllowRegistration = strings.EqualFold(value, "true") || value == "1"
 	}
 	if value := os.Getenv("SLAN_RELAY_TICKET_SIGNING_SECRET"); value != "" {
 		cfg.Relay.TicketSigningSecret = value

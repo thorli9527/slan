@@ -161,6 +161,7 @@ mod tests {
                     search_domains: vec![],
                     wildcards: vec![],
                 },
+                policy: Default::default(),
                 mtu: Some(1280),
             }),
         };

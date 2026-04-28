@@ -1,4 +1,4 @@
-<main class="ops-shell" *ngIf="token(); else loginPanel">
+﻿<main class="ops-shell" *ngIf="token(); else loginPanel">
   <aside class="ops-sidebar">
     <section class="brand">
       <span class="brand-mark">S</span>
@@ -90,7 +90,7 @@
 
       <section class="panel" *ngSwitchCase="'users'">
         <table>
-          <thead><tr><th>邮箱</th><th>用户 ID</th><th>设备</th><th>节点</th><th>角色</th><th>DNS 订单</th><th>扩容订单</th></tr></thead>
+          <thead><tr><th>邮箱</th><th>用户 ID</th><th>设备</th><th>节点</th><th>角色</th></tr></thead>
           <tbody>
             <tr *ngFor="let user of pagedUsers()">
               <td>{{ user.email }}</td>
@@ -98,8 +98,6 @@
               <td>{{ user.deviceCount }}</td>
               <td>{{ user.nodeCount }}</td>
               <td>{{ user.roleCodes?.join(', ') || '-' }}</td>
-              <td><button type="button" (click)="openPaidOrderDialog(user, 'dns')" [disabled]="loading()">开通 DNS</button></td>
-              <td><button type="button" (click)="openPaidOrderDialog(user, 'extra-device')" [disabled]="loading()">设备扩容</button></td>
             </tr>
           </tbody>
         </table>
@@ -128,96 +126,6 @@
           <span>{{ pageSummary('devices', filteredDevices().length) }}</span>
           <button type="button" (click)="previousPage('devices')" [disabled]="!canPreviousPage('devices')">上一页</button>
           <button type="button" (click)="nextPage('devices', filteredDevices().length)" [disabled]="!canNextPage('devices', filteredDevices().length)">下一页</button>
-        </div>
-      </section>
-
-      <section class="product-layout" *ngSwitchCase="'products'">
-        <article class="panel">
-          <div class="panel-title">
-            <h2>商品价格</h2>
-            <button type="button" (click)="startCreateProduct()">新增商品</button>
-          </div>
-          <table>
-            <thead><tr><th>编码</th><th>名称</th><th>类型</th><th>价格</th><th>限制</th><th>状态</th></tr></thead>
-            <tbody>
-              <tr *ngFor="let product of pagedProducts()" (click)="editProduct(product)" [class.selected]="selectedProduct()?.productCode === product.productCode">
-                <td><code>{{ product.productCode }}</code></td>
-                <td>{{ product.productName }}</td>
-                <td>{{ product.productType }}</td>
-                <td>{{ formatMoney(product.priceCents, product.currency) }} / {{ product.billingCycle }}</td>
-                <td>{{ product.maxActiveDevices || '-' }} 台 · {{ product.bandwidthLimitMbps || '-' }} Mbps</td>
-                <td><span class="pill">{{ product.status }}</span></td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="pager" *ngIf="filteredProducts().length > pageSize">
-            <span>{{ pageSummary('products', filteredProducts().length) }}</span>
-            <button type="button" (click)="previousPage('products')" [disabled]="!canPreviousPage('products')">上一页</button>
-            <button type="button" (click)="nextPage('products', filteredProducts().length)" [disabled]="!canNextPage('products', filteredProducts().length)">下一页</button>
-          </div>
-        </article>
-
-        <article class="panel editor">
-          <h2>{{ selectedProduct() ? '编辑商品' : '新增商品' }}</h2>
-          <label><span>商品编码</span><input [ngModel]="productDraft().productCode" (ngModelChange)="setProductDraft('productCode', $event)" /></label>
-          <label><span>商品名称</span><input [ngModel]="productDraft().productName" (ngModelChange)="setProductDraft('productName', $event)" /></label>
-          <label><span>说明</span><textarea [ngModel]="productDraft().description" (ngModelChange)="setProductDraft('description', $event)"></textarea></label>
-          <div class="form-grid">
-            <label><span>类型</span><input [ngModel]="productDraft().productType" (ngModelChange)="setProductDraft('productType', $event)" /></label>
-            <label><span>状态</span><input [ngModel]="productDraft().status" (ngModelChange)="setProductDraft('status', $event)" /></label>
-            <label><span>价格分</span><input type="number" [ngModel]="productDraft().priceCents" (ngModelChange)="setProductDraft('priceCents', $event)" /></label>
-            <label><span>币种</span><input [ngModel]="productDraft().currency" (ngModelChange)="setProductDraft('currency', $event)" /></label>
-            <label><span>周期</span><input [ngModel]="productDraft().billingCycle" (ngModelChange)="setProductDraft('billingCycle', $event)" /></label>
-            <label><span>单位数量</span><input type="number" [ngModel]="productDraft().unitQuantity" (ngModelChange)="setProductDraft('unitQuantity', $event)" /></label>
-            <label><span>最大设备数</span><input type="number" [ngModel]="productDraft().maxActiveDevices" (ngModelChange)="setProductDraft('maxActiveDevices', $event)" /></label>
-            <label><span>限速 Mbps</span><input type="number" [ngModel]="productDraft().bandwidthLimitMbps" (ngModelChange)="setProductDraft('bandwidthLimitMbps', $event)" /></label>
-          </div>
-          <label class="checkbox"><input type="checkbox" [ngModel]="productDraft().isDefault" (ngModelChange)="setProductDraft('isDefault', $event)" /> 默认套餐</label>
-          <button class="primary" type="button" (click)="saveProduct()" [disabled]="loading()">保存商品</button>
-        </article>
-      </section>
-
-      <section class="panel" *ngSwitchCase="'orders'">
-        <div class="panel-title">
-          <h2>订单管理</h2>
-          <span class="muted">确认付款后，DNS 和附加设备权益会按订单状态生效。</span>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>订单</th>
-              <th>用户</th>
-              <th>商品</th>
-              <th>金额</th>
-              <th>状态</th>
-              <th>创建时间</th>
-              <th>到期时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let order of pagedOrders()">
-              <td><code>{{ order.orderId }}</code></td>
-              <td>{{ order.userEmail || order.userId }}</td>
-              <td>{{ order.productName }} <small>{{ orderLineLabel(order) }}</small></td>
-              <td>{{ formatMoney(order.amountCents, order.currency) }}</td>
-              <td><span class="pill">{{ order.status }}</span></td>
-              <td>{{ formatTime(order.createdAt) }}</td>
-              <td>{{ formatTime(order.expiresAt) }}</td>
-              <td>
-                <div class="inline-actions">
-                  <button type="button" (click)="updateOrderStatus(order, 'paid')" [disabled]="loading() || order.status === 'paid'">已支付</button>
-                  <button type="button" (click)="updateOrderStatus(order, 'active')" [disabled]="loading() || order.status === 'active'">启用</button>
-                  <button type="button" (click)="updateOrderStatus(order, 'cancelled')" [disabled]="loading() || order.status === 'cancelled'">取消</button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pager" *ngIf="filteredOrders().length > pageSize">
-          <span>{{ pageSummary('orders', filteredOrders().length) }}</span>
-          <button type="button" (click)="previousPage('orders')" [disabled]="!canPreviousPage('orders')">上一页</button>
-          <button type="button" (click)="nextPage('orders', filteredOrders().length)" [disabled]="!canNextPage('orders', filteredOrders().length)">下一页</button>
         </div>
       </section>
 
@@ -300,36 +208,6 @@
     </ng-container>
   </section>
 
-  <section class="modal-backdrop" *ngIf="paidOrderUser()">
-    <article class="modal-panel">
-      <header class="modal-title">
-        <div>
-          <p>{{ isPaidOrderDNS() ? 'DNS 订单' : '扩容订单' }}</p>
-          <h2>{{ paidOrderUser()?.email }}</h2>
-        </div>
-        <button type="button" (click)="closePaidOrderDialog()">关闭</button>
-      </header>
-      <div class="form-grid">
-        <label>
-          <span>商品</span>
-          <select [ngModel]="paidOrderDraft().productCode" (ngModelChange)="setPaidOrderDraft('productCode', $event)">
-            <option *ngFor="let product of paidOrderProducts()" [value]="product.productCode">
-              {{ product.productName }} / {{ durationLabel(product.billingCycle, 1) }}
-            </option>
-          </select>
-        </label>
-        <label *ngIf="!isPaidOrderDNS()">
-          <span>下单数量</span>
-          <input type="number" min="1" [disabled]="isPaidOrderDNS()" [ngModel]="paidOrderDraft().quantity" (ngModelChange)="setPaidOrderDraft('quantity', $event)" />
-        </label>
-        <label>
-          <span>周期数量</span>
-          <input type="number" min="1" [ngModel]="paidOrderDraft().months" (ngModelChange)="setPaidOrderDraft('months', $event)" />
-        </label>
-      </div>
-      <button class="primary" type="button" (click)="createPaidOrder()" [disabled]="loading()">确认开通</button>
-    </article>
-  </section>
 </main>
 
 <ng-template #loginPanel>
@@ -346,3 +224,4 @@
     </section>
   </main>
 </ng-template>
+

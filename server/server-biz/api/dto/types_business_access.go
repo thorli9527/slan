@@ -44,3 +44,7 @@ type AuthCallbackStatusResponse struct {
 	Ready      bool                         `json:"ready"`
 	Payload    *CompleteAuthCallbackRequest `json:"payload,omitempty"`
 }
+
+type PublicSystemConfig struct {
+	AllowRegistration bool `json:"allowRegistration"`
+}

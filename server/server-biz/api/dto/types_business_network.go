@@ -127,6 +127,15 @@ type NetworkHome struct {
 	HasNetwork bool `json:"hasNetwork"`
 }
 
+type PlanStatus struct {
+	PlanName                string `json:"planName"`
+	FreeDeviceLimit         int    `json:"freeDeviceLimit"`
+	MaxActiveDevices        int    `json:"maxActiveDevices"`
+	RelayBandwidthLimitKbps int    `json:"relayBandwidthLimitKbps,omitempty"`
+	P2PUnlimited            bool   `json:"p2pUnlimited,omitempty"`
+	DNSAvailable            bool   `json:"dnsAvailable"`
+}
+
 // Subnet 表示网络内实际承载地址空间的容器。
 type Subnet struct {
 	// SubnetID 是唯一子网标识。

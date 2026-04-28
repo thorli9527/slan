@@ -23,9 +23,4 @@ type Ops interface {
 	ListMenus() ([]dto.OpsMenu, error)
 	CreateMenu(req dto.CreateMenuRequest) (dto.OpsMenu, error)
 	AssignRoleMenus(roleID string, req dto.AssignRoleMenusRequest) error
-	ListProducts() ([]dto.OpsProduct, error)
-	UpsertProduct(req dto.UpsertProductRequest) (dto.OpsProduct, error)
-	ListPurchaseOrders() ([]dto.OpsPurchaseOrder, error)
-	CreatePaidPurchaseOrder(req dto.OpsCreatePaidOrderRequest) (dto.OpsPurchaseOrder, error)
-	UpdatePurchaseOrderStatus(orderID string, req dto.UpdatePurchaseOrderStatusRequest) (dto.OpsPurchaseOrder, error)
 }

@@ -508,23 +508,3 @@ func (fakeOpsService) CreateMenu(req dto.CreateMenuRequest) (dto.OpsMenu, error)
 func (fakeOpsService) AssignRoleMenus(roleID string, req dto.AssignRoleMenusRequest) error {
 	return nil
 }
-
-func (fakeOpsService) ListProducts() ([]dto.OpsProduct, error) {
-	return nil, nil
-}
-
-func (fakeOpsService) UpsertProduct(req dto.UpsertProductRequest) (dto.OpsProduct, error) {
-	return dto.OpsProduct{}, nil
-}
-
-func (fakeOpsService) ListPurchaseOrders() ([]dto.OpsPurchaseOrder, error) {
-	return nil, nil
-}
-
-func (fakeOpsService) CreatePaidPurchaseOrder(req dto.OpsCreatePaidOrderRequest) (dto.OpsPurchaseOrder, error) {
-	return dto.OpsPurchaseOrder{}, nil
-}
-
-func (fakeOpsService) UpdatePurchaseOrderStatus(orderID string, req dto.UpdatePurchaseOrderStatusRequest) (dto.OpsPurchaseOrder, error) {
-	return dto.OpsPurchaseOrder{}, nil
-}

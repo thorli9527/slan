@@ -277,22 +277,6 @@ code {
   font-size: 12px;
 }
 
-.order-create {
-  display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1.2fr) 110px 110px 130px;
-  align-items: end;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.order-create label {
-  margin-bottom: 0;
-}
-
-.order-create .primary {
-  height: 42px;
-}
-
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -329,13 +313,6 @@ code {
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
-}
-
-.product-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr);
-  gap: 16px;
-  align-items: start;
 }
 
 .editor {
@@ -406,8 +383,7 @@ textarea {
 }
 
 @media (max-width: 1100px) {
-  .ops-shell,
-  .product-layout {
+  .ops-shell {
     grid-template-columns: 1fr;
   }
 

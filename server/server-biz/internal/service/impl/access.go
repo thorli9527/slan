@@ -21,6 +21,9 @@ var (
 )
 
 func (s dbAuthService) Register(req dto.RegisterRequest) (dto.AuthResponse, error) {
+	if !s.state.cfg.Auth.AllowRegistration {
+		return dto.AuthResponse{}, ErrForbidden
+	}
 	email := strings.TrimSpace(strings.ToLower(req.Email))
 	if email == "" || len(req.Password) < 8 {
 		return dto.AuthResponse{}, fmt.Errorf("%w: email and password are required", ErrInvalidArgument)

@@ -1,6 +1,11 @@
 package httpapi
 
-import "github.com/gin-gonic/gin"
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/slan/server/server-biz/api/dto"
+)
 
 // registerBusinessRoutes 装配对外客户可见的全部业务 HTTP 路由。
 //
@@ -10,6 +15,9 @@ import "github.com/gin-gonic/gin"
 // - network
 // - bootstrap/control
 func registerBusinessRoutes(api *gin.RouterGroup, deps routerDeps) {
+	api.GET("/system/public-config", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.PublicSystemConfig, error) {
+		return dto.PublicSystemConfig{AllowRegistration: deps.Config.Auth.AllowRegistration}, nil
+	}))
 	registerAccessRoutes(api, deps)
 
 	protected := api.Group("")
@@ -18,6 +26,5 @@ func registerBusinessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	registerProtectedAccessRoutes(protected, deps)
 	registerRegistrationRoutes(protected, deps)
 	registerNetworkRoutes(protected, deps)
-	registerCommerceRoutes(protected, deps)
 	registerBootstrapRoutes(protected, deps)
 }

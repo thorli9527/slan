@@ -1498,6 +1498,5 @@ fn apply_control_mqtt_event(
         ControlMqttEvent::ActiveNetworkEnabled(enabled) => {
             *active_network_enabled = Some(enabled);
         }
-        ControlMqttEvent::UserEntitlementChanged(_changed) => {}
     }
 }

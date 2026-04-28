@@ -150,9 +150,6 @@ func (s dbNetworkService) UpdateDNS(userID, networkID string, req dto.UpdateNetw
 	if record.OwnerUserID != userID {
 		return dto.NetworkDetail{}, ErrForbidden
 	}
-	if err := s.state.requireActiveProductEntitlement(ctx, userID, "dns"); err != nil {
-		return dto.NetworkDetail{}, err
-	}
 	dns := dto.DNSConfig{
 		Servers:       sanitizeValues(req.Servers),
 		SearchDomains: sanitizeValues(req.SearchDomains),

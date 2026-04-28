@@ -16,9 +16,9 @@ pub use derp::{
 };
 pub use identity::{Device, MqttCredential, Node, Session};
 pub use network::{
-    ControlPlaneConfig, DnsConfig, Endpoint, Network, NetworkAssignment, NetworkJoinResult,
-    NetworkMap, NetworkMember, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry,
-    RelayEndpoint, RelayNode, RelayRegion, Route, Subnet,
+    AccessPolicy, ControlPlaneConfig, DnsConfig, Endpoint, Network, NetworkAssignment,
+    NetworkJoinResult, NetworkMap, NetworkMember, Peer, RelayCity, RelayCluster, RelayConfig,
+    RelayCountry, RelayEndpoint, RelayNode, RelayRegion, Route, Subnet,
 };
 pub use wireguard::{
     AllowedIp, TunnelKeyMaterial, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair,

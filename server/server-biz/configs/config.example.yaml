@@ -53,6 +53,8 @@ bootstrap:
   stun_servers:
     - "stun:stun.l.google.com:19302"
 auth:
+  # 是否允许用户在 Web 端自助注册；关闭后只能登录已有账号。
+  allow_registration: true
   # Access token TTL in seconds.
   access_token_ttl_seconds: 3600
   # Refresh token TTL in seconds.

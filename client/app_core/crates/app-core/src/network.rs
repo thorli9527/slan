@@ -7,6 +7,6 @@ pub use relay::{
     RelayCity, RelayCluster, RelayConfig, RelayCountry, RelayEndpoint, RelayNode, RelayRegion,
 };
 pub use topology::{
-    Endpoint, Network, NetworkAssignment, NetworkJoinResult, NetworkMap, NetworkMember, Peer,
-    Route, Subnet,
+    AccessPolicy, Endpoint, Network, NetworkAssignment, NetworkJoinResult, NetworkMap,
+    NetworkMember, Peer, Route, Subnet,
 };

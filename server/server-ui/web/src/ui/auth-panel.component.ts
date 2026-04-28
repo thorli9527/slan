@@ -15,9 +15,14 @@ export class AuthPanelComponent {
   @Input({ required: true }) mode!: AuthMode;
   @Input({ required: true }) email!: string;
   @Input({ required: true }) password!: string;
+  @Input() allowRegistration = true;
 
   @Output() readonly modeChange = new EventEmitter<AuthMode>();
   @Output() readonly emailChange = new EventEmitter<string>();
   @Output() readonly passwordChange = new EventEmitter<string>();
   @Output() readonly submit = new EventEmitter<void>();
+
+  get effectiveMode(): AuthMode {
+    return this.allowRegistration ? this.mode : 'login';
+  }
 }

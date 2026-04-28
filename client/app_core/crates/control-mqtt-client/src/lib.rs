@@ -7,8 +7,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slan_app_core::{
-    DnsConfig, Endpoint, MqttCredential, NetworkMap, Peer, RelayEndpoint, RelayRegion, RelayTicket,
-    Route,
+    AccessPolicy, DnsConfig, Endpoint, MqttCredential, NetworkMap, Peer, RelayEndpoint,
+    RelayRegion, RelayTicket, Route,
 };
 
 const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -55,7 +55,6 @@ pub enum ControlMqttEvent {
     NetworkRestartRequired(ControlMqttNetworkRestartRequired),
     DeviceIPReassigned(ControlMqttDeviceIPReassigned),
     ActiveNetworkEnabled(ControlMqttActiveNetworkEnabled),
-    UserEntitlementChanged(ControlMqttUserEntitlementChanged),
 }
 
 #[derive(Debug, Clone)]
@@ -77,18 +76,6 @@ pub struct ControlMqttPeerRemove {
 pub struct ControlMqttActiveNetworkEnabled {
     pub user_id: String,
     pub network_id: String,
-    #[serde(default)]
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ControlMqttUserEntitlementChanged {
-    pub user_id: String,
-    #[serde(default)]
-    pub network_id: String,
-    pub available_device_count: u32,
-    pub dns_available: bool,
     #[serde(default)]
     pub reason: String,
 }
@@ -479,12 +466,6 @@ fn decode_control_mqtt_event(response: Envelope) -> Result<ControlMqttEvent, Str
                 .map_err(|err| format!("decode active_network_enabled: {err}"))?;
             Ok(ControlMqttEvent::ActiveNetworkEnabled(enabled))
         }
-        "user_entitlement_changed" => {
-            let changed: ControlMqttUserEntitlementChanged =
-                serde_json::from_value(response.payload)
-                    .map_err(|err| format!("decode user_entitlement_changed: {err}"))?;
-            Ok(ControlMqttEvent::UserEntitlementChanged(changed))
-        }
         other => Err(format!("unexpected control mqtt event: {other}")),
     }
 }
@@ -808,6 +789,8 @@ struct NetworkMapWire {
     relay_regions: Vec<RelayRegionWire>,
     dns: DnsConfigWire,
     #[serde(default)]
+    policy: AccessPolicyWire,
+    #[serde(default)]
     mtu: Option<u32>,
 }
 
@@ -825,7 +808,38 @@ impl From<NetworkMapWire> for NetworkMap {
             routes: value.routes.into_iter().map(Into::into).collect(),
             relay_regions: value.relay_regions.into_iter().map(Into::into).collect(),
             dns: value.dns.into(),
+            policy: value.policy.into(),
             mtu: value.mtu,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AccessPolicyWire {
+    #[serde(default)]
+    plan_code: Option<String>,
+    #[serde(default)]
+    max_active_devices: Option<u32>,
+    #[serde(default)]
+    bandwidth_limit_mbps: Option<u32>,
+    #[serde(default)]
+    relay_bandwidth_limit_kbps: Option<u32>,
+    #[serde(default)]
+    p2p_unlimited: bool,
+    #[serde(default)]
+    dns_available: bool,
+}
+
+impl From<AccessPolicyWire> for AccessPolicy {
+    fn from(value: AccessPolicyWire) -> Self {
+        Self {
+            plan_code: value.plan_code,
+            max_active_devices: value.max_active_devices,
+            bandwidth_limit_mbps: value.bandwidth_limit_mbps,
+            relay_bandwidth_limit_kbps: value.relay_bandwidth_limit_kbps,
+            p2p_unlimited: value.p2p_unlimited,
+            dns_available: value.dns_available,
         }
     }
 }

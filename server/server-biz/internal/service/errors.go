@@ -12,7 +12,7 @@ var (
 	// ErrConflict 表示请求与现有状态冲突，例如重复创建。
 	ErrConflict = errors.New("conflict")
 	// ErrInvalidArgument 表示请求参数缺失、非法或不满足约束。
-	ErrInvalidArgument = errors.New("invalid argument")
-	ErrPaymentRequired = errors.New("payment required")
-	ErrNotImplemented  = errors.New("not implemented")
+	ErrInvalidArgument     = errors.New("invalid argument")
+	ErrDeviceLimitExceeded = errors.New("device limit exceeded")
+	ErrNotImplemented      = errors.New("not implemented")
 )

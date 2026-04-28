@@ -183,10 +183,12 @@ type DNSConfig struct {
 }
 
 type AccessPolicy struct {
-	ProductCode        string `json:"productCode,omitempty"`
-	MaxActiveDevices   int    `json:"maxActiveDevices,omitempty"`
-	BandwidthLimitMbps int    `json:"bandwidthLimitMbps,omitempty"`
-	DNSAvailable       bool   `json:"dnsAvailable,omitempty"`
+	PlanCode                string `json:"planCode,omitempty"`
+	MaxActiveDevices        int    `json:"maxActiveDevices,omitempty"`
+	BandwidthLimitMbps      int    `json:"bandwidthLimitMbps,omitempty"`
+	RelayBandwidthLimitKbps int    `json:"relayBandwidthLimitKbps,omitempty"`
+	P2PUnlimited            bool   `json:"p2pUnlimited,omitempty"`
+	DNSAvailable            bool   `json:"dnsAvailable,omitempty"`
 }
 
 // RelayEndpoint 描述一个 relay 区域下的具体接入点。

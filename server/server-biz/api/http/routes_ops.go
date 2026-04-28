@@ -202,58 +202,6 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 		}
 		c.JSON(http.StatusOK, resp)
 	})
-	ops.GET("/products", authorizeOpsMenu(deps, "ops.products"), func(c *gin.Context) {
-		items, err := deps.Ops.ListProducts()
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		writeItems(c, items)
-	})
-	ops.POST("/products", authorizeOpsMenu(deps, "ops.products"), func(c *gin.Context) {
-		var req dto.UpsertProductRequest
-		if !bindJSON(c, &req) {
-			return
-		}
-		resp, err := deps.Ops.UpsertProduct(req)
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		c.JSON(http.StatusCreated, resp)
-	})
-	ops.GET("/orders", authorizeOpsMenu(deps, "ops.orders"), func(c *gin.Context) {
-		items, err := deps.Ops.ListPurchaseOrders()
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		writeItems(c, items)
-	})
-	ops.POST("/orders/paid", authorizeOpsMenu(deps, "ops.orders"), func(c *gin.Context) {
-		var req dto.OpsCreatePaidOrderRequest
-		if !bindJSON(c, &req) {
-			return
-		}
-		resp, err := deps.Ops.CreatePaidPurchaseOrder(req)
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		c.JSON(http.StatusCreated, resp)
-	})
-	ops.PUT("/orders/:orderId/status", authorizeOpsMenu(deps, "ops.orders"), func(c *gin.Context) {
-		var req dto.UpdatePurchaseOrderStatusRequest
-		if !bindJSON(c, &req) {
-			return
-		}
-		resp, err := deps.Ops.UpdatePurchaseOrderStatus(c.Param("orderId"), req)
-		if err != nil {
-			writeError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, resp)
-	})
 }
 
 func opsLoginRateLimitHandlers(cfg configs.OpsLoginRateLimitConfig) []gin.HandlerFunc {

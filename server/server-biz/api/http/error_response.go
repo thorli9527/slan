@@ -10,16 +10,16 @@ import (
 )
 
 const (
-	errorCodeInternal        = "INTERNAL"
-	errorCodeInvalidArgument = "INVALID_ARGUMENT"
-	errorCodeUnauthorized    = "UNAUTHORIZED"
-	errorCodeForbidden       = "FORBIDDEN"
-	errorCodeNotFound        = "NOT_FOUND"
-	errorCodeConflict        = "CONFLICT"
-	errorCodePaymentRequired = "PAYMENT_REQUIRED"
-	errorCodeRequestTooLarge = "REQUEST_TOO_LARGE"
-	errorCodeRateLimited     = "RATE_LIMITED"
-	errorCodeNotImplemented  = "NOT_IMPLEMENTED"
+	errorCodeInternal            = "INTERNAL"
+	errorCodeInvalidArgument     = "INVALID_ARGUMENT"
+	errorCodeUnauthorized        = "UNAUTHORIZED"
+	errorCodeForbidden           = "FORBIDDEN"
+	errorCodeNotFound            = "NOT_FOUND"
+	errorCodeConflict            = "CONFLICT"
+	errorCodeDeviceLimitExceeded = "DEVICE_LIMIT_EXCEEDED"
+	errorCodeRequestTooLarge     = "REQUEST_TOO_LARGE"
+	errorCodeRateLimited         = "RATE_LIMITED"
+	errorCodeNotImplemented      = "NOT_IMPLEMENTED"
 )
 
 func writeErrorResponse(c *gin.Context, status int, code, message string) {
@@ -48,9 +48,9 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrConflict):
 		status = http.StatusConflict
 		code = errorCodeConflict
-	case errors.Is(err, service.ErrPaymentRequired):
-		status = http.StatusPaymentRequired
-		code = errorCodePaymentRequired
+	case errors.Is(err, service.ErrDeviceLimitExceeded):
+		status = http.StatusForbidden
+		code = errorCodeDeviceLimitExceeded
 	case errors.Is(err, service.ErrNotImplemented):
 		status = http.StatusNotImplemented
 		code = errorCodeNotImplemented

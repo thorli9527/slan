@@ -1,9 +1,9 @@
 <section class="auth-shell">
   <div class="auth-copy">
-    <p class="auth-kicker">{{ mode === 'login' ? 'Secure Sign In' : 'Create Access' }}</p>
-    <h2>{{ mode === 'login' ? '登录网络控制台' : '创建控制台账号' }}</h2>
+    <p class="auth-kicker">{{ effectiveMode === 'login' ? 'Secure Sign In' : 'Create Access' }}</p>
+    <h2>{{ effectiveMode === 'login' ? '登录网络控制台' : '创建控制台账号' }}</h2>
     <p class="auth-description">
-      {{ mode === 'login'
+      {{ effectiveMode === 'login'
         ? '登录后可以查看当前网络、在线状态、虚拟 IP、默认地址池和加入申请。'
         : '注册后可以直接进入网络控制台，创建自己的网络或加入已有网络。'
       }}
@@ -27,8 +27,13 @@
 
   <div class="auth-card">
     <div class="segmented">
-      <button type="button" [class.active]="mode === 'login'" (click)="modeChange.emit('login')">登录</button>
-      <button type="button" [class.active]="mode === 'register'" (click)="modeChange.emit('register')">注册</button>
+      <button type="button" [class.active]="effectiveMode === 'login'" (click)="modeChange.emit('login')">登录</button>
+      <button
+        type="button"
+        *ngIf="allowRegistration"
+        [class.active]="mode === 'register'"
+        (click)="modeChange.emit('register')"
+      >注册</button>
     </div>
 
     <label class="field">
@@ -48,16 +53,18 @@
         (ngModelChange)="passwordChange.emit($event)"
         type="password"
         placeholder="password"
-        autocomplete="{{ mode === 'login' ? 'current-password' : 'new-password' }}"
+        autocomplete="{{ effectiveMode === 'login' ? 'current-password' : 'new-password' }}"
       />
     </label>
 
     <button class="submit" type="button" (click)="submit.emit()">
-      {{ mode === 'login' ? '进入控制台' : '创建账号并进入' }}
+      {{ effectiveMode === 'login' ? '进入控制台' : '创建账号并进入' }}
     </button>
 
     <p class="auth-hint">
-      {{ mode === 'login'
+      {{ !allowRegistration
+        ? '当前服务端已关闭自助注册，请使用已有账号登录。'
+        : effectiveMode === 'login'
         ? '推荐先登录，再进入网络创建、切换和接入管理。'
         : '注册密码至少 8 位，注册后可直接进入网络创建和加入流程。'
       }}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
+	"github.com/slan/server/server-biz/configs"
 	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/service"
 	"gorm.io/driver/sqlite"
@@ -1200,14 +1201,8 @@ func TestActivate_RejectsThirdFreeActiveDevice(t *testing.T) {
 	if _, err := networkService.Join("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); err != nil {
 		t.Fatalf("join dev-3: %v", err)
 	}
-	if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); !errors.Is(err, service.ErrPaymentRequired) {
-		t.Fatalf("expected free product limit to reject third active device, got %v", err)
-	}
-	if err := state.pg.UpdateUserEntitlements(ctx, "user-1", 3, false, time.Now().Unix()); err != nil {
-		t.Fatalf("extend user entitlement: %v", err)
-	}
-	if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); err != nil {
-		t.Fatalf("paid device entitlement should allow third active device: %v", err)
+	if _, err := networkService.Activate("user-1", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-3"}); !errors.Is(err, service.ErrDeviceLimitExceeded) {
+		t.Fatalf("expected fixed free limit to reject third active device, got %v", err)
 	}
 }
 
@@ -1434,14 +1429,11 @@ func newNetworkTestState(t *testing.T) *dbState {
 		&repo.NodePathHealth{},
 		&repo.ControlSession{},
 		&repo.DeviceNetworkState{},
-		&repo.Merchant{},
-		&repo.Product{},
-		&repo.PurchaseOrder{},
-		&repo.PurchaseOrderDeviceBinding{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	return &dbState{
+		cfg:    configs.DefaultConfig(),
 		pg:     repo.NewPostgresRepository(db),
 		tokens: newMemoryTokenStore(),
 	}

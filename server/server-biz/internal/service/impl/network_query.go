@@ -118,7 +118,7 @@ func (s dbNetworkService) UpdateMemberStatus(userID, networkID, memberID string,
 		if err != nil {
 			return dto.NetworkMember{}, err
 		}
-		if err := s.state.ensureProductAllowsActivation(ctx, memberDevice.UserID, record.DefaultSubnetID, member.DeviceID); err != nil {
+		if err := s.state.ensureFixedDeviceLimitAllowsActivation(ctx, memberDevice.UserID, record.DefaultSubnetID, member.DeviceID); err != nil {
 			return dto.NetworkMember{}, err
 		}
 	}

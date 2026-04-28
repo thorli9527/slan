@@ -69,13 +69,10 @@ func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 	if err := state.seedDefaultAdmin(context.Background()); err != nil {
 		panic(fmt.Errorf("seed default admin: %w", err))
 	}
-	if err := state.seedDefaultProducts(context.Background()); err != nil {
-		panic(fmt.Errorf("seed default products: %w", err))
-	}
 	state.cleanupExpiredControlPlaneState(context.Background(), time.Now())
-	state.syncAllUserEntitlements(context.Background(), "startup entitlement sync")
+	state.enforceFixedAccessPolicy(context.Background())
 	state.startControlStateCleanupLoop()
-	state.startEntitlementSyncLoop()
+	state.startAccessPolicySyncLoop()
 	state.startMQTTNetworkStateSubscriber()
 	return dbAuthService{state: state},
 		dbDeviceService{state: state},

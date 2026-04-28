@@ -188,14 +188,6 @@ type ActiveNetworkEnabled struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-type UserEntitlementChanged struct {
-	UserID               string `json:"userId"`
-	NetworkID            string `json:"networkId,omitempty"`
-	AvailableDeviceCount int    `json:"availableDeviceCount"`
-	DNSAvailable         bool   `json:"dnsAvailable"`
-	Reason               string `json:"reason,omitempty"`
-}
-
 // ControlSyncEvent 是多实例之间通过 Redis 同步的控制通道事件。
 type ControlSyncEvent struct {
 	// InstanceID 是发布该事件的实例标识。
@@ -226,6 +218,4 @@ type ControlSyncEvent struct {
 	DeviceIP *DeviceIPReassigned `json:"deviceIp,omitempty"`
 	// ActiveNetwork 是 active_network_enabled 时携带的活动网络信息。
 	ActiveNetwork *ActiveNetworkEnabled `json:"activeNetwork,omitempty"`
-	// Entitlement 是 user_entitlement_changed 时携带的用户权益信息。
-	Entitlement *UserEntitlementChanged `json:"entitlement,omitempty"`
 }

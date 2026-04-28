@@ -103,6 +103,17 @@ pub struct Route {
 }
 
 /// 控制面下发的网络地图。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessPolicy {
+    pub plan_code: Option<String>,
+    pub max_active_devices: Option<u32>,
+    pub bandwidth_limit_mbps: Option<u32>,
+    pub relay_bandwidth_limit_kbps: Option<u32>,
+    pub p2p_unlimited: bool,
+    pub dns_available: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkMap {
@@ -117,5 +128,7 @@ pub struct NetworkMap {
     pub routes: Vec<Route>,
     pub relay_regions: Vec<RelayRegion>,
     pub dns: DnsConfig,
+    #[serde(default)]
+    pub policy: AccessPolicy,
     pub mtu: Option<u32>,
 }

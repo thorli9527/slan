@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use slan_app_core::{
-    BootstrapConfig, ControlPlaneConfig, DerpCluster, DerpMap, DerpNodeMeta, DerpTransport, Device,
-    DnsConfig, Endpoint, MqttCredential, Network, NetworkAssignment, NetworkJoinResult, NetworkMap,
-    NetworkMember, Node, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry, RelayEndpoint,
-    RelayNode, RelayRegion, RelayTicket, Route, Session, Subnet,
+    AccessPolicy, BootstrapConfig, ControlPlaneConfig, DerpCluster, DerpMap, DerpNodeMeta,
+    DerpTransport, Device, DnsConfig, Endpoint, MqttCredential, Network, NetworkAssignment,
+    NetworkJoinResult, NetworkMap, NetworkMember, Node, Peer, RelayCity, RelayCluster, RelayConfig,
+    RelayCountry, RelayEndpoint, RelayNode, RelayRegion, RelayTicket, Route, Session, Subnet,
 };
 
 use crate::api::{
@@ -792,6 +792,8 @@ pub struct NetworkMapDto {
     pub relay_regions: Vec<RelayRegionDto>,
     pub dns: DnsConfigDto,
     #[serde(default)]
+    pub policy: AccessPolicyDto,
+    #[serde(default)]
     pub mtu: Option<u32>,
 }
 
@@ -811,8 +813,39 @@ impl TryFrom<NetworkMapDto> for NetworkMap {
             routes: value.routes.into_iter().map(Into::into).collect(),
             relay_regions: value.relay_regions.into_iter().map(Into::into).collect(),
             dns: value.dns.into(),
+            policy: value.policy.into(),
             mtu: value.mtu,
         })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessPolicyDto {
+    #[serde(default)]
+    pub plan_code: Option<String>,
+    #[serde(default)]
+    pub max_active_devices: Option<u32>,
+    #[serde(default)]
+    pub bandwidth_limit_mbps: Option<u32>,
+    #[serde(default)]
+    pub relay_bandwidth_limit_kbps: Option<u32>,
+    #[serde(default)]
+    pub p2p_unlimited: bool,
+    #[serde(default)]
+    pub dns_available: bool,
+}
+
+impl From<AccessPolicyDto> for AccessPolicy {
+    fn from(value: AccessPolicyDto) -> Self {
+        Self {
+            plan_code: value.plan_code,
+            max_active_devices: value.max_active_devices,
+            bandwidth_limit_mbps: value.bandwidth_limit_mbps,
+            relay_bandwidth_limit_kbps: value.relay_bandwidth_limit_kbps,
+            p2p_unlimited: value.p2p_unlimited,
+            dns_available: value.dns_available,
+        }
     }
 }
 

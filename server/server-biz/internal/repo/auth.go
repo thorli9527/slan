@@ -13,13 +13,10 @@ import (
 // - 规范化邮箱
 // - 密码哈希
 type User struct {
-	UserID               string `gorm:"column:user_id;primaryKey"`
-	Email                string `gorm:"column:email;uniqueIndex;not null"`
-	PasswordHash         string `gorm:"column:password_hash;not null"`
-	ActiveNetworkID      string `gorm:"column:active_network_id;index"`
-	AvailableDeviceCount int    `gorm:"column:available_device_count;not null;default:2"`
-	DNSAvailable         bool   `gorm:"column:dns_available;not null;default:false"`
-	EntitlementSyncedAt  int64  `gorm:"column:entitlement_synced_at;not null;default:0"`
+	UserID          string `gorm:"column:user_id;primaryKey"`
+	Email           string `gorm:"column:email;uniqueIndex;not null"`
+	PasswordHash    string `gorm:"column:password_hash;not null"`
+	ActiveNetworkID string `gorm:"column:active_network_id;index"`
 }
 
 func (User) TableName() string { return "users" }
@@ -57,17 +54,6 @@ func (r *PostgresRepository) UpdateUserActiveNetwork(ctx context.Context, userID
 		Model(&User{}).
 		Where("user_id = ?", userID).
 		Update("active_network_id", networkID).Error
-}
-
-func (r *PostgresRepository) UpdateUserEntitlements(ctx context.Context, userID string, availableDeviceCount int, dnsAvailable bool, syncedAt int64) error {
-	return r.db.WithContext(ctx).
-		Model(&User{}).
-		Where("user_id = ?", userID).
-		Updates(map[string]any{
-			"available_device_count": availableDeviceCount,
-			"dns_available":          dnsAvailable,
-			"entitlement_synced_at":  syncedAt,
-		}).Error
 }
 
 // ListUsers 返回当前所有用户，主要供 ops 视图聚合使用。

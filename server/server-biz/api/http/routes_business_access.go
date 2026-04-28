@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/mqttauth"
+	"github.com/slan/server/server-biz/internal/service"
 )
 
 // registerAccessRoutes 注册无需业务鉴权即可访问的账号入口。
@@ -17,6 +18,9 @@ func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	auth := api.Group("/auth")
 	// POST /auth/register 创建终端用户账号。
 	auth.POST("/register", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.RegisterRequest) (dto.AuthResponse, error) {
+		if !deps.Config.Auth.AllowRegistration {
+			return dto.AuthResponse{}, service.ErrForbidden
+		}
 		return deps.Auth.Register(req)
 	}))
 	// POST /auth/login 校验账号并返回新的访问令牌。

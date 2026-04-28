@@ -11,6 +11,10 @@ export type ErrorResponse = {
   message: string;
 };
 
+export type PublicSystemConfig = {
+  allowRegistration: boolean;
+};
+
 export type CompleteAuthCallbackRequest = {
   accessToken: string;
   userId: string;
@@ -337,44 +341,11 @@ export type NetworkMap = {
   mtu?: number;
 };
 
-export type PurchaseProduct = {
-  productCode: string;
-  productName: string;
-  description?: string;
-  productType: string;
-  priceCents: number;
-  currency: string;
-  billingCycle: string;
-  unitQuantity: number;
-  maxActiveDevices?: number;
-  bandwidthLimitMbps?: number;
-};
-
-export type PurchaseOrder = {
-  orderId: string;
-  merchantId?: string;
-  merchantName?: string;
-  productId?: string;
-  productCode: string;
-  productName: string;
-  productType?: string;
-  quantity: number;
-  months: number;
-  unitCents?: number;
-  amountCents: number;
-  currency: string;
-  billingCycle: string;
-  status: string;
-  paidAt?: number;
-  cancelledAt?: number;
-  refundedAt?: number;
-  expiresAt?: number;
-  createdAt?: number;
-  updatedAt?: number;
-};
-
-export type ProductEntitlement = {
-  productCode: string;
-  active: boolean;
-  expiresAt?: number;
+export type PlanStatus = {
+  planName: string;
+  freeDeviceLimit: number;
+  maxActiveDevices: number;
+  relayBandwidthLimitKbps?: number;
+  p2pUnlimited?: boolean;
+  dnsAvailable: boolean;
 };

@@ -41,6 +41,7 @@ bootstrap:
   stun_servers:
     - "stun:stun.l.google.com:19302"
 auth:
+  allow_registration: true
   access_token_ttl_seconds: 3600
   refresh_token_ttl_seconds: 86400
 ops:

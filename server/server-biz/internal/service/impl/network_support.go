@@ -203,17 +203,12 @@ func (s *dbState) buildNetworkMap(ctx context.Context, userID string, self dto.N
 }
 
 func (s *dbState) buildAccessPolicy(ctx context.Context, userID string) dto.AccessPolicy {
-	product := s.currentDefaultProduct(ctx)
 	policy := dto.AccessPolicy{
-		ProductCode:        product.ProductCode,
-		MaxActiveDevices:   product.MaxActiveDevices,
-		BandwidthLimitMbps: product.BandwidthLimitMbps,
-	}
-	if user, err := s.pg.GetUserByID(ctx, userID); err == nil {
-		if user.AvailableDeviceCount > 0 {
-			policy.MaxActiveDevices = user.AvailableDeviceCount
-		}
-		policy.DNSAvailable = user.DNSAvailable
+		PlanCode:                "free",
+		MaxActiveDevices:        fixedDeviceLimit(),
+		RelayBandwidthLimitKbps: defaultRelayBandwidthLimitKbps,
+		P2PUnlimited:            true,
+		DNSAvailable:            true,
 	}
 	return policy
 }
@@ -363,9 +358,6 @@ func (s *dbState) networkPeerDTO(ctx context.Context, self dto.Node, networkID s
 }
 
 func (s *dbState) buildNetworkMapDNS(ctx context.Context, userID, networkID string) dto.DNSConfig {
-	if user, err := s.pg.GetUserByID(ctx, userID); err == nil && !user.DNSAvailable {
-		return dto.DNSConfig{}
-	}
 	record, err := s.pg.GetNetworkByID(ctx, networkID)
 	if err != nil {
 		return dto.DNSConfig{

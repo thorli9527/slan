@@ -3,7 +3,6 @@ package impl
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/util"
@@ -17,8 +16,6 @@ var builtinOpsMenus = []repo.Menu{
 	{MenuCode: "ops.roles", MenuName: "Roles", Path: "/roles", Sort: 50, Status: "active"},
 	{MenuCode: "ops.menus", MenuName: "Menus", Path: "/menus", Sort: 60, Status: "active"},
 	{MenuCode: "ops.relays", MenuName: "Relays", Path: "/relays", Sort: 70, Status: "active"},
-	{MenuCode: "ops.products", MenuName: "Products", Path: "/products", Sort: 80, Status: "active"},
-	{MenuCode: "ops.orders", MenuName: "Orders", Path: "/orders", Sort: 90, Status: "active"},
 }
 
 type builtinOpsRoleSeed struct {
@@ -41,8 +38,6 @@ var builtinOpsRoles = []builtinOpsRoleSeed{
 			"ops.roles",
 			"ops.menus",
 			"ops.relays",
-			"ops.products",
-			"ops.orders",
 		},
 	},
 	{
@@ -79,112 +74,6 @@ func (s *dbState) seedBuiltinOpsRBAC(ctx context.Context) error {
 			}
 		}
 		if err := s.pg.ReplaceRoleMenus(ctx, role.RoleID, menuIDs); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *dbState) seedDefaultProducts(ctx context.Context) error {
-	now := time.Now().Unix()
-	merchant := repo.Merchant{
-		MerchantID:   "merchant-platform",
-		MerchantCode: "platform",
-		MerchantName: "SLAN Platform",
-		Status:       "active",
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if err := s.pg.UpsertMerchant(ctx, merchant); err != nil {
-		return err
-	}
-	products := []repo.Product{
-		{
-			ProductID:          "prod-free",
-			MerchantID:         merchant.MerchantID,
-			MerchantName:       merchant.MerchantName,
-			ProductCode:        "free",
-			ProductName:        "Free",
-			Description:        "Free users can keep at most 2 devices connected at the same time with 1 Mbps bandwidth policy.",
-			ProductType:        "plan",
-			PriceCents:         0,
-			Currency:           "CNY",
-			BillingCycle:       "month",
-			UnitQuantity:       1,
-			MaxActiveDevices:   defaultFreeMaxActiveDevices,
-			BandwidthLimitMbps: defaultFreeBandwidthLimitMbps,
-			IsDefault:          true,
-			Status:             "active",
-			CreatedAt:          now,
-			UpdatedAt:          now,
-		},
-		{
-			ProductID:    "prod-extra-device",
-			MerchantID:   merchant.MerchantID,
-			MerchantName: merchant.MerchantName,
-			ProductCode:  "extra-device",
-			ProductName:  "Extra Device",
-			Description:  "Add one more device to the same network.",
-			ProductType:  "addon_device",
-			PriceCents:   1000,
-			Currency:     "CNY",
-			BillingCycle: "month",
-			UnitQuantity: 1,
-			Status:       "active",
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
-		{
-			ProductID:    "prod-extra-device-quarter",
-			MerchantID:   merchant.MerchantID,
-			MerchantName: merchant.MerchantName,
-			ProductCode:  "extra-device-quarter",
-			ProductName:  "Extra Device Quarterly",
-			Description:  "Add one more device to the same network for one quarter.",
-			ProductType:  "addon_device",
-			PriceCents:   3000,
-			Currency:     "CNY",
-			BillingCycle: "quarter",
-			UnitQuantity: 1,
-			Status:       "active",
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
-		{
-			ProductID:    "prod-extra-device-year",
-			MerchantID:   merchant.MerchantID,
-			MerchantName: merchant.MerchantName,
-			ProductCode:  "extra-device-year",
-			ProductName:  "Extra Device Yearly",
-			Description:  "Add one more device to the same network for one year.",
-			ProductType:  "addon_device",
-			PriceCents:   12000,
-			Currency:     "CNY",
-			BillingCycle: "year",
-			UnitQuantity: 1,
-			Status:       "active",
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
-		{
-			ProductID:    "prod-dns",
-			MerchantID:   merchant.MerchantID,
-			MerchantName: merchant.MerchantName,
-			ProductCode:  "dns",
-			ProductName:  "DNS",
-			Description:  "DNS service add-on.",
-			ProductType:  "addon_dns",
-			PriceCents:   1000,
-			Currency:     "CNY",
-			BillingCycle: "month",
-			UnitQuantity: 1,
-			Status:       "active",
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		},
-	}
-	for _, product := range products {
-		if err := s.pg.UpsertProduct(ctx, product); err != nil {
 			return err
 		}
 	}

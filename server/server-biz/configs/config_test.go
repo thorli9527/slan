@@ -25,6 +25,9 @@ func TestLoadConfig_AllowsDevelopmentDefaults(t *testing.T) {
 	if cfg.Auth.AccessTokenTTLSeconds != 3600 || cfg.Auth.RefreshTokenTTLSeconds != 86400 {
 		t.Fatalf("expected auth token ttl defaults, got %+v", cfg.Auth)
 	}
+	if !cfg.Auth.AllowRegistration {
+		t.Fatalf("expected registration to be enabled by default")
+	}
 }
 
 func TestLoadConfig_AppliesAuthTTLOverrides(t *testing.T) {
@@ -38,6 +41,19 @@ func TestLoadConfig_AppliesAuthTTLOverrides(t *testing.T) {
 	}
 	if cfg.Auth.AccessTokenTTLSeconds != 120 || cfg.Auth.RefreshTokenTTLSeconds != 240 {
 		t.Fatalf("expected auth token ttl overrides, got %+v", cfg.Auth)
+	}
+}
+
+func TestLoadConfig_AppliesRegistrationOverride(t *testing.T) {
+	t.Setenv("SLAN_ENV", "")
+	t.Setenv("SLAN_AUTH_ALLOW_REGISTRATION", "false")
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("load default config with registration override: %v", err)
+	}
+	if cfg.Auth.AllowRegistration {
+		t.Fatalf("expected registration to be disabled by env override")
 	}
 }
 

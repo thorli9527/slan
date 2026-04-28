@@ -6,15 +6,14 @@ import {
   ChangePasswordRequest,
   CompleteAuthCallbackRequest,
   Device,
+  PlanStatus,
   Network,
   NetworkAssignment,
   NetworkMember,
   NetworkDetail,
   NetworkHome,
   NetworkJoinResult,
-  PurchaseOrder,
-  PurchaseProduct,
-  ProductEntitlement,
+  PublicSystemConfig,
   Subnet,
   SubnetAttachment,
   UpdateNetworkDNSRequest,
@@ -34,8 +33,8 @@ export class ConsoleApiError extends Error {
     return this.status === 401 || this.code === 'UNAUTHORIZED';
   }
 
-  get isPaymentRequired(): boolean {
-    return this.status === 402 || this.code === 'PAYMENT_REQUIRED';
+  get isDeviceLimitExceeded(): boolean {
+    return this.status === 403 && this.code === 'DEVICE_LIMIT_EXCEEDED';
   }
 }
 
@@ -71,6 +70,10 @@ type UpdateNetworkInput = {
 @Injectable({ providedIn: 'root' })
 export class ConsoleApiService {
   private readonly serverBase = '/api';
+
+  getPublicConfig(): Promise<PublicSystemConfig> {
+    return this.request<PublicSystemConfig>('/system/public-config');
+  }
 
   authenticate(
     mode: AuthModeLocal,
@@ -221,26 +224,8 @@ export class ConsoleApiService {
     });
   }
 
-  listPurchaseProducts(token: string): Promise<{ items: PurchaseProduct[] }> {
-    return this.request<{ items: PurchaseProduct[] }>('/products', { token });
-  }
-
-  getProductEntitlement(token: string, productCode: string): Promise<ProductEntitlement> {
-    return this.request<ProductEntitlement>(`/entitlements/${encodeURIComponent(productCode)}`, { token });
-  }
-
-  listPurchaseOrders(token: string): Promise<{ items: PurchaseOrder[] }> {
-    return this.request<{ items: PurchaseOrder[] }>('/orders', { token });
-  }
-
-  createPurchaseOrder(token: string, productCode: string, quantity = 1, months = 1): Promise<PurchaseOrder> {
-    return this.request<PurchaseOrder>('/orders', {
-      token,
-      init: {
-        method: 'POST',
-        body: JSON.stringify({ productCode, quantity, months })
-      }
-    });
+  getPlan(token: string): Promise<PlanStatus> {
+    return this.request<PlanStatus>('/plan', { token });
   }
 
   registerDevice(token: string, input: RegisterDeviceInput): Promise<Device> {
@@ -302,7 +287,7 @@ export class ConsoleApiService {
       .replace(/^conflict:\s*/i, '')
       .replace(/^unauthorized:\s*/i, '')
       .replace(/^forbidden:\s*/i, '')
-      .replace(/^payment required:\s*/i, '')
+      .replace(/^device limit exceeded:\s*/i, '')
       .replace(/^not found:\s*/i, '');
   }
 }

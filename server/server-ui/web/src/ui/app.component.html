@@ -21,7 +21,8 @@
     [mode]="authMode()"
     [email]="email"
     [password]="password"
-    (modeChange)="authMode.set($event)"
+    [allowRegistration]="allowRegistration()"
+    (modeChange)="setAuthMode($event)"
     (emailChange)="email = $event"
     (passwordChange)="password = $event"
     (submit)="submitAuth()"
@@ -133,53 +134,14 @@
               <strong>{{ selectedDeviceLabel() || '未选择' }}</strong>
               <p>{{ currentVirtualIp() }}</p>
             </div>
+            <div class="health-card">
+              <span>接入策略</span>
+              <strong>免费版</strong>
+              <p>{{ deviceLimitLabel() }}，中转 512K，P2P 不限</p>
+            </div>
           </div>
         </article>
 
-      </section>
-
-      <section class="panel orders-panel" *ngIf="activeView() === 'orders'">
-        <div class="panel-title split">
-          <div>
-            <h2>订单管理</h2>
-            <p>查看设备扩容和 DNS 服务订单，未支付订单可联系运营确认开通。</p>
-          </div>
-          <div class="order-actions">
-            <button class="ghost" type="button" (click)="openPurchaseDialog('extra-device')">设备扩容</button>
-            <button class="ghost" type="button" (click)="openPurchaseDialog('dns')">购买 DNS</button>
-            <button class="ghost" type="button" (click)="loadPurchaseOrders()" [disabled]="isActionBusy('loadOrders')">刷新</button>
-          </div>
-        </div>
-        <table class="orders-table">
-          <thead>
-            <tr>
-              <th>订单号</th>
-              <th>商品</th>
-              <th>数量 / 月数</th>
-              <th>金额</th>
-              <th>状态</th>
-              <th>创建时间</th>
-              <th>到期时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let order of pagedPurchaseOrders()">
-              <td><code>{{ order.orderId }}</code></td>
-              <td>{{ order.productName }} <span>{{ order.productCode }}</span></td>
-              <td>{{ orderQuantityLabel(order) }}</td>
-              <td>{{ formatMoney(order.amountCents, order.currency) }}</td>
-              <td><span class="status-pill">{{ order.status }}</span></td>
-              <td>{{ formatTimestamp(order.createdAt) }}</td>
-              <td>{{ formatTimestamp(order.expiresAt) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pager" *ngIf="purchaseOrders().length > pageSize">
-          <span>{{ pageSummary(purchaseOrderPage(), purchaseOrders().length) }}</span>
-          <button type="button" class="ghost" (click)="previousPurchaseOrderPage()" [disabled]="purchaseOrderPage() <= 1">上一页</button>
-          <button type="button" class="ghost" (click)="nextPurchaseOrderPage()" [disabled]="purchaseOrderPage() >= totalPages(purchaseOrders().length)">下一页</button>
-        </div>
-        <p class="empty-copy" *ngIf="!purchaseOrders().length && !isActionBusy('loadOrders')">当前还没有订单。</p>
       </section>
 
       <section *ngIf="activeView() === 'network'">
@@ -419,55 +381,6 @@
         </div>
       </ng-container>
 
-      <ng-container *ngIf="networkDialog() === 'purchase'">
-        <div class="purchase-dialog">
-          <section class="dialog-section">
-            <div class="purchase-products" *ngIf="purchaseProducts().length; else productsLoading">
-              <article class="purchase-card" *ngFor="let product of purchaseProducts()">
-                <div>
-                  <span>{{ product.productType === 'addon_device' ? '设备扩容' : (product.productCode === 'dns' ? 'DNS 服务' : product.productName) }}</span>
-                  <strong>{{ product.productName }}</strong>
-                  <p>{{ product.description || '按月订购，到期前可续费。' }}</p>
-                  <label class="purchase-months" *ngIf="product.productCode === 'dns'">
-                    <span>月数</span>
-                    <input type="number" min="1" [value]="purchaseMonthsValue" (input)="setPurchaseMonths($any($event.target).value)" />
-                  </label>
-                </div>
-                <div class="purchase-card-action">
-                  <strong>{{ formatMoney(product.priceCents, product.currency) }} / {{ orderDurationLabel(product.billingCycle, 1) }}</strong>
-                  <label class="purchase-quantity" *ngIf="isDeviceAddonProduct(product)">
-                    <span>下单数量</span>
-                    <input type="number" min="1" [value]="purchaseQuantityValue" (input)="setPurchaseQuantity($any($event.target).value)" />
-                  </label>
-                  <button
-                    class="primary-action"
-                    type="button"
-                    (click)="createPurchaseProductOrder(product)"
-                    [disabled]="isActionBusy('order:' + product.productCode)"
-                  >
-                    {{ isActionBusy('order:' + product.productCode) ? '下单中...' : '立即下单' }}
-                  </button>
-                </div>
-              </article>
-            </div>
-            <ng-template #productsLoading>
-              <p class="dialog-copy">正在读取可购买商品...</p>
-            </ng-template>
-          </section>
-
-          <section class="dialog-section" *ngIf="purchaseOrder() as order">
-            <div class="order-summary">
-              <span>待支付订单</span>
-              <strong>{{ order.orderId }}</strong>
-              <p>{{ order.productName }} · {{ orderQuantityLabel(order) }} · {{ formatMoney(order.amountCents, order.currency) }} · {{ order.status }}</p>
-            </div>
-          </section>
-        </div>
-
-        <div class="dialog-actions dialog-actions-single">
-          <button class="ghost" type="button" (click)="closeNetworkDialog()" [disabled]="!!actionBusy()">关闭</button>
-        </div>
-      </ng-container>
     </article>
   </section>
 

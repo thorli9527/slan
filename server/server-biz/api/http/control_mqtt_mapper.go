@@ -24,10 +24,12 @@ func dtoNetworkMapToControl(m dto.NetworkMap) controlmsg.NetworkMap {
 			Wildcards:     append([]string(nil), m.DNS.Wildcards...),
 		},
 		Policy: controlmsg.AccessPolicy{
-			ProductCode:        m.Policy.ProductCode,
-			MaxActiveDevices:   m.Policy.MaxActiveDevices,
-			BandwidthLimitMbps: m.Policy.BandwidthLimitMbps,
-			DNSAvailable:       m.Policy.DNSAvailable,
+			PlanCode:                m.Policy.PlanCode,
+			MaxActiveDevices:        m.Policy.MaxActiveDevices,
+			BandwidthLimitMbps:      m.Policy.BandwidthLimitMbps,
+			RelayBandwidthLimitKbps: m.Policy.RelayBandwidthLimitKbps,
+			P2PUnlimited:            m.Policy.P2PUnlimited,
+			DNSAvailable:            m.Policy.DNSAvailable,
 		},
 		MTU: m.MTU,
 	}

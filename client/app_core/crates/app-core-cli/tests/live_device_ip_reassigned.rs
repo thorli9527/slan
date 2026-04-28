@@ -138,11 +138,6 @@ fn live_control_mqtt_receives_device_ip_reassigned() {
         }),
     )
     .expect("bootstrap member");
-    let control_mqtt_url = local_control_mqtt_url(
-        bootstrap["controlPlane"]["wsUrl"]
-            .as_str()
-            .expect("controlPlane.wsUrl"),
-    );
     let session_token = bootstrap["sessionToken"]
         .as_str()
         .expect("sessionToken")
@@ -689,6 +684,7 @@ fn network_map_from_json(raw: &Value) -> NetworkMap {
             search_domains: Vec::new(),
             wildcards: Vec::new(),
         }),
+        policy: serde_json::from_value(raw["policy"].clone()).unwrap_or_default(),
         mtu: raw["mtu"].as_u64().map(|value| value as u32),
     }
 }

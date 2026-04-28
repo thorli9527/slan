@@ -9,6 +9,11 @@ import (
 
 // registerNetworkRoutes registers logical network, subnet, and attachment APIs.
 func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
+	protected.GET("/plan", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.PlanStatus, error) {
+		rc := currentRouteContext(c)
+		return deps.Network.PlanStatus(rc.user())
+	}))
+
 	networks := protected.Group("/networks")
 
 	networks.GET("/home", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.NetworkHome, error) {

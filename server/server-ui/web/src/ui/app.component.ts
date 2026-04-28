@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 
-import { AuthResponse, Device, NetworkAssignment, NetworkDetail, NetworkHome, NetworkMember, PurchaseOrder, PurchaseProduct, Subnet } from './api-contracts';
+import { AuthResponse, Device, PlanStatus, NetworkAssignment, NetworkDetail, NetworkHome, NetworkMember, Subnet } from './api-contracts';
 import { AuthPanelComponent } from './auth-panel.component';
 import { ConsoleApiError, ConsoleApiService } from './console-api.service';
 import { AuthenticateResult, ConsoleAppFacadeService, RefreshWorkspaceResult } from './console-app-facade.service';
@@ -30,8 +30,6 @@ export class AppComponent implements OnDestroy {
   readonly navItems: Array<{ id: ConsoleView; label: string; caption: string }> = [
     { id: 'account', label: '账户概览', caption: '账号、设备、接入状态' },
     { id: 'network', label: '网络管理', caption: 'IP 绑定、设备接入和邀请码管理' }
-    ,
-    { id: 'orders', label: '订单管理', caption: '设备扩容和 DNS 服务订单' }
   ];
   private readonly facade = inject(ConsoleAppFacadeService);
   private readonly callbackService = inject(ConsoleCallbackService);
@@ -64,15 +62,14 @@ export class AppComponent implements OnDestroy {
   updateCidr = '';
   networkJoinKey = '';
   dnsDocumentText = '';
-  purchaseQuantityValue = 1;
-  purchaseMonthsValue = 1;
 
   readonly token = signal(localStorage.getItem('slan.accessToken') || '');
   readonly userId = signal(localStorage.getItem('slan.userId') || '');
   readonly userEmail = signal(localStorage.getItem('slan.userEmail') || '');
+  readonly allowRegistration = signal(true);
   readonly authMode = signal<AuthMode>('login');
   readonly activeView = signal<ConsoleView>('account');
-  readonly networkDialog = signal<'create' | 'join' | 'current' | 'invite' | 'manage' | 'dns' | 'purchase' | ''>('');
+  readonly networkDialog = signal<'create' | 'join' | 'current' | 'invite' | 'manage' | 'dns' | ''>('');
   readonly passwordDialog = signal(false);
   readonly loading = signal(false);
   readonly actionBusy = signal('');
@@ -84,11 +81,8 @@ export class AppComponent implements OnDestroy {
   readonly assignments = signal<NetworkAssignment[]>([]);
   readonly devices = signal<Device[]>([]);
   readonly subnets = signal<Subnet[]>([]);
-  readonly purchaseProducts = signal<PurchaseProduct[]>([]);
-  readonly purchaseOrders = signal<PurchaseOrder[]>([]);
-  readonly purchaseOrder = signal<PurchaseOrder | null>(null);
+  readonly plan = signal<PlanStatus | null>(null);
   readonly assignmentPage = signal(1);
-  readonly purchaseOrderPage = signal(1);
   readonly currentDeviceId = signal(localStorage.getItem('slan.deviceId') || '');
   readonly draftIps = signal<Record<string, string>>({});
   readonly draftRemarks = signal<Record<string, string>>({});
@@ -128,7 +122,6 @@ export class AppComponent implements OnDestroy {
     });
   });
   readonly pagedAssignments = computed(() => this.pageRows(this.filteredAssignments(), this.assignmentPage()));
-  readonly pagedPurchaseOrders = computed(() => this.pageRows(this.purchaseOrders(), this.purchaseOrderPage()));
   readonly pendingMembers = computed((): NetworkMember[] => {
     return (this.detail()?.members || []).filter((item) => item.status === 'pending');
   });
@@ -149,6 +142,7 @@ export class AppComponent implements OnDestroy {
     if (loginClientContext.authMode) {
       this.authMode.set(loginClientContext.authMode);
     }
+    void this.loadPublicConfig();
     if (loginClientContext.callbackId) {
       this.loginCallbackId.set(loginClientContext.callbackId);
       this.pendingCallbackId.set(loginClientContext.callbackId);
@@ -181,6 +175,11 @@ export class AppComponent implements OnDestroy {
     return this.currentAssignment()?.virtualIp || '未分配';
   }
 
+  deviceLimitLabel(): string {
+    const status = this.plan();
+    return `最多 ${status?.maxActiveDevices || 2} 台设备`;
+  }
+
   currentSubnetLabel(): string {
     const subnet = this.currentSubnet();
     if (!subnet) {
@@ -199,10 +198,14 @@ export class AppComponent implements OnDestroy {
 
   switchView(view: ConsoleView): void {
     this.activeView.set(view);
-    if (view === 'orders') {
-      this.purchaseOrderPage.set(1);
-      void this.loadPurchaseOrders();
+  }
+
+  setAuthMode(mode: AuthMode): void {
+    if (mode === 'register' && !this.allowRegistration()) {
+      this.authMode.set('login');
+      return;
     }
+    this.authMode.set(mode);
   }
 
   setAssignmentSearch(value: string): void {
@@ -237,14 +240,6 @@ export class AppComponent implements OnDestroy {
     this.assignmentPage.set(Math.min(this.totalPages(this.filteredAssignments().length), this.assignmentPage() + 1));
   }
 
-  previousPurchaseOrderPage(): void {
-    this.purchaseOrderPage.set(Math.max(1, this.purchaseOrderPage() - 1));
-  }
-
-  nextPurchaseOrderPage(): void {
-    this.purchaseOrderPage.set(Math.min(this.totalPages(this.purchaseOrders().length), this.purchaseOrderPage() + 1));
-  }
-
   openCurrentNetworkDialog(): void {
     this.clearNotices();
     this.networkDialog.set('current');
@@ -254,10 +249,6 @@ export class AppComponent implements OnDestroy {
     this.clearNotices();
     if (!this.canManageNetwork()) {
       this.error.set('只有当前网络 owner 可以管理 DNS。');
-      return;
-    }
-    const allowed = await this.ensureDnsEntitlement();
-    if (!allowed) {
       return;
     }
     this.networkDialog.set('dns');
@@ -285,36 +276,8 @@ export class AppComponent implements OnDestroy {
         return '网络管理';
       case 'dns':
         return 'DNS 管理';
-      case 'purchase':
-        return '购买下单';
       default:
         return '加入网络';
-    }
-  }
-
-  async openPurchaseDialog(productCode = 'extra-device'): Promise<void> {
-    this.purchaseOrder.set(null);
-    this.purchaseQuantityValue = 1;
-    this.purchaseMonthsValue = 1;
-    this.networkDialog.set('purchase');
-    await this.loadPurchaseProducts(productCode);
-  }
-
-  async loadPurchaseOrders(): Promise<void> {
-    if (!this.token()) {
-      return;
-    }
-    this.actionBusy.set('loadOrders');
-    try {
-      const result = await this.api.listPurchaseOrders(this.token());
-      this.purchaseOrders.set(result.items || []);
-      if (this.purchaseOrderPage() > this.totalPages(this.purchaseOrders().length)) {
-        this.purchaseOrderPage.set(this.totalPages(this.purchaseOrders().length));
-      }
-    } catch (error) {
-      this.setError(error);
-    } finally {
-      this.actionBusy.set('');
     }
   }
 
@@ -380,6 +343,11 @@ export class AppComponent implements OnDestroy {
 
   async submitAuth(): Promise<void> {
     this.clearNotices();
+    if (this.authMode() === 'register' && !this.allowRegistration()) {
+      this.authMode.set('login');
+      this.error.set('当前服务端已关闭自助注册，请使用已有账号登录。');
+      return;
+    }
     this.loading.set(true);
     try {
       const result = await this.facade.authenticate({
@@ -396,6 +364,7 @@ export class AppComponent implements OnDestroy {
           workspace: result.workspace,
         });
       }
+      await this.loadPlanStatus();
       await this.forwardCallbackToServer(
         result.auth,
         result.managedDevice.deviceId,
@@ -420,6 +389,7 @@ export class AppComponent implements OnDestroy {
         ...this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
+      await this.loadPlanStatus();
       await this.resumeCachedLoginCallback(result.managedDevice.deviceId);
     } catch (error) {
       this.setError(error);
@@ -545,10 +515,6 @@ export class AppComponent implements OnDestroy {
     if (!active) {
       return;
     }
-    const allowed = await this.ensureDnsEntitlement();
-    if (!allowed) {
-      return;
-    }
     this.actionBusy.set('saveDns');
     try {
       const result = await this.facade.updateNetworkDns({
@@ -563,12 +529,7 @@ export class AppComponent implements OnDestroy {
         this.networkDialog.set('');
       }
     } catch (error) {
-      if (error instanceof ConsoleApiError && error.isPaymentRequired) {
-        void this.openPurchaseDialog('dns');
-        this.error.set('DNS 管理需要购买 DNS 服务，或当前 DNS 服务已过期。');
-      } else {
-        this.setError(error);
-      }
+      this.setError(error);
     } finally {
       this.actionBusy.set('');
     }
@@ -691,30 +652,6 @@ export class AppComponent implements OnDestroy {
     }
   }
 
-  async createExtraDeviceOrder(): Promise<void> {
-    await this.createOrder('extra-device', this.purchaseQuantityValue, 1);
-  }
-
-  async createDnsOrder(): Promise<void> {
-    await this.createOrder('dns', 1, this.purchaseMonthsValue);
-  }
-
-  async createPurchaseProductOrder(product: PurchaseProduct): Promise<void> {
-    if (this.isDnsProduct(product)) {
-      await this.createOrder(product.productCode, 1, this.purchaseMonthsValue);
-      return;
-    }
-    await this.createOrder(product.productCode, this.purchaseQuantityValue, 1);
-  }
-
-  isDeviceAddonProduct(product: PurchaseProduct): boolean {
-    return !this.isDnsProduct(product);
-  }
-
-  isDnsProduct(product: PurchaseProduct): boolean {
-    return product.productType === 'addon_dns' || product.productCode === 'dns';
-  }
-
   async changePassword(): Promise<void> {
     this.clearNotices();
     if (this.newPassword !== this.confirmPassword) {
@@ -763,49 +700,8 @@ export class AppComponent implements OnDestroy {
     return device.linkStatus || device.status || '-';
   }
 
-  formatMoney(cents: number, currency = 'CNY'): string {
-    const amount = (Number(cents || 0) / 100).toFixed(2);
-    return currency === 'CNY' ? `¥${amount}` : `${currency} ${amount}`;
-  }
-
   deviceProtocol(device: Device): string {
     return device.connectivityProtocol || '-';
-  }
-
-  orderQuantityLabel(order: PurchaseOrder): string {
-    const duration = this.orderDurationLabel(order.billingCycle, order.months);
-    if (order.productCode === 'dns' || order.productType === 'addon_dns') {
-      return duration;
-    }
-    return `${Math.max(1, Number(order.quantity || 1))} 台 / ${duration}`;
-  }
-
-  orderDurationLabel(billingCycle = 'month', months = 1): string {
-    const count = Math.max(1, Number(months || 1));
-    switch ((billingCycle || '').toLowerCase()) {
-      case 'quarter':
-      case 'quarterly':
-        return `${count} 季度`;
-      case 'year':
-      case 'yearly':
-      case 'annual':
-        return `${count} 年`;
-      case 'day':
-      case 'daily':
-        return `${count} 天`;
-      default:
-        return `${count} 个月`;
-    }
-  }
-
-  setPurchaseMonths(value: string | number): void {
-    const months = Number(value);
-    this.purchaseMonthsValue = Number.isFinite(months) && months > 0 ? Math.floor(months) : 1;
-  }
-
-  setPurchaseQuantity(value: string | number): void {
-    const quantity = Number(value);
-    this.purchaseQuantityValue = Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1;
   }
 
   deviceStatusLabel(device: Device): string {
@@ -957,6 +853,7 @@ export class AppComponent implements OnDestroy {
     this.detail.set(null);
     this.subnets.set([]);
     this.assignments.set([]);
+    this.plan.set(null);
     this.currentDeviceId.set('');
     this.pendingCallbackId.set('');
     this.callbackAcknowledged.set(false);
@@ -1081,72 +978,33 @@ export class AppComponent implements OnDestroy {
   }
 
   private handleActionError(error: unknown): void {
-    if (error instanceof ConsoleApiError && error.isPaymentRequired) {
-      void this.openPurchaseDialog('extra-device');
-      this.error.set('免费套餐最多支持 2 台设备同时接入，请先购买附加设备后再继续。');
+    if (error instanceof ConsoleApiError && error.isDeviceLimitExceeded) {
+      this.error.set(`免费版最多支持 ${this.plan()?.freeDeviceLimit || 2} 台设备接入。需要更多设备时，请下载产品并自行部署。`);
       return;
     }
     this.setError(error);
   }
 
-  private async ensureDnsEntitlement(): Promise<boolean> {
-    if (!this.token()) {
-      return false;
-    }
-    this.actionBusy.set('checkDnsEntitlement');
-    try {
-      const entitlement = await this.api.getProductEntitlement(this.token(), 'dns');
-      if (entitlement.active) {
-        return true;
-      }
-      await this.openPurchaseDialog('dns');
-      this.error.set('DNS 管理需要购买 DNS 服务，或当前 DNS 服务已过期。');
-      return false;
-    } catch (error) {
-      this.setError(error);
-      return false;
-    } finally {
-      if (this.actionBusy() === 'checkDnsEntitlement') {
-        this.actionBusy.set('');
-      }
-    }
-  }
-
-  private async loadPurchaseProducts(preferredProductCode = 'extra-device'): Promise<void> {
+  private async loadPlanStatus(): Promise<void> {
     if (!this.token()) {
       return;
     }
-    this.actionBusy.set('loadProducts');
     try {
-      const result = await this.api.listPurchaseProducts(this.token());
-      const items = (result.items || []).filter((item) => {
-        if (preferredProductCode === 'extra-device') {
-          return item.productType === 'addon_device';
-        }
-        return item.productCode === preferredProductCode;
-      });
-      this.purchaseProducts.set(items);
-    } catch (error) {
-      this.setError(error);
-    } finally {
-      this.actionBusy.set('');
+      this.plan.set(await this.api.getPlan(this.token()));
+    } catch {
+      this.plan.set(null);
     }
   }
 
-  private async createOrder(productCode: string, quantity = 1, months = 1): Promise<void> {
-    if (!this.token()) {
-      return;
-    }
-    this.actionBusy.set(`order:${productCode}`);
+  private async loadPublicConfig(): Promise<void> {
     try {
-      const order = await this.api.createPurchaseOrder(this.token(), productCode, quantity, months);
-      this.purchaseOrder.set(order);
-      await this.loadPurchaseOrders();
-      this.message.set(`订单已生成：${order.orderId}`);
-    } catch (error) {
-      this.setError(error);
-    } finally {
-      this.actionBusy.set('');
+      const config = await this.api.getPublicConfig();
+      this.allowRegistration.set(config.allowRegistration);
+      if (!config.allowRegistration && this.authMode() === 'register') {
+        this.authMode.set('login');
+      }
+    } catch {
+      this.allowRegistration.set(true);
     }
   }
 
@@ -1158,6 +1016,7 @@ export class AppComponent implements OnDestroy {
     this.detail.set(null);
     this.subnets.set([]);
     this.assignments.set([]);
+    this.plan.set(null);
     this.currentDeviceId.set('');
     this.pendingCallbackId.set('');
     this.callbackAcknowledged.set(false);
@@ -1280,3 +1139,4 @@ export class AppComponent implements OnDestroy {
     }
   }
 }
+
