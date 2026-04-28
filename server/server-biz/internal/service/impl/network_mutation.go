@@ -122,11 +122,15 @@ func (s dbNetworkService) Update(userID, networkID string, req dto.UpdateNetwork
 	if err != nil {
 		return dto.Network{}, err
 	}
-	if err := s.state.reassignDefaultSubnetLeasePool(ctx, record.NetworkID, subnet); err != nil {
+	changes, err := s.state.reassignDefaultSubnetLeasePool(ctx, record.NetworkID, subnet)
+	if err != nil {
 		return dto.Network{}, err
 	}
 	if err := s.state.pg.UpdateNetworkMetadata(ctx, record.NetworkID, name, description, subnet.CIDR); err != nil {
 		return dto.Network{}, err
+	}
+	for _, change := range changes {
+		s.state.publishDeviceIPReassigned(record.NetworkID, change.deviceID, change.attachmentID, change.virtualIP)
 	}
 	s.state.publishNetworkRestartRequired(record.NetworkID, subnet.CIDR)
 	return dto.Network{
@@ -242,37 +246,11 @@ func (s dbNetworkService) UpdateAttachmentIP(userID, networkID, attachmentID str
 	if attachment.NetworkID != networkID {
 		return dto.SubnetAttachment{}, ErrNotFound
 	}
-	member, err := s.state.pg.GetMemberByNetworkDevice(ctx, networkID, attachment.DeviceID)
-	if err != nil {
+	if _, err := s.state.pg.GetMemberByNetworkDevice(ctx, networkID, attachment.DeviceID); err != nil {
 		if repo.IsNotFound(err) {
 			return dto.SubnetAttachment{}, ErrNotFound
 		}
 		return dto.SubnetAttachment{}, err
-	}
-	if member.Role == "owner" {
-		subnet, err := s.state.pg.GetSubnetByID(ctx, attachment.SubnetID)
-		if err != nil {
-			if repo.IsNotFound(err) {
-				return dto.SubnetAttachment{}, ErrNotFound
-			}
-			return dto.SubnetAttachment{}, err
-		}
-		preferred, ok, err := s.state.preferredOwnerIP(ctx, subnet)
-		if err != nil {
-			return dto.SubnetAttachment{}, err
-		}
-		if !ok {
-			prefix, start, _, rangeErr := subnetRange(subnet.CIDR, subnet.GatewayIP, subnet.AllocationStartIP, subnet.AllocationEndIP)
-			if rangeErr != nil {
-				return dto.SubnetAttachment{}, rangeErr
-			}
-			if prefix.Contains(uint32ToAddr(start)) {
-				preferred = uint32ToAddr(start).String()
-			}
-		}
-		if preferred != "" && strings.TrimSpace(req.VirtualIP) != preferred {
-			return dto.SubnetAttachment{}, fmt.Errorf("%w: owner device virtual ip is fixed to %s", ErrConflict, preferred)
-		}
 	}
 	reserved, err := s.Reserve(networkID, attachment.SubnetID, attachment.AttachmentID, attachment.DeviceID, req.VirtualIP)
 	if err != nil {
@@ -324,6 +302,52 @@ func (s dbNetworkService) UpdateAttachmentRemark(userID, networkID, attachmentID
 		}
 	}
 	return dto.NetworkAssignment{}, ErrNotFound
+}
+
+func (s dbNetworkService) DeleteAttachment(userID, networkID, attachmentID string) error {
+	ctx := context.Background()
+	record, err := s.state.pg.GetNetworkByID(ctx, networkID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if record.OwnerUserID != userID {
+		return ErrForbidden
+	}
+	attachment, err := s.state.pg.GetAttachmentByID(ctx, attachmentID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if attachment.NetworkID != networkID {
+		return ErrNotFound
+	}
+	member, err := s.state.pg.GetMemberByNetworkDevice(ctx, networkID, attachment.DeviceID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if member.Role == "owner" {
+		return fmt.Errorf("%w: owner device cannot be removed", ErrInvalidArgument)
+	}
+	s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, "")
+	if err := s.state.cleanupDeactivatedNetworkDevice(ctx, networkID, attachment.DeviceID); err != nil {
+		return err
+	}
+	if err := s.state.pg.DeleteMemberByID(ctx, member.MemberID); err != nil {
+		return err
+	}
+	if err := s.state.clearDeviceOwnerActiveNetworkIfNoActiveMembership(ctx, networkID, attachment.DeviceID); err != nil {
+		return err
+	}
+	s.state.publishNetworkRestartRequired(networkID, record.DefaultSubnetCIDR)
+	return nil
 }
 
 func sanitizeValues(items []string) []string {

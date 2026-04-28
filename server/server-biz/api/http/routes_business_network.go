@@ -120,4 +120,9 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		rc := currentRouteContext(c)
 		return deps.Network.UpdateAttachmentRemark(rc.user(), rc.networkID(c), rc.attachmentID(c), req)
 	}))
+
+	networks.DELETE("/:networkId/attachments/:attachmentId", respondWithStatus(http.StatusOK, gin.H{"status": "deleted"}, func(c *gin.Context) error {
+		rc := currentRouteContext(c)
+		return deps.Network.DeleteAttachment(rc.user(), rc.networkID(c), rc.attachmentID(c))
+	}))
 }

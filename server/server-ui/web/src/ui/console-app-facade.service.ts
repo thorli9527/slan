@@ -241,6 +241,19 @@ export class ConsoleAppFacadeService {
     });
   }
 
+  async deleteAttachment(input: {
+    token: string;
+    networkId: string;
+    attachmentId: string;
+    deviceState: Omit<EnsureDeviceInput, 'token'>;
+  }): Promise<RefreshWorkspaceResult> {
+    await this.api.deleteAttachment(input.token, input.networkId, input.attachmentId);
+    return this.refreshWorkspace({
+      token: input.token,
+      ...input.deviceState,
+    });
+  }
+
   private ensureManagementDevice(input: EnsureDeviceInput): Promise<ManagedDeviceState> {
     return this.sessionService.ensureManagementDevice(input);
   }

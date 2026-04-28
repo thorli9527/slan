@@ -66,6 +66,17 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
                   <button class="edit-icon-button" type="button" (click)="openEditDialog(item)" title="修改" aria-label="修改">
                     ✎
                   </button>
+                  <button
+                    class="edit-icon-button danger"
+                    type="button"
+                    *ngIf="canDeleteAssignment(item)"
+                    (click)="deleteAttachment.emit(item.attachmentId)"
+                    [disabled]="isDeleteBusy(item.attachmentId)"
+                    title="删除设备"
+                    aria-label="删除设备"
+                  >
+                    ×
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -118,9 +129,10 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
     tr:last-child td { border-bottom: 0; }
     td strong { display: block; overflow-wrap: anywhere; }
     .remark-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .edit-col, .edit-cell { width: 58px; }
+    .edit-col, .edit-cell { width: 100px; }
     .actions-col { width: 168px; }
     .edit-icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; font-size: 17px; line-height: 1; }
+    .edit-icon-button.danger { color: #991b1b; border-color: rgba(153, 27, 27, .18); background: #fff7f7; font-size: 20px; }
     .status-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 800; }
     .status-badge[data-tone="success"] { color: #14532d; background: #dcfce7; }
     .status-badge[data-tone="info"] { color: #1e3a8a; background: #dbeafe; }
@@ -166,6 +178,7 @@ export class NetworkWorkspaceComponent {
   @Output() readonly saveAttachmentIp = new EventEmitter<string>();
   @Output() readonly saveAttachmentRemark = new EventEmitter<string>();
   @Output() readonly saveAttachmentEdit = new EventEmitter<{ attachmentId: string; virtualIp: string; remark: string }>();
+  @Output() readonly deleteAttachment = new EventEmitter<string>();
   @Output() readonly updateMemberStatus = new EventEmitter<{ memberId: string; status: 'active' | 'rejected' }>();
 
   editingAssignment: NetworkAssignment | null = null;
@@ -224,6 +237,10 @@ export class NetworkWorkspaceComponent {
       remark: this.editRemark,
     });
     this.closeEditDialog();
+  }
+
+  canDeleteAssignment(item: NetworkAssignment): boolean {
+    return (item.role || '').toLowerCase() !== 'owner';
   }
 
   roleLabel(role: string): string {
@@ -328,5 +345,9 @@ export class NetworkWorkspaceComponent {
       return busy === `member:${memberId}:${status}`;
     }
     return busy.startsWith(`member:${memberId}:`);
+  }
+
+  isDeleteBusy(attachmentId: string): boolean {
+    return this.actionBusy === `deleteAttachment:${attachmentId}`;
   }
 }

@@ -626,6 +626,31 @@ export class AppComponent implements OnDestroy {
     }
   }
 
+  async deleteAttachment(attachmentId: string): Promise<void> {
+    const active = this.activeNetwork();
+    if (!active || !this.canManageNetwork()) {
+      return;
+    }
+    if (!window.confirm('确认删除该设备？删除后会释放虚拟 IP，并通知客户端下线。')) {
+      return;
+    }
+    this.actionBusy.set(`deleteAttachment:${attachmentId}`);
+    try {
+      const result = await this.facade.deleteAttachment({
+        token: this.token(),
+        networkId: active.networkId,
+        attachmentId,
+        deviceState: this.currentDeviceState(),
+      });
+      this.applyRefreshWorkspaceResult(result);
+      this.message.set('device removed from network');
+    } catch (error) {
+      this.handleActionError(error);
+    } finally {
+      this.actionBusy.set('');
+    }
+  }
+
   async updateMemberStatus(memberId: string, status: 'active' | 'rejected'): Promise<void> {
     const active = this.activeNetwork();
     if (!active) {

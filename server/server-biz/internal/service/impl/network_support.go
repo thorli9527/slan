@@ -61,17 +61,23 @@ func (s *dbState) preferredOwnerIP(ctx context.Context, subnet dto.Subnet) (stri
 	return ip, true, nil
 }
 
-func (s *dbState) reassignDefaultSubnetLeasePool(ctx context.Context, networkID string, subnet dto.Subnet) error {
+type attachmentIPChange struct {
+	attachmentID string
+	deviceID     string
+	virtualIP    string
+}
+
+func (s *dbState) reassignDefaultSubnetLeasePool(ctx context.Context, networkID string, subnet dto.Subnet) ([]attachmentIPChange, error) {
 	attachments, err := s.pg.ListAttachmentsBySubnet(ctx, subnet.SubnetID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	prefix, start, end, err := subnetRange(subnet.CIDR, subnet.GatewayIP, subnet.AllocationStartIP, subnet.AllocationEndIP)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(attachments) > int(end-start+1) {
-		return fmt.Errorf("%w: subnet is too small for current members", ErrConflict)
+		return nil, fmt.Errorf("%w: subnet is too small for current members", ErrConflict)
 	}
 
 	sort.Slice(attachments, func(i, j int) bool {
@@ -88,16 +94,26 @@ func (s *dbState) reassignDefaultSubnetLeasePool(ctx context.Context, networkID 
 		}
 		return attachments[i].AttachmentID < attachments[j].AttachmentID
 	})
+	changes := make([]attachmentIPChange, 0, len(attachments))
 	for index, attachment := range attachments {
 		candidate := start + uint32(index)
 		if candidate > end || !prefix.Contains(uint32ToAddr(candidate)) {
-			return fmt.Errorf("%w: subnet is exhausted", ErrConflict)
+			return nil, fmt.Errorf("%w: subnet is exhausted", ErrConflict)
 		}
-		if err := s.pg.UpdateAttachmentVirtualIP(ctx, attachment.AttachmentID, uint32ToAddr(candidate).String()); err != nil {
-			return err
+		virtualIP := uint32ToAddr(candidate).String()
+		if err := s.pg.UpdateAttachmentVirtualIP(ctx, attachment.AttachmentID, virtualIP); err != nil {
+			return nil, err
 		}
+		changes = append(changes, attachmentIPChange{
+			attachmentID: attachment.AttachmentID,
+			deviceID:     attachment.DeviceID,
+			virtualIP:    virtualIP,
+		})
 	}
-	return s.pg.UpdateSubnetRange(ctx, subnet)
+	if err := s.pg.UpdateSubnetRange(ctx, subnet); err != nil {
+		return nil, err
+	}
+	return changes, nil
 }
 
 func (s *dbState) publishNetworkRestartRequired(networkID, cidr string) {

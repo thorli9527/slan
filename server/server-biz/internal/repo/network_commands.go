@@ -84,6 +84,12 @@ func (r *PostgresRepository) UpdateMemberStatus(ctx context.Context, memberID, s
 		Update("status", status).Error
 }
 
+func (r *PostgresRepository) DeleteMemberByID(ctx context.Context, memberID string) error {
+	return r.db.WithContext(ctx).
+		Where("member_id = ?", memberID).
+		Delete(&NetworkMember{}).Error
+}
+
 func (r *PostgresRepository) CreateAttachment(ctx context.Context, attachment dto.SubnetAttachment) error {
 	model := SubnetAttachment{
 		AttachmentID: attachment.AttachmentID,

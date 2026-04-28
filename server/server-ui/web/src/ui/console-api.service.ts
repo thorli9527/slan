@@ -194,6 +194,15 @@ export class ConsoleApiService {
     });
   }
 
+  deleteAttachment(token: string, networkId: string, attachmentId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/networks/${networkId}/attachments/${attachmentId}`, {
+      token,
+      init: {
+        method: 'DELETE'
+      }
+    });
+  }
+
   switchNetwork(token: string, networkId: string, deviceId: string): Promise<NetworkJoinResult> {
     return this.request<NetworkJoinResult>(`/networks/${networkId}/switch`, {
       token,

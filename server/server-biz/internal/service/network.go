@@ -26,6 +26,7 @@ type Network interface {
 	AttachDevice(userID, networkID, subnetID string, req dto.AttachDeviceRequest) (dto.SubnetAttachment, error)
 	UpdateAttachmentIP(userID, networkID, attachmentID string, req dto.UpdateAttachmentIPRequest) (dto.SubnetAttachment, error)
 	UpdateAttachmentRemark(userID, networkID, attachmentID string, req dto.UpdateAttachmentRemarkRequest) (dto.NetworkAssignment, error)
+	DeleteAttachment(userID, networkID, attachmentID string) error
 }
 
 // Allocator defines server-side DHCP-style virtual IP allocation.

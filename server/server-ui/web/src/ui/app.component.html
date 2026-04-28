@@ -189,6 +189,7 @@
             (draftRemarkChange)="setDraftRemark($event.attachmentId, $event.value)"
             (saveAttachmentRemark)="updateAttachmentRemark($event)"
             (saveAttachmentEdit)="updateAttachmentEdit($event)"
+            (deleteAttachment)="deleteAttachment($event)"
             (updateMemberStatus)="updateMemberStatus($event.memberId, $event.status)"
           />
           <div class="pager" *ngIf="filteredAssignments().length > pageSize">

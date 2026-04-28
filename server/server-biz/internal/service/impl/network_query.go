@@ -177,7 +177,11 @@ func (s *dbState) cleanupRejectedNetworkMember(ctx context.Context, networkID st
 	if err := s.cleanupDeactivatedNetworkDevice(ctx, networkID, member.DeviceID); err != nil {
 		return err
 	}
-	device, err := s.pg.GetDeviceByID(ctx, member.DeviceID)
+	return s.clearDeviceOwnerActiveNetworkIfNoActiveMembership(ctx, networkID, member.DeviceID)
+}
+
+func (s *dbState) clearDeviceOwnerActiveNetworkIfNoActiveMembership(ctx context.Context, networkID, deviceID string) error {
+	device, err := s.pg.GetDeviceByID(ctx, deviceID)
 	if err != nil {
 		return err
 	}

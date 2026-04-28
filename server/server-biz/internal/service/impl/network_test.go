@@ -557,6 +557,22 @@ func TestUpdateNetwork_ReassignsVirtualIPsForAllMembers(t *testing.T) {
 	if attachments[1].AttachmentID != "att-2" || attachments[1].VirtualIP != "10.9.0.3" {
 		t.Fatalf("expected att-2 reassigned to 10.9.0.3, got %+v", attachments[1])
 	}
+
+	tokenStore := state.tokens.(*memoryTokenStore)
+	types := make([]string, 0, len(tokenStore.controlSyncEvents))
+	for _, event := range tokenStore.controlSyncEvents {
+		types = append(types, event.Type)
+	}
+	wantTypes := []string{"device_ip_reassigned", "device_ip_reassigned", "network_restart_required"}
+	if strings.Join(types, ",") != strings.Join(wantTypes, ",") {
+		t.Fatalf("expected reassignment events %v, got %+v", wantTypes, tokenStore.controlSyncEvents)
+	}
+	if first := tokenStore.controlSyncEvents[0].DeviceIP; first == nil || first.DeviceID != "dev-1" || first.VirtualIP != "10.9.0.2" {
+		t.Fatalf("expected owner device reassigned to 10.9.0.2, got %+v", tokenStore.controlSyncEvents[0])
+	}
+	if second := tokenStore.controlSyncEvents[1].DeviceIP; second == nil || second.DeviceID != "dev-2" || second.VirtualIP != "10.9.0.3" {
+		t.Fatalf("expected member device reassigned to 10.9.0.3, got %+v", tokenStore.controlSyncEvents[1])
+	}
 }
 
 func TestHome_ReturnsOwnedAndActiveNetworks(t *testing.T) {
@@ -1345,6 +1361,118 @@ func TestUpdateAttachmentIP_UpdatesLease(t *testing.T) {
 	}
 	if updated.VirtualIP != "10.0.0.9" {
 		t.Fatalf("expected updated virtual ip, got %+v", updated)
+	}
+	ownerUpdated, err := dbNetworkService{state: state}.UpdateAttachmentIP("owner-1", "net-1", "att-1", dto.UpdateAttachmentIPRequest{
+		VirtualIP: "10.0.0.4",
+	})
+	if err != nil {
+		t.Fatalf("owner attachment ip should be editable: %v", err)
+	}
+	if ownerUpdated.VirtualIP != "10.0.0.4" {
+		t.Fatalf("expected owner virtual ip to update, got %+v", ownerUpdated)
+	}
+}
+
+func TestDeleteAttachment_RemovesMemberAndNotifiesDevice(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	for _, user := range []repo.User{
+		{UserID: "owner-1", Email: "owner@local.slan", PasswordHash: "hash", ActiveNetworkID: "net-1"},
+		{UserID: "user-2", Email: "member@local.slan", PasswordHash: "hash", ActiveNetworkID: "net-1"},
+	} {
+		if err := state.pg.CreateUser(ctx, user); err != nil {
+			t.Fatalf("create user %s: %v", user.UserID, err)
+		}
+	}
+	for _, device := range []repo.Device{
+		{DeviceID: "dev-1", UserID: "owner-1", MachineID: "machine-1", Name: "owner-device", Platform: "macos", Status: "online"},
+		{DeviceID: "dev-2", UserID: "user-2", MachineID: "machine-2", Name: "member-device", Platform: "windows", Status: "online"},
+	} {
+		if err := state.pg.InsertDevice(ctx, device); err != nil {
+			t.Fatalf("create device %s: %v", device.DeviceID, err)
+		}
+	}
+	createNetworkFixture(t, state, "owner-1", "net-1", "subnet-1", "10.0.0.0/16")
+	for _, member := range []dto.NetworkMember{
+		{MemberID: "member-1", NetworkID: "net-1", DeviceID: "dev-1", Role: "owner", Status: "active"},
+		{MemberID: "member-2", NetworkID: "net-1", DeviceID: "dev-2", Role: "member", Status: "active"},
+	} {
+		if err := state.pg.CreateMember(ctx, member); err != nil {
+			t.Fatalf("create member %s: %v", member.MemberID, err)
+		}
+	}
+	if err := state.pg.CreateAttachment(ctx, dto.SubnetAttachment{
+		AttachmentID: "att-2",
+		NetworkID:    "net-1",
+		SubnetID:     "subnet-1",
+		DeviceID:     "dev-2",
+		VirtualIP:    "10.0.0.3",
+		Status:       "active",
+	}); err != nil {
+		t.Fatalf("create member attachment: %v", err)
+	}
+	if err := state.pg.UpsertNode(ctx, repo.Node{
+		NodeID:        "node-2",
+		UserID:        "user-2",
+		DeviceID:      "dev-2",
+		NodePublicKey: "node-key-2",
+		Capabilities:  []string{"desktop"},
+	}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if err := state.pg.CreateControlSession(ctx, repo.ControlSession{
+		ControlSessionID: "ctrl-2",
+		UserID:           "user-2",
+		DeviceID:         "dev-2",
+		NodeID:           "node-2",
+		NetworkID:        "net-1",
+		SessionToken:     "token-2",
+		ConnectedAt:      time.Now().Unix(),
+		LastSeenAt:       time.Now().Unix(),
+	}); err != nil {
+		t.Fatalf("create control session: %v", err)
+	}
+	if err := state.tokens.StoreControlSessionToken(ctx, "token-2", "user-2", time.Hour); err != nil {
+		t.Fatalf("store control token: %v", err)
+	}
+
+	if err := (dbNetworkService{state: state}).DeleteAttachment("owner-1", "net-1", "att-2"); err != nil {
+		t.Fatalf("delete attachment: %v", err)
+	}
+	if _, err := state.pg.GetMemberByID(ctx, "member-2"); !repo.IsNotFound(err) {
+		t.Fatalf("expected member to be deleted, got %v", err)
+	}
+	attachments, err := state.pg.ListAttachmentsByDevice(ctx, "dev-2")
+	if err != nil {
+		t.Fatalf("list attachments: %v", err)
+	}
+	if len(attachments) != 0 {
+		t.Fatalf("expected attachments to be deleted, got %+v", attachments)
+	}
+	if _, err := state.pg.GetLatestControlSessionByNode(ctx, "node-2", "net-1"); !repo.IsNotFound(err) {
+		t.Fatalf("expected control session to be deleted, got %v", err)
+	}
+	if _, err := state.tokens.AuthenticateControlSessionToken(ctx, "token-2"); err == nil {
+		t.Fatal("expected control session token to be revoked")
+	}
+	memberUser, err := state.pg.GetUserByID(ctx, "user-2")
+	if err != nil {
+		t.Fatalf("load member user: %v", err)
+	}
+	if memberUser.ActiveNetworkID != "" {
+		t.Fatalf("expected member active network cleared, got %s", memberUser.ActiveNetworkID)
+	}
+	tokenStore := state.tokens.(*memoryTokenStore)
+	types := make([]string, 0, len(tokenStore.controlSyncEvents))
+	for _, event := range tokenStore.controlSyncEvents {
+		types = append(types, event.Type)
+	}
+	want := []string{"device_ip_reassigned", "peer_remove", "network_restart_required"}
+	if strings.Join(types, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected events %v, got %+v", want, tokenStore.controlSyncEvents)
+	}
+	if event := tokenStore.controlSyncEvents[0]; event.DeviceIP == nil || event.DeviceIP.DeviceID != "dev-2" || event.DeviceIP.VirtualIP != "" {
+		t.Fatalf("expected blank device ip reassignment, got %+v", event)
 	}
 }
 
