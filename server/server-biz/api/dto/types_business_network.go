@@ -239,6 +239,8 @@ type NetworkAssignment struct {
 	DeviceVersion string `json:"deviceVersion,omitempty"`
 	// ConnectionType 标识连接方式，当前为 app 或 console。
 	ConnectionType string `json:"connectionType,omitempty"`
+	// RuntimeControlReachable 是客户端心跳/控制面最近是否可达。
+	RuntimeControlReachable bool `json:"runtimeControlReachable,omitempty"`
 	// RuntimeNetworkOnline 是客户端上报的当前网络在线状态。
 	RuntimeNetworkOnline bool `json:"runtimeNetworkOnline,omitempty"`
 	// RuntimeTunnelUp 是客户端上报的本地隧道启用状态。

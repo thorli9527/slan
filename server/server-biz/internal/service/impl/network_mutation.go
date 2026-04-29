@@ -231,6 +231,7 @@ func (s dbNetworkService) UpdateAttachmentIP(userID, networkID, attachmentID str
 	}
 	attachment.VirtualIP = reserved
 	s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, reserved)
+	s.state.publishNetworkRestartRequired(networkID, record.DefaultSubnetCIDR)
 	return attachment, nil
 }
 
@@ -266,6 +267,7 @@ func (s dbNetworkService) UpdateAttachmentRemark(userID, networkID, attachmentID
 	if err != nil {
 		return dto.NetworkAssignment{}, err
 	}
+	s.state.applyLiveDeviceNetworkStates(ctx, assignments)
 	for _, item := range assignments {
 		if item.AttachmentID == attachmentID {
 			return item, nil
@@ -313,40 +315,28 @@ func (s dbNetworkService) UpdateAttachmentStatus(userID, networkID, attachmentID
 		if err := s.state.ensureFixedDeviceLimitAllowsActivation(ctx, record.OwnerUserID, networkID, attachment.SubnetID, attachment.DeviceID); err != nil {
 			return dto.NetworkAssignment{}, err
 		}
-		virtualIP := strings.TrimSpace(attachment.VirtualIP)
-		if virtualIP == "" {
-			subnet, err := s.state.pg.GetSubnetByID(ctx, attachment.SubnetID)
-			if err != nil {
-				if repo.IsNotFound(err) {
-					return dto.NetworkAssignment{}, ErrNotFound
-				}
-				return dto.NetworkAssignment{}, err
-			}
-			virtualIP, err = s.state.allocateIP(ctx, subnet)
-			if err != nil {
-				return dto.NetworkAssignment{}, err
-			}
-			if member.Role == "owner" {
-				if preferred, ok, err := s.state.preferredOwnerIP(ctx, subnet); err != nil {
-					return dto.NetworkAssignment{}, err
-				} else if ok {
-					virtualIP = preferred
-				}
-			}
+		virtualIP, err := s.state.ensureAttachmentVirtualIP(ctx, attachment, member)
+		if err != nil {
+			return dto.NetworkAssignment{}, err
 		}
 		if err := s.state.pg.UpdateAttachmentLease(ctx, attachmentID, "active", virtualIP); err != nil {
 			return dto.NetworkAssignment{}, err
 		}
 		if device, err := s.state.pg.GetDeviceByID(ctx, attachment.DeviceID); err == nil {
 			_ = s.state.pg.UpdateUserActiveNetwork(ctx, device.UserID, networkID)
+			s.state.publishActiveNetworkEnabled(device.UserID, networkID, "attachment enabled by network owner")
 		}
 		s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, virtualIP)
 	case "disabled", "suspended":
+		virtualIP, err := s.state.ensureAttachmentVirtualIP(ctx, attachment, member)
+		if err != nil {
+			return dto.NetworkAssignment{}, err
+		}
 		s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, "")
 		if err := s.state.cleanupNetworkDeviceRuntime(ctx, networkID, attachment.DeviceID); err != nil {
 			return dto.NetworkAssignment{}, err
 		}
-		if err := s.state.pg.UpdateAttachmentLease(ctx, attachmentID, "disabled", ""); err != nil {
+		if err := s.state.pg.UpdateAttachmentLease(ctx, attachmentID, "disabled", virtualIP); err != nil {
 			return dto.NetworkAssignment{}, err
 		}
 		if device, err := s.state.pg.GetDeviceByID(ctx, attachment.DeviceID); err == nil {
@@ -361,6 +351,7 @@ func (s dbNetworkService) UpdateAttachmentStatus(userID, networkID, attachmentID
 	if err != nil {
 		return dto.NetworkAssignment{}, err
 	}
+	s.state.applyLiveDeviceNetworkStates(ctx, assignments)
 	for _, item := range assignments {
 		if item.AttachmentID == attachmentID {
 			return item, nil

@@ -7,6 +7,7 @@ import { AuthMode } from './ui-models';
 export type LoginClientContext = {
   authMode?: AuthMode;
   callbackId?: string;
+  consoleLoginKey?: string;
   deviceId: string;
   clientPlatform: string;
   clientName: string;
@@ -29,6 +30,7 @@ export class ConsoleSessionService {
     const deviceId = params.get('deviceId');
     const clientDeviceId = params.get('clientDeviceId');
     const callbackId = params.get('callbackId');
+    const consoleLoginKey = params.get('consoleLoginKey');
     const clientPlatform = params.get('clientPlatform');
     const clientName = params.get('clientName');
     const resolvedDeviceId = (deviceId || clientDeviceId || '').trim();
@@ -36,6 +38,7 @@ export class ConsoleSessionService {
     return {
       authMode: authMode === 'login' || authMode === 'register' ? authMode : undefined,
       callbackId: resolvedCallbackId,
+      consoleLoginKey: consoleLoginKey?.trim() || undefined,
       deviceId: resolvedDeviceId,
       clientPlatform: clientPlatform?.trim() || 'desktop',
       clientName: clientName?.trim() || 'SLAN Client',

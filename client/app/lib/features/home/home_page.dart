@@ -1,6 +1,7 @@
 library slan_app.features.home;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -30,6 +31,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   bool _autoSetupStarted = false;
+  bool _networkToggleBusy = false;
+  bool? _optimisticNetworkEnabled;
   Timer? _networkPollingTimer;
 
   @override
@@ -56,16 +59,19 @@ class _HomePageState extends State<HomePage> {
         final runtime = tunnelStore.tunnelRuntimeView;
         final currentMember = _memberForCurrentDevice(
             sessionStore.device?.deviceId, activeNetwork);
-        final virtualIp = switch (activeNetwork) {
-          null => 'No network',
-          _
-              when currentMember?.virtualIp != null &&
-                  currentMember!.virtualIp!.trim().isNotEmpty =>
-            currentMember.virtualIp!.trim(),
-          _ => 'Pending allocation',
-        };
         final runtimeState =
             activeNetwork == null ? 'inactive' : runtime?.state ?? 'idle';
+        final runtimeEnabled = _runtimeStateIsEnabled(runtimeState);
+        final runtimeLocalIp = runtime?.localVirtualIp.trim() ?? '';
+        final allocatedIp = currentMember?.virtualIp?.trim() ?? '';
+        final virtualIp = switch (activeNetwork) {
+          null => 'No network',
+          _ when runtimeEnabled && runtimeLocalIp.isNotEmpty => runtimeLocalIp,
+          _ when _networkToggleBusy && _optimisticNetworkEnabled == true =>
+            allocatedIp.isNotEmpty ? '正在应用 $allocatedIp' : '正在应用',
+          _ when allocatedIp.isNotEmpty => '未启用',
+          _ => '等待分配',
+        };
 
         return Scaffold(
           body: Align(
@@ -83,16 +89,20 @@ class _HomePageState extends State<HomePage> {
                     ? _LoggedInHomeV4(
                         userLabel: _currentUserLabel(
                           sessionStore,
-                          virtualIp: virtualIp,
                         ),
                         virtualIp: virtualIp,
                         runtimeState: runtimeState,
+                        statusMessage: sessionStore.error ??
+                            sessionStore.notice ??
+                            (sessionStore.busy ? '正在执行网络操作...' : null),
                         hasActiveNetwork: activeNetwork != null,
                         busy: sessionStore.busy,
+                        networkTransitioning: _networkToggleBusy,
+                        optimisticNetworkEnabled: _optimisticNetworkEnabled,
                         onEnable: () => _enableActiveNetworkWithPrompt(
                           currentMember,
                         ),
-                        onDisable: sessionController.disableActiveNetwork,
+                        onDisable: _disableActiveNetworkSmoothly,
                         onLogout: _logoutFromClient,
                         onDetails: _openWebDetails,
                       )
@@ -470,8 +480,11 @@ class _LoggedInHomeV4 extends StatelessWidget {
     required this.userLabel,
     required this.virtualIp,
     required this.runtimeState,
+    required this.statusMessage,
     required this.hasActiveNetwork,
     required this.busy,
+    required this.networkTransitioning,
+    required this.optimisticNetworkEnabled,
     required this.onEnable,
     required this.onDisable,
     required this.onLogout,
@@ -481,8 +494,11 @@ class _LoggedInHomeV4 extends StatelessWidget {
   final String userLabel;
   final String virtualIp;
   final String runtimeState;
+  final String? statusMessage;
   final bool hasActiveNetwork;
   final bool busy;
+  final bool networkTransitioning;
+  final bool? optimisticNetworkEnabled;
   final Future<void> Function() onEnable;
   final Future<void> Function() onDisable;
   final Future<void> Function() onLogout;
@@ -495,6 +511,8 @@ class _LoggedInHomeV4 extends StatelessWidget {
         normalizedState != 'idle' &&
         normalizedState != 'inactive' &&
         normalizedState != 'disabled';
+    final effectiveNetworkEnabled =
+        optimisticNetworkEnabled ?? networkEnabled;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -505,11 +523,12 @@ class _LoggedInHomeV4 extends StatelessWidget {
             final compact = constraints.maxWidth < 360;
             final userInfo = _CompactIdentity(userLabel: userLabel);
             final toggle = SizedBox(
-              width: compact ? double.infinity : 72,
+              width: compact ? double.infinity : 92,
               height: 40,
               child: _NetworkEnableSwitch(
-                enabled: networkEnabled,
-                disabled: busy || !hasActiveNetwork,
+                enabled: effectiveNetworkEnabled,
+                disabled: busy || networkTransitioning || !hasActiveNetwork,
+                transitioning: networkTransitioning,
                 onEnable: onEnable,
                 onDisable: onDisable,
               ),
@@ -542,6 +561,13 @@ class _LoggedInHomeV4 extends StatelessWidget {
           label: '当前 IP',
           value: virtualIp,
         ),
+        if (statusMessage != null && statusMessage!.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _CompactStatusMessage(
+            message: statusMessage!.trim(),
+            isError: statusMessage == AppCoreScope.sessionStore.error,
+          ),
+        ],
         const SizedBox(height: 10),
         Row(
           children: [
@@ -679,6 +705,51 @@ class _CompactInfoPill extends StatelessWidget {
   }
 }
 
+class _CompactStatusMessage extends StatelessWidget {
+  const _CompactStatusMessage({
+    required this.message,
+    required this.isError,
+  });
+
+  final String message;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = isError ? theme.colorScheme.error : theme.colorScheme.primary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: .28)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isError ? Icons.error_outline_rounded : Icons.info_outline_rounded,
+            size: 17,
+            color: color,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ignore: unused_element
 class _LoggedInHomeV3 extends StatelessWidget {
   const _LoggedInHomeV3({
@@ -791,29 +862,71 @@ class _NetworkEnableSwitch extends StatelessWidget {
     required this.disabled,
     required this.onEnable,
     required this.onDisable,
+    this.transitioning = false,
   });
 
   final bool enabled;
   final bool disabled;
+  final bool transitioning;
   final Future<void> Function() onEnable;
   final Future<void> Function() onDisable;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Align(
       alignment: Alignment.centerRight,
-      child: Switch(
-        key: AppTestKeys.homeNetworkSwitchButton,
-        value: enabled,
-        onChanged: disabled
-            ? null
-            : (value) {
-                if (value) {
-                  onEnable();
-                } else {
-                  onDisable();
-                }
-              },
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.centerRight,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: transitioning
+                  ? Padding(
+                      key: const ValueKey('network-toggle-progress'),
+                      padding: const EdgeInsets.only(right: 4),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    )
+                  : const SizedBox(
+                      key: ValueKey('network-toggle-idle'),
+                      width: 0,
+                      height: 16,
+                    ),
+            ),
+            AnimatedScale(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOutCubic,
+              scale: transitioning ? 0.96 : 1,
+              child: Switch(
+                key: AppTestKeys.homeNetworkSwitchButton,
+                value: enabled,
+                onChanged: disabled
+                    ? null
+                    : (value) async {
+                        if (value) {
+                          await onEnable();
+                        } else {
+                          await onDisable();
+                        }
+                      },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

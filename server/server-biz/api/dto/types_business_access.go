@@ -29,6 +29,19 @@ type AuthResponse struct {
 	ExpiresIn    int64  `json:"expiresIn"`
 }
 
+type CreateConsoleLoginKeyRequest struct {
+	DeviceID string `json:"deviceId,omitempty"`
+}
+
+type ConsoleLoginKeyResponse struct {
+	LoginKey  string `json:"loginKey"`
+	ExpiresIn int64  `json:"expiresIn"`
+}
+
+type ConsumeConsoleLoginKeyRequest struct {
+	LoginKey string `json:"loginKey"`
+}
+
 type CompleteAuthCallbackRequest struct {
 	AccessToken  string `json:"accessToken"`
 	UserID       string `json:"userId"`

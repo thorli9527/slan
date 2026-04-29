@@ -55,7 +55,7 @@ ops:
   default_admin:
     enabled: true
     email: "admin@docker.slan"
-    password: "docker-admin-password"
+    password: "admin"
     login_name: "admin"
     display_name: "Docker Admin"
 postgres:

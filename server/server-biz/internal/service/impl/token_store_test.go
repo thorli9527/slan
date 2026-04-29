@@ -19,10 +19,12 @@ type memoryTokenStore struct {
 	opsTokens            map[string]string
 	controlSessionTokens map[string]string
 	authCallbackPayloads map[string][]byte
+	consoleLoginKeys     map[string][]byte
 	networkRevisions     map[string]uint64
 	controlSyncEvents    []controlmsg.ControlSyncEvent
 	connectPlanGate      map[string]struct{}
 	peerCandidateGate    map[string]struct{}
+	deviceNetworkStates  map[string]repo.DeviceNetworkState
 }
 
 func newMemoryTokenStore() *memoryTokenStore {
@@ -32,10 +34,12 @@ func newMemoryTokenStore() *memoryTokenStore {
 		opsTokens:            make(map[string]string),
 		controlSessionTokens: make(map[string]string),
 		authCallbackPayloads: make(map[string][]byte),
+		consoleLoginKeys:     make(map[string][]byte),
 		networkRevisions:     make(map[string]uint64),
 		controlSyncEvents:    []controlmsg.ControlSyncEvent{},
 		connectPlanGate:      make(map[string]struct{}),
 		peerCandidateGate:    make(map[string]struct{}),
+		deviceNetworkStates:  make(map[string]repo.DeviceNetworkState),
 	}
 }
 
@@ -128,6 +132,62 @@ func (s *memoryTokenStore) LoadAuthCallbackPayload(_ context.Context, callbackID
 		return false, err
 	}
 	return true, nil
+}
+
+func (s *memoryTokenStore) StoreConsoleLoginKey(_ context.Context, loginKey string, payload any, _ time.Duration) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.consoleLoginKeys[loginKey] = encoded
+	return nil
+}
+
+func (s *memoryTokenStore) ConsumeConsoleLoginKey(_ context.Context, loginKey string, target any) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.consoleLoginKeys[loginKey]
+	if !ok {
+		return false, nil
+	}
+	delete(s.consoleLoginKeys, loginKey)
+	if err := json.Unmarshal(value, target); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *memoryTokenStore) StoreDeviceNetworkState(_ context.Context, state repo.DeviceNetworkState, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deviceNetworkStates[state.DeviceID+":"+state.NetworkID] = state
+	return nil
+}
+
+func (s *memoryTokenStore) LoadDeviceNetworkState(_ context.Context, deviceID, networkID string) (repo.DeviceNetworkState, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.deviceNetworkStates[deviceID+":"+networkID]
+	return state, ok, nil
+}
+
+func (s *memoryTokenStore) ListDeviceNetworkStates(_ context.Context) ([]repo.DeviceNetworkState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]repo.DeviceNetworkState, 0, len(s.deviceNetworkStates))
+	for _, state := range s.deviceNetworkStates {
+		out = append(out, state)
+	}
+	return out, nil
+}
+
+func (s *memoryTokenStore) DeleteDeviceNetworkState(_ context.Context, deviceID, networkID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.deviceNetworkStates, deviceID+":"+networkID)
+	return nil
 }
 
 func (s *memoryTokenStore) Authenticate(_ context.Context, accessToken string) (repo.AccessTokenSession, error) {

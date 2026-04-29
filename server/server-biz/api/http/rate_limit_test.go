@@ -416,6 +416,14 @@ func (fakeAuthService) ChangePassword(userID string, req dto.ChangePasswordReque
 	return nil
 }
 
+func (fakeAuthService) CreateConsoleLoginKey(userID string, req dto.CreateConsoleLoginKeyRequest) (dto.ConsoleLoginKeyResponse, error) {
+	return dto.ConsoleLoginKeyResponse{LoginKey: "console-key", ExpiresIn: 120}, nil
+}
+
+func (fakeAuthService) ConsumeConsoleLoginKey(req dto.ConsumeConsoleLoginKeyRequest) (dto.AuthResponse, error) {
+	return dto.AuthResponse{UserID: "user-1", AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 3600}, nil
+}
+
 func (fakeAuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error) {
 	return dto.AuthCallbackStatusResponse{CallbackID: callbackID}, nil
 }

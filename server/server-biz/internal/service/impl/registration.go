@@ -105,6 +105,9 @@ func (s dbDeviceService) SetDeviceNetworkState(userID, deviceID, networkID strin
 	if err := s.state.upsertTrustedDeviceNetworkState(ctx, deviceID, networkID, req); err != nil {
 		return dto.DeviceNetworkState{}, err
 	}
+	if state, ok, err := s.state.tokens.LoadDeviceNetworkState(ctx, deviceID, networkID); err == nil && ok {
+		return state.ToDTO(), nil
+	}
 	state, err := s.state.pg.GetDeviceNetworkState(ctx, deviceID, networkID)
 	if err != nil {
 		return dto.DeviceNetworkState{}, err
@@ -143,6 +146,7 @@ func (s dbDeviceService) MarkMQTTReachable(deviceID string) error {
 		state.ControlReachable = true
 		state.LastSeenAt = now
 		state.UpdatedAt = now
+		_ = s.state.tokens.StoreDeviceNetworkState(ctx, state, 2*deviceNetworkStateFreshnessWindow)
 		if err := s.state.pg.UpsertDeviceNetworkState(ctx, state); err != nil {
 			return err
 		}

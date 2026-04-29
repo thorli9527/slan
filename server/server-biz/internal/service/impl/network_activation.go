@@ -163,6 +163,7 @@ func (s *dbState) cleanupNetworkDeviceRuntime(ctx context.Context, networkID, de
 	if err := s.pg.DeleteControlSessionsByDeviceInNetwork(ctx, deviceID, networkID); err != nil {
 		return err
 	}
+	_ = s.tokens.DeleteDeviceNetworkState(ctx, deviceID, networkID)
 	for _, node := range nodes {
 		s.publishPeerRemove(networkID, node.NodeID)
 	}

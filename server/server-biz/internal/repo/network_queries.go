@@ -211,23 +211,24 @@ func (r *PostgresRepository) ListActiveAttachmentsByUser(ctx context.Context, us
 // ListAssignmentsByNetwork returns the flattened device-to-virtual-ip view for owner management pages.
 func (r *PostgresRepository) ListAssignmentsByNetwork(ctx context.Context, networkID string) ([]dto.NetworkAssignment, error) {
 	type row struct {
-		AttachmentID         string
-		NetworkID            string
-		SubnetID             string
-		DeviceID             string
-		DeviceName           string
-		DevicePlatform       string
-		DeviceVersion        string
-		UserID               string
-		UserEmail            string
-		Role                 string
-		Remark               string
-		VirtualIP            string
-		Status               string
-		RuntimeNetworkOnline bool
-		RuntimeTunnelUp      bool
-		RuntimeVirtualIP     string
-		RuntimeLastSeenAt    int64
+		AttachmentID            string
+		NetworkID               string
+		SubnetID                string
+		DeviceID                string
+		DeviceName              string
+		DevicePlatform          string
+		DeviceVersion           string
+		UserID                  string
+		UserEmail               string
+		Role                    string
+		Remark                  string
+		VirtualIP               string
+		Status                  string
+		RuntimeControlReachable bool
+		RuntimeNetworkOnline    bool
+		RuntimeTunnelUp         bool
+		RuntimeVirtualIP        string
+		RuntimeLastSeenAt       int64
 	}
 
 	var rows []row
@@ -247,6 +248,7 @@ func (r *PostgresRepository) ListAssignmentsByNetwork(ctx context.Context, netwo
 			subnet_attachments.remark,
 			subnet_attachments.virtual_ip,
 			subnet_attachments.status,
+			COALESCE(device_network_states.control_reachable, false) AS runtime_control_reachable,
 			COALESCE(device_network_states.network_online, false) AS runtime_network_online,
 			COALESCE(device_network_states.tunnel_up, false) AS runtime_tunnel_up,
 			COALESCE(device_network_states.virtual_ip, '') AS runtime_virtual_ip,
@@ -267,25 +269,26 @@ func (r *PostgresRepository) ListAssignmentsByNetwork(ctx context.Context, netwo
 	out := make([]dto.NetworkAssignment, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, dto.NetworkAssignment{
-			AttachmentID:         row.AttachmentID,
-			NetworkID:            row.NetworkID,
-			SubnetID:             row.SubnetID,
-			DeviceID:             row.DeviceID,
-			DeviceName:           row.DeviceName,
-			DevicePlatform:       row.DevicePlatform,
-			DeviceVersion:        row.DeviceVersion,
-			ConnectionType:       assignmentConnectionType(row.DevicePlatform),
-			RuntimeNetworkOnline: row.RuntimeNetworkOnline,
-			RuntimeTunnelUp:      row.RuntimeTunnelUp,
-			RuntimeVirtualIP:     row.RuntimeVirtualIP,
-			RuntimeLastSeenAt:    row.RuntimeLastSeenAt,
-			RuntimeStateFresh:    row.RuntimeLastSeenAt >= freshCutoff,
-			UserID:               row.UserID,
-			UserEmail:            row.UserEmail,
-			Role:                 row.Role,
-			Remark:               row.Remark,
-			VirtualIP:            row.VirtualIP,
-			Status:               row.Status,
+			AttachmentID:            row.AttachmentID,
+			NetworkID:               row.NetworkID,
+			SubnetID:                row.SubnetID,
+			DeviceID:                row.DeviceID,
+			DeviceName:              row.DeviceName,
+			DevicePlatform:          row.DevicePlatform,
+			DeviceVersion:           row.DeviceVersion,
+			ConnectionType:          assignmentConnectionType(row.DevicePlatform),
+			RuntimeControlReachable: row.RuntimeControlReachable,
+			RuntimeNetworkOnline:    row.RuntimeNetworkOnline,
+			RuntimeTunnelUp:         row.RuntimeTunnelUp,
+			RuntimeVirtualIP:        row.RuntimeVirtualIP,
+			RuntimeLastSeenAt:       row.RuntimeLastSeenAt,
+			RuntimeStateFresh:       row.RuntimeLastSeenAt >= freshCutoff,
+			UserID:                  row.UserID,
+			UserEmail:               row.UserEmail,
+			Role:                    row.Role,
+			Remark:                  row.Remark,
+			VirtualIP:               row.VirtualIP,
+			Status:                  row.Status,
 		})
 	}
 	return out, nil

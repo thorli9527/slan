@@ -5,6 +5,7 @@ import {
   AuthResponse,
   ChangePasswordRequest,
   CompleteAuthCallbackRequest,
+  ConsoleLoginKeyResponse,
   Device,
   PlanStatus,
   Network,
@@ -90,6 +91,25 @@ export class ConsoleApiService {
           password,
           deviceId: deviceId?.trim() || undefined,
         })
+      }
+    });
+  }
+
+  consumeConsoleLoginKey(loginKey: string): Promise<AuthResponse> {
+    return this.request<AuthResponse>('/auth/console-login', {
+      init: {
+        method: 'POST',
+        body: JSON.stringify({ loginKey })
+      }
+    });
+  }
+
+  createConsoleLoginKey(token: string, deviceId?: string): Promise<ConsoleLoginKeyResponse> {
+    return this.request<ConsoleLoginKeyResponse>('/auth/console-login-key', {
+      token,
+      init: {
+        method: 'POST',
+        body: JSON.stringify({ deviceId: deviceId?.trim() || undefined })
       }
     });
   }

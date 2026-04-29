@@ -366,6 +366,15 @@ class AppCoreScope {
         try {
           _instance.restoreSession(session);
           await _instance.listDevices();
+          if (_sessionMissingUserLabel(session)) {
+            final refreshed = await _tryRefreshPersistedSession(session);
+            if (refreshed != null) {
+              await StartupLog.write(
+                'validate persisted bridge session refreshed missing user label',
+              );
+              return _persistedSessionValid.withSession(refreshed);
+            }
+          }
           await StartupLog.write('validate persisted bridge session success');
           return _persistedSessionValid.withSession(session);
         } catch (error) {
@@ -388,6 +397,15 @@ class AppCoreScope {
       }
       _instance.restoreSession(session);
       await _instance.listDevices();
+      if (_sessionMissingUserLabel(session)) {
+        final refreshed = await _tryRefreshPersistedSession(session);
+        if (refreshed != null) {
+          await StartupLog.write(
+            'validate persisted session refreshed missing user label',
+          );
+          return _persistedSessionValid.withSession(refreshed);
+        }
+      }
       await StartupLog.write('validate persisted session success');
       return _persistedSessionValid.withSession(session);
     } catch (error) {
@@ -421,6 +439,11 @@ class AppCoreScope {
           code == 'session_expired';
     }
     return false;
+  }
+
+  static bool _sessionMissingUserLabel(SessionModel session) {
+    final label = session.userLabel?.trim() ?? '';
+    return label.isEmpty || !label.contains('@');
   }
 
   static String? _deriveWebConsoleUrl(String? baseUrl) {

@@ -128,6 +128,9 @@ func (s *dbState) buildDeviceDTOForNetwork(ctx context.Context, record repo.Devi
 	}
 	attachments, err := s.pg.ListAttachmentsByDevice(ctx, record.DeviceID)
 	if err == nil {
+		if repaired, repairErr := s.ensureDeviceAttachmentsVirtualIPs(ctx, attachments); repairErr == nil {
+			attachments = repaired
+		}
 		for _, attachment := range attachments {
 			if attachment.NetworkID == activeNetworkID {
 				device.CurrentVirtualIP = attachment.VirtualIP
@@ -141,21 +144,19 @@ func (s *dbState) buildDeviceDTOForNetwork(ctx context.Context, record repo.Devi
 		device.NetworkRole = member.Role
 	}
 	hasFreshNetworkState := false
-	if state, err := s.pg.GetDeviceNetworkState(ctx, record.DeviceID, activeNetworkID); err == nil {
-		if time.Now().Unix()-state.LastSeenAt <= int64(deviceNetworkStateFreshnessWindow/time.Second) {
-			hasFreshNetworkState = true
-			stateDTO := state.ToDTO()
-			device.NetworkState = &stateDTO
-			if state.NetworkOnline {
-				device.LinkStatus = "online"
-			} else if state.ControlReachable {
-				device.LinkStatus = "reachable"
-			} else {
-				device.LinkStatus = "offline"
-			}
-			if state.VirtualIP != "" {
-				device.CurrentVirtualIP = state.VirtualIP
-			}
+	if state, ok := s.loadFreshDeviceNetworkState(ctx, record.DeviceID, activeNetworkID); ok {
+		hasFreshNetworkState = true
+		stateDTO := state.ToDTO()
+		device.NetworkState = &stateDTO
+		if state.NetworkOnline {
+			device.LinkStatus = "online"
+		} else if state.ControlReachable {
+			device.LinkStatus = "reachable"
+		} else {
+			device.LinkStatus = "offline"
+		}
+		if state.VirtualIP != "" {
+			device.CurrentVirtualIP = state.VirtualIP
 		}
 	}
 	if state, err := s.pg.GetLatestDeviceConnectionState(ctx, activeNetworkID, record.DeviceID); err == nil {

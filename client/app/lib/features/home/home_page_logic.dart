@@ -2,24 +2,25 @@ part of 'home_page.dart';
 
 extension _HomePageLogic on _HomePageState {
   String _currentUserLabel(
-    AppSessionStore sessionStore, {
-    required String virtualIp,
-  }) {
+    AppSessionStore sessionStore,
+  ) {
     final sessionLabel = sessionStore.session?.userLabel?.trim();
     final ownerEmail = sessionStore.device?.ownerEmail?.trim();
     final userId = sessionStore.session?.userId.trim();
-    final label = sessionLabel != null && sessionLabel.isNotEmpty
+    return sessionLabel != null && sessionLabel.isNotEmpty
         ? sessionLabel
         : ownerEmail != null && ownerEmail.isNotEmpty
             ? ownerEmail
             : userId != null && userId.isNotEmpty
                 ? userId
                 : 'Unknown user';
-    final ip = virtualIp.trim();
-    if (ip.isEmpty || ip == 'No network' || ip == 'Pending allocation') {
-      return label;
-    }
-    return '$label ($ip)';
+  }
+
+  bool _runtimeStateIsEnabled(String runtimeState) {
+    final normalized = runtimeState.toLowerCase().trim();
+    return normalized != 'idle' &&
+        normalized != 'inactive' &&
+        normalized != 'disabled';
   }
 
   Future<void> _ensureWorkspaceReady(AppSessionStore sessionStore) async {
@@ -85,7 +86,77 @@ extension _HomePageLogic on _HomePageState {
     if (target == null || target.isEmpty) {
       return;
     }
-    await _openExternalUrl(target);
+    await _enableExistingNetworkBeforeConsole();
+    final loginKey = await _createConsoleLoginKey();
+    final uri = Uri.parse(target);
+    await _openExternalUrl(
+      uri.replace(queryParameters: {
+        ...uri.queryParameters,
+        if (loginKey != null) 'consoleLoginKey': loginKey,
+        if (AppCoreScope.sessionStore.device?.deviceId.trim().isNotEmpty ==
+            true)
+          'deviceId': AppCoreScope.sessionStore.device!.deviceId.trim(),
+      }).toString(),
+    );
+  }
+
+  Future<void> _enableExistingNetworkBeforeConsole() async {
+    final sessionStore = AppCoreScope.sessionStore;
+    if (sessionStore.selectedNetwork == null) {
+      return;
+    }
+    final runtimeState =
+        AppCoreScope.tunnelStore.tunnelRuntimeView?.state.toLowerCase().trim();
+    final alreadyEnabled = runtimeState != null &&
+        runtimeState != 'idle' &&
+        runtimeState != 'inactive' &&
+        runtimeState != 'disabled';
+    if (alreadyEnabled || sessionStore.busy) {
+      return;
+    }
+    try {
+      await AppCoreScope.sessionController.enableActiveNetwork();
+    } catch (error) {
+      await StartupLog.write('open web console auto-enable skipped: $error');
+    }
+  }
+
+  Future<String?> _createConsoleLoginKey() async {
+    final baseUrl = AppCoreScope.controlBaseUrl;
+    final token = AppCoreScope.sessionStore.session?.accessToken.trim();
+    if (baseUrl == null || baseUrl.isEmpty || token == null || token.isEmpty) {
+      return null;
+    }
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 8);
+    try {
+      final uri = Uri.parse(baseUrl).replace(path: '/auth/console-login-key');
+      final request = await client.postUrl(uri);
+      request.headers.contentType = ContentType.json;
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+      request.write(jsonEncode({
+        'deviceId': AppCoreScope.sessionStore.device?.deviceId.trim(),
+      }));
+      final response = await request.close().timeout(
+            const Duration(seconds: 8),
+          );
+      final body = await utf8.decoder.bind(response).join().timeout(
+            const Duration(seconds: 8),
+          );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        await StartupLog.write(
+          'create console login key failed status=${response.statusCode} body=$body',
+        );
+        return null;
+      }
+      final payload = jsonDecode(body) as Map<String, dynamic>;
+      return payload['loginKey'] as String?;
+    } catch (error) {
+      await StartupLog.write('create console login key skipped: $error');
+      return null;
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<void> _logoutFromClient() async {
@@ -100,12 +171,50 @@ extension _HomePageLogic on _HomePageState {
       await _showManagedDeviceDisabledDialog();
       return;
     }
-    await AppCoreScope.sessionController.enableActiveNetwork();
+    await _runNetworkToggle(enable: true);
     if (!mounted) {
       return;
     }
     if (_isDeviceUnavailableError(AppCoreScope.sessionStore.error)) {
       await _showManagedDeviceDisabledDialog();
+    }
+  }
+
+  Future<void> _disableActiveNetworkSmoothly() async {
+    await _runNetworkToggle(enable: false);
+  }
+
+  Future<void> _runNetworkToggle({required bool enable}) async {
+    if (_networkToggleBusy) {
+      return;
+    }
+    setState(() {
+      _networkToggleBusy = true;
+      _optimisticNetworkEnabled = enable;
+    });
+    try {
+      await StartupLog.write(
+        'home network switch requested enable=$enable '
+        'selectedNetwork=${AppCoreScope.sessionStore.selectedNetworkId ?? '-'} '
+        'device=${AppCoreScope.sessionStore.device?.deviceId ?? '-'}',
+      );
+      if (enable) {
+        await AppCoreScope.sessionController.enableActiveNetwork();
+      } else {
+        await AppCoreScope.sessionController.disableActiveNetwork();
+      }
+      await StartupLog.write(
+        'home network switch completed enable=$enable '
+        'error=${AppCoreScope.sessionStore.error ?? '-'} '
+        'runtime=${AppCoreScope.tunnelStore.tunnelRuntimeView?.state ?? '-'}',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _networkToggleBusy = false;
+          _optimisticNetworkEnabled = null;
+        });
+      }
     }
   }
 

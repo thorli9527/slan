@@ -56,10 +56,7 @@ func (s dbOpsService) Overview() (dto.OpsOverview, error) {
 }
 
 func (s dbOpsService) networkOnlineDeviceCount(ctx context.Context) int {
-	states, err := s.state.pg.ListFreshOnlineDeviceNetworkStates(ctx, deviceNetworkStateCutoffUnix(time.Now()))
-	if err != nil {
-		return 0
-	}
+	states := s.state.listFreshOnlineDeviceNetworkStates(ctx, time.Now())
 	seen := make(map[string]struct{}, len(states))
 	for _, state := range states {
 		seen[state.DeviceID] = struct{}{}

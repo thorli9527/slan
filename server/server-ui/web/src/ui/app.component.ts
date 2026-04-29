@@ -27,6 +27,7 @@ import { AuthMode, ConsoleView } from './ui-models';
 })
 export class AppComponent implements OnDestroy {
   private static readonly SESSION_CHECK_INTERVAL_MS = 30_000;
+  private static readonly WORKSPACE_REFRESH_INTERVAL_MS = 5_000;
   readonly navItems: Array<{ id: ConsoleView; label: string; caption: string }> = [
     { id: 'account', label: '账户概览', caption: '账号、设备、接入状态' },
     { id: 'network', label: '网络管理', caption: 'IP 绑定、设备接入和邀请码管理' }
@@ -90,7 +91,23 @@ export class AppComponent implements OnDestroy {
   readonly selectedDevice = computed(() => this.devices().find((item) => item.deviceId === this.currentDeviceId()) || null);
   readonly currentAssignment = computed(() => {
     const deviceId = this.currentDeviceId();
-    return this.assignments().find((item) => item.deviceId === deviceId) || null;
+    const assignments = this.assignments();
+    const byCurrentDevice = assignments.find((item) => item.deviceId === deviceId);
+    if (byCurrentDevice) {
+      return byCurrentDevice;
+    }
+    const email = this.userEmail().trim().toLowerCase();
+    const userId = this.userId().trim();
+    const ownAssignments = assignments.filter((item) => {
+      if (userId && item.userId === userId) {
+        return true;
+      }
+      return email !== '' && (item.userEmail || '').trim().toLowerCase() === email;
+    });
+    return ownAssignments.find((item) => (item.connectionType || '').toLowerCase() === 'app') ||
+      ownAssignments.find((item) => (item.devicePlatform || '').toLowerCase() !== 'web') ||
+      ownAssignments[0] ||
+      null;
   });
   readonly networkDevices = computed(() => {
     const boundDeviceIds = new Set(this.assignments().map((item) => item.deviceId));
@@ -140,6 +157,8 @@ export class AppComponent implements OnDestroy {
   private autoCallbackAttempted = false;
   private sessionCheckTimer: number | null = null;
   private sessionCheckInFlight = false;
+  private workspaceRefreshTimer: number | null = null;
+  private workspaceRefreshInFlight = false;
 
   constructor() {
     const loginClientContext = this.sessionService.readLoginClientContext(window.location.href);
@@ -156,6 +175,10 @@ export class AppComponent implements OnDestroy {
     }
     this.loginClientPlatform.set(loginClientContext.clientPlatform);
     this.loginClientName.set(loginClientContext.clientName);
+    if (loginClientContext.consoleLoginKey) {
+      void this.consumeConsoleLoginKey(loginClientContext.consoleLoginKey);
+      return;
+    }
     if (this.token()) {
       this.startSessionMonitor();
       void this.refreshWorkspace();
@@ -180,16 +203,19 @@ export class AppComponent implements OnDestroy {
   }
 
   onlineNetworkDeviceCount(): number {
-    return this.assignments().filter((item) => {
-      if (!item.virtualIp) {
-        return false;
-      }
-      return item.runtimeStateFresh && item.runtimeNetworkOnline && item.runtimeTunnelUp && item.runtimeVirtualIp === item.virtualIp;
-    }).length;
+    return this.assignments().filter((item) => this.assignmentHeartbeatOnline(item)).length;
   }
 
   currentVirtualIp(): string {
     return this.currentAssignment()?.virtualIp || '未分配';
+  }
+
+  private assignmentHeartbeatOnline(item: NetworkAssignment): boolean {
+    const status = (item.status || '').trim().toLowerCase();
+    if (!item.virtualIp || status === 'disabled' || status === 'suspended' || status === 'rejected') {
+      return false;
+    }
+    return item.runtimeStateFresh === true && item.runtimeControlReachable === true;
   }
 
   deviceLimitLabel(): string {
@@ -385,8 +411,33 @@ export class AppComponent implements OnDestroy {
       await this.forwardCallbackToServer(
         result.auth,
         result.managedDevice.deviceId,
-        this.authMode() === 'register' ? 'activate_active_network' : undefined,
+        'activate_active_network',
       );
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  private async consumeConsoleLoginKey(loginKey: string): Promise<void> {
+    this.loading.set(true);
+    this.sessionService.clearCachedAuth();
+    this.token.set('');
+    this.userId.set('');
+    this.userEmail.set('');
+    try {
+      const auth = await this.api.consumeConsoleLoginKey(loginKey);
+      this.sessionService.persistAuth(auth);
+      this.token.set(auth.accessToken);
+      this.userId.set(auth.userId);
+      this.userEmail.set(auth.email || '');
+      this.startSessionMonitor();
+      await this.refreshWorkspace();
+      this.message.set('已切换到桌面客户端当前用户。');
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('consoleLoginKey');
+      window.history.replaceState({}, document.title, cleanUrl.toString());
     } catch (error) {
       this.setError(error);
     } finally {
@@ -437,6 +488,17 @@ export class AppComponent implements OnDestroy {
       this.applyRefreshWorkspaceResult(result.refreshed);
       this.networkDialog.set('');
       this.message.set(`created network ${result.network.name}, created default DHCP plan and bound the current device`);
+      await this.forwardCallbackToServer(
+        {
+          accessToken: this.token(),
+          userId: this.userId(),
+          email: this.userEmail(),
+          refreshToken: '',
+          expiresIn: 3600,
+        },
+        result.refreshed.managedDevice.deviceId,
+        'activate_active_network',
+      );
     } catch (error) {
       this.handleActionError(error);
     } finally {
@@ -964,7 +1026,7 @@ export class AppComponent implements OnDestroy {
       callbackId,
       auth,
       deviceId,
-      userLabel: this.email.trim(),
+      userLabel: auth.email?.trim() || this.userEmail().trim() || this.email.trim(),
       action,
     });
     await this.facade.completeCallback(callback.callbackId, {
@@ -1151,11 +1213,15 @@ export class AppComponent implements OnDestroy {
 
   private startSessionMonitor(): void {
     if (this.sessionCheckTimer !== null || !this.token()) {
+      if (this.token()) {
+        this.startWorkspaceRefresh();
+      }
       return;
     }
     this.sessionCheckTimer = window.setInterval(() => {
       void this.checkSessionStillValid();
     }, AppComponent.SESSION_CHECK_INTERVAL_MS);
+    this.startWorkspaceRefresh();
   }
 
   private stopSessionMonitor(): void {
@@ -1163,7 +1229,42 @@ export class AppComponent implements OnDestroy {
       window.clearInterval(this.sessionCheckTimer);
       this.sessionCheckTimer = null;
     }
+    if (this.workspaceRefreshTimer !== null) {
+      window.clearInterval(this.workspaceRefreshTimer);
+      this.workspaceRefreshTimer = null;
+    }
     this.sessionCheckInFlight = false;
+    this.workspaceRefreshInFlight = false;
+  }
+
+  private startWorkspaceRefresh(): void {
+    if (this.workspaceRefreshTimer !== null || !this.token()) {
+      return;
+    }
+    this.workspaceRefreshTimer = window.setInterval(() => {
+      void this.refreshWorkspaceSnapshot();
+    }, AppComponent.WORKSPACE_REFRESH_INTERVAL_MS);
+  }
+
+  private async refreshWorkspaceSnapshot(): Promise<void> {
+    const token = this.token();
+    if (!token || this.workspaceRefreshInFlight || this.loading() || this.actionBusy()) {
+      return;
+    }
+    this.workspaceRefreshInFlight = true;
+    try {
+      const result = await this.facade.refreshWorkspace({
+        token,
+        ...this.currentDeviceState(),
+      });
+      this.applyRefreshWorkspaceResult(result);
+    } catch (error) {
+      if (error instanceof ConsoleApiError && error.isUnauthorized) {
+        this.handleUnauthorizedSession(error.message || 'session invalid');
+      }
+    } finally {
+      this.workspaceRefreshInFlight = false;
+    }
   }
 
   private async checkSessionStillValid(): Promise<void> {

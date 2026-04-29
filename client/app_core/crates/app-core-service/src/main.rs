@@ -7,7 +7,7 @@ use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use slan_app_core::{WireGuardInterfaceConfig, WireGuardKeyPair};
 #[cfg(target_os = "windows")]
@@ -384,6 +384,8 @@ fn run_supervisor(
             config.tcp_host
         ));
         let service_tasks = start_service_tasks(config.tcp_host.clone());
+        let mut helper_rpc_probe_failures = 0_u32;
+        let mut next_helper_rpc_probe = Instant::now() + Duration::from_secs(5);
 
         loop {
             if is_stop_requested(stop_signal.as_ref()) {
@@ -413,6 +415,34 @@ fn run_supervisor(
                     return Err(format!("failed while waiting on app-core-helper: {err}"));
                 }
             }
+
+            if Instant::now() >= next_helper_rpc_probe {
+                next_helper_rpc_probe = Instant::now() + Duration::from_secs(5);
+                match helper_rpc_accepts_connection(&config.tcp_host) {
+                    Ok(()) => {
+                        if helper_rpc_probe_failures > 0 {
+                            write_service_log("helper rpc probe recovered");
+                        }
+                        helper_rpc_probe_failures = 0;
+                    }
+                    Err(err) => {
+                        helper_rpc_probe_failures = helper_rpc_probe_failures.saturating_add(1);
+                        write_service_log(&format!(
+                            "helper rpc probe failed count={} error={}",
+                            helper_rpc_probe_failures, err
+                        ));
+                        if helper_rpc_probe_failures >= 3 {
+                            write_service_log(
+                                "helper rpc unavailable; terminating helper for restart",
+                            );
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            service_tasks.stop_and_join();
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         if config.once {
@@ -427,6 +457,12 @@ fn run_supervisor(
         write_service_log("helper exited unexpectedly; restarting after backoff");
         thread::sleep(Duration::from_secs(1));
     }
+}
+
+fn helper_rpc_accepts_connection(tcp_host: &str) -> Result<(), String> {
+    TcpStream::connect(tcp_host)
+        .map(|_| ())
+        .map_err(|err| format!("connect helper rpc {tcp_host}: {err}"))
 }
 
 fn start_service_tasks(tcp_host: String) -> ServiceTaskRunner {

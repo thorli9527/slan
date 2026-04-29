@@ -79,7 +79,7 @@ func (s *dbState) upsertTrustedDeviceNetworkState(ctx context.Context, deviceID,
 	if req.ReportedAt > 0 {
 		now = req.ReportedAt
 	}
-	return s.pg.UpsertDeviceNetworkState(ctx, repo.DeviceNetworkState{
+	state := repo.DeviceNetworkState{
 		DeviceID:         deviceID,
 		NetworkID:        networkID,
 		ControlReachable: req.ControlReachable,
@@ -89,7 +89,11 @@ func (s *dbState) upsertTrustedDeviceNetworkState(ctx context.Context, deviceID,
 		VirtualIP:        strings.TrimSpace(req.VirtualIP),
 		LastSeenAt:       now,
 		UpdatedAt:        time.Now().Unix(),
-	})
+	}
+	if err := s.tokens.StoreDeviceNetworkState(ctx, state, 2*deviceNetworkStateFreshnessWindow); err != nil {
+		log.Printf("redis device network state store failed device=%s network=%s err=%v", deviceID, networkID, err)
+	}
+	return s.pg.UpsertDeviceNetworkState(ctx, state)
 }
 
 func parseNetworkStateTopic(topicPrefix, topic string) (string, string, bool) {

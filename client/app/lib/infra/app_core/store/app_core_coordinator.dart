@@ -21,6 +21,8 @@ import 'app_tunnel_store.dart';
 
 class AppCoreCoordinator with AppCoreCoordinatorAsync {
   static const defaultAutoNetworkCidr = '10.0.0.0/16';
+  static const _networkStateHeartbeatInterval = Duration(seconds: 15);
+
   AppCoreCoordinator({
     TunnelHostGateway hostGateway = const PluginTunnelHostGateway(),
   }) : _tunnelRuntimeService = TunnelRuntimeService(hostGateway: hostGateway);
@@ -42,6 +44,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   final TunnelRuntimeService _tunnelRuntimeService;
   final TunnelConfigurationService _tunnelConfigurationService =
       const TunnelConfigurationService();
+  Timer? _networkStateHeartbeatTimer;
+  bool _networkStateHeartbeatInFlight = false;
   bool get _serviceOwnsLocalNetwork => AppCoreScope.mode == 'bridge';
   @override
   bool get busy => sessionStore.busy;
@@ -87,6 +91,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   void resetState() {
+    _stopNetworkStateHeartbeat();
     sessionStore.resetAll();
     tunnelStore.resetAll();
   }
@@ -156,6 +161,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.syncDevice(hydrated.device);
       sessionStore.networks = hydrated.networks;
       sessionStore.syncSelectedNetworkId();
+      _startNetworkStateHeartbeat();
       await _connectMqttAndMarkOnline(hydrated.device!);
       emitStateChanged();
       debugPrint(
@@ -174,6 +180,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
 
   Future<void> signOut() async {
     await runAction(() async {
+      _stopNetworkStateHeartbeat();
       final peerVirtualIp = tunnelStore.tunnelRuntimeView?.peerVirtualIp.trim();
       await _persistNetworkUsageState(enabled: false);
       if (_serviceOwnsLocalNetwork) {
@@ -206,7 +213,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         }
         try {
           await _reportDeviceNetworkState(
-              networkOnline: false, tunnelUp: false);
+            networkOnline: false,
+            tunnelUp: false,
+          );
         } catch (error) {
           debugPrint('[logout] offline report skipped: $error');
         }
@@ -240,6 +249,170 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     } catch (_) {
       // The MQTT auth provider also marks the control channel reachable.
     }
+  }
+
+  void _startNetworkStateHeartbeat() {
+    _networkStateHeartbeatTimer?.cancel();
+    unawaited(_sendNetworkStateHeartbeat());
+    _networkStateHeartbeatTimer = Timer.periodic(
+      _networkStateHeartbeatInterval,
+      (_) => unawaited(_sendNetworkStateHeartbeat()),
+    );
+  }
+
+  void _stopNetworkStateHeartbeat() {
+    _networkStateHeartbeatTimer?.cancel();
+    _networkStateHeartbeatTimer = null;
+    _networkStateHeartbeatInFlight = false;
+  }
+
+  Future<void> _sendNetworkStateHeartbeat() async {
+    if (_networkStateHeartbeatInFlight || sessionStore.session == null) {
+      return;
+    }
+    _networkStateHeartbeatInFlight = true;
+    try {
+      if (_serviceOwnsLocalNetwork) {
+        try {
+          await AppCoreScope.instance.reportDeviceNetworkState();
+        } catch (error) {
+          debugPrint('[network-heartbeat] service state report skipped: $error');
+        }
+        if (!sessionStore.busy && !_hasActiveTunnelRuntime()) {
+          await _refreshNetworksForRemoteControl();
+        }
+        return;
+      }
+      if (!sessionStore.busy && _hasActiveTunnelRuntime()) {
+        final runtimeStillActive = await _refreshActiveTunnelRuntimeFromNative();
+        if (!runtimeStillActive) {
+          await _markLocalTunnelRuntimeOffline(
+            reason: '本地网络适配器或虚拟 IP 已不存在，本地网络状态已刷新为停用。',
+          );
+        }
+      }
+      if (!sessionStore.busy && _hasActiveTunnelRuntime()) {
+        await _syncActiveNetworkBeforeHeartbeat();
+      } else if (!sessionStore.busy) {
+        await _refreshNetworksForRemoteControl();
+      }
+      final networkOnline = _hasActiveTunnelRuntime();
+      await _reportDeviceNetworkState(
+        networkOnline: networkOnline,
+        tunnelUp: networkOnline,
+        lastProbeOk: networkOnline
+            ? (tunnelStore.lastProbe?.replyObserved ?? true)
+            : false,
+      );
+    } catch (error) {
+      debugPrint('[network-heartbeat] skipped: $error');
+    } finally {
+      _networkStateHeartbeatInFlight = false;
+    }
+  }
+
+  Future<void> _syncActiveNetworkBeforeHeartbeat() async {
+    if (sessionStore.node == null ||
+        sessionStore.bootstrap == null ||
+        sessionStore.selectedNetworkId == null) {
+      return;
+    }
+    final previousLocalVirtualIp =
+        tunnelStore.tunnelRuntimeView?.localVirtualIp;
+    late final String detail;
+    try {
+      detail = await _refreshBootstrapOrControlSyncState();
+    } catch (error) {
+      if (_isRemoteAttachmentDisabledError(error)) {
+        await _forceDisableLocalNetwork(
+          reason: '网络管理员已停用当前设备绑定，本地网络已自动禁用。',
+        );
+        return;
+      }
+      rethrow;
+    }
+    await _configureLocalDnsForActiveTunnel();
+    await _reapplyActiveNetworkTunnelIfVirtualIpChanged(
+      previousLocalVirtualIp,
+    );
+    debugPrint('[network-heartbeat] control sync before state report: $detail');
+  }
+
+  Future<bool> _refreshActiveTunnelRuntimeFromNative() async {
+    final runtime = tunnelStore.tunnelRuntimeView;
+    if (runtime == null) {
+      return false;
+    }
+    final peerVirtualIp = runtime.peerVirtualIp.trim();
+    if (peerVirtualIp.isEmpty) {
+      return false;
+    }
+    final result = await _tunnelRuntimeService.refreshTunnelRuntime(
+      peerVirtualIp: peerVirtualIp,
+    );
+    tunnelStore.tunnelRuntimeView = result.runtimeView;
+    tunnelStore.lastTunnelActionReport = result.report;
+    final refreshed = result.runtimeView;
+    if (refreshed == null || !result.report.succeeded) {
+      emitStateChanged();
+      return false;
+    }
+    final active = _tunnelRuntimeViewIsActive(refreshed);
+    emitStateChanged();
+    return active;
+  }
+
+  Future<void> _markLocalTunnelRuntimeOffline({required String reason}) async {
+    try {
+      await LocalDnsService.instance.stop();
+    } catch (error) {
+      debugPrint('[network-heartbeat] stop dns after stale runtime skipped: $error');
+    }
+    try {
+      await _reportDeviceNetworkState(
+        networkOnline: false,
+        tunnelUp: false,
+        lastProbeOk: false,
+      );
+    } catch (error) {
+      debugPrint('[network-heartbeat] stale runtime offline report skipped: $error');
+    }
+    sessionStore.clearConnection();
+    tunnelStore.clearConnection();
+    tunnelStore.lastTunnelActionReport = TunnelActionReport(
+      succeeded: true,
+      detail: reason,
+      source: TunnelActionReportSource.runtimeSnapshot,
+      phase: TunnelActionPhase.verified,
+    );
+    sessionStore.notice = reason;
+    emitStateChanged();
+  }
+
+  Future<void> _refreshNetworksForRemoteControl() async {
+    final session = sessionStore.session;
+    final device = sessionStore.device;
+    if (session == null || device == null || sessionStore.busy) {
+      return;
+    }
+    final previousNetworkId = sessionStore.selectedNetworkId;
+    final usageState = await AppCoreScope.readNetworkUsageState(session.userId);
+    final networks = await AppCoreScope.instance.listNetworks();
+    sessionStore.networks = networks;
+    sessionStore.syncSelectedNetworkId(
+      preferredNetworkId: previousNetworkId ?? usageState?.networkId,
+    );
+    if (sessionStore.selectedNetwork == null || _hasActiveTunnelRuntime()) {
+      return;
+    }
+    final memberStatus = _currentDeviceMemberStatus(device.deviceId);
+    if (memberStatus == 'disabled' || memberStatus == 'suspended') {
+      return;
+    }
+    if (memberStatus != 'active' && usageState?.enabled != true) {
+      return;
+    }
+    await enableActiveNetwork();
   }
 
   Future<void> _reportDeviceNetworkState({
@@ -278,8 +451,81 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         tunnelStore.tunnelRuntimeView == null) {
       return false;
     }
-    final state = tunnelStore.tunnelRuntimeView!.state.toLowerCase().trim();
-    return state != 'idle' && state != 'inactive' && state != 'disabled';
+    return _tunnelRuntimeViewIsActive(tunnelStore.tunnelRuntimeView!);
+  }
+
+  bool _tunnelRuntimeViewIsActive(WireGuardTunnelRuntimeView runtime) {
+    final state = runtime.state.toLowerCase().trim();
+    final backendState = (runtime.backendState ?? '').toLowerCase().trim();
+    final stateActive =
+        state == 'up' || state == 'running' || state == 'configured';
+    final backendActive = runtime.backendIsUp == true ||
+        backendState == 'started' ||
+        backendState == 'running' ||
+        backendState == 'up';
+    return stateActive && backendActive;
+  }
+
+  void _setServiceTunnelRuntimeSnapshot() {
+    final network = sessionStore.selectedNetwork;
+    final device = sessionStore.device;
+    if (network == null || device == null) {
+      return;
+    }
+    final config = _tunnelConfigurationService.buildActiveNetworkConfiguration(
+      network: network,
+      deviceId: device.deviceId,
+      devicePublicKey: device.publicKey,
+    );
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    tunnelStore.tunnelRuntimeView = WireGuardTunnelRuntimeView(
+      state: 'running',
+      transport: config.transport,
+      backendName: 'app-core-service',
+      backendState: 'running',
+      backendIsUp: true,
+      backendLastStartedAtMs: nowMs,
+      peerVirtualIp: config.peerVirtualIp,
+      peerPublicKey: config.peer.publicKey,
+      selectedEndpoint: config.peer.endpoint,
+      interfaceName: config.interface.interfaceName,
+      dnsServers: config.interface.dnsServers,
+      allowedIps: config.peer.allowedIps,
+      localVirtualIp: config.localVirtualIp,
+      remoteAddress: config.peer.endpoint ?? '',
+      mtu: config.interface.mtu,
+      interfaceAddresses: config.interface.addresses,
+      lastAppliedAtMs: nowMs,
+    );
+    tunnelStore.lastTunnelActionReport = TunnelActionReport(
+      succeeded: true,
+      detail: 'app-core-service 已启用当前网络。',
+      source: TunnelActionReportSource.runtimeSnapshot,
+      phase: TunnelActionPhase.verified,
+      runtimeSnapshot: tunnelStore.tunnelRuntimeView,
+    );
+    emitStateChanged();
+  }
+
+  String? _currentDeviceMemberStatus(String deviceId) {
+    final network = sessionStore.selectedNetwork;
+    if (network == null) {
+      return null;
+    }
+    for (final member in network.members) {
+      if (member.deviceId == deviceId) {
+        return member.status?.trim().toLowerCase();
+      }
+    }
+    return null;
+  }
+
+  bool _isRemoteAttachmentDisabledError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('forbidden') &&
+        (message.contains('no active network attachment') ||
+            message.contains('has no active network attachment') ||
+            message.contains('device unavailable'));
   }
 
   Future<void> _persistNetworkUsageState({required bool enabled}) async {
@@ -350,6 +596,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         ),
       );
       sessionStore.syncDevice(result.device);
+      _startNetworkStateHeartbeat();
       await _connectMqttAndMarkOnline(result.device);
     });
   }
@@ -396,6 +643,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       );
       if (result.device != null) {
         sessionStore.syncDevice(result.device);
+        _startNetworkStateHeartbeat();
         await _connectMqttAndMarkOnline(result.device!);
       }
       sessionStore.networks = result.networks;
@@ -517,7 +765,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       );
       sessionStore.networks = await AppCoreScope.instance.listNetworks();
       sessionStore.syncSelectedNetworkId(preferredNetworkId: network.networkId);
-      sessionStore.notice = 'Network created: ${network.networkId}';
+      await _enableActiveNetworkCore();
+      sessionStore.notice = 'Network created and enabled: ${network.networkId}';
     });
   }
 
@@ -562,7 +811,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.syncSelectedNetworkId(
         preferredNetworkId: requestedNetworkId,
       );
+      _setServiceTunnelRuntimeSnapshot();
       await _persistNetworkUsageState(enabled: true);
+      unawaited(_sendNetworkStateHeartbeat());
       sessionStore.notice = 'Network enabled';
       debugPrint(
         '[tunnel-enable] service handled network=${sessionStore.selectedNetworkId}',
@@ -631,6 +882,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       lastProbeOk: true,
     );
     await _persistNetworkUsageState(enabled: true);
+    unawaited(_sendNetworkStateHeartbeat());
     debugPrint('[tunnel-enable] bring-up done peerVirtualIp=$peerVirtualIp');
   }
 
@@ -661,11 +913,11 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         await LocalDnsService.instance.stop();
         await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
         await _persistNetworkUsageState(enabled: false);
-        result = await _workspaceService.deactivateActiveNetwork(
-          session: sessionStore.session,
-          currentDevice: sessionStore.device,
-          currentNetworks: sessionStore.networks,
-          targetNetworkId: sessionStore.selectedNetworkId,
+        result = DeactivatedNetworkResult(
+          device: sessionStore.device,
+          networks: sessionStore.session == null
+              ? sessionStore.networks
+              : await AppCoreScope.instance.listNetworks(),
         );
       }
       final currentDevice = result.device;
@@ -790,7 +1042,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       currentBootstrap: sessionStore.bootstrap,
       currentNetworks: sessionStore.networks,
     );
-    if (result.usedControlSync && !result.controlStatus.networkMapPresent) {
+    if (result.usedControlSync &&
+        result.controlStatus.status != 'none' &&
+        !result.controlStatus.networkMapPresent) {
       await _forceDisableLocalNetwork(
         reason: '当前设备已被服务端移出网络，本地网络已自动禁用。',
       );

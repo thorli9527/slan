@@ -62,6 +62,10 @@ func (s dbBootstrapService) buildBootstrapDevice(ctx context.Context, userID, de
 	if err != nil {
 		return dto.DeviceBootstrap{}, err
 	}
+	attachments, err = s.state.ensureDeviceAttachmentsVirtualIPs(ctx, attachments)
+	if err != nil {
+		return dto.DeviceBootstrap{}, err
+	}
 	deviceNetworkIDs, _ := s.state.activeDeviceNetworkIDs(ctx, deviceRecord.DeviceID)
 	return dto.DeviceBootstrap{
 		Device:      deviceRecord.ToDTO(deviceNetworkIDs),

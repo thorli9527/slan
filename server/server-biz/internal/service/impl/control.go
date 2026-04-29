@@ -555,22 +555,14 @@ func (s *dbState) hasFreshDeviceBoundWebSession(
 	if session.UserID == "" || session.DeviceID == "" {
 		return true
 	}
-	issuedAt := time.Unix(session.IssuedAt, 0)
-	if session.IssuedAt <= 0 {
-		issuedAt = now
-	}
 	record, err := s.pg.GetLatestControlSessionByDevice(ctx, session.DeviceID)
 	if err != nil {
-		return now.Sub(issuedAt) <= deviceBoundWebSessionFreshnessWindow
+		return true
 	}
 	if record.UserID != session.UserID {
 		return false
 	}
-	lastSeenAt := time.Unix(record.LastSeenAt, 0)
-	if lastSeenAt.Before(issuedAt) {
-		lastSeenAt = issuedAt
-	}
-	return now.Sub(lastSeenAt) <= deviceBoundWebSessionFreshnessWindow
+	return true
 }
 
 // markDeviceOfflineIfNoFreshControlSession avoids flipping a device offline

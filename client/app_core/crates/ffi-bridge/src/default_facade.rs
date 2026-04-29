@@ -575,6 +575,32 @@ where
             None,
         )
     }
+
+    fn clear_local_network_runtime(&self) -> Result<(), String> {
+        replace_tunnel(
+            &self.current_tunnel_peer_virtual_ip,
+            &self.tunnel_manager,
+            None,
+        )?;
+        let _ = self.tunnel_manager.stop_local_dns();
+        if let Ok(mut control_mqtt) = self.control_mqtt.lock() {
+            *control_mqtt = None;
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "app core state poisoned".to_string())?;
+        state.current_network_id = None;
+        state.current_connect_plans.clear();
+        state.connection_state = Some(ConnectionState::Disconnected);
+        state.active_path = None;
+        state.tunnel_peer_virtual_ip = None;
+        state.tunnel_runtime = None;
+        if let Some(bootstrap) = state.current_bootstrap.as_mut() {
+            bootstrap.network_map = None;
+        }
+        Ok(())
+    }
 }
 
 impl<C, P, R, D, M, T> AppCoreFacade for DefaultAppCoreFacade<C, P, R, D, M, T>
@@ -867,6 +893,12 @@ where
     }
 
     fn report_device_network_state(&self) -> Result<(), String> {
+        if let Err(err) = self.control_sync() {
+            if is_remote_network_disabled_error(&err) {
+                self.clear_local_network_runtime()?;
+                return Ok(());
+            }
+        }
         let access_token = self.with_access_token()?;
         let state = self
             .state
@@ -1056,13 +1088,6 @@ where
                     reported_at: Some((now_ms() / 1000) as i64),
                 },
             );
-            self.controller.deactivate_network(
-                &access_token,
-                DeactivateNetworkRequest {
-                    network_id: network_id.clone(),
-                    device_id: device.device_id.clone(),
-                },
-            )?;
         }
         let mut state = self
             .state
@@ -1265,7 +1290,12 @@ where
         } else {
             bootstrap
         };
-        let (updated_bootstrap, tunnel_reapply, should_disable_current_network) = {
+        let (
+            updated_bootstrap,
+            tunnel_reapply,
+            local_tunnel_reapply,
+            should_disable_current_network,
+        ) = {
             let mut state = self
                 .state
                 .lock()
@@ -1311,6 +1341,17 @@ where
                 .map(|virtual_ip| virtual_ip.trim().is_empty())
                 .unwrap_or(false);
             let updated_bootstrap = current_bootstrap.clone();
+            let local_tunnel_reapply = if should_reapply_tunnel {
+                let current_device = updated_bootstrap.device.clone();
+                updated_bootstrap
+                    .networks
+                    .iter()
+                    .find(|network| network.network_id == bootstrap.network_map.network_id)
+                    .cloned()
+                    .map(|network| (network, current_device))
+            } else {
+                None
+            };
             let tunnel_reapply = match active_path.clone() {
                 Some(ActivePath::P2P { ref peer_node_id })
                 | Some(ActivePath::Relay { ref peer_node_id }) => {
@@ -1417,6 +1458,11 @@ where
                 } else {
                     tunnel_reapply
                 },
+                if should_disable_current_network {
+                    None
+                } else {
+                    local_tunnel_reapply
+                },
                 should_disable_current_network,
             )
         };
@@ -1433,15 +1479,39 @@ where
             }
             return Ok(updated_bootstrap);
         }
-        if let Some((active_path, bootstrap, peer)) = tunnel_reapply {
-            if let Some(config) = self.build_tunnel_config(&active_path, &bootstrap, &peer)? {
+        match tunnel_reapply {
+            Some((active_path, bootstrap, peer)) => {
+                if let Some(config) = self.build_tunnel_config(&active_path, &bootstrap, &peer)? {
+                    replace_tunnel(
+                        &self.current_tunnel_peer_virtual_ip,
+                        &self.tunnel_manager,
+                        Some(config.clone()),
+                    )?;
+                    self.tunnel_manager
+                        .start_local_dns(dns_records_from_bootstrap(&bootstrap))?;
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|_| "app core state poisoned".to_string())?;
+                    state.tunnel_peer_virtual_ip = Some(config.peer_virtual_ip.clone());
+                    state.tunnel_runtime = Some(build_tunnel_runtime(&config));
+                }
+            }
+            None => {
+                let Some((network, device)) = local_tunnel_reapply else {
+                    return Ok(updated_bootstrap);
+                };
+                let mut config = self.build_local_network_tunnel_config(&network, &device);
+                let dns_records = dns_records_from_bootstrap(&updated_bootstrap);
+                if !dns_records.is_empty() {
+                    config.wireguard_interface.dns_servers = vec!["127.0.0.1".to_string()];
+                }
                 replace_tunnel(
                     &self.current_tunnel_peer_virtual_ip,
                     &self.tunnel_manager,
                     Some(config.clone()),
                 )?;
-                self.tunnel_manager
-                    .start_local_dns(dns_records_from_bootstrap(&bootstrap))?;
+                self.tunnel_manager.start_local_dns(dns_records)?;
                 let mut state = self
                     .state
                     .lock()
@@ -1834,6 +1904,14 @@ fn default_tunnel_endpoint() -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "203.0.113.10:51820".to_string())
+}
+
+fn is_remote_network_disabled_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("forbidden")
+        && (normalized.contains("no active network attachment")
+            || normalized.contains("has no active network attachment")
+            || normalized.contains("device unavailable"))
 }
 
 fn dns_records_from_bootstrap(bootstrap: &BootstrapConfig) -> Vec<(String, String)> {

@@ -49,7 +49,7 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
         </div>
         <div class="table-shell" *ngIf="assignments.length > 0; else noAssignments">
           <table>
-            <thead><tr><th>Virtual IP</th><th>User</th><th>操作系统/版本</th><th>连接方式</th><th>Network Status</th><th>Remark</th><th class="edit-col"></th></tr></thead>
+            <thead><tr><th>Virtual IP</th><th>User</th><th>操作系统/版本</th><th>连接方式</th><th>心跳状态</th><th>网络启用</th><th>设备状态</th><th>Remark</th><th class="edit-col"></th></tr></thead>
             <tbody>
               <tr *ngFor="let item of assignments">
                 <td>{{ draftIps[item.attachmentId] || item.virtualIp || '-' }}</td>
@@ -57,8 +57,18 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
                 <td>{{ assignmentOsVersion(item) }}</td>
                 <td>{{ assignmentConnectionType(item) }}</td>
                 <td>
-                  <span class="status-badge" [attr.data-tone]="assignmentStatusTone(item)">
-                    {{ assignmentStatusLabel(item) }}
+                  <span class="status-badge" [attr.data-tone]="heartbeatStatusTone(item)">
+                    {{ heartbeatStatusLabel(item) }}
+                  </span>
+                </td>
+                <td>
+                  <span class="status-badge" [attr.data-tone]="networkEnableStatusTone(item)">
+                    {{ networkEnableStatusLabel(item) }}
+                  </span>
+                </td>
+                <td>
+                  <span class="status-badge" [attr.data-tone]="deviceBindingStatusTone(item)">
+                    {{ deviceBindingStatusLabel(item) }}
                   </span>
                 </td>
                 <td class="remark-text">{{ draftRemarks[item.attachmentId] || item.remark || '-' }}</td>
@@ -123,7 +133,7 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
     button:disabled { cursor: wait; opacity: .62; }
     .row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .table-shell { overflow: auto; border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; }
-    table { width: 100%; min-width: 820px; border-collapse: collapse; table-layout: fixed; }
+    table { width: 100%; min-width: 1040px; border-collapse: collapse; table-layout: fixed; }
     th, td { padding: 12px; border-bottom: 1px solid rgba(15, 23, 42, .08); text-align: left; vertical-align: top; }
     th { color: #6b7280; font-size: 12px; text-transform: uppercase; background: #f8fafc; }
     tr:last-child td { border-bottom: 0; }
@@ -293,30 +303,49 @@ export class NetworkWorkspaceComponent {
     return (item.devicePlatform || '').trim().toLowerCase() === 'web' ? 'console' : 'app';
   }
 
-  assignmentStatusLabel(item: NetworkAssignment): string {
-    const status = (item.status || '').toLowerCase();
-    if (status === 'pending') {
-      return '待确认';
+  heartbeatStatusLabel(item: NetworkAssignment): string {
+    if (!item.runtimeStateFresh) {
+      return '心跳离线';
     }
-    if (status === 'rejected') {
-      return '已拒绝';
-    }
-    if (status === 'disabled' || status === 'suspended') {
-      return '已停用';
-    }
-    if (!item.virtualIp) {
-      return status || '-';
-    }
-    if (!item.runtimeStateFresh || !item.runtimeNetworkOnline) {
-      return '离线 / 未应用';
-    }
-    if (item.runtimeTunnelUp && item.runtimeVirtualIp === item.virtualIp) {
-      return '已应用';
-    }
-    return '已分配';
+    return item.runtimeControlReachable ? '心跳在线' : '心跳异常';
   }
 
-  assignmentStatusTone(item: NetworkAssignment): string {
+  heartbeatStatusTone(item: NetworkAssignment): string {
+    if (!item.runtimeStateFresh) {
+      return 'muted';
+    }
+    return item.runtimeControlReachable ? 'success' : 'warn';
+  }
+
+  networkEnableStatusLabel(item: NetworkAssignment): string {
+    const status = (item.status || '').toLowerCase();
+    if (status === 'pending') {
+      return '待启用';
+    }
+    if (status === 'rejected') {
+      return '不可用';
+    }
+    if (status === 'disabled' || status === 'suspended') {
+      return '未启用';
+    }
+    if (!item.virtualIp) {
+      return '未分配 IP';
+    }
+    if (!item.runtimeStateFresh) {
+      return '等待客户端';
+    }
+    if (!item.runtimeNetworkOnline) {
+      return '未应用';
+    }
+    if (item.runtimeTunnelUp) {
+      return item.runtimeVirtualIp && item.runtimeVirtualIp !== item.virtualIp
+        ? 'IP同步中'
+        : '已启用';
+    }
+    return '隧道同步中';
+  }
+
+  networkEnableStatusTone(item: NetworkAssignment): string {
     const status = (item.status || '').toLowerCase();
     if (status === 'pending') {
       return 'warn';
@@ -330,13 +359,47 @@ export class NetworkWorkspaceComponent {
     if (!item.virtualIp) {
       return 'muted';
     }
-    if (!item.runtimeStateFresh || !item.runtimeNetworkOnline) {
+    if (!item.runtimeStateFresh) {
       return 'muted';
     }
-    if (item.runtimeTunnelUp && item.runtimeVirtualIp === item.virtualIp) {
+    if (!item.runtimeNetworkOnline) {
+      return 'muted';
+    }
+    if (item.runtimeTunnelUp && (!item.runtimeVirtualIp || item.runtimeVirtualIp === item.virtualIp)) {
       return 'success';
     }
     return 'warn';
+  }
+
+  deviceBindingStatusLabel(item: NetworkAssignment): string {
+    switch ((item.status || '').toLowerCase()) {
+      case 'active':
+        return '设备可用';
+      case 'disabled':
+      case 'suspended':
+        return '设备禁用';
+      case 'pending':
+        return '待确认';
+      case 'rejected':
+        return '已拒绝';
+      default:
+        return item.status || '-';
+    }
+  }
+
+  deviceBindingStatusTone(item: NetworkAssignment): string {
+    switch ((item.status || '').toLowerCase()) {
+      case 'active':
+        return 'success';
+      case 'disabled':
+      case 'suspended':
+      case 'rejected':
+        return 'danger';
+      case 'pending':
+        return 'warn';
+      default:
+        return 'muted';
+    }
   }
 
   formatMemberTime(value?: number): string {

@@ -30,6 +30,9 @@ func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	auth.POST("/refresh", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.RefreshTokenRequest) (dto.AuthResponse, error) {
 		return deps.Auth.Refresh(req)
 	}))
+	auth.POST("/console-login", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.ConsumeConsoleLoginKeyRequest) (dto.AuthResponse, error) {
+		return deps.Auth.ConsumeConsoleLoginKey(req)
+	}))
 	auth.GET("/callback-status/:callbackId", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.AuthCallbackStatusResponse, error) {
 		rc := currentRouteContext(c)
 		return deps.Auth.GetCallbackStatus(rc.callbackID(c))
@@ -100,6 +103,10 @@ func registerAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 
 func registerProtectedAccessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	auth := api.Group("/auth")
+	auth.POST("/console-login-key", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.CreateConsoleLoginKeyRequest) (dto.ConsoleLoginKeyResponse, error) {
+		rc := currentRouteContext(c)
+		return deps.Auth.CreateConsoleLoginKey(rc.user(), req)
+	}))
 	auth.PUT("/password", respondWithBodyStatus(http.StatusOK, gin.H{"status": "ok"}, func(c *gin.Context, req dto.ChangePasswordRequest) error {
 		rc := currentRouteContext(c)
 		return deps.Auth.ChangePassword(rc.user(), req)

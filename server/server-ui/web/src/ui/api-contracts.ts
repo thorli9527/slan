@@ -6,6 +6,11 @@ export type AuthResponse = {
   expiresIn: number;
 };
 
+export type ConsoleLoginKeyResponse = {
+  loginKey: string;
+  expiresIn: number;
+};
+
 export type ErrorResponse = {
   code: string;
   message: string;
@@ -140,6 +145,7 @@ export type NetworkAssignment = {
   devicePlatform?: string;
   deviceVersion?: string;
   connectionType?: string;
+  runtimeControlReachable?: boolean;
   runtimeNetworkOnline?: boolean;
   runtimeTunnelUp?: boolean;
   runtimeVirtualIp?: string;

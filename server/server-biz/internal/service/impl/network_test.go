@@ -1516,8 +1516,8 @@ func TestUpdateAttachmentStatus_DisablesMemberAndNotifiesDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disable attachment: %v", err)
 	}
-	if updated.Status != "disabled" || updated.VirtualIP != "" {
-		t.Fatalf("expected disabled assignment without virtual ip, got %+v", updated)
+	if updated.Status != "disabled" || updated.VirtualIP != "10.0.0.3" {
+		t.Fatalf("expected disabled assignment to keep virtual ip, got %+v", updated)
 	}
 	if member, err := state.pg.GetMemberByID(ctx, "member-2"); err != nil || member.Status != "active" {
 		t.Fatalf("expected member to remain active for later re-enable, got member=%+v err=%v", member, err)
@@ -1526,7 +1526,7 @@ func TestUpdateAttachmentStatus_DisablesMemberAndNotifiesDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list attachments: %v", err)
 	}
-	if len(attachments) != 1 || attachments[0].Status != "disabled" || attachments[0].VirtualIP != "" {
+	if len(attachments) != 1 || attachments[0].Status != "disabled" || attachments[0].VirtualIP != "10.0.0.3" {
 		t.Fatalf("expected disabled attachment to be kept, got %+v", attachments)
 	}
 	if _, err := (dbNetworkService{state: state}).Activate("user-2", "net-1", dto.JoinNetworkRequest{DeviceID: "dev-2"}); !errors.Is(err, service.ErrForbidden) || !strings.Contains(err.Error(), "device unavailable") {
@@ -1644,7 +1644,7 @@ func TestUpdateAttachmentStatus_AllowsOwnerDeviceDisable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("owner device should be disabled: %v", err)
 	}
-	if updated.Status != "disabled" || updated.VirtualIP != "" {
+	if updated.Status != "disabled" || updated.VirtualIP != "10.0.0.2" {
 		t.Fatalf("expected owner assignment disabled, got %+v", updated)
 	}
 	if member, err := state.pg.GetMemberByID(ctx, "member-1"); err != nil || member.Status != "active" {

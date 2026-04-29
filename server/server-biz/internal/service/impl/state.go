@@ -32,6 +32,8 @@ type tokenStore interface {
 	DeleteControlSessionToken(ctx context.Context, token string) error
 	StoreAuthCallbackPayload(ctx context.Context, callbackID string, payload any, ttl time.Duration) error
 	LoadAuthCallbackPayload(ctx context.Context, callbackID string, target any) (bool, error)
+	StoreConsoleLoginKey(ctx context.Context, loginKey string, payload any, ttl time.Duration) error
+	ConsumeConsoleLoginKey(ctx context.Context, loginKey string, target any) (bool, error)
 	Authenticate(ctx context.Context, accessToken string) (repo.AccessTokenSession, error)
 	AuthenticateControlSessionToken(ctx context.Context, token string) (string, error)
 	AuthenticateOpsAccessToken(ctx context.Context, token string) (string, error)
@@ -43,6 +45,10 @@ type tokenStore interface {
 	AcquireConnectPlanRetry(ctx context.Context, networkID, nodeID, peerNodeID string) (bool, error)
 	ResetConnectPlanRetry(ctx context.Context, networkID, nodeID, peerNodeID string) error
 	AcquirePeerCandidateDelivery(ctx context.Context, networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate, ttl time.Duration) (bool, error)
+	StoreDeviceNetworkState(ctx context.Context, state repo.DeviceNetworkState, ttl time.Duration) error
+	LoadDeviceNetworkState(ctx context.Context, deviceID, networkID string) (repo.DeviceNetworkState, bool, error)
+	ListDeviceNetworkStates(ctx context.Context) ([]repo.DeviceNetworkState, error)
+	DeleteDeviceNetworkState(ctx context.Context, deviceID, networkID string) error
 }
 
 func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (

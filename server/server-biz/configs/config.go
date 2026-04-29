@@ -261,7 +261,7 @@ func DefaultConfig() Config {
 	cfg.Ops.DefaultAdmin = OpsDefaultAdminConfig{
 		Enabled:     true,
 		Email:       "admin@local.slan",
-		Password:    "change-me-admin-password",
+		Password:    "admin",
 		LoginName:   "admin",
 		DisplayName: "Default Admin",
 	}

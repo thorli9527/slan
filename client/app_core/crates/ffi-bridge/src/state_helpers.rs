@@ -58,10 +58,11 @@ pub fn replace_tunnel<T: TunnelManager>(
         }
     }
     if let Some(config) = config {
-        if current_tunnel.as_deref() != Some(config.peer_virtual_ip.as_str()) {
-            tunnel_manager.establish(&config)?;
-            *current_tunnel = Some(config.peer_virtual_ip);
-        }
+        // Re-apply even when the peer IP is unchanged. The local virtual IP,
+        // DNS, routes, or interface settings may have changed while the gateway
+        // peer stayed the same.
+        tunnel_manager.establish(&config)?;
+        *current_tunnel = Some(config.peer_virtual_ip);
     }
     Ok(())
 }

@@ -61,6 +61,57 @@ func (s *dbState) preferredOwnerIP(ctx context.Context, subnet dto.Subnet) (stri
 	return ip, true, nil
 }
 
+func (s *dbState) ensureAttachmentVirtualIP(ctx context.Context, attachment dto.SubnetAttachment, member dto.NetworkMember) (string, error) {
+	virtualIP := strings.TrimSpace(attachment.VirtualIP)
+	if virtualIP != "" {
+		return virtualIP, nil
+	}
+	subnet, err := s.pg.GetSubnetByID(ctx, attachment.SubnetID)
+	if err != nil {
+		if repo.IsNotFound(err) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	virtualIP, err = s.allocateIP(ctx, subnet)
+	if err != nil {
+		return "", err
+	}
+	if member.Role == "owner" {
+		if preferred, ok, err := s.preferredOwnerIP(ctx, subnet); err != nil {
+			return "", err
+		} else if ok {
+			virtualIP = preferred
+		}
+	}
+	if err := s.pg.UpdateAttachmentVirtualIP(ctx, attachment.AttachmentID, virtualIP); err != nil {
+		return "", err
+	}
+	return virtualIP, nil
+}
+
+func (s *dbState) ensureDeviceAttachmentsVirtualIPs(ctx context.Context, attachments []dto.SubnetAttachment) ([]dto.SubnetAttachment, error) {
+	out := append([]dto.SubnetAttachment(nil), attachments...)
+	for index, attachment := range out {
+		if strings.TrimSpace(attachment.VirtualIP) != "" {
+			continue
+		}
+		member, err := s.pg.GetMemberByNetworkDevice(ctx, attachment.NetworkID, attachment.DeviceID)
+		if err != nil {
+			if repo.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		virtualIP, err := s.ensureAttachmentVirtualIP(ctx, attachment, member)
+		if err != nil {
+			return nil, err
+		}
+		out[index].VirtualIP = virtualIP
+	}
+	return out, nil
+}
+
 type attachmentIPChange struct {
 	attachmentID string
 	deviceID     string

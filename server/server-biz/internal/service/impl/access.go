@@ -15,6 +15,11 @@ import (
 type dbAuthService struct{ state *dbState }
 type dbTokenVerifier struct{ state *dbState }
 
+type consoleLoginKeyPayload struct {
+	UserID   string `json:"userId"`
+	DeviceID string `json:"deviceId,omitempty"`
+}
+
 var (
 	_ service.Auth          = dbAuthService{}
 	_ service.TokenVerifier = dbTokenVerifier{}
@@ -128,6 +133,62 @@ func (s dbAuthService) ChangePassword(userID string, req dto.ChangePasswordReque
 		return ErrUnauthorized
 	}
 	return s.state.pg.UpdateUserPassword(ctx, userID, util.HashPassword(req.NewPassword))
+}
+
+func (s dbAuthService) CreateConsoleLoginKey(userID string, req dto.CreateConsoleLoginKeyRequest) (dto.ConsoleLoginKeyResponse, error) {
+	userID = strings.TrimSpace(userID)
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if userID == "" {
+		return dto.ConsoleLoginKeyResponse{}, ErrUnauthorized
+	}
+	ctx := context.Background()
+	if _, err := s.state.pg.GetUserByID(ctx, userID); err != nil {
+		if repo.IsNotFound(err) {
+			return dto.ConsoleLoginKeyResponse{}, ErrUnauthorized
+		}
+		return dto.ConsoleLoginKeyResponse{}, err
+	}
+	if deviceID != "" {
+		device, err := s.state.pg.GetDeviceByID(ctx, deviceID)
+		if err != nil {
+			if repo.IsNotFound(err) {
+				return dto.ConsoleLoginKeyResponse{}, ErrForbidden
+			}
+			return dto.ConsoleLoginKeyResponse{}, err
+		}
+		if device.UserID != userID {
+			return dto.ConsoleLoginKeyResponse{}, ErrForbidden
+		}
+	}
+	ttl := 2 * time.Minute
+	loginKey := util.OpaqueToken("console", userID)
+	if err := s.state.tokens.StoreConsoleLoginKey(ctx, loginKey, consoleLoginKeyPayload{
+		UserID:   userID,
+		DeviceID: deviceID,
+	}, ttl); err != nil {
+		return dto.ConsoleLoginKeyResponse{}, err
+	}
+	return dto.ConsoleLoginKeyResponse{
+		LoginKey:  loginKey,
+		ExpiresIn: int64(ttl / time.Second),
+	}, nil
+}
+
+func (s dbAuthService) ConsumeConsoleLoginKey(req dto.ConsumeConsoleLoginKeyRequest) (dto.AuthResponse, error) {
+	loginKey := strings.TrimSpace(req.LoginKey)
+	if loginKey == "" {
+		return dto.AuthResponse{}, ErrInvalidArgument
+	}
+	ctx := context.Background()
+	var payload consoleLoginKeyPayload
+	ok, err := s.state.tokens.ConsumeConsoleLoginKey(ctx, loginKey, &payload)
+	if err != nil {
+		return dto.AuthResponse{}, err
+	}
+	if !ok || strings.TrimSpace(payload.UserID) == "" {
+		return dto.AuthResponse{}, ErrUnauthorized
+	}
+	return s.state.issueAuthResponse(ctx, payload.UserID, payload.DeviceID)
 }
 
 func (s dbAuthService) GetCallbackStatus(callbackID string) (dto.AuthCallbackStatusResponse, error) {

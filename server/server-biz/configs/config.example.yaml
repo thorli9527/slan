@@ -76,7 +76,7 @@ ops:
     # 默认管理员绑定的业务用户邮箱。
     email: "admin@local.slan"
     # 默认管理员初始密码，生产环境必须替换。
-    password: "change-me-admin-password"
+    password: "admin"
     # 默认管理员登录名。
     login_name: "admin"
     # 默认管理员显示名称。

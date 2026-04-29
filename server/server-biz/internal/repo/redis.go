@@ -27,6 +27,8 @@ const connectPlanRetryCountKeyPrefix = "connect_plan_retry_count:"
 const connectPlanRetryGateKeyPrefix = "connect_plan_retry_gate:"
 const peerCandidateDeliveryKeyPrefix = "peer_candidate_delivery:"
 const authCallbackPayloadKeyPrefix = "auth_callback_payload:"
+const consoleLoginKeyPrefix = "console_login_key:"
+const deviceNetworkStateKeyPrefix = "device_network_state:"
 
 func NewRedisTokenStore(client *redis.Client) *RedisTokenStore {
 	return &RedisTokenStore{client: client}
@@ -106,6 +108,103 @@ func (s *RedisTokenStore) LoadAuthCallbackPayload(ctx context.Context, callbackI
 		return false, err
 	}
 	return true, nil
+}
+
+func (s *RedisTokenStore) StoreConsoleLoginKey(ctx context.Context, loginKey string, payload any, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = 2 * time.Minute
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return s.client.Set(ctx, consoleLoginKeyPrefix+loginKey, encoded, ttl).Err()
+}
+
+func (s *RedisTokenStore) ConsumeConsoleLoginKey(ctx context.Context, loginKey string, target any) (bool, error) {
+	value, err := s.client.GetDel(ctx, consoleLoginKeyPrefix+loginKey).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := json.Unmarshal(value, target); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *RedisTokenStore) StoreDeviceNetworkState(ctx context.Context, state DeviceNetworkState, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = 90 * time.Second
+	}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return s.client.Set(ctx, deviceNetworkStateKey(state.DeviceID, state.NetworkID), encoded, ttl).Err()
+}
+
+func (s *RedisTokenStore) LoadDeviceNetworkState(ctx context.Context, deviceID, networkID string) (DeviceNetworkState, bool, error) {
+	value, err := s.client.Get(ctx, deviceNetworkStateKey(deviceID, networkID)).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return DeviceNetworkState{}, false, nil
+		}
+		return DeviceNetworkState{}, false, err
+	}
+	var state DeviceNetworkState
+	if err := json.Unmarshal(value, &state); err != nil {
+		return DeviceNetworkState{}, false, err
+	}
+	return state, true, nil
+}
+
+func (s *RedisTokenStore) ListDeviceNetworkStates(ctx context.Context) ([]DeviceNetworkState, error) {
+	var cursor uint64
+	var out []DeviceNetworkState
+	for {
+		keys, nextCursor, err := s.client.Scan(ctx, cursor, deviceNetworkStateKeyPrefix+"*", 100).Result()
+		if err != nil {
+			return nil, err
+		}
+		cursor = nextCursor
+		if len(keys) > 0 {
+			values, err := s.client.MGet(ctx, keys...).Result()
+			if err != nil {
+				return nil, err
+			}
+			for _, value := range values {
+				if value == nil {
+					continue
+				}
+				var raw []byte
+				switch typed := value.(type) {
+				case string:
+					raw = []byte(typed)
+				case []byte:
+					raw = typed
+				default:
+					raw = []byte(fmt.Sprint(typed))
+				}
+				var state DeviceNetworkState
+				if err := json.Unmarshal(raw, &state); err != nil {
+					log.Printf("redis device network state decode skipped: %v", err)
+					continue
+				}
+				out = append(out, state)
+			}
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *RedisTokenStore) DeleteDeviceNetworkState(ctx context.Context, deviceID, networkID string) error {
+	return s.client.Del(ctx, deviceNetworkStateKey(deviceID, networkID)).Err()
 }
 
 func (s *RedisTokenStore) Authenticate(ctx context.Context, accessToken string) (AccessTokenSession, error) {
@@ -286,6 +385,10 @@ func connectPlanRetryPairKey(networkID, nodeID, peerNodeID string) string {
 
 func peerCandidateDeliveryKey(networkID, sourceNodeID, targetNodeID string, candidate controlmsg.PeerCandidate) string {
 	return networkID + ":" + sourceNodeID + ":" + targetNodeID + ":" + candidate.CandidateType + ":" + candidate.Endpoint + ":" + fmt.Sprintf("%d", candidate.Priority)
+}
+
+func deviceNetworkStateKey(deviceID, networkID string) string {
+	return deviceNetworkStateKeyPrefix + deviceID + ":" + networkID
 }
 
 func connectPlanRetryBackoff(failures int) time.Duration {
