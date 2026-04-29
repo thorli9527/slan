@@ -251,6 +251,14 @@ type NetworkAssignment struct {
 	RuntimeLastSeenAt int64 `json:"runtimeLastSeenAt,omitempty"`
 	// RuntimeStateFresh 标识最近一次状态上报是否仍在有效窗口内。
 	RuntimeStateFresh bool `json:"runtimeStateFresh,omitempty"`
+	// RuntimeHeartbeatOnline 是统一派生状态：最近心跳有效且控制面可达。
+	RuntimeHeartbeatOnline bool `json:"runtimeHeartbeatOnline,omitempty"`
+	// RuntimeNetworkEnabled 是统一派生状态：设备绑定可用、心跳有效、客户端已应用网络且隧道已启动。
+	RuntimeNetworkEnabled bool `json:"runtimeNetworkEnabled,omitempty"`
+	// RuntimeDeviceDisabled 是统一派生状态：该绑定被管理员禁用、挂起或拒绝。
+	RuntimeDeviceDisabled bool `json:"runtimeDeviceDisabled,omitempty"`
+	// RuntimeIPApplied 是统一派生状态：客户端确认应用的虚拟 IP 与服务端绑定一致。
+	RuntimeIPApplied bool `json:"runtimeIpApplied,omitempty"`
 	// UserID 是设备所属用户 ID。
 	UserID string `json:"userId"`
 	// UserEmail 是设备所属用户邮箱。

@@ -410,6 +410,13 @@ h1 {
   line-height: 1.5;
 }
 
+.dns-document-help {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
 .span-2 {
   grid-column: 1 / -1;
 }

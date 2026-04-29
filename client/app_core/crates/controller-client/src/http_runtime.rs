@@ -77,5 +77,9 @@ where
     if !(200..300).contains(&status) {
         return Err(format!("unexpected http status: {status}"));
     }
-    serde_json::from_slice(body_json).map_err(|err| err.to_string())
+    serde_json::from_slice(body_json).map_err(|err| {
+        let snippet = String::from_utf8_lossy(body_json);
+        let snippet = snippet.chars().take(300).collect::<String>();
+        format!("decode json response failed: {err}; body={snippet}")
+    })
 }

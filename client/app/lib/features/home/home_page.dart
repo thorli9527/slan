@@ -37,7 +37,6 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final sessionController = AppCoreScope.sessionController;
     final sessionStore = AppCoreScope.sessionStore;
     final tunnelStore = AppCoreScope.tunnelStore;
     if (sessionStore.session == null) {
@@ -124,6 +123,20 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _networkPollingTimer?.cancel();
     super.dispose();
+  }
+
+  void _markNetworkToggleBusy(bool enable) {
+    setState(() {
+      _networkToggleBusy = true;
+      _optimisticNetworkEnabled = enable;
+    });
+  }
+
+  void _clearNetworkToggleBusy() {
+    setState(() {
+      _networkToggleBusy = false;
+      _optimisticNetworkEnabled = null;
+    });
   }
 }
 

@@ -497,7 +497,7 @@ extension _DevicesPageSections on _DevicesPageState {
     required AppTunnelController tunnelController,
     bool isDesktop = false,
   }) {
-    final serviceOwned = AppCoreScope.mode == 'bridge';
+    final serviceOwned = _serviceOwnsRuntime;
     final actionButtons =
         _buildTunnelActionButtons(sessionStore, tunnelController);
     if (serviceOwned) {
@@ -790,7 +790,7 @@ extension _DevicesPageSections on _DevicesPageState {
     AppSessionStore sessionStore,
     AppTunnelController tunnelController,
   ) {
-    final serviceOwned = AppCoreScope.mode == 'bridge';
+    final serviceOwned = _serviceOwnsRuntime;
     return Wrap(
       spacing: 12,
       runSpacing: 12,

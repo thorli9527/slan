@@ -30,6 +30,8 @@ mixin AppCoreCoordinatorAsync {
     emitStateChanged();
     try {
       await action();
+    } on StateError catch (err) {
+      error = err.message;
     } catch (err) {
       error = err.toString();
     } finally {

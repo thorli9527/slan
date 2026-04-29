@@ -57,6 +57,13 @@ void main() {
         networkId: 'net-1',
         name: 'default',
         cidr: '10.0.0.0/24',
+        members: [
+          NetworkMemberModel(
+            deviceId: 'dev-1',
+            role: 'owner',
+            virtualIp: '10.0.0.2',
+          ),
+        ],
       ),
       deviceId: 'dev-1',
       devicePublicKey: 'pub',
@@ -67,6 +74,13 @@ void main() {
         name: 'default',
         cidr: '10.0.0.0/24',
         dns: DNSConfigModel(wildcards: ['*.xx.com=10.0.0.2']),
+        members: [
+          NetworkMemberModel(
+            deviceId: 'dev-1',
+            role: 'owner',
+            virtualIp: '10.0.0.2',
+          ),
+        ],
       ),
       deviceId: 'dev-1',
       devicePublicKey: 'pub',
@@ -74,5 +88,47 @@ void main() {
 
     expect(disabled.interface.dnsServers, isEmpty);
     expect(enabled.interface.dnsServers, ['127.0.0.1']);
+  });
+
+  test('prefers current device virtual IP over stale network member IP', () {
+    const service = TunnelConfigurationService();
+
+    final config = service.buildActiveNetworkConfiguration(
+      network: const NetworkModel(
+        networkId: 'net-1',
+        name: 'default',
+        cidr: '10.0.0.0/24',
+        members: [
+          NetworkMemberModel(
+            deviceId: 'dev-1',
+            role: 'owner',
+            virtualIp: '10.0.0.10',
+          ),
+        ],
+      ),
+      deviceId: 'dev-1',
+      devicePublicKey: 'pub',
+      deviceVirtualIp: '10.0.0.2',
+    );
+
+    expect(config.localVirtualIp, '10.0.0.2');
+    expect(config.interface.addresses, ['10.0.0.2/24']);
+  });
+
+  test('throws when current device has no assigned virtual IP', () {
+    const service = TunnelConfigurationService();
+
+    expect(
+      () => service.buildActiveNetworkConfiguration(
+        network: const NetworkModel(
+          networkId: 'net-1',
+          name: 'default',
+          cidr: '10.0.0.0/24',
+        ),
+        deviceId: 'dev-1',
+        devicePublicKey: 'pub',
+      ),
+      throwsA(isA<StateError>()),
+    );
   });
 }

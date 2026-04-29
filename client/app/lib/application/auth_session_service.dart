@@ -82,8 +82,12 @@ class AuthSessionService {
     final networks = await _api.listNetworks();
     final notice = networks.isEmpty ? '登录成功，当前还没有活动网络。' : '登录成功，已进入默认主页。';
 
+    final sessionWithDevice = matchedDevice == null
+        ? hydratedSession
+        : hydratedSession.copyWith(deviceId: matchedDevice.deviceId);
+
     return AuthSessionHydrationResult(
-      session: hydratedSession,
+      session: sessionWithDevice,
       device: matchedDevice,
       devices: devices,
       networks: networks,

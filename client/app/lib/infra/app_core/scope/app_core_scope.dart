@@ -6,6 +6,7 @@ library slan_app.infra.app_core.scope;
 import 'dart:convert';
 import 'dart:core';
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -138,7 +139,17 @@ class AppCoreScope {
   static AppSessionController get sessionController => _sessionController;
   static AppTunnelController get tunnelController => _tunnelController;
   static TunnelHostGateway get tunnelHostGateway => _tunnelHostGateway;
-  static String get mode => _runtimeModeOverride ?? _appCoreMode;
+  static String get mode {
+    final override = _runtimeModeOverride;
+    if (override != null && override.isNotEmpty) {
+      return override;
+    }
+    final configured = _appCoreMode.trim();
+    if (configured.isNotEmpty) {
+      return configured;
+    }
+    return Platform.isWindows ? 'bridge' : '';
+  }
   static AppHostConfig? get hostConfig =>
       AppHostConfig.tryParse(_runtimeHostInput) ??
       AppHostConfig.tryParse(_runtimeControlBaseUrl);
@@ -284,6 +295,14 @@ class AppCoreScope {
     await preferences.remove(_sessionPreferenceKey);
   }
 
+  static Future<void> hydrateBridgeSession(SessionModel session) async {
+    if (!_isBridgeMode) {
+      return;
+    }
+    _instance.restoreSession(session);
+    await _instance.listDevices();
+  }
+
   static Future<void> persistNetworkUsageState({
     required String userId,
     required bool enabled,
@@ -365,9 +384,16 @@ class AppCoreScope {
       if (_isBridgeMode) {
         try {
           _instance.restoreSession(session);
-          await _instance.listDevices();
+          final devices = await _instance.listDevices();
+          var validatedSession = session;
+          final sessionDeviceId = session.deviceId?.trim() ?? '';
+          if (sessionDeviceId.isEmpty && devices.isNotEmpty) {
+            validatedSession = session.copyWith(deviceId: devices.first.deviceId);
+            await persistSession(validatedSession);
+            _instance.restoreSession(validatedSession);
+          }
           if (_sessionMissingUserLabel(session)) {
-            final refreshed = await _tryRefreshPersistedSession(session);
+            final refreshed = await _tryRefreshPersistedSession(validatedSession);
             if (refreshed != null) {
               await StartupLog.write(
                 'validate persisted bridge session refreshed missing user label',
@@ -376,7 +402,7 @@ class AppCoreScope {
             }
           }
           await StartupLog.write('validate persisted bridge session success');
-          return _persistedSessionValid.withSession(session);
+          return _persistedSessionValid.withSession(validatedSession);
         } catch (error) {
           await StartupLog.write(
             'validate persisted bridge session restore failed: $error',

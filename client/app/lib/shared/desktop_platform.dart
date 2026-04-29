@@ -35,7 +35,7 @@ final class DesktopPlatform {
 
   static bool get supportsNativeTunnel {
     if (Platform.isWindows) {
-      return false;
+      return true;
     }
     return true;
   }

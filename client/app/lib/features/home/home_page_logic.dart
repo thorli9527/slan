@@ -188,10 +188,7 @@ extension _HomePageLogic on _HomePageState {
     if (_networkToggleBusy) {
       return;
     }
-    setState(() {
-      _networkToggleBusy = true;
-      _optimisticNetworkEnabled = enable;
-    });
+    _markNetworkToggleBusy(enable);
     try {
       await StartupLog.write(
         'home network switch requested enable=$enable '
@@ -210,10 +207,7 @@ extension _HomePageLogic on _HomePageState {
       );
     } finally {
       if (mounted) {
-        setState(() {
-          _networkToggleBusy = false;
-          _optimisticNetworkEnabled = null;
-        });
+        _clearNetworkToggleBusy();
       }
     }
   }

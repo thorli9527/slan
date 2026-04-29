@@ -105,6 +105,7 @@ pub trait ControllerClient: Send + Sync {
         access_token: &str,
         req: RegisterDeviceRequest,
     ) -> Result<Device, String>;
+    fn list_devices(&self, access_token: &str) -> Result<Vec<Device>, String>;
     fn register_node(&self, access_token: &str, req: RegisterNodeRequest) -> Result<Node, String>;
     fn list_networks(&self, access_token: &str) -> Result<Vec<Network>, String>;
     fn create_network(

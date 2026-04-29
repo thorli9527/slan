@@ -36,6 +36,10 @@ class LocalDnsService {
     InternetAddress? bindAddress,
     int bindPort = 53,
   }) async {
+    if (records.isEmpty) {
+      await stop();
+      return;
+    }
     _records = Map.unmodifiable(records.map(
       (key, value) => MapEntry(normalizeName(key), value.trim()),
     ));

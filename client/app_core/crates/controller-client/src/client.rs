@@ -12,11 +12,11 @@ use crate::api::{
 use crate::dto::{
     AuthResponseDto, BootstrapRequestDto, BootstrapResponseDto, CreateNetworkRequestDto,
     DeactivateNetworkRequestDto, DeviceDto, DeviceNetworkStateRequestDto,
-    JoinNetworkByKeyRequestDto, JoinNetworkRequestDto, ListNetworksResponseDto, LoginRequestDto,
-    NetworkAssignmentDto, NetworkDto, NetworkJoinResultDto, NodeDto, RefreshTokenRequestDto,
-    RegisterDeviceRequestDto, RegisterNodeRequestDto, RegisterRequestDto, RelayTicketDto,
-    RelayTicketRequestDto, SwitchNetworkRequestDto, UpdateAttachmentRemarkRequestDto,
-    UpdateNetworkDNSRequestDto,
+    JoinNetworkByKeyRequestDto, JoinNetworkRequestDto, ListDevicesResponseDto,
+    ListNetworksResponseDto, LoginRequestDto, NetworkAssignmentDto, NetworkDto,
+    NetworkJoinResultDto, NodeDto, RefreshTokenRequestDto, RegisterDeviceRequestDto,
+    RegisterNodeRequestDto, RegisterRequestDto, RelayTicketDto, RelayTicketRequestDto,
+    SwitchNetworkRequestDto, UpdateAttachmentRemarkRequestDto, UpdateNetworkDNSRequestDto,
 };
 use crate::http_runtime::{get_json, post_json, put_json};
 use crate::transport::JsonHttpTransport;
@@ -86,6 +86,16 @@ where
             &RegisterDeviceRequestDto::from(req),
         )?;
         Ok(dto.into())
+    }
+
+    fn list_devices(&self, access_token: &str) -> Result<Vec<Device>, String> {
+        let dto: ListDevicesResponseDto = get_json(
+            &self.transport,
+            &self.base_url,
+            "/devices",
+            Some(access_token),
+        )?;
+        Ok(dto.items.into_iter().map(Into::into).collect())
     }
 
     fn register_node(&self, access_token: &str, req: RegisterNodeRequest) -> Result<Node, String> {
@@ -324,6 +334,10 @@ where
         req: RegisterDeviceRequest,
     ) -> Result<Device, String> {
         HttpControllerClient::register_device(self, access_token, req)
+    }
+
+    fn list_devices(&self, access_token: &str) -> Result<Vec<Device>, String> {
+        HttpControllerClient::list_devices(self, access_token)
     }
 
     fn register_node(&self, access_token: &str, req: RegisterNodeRequest) -> Result<Node, String> {

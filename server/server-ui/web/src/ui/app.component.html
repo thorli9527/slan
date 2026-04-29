@@ -367,9 +367,12 @@
               <span>DNS 配置</span>
               <textarea
                 [value]="dnsDocumentText"
-                (input)="dnsDocumentText = $any($event.target).value"
+                (input)="onDnsDocumentInput($any($event.target).value)"
                 placeholder="*.xx.com=10.0.0.2&#10;*.*.xx.com=10.0.0.2"
               ></textarea>
+              <span class="dns-document-help">
+                每行一条规则，仅支持 *.xx.com=10.0.0.2 或 *.*.xx.com=10.0.0.2。
+              </span>
             </label>
           </section>
         </div>

@@ -54,7 +54,7 @@ class _DevicesPageState extends State<DevicesPage> {
   final _sendPayloadController = TextEditingController(text: 'hello');
   final _probePayloadController = TextEditingController(text: 'hello');
   final _probeTimeoutController = TextEditingController(text: '25');
-  final _tunnelLocalIpController = TextEditingController(text: '10.0.0.10');
+  final _tunnelLocalIpController = TextEditingController();
   final _tunnelPeerIpController = TextEditingController(text: '10.0.0.2');
   final _tunnelPrivateKeyController =
       TextEditingController(text: 'debug-private-key');
@@ -72,7 +72,8 @@ class _DevicesPageState extends State<DevicesPage> {
   Timer? _runtimeMonitorTimer;
   bool _runtimeMonitorEnabled = false;
   String? _localClientIp;
-  bool get _serviceOwnsRuntime => AppCoreScope.mode == 'bridge';
+  bool get _serviceOwnsRuntime =>
+      AppCoreScope.mode == 'bridge' && Platform.isWindows;
 
   @override
   void initState() {

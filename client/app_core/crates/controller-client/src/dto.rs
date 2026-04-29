@@ -175,6 +175,13 @@ impl From<DeviceDto> for Device {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ListDevicesResponseDto {
+    #[serde(default)]
+    pub items: Vec<DeviceDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceNetworkStateDto {
     pub device_id: String,
     pub network_id: String,
@@ -575,10 +582,23 @@ impl TryFrom<BootstrapResponseDto> for BootstrapConfig {
     type Error = String;
 
     fn try_from(value: BootstrapResponseDto) -> Result<Self, Self::Error> {
+        let mut device: Device = value.device.device.into();
+        if device.virtual_ip.as_deref().unwrap_or("").trim().is_empty() {
+            device.virtual_ip = value
+                .device
+                .attachments
+                .iter()
+                .find_map(|attachment| attachment.virtual_ip.clone())
+                .filter(|value| !value.trim().is_empty());
+        }
+        let mut control_plane: ControlPlaneConfig = value.control_plane.into();
+        if control_plane.session_token.is_none() {
+            control_plane.session_token = value.session_token;
+        }
         Ok(Self {
-            device: value.device.device.into(),
+            device,
             networks: value.networks.into_iter().map(Into::into).collect(),
-            control_plane: value.control_plane.into(),
+            control_plane,
             stun_servers: value.stun_servers,
             relay: value.relay.into(),
             derp_map: value.derp_map.map(TryInto::try_into).transpose()?,

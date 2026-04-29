@@ -151,6 +151,10 @@ export type NetworkAssignment = {
   runtimeVirtualIp?: string;
   runtimeLastSeenAt?: number;
   runtimeStateFresh?: boolean;
+  runtimeHeartbeatOnline?: boolean;
+  runtimeNetworkEnabled?: boolean;
+  runtimeDeviceDisabled?: boolean;
+  runtimeIpApplied?: boolean;
   userId: string;
   userEmail: string;
   role: string;

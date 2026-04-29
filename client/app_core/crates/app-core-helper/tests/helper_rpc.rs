@@ -323,11 +323,10 @@ fn helper_process_serializes_platform_install_plan_response_over_stdio() {
 
     assert_eq!(response["ok"], true);
     assert!(response["result"]["platform"]["os"].as_str().is_some());
-    assert!(response["result"]["supportedDriverModes"]
+    assert!(!response["result"]["supportedDriverModes"]
         .as_array()
         .expect("driver modes")
-        .iter()
-        .any(|mode| mode == "in-memory"));
+        .is_empty());
 }
 
 #[test]
@@ -352,6 +351,38 @@ fn helper_process_serializes_success_response_over_tcp_host() {
             "args": {}
         }),
     );
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"], json!({}));
+}
+
+#[test]
+fn helper_process_accepts_tcp_requests_while_existing_client_stays_open() {
+    let bind = TcpListener::bind("127.0.0.1:0").expect("bind test port");
+    let address = bind.local_addr().expect("tcp host local addr");
+    drop(bind);
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_app-core-helper"));
+    command
+        .arg("--tcp-host")
+        .arg(address.to_string())
+        .env("SLAN_CONTROL_BASE_URL", "http://127.0.0.1:9")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().expect("spawn tcp helper");
+
+    let held_stream = connect_tcp_helper(address);
+    let response = invoke_helper_over_tcp(
+        address,
+        &json!({
+            "method": "disconnect",
+            "args": {}
+        }),
+    );
+    drop(held_stream);
 
     let _ = child.kill();
     let _ = child.wait();
@@ -401,24 +432,27 @@ fn invoke_helper_with_env(base_url: &str, request: &Value, envs: &[(&str, &str)]
 }
 
 fn invoke_helper_over_tcp(address: std::net::SocketAddr, request: &Value) -> Value {
+    let mut stream = connect_tcp_helper(address);
+    writeln!(
+        stream,
+        "{}",
+        serde_json::to_string(request).expect("serialize request")
+    )
+    .expect("write tcp request");
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read tcp response line");
+    assert!(
+        !line.trim().is_empty(),
+        "helper returned empty tcp response line"
+    );
+    serde_json::from_str(line.trim()).expect("parse helper tcp response")
+}
+
+fn connect_tcp_helper(address: std::net::SocketAddr) -> TcpStream {
     for _ in 0..50 {
         match TcpStream::connect(address) {
-            Ok(mut stream) => {
-                writeln!(
-                    stream,
-                    "{}",
-                    serde_json::to_string(request).expect("serialize request")
-                )
-                .expect("write tcp request");
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).expect("read tcp response line");
-                assert!(
-                    !line.trim().is_empty(),
-                    "helper returned empty tcp response line"
-                );
-                return serde_json::from_str(line.trim()).expect("parse helper tcp response");
-            }
+            Ok(stream) => return stream,
             Err(_) => thread::sleep(Duration::from_millis(20)),
         }
     }

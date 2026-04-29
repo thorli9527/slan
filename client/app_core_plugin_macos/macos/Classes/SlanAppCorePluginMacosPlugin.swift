@@ -19,7 +19,11 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
       do {
         let args = call.arguments as? [String: Any] ?? [:]
         let response: Any
-        if let backendMethod = WireGuardTunnelBackendMethod(rawValue: call.method) {
+        if call.method == "platformDoctor" {
+          response = try self.platformDoctor()
+        } else if call.method == "platformInstallPlan" {
+          response = self.platformInstallPlan()
+        } else if let backendMethod = WireGuardTunnelBackendMethod(rawValue: call.method) {
           response = try self.handleTunnelBackend(method: backendMethod, args: args)
         } else {
           response = try self.helperProcess().invoke(method: call.method, args: args)
@@ -154,6 +158,85 @@ public class SlanAppCorePluginMacosPlugin: NSObject, FlutterPlugin {
       }
       return WireGuardTunnelRuntimeViewMapper.toJson(runtime)
     }
+  }
+
+  private func platformDoctor() throws -> [String: Any] {
+    let backend = tunnelProcess()
+    let snapshot = try? backend.actionSnapshot(preferredPeerVirtualIp: nil)
+    let connectionStatus = snapshot?.connectionStatus ?? "unknown"
+    let runtimeState = snapshot?.runtimeState ?? connectionStatus
+    let backendState = snapshot?.backendState ?? connectionStatus
+    let hasConfiguration = snapshot?.hasConfiguration ?? false
+    let isUp = connectionStatus == "connected" ||
+      runtimeState == "running" ||
+      runtimeState == "up" ||
+      backendState == "running" ||
+      backendState == "started"
+    let error = snapshot?.runtimeLastError
+
+    return [
+      "platform": macosPlatformJson(),
+      "tunnelBackend": [
+        "name": backend.hostSource,
+        "executionMode": "system",
+        "executionBackend": "packet-tunnel",
+        "interfaceName": "PacketTunnel",
+        "isUp": isUp,
+        "plannedPeerCount": hasConfiguration ? 1 : 0,
+        "recentCommandCount": 0,
+      ],
+      "checks": [
+        platformCheck(
+          name: "packet_tunnel_backend",
+          status: error == nil ? "ok" : "fail",
+          detail: error ?? "PacketTunnel backend is available through the macOS plugin"
+        ),
+        platformCheck(
+          name: "packet_tunnel_configuration",
+          status: hasConfiguration ? "ok" : "warn",
+          detail: hasConfiguration
+            ? "PacketTunnel configuration is present"
+            : "PacketTunnel configuration has not been applied yet"
+        ),
+        platformCheck(
+          name: "packet_tunnel_runtime",
+          status: isUp ? "ok" : "warn",
+          detail: "connection=\(connectionStatus), runtime=\(runtimeState), backend=\(backendState)"
+        ),
+      ],
+    ]
+  }
+
+  private func platformInstallPlan() -> [String: Any] {
+    [
+      "platform": macosPlatformJson(),
+      "packages": [] as [String],
+      "supportedDriverModes": ["packet-tunnel", "helper-host"],
+      "warnings": [
+        "macOS requires the PacketTunnel app extension and Network Extension entitlement to be embedded and signed with the app",
+        "bridge mode uses the macOS plugin for PacketTunnel runtime actions; Rust helper fallback is only for non-tunnel control RPCs",
+      ],
+    ]
+  }
+
+  private func macosPlatformJson() -> [String: Any] {
+    [
+      "os": "macos",
+      "distroId": NSNull(),
+      "versionId": ProcessInfo.processInfo.operatingSystemVersionString,
+      "idLike": [] as [String],
+      "family": "darwin",
+      "kernelRelease": NSNull(),
+      "packageManager": NSNull(),
+    ]
+  }
+
+  private func platformCheck(name: String, status: String, detail: String) -> [String: Any] {
+    [
+      "name": name,
+      "status": status,
+      "detail": detail,
+    ]
   }
 
   private func requireStringArg(_ key: String, in args: [String: Any]) throws -> String {

@@ -14,8 +14,16 @@ class TunnelConfigurationService {
     required NetworkModel network,
     required String deviceId,
     required String? devicePublicKey,
+    String? deviceVirtualIp,
   }) {
-    final localVirtualIp = _localVirtualIpFor(network, deviceId);
+    final localVirtualIp = _localVirtualIpFor(
+      network,
+      deviceId,
+      deviceVirtualIp: deviceVirtualIp,
+    );
+    if (localVirtualIp.isEmpty) {
+      throw StateError('missing local virtual IP for current device');
+    }
     final peerVirtualIp = _peerVirtualIpFor(network, deviceId, localVirtualIp);
     final interfaceAddress = _interfaceAddressFor(localVirtualIp, network.cidr);
     return WireGuardTunnelConfiguration(
@@ -44,7 +52,15 @@ class TunnelConfigurationService {
   }
 }
 
-String _localVirtualIpFor(NetworkModel network, String deviceId) {
+String _localVirtualIpFor(
+  NetworkModel network,
+  String deviceId, {
+  String? deviceVirtualIp,
+}) {
+  final deviceIp = deviceVirtualIp?.trim();
+  if (deviceIp != null && deviceIp.isNotEmpty) {
+    return deviceIp;
+  }
   for (final member in network.members) {
     if (member.deviceId == deviceId &&
         member.virtualIp != null &&
@@ -52,7 +68,7 @@ String _localVirtualIpFor(NetworkModel network, String deviceId) {
       return member.virtualIp!.trim();
     }
   }
-  return '10.0.0.10';
+  return '';
 }
 
 String _peerVirtualIpFor(

@@ -211,11 +211,7 @@ export class AppComponent implements OnDestroy {
   }
 
   private assignmentHeartbeatOnline(item: NetworkAssignment): boolean {
-    const status = (item.status || '').trim().toLowerCase();
-    if (!item.virtualIp || status === 'disabled' || status === 'suspended' || status === 'rejected') {
-      return false;
-    }
-    return item.runtimeStateFresh === true && item.runtimeControlReachable === true;
+    return item.runtimeHeartbeatOnline === true;
   }
 
   deviceLimitLabel(): string {
@@ -293,6 +289,10 @@ export class AppComponent implements OnDestroy {
     if (!this.canManageNetwork()) {
       this.error.set('只有当前网络 owner 可以管理 DNS。');
       return;
+    }
+    const detail = this.detail();
+    if (detail) {
+      this.dnsDocumentText = this.buildDnsDocument(detail);
     }
     this.networkDialog.set('dns');
   }
@@ -594,12 +594,19 @@ export class AppComponent implements OnDestroy {
     if (!active) {
       return;
     }
+    let parsedDns: { servers: string[]; searchDomains: string[]; wildcards: string[] };
+    try {
+      parsedDns = this.parseDnsDocument(this.dnsDocumentText);
+    } catch (error) {
+      this.setError(error);
+      return;
+    }
     this.actionBusy.set('saveDns');
     try {
       const result = await this.facade.updateNetworkDns({
         token: this.token(),
         networkId: active.networkId,
-        ...this.parseDnsDocument(this.dnsDocumentText),
+        ...parsedDns,
         deviceState: this.currentDeviceState(),
       });
       this.applyRefreshWorkspaceResult(result);
@@ -617,6 +624,10 @@ export class AppComponent implements OnDestroy {
   setCurrentDeviceId(deviceId: string): void {
     this.currentDeviceId.set(deviceId);
     this.sessionService.persistCurrentDeviceId(deviceId);
+  }
+
+  onDnsDocumentInput(value: string): void {
+    this.dnsDocumentText = value.replace(/[^A-Za-z0-9.*=#\s-]/g, '');
   }
 
   showSwitchToOwned(): boolean {
@@ -1014,7 +1025,9 @@ export class AppComponent implements OnDestroy {
     this.updateDescription = draft.description;
     this.updateCidr = draft.cidr;
     this.networkJoinKey = detail.joinKey || '';
-    this.dnsDocumentText = this.buildDnsDocument(detail);
+    if (this.networkDialog() !== 'dns') {
+      this.dnsDocumentText = this.buildDnsDocument(detail);
+    }
   }
 
   private async forwardCallbackToServer(auth: AuthResponse, deviceId?: string, action?: string): Promise<void> {
@@ -1191,18 +1204,74 @@ export class AppComponent implements OnDestroy {
 
   private parseDnsDocument(value: string): { servers: string[]; searchDomains: string[]; wildcards: string[] } {
     const wildcards: string[] = [];
-    for (const raw of value.split(/\r?\n/)) {
+    const lines = value.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const raw = lines[index];
+      const lineNumber = index + 1;
       let line = raw.trim();
       if (!line || line.startsWith('#')) {
         continue;
       }
       line = line.replace(/^wildcard\s+/i, '');
-      if (!line.includes('=')) {
-        throw new Error('DNS 配置格式错误，请使用 *.xx.com=10.0.0.2 这样的通配符映射');
+      const parts = line.split('=');
+      if (parts.length !== 2) {
+        throw new Error(`DNS 第 ${lineNumber} 行格式错误，请使用 *.xx.com=10.0.0.2`);
       }
-      wildcards.push(line);
+      const host = this.normalizeDnsWildcardHost(parts[0]);
+      const ip = parts[1].trim();
+      if (!this.isAllowedDnsWildcardHost(host)) {
+        throw new Error(`DNS 第 ${lineNumber} 行域名不合法，仅支持 *.xx.com 或 *.*.xx.com`);
+      }
+      if (!this.isValidIPv4(ip)) {
+        throw new Error(`DNS 第 ${lineNumber} 行 IP 不合法，请填写 IPv4 地址`);
+      }
+      wildcards.push(`${host}=${ip}`);
     }
     return { servers: [], searchDomains: [], wildcards };
+  }
+
+  private normalizeDnsWildcardHost(host: string): string {
+    const normalized = host.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+    if (normalized.startsWith('*') && !normalized.startsWith('*.')) {
+      return `*.${normalized.slice(1)}`;
+    }
+    return normalized;
+  }
+
+  private isAllowedDnsWildcardHost(host: string): boolean {
+    if (!host || host.length > 253 || host.includes('..')) {
+      return false;
+    }
+    const labels = host.split('.');
+    let wildcardCount = 0;
+    while (wildcardCount < labels.length && labels[wildcardCount] === '*') {
+      wildcardCount += 1;
+    }
+    if (wildcardCount === 0 || wildcardCount === labels.length) {
+      return false;
+    }
+    if (labels.length - wildcardCount < 2) {
+      return false;
+    }
+    return labels.slice(wildcardCount).every((label) => this.isDnsLabel(label));
+  }
+
+  private isDnsLabel(label: string): boolean {
+    return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label);
+  }
+
+  private isValidIPv4(value: string): boolean {
+    const parts = value.split('.');
+    if (parts.length !== 4) {
+      return false;
+    }
+    return parts.every((part) => {
+      if (!/^\d{1,3}$/.test(part)) {
+        return false;
+      }
+      const value = Number(part);
+      return Number.isInteger(value) && value >= 0 && value <= 255;
+    });
   }
 
   private applyManagedDeviceState(managedDevice: { devices: Device[]; currentDeviceId: string; callbackDeviceId: string }): void {

@@ -31,6 +31,7 @@ const DEFAULT_TCP_HOST: &str = "127.0.0.1:46391";
 const DEFAULT_CONTROL_BASE_URL: &str = "http://127.0.0.1:28080";
 const CONTROL_SYNC_AGENT_INTERVAL: Duration = Duration::from_secs(5);
 const NETWORK_STATE_REPORT_INTERVAL: Duration = Duration::from_secs(15);
+const LOCAL_DNS_ENSURE_INTERVAL: Duration = Duration::from_secs(15);
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "SLANAppCoreService";
 
@@ -467,7 +468,8 @@ fn helper_rpc_accepts_connection(tcp_host: &str) -> Result<(), String> {
 
 fn start_service_tasks(tcp_host: String) -> ServiceTaskRunner {
     let control_sync_host = tcp_host.clone();
-    let network_state_host = tcp_host;
+    let network_state_host = tcp_host.clone();
+    let local_dns_host = tcp_host;
     ServiceTaskRunner::start(
         vec![
             ServiceTask::periodic("control-sync", CONTROL_SYNC_AGENT_INTERVAL, move || {
@@ -478,6 +480,9 @@ fn start_service_tasks(tcp_host: String) -> ServiceTaskRunner {
                 NETWORK_STATE_REPORT_INTERVAL,
                 move || invoke_helper_report_device_network_state(&network_state_host),
             ),
+            ServiceTask::periodic("local-dns-ensure", LOCAL_DNS_ENSURE_INTERVAL, move || {
+                invoke_helper_ensure_local_dns(&local_dns_host)
+            }),
         ],
         Arc::new(|message| write_service_log(&message)),
     )
@@ -489,6 +494,10 @@ fn invoke_helper_control_sync(tcp_host: &str) -> Result<(), String> {
 
 fn invoke_helper_report_device_network_state(tcp_host: &str) -> Result<(), String> {
     invoke_helper_method(tcp_host, "reportDeviceNetworkState")
+}
+
+fn invoke_helper_ensure_local_dns(tcp_host: &str) -> Result<(), String> {
+    invoke_helper_method(tcp_host, "ensureLocalDns")
 }
 
 fn invoke_helper_method(tcp_host: &str, method: &str) -> Result<(), String> {

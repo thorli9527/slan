@@ -164,8 +164,69 @@ fn parse_http_response(raw: &[u8]) -> Result<HttpResponse, String> {
         .ok_or_else(|| format!("invalid http status line: {status_line}"))?
         .parse::<u16>()
         .map_err(|err| err.to_string())?;
-    Ok(HttpResponse {
-        status,
-        body_json: body,
-    })
+    let chunked = lines.any(|line| {
+        let line = line.trim();
+        line.eq_ignore_ascii_case("transfer-encoding: chunked")
+            || line
+                .to_ascii_lowercase()
+                .starts_with("transfer-encoding: chunked")
+    });
+    let body_json = if chunked {
+        decode_chunked_body(&body)?
+    } else {
+        body
+    };
+    Ok(HttpResponse { status, body_json })
+}
+
+fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>, String> {
+    let mut offset = 0usize;
+    let mut decoded = Vec::new();
+    loop {
+        let line_end = find_crlf(body, offset)
+            .ok_or_else(|| "invalid chunked response: missing chunk size".to_string())?;
+        let size_line =
+            std::str::from_utf8(&body[offset..line_end]).map_err(|err| err.to_string())?;
+        let size_text = size_line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|err| format!("invalid chunked response size {size_text:?}: {err}"))?;
+        offset = line_end + 2;
+        if size == 0 {
+            return Ok(decoded);
+        }
+        let chunk_end = offset
+            .checked_add(size)
+            .ok_or_else(|| "invalid chunked response: chunk size overflow".to_string())?;
+        if chunk_end + 2 > body.len() {
+            return Err("invalid chunked response: truncated chunk".to_string());
+        }
+        decoded.extend_from_slice(&body[offset..chunk_end]);
+        if &body[chunk_end..chunk_end + 2] != b"\r\n" {
+            return Err("invalid chunked response: missing chunk terminator".to_string());
+        }
+        offset = chunk_end + 2;
+    }
+}
+
+fn find_crlf(bytes: &[u8], start: usize) -> Option<usize> {
+    bytes
+        .get(start..)?
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .map(|position| start + position)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_http_response;
+
+    #[test]
+    fn parse_http_response_decodes_chunked_body() {
+        let raw =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n{\"ok\":1}\r\n0\r\n\r\n";
+        let response = parse_http_response(raw).expect("response");
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_json, br#"{"ok":1}"#);
+    }
 }

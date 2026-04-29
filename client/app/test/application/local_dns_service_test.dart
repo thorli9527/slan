@@ -43,6 +43,11 @@ void main() {
     expect(records, isEmpty);
   });
 
+  test('start with empty records keeps local DNS stopped', () async {
+    await LocalDnsService.instance.start(records: const {});
+    expect(LocalDnsService.instance.isRunning, isFalse);
+  });
+
   test('buildResponse answers A record without forwarding public DNS', () {
     final response = LocalDnsService.buildResponse(
       _query('Laptop.slan'),
@@ -69,6 +74,7 @@ void main() {
     ));
 
     expect(LocalDnsService.resolveName('api.xx.com', records), '10.0.0.2');
+    expect(LocalDnsService.resolveName('www.xx.com', records), '10.0.0.2');
     expect(LocalDnsService.resolveName('a.b.xx.net', records), '10.0.0.3');
     expect(LocalDnsService.resolveName('xx.com', records), isNull);
     expect(LocalDnsService.resolveName('anything.com', records), isNull);

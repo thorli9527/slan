@@ -141,6 +141,7 @@ pub trait AppCoreFacade: Send + Sync {
         machine_id: String,
         public_key: String,
     ) -> Result<Device, String>;
+    fn list_devices(&self) -> Result<Vec<Device>, String>;
     fn register_node(
         &self,
         device_id: String,
@@ -199,6 +200,7 @@ pub trait AppCoreFacade: Send + Sync {
     fn report_device_network_state(&self) -> Result<(), String>;
     fn enable_local_network(&self, network_id: Option<String>) -> Result<BootstrapConfig, String>;
     fn disable_local_network(&self, network_id: Option<String>) -> Result<(), String>;
+    fn ensure_local_dns(&self) -> Result<(), String>;
     fn bootstrap(&self, node_id: String, network_id: String) -> Result<BootstrapConfig, String>;
     fn control_sync(&self) -> Result<BootstrapConfig, String>;
     fn control_status(&self) -> Result<ControlStatusView, String>;

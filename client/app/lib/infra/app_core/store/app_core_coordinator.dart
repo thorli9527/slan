@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
@@ -11,6 +12,7 @@ import '../../../application/local_dns_service.dart';
 import '../../../application/tunnel_configuration_service.dart';
 import '../../../application/tunnel_host_gateway.dart';
 import '../../../application/tunnel_runtime_service.dart';
+import '../api/http_app_core_api.dart';
 import '../scope/app_core_scope.dart';
 import '../models/diagnostic_models.dart';
 import '../models/identity_models.dart';
@@ -46,7 +48,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       const TunnelConfigurationService();
   Timer? _networkStateHeartbeatTimer;
   bool _networkStateHeartbeatInFlight = false;
-  bool get _serviceOwnsLocalNetwork => AppCoreScope.mode == 'bridge';
+  bool get _serviceOwnsLocalNetwork =>
+      AppCoreScope.mode == 'bridge' && Platform.isWindows;
   @override
   bool get busy => sessionStore.busy;
   @override
@@ -402,7 +405,15 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     sessionStore.syncSelectedNetworkId(
       preferredNetworkId: previousNetworkId ?? usageState?.networkId,
     );
+    _syncCurrentDeviceVirtualIpFromSelectedNetwork();
     if (sessionStore.selectedNetwork == null || _hasActiveTunnelRuntime()) {
+      return;
+    }
+    if (await _deferNetworkInitializationUntilAssignedIp(
+      notice: '登录成功，正在等待服务器分配 IP。',
+      debugMessage:
+          '[remote-control] skip enable: current device has no virtual IP',
+    )) {
       return;
     }
     final memberStatus = _currentDeviceMemberStatus(device.deviceId);
@@ -466,16 +477,155 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     return stateActive && backendActive;
   }
 
+  bool _currentDeviceHasAssignedVirtualIp() {
+    final device = sessionStore.device;
+    if (device == null) {
+      return false;
+    }
+    return _assignedVirtualIpForDevice(device.deviceId) != null;
+  }
+
+  String? _assignedVirtualIpForDevice(String deviceId) {
+    final network = sessionStore.selectedNetwork;
+    if (network != null) {
+      for (final member in network.members) {
+        final memberIp = member.virtualIp?.trim();
+        if (member.deviceId == deviceId &&
+            memberIp != null &&
+            memberIp.isNotEmpty) {
+          return memberIp;
+        }
+      }
+    }
+    final deviceIp = sessionStore.device?.virtualIp?.trim();
+    if (sessionStore.device?.deviceId == deviceId &&
+        deviceIp != null &&
+        deviceIp.isNotEmpty) {
+      return deviceIp;
+    }
+    return null;
+  }
+
+  void _syncCurrentDeviceVirtualIpFromSelectedNetwork() {
+    final device = sessionStore.device;
+    if (device == null) {
+      return;
+    }
+    final assignedIp = _assignedVirtualIpForDevice(device.deviceId);
+    if (assignedIp == null || assignedIp == device.virtualIp?.trim()) {
+      return;
+    }
+    sessionStore.syncDevice(_copyDeviceWithVirtualIp(device, assignedIp));
+  }
+
+  Future<void> _refreshCurrentDeviceNetworkConfigFromServer({
+    String? preferredNetworkId,
+  }) async {
+    final session = sessionStore.session;
+    final controlBaseUrl = AppCoreScope.controlBaseUrl;
+    if (session == null ||
+        controlBaseUrl == null ||
+        controlBaseUrl.trim().isEmpty) {
+      throw StateError('网络错误：无法从服务器拉取最新设备 IP 和 DNS 信息');
+    }
+    final currentDeviceId =
+        sessionStore.device?.deviceId ?? session.deviceId;
+    if (currentDeviceId == null || currentDeviceId.trim().isEmpty) {
+      return;
+    }
+    final httpApi = HttpAppCoreApi(baseUrl: controlBaseUrl);
+    httpApi.restoreSession(session);
+    try {
+      final devices = await httpApi.listDevices();
+      sessionStore.devices = devices;
+      for (final device in devices) {
+        if (device.deviceId == currentDeviceId) {
+          sessionStore.syncDevice(device);
+          break;
+        }
+      }
+      final networks = await httpApi.listNetworks();
+      if (networks.isNotEmpty) {
+        sessionStore.networks = networks;
+        sessionStore.syncSelectedNetworkId(
+          preferredNetworkId: preferredNetworkId,
+        );
+        _syncCurrentDeviceVirtualIpFromSelectedNetwork();
+        final network = sessionStore.selectedNetwork;
+        if (network != null) {
+          debugPrint(
+            '[device-config-refresh] network=${network.networkId} '
+            'dnsWildcards=${network.dns.wildcards.length} '
+            'dnsServers=${network.dns.servers.length} '
+            'searchDomains=${network.dns.searchDomains.length}',
+          );
+        }
+      }
+    } catch (error) {
+      debugPrint('[device-config-refresh] http refresh failed: $error');
+      throw StateError('网络错误：无法从服务器拉取最新设备 IP 和 DNS 信息');
+    }
+  }
+
+  Future<bool> _deferNetworkInitializationUntilAssignedIp({
+    required String notice,
+    required String debugMessage,
+  }) async {
+    _syncCurrentDeviceVirtualIpFromSelectedNetwork();
+    if (_currentDeviceHasAssignedVirtualIp()) {
+      return false;
+    }
+    sessionStore.notice = notice;
+    await _reportDeviceNetworkState(
+      networkOnline: false,
+      tunnelUp: false,
+      lastProbeOk: false,
+    );
+    emitStateChanged();
+    debugPrint(debugMessage);
+    return true;
+  }
+
+  DeviceModel _copyDeviceWithVirtualIp(DeviceModel device, String virtualIp) {
+    return DeviceModel(
+      deviceId: device.deviceId,
+      name: device.name,
+      platform: device.platform,
+      deviceVersion: device.deviceVersion,
+      status: device.status,
+      virtualIp: virtualIp,
+      publicKey: device.publicKey,
+      ownerEmail: device.ownerEmail,
+      machineId: device.machineId,
+      linkStatus: device.linkStatus,
+      connectivityProtocol: device.connectivityProtocol,
+      joinedAt: device.joinedAt,
+      membershipStatus: device.membershipStatus,
+      networkRole: device.networkRole,
+      createdAt: device.createdAt,
+      networkIds: device.networkIds,
+      mqtt: device.mqtt,
+      networkState: device.networkState,
+    );
+  }
+
   void _setServiceTunnelRuntimeSnapshot() {
     final network = sessionStore.selectedNetwork;
     final device = sessionStore.device;
     if (network == null || device == null) {
       return;
     }
+    _syncCurrentDeviceVirtualIpFromSelectedNetwork();
+    if (!_currentDeviceHasAssignedVirtualIp()) {
+      sessionStore.notice = '网络已请求启用，正在等待服务器返回 IP。';
+      emitStateChanged();
+      return;
+    }
     final config = _tunnelConfigurationService.buildActiveNetworkConfiguration(
       network: network,
       deviceId: device.deviceId,
       devicePublicKey: device.publicKey,
+      deviceVirtualIp: device.virtualIp,
     );
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     tunnelStore.tunnelRuntimeView = WireGuardTunnelRuntimeView(
@@ -520,6 +670,15 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     return null;
   }
 
+  bool _currentDeviceMemberIsDisabled() {
+    final deviceId = sessionStore.device?.deviceId;
+    if (deviceId == null || deviceId.trim().isEmpty) {
+      return false;
+    }
+    final status = _currentDeviceMemberStatus(deviceId)?.trim().toLowerCase();
+    return status == 'disabled' || status == 'suspended' || status == 'rejected';
+  }
+
   bool _isRemoteAttachmentDisabledError(Object error) {
     final message = error.toString().toLowerCase();
     return message.contains('forbidden') &&
@@ -560,6 +719,12 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     if (sessionStore.selectedNetworkId == null ||
         sessionStore.networks.isEmpty) {
       debugPrint('[startup] skip auto enable: no selected network');
+      return;
+    }
+    if (await _deferNetworkInitializationUntilAssignedIp(
+      notice: '登录成功，正在等待服务器分配 IP。',
+      debugMessage: '[startup] skip auto enable: current device has no virtual IP',
+    )) {
       return;
     }
     if (_hasActiveTunnelRuntime()) {
@@ -797,7 +962,19 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     }
     sessionStore.syncSelectedNetworkId();
     final requestedNetworkId = sessionStore.selectedNetworkId;
+    await _refreshCurrentDeviceNetworkConfigFromServer(
+      preferredNetworkId: requestedNetworkId,
+    );
+    if (await _deferNetworkInitializationUntilAssignedIp(
+      notice: '网络已请求启用，正在等待服务器返回 IP。',
+      debugMessage:
+          '[tunnel-enable] skip enable: current device has no virtual IP after HTTP refresh',
+    )) {
+      await _persistNetworkUsageState(enabled: false);
+      return;
+    }
     if (_serviceOwnsLocalNetwork) {
+      await AppCoreScope.hydrateBridgeSession(sessionStore.session!);
       final serviceBootstrap = await AppCoreScope.instance.enableLocalNetwork(
         networkId: requestedNetworkId,
       );
@@ -806,15 +983,33 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       }
       sessionStore.bootstrap = serviceBootstrap;
       sessionStore.controlStatus = await AppCoreScope.instance.controlStatus();
-      sessionStore.syncDevice(serviceBootstrap.device);
+      if (serviceBootstrap.device.deviceId.trim().isNotEmpty) {
+        sessionStore.syncDevice(serviceBootstrap.device);
+      }
       sessionStore.networks = serviceBootstrap.networks;
       sessionStore.syncSelectedNetworkId(
         preferredNetworkId: requestedNetworkId,
       );
+      await _refreshCurrentDeviceNetworkConfigFromServer(
+        preferredNetworkId: requestedNetworkId,
+      );
+      if (await _deferNetworkInitializationUntilAssignedIp(
+        notice: '网络已请求启用，正在等待服务器返回 IP。',
+        debugMessage:
+            '[tunnel-enable] service enabled but current device has no virtual IP',
+      )) {
+        await _persistNetworkUsageState(enabled: false);
+        return;
+      }
       _setServiceTunnelRuntimeSnapshot();
+      if (sessionStore.selectedNetwork?.dns.enabled == true) {
+        sessionStore.notice =
+            'Network enabled，DNS 已同步 ${sessionStore.selectedNetwork!.dns.wildcards.length} 条。';
+      } else {
+        sessionStore.notice = 'Network enabled';
+      }
       await _persistNetworkUsageState(enabled: true);
       unawaited(_sendNetworkStateHeartbeat());
-      sessionStore.notice = 'Network enabled';
       debugPrint(
         '[tunnel-enable] service handled network=${sessionStore.selectedNetworkId}',
       );
@@ -838,12 +1033,21 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     sessionStore.syncSelectedNetworkId(
       preferredNetworkId: runtime.activeNetwork.networkId,
     );
-    await LocalDnsService.instance.configureFromNetwork(runtime.activeNetwork);
+    _syncCurrentDeviceVirtualIpFromSelectedNetwork();
+    if (await _deferNetworkInitializationUntilAssignedIp(
+      notice: '网络已准备就绪，正在等待服务器返回 IP。',
+      debugMessage:
+          '[tunnel-enable] runtime ready but current device has no virtual IP',
+    )) {
+      await _persistNetworkUsageState(enabled: false);
+      return;
+    }
 
     final config = _tunnelConfigurationService.buildActiveNetworkConfiguration(
       network: runtime.activeNetwork,
       deviceId: sessionStore.device!.deviceId,
       devicePublicKey: sessionStore.device!.publicKey,
+      deviceVirtualIp: sessionStore.device!.virtualIp,
     );
     final peerVirtualIp = config.peer.allowedIps.first.split('/').first;
     debugPrint(
@@ -1035,6 +1239,12 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.syncSelectedNetworkId(
         preferredNetworkId: controlStatus.networkId ?? targetNetworkId,
       );
+      if (_currentDeviceMemberIsDisabled()) {
+        await _forceDisableLocalNetwork(
+          reason: '网络管理员已停用当前设备绑定，本地网络已自动禁用。',
+        );
+        return '网络管理员已停用当前设备绑定，本地网络已自动禁用。';
+      }
       return 'Control session synchronized by app-core-service.';
     }
     final result = await _deviceRuntimeService.refreshBootstrap(
@@ -1059,6 +1269,12 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
           ? null
           : result.bootstrap.networks.first.networkId,
     );
+    if (_currentDeviceMemberIsDisabled()) {
+      await _forceDisableLocalNetwork(
+        reason: '网络管理员已停用当前设备绑定，本地网络已自动禁用。',
+      );
+      return '网络管理员已停用当前设备绑定，本地网络已自动禁用。';
+    }
     return result.detail;
   }
 
@@ -1142,6 +1358,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       network: network,
       deviceId: device.deviceId,
       devicePublicKey: device.publicKey,
+      deviceVirtualIp: device.virtualIp,
     );
     final dnsUnchanged = listEquals(
       runtime.dnsServers,

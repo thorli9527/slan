@@ -2,6 +2,7 @@ package impl
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
@@ -17,6 +18,7 @@ func (s *dbState) applyLiveDeviceNetworkStates(ctx context.Context, assignments 
 			item.RuntimeNetworkOnline = false
 			item.RuntimeTunnelUp = false
 			item.RuntimeStateFresh = false
+			applyRuntimeAssignmentSummary(item)
 			continue
 		}
 		item.RuntimeControlReachable = state.ControlReachable
@@ -25,6 +27,7 @@ func (s *dbState) applyLiveDeviceNetworkStates(ctx context.Context, assignments 
 		item.RuntimeVirtualIP = state.VirtualIP
 		item.RuntimeLastSeenAt = state.LastSeenAt
 		item.RuntimeStateFresh = true
+		applyRuntimeAssignmentSummary(item)
 	}
 }
 
@@ -53,4 +56,20 @@ func (s *dbState) listFreshOnlineDeviceNetworkStates(ctx context.Context, now ti
 
 func deviceNetworkStateIsFresh(state repo.DeviceNetworkState, now time.Time) bool {
 	return state.LastSeenAt > 0 && now.Unix()-state.LastSeenAt <= int64(deviceNetworkStateFreshnessWindow/time.Second)
+}
+
+func applyRuntimeAssignmentSummary(item *dto.NetworkAssignment) {
+	status := strings.ToLower(strings.TrimSpace(item.Status))
+	item.RuntimeDeviceDisabled = status == "disabled" || status == "suspended" || status == "rejected"
+	item.RuntimeHeartbeatOnline = !item.RuntimeDeviceDisabled &&
+		strings.TrimSpace(item.VirtualIP) != "" &&
+		item.RuntimeStateFresh &&
+		item.RuntimeControlReachable
+	item.RuntimeIPApplied = item.RuntimeHeartbeatOnline &&
+		strings.TrimSpace(item.RuntimeVirtualIP) != "" &&
+		strings.TrimSpace(item.RuntimeVirtualIP) == strings.TrimSpace(item.VirtualIP)
+	item.RuntimeNetworkEnabled = item.RuntimeHeartbeatOnline &&
+		item.RuntimeNetworkOnline &&
+		item.RuntimeTunnelUp &&
+		item.RuntimeIPApplied
 }

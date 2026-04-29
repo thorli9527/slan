@@ -100,6 +100,10 @@ mod tests {
             unimplemented!()
         }
 
+        fn list_devices(&self) -> Result<Vec<Device>, String> {
+            unimplemented!()
+        }
+
         fn register_node(
             &self,
             _device_id: String,
@@ -191,6 +195,10 @@ mod tests {
         }
 
         fn disable_local_network(&self, _network_id: Option<String>) -> Result<(), String> {
+            unimplemented!()
+        }
+
+        fn ensure_local_dns(&self) -> Result<(), String> {
             unimplemented!()
         }
 
@@ -288,6 +296,10 @@ where
                     args.public_key,
                 )?)?)
             }
+            "listDevices" => {
+                let items = self.inner.list_devices()?;
+                Ok(json!({ "items": items }))
+            }
             "registerNode" => {
                 let args: RegisterNodeArgs = parse_args(args)?;
                 Ok(to_value(self.inner.register_node(
@@ -375,6 +387,10 @@ where
             "disableLocalNetwork" => {
                 let args: LocalNetworkArgs = parse_args(args)?;
                 self.inner.disable_local_network(args.network_id)?;
+                Ok(json!({}))
+            }
+            "ensureLocalDns" => {
+                self.inner.ensure_local_dns()?;
                 Ok(json!({}))
             }
             "bootstrap" => {

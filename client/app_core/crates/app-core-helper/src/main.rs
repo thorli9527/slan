@@ -3,6 +3,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -62,18 +64,20 @@ fn run() -> Result<(), String> {
             Ok(path) => Box::new(FileTunnelKeyProvider::new(PathBuf::from(path))),
             Err(_) => Box::new(ffi_bridge::InMemoryTunnelKeyProvider),
         };
-    let facade = JsonAppCoreFacade::new(DefaultAppCoreFacade::new_with_tunnel_key_provider(
-        HttpControllerClient::new(base_url, TcpJsonHttpTransport::default()),
-        p2p_connector.clone(),
-        relay_client.clone(),
-        derp_pool.clone(),
-        InMemoryPathManager::new(derp_pool, relay_client, p2p_connector),
-        tunnel_host.clone(),
-        key_provider,
+    let facade = Arc::new(JsonAppCoreFacade::new(
+        DefaultAppCoreFacade::new_with_tunnel_key_provider(
+            HttpControllerClient::new(base_url, TcpJsonHttpTransport::default()),
+            p2p_connector.clone(),
+            relay_client.clone(),
+            derp_pool.clone(),
+            InMemoryPathManager::new(derp_pool, relay_client, p2p_connector),
+            tunnel_host.clone(),
+            key_provider,
+        ),
     ));
 
     if let Some(address) = tcp_host {
-        return run_tcp_host(&address, &facade, tunnel_host.as_ref());
+        return run_tcp_host(&address, facade, tunnel_host);
     }
 
     let stdin = io::stdin();
@@ -83,7 +87,7 @@ fn run() -> Result<(), String> {
         if line.trim().is_empty() {
             continue;
         }
-        let response = handle_rpc_line(&line, &facade, tunnel_host.as_ref())?;
+        let response = handle_rpc_line(&line, facade.as_ref(), tunnel_host.as_ref())?;
         serde_json::to_writer(&mut stdout, &response).map_err(|err| err.to_string())?;
         stdout.write_all(b"\n").map_err(|err| err.to_string())?;
         stdout.flush().map_err(|err| err.to_string())?;
@@ -93,11 +97,11 @@ fn run() -> Result<(), String> {
 
 fn run_tcp_host<F>(
     address: &str,
-    facade: &JsonAppCoreFacade<F>,
-    tunnel_host: &HelperTunnelHost,
+    facade: Arc<JsonAppCoreFacade<F>>,
+    tunnel_host: Arc<HelperTunnelHost>,
 ) -> Result<(), String>
 where
-    F: ffi_bridge::AppCoreFacade,
+    F: ffi_bridge::AppCoreFacade + 'static,
 {
     let listener = TcpListener::bind(address)
         .map_err(|err| format!("failed to bind app-core-helper tcp host on {address}: {err}"))?;
@@ -105,7 +109,13 @@ where
     for stream in listener.incoming() {
         let stream = stream.map_err(|err| format!("tcp host accept failed: {err}"))?;
         write_helper_log("accepted tcp client connection");
-        handle_tcp_client(stream, facade, tunnel_host)?;
+        let facade = facade.clone();
+        let tunnel_host = tunnel_host.clone();
+        thread::spawn(move || {
+            if let Err(err) = handle_tcp_client(stream, facade.as_ref(), tunnel_host.as_ref()) {
+                write_helper_log(&format!("tcp client handler failed: {err}"));
+            }
+        });
     }
     Ok(())
 }
@@ -825,6 +835,7 @@ impl TunnelManager for HelperTunnelHost {
     }
 
     fn start_local_dns(&self, records: Vec<(String, String)>) -> Result<(), String> {
+        let records = normalize_dns_records(records);
         let mut dns_server = self
             .dns_server
             .lock()
@@ -856,19 +867,21 @@ impl TunnelManager for HelperTunnelHost {
 struct HelperLocalDnsServer {
     stop_signal: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
+    nrpt_namespaces: Vec<String>,
 }
 
 impl HelperLocalDnsServer {
-    fn start(records: Vec<(String, String)>) -> Result<Self, String> {
-        let records = normalize_dns_records(records);
+    fn start(records: HashMap<String, String>) -> Result<Self, String> {
         if records.is_empty() {
             return Err("local dns requires at least one valid record".to_string());
         }
+        let nrpt_namespaces = nrpt_namespaces_for_records(&records);
         let socket = UdpSocket::bind(("127.0.0.1", 53))
             .map_err(|err| format!("local dns bind 127.0.0.1:53 failed: {err}"))?;
         socket
             .set_read_timeout(Some(Duration::from_millis(250)))
             .map_err(|err| format!("local dns set read timeout failed: {err}"))?;
+        configure_windows_nrpt_rules(&nrpt_namespaces)?;
         let stop_signal = Arc::new(AtomicBool::new(false));
         let thread_stop = stop_signal.clone();
         let handle = thread::spawn(move || {
@@ -879,6 +892,7 @@ impl HelperLocalDnsServer {
         Ok(Self {
             stop_signal,
             handle: Some(handle),
+            nrpt_namespaces,
         })
     }
 
@@ -889,12 +903,18 @@ impl HelperLocalDnsServer {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+        if let Err(err) = remove_windows_nrpt_rules(&self.nrpt_namespaces) {
+            write_helper_log(&format!("local dns remove NRPT skipped: {err}"));
+        }
     }
 }
 
 impl Drop for HelperLocalDnsServer {
     fn drop(&mut self) {
         self.stop_signal.store(true, Ordering::SeqCst);
+        if let Err(err) = remove_windows_nrpt_rules(&self.nrpt_namespaces) {
+            write_helper_log(&format!("local dns drop remove NRPT skipped: {err}"));
+        }
     }
 }
 
@@ -986,6 +1006,109 @@ fn wildcard_matches(pattern: &str, name: &str) -> bool {
             .iter()
             .zip(name_labels.iter())
             .all(|(pattern, name)| *pattern == "*" || pattern == name)
+}
+
+fn nrpt_namespaces_for_records(records: &HashMap<String, String>) -> Vec<String> {
+    let mut namespaces = records
+        .keys()
+        .filter_map(|host| nrpt_namespace_for_host(host))
+        .collect::<Vec<_>>();
+    namespaces.sort();
+    namespaces.dedup();
+    namespaces
+}
+
+fn nrpt_namespace_for_host(host: &str) -> Option<String> {
+    let labels = host.split('.').collect::<Vec<_>>();
+    let wildcard_count = labels.iter().take_while(|label| **label == "*").count();
+    if wildcard_count == 0 || labels.len().saturating_sub(wildcard_count) < 2 {
+        return None;
+    }
+    Some(format!(".{}", labels[wildcard_count..].join(".")))
+}
+
+fn configure_windows_nrpt_rules(namespaces: &[String]) -> Result<(), String> {
+    if namespaces.is_empty() {
+        return Ok(());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        remove_windows_nrpt_rules(namespaces)?;
+        let namespace_array = powershell_string_array(namespaces);
+        let script = format!(
+            "$ErrorActionPreference='Stop'\n\
+             $namespaces=@({namespace_array})\n\
+             foreach ($namespace in $namespaces) {{\n\
+               Add-DnsClientNrptRule -Namespace $namespace -NameServers '127.0.0.1' -Comment 'SLAN local DNS' -ErrorAction Stop | Out-Null\n\
+             }}\n\
+             Clear-DnsClientCache -ErrorAction SilentlyContinue\n"
+        );
+        run_powershell_script(&script)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = namespaces;
+        Ok(())
+    }
+}
+
+fn remove_windows_nrpt_rules(namespaces: &[String]) -> Result<(), String> {
+    if namespaces.is_empty() {
+        return Ok(());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let namespace_array = powershell_string_array(namespaces);
+        let script = format!(
+            "$ErrorActionPreference='Stop'\n\
+             $namespaces=@({namespace_array})\n\
+             foreach ($namespace in $namespaces) {{\n\
+               Get-DnsClientNrptRule -ErrorAction SilentlyContinue |\n\
+                 Where-Object {{ $_.Namespace -contains $namespace -and ($_.NameServers -contains '127.0.0.1' -or $_.Comment -eq 'SLAN local DNS') }} |\n\
+                 ForEach-Object {{ Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue | Out-Null }}\n\
+             }}\n\
+             Clear-DnsClientCache -ErrorAction SilentlyContinue\n"
+        );
+        run_powershell_script(&script)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = namespaces;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_powershell_script(script: &str) -> Result<(), String> {
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|err| format!("launch powershell failed: {err}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if detail.is_empty() {
+        format!("powershell exited with status {}", output.status)
+    } else {
+        detail
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn powershell_string_array(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!("'{}'", value.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 struct DnsQuestion {
@@ -1136,6 +1259,17 @@ fn platform_report_json() -> Value {
 
 fn platform_install_plan_json() -> Value {
     let platform = platform_report_json();
+    if platform.get("os").and_then(Value::as_str) == Some("windows") {
+        return json!({
+            "platform": platform,
+            "packages": Vec::<String>::new(),
+            "supportedDriverModes": ["windows-embeddable", "wintun"],
+            "warnings": [
+                "SLAN Windows requires the packaged installer so app-core-service, app-core-helper, and wintun.dll are installed together",
+                "the SLANAppCoreService Windows service must run as LocalSystem to apply the Wintun adapter and virtual IP",
+            ],
+        });
+    }
     let family = platform
         .get("family")
         .and_then(Value::as_str)
@@ -1171,6 +1305,9 @@ fn platform_install_plan_json() -> Value {
 }
 
 fn platform_doctor_json(diagnostics: &tunnel::TunnelBackendDiagnostics) -> Value {
+    if std::env::consts::OS == "windows" {
+        return platform_doctor_windows_json(diagnostics);
+    }
     let checks = vec![
         platform_check_json(
             "ip_command",
@@ -1231,12 +1368,209 @@ fn platform_doctor_json(diagnostics: &tunnel::TunnelBackendDiagnostics) -> Value
     })
 }
 
+fn platform_doctor_windows_json(diagnostics: &tunnel::TunnelBackendDiagnostics) -> Value {
+    let checks = vec![
+        platform_check_json(
+            "app_core_service",
+            windows_service_status(),
+            windows_service_detail(),
+        ),
+        platform_check_json(
+            "helper_executable",
+            if sibling_executable_exists("app-core-helper.exe") {
+                "ok"
+            } else {
+                "fail"
+            },
+            if sibling_executable_exists("app-core-helper.exe") {
+                "app-core-helper.exe is present next to the running binary".to_string()
+            } else {
+                "app-core-helper.exe is missing next to the running binary".to_string()
+            },
+        ),
+        platform_check_json(
+            "wintun_dll",
+            if sibling_executable_exists("wintun.dll") {
+                "ok"
+            } else {
+                "fail"
+            },
+            if sibling_executable_exists("wintun.dll") {
+                "wintun.dll is present next to the running binary".to_string()
+            } else {
+                "wintun.dll is missing next to the running binary".to_string()
+            },
+        ),
+        platform_check_json(
+            "powershell",
+            if command_on_path("powershell") || command_on_path("pwsh") {
+                "ok"
+            } else {
+                "fail"
+            },
+            if command_on_path("powershell") || command_on_path("pwsh") {
+                "PowerShell is available for adapter/IP management".to_string()
+            } else {
+                "PowerShell is missing from PATH".to_string()
+            },
+        ),
+        platform_check_json(
+            "netsh",
+            if command_on_path("netsh") {
+                "ok"
+            } else {
+                "warn"
+            },
+            if command_on_path("netsh") {
+                "netsh is available as a Windows network fallback".to_string()
+            } else {
+                "netsh is missing from PATH".to_string()
+            },
+        ),
+        platform_check_json(
+            "slan_lan_adapter",
+            windows_slan_adapter_status(),
+            windows_slan_adapter_detail(),
+        ),
+        platform_check_json(
+            "tunnel_backend",
+            "ok",
+            format!(
+                "backend {} mode {} executor {} peers {} commands {}",
+                diagnostics.name,
+                diagnostics.execution_mode.unwrap_or("unknown"),
+                diagnostics.execution_backend.unwrap_or("unknown"),
+                diagnostics.planned_peer_count,
+                diagnostics.recent_command_count
+            ),
+        ),
+    ];
+    json!({
+        "platform": platform_report_json(),
+        "tunnelBackend": {
+            "name": diagnostics.name,
+            "executionMode": diagnostics.execution_mode,
+            "executionBackend": diagnostics.execution_backend,
+            "interfaceName": diagnostics.interface_name,
+            "isUp": diagnostics.is_up,
+            "plannedPeerCount": diagnostics.planned_peer_count,
+            "recentCommandCount": diagnostics.recent_command_count,
+        },
+        "checks": checks,
+    })
+}
+
 fn platform_check_json(name: &str, status: &str, detail: String) -> Value {
     json!({
         "name": name,
         "status": status,
         "detail": detail,
     })
+}
+
+fn sibling_executable_exists(file_name: &str) -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(file_name)))
+        .map(|path| path.exists())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_service_status() -> &'static str {
+    match windows_service_query_output() {
+        Some(output) if output.contains("RUNNING") => "ok",
+        Some(_) => "warn",
+        None => "fail",
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_service_status() -> &'static str {
+    "warn"
+}
+
+#[cfg(target_os = "windows")]
+fn windows_service_detail() -> String {
+    match windows_service_query_output() {
+        Some(output) if output.contains("RUNNING") => {
+            "SLANAppCoreService is installed and running".to_string()
+        }
+        Some(output) if output.contains("STOPPED") => {
+            "SLANAppCoreService is installed but stopped".to_string()
+        }
+        Some(_) => "SLANAppCoreService is installed but not running".to_string(),
+        None => "SLANAppCoreService is not installed or sc.exe is unavailable".to_string(),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_service_detail() -> String {
+    "Windows service check is only available on Windows".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn windows_service_query_output() -> Option<String> {
+    let output = Command::new("sc.exe")
+        .args(["query", "SLANAppCoreService"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_slan_adapter_status() -> &'static str {
+    match windows_slan_adapter_query_output() {
+        Some(output) if !output.trim().is_empty() => "ok",
+        Some(_) => "warn",
+        None => "warn",
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_slan_adapter_status() -> &'static str {
+    "warn"
+}
+
+#[cfg(target_os = "windows")]
+fn windows_slan_adapter_detail() -> String {
+    match windows_slan_adapter_query_output() {
+        Some(output) if !output.trim().is_empty() => {
+            format!("SLAN LAN Adapter detected: {}", output.trim())
+        }
+        Some(_) => {
+            "SLAN LAN Adapter was not found; the installer or service can recreate it".to_string()
+        }
+        None => "unable to query SLAN LAN Adapter with PowerShell".to_string(),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_slan_adapter_detail() -> String {
+    "Windows adapter check is only available on Windows".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn windows_slan_adapter_query_output() -> Option<String> {
+    let script = "$adapter = Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'SLAN LAN Adapter' -or $_.InterfaceDescription -like '*Wintun*' -or $_.InterfaceDescription -like '*WireGuard*Tunnel*' -or $_.InterfaceDescription -like '*WireGuardNT*' } | Select-Object -First 1 Name, InterfaceDescription, Status; if ($adapter) { Write-Output ($adapter.Name + '|' + $adapter.InterfaceDescription + '|' + $adapter.Status) }";
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn command_on_path(command: &str) -> bool {
@@ -1339,10 +1673,11 @@ mod tests {
     use super::{
         build_dns_response, build_rpc_response, classify_helper_error, classify_structured_error,
         current_timestamp_ms, linux_family, linux_package_manager, maybe_test_override_result,
-        normalize_dns_records, parse_os_release, resolve_dns_name, HelperTunnelConfiguration,
-        HelperTunnelHost,
+        normalize_dns_records, nrpt_namespaces_for_records, parse_os_release, resolve_dns_name,
+        HelperTunnelConfiguration, HelperTunnelHost,
     };
     use serde_json::{json, Value};
+    use tunnel::TunnelManager;
 
     fn dns_query(name: &str) -> Vec<u8> {
         let mut request = vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
@@ -1382,6 +1717,27 @@ mod tests {
         assert_eq!(&response[2..4], &[0x81, 0x80]);
         assert_eq!(&response[6..8], &[0x00, 0x01]);
         assert!(response.ends_with(&[10, 0, 0, 2]));
+    }
+
+    #[test]
+    fn local_dns_derives_nrpt_namespaces_from_wildcards() {
+        let records = normalize_dns_records(vec![
+            ("*.xx.com".into(), "10.0.0.2".into()),
+            ("*.*.xx.net".into(), "10.0.0.3".into()),
+        ]);
+
+        assert_eq!(
+            nrpt_namespaces_for_records(&records),
+            vec![".xx.com".to_string(), ".xx.net".to_string()]
+        );
+    }
+
+    #[test]
+    fn local_dns_start_skips_empty_effective_records() {
+        let host = HelperTunnelHost::new();
+        host.start_local_dns(vec![("".into(), "".into())])
+            .expect("empty effective records should be skipped");
+        assert!(host.dns_server.lock().expect("dns lock").is_none());
     }
 
     #[test]
@@ -1722,11 +2078,15 @@ mod tests {
             .expect("platform install plan");
 
         assert_eq!(plan["platform"]["os"].as_str().is_some(), true);
-        assert!(plan["supportedDriverModes"]
+        let modes = plan["supportedDriverModes"]
             .as_array()
-            .expect("driver modes")
-            .iter()
-            .any(|mode| mode == "in-memory"));
+            .expect("driver modes");
+        assert!(!modes.is_empty());
+        if std::env::consts::OS == "windows" {
+            assert!(modes.iter().any(|mode| mode == "wintun"));
+        } else {
+            assert!(modes.iter().any(|mode| mode == "in-memory"));
+        }
     }
 
     #[test]

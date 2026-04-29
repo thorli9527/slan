@@ -307,14 +307,14 @@ export class NetworkWorkspaceComponent {
     if (!item.runtimeStateFresh) {
       return '心跳离线';
     }
-    return item.runtimeControlReachable ? '心跳在线' : '心跳异常';
+    return item.runtimeHeartbeatOnline ? '心跳在线' : '心跳异常';
   }
 
   heartbeatStatusTone(item: NetworkAssignment): string {
     if (!item.runtimeStateFresh) {
       return 'muted';
     }
-    return item.runtimeControlReachable ? 'success' : 'warn';
+    return item.runtimeHeartbeatOnline ? 'success' : 'warn';
   }
 
   networkEnableStatusLabel(item: NetworkAssignment): string {
@@ -334,15 +334,13 @@ export class NetworkWorkspaceComponent {
     if (!item.runtimeStateFresh) {
       return '等待客户端';
     }
-    if (!item.runtimeNetworkOnline) {
-      return '未应用';
+    if (item.runtimeNetworkEnabled) {
+      return '已启用';
     }
-    if (item.runtimeTunnelUp) {
-      return item.runtimeVirtualIp && item.runtimeVirtualIp !== item.virtualIp
-        ? 'IP同步中'
-        : '已启用';
+    if (item.runtimeNetworkOnline && item.runtimeTunnelUp && !item.runtimeIpApplied) {
+      return 'IP同步中';
     }
-    return '隧道同步中';
+    return item.runtimeNetworkOnline ? '隧道同步中' : '未应用';
   }
 
   networkEnableStatusTone(item: NetworkAssignment): string {
@@ -362,13 +360,10 @@ export class NetworkWorkspaceComponent {
     if (!item.runtimeStateFresh) {
       return 'muted';
     }
-    if (!item.runtimeNetworkOnline) {
-      return 'muted';
-    }
-    if (item.runtimeTunnelUp && (!item.runtimeVirtualIp || item.runtimeVirtualIp === item.virtualIp)) {
+    if (item.runtimeNetworkEnabled) {
       return 'success';
     }
-    return 'warn';
+    return item.runtimeNetworkOnline ? 'warn' : 'muted';
   }
 
   deviceBindingStatusLabel(item: NetworkAssignment): string {
