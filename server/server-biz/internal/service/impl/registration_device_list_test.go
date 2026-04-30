@@ -232,6 +232,90 @@ func TestMarkMQTTReachableUpdatesControlReachabilityOnly(t *testing.T) {
 	}
 }
 
+func TestMarkMQTTReachableKeepsDisabledAttachmentOffline(t *testing.T) {
+	state := newNetworkTestState(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	if err := state.pg.CreateUser(ctx, repo.User{
+		UserID:       "user-1",
+		Email:        "user@example.com",
+		PasswordHash: "hash",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	createNetworkFixture(t, state, "user-1", "net-1", "subnet-1", "10.0.0.0/16")
+	if err := state.pg.InsertDevice(ctx, repo.Device{
+		DeviceID:  "dev-1",
+		UserID:    "user-1",
+		MachineID: "machine-1",
+		Name:      "device",
+		Platform:  "windows",
+		Status:    "offline",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("insert device: %v", err)
+	}
+	if err := state.pg.CreateMember(ctx, dto.NetworkMember{
+		MemberID:  "member-1",
+		NetworkID: "net-1",
+		DeviceID:  "dev-1",
+		Role:      "owner",
+		CreatedAt: now,
+		Status:    "active",
+	}); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	if err := state.pg.CreateAttachment(ctx, dto.SubnetAttachment{
+		AttachmentID: "att-1",
+		NetworkID:    "net-1",
+		SubnetID:     "subnet-1",
+		DeviceID:     "dev-1",
+		VirtualIP:    "10.0.0.3",
+		Status:       "disabled",
+	}); err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	if err := state.pg.UpsertDeviceNetworkState(ctx, repo.DeviceNetworkState{
+		DeviceID:         "dev-1",
+		NetworkID:        "net-1",
+		ControlReachable: true,
+		NetworkOnline:    true,
+		TunnelUp:         true,
+		LastProbeOK:      true,
+		VirtualIP:        "10.0.0.3",
+		LastSeenAt:       now - 1,
+		UpdatedAt:        now - 1,
+	}); err != nil {
+		t.Fatalf("seed device network state: %v", err)
+	}
+
+	if err := (dbDeviceService{state: state}).MarkMQTTReachable("dev-1"); err != nil {
+		t.Fatalf("mark mqtt reachable: %v", err)
+	}
+
+	got, err := state.pg.GetDeviceNetworkState(ctx, "dev-1", "net-1")
+	if err != nil {
+		t.Fatalf("load device network state: %v", err)
+	}
+	if !got.ControlReachable {
+		t.Fatalf("expected heartbeat to remain reachable, got %+v", got)
+	}
+	if got.NetworkOnline || got.TunnelUp || got.LastProbeOK || got.VirtualIP != "" {
+		t.Fatalf("expected disabled attachment to stay network-offline, got %+v", got)
+	}
+	devices, err := (dbDeviceService{state: state}).ListByUser("user-1")
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("expected one device, got %+v", devices)
+	}
+	if devices[0].CurrentVirtualIP != "" {
+		t.Fatalf("expected offline runtime to clear currentVirtualIp, got %+v", devices[0])
+	}
+}
+
 func TestListDevicesRefreshesStalePresenceBeforeReturning(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()

@@ -333,10 +333,14 @@ func (s dbNetworkService) UpdateAttachmentStatus(userID, networkID, attachmentID
 			return dto.NetworkAssignment{}, err
 		}
 		s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, "")
+		s.state.publishDeviceNetworkDisabled(networkID, attachment.DeviceID, attachment.AttachmentID, "attachment disabled by network owner")
 		if err := s.state.cleanupNetworkDeviceRuntime(ctx, networkID, attachment.DeviceID); err != nil {
 			return dto.NetworkAssignment{}, err
 		}
 		if err := s.state.pg.UpdateAttachmentLease(ctx, attachmentID, "disabled", virtualIP); err != nil {
+			return dto.NetworkAssignment{}, err
+		}
+		if err := s.state.markDeviceNetworkAttachmentDisabled(ctx, networkID, attachment.DeviceID); err != nil {
 			return dto.NetworkAssignment{}, err
 		}
 		if device, err := s.state.pg.GetDeviceByID(ctx, attachment.DeviceID); err == nil {

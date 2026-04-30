@@ -173,6 +173,18 @@ func broadcastDeviceIPReassigned(deps routerDeps, networkID string, deviceIP con
 	}
 }
 
+func broadcastDeviceNetworkDisabled(deps routerDeps, networkID string, disabled controlmsg.DeviceNetworkDisabled) {
+	if disabled.DeviceID != "" {
+		_ = publishControlMQTTEnvelope(deps, disabled.DeviceID, "device_network_disabled", "", disabled)
+	}
+	for _, peerSession := range mqttSessionsInNetwork(deps, networkID, "") {
+		if peerSession.DeviceID == disabled.DeviceID {
+			continue
+		}
+		_ = publishControlMQTTEnvelope(deps, peerSession.DeviceID, "device_network_disabled", "", disabled)
+	}
+}
+
 func broadcastActiveNetworkEnabled(deps routerDeps, userID string, enabled controlmsg.ActiveNetworkEnabled) {
 	if userID == "" {
 		return

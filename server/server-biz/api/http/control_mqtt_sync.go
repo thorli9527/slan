@@ -33,6 +33,10 @@ func startControlSync(deps routerDeps) {
 					if event.DeviceIP != nil {
 						broadcastDeviceIPReassigned(deps, event.NetworkID, *event.DeviceIP)
 					}
+				case "device_network_disabled":
+					if event.DeviceDisabled != nil {
+						broadcastDeviceNetworkDisabled(deps, event.NetworkID, *event.DeviceDisabled)
+					}
 				case "active_network_enabled":
 					if event.ActiveNetwork != nil {
 						broadcastActiveNetworkEnabled(deps, event.TargetUserID, *event.ActiveNetwork)

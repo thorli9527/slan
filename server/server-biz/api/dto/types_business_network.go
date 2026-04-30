@@ -215,8 +215,8 @@ type NetworkDetail struct {
 	DNS DNSConfig `json:"dns"`
 	// JoinKey 是当前网络 owner 可见的加入 key；非 owner 请求时为空。
 	JoinKey string `json:"joinKey,omitempty"`
-	// Subnets 列出该网络下当前定义的全部子网。
-	Subnets []Subnet `json:"subnets"`
+	// Subnets 是兼容字段；单网络模式下不再向客户端展开内部地址池。
+	Subnets []Subnet `json:"subnets,omitempty"`
 	// Members 列出该网络下全部网络层级成员。
 	Members []NetworkMember `json:"members"`
 }

@@ -178,6 +178,18 @@ type DeviceIPReassigned struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// DeviceNetworkDisabled 用于通知客户端当前设备的网络绑定已被停用。
+type DeviceNetworkDisabled struct {
+	// NetworkID 是被停用的网络。
+	NetworkID string `json:"networkId"`
+	// DeviceID 是被停用的设备 ID。
+	DeviceID string `json:"deviceId"`
+	// AttachmentID 是对应的网络挂载关系。
+	AttachmentID string `json:"attachmentId,omitempty"`
+	// Reason 是停用原因说明。
+	Reason string `json:"reason,omitempty"`
+}
+
 // ActiveNetworkEnabled 用于通知客户端当前用户的活动网络已切换到指定网络。
 type ActiveNetworkEnabled struct {
 	// UserID 是被通知的目标用户。
@@ -216,6 +228,8 @@ type ControlSyncEvent struct {
 	Restart *NetworkRestartRequired `json:"restart,omitempty"`
 	// DeviceIP 是 device_ip_reassigned 时携带的虚拟 IP 变更信息。
 	DeviceIP *DeviceIPReassigned `json:"deviceIp,omitempty"`
+	// DeviceDisabled 是 device_network_disabled 时携带的停用信息。
+	DeviceDisabled *DeviceNetworkDisabled `json:"deviceDisabled,omitempty"`
 	// ActiveNetwork 是 active_network_enabled 时携带的活动网络信息。
 	ActiveNetwork *ActiveNetworkEnabled `json:"activeNetwork,omitempty"`
 }

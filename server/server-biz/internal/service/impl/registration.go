@@ -99,9 +99,6 @@ func (s dbDeviceService) SetDeviceNetworkState(userID, deviceID, networkID strin
 	if _, err := s.state.requireActiveNetworkMember(ctx, networkID, deviceID, ErrForbidden, "device"); err != nil {
 		return dto.DeviceNetworkState{}, err
 	}
-	if _, err := s.state.requireActiveNetworkAttachment(ctx, networkID, deviceID, ErrForbidden, "device"); err != nil {
-		return dto.DeviceNetworkState{}, err
-	}
 	if err := s.state.upsertTrustedDeviceNetworkState(ctx, deviceID, networkID, req); err != nil {
 		return dto.DeviceNetworkState{}, err
 	}
@@ -144,6 +141,18 @@ func (s dbDeviceService) MarkMQTTReachable(deviceID string) error {
 			}
 		}
 		state.ControlReachable = true
+		attachmentActive, attachmentVirtualIP, err := s.state.networkAttachmentRuntimeState(ctx, networkID, deviceID)
+		if err != nil {
+			return err
+		}
+		if !attachmentActive {
+			state.NetworkOnline = false
+			state.TunnelUp = false
+			state.LastProbeOK = false
+			state.VirtualIP = ""
+		} else if strings.TrimSpace(state.VirtualIP) == "" {
+			state.VirtualIP = attachmentVirtualIP
+		}
 		state.LastSeenAt = now
 		state.UpdatedAt = now
 		_ = s.state.tokens.StoreDeviceNetworkState(ctx, state, 2*deviceNetworkStateFreshnessWindow)

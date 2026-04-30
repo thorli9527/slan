@@ -208,6 +208,26 @@ func (s *dbState) publishDeviceIPReassigned(networkID, deviceID, attachmentID, v
 	})
 }
 
+func (s *dbState) publishDeviceNetworkDisabled(networkID, deviceID, attachmentID, reason string) {
+	if strings.TrimSpace(networkID) == "" || strings.TrimSpace(deviceID) == "" || s.tokens == nil {
+		return
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "attachment disabled by network owner"
+	}
+
+	_ = s.tokens.PublishControlSyncEvent(context.Background(), controlmsg.ControlSyncEvent{
+		Type:      "device_network_disabled",
+		NetworkID: networkID,
+		DeviceDisabled: &controlmsg.DeviceNetworkDisabled{
+			NetworkID:    networkID,
+			DeviceID:     deviceID,
+			AttachmentID: attachmentID,
+			Reason:       reason,
+		},
+	})
+}
+
 func (s *dbState) publishActiveNetworkEnabled(userID, networkID, reason string) {
 	if strings.TrimSpace(userID) == "" || strings.TrimSpace(networkID) == "" || s.tokens == nil {
 		return
@@ -601,17 +621,14 @@ type subnetTemplate struct {
 }
 
 var defaultSubnetTemplates = []subnetTemplate{
-	{name: "总网络", remark: "默认主子网，适合未分组设备和通用接入"},
-	{name: "开发部", remark: "开发、测试、运维相关设备"},
-	{name: "营销部", remark: "销售、市场、外勤相关设备"},
-	{name: "人事部", remark: "人事、行政、财务相关设备"},
+	{name: "默认网络", remark: "默认地址池，用于当前网络设备 IP 分配"},
 }
 
 func createNetworkCIDR(cidr string) string {
 	if strings.TrimSpace(cidr) != "" {
 		return strings.TrimSpace(cidr)
 	}
-	return "10.0.0.0/22"
+	return "10.0.0.0/24"
 }
 
 func defaultSubnetsForNetwork(networkID, cidr string, newID func() string) ([]dto.Subnet, error) {

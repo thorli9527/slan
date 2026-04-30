@@ -57,7 +57,7 @@ func TestApplyRuntimeAssignmentSummaryRequiresMatchingRuntimeIP(t *testing.T) {
 	}
 }
 
-func TestApplyRuntimeAssignmentSummaryTreatsDisabledDeviceOffline(t *testing.T) {
+func TestApplyRuntimeAssignmentSummaryKeepsHeartbeatForDisabledDevice(t *testing.T) {
 	item := dto.NetworkAssignment{
 		Status:                  "disabled",
 		VirtualIP:               "10.0.0.2",
@@ -73,8 +73,11 @@ func TestApplyRuntimeAssignmentSummaryTreatsDisabledDeviceOffline(t *testing.T) 
 	if !item.RuntimeDeviceDisabled {
 		t.Fatal("expected disabled attachment to mark device disabled")
 	}
-	if item.RuntimeHeartbeatOnline {
-		t.Fatal("expected disabled device to be excluded from heartbeat online")
+	if !item.RuntimeHeartbeatOnline {
+		t.Fatal("expected disabled device to keep control heartbeat online")
+	}
+	if item.RuntimeIPApplied {
+		t.Fatal("expected disabled device to be excluded from runtime IP applied")
 	}
 	if item.RuntimeNetworkEnabled {
 		t.Fatal("expected disabled device to be excluded from network enabled")

@@ -155,9 +155,7 @@ func (s *dbState) buildDeviceDTOForNetwork(ctx context.Context, record repo.Devi
 		} else {
 			device.LinkStatus = "offline"
 		}
-		if state.VirtualIP != "" {
-			device.CurrentVirtualIP = state.VirtualIP
-		}
+		device.CurrentVirtualIP = state.VirtualIP
 	}
 	if state, err := s.pg.GetLatestDeviceConnectionState(ctx, activeNetworkID, record.DeviceID); err == nil {
 		if !hasFreshNetworkState && strings.TrimSpace(state.State) != "" {

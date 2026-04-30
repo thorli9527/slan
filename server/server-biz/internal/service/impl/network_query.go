@@ -57,10 +57,6 @@ func (s dbNetworkService) Get(userID, networkID string) (dto.NetworkDetail, erro
 	if err := s.state.ensureNetworkAccess(ctx, userID, networkID); err != nil {
 		return dto.NetworkDetail{}, err
 	}
-	subnets, err := s.state.pg.ListSubnetsByNetwork(ctx, networkID)
-	if err != nil {
-		return dto.NetworkDetail{}, err
-	}
 	members, err := s.state.pg.ListMembersByNetwork(ctx, networkID)
 	if err != nil {
 		return dto.NetworkDetail{}, err
@@ -70,7 +66,7 @@ func (s dbNetworkService) Get(userID, networkID string) (dto.NetworkDetail, erro
 		OwnedByCurrentUser: record.OwnerUserID == userID,
 		DNS:                record.DNSConfig(),
 		JoinKey:            visibleJoinKey(record, userID),
-		Subnets:            subnets,
+		Subnets:            nil,
 		Members:            members,
 	}, nil
 }

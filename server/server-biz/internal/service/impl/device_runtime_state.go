@@ -61,14 +61,15 @@ func deviceNetworkStateIsFresh(state repo.DeviceNetworkState, now time.Time) boo
 func applyRuntimeAssignmentSummary(item *dto.NetworkAssignment) {
 	status := strings.ToLower(strings.TrimSpace(item.Status))
 	item.RuntimeDeviceDisabled = status == "disabled" || status == "suspended" || status == "rejected"
-	item.RuntimeHeartbeatOnline = !item.RuntimeDeviceDisabled &&
-		strings.TrimSpace(item.VirtualIP) != "" &&
+	item.RuntimeHeartbeatOnline =
 		item.RuntimeStateFresh &&
-		item.RuntimeControlReachable
+			item.RuntimeControlReachable
 	item.RuntimeIPApplied = item.RuntimeHeartbeatOnline &&
+		!item.RuntimeDeviceDisabled &&
 		strings.TrimSpace(item.RuntimeVirtualIP) != "" &&
 		strings.TrimSpace(item.RuntimeVirtualIP) == strings.TrimSpace(item.VirtualIP)
 	item.RuntimeNetworkEnabled = item.RuntimeHeartbeatOnline &&
+		!item.RuntimeDeviceDisabled &&
 		item.RuntimeNetworkOnline &&
 		item.RuntimeTunnelUp &&
 		item.RuntimeIPApplied

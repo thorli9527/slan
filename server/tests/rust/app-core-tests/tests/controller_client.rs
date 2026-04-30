@@ -342,6 +342,66 @@ fn bootstrap_response_parses_derp_map() {
 }
 
 #[test]
+fn bootstrap_response_projects_disabled_attachment_onto_current_member() {
+    let transport = RecordingTransport::default();
+    transport.respond_with(
+        200,
+        r#"{
+            "device": {
+                "device": {"deviceId":"dev-1","name":"mac","platform":"macos","status":"online","publicKey":"pk"},
+                "attachments":[{
+                    "attachmentId":"att-1",
+                    "networkId":"net-1",
+                    "subnetId":"subnet-1",
+                    "deviceId":"dev-1",
+                    "virtualIp":"100.64.0.10",
+                    "status":"disabled"
+                }]
+            },
+            "networks": [{
+                "networkId":"net-1",
+                "name":"home",
+                "defaultSubnetCidr":"100.64.0.0/24",
+                "members":[{
+                    "memberId":"member-1",
+                    "networkId":"net-1",
+                    "attachmentId":"att-1",
+                    "deviceId":"dev-1",
+                    "role":"owner",
+                    "status":"active",
+                    "virtualIp":"100.64.0.10"
+                }]
+            }],
+            "controlPlane": {"wsUrl":"mqtt://127.0.0.1:1883","heartbeatSeconds":15},
+            "relay":{"defaultClusterId":"local","countries":[]},
+            "networkMap": {
+                "selfUserId":"user-1",
+                "selfDeviceId":"dev-1",
+                "selfNodeId":"node-1",
+                "networkId":"net-1",
+                "revision":1,
+                "heartbeatSeconds":15,
+                "stunServers":[],
+                "peers":[],
+                "routes":[],
+                "relayRegions":[],
+                "dns":{"servers":[],"searchDomains":[]}
+            }
+        }"#,
+    );
+
+    let client = HttpControllerClient::new(support::DEV_CONTROL_BASE_URL, transport);
+    let bootstrap = client.bootstrap("token-1", "node-1", "net-1").unwrap();
+
+    assert!(bootstrap.device.virtual_ip.is_none());
+    assert_eq!(bootstrap.networks.len(), 1);
+    assert_eq!(
+        bootstrap.networks[0].members[0].status.as_deref(),
+        Some("disabled")
+    );
+}
+
+#[test]
 fn tcp_transport_rejects_unsupported_scheme_before_network_io() {
     let transport = TcpJsonHttpTransport::new(Duration::from_secs(2));
     let error = transport

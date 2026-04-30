@@ -91,7 +91,7 @@ func TestRegister_DoesNotCreateDefaultOwnedNetwork(t *testing.T) {
 	}
 }
 
-func TestCreateNetwork_CreatesTemplatedSubnets(t *testing.T) {
+func TestCreateNetwork_CreatesSingleDefaultSubnet(t *testing.T) {
 	state := newNetworkTestState(t)
 	ctx := context.Background()
 	if err := state.pg.CreateUser(ctx, repo.User{
@@ -109,23 +109,22 @@ func TestCreateNetwork_CreatesTemplatedSubnets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create network: %v", err)
 	}
-	if created.DefaultSubnetCIDR != "10.0.0.0/24" {
-		t.Fatalf("expected default subnet /24, got %+v", created)
+	if created.DefaultSubnetCIDR != "10.0.0.0/22" {
+		t.Fatalf("expected default subnet to match requested cidr, got %+v", created)
 	}
 
 	subnets, err := state.pg.ListSubnetsByNetwork(ctx, created.NetworkID)
 	if err != nil {
 		t.Fatalf("list subnets: %v", err)
 	}
-	if len(subnets) != 4 {
-		t.Fatalf("expected four subnets, got %+v", subnets)
+	if len(subnets) != 1 {
+		t.Fatalf("expected one internal default subnet, got %+v", subnets)
 	}
-	wantNames := []string{"总网络", "开发部", "营销部", "人事部"}
-	wantCIDRs := []string{"10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"}
-	for index, subnet := range subnets {
-		if subnet.Name != wantNames[index] || subnet.CIDR != wantCIDRs[index] || subnet.Remark == "" {
-			t.Fatalf("unexpected subnet at %d: %+v", index, subnet)
-		}
+	if subnets[0].Name != "默认网络" ||
+		subnets[0].CIDR != "10.0.0.0/22" ||
+		subnets[0].Remark == "" ||
+		!subnets[0].IsDefault {
+		t.Fatalf("unexpected subnet: %+v", subnets[0])
 	}
 }
 
@@ -1300,6 +1299,7 @@ func TestActivate_UsesGlobalAndUserDeviceLimitConfig(t *testing.T) {
 
 func TestBootstrap_IncludesAttachmentsAfterActivation(t *testing.T) {
 	state := newNetworkTestState(t)
+	state.cfg.MQTT.Enabled = true
 	ctx := context.Background()
 	if err := state.pg.CreateUser(ctx, repo.User{
 		UserID:       "user-1",
@@ -1349,6 +1349,9 @@ func TestBootstrap_IncludesAttachmentsAfterActivation(t *testing.T) {
 	}
 	if bootstrap.Device.Attachments[0].VirtualIP == "" {
 		t.Fatalf("expected bootstrap attachment ip, got %+v", bootstrap.Device.Attachments[0])
+	}
+	if bootstrap.Device.Device.MQTT == nil {
+		t.Fatalf("expected bootstrap device to include mqtt credential")
 	}
 }
 
@@ -1511,6 +1514,19 @@ func TestUpdateAttachmentStatus_DisablesMemberAndNotifiesDevice(t *testing.T) {
 	if err := state.tokens.StoreControlSessionToken(ctx, "token-2", "user-2", time.Hour); err != nil {
 		t.Fatalf("store control token: %v", err)
 	}
+	if err := state.pg.UpsertDeviceNetworkState(ctx, repo.DeviceNetworkState{
+		DeviceID:         "dev-2",
+		NetworkID:        "net-1",
+		ControlReachable: true,
+		NetworkOnline:    true,
+		TunnelUp:         true,
+		LastProbeOK:      true,
+		VirtualIP:        "10.0.0.3",
+		LastSeenAt:       time.Now().Unix(),
+		UpdatedAt:        time.Now().Unix(),
+	}); err != nil {
+		t.Fatalf("seed device network state: %v", err)
+	}
 
 	updated, err := (dbNetworkService{state: state}).UpdateAttachmentStatus("owner-1", "net-1", "att-2", dto.UpdateAttachmentStatusRequest{Status: "disabled"})
 	if err != nil {
@@ -1538,6 +1554,16 @@ func TestUpdateAttachmentStatus_DisablesMemberAndNotifiesDevice(t *testing.T) {
 	if _, err := state.tokens.AuthenticateControlSessionToken(ctx, "token-2"); err == nil {
 		t.Fatal("expected control session token to be revoked")
 	}
+	runtimeState, err := state.pg.GetDeviceNetworkState(ctx, "dev-2", "net-1")
+	if err != nil {
+		t.Fatalf("load device network state: %v", err)
+	}
+	if !runtimeState.ControlReachable {
+		t.Fatalf("expected heartbeat state to remain reachable, got %+v", runtimeState)
+	}
+	if runtimeState.NetworkOnline || runtimeState.TunnelUp || runtimeState.LastProbeOK || runtimeState.VirtualIP != "" {
+		t.Fatalf("expected disabled attachment to clear network runtime, got %+v", runtimeState)
+	}
 	memberUser, err := state.pg.GetUserByID(ctx, "user-2")
 	if err != nil {
 		t.Fatalf("load member user: %v", err)
@@ -1550,12 +1576,15 @@ func TestUpdateAttachmentStatus_DisablesMemberAndNotifiesDevice(t *testing.T) {
 	for _, event := range tokenStore.controlSyncEvents {
 		types = append(types, event.Type)
 	}
-	want := []string{"device_ip_reassigned", "peer_remove", "network_restart_required"}
+	want := []string{"device_ip_reassigned", "device_network_disabled", "peer_remove", "network_restart_required"}
 	if strings.Join(types, ",") != strings.Join(want, ",") {
 		t.Fatalf("expected events %v, got %+v", want, tokenStore.controlSyncEvents)
 	}
 	if event := tokenStore.controlSyncEvents[0]; event.DeviceIP == nil || event.DeviceIP.DeviceID != "dev-2" || event.DeviceIP.VirtualIP != "" {
 		t.Fatalf("expected blank device ip reassignment, got %+v", event)
+	}
+	if event := tokenStore.controlSyncEvents[1]; event.DeviceDisabled == nil || event.DeviceDisabled.DeviceID != "dev-2" || event.DeviceDisabled.NetworkID != "net-1" {
+		t.Fatalf("expected device disabled event, got %+v", event)
 	}
 
 	reenabled, err := (dbNetworkService{state: state}).UpdateAttachmentStatus("owner-1", "net-1", "att-2", dto.UpdateAttachmentStatusRequest{Status: "active"})
@@ -1669,6 +1698,12 @@ func TestUpdateAttachmentStatus_AllowsOwnerDeviceDisable(t *testing.T) {
 	}
 	if event := tokenStore.controlSyncEvents[0]; event.DeviceIP.DeviceID != "dev-1" || event.DeviceIP.VirtualIP != "" {
 		t.Fatalf("expected owner device to receive blank virtual ip, got %+v", event)
+	}
+	if len(tokenStore.controlSyncEvents) < 2 || tokenStore.controlSyncEvents[1].DeviceDisabled == nil {
+		t.Fatalf("expected owner device disabled event, got %+v", tokenStore.controlSyncEvents)
+	}
+	if event := tokenStore.controlSyncEvents[1]; event.DeviceDisabled.DeviceID != "dev-1" || event.DeviceDisabled.NetworkID != "net-1" {
+		t.Fatalf("expected owner device disabled payload, got %+v", event)
 	}
 }
 

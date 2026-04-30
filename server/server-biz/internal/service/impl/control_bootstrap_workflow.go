@@ -67,8 +67,10 @@ func (s dbBootstrapService) buildBootstrapDevice(ctx context.Context, userID, de
 		return dto.DeviceBootstrap{}, err
 	}
 	deviceNetworkIDs, _ := s.state.activeDeviceNetworkIDs(ctx, deviceRecord.DeviceID)
+	device := deviceRecord.ToDTO(deviceNetworkIDs)
+	device.MQTT = s.state.buildDeviceMQTTCredential(deviceRecord)
 	return dto.DeviceBootstrap{
-		Device:      deviceRecord.ToDTO(deviceNetworkIDs),
+		Device:      device,
 		Attachments: attachments,
 	}, nil
 }

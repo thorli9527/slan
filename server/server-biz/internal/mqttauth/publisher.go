@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"strings"
@@ -16,7 +17,24 @@ import (
 
 const maxMQTTRemainingLength = 268435455
 
+const (
+	PublishQoSAtMostOnce  byte = 0
+	PublishQoSExactlyOnce byte = 2
+)
+
+type PublishOptions struct {
+	QoS byte
+}
+
+func defaultPublishOptions() PublishOptions {
+	return PublishOptions{QoS: PublishQoSExactlyOnce}
+}
+
 func PublishJSON(ctx context.Context, cfg configs.MQTTConfig, credentialClientID, credentialUsername, credentialPassword, topic string, payload any) error {
+	return PublishJSONWithOptions(ctx, cfg, credentialClientID, credentialUsername, credentialPassword, topic, payload, defaultPublishOptions())
+}
+
+func PublishJSONWithOptions(ctx context.Context, cfg configs.MQTTConfig, credentialClientID, credentialUsername, credentialPassword, topic string, payload any, options PublishOptions) error {
 	if !cfg.Enabled {
 		return nil
 	}
@@ -24,10 +42,13 @@ func PublishJSON(ctx context.Context, cfg configs.MQTTConfig, credentialClientID
 	if err != nil {
 		return err
 	}
-	return publish(ctx, cfg, credentialClientID, credentialUsername, credentialPassword, topic, body)
+	return publish(ctx, cfg, credentialClientID, credentialUsername, credentialPassword, topic, body, options)
 }
 
-func publish(ctx context.Context, cfg configs.MQTTConfig, clientID, username, password, topic string, payload []byte) error {
+func publish(ctx context.Context, cfg configs.MQTTConfig, clientID, username, password, topic string, payload []byte, options PublishOptions) error {
+	if err := validatePublishOptions(options); err != nil {
+		return err
+	}
 	address, err := brokerAddress(cfg.BrokerURL)
 	if err != nil {
 		return err
@@ -53,12 +74,17 @@ func publish(ctx context.Context, cfg configs.MQTTConfig, clientID, username, pa
 	if err := readConnAck(conn); err != nil {
 		return err
 	}
-	publish, err := publishPacket(topic, payload)
+	publish, err := publishPacket(topic, payload, options)
 	if err != nil {
 		return err
 	}
 	if _, err := conn.Write(publish); err != nil {
 		return err
+	}
+	if options.QoS == PublishQoSExactlyOnce {
+		if err := completeQoS2Publish(conn, 1); err != nil {
+			return err
+		}
 	}
 	_, _ = conn.Write([]byte{0xe0, 0x00})
 	return nil
@@ -107,10 +133,16 @@ func connectPacket(clientID, username, password string) ([]byte, error) {
 	return packet.Bytes(), nil
 }
 
-func publishPacket(topic string, payload []byte) ([]byte, error) {
+func publishPacket(topic string, payload []byte, options PublishOptions) ([]byte, error) {
+	if err := validatePublishOptions(options); err != nil {
+		return nil, err
+	}
 	var variable bytes.Buffer
 	if err := writeString(&variable, topic); err != nil {
 		return nil, err
+	}
+	if options.QoS > 0 {
+		_ = binary.Write(&variable, binary.BigEndian, uint16(1))
 	}
 	variable.Write(payload)
 	remaining, err := remainingLength(variable.Len())
@@ -119,10 +151,55 @@ func publishPacket(topic string, payload []byte) ([]byte, error) {
 	}
 
 	var packet bytes.Buffer
-	packet.WriteByte(0x30)
+	packet.WriteByte(0x30 | (options.QoS << 1))
 	packet.Write(remaining)
 	packet.Write(variable.Bytes())
 	return packet.Bytes(), nil
+}
+
+func validatePublishOptions(options PublishOptions) error {
+	if options.QoS != PublishQoSAtMostOnce && options.QoS != PublishQoSExactlyOnce {
+		return fmt.Errorf("unsupported mqtt publish qos %d", options.QoS)
+	}
+	return nil
+}
+
+func completeQoS2Publish(conn net.Conn, packetID uint16) error {
+	header, body, err := readPacket(conn)
+	if err != nil {
+		return err
+	}
+	if header&0xf0 != 0x50 || len(body) < 2 || binary.BigEndian.Uint16(body[:2]) != packetID {
+		return fmt.Errorf("mqtt pubrec rejected")
+	}
+	pubrel := []byte{0x62, 0x02, byte(packetID >> 8), byte(packetID)}
+	if _, err := conn.Write(pubrel); err != nil {
+		return err
+	}
+	header, body, err = readPacket(conn)
+	if err != nil {
+		return err
+	}
+	if header&0xf0 != 0x70 || len(body) < 2 || binary.BigEndian.Uint16(body[:2]) != packetID {
+		return fmt.Errorf("mqtt pubcomp rejected")
+	}
+	return nil
+}
+
+func readPacket(reader io.Reader) (byte, []byte, error) {
+	header := []byte{0}
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return 0, nil, err
+	}
+	remaining, err := readRemainingLength(reader)
+	if err != nil {
+		return 0, nil, err
+	}
+	body := make([]byte, remaining)
+	if _, err := io.ReadFull(reader, body); err != nil {
+		return 0, nil, err
+	}
+	return header[0], body, nil
 }
 
 func writeString(buf *bytes.Buffer, value string) error {

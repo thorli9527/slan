@@ -98,6 +98,21 @@ func TestBifroMQCheckAllowsConnectAndOwnPublishOnly(t *testing.T) {
 	}
 }
 
+func TestBifroMQCheckAllowsNetworkStateHeartbeatIndependentOfAttachmentStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := configs.DefaultConfig()
+	cfg.MQTT.Enabled = true
+	router := mqttAccessTestRouter(cfg, &fakeMQTTDeviceService{})
+
+	headers := map[string]string{"user_id": "dev-1"}
+	if rec := postJSON(router, "/mqtt/bifromq/check", map[string]any{"pub": map[string]any{"topic": "slan/devices/dev-1/networks/net-1/state"}}, headers); rec.Code != http.StatusOK || rec.Body.String() != "true" {
+		t.Fatalf("expected device network state heartbeat to pass, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := postJSON(router, "/mqtt/bifromq/check", map[string]any{"sub": map[string]any{"topicFilter": "slan/devices/dev-1/control/down"}}, headers); rec.Code != http.StatusOK || rec.Body.String() != "true" {
+		t.Fatalf("expected control down subscription to pass, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestBifroMQCheckAllowsServerStateSubscriptionOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := configs.DefaultConfig()
