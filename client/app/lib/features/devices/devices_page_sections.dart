@@ -88,7 +88,7 @@ extension _DevicesPageSections on _DevicesPageState {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Local tunnel runtime actions are routed through the Rust backend on ${DesktopPlatform.nativeTunnelLabel}, so apply, bring-up, and runtime inspection can now run through the desktop bridge.',
+                  'Local mesh runtime actions are routed through the Rust backend on ${DesktopPlatform.nativeTunnelLabel}, so apply, bring-up, and runtime inspection can now run through the desktop bridge.',
                 ),
                 if (footer != null) ...[
                   const SizedBox(height: 12),

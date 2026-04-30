@@ -63,10 +63,10 @@ final class DesktopPlatform {
       return 'WireGuard';
     }
     if (Platform.isAndroid) {
-      return 'VpnService';
+      return 'SLAN Overlay';
     }
     if (Platform.isIOS) {
-      return 'Network Extension';
+      return 'SLAN Overlay';
     }
     return 'Tunnel';
   }

@@ -243,7 +243,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
           await bringTunnelDown();
         } catch (_) {
           // Best effort. Local state still needs to be cleared even if the
-          // tunnel runtime is already gone or not initialized.
+          // The local mesh runtime is already gone or not initialized.
         }
         if (peerVirtualIp != null && peerVirtualIp.isNotEmpty) {
           try {

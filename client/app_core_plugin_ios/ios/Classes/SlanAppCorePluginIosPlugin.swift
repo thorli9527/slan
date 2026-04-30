@@ -96,7 +96,7 @@ public class SlanAppCorePluginIosPlugin: NSObject, FlutterPlugin {
     return [
       "platform": iosPlatform(),
       "tunnelBackend": [
-        "name": "ios-network-extension",
+        "name": "ios-overlay",
         "executionMode": "system",
         "executionBackend": "network-extension",
         "interfaceName": NSNull(),
@@ -111,9 +111,9 @@ public class SlanAppCorePluginIosPlugin: NSObject, FlutterPlugin {
           detail: "iOS MethodChannel is registered"
         ),
         platformCheck(
-          name: "network_extension",
+          name: "overlay_packet_extension",
           status: "warn",
-          detail: "iOS Network Extension tunnel runtime still needs to be implemented"
+          detail: "iOS peer-network packet routing still needs a Network Extension implementation"
         ),
         platformCheck(
           name: "app_core_json_bridge",
@@ -132,7 +132,7 @@ public class SlanAppCorePluginIosPlugin: NSObject, FlutterPlugin {
       "warnings": [
         "Control-plane RPCs are routed through the same JSON-line app-core bridge used by desktop platforms",
         "Set Info.plist key SLANAppCoreServiceHost when an app or extension exposes a TCP endpoint",
-        "Network enable/disable and heartbeat require a Network Extension target and app group storage",
+        "Mobile mesh networking requires a Network Extension packet provider and app group storage",
       ],
     ]
   }

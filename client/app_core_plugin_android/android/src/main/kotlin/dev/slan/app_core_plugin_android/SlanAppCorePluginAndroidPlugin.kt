@@ -109,7 +109,7 @@ class SlanAppCorePluginAndroidPlugin : FlutterPlugin, MethodCallHandler {
     return mapOf(
       "platform" to androidPlatform(),
       "tunnelBackend" to mapOf(
-        "name" to "android-vpnservice",
+        "name" to "android-overlay",
         "executionMode" to "system",
         "executionBackend" to "vpnservice",
         "interfaceName" to null,
@@ -135,9 +135,9 @@ class SlanAppCorePluginAndroidPlugin : FlutterPlugin, MethodCallHandler {
           },
         ),
         platformCheck(
-          "vpn_service",
+          "overlay_packet_service",
           "warn",
-          "Android VpnService tunnel runtime still needs a native service implementation",
+          "Android packet routing still needs a native VpnService-backed overlay implementation",
         ),
       ),
     )
@@ -150,7 +150,7 @@ class SlanAppCorePluginAndroidPlugin : FlutterPlugin, MethodCallHandler {
     "warnings" to listOf(
       "Control-plane RPCs are routed through the same JSON-line app-core bridge used by desktop platforms",
       "Set Android manifest meta-data dev.slan.app_core.SERVICE_HOST when a foreground app-core service exposes a TCP endpoint",
-      "Network tunneling still requires implementing Android VpnService and a foreground service",
+      "Mobile mesh networking still requires implementing Android VpnService as the packet-routing API and a foreground service",
     ),
   )
 
