@@ -25,6 +25,7 @@ pub struct Network {
     pub description: Option<String>,
     pub cidr: String,
     pub default_subnet_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subnets: Vec<Subnet>,
     pub members: Vec<NetworkMember>,
 }

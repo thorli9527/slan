@@ -23,17 +23,24 @@ use windows_service::service_dispatcher;
 
 use tunnel::{TunnelBackend, WindowsEmbeddableServiceBackend};
 
+mod mqtt_control_tasks;
 mod tasks;
 
+use mqtt_control_tasks::{
+    read_mqtt_control_tasks, write_mqtt_control_tasks, MqttControlTask, MqttControlTaskPolicy,
+};
 use tasks::{ServiceTask, ServiceTaskRunner};
 
 const DEFAULT_TCP_HOST: &str = "127.0.0.1:46391";
 const DEFAULT_CONTROL_BASE_URL: &str = "http://127.0.0.1:28080";
 const CONTROL_SYNC_AGENT_INTERVAL: Duration = Duration::from_secs(5);
+const MQTT_CONTROL_TASK_RUNNER_INTERVAL: Duration = Duration::from_secs(2);
 const NETWORK_STATE_REPORT_INTERVAL: Duration = Duration::from_secs(15);
 const LOCAL_DNS_ENSURE_INTERVAL: Duration = Duration::from_secs(15);
 const HELPER_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const HELPER_READY_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const MQTT_CONTROL_TASK_MAX_ATTEMPTS: u32 = 5;
+const MQTT_CONTROL_TASK_RUNNING_STALE_MS: u64 = 30_000;
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "SLANAppCoreService";
 
@@ -591,6 +598,7 @@ fn wait_for_helper_rpc_ready(
 
 fn start_service_tasks(tcp_host: String) -> ServiceTaskRunner {
     let control_sync_host = tcp_host.clone();
+    let mqtt_control_task_host = tcp_host.clone();
     let network_state_host = tcp_host.clone();
     let local_dns_host = tcp_host;
     ServiceTaskRunner::start(
@@ -598,6 +606,11 @@ fn start_service_tasks(tcp_host: String) -> ServiceTaskRunner {
             ServiceTask::periodic("control-sync", CONTROL_SYNC_AGENT_INTERVAL, move || {
                 invoke_helper_control_sync(&control_sync_host)
             }),
+            ServiceTask::periodic(
+                "mqtt-control-task-runner",
+                MQTT_CONTROL_TASK_RUNNER_INTERVAL,
+                move || run_mqtt_control_task_job(&mqtt_control_task_host),
+            ),
             ServiceTask::periodic(
                 "network-state-report",
                 NETWORK_STATE_REPORT_INTERVAL,
@@ -623,11 +636,87 @@ fn invoke_helper_ensure_local_dns(tcp_host: &str) -> Result<(), String> {
     invoke_helper_method(tcp_host, "ensureLocalDns")
 }
 
+fn run_mqtt_control_task_job(tcp_host: &str) -> Result<(), String> {
+    let mut tasks = read_mqtt_control_tasks()?;
+    let Some(index) = next_mqtt_control_task_index(&tasks) else {
+        return Ok(());
+    };
+    let task_id = tasks[index].id.clone();
+    tasks[index].status = "running".to_string();
+    tasks[index].attempts = tasks[index].attempts.saturating_add(1);
+    tasks[index].updated_at_ms = current_timestamp_ms();
+    tasks[index].error.clear();
+    write_mqtt_control_tasks(&tasks)?;
+
+    let task = tasks[index].clone();
+    let result = execute_mqtt_control_task(tcp_host, &task);
+    let mut latest = read_mqtt_control_tasks()?;
+    if let Some(item) = latest.iter_mut().find(|item| item.id == task_id) {
+        item.updated_at_ms = current_timestamp_ms();
+        match result {
+            Ok(()) => {
+                item.status = "succeeded".to_string();
+                item.error.clear();
+            }
+            Err(err) => {
+                item.status = "failed".to_string();
+                item.error = err;
+            }
+        }
+    }
+    write_mqtt_control_tasks(&latest)
+}
+
+fn next_mqtt_control_task_index(tasks: &[MqttControlTask]) -> Option<usize> {
+    MqttControlTaskPolicy {
+        max_attempts: MQTT_CONTROL_TASK_MAX_ATTEMPTS,
+        running_stale_ms: MQTT_CONTROL_TASK_RUNNING_STALE_MS,
+    }
+    .next_runnable_index(tasks, current_timestamp_ms())
+}
+
+fn execute_mqtt_control_task(tcp_host: &str, task: &MqttControlTask) -> Result<(), String> {
+    if task.network_id.trim().is_empty() {
+        return Err("mqtt control task missing networkId".to_string());
+    }
+    match task.task_type.as_str() {
+        "enable_network" => invoke_helper_method_with_args(
+            tcp_host,
+            "enableLocalNetwork",
+            serde_json::json!({ "networkId": task.network_id }),
+        )
+        .map(|_| ()),
+        "disable_network" => invoke_helper_method_with_args(
+            tcp_host,
+            "disableLocalNetwork",
+            serde_json::json!({ "networkId": task.network_id }),
+        )
+        .map(|_| ()),
+        other => Err(format!("unsupported mqtt control task type: {other}")),
+    }
+}
+
 fn invoke_helper_method(tcp_host: &str, method: &str) -> Result<(), String> {
     invoke_helper_method_result(tcp_host, method).map(|_| ())
 }
 
+fn invoke_helper_method_with_args(
+    tcp_host: &str,
+    method: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    invoke_helper_method_result_with_args(tcp_host, method, args)
+}
+
 fn invoke_helper_method_result(tcp_host: &str, method: &str) -> Result<serde_json::Value, String> {
+    invoke_helper_method_result_with_args(tcp_host, method, serde_json::json!({}))
+}
+
+fn invoke_helper_method_result_with_args(
+    tcp_host: &str,
+    method: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let mut stream = TcpStream::connect(tcp_host)
         .map_err(|err| format!("connect helper rpc {tcp_host}: {err}"))?;
     stream
@@ -636,8 +725,12 @@ fn invoke_helper_method_result(tcp_host: &str, method: &str) -> Result<serde_jso
     stream
         .set_write_timeout(Some(Duration::from_secs(4)))
         .map_err(|err| format!("set helper write timeout: {err}"))?;
+    let request = serde_json::json!({
+        "method": method,
+        "args": args,
+    });
     stream
-        .write_all(format!(r#"{{"method":"{method}","args":{{}}}}"#).as_bytes())
+        .write_all(request.to_string().as_bytes())
         .map_err(|err| format!("write {method} rpc: {err}"))?;
     stream
         .write_all(b"\n")
@@ -678,10 +771,7 @@ fn is_stop_requested(stop_signal: Option<&Arc<AtomicBool>>) -> bool {
 }
 
 fn write_service_log(message: &str) {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default();
+    let timestamp = current_timestamp_ms() / 1000;
     let log_path = service_log_path();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -689,6 +779,13 @@ fn write_service_log(message: &str) {
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let _ = writeln!(file, "[{timestamp}] {message}");
     }
+}
+
+fn current_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 fn service_log_path() -> PathBuf {

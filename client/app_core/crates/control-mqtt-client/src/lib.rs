@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,7 @@ pub enum ControlMqttEvent {
     ConnectPlan(ControlMqttConnectPlan),
     NetworkRestartRequired(ControlMqttNetworkRestartRequired),
     DeviceIPReassigned(ControlMqttDeviceIPReassigned),
+    DeviceNetworkDisabled(ControlMqttDeviceNetworkDisabled),
     ActiveNetworkEnabled(ControlMqttActiveNetworkEnabled),
 }
 
@@ -99,6 +101,17 @@ pub struct ControlMqttDeviceIPReassigned {
     pub device_id: String,
     pub attachment_id: String,
     pub virtual_ip: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlMqttDeviceNetworkDisabled {
+    pub network_id: String,
+    pub device_id: String,
+    #[serde(default)]
+    pub attachment_id: String,
     #[serde(default)]
     pub reason: String,
 }
@@ -356,6 +369,10 @@ impl ControlMqttClient {
         decode_control_mqtt_event(response)
     }
 
+    pub fn take_queued_events(&mut self) -> Vec<ControlMqttEvent> {
+        self.queued_events.drain(..).collect()
+    }
+
     pub fn drain_pending_events(
         &mut self,
         timeout: Duration,
@@ -369,6 +386,7 @@ impl ControlMqttClient {
             match self.read_event() {
                 Ok(event) => events.push(event),
                 Err(err) if is_control_mqtt_timeout_error(&err) => break,
+                Err(err) if is_control_mqtt_disconnect_error(&err) => break,
                 Err(err) => {
                     self.stream
                         .set_read_timeout(Some(DEFAULT_IO_TIMEOUT))
@@ -460,6 +478,12 @@ fn decode_control_mqtt_event(response: Envelope) -> Result<ControlMqttEvent, Str
                 serde_json::from_value(response.payload)
                     .map_err(|err| format!("decode device_ip_reassigned: {err}"))?;
             Ok(ControlMqttEvent::DeviceIPReassigned(updated))
+        }
+        "device_network_disabled" => {
+            let disabled: ControlMqttDeviceNetworkDisabled =
+                serde_json::from_value(response.payload)
+                    .map_err(|err| format!("decode device_network_disabled: {err}"))?;
+            Ok(ControlMqttEvent::DeviceNetworkDisabled(disabled))
         }
         "active_network_enabled" => {
             let enabled: ControlMqttActiveNetworkEnabled = serde_json::from_value(response.payload)
@@ -564,7 +588,7 @@ fn mqtt_subscribe_packet(packet_id: u16, topic_filter: &str) -> Result<Vec<u8>, 
     let mut variable = Vec::new();
     variable.extend_from_slice(&packet_id.to_be_bytes());
     mqtt_write_string(&mut variable, topic_filter)?;
-    variable.push(0x00);
+    variable.push(0x02);
     let mut packet = vec![0x82];
     packet.extend_from_slice(&mqtt_remaining_length(variable.len())?);
     packet.extend_from_slice(&variable);
@@ -607,16 +631,16 @@ fn read_mqtt_connack(stream: &mut TcpStream) -> Result<(), String> {
     Ok(())
 }
 
-fn read_mqtt_suback(stream: &mut TcpStream, packet_id: u16) -> Result<(), String> {
-    let packet = read_mqtt_packet(stream)?;
+fn read_mqtt_suback(reader: &mut impl Read, packet_id: u16) -> Result<(), String> {
+    let packet = read_mqtt_packet(reader)?;
     if packet.header & 0xf0 != 0x90 || packet.body.len() < 3 {
         return Err("mqtt subscribe rejected".to_string());
     }
     if u16::from_be_bytes([packet.body[0], packet.body[1]]) != packet_id {
         return Err("mqtt subscribe packet id mismatch".to_string());
     }
-    if packet.body[2..].iter().any(|code| *code == 0x80) {
-        return Err("mqtt subscribe rejected".to_string());
+    if packet.body[2..].iter().any(|code| *code != 0x02) {
+        return Err("mqtt subscribe qos2 rejected".to_string());
     }
     Ok(())
 }
@@ -625,7 +649,12 @@ fn read_mqtt_publish(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String
     loop {
         let packet = read_mqtt_packet(stream)?;
         match packet.header & 0xf0 {
-            0x30 => return parse_mqtt_publish(packet.header, &packet.body),
+            0x30 => {
+                let publish = parse_mqtt_publish(packet.header, &packet.body)?;
+                persist_mqtt_downstream_inbox(&publish.topic, &publish.payload)?;
+                ack_mqtt_publish(stream, &publish)?;
+                return Ok((publish.topic, publish.payload));
+            }
             0xd0 => continue,
             0xc0 => {
                 stream
@@ -637,12 +666,19 @@ fn read_mqtt_publish(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String
     }
 }
 
+struct ParsedMqttPublish {
+    topic: String,
+    packet_id: Option<u16>,
+    qos: u8,
+    payload: Vec<u8>,
+}
+
 struct MqttPacket {
     header: u8,
     body: Vec<u8>,
 }
 
-fn read_mqtt_packet(stream: &mut TcpStream) -> Result<MqttPacket, String> {
+fn read_mqtt_packet(stream: &mut impl Read) -> Result<MqttPacket, String> {
     let mut header = [0_u8; 1];
     stream
         .read_exact(&mut header)
@@ -658,7 +694,7 @@ fn read_mqtt_packet(stream: &mut TcpStream) -> Result<MqttPacket, String> {
     })
 }
 
-fn read_mqtt_remaining_length(stream: &mut TcpStream) -> Result<usize, String> {
+fn read_mqtt_remaining_length(stream: &mut impl Read) -> Result<usize, String> {
     let mut multiplier = 1_usize;
     let mut value = 0_usize;
     for _ in 0..4 {
@@ -675,7 +711,7 @@ fn read_mqtt_remaining_length(stream: &mut TcpStream) -> Result<usize, String> {
     Err("malformed mqtt remaining length".to_string())
 }
 
-fn parse_mqtt_publish(header: u8, body: &[u8]) -> Result<(String, Vec<u8>), String> {
+fn parse_mqtt_publish(header: u8, body: &[u8]) -> Result<ParsedMqttPublish, String> {
     if body.len() < 2 {
         return Err("mqtt publish too short".to_string());
     }
@@ -687,13 +723,134 @@ fn parse_mqtt_publish(header: u8, body: &[u8]) -> Result<(String, Vec<u8>), Stri
         .map_err(|err| format!("mqtt publish topic utf8: {err}"))?;
     let mut payload_offset = 2 + topic_len;
     let qos = (header >> 1) & 0x03;
-    if qos > 0 {
+    let packet_id = if qos > 0 {
         if body.len() < payload_offset + 2 {
             return Err("mqtt publish packet id truncated".to_string());
         }
+        let packet_id = u16::from_be_bytes([body[payload_offset], body[payload_offset + 1]]);
         payload_offset += 2;
+        Some(packet_id)
+    } else {
+        None
+    };
+    Ok(ParsedMqttPublish {
+        topic,
+        packet_id,
+        qos,
+        payload: body[payload_offset..].to_vec(),
+    })
+}
+
+fn ack_mqtt_publish(stream: &mut TcpStream, publish: &ParsedMqttPublish) -> Result<(), String> {
+    match (publish.qos, publish.packet_id) {
+        (0, _) => Ok(()),
+        (1, Some(packet_id)) => write_mqtt_packet_id(stream, 0x40, packet_id, "puback"),
+        (2, Some(packet_id)) => {
+            write_mqtt_packet_id(stream, 0x50, packet_id, "pubrec")?;
+            loop {
+                let packet = read_mqtt_packet(stream)?;
+                match packet.header & 0xf0 {
+                    0x60 => {
+                        if packet.body.len() < 2 {
+                            return Err("mqtt pubrel packet id truncated".to_string());
+                        }
+                        let pubrel_id = u16::from_be_bytes([packet.body[0], packet.body[1]]);
+                        if pubrel_id == packet_id {
+                            return write_mqtt_packet_id(stream, 0x70, packet_id, "pubcomp");
+                        }
+                    }
+                    0xc0 => {
+                        stream
+                            .write_all(&[0xd0, 0x00])
+                            .map_err(|err| format!("write mqtt ping response: {err}"))?;
+                    }
+                    0xd0 => {}
+                    _ => {}
+                }
+            }
+        }
+        (3, _) => Err("invalid mqtt publish qos 3".to_string()),
+        _ => Err("mqtt publish missing packet id".to_string()),
     }
-    Ok((topic, body[payload_offset..].to_vec()))
+}
+
+fn write_mqtt_packet_id(
+    stream: &mut TcpStream,
+    header: u8,
+    packet_id: u16,
+    packet_name: &str,
+) -> Result<(), String> {
+    let mut packet = vec![header, 0x02];
+    packet.extend_from_slice(&packet_id.to_be_bytes());
+    stream
+        .write_all(&packet)
+        .map_err(|err| format!("write mqtt {packet_name}: {err}"))?;
+    stream
+        .flush()
+        .map_err(|err| format!("flush mqtt {packet_name}: {err}"))
+}
+
+fn persist_mqtt_downstream_inbox(topic: &str, payload: &[u8]) -> Result<(), String> {
+    let path = mqtt_downstream_inbox_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "create mqtt downstream inbox directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut entries = std::fs::read_to_string(&path).unwrap_or_default();
+    if entries.trim().is_empty() {
+        entries.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<mqttDownstreamInbox>\n");
+    } else if let Some(index) = entries.rfind("</mqttDownstreamInbox>") {
+        entries.truncate(index);
+    } else {
+        entries.push('\n');
+    }
+    let payload_text = String::from_utf8_lossy(payload);
+    entries.push_str("  <message");
+    entries.push_str(&format!(" receivedAtMs=\"{}\"", current_timestamp_ms()));
+    entries.push_str(&format!(" topic=\"{}\"", xml_escape(topic)));
+    entries.push_str(&format!(" payload=\"{}\"", xml_escape(&payload_text)));
+    entries.push_str(" />\n</mqttDownstreamInbox>\n");
+    std::fs::write(&path, entries)
+        .map_err(|err| format!("write mqtt downstream inbox {}: {err}", path.display()))
+}
+
+fn mqtt_downstream_inbox_path() -> PathBuf {
+    if let Ok(configured) = std::env::var("SLAN_MQTT_DOWNSTREAM_INBOX_FILE") {
+        let trimmed = configured.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(program_data) = std::env::var("ProgramData") {
+        let trimmed = program_data.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("SLAN").join("mqtt-inbox.xml");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    return PathBuf::from(r"C:\ProgramData\SLAN\mqtt-inbox.xml");
+    #[cfg(not(target_os = "windows"))]
+    std::env::temp_dir().join("slan-mqtt-inbox.xml")
+}
+
+fn current_timestamp_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn format_control_error(payload: Value) -> String {
@@ -712,6 +869,17 @@ fn is_control_mqtt_timeout_error(error: &str) -> bool {
         || lower.contains("would block")
         || lower.contains("resource temporarily unavailable")
         || lower.contains("os error 35")
+        || lower.contains("os error 10060")
+}
+
+fn is_control_mqtt_disconnect_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("failed to fill whole buffer")
+        || lower.contains("connection reset")
+        || lower.contains("connection aborted")
+        || lower.contains("forcibly closed")
+        || lower.contains("os error 10053")
+        || lower.contains("os error 10054")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1022,5 +1190,66 @@ impl fmt::Display for ControlSessionBootstrap {
             self.ack.heartbeat_seconds,
             self.network_map.peers.len()
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn decodes_device_network_disabled_event() {
+        let event = decode_control_mqtt_event(Envelope {
+            msg_type: "device_network_disabled".to_string(),
+            request_id: None,
+            message_id: None,
+            source_node_id: None,
+            network_id: None,
+            payload: json!({
+                "networkId": "net-1",
+                "deviceId": "dev-1",
+                "attachmentId": "att-1",
+                "reason": "attachment disabled by network owner"
+            }),
+        })
+        .unwrap();
+
+        match event {
+            ControlMqttEvent::DeviceNetworkDisabled(disabled) => {
+                assert_eq!(disabled.network_id, "net-1");
+                assert_eq!(disabled.device_id, "dev-1");
+                assert_eq!(disabled.attachment_id, "att-1");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_qos2_publish_packet_id_and_payload() {
+        let mut body = Vec::new();
+        mqtt_write_string(&mut body, "slan/device/control/down").unwrap();
+        body.extend_from_slice(&7_u16.to_be_bytes());
+        body.extend_from_slice(br#"{"type":"pong","payload":{}}"#);
+
+        let publish = parse_mqtt_publish(0x34, &body).unwrap();
+
+        assert_eq!(publish.topic, "slan/device/control/down");
+        assert_eq!(publish.packet_id, Some(7));
+        assert_eq!(publish.qos, 2);
+        assert_eq!(publish.payload, br#"{"type":"pong","payload":{}}"#);
+    }
+
+    #[test]
+    fn subscribe_requests_and_requires_qos2() {
+        let packet = mqtt_subscribe_packet(1, "slan/device/control/down").unwrap();
+        assert_eq!(packet.last().copied(), Some(0x02));
+
+        let mut granted = std::io::Cursor::new(vec![0x90, 0x03, 0x00, 0x01, 0x02]);
+        read_mqtt_suback(&mut granted, 1).unwrap();
+
+        let mut downgraded = std::io::Cursor::new(vec![0x90, 0x03, 0x00, 0x01, 0x01]);
+        let err = read_mqtt_suback(&mut downgraded, 1).unwrap_err();
+        assert!(err.contains("qos2 rejected"));
     }
 }

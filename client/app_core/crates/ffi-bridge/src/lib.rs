@@ -8,6 +8,7 @@ mod json_facade;
 mod json_facade_args;
 mod json_facade_runtime;
 mod key_provider;
+mod mqtt_control_tasks;
 mod probe_runtime;
 mod snapshot;
 mod snapshot_updates;

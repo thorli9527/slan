@@ -581,15 +581,38 @@ pub struct BootstrapResponseDto {
 impl TryFrom<BootstrapResponseDto> for BootstrapConfig {
     type Error = String;
 
-    fn try_from(value: BootstrapResponseDto) -> Result<Self, Self::Error> {
+    fn try_from(mut value: BootstrapResponseDto) -> Result<Self, Self::Error> {
+        let device_attachments = value.device.attachments.clone();
         let mut device: Device = value.device.device.into();
         if device.virtual_ip.as_deref().unwrap_or("").trim().is_empty() {
-            device.virtual_ip = value
-                .device
-                .attachments
+            device.virtual_ip = device_attachments
                 .iter()
+                .filter(|attachment| !is_disabled_attachment_status(&attachment.status))
                 .find_map(|attachment| attachment.virtual_ip.clone())
                 .filter(|value| !value.trim().is_empty());
+        }
+        for network in &mut value.networks {
+            for member in &mut network.members {
+                if member.device_id != device.device_id {
+                    continue;
+                }
+                let attachment = device_attachments.iter().find(|attachment| {
+                    attachment.device_id == member.device_id
+                        && attachment.network_id == network.network_id
+                        && member
+                            .attachment_id
+                            .as_deref()
+                            .map(|id| id == attachment.attachment_id)
+                            .unwrap_or(true)
+                });
+                if let Some(attachment) = attachment {
+                    if !attachment.status.trim().is_empty() {
+                        member.status = Some(attachment.status.clone());
+                    }
+                    member.attachment_id = Some(attachment.attachment_id.clone());
+                    member.virtual_ip = attachment.virtual_ip.clone();
+                }
+            }
         }
         let mut control_plane: ControlPlaneConfig = value.control_plane.into();
         if control_plane.session_token.is_none() {
@@ -605,6 +628,13 @@ impl TryFrom<BootstrapResponseDto> for BootstrapConfig {
             network_map: value.network_map.map(TryInto::try_into).transpose()?,
         })
     }
+}
+
+fn is_disabled_attachment_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "disabled" | "suspended" | "rejected"
+    )
 }
 
 #[derive(Debug, Clone, Deserialize)]

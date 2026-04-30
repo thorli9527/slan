@@ -1,7 +1,7 @@
 use control_mqtt_client::{
     ControlMqttActiveNetworkEnabled, ControlMqttClient, ControlMqttConfig, ControlMqttConnectPlan,
-    ControlMqttConnectionStateReport, ControlMqttDeviceIPReassigned, ControlMqttEvent,
-    ControlMqttPathHealthReport,
+    ControlMqttConnectionStateReport, ControlMqttDeviceIPReassigned,
+    ControlMqttDeviceNetworkDisabled, ControlMqttEvent, ControlMqttPathHealthReport,
 };
 use controller_client::{
     ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
@@ -13,8 +13,9 @@ use p2p::{P2PConnector, PeerCandidate};
 use relay_client::{DerpPool, PathManager, RelayClient};
 use slan_app_core::{
     ActivePath, AllowedIp, BootstrapConfig, ConnectionPath, ConnectionState, DerpCluster, Device,
-    Endpoint, Network, NetworkAssignment, NetworkJoinResult, NetworkMap, Node, Peer, RelayTicket,
-    Session, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair, WireGuardPeerConfig,
+    DnsConfig, Endpoint, Network, NetworkAssignment, NetworkJoinResult, NetworkMap, Node, Peer,
+    RelayTicket, Session, TunnelTransport, WireGuardInterfaceConfig, WireGuardKeyPair,
+    WireGuardPeerConfig,
 };
 use std::sync::Mutex;
 use tunnel::{TunnelConfig, TunnelManager};
@@ -26,6 +27,10 @@ use crate::facade::{
     DataPlaneError, DataPlaneErrorCode, DataPlaneProbe,
 };
 use crate::key_provider::{InMemoryTunnelKeyProvider, TunnelKeyProvider};
+use crate::mqtt_control_tasks::{
+    append_mqtt_control_tasks, mqtt_control_task_id, update_mqtt_control_task_status,
+    MqttControlTask,
+};
 use crate::probe_runtime::{poll_reply_until_timeout, probe_health_from_active_path};
 use crate::snapshot::AppCoreSnapshot;
 use crate::snapshot_updates::{
@@ -270,6 +275,7 @@ where
     }
 
     pub fn restore_snapshot(&self, snapshot: AppCoreSnapshot) -> Result<(), String> {
+        let snapshot = sanitize_restored_snapshot(snapshot);
         let mut control_mqtt = self
             .control_mqtt
             .lock()
@@ -599,6 +605,80 @@ where
             bootstrap.network_map = None;
         }
         Ok(())
+    }
+
+    fn touch_device_mqtt_reachability(&self) -> Result<(), String> {
+        let access_token = self.with_access_token()?;
+        let (device, user_id, node_id, node_public_key, capabilities) = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "app core state poisoned".to_string())?
+                .clone();
+            let user_id = state
+                .session
+                .as_ref()
+                .map(|session| session.user_id.clone())
+                .unwrap_or_default();
+            let session_device_id = state.session.as_ref().and_then(|session| {
+                session
+                    .device_id
+                    .as_ref()
+                    .map(|device_id| device_id.trim().to_string())
+                    .filter(|device_id| !device_id.is_empty())
+            });
+            let device = match state.current_device.clone() {
+                Some(device) if device.mqtt.is_some() => device,
+                _ => {
+                    let devices = self.controller.list_devices(&access_token)?;
+                    let device = session_device_id
+                        .as_deref()
+                        .and_then(|device_id| {
+                            devices
+                                .iter()
+                                .find(|device| device.device_id == device_id)
+                                .cloned()
+                        })
+                        .or_else(|| devices.into_iter().find(|device| device.mqtt.is_some()))
+                        .ok_or_else(|| "missing current device MQTT credential".to_string())?;
+                    let mut live_state = self
+                        .state
+                        .lock()
+                        .map_err(|_| "app core state poisoned".to_string())?;
+                    live_state.current_device = Some(device.clone());
+                    device
+                }
+            };
+            let node = state.current_node.clone();
+            (
+                device,
+                user_id,
+                node.as_ref()
+                    .map(|node| node.node_id.clone())
+                    .unwrap_or_default(),
+                node.as_ref()
+                    .map(|node| node.node_public_key.clone())
+                    .unwrap_or_default(),
+                node.map(|node| node.capabilities).unwrap_or_default(),
+            )
+        };
+        let mut mqtt = device
+            .mqtt
+            .clone()
+            .ok_or_else(|| "missing current device MQTT credential".to_string())?;
+        mqtt.client_id = format!("{}-reachability-{}", mqtt.client_id, now_ms());
+        let config = ControlMqttConfig {
+            access_token,
+            session_token: String::new(),
+            user_id,
+            device_id: device.device_id,
+            node_id,
+            node_public_key,
+            network_id: String::new(),
+            capabilities,
+            mqtt,
+        };
+        ControlMqttClient::connect(&config).map(|_| ())
     }
 }
 
@@ -935,6 +1015,7 @@ where
     }
 
     fn report_device_network_state(&self) -> Result<(), String> {
+        let _ = self.touch_device_mqtt_reachability();
         if let Err(err) = self.control_sync() {
             if is_remote_network_disabled_error(&err) {
                 self.clear_local_network_runtime()?;
@@ -998,30 +1079,10 @@ where
                 last_probe_ok,
             )
         };
-        let (network_id, virtual_ip) = match network_id {
-            Some(network_id) => (network_id, virtual_ip),
-            None => {
-                let networks = self.controller.list_networks(&access_token)?;
-                let network = match resolve_target_network(&networks, None, Some(&device.device_id))
-                {
-                    Ok(network) => network,
-                    Err(_) => return Ok(()),
-                };
-                let virtual_ip = local_virtual_ip_for(&network, &device).or(virtual_ip);
-                let mut state = self
-                    .state
-                    .lock()
-                    .map_err(|_| "app core state poisoned".to_string())?;
-                state.current_network_id = Some(network.network_id.clone());
-                if let Some(current_device) = state.current_device.as_mut() {
-                    if current_device.virtual_ip.is_none() {
-                        current_device.virtual_ip = virtual_ip.clone();
-                    }
-                }
-                (network.network_id, virtual_ip)
-            }
+        let Some(network_id) = network_id else {
+            return Ok(());
         };
-        self.controller.set_device_network_state(
+        match self.controller.set_device_network_state(
             &access_token,
             DeviceNetworkStateRequest {
                 device_id: device.device_id,
@@ -1033,7 +1094,14 @@ where
                 virtual_ip,
                 reported_at: Some((now_ms() / 1000) as i64),
             },
-        )
+        ) {
+            Ok(()) => Ok(()),
+            Err(err) if is_remote_network_disabled_error(&err) => {
+                self.clear_local_network_runtime()?;
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
     fn enable_local_network(&self, network_id: Option<String>) -> Result<BootstrapConfig, String> {
@@ -1265,12 +1333,12 @@ where
                 state.tunnel_peer_virtual_ip.clone(),
             )
         };
+        replace_tunnel(
+            &self.current_tunnel_peer_virtual_ip,
+            &self.tunnel_manager,
+            None,
+        )?;
         if let Some(peer_virtual_ip) = peer_virtual_ip {
-            replace_tunnel(
-                &self.current_tunnel_peer_virtual_ip,
-                &self.tunnel_manager,
-                None,
-            )?;
             let _ = self.tunnel_manager.stop_local_dns();
             let mut state = self
                 .state
@@ -1294,7 +1362,7 @@ where
                     network_online: false,
                     tunnel_up: false,
                     last_probe_ok: false,
-                    virtual_ip: device.virtual_ip.clone(),
+                    virtual_ip: None,
                     reported_at: Some((now_ms() / 1000) as i64),
                 },
             );
@@ -1306,6 +1374,9 @@ where
         state.current_bootstrap = None;
         state.current_network_id = None;
         state.current_connect_plans.clear();
+        if let Some(device) = state.current_device.as_mut() {
+            device.virtual_ip = None;
+        }
         state.tunnel_peer_virtual_ip = None;
         state.tunnel_runtime = None;
         Ok(())
@@ -1509,6 +1580,7 @@ where
                         state.current_connect_plans.clone()
                     };
                     let mut device_ip_updates = Vec::new();
+                    let mut device_network_disabled = Vec::new();
                     let mut active_network_enabled = None;
                     for event in
                         client.drain_pending_events(std::time::Duration::from_millis(200), 32)?
@@ -1517,6 +1589,7 @@ where
                             &mut network_map,
                             &mut pending_connect_plans,
                             &mut device_ip_updates,
+                            &mut device_network_disabled,
                             &mut active_network_enabled,
                             event,
                         );
@@ -1527,40 +1600,85 @@ where
                         heartbeat_seconds: 0,
                         connect_plans: pending_connect_plans,
                         device_ip_updates,
+                        device_network_disabled,
                         active_network_enabled,
                     }
                 }
                 Err(_) => {
-                    let mut client = ControlMqttClient::connect(&config)?;
-                    let mut bootstrap = client.bootstrap_session(&config)?;
-                    let snapshot = self
-                        .state
-                        .lock()
-                        .map_err(|_| "app core state poisoned".to_string())?
-                        .clone();
-                    Self::emit_control_observations(&mut client, &snapshot, &config)?;
-                    let mut pending_connect_plans = std::collections::HashMap::new();
-                    let mut device_ip_updates = Vec::new();
-                    let mut active_network_enabled = None;
-                    for event in
-                        client.drain_pending_events(std::time::Duration::from_millis(200), 32)?
-                    {
-                        apply_control_mqtt_event(
-                            &mut bootstrap.network_map,
-                            &mut pending_connect_plans,
-                            &mut device_ip_updates,
-                            &mut active_network_enabled,
-                            event,
-                        );
-                    }
-                    *control_mqtt = Some(client);
-                    ControlMqttBootstrapUpdate {
-                        bootstrap_override: None,
-                        network_map: bootstrap.network_map,
-                        heartbeat_seconds: bootstrap.ack.heartbeat_seconds,
-                        connect_plans: pending_connect_plans,
-                        device_ip_updates,
-                        active_network_enabled,
+                    let queued_events = client.take_queued_events();
+                    if !queued_events.is_empty() {
+                        let mut network_map = self
+                            .state
+                            .lock()
+                            .map_err(|_| "app core state poisoned".to_string())?
+                            .current_bootstrap
+                            .as_ref()
+                            .and_then(|bootstrap| bootstrap.network_map.clone())
+                            .unwrap_or_else(|| fallback_network_map(&config));
+                        let mut pending_connect_plans = {
+                            let state = self
+                                .state
+                                .lock()
+                                .map_err(|_| "app core state poisoned".to_string())?;
+                            state.current_connect_plans.clone()
+                        };
+                        let mut device_ip_updates = Vec::new();
+                        let mut device_network_disabled = Vec::new();
+                        let mut active_network_enabled = None;
+                        for event in queued_events {
+                            apply_control_mqtt_event(
+                                &mut network_map,
+                                &mut pending_connect_plans,
+                                &mut device_ip_updates,
+                                &mut device_network_disabled,
+                                &mut active_network_enabled,
+                                event,
+                            );
+                        }
+                        ControlMqttBootstrapUpdate {
+                            bootstrap_override: None,
+                            network_map,
+                            heartbeat_seconds: 0,
+                            connect_plans: pending_connect_plans,
+                            device_ip_updates,
+                            device_network_disabled,
+                            active_network_enabled,
+                        }
+                    } else {
+                        let mut client = ControlMqttClient::connect(&config)?;
+                        let mut bootstrap = client.bootstrap_session(&config)?;
+                        let snapshot = self
+                            .state
+                            .lock()
+                            .map_err(|_| "app core state poisoned".to_string())?
+                            .clone();
+                        Self::emit_control_observations(&mut client, &snapshot, &config)?;
+                        let mut pending_connect_plans = std::collections::HashMap::new();
+                        let mut device_ip_updates = Vec::new();
+                        let mut device_network_disabled = Vec::new();
+                        let mut active_network_enabled = None;
+                        for event in client
+                            .drain_pending_events(std::time::Duration::from_millis(200), 32)?
+                        {
+                            apply_control_mqtt_event(
+                                &mut bootstrap.network_map,
+                                &mut pending_connect_plans,
+                                &mut device_ip_updates,
+                                &mut device_network_disabled,
+                                &mut active_network_enabled,
+                                event,
+                            );
+                        }
+                        *control_mqtt = Some(client);
+                        ControlMqttBootstrapUpdate {
+                            bootstrap_override: None,
+                            network_map: bootstrap.network_map,
+                            heartbeat_seconds: bootstrap.ack.heartbeat_seconds,
+                            connect_plans: pending_connect_plans,
+                            device_ip_updates,
+                            device_network_disabled,
+                            active_network_enabled,
+                        }
                     }
                 }
             }
@@ -1575,12 +1693,14 @@ where
             Self::emit_control_observations(&mut client, &snapshot, &config)?;
             let mut pending_connect_plans = std::collections::HashMap::new();
             let mut device_ip_updates = Vec::new();
+            let mut device_network_disabled = Vec::new();
             let mut active_network_enabled = None;
             for event in client.drain_pending_events(std::time::Duration::from_millis(200), 32)? {
                 apply_control_mqtt_event(
                     &mut bootstrap.network_map,
                     &mut pending_connect_plans,
                     &mut device_ip_updates,
+                    &mut device_network_disabled,
                     &mut active_network_enabled,
                     event,
                 );
@@ -1592,9 +1712,14 @@ where
                 heartbeat_seconds: bootstrap.ack.heartbeat_seconds,
                 connect_plans: pending_connect_plans,
                 device_ip_updates,
+                device_network_disabled,
                 active_network_enabled,
             }
         };
+        let mqtt_control_tasks = mqtt_control_tasks_from_update(&bootstrap, &config.device_id);
+        if !mqtt_control_tasks.is_empty() {
+            let _ = append_mqtt_control_tasks(&mqtt_control_tasks);
+        }
         let bootstrap = if let Some(enabled) = bootstrap.active_network_enabled.as_ref() {
             let current_network_id = {
                 let state = self
@@ -1618,18 +1743,31 @@ where
                             "missing current device, register device first".to_string()
                         })?
                 };
-                self.controller.activate_network(
+                let task_id =
+                    mqtt_control_task_id("enable_network", &enabled.network_id, &device_id);
+                let _ = update_mqtt_control_task_status(&task_id, "running", None);
+                if let Err(err) = self.controller.activate_network(
                     &access_token,
                     JoinNetworkRequest {
                         network_id: enabled.network_id.clone(),
                         device_id,
                     },
-                )?;
-                let refreshed = self.controller.bootstrap(
+                ) {
+                    let _ = update_mqtt_control_task_status(&task_id, "failed", Some(&err));
+                    return Err(err);
+                }
+                let refreshed = match self.controller.bootstrap(
                     &access_token,
                     &config.node_id,
                     &enabled.network_id,
-                )?;
+                ) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        let _ = update_mqtt_control_task_status(&task_id, "failed", Some(&err));
+                        return Err(err);
+                    }
+                };
+                let _ = update_mqtt_control_task_status(&task_id, "succeeded", None);
                 ControlMqttBootstrapUpdate {
                     bootstrap_override: Some(refreshed.clone()),
                     network_map: refreshed.network_map.clone().ok_or_else(|| {
@@ -1638,6 +1776,7 @@ where
                     heartbeat_seconds: refreshed.control_plane.heartbeat_seconds,
                     connect_plans: std::collections::HashMap::new(),
                     device_ip_updates: vec![],
+                    device_network_disabled: vec![],
                     active_network_enabled: Some(enabled.clone()),
                 }
             } else {
@@ -1651,6 +1790,7 @@ where
             tunnel_reapply,
             local_tunnel_reapply,
             should_disable_current_network,
+            disable_task_id,
         ) = {
             let mut state = self
                 .state
@@ -1725,11 +1865,44 @@ where
                 })
                 .map(is_disabled_member_status)
                 .unwrap_or(false);
-            let should_disable_current_network = current_device_attachment_disabled
+            let current_device_network_disabled = current_device_id
+                .as_deref()
+                .map(|device_id| {
+                    bootstrap.device_network_disabled.iter().any(|disabled| {
+                        disabled.network_id == bootstrap.network_map.network_id
+                            && disabled.device_id == device_id
+                    })
+                })
+                .unwrap_or(false);
+            let disable_task_id = current_device_id.as_deref().and_then(|device_id| {
+                if current_device_network_disabled
+                    || updated_current_device_virtual_ip
+                        .as_ref()
+                        .map(|virtual_ip| virtual_ip.trim().is_empty())
+                        .unwrap_or(false)
+                {
+                    Some(mqtt_control_task_id(
+                        "disable_network",
+                        &bootstrap.network_map.network_id,
+                        device_id,
+                    ))
+                } else {
+                    None
+                }
+            });
+            let should_disable_current_network = current_device_network_disabled
+                || current_device_attachment_disabled
                 || updated_current_device_virtual_ip
                     .as_ref()
                     .map(|virtual_ip| virtual_ip.trim().is_empty())
                     .unwrap_or(false);
+            if should_disable_current_network {
+                clear_current_device_virtual_ip(
+                    current_bootstrap,
+                    &bootstrap.network_map.network_id,
+                    current_device_id.as_deref(),
+                );
+            }
             let updated_bootstrap = current_bootstrap.clone();
             let local_tunnel_reapply = if should_reapply_tunnel {
                 let current_device = updated_bootstrap.device.clone();
@@ -1832,6 +2005,12 @@ where
                 state.current_device = Some(override_device);
             }
             if should_disable_current_network {
+                if let Some(task_id) = disable_task_id.as_deref() {
+                    let _ = update_mqtt_control_task_status(task_id, "running", None);
+                }
+                if let Some(device) = state.current_device.as_mut() {
+                    device.virtual_ip = None;
+                }
                 state.current_network_id = None;
                 state.current_connect_plans.clear();
                 if let Some(current_bootstrap) = state.current_bootstrap.as_mut() {
@@ -1854,18 +2033,29 @@ where
                     local_tunnel_reapply
                 },
                 should_disable_current_network,
+                disable_task_id,
             )
         };
         if should_disable_current_network {
-            replace_tunnel(
+            if let Err(err) = replace_tunnel(
                 &self.current_tunnel_peer_virtual_ip,
                 &self.tunnel_manager,
                 None,
-            )?;
+            ) {
+                if let Some(task_id) = disable_task_id.as_deref() {
+                    let _ = update_mqtt_control_task_status(task_id, "failed", Some(&err));
+                }
+                return Err(err);
+            }
             let _ = self.tunnel_manager.stop_local_dns();
-            update_disconnected_snapshot(&self.state)?;
-            if let Ok(mut control_mqtt) = self.control_mqtt.lock() {
-                *control_mqtt = None;
+            if let Err(err) = update_disconnected_snapshot(&self.state) {
+                if let Some(task_id) = disable_task_id.as_deref() {
+                    let _ = update_mqtt_control_task_status(task_id, "failed", Some(&err));
+                }
+                return Err(err);
+            }
+            if let Some(task_id) = disable_task_id.as_deref() {
+                let _ = update_mqtt_control_task_status(task_id, "succeeded", None);
             }
             return Ok(updated_bootstrap);
         }
@@ -2234,7 +2424,65 @@ struct ControlMqttBootstrapUpdate {
     heartbeat_seconds: u32,
     connect_plans: std::collections::HashMap<String, ControlMqttConnectPlan>,
     device_ip_updates: Vec<ControlMqttDeviceIPReassigned>,
+    device_network_disabled: Vec<ControlMqttDeviceNetworkDisabled>,
     active_network_enabled: Option<ControlMqttActiveNetworkEnabled>,
+}
+
+fn mqtt_control_tasks_from_update(
+    update: &ControlMqttBootstrapUpdate,
+    current_device_id: &str,
+) -> Vec<MqttControlTask> {
+    let now = now_ms();
+    let mut tasks = Vec::new();
+    if let Some(enabled) = update.active_network_enabled.as_ref() {
+        tasks.push(MqttControlTask::new(
+            "enable_network",
+            &enabled.network_id,
+            current_device_id,
+            now,
+        ));
+    }
+    for disabled in &update.device_network_disabled {
+        tasks.push(MqttControlTask::new(
+            "disable_network",
+            &disabled.network_id,
+            &disabled.device_id,
+            now,
+        ));
+    }
+    for device_ip in &update.device_ip_updates {
+        if device_ip.virtual_ip.trim().is_empty() {
+            tasks.push(MqttControlTask::new(
+                "disable_network",
+                &device_ip.network_id,
+                &device_ip.device_id,
+                now,
+            ));
+        }
+    }
+    tasks
+}
+
+fn fallback_network_map(config: &ControlMqttConfig) -> NetworkMap {
+    NetworkMap {
+        self_user_id: config.user_id.clone(),
+        self_device_id: config.device_id.clone(),
+        self_node_id: config.node_id.clone(),
+        network_id: config.network_id.clone(),
+        revision: 0,
+        heartbeat_seconds: 0,
+        stun_servers: Vec::new(),
+        peers: Vec::new(),
+        routes: Vec::new(),
+        relay_regions: Vec::new(),
+        dns: DnsConfig {
+            servers: Vec::new(),
+            search_domains: Vec::new(),
+            wildcards: Vec::new(),
+        },
+        policy: Default::default(),
+        mtu: None,
+    }
 }
 
 fn resolve_target_network(
@@ -2319,12 +2567,60 @@ fn default_tunnel_endpoint() -> String {
         .unwrap_or_else(|| "203.0.113.10:51820".to_string())
 }
 
+fn sanitize_restored_snapshot(mut snapshot: AppCoreSnapshot) -> AppCoreSnapshot {
+    let session_device_id = snapshot
+        .session
+        .as_ref()
+        .and_then(|session| session.device_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if let (Some(session_device_id), Some(device)) = (
+        session_device_id.as_deref(),
+        snapshot.current_device.as_ref(),
+    ) {
+        if device.device_id != session_device_id {
+            snapshot.current_device = None;
+        }
+    }
+    let active_device_id = snapshot
+        .current_device
+        .as_ref()
+        .map(|device| device.device_id.as_str())
+        .or(session_device_id.as_deref());
+    if let Some(active_device_id) = active_device_id {
+        let node_matches = snapshot
+            .current_node
+            .as_ref()
+            .map(|node| node.device_id == active_device_id)
+            .unwrap_or(true);
+        let bootstrap_matches = snapshot
+            .current_bootstrap
+            .as_ref()
+            .map(|bootstrap| bootstrap.device.device_id == active_device_id)
+            .unwrap_or(true);
+        if !node_matches || !bootstrap_matches {
+            snapshot.current_node = None;
+            snapshot.current_bootstrap = None;
+            snapshot.current_network_id = None;
+            snapshot.current_connect_plans.clear();
+            snapshot.connection_state = Some(ConnectionState::Disconnected);
+            snapshot.active_path = None;
+            snapshot.tunnel_peer_virtual_ip = None;
+            snapshot.tunnel_runtime = None;
+        }
+    }
+    snapshot
+}
+
 fn is_remote_network_disabled_error(error: &str) -> bool {
     let normalized = error.to_ascii_lowercase();
-    normalized.contains("forbidden")
-        && (normalized.contains("no active network attachment")
-            || normalized.contains("has no active network attachment")
-            || normalized.contains("device unavailable"))
+    normalized.contains("unexpected http status: 403")
+        || normalized.contains("http status: 403")
+        || normalized.contains("forbidden")
+            && (normalized.contains("no active network attachment")
+                || normalized.contains("has no active network attachment")
+                || normalized.contains("device unavailable"))
 }
 
 fn is_disabled_member_status(status: &str) -> bool {
@@ -2352,6 +2648,30 @@ fn bootstrap_device_attachment_disabled(
         .and_then(|member| member.status.as_deref())
         .map(is_disabled_member_status)
         .unwrap_or(false)
+}
+
+fn clear_current_device_virtual_ip(
+    bootstrap: &mut BootstrapConfig,
+    network_id: &str,
+    current_device_id: Option<&str>,
+) {
+    let device_id = current_device_id
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(bootstrap.device.device_id.as_str())
+        .to_string();
+    if bootstrap.device.device_id == device_id {
+        bootstrap.device.virtual_ip = None;
+    }
+    for network in &mut bootstrap.networks {
+        if network.network_id != network_id {
+            continue;
+        }
+        for member in &mut network.members {
+            if member.device_id == device_id {
+                member.virtual_ip = None;
+            }
+        }
+    }
 }
 
 fn dns_records_from_bootstrap(bootstrap: &BootstrapConfig) -> Vec<(String, String)> {
@@ -2397,6 +2717,7 @@ fn apply_control_mqtt_event(
     network_map: &mut slan_app_core::NetworkMap,
     connect_plans: &mut std::collections::HashMap<String, ControlMqttConnectPlan>,
     device_ip_updates: &mut Vec<ControlMqttDeviceIPReassigned>,
+    device_network_disabled: &mut Vec<ControlMqttDeviceNetworkDisabled>,
     active_network_enabled: &mut Option<ControlMqttActiveNetworkEnabled>,
     event: ControlMqttEvent,
 ) {
@@ -2435,6 +2756,18 @@ fn apply_control_mqtt_event(
                 }
             }
             device_ip_updates.push(update);
+        }
+        ControlMqttEvent::DeviceNetworkDisabled(disabled) => {
+            if disabled.network_id == network_map.network_id {
+                for peer in network_map
+                    .peers
+                    .iter_mut()
+                    .filter(|peer| peer.device_id == disabled.device_id)
+                {
+                    peer.virtual_ips.clear();
+                }
+            }
+            device_network_disabled.push(disabled);
         }
         ControlMqttEvent::ActiveNetworkEnabled(enabled) => {
             *active_network_enabled = Some(enabled);

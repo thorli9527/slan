@@ -953,6 +953,7 @@ class AppCoreHelperStatusPayload {
     required this.sessionPresent,
     required this.refreshTokenPresent,
     this.deviceId,
+    this.currentDeviceVirtualIp,
     this.nodeId,
     this.currentNetworkId,
     required this.bootstrapPresent,
@@ -963,6 +964,11 @@ class AppCoreHelperStatusPayload {
     this.tunnelLastError,
     this.tunnelLastAppliedAtMs,
     this.tunnelLastStartedAtMs,
+    this.mqttControlTaskFile,
+    required this.mqttControlUiRefreshRequired,
+    this.mqttControlUiRefreshTaskId,
+    this.mqttControlUiRefreshReason,
+    this.mqttControlUiRefreshUpdatedAtMs,
     this.checkedAtMs,
   });
 
@@ -976,6 +982,7 @@ class AppCoreHelperStatusPayload {
       sessionPresent: json['sessionPresent'] as bool? ?? false,
       refreshTokenPresent: json['refreshTokenPresent'] as bool? ?? false,
       deviceId: json['deviceId'] as String?,
+      currentDeviceVirtualIp: json['currentDeviceVirtualIp'] as String?,
       nodeId: json['nodeId'] as String?,
       currentNetworkId: json['currentNetworkId'] as String?,
       bootstrapPresent: json['bootstrapPresent'] as bool? ?? false,
@@ -986,6 +993,15 @@ class AppCoreHelperStatusPayload {
       tunnelLastError: json['tunnelLastError'] as String?,
       tunnelLastAppliedAtMs: (json['tunnelLastAppliedAtMs'] as num?)?.toInt(),
       tunnelLastStartedAtMs: (json['tunnelLastStartedAtMs'] as num?)?.toInt(),
+      mqttControlTaskFile: json['mqttControlTaskFile'] as String?,
+      mqttControlUiRefreshRequired:
+          json['mqttControlUiRefreshRequired'] as bool? ?? false,
+      mqttControlUiRefreshTaskId:
+          json['mqttControlUiRefreshTaskId'] as String?,
+      mqttControlUiRefreshReason:
+          json['mqttControlUiRefreshReason'] as String?,
+      mqttControlUiRefreshUpdatedAtMs:
+          (json['mqttControlUiRefreshUpdatedAtMs'] as num?)?.toInt(),
       checkedAtMs: (json['checkedAtMs'] as num?)?.toInt(),
     );
   }
@@ -998,6 +1014,7 @@ class AppCoreHelperStatusPayload {
   final bool sessionPresent;
   final bool refreshTokenPresent;
   final String? deviceId;
+  final String? currentDeviceVirtualIp;
   final String? nodeId;
   final String? currentNetworkId;
   final bool bootstrapPresent;
@@ -1008,6 +1025,11 @@ class AppCoreHelperStatusPayload {
   final String? tunnelLastError;
   final int? tunnelLastAppliedAtMs;
   final int? tunnelLastStartedAtMs;
+  final String? mqttControlTaskFile;
+  final bool mqttControlUiRefreshRequired;
+  final String? mqttControlUiRefreshTaskId;
+  final String? mqttControlUiRefreshReason;
+  final int? mqttControlUiRefreshUpdatedAtMs;
   final int? checkedAtMs;
 }
 

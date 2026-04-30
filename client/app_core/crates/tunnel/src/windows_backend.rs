@@ -1126,11 +1126,44 @@ impl WindowsEmbeddableServiceBackend {
                  $adapter | Enable-NetAdapter -Confirm:$false -ErrorAction SilentlyContinue | Out-Null\n\
                  if ($adapter.Name -ne '{}') {{ Rename-NetAdapter -Name $adapter.Name -NewName '{}' -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }}\n\
                  Set-NetIPInterface -InterfaceIndex {interface_index} -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null\n\
-                 if (@({dns_servers}).Count -gt 0) {{ Set-DnsClientServerAddress -InterfaceIndex {interface_index} -ServerAddresses @({dns_servers}) -ErrorAction Stop | Out-Null }} else {{ Reset-DnsClientServerAddress -InterfaceIndex {interface_index} -ErrorAction SilentlyContinue | Out-Null }}\n",
+                 if (Get-Command Set-DnsClientServerAddress -ErrorAction SilentlyContinue) {{ if (@({dns_servers}).Count -gt 0) {{ Set-DnsClientServerAddress -InterfaceIndex {interface_index} -ServerAddresses @({dns_servers}) -ErrorAction Stop | Out-Null }} elseif (Get-Command Reset-DnsClientServerAddress -ErrorAction SilentlyContinue) {{ Reset-DnsClientServerAddress -InterfaceIndex {interface_index} -ErrorAction SilentlyContinue | Out-Null }} }}\n",
                 runtime.interface_name,
                 runtime.interface_name,
             );
             Self::run_powershell_script(&script, false)?;
+            if let Some(primary_dns) = runtime.dns_servers.first() {
+                Self::run_netsh(&[
+                    "interface",
+                    "ipv4",
+                    "set",
+                    "dnsservers",
+                    &format!("name={}", runtime.interface_name),
+                    "source=static",
+                    &format!("address={primary_dns}"),
+                    "register=none",
+                    "validate=no",
+                ])?;
+                for dns in runtime.dns_servers.iter().skip(1) {
+                    Self::run_netsh(&[
+                        "interface",
+                        "ipv4",
+                        "add",
+                        "dnsservers",
+                        &format!("name={}", runtime.interface_name),
+                        &format!("address={dns}"),
+                        "validate=no",
+                    ])?;
+                }
+            } else {
+                let _ = Self::run_netsh(&[
+                    "interface",
+                    "ipv4",
+                    "set",
+                    "dnsservers",
+                    &format!("name={}", runtime.interface_name),
+                    "source=dhcp",
+                ]);
+            }
             let address_script = format!(
                 "$ErrorActionPreference='Stop'\n\
                  Get-NetIPAddress -InterfaceIndex {interface_index} -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue\n\
@@ -1201,22 +1234,44 @@ impl WindowsEmbeddableServiceBackend {
         }
         #[cfg(target_os = "windows")]
         if runtime.is_dedicated_adapter {
-            let interface_index = runtime.interface_index.ok_or_else(|| {
-                "windows backend dedicated adapter is missing an interface index".to_string()
-            })?;
+            let adapter_selector = if let Some(interface_index) = runtime.interface_index {
+                format!(
+                    "Get-NetAdapter -InterfaceIndex {interface_index} -ErrorAction SilentlyContinue"
+                )
+            } else {
+                let escaped_name = runtime.interface_name.replace('\'', "''");
+                format!("Get-NetAdapter -Name '{escaped_name}' -ErrorAction SilentlyContinue")
+            };
+            let escaped_ip = runtime.local_virtual_ip.replace('\'', "''");
             let script = format!(
                 "$ErrorActionPreference='Stop'\n\
-                 $adapter = Get-NetAdapter -InterfaceIndex {interface_index} -ErrorAction SilentlyContinue\n\
-                 Reset-DnsClientServerAddress -InterfaceIndex {interface_index} -ErrorAction SilentlyContinue | Out-Null\n\
-                 if ($adapter) {{ $adapter | Disable-NetAdapter -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }}\n"
+                 $adapter = {adapter_selector}\n\
+                 if ($adapter) {{\n\
+                   $ifIndex = $adapter.ifIndex\n\
+                   if ('{escaped_ip}'.Length -gt 0 -and (Get-Command Remove-NetIPAddress -ErrorAction SilentlyContinue)) {{\n\
+                     Get-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq '{escaped_ip}' }} | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue | Out-Null\n\
+                   }}\n\
+                   if (Get-Command Reset-DnsClientServerAddress -ErrorAction SilentlyContinue) {{ Reset-DnsClientServerAddress -InterfaceIndex $ifIndex -ErrorAction SilentlyContinue | Out-Null }}\n\
+                   $adapter | Disable-NetAdapter -Confirm:$false -ErrorAction SilentlyContinue | Out-Null\n\
+                 }}\n"
             );
+            if !runtime.local_virtual_ip.trim().is_empty() {
+                let _ = Self::run_netsh(&[
+                    "interface",
+                    "ipv4",
+                    "delete",
+                    "address",
+                    &format!("name={}", runtime.interface_name),
+                    &format!("addr={}", runtime.local_virtual_ip),
+                ]);
+            }
             let _ = Self::run_netsh(&[
                 "interface",
                 "ipv4",
-                "delete",
-                "address",
+                "set",
+                "dnsservers",
                 &format!("name={}", runtime.interface_name),
-                &format!("addr={}", runtime.local_virtual_ip),
+                "source=dhcp",
             ]);
             return Self::run_powershell_script(&script, false);
         }
@@ -1332,7 +1387,20 @@ impl TunnelBackend for WindowsEmbeddableServiceBackend {
             .lock()
             .map_err(|_| "windows backend interface state poisoned".to_string())?;
         let Some(runtime) = interface.as_mut() else {
-            return Err("windows backend interface runtime unavailable".to_string());
+            #[cfg(target_os = "windows")]
+            {
+                let runtime = WindowsInterfaceRuntime {
+                    interface_name: WINDOWS_DEDICATED_INTERFACE_ALIAS.to_string(),
+                    interface_index: None,
+                    is_dedicated_adapter: true,
+                    local_virtual_ip: String::new(),
+                    local_prefix_len: 32,
+                    dns_servers: Vec::new(),
+                    is_up: false,
+                };
+                let _ = Self::remove_system_interface_address(&runtime);
+            }
+            return Ok(());
         };
         let _ = Self::remove_system_interface_address(runtime);
         runtime.is_up = false;
@@ -1360,6 +1428,18 @@ impl TunnelBackend for WindowsEmbeddableServiceBackend {
             .map_err(|_| "windows backend peer state poisoned".to_string())?;
         peers.remove(peer_virtual_ip);
         Ok(())
+    }
+
+    fn close(&self, peer_virtual_ip: &str) -> Result<(), String> {
+        let bring_down_result = self.bring_down();
+        let remove_peer_result = self.remove_peer(peer_virtual_ip);
+        match (bring_down_result, remove_peer_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(err), Ok(())) | (Ok(()), Err(err)) => Err(err),
+            (Err(down_err), Err(peer_err)) => {
+                Err(format!("{down_err}; remove peer failed: {peer_err}"))
+            }
+        }
     }
 
     fn runtime_stats(
@@ -1579,7 +1659,6 @@ mod tests {
             let backend = WindowsEmbeddableServiceBackend::new();
             backend.establish(&sample_config()).unwrap();
 
-            backend.bring_down().unwrap();
             backend.close("10.12.0.3").unwrap();
 
             assert!(!backend.is_up());

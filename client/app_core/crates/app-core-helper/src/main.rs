@@ -323,6 +323,7 @@ where
     let persisted_control_base_url = load_persisted_helper_state()
         .map(|state| state.control_base_url.trim().to_string())
         .filter(|value| !value.is_empty());
+    let ui_refresh = mqtt_control_ui_refresh_status();
     Ok(json!({
         "source": "app-core-helper",
         "helperReachable": true,
@@ -332,6 +333,7 @@ where
         "sessionPresent": session_present,
         "refreshTokenPresent": refresh_token_present,
         "deviceId": snapshot.current_device.as_ref().map(|device| device.device_id.clone()),
+        "currentDeviceVirtualIp": snapshot.current_device.as_ref().and_then(|device| device.virtual_ip.clone()),
         "nodeId": snapshot.current_node.as_ref().map(|node| node.node_id.clone()),
         "currentNetworkId": snapshot.current_network_id,
         "bootstrapPresent": snapshot.current_bootstrap.is_some(),
@@ -347,8 +349,78 @@ where
         "tunnelLastError": tunnel_state.last_error,
         "tunnelLastAppliedAtMs": tunnel_state.last_applied_at_ms,
         "tunnelLastStartedAtMs": tunnel_state.last_started_at_ms,
+        "mqttControlTaskFile": mqtt_control_tasks_path().display().to_string(),
+        "mqttControlUiRefreshRequired": ui_refresh.required,
+        "mqttControlUiRefreshTaskId": ui_refresh.task_id,
+        "mqttControlUiRefreshReason": ui_refresh.reason,
+        "mqttControlUiRefreshUpdatedAtMs": ui_refresh.updated_at_ms,
         "checkedAtMs": current_timestamp_ms(),
     }))
+}
+
+struct MqttControlUiRefreshStatus {
+    required: bool,
+    task_id: Option<String>,
+    reason: Option<String>,
+    updated_at_ms: Option<u64>,
+}
+
+fn mqtt_control_ui_refresh_status() -> MqttControlUiRefreshStatus {
+    let path = mqtt_control_tasks_path();
+    let payload = match fs::read_to_string(&path) {
+        Ok(payload) => payload,
+        Err(_) => {
+            return MqttControlUiRefreshStatus {
+                required: false,
+                task_id: None,
+                reason: None,
+                updated_at_ms: None,
+            }
+        }
+    };
+    let mut latest: Option<(String, String, u64)> = None;
+    for line in payload.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("<task ") {
+            continue;
+        }
+        let status = xml_attr(trimmed, "status").unwrap_or_default();
+        let required = xml_attr(trimmed, "uiRefreshRequired")
+            .map(|value| value == "true")
+            .unwrap_or_default();
+        let consumed = xml_attr(trimmed, "uiRefreshAtMs")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_default();
+        if status != "succeeded" || !required || consumed > 0 {
+            continue;
+        }
+        let task_id = xml_attr(trimmed, "id").unwrap_or_default();
+        let reason = xml_attr(trimmed, "uiRefreshReason").unwrap_or_default();
+        let updated_at_ms = xml_attr(trimmed, "updatedAtMs")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_default();
+        if latest
+            .as_ref()
+            .map(|(_, _, current_updated_at)| updated_at_ms >= *current_updated_at)
+            .unwrap_or(true)
+        {
+            latest = Some((task_id, reason, updated_at_ms));
+        }
+    }
+    if let Some((task_id, reason, updated_at_ms)) = latest {
+        return MqttControlUiRefreshStatus {
+            required: true,
+            task_id: Some(task_id),
+            reason: Some(reason),
+            updated_at_ms: Some(updated_at_ms),
+        };
+    }
+    MqttControlUiRefreshStatus {
+        required: false,
+        task_id: None,
+        reason: None,
+        updated_at_ms: None,
+    }
 }
 
 fn resolve_helper_control_base_url() -> Result<String, String> {
@@ -470,6 +542,43 @@ fn persisted_helper_state_path() -> PathBuf {
         }
         std::env::temp_dir().join("slan-app-core-state.json")
     }
+}
+
+fn mqtt_control_tasks_path() -> PathBuf {
+    if let Ok(configured) = std::env::var("SLAN_MQTT_CONTROL_TASKS_FILE") {
+        let trimmed = configured.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(program_data) = std::env::var("ProgramData") {
+        let trimmed = program_data.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed)
+                .join("SLAN")
+                .join("mqtt-control-tasks.xml");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    return PathBuf::from(r"C:\ProgramData\SLAN\mqtt-control-tasks.xml");
+    #[cfg(not(target_os = "windows"))]
+    std::env::temp_dir().join("slan-mqtt-control-tasks.xml")
+}
+
+fn xml_attr(line: &str, name: &str) -> Option<String> {
+    let needle = format!("{name}=\"");
+    let start = line.find(&needle)? + needle.len();
+    let end = line[start..].find('"')? + start;
+    Some(xml_unescape(&line[start..end]))
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
 }
 
 fn write_helper_log(message: &str) {
