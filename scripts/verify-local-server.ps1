@@ -280,6 +280,15 @@ if ($networkHome.activeNetwork -and $networkHome.activeNetwork.networkId) {
 } elseif ($networkHome.ownedNetwork -and $networkHome.ownedNetwork.networkId) {
     $networkId = $networkHome.ownedNetwork.networkId
 }
+if (-not $networkId) {
+    $createdNetwork = Invoke-Api 'networks create' POST "$BaseUrl/networks" @{
+        name         = 'verify-network'
+        description  = 'local smoke network'
+        cidr         = '10.0.0.0/24'
+        bindDeviceId = $deviceId
+    } $token @(201)
+    $networkId = $createdNetwork.networkId
+}
 if (-not $networkId) { throw 'networks home did not return networkId' }
 
 Invoke-Api 'networks list' GET "$BaseUrl/networks" $null $token | Out-Null
