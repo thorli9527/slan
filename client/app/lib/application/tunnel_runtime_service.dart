@@ -148,7 +148,7 @@ class TunnelRuntimeService implements TunnelRuntimeServiceContract {
       return const TunnelRuntimeOperationResult(
         report: TunnelActionReport(
           succeeded: false,
-          detail: 'Runtime snapshot is unavailable for the selected peer.',
+          detail: 'Mesh runtime snapshot is unavailable for the selected peer.',
           source: TunnelActionReportSource.runtimeSnapshot,
           phase: TunnelActionPhase.failed,
           errorMessage: 'No runtime snapshot returned from native backend.',
@@ -158,8 +158,8 @@ class TunnelRuntimeService implements TunnelRuntimeServiceContract {
     return TunnelRuntimeOperationResult(
       report: TunnelActionReport(
         succeeded: (errorMessage?.isEmpty ?? true),
-        detail:
-            'Runtime reports tunnel ${runtime.state} and backend ${runtime.backendState}.',
+          detail:
+            'Mesh runtime reports ${runtime.state} and backend ${runtime.backendState}.',
         source: TunnelActionReportSource.runtimeSnapshot,
         phase: _deriveRuntimeInspectionPhase(runtime, errorMessage),
         errorMessage: errorMessage,
@@ -234,7 +234,7 @@ TunnelActionReport _buildApplyVerificationReport(
     return const TunnelActionReport(
       succeeded: true,
       detail:
-          'Native plugin accepted the tunnel configuration, but runtime verification is still pending.',
+          'Native plugin accepted the overlay configuration, but runtime verification is still pending.',
       source: TunnelActionReportSource.pluginHost,
       phase: TunnelActionPhase.accepted,
     );
@@ -275,9 +275,9 @@ TunnelActionReport _buildApplyVerificationReport(
 
   if (peerMatches && endpointMatches) {
     return const TunnelActionReport(
-      succeeded: true,
-      detail:
-          'Native plugin accepted the tunnel configuration; runtime shape matches, but apply verification is still pending.',
+          succeeded: true,
+          detail:
+          'Native plugin accepted the overlay configuration; runtime shape matches, but apply verification is still pending.',
       source: TunnelActionReportSource.runtimeSnapshot,
       phase: TunnelActionPhase.pendingVerification,
     );
@@ -286,7 +286,7 @@ TunnelActionReport _buildApplyVerificationReport(
   return const TunnelActionReport(
     succeeded: true,
     detail:
-        'Native plugin accepted the tunnel configuration, but runtime verification has not caught up yet.',
+        'Native plugin accepted the overlay configuration, but runtime verification has not caught up yet.',
     source: TunnelActionReportSource.pluginHost,
     phase: TunnelActionPhase.accepted,
   );

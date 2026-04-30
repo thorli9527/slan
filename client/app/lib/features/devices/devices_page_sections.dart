@@ -76,7 +76,7 @@ extension _DevicesPageSections on _DevicesPageState {
     return DesktopHeroPanel(
       title: 'Devices Workspace',
       description:
-          'Register a local device, attach a node, bootstrap overlay state, drive relay fallback, and inspect ${DesktopPlatform.nativeTunnelLabel} runtime without leaving the desktop client.',
+          'Register a local device, attach a node, bootstrap overlay state, drive relay fallback, and inspect the local mesh runtime without leaving the desktop client.',
       trailing: trailing,
       footer: DesktopPlatform.supportsNativeTunnel
           ? footer
@@ -88,7 +88,7 @@ extension _DevicesPageSections on _DevicesPageState {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Local mesh runtime actions are routed through the Rust backend on ${DesktopPlatform.nativeTunnelLabel}, so apply, bring-up, and runtime inspection can now run through the desktop bridge.',
+                  'Local mesh runtime actions are routed through the native host backend, so apply, bring-up, and runtime inspection can now run through the desktop bridge.',
                 ),
                 if (footer != null) ...[
                   const SizedBox(height: 12),
@@ -867,14 +867,14 @@ extension _DevicesPageSections on _DevicesPageState {
           onPressed: sessionStore.busy
               ? null
               : () => _handleTunnelApply(tunnelController),
-          child: Text(serviceOwned ? 'Enable Network' : 'Apply Tunnel'),
+          child: Text(serviceOwned ? 'Enable Network' : 'Apply Mesh Config'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelUpButton,
           onPressed: sessionStore.busy
               ? null
               : () => _handleTunnelUp(tunnelController),
-          child: Text(serviceOwned ? 'Start Runtime' : 'Bring Up'),
+          child: Text(serviceOwned ? 'Start Runtime' : 'Start Mesh'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelViewButton,
@@ -888,7 +888,7 @@ extension _DevicesPageSections on _DevicesPageState {
           onPressed: sessionStore.busy
               ? null
               : () => _handleTunnelDown(tunnelController),
-          child: Text(serviceOwned ? 'Disable Network' : 'Bring Down'),
+          child: Text(serviceOwned ? 'Disable Network' : 'Stop Mesh'),
         ),
         OutlinedButton(
           key: AppTestKeys.devicesTunnelRemoveButton,

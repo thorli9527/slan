@@ -466,7 +466,7 @@ class _TunnelRecentActionsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (recentActions.isEmpty) {
-      return const Text('No tunnel actions yet.');
+      return const Text('No mesh actions yet.');
     }
 
     return Column(

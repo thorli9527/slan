@@ -1,7 +1,7 @@
 # Platform parity matrix
 
 SLAN is an overlay mesh networking client, similar in product shape to a private tailnet.
-It is not positioned as a traditional VPN. Platform APIs such as Android `VpnService`
+It is not a VPN product. Platform APIs such as Android `VpnService`
 and Apple Network Extension are packet-routing primitives used to implement the local
 interface; user-facing copy should describe SLAN as private networking, mesh networking,
 overlay networking, or device-to-device access.
@@ -22,4 +22,4 @@ overlay networking, or device-to-device access.
 - Android: implement a foreground app-core service that owns MQTT, XML task persistence, heartbeat, and packet routing through Android `VpnService`; expose its JSON-line control endpoint through manifest meta-data `dev.slan.app_core.SERVICE_HOST`.
 - iOS: add a Runner iOS target, packet-routing Network Extension target, app group storage for queued control tasks, and a durable bridge provider behind `SLANAppCoreServiceHost`.
 - Linux: add installer/systemd packaging so the helper/service lifecycle matches Windows service reliability.
-- macOS: verify signing/provisioning for PacketTunnel and decide when to use PacketTunnel vs Rust helper-host for tunnel actions.
+- macOS: verify signing/provisioning for PacketTunnel and decide when to use PacketTunnel vs Rust helper-host for mesh runtime actions.

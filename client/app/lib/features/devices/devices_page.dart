@@ -709,8 +709,8 @@ class _DevicesPageState extends State<DevicesPage> {
     }
     return _runTunnelWorkbenchAction(
       kind: _TunnelActionKind.up,
-      label: 'Bring tunnel up',
-      detail: 'Start PacketTunnel session',
+      label: 'Start mesh',
+      detail: 'Start the local overlay session',
       action: () => tunnelController.bringTunnelUp(
         verifyPeerVirtualIp: _tunnelPeerIpController.text.trim(),
       ),
@@ -745,8 +745,8 @@ class _DevicesPageState extends State<DevicesPage> {
     }
     return _runTunnelWorkbenchAction(
       kind: _TunnelActionKind.down,
-      label: 'Bring tunnel down',
-      detail: 'Stop PacketTunnel session',
+      label: 'Stop mesh',
+      detail: 'Stop the local overlay session',
       action: tunnelController.bringTunnelDown,
     );
   }
@@ -1095,7 +1095,7 @@ class _DevicesPageState extends State<DevicesPage> {
 
   String _formatTunnelActionReportDetail(TunnelActionReport? report) {
     if (report == null) {
-      return 'Tunnel action completed without a structured backend report.';
+      return 'Mesh runtime action completed without a structured backend report.';
     }
     return '${report.detail} Verified by ${report.sourceLabel}.';
   }

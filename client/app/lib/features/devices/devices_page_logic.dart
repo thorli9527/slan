@@ -82,7 +82,7 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
           ? 'A control session token exists, but no synced peer/runtime view is available yet.'
           : 'Control MQTT is configured, but peer state has not been refreshed yet.',
       recommendedAction:
-          'Refresh bootstrap or run control sync first so the latest peer map and path recommendation reach the client before retrying tunnel or relay recovery.',
+          'Refresh bootstrap or run control sync first so the latest peer map and path recommendation reach the client before retrying mesh or relay recovery.',
       primaryAction: _TunnelActionKind.bootstrap,
       primaryActionLabel: 'Refresh Bootstrap',
       secondaryAction: _TunnelActionKind.inspect,
@@ -125,17 +125,17 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
               'Latest data-plane failure: ${relayFailure.summary}',
           recommendedAction: isPersistentUnhealthy
               ? 'Recent checks show the relay session is not recovering. Run a full session recovery flow.'
-              : 'Re-establish the relay-backed session by bringing the tunnel down and up again.',
+              : 'Re-establish the relay-backed session by stopping and starting the mesh link again.',
           primaryAction: isPersistentUnhealthy
               ? _TunnelActionKind.recover
               : _TunnelActionKind.down,
           primaryActionLabel:
-              isPersistentUnhealthy ? 'Recover Session' : 'Bring Tunnel Down',
+              isPersistentUnhealthy ? 'Recover Session' : 'Stop Mesh',
           secondaryAction: isPersistentUnhealthy
               ? _TunnelActionKind.inspect
               : _TunnelActionKind.up,
           secondaryActionLabel:
-              isPersistentUnhealthy ? 'View Runtime' : 'Bring Tunnel Up',
+              isPersistentUnhealthy ? 'View Runtime' : 'Start Mesh',
           trendLabel: trendSummary.label,
           trendSignal: trendSummary.signal,
           dataPlaneSignal: relayFailure.label,
@@ -157,7 +157,7 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
               ? _TunnelActionKind.recover
               : _TunnelActionKind.apply,
           secondaryActionLabel:
-              isPersistentUnhealthy ? 'Recover Session' : 'Apply Tunnel',
+              isPersistentUnhealthy ? 'Recover Session' : 'Apply Mesh Config',
           trendLabel: trendSummary.label,
           trendSignal: trendSummary.signal,
           dataPlaneSignal: relayFailure.label,
@@ -170,8 +170,8 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
     return _TunnelSessionHealthSummary(
       health: _TunnelSessionHealth.failed,
       reason: backendLooksFailed
-          ? 'The tunnel backend reports a failed state.'
-          : 'A runtime or client-side error is blocking the tunnel session.',
+          ? 'The mesh backend reports a failed state.'
+          : 'A runtime or client-side error is blocking the mesh session.',
       supportingSignal: runtime?.backendLastError ??
           runtime?.lastError ??
           tunnelDebugError ??
@@ -188,7 +188,7 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
       primaryActionLabel:
           (recentApplyFailures + recentUpFailures) >= 2 || isPersistentUnhealthy
               ? 'Recover Session'
-              : 'Apply Tunnel Again',
+              : 'Apply Mesh Again',
       secondaryAction: _runtimeMonitorEnabledForSummary(
               runtimeMonitorEnabled: runtimeMonitorEnabled)
           ? _TunnelActionKind.inspect
@@ -196,7 +196,7 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
       secondaryActionLabel: _runtimeMonitorEnabledForSummary(
               runtimeMonitorEnabled: runtimeMonitorEnabled)
           ? 'View Runtime'
-          : 'Bring Tunnel Up',
+          : 'Start Mesh',
       trendLabel: trendSummary.label,
       trendSignal: trendSummary.signal,
       recommendationMatch: recommendationSignal,
@@ -207,18 +207,18 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
     return _TunnelSessionHealthSummary(
       health: _TunnelSessionHealth.idle,
       reason:
-          'No tunnel configuration has been applied yet, so there is no active session to evaluate.',
+          'No overlay configuration has been applied yet, so there is no active mesh session to evaluate.',
       supportingSignal:
           'The runtime is still idle and no apply timestamp is present.',
       recommendedAction:
-          'Apply configuration first, then bring the tunnel up and inspect runtime.',
+          'Apply configuration first, then start the mesh link and inspect runtime.',
       primaryAction: _TunnelActionKind.apply,
-      primaryActionLabel: 'Apply Tunnel',
+      primaryActionLabel: 'Apply Mesh Config',
       secondaryAction: hasControlSession
           ? _TunnelActionKind.bootstrap
           : _TunnelActionKind.up,
       secondaryActionLabel:
-          hasControlSession ? 'Refresh Bootstrap' : 'Bring Tunnel Up',
+          hasControlSession ? 'Refresh Bootstrap' : 'Start Mesh',
       trendLabel: trendSummary.label,
       trendSignal: trendSummary.signal,
       recommendationMatch: recommendationSignal,
@@ -237,7 +237,7 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
       recommendedAction: _runtimeMonitorEnabledForSummary(
               runtimeMonitorEnabled: runtimeMonitorEnabled)
           ? 'Watch runtime and refresh if startup does not complete.'
-          : 'Bring the tunnel up again, then inspect runtime.',
+          : 'Start the mesh link again, then inspect runtime.',
       primaryAction: _runtimeMonitorEnabledForSummary(
               runtimeMonitorEnabled: runtimeMonitorEnabled)
           ? _TunnelActionKind.inspect
@@ -245,9 +245,9 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
       primaryActionLabel: _runtimeMonitorEnabledForSummary(
               runtimeMonitorEnabled: runtimeMonitorEnabled)
           ? 'View Runtime'
-          : 'Bring Tunnel Up',
+          : 'Start Mesh',
       secondaryAction: _TunnelActionKind.apply,
-      secondaryActionLabel: 'Apply Tunnel Again',
+      secondaryActionLabel: 'Apply Mesh Again',
       trendLabel: trendSummary.label,
       trendSignal: trendSummary.signal,
       recommendationMatch: recommendationSignal,
@@ -309,7 +309,7 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
   return _TunnelSessionHealthSummary(
     health: _TunnelSessionHealth.healthy,
     reason:
-        'The tunnel backend is running, an endpoint is selected, and traffic has been observed.',
+        'The mesh backend is running, an endpoint is selected, and traffic has been observed.',
     supportingSignal: packetAge == null
         ? 'Backend=$backendState state=$state traffic=${_trafficValue(runtime)}.'
         : 'Traffic last moved about $packetAge ago with endpoint ${runtime?.selectedEndpoint}.',
@@ -319,7 +319,7 @@ _TunnelSessionHealthSummary _deriveTunnelSessionHealthSummary({
     primaryAction: _TunnelActionKind.inspect,
     primaryActionLabel: 'View Runtime',
     secondaryAction: _TunnelActionKind.down,
-    secondaryActionLabel: 'Bring Tunnel Down',
+    secondaryActionLabel: 'Stop Mesh',
     trendLabel: trendSummary.label,
     trendSignal: trendSummary.signal,
     recommendationMatch: recommendationSignal,
@@ -617,30 +617,30 @@ _TunnelStagePlan _deriveTunnelStagePlan({
           : !hasApplied
               ? 'Apply configuration'
               : !isUp
-                  ? 'Bring the tunnel up'
+                  ? 'Start the mesh link'
                   : !hasInspection
                       ? 'Refresh runtime'
                       : hasPreferredControlPath
                           ? 'Observe runtime or follow control recommendation $preferredControlPath'
-                          : 'Observe runtime or bring the tunnel down';
+                          : 'Observe runtime or stop the mesh link';
 
   final summary = blocked
-      ? 'The latest tunnel action failed. Recover configuration or backend state before moving forward.'
+      ? 'The latest mesh action failed. Recover configuration or backend state before moving forward.'
       : controlMapPending
           ? 'Control plane is configured but has not synced a fresh network map yet. Refresh bootstrap/control sync before trusting local path decisions.'
           : !hasApplied
               ? 'Start the recommended sequence by applying configuration so the host has a staged interface and peer definition.'
               : applyNeedsBringUp
-                  ? 'A newer configuration was applied after the last successful bring-up. Bring the tunnel up again so runtime reflects the staged settings.'
+                  ? 'A newer configuration was applied after the last successful start. Start the mesh link again so runtime reflects the staged settings.'
                   : !isUp
-                      ? 'Configuration is staged. The next meaningful step is to bring the PacketTunnel session up.'
+                      ? 'Configuration is staged. The next meaningful step is to start the local mesh session.'
                       : !hasInspection
                           ? hasPreferredControlPath
-                              ? 'The tunnel looks active. Refresh runtime now, or let live monitor observe backend state while control plane recommends $preferredControlPath${preferredControlRelay == '-' ? '' : ' via $preferredControlRelay'}.'
-                              : 'The tunnel looks active. Refresh runtime now, or let live monitor observe backend state and traffic changes for you.'
+                              ? 'The mesh link looks active. Refresh runtime now, or let live monitor observe backend state while control plane recommends $preferredControlPath${preferredControlRelay == '-' ? '' : ' via $preferredControlRelay'}.'
+                              : 'The mesh link looks active. Refresh runtime now, or let live monitor observe backend state and traffic changes for you.'
                           : hasPreferredControlPath
                               ? 'The recommended flow has completed. Control plane currently recommends $preferredControlPath${preferredControlRelay == '-' ? '' : ' via $preferredControlRelay'}.'
-                              : 'The recommended flow has completed. You can keep observing runtime, re-apply configuration, or shut the tunnel down cleanly.';
+                              : 'The recommended flow has completed. You can keep observing runtime, re-apply configuration, or stop the mesh link cleanly.';
 
   final recoveryTitle = effectiveError == null
       ? 'If the next step fails'
@@ -648,19 +648,19 @@ _TunnelStagePlan _deriveTunnelStagePlan({
   final recoverySteps = effectiveError == null
       ? <String>[
           if (controlMapPending)
-            'Refresh bootstrap/control sync first so the latest peer map and path recommendation are present before tunnel actions.',
-          'Verify local IP, peer IP, endpoint, and debug engine mode before pressing Apply Tunnel.',
-          'If Bring Up does not move the tunnel out of idle, run View Runtime immediately or enable live monitor to capture backend state and activity.',
+            'Refresh bootstrap/control sync first so the latest peer map and path recommendation are present before mesh actions.',
+          'Verify local IP, peer IP, endpoint, and debug engine mode before pressing Apply Mesh Config.',
+          'If Start Mesh does not move the mesh link out of idle, run View Runtime immediately or enable live monitor to capture backend state and activity.',
           if (hasPreferredControlPath)
             'Control plane currently suggests $preferredControlPath${preferredControlRelay == '-' ? '' : ' via $preferredControlRelay'}. Use that as the expected path while validating runtime.',
-          'If runtime still looks stale, bring the tunnel down, apply configuration again, then repeat the flow.',
+          'If runtime still looks stale, stop the mesh link, apply configuration again, then repeat the flow.',
         ]
       : <String>[
           'Review the latest failure first: $effectiveError',
           if (controlMapPending)
             'Refresh bootstrap/control sync before retrying so local runtime and control-plane state are aligned.',
           'Re-check endpoint, peer addressing, and debug engine mode. Use noop, loopback, or external only when you intend to test those paths.',
-          'Repeat the recommended sequence in order: Apply Tunnel, Bring Up, then View Runtime.',
+          'Repeat the recommended sequence in order: Apply Mesh Config, Start Mesh, then View Runtime.',
         ];
 
   final primaryAction = blocked
@@ -679,20 +679,20 @@ _TunnelStagePlan _deriveTunnelStagePlan({
       : controlMapPending
           ? 'Run Refresh Bootstrap'
           : !hasApplied
-              ? 'Run Apply Tunnel'
+              ? 'Run Apply Mesh Config'
               : !isUp
-                  ? 'Run Bring Up'
+                  ? 'Run Start Mesh'
                   : !hasInspection
                       ? 'Run View Runtime'
-                      : 'Run Bring Down';
+                      : 'Run Stop Mesh';
 
   final primaryRecoveryAction =
       blocked ? _TunnelActionKind.apply : _TunnelActionKind.inspect;
-  final primaryRecoveryLabel = blocked ? 'Apply Tunnel Again' : 'View Runtime';
+  final primaryRecoveryLabel = blocked ? 'Apply Mesh Again' : 'View Runtime';
   final secondaryRecoveryAction =
       blocked ? _TunnelActionKind.inspect : _TunnelActionKind.down;
   final secondaryRecoveryLabel =
-      blocked ? 'Refresh Runtime' : 'Bring Tunnel Down';
+      blocked ? 'Refresh Runtime' : 'Stop Mesh';
 
   return _TunnelStagePlan(
     nextStepLabel: nextStepLabel,
@@ -717,9 +717,9 @@ _TunnelStagePlan _deriveTunnelStagePlan({
                 : _TunnelStageState.current,
       ),
       _TunnelStageStep(
-        title: 'Bring tunnel up',
+        title: 'Start mesh link',
         description:
-            'Start PacketTunnel and let the selected backend move into an active state.',
+            'Start the local overlay interface and let the selected backend move into an active state.',
         state: isUp
             ? _TunnelStageState.complete
             : blocked && hasApplied

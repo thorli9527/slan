@@ -8,9 +8,9 @@ _TunnelActionPhaseGuidance _deriveTunnelActionPhaseGuidance(
   }
   final nextStepLabel = switch (report.phase) {
     TunnelActionPhase.accepted => 'Inspect runtime and wait for backend state',
-    TunnelActionPhase.configured => 'Bring the tunnel up',
+    TunnelActionPhase.configured => 'Start the mesh link',
     TunnelActionPhase.started => 'Inspect runtime or leave monitor running',
-    TunnelActionPhase.verified => 'Observe runtime or bring the tunnel down',
+    TunnelActionPhase.verified => 'Observe runtime or stop the mesh link',
     TunnelActionPhase.failed => 'Recover session or re-apply configuration',
     TunnelActionPhase.pendingVerification =>
       'Inspect runtime again to confirm backend progress',

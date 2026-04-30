@@ -58,7 +58,7 @@ class TunnelSessionService implements TunnelSessionServiceContract {
     onProgress(
       TunnelProgressUpdate(
         detail: _formatTunnelActionReportDetail(applyReport),
-        progressLabel: '2/3 Bring tunnel up',
+        progressLabel: '2/3 Start mesh link',
       ),
     );
     final upReport = await bringTunnelUp();
@@ -123,8 +123,8 @@ class TunnelSessionService implements TunnelSessionServiceContract {
 
     onProgress(
       const TunnelProgressUpdate(
-        detail: 'Staging tunnel configuration from current bootstrap state',
-        progressLabel: '4/5 Apply tunnel',
+        detail: 'Staging overlay configuration from current bootstrap state',
+        progressLabel: '4/5 Apply mesh config',
       ),
     );
     final applyReport = await applyConfiguration();
@@ -134,8 +134,8 @@ class TunnelSessionService implements TunnelSessionServiceContract {
 
     onProgress(
       const TunnelProgressUpdate(
-        detail: 'Bringing PacketTunnel session up',
-        progressLabel: '5/5 Tunnel up',
+        detail: 'Starting the local mesh session',
+        progressLabel: '5/5 Mesh up',
       ),
     );
     return bringTunnelUp();
@@ -144,7 +144,7 @@ class TunnelSessionService implements TunnelSessionServiceContract {
 
 String _formatTunnelActionReportDetail(TunnelActionReport? report) {
   if (report == null) {
-    return 'Tunnel action completed without a structured backend report.';
+    return 'Mesh runtime action completed without a structured backend report.';
   }
   return '${report.detail} Verified by ${report.sourceLabel}.';
 }
