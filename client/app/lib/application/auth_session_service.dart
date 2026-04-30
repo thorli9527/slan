@@ -20,7 +20,17 @@ class AuthSessionHydrationResult {
   final String notice;
 }
 
-class AuthSessionService {
+abstract class AuthSessionServiceContract {
+  Future<AuthSessionHydrationResult> hydrateExternalSession(
+    SessionModel session,
+  );
+
+  Future<AuthSessionHydrationResult> refreshAndHydrateSession(
+    SessionModel session,
+  );
+}
+
+class AuthSessionService implements AuthSessionServiceContract {
   const AuthSessionService({
     required AppCoreApi Function() apiProvider,
   }) : _apiProvider = apiProvider;
@@ -29,12 +39,14 @@ class AuthSessionService {
 
   AppCoreApi get _api => _apiProvider();
 
+  @override
   Future<AuthSessionHydrationResult> hydrateExternalSession(
     SessionModel session,
   ) async {
     return _hydrateSession(session);
   }
 
+  @override
   Future<AuthSessionHydrationResult> refreshAndHydrateSession(
     SessionModel session,
   ) async {

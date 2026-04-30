@@ -6,7 +6,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../../infra/app_core/models/diagnostic_models.dart';
 import '../../infra/app_core/models/network_models.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
 import '../../infra/app_core/store/app_session_store.dart';
@@ -22,9 +21,13 @@ class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
     this.enableAutoSetup = true,
+    this.urlLauncher = DesktopUrlLauncher.instance,
+    this.authCallbackGateway = DefaultAuthCallbackGateway.instance,
   });
 
   final bool enableAutoSetup;
+  final DesktopUrlLauncherContract urlLauncher;
+  final AuthCallbackGateway authCallbackGateway;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -95,7 +98,6 @@ class _HomePageState extends State<HomePage> {
                         statusMessage: sessionStore.error ??
                             sessionStore.notice ??
                             (sessionStore.busy ? '正在执行网络操作...' : null),
-                        helperStatus: sessionStore.helperStatus,
                         hasActiveNetwork: activeNetwork != null,
                         busy: sessionStore.busy,
                         networkTransitioning: _networkToggleBusy,
@@ -496,7 +498,6 @@ class _LoggedInHomeV4 extends StatelessWidget {
     required this.virtualIp,
     required this.runtimeState,
     required this.statusMessage,
-    required this.helperStatus,
     required this.hasActiveNetwork,
     required this.busy,
     required this.networkTransitioning,
@@ -511,7 +512,6 @@ class _LoggedInHomeV4 extends StatelessWidget {
   final String virtualIp;
   final String runtimeState;
   final String? statusMessage;
-  final AppCoreHelperStatusModel? helperStatus;
   final bool hasActiveNetwork;
   final bool busy;
   final bool networkTransitioning;
@@ -577,16 +577,6 @@ class _LoggedInHomeV4 extends StatelessWidget {
           label: '当前 IP',
           value: virtualIp,
         ),
-        if (helperStatus != null) ...[
-          const SizedBox(height: 8),
-          _CompactInfoPill(
-            icon: helperStatus!.helperReachable
-                ? Icons.health_and_safety_rounded
-                : Icons.warning_amber_rounded,
-            label: '服务状态',
-            value: _formatHelperStatusSummary(helperStatus!),
-          ),
-        ],
         if (statusMessage != null && statusMessage!.trim().isNotEmpty) ...[
           const SizedBox(height: 8),
           _CompactStatusMessage(
@@ -625,20 +615,6 @@ class _LoggedInHomeV4 extends StatelessWidget {
       ],
     );
   }
-}
-
-String _formatHelperStatusSummary(AppCoreHelperStatusModel status) {
-  if (!status.helperReachable) {
-    return 'helper unavailable';
-  }
-  if (status.tunnelBackendRunning) {
-    final ip = status.tunnelPeerVirtualIp?.trim();
-    return ip == null || ip.isEmpty ? 'running' : 'running / peer $ip';
-  }
-  if (status.currentNetworkId?.trim().isNotEmpty == true) {
-    return 'ready / ${status.currentNetworkId}';
-  }
-  return status.sessionPresent ? 'signed in' : 'waiting for login';
 }
 
 class _CompactIdentity extends StatelessWidget {

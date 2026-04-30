@@ -38,7 +38,24 @@ class ConnectAttemptResult {
   final String resultHint;
 }
 
-class DeviceRuntimeService {
+abstract class DeviceRuntimeServiceContract {
+  Future<BootstrapRefreshResult> refreshBootstrap({
+    required NodeModel? node,
+    required BootstrapModel? currentBootstrap,
+    required List<NetworkModel> currentNetworks,
+  });
+
+  Future<ConnectAttemptResult> connectWithFallback({
+    required String networkId,
+    required String peerNodeId,
+    required String reason,
+    required NodeModel? currentNode,
+    required ControlStatusModel? controlStatus,
+    required DataPlaneProbeModel? lastProbe,
+  });
+}
+
+class DeviceRuntimeService implements DeviceRuntimeServiceContract {
   const DeviceRuntimeService({
     required AppCoreApi Function() apiProvider,
   }) : _apiProvider = apiProvider;
@@ -47,6 +64,7 @@ class DeviceRuntimeService {
 
   AppCoreApi get _api => _apiProvider();
 
+  @override
   Future<BootstrapRefreshResult> refreshBootstrap({
     required NodeModel? node,
     required BootstrapModel? currentBootstrap,
@@ -90,6 +108,7 @@ class DeviceRuntimeService {
     );
   }
 
+  @override
   Future<ConnectAttemptResult> connectWithFallback({
     required String networkId,
     required String peerNodeId,

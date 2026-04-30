@@ -5,11 +5,21 @@ import 'package:slan_app_core_plugin/slan_app_core_plugin.dart';
 import '../infra/app_core/api/dev_defaults.dart';
 import '../infra/app_core/models/network_models.dart';
 
-class TunnelConfigurationService {
+abstract class TunnelConfigurationServiceContract {
+  WireGuardTunnelConfiguration buildActiveNetworkConfiguration({
+    required NetworkModel network,
+    required String deviceId,
+    required String? devicePublicKey,
+    String? deviceVirtualIp,
+  });
+}
+
+class TunnelConfigurationService implements TunnelConfigurationServiceContract {
   const TunnelConfigurationService();
 
   static const windowsTunnelInterfaceName = 'SLAN LAN Adapter';
 
+  @override
   WireGuardTunnelConfiguration buildActiveNetworkConfiguration({
     required NetworkModel network,
     required String deviceId,

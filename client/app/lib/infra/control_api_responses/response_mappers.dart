@@ -15,13 +15,24 @@ extension AuthResponseDtoMapper on AuthResponseDto {
 }
 
 extension DeviceResponseDtoMapper on DeviceResponseDto {
+  String? resolvedRuntimeVirtualIp(String? overrideVirtualIp) {
+    if (overrideVirtualIp != null) {
+      return overrideVirtualIp;
+    }
+    final state = networkState;
+    if (state != null && (!state.networkOnline || !state.tunnelUp)) {
+      return null;
+    }
+    return currentVirtualIp;
+  }
+
   DeviceModel toModel({String? virtualIp}) => DeviceModel(
         deviceId: deviceId,
         name: name,
         platform: platform,
         deviceVersion: deviceVersion,
         status: status,
-        virtualIp: virtualIp ?? currentVirtualIp,
+        virtualIp: resolvedRuntimeVirtualIp(virtualIp),
         publicKey: publicKey,
         ownerEmail: ownerEmail,
         machineId: machineId,

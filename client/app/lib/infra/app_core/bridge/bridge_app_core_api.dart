@@ -365,6 +365,7 @@ AppCoreHelperStatusModel _toHelperStatusModel(
     sessionPresent: payload.sessionPresent,
     refreshTokenPresent: payload.refreshTokenPresent,
     deviceId: payload.deviceId,
+    currentDeviceVirtualIp: payload.currentDeviceVirtualIp,
     nodeId: payload.nodeId,
     currentNetworkId: payload.currentNetworkId,
     bootstrapPresent: payload.bootstrapPresent,
@@ -375,6 +376,11 @@ AppCoreHelperStatusModel _toHelperStatusModel(
     tunnelLastError: payload.tunnelLastError,
     tunnelLastAppliedAtMs: payload.tunnelLastAppliedAtMs,
     tunnelLastStartedAtMs: payload.tunnelLastStartedAtMs,
+    mqttControlTaskFile: payload.mqttControlTaskFile,
+    mqttControlUiRefreshRequired: payload.mqttControlUiRefreshRequired,
+    mqttControlUiRefreshTaskId: payload.mqttControlUiRefreshTaskId,
+    mqttControlUiRefreshReason: payload.mqttControlUiRefreshReason,
+    mqttControlUiRefreshUpdatedAtMs: payload.mqttControlUiRefreshUpdatedAtMs,
     checkedAtMs: payload.checkedAtMs,
   );
 }

@@ -64,6 +64,7 @@ extension _HomePageLogic on _HomePageState {
     final target =
         AppCoreScope.hostConfig?.authLoginUrl ?? AppCoreScope.webConsoleUrl;
     if (target == null || target.isEmpty) {
+      await StartupLog.write('home browser login skipped: missing target');
       return;
     }
     final currentDeviceId = AppCoreScope.sessionStore.device?.deviceId.trim();
@@ -71,15 +72,22 @@ extension _HomePageLogic on _HomePageState {
         currentDeviceId != null && currentDeviceId.isNotEmpty
             ? currentDeviceId
             : AppCoreScope.clientMachineId;
-    await AuthCallbackService.preparePendingServerCallback(
-      preferredKey: loginTargetDeviceId,
-    );
-    await _openExternalUrl(
-      Uri.parse(target).replace(queryParameters: {
+    try {
+      await widget.authCallbackGateway.preparePendingServerCallback(
+        preferredKey: loginTargetDeviceId,
+      );
+      final loginUrl = Uri.parse(target).replace(queryParameters: {
         ...Uri.parse(target).queryParameters,
         'deviceId': loginTargetDeviceId,
-      }).toString(),
-    );
+      }).toString();
+      await StartupLog.write('home browser login target=$loginUrl');
+      await _openExternalUrl(loginUrl);
+      await StartupLog.write('home browser login launched');
+    } catch (error) {
+      AppCoreScope.sessionStore.error = '打开浏览器登录失败：$error';
+      AppCoreScope.sessionStore.notifyListeners();
+      await StartupLog.write('home browser login failed: $error');
+    }
   }
 
   Future<void> _openWebDetails() async {
@@ -161,7 +169,7 @@ extension _HomePageLogic on _HomePageState {
   }
 
   Future<void> _logoutFromClient() async {
-    await AuthCallbackService.clearPendingServerCallback();
+    await widget.authCallbackGateway.clearPendingServerCallback();
     await AppCoreScope.sessionController.signOut();
   }
 
@@ -201,6 +209,14 @@ extension _HomePageLogic on _HomePageState {
       } else {
         await AppCoreScope.sessionController.disableActiveNetwork();
       }
+      if (AppCoreScope.sessionStore.error != null) {
+        await StartupLog.write(
+          'home network switch preflight failed enable=$enable '
+          'error=${AppCoreScope.sessionStore.error}',
+        );
+        return;
+      }
+      await _waitForNetworkToggleSync(enable: enable);
       await StartupLog.write(
         'home network switch completed enable=$enable '
         'error=${AppCoreScope.sessionStore.error ?? '-'} '
@@ -213,6 +229,49 @@ extension _HomePageLogic on _HomePageState {
     }
   }
 
+  Future<void> _waitForNetworkToggleSync({required bool enable}) async {
+    const pollInterval = Duration(milliseconds: 500);
+    final deadline = DateTime.now().add(const Duration(seconds: 20));
+    while (mounted && DateTime.now().isBefore(deadline)) {
+      final status = await AppCoreScope.sessionController.refreshHelperStatus();
+      final helperNetworkId = status.currentNetworkId?.trim();
+      final serviceRuntimeActive = status.helperReachable &&
+          status.tunnelBackendRunning &&
+          helperNetworkId != null &&
+          helperNetworkId.isNotEmpty;
+      final expectedRefreshReason =
+          enable ? 'network_enabled' : 'network_disabled';
+      final completedRequestedTask = status.mqttControlUiRefreshRequired &&
+          status.mqttControlUiRefreshReason?.trim().toLowerCase() ==
+              expectedRefreshReason;
+      final runtimeState =
+          AppCoreScope.tunnelStore.tunnelRuntimeView?.state ?? 'idle';
+      final uiRuntimeEnabled = _runtimeStateIsEnabled(runtimeState);
+      final settled = enable
+          ? completedRequestedTask && serviceRuntimeActive && uiRuntimeEnabled
+          : completedRequestedTask && !serviceRuntimeActive && !uiRuntimeEnabled;
+      if (settled) {
+        await StartupLog.write(
+          'home network switch synced enable=$enable '
+          'helperActive=$serviceRuntimeActive runtime=$runtimeState '
+          'task=${status.mqttControlUiRefreshTaskId ?? '-'}',
+        );
+        return;
+      }
+      await Future<void>.delayed(pollInterval);
+    }
+    await StartupLog.write(
+      'home network switch sync timeout enable=$enable '
+      'runtime=${AppCoreScope.tunnelStore.tunnelRuntimeView?.state ?? '-'}',
+    );
+    if (mounted) {
+      AppCoreScope.sessionStore.notice = enable
+          ? '网络启用任务已提交，后台仍在同步状态。'
+          : '网络停用任务已提交，后台仍在同步状态。';
+      AppCoreScope.sessionStore.emit();
+    }
+  }
+
   bool _memberIsDisabled(NetworkMemberModel? currentMember) {
     final status = currentMember?.status?.trim().toLowerCase();
     return status == 'disabled' || status == 'suspended';
@@ -222,6 +281,7 @@ extension _HomePageLogic on _HomePageState {
     final normalized = error?.toLowerCase() ?? '';
     return normalized.contains('device unavailable') ||
         normalized.contains('contact administrator') ||
+        normalized.contains('联系管理员') ||
         (normalized.contains('forbidden') && normalized.contains('disabled'));
   }
 
@@ -334,7 +394,8 @@ extension _HomePageLogic on _HomePageState {
   }
 
   Future<void> _openExternalUrl(String url) async {
-    await DesktopUrlLauncher.open(url);
+    await StartupLog.write('open external url target=$url');
+    await widget.urlLauncher.open(url);
   }
 
   NetworkMemberModel? _memberForCurrentDevice(

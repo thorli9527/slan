@@ -31,15 +31,20 @@ part 'devices_page_state_card.dart';
 part 'devices_page_state_sections.dart';
 
 class DevicesPage extends StatefulWidget {
-  const DevicesPage({super.key});
+  const DevicesPage({
+    super.key,
+    this.tunnelSessionService = const TunnelSessionService(),
+  });
+
+  final TunnelSessionServiceContract tunnelSessionService;
 
   @override
   State<DevicesPage> createState() => _DevicesPageState();
 }
 
 class _DevicesPageState extends State<DevicesPage> {
-  final TunnelSessionService _tunnelSessionService =
-      const TunnelSessionService();
+  TunnelSessionServiceContract get _tunnelSessionService =>
+      widget.tunnelSessionService;
   final _nameController = TextEditingController();
   final _platformController =
       TextEditingController(text: DesktopPlatform.currentId);

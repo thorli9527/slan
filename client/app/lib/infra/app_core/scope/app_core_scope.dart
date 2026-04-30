@@ -9,8 +9,17 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../application/app_workspace_service.dart';
+import '../../../application/auth_session_service.dart';
+import '../../../application/device_runtime_service.dart';
+import '../../../application/device_setup_service.dart';
+import '../../../application/local_dns_service.dart';
+import '../../../application/mqtt_control_task_service.dart';
+import '../../../application/network_enable_preflight_service.dart';
+import '../../../application/tunnel_configuration_service.dart';
 import '../../../application/tunnel_host_gateway.dart';
 import '../api/app_core_api.dart';
 import '../models/identity_models.dart';
@@ -32,6 +41,8 @@ class AppCoreScope {
   static const _clientMachineIdKey = 'slan.client_machine_id';
   static const _sessionPreferenceKey = 'slan.session';
   static const _networkUsagePreferenceKey = 'slan.last_network_usage_state';
+  static const _bridgeHelperReadyTimeout = Duration(seconds: 8);
+  static const _bridgeHelperReadyPollInterval = Duration(milliseconds: 250);
 
   static const String _appCoreMode =
       String.fromEnvironment('SLAN_APP_CORE_MODE');
@@ -56,8 +67,24 @@ class AppCoreScope {
 
   static AppCoreApi _instance = _buildDefaultInstance();
   static TunnelHostGateway _tunnelHostGateway = _buildTunnelHostGateway();
+  static MqttControlTaskService _mqttControlTaskService =
+      const XmlMqttControlTaskService();
+  static NetworkEnablePreflightService _networkEnablePreflightService =
+      const DefaultNetworkEnablePreflightService();
+  static LocalDnsServiceContract? _localDnsServiceOverride;
+  static AppWorkspaceServiceContract? _workspaceServiceOverride;
+  static AuthSessionServiceContract? _authSessionServiceOverride;
+  static DeviceSetupServiceContract? _deviceSetupServiceOverride;
+  static DeviceRuntimeServiceContract? _deviceRuntimeServiceOverride;
+  static TunnelConfigurationServiceContract?
+      _tunnelConfigurationServiceOverride;
   static AppCoreCoordinator _coordinator =
-      AppCoreCoordinator(hostGateway: _tunnelHostGateway);
+      AppCoreCoordinator(
+    apiProvider: () => _instance,
+    hostGateway: _tunnelHostGateway,
+    mqttControlTaskService: _mqttControlTaskService,
+    networkEnablePreflightService: _networkEnablePreflightService,
+  );
   static AppSessionController _sessionController =
       AppSessionController(_coordinator);
   static AppTunnelController _tunnelController =
@@ -153,7 +180,8 @@ class AppCoreScope {
 
   static AppHostConfig? get hostConfig =>
       AppHostConfig.tryParse(_runtimeHostInput) ??
-      AppHostConfig.tryParse(_runtimeControlBaseUrl);
+      AppHostConfig.tryParse(_runtimeControlBaseUrl) ??
+      (Platform.isWindows ? AppHostConfig.tryParse('127.0.0.1') : null);
   static String? get hostInput => _runtimeHostInput ?? hostConfig?.rawInput;
   static String? get controlBaseUrl =>
       hostConfig?.controlBaseUrl ?? _runtimeControlBaseUrl;
@@ -209,11 +237,30 @@ class AppCoreScope {
   static void configureForTest({
     required AppCoreApi appCoreApi,
     TunnelHostGateway? tunnelHostGateway,
+    MqttControlTaskService? mqttControlTaskService,
+    NetworkEnablePreflightService? networkEnablePreflightService,
+    LocalDnsServiceContract? localDnsService,
+    AppWorkspaceServiceContract? workspaceService,
+    AuthSessionServiceContract? authSessionService,
+    DeviceSetupServiceContract? deviceSetupService,
+    DeviceRuntimeServiceContract? deviceRuntimeService,
+    TunnelConfigurationServiceContract? tunnelConfigurationService,
     String? mode,
   }) {
     _runtimeModeOverride = mode?.trim().isEmpty == true ? null : mode?.trim();
     _instance = appCoreApi;
     _tunnelHostGateway = tunnelHostGateway ?? _buildTunnelHostGateway();
+    _mqttControlTaskService =
+        mqttControlTaskService ?? const XmlMqttControlTaskService();
+    _networkEnablePreflightService =
+        networkEnablePreflightService ??
+            const DefaultNetworkEnablePreflightService();
+    _localDnsServiceOverride = localDnsService;
+    _workspaceServiceOverride = workspaceService;
+    _authSessionServiceOverride = authSessionService;
+    _deviceSetupServiceOverride = deviceSetupService;
+    _deviceRuntimeServiceOverride = deviceRuntimeService;
+    _tunnelConfigurationServiceOverride = tunnelConfigurationService;
     _resetStoreBindings();
   }
 
@@ -226,11 +273,32 @@ class AppCoreScope {
     _runtimeModeOverride = null;
     _instance = _buildDefaultInstance();
     _tunnelHostGateway = _buildTunnelHostGateway();
+    _mqttControlTaskService = const XmlMqttControlTaskService();
+    _networkEnablePreflightService =
+        const DefaultNetworkEnablePreflightService();
+    _localDnsServiceOverride = null;
+    _workspaceServiceOverride = null;
+    _authSessionServiceOverride = null;
+    _deviceSetupServiceOverride = null;
+    _deviceRuntimeServiceOverride = null;
+    _tunnelConfigurationServiceOverride = null;
     _resetStoreBindings();
   }
 
   static void _resetStoreBindings() {
-    _coordinator = AppCoreCoordinator(hostGateway: _tunnelHostGateway);
+    _coordinator.resetState();
+    _coordinator = AppCoreCoordinator(
+      apiProvider: () => _instance,
+      hostGateway: _tunnelHostGateway,
+      mqttControlTaskService: _mqttControlTaskService,
+      networkEnablePreflightService: _networkEnablePreflightService,
+      localDnsService: _localDnsServiceOverride,
+      workspaceService: _workspaceServiceOverride,
+      authSessionService: _authSessionServiceOverride,
+      deviceSetupService: _deviceSetupServiceOverride,
+      deviceRuntimeService: _deviceRuntimeServiceOverride,
+      tunnelConfigurationService: _tunnelConfigurationServiceOverride,
+    );
     _sessionController = AppSessionController(_coordinator);
     _tunnelController = AppTunnelController(_coordinator);
   }
@@ -298,6 +366,7 @@ class AppCoreScope {
     if (!_isBridgeMode) {
       return;
     }
+    await _waitForBridgeHelperReady('hydrate bridge session');
     _instance.restoreSession(session);
     await _instance.listDevices();
   }
@@ -381,6 +450,17 @@ class AppCoreScope {
     try {
       await StartupLog.write('validate persisted session start');
       if (_isBridgeMode) {
+        final helperReady =
+            await _waitForBridgeHelperReady('validate persisted session');
+        if (!helperReady) {
+          await StartupLog.write(
+            'validate persisted bridge session skipped: helper not ready',
+          );
+          return const _PersistedSessionValidationResult(
+            isValid: false,
+            shouldClearPersistedSession: false,
+          );
+        }
         try {
           _instance.restoreSession(session);
           final devices = await _instance.listDevices();
@@ -473,6 +553,68 @@ class AppCoreScope {
     return label.isEmpty || !label.contains('@');
   }
 
+  static Future<bool> _waitForBridgeHelperReady(String reason) async {
+    if (!_isBridgeMode) {
+      return true;
+    }
+    final deadline = DateTime.now().add(_bridgeHelperReadyTimeout);
+    Object? lastError;
+    var attempt = 0;
+    while (true) {
+      attempt += 1;
+      try {
+        final status = await _instance.helperStatus();
+        if (status.helperReachable) {
+          if (attempt > 1) {
+            await StartupLog.write(
+              'bridge helper ready reason=$reason attempts=$attempt',
+            );
+          }
+          return true;
+        }
+        lastError = status.tunnelLastError ?? 'helperReachable=false';
+      } catch (error) {
+        lastError = error;
+        if (!_isTransientBridgeHelperError(error)) {
+          await StartupLog.write(
+            'bridge helper readiness probe deferred to normal flow reason=$reason error=$error',
+          );
+          return true;
+        }
+      }
+
+      if (!DateTime.now().isBefore(deadline)) {
+        await StartupLog.write(
+          'bridge helper not ready reason=$reason attempts=$attempt lastError=$lastError',
+        );
+        return false;
+      }
+      await Future<void>.delayed(_bridgeHelperReadyPollInterval);
+    }
+  }
+
+  static bool _isTransientBridgeHelperError(Object error) {
+    if (error is PlatformException) {
+      final code = error.code.trim().toLowerCase();
+      final message = (error.message ?? '').toLowerCase();
+      if (code != 'app_core_helper_error') {
+        return false;
+      }
+      return message.contains('10061') ||
+          message.contains('connection refused') ||
+          message.contains('actively refused') ||
+          message.contains('无法连接') ||
+          message.contains('拒绝');
+    }
+    final message = error.toString().toLowerCase();
+    return message.contains('app_core_helper_error') &&
+        (message.contains('10061') ||
+            message.contains('connection refused') ||
+            message.contains('actively refused') ||
+            message.contains('无法连接') ||
+            message.contains('拒绝'));
+  }
+
   static String? _deriveWebConsoleUrl(String? baseUrl) {
     final normalized = baseUrl?.trim();
     if (normalized == null || normalized.isEmpty) {
@@ -485,7 +627,7 @@ class AppCoreScope {
     if (uri.host == '127.0.0.1' ||
         uri.host == 'localhost' ||
         uri.host == '::1') {
-      return 'https://web.slan.localhost:18443';
+      return 'http://127.0.0.1:24200';
     }
     if (uri.host == 'slan.localhost') {
       return uri

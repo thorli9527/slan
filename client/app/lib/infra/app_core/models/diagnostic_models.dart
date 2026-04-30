@@ -77,6 +77,7 @@ class AppCoreHelperStatusModel {
     required this.sessionPresent,
     required this.refreshTokenPresent,
     this.deviceId,
+    this.currentDeviceVirtualIp,
     this.nodeId,
     this.currentNetworkId,
     required this.bootstrapPresent,
@@ -87,6 +88,11 @@ class AppCoreHelperStatusModel {
     this.tunnelLastError,
     this.tunnelLastAppliedAtMs,
     this.tunnelLastStartedAtMs,
+    this.mqttControlTaskFile,
+    this.mqttControlUiRefreshRequired = false,
+    this.mqttControlUiRefreshTaskId,
+    this.mqttControlUiRefreshReason,
+    this.mqttControlUiRefreshUpdatedAtMs,
     this.checkedAtMs,
   });
 
@@ -98,6 +104,7 @@ class AppCoreHelperStatusModel {
   final bool sessionPresent;
   final bool refreshTokenPresent;
   final String? deviceId;
+  final String? currentDeviceVirtualIp;
   final String? nodeId;
   final String? currentNetworkId;
   final bool bootstrapPresent;
@@ -108,6 +115,11 @@ class AppCoreHelperStatusModel {
   final String? tunnelLastError;
   final int? tunnelLastAppliedAtMs;
   final int? tunnelLastStartedAtMs;
+  final String? mqttControlTaskFile;
+  final bool mqttControlUiRefreshRequired;
+  final String? mqttControlUiRefreshTaskId;
+  final String? mqttControlUiRefreshReason;
+  final int? mqttControlUiRefreshUpdatedAtMs;
   final int? checkedAtMs;
 
   bool get isReady =>

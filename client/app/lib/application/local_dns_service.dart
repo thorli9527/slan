@@ -6,7 +6,16 @@ import 'dart:typed_data';
 
 import '../infra/app_core/models/network_models.dart';
 
-class LocalDnsService {
+abstract class LocalDnsServiceContract {
+  bool get isRunning;
+  int get port;
+
+  Future<void> configureFromNetwork(NetworkModel network);
+
+  Future<void> stop();
+}
+
+class LocalDnsService implements LocalDnsServiceContract {
   LocalDnsService._();
 
   static final LocalDnsService instance = LocalDnsService._();
@@ -15,9 +24,12 @@ class LocalDnsService {
   StreamSubscription<RawSocketEvent>? _subscription;
   Map<String, String> _records = const {};
 
+  @override
   bool get isRunning => _socket != null;
+  @override
   int get port => _socket?.port ?? 0;
 
+  @override
   Future<void> configureFromNetwork(NetworkModel network) async {
     if (!network.dns.enabled) {
       await stop();
@@ -69,6 +81,7 @@ class LocalDnsService {
     });
   }
 
+  @override
   Future<void> stop() async {
     await _subscription?.cancel();
     _subscription = null;

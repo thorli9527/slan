@@ -21,4 +21,13 @@ void main() {
     expect(config.webConsoleUrl, 'https://web.slan.localhost:18443');
     expect(config.authLoginUrl, 'https://web.slan.localhost:18443/?auth=login');
   });
+
+  test('loopback host resolves to local HTTP web endpoint', () {
+    final config = AppHostConfig.tryParse('127.0.0.1');
+
+    expect(config, isNotNull);
+    expect(config!.controlBaseUrl, 'http://127.0.0.1:28080');
+    expect(config.webConsoleUrl, 'http://127.0.0.1:24200');
+    expect(config.authLoginUrl, 'http://127.0.0.1:24200/?auth=login');
+  });
 }

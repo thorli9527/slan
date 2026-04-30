@@ -15,9 +15,29 @@ class TunnelProgressUpdate {
 typedef TunnelProgressReporter = void Function(TunnelProgressUpdate update);
 typedef TunnelFailureReader = String? Function();
 
-class TunnelSessionService {
+abstract class TunnelSessionServiceContract {
+  Future<TunnelActionReport?> recoverSession({
+    required TunnelProgressReporter onProgress,
+    required Future<TunnelActionReport> Function() applyConfiguration,
+    required Future<TunnelActionReport> Function() bringTunnelUp,
+    required Future<TunnelActionReport> Function() inspectRuntime,
+  });
+
+  Future<TunnelActionReport?> quickSetup({
+    required TunnelProgressReporter onProgress,
+    required Future<void> Function() ensureDeviceRegistered,
+    required Future<void> Function() ensureNetworkAvailableAndJoined,
+    required Future<void> Function() ensureNodeRegisteredAndBootstrapped,
+    required Future<TunnelActionReport> Function() applyConfiguration,
+    required Future<TunnelActionReport> Function() bringTunnelUp,
+    required TunnelFailureReader readCurrentFailure,
+  });
+}
+
+class TunnelSessionService implements TunnelSessionServiceContract {
   const TunnelSessionService();
 
+  @override
   Future<TunnelActionReport?> recoverSession({
     required TunnelProgressReporter onProgress,
     required Future<TunnelActionReport> Function() applyConfiguration,
@@ -55,6 +75,7 @@ class TunnelSessionService {
     return inspectRuntime();
   }
 
+  @override
   Future<TunnelActionReport?> quickSetup({
     required TunnelProgressReporter onProgress,
     required Future<void> Function() ensureDeviceRegistered,

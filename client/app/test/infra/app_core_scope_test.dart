@@ -1,6 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:slan_app/application/mqtt_control_task_service.dart';
+import 'package:slan_app/application/network_enable_preflight_service.dart';
 import 'package:slan_app/application/tunnel_host_gateway.dart';
+import 'package:slan_app/infra/app_core/api/app_core_api.dart';
 import 'package:slan_app/infra/app_core/api/mock_app_core_api.dart';
 import 'package:slan_app/infra/app_core/api/dev_defaults.dart';
 import 'package:slan_app/infra/app_core/models/models.dart';
@@ -48,6 +51,14 @@ void main() {
     expect(AppCoreScope.mode, originalMode);
   });
 
+  test('windows default host config falls back to local server', () {
+    AppCoreScope.resetForTest();
+
+    expect(AppCoreScope.hostConfig, isNotNull);
+    expect(AppCoreScope.hostConfig!.controlBaseUrl, 'http://127.0.0.1:28080');
+    expect(AppCoreScope.webConsoleUrl, 'http://127.0.0.1:24200');
+  });
+
   test('network usage state is persisted per user', () async {
     SharedPreferences.setMockInitialValues({});
 
@@ -85,6 +96,8 @@ void main() {
     final appCore = _AutoEnableMockAppCoreApi();
     AppCoreScope.configureForTest(
       appCoreApi: appCore,
+      mqttControlTaskService: appCore.mqttTasks,
+      networkEnablePreflightService: _AutoEnablePreflightService(appCore),
       mode: 'bridge',
     );
     addTearDown(AppCoreScope.resetForTest);
@@ -103,8 +116,9 @@ void main() {
       ),
     );
 
-    expect(appCore.enableLocalNetworkCalls, greaterThanOrEqualTo(1));
-    expect(appCore.lastEnabledNetworkId, 'net-1');
+    expect(appCore.enableLocalNetworkCalls, 0);
+    expect(appCore.mqttTasks.taskTypes, contains('enable_network'));
+    expect(appCore.mqttTasks.networkIds, contains('net-1'));
     expect(AppCoreScope.sessionStore.selectedNetworkId, 'net-1');
   });
 
@@ -113,6 +127,8 @@ void main() {
     final appCore = _AutoEnableMockAppCoreApi();
     AppCoreScope.configureForTest(
       appCoreApi: appCore,
+      mqttControlTaskService: appCore.mqttTasks,
+      networkEnablePreflightService: _AutoEnablePreflightService(appCore),
       mode: 'bridge',
     );
     addTearDown(AppCoreScope.resetForTest);
@@ -140,6 +156,8 @@ void main() {
 class _AutoEnableMockAppCoreApi extends MockAppCoreApi {
   int enableLocalNetworkCalls = 0;
   String? lastEnabledNetworkId;
+  final _RecordingMqttControlTaskService mqttTasks =
+      _RecordingMqttControlTaskService();
 
   final DeviceModel device = const DeviceModel(
     deviceId: 'dev-1',
@@ -207,6 +225,47 @@ class _AutoEnableMockAppCoreApi extends MockAppCoreApi {
         connectPlanCount: 0,
         connectPlans: [],
       );
+}
+
+class _RecordingMqttControlTaskService implements MqttControlTaskService {
+  final List<String> taskTypes = [];
+  final List<String> networkIds = [];
+
+  @override
+  Future<void> enqueueNetworkTask({
+    required String taskType,
+    required String networkId,
+    required String deviceId,
+    required String uiRefreshReason,
+  }) async {
+    taskTypes.add(taskType);
+    networkIds.add(networkId);
+  }
+
+  @override
+  void markUiRefreshConsumed(String? taskId) {}
+}
+
+class _AutoEnablePreflightService implements NetworkEnablePreflightService {
+  const _AutoEnablePreflightService(this.appCore);
+
+  final _AutoEnableMockAppCoreApi appCore;
+
+  @override
+  Future<NetworkEnablePreflightResult> verifyRemoteNetwork({
+    required AppCoreApi remoteApi,
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    required String? preferredNetworkId,
+  }) async {
+    return NetworkEnablePreflightResult(
+      devices: [appCore.device],
+      networks: appCore.networks,
+      device: appCore.device,
+      selectedNetworkId: preferredNetworkId ?? 'net-1',
+      assignedVirtualIp: appCore.device.virtualIp ?? '10.0.0.2',
+    );
+  }
 }
 
 class _FakeTunnelHostGateway extends TunnelHostGateway {

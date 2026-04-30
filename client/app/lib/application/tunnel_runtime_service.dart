@@ -15,13 +15,35 @@ class TunnelRuntimeOperationResult {
   final WireGuardTunnelRuntimeView? runtimeView;
 }
 
-class TunnelRuntimeService {
+abstract class TunnelRuntimeServiceContract {
+  Future<TunnelRuntimeOperationResult> applyTunnelConfiguration({
+    required WireGuardTunnelConfiguration configuration,
+    String? verifyPeerVirtualIp,
+  });
+
+  Future<TunnelRuntimeOperationResult> bringTunnelUp({
+    String? verifyPeerVirtualIp,
+  });
+
+  Future<TunnelRuntimeOperationResult> bringTunnelDown();
+
+  Future<TunnelRuntimeOperationResult> removeTunnelPeer({
+    required String peerVirtualIp,
+  });
+
+  Future<TunnelRuntimeOperationResult> refreshTunnelRuntime({
+    required String peerVirtualIp,
+  });
+}
+
+class TunnelRuntimeService implements TunnelRuntimeServiceContract {
   const TunnelRuntimeService({
     this.hostGateway = const PluginTunnelHostGateway(),
   });
 
   final TunnelHostGateway hostGateway;
 
+  @override
   Future<TunnelRuntimeOperationResult> applyTunnelConfiguration({
     required WireGuardTunnelConfiguration configuration,
     String? verifyPeerVirtualIp,
@@ -54,6 +76,7 @@ class TunnelRuntimeService {
     );
   }
 
+  @override
   Future<TunnelRuntimeOperationResult> bringTunnelUp({
     String? verifyPeerVirtualIp,
   }) async {
@@ -83,6 +106,7 @@ class TunnelRuntimeService {
     );
   }
 
+  @override
   Future<TunnelRuntimeOperationResult> bringTunnelDown() async {
     final nativeResult = await hostGateway.bringTunnelDown();
     return TunnelRuntimeOperationResult(
@@ -96,6 +120,7 @@ class TunnelRuntimeService {
     );
   }
 
+  @override
   Future<TunnelRuntimeOperationResult> removeTunnelPeer({
     required String peerVirtualIp,
   }) async {
@@ -111,6 +136,7 @@ class TunnelRuntimeService {
     );
   }
 
+  @override
   Future<TunnelRuntimeOperationResult> refreshTunnelRuntime({
     required String peerVirtualIp,
   }) async {

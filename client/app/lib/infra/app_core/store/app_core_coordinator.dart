@@ -8,10 +8,15 @@ import '../../../application/app_workspace_service.dart';
 import '../../../application/auth_session_service.dart';
 import '../../../application/device_setup_service.dart';
 import '../../../application/device_runtime_service.dart';
+import '../../../application/device_network_runtime_service.dart';
 import '../../../application/local_dns_service.dart';
+import '../../../application/mqtt_control_task_service.dart';
+import '../../../application/network_enable_preflight_service.dart';
+import '../../../application/service_runtime_sync_policy.dart';
 import '../../../application/tunnel_configuration_service.dart';
 import '../../../application/tunnel_host_gateway.dart';
 import '../../../application/tunnel_runtime_service.dart';
+import '../api/app_core_api.dart';
 import '../api/http_app_core_api.dart';
 import '../scope/app_core_scope.dart';
 import '../models/diagnostic_models.dart';
@@ -26,28 +31,67 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   static const _networkStateHeartbeatInterval = Duration(seconds: 15);
 
   AppCoreCoordinator({
+    AppCoreApi Function()? apiProvider,
     TunnelHostGateway hostGateway = const PluginTunnelHostGateway(),
-  }) : _tunnelRuntimeService = TunnelRuntimeService(hostGateway: hostGateway);
+    DeviceNetworkRuntimeService deviceNetworkRuntimeService =
+        const DefaultDeviceNetworkRuntimeService(),
+    MqttControlTaskService mqttControlTaskService =
+        const XmlMqttControlTaskService(),
+    NetworkEnablePreflightService networkEnablePreflightService =
+        const DefaultNetworkEnablePreflightService(),
+    ServiceRuntimeSyncPolicy serviceRuntimeSyncPolicy =
+        const DefaultServiceRuntimeSyncPolicy(),
+    LocalDnsServiceContract? localDnsService,
+    AppWorkspaceServiceContract? workspaceService,
+    AuthSessionServiceContract? authSessionService,
+    DeviceSetupServiceContract? deviceSetupService,
+    DeviceRuntimeServiceContract? deviceRuntimeService,
+    TunnelConfigurationServiceContract? tunnelConfigurationService,
+    TunnelRuntimeServiceContract? tunnelRuntimeService,
+  })  : _deviceNetworkRuntimeService = deviceNetworkRuntimeService,
+        _mqttControlTaskService = mqttControlTaskService,
+        _networkEnablePreflightService = networkEnablePreflightService,
+        _serviceRuntimeSyncPolicy = serviceRuntimeSyncPolicy,
+        _localDnsService = localDnsService ?? LocalDnsService.instance,
+        _workspaceService = workspaceService ??
+            AppWorkspaceService(
+              apiProvider: apiProvider ?? (() => AppCoreScope.instance),
+            ),
+        _authSessionService = authSessionService ??
+            AuthSessionService(
+              apiProvider: apiProvider ?? (() => AppCoreScope.instance),
+            ),
+        _deviceSetupService = deviceSetupService ??
+            DeviceSetupService(
+              apiProvider: apiProvider ?? (() => AppCoreScope.instance),
+            ),
+        _deviceRuntimeService = deviceRuntimeService ??
+            DeviceRuntimeService(
+              apiProvider: apiProvider ?? (() => AppCoreScope.instance),
+            ),
+        _apiProvider = apiProvider ?? (() => AppCoreScope.instance),
+        _tunnelConfigurationService =
+            tunnelConfigurationService ?? const TunnelConfigurationService(),
+        _tunnelRuntimeService = tunnelRuntimeService ??
+            TunnelRuntimeService(hostGateway: hostGateway);
 
   final AppSessionStore sessionStore = AppSessionStore();
   final AppTunnelStore tunnelStore = AppTunnelStore();
-  final AppWorkspaceService _workspaceService = AppWorkspaceService(
-    apiProvider: () => AppCoreScope.instance,
-  );
-  final AuthSessionService _authSessionService = AuthSessionService(
-    apiProvider: () => AppCoreScope.instance,
-  );
-  final DeviceSetupService _deviceSetupService = DeviceSetupService(
-    apiProvider: () => AppCoreScope.instance,
-  );
-  final DeviceRuntimeService _deviceRuntimeService = DeviceRuntimeService(
-    apiProvider: () => AppCoreScope.instance,
-  );
-  final TunnelRuntimeService _tunnelRuntimeService;
-  final TunnelConfigurationService _tunnelConfigurationService =
-      const TunnelConfigurationService();
+  final AppCoreApi Function() _apiProvider;
+  final AppWorkspaceServiceContract _workspaceService;
+  final AuthSessionServiceContract _authSessionService;
+  final DeviceSetupServiceContract _deviceSetupService;
+  final DeviceRuntimeServiceContract _deviceRuntimeService;
+  final TunnelRuntimeServiceContract _tunnelRuntimeService;
+  final DeviceNetworkRuntimeService _deviceNetworkRuntimeService;
+  final MqttControlTaskService _mqttControlTaskService;
+  final NetworkEnablePreflightService _networkEnablePreflightService;
+  final ServiceRuntimeSyncPolicy _serviceRuntimeSyncPolicy;
+  final LocalDnsServiceContract _localDnsService;
+  final TunnelConfigurationServiceContract _tunnelConfigurationService;
   Timer? _networkStateHeartbeatTimer;
   bool _networkStateHeartbeatInFlight = false;
+  AppCoreApi get _api => _apiProvider();
   bool get _serviceOwnsLocalNetwork =>
       AppCoreScope.mode == 'bridge' && Platform.isWindows;
   @override
@@ -188,7 +232,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       await _persistNetworkUsageState(enabled: false);
       if (_serviceOwnsLocalNetwork) {
         try {
-          await AppCoreScope.instance.disableLocalNetwork(
+          await _api.disableLocalNetwork(
             networkId: sessionStore.selectedNetworkId,
           );
         } catch (error) {
@@ -210,7 +254,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
           }
         }
         try {
-          await LocalDnsService.instance.stop();
+          await _localDnsService.stop();
         } catch (error) {
           debugPrint('[logout] stop dns skipped: $error');
         }
@@ -224,7 +268,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         }
       }
       try {
-        await AppCoreScope.instance.disconnect();
+        await _api.disconnect();
       } catch (error) {
         debugPrint('[logout] app-core disconnect skipped: $error');
         // Best effort. Signing out must clear the Flutter session even if the
@@ -276,8 +320,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     _networkStateHeartbeatInFlight = true;
     try {
       if (_serviceOwnsLocalNetwork) {
+        await _syncServiceOwnedRuntimeFromHelper();
         try {
-          await AppCoreScope.instance.reportDeviceNetworkState();
+          await _api.reportDeviceNetworkState();
         } catch (error) {
           debugPrint(
               '[network-heartbeat] service state report skipped: $error');
@@ -314,6 +359,102 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     } finally {
       _networkStateHeartbeatInFlight = false;
     }
+  }
+
+  Future<void> _syncServiceOwnedRuntimeFromHelper() async {
+    final hadRuntime = _hasActiveTunnelRuntime();
+    final hadDeviceIp =
+        sessionStore.device?.virtualIp?.trim().isNotEmpty == true;
+    final status = await _readHelperStatus();
+    await _applyServiceOwnedRuntimeFromHelperStatus(
+      status,
+      hadRuntime: hadRuntime,
+      hadDeviceIp: hadDeviceIp,
+    );
+  }
+
+  Future<void> _applyServiceOwnedRuntimeFromHelperStatus(
+    AppCoreHelperStatusModel status, {
+    required bool hadRuntime,
+    required bool hadDeviceIp,
+  }) async {
+    final decision = _serviceRuntimeSyncPolicy.decide(
+      ServiceRuntimeSyncInput(
+        status: status,
+        hadRuntime: hadRuntime,
+        hadDeviceIp: hadDeviceIp,
+        hasAssignedDeviceIp: _currentDeviceHasAssignedVirtualIp(),
+        hasControlStatus: sessionStore.controlStatus != null,
+        selectedNetworkId: sessionStore.selectedNetworkId,
+      ),
+    );
+    switch (decision.action) {
+      case ServiceRuntimeSyncAction.none:
+      case ServiceRuntimeSyncAction.waitForPendingDisable:
+        return;
+      case ServiceRuntimeSyncAction.refreshInventoryAndActivate:
+        await _refreshServiceNetworkInventory(
+          preferredNetworkId: decision.helperNetworkId,
+        );
+        _syncServiceDeviceVirtualIpFromHelperStatus(status);
+        if (!_hasActiveTunnelRuntime() || decision.consumeUiRefresh) {
+          _setServiceTunnelRuntimeSnapshot();
+        }
+        if (decision.notice != null) {
+          sessionStore.notice = decision.notice;
+        }
+        if (decision.consumeUiRefresh) {
+          _mqttControlTaskService.markUiRefreshConsumed(
+            status.mqttControlUiRefreshTaskId,
+          );
+        }
+        emitStateChanged();
+        return;
+      case ServiceRuntimeSyncAction.selectNetworkAndActivate:
+        sessionStore.syncSelectedNetworkId(
+          preferredNetworkId: decision.helperNetworkId,
+        );
+        _syncServiceDeviceVirtualIpFromHelperStatus(status);
+        if (!_hasActiveTunnelRuntime() || decision.consumeUiRefresh) {
+          _setServiceTunnelRuntimeSnapshot();
+        }
+        if (decision.notice != null) {
+          sessionStore.notice = decision.notice;
+        }
+        if (decision.consumeUiRefresh) {
+          _mqttControlTaskService.markUiRefreshConsumed(
+            status.mqttControlUiRefreshTaskId,
+          );
+        }
+        emitStateChanged();
+        return;
+      case ServiceRuntimeSyncAction.clearInactiveRuntime:
+        break;
+    }
+    if (sessionStore.device != null && hadDeviceIp) {
+      sessionStore.syncDevice(
+        _deviceNetworkRuntimeService.copyDeviceWithVirtualIp(
+          sessionStore.device!,
+          null,
+        ),
+      );
+    }
+    sessionStore.controlStatus = null;
+    sessionStore.clearConnection();
+    tunnelStore.clearConnection();
+    tunnelStore.lastTunnelActionReport = const TunnelActionReport(
+      succeeded: true,
+      detail: 'app-core-service 当前没有启用的本地网络，界面状态已同步为停用。',
+      source: TunnelActionReportSource.runtimeSnapshot,
+      phase: TunnelActionPhase.verified,
+    );
+    sessionStore.notice = decision.notice;
+    if (decision.consumeUiRefresh) {
+      _mqttControlTaskService.markUiRefreshConsumed(
+        status.mqttControlUiRefreshTaskId,
+      );
+    }
+    emitStateChanged();
   }
 
   Future<void> _syncActiveNetworkBeforeHeartbeat() async {
@@ -369,7 +510,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
 
   Future<void> _markLocalTunnelRuntimeOffline({required String reason}) async {
     try {
-      await LocalDnsService.instance.stop();
+      await _localDnsService.stop();
     } catch (error) {
       debugPrint(
           '[network-heartbeat] stop dns after stale runtime skipped: $error');
@@ -404,7 +545,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     }
     final previousNetworkId = sessionStore.selectedNetworkId;
     final usageState = await AppCoreScope.readNetworkUsageState(session.userId);
-    final networks = await AppCoreScope.instance.listNetworks();
+    final networks = await _api.listNetworks();
     sessionStore.networks = networks;
     sessionStore.syncSelectedNetworkId(
       preferredNetworkId: previousNetworkId ?? usageState?.networkId,
@@ -430,6 +571,49 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     await enableActiveNetwork();
   }
 
+  Future<void> _refreshServiceNetworkInventory({
+    String? preferredNetworkId,
+  }) async {
+    final session = sessionStore.session;
+    if (session == null) {
+      return;
+    }
+    try {
+      final previousNetworkId = sessionStore.selectedNetworkId;
+      sessionStore.networks = await _api.listNetworks();
+      sessionStore.syncSelectedNetworkId(
+        preferredNetworkId: preferredNetworkId ?? previousNetworkId,
+      );
+      _syncCurrentDeviceVirtualIpFromSelectedNetwork();
+      emitStateChanged();
+    } catch (error) {
+      debugPrint('[service-runtime-sync] refresh networks skipped: $error');
+    }
+  }
+
+  void _syncServiceDeviceVirtualIpFromHelperStatus(
+    AppCoreHelperStatusModel status,
+  ) {
+    final helperDeviceId = status.deviceId?.trim();
+    final helperVirtualIp = status.currentDeviceVirtualIp?.trim();
+    final currentDevice = sessionStore.device;
+    if (currentDevice == null ||
+        helperDeviceId == null ||
+        helperDeviceId.isEmpty ||
+        helperVirtualIp == null ||
+        helperVirtualIp.isEmpty ||
+        currentDevice.deviceId != helperDeviceId ||
+        currentDevice.virtualIp?.trim() == helperVirtualIp) {
+      return;
+    }
+    sessionStore.syncDevice(
+      _deviceNetworkRuntimeService.copyDeviceWithVirtualIp(
+        currentDevice,
+        helperVirtualIp,
+      ),
+    );
+  }
+
   Future<void> _reportDeviceNetworkState({
     String? deviceId,
     bool controlReachable = true,
@@ -449,7 +633,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     final probeOk =
         lastProbeOk ?? tunnelStore.lastProbe?.replyObserved ?? false;
     final reportedAt = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    await AppCoreScope.instance.setDeviceNetworkState(
+    await _api.setDeviceNetworkState(
       deviceId: targetDevice,
       networkId: targetNetwork,
       controlReachable: controlReachable,
@@ -490,36 +674,22 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   String? _assignedVirtualIpForDevice(String deviceId) {
-    final network = sessionStore.selectedNetwork;
-    if (network != null) {
-      for (final member in network.members) {
-        final memberIp = member.virtualIp?.trim();
-        if (member.deviceId == deviceId &&
-            memberIp != null &&
-            memberIp.isNotEmpty) {
-          return memberIp;
-        }
-      }
-    }
-    final deviceIp = sessionStore.device?.virtualIp?.trim();
-    if (sessionStore.device?.deviceId == deviceId &&
-        deviceIp != null &&
-        deviceIp.isNotEmpty) {
-      return deviceIp;
-    }
-    return null;
+    return _deviceNetworkRuntimeService.assignedVirtualIpForDevice(
+      device: sessionStore.device,
+      network: sessionStore.selectedNetwork,
+      deviceId: deviceId,
+    );
   }
 
   void _syncCurrentDeviceVirtualIpFromSelectedNetwork() {
-    final device = sessionStore.device;
-    if (device == null) {
-      return;
+    final syncedDevice =
+        _deviceNetworkRuntimeService.syncDeviceVirtualIpFromNetwork(
+      device: sessionStore.device,
+      network: sessionStore.selectedNetwork,
+    );
+    if (syncedDevice != null) {
+      sessionStore.syncDevice(syncedDevice);
     }
-    final assignedIp = _assignedVirtualIpForDevice(device.deviceId);
-    if (assignedIp == null || assignedIp == device.virtualIp?.trim()) {
-      return;
-    }
-    sessionStore.syncDevice(_copyDeviceWithVirtualIp(device, assignedIp));
   }
 
   Future<void> _refreshCurrentDeviceNetworkConfigFromServer({
@@ -537,36 +707,26 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       return;
     }
     final httpApi = HttpAppCoreApi(baseUrl: controlBaseUrl);
-    httpApi.restoreSession(session);
-    try {
-      final devices = await httpApi.listDevices();
-      sessionStore.devices = devices;
-      for (final device in devices) {
-        if (device.deviceId == currentDeviceId) {
-          sessionStore.syncDevice(device);
-          break;
-        }
-      }
-      final networks = await httpApi.listNetworks();
-      if (networks.isNotEmpty) {
-        sessionStore.networks = networks;
-        sessionStore.syncSelectedNetworkId(
-          preferredNetworkId: preferredNetworkId,
-        );
-        _syncCurrentDeviceVirtualIpFromSelectedNetwork();
-        final network = sessionStore.selectedNetwork;
-        if (network != null) {
-          debugPrint(
-            '[device-config-refresh] network=${network.networkId} '
-            'dnsWildcards=${network.dns.wildcards.length} '
-            'dnsServers=${network.dns.servers.length} '
-            'searchDomains=${network.dns.searchDomains.length}',
-          );
-        }
-      }
-    } catch (error) {
-      debugPrint('[device-config-refresh] http refresh failed: $error');
-      throw StateError('网络错误：无法从服务器拉取最新设备 IP 和 DNS 信息');
+    final result = await _networkEnablePreflightService.verifyRemoteNetwork(
+      remoteApi: httpApi,
+      session: session,
+      currentDevice: sessionStore.device,
+      preferredNetworkId: preferredNetworkId,
+    );
+    sessionStore.devices = result.devices;
+    sessionStore.networks = result.networks;
+    sessionStore.syncSelectedNetworkId(
+      preferredNetworkId: result.selectedNetworkId ?? preferredNetworkId,
+    );
+    sessionStore.syncDevice(result.device);
+    final network = sessionStore.selectedNetwork;
+    if (network != null) {
+      debugPrint(
+        '[device-config-refresh] network=${network.networkId} '
+        'dnsWildcards=${network.dns.wildcards.length} '
+        'dnsServers=${network.dns.servers.length} '
+        'searchDomains=${network.dns.searchDomains.length}',
+      );
     }
   }
 
@@ -587,29 +747,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     emitStateChanged();
     debugPrint(debugMessage);
     return true;
-  }
-
-  DeviceModel _copyDeviceWithVirtualIp(DeviceModel device, String virtualIp) {
-    return DeviceModel(
-      deviceId: device.deviceId,
-      name: device.name,
-      platform: device.platform,
-      deviceVersion: device.deviceVersion,
-      status: device.status,
-      virtualIp: virtualIp,
-      publicKey: device.publicKey,
-      ownerEmail: device.ownerEmail,
-      machineId: device.machineId,
-      linkStatus: device.linkStatus,
-      connectivityProtocol: device.connectivityProtocol,
-      joinedAt: device.joinedAt,
-      membershipStatus: device.membershipStatus,
-      networkRole: device.networkRole,
-      createdAt: device.createdAt,
-      networkIds: device.networkIds,
-      mqtt: device.mqtt,
-      networkState: device.networkState,
-    );
   }
 
   void _setServiceTunnelRuntimeSnapshot() {
@@ -657,6 +794,50 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       phase: TunnelActionPhase.verified,
       runtimeSnapshot: tunnelStore.tunnelRuntimeView,
     );
+    emitStateChanged();
+  }
+
+  Future<void> _enqueueServiceNetworkTask({
+    required String taskType,
+    required String? networkId,
+    required String reason,
+  }) async {
+    final deviceId = sessionStore.device?.deviceId.trim();
+    final targetNetworkId = networkId?.trim();
+    if (deviceId == null || deviceId.isEmpty) {
+      throw StateError('当前设备尚未注册完成。');
+    }
+    if (targetNetworkId == null || targetNetworkId.isEmpty) {
+      throw StateError('当前没有可操作的网络。');
+    }
+    await _mqttControlTaskService.enqueueNetworkTask(
+      taskType: taskType,
+      networkId: targetNetworkId,
+      deviceId: deviceId,
+      uiRefreshReason: reason,
+    );
+  }
+
+  void _clearServiceOwnedNetworkUiState({required String notice}) {
+    final currentDevice = sessionStore.device;
+    if (currentDevice != null) {
+      sessionStore.syncDevice(
+        _deviceNetworkRuntimeService.copyDeviceWithVirtualIp(
+          currentDevice,
+          null,
+        ),
+      );
+    }
+    sessionStore.controlStatus = null;
+    sessionStore.clearConnection();
+    tunnelStore.clearConnection();
+    tunnelStore.lastTunnelActionReport = TunnelActionReport(
+      succeeded: true,
+      detail: notice,
+      source: TunnelActionReportSource.runtimeSnapshot,
+      phase: TunnelActionPhase.verified,
+    );
+    sessionStore.notice = notice;
     emitStateChanged();
   }
 
@@ -779,7 +960,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       if (sessionStore.session == null) {
         throw StateError('login required');
       }
-      final devices = await AppCoreScope.instance.listDevices();
+      final devices = await _api.listDevices();
       sessionStore.devices = devices;
       final currentDeviceId =
           sessionStore.device?.deviceId ?? sessionStore.session?.deviceId;
@@ -929,14 +1110,14 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       if (device == null) {
         throw StateError('device must be ready first');
       }
-      final network = await AppCoreScope.instance.createNetwork(
+      final network = await _api.createNetwork(
         name: name,
         cidr: cidr,
         allocationStartIp: allocationStartIp,
         allocationEndIp: allocationEndIp,
         bindDeviceId: device.deviceId,
       );
-      sessionStore.networks = await AppCoreScope.instance.listNetworks();
+      sessionStore.networks = await _api.listNetworks();
       sessionStore.syncSelectedNetworkId(preferredNetworkId: network.networkId);
       await _enableActiveNetworkCore();
       sessionStore.notice = 'Network created and enabled: ${network.networkId}';
@@ -948,7 +1129,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       if (sessionStore.session == null) {
         throw StateError('login required');
       }
-      sessionStore.networks = await AppCoreScope.instance.listNetworks();
+      sessionStore.networks = await _api.listNetworks();
       sessionStore.syncSelectedNetworkId();
     });
   }
@@ -971,42 +1152,19 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     sessionStore.syncSelectedNetworkId();
     final requestedNetworkId = sessionStore.selectedNetworkId;
     if (_serviceOwnsLocalNetwork) {
-      await AppCoreScope.hydrateBridgeSession(sessionStore.session!);
-      final serviceBootstrap = await AppCoreScope.instance.enableLocalNetwork(
-        networkId: requestedNetworkId,
-      );
-      if (serviceBootstrap == null) {
-        throw StateError('app-core-service failed to enable local network');
-      }
-      sessionStore.bootstrap = serviceBootstrap;
-      sessionStore.controlStatus = await AppCoreScope.instance.controlStatus();
-      if (serviceBootstrap.device.deviceId.trim().isNotEmpty) {
-        sessionStore.syncDevice(serviceBootstrap.device);
-      }
-      sessionStore.networks = serviceBootstrap.networks;
-      sessionStore.syncSelectedNetworkId(
+      await _preflightServiceNetworkEnable(
         preferredNetworkId: requestedNetworkId,
       );
-      _syncCurrentDeviceVirtualIpFromSelectedNetwork();
-      if (await _deferNetworkInitializationUntilAssignedIp(
-        notice: '网络已请求启用，正在等待服务器返回 IP。',
-        debugMessage:
-            '[tunnel-enable] service enabled but current device has no virtual IP',
-      )) {
-        await _persistNetworkUsageState(enabled: false);
-        return;
-      }
-      _setServiceTunnelRuntimeSnapshot();
-      if (sessionStore.selectedNetwork?.dns.enabled == true) {
-        sessionStore.notice =
-            'Network enabled，DNS 已同步 ${sessionStore.selectedNetwork!.dns.wildcards.length} 条。';
-      } else {
-        sessionStore.notice = 'Network enabled';
-      }
+      await _enqueueServiceNetworkTask(
+        taskType: 'enable_network',
+        networkId: requestedNetworkId,
+        reason: 'network_enabled',
+      );
+      sessionStore.notice = '网络启用任务已提交，正在后台应用。';
       await _persistNetworkUsageState(enabled: true);
       unawaited(_sendNetworkStateHeartbeat());
       debugPrint(
-        '[tunnel-enable] service handled network=${sessionStore.selectedNetworkId}',
+        '[tunnel-enable] queued service task network=${sessionStore.selectedNetworkId}',
       );
       return;
     }
@@ -1085,7 +1243,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       await _persistNetworkUsageState(enabled: false);
       return;
     }
-    await LocalDnsService.instance.configureFromNetwork(runtime.activeNetwork);
+    await _localDnsService.configureFromNetwork(runtime.activeNetwork);
     await _reportDeviceNetworkState(
       networkOnline: true,
       tunnelUp: true,
@@ -1096,6 +1254,26 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     debugPrint('[tunnel-enable] bring-up done peerVirtualIp=$peerVirtualIp');
   }
 
+  Future<void> _preflightServiceNetworkEnable({
+    required String? preferredNetworkId,
+  }) async {
+    await _refreshCurrentDeviceNetworkConfigFromServer(
+      preferredNetworkId: preferredNetworkId,
+    );
+    final device = sessionStore.device;
+    if (device == null) {
+      throw StateError('device unavailable: 当前设备尚未注册完成，请联系管理员。');
+    }
+    final assignedIp = _assignedVirtualIpForDevice(device.deviceId);
+    if (assignedIp == null || assignedIp.trim().isEmpty) {
+      throw StateError('device unavailable: 当前设备没有分配远程 IP，请联系管理员。');
+    }
+    debugPrint(
+      '[tunnel-enable] service preflight ok network=$preferredNetworkId '
+      'device=${device.deviceId} virtualIp=$assignedIp',
+    );
+  }
+
   Future<void> disableActiveNetwork() async {
     await runAction(() async {
       if (sessionStore.networks.isEmpty) {
@@ -1104,30 +1282,29 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       }
       late final DeactivatedNetworkResult result;
       if (_serviceOwnsLocalNetwork) {
-        final disabledByService =
-            await AppCoreScope.instance.disableLocalNetwork(
+        await _enqueueServiceNetworkTask(
+          taskType: 'disable_network',
           networkId: sessionStore.selectedNetworkId,
+          reason: 'network_disabled',
         );
-        if (!disabledByService) {
-          throw StateError('app-core-service failed to disable local network');
-        }
         await _persistNetworkUsageState(enabled: false);
+        _clearServiceOwnedNetworkUiState(
+          notice: '网络停用任务已提交，本地界面已切换为停用状态。',
+        );
         result = DeactivatedNetworkResult(
           device: sessionStore.device,
-          networks: sessionStore.session == null
-              ? sessionStore.networks
-              : await AppCoreScope.instance.listNetworks(),
+          networks: sessionStore.networks,
         );
       } else {
         await bringTunnelDown();
-        await LocalDnsService.instance.stop();
+        await _localDnsService.stop();
         await _reportDeviceNetworkState(networkOnline: false, tunnelUp: false);
         await _persistNetworkUsageState(enabled: false);
         result = DeactivatedNetworkResult(
           device: sessionStore.device,
           networks: sessionStore.session == null
               ? sessionStore.networks
-              : await AppCoreScope.instance.listNetworks(),
+              : await _api.listNetworks(),
         );
       }
       final currentDevice = result.device;
@@ -1186,11 +1363,11 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       return;
     }
     await runAction(() async {
-      sessionStore.bootstrap = await AppCoreScope.instance.bootstrap(
+      sessionStore.bootstrap = await _api.bootstrap(
         nodeId: targetNodeId,
         networkId: targetNetworkId,
       );
-      sessionStore.controlStatus = await AppCoreScope.instance.controlStatus();
+      sessionStore.controlStatus = await _api.controlStatus();
       sessionStore.syncDevice(sessionStore.bootstrap!.device);
       sessionStore.networks = sessionStore.bootstrap!.networks;
       sessionStore.syncSelectedNetworkId(preferredNetworkId: targetNetworkId);
@@ -1227,11 +1404,11 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
           targetNetworkId.trim().isEmpty) {
         throw StateError('nodeId and networkId are required');
       }
-      final bootstrap = await AppCoreScope.instance.controlSync(
+      final bootstrap = await _api.controlSync(
         nodeId: targetNodeId,
         networkId: targetNetworkId,
       );
-      final controlStatus = await AppCoreScope.instance.controlStatus();
+      final controlStatus = await _api.controlStatus();
       if (!controlStatus.networkMapPresent) {
         await _forceDisableLocalNetwork(
           reason: '当前设备已被服务端移出网络，本地网络已自动禁用。',
@@ -1285,9 +1462,18 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   Future<void> _forceDisableLocalNetwork({required String reason}) async {
+    final currentDevice = sessionStore.device;
+    if (currentDevice != null) {
+      sessionStore.syncDevice(
+        _deviceNetworkRuntimeService.copyDeviceWithVirtualIp(
+          currentDevice,
+          null,
+        ),
+      );
+    }
     if (_serviceOwnsLocalNetwork) {
       try {
-        await AppCoreScope.instance.disableLocalNetwork(
+        await _api.disableLocalNetwork(
           networkId: sessionStore.selectedNetworkId,
         );
       } catch (error) {
@@ -1322,12 +1508,12 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       }
     }
     try {
-      await LocalDnsService.instance.stop();
+      await _localDnsService.stop();
     } catch (error) {
       debugPrint('[control-sync] force stop dns skipped: $error');
     }
     try {
-      await AppCoreScope.instance.disconnect();
+      await _api.disconnect();
     } catch (error) {
       debugPrint('[control-sync] force app-core disconnect skipped: $error');
     }
@@ -1391,7 +1577,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       return;
     }
     await bringTunnelUp(verifyPeerVirtualIp: peerVirtualIp);
-    await LocalDnsService.instance.configureFromNetwork(network);
+    await _localDnsService.configureFromNetwork(network);
     await _reportDeviceNetworkState(
       networkOnline: true,
       tunnelUp: true,
@@ -1405,10 +1591,10 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     }
     final network = sessionStore.selectedNetwork;
     if (network == null) {
-      await LocalDnsService.instance.stop();
+      await _localDnsService.stop();
       return;
     }
-    await LocalDnsService.instance.configureFromNetwork(network);
+    await _localDnsService.configureFromNetwork(network);
   }
 
   Future<ConnectAttemptResult> connectUsingControlPlan({
@@ -1419,7 +1605,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     late ConnectAttemptResult result;
     await runAction(() async {
       if (_serviceOwnsLocalNetwork) {
-        final connectionState = await AppCoreScope.instance.connect(
+        final connectionState = await _api.connect(
           networkId: networkId,
           peerNodeId: peerNodeId,
         );
@@ -1448,10 +1634,10 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
 
   Future<void> disconnect() async {
     await runAction(() async {
-      await AppCoreScope.instance.disconnect();
+      await _api.disconnect();
       if (!_serviceOwnsLocalNetwork) {
         try {
-          await LocalDnsService.instance.stop();
+          await _localDnsService.stop();
         } catch (error) {
           debugPrint('[disconnect] stop dns skipped: $error');
         }
@@ -1557,7 +1743,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
 
   Future<PlatformDoctorModel> refreshPlatformDoctor() async {
     final report = await runTunnelAction<PlatformDoctorModel>(() {
-      return AppCoreScope.instance.platformDoctor();
+      return _api.platformDoctor();
     });
     tunnelStore.platformDoctor = report ?? _failedPlatformDoctor();
     emitStateChanged();
@@ -1565,8 +1751,23 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   Future<AppCoreHelperStatusModel> refreshHelperStatus() async {
+    final hadRuntime = _hasActiveTunnelRuntime();
+    final hadDeviceIp =
+        sessionStore.device?.virtualIp?.trim().isNotEmpty == true;
+    final status = await _readHelperStatus();
+    if (_serviceOwnsLocalNetwork) {
+      await _applyServiceOwnedRuntimeFromHelperStatus(
+        status,
+        hadRuntime: hadRuntime,
+        hadDeviceIp: hadDeviceIp,
+      );
+    }
+    return status;
+  }
+
+  Future<AppCoreHelperStatusModel> _readHelperStatus() async {
     try {
-      sessionStore.helperStatus = await AppCoreScope.instance.helperStatus();
+      sessionStore.helperStatus = await _api.helperStatus();
     } catch (err) {
       sessionStore.helperStatus = AppCoreHelperStatusModel(
         source: AppCoreScope.mode,
@@ -1575,6 +1776,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         sessionPresent: sessionStore.session != null,
         refreshTokenPresent:
             sessionStore.session?.refreshToken?.trim().isNotEmpty == true,
+        mqttControlUiRefreshRequired: false,
         deviceId: sessionStore.device?.deviceId,
         nodeId: sessionStore.node?.nodeId,
         currentNetworkId: sessionStore.selectedNetworkId,
@@ -1591,7 +1793,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
 
   Future<PlatformInstallPlanModel> refreshPlatformInstallPlan() async {
     final plan = await runTunnelAction<PlatformInstallPlanModel>(() {
-      return AppCoreScope.instance.platformInstallPlan();
+      return _api.platformInstallPlan();
     });
     tunnelStore.platformInstallPlan = plan ?? _failedPlatformInstallPlan();
     emitStateChanged();
@@ -1644,7 +1846,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     int? probeTimeoutMs,
   }) async {
     await runProbeAction(() {
-      return AppCoreScope.instance.probe(
+      return _api.probe(
         payload: payload,
         probeTimeoutMs: probeTimeoutMs,
       );
@@ -1654,6 +1856,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   Future<void> send({
     required String payload,
   }) async {
-    await runSendAction(() => AppCoreScope.instance.send(payload: payload));
+    await runSendAction(() => _api.send(payload: payload));
   }
 }

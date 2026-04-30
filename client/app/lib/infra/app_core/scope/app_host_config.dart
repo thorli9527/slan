@@ -2,6 +2,7 @@ library slan_app.infra.app_core.scope.host_config;
 
 final class AppHostConfig {
   static const _localControlBaseUrl = 'http://127.0.0.1:28080';
+  static const _localWebBaseUrl = 'http://127.0.0.1:24200';
   static const _localWebHost = 'web.slan.localhost';
   static const _localCaddyPort = 18443;
 
@@ -46,7 +47,7 @@ final class AppHostConfig {
         rawInput: normalized,
         displayHost: host,
         controlBaseUrl: _localControlBaseUrl,
-        webConsoleUrl: 'https://$_localWebHost:$_localCaddyPort',
+        webConsoleUrl: _localWebBaseUrl,
         secure: false,
       );
     }
@@ -79,7 +80,7 @@ final class AppHostConfig {
         rawInput: rawInput,
         displayHost: uri.host,
         controlBaseUrl: _localControlBaseUrl,
-        webConsoleUrl: 'https://$_localWebHost:$_localCaddyPort',
+        webConsoleUrl: _localWebBaseUrl,
         secure: false,
       );
     }

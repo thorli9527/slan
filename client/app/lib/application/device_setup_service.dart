@@ -94,7 +94,27 @@ class NetworkJoinIntent {
   bool get isEmpty => value.trim().isEmpty;
 }
 
-class DeviceSetupService {
+abstract class DeviceSetupServiceContract {
+  Future<DeviceRegistrationResult> registerDevice(
+    DeviceRegistrationInput input,
+  );
+
+  Future<NodeRegistrationResult> registerNodeAndBootstrap(
+    NodeRegistrationInput input, {
+    required List<NetworkModel> currentNetworks,
+  });
+
+  Future<JoinedNetworkResult> ensureNetworkAvailableAndJoined({
+    required DeviceModel device,
+    required List<NetworkModel> currentNetworks,
+    required String preferredNetworkId,
+    required String fallbackNetworkName,
+    String fallbackCidr,
+    NetworkJoinIntent? joinIntent,
+  });
+}
+
+class DeviceSetupService implements DeviceSetupServiceContract {
   const DeviceSetupService({
     required AppCoreApi Function() apiProvider,
   }) : _apiProvider = apiProvider;
@@ -103,6 +123,7 @@ class DeviceSetupService {
 
   AppCoreApi get _api => _apiProvider();
 
+  @override
   Future<DeviceRegistrationResult> registerDevice(
     DeviceRegistrationInput input,
   ) async {
@@ -120,6 +141,7 @@ class DeviceSetupService {
     );
   }
 
+  @override
   Future<NodeRegistrationResult> registerNodeAndBootstrap(
     NodeRegistrationInput input, {
     required List<NetworkModel> currentNetworks,
@@ -163,6 +185,7 @@ class DeviceSetupService {
     );
   }
 
+  @override
   Future<JoinedNetworkResult> ensureNetworkAvailableAndJoined({
     required DeviceModel device,
     required List<NetworkModel> currentNetworks,

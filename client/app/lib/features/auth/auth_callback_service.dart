@@ -9,6 +9,30 @@ import '../../infra/app_core/models/identity_models.dart';
 import '../../infra/app_core/scope/app_core_scope.dart';
 import '../../shared/desktop_platform.dart';
 
+abstract class AuthCallbackGateway {
+  Future<String> preparePendingServerCallback({String? preferredKey});
+
+  Future<void> clearPendingServerCallback();
+}
+
+final class DefaultAuthCallbackGateway implements AuthCallbackGateway {
+  const DefaultAuthCallbackGateway();
+
+  static const instance = DefaultAuthCallbackGateway();
+
+  @override
+  Future<String> preparePendingServerCallback({String? preferredKey}) {
+    return AuthCallbackService.preparePendingServerCallback(
+      preferredKey: preferredKey,
+    );
+  }
+
+  @override
+  Future<void> clearPendingServerCallback() {
+    return AuthCallbackService.clearPendingServerCallback();
+  }
+}
+
 class AuthCallbackService {
   AuthCallbackService._();
 

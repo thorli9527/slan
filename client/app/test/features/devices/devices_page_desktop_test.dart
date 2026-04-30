@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:slan_app/application/mqtt_control_task_service.dart';
+import 'package:slan_app/application/network_enable_preflight_service.dart';
 import 'package:slan_app/application/tunnel_host_gateway.dart';
 import 'package:slan_app/features/devices/devices_page.dart';
 import 'package:slan_app/infra/app_core/api/app_core_api.dart';
@@ -228,10 +230,15 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final appCore = _BridgeRuntimeMockAppCoreApi();
     final gateway = _ThrowingTunnelHostGateway();
+    final mqttTasks = _RecordingMqttControlTaskService();
     await _pumpDevicesPageWithScope(
       tester,
       appCoreApi: appCore,
       tunnelHostGateway: gateway,
+      mqttControlTaskService: mqttTasks,
+      networkEnablePreflightService: _StaticNetworkEnablePreflightService(
+        appCore,
+      ),
       mode: 'bridge',
     );
 
@@ -263,7 +270,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pumpAndSettle();
 
-    expect(appCore.enableLocalNetworkCalls, 1);
+    expect(appCore.enableLocalNetworkCalls, 0);
+    expect(mqttTasks.taskTypes, contains('enable_network'));
     expect(gateway.tunnelActionCalls, 0);
     expect(find.text('Enable network'), findsWidgets);
     var usageState = await AppCoreScope.readNetworkUsageState('user-1');
@@ -289,7 +297,8 @@ void main() {
     disableButton.onPressed!();
     await tester.pumpAndSettle();
 
-    expect(appCore.disableLocalNetworkCalls, 1);
+    expect(appCore.disableLocalNetworkCalls, 0);
+    expect(mqttTasks.taskTypes, contains('disable_network'));
     expect(gateway.tunnelActionCalls, 0);
     expect(find.text('Disable network'), findsWidgets);
     usageState = await AppCoreScope.readNetworkUsageState('user-1');
@@ -304,10 +313,15 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final appCore = _BridgeRuntimeMockAppCoreApi();
     final gateway = _ThrowingTunnelHostGateway();
+    final mqttTasks = _RecordingMqttControlTaskService();
     await _pumpDevicesPageWithScope(
       tester,
       appCoreApi: appCore,
       tunnelHostGateway: gateway,
+      mqttControlTaskService: mqttTasks,
+      networkEnablePreflightService: _StaticNetworkEnablePreflightService(
+        appCore,
+      ),
       mode: 'bridge',
     );
 
@@ -323,8 +337,9 @@ void main() {
     await tester.tap(find.text('Quick Setup Client'));
     await tester.pumpAndSettle();
 
-    expect(appCore.enableLocalNetworkCalls, 1);
-    expect(appCore.controlSyncCalls, 1);
+    expect(appCore.enableLocalNetworkCalls, 0);
+    expect(appCore.controlSyncCalls, 0);
+    expect(mqttTasks.taskTypes, contains('enable_network'));
     expect(gateway.tunnelActionCalls, 0);
     expect(find.text('Quick setup client'), findsWidgets);
     final usageState = await AppCoreScope.readNetworkUsageState('user-1');
@@ -379,12 +394,16 @@ Future<void> _pumpDevicesPageWithScope(
   WidgetTester tester, {
   required AppCoreApi appCoreApi,
   TunnelHostGateway? tunnelHostGateway,
+  MqttControlTaskService? mqttControlTaskService,
+  NetworkEnablePreflightService? networkEnablePreflightService,
   String? mode,
 }) async {
   _configureDesktopViewport(tester);
   AppCoreScope.configureForTest(
     appCoreApi: appCoreApi,
     tunnelHostGateway: tunnelHostGateway,
+    mqttControlTaskService: mqttControlTaskService,
+    networkEnablePreflightService: networkEnablePreflightService,
     mode: mode,
   );
   addTearDown(AppCoreScope.resetForTest);
@@ -483,6 +502,51 @@ class _BridgeRuntimeMockAppCoreApi extends MockAppCoreApi {
         connectPlanCount: 0,
         connectPlans: [],
       );
+}
+
+class _RecordingMqttControlTaskService implements MqttControlTaskService {
+  final List<String> taskTypes = [];
+  final List<String> consumedTaskIds = [];
+
+  @override
+  Future<void> enqueueNetworkTask({
+    required String taskType,
+    required String networkId,
+    required String deviceId,
+    required String uiRefreshReason,
+  }) async {
+    taskTypes.add(taskType);
+  }
+
+  @override
+  void markUiRefreshConsumed(String? taskId) {
+    if (taskId != null) {
+      consumedTaskIds.add(taskId);
+    }
+  }
+}
+
+class _StaticNetworkEnablePreflightService
+    implements NetworkEnablePreflightService {
+  const _StaticNetworkEnablePreflightService(this.appCore);
+
+  final _BridgeRuntimeMockAppCoreApi appCore;
+
+  @override
+  Future<NetworkEnablePreflightResult> verifyRemoteNetwork({
+    required AppCoreApi remoteApi,
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    required String? preferredNetworkId,
+  }) async {
+    return NetworkEnablePreflightResult(
+      devices: [appCore.device],
+      networks: appCore.networks,
+      device: appCore.device,
+      selectedNetworkId: preferredNetworkId ?? 'net-1',
+      assignedVirtualIp: appCore.device.virtualIp ?? '10.0.0.2',
+    );
+  }
 }
 
 class _ThrowingTunnelHostGateway extends TunnelHostGateway {

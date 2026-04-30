@@ -2,13 +2,21 @@ import 'package:flutter/material.dart';
 
 import '../../infra/app_core/scope/app_core_scope.dart';
 import '../../infra/app_core/scope/app_host_config.dart';
+import '../../infra/logging/startup_log.dart';
 import '../../shared/desktop_url_launcher.dart';
 import '../../testing/app_test_keys.dart';
 import '../shared/desktop_client_widgets.dart';
 import 'auth_callback_service.dart';
 
 class AuthPage extends StatefulWidget {
-  const AuthPage({super.key});
+  const AuthPage({
+    super.key,
+    this.urlLauncher = DesktopUrlLauncher.instance,
+    this.authCallbackGateway = DefaultAuthCallbackGateway.instance,
+  });
+
+  final DesktopUrlLauncherContract urlLauncher;
+  final AuthCallbackGateway authCallbackGateway;
 
   @override
   State<AuthPage> createState() => _AuthPageState();
@@ -94,23 +102,33 @@ class _AuthPageState extends State<AuthPage> {
             ? currentDeviceId
             : AppCoreScope.clientMachineId;
     if (configured == null || configured.isEmpty) {
+      await StartupLog.write('open web auth skipped: missing target');
       return;
     }
     final uri = Uri.tryParse(configured);
     if (uri == null) {
+      await StartupLog.write('open web auth skipped: invalid target=$configured');
       return;
     }
-    await AuthCallbackService.preparePendingServerCallback(
-      preferredKey: loginTargetDeviceId,
-    );
-    final target = uri.replace(
-      path: '/',
-      queryParameters: {
-        ...uri.queryParameters,
-        'deviceId': loginTargetDeviceId,
-      },
-    );
-    await DesktopUrlLauncher.open(target.toString());
+    try {
+      await widget.authCallbackGateway.preparePendingServerCallback(
+        preferredKey: loginTargetDeviceId,
+      );
+      final target = uri.replace(
+        path: '/',
+        queryParameters: {
+          ...uri.queryParameters,
+          'deviceId': loginTargetDeviceId,
+        },
+      );
+      await StartupLog.write('open web auth target=$target');
+      await widget.urlLauncher.open(target.toString());
+      await StartupLog.write('open web auth launched');
+    } catch (error) {
+      sessionStore.error = '打开浏览器登录失败：$error';
+      sessionStore.notifyListeners();
+      await StartupLog.write('open web auth failed: $error');
+    }
   }
 
   void _applyHostConfig() {

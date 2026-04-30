@@ -58,7 +58,47 @@ class NetworkJoinResult {
   final String networkId;
 }
 
-class AppWorkspaceService {
+abstract class AppWorkspaceServiceContract {
+  Future<WorkspacePreparationResult> ensureWorkspaceReady({
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    required String deviceName,
+    required String platform,
+    String? deviceVersion,
+    required String machineId,
+    required String devicePublicKey,
+  });
+
+  Future<ActiveNetworkRuntimeResult> prepareActiveNetworkRuntime({
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    required NodeModel? currentNode,
+    required List<NetworkModel> currentNetworks,
+    String? targetNetworkId,
+  });
+
+  Future<DeactivatedNetworkResult> deactivateActiveNetwork({
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    required List<NetworkModel> currentNetworks,
+    String? targetNetworkId,
+  });
+
+  Future<NetworkJoinResult> joinNetwork({
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    String? joinKey,
+  });
+
+  Future<NetworkJoinResult> switchNetwork({
+    required SessionModel? session,
+    required DeviceModel? currentDevice,
+    required List<NetworkModel> currentNetworks,
+    required String networkId,
+  });
+}
+
+class AppWorkspaceService implements AppWorkspaceServiceContract {
   const AppWorkspaceService({
     required AppCoreApi Function() apiProvider,
   }) : _apiProvider = apiProvider;
@@ -67,6 +107,7 @@ class AppWorkspaceService {
 
   AppCoreApi get _api => _apiProvider();
 
+  @override
   Future<WorkspacePreparationResult> ensureWorkspaceReady({
     required SessionModel? session,
     required DeviceModel? currentDevice,
@@ -125,6 +166,7 @@ class AppWorkspaceService {
     );
   }
 
+  @override
   Future<ActiveNetworkRuntimeResult> prepareActiveNetworkRuntime({
     required SessionModel? session,
     required DeviceModel? currentDevice,
@@ -179,6 +221,7 @@ class AppWorkspaceService {
     );
   }
 
+  @override
   Future<DeactivatedNetworkResult> deactivateActiveNetwork({
     required SessionModel? session,
     required DeviceModel? currentDevice,
@@ -205,6 +248,7 @@ class AppWorkspaceService {
     );
   }
 
+  @override
   Future<NetworkJoinResult> joinNetwork({
     required SessionModel? session,
     required DeviceModel? currentDevice,
@@ -241,6 +285,7 @@ class AppWorkspaceService {
     );
   }
 
+  @override
   Future<NetworkJoinResult> switchNetwork({
     required SessionModel? session,
     required DeviceModel? currentDevice,
