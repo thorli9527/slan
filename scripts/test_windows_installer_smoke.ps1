@@ -88,6 +88,26 @@ function Stop-SlanAppProcess {
   }
 }
 
+function Remove-PathWithRetry {
+  param(
+    [string]$Path,
+    [int]$Attempts = 30,
+    [int]$DelayMilliseconds = 1000
+  )
+
+  for ($i = 1; $i -le $Attempts; $i++) {
+    try {
+      Remove-Item -Recurse -Force $Path
+      return
+    } catch {
+      if ($i -eq $Attempts) {
+        throw
+      }
+      Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+  }
+}
+
 function Prepare-InstallSandbox {
   param(
     [string]$InstallDir,
@@ -336,6 +356,13 @@ try {
     Stop-SlanAppProcess
   }
 
+  $exeUninstaller = Join-Path $paths.ExeInstallDir 'unins000.exe'
+  if (Test-Path $exeUninstaller) {
+    Invoke-Step 'Uninstalling setup.exe smoke install' {
+      & $exeUninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+    }
+  }
+
   if (Test-Path $paths.SmokeShortcut) {
     Remove-Item -Force $paths.SmokeShortcut
   }
@@ -343,7 +370,7 @@ try {
   if (-not $KeepArtifacts) {
     foreach ($path in @($paths.ScriptInstallDir, $paths.ExeInstallDir, $paths.OutputDir, $paths.SmokeShortcutDir)) {
       if ($path -and (Test-Path $path)) {
-        Remove-Item -Recurse -Force $path
+        Remove-PathWithRetry -Path $path
       }
     }
     if (Test-Path $paths.OutputZip) {
