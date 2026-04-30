@@ -15,6 +15,12 @@ final class DesktopPlatform {
     if (Platform.isMacOS) {
       return 'macos';
     }
+    if (Platform.isAndroid) {
+      return 'android';
+    }
+    if (Platform.isIOS) {
+      return 'ios';
+    }
     return 'unknown';
   }
 
@@ -29,6 +35,12 @@ final class DesktopPlatform {
     }
     if (Platform.isMacOS) {
       return 'macOS';
+    }
+    if (Platform.isAndroid) {
+      return 'Android';
+    }
+    if (Platform.isIOS) {
+      return 'iOS';
     }
     return 'Desktop';
   }
@@ -49,6 +61,12 @@ final class DesktopPlatform {
     }
     if (Platform.isLinux) {
       return 'WireGuard';
+    }
+    if (Platform.isAndroid) {
+      return 'VpnService';
+    }
+    if (Platform.isIOS) {
+      return 'Network Extension';
     }
     return 'Tunnel';
   }

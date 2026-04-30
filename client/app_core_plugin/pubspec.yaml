@@ -12,6 +12,8 @@ dependencies:
     sdk: flutter
   slan_app_core_plugin_android:
     path: ../app_core_plugin_android
+  slan_app_core_plugin_ios:
+    path: ../app_core_plugin_ios
   slan_app_core_plugin_linux:
     path: ../app_core_plugin_linux
   slan_app_core_plugin_macos:
@@ -26,6 +28,8 @@ flutter:
     platforms:
       android:
         default_package: slan_app_core_plugin_android
+      ios:
+        default_package: slan_app_core_plugin_ios
       linux:
         default_package: slan_app_core_plugin_linux
       macos:

@@ -290,6 +290,13 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
+  slan_app_core_plugin_ios:
+    dependency: transitive
+    description:
+      path: "../app_core_plugin_ios"
+      relative: true
+    source: path
+    version: "0.1.0"
   slan_app_core_plugin_linux:
     dependency: transitive
     description:

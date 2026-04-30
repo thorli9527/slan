@@ -51,45 +51,10 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  slan_app_core_plugin_android:
-    dependency: "direct main"
-    description:
-      path: "../app_core_plugin_android"
-      relative: true
-    source: path
-    version: "0.1.0"
-  slan_app_core_plugin_ios:
-    dependency: "direct main"
-    description:
-      path: "../app_core_plugin_ios"
-      relative: true
-    source: path
-    version: "0.1.0"
-  slan_app_core_plugin_linux:
-    dependency: "direct main"
-    description:
-      path: "../app_core_plugin_linux"
-      relative: true
-    source: path
-    version: "0.1.0"
-  slan_app_core_plugin_macos:
-    dependency: "direct main"
-    description:
-      path: "../app_core_plugin_macos"
-      relative: true
-    source: path
-    version: "0.1.0"
   slan_app_core_plugin_platform_interface:
     dependency: "direct main"
     description:
       path: "../app_core_plugin_platform_interface"
-      relative: true
-    source: path
-    version: "0.1.0"
-  slan_app_core_plugin_windows:
-    dependency: "direct main"
-    description:
-      path: "../app_core_plugin_windows"
       relative: true
     source: path
     version: "0.1.0"
