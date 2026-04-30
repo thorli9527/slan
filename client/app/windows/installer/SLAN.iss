@@ -40,6 +40,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
+[Dirs]
+Name: "{app}"; Permissions: users-modify
+
 [Files]
 Source: "{#SourceDir}\slan_app.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\app-core-helper.exe"; DestDir: "{app}"; Flags: ignoreversion
