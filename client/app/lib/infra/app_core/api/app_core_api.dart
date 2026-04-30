@@ -133,6 +133,8 @@ abstract class AppCoreApi {
     int? probeTimeoutMs,
   });
 
+  Future<AppCoreHelperStatusModel> helperStatus();
+
   Future<PlatformDoctorModel> platformDoctor();
 
   Future<PlatformInstallPlanModel> platformInstallPlan();

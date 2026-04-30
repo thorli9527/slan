@@ -1,6 +1,73 @@
 part of 'devices_page.dart';
 
 extension _DevicesPageSections on _DevicesPageState {
+  String _helperStatusValue(AppCoreHelperStatusModel? status) {
+    if (status == null) {
+      return 'unknown';
+    }
+    if (!status.helperReachable) {
+      return 'unreachable';
+    }
+    if (status.tunnelBackendRunning) {
+      return 'running';
+    }
+    return status.sessionPresent ? 'ready' : 'waiting';
+  }
+
+  Widget _buildHelperStatusSection(
+    BuildContext context,
+    AppSessionStore sessionStore,
+    AppSessionController sessionController,
+  ) {
+    final status = sessionStore.helperStatus;
+    return _DevicesWorkbenchCard(
+      title: 'Helper Service',
+      subtitle: 'Runtime ownership, persisted state, and control endpoint.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              DesktopBadge(label: 'helper ${_helperStatusValue(status)}'),
+              DesktopBadge(
+                label:
+                    'control ${status?.configuredControlBaseUrl ?? AppCoreScope.controlBaseUrl ?? 'unset'}',
+              ),
+              if (status?.currentNetworkId != null)
+                DesktopBadge(label: 'network ${status!.currentNetworkId}'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (status?.tunnelLastError?.trim().isNotEmpty == true)
+            Text(
+              status!.tunnelLastError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            )
+          else
+            Text(
+              status == null
+                  ? 'No helper status has been collected yet.'
+                  : 'session=${status.sessionPresent} bootstrap=${status.bootstrapPresent} runtime=${status.tunnelRuntimePresent}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: sessionStore.busy
+                  ? null
+                  : () => sessionController.refreshHelperStatus(),
+              icon: const Icon(Icons.health_and_safety_rounded),
+              label: const Text('Refresh Helper'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPageIntro(
     BuildContext context, {
     Widget? trailing,

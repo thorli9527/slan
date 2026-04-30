@@ -209,6 +209,8 @@ class _NetworksPageState extends State<NetworksPage> {
     await showDialog<void>(
       context: context,
       builder: (context) {
+        var saving = false;
+        String? dialogError;
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
@@ -254,6 +256,15 @@ class _NetworksPageState extends State<NetworksPage> {
                       controller: _allocationEndIpController,
                       decoration: const InputDecoration(labelText: 'End IP'),
                     ),
+                    if (dialogError != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        dialogError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -261,7 +272,8 @@ class _NetworksPageState extends State<NetworksPage> {
                 SizedBox(
                   width: 120,
                   child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed:
+                        saving ? null : () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                 ),
@@ -269,13 +281,36 @@ class _NetworksPageState extends State<NetworksPage> {
                   width: 160,
                   child: FilledButton(
                     key: AppTestKeys.networksCreateButton,
-                    onPressed: () async {
-                      await _createNetwork();
-                      if (context.mounted) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                    child: const Text('Save'),
+                    onPressed: saving
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              saving = true;
+                              dialogError = null;
+                            });
+                            try {
+                              await _createNetwork();
+                              if (context.mounted) {
+                                Navigator.of(context).pop();
+                              }
+                            } on FormatException catch (err) {
+                              setDialogState(() {
+                                saving = false;
+                                dialogError = err.message;
+                              });
+                            } catch (err) {
+                              setDialogState(() {
+                                saving = false;
+                                dialogError = err.toString();
+                              });
+                            }
+                          },
+                    child: saving
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Save'),
                   ),
                 ),
               ],
@@ -290,39 +325,72 @@ class _NetworksPageState extends State<NetworksPage> {
     await showDialog<void>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('Access confirmation'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  key: AppTestKeys.networksJoinKeyField,
-                  controller: _joinKeyController,
-                  decoration: const InputDecoration(
-                    labelText: 'Invite code',
-                    hintText: 'Paste invite code',
-                  ),
+        var saving = false;
+        String? dialogError;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Access confirmation'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      key: AppTestKeys.networksJoinKeyField,
+                      controller: _joinKeyController,
+                      decoration: const InputDecoration(
+                        labelText: 'Invite code',
+                        hintText: 'Paste invite code',
+                      ),
+                    ),
+                    if (dialogError != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        dialogError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  key: AppTestKeys.networksJoinButton,
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            saving = true;
+                            dialogError = null;
+                          });
+                          try {
+                            await _joinNetwork();
+                            if (context.mounted) {
+                              Navigator.of(context).pop();
+                            }
+                          } catch (err) {
+                            setDialogState(() {
+                              saving = false;
+                              dialogError = err.toString();
+                            });
+                          }
+                        },
+                  child: saving
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Confirm'),
                 ),
               ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              key: AppTestKeys.networksJoinButton,
-              onPressed: () async {
-                await _joinNetwork();
-                if (context.mounted) {
-                  Navigator.of(context).pop();
-                }
-              },
-              child: const Text('Confirm'),
-            ),
-          ],
+            );
+          },
         );
       },
     );

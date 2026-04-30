@@ -279,7 +279,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         try {
           await AppCoreScope.instance.reportDeviceNetworkState();
         } catch (error) {
-          debugPrint('[network-heartbeat] service state report skipped: $error');
+          debugPrint(
+              '[network-heartbeat] service state report skipped: $error');
         }
         if (!sessionStore.busy && !_hasActiveTunnelRuntime()) {
           await _refreshNetworksForRemoteControl();
@@ -287,7 +288,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         return;
       }
       if (!sessionStore.busy && _hasActiveTunnelRuntime()) {
-        final runtimeStillActive = await _refreshActiveTunnelRuntimeFromNative();
+        final runtimeStillActive =
+            await _refreshActiveTunnelRuntimeFromNative();
         if (!runtimeStillActive) {
           await _markLocalTunnelRuntimeOffline(
             reason: '本地网络适配器或虚拟 IP 已不存在，本地网络状态已刷新为停用。',
@@ -369,7 +371,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     try {
       await LocalDnsService.instance.stop();
     } catch (error) {
-      debugPrint('[network-heartbeat] stop dns after stale runtime skipped: $error');
+      debugPrint(
+          '[network-heartbeat] stop dns after stale runtime skipped: $error');
     }
     try {
       await _reportDeviceNetworkState(
@@ -378,7 +381,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         lastProbeOk: false,
       );
     } catch (error) {
-      debugPrint('[network-heartbeat] stale runtime offline report skipped: $error');
+      debugPrint(
+          '[network-heartbeat] stale runtime offline report skipped: $error');
     }
     sessionStore.clearConnection();
     tunnelStore.clearConnection();
@@ -528,8 +532,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         controlBaseUrl.trim().isEmpty) {
       throw StateError('网络错误：无法从服务器拉取最新设备 IP 和 DNS 信息');
     }
-    final currentDeviceId =
-        sessionStore.device?.deviceId ?? session.deviceId;
+    final currentDeviceId = sessionStore.device?.deviceId ?? session.deviceId;
     if (currentDeviceId == null || currentDeviceId.trim().isEmpty) {
       return;
     }
@@ -676,7 +679,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       return false;
     }
     final status = _currentDeviceMemberStatus(deviceId)?.trim().toLowerCase();
-    return status == 'disabled' || status == 'suspended' || status == 'rejected';
+    return status == 'disabled' ||
+        status == 'suspended' ||
+        status == 'rejected';
   }
 
   bool _isRemoteAttachmentDisabledError(Object error) {
@@ -723,7 +728,8 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     }
     if (await _deferNetworkInitializationUntilAssignedIp(
       notice: '登录成功，正在等待服务器分配 IP。',
-      debugMessage: '[startup] skip auto enable: current device has no virtual IP',
+      debugMessage:
+          '[startup] skip auto enable: current device has no virtual IP',
     )) {
       return;
     }
@@ -761,7 +767,9 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
         ),
       );
       sessionStore.syncDevice(result.device);
-      _startNetworkStateHeartbeat();
+      if (sessionStore.selectedNetworkId != null) {
+        _startNetworkStateHeartbeat();
+      }
       await _connectMqttAndMarkOnline(result.device);
     });
   }
@@ -962,17 +970,6 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     }
     sessionStore.syncSelectedNetworkId();
     final requestedNetworkId = sessionStore.selectedNetworkId;
-    await _refreshCurrentDeviceNetworkConfigFromServer(
-      preferredNetworkId: requestedNetworkId,
-    );
-    if (await _deferNetworkInitializationUntilAssignedIp(
-      notice: '网络已请求启用，正在等待服务器返回 IP。',
-      debugMessage:
-          '[tunnel-enable] skip enable: current device has no virtual IP after HTTP refresh',
-    )) {
-      await _persistNetworkUsageState(enabled: false);
-      return;
-    }
     if (_serviceOwnsLocalNetwork) {
       await AppCoreScope.hydrateBridgeSession(sessionStore.session!);
       final serviceBootstrap = await AppCoreScope.instance.enableLocalNetwork(
@@ -990,9 +987,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       sessionStore.syncSelectedNetworkId(
         preferredNetworkId: requestedNetworkId,
       );
-      await _refreshCurrentDeviceNetworkConfigFromServer(
-        preferredNetworkId: requestedNetworkId,
-      );
+      _syncCurrentDeviceVirtualIpFromSelectedNetwork();
       if (await _deferNetworkInitializationUntilAssignedIp(
         notice: '网络已请求启用，正在等待服务器返回 IP。',
         debugMessage:
@@ -1013,6 +1008,17 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
       debugPrint(
         '[tunnel-enable] service handled network=${sessionStore.selectedNetworkId}',
       );
+      return;
+    }
+    await _refreshCurrentDeviceNetworkConfigFromServer(
+      preferredNetworkId: requestedNetworkId,
+    );
+    if (await _deferNetworkInitializationUntilAssignedIp(
+      notice: '网络已请求启用，正在等待服务器返回 IP。',
+      debugMessage:
+          '[tunnel-enable] skip enable: current device has no virtual IP after HTTP refresh',
+    )) {
+      await _persistNetworkUsageState(enabled: false);
       return;
     }
     final runtime = await _workspaceService.prepareActiveNetworkRuntime(
@@ -1192,7 +1198,7 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
   }
 
   Future<String> refreshBootstrapOrControlSync() async {
-    late String detail;
+    var detail = '';
     if (_serviceOwnsLocalNetwork) {
       await runAction(() async {
         detail = await _refreshBootstrapOrControlSyncState();
@@ -1556,6 +1562,31 @@ class AppCoreCoordinator with AppCoreCoordinatorAsync {
     tunnelStore.platformDoctor = report ?? _failedPlatformDoctor();
     emitStateChanged();
     return tunnelStore.platformDoctor!;
+  }
+
+  Future<AppCoreHelperStatusModel> refreshHelperStatus() async {
+    try {
+      sessionStore.helperStatus = await AppCoreScope.instance.helperStatus();
+    } catch (err) {
+      sessionStore.helperStatus = AppCoreHelperStatusModel(
+        source: AppCoreScope.mode,
+        helperReachable: false,
+        configuredControlBaseUrl: AppCoreScope.controlBaseUrl,
+        sessionPresent: sessionStore.session != null,
+        refreshTokenPresent:
+            sessionStore.session?.refreshToken?.trim().isNotEmpty == true,
+        deviceId: sessionStore.device?.deviceId,
+        nodeId: sessionStore.node?.nodeId,
+        currentNetworkId: sessionStore.selectedNetworkId,
+        bootstrapPresent: sessionStore.bootstrap != null,
+        networkMapPresent: false,
+        tunnelRuntimePresent: tunnelStore.tunnelRuntimeView != null,
+        tunnelBackendRunning: false,
+        tunnelLastError: err.toString(),
+      );
+    }
+    emitStateChanged();
+    return sessionStore.helperStatus!;
   }
 
   Future<PlatformInstallPlanModel> refreshPlatformInstallPlan() async {

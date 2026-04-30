@@ -2,9 +2,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use controller_client::{
-    ControllerClient, HttpControllerClient, HttpRequest, HttpResponse,
-    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, JsonHttpTransport, LoginRequest,
-    RelayTicketRequest, SwitchNetworkRequest, TcpJsonHttpTransport,
+    ControllerClient, HttpControllerClient, HttpRequest, HttpResponse, JoinNetworkByKeyRequest,
+    JoinNetworkRequest, JsonHttpTransport, LoginRequest, RelayTicketRequest, SwitchNetworkRequest,
+    TcpJsonHttpTransport,
 };
 use serde_json::Value;
 
@@ -166,7 +166,7 @@ fn join_network_accepts_member_attachment_response() {
 }
 
 #[test]
-fn join_by_owner_email_accepts_network_member_attachment_response() {
+fn join_by_key_accepts_network_member_attachment_response() {
     let transport = RecordingTransport::default();
     transport.respond_with(
         200,
@@ -196,10 +196,10 @@ fn join_by_owner_email_accepts_network_member_attachment_response() {
 
     let client = HttpControllerClient::new(support::DEV_CONTROL_BASE_URL, transport);
     let joined = client
-        .join_network_by_owner_email(
+        .join_network_by_key(
             "token-1",
-            JoinNetworkByOwnerEmailRequest {
-                owner_email: "owner@example.com".into(),
+            JoinNetworkByKeyRequest {
+                join_key: "invite-1".into(),
                 device_id: "dev-1".into(),
             },
         )
@@ -208,10 +208,7 @@ fn join_by_owner_email_accepts_network_member_attachment_response() {
     let request = client.transport.take_request();
     assert_eq!(
         request.path,
-        format!(
-            "{}/networks/join-by-owner-email",
-            support::DEV_CONTROL_BASE_URL
-        )
+        format!("{}/networks/join-by-key", support::DEV_CONTROL_BASE_URL)
     );
     assert_eq!(joined.network_id, "net-1");
     assert_eq!(joined.attachment_id.as_deref(), Some("att-1"));

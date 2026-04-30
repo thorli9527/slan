@@ -1,20 +1,20 @@
 use std::sync::{Arc, Mutex};
 
 use controller_client::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkByKeyRequest,
-    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
+    JoinNetworkByKeyRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
     RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
-    UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
+    SwitchNetworkRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
 };
 use ffi_bridge::{AppCoreFacade, DefaultAppCoreFacade};
 use p2p::{P2PConnector, PeerCandidate};
 use relay_client::{DerpPool, PathManager, PathManagerError, RelayClient, RelayClientError};
 use slan_app_core::{
-    ActivePath, BootstrapConfig, ConnectionPath, ConnectionState, ControlPlaneConfig, DerpCluster,
-    DerpHealth, DerpLinkSnapshot, DerpLinkState, DerpMap, DerpNodeMeta, DerpPoolState,
+    AccessPolicy, ActivePath, BootstrapConfig, ConnectionPath, ConnectionState, ControlPlaneConfig,
+    DerpCluster, DerpHealth, DerpLinkSnapshot, DerpLinkState, DerpMap, DerpNodeMeta, DerpPoolState,
     DerpSwitchEvent, DerpTransport, Device, DnsConfig, Endpoint, Network, NetworkAssignment,
-    NetworkJoinResult, NetworkMap, Node, Peer, RelayCity, RelayCluster, RelayConfig, RelayCountry,
-    RelayNode, RelayTicket, Session, SwitchReason,
+    NetworkJoinResult, NetworkMap, NetworkMember, Node, Peer, RelayCity, RelayCluster, RelayConfig,
+    RelayCountry, RelayNode, RelayTicket, Session, SwitchReason,
 };
 use tunnel::{TunnelConfig, TunnelManager};
 
@@ -24,6 +24,7 @@ struct FakeController {
     relay_reason: Mutex<Option<String>>,
     with_derp_map: bool,
     device_virtual_ip: Option<String>,
+    member_status: Option<String>,
 }
 
 impl FakeController {
@@ -32,6 +33,7 @@ impl FakeController {
             relay_reason: Mutex::new(None),
             with_derp_map,
             device_virtual_ip: Some("100.64.0.10".into()),
+            member_status: None,
         }
     }
 
@@ -40,6 +42,16 @@ impl FakeController {
             relay_reason: Mutex::new(None),
             with_derp_map,
             device_virtual_ip: None,
+            member_status: None,
+        }
+    }
+
+    fn with_member_status(with_derp_map: bool, status: impl Into<String>) -> Self {
+        Self {
+            relay_reason: Mutex::new(None),
+            with_derp_map,
+            device_virtual_ip: Some("100.64.0.10".into()),
+            member_status: Some(status.into()),
         }
     }
 }
@@ -104,12 +116,7 @@ impl ControllerClient for FakeController {
         _access_token: &str,
         req: CreateNetworkRequest,
     ) -> Result<Network, String> {
-        Ok(Network {
-            network_id: "net-1".into(),
-            name: req.name,
-            cidr: req.cidr,
-            members: vec![],
-        })
+        Ok(test_network("net-1", req.name, req.cidr, vec![]))
     }
 
     fn update_network_dns(
@@ -117,12 +124,12 @@ impl ControllerClient for FakeController {
         _access_token: &str,
         req: UpdateNetworkDNSRequest,
     ) -> Result<Network, String> {
-        Ok(Network {
-            network_id: req.network_id,
-            name: "home".into(),
-            cidr: "100.64.0.0/24".into(),
-            members: vec![],
-        })
+        Ok(test_network(
+            req.network_id,
+            "home",
+            Some("100.64.0.0/24".into()),
+            vec![],
+        ))
     }
 
     fn join_network(
@@ -131,14 +138,6 @@ impl ControllerClient for FakeController {
         req: JoinNetworkRequest,
     ) -> Result<NetworkJoinResult, String> {
         Ok(join_result(req.network_id, req.device_id))
-    }
-
-    fn join_network_by_owner_email(
-        &self,
-        _access_token: &str,
-        _req: JoinNetworkByOwnerEmailRequest,
-    ) -> Result<NetworkJoinResult, String> {
-        Ok(join_result("net-1".into(), _req.device_id))
     }
 
     fn join_network_by_key(
@@ -169,10 +168,30 @@ impl ControllerClient for FakeController {
         Ok(join_result(req.network_id, req.device_id))
     }
 
+    fn switch_network(
+        &self,
+        _access_token: &str,
+        req: SwitchNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        Ok(join_result(req.network_id, req.device_id))
+    }
+
     fn deactivate_network(
         &self,
         _access_token: &str,
         _req: DeactivateNetworkRequest,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn list_devices(&self, _access_token: &str) -> Result<Vec<Device>, String> {
+        Ok(vec![])
+    }
+
+    fn set_device_network_state(
+        &self,
+        _access_token: &str,
+        _req: DeviceNetworkStateRequest,
     ) -> Result<(), String> {
         Ok(())
     }
@@ -193,7 +212,18 @@ impl ControllerClient for FakeController {
                 public_key: Some("device-pk".into()),
                 mqtt: None,
             },
-            networks: vec![],
+            networks: self
+                .member_status
+                .as_ref()
+                .map(|status| {
+                    vec![test_network(
+                        network_id,
+                        "home",
+                        Some("100.64.0.0/24".into()),
+                        vec![test_member("dev-1", status.as_str())],
+                    )]
+                })
+                .unwrap_or_default(),
             control_plane: ControlPlaneConfig {
                 ws_url: support::DEV_CONTROL_WS_URL.into(),
                 session_token: Some("control-session-token".into()),
@@ -315,10 +345,8 @@ impl ControllerClient for FakeController {
                 ],
                 routes: vec![],
                 relay_regions: vec![],
-                dns: DnsConfig {
-                    servers: vec![],
-                    search_domains: vec![],
-                },
+                dns: empty_dns_config(),
+                policy: default_access_policy(),
                 mtu: Some(1280),
             }),
         })
@@ -375,6 +403,55 @@ fn network_assignment(
         remark,
         virtual_ip: Some("100.64.0.10".into()),
         status: Some("active".into()),
+    }
+}
+
+fn test_network(
+    network_id: impl Into<String>,
+    name: impl Into<String>,
+    cidr: Option<String>,
+    members: Vec<NetworkMember>,
+) -> Network {
+    Network {
+        network_id: network_id.into(),
+        name: name.into(),
+        description: None,
+        cidr: cidr.unwrap_or_else(|| "100.64.0.0/24".into()),
+        default_subnet_id: None,
+        subnets: vec![],
+        members,
+    }
+}
+
+fn test_member(device_id: impl Into<String>, status: impl Into<String>) -> NetworkMember {
+    NetworkMember {
+        member_id: Some("member-1".into()),
+        network_id: Some("net-1".into()),
+        attachment_id: Some("attach-1".into()),
+        device_id: device_id.into(),
+        role: "member".into(),
+        status: Some(status.into()),
+        virtual_ip: Some("100.64.0.10".into()),
+        remark: None,
+    }
+}
+
+fn empty_dns_config() -> DnsConfig {
+    DnsConfig {
+        servers: vec![],
+        search_domains: vec![],
+        wildcards: vec![],
+    }
+}
+
+fn default_access_policy() -> AccessPolicy {
+    AccessPolicy {
+        plan_code: None,
+        max_active_devices: None,
+        bandwidth_limit_mbps: None,
+        relay_bandwidth_limit_kbps: None,
+        p2p_unlimited: false,
+        dns_available: false,
     }
 }
 
@@ -904,6 +981,53 @@ fn connect_establishes_and_disconnect_closes_tunnel_when_ips_are_available() {
         tunnel_manager.established.lock().unwrap().clone(),
         vec!["100.64.0.10->100.64.0.2:peer-pk"]
     );
+    assert_eq!(
+        tunnel_manager.closed.lock().unwrap().clone(),
+        vec!["100.64.0.2"]
+    );
+}
+
+#[test]
+fn control_sync_disconnects_when_current_device_attachment_is_disabled() {
+    let path_manager = Arc::new(RecordingPathManager::with_current_path(ActivePath::Relay {
+        peer_node_id: "peer-1".into(),
+    }));
+    let tunnel_manager = Arc::new(RecordingTunnelManager::default());
+    let facade = DefaultAppCoreFacade::new(
+        FakeController::with_member_status(false, "disabled"),
+        FakeP2P,
+        FakeRelay,
+        DisabledDerpPool,
+        path_manager,
+        tunnel_manager.clone(),
+    );
+
+    facade
+        .register("a@example.com".into(), "secret".into())
+        .unwrap();
+    facade
+        .register_node(
+            "dev-1".into(),
+            "node-1".into(),
+            "node-pk".into(),
+            vec!["relay".into()],
+        )
+        .unwrap();
+    facade.bootstrap("node-1".into(), "net-1".into()).unwrap();
+    facade.connect("net-1".into(), "peer-1".into()).unwrap();
+
+    facade.control_sync().unwrap();
+
+    let snapshot = facade.snapshot().unwrap();
+    assert_eq!(snapshot.current_network_id, None);
+    assert_eq!(snapshot.tunnel_peer_virtual_ip, None);
+    assert!(snapshot.tunnel_runtime.is_none());
+    assert!(snapshot.current_connect_plans.is_empty());
+    assert!(snapshot
+        .current_bootstrap
+        .as_ref()
+        .and_then(|bootstrap| bootstrap.network_map.as_ref())
+        .is_none());
     assert_eq!(
         tunnel_manager.closed.lock().unwrap().clone(),
         vec!["100.64.0.2"]

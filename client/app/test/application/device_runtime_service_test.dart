@@ -331,6 +331,20 @@ class _FakeAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<AppCoreHelperStatusModel> helperStatus() async {
+    return const AppCoreHelperStatusModel(
+      source: 'test',
+      helperReachable: true,
+      sessionPresent: false,
+      refreshTokenPresent: false,
+      bootstrapPresent: false,
+      networkMapPresent: false,
+      tunnelRuntimePresent: false,
+      tunnelBackendRunning: false,
+    );
+  }
+
+  @override
   Future<PlatformInstallPlanModel> platformInstallPlan() {
     throw UnimplementedError();
   }

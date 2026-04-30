@@ -943,6 +943,74 @@ class AppCorePlatformDoctorPayload {
   final List<AppCorePlatformCheckPayload> checks;
 }
 
+class AppCoreHelperStatusPayload {
+  const AppCoreHelperStatusPayload({
+    required this.source,
+    required this.helperReachable,
+    this.configuredControlBaseUrl,
+    this.persistedControlBaseUrl,
+    this.stateFile,
+    required this.sessionPresent,
+    required this.refreshTokenPresent,
+    this.deviceId,
+    this.nodeId,
+    this.currentNetworkId,
+    required this.bootstrapPresent,
+    required this.networkMapPresent,
+    required this.tunnelRuntimePresent,
+    this.tunnelPeerVirtualIp,
+    required this.tunnelBackendRunning,
+    this.tunnelLastError,
+    this.tunnelLastAppliedAtMs,
+    this.tunnelLastStartedAtMs,
+    this.checkedAtMs,
+  });
+
+  factory AppCoreHelperStatusPayload.fromJson(Map<String, dynamic> json) {
+    return AppCoreHelperStatusPayload(
+      source: json['source'] as String? ?? '',
+      helperReachable: json['helperReachable'] as bool? ?? false,
+      configuredControlBaseUrl: json['configuredControlBaseUrl'] as String?,
+      persistedControlBaseUrl: json['persistedControlBaseUrl'] as String?,
+      stateFile: json['stateFile'] as String?,
+      sessionPresent: json['sessionPresent'] as bool? ?? false,
+      refreshTokenPresent: json['refreshTokenPresent'] as bool? ?? false,
+      deviceId: json['deviceId'] as String?,
+      nodeId: json['nodeId'] as String?,
+      currentNetworkId: json['currentNetworkId'] as String?,
+      bootstrapPresent: json['bootstrapPresent'] as bool? ?? false,
+      networkMapPresent: json['networkMapPresent'] as bool? ?? false,
+      tunnelRuntimePresent: json['tunnelRuntimePresent'] as bool? ?? false,
+      tunnelPeerVirtualIp: json['tunnelPeerVirtualIp'] as String?,
+      tunnelBackendRunning: json['tunnelBackendRunning'] as bool? ?? false,
+      tunnelLastError: json['tunnelLastError'] as String?,
+      tunnelLastAppliedAtMs: (json['tunnelLastAppliedAtMs'] as num?)?.toInt(),
+      tunnelLastStartedAtMs: (json['tunnelLastStartedAtMs'] as num?)?.toInt(),
+      checkedAtMs: (json['checkedAtMs'] as num?)?.toInt(),
+    );
+  }
+
+  final String source;
+  final bool helperReachable;
+  final String? configuredControlBaseUrl;
+  final String? persistedControlBaseUrl;
+  final String? stateFile;
+  final bool sessionPresent;
+  final bool refreshTokenPresent;
+  final String? deviceId;
+  final String? nodeId;
+  final String? currentNetworkId;
+  final bool bootstrapPresent;
+  final bool networkMapPresent;
+  final bool tunnelRuntimePresent;
+  final String? tunnelPeerVirtualIp;
+  final bool tunnelBackendRunning;
+  final String? tunnelLastError;
+  final int? tunnelLastAppliedAtMs;
+  final int? tunnelLastStartedAtMs;
+  final int? checkedAtMs;
+}
+
 class AppCorePlatformInstallPlanPayload {
   const AppCorePlatformInstallPlanPayload({
     required this.platform,

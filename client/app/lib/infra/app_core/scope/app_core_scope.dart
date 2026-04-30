@@ -150,6 +150,7 @@ class AppCoreScope {
     }
     return Platform.isWindows ? 'bridge' : '';
   }
+
   static AppHostConfig? get hostConfig =>
       AppHostConfig.tryParse(_runtimeHostInput) ??
       AppHostConfig.tryParse(_runtimeControlBaseUrl);
@@ -177,15 +178,14 @@ class AppCoreScope {
   static void configureHost({
     required String host,
   }) {
-    if (_isBridgeMode) {
-      return;
-    }
     final normalized = host.trim();
     _runtimeHostInput = normalized.isEmpty ? null : normalized;
     _runtimeControlBaseUrl = null;
     _runtimeServerUiUrl = null;
-    _instance = _buildDefaultInstance();
-    _coordinator.resetForServerSwitch();
+    if (!_isBridgeMode) {
+      _instance = _buildDefaultInstance();
+      _coordinator.resetForServerSwitch();
+    }
     unawaited(_persistHost());
   }
 
@@ -193,16 +193,15 @@ class AppCoreScope {
     required String baseUrl,
     String? webBaseUrl,
   }) {
-    if (_isBridgeMode) {
-      return;
-    }
     _runtimeHostInput = null;
     final normalized = baseUrl.trim();
     _runtimeControlBaseUrl = normalized.isEmpty ? null : normalized;
     final webNormalized = webBaseUrl?.trim() ?? '';
     _runtimeServerUiUrl = webNormalized.isEmpty ? null : webNormalized;
-    _instance = _buildDefaultInstance();
-    _coordinator.resetForServerSwitch();
+    if (!_isBridgeMode) {
+      _instance = _buildDefaultInstance();
+      _coordinator.resetForServerSwitch();
+    }
     unawaited(_persistHost(clear: true));
   }
 
@@ -388,12 +387,14 @@ class AppCoreScope {
           var validatedSession = session;
           final sessionDeviceId = session.deviceId?.trim() ?? '';
           if (sessionDeviceId.isEmpty && devices.isNotEmpty) {
-            validatedSession = session.copyWith(deviceId: devices.first.deviceId);
+            validatedSession =
+                session.copyWith(deviceId: devices.first.deviceId);
             await persistSession(validatedSession);
             _instance.restoreSession(validatedSession);
           }
           if (_sessionMissingUserLabel(session)) {
-            final refreshed = await _tryRefreshPersistedSession(validatedSession);
+            final refreshed =
+                await _tryRefreshPersistedSession(validatedSession);
             if (refreshed != null) {
               await StartupLog.write(
                 'validate persisted bridge session refreshed missing user label',

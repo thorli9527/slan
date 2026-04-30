@@ -156,19 +156,6 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     );
   }
 
-  Future<AppCoreNetworkJoinPayload> joinNetworkByOwnerEmail({
-    required String ownerEmail,
-    required String deviceId,
-  }) async {
-    final payload = await invoke('joinNetworkByOwnerEmail', {
-      'ownerEmail': ownerEmail,
-      'deviceId': deviceId,
-    });
-    return AppCoreNetworkJoinPayload.fromJson(
-      _expectMap(payload, method: 'joinNetworkByOwnerEmail'),
-    );
-  }
-
   Future<AppCoreNetworkJoinPayload> joinNetworkByKey({
     required String joinKey,
     required String deviceId,
@@ -429,6 +416,13 @@ abstract class SlanAppCorePluginPlatform extends PlatformInterface {
     final payload = await invoke('platformDoctor');
     return AppCorePlatformDoctorPayload.fromJson(
       _expectMap(payload, method: 'platformDoctor'),
+    );
+  }
+
+  Future<AppCoreHelperStatusPayload> helperStatus() async {
+    final payload = await invoke('helperStatus');
+    return AppCoreHelperStatusPayload.fromJson(
+      _expectMap(payload, method: 'helperStatus'),
     );
   }
 

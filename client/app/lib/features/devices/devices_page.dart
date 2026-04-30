@@ -174,6 +174,8 @@ class _DevicesPageState extends State<DevicesPage> {
           tunnelController,
         ),
         const SizedBox(height: 16),
+        _buildHelperStatusSection(context, sessionStore, sessionController),
+        const SizedBox(height: 16),
         _buildTunnelSection(
           context,
           sessionStore,
@@ -244,6 +246,10 @@ class _DevicesPageState extends State<DevicesPage> {
                 value: runtime?.backendState ?? 'unavailable',
               ),
               DesktopMetricPill(
+                label: 'Helper',
+                value: _helperStatusValue(sessionStore.helperStatus),
+              ),
+              DesktopMetricPill(
                 label: 'Flow',
                 value: _trafficValue(runtime),
               ),
@@ -287,6 +293,12 @@ class _DevicesPageState extends State<DevicesPage> {
                             context,
                             sessionStore,
                             tunnelStore,
+                            sessionController,
+                          ),
+                          const SizedBox(height: 16),
+                          _buildHelperStatusSection(
+                            context,
+                            sessionStore,
                             sessionController,
                           ),
                         ],

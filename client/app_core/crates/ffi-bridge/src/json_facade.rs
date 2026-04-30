@@ -10,6 +10,7 @@ use crate::json_facade_args::{
 use crate::json_facade_runtime::{
     connection_state_value, data_plane_error_string, parse_args, to_value,
 };
+use crate::AppCoreSnapshot;
 
 pub struct JsonAppCoreFacade<F>
 where
@@ -29,6 +30,7 @@ mod tests {
     };
 
     use crate::facade::{AppCoreFacade, ControlStatusView, DataPlaneError, DataPlaneProbe};
+    use crate::AppCoreSnapshot;
 
     use super::JsonAppCoreFacade;
 
@@ -60,12 +62,64 @@ mod tests {
         assert_eq!(restored.device_id.as_deref(), Some("dev-1"));
     }
 
+    #[test]
+    fn snapshot_routes_to_inner_facade() {
+        let inner = RecordingFacade::default();
+        let expected = AppCoreSnapshot {
+            current_network_id: Some("net-1".to_string()),
+            ..AppCoreSnapshot::default()
+        };
+        *inner.snapshot.lock().expect("snapshot lock") = expected.clone();
+        let facade = JsonAppCoreFacade::new(inner);
+
+        assert_eq!(
+            facade.snapshot().expect("snapshot").current_network_id,
+            expected.current_network_id,
+        );
+
+        let restored = AppCoreSnapshot {
+            current_network_id: Some("net-2".to_string()),
+            ..AppCoreSnapshot::default()
+        };
+        facade
+            .restore_snapshot(restored.clone())
+            .expect("restore snapshot");
+
+        assert_eq!(
+            facade
+                .inner
+                .restored_snapshot
+                .lock()
+                .expect("restored snapshot lock")
+                .as_ref()
+                .and_then(|snapshot| snapshot.current_network_id.clone()),
+            restored.current_network_id,
+        );
+    }
+
     #[derive(Default)]
     struct RecordingFacade {
         restored: Mutex<Option<Session>>,
+        snapshot: Mutex<AppCoreSnapshot>,
+        restored_snapshot: Mutex<Option<AppCoreSnapshot>>,
     }
 
     impl AppCoreFacade for RecordingFacade {
+        fn snapshot(&self) -> Result<AppCoreSnapshot, String> {
+            self.snapshot
+                .lock()
+                .map_err(|_| "lock poisoned".to_string())
+                .map(|snapshot| snapshot.clone())
+        }
+
+        fn restore_snapshot(&self, snapshot: AppCoreSnapshot) -> Result<(), String> {
+            *self
+                .restored_snapshot
+                .lock()
+                .map_err(|_| "lock poisoned".to_string())? = Some(snapshot);
+            Ok(())
+        }
+
         fn restore_session(&self, session: Session) -> Result<(), String> {
             *self
                 .restored
@@ -154,6 +208,14 @@ mod tests {
         }
 
         fn activate_network(
+            &self,
+            _network_id: String,
+            _device_id: String,
+        ) -> Result<NetworkJoinResult, String> {
+            unimplemented!()
+        }
+
+        fn switch_network(
             &self,
             _network_id: String,
             _device_id: String,
@@ -263,6 +325,14 @@ where
 {
     pub fn new(inner: F) -> Self {
         Self { inner }
+    }
+
+    pub fn snapshot(&self) -> Result<AppCoreSnapshot, String> {
+        self.inner.snapshot()
+    }
+
+    pub fn restore_snapshot(&self, snapshot: AppCoreSnapshot) -> Result<(), String> {
+        self.inner.restore_snapshot(snapshot)
     }
 
     pub fn invoke(&self, method: &str, args: Value) -> Result<Value, String> {

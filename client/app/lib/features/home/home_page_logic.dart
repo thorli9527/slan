@@ -43,6 +43,7 @@ extension _HomePageLogic on _HomePageState {
     if (!mounted) {
       return;
     }
+    await AppCoreScope.sessionController.refreshHelperStatus();
 
     final activeNetwork = sessionStore.selectedNetwork;
     _stopMissingNetworkPolling();
@@ -299,9 +300,12 @@ extension _HomePageLogic on _HomePageState {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () {
+              onPressed: () async {
                 AppCoreScope.configureHost(host: controller.text);
-                Navigator.of(dialogContext).pop();
+                await AppCoreScope.sessionController.refreshHelperStatus();
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
               },
               child: const Text('Save'),
             ),

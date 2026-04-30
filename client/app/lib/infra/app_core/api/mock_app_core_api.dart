@@ -694,6 +694,24 @@ class MockAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<AppCoreHelperStatusModel> helperStatus() async {
+    return AppCoreHelperStatusModel(
+      source: 'mock',
+      helperReachable: true,
+      sessionPresent: _session != null,
+      refreshTokenPresent: _session?.refreshToken?.trim().isNotEmpty == true,
+      deviceId: _device?.deviceId,
+      nodeId: _node?.nodeId,
+      currentNetworkId: _networks.isEmpty ? null : _networks.first.networkId,
+      bootstrapPresent: _networks.isNotEmpty,
+      networkMapPresent: _networks.isNotEmpty,
+      tunnelRuntimePresent: true,
+      tunnelBackendRunning: true,
+      checkedAtMs: DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  @override
   Future<PlatformInstallPlanModel> platformInstallPlan() async {
     return const PlatformInstallPlanModel(
       platform: PlatformInfoModel(os: 'mock', family: 'mock'),

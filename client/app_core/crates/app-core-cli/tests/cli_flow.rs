@@ -91,7 +91,7 @@ fn cli_persists_login_to_bootstrap_connect_flow() {
     assert_eq!(probe["replySampledAtMs"], Value::Null);
     assert_eq!(probe["replyRttMs"], Value::Null);
     assert_eq!(probe["activePath"]["relay"]["peer_node_id"], "peer-1");
-    assert_eq!(probe["tunnelPeerVirtualIp"], Value::Null);
+    assert_eq!(probe["tunnelPeerVirtualIp"], "100.64.0.2");
     assert_eq!(probe["observedRttMs"], Value::Null);
     assert_eq!(probe["packetLossPpm"], Value::Null);
     assert_eq!(probe["pathScore"], Value::Null);
@@ -105,7 +105,7 @@ fn cli_persists_login_to_bootstrap_connect_flow() {
     assert_eq!(status["current_network_id"], "net-1");
     assert_eq!(status["connection_state"]["connected"], "relay");
     assert_eq!(status["active_path"]["relay"]["peer_node_id"], "peer-1");
-    assert_eq!(status["tunnel_peer_virtual_ip"], Value::Null);
+    assert_eq!(status["tunnel_peer_virtual_ip"], "100.64.0.2");
     assert!(status["last_probe"]["probeId"]
         .as_str()
         .expect("last_probe.probeId string")
@@ -125,7 +125,7 @@ fn cli_persists_login_to_bootstrap_connect_flow() {
         status["last_probe"]["activePath"]["relay"]["peer_node_id"],
         "peer-1"
     );
-    assert_eq!(status["last_probe"]["tunnelPeerVirtualIp"], Value::Null);
+    assert_eq!(status["last_probe"]["tunnelPeerVirtualIp"], "100.64.0.2");
     assert_eq!(status["last_probe"]["observedRttMs"], Value::Null);
     assert_eq!(status["last_probe"]["packetLossPpm"], Value::Null);
     assert_eq!(status["last_probe"]["pathScore"], Value::Null);
@@ -565,6 +565,7 @@ fn cli_surfaces_send_failures_after_connect() {
 
 fn run_cli(base_url: &str, state_file: &Path, args: &[&str]) -> Value {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_app-core-cli"))
+        .env("SLAN_TUNNEL_DRIVER", "in-memory")
         .arg("--control-base-url")
         .arg(base_url)
         .arg("--state-file")
@@ -684,6 +685,7 @@ fn assert_disconnected_saved_state(saved_state: &Value, _node_id: &str, _network
 
 fn run_cli_failure(base_url: &str, state_file: &Path, args: &[&str]) -> String {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_app-core-cli"))
+        .env("SLAN_TUNNEL_DRIVER", "in-memory")
         .arg("--control-base-url")
         .arg(base_url)
         .arg("--state-file")

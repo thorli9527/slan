@@ -1,5 +1,6 @@
 import '../../../application/device_runtime_service.dart';
 import '../../../application/device_setup_service.dart';
+import '../models/diagnostic_models.dart';
 import '../models/identity_models.dart';
 import 'app_core_coordinator.dart';
 
@@ -103,6 +104,9 @@ class AppSessionController {
       );
 
   Future<void> refreshNetworks() => _coordinator.refreshNetworks();
+
+  Future<AppCoreHelperStatusModel> refreshHelperStatus() =>
+      _coordinator.refreshHelperStatus();
 
   Future<void> enableActiveNetwork() => _coordinator.enableActiveNetwork();
 

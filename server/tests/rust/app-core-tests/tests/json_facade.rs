@@ -1,15 +1,15 @@
 use controller_client::{
-    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, JoinNetworkByKeyRequest,
-    JoinNetworkByOwnerEmailRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
+    ControllerClient, CreateNetworkRequest, DeactivateNetworkRequest, DeviceNetworkStateRequest,
+    JoinNetworkByKeyRequest, JoinNetworkRequest, LoginRequest, RefreshTokenRequest,
     RegisterDeviceRequest, RegisterNodeRequest, RegisterRequest, RelayTicketRequest,
-    UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
+    SwitchNetworkRequest, UpdateAttachmentRemarkRequest, UpdateNetworkDNSRequest,
 };
 use ffi_bridge::{DefaultAppCoreFacade, JsonAppCoreFacade};
 use p2p::{P2PConnector, PeerCandidate};
 use relay_client::{DerpPool, PathManager, PathManagerError, RelayClient, RelayClientError};
 use serde_json::json;
 use slan_app_core::{
-    ActivePath, BootstrapConfig, ConnectionPath, ConnectionState, ControlPlaneConfig,
+    AccessPolicy, ActivePath, BootstrapConfig, ConnectionPath, ConnectionState, ControlPlaneConfig,
     DerpLinkSnapshot, DerpNodeMeta, DerpPoolState, DerpSwitchEvent, Device, DnsConfig, Endpoint,
     Network, NetworkAssignment, NetworkJoinResult, NetworkMap, Node, Peer, RelayCity, RelayCluster,
     RelayConfig, RelayCountry, RelayNode, RelayTicket, Session, SwitchReason,
@@ -72,12 +72,11 @@ impl ControllerClient for FakeController {
     }
 
     fn list_networks(&self, _access_token: &str) -> Result<Vec<Network>, String> {
-        Ok(vec![Network {
-            network_id: "net-1".into(),
-            name: "home".into(),
-            cidr: "100.64.0.0/24".into(),
-            members: vec![],
-        }])
+        Ok(vec![test_network(
+            "net-1",
+            "home",
+            Some("100.64.0.0/24".into()),
+        )])
     }
 
     fn create_network(
@@ -85,12 +84,7 @@ impl ControllerClient for FakeController {
         _access_token: &str,
         req: CreateNetworkRequest,
     ) -> Result<Network, String> {
-        Ok(Network {
-            network_id: "net-1".into(),
-            name: req.name,
-            cidr: req.cidr,
-            members: vec![],
-        })
+        Ok(test_network("net-1", req.name, req.cidr))
     }
 
     fn update_network_dns(
@@ -98,12 +92,11 @@ impl ControllerClient for FakeController {
         _access_token: &str,
         req: UpdateNetworkDNSRequest,
     ) -> Result<Network, String> {
-        Ok(Network {
-            network_id: req.network_id,
-            name: "home".into(),
-            cidr: "100.64.0.0/24".into(),
-            members: vec![],
-        })
+        Ok(test_network(
+            req.network_id,
+            "home",
+            Some("100.64.0.0/24".into()),
+        ))
     }
 
     fn join_network(
@@ -112,14 +105,6 @@ impl ControllerClient for FakeController {
         req: JoinNetworkRequest,
     ) -> Result<NetworkJoinResult, String> {
         Ok(join_result(req.network_id, req.device_id))
-    }
-
-    fn join_network_by_owner_email(
-        &self,
-        _access_token: &str,
-        _req: JoinNetworkByOwnerEmailRequest,
-    ) -> Result<NetworkJoinResult, String> {
-        Ok(join_result("net-1".into(), _req.device_id))
     }
 
     fn join_network_by_key(
@@ -150,10 +135,30 @@ impl ControllerClient for FakeController {
         Ok(join_result(req.network_id, req.device_id))
     }
 
+    fn switch_network(
+        &self,
+        _access_token: &str,
+        req: SwitchNetworkRequest,
+    ) -> Result<NetworkJoinResult, String> {
+        Ok(join_result(req.network_id, req.device_id))
+    }
+
     fn deactivate_network(
         &self,
         _access_token: &str,
         _req: DeactivateNetworkRequest,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn list_devices(&self, _access_token: &str) -> Result<Vec<Device>, String> {
+        Ok(vec![])
+    }
+
+    fn set_device_network_state(
+        &self,
+        _access_token: &str,
+        _req: DeviceNetworkStateRequest,
     ) -> Result<(), String> {
         Ok(())
     }
@@ -174,12 +179,11 @@ impl ControllerClient for FakeController {
                 public_key: Some("device-pk".into()),
                 mqtt: None,
             },
-            networks: vec![Network {
-                network_id: network_id.into(),
-                name: "home".into(),
-                cidr: "100.64.0.0/24".into(),
-                members: vec![],
-            }],
+            networks: vec![test_network(
+                network_id,
+                "home",
+                Some("100.64.0.0/24".into()),
+            )],
             control_plane: ControlPlaneConfig {
                 ws_url: support::DEV_CONTROL_WS_URL.into(),
                 session_token: Some("control-session-token".into()),
@@ -233,10 +237,8 @@ impl ControllerClient for FakeController {
                 }],
                 routes: vec![],
                 relay_regions: vec![],
-                dns: DnsConfig {
-                    servers: vec![],
-                    search_domains: vec![],
-                },
+                dns: empty_dns_config(),
+                policy: default_access_policy(),
                 mtu: Some(1280),
             }),
         })
@@ -292,6 +294,41 @@ fn network_assignment(
         remark,
         virtual_ip: Some("100.64.0.10".into()),
         status: Some("active".into()),
+    }
+}
+
+fn test_network(
+    network_id: impl Into<String>,
+    name: impl Into<String>,
+    cidr: Option<String>,
+) -> Network {
+    Network {
+        network_id: network_id.into(),
+        name: name.into(),
+        description: None,
+        cidr: cidr.unwrap_or_else(|| "100.64.0.0/24".into()),
+        default_subnet_id: None,
+        subnets: vec![],
+        members: vec![],
+    }
+}
+
+fn empty_dns_config() -> DnsConfig {
+    DnsConfig {
+        servers: vec![],
+        search_domains: vec![],
+        wildcards: vec![],
+    }
+}
+
+fn default_access_policy() -> AccessPolicy {
+    AccessPolicy {
+        plan_code: None,
+        max_active_devices: None,
+        bandwidth_limit_mbps: None,
+        relay_bandwidth_limit_kbps: None,
+        p2p_unlimited: false,
+        dns_available: false,
     }
 }
 

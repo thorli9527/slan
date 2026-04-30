@@ -142,15 +142,7 @@ pub trait ControllerClient: Send + Sync {
         &self,
         access_token: &str,
         req: SwitchNetworkRequest,
-    ) -> Result<NetworkJoinResult, String> {
-        self.activate_network(
-            access_token,
-            JoinNetworkRequest {
-                network_id: req.network_id,
-                device_id: req.device_id,
-            },
-        )
-    }
+    ) -> Result<NetworkJoinResult, String>;
     fn deactivate_network(
         &self,
         access_token: &str,

@@ -611,6 +611,14 @@ where
     M: PathManager,
     T: TunnelManager,
 {
+    fn snapshot(&self) -> Result<AppCoreSnapshot, String> {
+        DefaultAppCoreFacade::snapshot(self)
+    }
+
+    fn restore_snapshot(&self, snapshot: AppCoreSnapshot) -> Result<(), String> {
+        DefaultAppCoreFacade::restore_snapshot(self, snapshot)
+    }
+
     fn restore_session(&self, session: Session) -> Result<(), String> {
         let mut state = self
             .state
@@ -1421,6 +1429,41 @@ where
                 let bootstrap = self
                     .controller
                     .bootstrap(&access_token, &node_id, &network_id)?;
+                let current_device_id = {
+                    let state = self
+                        .state
+                        .lock()
+                        .map_err(|_| "app core state poisoned".to_string())?;
+                    state
+                        .current_device
+                        .as_ref()
+                        .map(|device| device.device_id.clone())
+                        .unwrap_or_else(|| bootstrap.device.device_id.clone())
+                };
+                if bootstrap_device_attachment_disabled(&bootstrap, &network_id, &current_device_id)
+                {
+                    replace_tunnel(
+                        &self.current_tunnel_peer_virtual_ip,
+                        &self.tunnel_manager,
+                        None,
+                    )?;
+                    let _ = self.tunnel_manager.stop_local_dns();
+                    update_disconnected_snapshot(&self.state)?;
+                    if let Ok(mut control_mqtt) = self.control_mqtt.lock() {
+                        *control_mqtt = None;
+                    }
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|_| "app core state poisoned".to_string())?;
+                    state.current_bootstrap = Some(bootstrap.clone());
+                    state.current_network_id = None;
+                    state.current_connect_plans.clear();
+                    if let Some(current_bootstrap) = state.current_bootstrap.as_mut() {
+                        current_bootstrap.network_map = None;
+                    }
+                    return Ok(bootstrap);
+                }
                 let mut state = self
                     .state
                     .lock()
@@ -2289,6 +2332,26 @@ fn is_disabled_member_status(status: &str) -> bool {
         status.trim().to_ascii_lowercase().as_str(),
         "disabled" | "suspended" | "rejected"
     )
+}
+
+fn bootstrap_device_attachment_disabled(
+    bootstrap: &BootstrapConfig,
+    network_id: &str,
+    device_id: &str,
+) -> bool {
+    bootstrap
+        .networks
+        .iter()
+        .find(|network| network.network_id == network_id)
+        .and_then(|network| {
+            network
+                .members
+                .iter()
+                .find(|member| member.device_id == device_id)
+        })
+        .and_then(|member| member.status.as_deref())
+        .map(is_disabled_member_status)
+        .unwrap_or(false)
 }
 
 fn dns_records_from_bootstrap(bootstrap: &BootstrapConfig) -> Vec<(String, String)> {

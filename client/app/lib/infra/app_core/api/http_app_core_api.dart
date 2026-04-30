@@ -26,11 +26,13 @@ class HttpAppCoreApi implements AppCoreApi {
   final HttpClient _httpClient;
 
   String? _accessToken;
+  SessionModel? _session;
   ConnectionStateModel _connectionState =
       const ConnectionStateModel.disconnected();
 
   @override
   void restoreSession(SessionModel session) {
+    _session = session;
     _accessToken = session.accessToken;
   }
 
@@ -46,6 +48,7 @@ class HttpAppCoreApi implements AppCoreApi {
         body: RegisterRequest(email: email, password: password).toJson(),
       ),
     );
+    _session = session;
     _accessToken = session.accessToken;
     return session;
   }
@@ -62,6 +65,7 @@ class HttpAppCoreApi implements AppCoreApi {
         body: LoginRequest(email: email, password: password).toJson(),
       ),
     );
+    _session = session;
     _accessToken = session.accessToken;
     return session;
   }
@@ -81,6 +85,7 @@ class HttpAppCoreApi implements AppCoreApi {
         ).toJson(),
       ),
     );
+    _session = session;
     _accessToken = session.accessToken;
     return session;
   }
@@ -399,6 +404,24 @@ class HttpAppCoreApi implements AppCoreApi {
           detail: 'HTTP mode does not expose local tunnel platform diagnostics',
         ),
       ],
+    );
+  }
+
+  @override
+  Future<AppCoreHelperStatusModel> helperStatus() async {
+    return AppCoreHelperStatusModel(
+      source: 'http',
+      helperReachable: false,
+      configuredControlBaseUrl: _baseUri.toString(),
+      persistedControlBaseUrl: null,
+      stateFile: null,
+      sessionPresent: _session != null,
+      refreshTokenPresent: _session?.refreshToken?.trim().isNotEmpty == true,
+      currentNetworkId: null,
+      bootstrapPresent: false,
+      networkMapPresent: false,
+      tunnelRuntimePresent: false,
+      tunnelBackendRunning: false,
     );
   }
 

@@ -325,6 +325,12 @@ class BridgeAppCoreApi implements AppCoreApi {
   }
 
   @override
+  Future<AppCoreHelperStatusModel> helperStatus() async {
+    final payload = await _pluginPlatform.helperStatus();
+    return _toHelperStatusModel(payload);
+  }
+
+  @override
   Future<PlatformInstallPlanModel> platformInstallPlan() async {
     final payload = await _pluginPlatform.platformInstallPlan();
     return _toPlatformInstallPlanModel(payload);
@@ -345,6 +351,32 @@ class BridgeAppCoreApi implements AppCoreApi {
   Future<void> disconnect() async {
     await _pluginPlatform.disconnect();
   }
+}
+
+AppCoreHelperStatusModel _toHelperStatusModel(
+  AppCoreHelperStatusPayload payload,
+) {
+  return AppCoreHelperStatusModel(
+    source: payload.source,
+    helperReachable: payload.helperReachable,
+    configuredControlBaseUrl: payload.configuredControlBaseUrl,
+    persistedControlBaseUrl: payload.persistedControlBaseUrl,
+    stateFile: payload.stateFile,
+    sessionPresent: payload.sessionPresent,
+    refreshTokenPresent: payload.refreshTokenPresent,
+    deviceId: payload.deviceId,
+    nodeId: payload.nodeId,
+    currentNetworkId: payload.currentNetworkId,
+    bootstrapPresent: payload.bootstrapPresent,
+    networkMapPresent: payload.networkMapPresent,
+    tunnelRuntimePresent: payload.tunnelRuntimePresent,
+    tunnelPeerVirtualIp: payload.tunnelPeerVirtualIp,
+    tunnelBackendRunning: payload.tunnelBackendRunning,
+    tunnelLastError: payload.tunnelLastError,
+    tunnelLastAppliedAtMs: payload.tunnelLastAppliedAtMs,
+    tunnelLastStartedAtMs: payload.tunnelLastStartedAtMs,
+    checkedAtMs: payload.checkedAtMs,
+  );
 }
 
 SessionModel _toSessionModel(AppCoreSessionPayload payload) {

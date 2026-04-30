@@ -4,6 +4,8 @@ use slan_app_core::{
     NetworkJoinResult, Node, RelayTicket, Session, TunnelTransport,
 };
 
+use crate::AppCoreSnapshot;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataPlaneProbe {
@@ -126,6 +128,14 @@ impl std::fmt::Display for DataPlaneError {
 }
 
 pub trait AppCoreFacade: Send + Sync {
+    fn snapshot(&self) -> Result<AppCoreSnapshot, String> {
+        Err("snapshot is not supported by this facade".to_string())
+    }
+
+    fn restore_snapshot(&self, _snapshot: AppCoreSnapshot) -> Result<(), String> {
+        Err("restore snapshot is not supported by this facade".to_string())
+    }
+
     fn restore_session(&self, session: Session) -> Result<(), String>;
     fn register(&self, email: String, password: String) -> Result<Session, String>;
     fn login(&self, email: String, password: String) -> Result<Session, String>;
@@ -182,9 +192,7 @@ pub trait AppCoreFacade: Send + Sync {
         &self,
         network_id: String,
         device_id: String,
-    ) -> Result<NetworkJoinResult, String> {
-        self.activate_network(network_id, device_id)
-    }
+    ) -> Result<NetworkJoinResult, String>;
     fn deactivate_network(&self, network_id: String, device_id: String) -> Result<(), String>;
     fn set_device_network_state(
         &self,

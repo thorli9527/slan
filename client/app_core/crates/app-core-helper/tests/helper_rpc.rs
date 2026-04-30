@@ -330,6 +330,40 @@ fn helper_process_serializes_platform_install_plan_response_over_stdio() {
 }
 
 #[test]
+fn helper_process_serializes_helper_status_without_persisting_state() {
+    let state_path = std::env::temp_dir().join(format!(
+        "slan-helper-status-{}-{}.json",
+        std::process::id(),
+        chrono_like_test_suffix()
+    ));
+    let response = invoke_helper_with_env(
+        "http://127.0.0.1:9",
+        &json!({
+            "method": "helperStatus",
+            "args": {}
+        }),
+        &[(
+            "SLAN_APP_CORE_STATE_FILE",
+            state_path.to_str().expect("state path utf8"),
+        )],
+    );
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["source"], "app-core-helper");
+    assert_eq!(response["result"]["helperReachable"], true);
+    assert_eq!(
+        response["result"]["configuredControlBaseUrl"],
+        "http://127.0.0.1:9"
+    );
+    assert_eq!(response["result"]["sessionPresent"], false);
+    assert_eq!(response["result"]["tunnelRuntimePresent"], false);
+    assert!(
+        !state_path.exists(),
+        "helperStatus should not create persisted state file"
+    );
+}
+
+#[test]
 fn helper_process_serializes_success_response_over_tcp_host() {
     let bind = TcpListener::bind("127.0.0.1:0").expect("bind test port");
     let address = bind.local_addr().expect("tcp host local addr");
@@ -389,6 +423,13 @@ fn helper_process_accepts_tcp_requests_while_existing_client_stays_open() {
 
     assert_eq!(response["ok"], true);
     assert_eq!(response["result"], json!({}));
+}
+
+fn chrono_like_test_suffix() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time before unix epoch")
+        .as_millis()
 }
 
 fn invoke_helper(base_url: &str, request: &Value) -> Value {

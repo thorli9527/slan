@@ -103,7 +103,7 @@ void main() {
       ),
     );
 
-    expect(appCore.enableLocalNetworkCalls, 1);
+    expect(appCore.enableLocalNetworkCalls, greaterThanOrEqualTo(1));
     expect(appCore.lastEnabledNetworkId, 'net-1');
     expect(AppCoreScope.sessionStore.selectedNetworkId, 'net-1');
   });

@@ -15,7 +15,7 @@ void main() {
   testWidgets('DevicesPage renders desktop workbench sections', (
     WidgetTester tester,
   ) async {
-    await _pumpDevicesPage(tester);
+    await _pumpDevicesPageWithMockAppCore(tester);
 
     expect(find.text('Devices Workspace'), findsOneWidget);
     expect(find.text('Identity'), findsOneWidget);
@@ -359,6 +359,7 @@ Future<void> _pumpDevicesPageWithMockAppCore(WidgetTester tester) async {
   await _pumpDevicesPageWithScope(
     tester,
     appCoreApi: MockAppCoreApi(),
+    mode: 'mock',
   );
 }
 
@@ -370,6 +371,7 @@ Future<void> _pumpDevicesPageWithGateway(
     tester,
     appCoreApi: MockAppCoreApi(),
     tunnelHostGateway: gateway,
+    mode: 'mock',
   );
 }
 

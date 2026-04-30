@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/bootstrap_models.dart';
 import '../models/connection_models.dart';
 import '../models/control_models.dart';
+import '../models/diagnostic_models.dart';
 import '../models/identity_models.dart';
 import '../models/network_models.dart';
 import '../models/relay_models.dart';
@@ -16,6 +17,7 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
   String? selectedNetworkId;
   BootstrapModel? bootstrap;
   ControlStatusModel? controlStatus;
+  AppCoreHelperStatusModel? helperStatus;
   RelayTicketModel? relayTicket;
   ConnectionStateModel connectionState =
       const ConnectionStateModel.disconnected();
@@ -33,6 +35,7 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
     selectedNetworkId = null;
     bootstrap = null;
     controlStatus = null;
+    helperStatus = null;
     relayTicket = null;
     connectionState = const ConnectionStateModel.disconnected();
     busy = false;
@@ -73,6 +76,7 @@ mixin AppCoreSessionStoreState on ChangeNotifier {
     connectionState = const ConnectionStateModel.disconnected();
     relayTicket = null;
     controlStatus = null;
+    helperStatus = null;
   }
 
   NetworkModel? get selectedNetwork {

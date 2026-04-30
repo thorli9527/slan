@@ -67,6 +67,53 @@ class PlatformDoctorModel {
   final List<PlatformCheckModel> checks;
 }
 
+class AppCoreHelperStatusModel {
+  const AppCoreHelperStatusModel({
+    required this.source,
+    required this.helperReachable,
+    this.configuredControlBaseUrl,
+    this.persistedControlBaseUrl,
+    this.stateFile,
+    required this.sessionPresent,
+    required this.refreshTokenPresent,
+    this.deviceId,
+    this.nodeId,
+    this.currentNetworkId,
+    required this.bootstrapPresent,
+    required this.networkMapPresent,
+    required this.tunnelRuntimePresent,
+    this.tunnelPeerVirtualIp,
+    required this.tunnelBackendRunning,
+    this.tunnelLastError,
+    this.tunnelLastAppliedAtMs,
+    this.tunnelLastStartedAtMs,
+    this.checkedAtMs,
+  });
+
+  final String source;
+  final bool helperReachable;
+  final String? configuredControlBaseUrl;
+  final String? persistedControlBaseUrl;
+  final String? stateFile;
+  final bool sessionPresent;
+  final bool refreshTokenPresent;
+  final String? deviceId;
+  final String? nodeId;
+  final String? currentNetworkId;
+  final bool bootstrapPresent;
+  final bool networkMapPresent;
+  final bool tunnelRuntimePresent;
+  final String? tunnelPeerVirtualIp;
+  final bool tunnelBackendRunning;
+  final String? tunnelLastError;
+  final int? tunnelLastAppliedAtMs;
+  final int? tunnelLastStartedAtMs;
+  final int? checkedAtMs;
+
+  bool get isReady =>
+      helperReachable && sessionPresent && currentNetworkId != null;
+}
+
 class PlatformInstallPlanModel {
   const PlatformInstallPlanModel({
     required this.platform,

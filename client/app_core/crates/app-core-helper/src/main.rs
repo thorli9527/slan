@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -24,6 +24,13 @@ use tunnel::LinuxKernelWireGuardBackend;
 #[cfg(target_os = "windows")]
 use tunnel::WindowsEmbeddableServiceBackend;
 use tunnel::{TunnelBackend, TunnelConfig, TunnelManager};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedHelperState {
+    control_base_url: String,
+    snapshot: ffi_bridge::AppCoreSnapshot,
+}
 
 fn main() {
     if let Err(err) = run() {
@@ -48,8 +55,7 @@ fn run() -> Result<(), String> {
         }
         None => None,
     };
-    let base_url = std::env::var("SLAN_CONTROL_BASE_URL")
-        .map_err(|_| "missing SLAN_CONTROL_BASE_URL for app-core-helper".to_string())?;
+    let base_url = resolve_helper_control_base_url()?;
     write_helper_log(&format!(
         "helper start tcp_host={} control_base_url={}",
         tcp_host.as_deref().unwrap_or("<stdio>"),
@@ -64,20 +70,63 @@ fn run() -> Result<(), String> {
             Ok(path) => Box::new(FileTunnelKeyProvider::new(PathBuf::from(path))),
             Err(_) => Box::new(ffi_bridge::InMemoryTunnelKeyProvider),
         };
-    let facade = Arc::new(JsonAppCoreFacade::new(
-        DefaultAppCoreFacade::new_with_tunnel_key_provider(
-            HttpControllerClient::new(base_url, TcpJsonHttpTransport::default()),
-            p2p_connector.clone(),
-            relay_client.clone(),
-            derp_pool.clone(),
-            InMemoryPathManager::new(derp_pool, relay_client, p2p_connector),
-            tunnel_host.clone(),
-            key_provider,
-        ),
-    ));
+    let app_facade = DefaultAppCoreFacade::new_with_tunnel_key_provider(
+        HttpControllerClient::new(base_url.clone(), TcpJsonHttpTransport::default()),
+        p2p_connector.clone(),
+        relay_client.clone(),
+        derp_pool.clone(),
+        InMemoryPathManager::new(derp_pool, relay_client, p2p_connector),
+        tunnel_host.clone(),
+        key_provider,
+    );
+    let mut restored_network_id: Option<String> = None;
+    let mut restored_runtime_enabled = false;
+    if let Some(snapshot) = load_persisted_helper_state()
+        .filter(|state| state.control_base_url.trim() == base_url.trim())
+        .map(|state| state.snapshot)
+    {
+        restored_network_id = snapshot.current_network_id.clone();
+        restored_runtime_enabled =
+            snapshot.tunnel_runtime.is_some() || snapshot.tunnel_peer_virtual_ip.is_some();
+        match app_facade.restore_snapshot(snapshot) {
+            Ok(()) => write_helper_log("persisted app-core snapshot restored"),
+            Err(err) => write_helper_log(&format!(
+                "restore persisted app-core snapshot failed: {err}"
+            )),
+        }
+    }
+    let facade = Arc::new(JsonAppCoreFacade::new(app_facade));
+    if let Err(err) = refresh_persisted_session(facade.as_ref()) {
+        write_helper_log(&format!("startup refreshSession skipped: {err}"));
+    }
+    if let Err(err) = facade.invoke("controlSync", json!({})) {
+        write_helper_log(&format!("startup controlSync skipped: {err}"));
+    } else {
+        let _ = persist_helper_state(&base_url, facade.as_ref());
+        write_helper_log("startup controlSync completed");
+    }
+    if restored_runtime_enabled {
+        if let Some(network_id) = restored_network_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            match facade.invoke("enableLocalNetwork", json!({ "networkId": network_id })) {
+                Ok(_) => {
+                    let _ = persist_helper_state(&base_url, facade.as_ref());
+                    write_helper_log(&format!(
+                        "startup local network restored network_id={network_id}"
+                    ));
+                }
+                Err(err) => write_helper_log(&format!(
+                    "startup local network restore skipped network_id={network_id} error={err}"
+                )),
+            }
+        }
+    }
 
+    let control_base_url = Arc::new(base_url);
     if let Some(address) = tcp_host {
-        return run_tcp_host(&address, facade, tunnel_host);
+        return run_tcp_host(&address, facade, tunnel_host, control_base_url);
     }
 
     let stdin = io::stdin();
@@ -87,8 +136,16 @@ fn run() -> Result<(), String> {
         if line.trim().is_empty() {
             continue;
         }
-        let response = handle_rpc_line(&line, facade.as_ref(), tunnel_host.as_ref())?;
-        serde_json::to_writer(&mut stdout, &response).map_err(|err| err.to_string())?;
+        let outcome = handle_rpc_line(
+            &line,
+            facade.as_ref(),
+            tunnel_host.as_ref(),
+            control_base_url.as_str(),
+        )?;
+        if outcome.response.ok && outcome.should_persist_state {
+            let _ = persist_helper_state(control_base_url.as_str(), facade.as_ref());
+        }
+        serde_json::to_writer(&mut stdout, &outcome.response).map_err(|err| err.to_string())?;
         stdout.write_all(b"\n").map_err(|err| err.to_string())?;
         stdout.flush().map_err(|err| err.to_string())?;
     }
@@ -99,6 +156,7 @@ fn run_tcp_host<F>(
     address: &str,
     facade: Arc<JsonAppCoreFacade<F>>,
     tunnel_host: Arc<HelperTunnelHost>,
+    control_base_url: Arc<String>,
 ) -> Result<(), String>
 where
     F: ffi_bridge::AppCoreFacade + 'static,
@@ -111,8 +169,14 @@ where
         write_helper_log("accepted tcp client connection");
         let facade = facade.clone();
         let tunnel_host = tunnel_host.clone();
+        let control_base_url = control_base_url.clone();
         thread::spawn(move || {
-            if let Err(err) = handle_tcp_client(stream, facade.as_ref(), tunnel_host.as_ref()) {
+            if let Err(err) = handle_tcp_client(
+                stream,
+                facade.as_ref(),
+                tunnel_host.as_ref(),
+                control_base_url.as_str(),
+            ) {
                 write_helper_log(&format!("tcp client handler failed: {err}"));
             }
         });
@@ -124,6 +188,7 @@ fn handle_tcp_client<F>(
     stream: TcpStream,
     facade: &JsonAppCoreFacade<F>,
     tunnel_host: &HelperTunnelHost,
+    control_base_url: &str,
 ) -> Result<(), String>
 where
     F: ffi_bridge::AppCoreFacade,
@@ -144,8 +209,11 @@ where
         if line.trim().is_empty() {
             continue;
         }
-        let response = handle_rpc_line(&line, facade, tunnel_host)?;
-        serde_json::to_writer(&mut writer, &response).map_err(|err| err.to_string())?;
+        let outcome = handle_rpc_line(&line, facade, tunnel_host, control_base_url)?;
+        if outcome.response.ok && outcome.should_persist_state {
+            let _ = persist_helper_state(control_base_url, facade);
+        }
+        serde_json::to_writer(&mut writer, &outcome.response).map_err(|err| err.to_string())?;
         writer.write_all(b"\n").map_err(|err| err.to_string())?;
         writer.flush().map_err(|err| err.to_string())?;
     }
@@ -155,25 +223,55 @@ fn handle_rpc_line<F>(
     line: &str,
     facade: &JsonAppCoreFacade<F>,
     tunnel_host: &HelperTunnelHost,
-) -> Result<RpcResponse, String>
+    control_base_url: &str,
+) -> Result<RpcOutcome, String>
 where
     F: ffi_bridge::AppCoreFacade,
 {
     let request: RpcRequest = serde_json::from_str(line).map_err(|err| err.to_string())?;
-    Ok(handle_rpc_request(request, facade, tunnel_host))
+    let should_persist_state = should_persist_after_rpc(&request.method);
+    Ok(RpcOutcome {
+        response: handle_rpc_request(request, facade, tunnel_host, control_base_url),
+        should_persist_state,
+    })
+}
+
+#[derive(Debug)]
+struct RpcOutcome {
+    response: RpcResponse,
+    should_persist_state: bool,
+}
+
+fn should_persist_after_rpc(method: &str) -> bool {
+    !matches!(
+        method,
+        "helperStatus"
+            | "platformDoctor"
+            | "platformInstallPlan"
+            | "tunnelRuntimeView"
+            | "controlStatus"
+    )
 }
 
 fn handle_rpc_request<F>(
     request: RpcRequest,
     facade: &JsonAppCoreFacade<F>,
     tunnel_host: &HelperTunnelHost,
+    control_base_url: &str,
 ) -> RpcResponse
 where
     F: ffi_bridge::AppCoreFacade,
 {
     let method_name = request.method.clone();
-    let result = maybe_test_override_result(&method_name)
-        .unwrap_or_else(|| invoke_helper(&method_name, request.args, facade, tunnel_host));
+    let result = maybe_test_override_result(&method_name).unwrap_or_else(|| {
+        invoke_helper(
+            &method_name,
+            request.args,
+            facade,
+            tunnel_host,
+            control_base_url,
+        )
+    });
     match &result {
         Ok(_) => write_helper_log(&format!("method {method_name} completed successfully")),
         Err(error) => write_helper_log(&format!("method {method_name} failed error={error}")),
@@ -186,15 +284,191 @@ fn invoke_helper<F>(
     args: Value,
     facade: &JsonAppCoreFacade<F>,
     tunnel_host: &HelperTunnelHost,
+    control_base_url: &str,
 ) -> Result<Value, String>
 where
     F: ffi_bridge::AppCoreFacade,
 {
-    if HelperTunnelHost::supports_method(method) {
+    if method == "helperStatus" {
+        helper_status_json(control_base_url, facade, tunnel_host)
+    } else if HelperTunnelHost::supports_method(method) {
         write_helper_log(&format!("dispatching tunnel method {method}"));
         tunnel_host.invoke(method, args)
     } else {
         facade.invoke(method, args)
+    }
+}
+
+fn helper_status_json<F>(
+    control_base_url: &str,
+    facade: &JsonAppCoreFacade<F>,
+    tunnel_host: &HelperTunnelHost,
+) -> Result<Value, String>
+where
+    F: ffi_bridge::AppCoreFacade,
+{
+    let snapshot = facade.snapshot()?;
+    let session_present = snapshot.session.is_some();
+    let refresh_token_present = snapshot
+        .session
+        .as_ref()
+        .and_then(|session| session.refresh_token.as_deref())
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false);
+    let tunnel_state = tunnel_host
+        .state
+        .lock()
+        .map_err(|_| "app_core_tunnel_backend_error: tunnel helper state poisoned".to_string())?
+        .clone();
+    let persisted_control_base_url = load_persisted_helper_state()
+        .map(|state| state.control_base_url.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(json!({
+        "source": "app-core-helper",
+        "helperReachable": true,
+        "configuredControlBaseUrl": control_base_url.trim(),
+        "persistedControlBaseUrl": persisted_control_base_url,
+        "stateFile": persisted_helper_state_path().display().to_string(),
+        "sessionPresent": session_present,
+        "refreshTokenPresent": refresh_token_present,
+        "deviceId": snapshot.current_device.as_ref().map(|device| device.device_id.clone()),
+        "nodeId": snapshot.current_node.as_ref().map(|node| node.node_id.clone()),
+        "currentNetworkId": snapshot.current_network_id,
+        "bootstrapPresent": snapshot.current_bootstrap.is_some(),
+        "networkMapPresent": snapshot
+            .current_bootstrap
+            .as_ref()
+            .and_then(|bootstrap| bootstrap.network_map.as_ref())
+            .is_some(),
+        "connectionState": snapshot.connection_state,
+        "tunnelRuntimePresent": snapshot.tunnel_runtime.is_some(),
+        "tunnelPeerVirtualIp": snapshot.tunnel_peer_virtual_ip,
+        "tunnelBackendRunning": tunnel_state.is_running,
+        "tunnelLastError": tunnel_state.last_error,
+        "tunnelLastAppliedAtMs": tunnel_state.last_applied_at_ms,
+        "tunnelLastStartedAtMs": tunnel_state.last_started_at_ms,
+        "checkedAtMs": current_timestamp_ms(),
+    }))
+}
+
+fn resolve_helper_control_base_url() -> Result<String, String> {
+    if let Ok(base_url) = std::env::var("SLAN_CONTROL_BASE_URL") {
+        let trimmed = base_url.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    if let Some(state) = load_persisted_helper_state() {
+        let trimmed = state.control_base_url.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    Err("missing SLAN_CONTROL_BASE_URL for app-core-helper".to_string())
+}
+
+fn refresh_persisted_session<F>(facade: &JsonAppCoreFacade<F>) -> Result<(), String>
+where
+    F: ffi_bridge::AppCoreFacade,
+{
+    let _guard = persisted_helper_state_file_lock()
+        .lock()
+        .map_err(|_| "persisted app-core state lock poisoned".to_string())?;
+    let snapshot = facade.snapshot()?;
+    let Some(session) = snapshot.session else {
+        return Err("missing persisted session".to_string());
+    };
+    let Some(refresh_token) = session.refresh_token.as_deref() else {
+        return Err("missing refresh token".to_string());
+    };
+    if refresh_token.trim().is_empty() {
+        return Err("missing refresh token".to_string());
+    }
+    facade.invoke(
+        "refreshSession",
+        json!({
+            "refreshToken": refresh_token,
+            "deviceId": session.device_id,
+        }),
+    )?;
+    write_helper_log("persisted session refreshed on startup");
+    Ok(())
+}
+
+fn persist_helper_state<F>(
+    control_base_url: &str,
+    facade: &JsonAppCoreFacade<F>,
+) -> Result<(), String>
+where
+    F: ffi_bridge::AppCoreFacade,
+{
+    let _guard = persisted_helper_state_file_lock()
+        .lock()
+        .map_err(|_| "persisted app-core state lock poisoned".to_string())?;
+    let state = PersistedHelperState {
+        control_base_url: control_base_url.trim().to_string(),
+        snapshot: facade.snapshot()?,
+    };
+    let path = persisted_helper_state_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create persisted app-core state dir failed: {err}"))?;
+    }
+    let payload = serde_json::to_vec_pretty(&state)
+        .map_err(|err| format!("encode persisted app-core state failed: {err}"))?;
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, payload)
+        .map_err(|err| format!("write persisted app-core state temp file failed: {err}"))?;
+    fs::rename(&temp_path, &path)
+        .map_err(|err| format!("replace persisted app-core state failed: {err}"))?;
+    Ok(())
+}
+
+fn persisted_helper_state_file_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn load_persisted_helper_state() -> Option<PersistedHelperState> {
+    let path = persisted_helper_state_path();
+    let payload = fs::read(&path).ok()?;
+    serde_json::from_slice(&payload)
+        .map_err(|err| {
+            write_helper_log(&format!(
+                "decode persisted app-core state failed path={} error={err}",
+                path.display()
+            ));
+            err
+        })
+        .ok()
+}
+
+fn persisted_helper_state_path() -> PathBuf {
+    if let Ok(configured) = std::env::var("SLAN_APP_CORE_STATE_FILE") {
+        let trimmed = configured.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(program_data) = std::env::var("ProgramData") {
+        let trimmed = program_data.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed)
+                .join("SLAN")
+                .join("app-core-state.json");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    return PathBuf::from(r"C:\ProgramData\SLAN\app-core-state.json");
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(parent) = current_exe.parent() {
+                return parent.join("app-core-state.json");
+            }
+        }
+        std::env::temp_dir().join("slan-app-core-state.json")
     }
 }
 
@@ -1673,11 +1947,40 @@ mod tests {
     use super::{
         build_dns_response, build_rpc_response, classify_helper_error, classify_structured_error,
         current_timestamp_ms, linux_family, linux_package_manager, maybe_test_override_result,
-        normalize_dns_records, nrpt_namespaces_for_records, parse_os_release, resolve_dns_name,
-        HelperTunnelConfiguration, HelperTunnelHost,
+        normalize_dns_records, nrpt_namespaces_for_records, parse_os_release,
+        persisted_helper_state_path, resolve_dns_name, resolve_helper_control_base_url,
+        should_persist_after_rpc, HelperTunnelConfiguration, HelperTunnelHost,
+        PersistedHelperState,
     };
     use serde_json::{json, Value};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
     use tunnel::TunnelManager;
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock")
+    }
+
+    fn unique_state_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "slan-helper-{name}-{}-{}.json",
+            std::process::id(),
+            current_timestamp_ms()
+        ))
+    }
+
+    fn write_persisted_state(path: &PathBuf, control_base_url: &str) {
+        let payload = serde_json::to_vec(&PersistedHelperState {
+            control_base_url: control_base_url.to_string(),
+            snapshot: ffi_bridge::AppCoreSnapshot::default(),
+        })
+        .expect("encode persisted helper state");
+        fs::write(path, payload).expect("write persisted helper state");
+    }
 
     fn dns_query(name: &str) -> Vec<u8> {
         let mut request = vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
@@ -1738,6 +2041,82 @@ mod tests {
         host.start_local_dns(vec![("".into(), "".into())])
             .expect("empty effective records should be skipped");
         assert!(host.dns_server.lock().expect("dns lock").is_none());
+    }
+
+    #[test]
+    fn helper_state_file_env_overrides_default_persisted_path() {
+        let _guard = env_lock();
+        let path = unique_state_path("path-env");
+        unsafe {
+            std::env::set_var("SLAN_APP_CORE_STATE_FILE", &path);
+        }
+
+        assert_eq!(persisted_helper_state_path(), path);
+
+        unsafe {
+            std::env::remove_var("SLAN_APP_CORE_STATE_FILE");
+        }
+    }
+
+    #[test]
+    fn helper_read_only_rpc_methods_do_not_request_state_persistence() {
+        for method in [
+            "helperStatus",
+            "platformDoctor",
+            "platformInstallPlan",
+            "tunnelRuntimeView",
+            "controlStatus",
+        ] {
+            assert!(
+                !should_persist_after_rpc(method),
+                "{method} should not persist helper state"
+            );
+        }
+        assert!(should_persist_after_rpc("controlSync"));
+        assert!(should_persist_after_rpc("enableLocalNetwork"));
+    }
+
+    #[test]
+    fn helper_control_base_url_uses_env_before_persisted_state() {
+        let _guard = env_lock();
+        let path = unique_state_path("env-first");
+        write_persisted_state(&path, "http://persisted.example");
+        unsafe {
+            std::env::set_var("SLAN_APP_CORE_STATE_FILE", &path);
+            std::env::set_var("SLAN_CONTROL_BASE_URL", " http://env.example ");
+        }
+
+        assert_eq!(
+            resolve_helper_control_base_url().expect("resolve helper control base url"),
+            "http://env.example"
+        );
+
+        unsafe {
+            std::env::remove_var("SLAN_CONTROL_BASE_URL");
+            std::env::remove_var("SLAN_APP_CORE_STATE_FILE");
+        }
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn helper_control_base_url_falls_back_to_persisted_state() {
+        let _guard = env_lock();
+        let path = unique_state_path("persisted");
+        write_persisted_state(&path, " http://persisted.example ");
+        unsafe {
+            std::env::set_var("SLAN_APP_CORE_STATE_FILE", &path);
+            std::env::remove_var("SLAN_CONTROL_BASE_URL");
+        }
+
+        assert_eq!(
+            resolve_helper_control_base_url().expect("resolve helper control base url"),
+            "http://persisted.example"
+        );
+
+        unsafe {
+            std::env::remove_var("SLAN_APP_CORE_STATE_FILE");
+        }
+        let _ = fs::remove_file(path);
     }
 
     #[test]

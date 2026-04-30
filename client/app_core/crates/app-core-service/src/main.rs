@@ -32,6 +32,8 @@ const DEFAULT_CONTROL_BASE_URL: &str = "http://127.0.0.1:28080";
 const CONTROL_SYNC_AGENT_INTERVAL: Duration = Duration::from_secs(5);
 const NETWORK_STATE_REPORT_INTERVAL: Duration = Duration::from_secs(15);
 const LOCAL_DNS_ENSURE_INTERVAL: Duration = Duration::from_secs(15);
+const HELPER_READY_TIMEOUT: Duration = Duration::from_secs(10);
+const HELPER_READY_POLL_INTERVAL: Duration = Duration::from_millis(200);
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "SLANAppCoreService";
 
@@ -306,7 +308,63 @@ fn resolve_control_base_url(config: &ServiceConfig) -> Result<String, String> {
             return Ok(trimmed.to_string());
         }
     }
+    if let Some(base_url) = read_persisted_control_base_url() {
+        let trimmed = base_url.trim();
+        if !trimmed.is_empty() {
+            write_service_log(&format!(
+                "control_base_url restored from persisted app-core state: {trimmed}"
+            ));
+            return Ok(trimmed.to_string());
+        }
+    }
     Ok(DEFAULT_CONTROL_BASE_URL.to_string())
+}
+
+fn read_persisted_control_base_url() -> Option<String> {
+    let path = persisted_app_core_state_path();
+    let payload = std::fs::read(&path).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&payload)
+        .map_err(|err| {
+            write_service_log(&format!(
+                "decode persisted app-core state failed path={} error={err}",
+                path.display()
+            ));
+            err
+        })
+        .ok()?;
+    value
+        .get("controlBaseUrl")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+fn persisted_app_core_state_path() -> PathBuf {
+    if let Ok(configured) = std::env::var("SLAN_APP_CORE_STATE_FILE") {
+        let trimmed = configured.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(program_data) = std::env::var("ProgramData") {
+        let trimmed = program_data.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed)
+                .join("SLAN")
+                .join("app-core-state.json");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    return PathBuf::from(r"C:\ProgramData\SLAN\app-core-state.json");
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(parent) = current_exe.parent() {
+                return parent.join("app-core-state.json");
+            }
+        }
+        std::env::temp_dir().join("slan-app-core-state.json")
+    }
 }
 
 fn resolve_helper_path(config: &ServiceConfig) -> Result<PathBuf, String> {
@@ -384,6 +442,25 @@ fn run_supervisor(
             child.id(),
             config.tcp_host
         ));
+        if let Err(err) = wait_for_helper_rpc_ready(
+            &config.tcp_host,
+            &mut child,
+            HELPER_READY_TIMEOUT,
+            stop_signal.as_ref(),
+        ) {
+            write_service_log(&format!("helper rpc not ready after spawn: {err}"));
+            let _ = child.kill();
+            let _ = child.wait();
+            if is_stop_requested(stop_signal.as_ref()) {
+                return Ok(());
+            }
+            if config.once {
+                return Err(err);
+            }
+            thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+        write_service_log("helper rpc ready; starting service tasks");
         let service_tasks = start_service_tasks(config.tcp_host.clone());
         let mut helper_rpc_probe_failures = 0_u32;
         let mut next_helper_rpc_probe = Instant::now() + Duration::from_secs(5);
@@ -419,7 +496,7 @@ fn run_supervisor(
 
             if Instant::now() >= next_helper_rpc_probe {
                 next_helper_rpc_probe = Instant::now() + Duration::from_secs(5);
-                match helper_rpc_accepts_connection(&config.tcp_host) {
+                match helper_rpc_is_healthy(&config.tcp_host) {
                     Ok(()) => {
                         if helper_rpc_probe_failures > 0 {
                             write_service_log("helper rpc probe recovered");
@@ -460,10 +537,56 @@ fn run_supervisor(
     }
 }
 
-fn helper_rpc_accepts_connection(tcp_host: &str) -> Result<(), String> {
-    TcpStream::connect(tcp_host)
-        .map(|_| ())
-        .map_err(|err| format!("connect helper rpc {tcp_host}: {err}"))
+fn helper_rpc_is_healthy(tcp_host: &str) -> Result<(), String> {
+    let result = invoke_helper_method_result(tcp_host, "helperStatus")?;
+    if result
+        .get("helperReachable")
+        .and_then(|value| value.as_bool())
+        == Some(true)
+    {
+        return Ok(());
+    }
+    Err("helperStatus reported helperReachable=false".to_string())
+}
+
+fn wait_for_helper_rpc_ready(
+    tcp_host: &str,
+    child: &mut Child,
+    timeout: Duration,
+    stop_signal: Option<&Arc<AtomicBool>>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    let mut last_error = None;
+    while !is_stop_requested(stop_signal) {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "app-core-helper exited before rpc was ready: {status}"
+                ));
+            }
+            Ok(None) => {}
+            Err(err) => {
+                return Err(format!("failed while waiting for helper readiness: {err}"));
+            }
+        }
+        match helper_rpc_is_healthy(tcp_host) {
+            Ok(()) => return Ok(()),
+            Err(err) => last_error = Some(err),
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        thread::sleep(remaining.min(HELPER_READY_POLL_INTERVAL));
+    }
+    if is_stop_requested(stop_signal) {
+        return Err("stop requested while waiting for helper rpc".to_string());
+    }
+    Err(format!(
+        "helper rpc did not become ready within {}ms: {}",
+        timeout.as_millis(),
+        last_error.unwrap_or_else(|| "no probe attempted".to_string())
+    ))
 }
 
 fn start_service_tasks(tcp_host: String) -> ServiceTaskRunner {
@@ -501,6 +624,10 @@ fn invoke_helper_ensure_local_dns(tcp_host: &str) -> Result<(), String> {
 }
 
 fn invoke_helper_method(tcp_host: &str, method: &str) -> Result<(), String> {
+    invoke_helper_method_result(tcp_host, method).map(|_| ())
+}
+
+fn invoke_helper_method_result(tcp_host: &str, method: &str) -> Result<serde_json::Value, String> {
     let mut stream = TcpStream::connect(tcp_host)
         .map_err(|err| format!("connect helper rpc {tcp_host}: {err}"))?;
     stream
@@ -532,7 +659,10 @@ fn invoke_helper_method(tcp_host: &str, method: &str) -> Result<(), String> {
     let response: serde_json::Value = serde_json::from_str(line.trim())
         .map_err(|err| format!("decode {method} rpc response: {err}"))?;
     if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
-        return Ok(());
+        return Ok(response
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})));
     }
     let error = response
         .get("error")
@@ -694,7 +824,28 @@ fn set_windows_service_status(
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    use std::path::PathBuf;
     use std::sync::mpsc;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock")
+    }
+
+    fn unique_state_path(name: &str) -> PathBuf {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_millis();
+        std::env::temp_dir().join(format!(
+            "slan-service-{name}-{}-{}.json",
+            std::process::id(),
+            now_ms
+        ))
+    }
 
     fn run_single_rpc_server(response: &'static str) -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test helper rpc server");
@@ -716,6 +867,46 @@ mod tests {
                 .expect("write helper rpc response newline");
         });
         (address.to_string(), rx)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn spawn_sleep_child() -> Child {
+        Command::new("cmd")
+            .args(["/C", "timeout", "/T", "5", "/NOBREAK"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep child")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn spawn_sleep_child() -> Child {
+        Command::new("sh")
+            .args(["-c", "sleep 5"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep child")
+    }
+
+    #[cfg(target_os = "windows")]
+    fn spawn_exiting_child() -> Child {
+        Command::new("cmd")
+            .args(["/C", "exit", "17"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn exiting child")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn spawn_exiting_child() -> Child {
+        Command::new("sh")
+            .args(["-c", "exit 17"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn exiting child")
     }
 
     #[test]
@@ -748,5 +939,105 @@ mod tests {
             serde_json::from_str(request.trim()).expect("decode helper rpc request");
         assert_eq!(json["method"], "reportDeviceNetworkState");
         assert_eq!(error, "missing active session");
+    }
+
+    #[test]
+    fn helper_rpc_health_uses_helper_status_rpc() {
+        let (address, rx) =
+            run_single_rpc_server(r#"{"ok":true,"result":{"helperReachable":true}}"#);
+
+        helper_rpc_is_healthy(&address).expect("helper status rpc should succeed");
+
+        let request = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("helper rpc request");
+        let json: serde_json::Value =
+            serde_json::from_str(request.trim()).expect("decode helper rpc request");
+        assert_eq!(json["method"], "helperStatus");
+        assert_eq!(json["args"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn helper_rpc_health_rejects_unreachable_helper_status_payload() {
+        let (address, rx) =
+            run_single_rpc_server(r#"{"ok":true,"result":{"helperReachable":false}}"#);
+
+        let error = helper_rpc_is_healthy(&address).expect_err("helper status should be unhealthy");
+
+        let request = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("helper rpc request");
+        let json: serde_json::Value =
+            serde_json::from_str(request.trim()).expect("decode helper rpc request");
+        assert_eq!(json["method"], "helperStatus");
+        assert_eq!(error, "helperStatus reported helperReachable=false");
+    }
+
+    #[test]
+    fn wait_for_helper_rpc_ready_times_out_when_helper_never_listens() {
+        let mut child = spawn_sleep_child();
+        let error =
+            wait_for_helper_rpc_ready("127.0.0.1:9", &mut child, Duration::from_millis(20), None)
+                .expect_err("helper readiness should time out");
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(error.contains("helper rpc did not become ready"));
+    }
+
+    #[test]
+    fn wait_for_helper_rpc_ready_reports_early_helper_exit() {
+        let mut child = spawn_exiting_child();
+        thread::sleep(Duration::from_millis(50));
+
+        let error =
+            wait_for_helper_rpc_ready("127.0.0.1:9", &mut child, Duration::from_secs(1), None)
+                .expect_err("helper readiness should detect early exit");
+
+        assert!(error.contains("exited before rpc was ready"));
+    }
+
+    #[test]
+    fn resolve_control_base_url_prefers_config_over_persisted_state() {
+        let _guard = env_lock();
+        let path = unique_state_path("config-first");
+        std::fs::write(&path, r#"{"controlBaseUrl":"http://persisted.example"}"#)
+            .expect("write persisted service state");
+        unsafe {
+            std::env::set_var("SLAN_APP_CORE_STATE_FILE", &path);
+        }
+        let mut config = ServiceConfig::default();
+        config.control_base_url = Some(" http://config.example ".into());
+
+        assert_eq!(
+            resolve_control_base_url(&config).expect("resolve control base url"),
+            "http://config.example"
+        );
+
+        unsafe {
+            std::env::remove_var("SLAN_APP_CORE_STATE_FILE");
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn resolve_control_base_url_falls_back_to_persisted_state() {
+        let _guard = env_lock();
+        let path = unique_state_path("persisted");
+        std::fs::write(&path, r#"{"controlBaseUrl":" http://persisted.example "}"#)
+            .expect("write persisted service state");
+        unsafe {
+            std::env::set_var("SLAN_APP_CORE_STATE_FILE", &path);
+        }
+
+        assert_eq!(
+            resolve_control_base_url(&ServiceConfig::default()).expect("resolve control base url"),
+            "http://persisted.example"
+        );
+
+        unsafe {
+            std::env::remove_var("SLAN_APP_CORE_STATE_FILE");
+        }
+        let _ = std::fs::remove_file(path);
     }
 }
