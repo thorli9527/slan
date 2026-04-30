@@ -113,6 +113,18 @@ begin
   StopAndDeleteWindowsService();
 end;
 
+procedure ClearPreviousStateData();
+begin
+  DelTree(ExpandConstant('{commonappdata}\SLAN'), True, True, True);
+  DelTree(ExpandConstant('{userappdata}\com.example\slan_app'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\com.example\slan_app'), True, True, True);
+end;
+
+procedure ClearPreviousInstallDir();
+begin
+  DelTree(ExpandConstant('{app}'), True, True, True);
+end;
+
 function RegisterAndStartWindowsService(): Boolean;
 var
   ResultCode: Integer;
@@ -179,11 +191,15 @@ end;
 function InitializeSetup(): Boolean;
 begin
   StopExistingRuntime();
+  ClearPreviousStateData();
   Result := True;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then begin
+    ClearPreviousInstallDir();
+  end;
   if CurStep = ssPostInstall then begin
     if not PrepareDedicatedAdapter() then begin
       RaiseException('Failed to prepare the SLAN Wintun adapter.');

@@ -5,8 +5,48 @@
 #include "flutter_window.h"
 #include "utils.h"
 
+namespace {
+
+constexpr const wchar_t kSingleInstanceMutexName[] =
+    L"Local\\SLANClientSingleInstance";
+constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
+constexpr const wchar_t kWindowTitle[] = L"SLAN Client";
+
+bool FocusExistingWindow() {
+  HWND window = nullptr;
+  for (int attempt = 0; attempt < 20 && window == nullptr; ++attempt) {
+    window = ::FindWindow(kWindowClassName, kWindowTitle);
+    if (window == nullptr) {
+      ::Sleep(100);
+    }
+  }
+  if (window == nullptr) {
+    return false;
+  }
+  if (::IsIconic(window)) {
+    ::ShowWindow(window, SW_RESTORE);
+  } else {
+    ::ShowWindow(window, SW_SHOWNORMAL);
+  }
+  ::SetForegroundWindow(window);
+  return true;
+}
+
+}  // namespace
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  HANDLE single_instance_mutex =
+      ::CreateMutex(nullptr, TRUE, kSingleInstanceMutexName);
+  if (single_instance_mutex == nullptr) {
+    return EXIT_FAILURE;
+  }
+  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+    FocusExistingWindow();
+    ::CloseHandle(single_instance_mutex);
+    return EXIT_SUCCESS;
+  }
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
@@ -27,7 +67,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(500, 260);
-  if (!window.Create(L"SLAN Client", origin, size)) {
+  if (!window.Create(kWindowTitle, origin, size)) {
+    ::CoUninitialize();
+    ::ReleaseMutex(single_instance_mutex);
+    ::CloseHandle(single_instance_mutex);
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
@@ -39,5 +82,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
 
   ::CoUninitialize();
+  ::ReleaseMutex(single_instance_mutex);
+  ::CloseHandle(single_instance_mutex);
   return EXIT_SUCCESS;
 }

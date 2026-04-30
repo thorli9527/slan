@@ -52,6 +52,45 @@ function Stop-SlanProcesses {
   Start-Sleep -Seconds 1
 }
 
+function Remove-SlanDirectory {
+  param(
+    [string]$Path,
+    [string]$Description
+  )
+
+  if (-not $Path -or -not $Path.Trim()) {
+    return
+  }
+
+  $fullPath = [System.IO.Path]::GetFullPath($Path.Trim())
+  $rootPath = [System.IO.Path]::GetPathRoot($fullPath)
+  if ($fullPath -eq $rootPath) {
+    throw "Refusing to remove drive root for ${Description}: $fullPath"
+  }
+  $leaf = Split-Path -Leaf $fullPath
+  $parentLeaf = Split-Path -Leaf (Split-Path -Parent $fullPath)
+  $isSlanDirectory = $leaf -eq 'SLAN' -or ($leaf -eq 'slan_app' -and $parentLeaf -eq 'com.example')
+  if (-not $isSlanDirectory) {
+    throw "Refusing to remove non-SLAN directory for ${Description}: $fullPath"
+  }
+
+  if (Test-Path $fullPath) {
+    Remove-Item -LiteralPath $fullPath -Recurse -Force
+  }
+}
+
+function Clear-PreviousSlanData {
+  param([string]$RuntimeDir)
+
+  $programDataDir = Join-Path $env:ProgramData 'SLAN'
+  $roamingAppDataDir = Join-Path $env:APPDATA 'com.example\slan_app'
+  $localAppDataDir = Join-Path $env:LOCALAPPDATA 'com.example\slan_app'
+  Remove-SlanDirectory -Path $RuntimeDir -Description 'install directory'
+  Remove-SlanDirectory -Path $programDataDir -Description 'ProgramData state directory'
+  Remove-SlanDirectory -Path $roamingAppDataDir -Description 'Flutter roaming app data directory'
+  Remove-SlanDirectory -Path $localAppDataDir -Description 'Flutter local app data directory'
+}
+
 function Ensure-DedicatedAdapter {
   param([string]$RuntimeDir)
 
@@ -148,6 +187,7 @@ if (-not (Test-Path $payloadDir)) {
 
 Assert-InstallPayload -PayloadDir $payloadDir
 Stop-SlanProcesses
+Clear-PreviousSlanData -RuntimeDir $InstallDir
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item -Path (Join-Path $payloadDir '*') -Destination $InstallDir -Recurse -Force
