@@ -1,0 +1,13 @@
+[package]
+name = "client-core-service"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+client-core = { path = "../client-core" }
+client-core-platform = { path = "../client-core-platform" }
+control-mqtt-client = { path = "../control-mqtt-client" }
+serde.workspace = true
+serde_json.workspace = true

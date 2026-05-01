@@ -83,13 +83,7 @@ func (s dbNetworkService) Activate(userID, networkID string, req dto.JoinNetwork
 	if err := s.state.requireAttachmentAvailableForActivation(ctx, record.DefaultSubnetID, req.DeviceID); err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
-	if err := s.state.ensureSingleActiveNetworkForUser(ctx, userID, networkID); err != nil {
-		return dto.NetworkJoinResult{}, err
-	}
-	if err := s.state.ensureFixedDeviceLimitAllowsActivation(ctx, record.OwnerUserID, networkID, record.DefaultSubnetID, req.DeviceID); err != nil {
-		return dto.NetworkJoinResult{}, err
-	}
-	attachment, err := s.state.ensureAttachment(ctx, networkID, record.DefaultSubnetID, req.DeviceID)
+	attachment, err := s.state.requireActiveNetworkAttachment(ctx, networkID, req.DeviceID, ErrForbidden, "device")
 	if err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
@@ -137,10 +131,19 @@ func (s dbNetworkService) Deactivate(userID, networkID string, req dto.Deactivat
 	if _, err := s.loadNetworkForDevice(ctx, userID, networkID, req.DeviceID, false); err != nil {
 		return err
 	}
-	if err := s.state.cleanupDeactivatedNetworkDevice(ctx, networkID, req.DeviceID); err != nil {
+	if _, err := s.state.requireActiveNetworkMember(ctx, networkID, req.DeviceID, ErrForbidden, "device"); err != nil {
 		return err
 	}
-	return s.state.clearUserActiveNetworkIfNoAttachments(ctx, userID, networkID)
+	return s.state.markDeviceNetworkRuntimeOffline(ctx, networkID, req.DeviceID)
+}
+
+func (s *dbState) markDeviceNetworkRuntimeOffline(ctx context.Context, networkID, deviceID string) error {
+	return s.upsertTrustedDeviceNetworkState(ctx, deviceID, networkID, dto.DeviceNetworkStateRequest{
+		ControlReachable: true,
+		NetworkOnline:    false,
+		TunnelUp:         false,
+		LastProbeOK:      false,
+	})
 }
 
 func (s *dbState) cleanupDeactivatedNetworkDevice(ctx context.Context, networkID, deviceID string) error {

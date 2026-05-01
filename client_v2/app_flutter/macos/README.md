@@ -1,0 +1,26 @@
+# macOS Tray Policy
+
+macOS should run SLAN Client V2 as a menu bar resident app.
+
+Policy:
+
+- Closing the main window hides it.
+- The menu bar item owns `Open` and `Quit`.
+- `Quit` calls `shutdownNetwork` and then exits the Flutter shell.
+- `shutdownNetwork` uses `SLAN_CLIENT_CORE_SERVICE_HOST` when provided.
+- MethodChannel calls are forwarded to `client-core-service`; Swift keeps only a fallback state for service-unavailable startup.
+- `client-core-service` owns runtime networking and should continue independently when installed as a launchd service.
+
+Implementation boundary:
+
+- AppKit status item lives in the macOS runner or macOS plugin.
+- Flutter UI only sends `ClientCommand`.
+- Network enable/disable still goes through `client-core-service`.
+- No mesh, DNS, route, or adapter logic belongs in Swift UI code.
+
+Native pieces:
+
+- `NSStatusItem` with app icon.
+- Menu items: `Open SLAN Client`, `Quit`.
+- The plugin assigns window delegates so close hides the window instead of terminating.
+- Explicit menu bar `Quit` calls `shutdownNetwork` before terminating.

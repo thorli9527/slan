@@ -1,0 +1,24 @@
+{
+  "windows": {
+    "trayMode": "enabled",
+    "installClientShell": true,
+    "installService": true,
+    "closeBehavior": "hideToTray",
+    "quitBehavior": "shutdownNetworkThenExit"
+  },
+  "macos": {
+    "trayMode": "enabled",
+    "installClientShell": true,
+    "installService": true,
+    "closeBehavior": "hideToMenuBar",
+    "quitBehavior": "shutdownNetworkThenExit"
+  },
+  "linux": {
+    "trayMode": "optional",
+    "defaultTrayMode": "disabled",
+    "installClientShell": false,
+    "installService": true,
+    "closeBehavior": "installerSelected",
+    "quitBehavior": "installerSelected"
+  }
+}

@@ -1,0 +1,12 @@
+[package]
+name = "client-core-ffi"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+client-core = { path = "../client-core" }
+serde_json.workspace = true
