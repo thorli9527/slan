@@ -241,6 +241,15 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 		}
 		c.JSON(http.StatusOK, resp)
 	})
+	// GET /network-quality 返回用户设备实时网络质量样本。
+	ops.GET("/network-quality", authorizeOpsMenu(deps, "ops.quality"), func(c *gin.Context) {
+		resp, err := deps.Ops.NetworkQuality()
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
 }
 
 func opsLoginRateLimitHandlers(cfg configs.OpsLoginRateLimitConfig) []gin.HandlerFunc {

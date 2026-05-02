@@ -227,7 +227,23 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *contro
 }
 
 func hydrateMQTTSession(deps routerDeps, session *controlSession) error {
-	if session.nodeID == "" || session.networkID == "" {
+	if session.nodeID == "" {
+		if strings.TrimSpace(session.deviceID) == "" {
+			return service.ErrUnauthorized
+		}
+		current, err := deps.ControlChannel.LatestSessionByDevice(session.deviceID)
+		if err != nil {
+			return err
+		}
+		session.userID = current.UserID
+		session.deviceID = current.DeviceID
+		session.nodeID = current.NodeID
+		if session.networkID == "" {
+			session.networkID = current.NetworkID
+		}
+		return nil
+	}
+	if session.networkID == "" {
 		return service.ErrUnauthorized
 	}
 	sessions, err := deps.ControlChannel.ActiveSessions(session.networkID, "")

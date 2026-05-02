@@ -56,6 +56,23 @@ func (r *PostgresRepository) UpsertNodePathHealth(ctx context.Context, record No
 	}).Create(&record).Error
 }
 
+func (r *PostgresRepository) UpsertRelayNodeHeartbeat(ctx context.Context, record RelayNodeHeartbeat) error {
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "node_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"cluster_id",
+			"country_code",
+			"city_code",
+			"transport",
+			"address",
+			"healthy",
+			"active_sessions",
+			"reported_at_ms",
+			"updated_at",
+		}),
+	}).Create(&record).Error
+}
+
 func (r *PostgresRepository) DeleteNodePathHealthBefore(ctx context.Context, nodeID, networkID string, cutoff int64) error {
 	return r.db.WithContext(ctx).
 		Where("node_id = ? AND network_id = ? AND updated_at < ?", nodeID, networkID, cutoff).
@@ -102,4 +119,10 @@ func (r *PostgresRepository) DeleteNodePathHealthBeforeAll(ctx context.Context, 
 	return r.db.WithContext(ctx).
 		Where("updated_at < ?", cutoff).
 		Delete(&NodePathHealth{}).Error
+}
+
+func (r *PostgresRepository) DeleteRelayNodeHeartbeatsBefore(ctx context.Context, cutoff int64) error {
+	return r.db.WithContext(ctx).
+		Where("updated_at < ?", cutoff).
+		Delete(&RelayNodeHeartbeat{}).Error
 }

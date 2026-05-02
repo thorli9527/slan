@@ -87,7 +87,40 @@ func (s dbNetworkService) Activate(userID, networkID string, req dto.JoinNetwork
 	if err != nil {
 		return dto.NetworkJoinResult{}, err
 	}
-	return dto.NetworkJoinResult{Member: member, Attachment: attachment}, nil
+	networkMap, err := s.relayNetworkMapForDevice(ctx, userID, networkID, req.DeviceID)
+	if err != nil {
+		return dto.NetworkJoinResult{}, err
+	}
+	return dto.NetworkJoinResult{Member: member, Attachment: attachment, NetworkMap: networkMap}, nil
+}
+
+func (s dbNetworkService) RelayCandidates(userID, networkID string, req dto.JoinNetworkRequest) (dto.NetworkMap, error) {
+	if err := s.requireDeviceID(req.DeviceID); err != nil {
+		return dto.NetworkMap{}, err
+	}
+	ctx := context.Background()
+	record, err := s.loadNetworkForDevice(ctx, userID, networkID, req.DeviceID, false)
+	if err != nil {
+		return dto.NetworkMap{}, err
+	}
+	if _, err := s.state.requireActiveNetworkMember(ctx, networkID, req.DeviceID, ErrForbidden, "device"); err != nil {
+		return dto.NetworkMap{}, err
+	}
+	if err := s.state.requireAttachmentAvailableForActivation(ctx, record.DefaultSubnetID, req.DeviceID); err != nil {
+		return dto.NetworkMap{}, err
+	}
+	if _, err := s.state.requireActiveNetworkAttachment(ctx, networkID, req.DeviceID, ErrForbidden, "device"); err != nil {
+		return dto.NetworkMap{}, err
+	}
+	return s.relayNetworkMapForDevice(ctx, userID, networkID, req.DeviceID)
+}
+
+func (s dbNetworkService) relayNetworkMapForDevice(ctx context.Context, userID, networkID, deviceID string) (dto.NetworkMap, error) {
+	self := dto.Node{DeviceID: deviceID}
+	if nodes, err := s.state.pg.ListNodesByDevice(ctx, deviceID); err == nil && len(nodes) > 0 {
+		self = nodes[0].ToDTO(nil)
+	}
+	return s.state.buildNetworkMap(ctx, userID, self, networkID), nil
 }
 
 func (s *dbState) requireAttachmentAvailableForActivation(ctx context.Context, subnetID, deviceID string) error {

@@ -2,7 +2,7 @@
 import { Component, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-type ViewKey = 'overview' | 'users' | 'devices' | 'admins' | 'roles' | 'menus' | 'relays' | 'settings';
+type ViewKey = 'overview' | 'users' | 'devices' | 'admins' | 'roles' | 'menus' | 'relays' | 'quality' | 'settings';
 type PagedViewKey = Exclude<ViewKey, 'overview' | 'relays' | 'settings'>;
 
 type OpsOverview = {
@@ -12,6 +12,7 @@ type OpsOverview = {
   nodeCount: number;
   relayClusterCount: number;
   relayNodeCount: number;
+  relayOnlineNodeCount: number;
   defaultAdminSeeded: boolean;
   defaultAdminLoginName?: string;
   defaultAdminRoleBound: boolean;
@@ -109,7 +110,34 @@ type OpsRelayTopology = {
     observedRttMs?: number;
     packetLossPpm?: number;
     pathScore?: number;
+    heartbeatOnline?: boolean;
+    heartbeatLastSeenAt?: number;
+    activeSessions?: number;
   }>;
+};
+
+type OpsNetworkQuality = {
+  items?: OpsNetworkQualityItem[];
+};
+
+type OpsNetworkQualityItem = {
+  healthId: string;
+  networkId: string;
+  networkName?: string;
+  userId?: string;
+  userEmail?: string;
+  deviceId?: string;
+  deviceName?: string;
+  nodeId: string;
+  peerNodeId?: string;
+  pathType: string;
+  endpoint?: string;
+  derpNodeId?: string;
+  observedRttMs?: number;
+  packetLossPpm?: number;
+  pathScore?: number;
+  sampledAtMs?: number;
+  updatedAt: number;
 };
 
 @Component({
@@ -127,7 +155,8 @@ export class AppComponent {
     { key: 'admins', label: '管理员', caption: '运营账号资料' },
     { key: 'roles', label: '角色权限', caption: 'RBAC 角色' },
     { key: 'menus', label: '菜单权限', caption: '运营菜单' },
-    { key: 'relays', label: 'Relay 拓扑', caption: '中继节点健康' },
+    { key: 'relays', label: 'Relay 节点', caption: '中继节点管理' },
+    { key: 'quality', label: '网络质量', caption: '用户实时网络质量' },
     { key: 'settings', label: '配置管理', caption: '设备与流量全局限制' },
   ];
 
@@ -145,6 +174,7 @@ export class AppComponent {
   readonly roles = signal<OpsRole[]>([]);
   readonly menus = signal<OpsMenu[]>([]);
   readonly relays = signal<OpsRelayTopology | null>(null);
+  readonly networkQuality = signal<OpsNetworkQualityItem[]>([]);
   readonly planConfig = signal<PlanConfig>({
     maxActiveDevices: 5,
     relayIngressKbps: 512,
@@ -160,6 +190,7 @@ export class AppComponent {
     admins: 1,
     roles: 1,
     menus: 1,
+    quality: 1,
   });
 
   loginName = 'admin';
@@ -179,7 +210,13 @@ export class AppComponent {
   readonly pagedAdmins = computed(() => this.pageRows('admins', this.filteredAdmins()));
   readonly pagedRoles = computed(() => this.pageRows('roles', this.roles()));
   readonly pagedMenus = computed(() => this.pageRows('menus', this.menus()));
+  readonly filteredNetworkQuality = computed(() => filterRows(this.networkQuality(), this.keyword()));
+  readonly pagedNetworkQuality = computed(() => this.pageRows('quality', this.filteredNetworkQuality()));
   readonly activeViewLabel = computed(() => this.views.find((item) => item.key === this.activeView())?.label || '运营后台');
+  readonly relayNodes = computed(() => this.relays()?.nodes || []);
+  readonly relayOnlineCount = computed(() => this.relayNodes().filter((node) => node.heartbeatOnline).length);
+  readonly relayRegionCount = computed(() => this.relays()?.regions?.length || 0);
+  readonly relayActiveSessions = computed(() => this.relayNodes().reduce((total, node) => total + (node.activeSessions || 0), 0));
 
   constructor() {
     if (this.token()) {
@@ -335,6 +372,9 @@ export class AppComponent {
         case 'relays':
           this.relays.set(await this.request<OpsRelayTopology>('/relays'));
           break;
+        case 'quality':
+          this.networkQuality.set((await this.request<OpsNetworkQuality>('/network-quality')).items || []);
+          break;
         case 'settings':
           this.planConfig.set(await this.request<PlanConfig>('/plan-config'));
           break;
@@ -350,6 +390,37 @@ export class AppComponent {
       return '-';
     }
     return new Date(seconds * 1000).toLocaleString();
+  }
+
+  formatSampleTime(ms?: number): string {
+    if (!ms) {
+      return '-';
+    }
+    return new Date(ms).toLocaleString();
+  }
+
+  qualityTone(item: OpsNetworkQualityItem): string {
+    const loss = item.packetLossPpm ?? 0;
+    const rtt = item.observedRttMs ?? 0;
+    const score = item.pathScore ?? 0;
+    if (loss > 50_000 || rtt > 500 || score > 2000) {
+      return 'status-bad';
+    }
+    if (loss > 0 || rtt > 180 || score > 900) {
+      return 'status-warn';
+    }
+    return 'status-ok';
+  }
+
+  qualityLabel(item: OpsNetworkQualityItem): string {
+    const tone = this.qualityTone(item);
+    if (tone === 'status-bad') {
+      return '差';
+    }
+    if (tone === 'status-warn') {
+      return '一般';
+    }
+    return '良好';
   }
 
   async saveGlobalPlanConfig(): Promise<void> {

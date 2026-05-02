@@ -76,7 +76,7 @@
         <article class="metric">
           <span>Relay</span>
           <strong>{{ overview()?.relayNodeCount || 0 }}</strong>
-          <small>{{ overview()?.relayClusterCount || 0 }} 集群</small>
+          <small>{{ overview()?.relayOnlineNodeCount || 0 }} 在线 · {{ overview()?.relayClusterCount || 0 }} 集群</small>
         </article>
         <article class="panel span-2">
           <h2>安全状态</h2>
@@ -192,20 +192,102 @@
       </section>
 
       <section class="panel" *ngSwitchCase="'relays'">
-        <h2>默认集群：{{ relays()?.defaultClusterId || '-' }}</h2>
+        <div class="panel-title">
+          <div>
+            <h2>Relay 节点管理</h2>
+            <p class="muted">默认集群：{{ relays()?.defaultClusterId || '-' }}</p>
+          </div>
+          <button type="button" (click)="refreshAll()" [disabled]="loading()">刷新</button>
+        </div>
+        <div class="relay-summary">
+          <article class="metric compact">
+            <span>节点在线</span>
+            <strong>{{ relayOnlineCount() }}/{{ relayNodes().length }}</strong>
+          </article>
+          <article class="metric compact">
+            <span>区域</span>
+            <strong>{{ relayRegionCount() }}</strong>
+          </article>
+          <article class="metric compact">
+            <span>活跃会话</span>
+            <strong>{{ relayActiveSessions() }}</strong>
+          </article>
+        </div>
         <table>
-          <thead><tr><th>节点</th><th>集群</th><th>区域</th><th>地址</th><th>优先级</th><th>RTT</th></tr></thead>
+          <thead><tr><th>节点</th><th>集群</th><th>区域</th><th>地址</th><th>心跳</th><th>会话</th><th>质量</th><th>优先级</th></tr></thead>
           <tbody>
-            <tr *ngFor="let node of relays()?.nodes || []">
+            <tr *ngFor="let node of relayNodes()">
               <td><code>{{ node.nodeId }}</code></td>
               <td>{{ node.clusterName }}</td>
               <td>{{ node.countryName || '-' }} {{ node.cityName || '' }}</td>
               <td>{{ node.transport }} · {{ node.address }}</td>
+              <td>
+                <span [class.status-ok]="node.heartbeatOnline" [class.status-bad]="!node.heartbeatOnline">
+                  {{ node.heartbeatOnline ? '在线' : '不在线' }}
+                </span>
+                <small>{{ formatTime(node.heartbeatLastSeenAt) }}</small>
+              </td>
+              <td>{{ node.activeSessions || 0 }}</td>
+              <td>
+                <span>RTT {{ node.observedRttMs || '-' }}</span>
+                <small>丢包 {{ node.packetLossPpm ?? '-' }} · 评分 {{ node.pathScore ?? '-' }}</small>
+              </td>
               <td>{{ node.priority }}</td>
-              <td>{{ node.observedRttMs || '-' }}</td>
             </tr>
           </tbody>
         </table>
+        <section class="relay-regions" *ngIf="relays()?.regions?.length">
+          <h3>区域与候选入口</h3>
+          <div class="region-grid">
+            <article class="region-card" *ngFor="let region of relays()?.regions || []">
+              <strong>{{ region.countryName || '-' }} {{ region.cityName || '' }}</strong>
+              <span>{{ region.clusterName || region.clusterId || '-' }}</span>
+              <small *ngFor="let endpoint of region.endpoints || []">{{ endpoint.transport }} · {{ endpoint.address }}</small>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel" *ngSwitchCase="'quality'">
+        <div class="panel-title">
+          <div>
+            <h2>用户实时网络质量</h2>
+            <p class="muted">展示最近 30 分钟客户端上报的路径质量样本。</p>
+          </div>
+          <button type="button" (click)="refreshAll()" [disabled]="loading()">刷新质量</button>
+        </div>
+        <table>
+          <thead><tr><th>质量</th><th>用户/设备</th><th>网络</th><th>路径</th><th>RTT</th><th>丢包</th><th>评分</th><th>时间</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let item of pagedNetworkQuality()">
+              <td><span [class]="qualityTone(item)">{{ qualityLabel(item) }}</span></td>
+              <td>
+                <strong>{{ item.userEmail || item.userId || '-' }}</strong>
+                <small>{{ item.deviceName || item.deviceId || '-' }}</small>
+              </td>
+              <td>
+                {{ item.networkName || item.networkId }}
+                <small><code>{{ item.networkId }}</code></small>
+              </td>
+              <td>
+                {{ item.pathType || '-' }}
+                <small>{{ item.derpNodeId || item.endpoint || item.peerNodeId || '-' }}</small>
+              </td>
+              <td>{{ item.observedRttMs ?? '-' }}</td>
+              <td>{{ item.packetLossPpm ?? '-' }}</td>
+              <td>{{ item.pathScore ?? '-' }}</td>
+              <td>
+                {{ formatTime(item.updatedAt) }}
+                <small>{{ formatSampleTime(item.sampledAtMs) }}</small>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="pager" *ngIf="filteredNetworkQuality().length > pageSize">
+          <span>{{ pageSummary('quality', filteredNetworkQuality().length) }}</span>
+          <button type="button" (click)="previousPage('quality')" [disabled]="!canPreviousPage('quality')">上一页</button>
+          <button type="button" (click)="nextPage('quality', filteredNetworkQuality().length)" [disabled]="!canNextPage('quality', filteredNetworkQuality().length)">下一页</button>
+        </div>
       </section>
 
       <section class="panel" *ngSwitchCase="'settings'">

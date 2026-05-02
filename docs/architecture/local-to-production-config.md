@@ -32,6 +32,9 @@ MQTT/BifroMQ production notes:
 - Replace `SLAN_MQTT_PASSWORD_SECRET`, set `SLAN_MQTT_BROKER_URL` to the broker
   address reachable from `server-biz`, and set `SLAN_MQTT_PUBLIC_BROKER_URL` to
   the broker address reachable from desktop clients.
+- `server-relay` also publishes node heartbeats over MQTT. Keep
+  `SLAN_RELAY_MQTT_PASSWORD_SECRET` aligned with `SLAN_MQTT_PASSWORD_SECRET`;
+  the local example uses the same default value for both.
 - Expose only the required MQTT listener externally, and keep BifroMQ management
   or plugin internals on trusted networks.
 
@@ -71,6 +74,25 @@ MQTT/BifroMQ production notes:
 
 - `ticket_signing_secret`
   必须与 `server-biz` 的 relay ticket 签名密钥保持一致。
+
+- `SLAN_RELAY_NODE_ID`
+  必须与控制面 relay 拓扑里的 `node_id` 一致，例如本地默认
+  `relay-cn-local-udp`。
+
+- `SLAN_RELAY_CLUSTER_ID` / `SLAN_RELAY_COUNTRY_CODE` / `SLAN_RELAY_CITY_CODE`
+  用于心跳和运营界面展示，也会参与 relay 节点健康排序的可观测性。
+
+- `SLAN_RELAY_ADDRESS`
+  是控制面和客户端看到的 relay 入口地址。本地默认是
+  `127.0.0.1:19000`，生产应改成公网或可路由地址。
+
+- `SLAN_RELAY_MQTT_BROKER_URL`
+  是 relay 容器访问 MQTT broker 的地址。本地 compose 默认
+  `mqtt://bifromq:1883`。
+
+- `SLAN_RELAY_MQTT_INTERVAL_SECONDS`
+  relay 心跳周期，本地默认 30 秒；服务端 2 分钟内未收到心跳会将 relay
+  视为不在线。
 
 ## 本地值与生产值对照
 

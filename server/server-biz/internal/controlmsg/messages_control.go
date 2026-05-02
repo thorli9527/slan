@@ -64,6 +64,19 @@ type PathHealthReport struct {
 	SampledAtMs uint64 `json:"sampledAtMs,omitempty"`
 }
 
+// RelayNodeHeartbeat is published by server-relay through MQTT.
+type RelayNodeHeartbeat struct {
+	NodeID         string `json:"nodeId"`
+	ClusterID      string `json:"clusterId,omitempty"`
+	CountryCode    string `json:"countryCode,omitempty"`
+	CityCode       string `json:"cityCode,omitempty"`
+	Transport      string `json:"transport,omitempty"`
+	Address        string `json:"address,omitempty"`
+	Healthy        bool   `json:"healthy"`
+	ActiveSessions int    `json:"activeSessions,omitempty"`
+	ReportedAtMs   uint64 `json:"reportedAtMs,omitempty"`
+}
+
 // PathOption 描述一条可尝试的连接路径。
 type PathOption struct {
 	// PathType 是路径类型，例如 direct_udp / direct_ipv6 / relay。

@@ -14,6 +14,7 @@ import (
 )
 
 const serverSubscriberID = "server-biz-subscriber"
+const relayPrincipalPrefix = "relay/"
 
 func DeviceCredential(cfg configs.MQTTConfig, deviceID, _ string, now time.Time) *dto.MQTTCredential {
 	if !cfg.Enabled || strings.TrimSpace(deviceID) == "" {
@@ -45,6 +46,25 @@ func ServerSubscriberCredential(cfg configs.MQTTConfig, now time.Time) *dto.MQTT
 		Username:    username,
 		Password:    password(cfg, clientID, username, serverSubscriberID),
 		TopicPrefix: trimTopic(cfg.TopicPrefix),
+		ExpiresAt:   expiresAt,
+	}
+}
+
+func RelayCredential(cfg configs.MQTTConfig, nodeID string, now time.Time) *dto.MQTTCredential {
+	nodeID = strings.TrimSpace(nodeID)
+	if !cfg.Enabled || nodeID == "" {
+		return nil
+	}
+	expiresAt := expiresAtUnix(cfg, now)
+	id := relayPrincipalPrefix + nodeID
+	clientID := joinClientID(cfg, id)
+	username := joinUsername(cfg, id, expiresAt)
+	return &dto.MQTTCredential{
+		BrokerURL:   publicBrokerURL(cfg),
+		ClientID:    clientID,
+		Username:    username,
+		Password:    password(cfg, clientID, username, id),
+		TopicPrefix: trimTopic(cfg.TopicPrefix) + "/relays/" + nodeID,
 		ExpiresAt:   expiresAt,
 	}
 }
@@ -88,6 +108,9 @@ func validateCredentialAt(cfg configs.MQTTConfig, clientID, username, givenPassw
 	if validateServerSubscriberAt(cfg, clientID, username, givenPassword, now) {
 		return dto.MQTTCredentialAuthResult{Allow: true, Principal: "server"}, true
 	}
+	if relayNodeID, ok := validateRelayAt(cfg, clientID, username, givenPassword, now); ok {
+		return dto.MQTTCredentialAuthResult{Allow: true, DeviceID: relayNodeID, Principal: "relay"}, true
+	}
 	return dto.MQTTCredentialAuthResult{Allow: false}, false
 }
 
@@ -111,6 +134,14 @@ func ControlDownTopic(cfg configs.MQTTConfig, deviceID string) string {
 	return DeviceTopicPrefix(cfg, deviceID) + "/control/down"
 }
 
+func RelayHeartbeatTopicFilter(cfg configs.MQTTConfig) string {
+	return trimTopic(cfg.TopicPrefix) + "/relays/+/heartbeat"
+}
+
+func RelayHeartbeatTopic(cfg configs.MQTTConfig, nodeID string) string {
+	return trimTopic(cfg.TopicPrefix) + "/relays/" + strings.TrimSpace(nodeID) + "/heartbeat"
+}
+
 func AllowTopicAccess(cfg configs.MQTTConfig, principal, deviceID, topic string, subscribe bool) bool {
 	topic = trimTopic(topic)
 	if topic == "" {
@@ -118,9 +149,17 @@ func AllowTopicAccess(cfg configs.MQTTConfig, principal, deviceID, topic string,
 	}
 	if principal == "server" {
 		if subscribe {
-			return topic == NetworkStateTopicFilter(cfg) || topic == ControlUpTopicFilter(cfg)
+			return topic == NetworkStateTopicFilter(cfg) ||
+				topic == ControlUpTopicFilter(cfg) ||
+				topic == RelayHeartbeatTopicFilter(cfg)
 		}
 		return isServerControlDownTopic(cfg, topic)
+	}
+	if principal == "relay" {
+		if subscribe {
+			return false
+		}
+		return strings.TrimSpace(deviceID) != "" && topic == RelayHeartbeatTopic(cfg, deviceID)
 	}
 	if principal != "device" || strings.TrimSpace(deviceID) == "" {
 		return false
@@ -162,15 +201,36 @@ func validateServerSubscriberAt(cfg configs.MQTTConfig, clientID, username, give
 	if !cfg.Enabled {
 		return false
 	}
-	if clientID != joinClientID(cfg, "server") {
+	baseClientID := joinClientID(cfg, "server")
+	if clientID != baseClientID && !strings.HasPrefix(clientID, baseClientID+"-") {
 		return false
 	}
 	expiresAt, ok := parseSystemUsernameExpiry(cfg, username, serverSubscriberID)
 	if !ok || expiresAt < now.Unix() {
 		return false
 	}
-	want := password(cfg, clientID, username, serverSubscriberID)
-	return hmac.Equal([]byte(want), []byte(givenPassword))
+	return hmac.Equal([]byte(password(cfg, clientID, username, serverSubscriberID)), []byte(givenPassword)) ||
+		hmac.Equal([]byte(password(cfg, baseClientID, username, serverSubscriberID)), []byte(givenPassword))
+}
+
+func validateRelayAt(cfg configs.MQTTConfig, clientID, username, givenPassword string, now time.Time) (string, bool) {
+	if !cfg.Enabled {
+		return "", false
+	}
+	nodeID, expiresAt, ok := parseRelayUsername(cfg, username)
+	if !ok || expiresAt < now.Unix() {
+		return "", false
+	}
+	id := relayPrincipalPrefix + nodeID
+	baseClientID := joinClientID(cfg, id)
+	if clientID != baseClientID && !strings.HasPrefix(clientID, baseClientID+"-") {
+		return "", false
+	}
+	if hmac.Equal([]byte(password(cfg, clientID, username, id)), []byte(givenPassword)) ||
+		hmac.Equal([]byte(password(cfg, baseClientID, username, id)), []byte(givenPassword)) {
+		return nodeID, true
+	}
+	return "", false
 }
 
 func expiresAtUnix(cfg configs.MQTTConfig, now time.Time) int64 {
@@ -210,6 +270,23 @@ func parseUsernameExpiry(cfg configs.MQTTConfig, username, id string) (int64, bo
 
 func parseDeviceUsername(cfg configs.MQTTConfig, username string) (string, int64, bool) {
 	prefix := strings.TrimSpace(cfg.UsernamePrefix) + "/"
+	rest := strings.TrimPrefix(username, prefix)
+	if rest == username {
+		return "", 0, false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return "", 0, false
+	}
+	expiresAt, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || expiresAt <= 0 {
+		return "", 0, false
+	}
+	return strings.TrimSpace(parts[0]), expiresAt, true
+}
+
+func parseRelayUsername(cfg configs.MQTTConfig, username string) (string, int64, bool) {
+	prefix := strings.TrimSpace(cfg.UsernamePrefix) + "/" + relayPrincipalPrefix
 	rest := strings.TrimPrefix(username, prefix)
 	if rest == username {
 		return "", 0, false

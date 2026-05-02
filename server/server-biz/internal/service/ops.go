@@ -15,6 +15,7 @@ type Ops interface {
 	DeleteUserPlanOverride(userID string) error
 	ListDevices() ([]dto.OpsDevice, error)
 	RelayTopology() (dto.OpsRelayTopology, error)
+	NetworkQuality() (dto.OpsNetworkQuality, error)
 	ListAdmins() ([]dto.OpsAdminInfo, error)
 	UpsertAdminInfo(req dto.UpsertAdminInfoRequest) (dto.OpsAdminInfo, error)
 	ChangeAdminPassword(adminID string, req dto.ChangeAdminPasswordRequest) error

@@ -162,6 +162,10 @@ button:disabled {
   padding: 18px;
 }
 
+.metric.compact {
+  box-shadow: none;
+}
+
 .metric strong {
   display: block;
   margin: 8px 0 4px;
@@ -216,6 +220,14 @@ td {
   vertical-align: top;
 }
 
+td small {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 th {
   color: #64748b;
   font-size: 12px;
@@ -238,6 +250,24 @@ code {
   background: #e0f2fe;
   font-size: 12px;
   font-weight: 800;
+}
+
+.status-ok,
+.status-bad,
+.status-warn {
+  font-weight: 900;
+}
+
+.status-ok {
+  color: #15803d;
+}
+
+.status-warn {
+  color: #b45309;
+}
+
+.status-bad {
+  color: #b91c1c;
 }
 
 .panel-title {
@@ -279,6 +309,44 @@ code {
 .pager button {
   padding: 7px 11px;
   font-size: 12px;
+}
+
+.relay-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.relay-regions {
+  margin-top: 18px;
+}
+
+.relay-regions h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.region-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.region-card {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, .08);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.region-card span,
+.region-card small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .modal-backdrop {

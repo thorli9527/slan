@@ -85,6 +85,7 @@ fn run_control_transport_worker(
     let mut last_ack_flush_ms = None;
     let mut last_heartbeat_ms = None;
     let mut last_runtime_state_ms = None;
+    let mut last_path_health_ms = None;
     loop {
         if reconnect_key(&load_session().map_err(|err| err.to_string())?) != reconnect_key(&session)
         {
@@ -102,12 +103,14 @@ fn run_control_transport_worker(
                 last_ack_flush_ms,
                 last_heartbeat_ms,
                 last_runtime_state_ms,
+                last_path_health_ms,
             },
             now_ms,
         );
         if !tick.outbox.include_control_acks
             && !tick.outbox.include_heartbeat
             && !tick.outbox.include_runtime_state
+            && !tick.outbox.include_path_health
         {
             continue;
         }
@@ -117,6 +120,7 @@ fn run_control_transport_worker(
             &task_queue,
             tick.outbox.include_heartbeat,
             tick.outbox.include_runtime_state,
+            tick.outbox.include_path_health,
             tick.outbox.include_control_acks,
         );
         for message in messages {
@@ -132,6 +136,9 @@ fn run_control_transport_worker(
                 ControlTransportMessageKind::RuntimeState => {
                     last_runtime_state_ms = Some(now_ms);
                 }
+                ControlTransportMessageKind::PathHealth => {
+                    last_path_health_ms = Some(now_ms);
+                }
             }
         }
     }
@@ -144,6 +151,9 @@ fn ingest_downstream_publish(
     state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<(), String> {
     if try_ingest_auth_callback(payload, runtime, state_notifier)? {
+        return Ok(());
+    }
+    if try_ingest_network_map_response(payload, runtime, state_notifier)? {
         return Ok(());
     }
     let message = serde_json::from_slice(payload)
@@ -196,6 +206,34 @@ fn ingest_downstream_publish(
     Ok(())
 }
 
+fn try_ingest_network_map_response(
+    payload: &[u8],
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<bool, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("network_map_response") {
+        return Ok(false);
+    }
+    let Some(map) = value.pointer("/payload/map") else {
+        return Err("network_map_response payload.map is missing".to_string());
+    };
+    let count = crate::persist_relay_candidates_from_network_map(map)
+        .map_err(|err| format!("persist relay candidates from network map: {err:#}"))?;
+    log_service_error(format!(
+        "client-core-service refreshed relay candidates from network map: count={count}"
+    ));
+    let state = {
+        let runtime = runtime
+            .lock()
+            .map_err(|_| "client runtime mutex poisoned".to_string())?;
+        runtime.state().clone()
+    };
+    publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
+    Ok(true)
+}
+
 fn try_ingest_auth_callback(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
@@ -229,6 +267,7 @@ fn build_outbox_messages(
     task_queue: &Arc<Mutex<ControlTaskQueue>>,
     include_heartbeat: bool,
     include_runtime_state: bool,
+    include_path_health: bool,
     include_control_acks: bool,
 ) -> Vec<ControlTransportMessage> {
     let state = {
@@ -254,6 +293,7 @@ fn build_outbox_messages(
         current_timestamp_ms(),
         include_heartbeat,
         include_runtime_state,
+        include_path_health,
     )
     .messages
 }

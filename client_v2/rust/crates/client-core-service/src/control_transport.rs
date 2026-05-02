@@ -1,3 +1,8 @@
+use std::{
+    net::{TcpStream, ToSocketAddrs},
+    time::{Duration, Instant},
+};
+
 use anyhow::Result;
 use client_core::ClientViewState;
 use serde::Deserialize;
@@ -28,6 +33,7 @@ pub struct ControlTransportPlan {
     pub control_qos: MqttQos,
     pub heartbeat_topic: Option<String>,
     pub runtime_state_topic: Option<String>,
+    pub upstream_control_topic: Option<String>,
     pub downstream_control_topic: Option<String>,
     pub upstream_control_ack_topic: Option<String>,
 }
@@ -55,6 +61,8 @@ pub enum ControlTransportMessageKind {
     Heartbeat,
     #[serde(rename = "runtimeState")]
     RuntimeState,
+    #[serde(rename = "pathHealth")]
+    PathHealth,
     #[serde(rename = "controlAck")]
     ControlAck,
 }
@@ -121,6 +129,8 @@ pub struct ControlTransportOutboxRequest {
     pub include_heartbeat: bool,
     #[serde(default = "default_true")]
     pub include_runtime_state: bool,
+    #[serde(default)]
+    pub include_path_health: bool,
     #[serde(default = "default_true")]
     pub include_control_acks: bool,
 }
@@ -131,6 +141,7 @@ pub struct ControlTransportCadence {
     pub ack_flush_interval_ms: u64,
     pub heartbeat_interval_ms: u64,
     pub runtime_state_interval_ms: u64,
+    pub path_health_interval_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -144,6 +155,8 @@ pub struct ControlTransportTickRequest {
     pub last_heartbeat_ms: Option<u64>,
     #[serde(default)]
     pub last_runtime_state_ms: Option<u64>,
+    #[serde(default)]
+    pub last_path_health_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -154,6 +167,7 @@ pub struct ControlTransportTickPlan {
     pub next_ack_flush_due_ms: u64,
     pub next_heartbeat_due_ms: u64,
     pub next_runtime_state_due_ms: u64,
+    pub next_path_health_due_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -193,6 +207,7 @@ pub fn control_transport_cadence() -> ControlTransportCadence {
         ack_flush_interval_ms: 1_000,
         heartbeat_interval_ms: 30_000,
         runtime_state_interval_ms: 10_000,
+        path_health_interval_ms: 600_000,
     }
 }
 
@@ -217,11 +232,17 @@ pub fn control_transport_tick_plan(
         request.last_runtime_state_ms,
         cadence.runtime_state_interval_ms,
     );
+    let include_path_health = due(
+        now_ms,
+        request.last_path_health_ms,
+        cadence.path_health_interval_ms,
+    );
     ControlTransportTickPlan {
         now_ms,
         outbox: ControlTransportOutboxRequest {
             include_heartbeat,
             include_runtime_state,
+            include_path_health,
             include_control_acks,
         },
         next_ack_flush_due_ms: next_due_ms(
@@ -239,6 +260,11 @@ pub fn control_transport_tick_plan(
             request.last_runtime_state_ms,
             cadence.runtime_state_interval_ms,
         ),
+        next_path_health_due_ms: next_due_ms(
+            now_ms,
+            request.last_path_health_ms,
+            cadence.path_health_interval_ms,
+        ),
     }
 }
 
@@ -253,6 +279,7 @@ pub fn control_transport_plan(session: &PersistedSession) -> ControlTransportPla
         control_qos: MqttQos::QoS2,
         heartbeat_topic: topic_prefix.map(|prefix| format!("{prefix}/heartbeat")),
         runtime_state_topic: topic_prefix.map(|prefix| format!("{prefix}/runtime-state")),
+        upstream_control_topic: topic_prefix.map(|prefix| format!("{prefix}/control/up")),
         downstream_control_topic: topic_prefix.map(|prefix| format!("{prefix}/control/down")),
         upstream_control_ack_topic: topic_prefix.map(|prefix| format!("{prefix}/control/ack")),
     }
@@ -265,6 +292,7 @@ pub fn control_transport_outbox(
     reported_at_ms: u64,
     include_heartbeat: bool,
     include_runtime_state: bool,
+    include_path_health: bool,
 ) -> ControlTransportOutbox {
     let plan = control_transport_plan(session);
     let mut messages = Vec::new();
@@ -305,6 +333,16 @@ pub fn control_transport_outbox(
             });
         }
     }
+    if include_path_health {
+        if let Some(topic) = plan.upstream_control_topic.clone() {
+            messages.extend(relay_path_health_messages(
+                session,
+                &topic,
+                reported_at_ms,
+                plan.control_qos,
+            ));
+        }
+    }
     if let Some(topic) = plan.upstream_control_ack_topic {
         for ack in acks {
             messages.push(ControlTransportMessage {
@@ -318,6 +356,92 @@ pub fn control_transport_outbox(
         }
     }
     ControlTransportOutbox { messages }
+}
+
+fn relay_path_health_messages(
+    session: &PersistedSession,
+    topic: &str,
+    reported_at_ms: u64,
+    qos: MqttQos,
+) -> Vec<ControlTransportMessage> {
+    let Some(network_id) = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+    session
+        .relay_candidates
+        .iter()
+        .take(12)
+        .filter(|candidate| !candidate.endpoint_id.trim().is_empty())
+        .map(|candidate| {
+            let sample = probe_relay_candidate(candidate);
+            ControlTransportMessage {
+                id: format!("path-health-{}-{reported_at_ms}", candidate.endpoint_id),
+                topic: topic.to_string(),
+                qos,
+                kind: ControlTransportMessageKind::PathHealth,
+                ack_task_id: None,
+                payload: serde_json::json!({
+                    "type": "path_health_report",
+                    "requestId": format!("path-health-{reported_at_ms}"),
+                    "networkId": network_id,
+                    "payload": {
+                        "networkId": network_id,
+                        "pathType": "relay",
+                        "endpoint": candidate.address,
+                        "derpNodeId": candidate.endpoint_id,
+                        "observedRttMs": sample.observed_rtt_ms,
+                        "packetLossPpm": sample.packet_loss_ppm,
+                        "pathScore": sample.path_score,
+                        "sampledAtMs": reported_at_ms
+                    }
+                }),
+            }
+        })
+        .collect()
+}
+
+struct RelayPathHealthSample {
+    observed_rtt_ms: Option<u32>,
+    packet_loss_ppm: Option<u32>,
+    path_score: Option<u32>,
+}
+
+fn probe_relay_candidate(candidate: &crate::PersistedRelayCandidate) -> RelayPathHealthSample {
+    let transport = candidate.transport.trim().to_ascii_lowercase();
+    if transport == "tcp" || transport == "tls" || transport == "quic" {
+        if let Some(rtt_ms) = probe_tcp_rtt_ms(&candidate.address) {
+            return RelayPathHealthSample {
+                observed_rtt_ms: Some(rtt_ms),
+                packet_loss_ppm: Some(0),
+                path_score: Some(rtt_ms.saturating_add(10).min(10_000)),
+            };
+        }
+        return RelayPathHealthSample {
+            observed_rtt_ms: None,
+            packet_loss_ppm: Some(1_000_000),
+            path_score: Some(10_000),
+        };
+    }
+    RelayPathHealthSample {
+        observed_rtt_ms: None,
+        packet_loss_ppm: None,
+        path_score: Some(1_000),
+    }
+}
+
+fn probe_tcp_rtt_ms(address: &str) -> Option<u32> {
+    let socket = address
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut values| values.next())?;
+    let started = Instant::now();
+    TcpStream::connect_timeout(&socket, Duration::from_millis(750)).ok()?;
+    Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
 }
 
 pub fn normalize_downstream_control_message(
@@ -529,6 +653,124 @@ mod tests {
         assert_eq!(accepted.action, "disableNetwork");
         assert_eq!(accepted.delivery_id, "delivery-1");
         assert!(accepted.require_ui_refresh);
+    }
+
+    #[test]
+    fn path_health_tick_runs_every_ten_minutes() {
+        let first = control_transport_tick_plan(
+            ControlTransportTickRequest {
+                now_ms: Some(600_000),
+                last_ack_flush_ms: Some(600_000),
+                last_heartbeat_ms: Some(600_000),
+                last_runtime_state_ms: Some(600_000),
+                last_path_health_ms: None,
+            },
+            600_000,
+        );
+        assert!(first.outbox.include_path_health);
+
+        let early = control_transport_tick_plan(
+            ControlTransportTickRequest {
+                now_ms: Some(1_000_000),
+                last_ack_flush_ms: Some(1_000_000),
+                last_heartbeat_ms: Some(1_000_000),
+                last_runtime_state_ms: Some(1_000_000),
+                last_path_health_ms: Some(600_000),
+            },
+            1_000_000,
+        );
+        assert!(!early.outbox.include_path_health);
+
+        let due = control_transport_tick_plan(
+            ControlTransportTickRequest {
+                now_ms: Some(1_200_000),
+                last_ack_flush_ms: Some(1_200_000),
+                last_heartbeat_ms: Some(1_200_000),
+                last_runtime_state_ms: Some(1_200_000),
+                last_path_health_ms: Some(600_000),
+            },
+            1_200_000,
+        );
+        assert!(due.outbox.include_path_health);
+    }
+
+    #[test]
+    fn path_health_outbox_uses_control_up_envelope() {
+        let mut session = PersistedSession::empty();
+        session.active_network_id = Some("net-1".to_string());
+        session.mqtt = Some(MqttCredential {
+            broker_url: "mqtt://127.0.0.1:1883".to_string(),
+            client_id: "client-1".to_string(),
+            username: "user".to_string(),
+            password: "pass".to_string(),
+            topic_prefix: "slan/devices/dev-1".to_string(),
+            expires_at: None,
+        });
+        session.relay_candidates = vec![crate::PersistedRelayCandidate {
+            endpoint_id: "relay-cn-tcp".to_string(),
+            transport: "udp".to_string(),
+            address: "127.0.0.1:9000".to_string(),
+            country_code: Some("CN".to_string()),
+            region_id: Some("sha".to_string()),
+            cluster_id: Some("cn-a".to_string()),
+        }];
+
+        let outbox = control_transport_outbox(
+            &session,
+            &ClientViewState::default(),
+            Vec::new(),
+            1_000,
+            false,
+            false,
+            true,
+        );
+
+        assert_eq!(outbox.messages.len(), 1);
+        assert_eq!(outbox.messages[0].topic, "slan/devices/dev-1/control/up");
+        assert!(matches!(
+            outbox.messages[0].kind,
+            ControlTransportMessageKind::PathHealth
+        ));
+        assert_eq!(
+            outbox.messages[0]
+                .payload
+                .get("type")
+                .and_then(Value::as_str),
+            Some("path_health_report")
+        );
+        assert_eq!(
+            outbox.messages[0]
+                .payload
+                .pointer("/payload/derpNodeId")
+                .and_then(Value::as_str),
+            Some("relay-cn-tcp")
+        );
+    }
+
+    #[test]
+    fn network_map_relay_candidates_are_extracted_for_persistence() {
+        let candidates =
+            crate::extract_persisted_relay_candidates_from_network_map(&serde_json::json!({
+                "relayRegions": [
+                    {
+                        "countryCode": "CN",
+                        "regionId": "sha",
+                        "clusterId": "cn-a",
+                        "endpoints": [
+                            {
+                                "endpointId": "relay-cn-udp",
+                                "transport": "udp",
+                                "address": "127.0.0.1:9000"
+                            }
+                        ]
+                    }
+                ]
+            }));
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].endpoint_id, "relay-cn-udp");
+        assert_eq!(candidates[0].country_code.as_deref(), Some("CN"));
+        assert_eq!(candidates[0].cluster_id.as_deref(), Some("cn-a"));
     }
 }
 

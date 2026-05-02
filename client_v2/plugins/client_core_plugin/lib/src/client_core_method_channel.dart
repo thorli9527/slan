@@ -61,6 +61,14 @@ class ClientCorePlugin {
     return _invoke('controlTransportStatus');
   }
 
+  Future<Object?> relayCandidates() {
+    return _invoke('relayCandidates');
+  }
+
+  Future<Object?> refreshRelayCandidates() {
+    return _invoke('refreshRelayCandidates');
+  }
+
   Future<Object?> controlTransportPlan() {
     return _invoke('controlTransportPlan');
   }

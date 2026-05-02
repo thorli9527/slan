@@ -28,9 +28,16 @@ func (s dbOpsService) Overview() (dto.OpsOverview, error) {
 	clusters := s.state.relayClusters()
 	clusterCount := 0
 	relayNodeCount := 0
+	relayOnlineNodeCount := 0
+	heartbeats := s.state.relayNodeHeartbeats(ctx, time.Now())
 	for _, cluster := range clusters {
 		clusterCount++
 		relayNodeCount += len(cluster.nodes)
+		for _, node := range cluster.nodes {
+			if heartbeat, ok := heartbeats[node.NodeID]; ok && heartbeat.Healthy {
+				relayOnlineNodeCount++
+			}
+		}
 	}
 	onlineCount := s.networkOnlineDeviceCount(ctx)
 	defaultAdminSeeded, defaultAdminRoleBound, err := s.defaultAdminSeedStatus(ctx)
@@ -48,6 +55,7 @@ func (s dbOpsService) Overview() (dto.OpsOverview, error) {
 		NodeCount:             len(nodes),
 		RelayClusterCount:     clusterCount,
 		RelayNodeCount:        relayNodeCount,
+		RelayOnlineNodeCount:  relayOnlineNodeCount,
 		DefaultAdminSeeded:    defaultAdminSeeded,
 		DefaultAdminLoginName: s.state.cfg.Ops.DefaultAdmin.LoginName,
 		DefaultAdminRoleBound: defaultAdminRoleBound,
@@ -223,7 +231,10 @@ func (s dbOpsService) ListDevices() ([]dto.OpsDevice, error) {
 }
 
 func (s dbOpsService) RelayTopology() (dto.OpsRelayTopology, error) {
-	health := s.state.relayNodeHealth(context.Background(), time.Now())
+	ctx := context.Background()
+	now := time.Now()
+	health := s.state.relayNodeHealth(ctx, now)
+	heartbeats := s.state.relayNodeHeartbeats(ctx, now)
 	nodes := make([]dto.OpsRelayNode, 0)
 	for _, cluster := range s.state.relayClusters() {
 		for _, node := range cluster.nodes {
@@ -248,6 +259,11 @@ func (s dbOpsService) RelayTopology() (dto.OpsRelayTopology, error) {
 				}
 				item.SampleCount = rank.samples
 			}
+			if heartbeat, ok := heartbeats[node.NodeID]; ok {
+				item.HeartbeatOnline = heartbeat.Healthy
+				item.HeartbeatLastSeenAt = heartbeat.UpdatedAt
+				item.ActiveSessions = heartbeat.ActiveSessions
+			}
 			nodes = append(nodes, item)
 		}
 	}
@@ -256,6 +272,82 @@ func (s dbOpsService) RelayTopology() (dto.OpsRelayTopology, error) {
 		Regions:          s.state.relayRegions(),
 		Nodes:            nodes,
 	}, nil
+}
+
+func (s dbOpsService) NetworkQuality() (dto.OpsNetworkQuality, error) {
+	ctx := context.Background()
+	cutoff := time.Now().Add(-nodePathHealthFreshnessWindow).Unix()
+	records, err := s.state.pg.ListRecentNodePathHealth(ctx, cutoff)
+	if err != nil {
+		return dto.OpsNetworkQuality{}, err
+	}
+	nodes, err := s.state.pg.ListNodes(ctx)
+	if err != nil {
+		return dto.OpsNetworkQuality{}, err
+	}
+	devices, err := s.state.pg.ListDevices(ctx)
+	if err != nil {
+		return dto.OpsNetworkQuality{}, err
+	}
+	users, err := s.state.pg.ListUsers(ctx)
+	if err != nil {
+		return dto.OpsNetworkQuality{}, err
+	}
+	networks, err := s.state.pg.ListNetworks(ctx)
+	if err != nil {
+		return dto.OpsNetworkQuality{}, err
+	}
+	nodeByID := make(map[string]repo.Node, len(nodes))
+	for _, node := range nodes {
+		nodeByID[node.NodeID] = node
+	}
+	deviceByID := make(map[string]repo.Device, len(devices))
+	for _, device := range devices {
+		deviceByID[device.DeviceID] = device
+	}
+	emailByUserID := make(map[string]string, len(users))
+	for _, user := range users {
+		emailByUserID[user.UserID] = user.Email
+	}
+	networkNameByID := make(map[string]string, len(networks))
+	for _, network := range networks {
+		networkNameByID[network.NetworkID] = network.Name
+	}
+
+	items := make([]dto.OpsNetworkQualityItem, 0, len(records))
+	for _, record := range records {
+		item := dto.OpsNetworkQualityItem{
+			HealthID:    record.HealthID,
+			NetworkID:   record.NetworkID,
+			NetworkName: networkNameByID[record.NetworkID],
+			NodeID:      record.NodeID,
+			PeerNodeID:  record.PeerNodeID,
+			PathType:    record.PathType,
+			Endpoint:    record.Endpoint,
+			DerpNodeID:  record.DerpNodeID,
+			SampledAtMs: record.SampledAtMs,
+			UpdatedAt:   record.UpdatedAt,
+		}
+		if value := record.ObservedRttMs; value != nil {
+			item.ObservedRttMs = *value
+		}
+		if value := record.PacketLossPpm; value != nil {
+			item.PacketLossPpm = *value
+		}
+		if value := record.PathScore; value != nil {
+			item.PathScore = *value
+		}
+		if node, ok := nodeByID[record.NodeID]; ok {
+			item.UserID = node.UserID
+			item.UserEmail = emailByUserID[node.UserID]
+			item.DeviceID = node.DeviceID
+			if device, ok := deviceByID[node.DeviceID]; ok {
+				item.DeviceName = device.Name
+			}
+		}
+		items = append(items, item)
+	}
+	return dto.OpsNetworkQuality{Items: items}, nil
 }
 
 func (s dbOpsService) ListAdmins() ([]dto.OpsAdminInfo, error) {

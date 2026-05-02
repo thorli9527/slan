@@ -65,4 +65,8 @@ impl RelayRuntime {
             } => self.handle_detach(source, session_id, participant_id),
         }
     }
+
+    pub fn active_session_count(&self) -> usize {
+        self.endpoints.len()
+    }
 }

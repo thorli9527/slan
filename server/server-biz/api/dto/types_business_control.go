@@ -249,6 +249,8 @@ type NetworkMap struct {
 	Routes []Route `json:"routes,omitempty"`
 	// RelayRegions 是可用 relay 区域列表。
 	RelayRegions []RelayRegion `json:"relayRegions,omitempty"`
+	// RelayCandidateCountries 是本次下发 relay 候选所依据的国家集合。
+	RelayCandidateCountries []string `json:"relayCandidateCountries,omitempty"`
 	// DNS 是可选 DNS 配置。
 	DNS    DNSConfig    `json:"dns"`
 	Policy AccessPolicy `json:"policy,omitempty"`

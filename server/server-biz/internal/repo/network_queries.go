@@ -34,6 +34,12 @@ func (r *PostgresRepository) GetOwnedNetworkByUser(ctx context.Context, userID s
 	return record, err
 }
 
+func (r *PostgresRepository) ListNetworks(ctx context.Context) ([]Network, error) {
+	var out []Network
+	err := r.db.WithContext(ctx).Order("network_id").Find(&out).Error
+	return out, err
+}
+
 // GetNetworkByJoinKey loads one network by its configured join key.
 func (r *PostgresRepository) GetNetworkByJoinKey(ctx context.Context, joinKey string) (Network, error) {
 	var record Network

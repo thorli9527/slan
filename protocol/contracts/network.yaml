@@ -219,6 +219,9 @@ contracts:
       attachment:
         type: SubnetAttachment
         required: true
+      networkMap:
+        type: NetworkMap
+        required: false
   NetworkDetail:
     fields:
       networkId:

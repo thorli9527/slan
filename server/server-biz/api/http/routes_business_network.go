@@ -71,6 +71,11 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		return deps.Network.Activate(rc.user(), rc.networkID(c), req)
 	}))
 
+	networks.POST("/:networkId/relay-candidates", respondWithBody(http.StatusOK, func(c *gin.Context, req dto.JoinNetworkRequest) (dto.NetworkMap, error) {
+		rc := currentRouteContext(c)
+		return deps.Network.RelayCandidates(rc.user(), rc.networkID(c), req)
+	}))
+
 	networks.POST("/:networkId/deactivate", respondWithBodyStatus(http.StatusOK, gin.H{"status": "deactivated"}, func(c *gin.Context, req dto.DeactivateNetworkRequest) error {
 		rc := currentRouteContext(c)
 		return deps.Network.Deactivate(rc.user(), rc.networkID(c), req)

@@ -67,6 +67,8 @@ export type Device = {
   name: string;
   ownerEmail?: string;
   platform: string;
+  deviceVersion?: string;
+  countryCode?: string;
   status: string;
   currentVirtualIp?: string;
   linkStatus?: string;
@@ -346,6 +348,7 @@ export type NetworkMap = {
   peers?: Peer[];
   routes?: Route[];
   relayRegions?: RelayRegion[];
+  relayCandidateCountries?: string[];
   dns: DNSConfig;
   mtu?: number;
 };

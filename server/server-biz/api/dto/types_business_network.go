@@ -203,6 +203,8 @@ type NetworkJoinResult struct {
 	Member NetworkMember `json:"member"`
 	// Attachment 是设备落到默认子网后的挂载结果。
 	Attachment SubnetAttachment `json:"attachment"`
+	// NetworkMap 是客户端启用网络时需要同步的控制面拓扑、DNS、路由与 relay 候选。
+	NetworkMap NetworkMap `json:"networkMap,omitempty"`
 }
 
 // NetworkDetail 在网络基础信息上展开子网和成员列表。

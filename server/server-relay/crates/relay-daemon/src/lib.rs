@@ -11,11 +11,12 @@
 mod config;
 mod daemon;
 mod errors;
+mod mqtt;
 mod protocol;
 mod runtime;
 
 /// DaemonConfig 描述 relay daemon 的启动配置。
-pub use config::DaemonConfig;
+pub use config::{DaemonConfig, RelayMqttConfig};
 /// RelayDaemon 负责 UDP socket 生命周期和请求收发循环。
 pub use daemon::RelayDaemon;
 /// 协议层导出供 daemon 和客户端共享的 request/response 模型。

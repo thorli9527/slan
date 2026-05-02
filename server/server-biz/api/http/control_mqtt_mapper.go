@@ -18,6 +18,10 @@ func dtoNetworkMapToControl(m dto.NetworkMap) controlmsg.NetworkMap {
 		Peers:            dtoPeersToControlPeers(m.Peers),
 		Routes:           dtoRoutesToControlRoutes(m.Routes),
 		RelayRegions:     dtoRelayRegionsToControlRelayRegions(m.RelayRegions),
+		RelayCandidateCountries: append(
+			[]string(nil),
+			m.RelayCandidateCountries...,
+		),
 		DNS: controlmsg.DNSConfig{
 			Servers:       append([]string(nil), m.DNS.Servers...),
 			SearchDomains: append([]string(nil), m.DNS.SearchDomains...),

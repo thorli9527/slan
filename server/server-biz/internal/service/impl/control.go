@@ -162,8 +162,13 @@ func (s dbControlChannelService) ReportConnectionState(userID, nodeID string, st
 // ReportPathHealth persists direct or relay path quality samples that later
 // influence connect-plan sorting.
 func (s dbControlChannelService) ReportPathHealth(userID, nodeID string, report controlmsg.PathHealthReport) error {
-	if strings.TrimSpace(report.NetworkID) == "" || strings.TrimSpace(report.PeerNodeID) == "" || strings.TrimSpace(report.PathType) == "" {
-		return fmt.Errorf("%w: networkId, peerNodeId, and pathType are required", ErrInvalidArgument)
+	pathType := strings.TrimSpace(report.PathType)
+	derpNodeID := strings.TrimSpace(report.DerpNodeID)
+	if strings.TrimSpace(report.NetworkID) == "" || pathType == "" {
+		return fmt.Errorf("%w: networkId and pathType are required", ErrInvalidArgument)
+	}
+	if strings.TrimSpace(report.PeerNodeID) == "" && derpNodeID == "" {
+		return fmt.Errorf("%w: peerNodeId or derpNodeId is required", ErrInvalidArgument)
 	}
 
 	ctx := context.Background()
@@ -171,18 +176,21 @@ func (s dbControlChannelService) ReportPathHealth(userID, nodeID string, report 
 	if err != nil {
 		return err
 	}
-	peerNode, err := s.state.pg.GetNodeByID(ctx, report.PeerNodeID)
-	if err != nil {
-		if repo.IsNotFound(err) {
-			return ErrNotFound
+	peerNodeID := strings.TrimSpace(report.PeerNodeID)
+	if peerNodeID != "" {
+		peerNode, err := s.state.pg.GetNodeByID(ctx, peerNodeID)
+		if err != nil {
+			if repo.IsNotFound(err) {
+				return ErrNotFound
+			}
+			return err
 		}
-		return err
-	}
-	if _, err := s.state.requireActiveNetworkMember(ctx, report.NetworkID, peerNode.DeviceID, ErrForbidden, "peer node device"); err != nil {
-		return err
-	}
-	if _, err := s.state.requireActiveNetworkAttachment(ctx, report.NetworkID, peerNode.DeviceID, ErrForbidden, "peer node device"); err != nil {
-		return err
+		if _, err := s.state.requireActiveNetworkMember(ctx, report.NetworkID, peerNode.DeviceID, ErrForbidden, "peer node device"); err != nil {
+			return err
+		}
+		if _, err := s.state.requireActiveNetworkAttachment(ctx, report.NetworkID, peerNode.DeviceID, ErrForbidden, "peer node device"); err != nil {
+			return err
+		}
 	}
 
 	sampledAtMs := report.SampledAtMs
@@ -194,15 +202,38 @@ func (s dbControlChannelService) ReportPathHealth(userID, nodeID string, report 
 		HealthID:      util.NewID("path"),
 		NetworkID:     report.NetworkID,
 		NodeID:        sourceNode.NodeID,
-		PeerNodeID:    report.PeerNodeID,
-		PathType:      strings.TrimSpace(report.PathType),
+		PeerNodeID:    peerNodeID,
+		PathType:      pathType,
 		Endpoint:      strings.TrimSpace(report.Endpoint),
-		DerpNodeID:    strings.TrimSpace(report.DerpNodeID),
+		DerpNodeID:    derpNodeID,
 		ObservedRttMs: report.ObservedRttMs,
 		PacketLossPpm: report.PacketLossPpm,
 		PathScore:     report.PathScore,
 		SampledAtMs:   sampledAtMs,
 		UpdatedAt:     time.Now().Unix(),
+	})
+}
+
+func (s dbControlChannelService) ReportRelayHeartbeat(report controlmsg.RelayNodeHeartbeat) error {
+	nodeID := strings.TrimSpace(report.NodeID)
+	if nodeID == "" {
+		return fmt.Errorf("%w: nodeId is required", ErrInvalidArgument)
+	}
+	reportedAtMs := report.ReportedAtMs
+	if reportedAtMs == 0 {
+		reportedAtMs = uint64(time.Now().UnixMilli())
+	}
+	return s.state.pg.UpsertRelayNodeHeartbeat(context.Background(), repo.RelayNodeHeartbeat{
+		NodeID:         nodeID,
+		ClusterID:      strings.TrimSpace(report.ClusterID),
+		CountryCode:    normalizeRelayCountryCode(report.CountryCode),
+		CityCode:       strings.TrimSpace(report.CityCode),
+		Transport:      strings.TrimSpace(report.Transport),
+		Address:        strings.TrimSpace(report.Address),
+		Healthy:        report.Healthy,
+		ActiveSessions: report.ActiveSessions,
+		ReportedAtMs:   reportedAtMs,
+		UpdatedAt:      time.Now().Unix(),
 	})
 }
 
@@ -366,6 +397,23 @@ func (s dbControlChannelService) ActiveSessions(networkID, excludeNodeID string)
 	return out, nil
 }
 
+func (s dbControlChannelService) LatestSessionByDevice(deviceID string) (service.ControlSession, error) {
+	ctx := context.Background()
+	session, err := s.state.pg.GetLatestControlSessionByDevice(ctx, strings.TrimSpace(deviceID))
+	if err != nil {
+		return service.ControlSession{}, err
+	}
+	if !controlSessionIsFresh(session, time.Now()) {
+		return service.ControlSession{}, ErrUnauthorized
+	}
+	return service.ControlSession{
+		UserID:    session.UserID,
+		DeviceID:  session.DeviceID,
+		NodeID:    session.NodeID,
+		NetworkID: session.NetworkID,
+	}, nil
+}
+
 // requireNodeSession verifies ownership and network membership for a node.
 func (s *dbState) requireNodeSession(ctx context.Context, userID, nodeID, networkID string) (repo.Node, error) {
 	if strings.TrimSpace(nodeID) == "" || strings.TrimSpace(networkID) == "" {
@@ -505,7 +553,8 @@ const deviceNetworkStateFreshnessWindow = 45 * time.Second
 const deviceBoundWebSessionFreshnessWindow = 2 * time.Minute
 const nodeEndpointFreshnessWindow = 2 * time.Minute
 const nodeConnectionStateFreshnessWindow = 2 * time.Minute
-const nodePathHealthFreshnessWindow = 5 * time.Minute
+const nodePathHealthFreshnessWindow = 30 * time.Minute
+const relayNodeHeartbeatFreshnessWindow = 2 * time.Minute
 const controlStateCleanupInterval = 1 * time.Minute
 
 // touchControlSessionByToken refreshes the liveness timestamp of a known
@@ -637,5 +686,6 @@ func (s *dbState) cleanupExpiredControlPlaneState(ctx context.Context, now time.
 	_ = s.pg.DeleteNodeEndpointsBeforeAll(ctx, endpointCutoffUnix(now))
 	_ = s.pg.DeleteNodeConnectionStatesBeforeAll(ctx, connectionStateCutoffUnix(now))
 	_ = s.pg.DeleteNodePathHealthBeforeAll(ctx, pathHealthCutoffUnix(now))
+	_ = s.pg.DeleteRelayNodeHeartbeatsBefore(ctx, now.Add(-24*time.Hour).Unix())
 	s.pruneExpiredRelayTickets(now)
 }

@@ -22,6 +22,8 @@ type OpsOverview struct {
 	RelayClusterCount int `json:"relayClusterCount"`
 	// RelayNodeCount 是当前配置或观测到的 relay 节点数量。
 	RelayNodeCount int `json:"relayNodeCount"`
+	// RelayOnlineNodeCount 是最近仍有健康 MQTT 心跳的 relay 节点数量。
+	RelayOnlineNodeCount int `json:"relayOnlineNodeCount"`
 	// DefaultAdminSeeded 表示默认管理员是否已经落库。
 	DefaultAdminSeeded bool `json:"defaultAdminSeeded"`
 	// DefaultAdminLoginName 是配置中的默认管理员登录名。
@@ -109,6 +111,12 @@ type OpsRelayNode struct {
 	PathScore uint32 `json:"pathScore,omitempty"`
 	// SampleCount 是参与聚合的样本数量。
 	SampleCount int `json:"sampleCount,omitempty"`
+	// HeartbeatOnline indicates whether the relay daemon MQTT heartbeat is fresh.
+	HeartbeatOnline bool `json:"heartbeatOnline,omitempty"`
+	// HeartbeatLastSeenAt is the latest relay heartbeat write time.
+	HeartbeatLastSeenAt int64 `json:"heartbeatLastSeenAt,omitempty"`
+	// ActiveSessions is the relay daemon reported active session count.
+	ActiveSessions int `json:"activeSessions,omitempty"`
 }
 
 // OpsRelayTopology 描述运营入口查看到的 relay 拓扑和健康摘要。
@@ -119,6 +127,33 @@ type OpsRelayTopology struct {
 	Regions []RelayRegion `json:"regions,omitempty"`
 	// Nodes 是扁平化后的 relay 节点摘要列表。
 	Nodes []OpsRelayNode `json:"nodes,omitempty"`
+}
+
+// OpsNetworkQuality 描述运营入口看到的用户设备实时网络质量样本。
+type OpsNetworkQuality struct {
+	// Items 是最近上报的路径质量样本。
+	Items []OpsNetworkQualityItem `json:"items,omitempty"`
+}
+
+// OpsNetworkQualityItem 展示一条节点路径质量样本及其用户、设备、网络上下文。
+type OpsNetworkQualityItem struct {
+	HealthID      string `json:"healthId"`
+	NetworkID     string `json:"networkId"`
+	NetworkName   string `json:"networkName,omitempty"`
+	UserID        string `json:"userId,omitempty"`
+	UserEmail     string `json:"userEmail,omitempty"`
+	DeviceID      string `json:"deviceId,omitempty"`
+	DeviceName    string `json:"deviceName,omitempty"`
+	NodeID        string `json:"nodeId"`
+	PeerNodeID    string `json:"peerNodeId,omitempty"`
+	PathType      string `json:"pathType"`
+	Endpoint      string `json:"endpoint,omitempty"`
+	DerpNodeID    string `json:"derpNodeId,omitempty"`
+	ObservedRttMs uint32 `json:"observedRttMs,omitempty"`
+	PacketLossPpm uint32 `json:"packetLossPpm,omitempty"`
+	PathScore     uint32 `json:"pathScore,omitempty"`
+	SampledAtMs   uint64 `json:"sampledAtMs,omitempty"`
+	UpdatedAt     int64  `json:"updatedAt"`
 }
 
 // OpsAdminInfo 描述管理员信息。

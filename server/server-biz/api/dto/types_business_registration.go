@@ -5,6 +5,7 @@ type RegisterDeviceRequest struct {
 	Name          string `json:"name"`
 	Platform      string `json:"platform"`
 	DeviceVersion string `json:"deviceVersion,omitempty"`
+	CountryCode   string `json:"countryCode,omitempty"`
 	PublicKey     string `json:"publicKey"`
 }
 
@@ -37,6 +38,7 @@ type Device struct {
 	OwnerEmail           string              `json:"ownerEmail,omitempty"`
 	Platform             string              `json:"platform"`
 	DeviceVersion        string              `json:"deviceVersion,omitempty"`
+	CountryCode          string              `json:"countryCode,omitempty"`
 	Status               string              `json:"status"`
 	CurrentVirtualIP     string              `json:"currentVirtualIp,omitempty"`
 	LinkStatus           string              `json:"linkStatus,omitempty"`

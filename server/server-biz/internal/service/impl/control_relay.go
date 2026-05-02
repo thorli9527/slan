@@ -8,6 +8,7 @@ import (
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/configs"
+	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/util"
 )
 
@@ -101,6 +102,21 @@ func (s *dbState) derpMap() dto.DerpMap {
 
 func (s *dbState) relayRegions() []dto.RelayRegion {
 	clusters := s.relayClusters()
+	return relayRegionsFromClusters(clusters)
+}
+
+func (s *dbState) relayRegionsForCountries(countryCodes []string) []dto.RelayRegion {
+	clusters := relayClustersForCountries(s.relayClusters(), countryCodes)
+	if len(clusters) == 0 {
+		clusters = relayClustersForCountries(s.relayClusters(), s.defaultRelayCountryCodes())
+	}
+	if len(clusters) == 0 {
+		clusters = s.relayClusters()
+	}
+	return relayRegionsFromClusters(clusters)
+}
+
+func relayRegionsFromClusters(clusters []relayClusterView) []dto.RelayRegion {
 	out := make([]dto.RelayRegion, 0, len(clusters))
 	for _, cluster := range clusters {
 		endpoints := make([]dto.RelayEndpoint, 0, len(cluster.nodes))
@@ -124,6 +140,39 @@ func (s *dbState) relayRegions() []dto.RelayRegion {
 		})
 	}
 	return out
+}
+
+func relayClustersForCountries(clusters []relayClusterView, countryCodes []string) []relayClusterView {
+	allowed := make(map[string]struct{}, len(countryCodes))
+	for _, countryCode := range countryCodes {
+		value := normalizeRelayCountryCode(countryCode)
+		if value == "" {
+			continue
+		}
+		allowed[value] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	out := make([]relayClusterView, 0, len(clusters))
+	for _, cluster := range clusters {
+		if _, ok := allowed[normalizeRelayCountryCode(cluster.countryCode)]; ok {
+			out = append(out, cluster)
+		}
+	}
+	return out
+}
+
+func (s *dbState) defaultRelayCountryCodes() []string {
+	if cluster, ok := s.relayClusterByID(s.cfg.Relay.DefaultClusterID); ok {
+		return []string{cluster.countryCode}
+	}
+	for _, country := range s.cfg.Relay.Countries {
+		if value := normalizeRelayCountryCode(country.CountryCode); value != "" {
+			return []string{value}
+		}
+	}
+	return nil
 }
 
 func (s *dbState) relayClusters() []relayClusterView {
@@ -267,6 +316,10 @@ func clusterContainsRelayNode(cluster relayClusterView, nodeID string) bool {
 	return false
 }
 
+func normalizeRelayCountryCode(countryCode string) string {
+	return strings.ToUpper(strings.TrimSpace(countryCode))
+}
+
 func (s *dbState) relayFallbackEndpoints() []dto.Endpoint {
 	cluster := s.defaultRelayCluster()
 	if len(cluster.nodes) == 0 {
@@ -287,8 +340,8 @@ func (s *dbState) relayFallbackEndpoints() []dto.Endpoint {
 func (s *dbState) relayNodeHealth(ctx context.Context, now time.Time) map[string]relayNodeRank {
 	cutoff := pathHealthCutoffUnix(now)
 	values, err := s.pg.ListRecentRelayNodePathHealth(ctx, cutoff)
-	if err != nil || len(values) == 0 {
-		return nil
+	if err != nil {
+		values = nil
 	}
 
 	type accumulator struct {
@@ -334,6 +387,35 @@ func (s *dbState) relayNodeHealth(ctx context.Context, now time.Time) map[string
 			acc.rank.rttAvg = acc.rttSum / float64(acc.rttCount)
 		}
 		out[nodeID] = acc.rank
+	}
+	for nodeID, heartbeat := range s.relayNodeHeartbeats(ctx, now) {
+		rank := out[nodeID]
+		rank.hasHeartbeat = true
+		rank.heartbeatHealthy = heartbeat.Healthy
+		if heartbeat.ReportedAtMs > rank.sampledAt {
+			rank.sampledAt = heartbeat.ReportedAtMs
+		}
+		out[nodeID] = rank
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (s *dbState) relayNodeHeartbeats(ctx context.Context, now time.Time) map[string]repo.RelayNodeHeartbeat {
+	cutoff := now.Add(-relayNodeHeartbeatFreshnessWindow).Unix()
+	values, err := s.pg.ListRecentRelayNodeHeartbeats(ctx, cutoff)
+	if err != nil || len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]repo.RelayNodeHeartbeat, len(values))
+	for _, value := range values {
+		nodeID := strings.TrimSpace(value.NodeID)
+		if nodeID == "" {
+			continue
+		}
+		out[nodeID] = value
 	}
 	return out
 }

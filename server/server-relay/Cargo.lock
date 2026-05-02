@@ -128,10 +128,12 @@ version = "0.1.0"
 dependencies = [
  "auth",
  "base64",
+ "hmac",
  "relay-core",
  "serde",
  "serde_json",
  "session",
+ "sha2",
  "udp-relay",
 ]
 

@@ -53,7 +53,22 @@ pub struct NetworkActivationPlan {
     pub prefix_len: u8,
     pub dns_servers: Vec<String>,
     pub routes: Vec<RouteSpec>,
+    pub relay_candidates: Vec<RelayCandidate>,
     pub peer_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayCandidate {
+    pub endpoint_id: String,
+    pub transport: String,
+    pub address: String,
+    #[serde(default)]
+    pub country_code: Option<String>,
+    #[serde(default)]
+    pub region_id: Option<String>,
+    #[serde(default)]
+    pub cluster_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,6 +122,8 @@ struct RegisterDeviceRequest {
     name: String,
     platform: String,
     device_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    country_code: Option<String>,
     public_key: String,
 }
 
@@ -246,8 +263,21 @@ impl ControlPlaneClient {
             prefix_len: self.network_prefix_len(access_token, network_id, subnet_id)?,
             dns_servers: extract_dns_servers(&response),
             routes: extract_routes(&response),
+            relay_candidates: extract_relay_candidates(&response),
             peer_count: extract_peer_count(&response),
         })
+    }
+
+    pub fn relay_candidates(
+        &self,
+        access_token: &str,
+        device_id: &str,
+        network_id: &str,
+    ) -> Result<Vec<RelayCandidate>> {
+        let body = serde_json::json!({ "deviceId": device_id });
+        let path = format!("/networks/{network_id}/relay-candidates");
+        let response = self.request_json("POST", &path, access_token, Some(body))?;
+        Ok(extract_relay_candidates(&response))
     }
 
     pub fn deactivate_network(
@@ -306,6 +336,7 @@ impl ControlPlaneClient {
             name: device_name,
             platform: platform_name().to_string(),
             device_version: env!("CARGO_PKG_VERSION").to_string(),
+            country_code: device_country_code(),
             public_key: format!("client-v2-{device_id}"),
         })?;
         let response = self.request_json("POST", "/devices/register", access_token, Some(body))?;
@@ -397,6 +428,77 @@ fn extract_peer_count(response: &Value) -> usize {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or_default()
+}
+
+fn extract_relay_candidates(response: &Value) -> Vec<RelayCandidate> {
+    response
+        .pointer("/networkMap/relayRegions")
+        .or_else(|| response.pointer("/relayRegions"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|region| {
+            let country_code = region
+                .get("countryCode")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let region_id = region
+                .get("regionId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let cluster_id = region
+                .get("clusterId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            region
+                .get("endpoints")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(move |endpoint| {
+                    let endpoint_id = endpoint
+                        .get("endpointId")
+                        .and_then(Value::as_str)?
+                        .trim()
+                        .to_string();
+                    let transport = endpoint
+                        .get("transport")
+                        .and_then(Value::as_str)?
+                        .trim()
+                        .to_string();
+                    let address = endpoint
+                        .get("address")
+                        .and_then(Value::as_str)?
+                        .trim()
+                        .to_string();
+                    if endpoint_id.is_empty() || transport.is_empty() || address.is_empty() {
+                        return None;
+                    }
+                    Some(RelayCandidate {
+                        endpoint_id,
+                        transport,
+                        address,
+                        country_code: country_code.clone(),
+                        region_id: region_id.clone(),
+                        cluster_id: cluster_id.clone(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn device_country_code() -> Option<String> {
+    env::var("SLAN_DEVICE_COUNTRY_CODE")
+        .ok()
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty())
 }
 
 fn prefix_len_from_cidr(cidr: &str) -> Result<u8> {

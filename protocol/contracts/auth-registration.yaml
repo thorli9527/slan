@@ -85,12 +85,15 @@ contracts:
       platform:
         type: string
         required: true
-      machineId:
+      deviceVersion:
         type: string
-        required: true
+        required: false
       publicKey:
         type: string
         required: true
+      countryCode:
+        type: string
+        required: false
   DeviceNetworkStateRequest:
     fields:
       deviceId:
@@ -160,7 +163,10 @@ contracts:
       platform:
         type: string
         required: true
-      machineId:
+      deviceVersion:
+        type: string
+        required: false
+      countryCode:
         type: string
         required: false
       status:

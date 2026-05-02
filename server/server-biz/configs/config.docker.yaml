@@ -1,7 +1,7 @@
 # server-biz 本地 Docker 运行配置。
 #
 # 这个配置假设 PostgreSQL / Redis 都运行在同一个 docker compose 网络里。
-# relay 地址先保留为宿主机端口占位；server-relay 仍未接入这份本地 compose。
+# relay 地址使用宿主机端口映射；server-relay 已接入本地 compose 并通过 MQTT 上报心跳。
 http:
   address: ":8080"
   ops_address: ":8081"

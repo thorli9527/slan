@@ -81,6 +81,20 @@ services:
       context: ./server/server-relay
       dockerfile: Dockerfile
     container_name: slan-server-relay
+    environment:
+      SLAN_RELAY_TICKET_SIGNING_SECRET: "${SLAN_RELAY_TICKET_SIGNING_SECRET:-change-me-relay-ticket-secret}"
+      SLAN_RELAY_MQTT_ENABLED: "${SLAN_RELAY_MQTT_ENABLED:-true}"
+      SLAN_RELAY_MQTT_BROKER_URL: "${SLAN_RELAY_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
+      SLAN_RELAY_MQTT_TOPIC_PREFIX: "${SLAN_RELAY_MQTT_TOPIC_PREFIX:-slan/devices}"
+      SLAN_RELAY_MQTT_USERNAME_PREFIX: "${SLAN_RELAY_MQTT_USERNAME_PREFIX:-slan}"
+      SLAN_RELAY_MQTT_PASSWORD_SECRET: "${SLAN_RELAY_MQTT_PASSWORD_SECRET:-change-me-mqtt-secret}"
+      SLAN_RELAY_NODE_ID: "${SLAN_RELAY_NODE_ID:-relay-cn-local-udp}"
+      SLAN_RELAY_CLUSTER_ID: "${SLAN_RELAY_CLUSTER_ID:-cn-local-a}"
+      SLAN_RELAY_COUNTRY_CODE: "${SLAN_RELAY_COUNTRY_CODE:-CN}"
+      SLAN_RELAY_CITY_CODE: "${SLAN_RELAY_CITY_CODE:-local}"
+      SLAN_RELAY_TRANSPORT: "${SLAN_RELAY_TRANSPORT:-udp}"
+      SLAN_RELAY_ADDRESS: "${SLAN_RELAY_ADDRESS:-127.0.0.1:19000}"
+      SLAN_RELAY_MQTT_INTERVAL_SECONDS: "${SLAN_RELAY_MQTT_INTERVAL_SECONDS:-30}"
     command:
       [
         "--config",
@@ -92,6 +106,9 @@ services:
       - "19000:9000/udp"
     volumes:
       - ./server/server-relay/configs/relay-daemon.example.json:/app/relay-daemon.json:ro
+    depends_on:
+      bifromq:
+        condition: service_healthy
 
   server-ui-web:
     build:

@@ -232,21 +232,52 @@ func (s *dbState) controlPlaneConfig() dto.ControlPlaneConfig {
 }
 
 func (s *dbState) buildNetworkMap(ctx context.Context, userID string, self dto.Node, networkID string) dto.NetworkMap {
+	peers := s.buildNetworkMapPeers(ctx, self, networkID)
+	relayCountries := s.relayCandidateCountryCodes(ctx, self, peers)
 	return dto.NetworkMap{
-		SelfUserID:       userID,
-		SelfDeviceID:     self.DeviceID,
-		SelfNodeID:       self.NodeID,
-		NetworkID:        networkID,
-		Revision:         s.currentNetworkRevision(ctx, networkID),
-		HeartbeatSeconds: defaultControlHeartbeatSeconds,
-		STUNServers:      append([]string(nil), s.cfg.Bootstrap.STUNServers...),
-		Peers:            s.buildNetworkMapPeers(ctx, self, networkID),
-		Routes:           s.routesForNetwork(ctx, networkID),
-		RelayRegions:     s.relayRegions(),
-		DNS:              s.buildNetworkMapDNS(ctx, userID, networkID),
-		Policy:           s.buildAccessPolicy(ctx, userID),
-		MTU:              defaultTunnelMTU,
+		SelfUserID:              userID,
+		SelfDeviceID:            self.DeviceID,
+		SelfNodeID:              self.NodeID,
+		NetworkID:               networkID,
+		Revision:                s.currentNetworkRevision(ctx, networkID),
+		HeartbeatSeconds:        defaultControlHeartbeatSeconds,
+		STUNServers:             append([]string(nil), s.cfg.Bootstrap.STUNServers...),
+		Peers:                   peers,
+		Routes:                  s.routesForNetwork(ctx, networkID),
+		RelayRegions:            s.relayRegionsForCountries(relayCountries),
+		RelayCandidateCountries: append([]string(nil), relayCountries...),
+		DNS:                     s.buildNetworkMapDNS(ctx, userID, networkID),
+		Policy:                  s.buildAccessPolicy(ctx, userID),
+		MTU:                     defaultTunnelMTU,
 	}
+}
+
+func (s *dbState) relayCandidateCountryCodes(ctx context.Context, self dto.Node, peers []dto.Peer) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 4)
+	appendCountry := func(countryCode string) {
+		value := normalizeRelayCountryCode(countryCode)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	if device, err := s.pg.GetDeviceByID(ctx, self.DeviceID); err == nil {
+		appendCountry(device.CountryCode)
+	}
+	for _, peer := range peers {
+		if device, err := s.pg.GetDeviceByID(ctx, peer.DeviceID); err == nil {
+			appendCountry(device.CountryCode)
+		}
+	}
+	for _, countryCode := range s.defaultRelayCountryCodes() {
+		appendCountry(countryCode)
+	}
+	return out
 }
 
 func (s *dbState) buildAccessPolicy(ctx context.Context, userID string) dto.AccessPolicy {

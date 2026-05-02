@@ -79,8 +79,8 @@ type NodePathHealth struct {
 	NetworkID string `gorm:"column:network_id;index;not null;uniqueIndex:idx_node_peer_path_health"`
 	// NodeID 是源节点。
 	NodeID string `gorm:"column:node_id;index;not null;uniqueIndex:idx_node_peer_path_health"`
-	// PeerNodeID 是目标节点。
-	PeerNodeID string `gorm:"column:peer_node_id;index;not null;uniqueIndex:idx_node_peer_path_health"`
+	// PeerNodeID 是目标节点。relay 节点全局质量样本允许为空。
+	PeerNodeID string `gorm:"column:peer_node_id;index;not null;default:'';uniqueIndex:idx_node_peer_path_health"`
 	// PathType 是路径类型。
 	PathType string `gorm:"column:path_type;not null;uniqueIndex:idx_node_peer_path_health"`
 	// Endpoint 是对应端点地址。
@@ -100,6 +100,22 @@ type NodePathHealth struct {
 }
 
 func (NodePathHealth) TableName() string { return "node_path_health" }
+
+// RelayNodeHeartbeat records the latest MQTT heartbeat published by one relay node.
+type RelayNodeHeartbeat struct {
+	NodeID         string `gorm:"column:node_id;primaryKey"`
+	ClusterID      string `gorm:"column:cluster_id;index;not null;default:''"`
+	CountryCode    string `gorm:"column:country_code;index;not null;default:''"`
+	CityCode       string `gorm:"column:city_code;index;not null;default:''"`
+	Transport      string `gorm:"column:transport;not null;default:''"`
+	Address        string `gorm:"column:address;not null;default:''"`
+	Healthy        bool   `gorm:"column:healthy;not null;default:true"`
+	ActiveSessions int    `gorm:"column:active_sessions;not null;default:0"`
+	ReportedAtMs   uint64 `gorm:"column:reported_at_ms;not null;default:0"`
+	UpdatedAt      int64  `gorm:"column:updated_at;index;not null"`
+}
+
+func (RelayNodeHeartbeat) TableName() string { return "relay_node_heartbeats" }
 
 func (m Node) ToDTO(networkIDs []string) dto.Node {
 	return dto.Node{

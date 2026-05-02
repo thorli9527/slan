@@ -223,7 +223,7 @@ func connectPlanPolicy(sourceNatType, peerNatType string, connectionState repo.N
 // relayPathOptions converts ordered relay nodes into connect-plan path options
 // and returns the preferred relay node id list alongside them.
 func relayPathOptions(nodes []configs.RelayNodeConfig, preferredNodeID, avoidedNodeID string, startPriority int) ([]controlmsg.PathOption, []string) {
-	nodes = prioritizeRelayNodes(nodes, preferredNodeID, avoidedNodeID, nil)
+	nodes = prioritizeRelayNodesPreservingRank(nodes, preferredNodeID, avoidedNodeID)
 	paths := make([]controlmsg.PathOption, 0, len(nodes))
 	preferredNodeIDs := make([]string, 0, len(nodes))
 	priority := startPriority
@@ -237,6 +237,32 @@ func relayPathOptions(nodes []configs.RelayNodeConfig, preferredNodeID, avoidedN
 		preferredNodeIDs = append(preferredNodeIDs, node.NodeID)
 	}
 	return paths, preferredNodeIDs
+}
+
+func prioritizeRelayNodesPreservingRank(nodes []configs.RelayNodeConfig, preferredNodeID, avoidedNodeID string) []configs.RelayNodeConfig {
+	out := append([]configs.RelayNodeConfig(nil), nodes...)
+	sort.SliceStable(out, func(i, j int) bool {
+		leftPreferred := out[i].NodeID == preferredNodeID
+		rightPreferred := out[j].NodeID == preferredNodeID
+		switch {
+		case leftPreferred && !rightPreferred:
+			return true
+		case !leftPreferred && rightPreferred:
+			return false
+		}
+
+		leftAvoided := out[i].NodeID == avoidedNodeID
+		rightAvoided := out[j].NodeID == avoidedNodeID
+		switch {
+		case !leftAvoided && rightAvoided:
+			return true
+		case leftAvoided && !rightAvoided:
+			return false
+		default:
+			return false
+		}
+	})
+	return out
 }
 
 // prioritizeRelayNodes ranks relay nodes using explicit preference, avoided
@@ -511,16 +537,20 @@ func aggregatePathHealthWindow(values []repo.NodePathHealth) []pathHealthWindow 
 
 // relayNodeRank 是 relay 节点排序时使用的聚合健康评分。
 type relayNodeRank struct {
-	scoreAvg  float64
-	rttAvg    float64
-	hasScore  bool
-	hasRtt    bool
-	samples   int
-	sampledAt uint64
+	scoreAvg         float64
+	rttAvg           float64
+	hasScore         bool
+	hasRtt           bool
+	samples          int
+	sampledAt        uint64
+	hasHeartbeat     bool
+	heartbeatHealthy bool
 }
 
 func betterRelayNodeRank(left, right relayNodeRank) bool {
 	switch {
+	case relayHeartbeatRank(left) != relayHeartbeatRank(right):
+		return relayHeartbeatRank(left) > relayHeartbeatRank(right)
 	case left.hasScore && right.hasScore && left.scoreAvg != right.scoreAvg:
 		return left.scoreAvg > right.scoreAvg
 	case left.hasScore != right.hasScore:
@@ -534,4 +564,14 @@ func betterRelayNodeRank(left, right relayNodeRank) bool {
 	default:
 		return left.sampledAt > right.sampledAt
 	}
+}
+
+func relayHeartbeatRank(rank relayNodeRank) int {
+	if !rank.hasHeartbeat {
+		return 1
+	}
+	if rank.heartbeatHealthy {
+		return 2
+	}
+	return 0
 }

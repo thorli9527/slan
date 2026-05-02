@@ -298,6 +298,9 @@ func LoadConfig(path string) (Config, error) {
 	cfg := DefaultConfig()
 	if path == "" {
 		applyEnvOverrides(&cfg)
+		if err := validateRelayTopology(cfg.Relay); err != nil {
+			return Config{}, err
+		}
 		if err := validateProductionConfig(cfg); err != nil {
 			return Config{}, err
 		}
@@ -435,6 +438,9 @@ func LoadConfig(path string) (Config, error) {
 		cfg.Redis.WriteTimeoutSeconds = DefaultConfig().Redis.WriteTimeoutSeconds
 	}
 	applyEnvOverrides(&cfg)
+	if err := validateRelayTopology(cfg.Relay); err != nil {
+		return Config{}, err
+	}
 	if err := validateProductionConfig(cfg); err != nil {
 		return Config{}, err
 	}
@@ -520,6 +526,64 @@ func validateProductionConfig(cfg Config) error {
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid production config: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func validateRelayTopology(relay RelayConfig) error {
+	defaultClusterID := strings.TrimSpace(relay.DefaultClusterID)
+	if defaultClusterID == "" {
+		return fmt.Errorf("invalid relay config: default_cluster_id is required")
+	}
+	if len(relay.Countries) == 0 {
+		return fmt.Errorf("invalid relay config: at least one country is required")
+	}
+	seenNodes := make(map[string]struct{})
+	defaultClusterFound := false
+	for _, country := range relay.Countries {
+		countryCode := strings.ToUpper(strings.TrimSpace(country.CountryCode))
+		if countryCode == "" {
+			return fmt.Errorf("invalid relay config: country_code is required")
+		}
+		for _, city := range country.Cities {
+			if strings.TrimSpace(city.CityCode) == "" {
+				return fmt.Errorf("invalid relay config: city_code is required for country %s", countryCode)
+			}
+			for _, cluster := range city.Clusters {
+				clusterID := strings.TrimSpace(cluster.ClusterID)
+				if clusterID == "" {
+					return fmt.Errorf("invalid relay config: cluster_id is required")
+				}
+				if clusterID == defaultClusterID {
+					defaultClusterFound = true
+				}
+				if len(cluster.Nodes) == 0 {
+					return fmt.Errorf("invalid relay config: cluster %s must contain at least one node", clusterID)
+				}
+				for _, node := range cluster.Nodes {
+					nodeID := strings.TrimSpace(node.NodeID)
+					if nodeID == "" {
+						return fmt.Errorf("invalid relay config: node_id is required in cluster %s", clusterID)
+					}
+					if _, ok := seenNodes[nodeID]; ok {
+						return fmt.Errorf("invalid relay config: duplicate node_id %s", nodeID)
+					}
+					seenNodes[nodeID] = struct{}{}
+					transport := strings.ToLower(strings.TrimSpace(node.Transport))
+					switch transport {
+					case "udp", "tcp", "tls", "quic":
+					default:
+						return fmt.Errorf("invalid relay config: node %s has unsupported transport %q", nodeID, node.Transport)
+					}
+					if strings.TrimSpace(node.Address) == "" {
+						return fmt.Errorf("invalid relay config: node %s address is required", nodeID)
+					}
+				}
+			}
+		}
+	}
+	if !defaultClusterFound {
+		return fmt.Errorf("invalid relay config: default_cluster_id %s does not exist", defaultClusterID)
 	}
 	return nil
 }

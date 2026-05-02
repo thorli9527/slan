@@ -9,11 +9,11 @@ use std::{
     ffi::OsString,
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpStream, ToSocketAddrs},
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -35,7 +35,7 @@ use windows_service::service_control_handler::{self, ServiceControlHandlerResult
 use windows_service::service_dispatcher;
 
 use crate::control_plane::{
-    local_stable_device_id, ControlDevice, ControlPlaneClient, MqttCredential,
+    local_stable_device_id, ControlDevice, ControlPlaneClient, MqttCredential, RelayCandidate,
 };
 use crate::control_tasks::{
     ControlTaskAction, ControlTaskDirection, ControlTaskQueue, EnqueueControlTaskRequest,
@@ -77,9 +77,53 @@ pub(crate) struct PersistedSession {
     pub(crate) device_id: Option<String>,
     pub(crate) active_network_id: Option<String>,
     pub(crate) virtual_ip: Option<String>,
+    #[serde(default)]
+    pub(crate) relay_candidates: Vec<PersistedRelayCandidate>,
     pub(crate) mqtt: Option<MqttCredential>,
     pub(crate) expires_in: Option<u64>,
     pub(crate) authenticated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PersistedRelayCandidate {
+    pub(crate) endpoint_id: String,
+    pub(crate) transport: String,
+    pub(crate) address: String,
+    #[serde(default)]
+    pub(crate) country_code: Option<String>,
+    #[serde(default)]
+    pub(crate) region_id: Option<String>,
+    #[serde(default)]
+    pub(crate) cluster_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayCandidateSelection {
+    endpoint_id: String,
+    transport: String,
+    address: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    country_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    region_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cluster_id: Option<String>,
+    reachable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rtt_ms: Option<u32>,
+    path_score: u32,
+    selected: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayCandidateListResponse {
+    network_id: Option<String>,
+    refreshed: bool,
+    candidates: Vec<RelayCandidateSelection>,
+    best: Option<RelayCandidateSelection>,
 }
 
 #[derive(Debug, Default)]
@@ -389,6 +433,9 @@ fn route_request(
     if request.method == "markTransportPublished" {
         return handle_mark_transport_published(request, runtime, task_queue);
     }
+    if request.method == "relayCandidates" || request.method == "refreshRelayCandidates" {
+        return handle_relay_candidates(request.method == "refreshRelayCandidates");
+    }
     let should_notify = matches!(
         request.method.as_str(),
         "start"
@@ -530,6 +577,29 @@ fn control_transport_tick_plan(args: Value) -> Result<ControlTransportTickPlan> 
         input,
         current_timestamp_ms(),
     ))
+}
+
+fn handle_relay_candidates(refresh: bool) -> Result<String> {
+    let response = relay_candidates_response(refresh)?;
+    serde_json::to_string(&response).context("encode relay candidates")
+}
+
+fn relay_candidates_response(refresh: bool) -> Result<RelayCandidateListResponse> {
+    let mut session = load_network_session()?;
+    let network_id = ensure_active_network_id(&mut session)?;
+    let refreshed = if refresh {
+        refresh_relay_candidates_for_session(&mut session, &network_id)?
+    } else {
+        false
+    };
+    let selections = select_relay_candidates(&session.relay_candidates);
+    let best = selections.iter().find(|item| item.selected).cloned();
+    Ok(RelayCandidateListResponse {
+        network_id: Some(network_id),
+        refreshed,
+        candidates: selections,
+        best,
+    })
 }
 
 fn handle_watch_state(
@@ -766,6 +836,7 @@ fn handle_control_transport_outbox(
         current_timestamp_ms(),
         input.include_heartbeat,
         input.include_runtime_state,
+        input.include_path_health,
     );
     serde_json::to_string(&outbox).context("encode control transport outbox")
 }
@@ -1055,25 +1126,41 @@ where
         ));
     };
     let client = ControlPlaneClient::from_env();
-    if session.active_network_id.is_none() {
-        session.active_network_id = client.active_network_id(&session.access_token)?;
-    }
-    let Some(network_id) = session.active_network_id.clone() else {
-        persist_session(session)?;
-        return Err(anyhow::anyhow!(
-            "device unavailable: current user has no active network"
-        ));
-    };
+    let network_id = ensure_active_network_id(session)?;
+    let refreshed_relay_count = refresh_relay_candidates_for_session(session, &network_id)
+        .map(|_| session.relay_candidates.len())
+        .unwrap_or_else(|error| {
+            log_service_error(format!(
+                "client-core-service relay candidate refresh skipped before enable: {error:#}"
+            ));
+            session.relay_candidates.len()
+        });
+    let best_relay = best_relay_candidate(&session.relay_candidates);
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     log_service_error(format!(
-        "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={}",
+        "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={} relays={} refreshedRelays={} bestRelay={}",
         activation.virtual_ip,
         activation.prefix_len,
         activation.dns_servers.len(),
         activation.routes.len(),
-        activation.peer_count
+        activation.peer_count,
+        activation.relay_candidates.len(),
+        refreshed_relay_count,
+        best_relay
+            .as_ref()
+            .map(|relay| format!("{}:{} score={}", relay.transport, relay.address, relay.path_score))
+            .unwrap_or_else(|| "none".to_string())
     ));
     session.virtual_ip = Some(activation.virtual_ip.clone());
+    if !activation.relay_candidates.is_empty() {
+        session.relay_candidates = sorted_persisted_relay_candidates(
+            activation
+                .relay_candidates
+                .iter()
+                .map(persisted_relay_candidate)
+                .collect(),
+        );
+    }
     persist_session(session)?;
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
         virtual_ip: activation.virtual_ip.clone(),
@@ -1089,6 +1176,42 @@ where
         &activation.routes,
     )?;
     Ok(())
+}
+
+fn ensure_active_network_id(session: &mut PersistedSession) -> Result<String> {
+    if session.active_network_id.is_none() {
+        let client = ControlPlaneClient::from_env();
+        session.active_network_id = client.active_network_id(&session.access_token)?;
+    }
+    let Some(network_id) = session.active_network_id.clone() else {
+        persist_session(session)?;
+        return Err(anyhow::anyhow!(
+            "device unavailable: current user has no active network"
+        ));
+    };
+    Ok(network_id)
+}
+
+fn refresh_relay_candidates_for_session(
+    session: &mut PersistedSession,
+    network_id: &str,
+) -> Result<bool> {
+    let device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("device unavailable: current device is not registered"))?;
+    let client = ControlPlaneClient::from_env();
+    let candidates = client.relay_candidates(&session.access_token, device_id, network_id)?;
+    if candidates.is_empty() {
+        return Ok(false);
+    }
+    session.relay_candidates = sorted_persisted_relay_candidates(
+        candidates.iter().map(persisted_relay_candidate).collect(),
+    );
+    persist_session(session)?;
+    Ok(true)
 }
 
 fn sync_downstream_network_assignment<P>(runtime: &mut ClientRuntime<P>) -> Result<()>
@@ -1167,6 +1290,160 @@ fn deactivate_control_network() {
             "client-core-service failed to deactivate control network on logout/disable: {error:#}"
         )),
     }
+}
+
+fn persisted_relay_candidate(candidate: &RelayCandidate) -> PersistedRelayCandidate {
+    PersistedRelayCandidate {
+        endpoint_id: candidate.endpoint_id.clone(),
+        transport: candidate.transport.clone(),
+        address: candidate.address.clone(),
+        country_code: candidate.country_code.clone(),
+        region_id: candidate.region_id.clone(),
+        cluster_id: candidate.cluster_id.clone(),
+    }
+}
+
+fn sorted_persisted_relay_candidates(
+    mut candidates: Vec<PersistedRelayCandidate>,
+) -> Vec<PersistedRelayCandidate> {
+    let selections = select_relay_candidates(&candidates);
+    let rank_by_endpoint = selections
+        .iter()
+        .enumerate()
+        .map(|(index, item)| (item.endpoint_id.clone(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    candidates.sort_by_key(|candidate| {
+        rank_by_endpoint
+            .get(candidate.endpoint_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    candidates
+}
+
+fn best_relay_candidate(candidates: &[PersistedRelayCandidate]) -> Option<RelayCandidateSelection> {
+    select_relay_candidates(candidates)
+        .into_iter()
+        .find(|candidate| candidate.selected)
+}
+
+fn select_relay_candidates(candidates: &[PersistedRelayCandidate]) -> Vec<RelayCandidateSelection> {
+    let mut selections = candidates
+        .iter()
+        .filter(|candidate| {
+            !candidate.endpoint_id.trim().is_empty()
+                && !candidate.transport.trim().is_empty()
+                && !candidate.address.trim().is_empty()
+        })
+        .map(score_relay_candidate)
+        .collect::<Vec<_>>();
+    selections.sort_by(|left, right| {
+        right
+            .reachable
+            .cmp(&left.reachable)
+            .then_with(|| left.path_score.cmp(&right.path_score))
+            .then_with(|| left.endpoint_id.cmp(&right.endpoint_id))
+    });
+    for (index, selection) in selections.iter_mut().enumerate() {
+        selection.selected = index == 0 && selection.reachable;
+    }
+    selections
+}
+
+fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateSelection {
+    let transport = candidate.transport.trim().to_ascii_lowercase();
+    let mut reachable = true;
+    let mut rtt_ms = None;
+    let path_score = match transport.as_str() {
+        "tcp" | "tls" => match probe_relay_tcp_rtt_ms(&candidate.address) {
+            Some(rtt) => {
+                rtt_ms = Some(rtt);
+                rtt.saturating_add(if transport == "tls" { 150 } else { 100 })
+            }
+            None => {
+                reachable = false;
+                10_000
+            }
+        },
+        "quic" => 700,
+        "udp" => 800,
+        _ => 9_000,
+    };
+    RelayCandidateSelection {
+        endpoint_id: candidate.endpoint_id.clone(),
+        transport: candidate.transport.clone(),
+        address: candidate.address.clone(),
+        country_code: candidate.country_code.clone(),
+        region_id: candidate.region_id.clone(),
+        cluster_id: candidate.cluster_id.clone(),
+        reachable,
+        rtt_ms,
+        path_score,
+        selected: false,
+    }
+}
+
+fn probe_relay_tcp_rtt_ms(address: &str) -> Option<u32> {
+    let socket = address
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut values| values.next())?;
+    let started = Instant::now();
+    TcpStream::connect_timeout(&socket, Duration::from_millis(750)).ok()?;
+    Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
+}
+
+pub(crate) fn persist_relay_candidates_from_network_map(map: &Value) -> Result<usize> {
+    let candidates = extract_persisted_relay_candidates_from_network_map(map);
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+    let mut session = load_session()?;
+    session.relay_candidates = sorted_persisted_relay_candidates(candidates);
+    persist_session(&session)?;
+    Ok(session.relay_candidates.len())
+}
+
+fn extract_persisted_relay_candidates_from_network_map(
+    map: &Value,
+) -> Vec<PersistedRelayCandidate> {
+    map.get("relayRegions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|region| {
+            let country_code = optional_trimmed_string(region.get("countryCode"));
+            let region_id = optional_trimmed_string(region.get("regionId"));
+            let cluster_id = optional_trimmed_string(region.get("clusterId"));
+            region
+                .get("endpoints")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(move |endpoint| {
+                    let endpoint_id = optional_trimmed_string(endpoint.get("endpointId"))?;
+                    let transport = optional_trimmed_string(endpoint.get("transport"))?;
+                    let address = optional_trimmed_string(endpoint.get("address"))?;
+                    Some(PersistedRelayCandidate {
+                        endpoint_id,
+                        transport,
+                        address,
+                        country_code: country_code.clone(),
+                        region_id: region_id.clone(),
+                        cluster_id: cluster_id.clone(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn optional_trimmed_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn clear_session_virtual_ip() -> Result<()> {
@@ -1479,7 +1756,7 @@ fn status_is_managed_disabled(status: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::status_is_managed_disabled;
+    use super::{select_relay_candidates, status_is_managed_disabled, PersistedRelayCandidate};
 
     #[test]
     fn online_presence_statuses_do_not_disable_local_network() {
@@ -1506,6 +1783,40 @@ mod tests {
         ] {
             assert!(status_is_managed_disabled(status));
         }
+    }
+
+    #[test]
+    fn relay_selection_prefers_reachable_low_score_candidate() {
+        let selections = select_relay_candidates(&[
+            PersistedRelayCandidate {
+                endpoint_id: "relay-bad".to_string(),
+                transport: "unknown".to_string(),
+                address: "127.0.0.1:1".to_string(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+            },
+            PersistedRelayCandidate {
+                endpoint_id: "relay-quic".to_string(),
+                transport: "quic".to_string(),
+                address: "127.0.0.1:9000".to_string(),
+                country_code: Some("CN".to_string()),
+                region_id: None,
+                cluster_id: None,
+            },
+            PersistedRelayCandidate {
+                endpoint_id: "relay-udp".to_string(),
+                transport: "udp".to_string(),
+                address: "127.0.0.1:9001".to_string(),
+                country_code: Some("CN".to_string()),
+                region_id: None,
+                cluster_id: None,
+            },
+        ]);
+        assert_eq!(selections[0].endpoint_id, "relay-quic");
+        assert!(selections[0].selected);
+        assert_eq!(selections[1].endpoint_id, "relay-udp");
+        assert!(!selections[1].selected);
     }
 }
 
@@ -1548,6 +1859,7 @@ impl From<AuthPayload> for PersistedSession {
             device_id: payload.device_id,
             active_network_id: None,
             virtual_ip: payload.virtual_ip,
+            relay_candidates: Vec::new(),
             mqtt: None,
             expires_in: payload.expires_in,
             authenticated_at_ms: current_timestamp_ms(),
@@ -1565,6 +1877,7 @@ impl PersistedSession {
             device_id: None,
             active_network_id: None,
             virtual_ip: None,
+            relay_candidates: Vec::new(),
             mqtt: None,
             expires_in: None,
             authenticated_at_ms: current_timestamp_ms(),
@@ -1743,7 +2056,7 @@ pub(crate) fn load_session() -> Result<PersistedSession> {
     serde_json::from_slice(&payload).with_context(|| format!("decode {}", path.display()))
 }
 
-fn persist_session(session: &PersistedSession) -> Result<()> {
+pub(crate) fn persist_session(session: &PersistedSession) -> Result<()> {
     let path = session_file_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;

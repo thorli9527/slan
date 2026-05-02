@@ -15,6 +15,7 @@ type Network interface {
 	JoinByKey(userID string, req dto.JoinNetworkByKeyRequest) (dto.NetworkJoinResult, error)
 	Switch(userID, networkID string, req dto.SwitchNetworkRequest) (dto.NetworkJoinResult, error)
 	Activate(userID, networkID string, req dto.JoinNetworkRequest) (dto.NetworkJoinResult, error)
+	RelayCandidates(userID, networkID string, req dto.JoinNetworkRequest) (dto.NetworkMap, error)
 	Deactivate(userID, networkID string, req dto.DeactivateNetworkRequest) error
 	PlanStatus(userID string) (dto.PlanStatus, error)
 	ListMembers(userID, networkID string) ([]dto.NetworkMember, error)

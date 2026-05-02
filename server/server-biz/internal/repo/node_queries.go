@@ -96,6 +96,24 @@ func (r *PostgresRepository) ListRecentRelayNodePathHealth(ctx context.Context, 
 	return out, err
 }
 
+func (r *PostgresRepository) ListRecentNodePathHealth(ctx context.Context, cutoff int64) ([]NodePathHealth, error) {
+	var out []NodePathHealth
+	err := r.db.WithContext(ctx).
+		Where("updated_at >= ?", cutoff).
+		Order("updated_at desc, sampled_at_ms desc, health_id").
+		Find(&out).Error
+	return out, err
+}
+
+func (r *PostgresRepository) ListRecentRelayNodeHeartbeats(ctx context.Context, cutoff int64) ([]RelayNodeHeartbeat, error) {
+	var out []RelayNodeHeartbeat
+	err := r.db.WithContext(ctx).
+		Where("updated_at >= ?", cutoff).
+		Order("updated_at desc, node_id").
+		Find(&out).Error
+	return out, err
+}
+
 // ListNodesByDevice returns all nodes registered under one device.
 func (r *PostgresRepository) ListNodesByDevice(ctx context.Context, deviceID string) ([]Node, error) {
 	var out []Node

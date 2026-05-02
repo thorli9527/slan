@@ -90,6 +90,7 @@ message NetworkMap {
   repeated RelayRegion relay_regions = 10;
   DNSConfig dns = 11;
   int32 mtu = 12;
+  repeated string relay_candidate_countries = 13;
 }
 
 // 网络中的对等节点信息。

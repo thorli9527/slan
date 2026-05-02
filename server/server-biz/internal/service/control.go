@@ -28,6 +28,8 @@ type ControlChannel interface {
 	ReportConnectionState(userID, nodeID string, state controlmsg.ConnectionState) error
 	// ReportPathHealth 上报某条 direct 或 relay 路径的质量观测结果。
 	ReportPathHealth(userID, nodeID string, report controlmsg.PathHealthReport) error
+	// ReportRelayHeartbeat records one relay node heartbeat from MQTT.
+	ReportRelayHeartbeat(report controlmsg.RelayNodeHeartbeat) error
 	// Disconnect 显式关闭当前节点到某个对端节点的连接关系。
 	Disconnect(userID, nodeID string, notice controlmsg.DisconnectNotice) error
 	// Heartbeat 刷新指定节点控制面会话的活跃时间，避免其被当作离线节点清理。
@@ -42,6 +44,8 @@ type ControlChannel interface {
 	ConnectPlanByNode(nodeID, networkID, peerNodeID string) (controlmsg.ConnectPlan, error)
 	// ActiveSessions returns fresh control sessions in a network for MQTT fanout.
 	ActiveSessions(networkID, excludeNodeID string) ([]ControlSession, error)
+	// LatestSessionByDevice returns the newest fresh control session for a device.
+	LatestSessionByDevice(deviceID string) (ControlSession, error)
 }
 
 type ControlSession struct {

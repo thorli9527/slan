@@ -12,6 +12,7 @@ type Device struct {
 	Name          string  `gorm:"column:name;not null"`
 	Platform      string  `gorm:"column:platform;not null"`
 	DeviceVersion string  `gorm:"column:device_version;not null;default:''"`
+	CountryCode   string  `gorm:"column:country_code;not null;default:''"`
 	Status        string  `gorm:"column:status;not null"`
 	PublicKey     *string `gorm:"column:public_key"`
 	CreatedAt     int64   `gorm:"column:created_at;not null;default:0"`
@@ -29,6 +30,7 @@ func (m Device) ToDTO(networkIDs []string) dto.Device {
 		Name:          m.Name,
 		Platform:      m.Platform,
 		DeviceVersion: m.DeviceVersion,
+		CountryCode:   m.CountryCode,
 		Status:        m.Status,
 		CreatedAt:     m.CreatedAt,
 		PublicKey:     publicKey,
@@ -48,6 +50,7 @@ func (r *PostgresRepository) UpdateDevice(ctx context.Context, record Device) er
 			"name":           record.Name,
 			"platform":       record.Platform,
 			"device_version": record.DeviceVersion,
+			"country_code":   record.CountryCode,
 			"status":         record.Status,
 			"public_key":     record.PublicKey,
 		}).Error

@@ -146,6 +146,9 @@ contracts:
       relayRegions:
         type: RelayRegion[]
         required: false
+      relayCandidateCountries:
+        type: string[]
+        required: false
       dns:
         type: DNSConfig
         required: true
