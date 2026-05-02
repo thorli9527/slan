@@ -56,6 +56,9 @@ Device runtime state is intentionally separated:
   for credential validation and `POST /mqtt/bifromq/check` for topic access
   checks. MQTT authentication success marks only the control channel as
   reachable.
+- MQTT control/config/task messages use QoS 2. Heartbeat and runtime state
+  messages use QoS 0. For QoS 2 messages, the receiver should complete local
+  handling before completing the MQTT acknowledgement handshake.
 - `PUT /devices/{deviceId}/networks/{networkId}/state` reports whether the
   virtual network is enabled, whether the local tunnel is up, and the latest
   health probe result.

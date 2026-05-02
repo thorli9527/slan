@@ -260,11 +260,34 @@ func publishControlMQTTEnvelope(deps routerDeps, deviceID, msgType, requestID st
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(deps.Config.MQTT.PublishTimeoutMilliseconds)*time.Millisecond)
 	defer cancel()
-	return mqttauth.PublishJSON(ctx, deps.Config.MQTT, credential.ClientID, credential.Username, credential.Password, mqttauth.ControlDownTopic(deps.Config.MQTT, deviceID), controlmsg.Envelope{
+	return mqttauth.PublishJSONWithOptions(ctx, deps.Config.MQTT, credential.ClientID, credential.Username, credential.Password, mqttauth.ControlDownTopic(deps.Config.MQTT, deviceID), controlmsg.Envelope{
 		Type:      msgType,
 		RequestID: requestID,
+		MessageID: controlMQTTMessageID(msgType),
 		Payload:   payload,
+	}, mqttauth.PublishOptions{
+		QoS: controlMQTTMessageQoS(msgType),
 	})
+}
+
+func controlMQTTMessageID(msgType string) string {
+	if controlMQTTMessageQoS(msgType) == mqttauth.PublishQoSAtMostOnce {
+		return ""
+	}
+	return util.NewID("msg")
+}
+
+func controlMQTTMessageQoS(msgType string) byte {
+	switch msgType {
+	case "pong":
+		// Heartbeat responses are intentionally lossy and should not pay the
+		// QoS2 round-trip cost.
+		return mqttauth.PublishQoSAtMostOnce
+	default:
+		// Control/config/task responses must survive transient client or broker
+		// interruptions.
+		return mqttauth.PublishQoSExactlyOnce
+	}
 }
 
 func parseControlUpTopic(topicPrefix, topic string) (string, bool) {

@@ -79,6 +79,17 @@ pub struct DownstreamControlMessage {
     pub require_ui_refresh: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DownstreamEnvelope {
+    #[serde(rename = "type")]
+    message_type: String,
+    #[serde(default)]
+    message_id: Option<String>,
+    #[serde(default)]
+    payload: Value,
+}
+
 #[derive(Debug, Clone)]
 pub struct AcceptedDownstreamControlMessage {
     pub action: String,
@@ -329,6 +340,105 @@ pub fn normalize_downstream_control_message(
     })
 }
 
+pub fn normalize_downstream_control_value(
+    value: Value,
+    self_device_id: Option<&str>,
+) -> Result<Option<AcceptedDownstreamControlMessage>> {
+    if value.get("type").and_then(Value::as_str).is_some() {
+        return normalize_downstream_envelope(value, self_device_id);
+    }
+    let message: DownstreamControlMessage =
+        serde_json::from_value(value).map_err(|err| anyhow::anyhow!("{err}"))?;
+    normalize_downstream_control_message(message).map(Some)
+}
+
+fn normalize_downstream_envelope(
+    value: Value,
+    self_device_id: Option<&str>,
+) -> Result<Option<AcceptedDownstreamControlMessage>> {
+    let envelope: DownstreamEnvelope = serde_json::from_value(value)?;
+    match envelope.message_type.trim() {
+        "device_network_disabled" => {
+            let device_id = envelope
+                .payload
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            if !message_targets_self(device_id, self_device_id) {
+                return Ok(None);
+            }
+            Ok(Some(AcceptedDownstreamControlMessage {
+                action: "disableNetwork".to_string(),
+                delivery_id: envelope_delivery_id(
+                    envelope.message_id,
+                    "device-network-disabled",
+                    &envelope.payload,
+                ),
+                require_ui_refresh: true,
+            }))
+        }
+        "device_ip_reassigned" => {
+            let device_id = envelope
+                .payload
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            if !message_targets_self(device_id, self_device_id) {
+                return Ok(None);
+            }
+            let virtual_ip = envelope
+                .payload
+                .get("virtualIp")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            if !virtual_ip.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(AcceptedDownstreamControlMessage {
+                action: "disableNetwork".to_string(),
+                delivery_id: envelope_delivery_id(
+                    envelope.message_id,
+                    "device-ip-cleared",
+                    &envelope.payload,
+                ),
+                require_ui_refresh: true,
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn message_targets_self(device_id: &str, self_device_id: Option<&str>) -> bool {
+    let Some(self_device_id) = self_device_id else {
+        return false;
+    };
+    !device_id.is_empty() && device_id == self_device_id.trim()
+}
+
+fn envelope_delivery_id(message_id: Option<String>, prefix: &str, payload: &Value) -> String {
+    message_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            let network_id = payload
+                .get("networkId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let device_id = payload
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let attachment_id = payload
+                .get("attachmentId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            format!("{prefix}-{network_id}-{device_id}-{attachment_id}")
+        })
+}
+
 pub fn downstream_task_ack(task: &ControlTask) -> Option<ControlTaskAck> {
     let status = match task.status {
         ControlTaskStatus::Succeeded => ControlTaskAckStatus::Succeeded,
@@ -358,6 +468,69 @@ fn transport_ack_message_id(task_id: &str) -> String {
 }
 
 const CONTROL_ACK_MESSAGE_ID_PREFIX: &str = "control-ack-";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_disabled_envelope_targets_self_as_disable_task() {
+        let accepted = normalize_downstream_control_value(
+            serde_json::json!({
+                "type": "device_network_disabled",
+                "messageId": "msg-1",
+                "payload": {
+                    "networkId": "net-1",
+                    "deviceId": "dev-1",
+                    "attachmentId": "att-1"
+                }
+            }),
+            Some("dev-1"),
+        )
+        .expect("normalize")
+        .expect("accepted");
+
+        assert_eq!(accepted.action, "disableNetwork");
+        assert_eq!(accepted.delivery_id, "msg-1");
+        assert!(accepted.require_ui_refresh);
+    }
+
+    #[test]
+    fn device_disabled_envelope_for_peer_is_ignored() {
+        let accepted = normalize_downstream_control_value(
+            serde_json::json!({
+                "type": "device_network_disabled",
+                "messageId": "msg-1",
+                "payload": {
+                    "networkId": "net-1",
+                    "deviceId": "dev-other"
+                }
+            }),
+            Some("dev-1"),
+        )
+        .expect("normalize");
+
+        assert!(accepted.is_none());
+    }
+
+    #[test]
+    fn direct_downstream_task_still_normalizes() {
+        let accepted = normalize_downstream_control_value(
+            serde_json::json!({
+                "action": "disableNetwork",
+                "deliveryId": "delivery-1",
+                "requireUiRefresh": true
+            }),
+            Some("dev-1"),
+        )
+        .expect("normalize")
+        .expect("accepted");
+
+        assert_eq!(accepted.action, "disableNetwork");
+        assert_eq!(accepted.delivery_id, "delivery-1");
+        assert!(accepted.require_ui_refresh);
+    }
+}
 
 fn mqtt_credential_ready(credential: Option<&MqttCredential>, missing: &mut Vec<String>) -> bool {
     let Some(credential) = credential else {

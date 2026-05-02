@@ -33,16 +33,51 @@ export class ConsoleSessionService {
     const consoleLoginKey = params.get('consoleLoginKey');
     const clientPlatform = params.get('clientPlatform');
     const clientName = params.get('clientName');
-    const resolvedDeviceId = (deviceId || clientDeviceId || '').trim();
-    const resolvedCallbackId = callbackId?.trim() || resolvedDeviceId || undefined;
+    const resolvedDeviceId = this.usableClientDeviceId(deviceId || clientDeviceId || '');
+    const resolvedCallbackId = callbackId?.trim() || undefined;
     return {
       authMode: authMode === 'login' || authMode === 'register' ? authMode : undefined,
       callbackId: resolvedCallbackId,
       consoleLoginKey: consoleLoginKey?.trim() || undefined,
       deviceId: resolvedDeviceId,
-      clientPlatform: clientPlatform?.trim() || 'desktop',
+      clientPlatform: clientPlatform?.trim() || this.detectClientPlatform(),
       clientName: clientName?.trim() || 'SLAN Client',
     };
+  }
+
+  usableClientDeviceId(deviceId: string | null | undefined): string {
+    const value = (deviceId || '').trim();
+    if (!value) {
+      return '';
+    }
+    const lower = value.toLowerCase();
+    if (lower === 'authcallbackid' || lower === 'windows-plugin-login' || lower === 'macos-plugin-login') {
+      return '';
+    }
+    if (lower.startsWith('cb-')) {
+      return '';
+    }
+    return value;
+  }
+
+  detectClientPlatform(): string {
+    const value = `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+    if (value.includes('win')) {
+      return 'windows';
+    }
+    if (value.includes('mac')) {
+      return 'macos';
+    }
+    if (value.includes('linux')) {
+      return 'linux';
+    }
+    if (value.includes('android')) {
+      return 'android';
+    }
+    if (value.includes('iphone') || value.includes('ipad') || value.includes('ios')) {
+      return 'ios';
+    }
+    return 'unknown';
   }
 
   persistAuth(auth: AuthResponse): void {
@@ -68,13 +103,13 @@ export class ConsoleSessionService {
     localStorage.removeItem('slan.deviceId');
   }
 
-  ensureMachineId(): string {
-    const existing = localStorage.getItem('slan.machineId');
+  ensureWebDeviceId(): string {
+    const existing = localStorage.getItem('slan.webDeviceId');
     if (existing) {
       return existing;
     }
     const created = `web-${crypto.randomUUID()}`;
-    localStorage.setItem('slan.machineId', created);
+    localStorage.setItem('slan.webDeviceId', created);
     return created;
   }
 
@@ -107,11 +142,12 @@ export class ConsoleSessionService {
         callbackDeviceId: input.callbackDeviceId,
       };
     }
+    input.preferredMachineId = this.usableClientDeviceId(input.preferredMachineId);
     if (input.preferredMachineId) {
       const resolved = await this.api.registerDevice(input.token, {
+        deviceId: input.preferredMachineId,
         name: input.clientName,
         platform: input.clientPlatform,
-        machineId: input.preferredMachineId,
         publicKey: `web-console-${input.preferredMachineId}`,
       });
       const loaded = await this.loadDevices(input.token, resolved.deviceId);
@@ -148,12 +184,12 @@ export class ConsoleSessionService {
       };
     }
 
-    const machineId = this.ensureMachineId();
+    const webDeviceId = this.ensureWebDeviceId();
     const created = await this.api.registerDevice(input.token, {
+      deviceId: webDeviceId,
       name: 'Web Console Device',
       platform: 'web',
-      machineId,
-      publicKey: `web-console-${machineId}`,
+      publicKey: `web-console-${webDeviceId}`,
     });
     const devices = [...loaded.devices, created];
     this.persistCurrentDeviceId(created.deviceId);

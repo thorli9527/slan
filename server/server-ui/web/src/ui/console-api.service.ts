@@ -45,9 +45,9 @@ type RequestOptions = {
 };
 
 type RegisterDeviceInput = {
+  deviceId?: string;
   name: string;
   platform: string;
-  machineId: string;
   publicKey: string;
 };
 
@@ -282,8 +282,10 @@ export class ConsoleApiService {
   completeCallback(
     callbackId: string,
     payload: CompleteAuthCallbackRequest,
+    token?: string,
   ): Promise<void> {
     return this.request(`/auth/callback-status/${encodeURIComponent(callbackId)}/complete`, {
+      token,
       init: {
         method: 'POST',
         body: JSON.stringify(payload)

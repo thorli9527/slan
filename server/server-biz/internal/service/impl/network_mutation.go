@@ -12,6 +12,7 @@ import (
 )
 
 func (s dbNetworkService) Create(userID string, req dto.CreateNetworkRequest) (dto.Network, error) {
+	req = normalizeCreateNetworkDefaults(req)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		return dto.Network{}, fmt.Errorf("%w: name is required", ErrInvalidArgument)
@@ -315,7 +316,7 @@ func (s dbNetworkService) UpdateAttachmentStatus(userID, networkID, attachmentID
 		if err := s.state.ensureFixedDeviceLimitAllowsActivation(ctx, record.OwnerUserID, networkID, attachment.SubnetID, attachment.DeviceID); err != nil {
 			return dto.NetworkAssignment{}, err
 		}
-		virtualIP, err := s.state.ensureAttachmentVirtualIP(ctx, attachment, member)
+		virtualIP, err := s.state.ensureAttachmentVirtualIP(ctx, attachment)
 		if err != nil {
 			return dto.NetworkAssignment{}, err
 		}
@@ -328,7 +329,7 @@ func (s dbNetworkService) UpdateAttachmentStatus(userID, networkID, attachmentID
 		}
 		s.state.publishDeviceIPReassigned(networkID, attachment.DeviceID, attachment.AttachmentID, virtualIP)
 	case "disabled", "suspended":
-		virtualIP, err := s.state.ensureAttachmentVirtualIP(ctx, attachment, member)
+		virtualIP, err := s.state.ensureAttachmentVirtualIP(ctx, attachment)
 		if err != nil {
 			return dto.NetworkAssignment{}, err
 		}
@@ -447,4 +448,18 @@ func isDNSLabel(label string) bool {
 func hasCreateNetworkDHCPOptions(req dto.CreateNetworkRequest) bool {
 	return strings.TrimSpace(req.AllocationStartIP) != "" ||
 		strings.TrimSpace(req.AllocationEndIP) != ""
+}
+
+func normalizeCreateNetworkDefaults(req dto.CreateNetworkRequest) dto.CreateNetworkRequest {
+	switch strings.TrimSpace(req.CIDR) {
+	case "10.0.0.0/16", "10.0.0.0/22", "10.0.0.0/24":
+		req.CIDR = ""
+	}
+	if strings.TrimSpace(req.AllocationStartIP) == "10.0.0.2" {
+		req.AllocationStartIP = ""
+	}
+	if strings.TrimSpace(req.AllocationEndIP) == "10.0.0.254" {
+		req.AllocationEndIP = ""
+	}
+	return req
 }

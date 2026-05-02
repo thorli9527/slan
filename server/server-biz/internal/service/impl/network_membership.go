@@ -80,6 +80,9 @@ func (s *dbState) ensureMember(ctx context.Context, networkID, deviceID, role st
 }
 
 func (s *dbState) ensureMemberWithStatus(ctx context.Context, networkID, deviceID, role, status string) (dto.NetworkMember, error) {
+	if err := s.ensureUniqueMachineInNetwork(ctx, networkID, deviceID); err != nil {
+		return dto.NetworkMember{}, err
+	}
 	member, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, deviceID)
 	if err == nil {
 		if member.Status == "rejected" && status == "pending" {
@@ -102,7 +105,14 @@ func (s *dbState) ensureMemberWithStatus(ctx context.Context, networkID, deviceI
 		CreatedAt: time.Now().Unix(),
 		Status:    status,
 	}
-	return member, s.pg.CreateMember(ctx, member)
+	if err := s.pg.CreateMember(ctx, member); err != nil {
+		return dto.NetworkMember{}, err
+	}
+	return s.pg.GetMemberByNetworkDevice(ctx, networkID, deviceID)
+}
+
+func (s *dbState) ensureUniqueMachineInNetwork(ctx context.Context, networkID, deviceID string) error {
+	return nil
 }
 
 // ensureSingleNetworkMembership keeps one device attached to exactly one
@@ -165,13 +175,6 @@ func (s *dbState) ensureAttachment(ctx context.Context, networkID, subnetID, dev
 		virtualIP, err := s.allocateIP(ctx, subnet)
 		if err != nil {
 			return dto.SubnetAttachment{}, err
-		}
-		if member, err := s.pg.GetMemberByNetworkDevice(ctx, networkID, deviceID); err == nil && member.Role == "owner" {
-			if preferred, ok, err := s.preferredOwnerIP(ctx, subnet); err != nil {
-				return dto.SubnetAttachment{}, err
-			} else if ok {
-				virtualIP = preferred
-			}
 		}
 
 		attachment = dto.SubnetAttachment{

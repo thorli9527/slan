@@ -25,4 +25,4 @@ Implementation boundary:
 
 - AppIndicator/libayatana integration belongs in the Linux runner or platform plugin.
 - Flutter UI remains a thin state/command shell.
-- Network operations remain in `client-core-service` and `client-core-helper`.
+- Network operations remain in `client-core-service`.

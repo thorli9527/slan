@@ -1,10 +1,13 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod control_plane;
 mod control_tasks;
 mod control_transport;
 mod control_transport_worker;
 
 use std::{
-    fs,
+    ffi::OsString,
+    fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
     path::PathBuf,
@@ -14,23 +17,48 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use client_core::{AssignedIpPayload, AuthPayload, ClientCommand, ClientRuntime, ClientViewState};
+use client_core::{
+    AssignedIpPayload, AuthPayload, ClientCommand, ClientRuntime, ClientViewState, PlatformNetwork,
+};
 use client_core_platform::PlatformNetworkImpl;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(target_os = "windows")]
+use windows_service::define_windows_service;
+#[cfg(target_os = "windows")]
+use windows_service::service::{
+    ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
+};
+#[cfg(target_os = "windows")]
+use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+#[cfg(target_os = "windows")]
+use windows_service::service_dispatcher;
 
-use crate::control_plane::{ControlDevice, ControlPlaneClient, MqttCredential};
+use crate::control_plane::{
+    local_stable_device_id, ControlDevice, ControlPlaneClient, MqttCredential,
+};
 use crate::control_tasks::{
     ControlTaskAction, ControlTaskDirection, ControlTaskQueue, EnqueueControlTaskRequest,
 };
 use crate::control_transport::{
     ControlTransportCadence, ControlTransportOutbox, ControlTransportOutboxRequest,
     ControlTransportPlan, ControlTransportStatus, ControlTransportTickPlan,
-    ControlTransportTickRequest, DownstreamControlMessage, PublishedControlTransportMessage,
+    ControlTransportTickRequest, PublishedControlTransportMessage,
 };
 use crate::control_transport_worker::ControlTransportWorkerState;
 
 const DEFAULT_SERVICE_HOST: &str = "127.0.0.1:46392";
+#[cfg(target_os = "windows")]
+const WINDOWS_SERVICE_NAME: &str = "SLANClientV2Service";
+pub(crate) const BUSINESS_SESSION_CHANGED: &str = "session.changed";
+pub(crate) const BUSINESS_NETWORK_SWITCH_FINISHED: &str = "network.switch.finished";
+pub(crate) const BUSINESS_NETWORK_SWITCH_FAILED: &str = "network.switch.failed";
+pub(crate) const BUSINESS_NETWORK_RUNTIME_CHANGED: &str = "network.runtime.changed";
+pub(crate) const BUSINESS_CONTROL_SYNC_CHANGED: &str = "control.sync.changed";
+pub(crate) const BUSINESS_STATE_CHANGED: &str = "state.changed";
+
+#[cfg(target_os = "windows")]
+define_windows_service!(ffi_service_main, service_main);
 
 #[derive(Debug, Deserialize)]
 struct ServiceRequest {
@@ -66,8 +94,9 @@ struct MarkControlAckedRequest {
 }
 
 #[derive(Debug, Default)]
-struct StateChangeNotifier {
+pub(crate) struct StateChangeNotifier {
     revision: Mutex<u64>,
+    event: Mutex<Option<StoredBusinessEvent>>,
     changed: Condvar,
 }
 
@@ -87,6 +116,31 @@ struct WatchStateResponse {
     state: ClientViewState,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredBusinessEvent {
+    business_type: String,
+    business_data: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WatchBusinessEventRequest {
+    #[serde(default)]
+    last_revision: u64,
+    #[serde(default = "default_watch_timeout_ms")]
+    timeout_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WatchBusinessEventResponse {
+    revision: u64,
+    business_type: String,
+    business_data: Value,
+    snapshot: ClientViewState,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandOrigin {
     Upstream,
@@ -94,13 +148,41 @@ enum CommandOrigin {
 }
 
 fn main() -> Result<()> {
+    if std::env::args().any(|arg| arg == "--ensure-device-id") {
+        println!("{}", local_stable_device_id()?);
+        return Ok(());
+    }
+    if std::env::args()
+        .any(|arg| arg == "--install-adapter" || arg == "--prepare-adapter" || arg == "--driver")
+    {
+        PlatformNetworkImpl::default().install_adapter()?;
+        return Ok(());
+    }
+    #[cfg(target_os = "windows")]
+    if std::env::args().any(|arg| arg == "--windows-service") {
+        return service_dispatcher::start(WINDOWS_SERVICE_NAME, ffi_service_main)
+            .context("start Windows service dispatcher");
+    }
+
+    run_service_server()
+}
+
+fn run_service_server() -> Result<()> {
+    log_service_error("client-core-service starting");
+    ensure_elevated_runtime()?;
+
     let bind_address = std::env::var("SLAN_CLIENT_CORE_SERVICE_HOST")
         .unwrap_or_else(|_| DEFAULT_SERVICE_HOST.to_string());
     let listener = TcpListener::bind(&bind_address)
         .with_context(|| format!("bind client-core-service on {bind_address}"))?;
     let mut initial_runtime = ClientRuntime::new(PlatformNetworkImpl::default());
-    if let Ok(session) = load_session() {
+    if let Some(session) = load_valid_registered_session() {
         let _ = initial_runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+    }
+    if let Err(error) = PlatformNetworkImpl::default().install_adapter() {
+        log_service_error(format!(
+            "client-core-service failed to prepare Wintun adapter: {error:#}"
+        ));
     }
     let runtime = Arc::new(Mutex::new(initial_runtime));
     let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
@@ -118,6 +200,7 @@ fn main() -> Result<()> {
         Arc::clone(&runtime),
         Arc::clone(&task_queue),
         Arc::clone(&transport_worker_state),
+        Arc::clone(&state_notifier),
     );
     println!("client-core-service listening on {bind_address}");
 
@@ -131,11 +214,86 @@ fn main() -> Result<()> {
             if let Err(error) =
                 handle_connection(stream, runtime, task_queue, sync_throttle, state_notifier)
             {
-                eprintln!("client-core-service connection error: {error:#}");
+                log_service_error(format!("client-core-service connection error: {error:#}"));
             }
         });
     }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn service_main(_arguments: Vec<OsString>) {
+    if let Err(error) = run_windows_service() {
+        log_service_error(format!(
+            "client-core-service windows service fatal: {error:#}"
+        ));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_service() -> Result<()> {
+    let status_handle =
+        service_control_handler::register(WINDOWS_SERVICE_NAME, move |control_event| {
+            match control_event {
+                ServiceControl::Stop | ServiceControl::Shutdown => {
+                    log_service_error("client-core-service windows service stopping");
+                    std::process::exit(0);
+                }
+                _ => ServiceControlHandlerResult::NotImplemented,
+            }
+        })
+        .context("register Windows service control handler")?;
+    set_windows_service_status(&status_handle, ServiceState::StartPending)?;
+    set_windows_service_status(&status_handle, ServiceState::Running)?;
+    let result = run_service_server();
+    let _ = set_windows_service_status(&status_handle, ServiceState::Stopped);
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_service_status(
+    status_handle: &windows_service::service_control_handler::ServiceStatusHandle,
+    state: ServiceState,
+) -> Result<()> {
+    let controls = match state {
+        ServiceState::Running => ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
+        _ => ServiceControlAccept::empty(),
+    };
+    status_handle
+        .set_service_status(ServiceStatus {
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: state,
+            controls_accepted: controls,
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::from_secs(10),
+            process_id: None,
+        })
+        .context("set Windows service status")
+}
+
+fn ensure_elevated_runtime() -> Result<()> {
+    if is_elevated_runtime() {
+        return Ok(());
+    }
+    let message =
+        "client-core-service requires administrator permission for Wintun and network settings";
+    log_service_error(message);
+    anyhow::bail!(message)
+}
+
+#[cfg(target_os = "windows")]
+fn is_elevated_runtime() -> bool {
+    #[link(name = "shell32")]
+    extern "system" {
+        fn IsUserAnAdmin() -> i32;
+    }
+    unsafe { IsUserAnAdmin() != 0 }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_elevated_runtime() -> bool {
+    true
 }
 
 fn handle_connection(
@@ -156,7 +314,11 @@ fn handle_connection(
             &sync_throttle,
             &state_notifier,
         )
-        .unwrap_or_else(|error| error_state_json(error.to_string()));
+        .unwrap_or_else(|error| {
+            let message = error.to_string();
+            log_service_error(format!("client-core-service request failed: {message}"));
+            error_state_json(message)
+        });
         writer.write_all(response.as_bytes())?;
         writer.write_all(b"\n")?;
         writer.flush()?;
@@ -176,6 +338,9 @@ fn route_request(
     if request.method == "watchState" {
         return handle_watch_state(request, runtime, state_notifier);
     }
+    if request.method == "watchBusinessEvent" {
+        return handle_watch_business_event(request, runtime, state_notifier);
+    }
     if request.method == "state" {
         return handle_state_snapshot(runtime);
     }
@@ -187,17 +352,29 @@ fn route_request(
     }
     if request.method == "enqueueControlTask" {
         let response = handle_task_request(request, runtime, task_queue)?;
-        notify_state_changed(state_notifier);
+        publish_business_event(
+            state_notifier,
+            BUSINESS_CONTROL_SYNC_CHANGED,
+            serde_json::json!({"method": "enqueueControlTask"}),
+        );
         return Ok(response);
     }
     if request.method == "enqueueDownstreamControlTask" {
         let response = handle_downstream_task_request(request, runtime, task_queue)?;
-        notify_state_changed(state_notifier);
+        publish_business_event(
+            state_notifier,
+            BUSINESS_CONTROL_SYNC_CHANGED,
+            serde_json::json!({"method": "enqueueDownstreamControlTask"}),
+        );
         return Ok(response);
     }
     if request.method == "ingestDownstreamControlMessage" {
         let response = handle_downstream_control_message(request, runtime, task_queue)?;
-        notify_state_changed(state_notifier);
+        publish_business_event(
+            state_notifier,
+            BUSINESS_CONTROL_SYNC_CHANGED,
+            serde_json::json!({"method": "ingestDownstreamControlMessage"}),
+        );
         return Ok(response);
     }
     if request.method == "pendingControlAcks" {
@@ -214,11 +391,17 @@ fn route_request(
     }
     let should_notify = matches!(
         request.method.as_str(),
-        "start" | "dispatch" | "refresh" | "shutdownNetwork"
+        "start"
+            | "dispatch"
+            | "refresh"
+            | "shutdownNetwork"
+            | "activateNetwork"
+            | "deactivateNetwork"
+            | "logout"
     );
     let response = handle_request(request, runtime)?;
     if should_notify {
-        notify_state_changed(state_notifier);
+        publish_method_business_event(state_notifier, line, &response);
     }
     Ok(response)
 }
@@ -226,12 +409,12 @@ fn route_request(
 fn handle_state_snapshot(
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
 ) -> Result<String> {
-    let state = match runtime.try_lock() {
-        Ok(mut runtime) => match runtime.refresh() {
+    let state = {
+        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+        match runtime.refresh() {
             Ok(()) => runtime.state().clone(),
             Err(error) => state_with_error(runtime.state(), error.to_string()),
-        },
-        Err(_) => busy_state_from_session(),
+        }
     };
     serde_json::to_string(&state).context("encode client state")
 }
@@ -242,14 +425,37 @@ fn handle_request(
 ) -> Result<String> {
     let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
     let state = match request.method.as_str() {
-        "start" | "state" => match runtime.refresh() {
+        "start" => {
+            refresh_startup_session(&mut runtime);
+            match runtime.refresh() {
+                Ok(()) => runtime.state().clone(),
+                Err(error) => state_with_error(runtime.state(), error.to_string()),
+            }
+        }
+        "state" => match runtime.refresh() {
             Ok(()) => runtime.state().clone(),
             Err(error) => state_with_error(runtime.state(), error.to_string()),
         },
         "dispatch" => {
             let command: ClientCommand =
                 serde_json::from_value(request.args).context("decode client command")?;
-            dispatch_with_side_effects(&mut runtime, command)
+            let is_login_with_browser = matches!(command, ClientCommand::LoginWithBrowser);
+            let mut state = dispatch_with_side_effects(&mut runtime, command);
+            if is_login_with_browser
+                && state
+                    .device_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+            {
+                state.device_id = local_stable_device_id().ok();
+            }
+            state
+        }
+        "activateNetwork" => activate_network_from_latest_control(&mut runtime),
+        "deactivateNetwork" => {
+            dispatch_with_side_effects(&mut runtime, ClientCommand::DisableNetwork)
         }
         "refresh" => match runtime.refresh() {
             Ok(()) => runtime.state().clone(),
@@ -270,6 +476,9 @@ fn handle_request(
             return serde_json::to_string(&control_transport_cadence())
                 .context("encode control transport cadence")
         }
+        "consoleLoginKey" => {
+            return serde_json::to_string(&console_login_key()?).context("encode console login key")
+        }
         "controlTransportTickPlan" => {
             return serde_json::to_string(&control_transport_tick_plan(request.args)?)
                 .context("encode control transport tick plan")
@@ -284,20 +493,6 @@ fn handle_request(
     serde_json::to_string(&state).context("encode client state")
 }
 
-fn busy_state_from_session() -> ClientViewState {
-    let mut state = ClientViewState::default();
-    if let Ok(session) = load_session() {
-        state.signed_in = !session.access_token.trim().is_empty();
-        state.user_label = Some(session.user_label);
-        state.device_id = session.device_id;
-        state.virtual_ip = session.virtual_ip;
-    }
-    state.syncing = true;
-    state.sync_reason = Some("networkTask".to_string());
-    state.switch_enabled = false;
-    state
-}
-
 fn control_transport_status() -> Result<ControlTransportStatus> {
     let session = load_session()?;
     Ok(control_transport::control_transport_status(&session))
@@ -310,6 +505,22 @@ fn control_transport_plan() -> Result<ControlTransportPlan> {
 
 fn control_transport_cadence() -> ControlTransportCadence {
     control_transport::control_transport_cadence()
+}
+
+fn console_login_key() -> Result<Value> {
+    let session = load_session()?;
+    let client = ControlPlaneClient::from_env();
+    let login_key = client.console_login_key(
+        &session.access_token,
+        session
+            .device_id
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+    )?;
+    Ok(serde_json::json!({
+        "loginKey": login_key,
+        "deviceId": session.device_id,
+    }))
 }
 
 fn control_transport_tick_plan(args: Value) -> Result<ControlTransportTickPlan> {
@@ -336,9 +547,7 @@ fn handle_watch_state(
     if *revision <= input.last_revision {
         let wait_result = state_notifier
             .changed
-            .wait_timeout_while(revision, timeout, |current| {
-                *current <= input.last_revision
-            })
+            .wait_timeout_while(revision, timeout, |current| *current <= input.last_revision)
             .expect("state revision condvar poisoned");
         revision = wait_result.0;
     }
@@ -354,6 +563,53 @@ fn handle_watch_state(
         state,
     })
     .context("encode watch state response")
+}
+
+fn handle_watch_business_event(
+    request: ServiceRequest,
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<String> {
+    let input: WatchBusinessEventRequest =
+        serde_json::from_value(request.args).context("decode watch business event request")?;
+    let timeout = Duration::from_millis(input.timeout_ms.clamp(1_000, 60_000));
+    let mut revision = state_notifier
+        .revision
+        .lock()
+        .expect("state revision mutex poisoned");
+    if *revision <= input.last_revision {
+        let wait_result = state_notifier
+            .changed
+            .wait_timeout_while(revision, timeout, |current| *current <= input.last_revision)
+            .expect("state revision condvar poisoned");
+        revision = wait_result.0;
+    }
+    let current_revision = *revision;
+    drop(revision);
+
+    let event = state_notifier
+        .event
+        .lock()
+        .expect("business event mutex poisoned")
+        .clone()
+        .unwrap_or_else(|| StoredBusinessEvent {
+            business_type: BUSINESS_STATE_CHANGED.to_string(),
+            business_data: serde_json::json!({}),
+        });
+    let snapshot = {
+        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+        match runtime.refresh() {
+            Ok(()) => runtime.state().clone(),
+            Err(error) => state_with_error(runtime.state(), error.to_string()),
+        }
+    };
+    serde_json::to_string(&WatchBusinessEventResponse {
+        revision: current_revision,
+        business_type: event.business_type,
+        business_data: event.business_data,
+        snapshot,
+    })
+    .context("encode watch business event response")
 }
 
 fn handle_task_request(
@@ -420,9 +676,21 @@ fn handle_downstream_control_message(
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     task_queue: &Arc<Mutex<ControlTaskQueue>>,
 ) -> Result<String> {
-    let input: DownstreamControlMessage =
-        serde_json::from_value(request.args).context("decode downstream control message")?;
-    let accepted = control_transport::normalize_downstream_control_message(input)?;
+    let self_device_id = load_session()
+        .ok()
+        .and_then(|session| session.device_id)
+        .filter(|value| !value.trim().is_empty());
+    let Some(accepted) = control_transport::normalize_downstream_control_value(
+        request.args,
+        self_device_id.as_deref(),
+    )?
+    else {
+        return Ok(serde_json::json!({
+            "accepted": false,
+            "ignored": true,
+        })
+        .to_string());
+    };
     let task_request = ServiceRequest {
         method: "enqueueDownstreamControlTask".to_string(),
         args: serde_json::json!({
@@ -587,7 +855,7 @@ fn execute_control_task(
     state
 }
 
-fn dispatch_with_side_effects<P>(
+pub(crate) fn dispatch_with_side_effects<P>(
     runtime: &mut ClientRuntime<P>,
     command: ClientCommand,
 ) -> ClientViewState
@@ -621,10 +889,16 @@ where
             let side_effect = persist_session(&session);
             (ClientCommand::SyncAssignedIp(payload), side_effect)
         }
-        ClientCommand::Logout => (ClientCommand::Logout, remove_session()),
+        ClientCommand::Logout => {
+            deactivate_control_network();
+            (ClientCommand::Logout, remove_session())
+        }
         other => (other, Ok(())),
     };
     if let Err(error) = side_effect {
+        log_service_error(format!(
+            "client-core-service command side effect failed: {error:#}"
+        ));
         return state_with_error(runtime.state(), error.to_string());
     }
 
@@ -633,11 +907,18 @@ where
 
     if command_was_enable && origin == CommandOrigin::Upstream {
         if let Err(error) = activate_control_network(runtime) {
+            log_service_error(format!(
+                "client-core-service activate network failed: {error:#}"
+            ));
+            let _ = clear_session_virtual_ip();
             return state_with_error(runtime.state(), error.to_string());
         }
     }
     if command_was_enable && origin == CommandOrigin::Downstream {
         if let Err(error) = sync_downstream_network_assignment(runtime) {
+            log_service_error(format!(
+                "client-core-service sync downstream network assignment failed: {error:#}"
+            ));
             return state_with_error(runtime.state(), error.to_string());
         }
     }
@@ -650,9 +931,23 @@ where
             if let Some(virtual_ip) = session.virtual_ip {
                 let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
                     virtual_ip,
+                    prefix_len: session.active_network_id.as_deref().and_then(|network_id| {
+                        ControlPlaneClient::from_env()
+                            .network_prefix_len(&session.access_token, network_id, None)
+                            .ok()
+                    }),
                 }));
             }
         }
+    }
+
+    if command_was_enable {
+        let mut state = runtime.state().clone();
+        if !state.network_enabled {
+            state.virtual_ip = None;
+        }
+        report_runtime_state(&state);
+        return state;
     }
 
     match runtime.dispatch(command) {
@@ -661,7 +956,7 @@ where
                 let _ = clear_session_virtual_ip();
                 state.virtual_ip = None;
             }
-            if state.virtual_ip.is_none() {
+            if state.network_enabled && state.virtual_ip.is_none() {
                 if let Ok(session) = load_session() {
                     state.virtual_ip = session.virtual_ip;
                 }
@@ -671,7 +966,20 @@ where
             }
             state
         }
-        Err(error) => state_with_error(runtime.state(), error.to_string()),
+        Err(error) => {
+            log_service_error(format!("client-core-service dispatch failed: {error:#}"));
+            state_with_error(runtime.state(), error.to_string())
+        }
+    }
+}
+
+pub(crate) fn log_service_error(message: impl AsRef<str>) {
+    let dir = app_data_dir().join("SLAN");
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join("client-core-service.log");
+    let timestamp = current_timestamp_ms();
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{timestamp} {}", message.as_ref());
     }
 }
 
@@ -679,32 +987,108 @@ fn activate_control_network<P>(runtime: &mut ClientRuntime<P>) -> Result<()>
 where
     P: client_core::PlatformNetwork,
 {
-    let mut session = load_session()?;
+    let mut session = load_network_session()?;
+    let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.clone().into()));
+    activate_control_network_for_session(runtime, &mut session)
+}
+
+fn activate_network_from_latest_control<P>(runtime: &mut ClientRuntime<P>) -> ClientViewState
+where
+    P: client_core::PlatformNetwork,
+{
+    match load_network_session()
+        .and_then(|mut session| {
+            let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.clone().into()));
+            activate_control_network_for_session(runtime, &mut session)
+        })
+        .map(|_| runtime.state().clone())
+    {
+        Ok(mut state) => {
+            if !state.network_enabled {
+                state.virtual_ip = None;
+            }
+            report_runtime_state(&state);
+            state
+        }
+        Err(error) => {
+            log_service_error(format!(
+                "client-core-service activate network failed: {error:#}"
+            ));
+            let error_message = error.to_string();
+            if session_auth_invalid_error(&error) || error_message.contains("session expired") {
+                let _ = runtime.dispatch(ClientCommand::Logout);
+            }
+            let _ = clear_session_virtual_ip();
+            state_with_error(runtime.state(), error_message)
+        }
+    }
+}
+
+fn load_network_session() -> Result<PersistedSession> {
+    let session = load_session()?;
+    if session.access_token.trim().is_empty() {
+        let _ = remove_session();
+        return Err(anyhow::anyhow!("login required"));
+    }
+    if session_is_expired(&session) {
+        let _ = remove_session();
+        return Err(anyhow::anyhow!("session expired; please login again"));
+    }
+    ensure_session_device_registered(session).map_err(|error| {
+        if session_auth_invalid_error(&error) {
+            let _ = remove_session();
+        }
+        error
+    })
+}
+
+fn activate_control_network_for_session<P>(
+    runtime: &mut ClientRuntime<P>,
+    session: &mut PersistedSession,
+) -> Result<()>
+where
+    P: client_core::PlatformNetwork,
+{
     let Some(device_id) = session.device_id.clone().filter(|value| !value.is_empty()) else {
-        return Ok(());
+        return Err(anyhow::anyhow!(
+            "device unavailable: current device is not registered"
+        ));
     };
     let client = ControlPlaneClient::from_env();
     if session.active_network_id.is_none() {
         session.active_network_id = client.active_network_id(&session.access_token)?;
     }
     let Some(network_id) = session.active_network_id.clone() else {
-        persist_session(&session)?;
-        return Ok(());
-    };
-    let Some(virtual_ip) =
-        client.activate_network(&session.access_token, &device_id, &network_id)?
-    else {
-        session.virtual_ip = None;
-        persist_session(&session)?;
+        persist_session(session)?;
         return Err(anyhow::anyhow!(
-            "device unavailable: current device has no assigned virtual IP"
+            "device unavailable: current user has no active network"
         ));
     };
-    session.virtual_ip = Some(virtual_ip.clone());
+    let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    log_service_error(format!(
+        "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={}",
+        activation.virtual_ip,
+        activation.prefix_len,
+        activation.dns_servers.len(),
+        activation.routes.len(),
+        activation.peer_count
+    ));
+    session.virtual_ip = Some(activation.virtual_ip.clone());
+    persist_session(session)?;
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
-        virtual_ip,
+        virtual_ip: activation.virtual_ip.clone(),
+        prefix_len: Some(activation.prefix_len),
     }));
-    persist_session(&session)
+    log_service_error(format!(
+        "client-core-service applying latest assigned IP locally: ip={}",
+        activation.virtual_ip
+    ));
+    runtime.enable_network_with_config(
+        activation.prefix_len,
+        &activation.dns_servers,
+        &activation.routes,
+    )?;
+    Ok(())
 }
 
 fn sync_downstream_network_assignment<P>(runtime: &mut ClientRuntime<P>) -> Result<()>
@@ -744,8 +1128,14 @@ where
         ));
     };
     session.virtual_ip = Some(virtual_ip.clone());
+    let prefix_len = session.active_network_id.as_deref().and_then(|network_id| {
+        client
+            .network_prefix_len(&session.access_token, network_id, None)
+            .ok()
+    });
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
         virtual_ip,
+        prefix_len,
     }));
     persist_session(&session)
 }
@@ -754,9 +1144,6 @@ fn deactivate_control_network() {
     let Ok(session) = load_session() else {
         return;
     };
-    if session.virtual_ip.is_none() {
-        return;
-    }
     let Some(device_id) = session
         .device_id
         .as_deref()
@@ -772,11 +1159,24 @@ fn deactivate_control_network() {
         return;
     };
     let client = ControlPlaneClient::from_env();
-    let _ = client.deactivate_network(&session.access_token, device_id, network_id);
+    match client.deactivate_network(&session.access_token, device_id, network_id) {
+        Ok(()) => log_service_error(format!(
+            "client-core-service deactivated control network on logout/disable: deviceId={device_id} networkId={network_id}"
+        )),
+        Err(error) => log_service_error(format!(
+            "client-core-service failed to deactivate control network on logout/disable: {error:#}"
+        )),
+    }
 }
 
 fn clear_session_virtual_ip() -> Result<()> {
-    let mut session = load_session().unwrap_or_else(|_| PersistedSession::empty());
+    let Ok(mut session) = load_session() else {
+        return Ok(());
+    };
+    if session.access_token.trim().is_empty() {
+        let _ = remove_session();
+        return Ok(());
+    }
     session.virtual_ip = None;
     persist_session(&session)
 }
@@ -785,6 +1185,9 @@ fn state_with_error(state: &ClientViewState, error: String) -> ClientViewState {
     let mut state = state.clone();
     state.syncing = false;
     state.switch_enabled = true;
+    if !state.network_enabled {
+        state.virtual_ip = None;
+    }
     state.error = Some(error);
     state
 }
@@ -794,12 +1197,72 @@ fn default_watch_timeout_ms() -> u64 {
 }
 
 fn notify_state_changed(state_notifier: &StateChangeNotifier) {
+    publish_business_event(
+        state_notifier,
+        BUSINESS_STATE_CHANGED,
+        serde_json::json!({}),
+    );
+}
+
+fn publish_business_event(
+    state_notifier: &StateChangeNotifier,
+    business_type: impl Into<String>,
+    business_data: Value,
+) {
     let mut revision = state_notifier
         .revision
         .lock()
         .expect("state revision mutex poisoned");
     *revision = revision.saturating_add(1);
+    let mut event = state_notifier
+        .event
+        .lock()
+        .expect("business event mutex poisoned");
+    *event = Some(StoredBusinessEvent {
+        business_type: business_type.into(),
+        business_data,
+    });
     state_notifier.changed.notify_all();
+}
+
+pub(crate) fn publish_state_business_event(
+    state_notifier: &Arc<StateChangeNotifier>,
+    business_type: impl Into<String>,
+    state: &ClientViewState,
+) {
+    let business_data = serde_json::to_value(state).unwrap_or_else(|_| serde_json::json!({}));
+    publish_business_event(state_notifier, business_type, business_data);
+}
+
+fn publish_method_business_event(
+    state_notifier: &StateChangeNotifier,
+    request_line: &str,
+    response: &str,
+) {
+    let method = serde_json::from_str::<ServiceRequest>(request_line)
+        .map(|request| request.method)
+        .unwrap_or_default();
+    let state = serde_json::from_str::<ClientViewState>(response).ok();
+    let business_type = match method.as_str() {
+        "activateNetwork" => state
+            .as_ref()
+            .and_then(|state| state.error.as_ref())
+            .map(|_| BUSINESS_NETWORK_SWITCH_FAILED)
+            .unwrap_or(BUSINESS_NETWORK_SWITCH_FINISHED),
+        "deactivateNetwork" | "shutdownNetwork" => state
+            .as_ref()
+            .and_then(|state| state.error.as_ref())
+            .map(|_| BUSINESS_NETWORK_SWITCH_FAILED)
+            .unwrap_or(BUSINESS_NETWORK_SWITCH_FINISHED),
+        "logout" => BUSINESS_SESSION_CHANGED,
+        "dispatch" => BUSINESS_SESSION_CHANGED,
+        "start" | "refresh" => BUSINESS_STATE_CHANGED,
+        _ => BUSINESS_STATE_CHANGED,
+    };
+    let business_data = state
+        .and_then(|state| serde_json::to_value(state).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    publish_business_event(state_notifier, business_type, business_data);
 }
 
 fn error_state_json(error: String) -> String {
@@ -826,7 +1289,9 @@ fn spawn_auth_callback_poller(
         };
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
         let _ = dispatch_with_side_effects(&mut runtime, ClientCommand::ApplyAuthCallback(payload));
-        notify_state_changed(&state_notifier);
+        let business_data =
+            serde_json::to_value(runtime.state()).unwrap_or_else(|_| serde_json::json!({}));
+        publish_business_event(&state_notifier, BUSINESS_SESSION_CHANGED, business_data);
     });
 }
 
@@ -848,8 +1313,25 @@ fn spawn_runtime_sync_worker(
                 Err(error) => state_with_error(runtime.state(), error.to_string()),
             }
         };
+        if before.network_enabled && !state.network_enabled {
+            log_service_error(format!(
+                "client-core-service runtime refresh disabled network: before_ip={:?} after_ip={:?} notice={:?} error={:?}",
+                before.virtual_ip, state.virtual_ip, state.notice, state.error
+            ));
+        }
         if state != before {
-            notify_state_changed(&state_notifier);
+            let business_type = if state.signed_in != before.signed_in {
+                BUSINESS_SESSION_CHANGED
+            } else if state.network_enabled != before.network_enabled
+                || state.virtual_ip != before.virtual_ip
+            {
+                BUSINESS_NETWORK_RUNTIME_CHANGED
+            } else {
+                BUSINESS_STATE_CHANGED
+            };
+            let business_data =
+                serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
+            publish_business_event(&state_notifier, business_type, business_data);
         }
         report_runtime_state(&state);
     });
@@ -884,6 +1366,12 @@ fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl
     let Ok(mut session) = load_session() else {
         return;
     };
+    if session_is_expired(&session) {
+        let _ = remove_session();
+        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+        let _ = runtime.dispatch(ClientCommand::Logout);
+        return;
+    }
     if session.access_token.trim().is_empty() {
         return;
     }
@@ -895,7 +1383,10 @@ fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl
     }
 
     let Some(device_id) = session.device_id.clone().filter(|value| !value.is_empty()) else {
-        let _ = persist_session(&session);
+        if let Ok(session) = ensure_session_device_registered(session) {
+            let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+            let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+        }
         return;
     };
     let Ok(devices) = client.list_devices(&session.access_token) else {
@@ -903,11 +1394,18 @@ fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl
         return;
     };
     let Some(device) = devices.into_iter().find(|item| item.device_id == device_id) else {
-        let _ = persist_session(&session);
+        if let Ok(session) = ensure_session_device_registered(session) {
+            let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+            let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+        }
         return;
     };
     sync_session_device_fields(&mut session, &device);
     if !control_device_network_available(&device) {
+        log_service_error(format!(
+            "client-core-service downstream disabled local network: deviceStatus={:?} memberStatus={:?}",
+            device.status, device.membership_status
+        ));
         session.virtual_ip = None;
         let _ = persist_session(&session);
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
@@ -923,6 +1421,9 @@ fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl
         .or(device.virtual_ip)
         .filter(|value| !value.trim().is_empty());
     let Some(assigned_ip) = assigned_ip else {
+        log_service_error(
+            "client-core-service downstream disabled local network: device list has no assigned virtual IP",
+        );
         session.virtual_ip = None;
         let _ = persist_session(&session);
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
@@ -940,15 +1441,23 @@ fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl
     session.virtual_ip = Some(assigned_ip.clone());
     let _ = persist_session(&session);
     let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+    log_service_error(format!(
+        "client-core-service syncing latest assigned IP locally: ip={assigned_ip}"
+    ));
+    let prefix_len = session.active_network_id.as_deref().and_then(|network_id| {
+        client
+            .network_prefix_len(&session.access_token, network_id, None)
+            .ok()
+    });
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
         virtual_ip: assigned_ip,
+        prefix_len,
     }));
 }
 
 fn control_device_network_available(device: &control_plane::ControlDevice) -> bool {
-    let device_status = device.status.as_deref().unwrap_or("active");
-    let member_status = device.membership_status.as_deref().unwrap_or("active");
-    status_is_active(device_status) && status_is_active(member_status)
+    !status_is_managed_disabled(device.status.as_deref())
+        && !status_is_managed_disabled(device.membership_status.as_deref())
 }
 
 fn sync_session_device_fields(session: &mut PersistedSession, device: &ControlDevice) {
@@ -958,9 +1467,46 @@ fn sync_session_device_fields(session: &mut PersistedSession, device: &ControlDe
     }
 }
 
-fn status_is_active(status: &str) -> bool {
-    let status = status.trim();
-    status.is_empty() || status.eq_ignore_ascii_case("active")
+fn status_is_managed_disabled(status: Option<&str>) -> bool {
+    let Some(status) = status else {
+        return false;
+    };
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "disabled" | "suspended" | "blocked" | "revoked" | "deleted" | "removed"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_is_managed_disabled;
+
+    #[test]
+    fn online_presence_statuses_do_not_disable_local_network() {
+        for status in [
+            None,
+            Some(""),
+            Some("active"),
+            Some("online"),
+            Some("offline"),
+        ] {
+            assert!(!status_is_managed_disabled(status));
+        }
+    }
+
+    #[test]
+    fn managed_disable_statuses_disable_local_network() {
+        for status in [
+            Some("disabled"),
+            Some("suspended"),
+            Some("blocked"),
+            Some("revoked"),
+            Some("deleted"),
+            Some("removed"),
+        ] {
+            assert!(status_is_managed_disabled(status));
+        }
+    }
 }
 
 fn should_sync_control(throttle: &Arc<Mutex<ControlSyncThrottle>>) -> bool {
@@ -1024,6 +1570,85 @@ impl PersistedSession {
             authenticated_at_ms: current_timestamp_ms(),
         }
     }
+}
+
+fn load_valid_registered_session() -> Option<PersistedSession> {
+    let Ok(session) = load_session() else {
+        return None;
+    };
+    if session.access_token.trim().is_empty() {
+        let _ = remove_session();
+        return None;
+    }
+    if session_is_expired(&session) {
+        let _ = remove_session();
+        return None;
+    }
+    match ensure_session_device_registered(session.clone()) {
+        Ok(session) => Some(session),
+        Err(error) if session_auth_invalid_error(&error) => {
+            eprintln!("client-core-service session invalid; clearing local session: {error:#}");
+            let _ = remove_session();
+            None
+        }
+        Err(error) => {
+            eprintln!("client-core-service startup device registration skipped: {error:#}");
+            Some(session)
+        }
+    }
+}
+
+fn refresh_startup_session<P>(runtime: &mut ClientRuntime<P>)
+where
+    P: client_core::PlatformNetwork,
+{
+    let Some(session) = load_valid_registered_session() else {
+        let _ = runtime.dispatch(ClientCommand::Logout);
+        return;
+    };
+    let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+}
+
+fn session_is_expired(session: &PersistedSession) -> bool {
+    let Some(expires_in) = session.expires_in else {
+        return false;
+    };
+    let lifetime_ms = expires_in.saturating_mul(1_000);
+    let expires_at_ms = session.authenticated_at_ms.saturating_add(lifetime_ms);
+    current_timestamp_ms().saturating_add(30_000) >= expires_at_ms
+}
+
+fn session_auth_invalid_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("http 401")
+        || message.contains("unauthorized")
+        || message.contains("invalid token")
+        || message.contains("token expired")
+}
+
+fn ensure_session_device_registered(mut session: PersistedSession) -> Result<PersistedSession> {
+    if session.access_token.trim().is_empty() {
+        return Ok(session);
+    }
+    let client = ControlPlaneClient::from_env();
+    let device = client.ensure_device(&session.access_token, session.device_id.as_deref())?;
+    sync_session_device_fields(&mut session, &device);
+    if session.active_network_id.is_none() {
+        if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
+            session.active_network_id = Some(network_id);
+        }
+    }
+    if session.virtual_ip.is_none() {
+        if let Some(virtual_ip) = device
+            .current_virtual_ip
+            .or(device.virtual_ip)
+            .filter(|value| !value.trim().is_empty())
+        {
+            session.virtual_ip = Some(virtual_ip);
+        }
+    }
+    persist_session(&session)?;
+    Ok(session)
 }
 
 fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result<PersistedSession> {

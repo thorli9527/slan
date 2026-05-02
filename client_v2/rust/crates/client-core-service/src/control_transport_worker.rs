@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use client_core::ClientRuntime;
+use client_core::{AuthPayload, ClientCommand, ClientRuntime};
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
 
@@ -14,7 +14,9 @@ use crate::{
         self, ControlTransportMessage, ControlTransportMessageKind, ControlTransportTickRequest,
         MqttQos,
     },
-    current_timestamp_ms, load_session, PersistedSession,
+    current_timestamp_ms, load_session, log_service_error, publish_state_business_event,
+    PersistedSession, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
+    BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
 };
 
 #[derive(Debug, Default)]
@@ -29,6 +31,7 @@ pub fn spawn_control_transport_supervisor(
     runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     task_queue: Arc<Mutex<ControlTaskQueue>>,
     worker_state: Arc<Mutex<ControlTransportWorkerState>>,
+    state_notifier: Arc<StateChangeNotifier>,
 ) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_secs(5));
@@ -48,8 +51,9 @@ pub fn spawn_control_transport_supervisor(
         let runtime = Arc::clone(&runtime);
         let task_queue = Arc::clone(&task_queue);
         let worker_state = Arc::clone(&worker_state);
+        let state_notifier = Arc::clone(&state_notifier);
         thread::spawn(move || {
-            let result = run_control_transport_worker(session, runtime, task_queue);
+            let result = run_control_transport_worker(session, runtime, task_queue, state_notifier);
             release_worker(&worker_state, reconnect_key, result.err());
         });
     });
@@ -59,6 +63,7 @@ fn run_control_transport_worker(
     session: PersistedSession,
     runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     task_queue: Arc<Mutex<ControlTaskQueue>>,
+    state_notifier: Arc<StateChangeNotifier>,
 ) -> Result<(), String> {
     let plan = control_transport::control_transport_plan(&session);
     let Some(downstream_topic) = plan.downstream_control_topic.clone() else {
@@ -86,7 +91,7 @@ fn run_control_transport_worker(
             return Err("control transport session changed".to_string());
         }
         if let Some(publish) = client.read_publish(Duration::from_millis(500))? {
-            ingest_downstream_publish(&publish.payload, &runtime, &task_queue)?;
+            ingest_downstream_publish(&publish.payload, &runtime, &task_queue, &state_notifier)?;
             client.ack_publish(&publish)?;
         }
 
@@ -136,11 +141,33 @@ fn ingest_downstream_publish(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<(), String> {
+    if try_ingest_auth_callback(payload, runtime, state_notifier)? {
+        return Ok(());
+    }
     let message = serde_json::from_slice(payload)
         .map_err(|err| format!("decode downstream control message: {err}"))?;
-    let accepted = control_transport::normalize_downstream_control_message(message)
-        .map_err(|err| err.to_string())?;
+    let self_device_id = load_session()
+        .ok()
+        .and_then(|session| session.device_id)
+        .filter(|value| !value.trim().is_empty());
+    let accepted = match control_transport::normalize_downstream_control_value(
+        message,
+        self_device_id.as_deref(),
+    )
+    .map_err(|err| err.to_string())?
+    {
+        Some(accepted) => accepted,
+        None => {
+            log_service_error("client-core-service ignored downstream control message");
+            return Ok(());
+        }
+    };
+    log_service_error(format!(
+        "client-core-service accepted downstream control action={} deliveryId={} requireUiRefresh={}",
+        accepted.action, accepted.delivery_id, accepted.require_ui_refresh
+    ));
     let mut queue = task_queue
         .lock()
         .map_err(|_| "control task queue mutex poisoned".to_string())?;
@@ -151,9 +178,49 @@ fn ingest_downstream_publish(
         .map_err(|err| err.to_string())?;
     if task.require_ui_refresh {
         drop(queue);
-        let _ = crate::drain_pending_control_tasks(runtime, task_queue);
+        let state = crate::drain_pending_control_tasks(runtime, task_queue);
+        let business_type = if state.error.is_some() {
+            BUSINESS_NETWORK_SWITCH_FAILED
+        } else {
+            BUSINESS_NETWORK_RUNTIME_CHANGED
+        };
+        publish_state_business_event(state_notifier, business_type, &state);
+    } else {
+        publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &{
+            let runtime = runtime
+                .lock()
+                .map_err(|_| "client runtime mutex poisoned".to_string())?;
+            runtime.state().clone()
+        });
     }
     Ok(())
+}
+
+fn try_ingest_auth_callback(
+    payload: &[u8],
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<bool, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("auth_callback") {
+        return Ok(false);
+    }
+    let Some(auth_value) = value.get("payload").cloned() else {
+        return Err("auth_callback payload is missing".to_string());
+    };
+    let auth: AuthPayload = serde_json::from_value(auth_value)
+        .map_err(|err| format!("decode auth_callback payload: {err}"))?;
+    let mut runtime = runtime
+        .lock()
+        .map_err(|_| "client runtime mutex poisoned".to_string())?;
+    let state =
+        crate::dispatch_with_side_effects(&mut runtime, ClientCommand::ApplyAuthCallback(auth));
+    if let Some(error) = state.error {
+        return Err(error);
+    }
+    publish_state_business_event(state_notifier, BUSINESS_SESSION_CHANGED, &state);
+    Ok(true)
 }
 
 fn build_outbox_messages(

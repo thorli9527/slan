@@ -14,7 +14,7 @@ impl PlatformNetwork for AndroidPlatformNetwork {
         bail!("android mesh network backend is not implemented yet")
     }
 
-    fn configure_ip(&self, _virtual_ip: &str) -> Result<()> {
+    fn configure_ip(&self, _virtual_ip: &str, _prefix_len: u8) -> Result<()> {
         bail!("android mesh network backend is not implemented yet")
     }
 

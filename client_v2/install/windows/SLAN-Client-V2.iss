@@ -2,6 +2,10 @@
 #define MyAppPublisher "SLAN"
 #define MyAppExeName "slan_client_v2.exe"
 #define MyAppVersion "0.1.0"
+#define HelperTaskName "SLAN Client V2 Helper"
+#define ServiceTaskName "SLAN Client V2 Service"
+#define ServiceName "SLANClientV2Service"
+#define ServiceDisplayName "SLAN Client V2 Service"
 
 #ifndef SourceDir
   #define SourceDir "."
@@ -39,8 +43,8 @@ Name: "{app}"; Permissions: users-modify
 
 [Files]
 Source: "{#SourceDir}\slan_client_v2.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\client-core-helper.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\client-core-service.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\wintun.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\flutter_windows.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\client_core_plugin_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -59,11 +63,32 @@ begin
   Result := Exec(Filename, Params, '', SW_HIDE, Wait, ResultCode) and (ResultCode = 0);
 end;
 
+function StopAndDeleteWindowsService(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure StopExistingRuntime();
 begin
   ExecHidden(ExpandConstant('{sys}\taskkill.exe'), '/F /IM slan_client_v2.exe', ewWaitUntilTerminated);
   ExecHidden(ExpandConstant('{sys}\taskkill.exe'), '/F /IM client-core-service.exe', ewWaitUntilTerminated);
   ExecHidden(ExpandConstant('{sys}\taskkill.exe'), '/F /IM client-core-helper.exe', ewWaitUntilTerminated);
+  StopAndDeleteWindowsService();
+end;
+
+procedure DeleteHelperTask();
+begin
+  ExecHidden(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "{#HelperTaskName}"', ewWaitUntilTerminated);
+  ExecHidden(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "{#HelperTaskName}" /F', ewWaitUntilTerminated);
+end;
+
+procedure DeleteServiceTask();
+begin
+  ExecHidden(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "{#ServiceTaskName}"', ewWaitUntilTerminated);
+  ExecHidden(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "{#ServiceTaskName}" /F', ewWaitUntilTerminated);
 end;
 
 procedure ClearPreviousClientV2State();
@@ -72,15 +97,112 @@ begin
   DeleteFile(ExpandConstant('{commonappdata}\SLAN\client-v2-control-tasks.xml'));
 end;
 
+procedure ClearClientV2State();
+var
+  StateDir: string;
+begin
+  StateDir := ExpandConstant('{commonappdata}\SLAN');
+  DeleteFile(StateDir + '\client-v2-session.json');
+  DeleteFile(StateDir + '\client-v2-control-tasks.xml');
+  DeleteFile(StateDir + '\client-v2-device-id.txt');
+  DeleteFile(StateDir + '\client-v2-network-state.json');
+  DeleteFile(StateDir + '\client-v2-assigned-ip.txt');
+  DeleteFile(StateDir + '\mqtt-inbox.xml');
+  RemoveDir(StateDir);
+end;
+
 procedure ClearPreviousInstallDir();
 begin
+  DelTree(ExpandConstant('{app}'), True, True, True);
+end;
+
+function PrepareDedicatedAdapter(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := Exec(
+    ExpandConstant('{app}\client-core-service.exe'),
+    '--prepare-adapter',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) and (ResultCode = 0);
+end;
+
+function EnsureStableDeviceId(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := Exec(
+    ExpandConstant('{app}\client-core-service.exe'),
+    '--ensure-device-id',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) and (ResultCode = 0);
+end;
+
+function RegisterAndStartWindowsService(): Boolean;
+var
+  ResultCode: Integer;
+  ServiceBinPath: string;
+begin
+  ServiceBinPath := '""' + ExpandConstant('{app}\client-core-service.exe') + '"" --windows-service';
+
+  Result := Exec(
+    ExpandConstant('{sys}\sc.exe'),
+    'create {#ServiceName} start= auto obj= LocalSystem DisplayName= "{#ServiceDisplayName}" binPath= "' + ServiceBinPath + '"',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) and (ResultCode = 0);
+  if not Result then begin
+    exit;
+  end;
+
+  Result := Exec(
+    ExpandConstant('{sys}\sc.exe'),
+    'start {#ServiceName}',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) and (ResultCode = 0);
+end;
+
+procedure VerifyWintunAdapterInstalled();
+begin
+  if not ExecHidden(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$deadline=(Get-Date).AddSeconds(30); do { $adapter=Get-NetAdapter -IncludeHidden -Name ''SLAN LAN Adapter'' -ErrorAction SilentlyContinue; if ($adapter) { Enable-NetAdapter -Name ''SLAN LAN Adapter'' -Confirm:$false -ErrorAction SilentlyContinue | Out-Null; $adapter=Get-NetAdapter -IncludeHidden -Name ''SLAN LAN Adapter'' -ErrorAction SilentlyContinue; if ($adapter -and $adapter.AdminStatus -eq ''Up'') { exit 0 } }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"',
+    ewWaitUntilTerminated
+  ) then begin
+    RaiseException('Failed to install SLAN Wintun adapter. Please allow administrator permission and reinstall.');
+  end;
+end;
+
+procedure ClearClientV2AppData();
+begin
+  DelTree(ExpandConstant('{userappdata}\slan_client_v2'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\slan_client_v2'), True, True, True);
+  DelTree(ExpandConstant('{userappdata}\SLAN Client V2'), True, True, True);
+  DelTree(ExpandConstant('{localappdata}\SLAN Client V2'), True, True, True);
+end;
+
+procedure ClearClientV2InstallArtifacts();
+begin
+  DeleteFile(ExpandConstant('{autodesktop}\SLAN Client V2.lnk'));
   DelTree(ExpandConstant('{app}'), True, True, True);
 end;
 
 function InitializeSetup(): Boolean;
 begin
   StopExistingRuntime();
-  ClearPreviousClientV2State();
+  DeleteServiceTask();
+  DeleteHelperTask();
   Result := True;
 end;
 
@@ -89,11 +211,31 @@ begin
   if CurStep = ssInstall then begin
     ClearPreviousInstallDir();
   end;
+  if CurStep = ssPostInstall then begin
+    if not EnsureStableDeviceId() then begin
+      RaiseException('Failed to initialize the SLAN device identity.');
+    end;
+    if not PrepareDedicatedAdapter() then begin
+      RaiseException('Failed to prepare the SLAN Wintun adapter.');
+    end;
+    if not RegisterAndStartWindowsService() then begin
+      RaiseException('Failed to register the SLAN Client V2 Windows service.');
+    end;
+    VerifyWintunAdapterInstalled();
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if CurUninstallStep = usPostUninstall then begin
+  if CurUninstallStep = usUninstall then begin
     StopExistingRuntime();
+    StopAndDeleteWindowsService();
+    DeleteServiceTask();
+    DeleteHelperTask();
+  end;
+  if CurUninstallStep = usPostUninstall then begin
+    ClearClientV2State();
+    ClearClientV2AppData();
+    ClearClientV2InstallArtifacts();
   end;
 end;

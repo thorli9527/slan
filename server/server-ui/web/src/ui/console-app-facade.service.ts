@@ -74,7 +74,7 @@ export class ConsoleAppFacadeService {
     userLabel?: string;
     action?: string;
   }): Promise<void> {
-    return this.api.completeCallback(callbackId, payload);
+    return this.api.completeCallback(callbackId, payload, payload.accessToken);
   }
 
   async createOwnNetwork(input: {

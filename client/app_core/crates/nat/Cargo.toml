@@ -1,6 +1,0 @@
-[package]
-name = "nat"
-edition.workspace = true
-version.workspace = true
-
-[dependencies]

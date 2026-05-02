@@ -49,27 +49,37 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
         </div>
         <div class="table-shell" *ngIf="assignments.length > 0; else noAssignments">
           <table>
-            <thead><tr><th>Virtual IP</th><th>User</th><th>操作系统/版本</th><th>连接方式</th><th>心跳状态</th><th>网络启用</th><th>设备状态</th><th>Remark</th><th class="edit-col"></th></tr></thead>
+            <thead><tr><th>Virtual IP</th><th>User</th><th>客户端</th><th>运行状态</th><th>Remark</th><th class="edit-col"></th></tr></thead>
             <tbody>
               <tr *ngFor="let item of assignments">
                 <td>{{ draftIps[item.attachmentId] || item.virtualIp || '-' }}</td>
                 <td>{{ item.userEmail }}</td>
-                <td>{{ assignmentOsVersion(item) }}</td>
-                <td>{{ assignmentConnectionType(item) }}</td>
                 <td>
-                  <span class="status-badge" [attr.data-tone]="heartbeatStatusTone(item)">
-                    {{ heartbeatStatusLabel(item) }}
-                  </span>
+                  <div class="client-meta" [class.client-online]="isClientOnline(item)" [class.client-offline]="!isClientOnline(item)">
+                    <strong>{{ assignmentClientLabel(item) }}</strong>
+                  </div>
                 </td>
                 <td>
-                  <span class="status-badge" [attr.data-tone]="networkEnableStatusTone(item)">
-                    {{ networkEnableStatusLabel(item) }}
-                  </span>
-                </td>
-                <td>
-                  <span class="status-badge" [attr.data-tone]="deviceBindingStatusTone(item)">
-                    {{ deviceBindingStatusLabel(item) }}
-                  </span>
+                  <div class="runtime-stack">
+                    <span class="runtime-item">
+                      <span>心跳</span>
+                      <strong [class.runtime-online]="isClientOnline(item)" [class.runtime-offline]="!isClientOnline(item)">
+                        {{ isClientOnline(item) ? '在线' : '不在线' }}
+                      </strong>
+                    </span>
+                    <span class="runtime-item">
+                      <span>网络启用</span>
+                      <strong [class.runtime-online]="isNetworkOnline(item)" [class.runtime-offline]="!isNetworkOnline(item)">
+                        {{ isNetworkOnline(item) ? '在线' : '不在线' }}
+                      </strong>
+                    </span>
+                    <span class="runtime-item">
+                      <span>设备</span>
+                      <strong [class.runtime-online]="isDeviceOnline(item)" [class.runtime-offline]="!isDeviceOnline(item)">
+                        {{ isDeviceOnline(item) ? '在线' : '不在线' }}
+                      </strong>
+                    </span>
+                  </div>
                 </td>
                 <td class="remark-text">{{ draftRemarks[item.attachmentId] || item.remark || '-' }}</td>
                 <td class="row-actions edit-cell">
@@ -107,7 +117,7 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
           <div class="edit-form">
             <label>
               <span>Virtual IP</span>
-              <input [(ngModel)]="editVirtualIp" placeholder="10.0.0.x" />
+              <input [(ngModel)]="editVirtualIp" placeholder="100.64.0.x" />
             </label>
             <label>
               <span>Remark</span>
@@ -133,7 +143,7 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
     button:disabled { cursor: wait; opacity: .62; }
     .row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .table-shell { overflow: auto; border: 1px solid rgba(15, 23, 42, .08); border-radius: 8px; }
-    table { width: 100%; min-width: 1040px; border-collapse: collapse; table-layout: fixed; }
+    table { width: 100%; min-width: 980px; border-collapse: collapse; table-layout: fixed; }
     th, td { padding: 12px; border-bottom: 1px solid rgba(15, 23, 42, .08); text-align: left; vertical-align: top; }
     th { color: #6b7280; font-size: 12px; text-transform: uppercase; background: #f8fafc; }
     tr:last-child td { border-bottom: 0; }
@@ -141,6 +151,15 @@ import { Network, NetworkAssignment, NetworkDetail, NetworkMember } from './api-
     .remark-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .edit-col, .edit-cell { width: 148px; }
     .actions-col { width: 168px; }
+    .client-meta { display: block; max-width: 100%; white-space: nowrap; }
+    .client-meta strong { color: #111827; font-size: 13px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .client-meta.client-online strong { color: #15803d; }
+    .client-meta.client-offline strong { color: #b91c1c; }
+    .runtime-stack { display: flex; flex-wrap: nowrap; gap: 12px; align-items: center; white-space: nowrap; }
+    .runtime-item { display: inline-flex; align-items: center; gap: 4px; color: #475569; font-size: 13px; font-weight: 800; white-space: nowrap; }
+    .runtime-item strong { font-weight: 900; }
+    .runtime-item strong.runtime-online { color: #15803d; }
+    .runtime-item strong.runtime-offline { color: #b91c1c; }
     .edit-icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; font-size: 17px; line-height: 1; }
     .status-action-button { min-width: 72px; height: 34px; padding: 0 12px; font-size: 13px; font-weight: 900; }
     .status-action-button[data-mode="disable"] { color: #991b1b; border-color: rgba(239, 68, 68, .3); background: #fff7f7; }
@@ -295,6 +314,11 @@ export class NetworkWorkspaceComponent {
     return platform || version || '-';
   }
 
+  assignmentClientLabel(item: NetworkAssignment): string {
+    const platform = (item.devicePlatform || '').trim() || '-';
+    return `${platform} / ${this.assignmentConnectionType(item)}`;
+  }
+
   assignmentConnectionType(item: NetworkAssignment): string {
     const explicit = (item.connectionType || '').trim().toLowerCase();
     if (explicit === 'app' || explicit === 'console') {
@@ -315,6 +339,18 @@ export class NetworkWorkspaceComponent {
       return 'muted';
     }
     return item.runtimeHeartbeatOnline ? 'success' : 'warn';
+  }
+
+  isClientOnline(item: NetworkAssignment): boolean {
+    return item.runtimeStateFresh === true && item.runtimeHeartbeatOnline === true;
+  }
+
+  isNetworkOnline(item: NetworkAssignment): boolean {
+    return item.runtimeStateFresh === true && item.runtimeNetworkEnabled === true;
+  }
+
+  isDeviceOnline(item: NetworkAssignment): boolean {
+    return (item.status || '').toLowerCase() === 'active';
   }
 
   networkEnableStatusLabel(item: NetworkAssignment): string {

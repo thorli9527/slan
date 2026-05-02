@@ -2,7 +2,6 @@
 members = [
     "crates/client-core",
     "crates/client-core-ffi",
-    "crates/client-core-helper",
     "crates/client-core-platform",
     "crates/client-core-service",
     "crates/control-mqtt-client",

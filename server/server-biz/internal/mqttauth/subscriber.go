@@ -12,8 +12,11 @@ import (
 	"github.com/slan/server/server-biz/configs"
 )
 
-// Subscribe publishes raw QoS0 MQTT PUBLISH payloads to handler until ctx is
-// cancelled or the broker connection fails.
+const subscribeQoSExactlyOnce byte = 2
+
+// Subscribe publishes raw MQTT PUBLISH payloads to handler until ctx is
+// cancelled or the broker connection fails. The subscription requests QoS2,
+// but each message is delivered at the publisher's effective QoS.
 func Subscribe(ctx context.Context, cfg configs.MQTTConfig, clientID, username, password, topicFilter string, handler func(string, []byte)) error {
 	if !cfg.Enabled {
 		return nil
@@ -78,9 +81,12 @@ func Subscribe(ctx context.Context, cfg configs.MQTTConfig, clientID, username, 
 		}
 		switch header[0] & 0xf0 {
 		case 0x30:
-			topic, payload, err := parsePublish(header[0], body)
+			publish, err := parsePublish(header[0], body)
 			if err == nil {
-				handler(topic, payload)
+				handler(publish.topic, publish.payload)
+				if err := ackPublish(conn, publish); err != nil {
+					return err
+				}
 			}
 		case 0xc0:
 			_, _ = conn.Write([]byte{0xd0, 0x00})
@@ -118,7 +124,10 @@ func subscribePacket(packetID uint16, topicFilter string) ([]byte, error) {
 	if err := writeString(&variable, topicFilter); err != nil {
 		return nil, err
 	}
-	variable.WriteByte(0x00)
+	// Request the highest delivery level this subscriber can handle. MQTT
+	// still delivers each message at min(publisher QoS, subscription QoS), so
+	// heartbeat/state publishers that use QoS0 remain QoS0.
+	variable.WriteByte(subscribeQoSExactlyOnce)
 	remaining, err := remainingLength(variable.Len())
 	if err != nil {
 		return nil, err
@@ -154,7 +163,7 @@ func readSubAck(reader io.Reader, packetID uint16) error {
 		return fmt.Errorf("mqtt subscribe rejected")
 	}
 	for _, code := range body[2:] {
-		if code == 0x80 {
+		if code != subscribeQoSExactlyOnce {
 			return fmt.Errorf("mqtt subscribe rejected")
 		}
 	}
@@ -178,23 +187,75 @@ func readRemainingLength(reader io.Reader) (int, error) {
 	return 0, fmt.Errorf("malformed mqtt remaining length")
 }
 
-func parsePublish(header byte, body []byte) (string, []byte, error) {
+type parsedPublish struct {
+	topic    string
+	payload  []byte
+	qos      byte
+	packetID uint16
+}
+
+func parsePublish(header byte, body []byte) (parsedPublish, error) {
 	if len(body) < 2 {
-		return "", nil, fmt.Errorf("mqtt publish too short")
+		return parsedPublish{}, fmt.Errorf("mqtt publish too short")
 	}
 	topicLength := int(binary.BigEndian.Uint16(body[:2]))
 	if len(body) < 2+topicLength {
-		return "", nil, fmt.Errorf("mqtt publish topic truncated")
+		return parsedPublish{}, fmt.Errorf("mqtt publish topic truncated")
 	}
 	topic := string(body[2 : 2+topicLength])
 	payloadOffset := 2 + topicLength
 	qos := (header >> 1) & 0x03
+	var packetID uint16
 	if qos > 0 {
 		if len(body) < payloadOffset+2 {
-			return "", nil, fmt.Errorf("mqtt publish packet id truncated")
+			return parsedPublish{}, fmt.Errorf("mqtt publish packet id truncated")
 		}
+		packetID = binary.BigEndian.Uint16(body[payloadOffset : payloadOffset+2])
 		payloadOffset += 2
 	}
 	payload := body[payloadOffset:]
-	return topic, payload, nil
+	return parsedPublish{
+		topic:    topic,
+		payload:  payload,
+		qos:      qos,
+		packetID: packetID,
+	}, nil
+}
+
+func ackPublish(conn net.Conn, publish parsedPublish) error {
+	switch publish.qos {
+	case 0:
+		return nil
+	case 1:
+		return writePacketID(conn, 0x40, publish.packetID)
+	case 2:
+		if err := writePacketID(conn, 0x50, publish.packetID); err != nil {
+			return err
+		}
+		for {
+			header, body, err := readPacket(conn)
+			if err != nil {
+				return err
+			}
+			switch header & 0xf0 {
+			case 0x60:
+				if len(body) < 2 {
+					return fmt.Errorf("mqtt pubrel packet id truncated")
+				}
+				if binary.BigEndian.Uint16(body[:2]) == publish.packetID {
+					return writePacketID(conn, 0x70, publish.packetID)
+				}
+			case 0xc0:
+				_, _ = conn.Write([]byte{0xd0, 0x00})
+			}
+		}
+	default:
+		return fmt.Errorf("invalid mqtt publish qos %d", publish.qos)
+	}
+}
+
+func writePacketID(conn net.Conn, header byte, packetID uint16) error {
+	packet := []byte{header, 0x02, byte(packetID >> 8), byte(packetID)}
+	_, err := conn.Write(packet)
+	return err
 }

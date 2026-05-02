@@ -6,7 +6,7 @@ system_profiler SPApplicationsDataType 2>/dev/null | grep -iE 'Docker|OrbStack|T
 
 echo
 echo "== Launchd Services =="
-launchctl list 2>/dev/null | grep -iE 'docker|orbstack|tailscale|vmnet|vpn|wireguard' || true
+launchctl list 2>/dev/null | grep -iE 'docker|orbstack|tailscale|vmnet|wireguard|protected-packet' || true
 
 echo
 echo "== vmnet / virtualization logs (last 1h) =="

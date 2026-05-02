@@ -218,7 +218,7 @@
             <div class="form-grid two">
               <label>
                 <span>IP 地址</span>
-                <input [value]="createNetworkIp" (input)="createNetworkIp = $any($event.target).value" placeholder="10.0.0.0" />
+                <input [value]="createNetworkIp" (input)="createNetworkIp = $any($event.target).value" placeholder="100.64.0.0" />
               </label>
               <label>
                 <span>子网掩码</span>
@@ -232,11 +232,11 @@
             <div class="form-grid two">
               <label>
                 <span>起始地址</span>
-                <input [value]="createAllocationStartIp" (input)="createAllocationStartIp = $any($event.target).value" placeholder="10.0.0.2" />
+                <input [value]="createAllocationStartIp" (input)="createAllocationStartIp = $any($event.target).value" placeholder="100.64.0.10" />
               </label>
               <label>
                 <span>结束地址</span>
-                <input [value]="createAllocationEndIp" (input)="createAllocationEndIp = $any($event.target).value" placeholder="10.0.0.254" />
+                <input [value]="createAllocationEndIp" (input)="createAllocationEndIp = $any($event.target).value" placeholder="100.64.0.254" />
               </label>
             </div>
           </section>
@@ -256,7 +256,7 @@
             <div class="form-grid two">
               <label>
                 <span>IP 地址</span>
-                <input [value]="manageNetworkIp" (input)="manageNetworkIp = $any($event.target).value" placeholder="10.0.0.0" />
+                <input [value]="manageNetworkIp" (input)="manageNetworkIp = $any($event.target).value" placeholder="100.64.0.0" />
               </label>
               <label>
                 <span>子网掩码</span>
@@ -270,11 +270,11 @@
             <div class="form-grid two">
               <label>
                 <span>起始地址</span>
-                <input [value]="manageAllocationStartIp" (input)="manageAllocationStartIp = $any($event.target).value" placeholder="10.0.0.2" />
+                <input [value]="manageAllocationStartIp" (input)="manageAllocationStartIp = $any($event.target).value" placeholder="100.64.0.10" />
               </label>
               <label>
                 <span>结束地址</span>
-                <input [value]="manageAllocationEndIp" (input)="manageAllocationEndIp = $any($event.target).value" placeholder="10.0.0.254" />
+                <input [value]="manageAllocationEndIp" (input)="manageAllocationEndIp = $any($event.target).value" placeholder="100.64.0.254" />
               </label>
             </div>
           </section>
@@ -368,10 +368,10 @@
               <textarea
                 [value]="dnsDocumentText"
                 (input)="onDnsDocumentInput($any($event.target).value)"
-                placeholder="*.xx.com=10.0.0.2&#10;*.*.xx.com=10.0.0.2"
+                placeholder="*.xx.com=100.64.0.10&#10;*.*.xx.com=100.64.0.10"
               ></textarea>
               <span class="dns-document-help">
-                每行一条规则，仅支持 *.xx.com=10.0.0.2 或 *.*.xx.com=10.0.0.2。
+                每行一条规则，仅支持 *.xx.com=100.64.0.10 或 *.*.xx.com=100.64.0.10。
               </span>
             </label>
           </section>

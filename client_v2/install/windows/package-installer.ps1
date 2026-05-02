@@ -10,8 +10,8 @@ function Assert-ReleaseRuntime {
 
   $required = @(
     'slan_client_v2.exe',
-    'client-core-helper.exe',
     'client-core-service.exe',
+    'wintun.dll',
     'flutter_windows.dll',
     'client_core_plugin_plugin.dll'
   )
@@ -72,6 +72,7 @@ if (Test-Path $outputPath) {
 
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 Copy-Item -Path (Join-Path $releasePath '*') -Destination $outputPath -Recurse -Force
+Remove-Item -Path (Join-Path $outputPath 'client-core-helper.exe') -Force -ErrorAction SilentlyContinue
 New-InnoSetupScript -TemplatePath $issTemplatePath -StageDir $outputPath -GeneratedPath $generatedIssPath
 
 if (Test-Path $zipPath) {

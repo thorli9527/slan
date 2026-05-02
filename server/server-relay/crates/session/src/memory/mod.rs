@@ -6,7 +6,7 @@ mod state;
 
 use state::MemorySessionState;
 
-/// 基于内存的 session store，适合本地开发与单进程测试。
+/// 基于内存的 session store，适合本地开发与单进程运行。
 #[derive(Debug, Clone, Default)]
 pub struct InMemorySessionStore {
     inner: MemorySessionState,

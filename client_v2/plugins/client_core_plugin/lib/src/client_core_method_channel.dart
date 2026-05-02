@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 
 class ClientCorePlugin {
   ClientCorePlugin({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel('dev.slan/client_core_v2');
+    : _channel = channel ?? const MethodChannel('dev.slan/client_core_v2');
 
   final MethodChannel _channel;
 
@@ -25,6 +25,13 @@ class ClientCorePlugin {
 
   Future<Object?> watchState(int lastRevision) {
     return _invoke('watchState', {
+      'lastRevision': lastRevision,
+      'timeoutMs': 30000,
+    });
+  }
+
+  Future<Object?> watchBusinessEvent(int lastRevision) {
+    return _invoke('watchBusinessEvent', {
       'lastRevision': lastRevision,
       'timeoutMs': 30000,
     });
@@ -93,7 +100,8 @@ class ClientCorePlugin {
   }
 
   Future<Object?> _invokeLocalService(String method, Object? arguments) async {
-    final host = Platform.environment['SLAN_CLIENT_CORE_SERVICE_HOST'] ??
+    final host =
+        Platform.environment['SLAN_CLIENT_CORE_SERVICE_HOST'] ??
         '127.0.0.1:46392';
     final separator = host.lastIndexOf(':');
     if (separator <= 0 || separator == host.length - 1) {
@@ -148,12 +156,18 @@ class ClientCorePlugin {
       return;
     }
     try {
-      final callbackId = type == 'loginWithBrowser'
-          ? _stringField(result, 'authCallbackId')
-          : '';
-      final deviceId =
-          type == 'loginWithBrowser' ? _stringField(result, 'deviceId') : '';
-      await _openConsole(callbackId: callbackId, deviceId: deviceId);
+      if (type == 'loginWithBrowser') {
+        await _openConsole(
+          callbackId: _stringField(result, 'authCallbackId'),
+          deviceId: _stringField(result, 'deviceId'),
+        );
+        return;
+      }
+      final loginKeyResult = await _invokeLocalService('consoleLoginKey', null);
+      await _openConsole(
+        consoleLoginKey: _stringField(loginKeyResult, 'loginKey'),
+        deviceId: _stringField(loginKeyResult, 'deviceId'),
+      );
     } on Object {
       // Browser opening is best-effort for platforms without a native plugin.
     }
@@ -174,26 +188,69 @@ class ClientCorePlugin {
   Future<void> _openConsole({
     String callbackId = '',
     String deviceId = '',
+    String consoleLoginKey = '',
   }) async {
+    final safeDeviceId = _usableClientDeviceId(deviceId);
     final baseUrl =
-        Platform.environment['SLAN_WEB_CONSOLE_URL'] ?? 'http://127.0.0.1:24200';
-    final uri = Uri.parse(baseUrl).replace(queryParameters: {
-      ...Uri.parse(baseUrl).queryParameters,
-      if (callbackId.isNotEmpty) 'auth': 'login',
-      if (callbackId.isNotEmpty) 'callbackId': callbackId,
-      if (deviceId.isNotEmpty) 'deviceId': deviceId,
-    });
+        Platform.environment['SLAN_WEB_CONSOLE_URL'] ??
+        'http://127.0.0.1:24200';
+    final uri = Uri.parse(baseUrl).replace(
+      queryParameters: {
+        ...Uri.parse(baseUrl).queryParameters,
+        if (callbackId.isNotEmpty) 'auth': 'login',
+        if (callbackId.isNotEmpty) 'callbackId': callbackId,
+        if (consoleLoginKey.isNotEmpty) 'consoleLoginKey': consoleLoginKey,
+        if (safeDeviceId.isNotEmpty) 'deviceId': safeDeviceId,
+        'clientPlatform': _clientPlatform(),
+        'clientName': 'SLAN Client V2',
+      },
+    );
     final url = uri.toString();
     if (Platform.isLinux) {
       await Process.start('xdg-open', [url], mode: ProcessStartMode.detached);
     } else if (Platform.isMacOS) {
       await Process.start('open', [url], mode: ProcessStartMode.detached);
     } else if (Platform.isWindows) {
-      await Process.start(
-        'powershell.exe',
-        ['-NoProfile', '-Command', 'Start-Process', url],
-        mode: ProcessStartMode.detached,
-      );
+      await Process.start('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        'Start-Process',
+        url,
+      ], mode: ProcessStartMode.detached);
     }
+  }
+
+  String _usableClientDeviceId(String deviceId) {
+    final value = deviceId.trim();
+    if (value.isEmpty) {
+      return '';
+    }
+    final lower = value.toLowerCase();
+    if (lower == 'authcallbackid' ||
+        lower == 'windows-plugin-login' ||
+        lower == 'macos-plugin-login' ||
+        lower.startsWith('cb-')) {
+      return '';
+    }
+    return value;
+  }
+
+  String _clientPlatform() {
+    if (Platform.isWindows) {
+      return 'windows';
+    }
+    if (Platform.isMacOS) {
+      return 'macos';
+    }
+    if (Platform.isLinux) {
+      return 'linux';
+    }
+    if (Platform.isAndroid) {
+      return 'android';
+    }
+    if (Platform.isIOS) {
+      return 'ios';
+    }
+    return 'unknown';
   }
 }

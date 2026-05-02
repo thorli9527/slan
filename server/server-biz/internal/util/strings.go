@@ -56,7 +56,7 @@ func DedupeTrimmed(values []string) []string {
 
 // SortedStrings 返回一个排序后的副本，不修改原切片。
 //
-// 主要用于生成稳定的 cache key、签名 payload 和测试可预测输出。
+// 主要用于生成稳定的 cache key、签名 payload 和可预测输出。
 func SortedStrings(values []string) []string {
 	out := append([]string(nil), values...)
 	sort.Strings(out)

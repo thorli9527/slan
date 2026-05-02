@@ -14,7 +14,7 @@
 
 - 页面集中在 `lib/features`
 - 控制面 / bridge / store 混合在 `lib/infra`
-- 已经存在 devices 页的 bridge/tunnel debug 和集成测试
+- 已经存在 devices 页的 bridge/tunnel debug 入口
 
 ### Rust app_core
 
@@ -39,16 +39,12 @@
 
 ### 平台插件
 
-- `client/app_core_plugin_macos`
-- `client/app_core_plugin_android`
-- `client/app_core_plugin_linux`
 - `client/app_core_plugin_windows`
 
 关键点：
 
-- macOS 侧已经有最小 tunnel debug 调用链
-- 真正的 Packet Tunnel Provider target 还没建
-- 其他平台目前主要还是骨架
+- 当前只保留 Windows 插件实现
+- 其他端插件已从当前工作区移除，后续如需恢复应重新按 app-core-service 边界接入
 
 ## 当前主要问题
 
@@ -58,12 +54,11 @@
 
 - API 抽象
 - bridge 实现
-- mock 实现
 - store
 - scope
 - 数据模型
 
-这让 UI、桥接、测试替身、状态编排混在一个目录里，后续继续扩 tunnel/path/status 会越来越难拆。
+这让 UI、桥接、状态编排混在一个目录里，后续继续扩 tunnel/path/status 会越来越难拆。
 
 ### 2. `ffi-bridge` 过于中心化
 
@@ -129,7 +124,7 @@ Rust `tunnel` crate 已经做了第一轮抽象，但：
 不应直接承载：
 
 - Xcode target
-- Android `VpnService`
+- Android protected packet-routing service
 - Windows service lifecycle
 - Linux 内核接口细节实现散落在主 crate
 
@@ -155,13 +150,12 @@ Rust `tunnel` crate 已经做了第一轮抽象，但：
 1. 给 `client/` 增统一目录说明
 2. 明确 `docs/architecture` 下的 client 文档入口
 3. 统一 generated artifact 忽略规则
-4. 保持现有测试入口不变
+4. 保持文档入口和生成产物规则清晰
 
 这一轮已经覆盖到：
 
 - `client/README.md`
 - `docs/architecture/client-refactor-plan.md`
-- `docs/architecture/macos-packet-tunnel-provider-plan.md`
 
 ### P1 Flutter app 分层
 
@@ -175,8 +169,6 @@ Rust `tunnel` crate 已经做了第一轮抽象，但：
 - `lib/infra/app_core/bridge/`
 - `lib/infra/app_core/models/`
 - `lib/infra/app_core/store/`
-- `lib/infra/app_core/testing/`
-
 其中：
 
 - `AppCoreDemoStore` 不应继续和 bridge/api 实现同层平铺
@@ -262,23 +254,21 @@ macOS 先按 Packet Tunnel Provider 方案继续推进，其他平台跟随同�
 - 新职责优先拆模块，不继续往一个 runtime 文件里堆
 - 平台实现细节不要回流到 `ffi-bridge`
 
-### macOS plugin
+### 非 Windows 插件
 
-重点文件：
-
-- `client/app_core_plugin_macos/macos/Classes/SlanAppCorePluginMacosPlugin.swift`
+Android / iOS / Linux / macOS 插件已从当前工作区移除。
 
 要求：
 
-- 后续改成 `MacOSTunnelManager -> PacketTunnelProvider`
-- 当前 in-memory tunnel backend 只能继续作为过渡态
+- 后续恢复这些端时，不再复用旧 tunnel debug 入口
+- 统一通过 app-core-service 暴露的简化状态和网络启停接口接入
 
 ## 当前建议
 
 如果下一步继续做代码，不建议“全量重构 client 所有代码”。更稳的顺序是：
 
-1. 先做 macOS Packet Tunnel Provider target 骨架
-2. 同时把 Flutter `infra/app_core` 做一次目录拆分
-3. 再把 `ffi-bridge` 的 key/state/diagnostics 逐步从 `default_facade.rs` 分出去
+1. 继续把 Flutter `infra/app_core` 做目录拆分
+2. 再把 `ffi-bridge` 的 key/state/diagnostics 逐步从 `default_facade.rs` 分出去
+3. 需要恢复非 Windows 端时，先补 app-core-service 平台边界设计
 
-这三步能最大化降低后面接 WireGuard 真正后端时的返工。
+这三步能最大化降低后面恢复多端平台接入时的返工。

@@ -9,3 +9,6 @@ anyhow.workspace = true
 client-core = { path = "../client-core" }
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+libloading = "0.8"

@@ -39,29 +39,7 @@ func (s *dbState) allocateIP(ctx context.Context, subnet dto.Subnet) (string, er
 	return "", fmt.Errorf("%w: subnet is exhausted", ErrConflict)
 }
 
-func (s *dbState) preferredOwnerIP(ctx context.Context, subnet dto.Subnet) (string, bool, error) {
-	attachments, err := s.pg.ListAttachmentsBySubnet(ctx, subnet.SubnetID)
-	if err != nil {
-		return "", false, err
-	}
-	prefix, start, end, err := subnetRange(subnet.CIDR, subnet.GatewayIP, subnet.AllocationStartIP, subnet.AllocationEndIP)
-	if err != nil {
-		return "", false, err
-	}
-	candidate := networkBase(prefix) + 2
-	if candidate < start || candidate > end || !prefix.Contains(uint32ToAddr(candidate)) {
-		return "", false, nil
-	}
-	ip := uint32ToAddr(candidate).String()
-	for _, attachment := range attachments {
-		if attachment.VirtualIP == ip {
-			return "", false, nil
-		}
-	}
-	return ip, true, nil
-}
-
-func (s *dbState) ensureAttachmentVirtualIP(ctx context.Context, attachment dto.SubnetAttachment, member dto.NetworkMember) (string, error) {
+func (s *dbState) ensureAttachmentVirtualIP(ctx context.Context, attachment dto.SubnetAttachment) (string, error) {
 	virtualIP := strings.TrimSpace(attachment.VirtualIP)
 	if virtualIP != "" {
 		return virtualIP, nil
@@ -77,13 +55,6 @@ func (s *dbState) ensureAttachmentVirtualIP(ctx context.Context, attachment dto.
 	if err != nil {
 		return "", err
 	}
-	if member.Role == "owner" {
-		if preferred, ok, err := s.preferredOwnerIP(ctx, subnet); err != nil {
-			return "", err
-		} else if ok {
-			virtualIP = preferred
-		}
-	}
 	if err := s.pg.UpdateAttachmentVirtualIP(ctx, attachment.AttachmentID, virtualIP); err != nil {
 		return "", err
 	}
@@ -96,14 +67,14 @@ func (s *dbState) ensureDeviceAttachmentsVirtualIPs(ctx context.Context, attachm
 		if strings.TrimSpace(attachment.VirtualIP) != "" {
 			continue
 		}
-		member, err := s.pg.GetMemberByNetworkDevice(ctx, attachment.NetworkID, attachment.DeviceID)
+		_, err := s.pg.GetMemberByNetworkDevice(ctx, attachment.NetworkID, attachment.DeviceID)
 		if err != nil {
 			if repo.IsNotFound(err) {
 				continue
 			}
 			return nil, err
 		}
-		virtualIP, err := s.ensureAttachmentVirtualIP(ctx, attachment, member)
+		virtualIP, err := s.ensureAttachmentVirtualIP(ctx, attachment)
 		if err != nil {
 			return nil, err
 		}
@@ -132,17 +103,6 @@ func (s *dbState) reassignDefaultSubnetLeasePool(ctx context.Context, networkID 
 	}
 
 	sort.Slice(attachments, func(i, j int) bool {
-		leftOwner := false
-		if member, err := s.pg.GetMemberByNetworkDevice(ctx, attachments[i].NetworkID, attachments[i].DeviceID); err == nil {
-			leftOwner = member.Role == "owner"
-		}
-		rightOwner := false
-		if member, err := s.pg.GetMemberByNetworkDevice(ctx, attachments[j].NetworkID, attachments[j].DeviceID); err == nil {
-			rightOwner = member.Role == "owner"
-		}
-		if leftOwner != rightOwner {
-			return leftOwner
-		}
 		return attachments[i].AttachmentID < attachments[j].AttachmentID
 	})
 	changes := make([]attachmentIPChange, 0, len(attachments))
@@ -481,19 +441,6 @@ func newSubnet(networkID, subnetID, name, cidr, gatewayIP, startIP, endIP string
 	if endIP == "" {
 		endIP = uint32ToAddr(end).String()
 	}
-	if isDefault {
-		ownerIP := uint32ToAddr(networkBase(prefix) + 2).String()
-		ownerValue := networkBase(prefix) + 2
-		gatewayValue := addrToUint32(mustParseAddr(gatewayIP))
-		if gatewayValue == ownerValue || ownerValue < start || ownerValue > end {
-			return dto.Subnet{}, fmt.Errorf(
-				"%w: default subnet DHCP range must include owner ip %s",
-				ErrInvalidArgument,
-				ownerIP,
-			)
-		}
-	}
-
 	return dto.Subnet{
 		SubnetID:          subnetID,
 		NetworkID:         networkID,
@@ -523,8 +470,11 @@ func subnetRange(cidr, gatewayIP, startIP, endIP string) (netip.Prefix, uint32, 
 	}
 
 	gateway := base + 1
-	start := base + 2
 	end := broadcast - 1
+	start := base + 10
+	if start >= end {
+		start = base + 2
+	}
 	startRaw := strings.TrimSpace(startIP)
 	endRaw := strings.TrimSpace(endIP)
 	if (startRaw == "") != (endRaw == "") {
@@ -628,7 +578,7 @@ func createNetworkCIDR(cidr string) string {
 	if strings.TrimSpace(cidr) != "" {
 		return strings.TrimSpace(cidr)
 	}
-	return "10.0.0.0/24"
+	return "100.64.0.0/24"
 }
 
 func defaultSubnetsForNetwork(networkID, cidr string, newID func() string) ([]dto.Subnet, error) {

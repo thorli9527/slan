@@ -9,6 +9,7 @@
 #include <dwmapi.h>
 #include <flutter_windows.h>
 #include <shellapi.h>
+#include <windowsx.h>
 
 #include "resource.h"
 
@@ -395,6 +396,10 @@ Win32Window::MessageHandler(HWND hwnd,
       break;
 
     case kTrayIconMessage:
+      if (lparam == WM_LBUTTONUP) {
+        RestoreWindow(hwnd);
+        return 0;
+      }
       if (lparam == WM_LBUTTONDBLCLK) {
         RestoreWindow(hwnd);
         return 0;
@@ -437,9 +442,6 @@ Win32Window::MessageHandler(HWND hwnd,
     }
 
     case WM_ACTIVATE:
-      if (LOWORD(wparam) != WA_INACTIVE) {
-        CenterWindowOnCurrentMonitor(hwnd);
-      }
       if (child_content_ != nullptr) {
         SetFocus(child_content_);
       }

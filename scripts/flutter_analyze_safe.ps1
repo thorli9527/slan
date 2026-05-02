@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 
 $RootDir = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($ProjectDir)) {
-  $ProjectDir = Join-Path $RootDir 'client\app'
+  $ProjectDir = Join-Path $RootDir 'client_v2\app_flutter'
 }
 $ProjectDir = [System.IO.Path]::GetFullPath($ProjectDir)
 $LockDir = Join-Path $RootDir '.tmp'

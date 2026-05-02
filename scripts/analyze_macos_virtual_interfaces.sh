@@ -29,7 +29,7 @@ echo "== Network Services =="
 networksetup -listallnetworkservices 2>/dev/null || true
 
 echo
-echo "== VPN Connections =="
+echo "== Protected Packet Connections =="
 scutil --nc list 2>/dev/null || true
 
 echo
@@ -38,7 +38,7 @@ systemextensionsctl list 2>/dev/null || true
 
 echo
 echo "== Suspected Processes =="
-ps -ef | grep -iE 'vpn|wireguard|tailscale|zerotier|openvpn|clash|surge|v2ray|tun|tunnel|packettunnel|networkextension' | grep -v grep || true
+ps -ef | grep -iE 'wireguard|tailscale|zerotier|clash|surge|v2ray|tun|tunnel|packettunnel|networkextension|protected-packet' | grep -v grep || true
 
 echo
 echo "== Recent NetworkExtension Logs (last 10m) =="

@@ -1,10 +1,10 @@
 package dto
 
 type RegisterDeviceRequest struct {
+	DeviceID      string `json:"deviceId,omitempty"`
 	Name          string `json:"name"`
 	Platform      string `json:"platform"`
 	DeviceVersion string `json:"deviceVersion,omitempty"`
-	MachineID     string `json:"machineId"`
 	PublicKey     string `json:"publicKey"`
 }
 
@@ -37,7 +37,6 @@ type Device struct {
 	OwnerEmail           string              `json:"ownerEmail,omitempty"`
 	Platform             string              `json:"platform"`
 	DeviceVersion        string              `json:"deviceVersion,omitempty"`
-	MachineID            string              `json:"machineId,omitempty"`
 	Status               string              `json:"status"`
 	CurrentVirtualIP     string              `json:"currentVirtualIp,omitempty"`
 	LinkStatus           string              `json:"linkStatus,omitempty"`

@@ -543,10 +543,10 @@ pub enum DerpPoolEvent {
 ## 13. 推荐落地顺序
 
 1. 固化 `bootstrap.derp_map` 与 cluster-aware relay ticket 的协议回归。
-2. 扩展客户端 `derp-client` / `derp-pool` 的真实网络和故障注入测试。
+2. 扩展客户端 `derp-client` / `derp-pool` 的真实网络和故障注入能力。
 3. 完善多连接、单路径发送、probe 评分和切换的诊断输出。
 4. 补齐 server-relay 多节点部署、attach、转发和指标。
-5. 最后把动态切换与状态上报纳入常规 smoke。
+5. 最后完善动态切换与状态上报的生产观测。
 
 ## 14. 与当前代码结构的对应关系
 

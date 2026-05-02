@@ -22,7 +22,7 @@ Rust `client-core-service` owns:
 - Runtime monitoring and `networkState` reporting
 - A small status/command API for Flutter
 
-Rust `client-core-helper` owns:
+Rust `client-core-service` owns:
 
 - Privileged OS network operations
 - Virtual adapter create/delete/configure
@@ -37,7 +37,7 @@ Flutter must not directly generate mesh config, consume MQTT tasks, poll helper 
 - `plugins/client_core_plugin/`: Flutter platform plugin facade.
 - `rust/crates/client-core/`: platform-neutral client state machine and ports.
 - `rust/crates/client-core-service/`: local service process.
-- `rust/crates/client-core-helper/`: privileged helper process.
+- `rust/crates/client-core-service/`: local service and privileged network runtime.
 - `rust/crates/client-core-platform/`: OS-specific helper implementations.
 - `rust/crates/client-core-ffi/`: FFI surface used by desktop/mobile plugin layers.
 
@@ -47,7 +47,7 @@ Move behavior from the old Flutter client only when the target owner is clear:
 
 - UI interaction stays in Flutter.
 - Persistent state and network workflows go to `client-core-service`.
-- Admin/system operations go to `client-core-helper`.
+- Admin/system operations go to `client-core-service`.
 
 ## Tray Policy
 

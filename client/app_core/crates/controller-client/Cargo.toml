@@ -1,9 +1,0 @@
-[package]
-name = "controller-client"
-edition.workspace = true
-version.workspace = true
-
-[dependencies]
-slan-app-core = { path = "../app-core" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"

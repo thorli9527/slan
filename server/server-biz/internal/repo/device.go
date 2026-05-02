@@ -4,13 +4,11 @@ import (
 	"context"
 
 	"github.com/slan/server/server-biz/api/dto"
-	"gorm.io/gorm/clause"
 )
 
 type Device struct {
 	DeviceID      string  `gorm:"column:device_id;primaryKey"`
-	UserID        string  `gorm:"column:user_id;index;not null;uniqueIndex:idx_user_machine"`
-	MachineID     string  `gorm:"column:machine_id;not null;uniqueIndex:idx_user_machine"`
+	UserID        string  `gorm:"column:user_id;index;not null"`
 	Name          string  `gorm:"column:name;not null"`
 	Platform      string  `gorm:"column:platform;not null"`
 	DeviceVersion string  `gorm:"column:device_version;not null;default:''"`
@@ -31,7 +29,6 @@ func (m Device) ToDTO(networkIDs []string) dto.Device {
 		Name:          m.Name,
 		Platform:      m.Platform,
 		DeviceVersion: m.DeviceVersion,
-		MachineID:     m.MachineID,
 		Status:        m.Status,
 		CreatedAt:     m.CreatedAt,
 		PublicKey:     publicKey,
@@ -39,37 +36,8 @@ func (m Device) ToDTO(networkIDs []string) dto.Device {
 	}
 }
 
-func (r *PostgresRepository) GetDeviceByUserMachine(ctx context.Context, userID, machineID string) (Device, error) {
-	var record Device
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND machine_id = ?", userID, machineID).
-		First(&record).Error
-	return record, err
-}
-
 func (r *PostgresRepository) InsertDevice(ctx context.Context, record Device) error {
 	return r.db.WithContext(ctx).Create(&record).Error
-}
-
-func (r *PostgresRepository) UpsertDeviceByUserMachine(ctx context.Context, record Device) (Device, error) {
-	if err := r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns: []clause.Column{
-				{Name: "user_id"},
-				{Name: "machine_id"},
-			},
-			DoUpdates: clause.Assignments(map[string]any{
-				"name":           record.Name,
-				"platform":       record.Platform,
-				"device_version": record.DeviceVersion,
-				"status":         record.Status,
-				"public_key":     record.PublicKey,
-			}),
-		}).
-		Create(&record).Error; err != nil {
-		return Device{}, err
-	}
-	return r.GetDeviceByUserMachine(ctx, record.UserID, record.MachineID)
 }
 
 func (r *PostgresRepository) UpdateDevice(ctx context.Context, record Device) error {

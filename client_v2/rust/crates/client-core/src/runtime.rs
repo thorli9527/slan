@@ -37,13 +37,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         self.state.error = None;
         match command {
             ClientCommand::LoginWithBrowser => {
-                self.state.auth_callback_id = Some(
-                    self.state
-                        .device_id
-                        .clone()
-                        .filter(|value| !value.trim().is_empty())
-                        .unwrap_or_else(|| format!("cb-{}", current_timestamp_ms())),
-                );
+                self.state.auth_callback_id = Some(format!("cb-{}", current_timestamp_ms()));
                 self.state.notice = Some("loginBrowserRequested".to_string());
             }
             ClientCommand::ApplyAuthCallback(payload) => {
@@ -58,26 +52,14 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 self.state.notice = Some("signedIn".to_string());
             }
             ClientCommand::EnableNetwork => {
-                self.with_syncing("enableNetwork", |runtime| {
-                    let virtual_ip = runtime
-                        .state
-                        .virtual_ip
-                        .clone()
-                        .filter(|value| !value.trim().is_empty())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("device unavailable: missing assigned virtual IP")
-                        })?;
-                    runtime.platform.install_adapter()?;
-                    runtime.platform.configure_ip(&virtual_ip)?;
-                    runtime.platform.configure_routes(&[RouteSpec {
+                self.enable_network_with_config(
+                    32,
+                    &[],
+                    &[RouteSpec {
                         destination: "mesh".to_string(),
                         gateway: None,
-                    }])?;
-                    runtime.state.network_enabled = true;
-                    runtime.state.virtual_ip = Some(virtual_ip);
-                    runtime.state.notice = Some("networkEnabled".to_string());
-                    Ok(())
-                })?;
+                    }],
+                )?;
             }
             ClientCommand::DisableNetwork => {
                 self.with_syncing("disableNetwork", |runtime| {
@@ -93,12 +75,16 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 if virtual_ip.is_empty() {
                     self.state.error = Some("assigned virtual IP is empty".to_string());
                 } else {
+                    if self.state.network_enabled {
+                        self.platform
+                            .configure_ip(virtual_ip, payload.prefix_len.unwrap_or(32))?;
+                    }
                     self.state.virtual_ip = Some(virtual_ip.to_string());
                     self.state.notice = Some("assignedIpSynced".to_string());
                 }
             }
             ClientCommand::Logout => {
-                self.platform.disable_network()?;
+                let _ = self.platform.disable_network();
                 self.state = ClientViewState::default();
                 self.state.notice = Some("signedOut".to_string());
             }
@@ -118,10 +104,35 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         }
         let runtime_state = self.platform.read_runtime_state()?;
         self.state.network_enabled = runtime_state.network_enabled;
-        if runtime_state.virtual_ip.is_some() || self.state.virtual_ip.is_none() {
-            self.state.virtual_ip = runtime_state.virtual_ip;
-        }
+        self.state.virtual_ip = runtime_state.virtual_ip;
         Ok(())
+    }
+
+    pub fn enable_network_with_config(
+        &mut self,
+        prefix_len: u8,
+        dns_servers: &[String],
+        routes: &[RouteSpec],
+    ) -> Result<ClientViewState> {
+        self.with_syncing("enableNetwork", |runtime| {
+            let virtual_ip = runtime
+                .state
+                .virtual_ip
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("device unavailable: missing assigned virtual IP")
+                })?;
+            runtime.platform.install_adapter()?;
+            runtime.platform.configure_ip(&virtual_ip, prefix_len)?;
+            runtime.platform.configure_dns(dns_servers)?;
+            runtime.platform.configure_routes(routes)?;
+            runtime.state.network_enabled = true;
+            runtime.state.virtual_ip = Some(virtual_ip);
+            runtime.state.notice = Some("networkEnabled".to_string());
+            Ok(())
+        })?;
+        Ok(self.state.clone())
     }
 
     fn with_syncing(

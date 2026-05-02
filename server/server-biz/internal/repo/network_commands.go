@@ -5,6 +5,7 @@ import (
 
 	"github.com/slan/server/server-biz/api/dto"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (r *PostgresRepository) CreateNetworkWithDefaultSubnet(ctx context.Context, ownerUserID string, network dto.Network, subnet dto.Subnet) error {
@@ -74,7 +75,18 @@ func (r *PostgresRepository) CreateMember(ctx context.Context, member dto.Networ
 		CreatedAt: member.CreatedAt,
 		Status:    member.Status,
 	}
-	return r.db.WithContext(ctx).Create(&model).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "network_id"},
+				{Name: "device_id"},
+			},
+			DoUpdates: clause.Assignments(map[string]any{
+				"role":   model.Role,
+				"status": model.Status,
+			}),
+		}).
+		Create(&model).Error
 }
 
 func (r *PostgresRepository) UpdateMemberStatus(ctx context.Context, memberID, status string) error {
@@ -109,6 +121,12 @@ func (r *PostgresRepository) DeleteMembersByDeviceExceptNetwork(ctx context.Cont
 		query = query.Where("network_id <> ?", keepNetworkID)
 	}
 	return query.Delete(&NetworkMember{}).Error
+}
+
+func (r *PostgresRepository) DeleteMembersByDeviceInNetwork(ctx context.Context, deviceID, networkID string) error {
+	return r.db.WithContext(ctx).
+		Where("device_id = ? AND network_id = ?", deviceID, networkID).
+		Delete(&NetworkMember{}).Error
 }
 
 func (r *PostgresRepository) DeleteAttachmentsByDeviceExceptNetwork(ctx context.Context, deviceID, keepNetworkID string) error {

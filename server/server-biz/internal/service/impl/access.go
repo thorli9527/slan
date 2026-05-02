@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
+	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
+	"github.com/slan/server/server-biz/internal/mqttauth"
 	"github.com/slan/server/server-biz/internal/repo"
 	"github.com/slan/server/server-biz/internal/service"
 	"github.com/slan/server/server-biz/internal/util"
@@ -30,7 +32,8 @@ func (s dbAuthService) Register(req dto.RegisterRequest) (dto.AuthResponse, erro
 		return dto.AuthResponse{}, ErrForbidden
 	}
 	email := strings.TrimSpace(strings.ToLower(req.Email))
-	if email == "" || len(req.Password) < 8 {
+	password := strings.TrimSpace(req.Password)
+	if email == "" || len(password) < 8 {
 		return dto.AuthResponse{}, fmt.Errorf("%w: email and password are required", ErrInvalidArgument)
 	}
 
@@ -45,7 +48,7 @@ func (s dbAuthService) Register(req dto.RegisterRequest) (dto.AuthResponse, erro
 	if err := s.state.pg.CreateUser(ctx, repo.User{
 		UserID:       userID,
 		Email:        email,
-		PasswordHash: util.HashPassword(req.Password),
+		PasswordHash: util.HashPassword(password),
 	}); err != nil {
 		return dto.AuthResponse{}, err
 	}
@@ -54,9 +57,13 @@ func (s dbAuthService) Register(req dto.RegisterRequest) (dto.AuthResponse, erro
 
 func (s dbAuthService) Login(req dto.LoginRequest) (dto.AuthResponse, error) {
 	email := strings.TrimSpace(strings.ToLower(req.Email))
+	password := strings.TrimSpace(req.Password)
 	deviceID := strings.TrimSpace(req.DeviceID)
-	if email == "" || req.Password == "" {
+	if email == "" || password == "" {
 		return dto.AuthResponse{}, fmt.Errorf("%w: email and password are required", ErrInvalidArgument)
+	}
+	if deviceID != "" && !usableClientDeviceID(deviceID) {
+		return dto.AuthResponse{}, fmt.Errorf("%w: invalid deviceId", ErrInvalidArgument)
 	}
 	ctx := context.Background()
 	user, err := s.state.pg.GetUserByEmail(ctx, email)
@@ -66,7 +73,7 @@ func (s dbAuthService) Login(req dto.LoginRequest) (dto.AuthResponse, error) {
 		}
 		return dto.AuthResponse{}, err
 	}
-	if user.PasswordHash != util.HashPassword(req.Password) {
+	if user.PasswordHash != util.HashPassword(password) && user.PasswordHash != util.HashPassword(req.Password) {
 		return dto.AuthResponse{}, ErrUnauthorized
 	}
 	if deviceID != "" {
@@ -89,6 +96,9 @@ func (s dbAuthService) Refresh(req dto.RefreshTokenRequest) (dto.AuthResponse, e
 	deviceID := strings.TrimSpace(req.DeviceID)
 	if refreshToken == "" {
 		return dto.AuthResponse{}, fmt.Errorf("%w: refreshToken is required", ErrInvalidArgument)
+	}
+	if deviceID != "" && !usableClientDeviceID(deviceID) {
+		return dto.AuthResponse{}, fmt.Errorf("%w: invalid deviceId", ErrInvalidArgument)
 	}
 	ctx := context.Background()
 	userID, err := s.state.tokens.AuthenticateRefreshToken(ctx, refreshToken)
@@ -118,7 +128,9 @@ func (s dbAuthService) ChangePassword(userID string, req dto.ChangePasswordReque
 	if userID == "" {
 		return ErrUnauthorized
 	}
-	if strings.TrimSpace(req.CurrentPassword) == "" || len(req.NewPassword) < 8 {
+	currentPassword := strings.TrimSpace(req.CurrentPassword)
+	newPassword := strings.TrimSpace(req.NewPassword)
+	if currentPassword == "" || len(newPassword) < 8 {
 		return fmt.Errorf("%w: currentPassword and newPassword are required, newPassword must be at least 8 characters", ErrInvalidArgument)
 	}
 	ctx := context.Background()
@@ -129,10 +141,10 @@ func (s dbAuthService) ChangePassword(userID string, req dto.ChangePasswordReque
 		}
 		return err
 	}
-	if user.PasswordHash != util.HashPassword(req.CurrentPassword) {
+	if user.PasswordHash != util.HashPassword(currentPassword) && user.PasswordHash != util.HashPassword(req.CurrentPassword) {
 		return ErrUnauthorized
 	}
-	return s.state.pg.UpdateUserPassword(ctx, userID, util.HashPassword(req.NewPassword))
+	return s.state.pg.UpdateUserPassword(ctx, userID, util.HashPassword(newPassword))
 }
 
 func (s dbAuthService) CreateConsoleLoginKey(userID string, req dto.CreateConsoleLoginKeyRequest) (dto.ConsoleLoginKeyResponse, error) {
@@ -140,6 +152,9 @@ func (s dbAuthService) CreateConsoleLoginKey(userID string, req dto.CreateConsol
 	deviceID := strings.TrimSpace(req.DeviceID)
 	if userID == "" {
 		return dto.ConsoleLoginKeyResponse{}, ErrUnauthorized
+	}
+	if deviceID != "" && !usableClientDeviceID(deviceID) {
+		return dto.ConsoleLoginKeyResponse{}, fmt.Errorf("%w: invalid deviceId", ErrInvalidArgument)
 	}
 	ctx := context.Background()
 	if _, err := s.state.pg.GetUserByID(ctx, userID); err != nil {
@@ -225,14 +240,81 @@ func (s dbAuthService) CompleteCallback(callbackID string, req dto.CompleteAuthC
 	if req.AccessToken == "" || req.UserID == "" {
 		return ErrInvalidArgument
 	}
+	if req.DeviceID != "" && !usableClientDeviceID(req.DeviceID) {
+		return fmt.Errorf("%w: invalid deviceId", ErrInvalidArgument)
+	}
+	ctx := context.Background()
+	session, err := s.state.tokens.Authenticate(ctx, req.AccessToken)
+	if err != nil {
+		return ErrUnauthorized
+	}
+	if session.UserID != req.UserID {
+		return ErrForbidden
+	}
+	if req.DeviceID != "" {
+		device, err := s.state.pg.GetDeviceByID(ctx, req.DeviceID)
+		if err != nil {
+			if repo.IsNotFound(err) {
+				return ErrForbidden
+			}
+			return err
+		}
+		if device.UserID != req.UserID {
+			return ErrForbidden
+		}
+	}
 	if req.ExpiresIn <= 0 {
 		req.ExpiresIn = 3600
 	}
-	return s.state.tokens.StoreAuthCallbackPayload(
-		context.Background(),
+	if err := s.state.tokens.StoreAuthCallbackPayload(
+		ctx,
 		callbackID,
 		req,
 		10*time.Minute,
+	); err != nil {
+		return err
+	}
+	s.state.publishAuthCallbackToDevice(ctx, callbackID, req)
+	return nil
+}
+
+func (s *dbState) publishAuthCallbackToDevice(ctx context.Context, callbackID string, payload dto.CompleteAuthCallbackRequest) {
+	deviceID := strings.TrimSpace(payload.DeviceID)
+	if deviceID == "" || !s.cfg.MQTT.Enabled {
+		return
+	}
+	credential := mqttauth.ServerSubscriberCredential(s.cfg.MQTT, time.Now())
+	if credential == nil {
+		return
+	}
+	timeout := time.Duration(s.cfg.MQTT.PublishTimeoutMilliseconds) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	publishCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	_ = mqttauth.PublishJSONWithOptions(
+		publishCtx,
+		s.cfg.MQTT,
+		credential.ClientID,
+		credential.Username,
+		credential.Password,
+		mqttauth.ControlDownTopic(s.cfg.MQTT, deviceID),
+		controlmsg.Envelope{
+			Type:      "auth_callback",
+			MessageID: util.NewID("msg"),
+			Payload: map[string]any{
+				"callbackId":   callbackID,
+				"accessToken":  payload.AccessToken,
+				"refreshToken": payload.RefreshToken,
+				"userId":       payload.UserID,
+				"userLabel":    payload.UserLabel,
+				"deviceId":     payload.DeviceID,
+				"expiresIn":    payload.ExpiresIn,
+				"action":       payload.Action,
+			},
+		},
+		mqttauth.PublishOptions{QoS: mqttauth.PublishQoSExactlyOnce},
 	)
 }
 

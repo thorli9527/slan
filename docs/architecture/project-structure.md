@@ -51,7 +51,6 @@ client/
 │  │  ├─ shared/                        # 公共组件、常量、工具
 │  │  ├─ infra/                         # API、存储、FFI 适配
 │  │  └─ main.dart
-│  └─ test/
 │
 └─ app_core/
    ├─ crates/
@@ -66,7 +65,6 @@ client/
    │  ├─ diagnostics/                   # 诊断能力
    │  ├─ platform/                      # 各平台差异封装
    │  └─ ffi-bridge/                    # 对 Flutter 暴露 FFI
-   └─ tests/
 ```
 
 ### 3.2 服务端
@@ -101,7 +99,6 @@ server/
 │  │  ├─ auth/                          # 中继票据鉴权
 │  │  ├─ session/                       # 会话管理
 │  │  └─ metrics/                       # 指标采集
-│  └─ tests/
 ```
 
 ### 3.3 公共目录

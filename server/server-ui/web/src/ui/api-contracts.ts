@@ -67,7 +67,6 @@ export type Device = {
   name: string;
   ownerEmail?: string;
   platform: string;
-  machineId?: string;
   status: string;
   currentVirtualIp?: string;
   linkStatus?: string;

@@ -46,13 +46,7 @@ Windows runtime chain:
 1. Flutter calls `dev.slan/client_core_v2`.
 2. The plugin forwards to `client-core-service`.
 3. `client-core-service` owns the client state machine.
-4. `client-core-service` calls `client-core-helper`.
-5. `client-core-helper` performs privileged Windows network operations.
-
-Helper host:
-
-- Default: `127.0.0.1:46393`
-- Override: `SLAN_CLIENT_CORE_HELPER_HOST`
+4. `client-core-service` performs privileged Windows network operations.
 
 Current helper operations:
 

@@ -11,3 +11,6 @@ client-core-platform = { path = "../client-core-platform" }
 control-mqtt-client = { path = "../control-mqtt-client" }
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"

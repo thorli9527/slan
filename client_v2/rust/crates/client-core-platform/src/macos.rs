@@ -11,7 +11,7 @@ impl PlatformNetwork for MacosPlatformNetwork {
         bail!("macos mesh network backend is not implemented yet")
     }
 
-    fn configure_ip(&self, _virtual_ip: &str) -> Result<()> {
+    fn configure_ip(&self, _virtual_ip: &str, _prefix_len: u8) -> Result<()> {
         bail!("macos mesh network backend is not implemented yet")
     }
 

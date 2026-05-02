@@ -539,7 +539,7 @@ server-biz 需求模型
 
 后续重点从“打通主流程”转为“补强生产约束”：
 
-1. 固化 create / join / alias / switch / activate / bootstrap / relay fallback 的回归测试矩阵
+1. 固化 create / join / alias / switch / activate / bootstrap / relay fallback 的主流程矩阵
 2. 补强策略、ACL、成员审批和错误码一致性
 3. 扩展控制通道事件覆盖和连接状态上报
 4. 补充生产配置校验、限流和观测指标

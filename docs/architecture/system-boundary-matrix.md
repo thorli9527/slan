@@ -146,7 +146,7 @@ app_core(path-manager / relay-client)
 
 ## 8. 推荐联动实现顺序
 
-1. 固化当前 client create / join / alias / switch / activate / bootstrap / relay 主流程回归测试。
+1. 固化当前 client create / join / alias / switch / activate / bootstrap / relay 主流程。
 2. 扩展 `app_core.derp_pool` 的真实网络诊断和生产路径覆盖。
 3. 补强 `server-biz` 策略 / ACL 与控制通道事件覆盖。
 4. 补 `server-relay` 的集群接入能力和多节点运行时。

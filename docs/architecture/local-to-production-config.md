@@ -155,4 +155,4 @@ MQTT/BifroMQ production notes:
 4. 把 relay 地址改成真实公网地址
 5. 部署真实 TLS
 6. 首启后修改默认管理员密码
-7. 跑一轮控制面和 relay 数据面 smoke
+7. 检查控制面和 relay 数据面运行状态

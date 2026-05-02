@@ -13,8 +13,11 @@ import (
 )
 
 func (s dbDeviceService) requireRegisterDeviceRequest(req dto.RegisterDeviceRequest) error {
-	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Platform) == "" || strings.TrimSpace(req.MachineID) == "" || strings.TrimSpace(req.PublicKey) == "" {
-		return fmt.Errorf("%w: name, platform, machineId, and publicKey are required", ErrInvalidArgument)
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Platform) == "" || strings.TrimSpace(req.PublicKey) == "" {
+		return fmt.Errorf("%w: name, platform, and publicKey are required", ErrInvalidArgument)
+	}
+	if deviceID := strings.TrimSpace(req.DeviceID); deviceID != "" && !usableClientDeviceID(deviceID) {
+		return fmt.Errorf("%w: invalid deviceId", ErrInvalidArgument)
 	}
 	return nil
 }
@@ -37,17 +40,76 @@ func (s *dbState) requireUser(ctx context.Context, userID string) error {
 }
 
 func (s dbDeviceService) upsertDeviceRecord(ctx context.Context, userID string, req dto.RegisterDeviceRequest) (repo.Device, error) {
-	return s.state.pg.UpsertDeviceByUserMachine(ctx, repo.Device{
-		DeviceID:      util.NewID("dev"),
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if deviceID == "" {
+		deviceID = util.NewID("dev")
+	}
+	record := repo.Device{
+		DeviceID:      deviceID,
 		UserID:        userID,
-		MachineID:     req.MachineID,
 		Name:          req.Name,
 		Platform:      req.Platform,
 		DeviceVersion: strings.TrimSpace(req.DeviceVersion),
 		Status:        "offline",
 		PublicKey:     &req.PublicKey,
 		CreatedAt:     time.Now().Unix(),
-	})
+	}
+	if strings.TrimSpace(req.DeviceID) != "" {
+		current, err := s.state.pg.GetDeviceByID(ctx, deviceID)
+		if err == nil {
+			if current.UserID != userID {
+				return repo.Device{}, ErrForbidden
+			}
+			record.CreatedAt = current.CreatedAt
+			if err := s.state.pg.UpdateDevice(ctx, record); err != nil {
+				return repo.Device{}, err
+			}
+			return s.state.pg.GetDeviceByID(ctx, deviceID)
+		}
+		if !repo.IsNotFound(err) {
+			return repo.Device{}, err
+		}
+		if err := s.state.pg.InsertDevice(ctx, record); err != nil {
+			if !repo.IsUniqueViolation(err) {
+				return repo.Device{}, err
+			}
+			current, err := s.state.pg.GetDeviceByID(ctx, deviceID)
+			if err != nil {
+				return repo.Device{}, err
+			}
+			if current.UserID != userID {
+				return repo.Device{}, ErrForbidden
+			}
+			return current, nil
+		}
+		return record, nil
+	}
+	if err := s.state.pg.InsertDevice(ctx, record); err != nil {
+		if !repo.IsUniqueViolation(err) {
+			return repo.Device{}, err
+		}
+		current, err := s.state.pg.GetDeviceByID(ctx, deviceID)
+		if err != nil {
+			return repo.Device{}, err
+		}
+		if current.UserID != userID {
+			return repo.Device{}, ErrForbidden
+		}
+		return current, nil
+	}
+	return record, nil
+}
+
+func usableClientDeviceID(deviceID string) bool {
+	value := strings.TrimSpace(deviceID)
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	if lower == "authcallbackid" || lower == "windows-plugin-login" || lower == "macos-plugin-login" {
+		return false
+	}
+	return !strings.HasPrefix(lower, "cb-")
 }
 
 func (s *dbState) buildDeviceDTO(ctx context.Context, record repo.Device) dto.Device {
@@ -113,6 +175,22 @@ func (s *dbState) firstDeviceMembershipNetwork(ctx context.Context, deviceID str
 	return ""
 }
 
+func (s *dbState) deviceListVisibleNetworkForDevice(ctx context.Context, userID, deviceID string, networks []repo.Network) (string, bool) {
+	for _, network := range networks {
+		member, err := s.pg.GetMemberByNetworkDevice(ctx, network.NetworkID, deviceID)
+		if err != nil {
+			if repo.IsNotFound(err) {
+				continue
+			}
+			return "", false
+		}
+		if network.OwnerUserID == userID || member.Status == "active" {
+			return network.NetworkID, true
+		}
+	}
+	return "", false
+}
+
 func (s *dbState) buildDeviceDTOForNetwork(ctx context.Context, record repo.Device, networkID string) dto.Device {
 	networkIDs, _ := s.deviceNetworkIDs(ctx, record.DeviceID)
 	device := record.ToDTO(networkIDs)
@@ -167,7 +245,7 @@ func (s *dbState) buildDeviceDTOForNetwork(ctx context.Context, record repo.Devi
 }
 
 func (s *dbState) buildDeviceMQTTCredential(record repo.Device) *dto.MQTTCredential {
-	return mqttauth.DeviceCredential(s.cfg.MQTT, record.DeviceID, record.MachineID, time.Now())
+	return mqttauth.DeviceCredential(s.cfg.MQTT, record.DeviceID, record.DeviceID, time.Now())
 }
 
 func (s dbNodeService) buildNodeDTO(ctx context.Context, req dto.RegisterNodeRequest) dto.Node {

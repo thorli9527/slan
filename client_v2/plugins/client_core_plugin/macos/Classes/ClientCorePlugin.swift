@@ -136,9 +136,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     state["syncReason"] = type
     switch type {
     case "loginWithBrowser":
-      state["authCallbackId"] = (state["deviceId"] as? String)?.isEmpty == false
-        ? state["deviceId"]
-        : "macos-plugin-login"
+      state["authCallbackId"] = "cb-\(Int(Date().timeIntervalSince1970 * 1000))"
       state["notice"] = "loginBrowserRequested"
     case "openWebConsole":
       state["notice"] = "webConsoleRequested"
@@ -224,15 +222,33 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       queryItems.append(URLQueryItem(name: "auth", value: "login"))
       queryItems.append(URLQueryItem(name: "callbackId", value: callbackId))
     }
-    if !deviceId.isEmpty {
-      queryItems.append(URLQueryItem(name: "deviceId", value: deviceId))
+    let safeDeviceId = usableClientDeviceId(deviceId)
+    if !safeDeviceId.isEmpty {
+      queryItems.append(URLQueryItem(name: "deviceId", value: safeDeviceId))
     }
+    queryItems.append(URLQueryItem(name: "clientPlatform", value: "macos"))
+    queryItems.append(URLQueryItem(name: "clientName", value: "SLAN Client V2"))
     if !queryItems.isEmpty {
       components?.queryItems = queryItems
     }
     if let url = components?.url ?? URL(string: target) {
       NSWorkspace.shared.open(url)
     }
+  }
+
+  private func usableClientDeviceId(_ deviceId: String) -> String {
+    let value = deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.isEmpty {
+      return ""
+    }
+    let lower = value.lowercased()
+    if lower == "authcallbackid" || lower == "windows-plugin-login" || lower == "macos-plugin-login" {
+      return ""
+    }
+    if lower.hasPrefix("cb-") {
+      return ""
+    }
+    return value
   }
 
   private func readCommandType(_ arguments: Any?) -> String {

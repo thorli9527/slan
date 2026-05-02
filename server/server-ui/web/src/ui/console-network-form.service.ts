@@ -21,7 +21,7 @@ export class ConsoleNetworkFormService {
   addressAndMaskFromCidr(cidr: string): { address: string; subnetMask: string } {
     const [address, prefixText] = cidr.trim().split('/');
     if (!this.isLikelyIPv4(address || '')) {
-      return { address: '10.0.0.0', subnetMask: '255.255.252.0' };
+      return { address: '100.64.0.0', subnetMask: '255.255.252.0' };
     }
     const prefix = Number(prefixText);
     if (!Number.isInteger(prefix) || prefix < 1 || prefix > 30) {

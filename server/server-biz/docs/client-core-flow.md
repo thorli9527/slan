@@ -175,15 +175,4 @@ Expected failures:
 
 ## Validation Matrix
 
-- Server business API: `go test ./...` under `server/server-biz`.
-- Server HTTP integration flow: `go test ./...` under
-  `server/tests/go/server-biz-test`.
-- Rust app core and bridge: `cargo test` under `client/app_core`.
-- Rust integration tests: `cargo test` under `server/tests/rust/app-core-tests`.
-- Flutter app join/switch adapters: `flutter test
-  test/infra/bridge_app_core_api_test.dart
-  test/features/networks/networks_page_desktop_test.dart
-  test/infra/http_app_core_api_test.dart`.
 - Web console build: `npm.cmd run build` under `server/server-ui/web`.
-- Protocol drift checks:
-  `go run scripts/check_protocol_contracts.go --root . --target web --target flutter --target rust-controller --target go-server --target openapi --target protobuf`.

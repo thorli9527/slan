@@ -129,16 +129,10 @@ Flutter 侧已补齐 relay 相关接口契约：
 - `ControlApi.issueRelayTicket(...)`
 - `api_models.dart` 中的 `RelayTicketRequest`
 
-Mock 已支持：
-
-- 返回 mock relay ticket
-- `connect()` 根据 peer 标识模拟 `p2p` 或 `relay` 连接路径
-
 实现位置：
 
 - `client/app/lib/infra/app_core/app_core_api.dart`
 - `client/app/lib/infra/app_core/models.dart`
-- `client/app/lib/infra/app_core/mock_app_core_api.dart`
 - `client/app/lib/infra/control_api.dart`
 - `client/app/lib/infra/api_models.dart`
 
@@ -179,16 +173,16 @@ Mock 已支持：
 ## 当前缺口
 
 当前 `/bootstrap`、`/relay/tickets`、controller-client、relay-client/path
-manager 的主流程已经具备测试覆盖。剩余缺口主要是生产化和可观测性：
+manager 的主流程已经打通。剩余缺口主要是生产化和可观测性：
 
 - Flutter 普通页面仍应只展示稳定连接状态，relay fallback 细节放到诊断视图。
-- 真实网络环境下的 relay / DERP 失败注入、恢复和切换测试还需要继续补强。
+- 真实网络环境下的 relay / DERP 失败注入、恢复和切换能力还需要继续补强。
 - 多 relay / DERP 节点集群部署和运维指标还需要完善。
 - `ConnectionState` 上报与控制面观测面需要继续细化。
 
 ## 建议下一步
 
-1. 固化 direct -> relay / DERP fallback 的回归和 smoke 测试。
+1. 固化 direct -> relay / DERP fallback 的生产流程。
 2. 补充真实 relay / DERP 节点的故障注入和恢复验证。
 3. 把 fallback、active path、最近探测结果整理为诊断视图。
 4. 完善多节点 relay / DERP 集群部署和指标。

@@ -130,7 +130,7 @@
 
 ## 5. 后续必须补强的点
 
-当前控制面消费、relay / DERP 票据字段、`DerpPool` / `PathManager` 基础路径已经具备测试覆盖。后续还需要补强：
+当前控制面消费、relay / DERP 票据字段、`DerpPool` / `PathManager` 基础路径已经打通。后续还需要补强：
 
 1. 真实网络环境下的 `DerpClient` 故障注入与恢复验证
 2. `DerpPool` 评分、选主、切换逻辑的长期运行与诊断覆盖
@@ -141,7 +141,7 @@
 ## 6. 建议的实现顺序
 
 1. 固化 `BootstrapConfig.derp_map` 与 cluster-aware relay ticket 的协议回归
-2. 扩展 `DerpClient` / `DerpPool` 的真实网络和故障注入测试
+2. 扩展 `DerpClient` / `DerpPool` 的真实网络和故障注入能力
 3. 完善 `tick_health_check()`、`maybe_switch()` 和 active path 诊断输出
 4. 扩展 `PathManager` 与 `p2p` / `tunnel` 联动场景
 5. 最后按需把 DERP 诊断状态开放给 Flutter

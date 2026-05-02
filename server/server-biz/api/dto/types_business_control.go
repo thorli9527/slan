@@ -178,7 +178,7 @@ type DNSConfig struct {
 	Servers []string `json:"servers,omitempty"`
 	// SearchDomains 是搜索域列表。
 	SearchDomains []string `json:"searchDomains,omitempty"`
-	// Wildcards 是通配解析记录，格式如 *.xx.com=10.0.0.2。
+	// Wildcards 是通配解析记录，格式如 *.xx.com=100.64.0.10。
 	Wildcards []string `json:"wildcards,omitempty"`
 }
 

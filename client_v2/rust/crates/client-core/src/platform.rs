@@ -18,7 +18,7 @@ pub struct NetworkRuntimeState {
 
 pub trait PlatformNetwork {
     fn install_adapter(&self) -> Result<()>;
-    fn configure_ip(&self, virtual_ip: &str) -> Result<()>;
+    fn configure_ip(&self, virtual_ip: &str, prefix_len: u8) -> Result<()>;
     fn configure_routes(&self, routes: &[RouteSpec]) -> Result<()>;
     fn configure_dns(&self, dns_servers: &[String]) -> Result<()>;
     fn disable_network(&self) -> Result<()>;

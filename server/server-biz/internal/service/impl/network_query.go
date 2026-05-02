@@ -247,11 +247,11 @@ func (s dbNetworkService) ensureAssignmentVirtualIPs(ctx context.Context, assign
 		if err != nil {
 			return false, err
 		}
-		member, err := s.state.pg.GetMemberByNetworkDevice(ctx, assignment.NetworkID, assignment.DeviceID)
+		_, err = s.state.pg.GetMemberByNetworkDevice(ctx, assignment.NetworkID, assignment.DeviceID)
 		if err != nil {
 			return false, err
 		}
-		if _, err := s.state.ensureAttachmentVirtualIP(ctx, attachment, member); err != nil {
+		if _, err := s.state.ensureAttachmentVirtualIP(ctx, attachment); err != nil {
 			return false, err
 		}
 		repaired = true

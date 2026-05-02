@@ -1,1 +1,0 @@
-library slan_app_core_plugin_android;

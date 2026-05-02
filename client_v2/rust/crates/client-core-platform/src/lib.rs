@@ -40,7 +40,7 @@ impl PlatformNetwork for NoopPlatformNetwork {
         anyhow::bail!("network operations are not implemented on this platform yet")
     }
 
-    fn configure_ip(&self, _virtual_ip: &str) -> Result<()> {
+    fn configure_ip(&self, _virtual_ip: &str, _prefix_len: u8) -> Result<()> {
         anyhow::bail!("network operations are not implemented on this platform yet")
     }
 

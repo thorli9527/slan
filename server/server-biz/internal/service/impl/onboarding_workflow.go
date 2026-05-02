@@ -10,7 +10,7 @@ import (
 
 const (
 	defaultOwnedNetworkName = "My Network"
-	defaultOwnedNetworkCIDR = "10.0.0.0/16"
+	defaultOwnedNetworkCIDR = "100.64.0.0/16"
 )
 
 func (s *dbState) ensureOwnedNetwork(ctx context.Context, userID string) (dto.Network, error) {

@@ -30,6 +30,9 @@ func (s dbDeviceService) Register(userID string, req dto.RegisterDeviceRequest) 
 	if err != nil {
 		return dto.Device{}, err
 	}
+	if err := s.state.ensureDeviceProvisionedInActiveNetwork(ctx, userID, record.DeviceID); err != nil {
+		return dto.Device{}, err
+	}
 	device := s.state.buildDeviceDTO(ctx, record)
 	device.MQTT = s.state.buildDeviceMQTTCredential(record)
 	return device, nil
@@ -50,13 +53,7 @@ func (s dbDeviceService) ListByUser(userID string) ([]dto.Device, error) {
 	for _, network := range visibleNetworks {
 		networkIDs = append(networkIDs, network.NetworkID)
 	}
-	ownedNetworkIDs := make([]string, 0, len(visibleNetworks))
-	for _, network := range visibleNetworks {
-		if network.OwnerUserID == userID {
-			ownedNetworkIDs = append(ownedNetworkIDs, network.NetworkID)
-		}
-	}
-	networkDevices, err := s.state.pg.ListDevicesByNetworks(ctx, ownedNetworkIDs)
+	networkDevices, err := s.state.pg.ListDevicesByNetworks(ctx, networkIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -71,11 +68,15 @@ func (s dbDeviceService) ListByUser(userID string) ([]dto.Device, error) {
 		if _, ok := seen[record.DeviceID]; ok {
 			continue
 		}
+		networkID, ok := s.state.deviceListVisibleNetworkForDevice(ctx, userID, record.DeviceID, visibleNetworks)
+		if !ok {
+			continue
+		}
 		seen[record.DeviceID] = struct{}{}
 		out = append(out, s.state.buildDeviceDTOForNetwork(
 			ctx,
 			record,
-			s.state.firstDeviceMembershipNetwork(ctx, record.DeviceID, networkIDs),
+			networkID,
 		))
 	}
 	return out, nil

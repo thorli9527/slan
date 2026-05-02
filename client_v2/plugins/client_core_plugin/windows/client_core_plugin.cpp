@@ -12,6 +12,8 @@
 #include <flutter/plugin_registrar_windows.h>
 #include <flutter/standard_method_codec.h>
 
+#include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -25,6 +27,27 @@ namespace {
 
 constexpr char kChannelName[] = "dev.slan/client_core_v2";
 constexpr char kDefaultServiceHost[] = "127.0.0.1:46392";
+constexpr wchar_t kWindowsServiceName[] = L"SLANClientV2Service";
+
+std::string NewAuthCallbackId() {
+  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                       .count();
+  return "cb-" + std::to_string(now);
+}
+
+bool IsUsableClientDeviceId(const std::string& device_id) {
+  if (device_id.empty()) {
+    return false;
+  }
+  std::string lower;
+  lower.reserve(device_id.size());
+  for (const unsigned char ch : device_id) {
+    lower.push_back(static_cast<char>(std::tolower(ch)));
+  }
+  return lower != "authcallbackid" && lower != "windows-plugin-login" &&
+         lower != "macos-plugin-login" && lower.rfind("cb-", 0) != 0;
+}
 
 std::string EscapeJsonString(const std::string& value) {
   std::ostringstream escaped;
@@ -220,15 +243,24 @@ std::string AppendQueryParam(
   return url + separator + key + "=" + value;
 }
 
-void OpenWebConsole(const std::string& callback_id = "", const std::string& device_id = "") {
+void OpenWebConsole(
+    const std::string& callback_id = "",
+    const std::string& device_id = "",
+    const std::string& console_login_key = "") {
   std::string url = ResolveWebConsoleUrl();
   if (!callback_id.empty()) {
     url = AppendQueryParam(url, "auth", "login");
     url = AppendQueryParam(url, "callbackId", callback_id);
   }
-  if (!device_id.empty()) {
-    url = AppendQueryParam(url, "deviceId", device_id);
+  if (!console_login_key.empty()) {
+    url = AppendQueryParam(url, "consoleLoginKey", console_login_key);
   }
+  if (!device_id.empty()) {
+    if (IsUsableClientDeviceId(device_id)) {
+      url = AppendQueryParam(url, "deviceId", device_id);
+    }
+  }
+  url = AppendQueryParam(url, "clientPlatform", "windows");
   const std::wstring wide_url = Utf8ToWide(url);
   ShellExecuteW(nullptr, L"open", wide_url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
@@ -248,38 +280,58 @@ std::optional<std::wstring> ResolveBundledServicePath() {
 }
 
 bool TryStartBundledService() {
-  const auto service_path = ResolveBundledServicePath();
-  if (!service_path.has_value()) {
-    return false;
-  }
+  STARTUPINFOW task_startup_info{};
+  task_startup_info.cb = sizeof(task_startup_info);
+  task_startup_info.dwFlags = STARTF_USESHOWWINDOW;
+  task_startup_info.wShowWindow = SW_HIDE;
 
-  STARTUPINFOW startup_info{};
-  startup_info.cb = sizeof(startup_info);
-  startup_info.dwFlags = STARTF_USESHOWWINDOW;
-  startup_info.wShowWindow = SW_HIDE;
-
-  PROCESS_INFORMATION process_info{};
-  std::wstring command_line = L"\"" + *service_path + L"\"";
-  std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
-  mutable_command.push_back(L'\0');
-
-  if (!CreateProcessW(
+  PROCESS_INFORMATION task_process_info{};
+  std::wstring task_command_line =
+      std::wstring(L"sc.exe start ") + kWindowsServiceName;
+  std::vector<wchar_t> mutable_task_command(
+      task_command_line.begin(), task_command_line.end());
+  mutable_task_command.push_back(L'\0');
+  if (CreateProcessW(
           nullptr,
-          mutable_command.data(),
+          mutable_task_command.data(),
           nullptr,
           nullptr,
           FALSE,
           CREATE_NO_WINDOW,
           nullptr,
           nullptr,
-          &startup_info,
-          &process_info)) {
+          &task_startup_info,
+          &task_process_info)) {
+    WaitForSingleObject(task_process_info.hProcess, 5000);
+    DWORD exit_code = 1;
+    GetExitCodeProcess(task_process_info.hProcess, &exit_code);
+    CloseHandle(task_process_info.hThread);
+    CloseHandle(task_process_info.hProcess);
+    if (exit_code == 0) {
+      Sleep(500);
+      return true;
+    }
+  }
+
+  if (reinterpret_cast<intptr_t>(
+          ShellExecuteW(nullptr, L"runas", L"sc.exe",
+                        (std::wstring(L"start ") + kWindowsServiceName).c_str(),
+                        nullptr, SW_HIDE)) > 32) {
+    Sleep(1000);
+    return true;
+  }
+
+  const auto service_path = ResolveBundledServicePath();
+  if (!service_path.has_value()) {
     return false;
   }
 
-  CloseHandle(process_info.hThread);
-  CloseHandle(process_info.hProcess);
-  Sleep(300);
+  if (reinterpret_cast<intptr_t>(
+          ShellExecuteW(nullptr, L"runas", service_path->c_str(), nullptr, nullptr, SW_HIDE)) <=
+      32) {
+    return false;
+  }
+  Sleep(1000);
   return true;
 }
 
@@ -393,6 +445,17 @@ std::optional<std::string> ForwardToServiceWithAutoStart(
   return std::nullopt;
 }
 
+void OpenAuthenticatedWebConsole() {
+  if (const auto login_key_response = ForwardToServiceWithAutoStart("consoleLoginKey", nullptr)) {
+    OpenWebConsole(
+        "",
+        ExtractJsonStringField(*login_key_response, "deviceId"),
+        ExtractJsonStringField(*login_key_response, "loginKey"));
+    return;
+  }
+  OpenWebConsole();
+}
+
 std::string ReadCommandType(const flutter::EncodableValue* arguments) {
   if (arguments == nullptr) {
     return "";
@@ -451,7 +514,7 @@ void ClientCorePlugin::HandleMethodCall(
       method == "dispatch" ? ReadCommandType(method_call.arguments()) : "";
   if (const auto service_response = ForwardToServiceWithAutoStart(method, method_call.arguments())) {
     if (command_type == "openWebConsole") {
-      OpenWebConsole();
+      OpenAuthenticatedWebConsole();
     } else if (command_type == "loginWithBrowser") {
       OpenWebConsole(
           ExtractJsonStringField(*service_response, "authCallbackId"),
@@ -473,7 +536,7 @@ void ClientCorePlugin::HandleMethodCall(
   if (method == "dispatch") {
     auto state = Dispatch(method_call.arguments());
     if (command_type == "openWebConsole") {
-      OpenWebConsole();
+      OpenAuthenticatedWebConsole();
     } else if (command_type == "loginWithBrowser") {
       OpenWebConsole(auth_callback_id_, device_id_);
     }
@@ -575,7 +638,7 @@ flutter::EncodableMap ClientCorePlugin::Dispatch(
   notice_.clear();
 
   if (type == "loginWithBrowser") {
-    auth_callback_id_ = device_id_.empty() ? "windows-plugin-login" : device_id_;
+    auth_callback_id_ = NewAuthCallbackId();
     notice_ = "loginBrowserRequested";
   } else if (type == "enableNetwork") {
     network_enabled_ = false;

@@ -32,7 +32,7 @@
 ### Go（服务端）
 
 - `server/**/bin/`：自定义输出目录
-- `server/**/*.exe`、`server/**/*.test`、`server/**/*.out`：Windows 二进制、`go test` 产物与 profiling 输出
+- `server/**/*.exe`、`server/**/*.out`：Windows 二进制与 profiling 输出
 
 说明：只对 `server/` 下做约束，避免误伤其他目录中同名文件。
 

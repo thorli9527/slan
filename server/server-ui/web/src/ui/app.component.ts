@@ -45,9 +45,9 @@ export class AppComponent implements OnDestroy {
   confirmPassword = '';
   createName = 'My Network';
   createDescription = '';
-  createNetworkIp = '10.0.0.0';
+  createNetworkIp = '100.64.0.0';
   createSubnetMask = '255.255.252.0';
-  manageNetworkIp = '10.0.0.0';
+  manageNetworkIp = '100.64.0.0';
   manageSubnetMask = '255.255.255.0';
   manageAllocationStartIp = '';
   manageAllocationEndIp = '';
@@ -148,7 +148,7 @@ export class AppComponent implements OnDestroy {
   });
   readonly loginClientDeviceId = signal<string>('');
   readonly loginCallbackId = signal<string>('');
-  readonly loginClientPlatform = signal<string>('desktop');
+  readonly loginClientPlatform = signal<string>(this.sessionService.detectClientPlatform());
   readonly loginClientName = signal<string>('SLAN Client');
   readonly callbackDeviceId = signal<string>('');
   readonly pendingCallbackId = signal<string>('');
@@ -171,12 +171,16 @@ export class AppComponent implements OnDestroy {
       this.pendingCallbackId.set(loginClientContext.callbackId);
     }
     if (loginClientContext.deviceId) {
-      this.loginClientDeviceId.set(loginClientContext.deviceId);
+      this.loginClientDeviceId.set(this.sessionService.usableClientDeviceId(loginClientContext.deviceId));
     }
     this.loginClientPlatform.set(loginClientContext.clientPlatform);
     this.loginClientName.set(loginClientContext.clientName);
     if (loginClientContext.consoleLoginKey) {
       void this.consumeConsoleLoginKey(loginClientContext.consoleLoginKey);
+      return;
+    }
+    if (loginClientContext.authMode === 'login' && loginClientContext.callbackId && this.token()) {
+      void this.resumeBrowserLoginRequest();
       return;
     }
     if (this.token()) {
@@ -397,7 +401,7 @@ export class AppComponent implements OnDestroy {
         mode: this.authMode(),
         email: this.email,
         password: this.password,
-        loginDeviceId: this.loginClientDeviceId().trim() || undefined,
+        loginDeviceId: this.sessionService.usableClientDeviceId(this.loginClientDeviceId()) || undefined,
         tokenDeviceState: this.currentDeviceState(),
       });
       this.applyAuthentication(result);
@@ -998,6 +1002,51 @@ export class AppComponent implements OnDestroy {
     );
   }
 
+  private async resumeBrowserLoginRequest(): Promise<void> {
+    const callbackId = this.loginCallbackId().trim();
+    const deviceId = this.sessionService.usableClientDeviceId(this.loginClientDeviceId());
+    if (!callbackId || !deviceId || !this.token() || !this.userId()) {
+      this.handleUnauthorizedSession('请登录持有该设备的账号。');
+      return;
+    }
+    this.loading.set(true);
+    try {
+      const devices = (await this.api.listDevices(this.token())).items;
+      const owned = devices.some((item) => item.deviceId === deviceId);
+      if (!owned) {
+        localStorage.setItem('slan.pendingLoginCallbackId', callbackId);
+        localStorage.setItem('slan.pendingLoginDeviceId', deviceId);
+        localStorage.setItem('slan.pendingLoginClientPlatform', this.loginClientPlatform());
+        this.handleUnauthorizedSession('当前登录账号不持有该设备，请重新登录设备所属账号。');
+        return;
+      }
+      this.currentDeviceId.set(deviceId);
+      this.devices.set(devices);
+      this.startSessionMonitor();
+      const workspace = await this.facade.refreshWorkspace({
+        token: this.token(),
+        ...this.currentDeviceState(),
+      });
+      this.applyRefreshWorkspaceResult(workspace);
+      this.openActiveNetworkIfAvailable();
+      await this.forwardCallbackToServer(
+        {
+          accessToken: this.token(),
+          userId: this.userId(),
+          email: this.userEmail(),
+          refreshToken: '',
+          expiresIn: 3600,
+        },
+        deviceId,
+        'activate_active_network',
+      );
+    } catch (error) {
+      this.handleUnauthorizedSession('当前登录状态不可用，请重新登录。');
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
   async switchToNetwork(networkId: string): Promise<void> {
     this.clearNotices();
     try {
@@ -1148,7 +1197,7 @@ export class AppComponent implements OnDestroy {
     return {
       currentDeviceId: this.currentDeviceId(),
       callbackDeviceId: this.callbackDeviceId(),
-      preferredMachineId: this.loginClientDeviceId(),
+      preferredMachineId: this.sessionService.usableClientDeviceId(this.loginClientDeviceId()),
       clientPlatform: this.loginClientPlatform(),
       clientName: this.loginClientName(),
     };
@@ -1184,6 +1233,14 @@ export class AppComponent implements OnDestroy {
     }
   }
 
+  private openActiveNetworkIfAvailable(): void {
+    if (!this.home().activeNetwork) {
+      return;
+    }
+    this.networkDialog.set('');
+    this.activeView.set('network');
+  }
+
   private parseList(value: string): string[] {
     return value
       .split(/\r?\n|,/)
@@ -1215,7 +1272,7 @@ export class AppComponent implements OnDestroy {
       line = line.replace(/^wildcard\s+/i, '');
       const parts = line.split('=');
       if (parts.length !== 2) {
-        throw new Error(`DNS 第 ${lineNumber} 行格式错误，请使用 *.xx.com=10.0.0.2`);
+        throw new Error(`DNS 第 ${lineNumber} 行格式错误，请使用 *.xx.com=100.64.0.10`);
       }
       const host = this.normalizeDnsWildcardHost(parts[0]);
       const ip = parts[1].trim();

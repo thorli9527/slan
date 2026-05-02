@@ -16,6 +16,8 @@ pub struct AuthPayload {
 #[serde(rename_all = "camelCase")]
 pub struct AssignedIpPayload {
     pub virtual_ip: String,
+    #[serde(default)]
+    pub prefix_len: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

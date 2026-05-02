@@ -11,7 +11,7 @@ impl PlatformNetwork for LinuxPlatformNetwork {
         bail!("linux mesh network backend is not implemented yet")
     }
 
-    fn configure_ip(&self, _virtual_ip: &str) -> Result<()> {
+    fn configure_ip(&self, _virtual_ip: &str, _prefix_len: u8) -> Result<()> {
         bail!("linux mesh network backend is not implemented yet")
     }
 

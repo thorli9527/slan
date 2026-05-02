@@ -145,7 +145,7 @@ func migratePostgres(ctx context.Context, db *gorm.DB) error {
 	if err := migrateSubnetAttachmentIndexes(ctx, db); err != nil {
 		return err
 	}
-	return migrateDeviceIndexes(ctx, db)
+	return migrateNetworkMemberIndexes(ctx, db)
 }
 
 func migrateSubnetAttachmentIndexes(ctx context.Context, db *gorm.DB) error {
@@ -159,13 +159,25 @@ func migrateSubnetAttachmentIndexes(ctx context.Context, db *gorm.DB) error {
 	return nil
 }
 
-func migrateDeviceIndexes(ctx context.Context, db *gorm.DB) error {
+func migrateNetworkMemberIndexes(ctx context.Context, db *gorm.DB) error {
 	tx := db.WithContext(ctx)
-	if err := tx.Exec(`DROP INDEX IF EXISTS idx_user_machine`).Error; err != nil {
-		return fmt.Errorf("drop idx_user_machine: %w", err)
+	if err := tx.Exec(`
+		DELETE FROM network_members a
+		USING network_members b
+		WHERE a.network_id = b.network_id
+		  AND a.device_id = b.device_id
+		  AND (
+		    a.created_at > b.created_at
+		    OR (a.created_at = b.created_at AND a.member_id > b.member_id)
+		  )
+	`).Error; err != nil {
+		return fmt.Errorf("dedupe network members: %w", err)
 	}
-	if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machine ON devices (user_id, machine_id)`).Error; err != nil {
-		return fmt.Errorf("create idx_user_machine: %w", err)
+	if err := tx.Exec(`DROP INDEX IF EXISTS idx_network_device`).Error; err != nil {
+		return fmt.Errorf("drop idx_network_device: %w", err)
+	}
+	if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_network_device ON network_members (network_id, device_id)`).Error; err != nil {
+		return fmt.Errorf("create idx_network_device: %w", err)
 	}
 	return nil
 }

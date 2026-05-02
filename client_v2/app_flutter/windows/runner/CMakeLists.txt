@@ -40,6 +40,8 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
 get_filename_component(CLIENT_V2_RUST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../rust" ABSOLUTE)
+get_filename_component(CLIENT_V2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(WINTUN_DLL_PATH "${CLIENT_V2_DIR}/drivers/wintun/bin/amd64/wintun.dll")
 set(CLIENT_CORE_OUTPUT_DIR "$<IF:$<CONFIG:Debug>,debug,release>")
 if(DEFINED ENV{CARGO_TARGET_DIR} AND NOT "$ENV{CARGO_TARGET_DIR}" STREQUAL "")
   file(TO_CMAKE_PATH "$ENV{CARGO_TARGET_DIR}" CLIENT_CORE_TARGET_DIR)
@@ -50,14 +52,16 @@ endif()
 add_custom_command(
   TARGET ${BINARY_NAME} POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${CLIENT_CORE_TARGET_DIR}"
-    cargo build -p client-core-helper -p client-core-service $<$<NOT:$<CONFIG:Debug>>:--release>
+    cargo build -p client-core-service $<$<NOT:$<CONFIG:Debug>>:--release>
   WORKING_DIRECTORY "${CLIENT_V2_RUST_DIR}"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${CLIENT_CORE_TARGET_DIR}/${CLIENT_CORE_OUTPUT_DIR}/client-core-helper.exe"
-    "$<TARGET_FILE_DIR:${BINARY_NAME}>/client-core-helper.exe"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CLIENT_CORE_TARGET_DIR}/${CLIENT_CORE_OUTPUT_DIR}/client-core-service.exe"
     "$<TARGET_FILE_DIR:${BINARY_NAME}>/client-core-service.exe"
+  COMMAND ${CMAKE_COMMAND} -E rm -f
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/client-core-helper.exe"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${WINTUN_DLL_PATH}"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/wintun.dll"
   VERBATIM
   COMMAND_EXPAND_LISTS
 )
