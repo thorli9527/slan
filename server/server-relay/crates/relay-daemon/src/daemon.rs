@@ -50,9 +50,20 @@ impl RelayDaemon {
             active_sessions.clone(),
             socket.local_addr().ok(),
         );
-        let runtime = Arc::new(Mutex::new(RelayRuntime::new(
+        let local_relay_node_ids = config
+            .mqtt
+            .as_ref()
+            .map(|mqtt| {
+                mqtt.effective_nodes()
+                    .into_iter()
+                    .map(|node| node.node_id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let runtime = Arc::new(Mutex::new(RelayRuntime::with_allowed_relay_node_ids(
             config.relay_url_prefix,
             config.ticket_signing_secret,
+            local_relay_node_ids,
         )));
         let tcp_clients = Arc::new(Mutex::new(HashMap::new()));
         let next_tcp_client_id = Arc::new(AtomicU64::new(1));
@@ -453,7 +464,7 @@ fn heartbeat_node_address(
         "udp" => local_udp_addr
             .map(|value| value.to_string())
             .unwrap_or_default(),
-        "tcp" => tcp_bind.unwrap_or_default().to_string(),
+        "tcp" | "tls" | "http3" => tcp_bind.unwrap_or_default().to_string(),
         _ => String::new(),
     }
 }

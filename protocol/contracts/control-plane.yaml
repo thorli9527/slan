@@ -239,6 +239,23 @@ contracts:
         type: int
         required: false
         comment: 客户端 8 级执行档位，范围 0..7。
+      preferredPathTypes:
+        type: string[]
+        required: false
+      probeIntervalMs:
+        type: int64
+        required: false
+      failoverAfterMs:
+        type: int64
+        required: false
+      upgradeSuccesses:
+        type: int
+        required: false
+        comment: 路径升级需要连续成功的探测次数，范围 1..10。
+      failedPathCooldownProbes:
+        type: int
+        required: false
+        comment: 失败路径重新升级前需要等待的探测次数，范围 1..20。
       relayMtu:
         type: int
         required: true

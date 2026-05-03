@@ -75,7 +75,7 @@ func (s *dbState) issueRelayTicket(ctx context.Context, userID string, req dto.R
 // buildRelayTicket materializes the relay ticket payload later verified by
 // server-relay.
 func (s *dbState) buildRelayTicket(req dto.RelayTicketRequest, cluster relayClusterView, expiresAt time.Time) dto.RelayTicket {
-	primaryNode := cluster.nodes[0]
+	primaryNode := relayTicketPrimaryNode(req, cluster.nodes)
 	ticket := dto.RelayTicket{
 		TicketID:           util.NewID("ticket"),
 		NetworkID:          req.NetworkID,
@@ -92,6 +92,21 @@ func (s *dbState) buildRelayTicket(req dto.RelayTicketRequest, cluster relayClus
 	ticket.SessionKey = s.newRelaySessionKey(ticket.TicketID, ticket.SrcNodeID, ticket.DstNodeID, expiresAt)
 	ticket.Signature = s.signRelayTicket(ticket)
 	return ticket
+}
+
+func relayTicketPrimaryNode(req dto.RelayTicketRequest, nodes []configs.RelayNodeConfig) configs.RelayNodeConfig {
+	for _, preferredNodeID := range req.PreferredDerpNodeIDs {
+		preferredNodeID = strings.TrimSpace(preferredNodeID)
+		if preferredNodeID == "" {
+			continue
+		}
+		for _, node := range nodes {
+			if node.NodeID == preferredNodeID {
+				return node
+			}
+		}
+	}
+	return nodes[0]
 }
 
 // newRelaySessionKey generates the opaque session secret embedded in relay
@@ -177,11 +192,5 @@ func normalizePreferredRelayNodeIDs(preferredNodeIDs []string, clusterNodes []co
 		normalized = append(normalized, nodeID)
 	}
 
-	if len(normalized) == 0 {
-		sort.Strings(defaultNodeIDs)
-		return defaultNodeIDs
-	}
-
-	sort.Strings(normalized)
 	return normalized
 }

@@ -19,8 +19,8 @@ var canonicalPathTypes = []string{
 	PathDirectUdp,
 	PathRelayUdp,
 	PathRelayTcp,
-	PathRelayHttp3,
 	PathRelayTls,
+	PathRelayHttp3,
 }
 
 func CanonicalPathTypes() []string {

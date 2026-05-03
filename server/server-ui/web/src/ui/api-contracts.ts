@@ -442,6 +442,8 @@ export type RelayPolicyRequest = {
   policyId?: string;
   pathType?: string;
   preferredPathTypes?: string[];
+  upgradeSuccesses?: number;
+  failedPathCooldownProbes?: number;
   version?: number;
   recommendationLevel?: number;
   executionLevel?: number;
@@ -458,6 +460,8 @@ export type RelayPolicyResponse = {
   targetDeviceIds?: string[];
   pathType?: string;
   preferredPathTypes?: string[];
+  upgradeSuccesses?: number;
+  failedPathCooldownProbes?: number;
   published: number;
   skipped: number;
   relayMtu: number;

@@ -11,6 +11,7 @@ mod relay_candidates;
 mod relay_models;
 mod relay_store;
 mod session_store;
+mod time_utils;
 
 use std::{
     collections::BTreeMap,
@@ -18,9 +19,10 @@ use std::{
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
+    process::{Command, Stdio},
     sync::{Arc, Condvar, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -28,7 +30,7 @@ use client_core::{
     normalize_relay_transport, relay_path_kind_for_transport, AndroidVpnSessionConfig,
     AssignedIpPayload, ClientCommand, ClientRuntime, ClientViewState, PathCandidate, PathKind,
     PathState, PeerPathConfig, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
-    RelayPeerSession,
+    RelayPeerSession, RelayTicket,
 };
 use client_core_platform::PlatformNetworkImpl;
 use serde_json::Value;
@@ -64,17 +66,19 @@ use crate::local_api::{
 };
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
-    extract_persisted_relay_candidates_from_network_map, select_relay_candidates,
-    sorted_persisted_relay_candidates,
+    extract_persisted_relay_candidates_from_network_map, normalize_relay_candidate_address,
+    select_relay_candidates, sorted_persisted_relay_candidates,
 };
 use crate::relay_models::{
-    PathDiagnoseDns, PathDiagnoseMtu, PathDiagnosePathCount, PathDiagnoseRelay,
-    PathDiagnoseRelayPeer, PathDiagnoseResponse, PersistedRelayCandidate,
-    RelayCandidateListResponse, RelayCandidateSelection, RelayRuntimeStats,
+    PathDiagnoseDns, PathDiagnoseHealth, PathDiagnoseHealthReason, PathDiagnoseMtu,
+    PathDiagnosePathCount, PathDiagnoseRelay, PathDiagnoseRelayPeer, PathDiagnoseResponse,
+    PersistedRelayCandidate, RelayCandidateListResponse, RelayCandidateSelection,
+    RelayRuntimeStats,
 };
 use crate::relay_store::{
     diagnostics_export_file_path, load_recent_relay_data_plane_policy_for_path,
-    load_relay_runtime_stats, relay_path_policy, relay_payload_policy, relay_runtime_failure_total,
+    load_relay_runtime_stats, relay_path_policy, relay_payload_policy, relay_policy_file_path,
+    relay_runtime_failure_total, relay_stats_file_path,
 };
 use crate::session_store::{
     app_data_dir, current_timestamp_ms, ensure_session_device_registered,
@@ -82,11 +86,13 @@ use crate::session_store::{
     persist_session, refresh_startup_session, remove_session, report_runtime_state,
     session_auth_invalid_error, session_is_expired, sync_session_device_fields, PersistedSession,
 };
+use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
 
 const DEFAULT_SERVICE_HOST: &str = "127.0.0.1:46392";
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "SLANClientV2Service";
 const RELAY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
+const CONNECT_PLAN_TTL_MS: u64 = 10 * 60 * 1000;
 const RELAY_TICKET_RENEW_INTERVAL_MS: u64 = 20 * 60 * 1000;
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
 const RELAY_RECONFIGURE_BACKOFF_MS: u64 = 60 * 1000;
@@ -538,6 +544,9 @@ fn handle_export_diagnostics(
         "path": diagnose,
         "platform": platform,
         "relayStats": load_relay_runtime_stats(),
+        "localData": diagnostic_local_data_snapshot(),
+        "localLogs": diagnostic_log_snapshot(),
+        "systemSnapshot": diagnostic_system_snapshot(),
     });
     let path = diagnostics_export_file_path();
     if let Some(parent) = path.parent() {
@@ -549,6 +558,208 @@ fn handle_export_diagnostics(
         "exportedAtMs": current_timestamp_ms(),
     })
     .to_string())
+}
+
+fn diagnostic_local_data_snapshot() -> serde_json::Value {
+    serde_json::json!({
+        "relayStatsFile": diagnostic_json_file_snapshot(&relay_stats_file_path()),
+        "relayPolicyFile": diagnostic_json_file_snapshot(&relay_policy_file_path()),
+        "connectPlanFile": diagnostic_connect_plan_file_snapshot(),
+    })
+}
+
+fn diagnostic_json_file_snapshot(path: &std::path::Path) -> serde_json::Value {
+    let metadata = fs::metadata(path).ok();
+    let exists = metadata.is_some();
+    let size_bytes = metadata.as_ref().map(std::fs::Metadata::len);
+    let modified_at_ms = metadata
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64);
+    let json = fs::read(path)
+        .ok()
+        .and_then(|payload| serde_json::from_slice::<Value>(&payload).ok());
+    serde_json::json!({
+        "path": path.display().to_string(),
+        "exists": exists,
+        "sizeBytes": size_bytes,
+        "modifiedAtMs": modified_at_ms,
+        "json": json,
+    })
+}
+
+fn diagnostic_connect_plan_file_snapshot() -> serde_json::Value {
+    let path = connect_plan_file_path();
+    let metadata = fs::metadata(&path).ok();
+    let exists = metadata.is_some();
+    let size_bytes = metadata.as_ref().map(std::fs::Metadata::len);
+    let modified_at_ms = metadata
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64);
+    let store = load_connect_plan_store();
+    let summaries = diagnostic_connect_plan_summaries(&store, current_timestamp_ms());
+    serde_json::json!({
+        "path": path.display().to_string(),
+        "exists": exists,
+        "sizeBytes": size_bytes,
+        "modifiedAtMs": modified_at_ms,
+        "planCount": store.plans.len(),
+        "plans": summaries,
+    })
+}
+
+fn diagnostic_connect_plan_summaries(
+    store: &PersistedConnectPlanStore,
+    now_ms: u64,
+) -> Vec<serde_json::Value> {
+    let cutoff = now_ms.saturating_sub(CONNECT_PLAN_TTL_MS);
+    store
+        .plans
+        .iter()
+        .map(|plan| {
+            serde_json::json!({
+                "peerNodeId": plan.peer_node_id,
+                "preferDirect": plan.prefer_direct,
+                "pathCount": plan.paths.len(),
+                "pathTypes": plan.paths.iter().map(|path| path.path_type.as_str()).collect::<Vec<_>>(),
+                "hasRelayTicket": plan.relay_ticket.is_some(),
+                "relayTicketExpiresAt": plan.relay_ticket.as_ref().map(|ticket| ticket.expires_at.as_str()),
+                "updatedAtMs": plan.updated_at_ms,
+                "expired": plan.updated_at_ms < cutoff,
+            })
+        })
+        .collect()
+}
+
+fn diagnostic_log_snapshot() -> serde_json::Value {
+    let service_log = app_data_dir().join("SLAN").join("client-core-service.log");
+    let ui_log = std::env::temp_dir().join("slan").join("client-v2-ui.log");
+    serde_json::json!({
+        "serviceLogPath": service_log.display().to_string(),
+        "serviceLogTail": tail_text_file(&service_log, 160),
+        "uiLogPath": ui_log.display().to_string(),
+        "uiLogTail": tail_text_file(&ui_log, 160),
+    })
+}
+
+fn tail_text_file(path: &std::path::Path, max_lines: usize) -> Option<String> {
+    let payload = fs::read_to_string(path).ok()?;
+    let mut lines = payload.lines().rev().take(max_lines).collect::<Vec<_>>();
+    lines.reverse();
+    Some(lines.join("\n"))
+}
+
+#[cfg(target_os = "windows")]
+fn diagnostic_system_snapshot() -> serde_json::Value {
+    serde_json::json!({
+        "os": std::env::consts::OS,
+        "commands": {
+            "ipconfig": diagnostic_command("ipconfig", &["/all"]),
+            "routePrint": diagnostic_command("route", &["print"]),
+            "slanAdapters": diagnostic_powershell("Get-NetAdapter | Where-Object { $_.Name -like '*SLAN*' -or $_.InterfaceDescription -like '*SLAN*' -or $_.InterfaceDescription -like '*Wintun*' } | Format-List Name,InterfaceDescription,Status,ifIndex,MacAddress,LinkSpeed"),
+            "slanDns": diagnostic_powershell("Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -like '*SLAN*' } | Format-List InterfaceAlias,InterfaceIndex,ServerAddresses"),
+            "slanRoutes": diagnostic_powershell("Get-NetRoute -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -like '*SLAN*' -or $_.DestinationPrefix -like '10.*' } | Sort-Object DestinationPrefix | Select-Object -First 80 | Format-Table -AutoSize DestinationPrefix,NextHop,InterfaceAlias,InterfaceIndex,RouteMetric"),
+            "service": diagnostic_powershell("Get-Service -Name 'SLANClientV2Service' -ErrorAction SilentlyContinue | Format-List Name,Status,StartType,ServiceType,CanStop"),
+        }
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn diagnostic_system_snapshot() -> serde_json::Value {
+    serde_json::json!({
+        "os": std::env::consts::OS,
+        "commands": {}
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn diagnostic_powershell(script: &str) -> serde_json::Value {
+    diagnostic_command(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn diagnostic_command(program: &str, args: &[&str]) -> serde_json::Value {
+    let timeout = Duration::from_secs(5);
+    let started = Instant::now();
+    let mut child = match Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            return serde_json::json!({
+                "ok": false,
+                "error": error.to_string(),
+            });
+        }
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => match child.wait_with_output() {
+                Ok(output) => {
+                    return serde_json::json!({
+                        "ok": output.status.success(),
+                        "code": output.status.code(),
+                        "elapsedMs": started.elapsed().as_millis() as u64,
+                        "stdout": diagnostic_truncate(&String::from_utf8_lossy(&output.stdout), 24_000),
+                        "stderr": diagnostic_truncate(&String::from_utf8_lossy(&output.stderr), 8_000),
+                    });
+                }
+                Err(error) => {
+                    return serde_json::json!({
+                        "ok": false,
+                        "elapsedMs": started.elapsed().as_millis() as u64,
+                        "error": error.to_string(),
+                    });
+                }
+            },
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let output = child.wait_with_output().ok();
+                return serde_json::json!({
+                    "ok": false,
+                    "timedOut": true,
+                    "elapsedMs": started.elapsed().as_millis() as u64,
+                    "stdout": output
+                        .as_ref()
+                        .map(|value| diagnostic_truncate(&String::from_utf8_lossy(&value.stdout), 24_000)),
+                    "stderr": output
+                        .as_ref()
+                        .map(|value| diagnostic_truncate(&String::from_utf8_lossy(&value.stderr), 8_000)),
+                });
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                let _ = child.kill();
+                return serde_json::json!({
+                    "ok": false,
+                    "elapsedMs": started.elapsed().as_millis() as u64,
+                    "error": error.to_string(),
+                });
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn diagnostic_truncate(value: &str, max_chars: usize) -> String {
+    let mut output = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        output.push_str("\n...[truncated]");
+    }
+    output
 }
 
 fn relay_candidates_response(refresh: bool) -> Result<RelayCandidateListResponse> {
@@ -622,61 +833,78 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
                 .map(|path| path.as_str().to_string())
         })
         .unwrap_or_else(|| "unknown".to_string());
-    let relay = stats.as_ref().map(|stats| PathDiagnoseRelay {
-        address: stats.relay_address.clone(),
-        active_path: stats.active_path.clone(),
-        requested_relay_session_count: stats.requested_relay_session_count,
-        relay_session_count: stats.relay_session_count,
-        ticket_expires_at: stats.ticket_expires_at.clone(),
-        relay_attach_failures: stats.relay_attach_failures,
-        last_relay_attach_error: stats.last_relay_attach_error.clone(),
-        peers: stats
-            .peers
-            .iter()
-            .map(|peer| PathDiagnoseRelayPeer {
-                peer_node_id: peer.peer_node_id.clone(),
-                session_id: peer.session_id.clone(),
-                peer_virtual_ips: peer.peer_virtual_ips.clone(),
-                attached: peer.attached,
-                attach_error: peer.attach_error.clone(),
-                tun_packets_sent: peer.tun_packets_sent,
-                relay_packets_received: peer.relay_packets_received,
-                relay_errors: peer.relay_errors,
-                last_relay_error: peer.last_relay_error.clone(),
-                last_send_path: peer.last_send_path.clone(),
-                path_downgrades: peer.path_downgrades,
-                path_upgrades: peer.path_upgrades,
-                last_path_change: peer.last_path_change.clone(),
-                replayed_frames: peer.replayed_frames,
-                config_hash_mismatches: peer.config_hash_mismatches,
-                last_rx_seq: peer.last_rx_seq,
-                send_failures: peer.send_failures,
-                receive_failures: peer.receive_failures,
-                wintun_write_failures: peer.wintun_write_failures,
-            })
-            .collect(),
-        relay_mtu: stats.relay_mtu,
-        max_frame_payload: stats.max_frame_payload,
-        tun_packets_sent: stats.tun_packets_sent,
-        relay_packets_received: stats.relay_packets_received,
-        relay_error_responses: stats.relay_error_responses,
-        relay_config_hash_mismatches: stats.relay_config_hash_mismatches,
-        last_relay_error: stats.last_relay_error.clone(),
-        failures: relay_runtime_failure_total(stats),
-        unroutable_tun_packets: stats.unroutable_tun_packets,
-        last_unroutable_destination: stats.last_unroutable_destination.clone(),
-        oversized_tun_packets: stats.oversized_tun_packets,
-        last_oversized_tun_packet_size: stats.last_oversized_tun_packet_size,
-        updated_at_ms: stats.updated_at_ms,
-        stale: current_timestamp_ms().saturating_sub(stats.updated_at_ms) > RELAY_STATS_STALE_MS,
+    let relay = stats.as_ref().map(|stats| {
+        let ticket_timing =
+            relay_ticket_timing(current_timestamp_ms(), stats.ticket_expires_at.as_deref());
+        PathDiagnoseRelay {
+            address: stats.relay_address.clone(),
+            transport: stats.relay_transport.clone(),
+            active_path: stats.active_path.clone(),
+            requested_relay_session_count: stats.requested_relay_session_count,
+            relay_session_count: stats.relay_session_count,
+            attached_peer_session_count: relay_attached_peer_session_count(stats),
+            attached_transport_count: relay_attached_transport_count(stats),
+            ticket_expires_at: stats.ticket_expires_at.clone(),
+            ticket_expires_in_ms: ticket_timing.expires_in_ms,
+            ticket_renew_due: ticket_timing.renew_due,
+            relay_attach_failures: stats.relay_attach_failures,
+            last_relay_attach_error: stats.last_relay_attach_error.clone(),
+            peers: stats
+                .peers
+                .iter()
+                .map(|peer| PathDiagnoseRelayPeer {
+                    peer_node_id: peer.peer_node_id.clone(),
+                    session_id: peer.session_id.clone(),
+                    peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                    attached: peer.attached,
+                    attach_error: peer.attach_error.clone(),
+                    tun_packets_sent: peer.tun_packets_sent,
+                    relay_packets_received: peer.relay_packets_received,
+                    relay_errors: peer.relay_errors,
+                    last_relay_error: peer.last_relay_error.clone(),
+                    last_send_path: peer.last_send_path.clone(),
+                    path_downgrades: peer.path_downgrades,
+                    path_upgrades: peer.path_upgrades,
+                    last_path_change: peer.last_path_change.clone(),
+                    replayed_frames: peer.replayed_frames,
+                    config_hash_mismatches: peer.config_hash_mismatches,
+                    last_rx_seq: peer.last_rx_seq,
+                    send_failures: peer.send_failures,
+                    receive_failures: peer.receive_failures,
+                    wintun_write_failures: peer.wintun_write_failures,
+                })
+                .collect(),
+            relay_mtu: stats.relay_mtu,
+            max_frame_payload: stats.max_frame_payload,
+            tun_packets_sent: stats.tun_packets_sent,
+            relay_packets_received: stats.relay_packets_received,
+            relay_error_responses: stats.relay_error_responses,
+            relay_config_hash_mismatches: stats.relay_config_hash_mismatches,
+            last_relay_error: stats.last_relay_error.clone(),
+            failures: relay_runtime_failure_total(stats),
+            unroutable_tun_packets: stats.unroutable_tun_packets,
+            last_unroutable_destination: stats.last_unroutable_destination.clone(),
+            oversized_tun_packets: stats.oversized_tun_packets,
+            last_oversized_tun_packet_size: stats.last_oversized_tun_packet_size,
+            updated_at_ms: stats.updated_at_ms,
+            stale: current_timestamp_ms().saturating_sub(stats.updated_at_ms)
+                > RELAY_STATS_STALE_MS,
+        }
     });
     let direct_candidates = diagnose_direct_candidates(&activation.peers);
     let relay_candidates = select_relay_candidates(&session.relay_candidates);
     let policy = load_recent_relay_data_plane_policy_for_path(
         &network_id,
         session.device_id.as_deref(),
-        Some("relay_udp"),
-    );
+        Some(active_path_type.as_str()),
+    )
+    .or_else(|| {
+        load_recent_relay_data_plane_policy_for_path(
+            &network_id,
+            session.device_id.as_deref(),
+            Some("relay_udp"),
+        )
+    });
     let expected_mtu = policy
         .as_ref()
         .and_then(|policy| policy.relay_mtu)
@@ -705,8 +933,17 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
         note: Some("Windows applies adapter MTU directly. MSS is reported as an effective IPv4 payload guard when platform readback is available; otherwise the relay maxFramePayload guard is enforced in the local data thread.".to_string()),
     };
     let dns = path_diagnose_dns(&activation.dns_servers, &platform.dns_servers);
+    let health = path_diagnose_health(
+        relay.as_ref(),
+        &mtu,
+        &dns,
+        &platform,
+        &relay_candidates,
+        &peer_paths,
+    );
     Ok(PathDiagnoseResponse {
         network_id: Some(network_id),
+        health,
         active_path_type,
         active_path_counts,
         peer_paths,
@@ -718,6 +955,218 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
         platform,
         export_path: None,
     })
+}
+
+fn path_diagnose_health(
+    relay: Option<&PathDiagnoseRelay>,
+    mtu: &PathDiagnoseMtu,
+    dns: &PathDiagnoseDns,
+    platform: &PlatformNetworkDiagnostics,
+    relay_candidates: &[RelayCandidateSelection],
+    peer_paths: &[client_core::PeerPathRuntime],
+) -> PathDiagnoseHealth {
+    let mut reasons = Vec::new();
+    let mut failed = false;
+    let mut degraded = false;
+
+    if relay_candidates.is_empty() {
+        degraded = true;
+        push_path_health_reason(
+            &mut reasons,
+            "no_relay_candidates",
+            "degraded",
+            "no relay candidates are available from the control plane",
+        );
+    } else if !relay_candidates.iter().any(|candidate| candidate.reachable) {
+        failed = true;
+        push_path_health_reason(
+            &mut reasons,
+            "no_reachable_relay_candidates",
+            "failed",
+            "relay candidates exist but none are reachable",
+        );
+    }
+
+    match relay {
+        Some(relay) => {
+            if relay.stale {
+                degraded = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "stale_relay_stats",
+                    "degraded",
+                    "relay runtime stats are stale",
+                );
+            }
+            if relay.requested_relay_session_count > 0
+                && relay.attached_peer_session_count < relay.requested_relay_session_count
+            {
+                failed = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "relay_peer_sessions_not_attached",
+                    "failed",
+                    "one or more relay peer sessions are not attached",
+                );
+            }
+            if relay.requested_relay_session_count > 0 && relay.attached_transport_count == 0 {
+                failed = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "no_attached_transports",
+                    "failed",
+                    "no relay data-plane transport is attached",
+                );
+            }
+            if relay.ticket_expires_in_ms.is_some_and(|value| value <= 0) {
+                failed = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "relay_ticket_expired",
+                    "failed",
+                    "relay ticket is expired",
+                );
+            } else if relay.ticket_renew_due {
+                degraded = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "relay_ticket_renew_due",
+                    "degraded",
+                    "relay ticket is near expiration and should renew",
+                );
+            }
+            if relay.unroutable_tun_packets > 0 {
+                failed = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "unroutable_tun_packets",
+                    "failed",
+                    "TUN packets could not be routed to a peer path",
+                );
+            }
+            if relay.oversized_tun_packets > 0 {
+                failed = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "oversized_tun_packets",
+                    "failed",
+                    "TUN packets exceeded the relay frame payload limit",
+                );
+            }
+            if relay.relay_config_hash_mismatches > 0 {
+                failed = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "relay_config_hash_mismatch",
+                    "failed",
+                    "relay frames from an old or different data-plane config were received",
+                );
+            }
+            if relay.peers.iter().any(|peer| peer.replayed_frames > 0) {
+                failed = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "relay_replayed_frames",
+                    "failed",
+                    "old or replayed relay frames were received",
+                );
+            }
+            if relay.failures > 0 {
+                degraded = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "relay_runtime_failures",
+                    "degraded",
+                    "relay runtime failure counters are non-zero",
+                );
+            }
+        }
+        None => {
+            failed = true;
+            push_path_health_reason(
+                &mut reasons,
+                "missing_relay_stats",
+                "failed",
+                "relay runtime stats are missing",
+            );
+        }
+    }
+
+    if peer_paths.is_empty() {
+        degraded = true;
+        push_path_health_reason(
+            &mut reasons,
+            "missing_peer_paths",
+            "degraded",
+            "no runtime peer paths are recorded",
+        );
+    }
+    if dns.checked && dns.ok == Some(false) {
+        failed = true;
+        push_path_health_reason(
+            &mut reasons,
+            "dns_mismatch",
+            "failed",
+            "Windows DNS configuration does not match the expected network DNS servers",
+        );
+    }
+    if mtu.actual_mtu_checked && mtu.actual_mtu_ok == Some(false) {
+        failed = true;
+        push_path_health_reason(
+            &mut reasons,
+            "mtu_mismatch",
+            "failed",
+            "Windows adapter MTU does not match relay policy",
+        );
+    }
+    if mtu.actual_mss_checked && mtu.actual_mss_ok == Some(false) {
+        failed = true;
+        push_path_health_reason(
+            &mut reasons,
+            "mss_too_small",
+            "failed",
+            "effective IPv4 payload size is below relay policy",
+        );
+    }
+    for check in &platform.checks {
+        if !check.ok {
+            degraded = true;
+            push_path_health_reason(
+                &mut reasons,
+                format!("platform_check_{}", check.name),
+                "degraded",
+                check
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| format!("platform check {} failed", check.name)),
+            );
+        }
+    }
+
+    let status = if failed {
+        "failed"
+    } else if degraded {
+        "degraded"
+    } else {
+        "ok"
+    };
+    PathDiagnoseHealth {
+        status: status.to_string(),
+        reasons,
+    }
+}
+
+fn push_path_health_reason(
+    reasons: &mut Vec<PathDiagnoseHealthReason>,
+    code: impl Into<String>,
+    severity: impl Into<String>,
+    message: impl Into<String>,
+) {
+    reasons.push(PathDiagnoseHealthReason {
+        code: code.into(),
+        severity: severity.into(),
+        message: message.into(),
+    });
 }
 
 fn path_diagnose_active_path_counts(
@@ -742,6 +1191,23 @@ fn path_diagnose_active_path_counts(
             .then_with(|| left.path_type.cmp(&right.path_type))
     });
     values
+}
+
+fn relay_attached_peer_session_count(stats: &RelayRuntimeStats) -> u32 {
+    if stats.attached_peer_session_count > 0 {
+        return stats.attached_peer_session_count;
+    }
+    if !stats.peers.is_empty() {
+        return stats.peers.iter().filter(|peer| peer.attached).count() as u32;
+    }
+    stats.relay_session_count
+}
+
+fn relay_attached_transport_count(stats: &RelayRuntimeStats) -> u32 {
+    if stats.attached_transport_count > 0 {
+        return stats.attached_transport_count;
+    }
+    stats.relay_session_count
 }
 
 fn path_diagnose_dns(expected_servers: &[String], actual_servers: &[String]) -> PathDiagnoseDns {
@@ -1309,7 +1775,7 @@ where
                 .collect(),
         );
     }
-    let best_relay = best_relay_candidate(&session.relay_candidates);
+    let best_relay = android_data_plane_relay_candidate(&session.relay_candidates);
     persist_session(&session)?;
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
         virtual_ip: activation.virtual_ip.clone(),
@@ -1365,7 +1831,8 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
     }
     session.virtual_ip = Some(activation.virtual_ip);
     persist_session(&session)?;
-    let best_relay = best_udp_relay_candidate(&session.relay_candidates)
+    let best_relay = best_relay_candidate_for_connect_plans(&session.relay_candidates)
+        .or_else(|| best_udp_relay_candidate(&session.relay_candidates))
         .or_else(|| best_relay_candidate(&session.relay_candidates));
     build_relay_data_plane_config(
         &client,
@@ -1375,6 +1842,45 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
         &activation.peers,
         best_relay.as_ref(),
     )
+}
+
+fn android_data_plane_relay_candidate(
+    candidates: &[PersistedRelayCandidate],
+) -> Option<RelayCandidateSelection> {
+    // Android's current native TUN runtime supports relay UDP sockets passed
+    // through VpnService.protect. Keep TCP/TLS/HTTP3 candidates visible to the
+    // control model, but do not hand them to the Android data plane until their
+    // transports have native implementations.
+    best_udp_relay_candidate(candidates)
+}
+
+fn best_relay_candidate_for_connect_plans(
+    candidates: &[PersistedRelayCandidate],
+) -> Option<RelayCandidateSelection> {
+    let selections = select_relay_candidates(candidates);
+    if selections.is_empty() {
+        return None;
+    }
+    load_recent_connect_plans(current_timestamp_ms())
+        .iter()
+        .flat_map(|plan| plan.paths.iter())
+        .find_map(|path| relay_candidate_matching_connect_plan_path(path, &selections))
+}
+
+fn relay_candidate_matching_connect_plan_path(
+    path: &PersistedConnectPlanPath,
+    candidates: &[RelayCandidateSelection],
+) -> Option<RelayCandidateSelection> {
+    let transport = relay_transport_for_path_type(path.path_type.as_str())?;
+    let address = normalize_relay_candidate_address(path.endpoint.as_str(), transport)?;
+    candidates
+        .iter()
+        .find(|candidate| {
+            candidate.reachable
+                && normalize_relay_transport(candidate.transport.as_str()) == Some(transport)
+                && candidate.address.trim() == address
+        })
+        .cloned()
 }
 
 fn load_network_session() -> Result<PersistedSession> {
@@ -1417,7 +1923,8 @@ where
             ));
             session.relay_candidates.len()
         });
-    let best_relay = best_relay_candidate(&session.relay_candidates);
+    let best_relay = best_relay_candidate_for_connect_plans(&session.relay_candidates)
+        .or_else(|| best_relay_candidate(&session.relay_candidates));
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     log_service_error(format!(
@@ -1444,7 +1951,8 @@ where
                 .collect(),
         );
     }
-    let best_relay = best_udp_relay_candidate(&session.relay_candidates)
+    let best_relay = best_relay_candidate_for_connect_plans(&session.relay_candidates)
+        .or_else(|| best_udp_relay_candidate(&session.relay_candidates))
         .or_else(|| best_relay_candidate(&session.relay_candidates));
     let relay_config = build_relay_data_plane_config(
         &client,
@@ -1527,19 +2035,29 @@ fn build_relay_data_plane_config(
     peers: &[ControlPeer],
     best_relay: Option<&RelayCandidateSelection>,
 ) -> Result<RelayDataPlaneConfig> {
-    let relay = best_relay
-        .filter(|relay| relay.transport.eq_ignore_ascii_case("udp"))
-        .ok_or_else(|| anyhow::anyhow!("no reachable udp relay candidate"))?;
+    let relay = best_relay.ok_or_else(|| anyhow::anyhow!("no reachable relay candidate"))?;
+    let relay_transport = normalize_relay_transport(&relay.transport).unwrap_or("udp");
+    let relay_path_kind =
+        relay_path_kind_for_transport(relay_transport).unwrap_or(PathKind::RelayUdp);
     let local_node_id = self_node_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("network map missing self node id"))?;
+    let connect_plans = load_recent_connect_plans(current_timestamp_ms())
+        .into_iter()
+        .map(|plan| (plan.peer_node_id.clone(), plan))
+        .collect::<BTreeMap<_, _>>();
 
     let sessions = peers
         .iter()
         .filter(|peer| peer.relay_allowed)
         .filter(|peer| peer.node_id != local_node_id)
         .filter_map(|peer| {
+            if let Some(session) = connect_plans.get(&peer.node_id).and_then(|plan| {
+                relay_session_from_connect_plan_ticket(plan, network_id, local_node_id, peer)
+            }) {
+                return Some(session);
+            }
             match client.issue_relay_ticket(
                 &session.access_token,
                 network_id,
@@ -1569,10 +2087,13 @@ fn build_relay_data_plane_config(
         relay.address.as_str(),
         network_id,
         session.device_id.as_deref(),
-        Some("relay_udp"),
+        Some(relay_path_kind.as_str()),
     );
-    let path_policy =
-        relay_path_policy(network_id, session.device_id.as_deref(), Some("relay_udp"));
+    let path_policy = relay_path_policy(
+        network_id,
+        session.device_id.as_deref(),
+        Some(relay_path_kind.as_str()),
+    );
 
     Ok(RelayDataPlaneConfig {
         enabled: !sessions.is_empty(),
@@ -1587,6 +2108,7 @@ fn build_relay_data_plane_config(
             relay,
             &select_relay_candidates(&session.relay_candidates),
             &sessions,
+            Some(connect_plans),
         ),
         relay_mtu: Some(policy.relay_mtu),
         max_frame_payload: Some(policy.max_frame_payload),
@@ -1600,7 +2122,14 @@ fn peer_path_configs(
     relay: &RelayCandidateSelection,
     relay_candidates: &[RelayCandidateSelection],
     relay_sessions: &[RelayPeerSession],
+    connect_plans: Option<BTreeMap<String, PersistedConnectPlan>>,
 ) -> Vec<PeerPathConfig> {
+    let connect_plans = connect_plans.unwrap_or_else(|| {
+        load_recent_connect_plans(current_timestamp_ms())
+            .into_iter()
+            .map(|plan| (plan.peer_node_id.clone(), plan))
+            .collect::<BTreeMap<_, _>>()
+    });
     peers
         .iter()
         .filter(|peer| peer.node_id != local_node_id)
@@ -1609,55 +2138,83 @@ fn peer_path_configs(
                 .iter()
                 .find(|session| session.peer_node_id == peer.node_id);
             let mut candidates = Vec::new();
+            let mut direct_addresses = Vec::new();
+            if let Some(plan) = connect_plans.get(&peer.node_id) {
+                for path in &plan.paths {
+                    let address = path.endpoint.trim();
+                    if address.is_empty() {
+                        continue;
+                    }
+                    if path.path_type == PathKind::DirectUdp.as_str() {
+                        if direct_addresses
+                            .iter()
+                            .any(|value: &String| value == address)
+                        {
+                            continue;
+                        }
+                        direct_addresses.push(address.to_string());
+                        candidates.push(direct_udp_path_candidate(address));
+                    } else if let Some(candidate) =
+                        relay_path_candidate_from_connect_plan(path, relay_session, relay)
+                    {
+                        push_unique_relay_path_candidate(&mut candidates, candidate);
+                    }
+                }
+            }
             candidates.extend(peer.endpoints.iter().filter_map(|endpoint| {
                 let address = endpoint.address.trim();
                 if address.is_empty() {
                     return None;
                 }
-                Some(PathCandidate {
-                    kind: PathKind::DirectUdp,
-                    state: PathState::Probing,
-                    endpoint_id: None,
-                    address: Some(address.to_string()),
-                    session_id: None,
-                    transport: Some("udp".to_string()),
-                    rtt_ms: None,
-                    path_score: None,
-                    last_ok_at_ms: None,
-                    last_error: None,
-                })
+                if direct_addresses.iter().any(|value| value == address) {
+                    return None;
+                }
+                direct_addresses.push(address.to_string());
+                Some(direct_udp_path_candidate(address))
             }));
             if let Some(session) = relay_session {
                 let relay_transport = normalize_relay_transport(&relay.transport).unwrap_or("udp");
-                candidates.push(PathCandidate {
-                    kind: PathKind::RelayUdp,
-                    state: PathState::Standby,
-                    endpoint_id: Some(relay.endpoint_id.clone()),
-                    address: Some(relay.address.clone()),
-                    session_id: Some(session.session_id.clone()),
-                    transport: Some(relay_transport.to_string()),
-                    rtt_ms: relay.rtt_ms,
-                    path_score: Some(relay.path_score),
-                    last_ok_at_ms: None,
-                    last_error: None,
-                });
+                let relay_path_kind =
+                    relay_path_kind_for_transport(relay_transport).unwrap_or(PathKind::RelayUdp);
+                push_unique_relay_path_candidate(
+                    &mut candidates,
+                    PathCandidate {
+                        kind: relay_path_kind,
+                        state: PathState::Standby,
+                        endpoint_id: Some(relay.endpoint_id.clone()),
+                        address: Some(relay.address.clone()),
+                        session_id: Some(session.session_id.clone()),
+                        transport: Some(relay_transport.to_string()),
+                        rtt_ms: relay.rtt_ms,
+                        path_score: Some(relay.path_score),
+                        last_ok_at_ms: None,
+                        last_error: None,
+                    },
+                );
             }
-            candidates.extend(relay_candidates.iter().filter_map(|candidate| {
-                let transport = normalize_relay_transport(&candidate.transport)?;
-                let path_kind = relay_path_kind_for_transport(transport)?;
-                Some(PathCandidate {
-                    kind: path_kind,
-                    state: PathState::Standby,
-                    endpoint_id: Some(candidate.endpoint_id.clone()),
-                    address: Some(candidate.address.clone()),
-                    session_id: None,
-                    transport: Some(transport.to_string()),
-                    rtt_ms: candidate.rtt_ms,
-                    path_score: Some(candidate.path_score),
-                    last_ok_at_ms: None,
-                    last_error: None,
-                })
-            }));
+            for candidate in relay_candidates {
+                let Some(transport) = normalize_relay_transport(&candidate.transport) else {
+                    continue;
+                };
+                let Some(path_kind) = relay_path_kind_for_transport(transport) else {
+                    continue;
+                };
+                push_unique_relay_path_candidate(
+                    &mut candidates,
+                    PathCandidate {
+                        kind: path_kind,
+                        state: PathState::Standby,
+                        endpoint_id: Some(candidate.endpoint_id.clone()),
+                        address: Some(candidate.address.clone()),
+                        session_id: None,
+                        transport: Some(transport.to_string()),
+                        rtt_ms: candidate.rtt_ms,
+                        path_score: Some(candidate.path_score),
+                        last_ok_at_ms: None,
+                        last_error: None,
+                    },
+                );
+            }
             PeerPathConfig {
                 peer_node_id: peer.node_id.clone(),
                 peer_virtual_ips: peer.virtual_ips.clone(),
@@ -1665,6 +2222,110 @@ fn peer_path_configs(
             }
         })
         .collect()
+}
+
+fn relay_session_from_connect_plan_ticket(
+    plan: &PersistedConnectPlan,
+    network_id: &str,
+    local_node_id: &str,
+    peer: &ControlPeer,
+) -> Option<RelayPeerSession> {
+    let ticket = plan.relay_ticket.as_ref()?;
+    if !relay_ticket_matches_peer(ticket, network_id, local_node_id, peer.node_id.as_str()) {
+        return None;
+    }
+    Some(RelayPeerSession {
+        session_id: ticket.session_id.clone(),
+        peer_node_id: peer.node_id.clone(),
+        peer_virtual_ips: peer.virtual_ips.clone(),
+        ticket: ticket.clone(),
+    })
+}
+
+fn relay_ticket_matches_peer(
+    ticket: &RelayTicket,
+    network_id: &str,
+    local_node_id: &str,
+    peer_node_id: &str,
+) -> bool {
+    if ticket.network_id.trim() != network_id
+        || ticket.src_node_id.trim() != local_node_id
+        || ticket.dst_node_id.trim() != peer_node_id
+        || ticket.session_id.trim().is_empty()
+        || ticket.session_key.trim().is_empty()
+        || ticket.relay_url.trim().is_empty()
+    {
+        return false;
+    }
+    parse_rfc3339_utc_ms(ticket.expires_at.as_str())
+        .map(|expires_at| expires_at > current_timestamp_ms().saturating_add(30_000))
+        .unwrap_or(false)
+}
+
+fn relay_path_candidate_from_connect_plan(
+    path: &PersistedConnectPlanPath,
+    relay_session: Option<&RelayPeerSession>,
+    selected_relay: &RelayCandidateSelection,
+) -> Option<PathCandidate> {
+    let transport = relay_transport_for_path_type(path.path_type.as_str())?;
+    let address = normalize_relay_candidate_address(path.endpoint.as_str(), transport)?;
+    let kind = relay_path_kind_for_transport(transport)?;
+    let selected_transport = normalize_relay_transport(selected_relay.transport.as_str());
+    let uses_selected_relay =
+        selected_transport == Some(transport) && selected_relay.address == address;
+    Some(PathCandidate {
+        kind,
+        state: PathState::Standby,
+        endpoint_id: uses_selected_relay.then(|| selected_relay.endpoint_id.clone()),
+        address: Some(address),
+        session_id: relay_session
+            .filter(|_| uses_selected_relay)
+            .map(|session| session.session_id.clone()),
+        transport: Some(transport.to_string()),
+        rtt_ms: None,
+        path_score: u32::try_from(path.priority).ok(),
+        last_ok_at_ms: None,
+        last_error: None,
+    })
+}
+
+fn relay_transport_for_path_type(path_type: &str) -> Option<&'static str> {
+    match path_type.trim() {
+        "relay_udp" => Some("udp"),
+        "relay_tcp" => Some("tcp"),
+        "relay_tls" => Some("tls"),
+        "relay_http3" => Some("http3"),
+        _ => None,
+    }
+}
+
+fn push_unique_relay_path_candidate(candidates: &mut Vec<PathCandidate>, candidate: PathCandidate) {
+    if !relay_path_candidate_exists(candidates, &candidate) {
+        candidates.push(candidate);
+    }
+}
+
+fn relay_path_candidate_exists(candidates: &[PathCandidate], candidate: &PathCandidate) -> bool {
+    candidates.iter().any(|existing| {
+        existing.kind == candidate.kind
+            && existing.address.as_deref().map(str::trim)
+                == candidate.address.as_deref().map(str::trim)
+    })
+}
+
+fn direct_udp_path_candidate(address: &str) -> PathCandidate {
+    PathCandidate {
+        kind: PathKind::DirectUdp,
+        state: PathState::Probing,
+        endpoint_id: None,
+        address: Some(address.to_string()),
+        session_id: None,
+        transport: Some("udp".to_string()),
+        rtt_ms: None,
+        path_score: None,
+        last_ok_at_ms: None,
+        last_error: None,
+    }
 }
 
 fn routes_with_peer_virtual_ips(
@@ -1846,6 +2507,103 @@ pub(crate) fn persist_relay_candidates_from_network_map(map: &Value) -> Result<u
     session.relay_candidates = sorted_persisted_relay_candidates(candidates);
     persist_session(&session)?;
     Ok(session.relay_candidates.len())
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedConnectPlan {
+    peer_node_id: String,
+    #[serde(default)]
+    prefer_direct: bool,
+    #[serde(default)]
+    paths: Vec<PersistedConnectPlanPath>,
+    #[serde(default)]
+    relay_ticket: Option<RelayTicket>,
+    updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedConnectPlanPath {
+    path_type: String,
+    endpoint: String,
+    #[serde(default)]
+    priority: i32,
+}
+
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedConnectPlanStore {
+    #[serde(default)]
+    plans: Vec<PersistedConnectPlan>,
+}
+
+pub(crate) fn persist_connect_plan_from_value(value: &Value) -> Result<bool> {
+    let mut plan: PersistedConnectPlan =
+        serde_json::from_value(value.clone()).context("decode connect_plan payload")?;
+    plan.peer_node_id = plan.peer_node_id.trim().to_string();
+    if plan.peer_node_id.is_empty() {
+        return Ok(false);
+    }
+    plan.paths = plan
+        .paths
+        .into_iter()
+        .filter_map(|mut path| {
+            path.path_type = path.path_type.trim().to_string();
+            path.endpoint = path.endpoint.trim().to_string();
+            (!path.path_type.is_empty() && !path.endpoint.is_empty()).then_some(path)
+        })
+        .collect();
+    plan.paths.sort_by_key(|path| path.priority);
+    plan.updated_at_ms = current_timestamp_ms();
+
+    let mut store = load_connect_plan_store();
+    let cutoff = plan.updated_at_ms.saturating_sub(CONNECT_PLAN_TTL_MS);
+    store
+        .plans
+        .retain(|item| item.peer_node_id != plan.peer_node_id && item.updated_at_ms >= cutoff);
+    store.plans.push(plan);
+    persist_connect_plan_store(&store)?;
+    Ok(true)
+}
+
+fn load_recent_connect_plans(now_ms: u64) -> Vec<PersistedConnectPlan> {
+    let cutoff = now_ms.saturating_sub(CONNECT_PLAN_TTL_MS);
+    load_connect_plan_store()
+        .plans
+        .into_iter()
+        .filter(|plan| plan.updated_at_ms >= cutoff)
+        .collect()
+}
+
+fn latest_connect_plan_updated_at_ms() -> u64 {
+    load_recent_connect_plans(current_timestamp_ms())
+        .into_iter()
+        .map(|plan| plan.updated_at_ms)
+        .max()
+        .unwrap_or_default()
+}
+
+fn load_connect_plan_store() -> PersistedConnectPlanStore {
+    let payload = fs::read(connect_plan_file_path()).ok();
+    payload
+        .and_then(|payload| serde_json::from_slice(&payload).ok())
+        .unwrap_or_default()
+}
+
+fn persist_connect_plan_store(store: &PersistedConnectPlanStore) -> Result<()> {
+    let path = connect_plan_file_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let payload = serde_json::to_vec_pretty(store).context("encode connect plan store")?;
+    fs::write(&path, payload).with_context(|| format!("write {}", path.display()))
+}
+
+fn connect_plan_file_path() -> std::path::PathBuf {
+    app_data_dir()
+        .join("SLAN")
+        .join("client-v2-connect-plans.json")
 }
 
 fn clear_session_virtual_ip() -> Result<()> {
@@ -2041,6 +2799,7 @@ struct RelayMaintenanceState {
     last_reconfigure_ms: u64,
     last_failure_total: u64,
     last_attach_failures: u64,
+    last_connect_plan_ms: u64,
 }
 
 fn spawn_relay_data_plane_maintenance_worker(
@@ -2089,11 +2848,18 @@ fn maintain_relay_data_plane(
         return Ok(());
     }
     let stats = load_relay_runtime_stats();
-    let reconfigure_reason = relay_maintenance_reconfigure_reason(now, stats.as_ref(), maintenance);
+    let connect_plan_updated_at_ms = latest_connect_plan_updated_at_ms();
+    let reconfigure_reason = relay_maintenance_reconfigure_reason(
+        now,
+        stats.as_ref(),
+        maintenance,
+        connect_plan_updated_at_ms,
+    );
     let Some(reason) = reconfigure_reason else {
         return Ok(());
     };
-    if maintenance.last_reconfigure_ms > 0
+    if relay_reconfigure_backoff_applies(reason)
+        && maintenance.last_reconfigure_ms > 0
         && now.saturating_sub(maintenance.last_reconfigure_ms) < RELAY_RECONFIGURE_BACKOFF_MS
     {
         return Ok(());
@@ -2132,11 +2898,16 @@ fn relay_maintenance_reconfigure_reason(
     now: u64,
     stats: Option<&RelayRuntimeStats>,
     maintenance: &mut RelayMaintenanceState,
+    connect_plan_updated_at_ms: u64,
 ) -> Option<&'static str> {
     if maintenance.last_reconfigure_ms == 0 {
+        maintenance.last_connect_plan_ms = connect_plan_updated_at_ms;
         if let Some(stats) = stats {
             maintenance.last_failure_total = relay_runtime_failure_total(stats);
             maintenance.last_attach_failures = stats.relay_attach_failures;
+            if relay_ticket_expired(now, stats.ticket_expires_at.as_deref()) {
+                return Some("ticket_expired");
+            }
             if relay_ticket_should_renew(now, stats.ticket_expires_at.as_deref()) {
                 return Some("ticket_expiring");
             }
@@ -2144,9 +2915,16 @@ fn relay_maintenance_reconfigure_reason(
         maintenance.last_reconfigure_ms = now;
         return None;
     }
+    if connect_plan_updated_at_ms > maintenance.last_connect_plan_ms {
+        maintenance.last_connect_plan_ms = connect_plan_updated_at_ms;
+        return Some("connect_plan_updated");
+    }
     let Some(stats) = stats else {
         return Some("missing_relay_stats");
     };
+    if relay_ticket_expired(now, stats.ticket_expires_at.as_deref()) {
+        return Some("ticket_expired");
+    }
     if relay_ticket_should_renew(now, stats.ticket_expires_at.as_deref()) {
         return Some("ticket_expiring");
     }
@@ -2175,66 +2953,27 @@ fn relay_maintenance_reconfigure_reason(
     None
 }
 
+fn relay_reconfigure_backoff_applies(reason: &str) -> bool {
+    reason != "ticket_expired"
+}
+
 fn relay_sessions_missing(stats: &RelayRuntimeStats) -> bool {
     stats.requested_relay_session_count > 0
-        && stats.relay_session_count < stats.requested_relay_session_count
+        && relay_attached_peer_session_count(stats) < stats.requested_relay_session_count
 }
 
 fn relay_ticket_should_renew(now_ms: u64, ticket_expires_at: Option<&str>) -> bool {
-    let Some(expires_at_ms) = ticket_expires_at.and_then(parse_rfc3339_utc_ms) else {
-        return false;
-    };
-    now_ms.saturating_add(RELAY_TICKET_RENEW_WINDOW_MS) >= expires_at_ms
+    relay_ticket_timing(now_ms, ticket_expires_at).renew_due
 }
 
-fn parse_rfc3339_utc_ms(value: &str) -> Option<u64> {
-    let value = value.trim();
-    let (date, time) = value.split_once('T')?;
-    let time = time.strip_suffix('Z')?;
-    let mut date_parts = date.split('-');
-    let year = date_parts.next()?.parse::<i32>().ok()?;
-    let month = date_parts.next()?.parse::<u32>().ok()?;
-    let day = date_parts.next()?.parse::<u32>().ok()?;
-    if date_parts.next().is_some() {
-        return None;
-    }
-    let time = time.split_once('.').map(|(whole, _)| whole).unwrap_or(time);
-    let mut time_parts = time.split(':');
-    let hour = time_parts.next()?.parse::<u32>().ok()?;
-    let minute = time_parts.next()?.parse::<u32>().ok()?;
-    let second = time_parts.next()?.parse::<u32>().ok()?;
-    if time_parts.next().is_some()
-        || !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return None;
-    }
-    let days = days_from_civil(year, month, day)?;
-    let seconds = days
-        .checked_mul(86_400)?
-        .checked_add(i64::from(hour) * 3_600)?
-        .checked_add(i64::from(minute) * 60)?
-        .checked_add(i64::from(second))?;
-    u64::try_from(seconds).ok()?.checked_mul(1_000)
+fn relay_ticket_expired(now_ms: u64, ticket_expires_at: Option<&str>) -> bool {
+    relay_ticket_timing(now_ms, ticket_expires_at)
+        .expires_in_ms
+        .is_some_and(|expires_in_ms| expires_in_ms <= 0)
 }
 
-fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
-    let mut year = i64::from(year);
-    let month = i64::from(month);
-    let day = i64::from(day);
-    year -= if month <= 2 { 1 } else { 0 };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe = year - era * 400;
-    let month_prime = month + if month > 2 { -3 } else { 9 };
-    let doy = (153 * month_prime + 2) / 5 + day - 1;
-    if !(0..=365).contains(&doy) {
-        return None;
-    }
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146_097 + doe - 719_468)
+fn relay_ticket_timing(now_ms: u64, ticket_expires_at: Option<&str>) -> TicketTiming {
+    ticket_timing_with_window(now_ms, ticket_expires_at, RELAY_TICKET_RENEW_WINDOW_MS)
 }
 
 fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) {

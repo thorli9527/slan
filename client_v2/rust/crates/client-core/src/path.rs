@@ -72,6 +72,10 @@ pub struct PathPolicy {
     pub probe_interval_ms: u64,
     #[serde(default = "default_failover_after_ms")]
     pub failover_after_ms: u64,
+    #[serde(default = "default_upgrade_successes")]
+    pub upgrade_successes: u32,
+    #[serde(default = "default_failed_path_cooldown_probes")]
+    pub failed_path_cooldown_probes: u32,
 }
 
 impl Default for PathPolicy {
@@ -81,12 +85,14 @@ impl Default for PathPolicy {
                 PathKind::DirectUdp,
                 PathKind::RelayUdp,
                 PathKind::RelayTcp,
-                PathKind::RelayHttp3,
                 PathKind::RelayTls,
+                PathKind::RelayHttp3,
             ],
             fallback_enabled: true,
             probe_interval_ms: default_probe_interval_ms(),
             failover_after_ms: default_failover_after_ms(),
+            upgrade_successes: default_upgrade_successes(),
+            failed_path_cooldown_probes: default_failed_path_cooldown_probes(),
         }
     }
 }
@@ -140,7 +146,10 @@ pub struct PeerPathRuntime {
 pub struct PathTracker {
     policy: PathPolicy,
     active_paths: HashMap<String, PathKind>,
-    send_failures: HashMap<String, u32>,
+    send_failures: HashMap<(String, PathKind), u32>,
+    send_failure_started_at_ms: HashMap<(String, PathKind), u64>,
+    probe_successes: HashMap<(String, PathKind), u32>,
+    failed_path_cooldowns: HashMap<(String, PathKind), u32>,
 }
 
 impl PathTracker {
@@ -152,6 +161,9 @@ impl PathTracker {
             policy,
             active_paths: active_paths.into_iter().collect(),
             send_failures: HashMap::new(),
+            send_failure_started_at_ms: HashMap::new(),
+            probe_successes: HashMap::new(),
+            failed_path_cooldowns: HashMap::new(),
         }
     }
 
@@ -180,7 +192,7 @@ impl PathTracker {
     }
 
     pub fn record_send_success(&mut self, peer_node_id: &str) {
-        self.send_failures.remove(peer_node_id);
+        self.clear_peer_send_failures(peer_node_id);
     }
 
     pub fn record_send_failure(
@@ -189,31 +201,83 @@ impl PathTracker {
         path_kind: PathKind,
         failure_threshold: u32,
     ) -> bool {
+        self.record_send_failure_at(peer_node_id, path_kind, failure_threshold, None)
+    }
+
+    pub fn record_send_failure_at(
+        &mut self,
+        peer_node_id: &str,
+        path_kind: PathKind,
+        failure_threshold: u32,
+        now_ms: Option<u64>,
+    ) -> bool {
         if !self.policy.fallback_enabled || path_kind == PathKind::RelayUdp {
             return false;
         }
-        let failures = self
-            .send_failures
-            .entry(peer_node_id.to_string())
-            .or_insert(0);
+        let key = (peer_node_id.to_string(), path_kind);
+        let failures = self.send_failures.entry(key.clone()).or_insert(0);
         *failures = failures.saturating_add(1);
-        if *failures < failure_threshold {
+        if let Some(now_ms) = now_ms {
+            self.send_failure_started_at_ms
+                .entry(key.clone())
+                .or_insert(now_ms);
+        }
+        let failed_long_enough = now_ms
+            .zip(self.send_failure_started_at_ms.get(&key).copied())
+            .is_some_and(|(now_ms, started_at_ms)| {
+                now_ms.saturating_sub(started_at_ms) >= self.policy.failover_after_ms
+            });
+        if *failures < failure_threshold && !failed_long_enough {
             return false;
         }
-        self.active_paths
-            .insert(peer_node_id.to_string(), PathKind::RelayUdp);
-        self.send_failures.remove(peer_node_id);
+        let peer_node_id = peer_node_id.to_string();
+        self.failed_path_cooldowns.insert(
+            (peer_node_id.clone(), path_kind),
+            self.policy.failed_path_cooldown_probes.max(1),
+        );
+        self.probe_successes
+            .remove(&(peer_node_id.clone(), path_kind));
+        self.clear_peer_send_failures(&peer_node_id);
         true
     }
 
     pub fn record_probe_success(&mut self, peer_node_id: &str, path_kind: PathKind) -> bool {
-        self.send_failures.remove(peer_node_id);
+        self.record_probe_success_after(peer_node_id, path_kind, self.policy.upgrade_successes)
+    }
+
+    pub fn record_probe_success_after(
+        &mut self,
+        peer_node_id: &str,
+        path_kind: PathKind,
+        success_threshold: u32,
+    ) -> bool {
+        self.clear_peer_send_failures(peer_node_id);
         let current = self.active_path_for_node(peer_node_id, PathKind::RelayUdp);
         if current == path_kind || !path_should_upgrade(&self.policy, current, path_kind) {
+            self.probe_successes
+                .remove(&(peer_node_id.to_string(), path_kind));
+            return false;
+        }
+        let cooldown_key = (peer_node_id.to_string(), path_kind);
+        if let Some(remaining) = self.failed_path_cooldowns.get_mut(&cooldown_key) {
+            *remaining = remaining.saturating_sub(1);
+            if *remaining == 0 {
+                self.failed_path_cooldowns.remove(&cooldown_key);
+            }
+            return false;
+        }
+        let successes = self
+            .probe_successes
+            .entry((peer_node_id.to_string(), path_kind))
+            .or_insert(0);
+        *successes = successes.saturating_add(1);
+        if *successes < success_threshold.max(1) {
             return false;
         }
         self.active_paths
             .insert(peer_node_id.to_string(), path_kind);
+        self.probe_successes
+            .remove(&(peer_node_id.to_string(), path_kind));
         true
     }
 
@@ -230,6 +294,17 @@ impl PathTracker {
             [path] => path.as_str().to_string(),
             _ => "mixed".to_string(),
         }
+    }
+
+    pub fn preferred_paths(&self) -> Vec<PathKind> {
+        preferred_path_order(&self.policy)
+    }
+
+    fn clear_peer_send_failures(&mut self, peer_node_id: &str) {
+        self.send_failures
+            .retain(|(failure_peer_node_id, _), _| failure_peer_node_id != peer_node_id);
+        self.send_failure_started_at_ms
+            .retain(|(failure_peer_node_id, _), _| failure_peer_node_id != peer_node_id);
     }
 }
 
@@ -382,6 +457,14 @@ fn default_failover_after_ms() -> u64 {
     30_000
 }
 
+fn default_upgrade_successes() -> u32 {
+    2
+}
+
+fn default_failed_path_cooldown_probes() -> u32 {
+    2
+}
+
 fn default_candidate_state() -> PathState {
     PathState::Standby
 }
@@ -452,13 +535,13 @@ mod tests {
         ));
         assert!(path_should_upgrade(
             &policy,
-            PathKind::RelayTls,
-            PathKind::RelayHttp3
+            PathKind::RelayHttp3,
+            PathKind::RelayTls
         ));
         assert!(!path_should_upgrade(
             &policy,
-            PathKind::RelayHttp3,
-            PathKind::RelayTls
+            PathKind::RelayTls,
+            PathKind::RelayHttp3
         ));
     }
 
@@ -598,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn path_tracker_downgrades_after_send_failure_threshold() {
+    fn path_tracker_records_send_failure_threshold_without_inventing_fallback() {
         let mut tracker = PathTracker::new(
             PathPolicy::default(),
             [("node-a".to_string(), PathKind::DirectUdp)],
@@ -609,7 +692,7 @@ mod tests {
         assert!(tracker.record_send_failure("node-a", PathKind::DirectUdp, 3));
         assert_eq!(
             tracker.active_path_for_node("node-a", PathKind::RelayUdp),
-            PathKind::RelayUdp
+            PathKind::DirectUdp
         );
     }
 
@@ -620,7 +703,83 @@ mod tests {
             [("node-a".to_string(), PathKind::RelayUdp)],
         );
 
+        assert!(!tracker.record_probe_success("node-a", PathKind::DirectUdp));
         assert!(tracker.record_probe_success("node-a", PathKind::DirectUdp));
+        assert_eq!(
+            tracker.active_path_for_node("node-a", PathKind::RelayUdp),
+            PathKind::DirectUdp
+        );
+    }
+
+    #[test]
+    fn path_tracker_uses_policy_upgrade_success_threshold() {
+        let mut tracker = PathTracker::new(
+            PathPolicy {
+                upgrade_successes: 3,
+                ..PathPolicy::default()
+            },
+            [("node-a".to_string(), PathKind::RelayUdp)],
+        );
+
+        assert!(!tracker.record_probe_success("node-a", PathKind::DirectUdp));
+        assert!(!tracker.record_probe_success("node-a", PathKind::DirectUdp));
+        assert!(tracker.record_probe_success("node-a", PathKind::DirectUdp));
+    }
+
+    #[test]
+    fn path_tracker_uses_policy_failed_path_cooldown() {
+        let mut tracker = PathTracker::new(
+            PathPolicy {
+                failed_path_cooldown_probes: 3,
+                ..PathPolicy::default()
+            },
+            [("node-a".to_string(), PathKind::DirectUdp)],
+        );
+
+        assert!(tracker.record_send_failure("node-a", PathKind::DirectUdp, 1));
+        tracker.set_active_path("node-a", PathKind::RelayUdp);
+
+        assert!(!tracker.record_probe_success_after("node-a", PathKind::DirectUdp, 1));
+        assert!(!tracker.record_probe_success_after("node-a", PathKind::DirectUdp, 1));
+        assert!(!tracker.record_probe_success_after("node-a", PathKind::DirectUdp, 1));
+        assert!(tracker.record_probe_success_after("node-a", PathKind::DirectUdp, 1));
+    }
+
+    #[test]
+    fn path_tracker_delays_failed_path_upgrade_until_cooldown_expires() {
+        let mut tracker = PathTracker::new(
+            PathPolicy::default(),
+            [("node-a".to_string(), PathKind::DirectUdp)],
+        );
+
+        assert!(tracker.record_send_failure("node-a", PathKind::DirectUdp, 1));
+        assert_eq!(
+            tracker.active_path_for_node("node-a", PathKind::RelayUdp),
+            PathKind::DirectUdp
+        );
+        tracker.set_active_path("node-a", PathKind::RelayUdp);
+        assert!(!tracker.record_probe_success_after("node-a", PathKind::DirectUdp, 1));
+        assert!(!tracker.record_probe_success_after("node-a", PathKind::DirectUdp, 1));
+        assert!(tracker.record_probe_success_after("node-a", PathKind::DirectUdp, 1));
+        assert_eq!(
+            tracker.active_path_for_node("node-a", PathKind::RelayUdp),
+            PathKind::DirectUdp
+        );
+    }
+
+    #[test]
+    fn path_tracker_flags_failover_window_without_inventing_fallback() {
+        let mut tracker = PathTracker::new(
+            PathPolicy {
+                failover_after_ms: 5_000,
+                ..PathPolicy::default()
+            },
+            [("node-a".to_string(), PathKind::DirectUdp)],
+        );
+
+        assert!(!tracker.record_send_failure_at("node-a", PathKind::DirectUdp, 99, Some(10_000)));
+        assert!(!tracker.record_send_failure_at("node-a", PathKind::DirectUdp, 99, Some(14_999)));
+        assert!(tracker.record_send_failure_at("node-a", PathKind::DirectUdp, 99, Some(15_000)));
         assert_eq!(
             tracker.active_path_for_node("node-a", PathKind::RelayUdp),
             PathKind::DirectUdp

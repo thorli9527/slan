@@ -430,12 +430,12 @@ export class AppComponent implements OnDestroy {
   qualityPreferredPathTypes(): string[] {
     switch (this.qualityPathStrategy) {
       case 'performance':
-        return ['direct_udp', 'relay_udp', 'relay_tcp', 'relay_http3', 'relay_tls'];
+        return ['direct_udp', 'relay_udp', 'relay_tcp', 'relay_tls', 'relay_http3'];
       case 'relay_saving':
-        return ['relay_udp', 'relay_tcp', 'relay_http3', 'relay_tls'];
+        return ['relay_udp', 'relay_tcp', 'relay_tls', 'relay_http3'];
       case 'bandwidth_saving':
       default:
-        return ['direct_udp', 'relay_udp', 'relay_tcp', 'relay_http3', 'relay_tls'];
+        return ['direct_udp', 'relay_udp', 'relay_tcp', 'relay_tls', 'relay_http3'];
     }
   }
 

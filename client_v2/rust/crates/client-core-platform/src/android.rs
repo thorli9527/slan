@@ -3,10 +3,13 @@
 //! Android may still need protected system network APIs, but the product
 //! language and app-level boundary stay as mesh networking.
 
-use anyhow::{bail, Result};
+use std::sync::{Mutex, OnceLock};
+
+use anyhow::{anyhow, Result};
 use client_core::{
     AndroidNetworkEvent, AndroidSocketProtectionRequest, AndroidVpnConsentRequest,
-    AndroidVpnPermissionState, AndroidVpnSessionConfig, NetworkRuntimeState, PlatformNetwork,
+    AndroidVpnPermissionState, AndroidVpnSessionConfig, NetworkRuntimeState, PeerPathRuntime,
+    PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
     RouteSpec,
 };
 
@@ -23,28 +26,175 @@ pub trait AndroidVpnBackend: Send + Sync + 'static {
 #[derive(Debug, Clone, Default)]
 pub struct AndroidPlatformNetwork;
 
+#[derive(Debug, Clone, Default)]
+struct AndroidCachedNetworkConfig {
+    installed: bool,
+    virtual_ip: Option<String>,
+    prefix_len: Option<u8>,
+    dns_servers: Vec<String>,
+    routes: Vec<RouteSpec>,
+    relay_config: Option<RelayDataPlaneConfig>,
+}
+
+static ANDROID_CONFIG: OnceLock<Mutex<AndroidCachedNetworkConfig>> = OnceLock::new();
+
+fn cached_config() -> &'static Mutex<AndroidCachedNetworkConfig> {
+    ANDROID_CONFIG.get_or_init(|| Mutex::new(AndroidCachedNetworkConfig::default()))
+}
+
 impl PlatformNetwork for AndroidPlatformNetwork {
     fn install_adapter(&self) -> Result<()> {
-        bail!("android mesh network backend is not implemented yet")
+        let mut config = cached_config()
+            .lock()
+            .map_err(|_| anyhow!("android network config lock poisoned"))?;
+        config.installed = true;
+        Ok(())
     }
 
-    fn configure_ip(&self, _virtual_ip: &str, _prefix_len: u8) -> Result<()> {
-        bail!("android mesh network backend is not implemented yet")
+    fn configure_ip(&self, virtual_ip: &str, prefix_len: u8) -> Result<()> {
+        let value = virtual_ip.trim();
+        if value.is_empty() {
+            return Err(anyhow!("android virtual IP is empty"));
+        }
+        let mut config = cached_config()
+            .lock()
+            .map_err(|_| anyhow!("android network config lock poisoned"))?;
+        config.virtual_ip = Some(value.to_string());
+        config.prefix_len = Some(prefix_len);
+        Ok(())
     }
 
-    fn configure_routes(&self, _routes: &[RouteSpec]) -> Result<()> {
-        bail!("android mesh network backend is not implemented yet")
+    fn configure_routes(&self, routes: &[RouteSpec]) -> Result<()> {
+        let mut config = cached_config()
+            .lock()
+            .map_err(|_| anyhow!("android network config lock poisoned"))?;
+        config.routes = routes.to_vec();
+        Ok(())
     }
 
-    fn configure_dns(&self, _dns_servers: &[String]) -> Result<()> {
-        bail!("android mesh network backend is not implemented yet")
+    fn configure_dns(&self, dns_servers: &[String]) -> Result<()> {
+        let mut config = cached_config()
+            .lock()
+            .map_err(|_| anyhow!("android network config lock poisoned"))?;
+        config.dns_servers = dns_servers
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect();
+        Ok(())
+    }
+
+    fn configure_relay(&self, relay_config: Option<&RelayDataPlaneConfig>) -> Result<()> {
+        let mut config = cached_config()
+            .lock()
+            .map_err(|_| anyhow!("android network config lock poisoned"))?;
+        config.relay_config = relay_config.cloned();
+        Ok(())
     }
 
     fn disable_network(&self) -> Result<()> {
+        let mut config = cached_config()
+            .lock()
+            .map_err(|_| anyhow!("android network config lock poisoned"))?;
+        *config = AndroidCachedNetworkConfig::default();
         Ok(())
     }
 
     fn read_runtime_state(&self) -> Result<NetworkRuntimeState> {
-        Ok(NetworkRuntimeState::default())
+        let config = cached_config()
+            .lock()
+            .map_err(|_| anyhow!("android network config lock poisoned"))?;
+        Ok(NetworkRuntimeState {
+            adapter_present: config.installed,
+            network_enabled: config.installed && config.virtual_ip.is_some(),
+            virtual_ip: config.virtual_ip.clone(),
+            active_path: config
+                .relay_config
+                .as_ref()
+                .filter(|relay| relay.enabled && !relay.sessions.is_empty())
+                .and_then(|relay| client_core::relay_path_kind_for_transport(&relay.transport)),
+            peer_paths: config
+                .relay_config
+                .as_ref()
+                .map(|relay| {
+                    let peer_paths = relay
+                        .peer_paths
+                        .iter()
+                        .map(|path| PeerPathRuntime {
+                            peer_node_id: path.peer_node_id.clone(),
+                            peer_virtual_ips: path.peer_virtual_ips.clone(),
+                            active_path: None,
+                            candidates: path.candidates.clone(),
+                        })
+                        .collect::<Vec<_>>();
+                    client_core::selected_runtime_paths(&relay.path_policy, peer_paths)
+                })
+                .unwrap_or_default(),
+        })
     }
+
+    fn diagnostics(&self) -> Result<PlatformNetworkDiagnostics> {
+        let config = cached_config()
+            .lock()
+            .map_err(|_| anyhow!("android network config lock poisoned"))?
+            .clone();
+        let adapter_present = config.installed;
+        let network_enabled = config.installed && config.virtual_ip.is_some();
+        Ok(PlatformNetworkDiagnostics {
+            platform: "android".to_string(),
+            adapter_present,
+            adapter_name: Some("VpnService".to_string()),
+            admin_status: Some(if network_enabled {
+                "enabled".to_string()
+            } else {
+                "disabled".to_string()
+            }),
+            interface_index: None,
+            virtual_ip: config.virtual_ip.clone(),
+            mtu: config
+                .relay_config
+                .as_ref()
+                .and_then(|relay| relay.relay_mtu)
+                .map(u32::from),
+            mss: None,
+            dns_servers: config.dns_servers.clone(),
+            routes: config
+                .routes
+                .iter()
+                .map(|route| route.destination.clone())
+                .collect(),
+            checks: android_diagnostic_checks(&config),
+        })
+    }
+}
+
+fn android_diagnostic_checks(config: &AndroidCachedNetworkConfig) -> Vec<PlatformDiagnosticCheck> {
+    let mut checks = Vec::new();
+    checks.push(PlatformDiagnosticCheck {
+        name: "vpnServiceConfig".to_string(),
+        ok: config.installed,
+        message: Some(if config.installed {
+            "Android VpnService config prepared".to_string()
+        } else {
+            "Android VpnService config is not prepared".to_string()
+        }),
+    });
+    checks.push(PlatformDiagnosticCheck {
+        name: "virtualIp".to_string(),
+        ok: config.virtual_ip.is_some(),
+        message: config.virtual_ip.clone(),
+    });
+    if let Some(relay) = &config.relay_config {
+        checks.push(PlatformDiagnosticCheck {
+            name: "relayDataPlane".to_string(),
+            ok: relay.enabled && relay.transport.eq_ignore_ascii_case("udp"),
+            message: Some(format!(
+                "transport={} sessions={}",
+                relay.transport,
+                relay.sessions.len()
+            )),
+        });
+    }
+    checks
 }

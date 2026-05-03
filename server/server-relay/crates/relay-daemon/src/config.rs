@@ -227,7 +227,7 @@ fn validate_relay_transport_listener(config: &DaemonConfig, transport: &str) -> 
                 return Err("relay udp transport requires udp_bind".to_string());
             }
         }
-        "tcp" => {
+        "tcp" | "tls" | "http3" => {
             if config
                 .tcp_bind
                 .as_deref()
@@ -235,13 +235,8 @@ fn validate_relay_transport_listener(config: &DaemonConfig, transport: &str) -> 
                 .filter(|value| !value.is_empty())
                 .is_none()
             {
-                return Err("relay tcp transport requires tcp_bind".to_string());
+                return Err(format!("relay {transport} transport requires tcp_bind"));
             }
-        }
-        "tls" | "http3" => {
-            return Err(format!(
-                "relay {transport} transport is declared in control-plane but this relay-daemon build does not implement a {transport} listener yet"
-            ));
         }
         _ => unreachable!(),
     }
@@ -347,9 +342,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_declared_tls_or_http3_until_listener_exists() {
+    fn validate_accepts_declared_tls_or_http3_when_stream_listener_exists() {
         for transport in ["tls", "http3"] {
             let config = DaemonConfig {
+                tcp_bind: Some("0.0.0.0:9001".to_string()),
                 mqtt: Some(RelayMqttConfig {
                     node_id: format!("relay-{transport}"),
                     transport: Some(transport.to_string()),
@@ -358,7 +354,7 @@ mod tests {
                 ..DaemonConfig::default()
             };
 
-            assert!(config.validate().is_err());
+            config.validate().unwrap();
         }
     }
 

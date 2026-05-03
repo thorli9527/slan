@@ -29,7 +29,15 @@ contracts:
       preferredPathTypes:
         type: string[]
         required: false
-        comment: 客户端路径优先级，例如 direct_udp, relay_udp, relay_tcp, relay_http3, relay_tls。
+        comment: 客户端路径优先级，例如 direct_udp, relay_udp, relay_tcp, relay_tls, relay_http3。
+      upgradeSuccesses:
+        type: int
+        required: false
+        comment: 路径升级需要连续成功的探测次数，范围 1..10。
+      failedPathCooldownProbes:
+        type: int
+        required: false
+        comment: 失败路径重新升级前需要等待的探测次数，范围 1..20。
       policyId:
         type: string
         required: false
@@ -78,6 +86,12 @@ contracts:
         required: false
       preferredPathTypes:
         type: string[]
+        required: false
+      upgradeSuccesses:
+        type: int
+        required: false
+      failedPathCooldownProbes:
+        type: int
         required: false
       published:
         type: int
@@ -253,6 +267,9 @@ contracts:
       networkId:
         type: string
         required: false
+      health:
+        type: PathDiagnoseHealth
+        required: true
       activePathType:
         type: string
         required: true
@@ -291,6 +308,25 @@ contracts:
       count:
         type: int
         required: true
+  PathDiagnoseHealth:
+    fields:
+      status:
+        type: string
+        required: true
+      reasons:
+        type: PathDiagnoseHealthReason[]
+        required: false
+  PathDiagnoseHealthReason:
+    fields:
+      code:
+        type: string
+        required: true
+      severity:
+        type: string
+        required: true
+      message:
+        type: string
+        required: true
   PathDiagnoseRelay:
     fields:
       address:
@@ -303,6 +339,12 @@ contracts:
         type: int
         required: true
       relaySessionCount:
+        type: int
+        required: true
+      attachedPeerSessionCount:
+        type: int
+        required: true
+      attachedTransportCount:
         type: int
         required: true
       ticketExpiresAt:

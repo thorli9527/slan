@@ -58,7 +58,7 @@ func directPathOptions(endpoints []dto.Endpoint, pathHealth []pathHealthWindow) 
 		}
 
 		paths = append(paths, controlmsg.PathOption{
-			PathType: endpoint.Type,
+			PathType: netpath.PathDirectUdp,
 			Endpoint: endpoint.Address,
 			Priority: pathPriority,
 		})

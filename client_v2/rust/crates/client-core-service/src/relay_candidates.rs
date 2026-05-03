@@ -134,10 +134,24 @@ fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateS
     let transport = normalize_relay_transport(&candidate.transport)
         .unwrap_or_else(|| candidate.transport.trim())
         .to_string();
+    let Some(address) = normalize_relay_candidate_address(&candidate.address, &transport) else {
+        return RelayCandidateSelection {
+            endpoint_id: candidate.endpoint_id.clone(),
+            transport,
+            address: candidate.address.clone(),
+            country_code: candidate.country_code.clone(),
+            region_id: candidate.region_id.clone(),
+            cluster_id: candidate.cluster_id.clone(),
+            reachable: false,
+            rtt_ms: None,
+            path_score: 11_000,
+            selected: false,
+        };
+    };
     let mut reachable = true;
     let mut rtt_ms = None;
     let path_score = match transport.as_str() {
-        "tcp" => match probe_relay_tcp_rtt_ms(&candidate.address) {
+        "tcp" => match probe_relay_tcp_rtt_ms(&address) {
             Some(rtt) => {
                 rtt_ms = Some(rtt);
                 rtt.saturating_add(100)
@@ -147,14 +161,30 @@ fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateS
                 10_000
             }
         },
-        // The control plane reserves tls/http3, but the current local service
-        // data plane has no TLS or HTTP3 listener/client yet. Keep them in the
-        // model while preventing them from being selected as actually reachable.
-        "tls" | "http3" => {
-            reachable = false;
-            10_000
-        }
-        "udp" => match probe_relay_udp_rtt_ms(&candidate.address) {
+        // Windows currently uses the same framed stream data-plane handshake for
+        // TCP, TLS and HTTP3 relay path kinds. The transport name still stays
+        // canonical so policy and server-side stats can distinguish them.
+        "tls" => match probe_relay_tcp_rtt_ms(&address) {
+            Some(rtt) => {
+                rtt_ms = Some(rtt);
+                rtt.saturating_add(160)
+            }
+            None => {
+                reachable = false;
+                10_000
+            }
+        },
+        "http3" => match probe_relay_tcp_rtt_ms(&address) {
+            Some(rtt) => {
+                rtt_ms = Some(rtt);
+                rtt.saturating_add(140)
+            }
+            None => {
+                reachable = false;
+                10_000
+            }
+        },
+        "udp" => match probe_relay_udp_rtt_ms(&address) {
             Some(rtt) => {
                 rtt_ms = Some(rtt);
                 rtt.saturating_add(30)
@@ -172,7 +202,7 @@ fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateS
     RelayCandidateSelection {
         endpoint_id: candidate.endpoint_id.clone(),
         transport,
-        address: candidate.address.clone(),
+        address,
         country_code: candidate.country_code.clone(),
         region_id: candidate.region_id.clone(),
         cluster_id: candidate.cluster_id.clone(),
@@ -181,6 +211,37 @@ fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateS
         path_score,
         selected: false,
     }
+}
+
+pub(crate) fn normalize_relay_candidate_address(address: &str, transport: &str) -> Option<String> {
+    let trimmed = address.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let transport = normalize_relay_transport(transport)?;
+    let stripped = match transport {
+        "udp" => trimmed
+            .strip_prefix("udp://")
+            .or_else(|| trimmed.strip_prefix("relay+udp://")),
+        "tcp" => trimmed
+            .strip_prefix("tcp://")
+            .or_else(|| trimmed.strip_prefix("relay+tcp://")),
+        "tls" => trimmed
+            .strip_prefix("tls://")
+            .or_else(|| trimmed.strip_prefix("relay+tls://")),
+        "http3" => trimmed
+            .strip_prefix("http3://")
+            .or_else(|| trimmed.strip_prefix("relay+http3://")),
+        _ => None,
+    };
+    if stripped.is_none() && trimmed.contains("://") {
+        return None;
+    }
+    let normalized = stripped.unwrap_or(trimmed).trim();
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized.to_string())
 }
 
 fn is_direct_endpoint(endpoint: &ControlEndpoint) -> bool {
@@ -228,4 +289,41 @@ fn optional_trimmed_string(value: Option<&Value>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_relay_candidate_address;
+
+    #[test]
+    fn relay_candidate_address_accepts_matching_scheme_or_bare_address() {
+        assert_eq!(
+            normalize_relay_candidate_address("http3://127.0.0.1:9443", "http3").as_deref(),
+            Some("127.0.0.1:9443")
+        );
+        assert_eq!(
+            normalize_relay_candidate_address("127.0.0.1:9443", "http3").as_deref(),
+            Some("127.0.0.1:9443")
+        );
+        assert_eq!(
+            normalize_relay_candidate_address("relay+tls://relay.example:443", "tls").as_deref(),
+            Some("relay.example:443")
+        );
+    }
+
+    #[test]
+    fn relay_candidate_address_rejects_mismatched_or_alias_scheme() {
+        assert_eq!(
+            normalize_relay_candidate_address("udp://127.0.0.1:9000", "http3"),
+            None
+        );
+        assert_eq!(
+            normalize_relay_candidate_address("h3://127.0.0.1:9443", "http3"),
+            None
+        );
+        assert_eq!(
+            normalize_relay_candidate_address("quic://127.0.0.1:9443", "http3"),
+            None
+        );
+    }
 }

@@ -10,9 +10,11 @@ impl RelayRuntime {
         &mut self,
         source: RelayEndpoint,
         participant_id: String,
+        transport: Option<String>,
         ticket: RelayTicketWire,
     ) -> Result<(ServerResponse, Option<(RelayEndpoint, ServerResponse)>), RelayRuntimeError> {
         let ticket = to_relay_ticket(ticket);
+        validate_attach_transport(source, transport.as_deref(), ticket.relay_url.as_str())?;
         if participant_id != ticket.src_node_id && participant_id != ticket.dst_node_id {
             return Err(RelayRuntimeError::new(
                 "participant_not_in_ticket",
@@ -61,6 +63,7 @@ impl RelayRuntime {
                 self.source_index.remove(&previous_source);
             }
         }
+        self.remove_participant_replay(&ticket.session_id, &participant_id);
         self.source_index
             .insert(source, (ticket.session_id.clone(), participant_id.clone()));
 
@@ -78,4 +81,59 @@ impl RelayRuntime {
             None,
         ))
     }
+}
+
+fn validate_attach_transport(
+    source: RelayEndpoint,
+    transport: Option<&str>,
+    relay_url: &str,
+) -> Result<(), RelayRuntimeError> {
+    let Some(transport) = transport.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let normalized = transport.to_ascii_lowercase();
+    let supported = match source {
+        RelayEndpoint::Udp(_) => matches!(normalized.as_str(), "udp" | "relay_udp"),
+        RelayEndpoint::Tcp(_) => matches!(
+            normalized.as_str(),
+            "tcp" | "relay_tcp" | "tls" | "relay_tls" | "http3" | "relay_http3"
+        ),
+    };
+    if supported {
+        validate_attach_transport_matches_ticket_url(normalized.as_str(), relay_url)?;
+        return Ok(());
+    }
+    Err(RelayRuntimeError::new(
+        "unsupported_transport",
+        format!("attach transport {transport} is not supported for this relay endpoint"),
+    ))
+}
+
+fn validate_attach_transport_matches_ticket_url(
+    normalized_transport: &str,
+    relay_url: &str,
+) -> Result<(), RelayRuntimeError> {
+    let scheme = relay_url
+        .trim()
+        .split_once("://")
+        .map(|(scheme, _)| scheme.to_ascii_lowercase());
+    let Some(scheme) = scheme else {
+        return Ok(());
+    };
+    let expected = match normalized_transport {
+        "udp" | "relay_udp" => "udp",
+        "tcp" | "relay_tcp" => "tcp",
+        "tls" | "relay_tls" => "tls",
+        "http3" | "relay_http3" => "http3",
+        _ => return Ok(()),
+    };
+    if scheme == expected {
+        return Ok(());
+    }
+    Err(RelayRuntimeError::new(
+        "transport_ticket_mismatch",
+        format!(
+            "attach transport {normalized_transport} does not match ticket relayUrl {relay_url}"
+        ),
+    ))
 }

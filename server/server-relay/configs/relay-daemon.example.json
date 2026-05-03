@@ -26,6 +26,16 @@
         "node_id": "relay-cn-local-tcp",
         "transport": "tcp",
         "address": "127.0.0.1:9001"
+      },
+      {
+        "node_id": "relay-cn-local-tls",
+        "transport": "tls",
+        "address": "127.0.0.1:9001"
+      },
+      {
+        "node_id": "relay-cn-local-http3",
+        "transport": "http3",
+        "address": "127.0.0.1:9001"
       }
     ],
     "interval_seconds": 30,

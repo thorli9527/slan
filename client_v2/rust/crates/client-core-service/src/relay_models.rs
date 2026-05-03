@@ -47,6 +47,7 @@ pub(crate) struct RelayCandidateListResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PathDiagnoseResponse {
     pub(crate) network_id: Option<String>,
+    pub(crate) health: PathDiagnoseHealth,
     pub(crate) active_path_type: String,
     pub(crate) active_path_counts: Vec<PathDiagnosePathCount>,
     pub(crate) peer_paths: Vec<client_core::PeerPathRuntime>,
@@ -61,6 +62,21 @@ pub(crate) struct PathDiagnoseResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct PathDiagnoseHealth {
+    pub(crate) status: String,
+    pub(crate) reasons: Vec<PathDiagnoseHealthReason>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PathDiagnoseHealthReason {
+    pub(crate) code: String,
+    pub(crate) severity: String,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct PathDiagnosePathCount {
     pub(crate) path_type: String,
     pub(crate) count: usize,
@@ -70,10 +86,15 @@ pub(crate) struct PathDiagnosePathCount {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PathDiagnoseRelay {
     pub(crate) address: String,
+    pub(crate) transport: Option<String>,
     pub(crate) active_path: Option<String>,
     pub(crate) requested_relay_session_count: u32,
     pub(crate) relay_session_count: u32,
+    pub(crate) attached_peer_session_count: u32,
+    pub(crate) attached_transport_count: u32,
     pub(crate) ticket_expires_at: Option<String>,
+    pub(crate) ticket_expires_in_ms: Option<i64>,
+    pub(crate) ticket_renew_due: bool,
     pub(crate) relay_attach_failures: u64,
     pub(crate) last_relay_attach_error: Option<String>,
     pub(crate) peers: Vec<PathDiagnoseRelayPeer>,
@@ -159,13 +180,23 @@ pub(crate) struct PathDiagnoseDns {
 pub(crate) struct RelayRuntimeStats {
     pub(crate) relay_address: String,
     #[serde(default)]
+    pub(crate) relay_transport: Option<String>,
+    #[serde(default)]
     pub(crate) active_path: Option<String>,
     #[serde(default)]
     pub(crate) requested_relay_session_count: u32,
     #[serde(default)]
     pub(crate) relay_session_count: u32,
     #[serde(default)]
+    pub(crate) attached_peer_session_count: u32,
+    #[serde(default)]
+    pub(crate) attached_transport_count: u32,
+    #[serde(default)]
     pub(crate) ticket_expires_at: Option<String>,
+    #[serde(default)]
+    pub(crate) ticket_expires_in_ms: Option<i64>,
+    #[serde(default)]
+    pub(crate) ticket_renew_due: bool,
     #[serde(default)]
     pub(crate) relay_attach_failures: u64,
     #[serde(default)]
@@ -256,6 +287,14 @@ pub(crate) struct RelayDataPlanePolicy {
     pub(crate) path_type: Option<String>,
     #[serde(default)]
     pub(crate) preferred_path_types: Vec<String>,
+    #[serde(default)]
+    pub(crate) probe_interval_ms: Option<u64>,
+    #[serde(default)]
+    pub(crate) failover_after_ms: Option<u64>,
+    #[serde(default)]
+    pub(crate) upgrade_successes: Option<u32>,
+    #[serde(default)]
+    pub(crate) failed_path_cooldown_probes: Option<u32>,
     #[serde(default)]
     pub(crate) relay_mtu: Option<u16>,
     #[serde(default)]

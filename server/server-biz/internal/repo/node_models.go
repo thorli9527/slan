@@ -107,6 +107,12 @@ type NodePathHealth struct {
 	RelayMtu *uint32 `gorm:"column:relay_mtu"`
 	// MaxFramePayload 是客户端当前使用的最大 frame payload。
 	MaxFramePayload *uint32 `gorm:"column:max_frame_payload"`
+	// TicketExpiresAt 是当前 relay ticket 最早过期时间。
+	TicketExpiresAt string `gorm:"column:ticket_expires_at;not null;default:''"`
+	// TicketExpiresInMs 是当前 relay ticket 距离过期的毫秒数。
+	TicketExpiresInMs *int64 `gorm:"column:ticket_expires_in_ms"`
+	// TicketRenewDue 标记客户端是否已进入 ticket 续期窗口。
+	TicketRenewDue *bool `gorm:"column:ticket_renew_due;index"`
 	// PathDowngrades 是客户端本地路径降级次数。
 	PathDowngrades uint64 `gorm:"column:path_downgrades;not null;default:0"`
 	// PathUpgrades 是客户端本地路径升级次数。
@@ -142,6 +148,9 @@ type NodePathHealthSample struct {
 	CrossCountry      *bool   `gorm:"column:cross_country;index"`
 	RelayMtu          *uint32 `gorm:"column:relay_mtu"`
 	MaxFramePayload   *uint32 `gorm:"column:max_frame_payload"`
+	TicketExpiresAt   string  `gorm:"column:ticket_expires_at;not null;default:''"`
+	TicketExpiresInMs *int64  `gorm:"column:ticket_expires_in_ms"`
+	TicketRenewDue    *bool   `gorm:"column:ticket_renew_due;index"`
 	PathDowngrades    uint64  `gorm:"column:path_downgrades;not null;default:0"`
 	PathUpgrades      uint64  `gorm:"column:path_upgrades;not null;default:0"`
 	LastPathChange    string  `gorm:"column:last_path_change;not null;default:''"`

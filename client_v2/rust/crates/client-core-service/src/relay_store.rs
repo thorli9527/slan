@@ -3,8 +3,11 @@ use std::{fs, path::PathBuf};
 use crate::{
     relay_models::{RelayDataPlanePolicy, RelayPayloadPolicy, RelayRuntimeStats},
     session_store::current_timestamp_ms,
+    time_utils::ticket_timing_with_window,
 };
 use client_core::{PathKind, PathPolicy};
+
+const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
 
 pub(crate) fn relay_payload_policy(
     relay_address: &str,
@@ -71,12 +74,30 @@ pub(crate) fn relay_path_policy(
             }
             acc
         });
-    if preferred.is_empty() {
-        return PathPolicy::default();
-    }
+    let defaults = PathPolicy::default();
     PathPolicy {
-        preferred,
-        ..PathPolicy::default()
+        preferred: if preferred.is_empty() {
+            defaults.preferred.clone()
+        } else {
+            preferred
+        },
+        probe_interval_ms: policy
+            .probe_interval_ms
+            .unwrap_or(defaults.probe_interval_ms)
+            .clamp(1_000, 300_000),
+        failover_after_ms: policy
+            .failover_after_ms
+            .unwrap_or(defaults.failover_after_ms)
+            .clamp(1_000, 600_000),
+        upgrade_successes: policy
+            .upgrade_successes
+            .unwrap_or(defaults.upgrade_successes)
+            .clamp(1, 10),
+        failed_path_cooldown_probes: policy
+            .failed_path_cooldown_probes
+            .unwrap_or(defaults.failed_path_cooldown_probes)
+            .clamp(1, 20),
+        fallback_enabled: defaults.fallback_enabled,
     }
 }
 
@@ -101,7 +122,19 @@ pub(crate) fn load_recent_relay_runtime_stats() -> Option<RelayRuntimeStats> {
 
 pub(crate) fn load_relay_runtime_stats() -> Option<RelayRuntimeStats> {
     let payload = fs::read(relay_stats_file_path()).ok()?;
-    serde_json::from_slice::<RelayRuntimeStats>(&payload).ok()
+    let mut stats = serde_json::from_slice::<RelayRuntimeStats>(&payload).ok()?;
+    refresh_relay_runtime_ticket_timing(&mut stats, current_timestamp_ms());
+    Some(stats)
+}
+
+pub(crate) fn refresh_relay_runtime_ticket_timing(stats: &mut RelayRuntimeStats, now_ms: u64) {
+    let timing = ticket_timing_with_window(
+        now_ms,
+        stats.ticket_expires_at.as_deref(),
+        RELAY_TICKET_RENEW_WINDOW_MS,
+    );
+    stats.ticket_expires_in_ms = timing.expires_in_ms;
+    stats.ticket_renew_due = timing.renew_due;
 }
 
 pub(crate) fn relay_runtime_failure_total(stats: &RelayRuntimeStats) -> u64 {
@@ -201,7 +234,7 @@ pub(crate) fn runtime_packet_loss_ppm(stats: &RelayRuntimeStats) -> Option<u32> 
     Some(ppm.min(1_000_000) as u32)
 }
 
-fn relay_stats_file_path() -> PathBuf {
+pub(crate) fn relay_stats_file_path() -> PathBuf {
     if let Some(dir) = std::env::var_os("ProgramData") {
         return PathBuf::from(dir)
             .join("SLAN")
@@ -213,7 +246,7 @@ fn relay_stats_file_path() -> PathBuf {
     PathBuf::from("client-v2-relay-stats.json")
 }
 
-fn relay_policy_file_path() -> PathBuf {
+pub(crate) fn relay_policy_file_path() -> PathBuf {
     if let Some(dir) = std::env::var_os("ProgramData") {
         return PathBuf::from(dir)
             .join("SLAN")
@@ -223,4 +256,66 @@ fn relay_policy_file_path() -> PathBuf {
         return PathBuf::from(dir).join("client-v2-relay-policy.json");
     }
     PathBuf::from("client-v2-relay-policy.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn relay_stats(expires_at: Option<&str>) -> RelayRuntimeStats {
+        RelayRuntimeStats {
+            relay_address: "127.0.0.1:3479".to_string(),
+            relay_transport: Some("udp".to_string()),
+            active_path: Some("relay_udp".to_string()),
+            requested_relay_session_count: 1,
+            relay_session_count: 1,
+            attached_peer_session_count: 1,
+            attached_transport_count: 1,
+            ticket_expires_at: expires_at.map(str::to_string),
+            ticket_expires_in_ms: None,
+            ticket_renew_due: false,
+            relay_attach_failures: 0,
+            last_relay_attach_error: None,
+            peers: Vec::new(),
+            relay_mtu: Some(1280),
+            max_frame_payload: Some(1200),
+            tun_packets_sent: 0,
+            relay_packets_received: 0,
+            relay_decode_failures: 0,
+            relay_config_hash_mismatches: 0,
+            relay_error_responses: 0,
+            last_relay_error: None,
+            relay_send_failures: 0,
+            relay_receive_failures: 0,
+            unroutable_tun_packets: 0,
+            last_unroutable_destination: None,
+            oversized_tun_packets: 0,
+            last_oversized_tun_packet_size: None,
+            wintun_write_failures: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn refresh_relay_runtime_ticket_timing_recomputes_derived_fields() {
+        let now = crate::time_utils::parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
+        let mut stats = relay_stats(Some("2026-05-03T10:01:30Z"));
+
+        refresh_relay_runtime_ticket_timing(&mut stats, now);
+
+        assert_eq!(stats.ticket_expires_in_ms, Some(90_000));
+        assert!(stats.ticket_renew_due);
+    }
+
+    #[test]
+    fn refresh_relay_runtime_ticket_timing_clears_missing_ticket() {
+        let mut stats = relay_stats(None);
+        stats.ticket_expires_in_ms = Some(1);
+        stats.ticket_renew_due = true;
+
+        refresh_relay_runtime_ticket_timing(&mut stats, 0);
+
+        assert_eq!(stats.ticket_expires_in_ms, None);
+        assert!(!stats.ticket_renew_due);
+    }
 }

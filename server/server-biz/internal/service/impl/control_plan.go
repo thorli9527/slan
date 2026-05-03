@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
+	"github.com/slan/server/server-biz/configs"
 	controlmsg "github.com/slan/server/server-biz/internal/controlmsg"
 	"github.com/slan/server/server-biz/internal/repo"
 )
@@ -83,17 +84,28 @@ func (s dbControlChannelService) relayClusterForPreferredNode(preferredRelayNode
 
 func (s dbControlChannelService) relayTicketForConnectPlan(ctx context.Context, userID, nodeID, networkID, peerNodeID string, relayCluster relayClusterView, connectionState repo.NodeConnectionState) (*controlmsg.RelayTicket, relayClusterView) {
 	ticket, err := s.state.issueRelayTicket(ctx, userID, dto.RelayTicketRequest{
-		NetworkID:     networkID,
-		SrcNodeID:     nodeID,
-		DstNodeID:     peerNodeID,
-		DerpClusterID: relayCluster.clusterID,
-		Reason:        relayReason(connectionState),
+		NetworkID:            networkID,
+		SrcNodeID:            nodeID,
+		DstNodeID:            peerNodeID,
+		DerpClusterID:        relayCluster.clusterID,
+		PreferredDerpNodeIDs: relayNodeIDs(relayCluster.nodes),
+		Reason:               relayReason(connectionState),
 	})
 	if err != nil {
 		return nil, relayCluster
 	}
 
 	return relayTicketDTOToControl(ticket), s.state.relayClusterForRequest(ticket.DerpClusterID)
+}
+
+func relayNodeIDs(nodes []configs.RelayNodeConfig) []string {
+	out := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if nodeID := strings.TrimSpace(node.NodeID); nodeID != "" {
+			out = append(out, nodeID)
+		}
+	}
+	return out
 }
 
 func relayTicketDTOToControl(ticket dto.RelayTicket) *controlmsg.RelayTicket {

@@ -165,6 +165,53 @@ fn ingest_downstream_publish(
     if try_ingest_network_map_response(payload, runtime, state_notifier)? {
         return Ok(());
     }
+    if let Some(connect_plan) = try_ingest_connect_plan(payload)? {
+        let current_state = {
+            let runtime = runtime
+                .lock()
+                .map_err(|_| "client runtime mutex poisoned".to_string())?;
+            runtime.state().clone()
+        };
+        if current_state.signed_in && current_state.network_enabled {
+            if let Some(delivery_id) = connect_plan.rebuild_delivery_id {
+                log_service_error(format!(
+                    "client-core-service scheduling network rebuild for connect_plan deliveryId={delivery_id}"
+                ));
+                {
+                    let mut queue = task_queue
+                        .lock()
+                        .map_err(|_| "control task queue mutex poisoned".to_string())?;
+                    queue
+                        .enqueue_downstream(
+                            crate::control_tasks::ControlTaskAction::EnableNetwork,
+                            delivery_id,
+                            false,
+                        )
+                        .map_err(|err| err.to_string())?;
+                }
+                let state = crate::drain_pending_control_tasks(runtime, task_queue);
+                let business_type = if state.error.is_some() {
+                    BUSINESS_NETWORK_SWITCH_FAILED
+                } else {
+                    BUSINESS_NETWORK_RUNTIME_CHANGED
+                };
+                publish_state_business_event(state_notifier, business_type, &state);
+            } else {
+                publish_state_business_event(
+                    state_notifier,
+                    BUSINESS_CONTROL_SYNC_CHANGED,
+                    &current_state,
+                );
+            }
+        } else {
+            publish_state_business_event(
+                state_notifier,
+                BUSINESS_CONTROL_SYNC_CHANGED,
+                &current_state,
+            );
+        }
+        return Ok(());
+    }
     if try_ingest_relay_data_plane_policy(payload)? {
         return Ok(());
     }
@@ -263,6 +310,55 @@ fn try_ingest_relay_data_plane_policy(payload: &[u8]) -> Result<bool, String> {
     Ok(true)
 }
 
+#[derive(Debug)]
+struct ConnectPlanIngest {
+    rebuild_delivery_id: Option<String>,
+}
+
+fn try_ingest_connect_plan(payload: &[u8]) -> Result<Option<ConnectPlanIngest>, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("connect_plan") {
+        return Ok(None);
+    }
+    let plan = value
+        .get("payload")
+        .ok_or_else(|| "connect_plan payload is missing".to_string())?;
+    let delivery_id = connect_plan_delivery_id(&value, plan);
+    if crate::persist_connect_plan_from_value(plan)
+        .map_err(|err| format!("persist connect plan: {err:#}"))?
+    {
+        log_service_error("client-core-service accepted connect_plan for relay data plane");
+        return Ok(Some(ConnectPlanIngest {
+            rebuild_delivery_id: Some(delivery_id),
+        }));
+    }
+    log_service_error("client-core-service ignored empty connect_plan for relay data plane");
+    Ok(Some(ConnectPlanIngest {
+        rebuild_delivery_id: None,
+    }))
+}
+
+fn connect_plan_delivery_id(envelope: &serde_json::Value, plan: &serde_json::Value) -> String {
+    envelope
+        .get("messageId")
+        .or_else(|| envelope.get("message_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("connect-plan-{value}"))
+        .unwrap_or_else(|| {
+            let peer = plan
+                .get("peerNodeId")
+                .or_else(|| plan.get("peer_node_id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("peer");
+            format!("connect-plan-{peer}-{}", current_timestamp_ms())
+        })
+}
+
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RelayDataPlanePolicy {
@@ -280,6 +376,14 @@ struct RelayDataPlanePolicy {
     path_type: Option<String>,
     #[serde(default)]
     preferred_path_types: Vec<String>,
+    #[serde(default)]
+    probe_interval_ms: Option<u64>,
+    #[serde(default)]
+    failover_after_ms: Option<u64>,
+    #[serde(default)]
+    upgrade_successes: Option<u32>,
+    #[serde(default)]
+    failed_path_cooldown_probes: Option<u32>,
     #[serde(default)]
     recommendation_level: Option<u8>,
     #[serde(default)]
@@ -327,6 +431,26 @@ fn validate_relay_data_plane_policy(policy: &RelayDataPlanePolicy) -> Result<(),
     }
     if policy.max_frame_payload >= policy.relay_mtu {
         return Err("maxFramePayload must be lower than relayMtu".to_string());
+    }
+    if let Some(probe_interval_ms) = policy.probe_interval_ms {
+        if !(1_000..=300_000).contains(&probe_interval_ms) {
+            return Err("probeIntervalMs out of range".to_string());
+        }
+    }
+    if let Some(failover_after_ms) = policy.failover_after_ms {
+        if !(1_000..=600_000).contains(&failover_after_ms) {
+            return Err("failoverAfterMs out of range".to_string());
+        }
+    }
+    if let Some(upgrade_successes) = policy.upgrade_successes {
+        if !(1..=10).contains(&upgrade_successes) {
+            return Err("upgradeSuccesses out of range".to_string());
+        }
+    }
+    if let Some(failed_path_cooldown_probes) = policy.failed_path_cooldown_probes {
+        if !(1..=20).contains(&failed_path_cooldown_probes) {
+            return Err("failedPathCooldownProbes out of range".to_string());
+        }
     }
     if let Some(level) = policy.recommendation_level {
         if level > 11 {

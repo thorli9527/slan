@@ -73,6 +73,12 @@ if (-not $relay) {
 }
 
 Write-Host "Network: $($diagnose.networkId)"
+if ($diagnose.health) {
+  Write-Host "Health: $($diagnose.health.status)"
+  foreach ($reason in @($diagnose.health.reasons)) {
+    Write-Host "  $($reason.severity): $($reason.code) - $($reason.message)"
+  }
+}
 Write-Host "Active path: $($diagnose.activePathType)"
 if ($diagnose.activePathCounts) {
   $pathCounts = @($diagnose.activePathCounts | ForEach-Object { "$($_.pathType)=$($_.count)" })
@@ -82,7 +88,11 @@ Write-Host "Relay: $($relay.address)"
 if ($relay.activePath) {
   Write-Host "Relay active path: $($relay.activePath)"
 }
-Write-Host "Relay sessions: $($relay.relaySessionCount)/$($relay.requestedRelaySessionCount)"
+$attachedPeerSessions = if ($null -ne $relay.attachedPeerSessionCount) { [int]$relay.attachedPeerSessionCount } else { [int]$relay.relaySessionCount }
+$attachedTransports = if ($null -ne $relay.attachedTransportCount) { [int]$relay.attachedTransportCount } else { [int]$relay.relaySessionCount }
+Write-Host "Relay peer sessions: $($relay.relaySessionCount)/$($relay.requestedRelaySessionCount)"
+Write-Host "Attached peer sessions: $attachedPeerSessions"
+Write-Host "Attached transports: $attachedTransports"
 Write-Host "Ticket expires: $($relay.ticketExpiresAt)"
 Write-Host "Failures: $($relay.failures)"
 Write-Host "Config hash mismatches: $($relay.relayConfigHashMismatches)"
@@ -211,11 +221,15 @@ if ($RequireMssOk -and $diagnose.mtu) {
 }
 
 if ($relay.relaySessionCount -lt $MinRelaySessions) {
-  Fail-SlanRelayCheck "Relay session count $($relay.relaySessionCount) is below required minimum $MinRelaySessions."
+  Fail-SlanRelayCheck "Relay peer session count $($relay.relaySessionCount) is below required minimum $MinRelaySessions."
 }
 
-if (-not $AllowMissingPeerSessions -and $relay.requestedRelaySessionCount -gt 0 -and $relay.relaySessionCount -lt $relay.requestedRelaySessionCount) {
-  Fail-SlanRelayCheck "Some relay peer sessions are missing: $($relay.relaySessionCount)/$($relay.requestedRelaySessionCount)."
+if (-not $AllowMissingPeerSessions -and $relay.requestedRelaySessionCount -gt 0 -and $attachedPeerSessions -lt $relay.requestedRelaySessionCount) {
+  Fail-SlanRelayCheck "Some relay peer sessions are not attached: $attachedPeerSessions/$($relay.requestedRelaySessionCount)."
+}
+
+if ($attachedTransports -lt $MinRelaySessions) {
+  Fail-SlanRelayCheck "Attached transport count $attachedTransports is below required minimum $MinRelaySessions."
 }
 
 if ($relay.unroutableTunPackets -gt 0) {

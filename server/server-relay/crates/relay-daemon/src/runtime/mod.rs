@@ -49,21 +49,39 @@ impl RelayEndpoint {
 
 type SessionEndpointsV2 = HashMap<String, HashMap<String, RelayEndpoint>>;
 type SourceIndexV2 = HashMap<RelayEndpoint, (String, String)>;
+type ReplayIndexV2 = HashMap<(String, String), u64>;
 
 pub struct RelayRuntime {
     relay: UdpRelay<InMemorySessionStore, StaticTicketValidator>,
     endpoints: SessionEndpointsV2,
     source_index: SourceIndexV2,
+    replay_last_seq: ReplayIndexV2,
 }
 
 impl RelayRuntime {
     pub fn new(relay_url_prefix: Option<String>, ticket_signing_secret: Option<String>) -> Self {
-        let validator =
-            StaticTicketValidator::with_options(relay_url_prefix, ticket_signing_secret);
+        Self::with_allowed_relay_node_ids(
+            relay_url_prefix,
+            ticket_signing_secret,
+            Vec::<String>::new(),
+        )
+    }
+
+    pub fn with_allowed_relay_node_ids(
+        relay_url_prefix: Option<String>,
+        ticket_signing_secret: Option<String>,
+        local_relay_node_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        let validator = StaticTicketValidator::with_allowed_relay_node_ids(
+            relay_url_prefix,
+            ticket_signing_secret,
+            local_relay_node_ids,
+        );
         Self {
             relay: UdpRelay::new(InMemorySessionStore::new(), validator),
             endpoints: HashMap::new(),
             source_index: HashMap::new(),
+            replay_last_seq: HashMap::new(),
         }
     }
 
@@ -92,8 +110,9 @@ impl RelayRuntime {
             ClientRequest::Ping => Ok((ServerResponse::Pong, None)),
             ClientRequest::Attach {
                 participant_id,
+                transport,
                 ticket,
-            } => self.handle_attach(source, participant_id, ticket),
+            } => self.handle_attach(source, participant_id, transport, ticket),
             ClientRequest::Forward {
                 session_id,
                 from_participant_id,
@@ -124,8 +143,36 @@ impl RelayRuntime {
             .unwrap_or(false);
         if should_remove_session {
             self.endpoints.remove(&session_id);
+            self.remove_session_replay(&session_id);
             let _ = self.relay.detach(&session_id);
         }
+    }
+
+    pub(crate) fn remove_participant_replay(&mut self, session_id: &str, participant_id: &str) {
+        self.replay_last_seq
+            .remove(&(session_id.to_string(), participant_id.to_string()));
+    }
+
+    pub(crate) fn remove_session_replay(&mut self, session_id: &str) {
+        self.replay_last_seq
+            .retain(|(replay_session_id, _), _| replay_session_id != session_id);
+    }
+
+    pub(crate) fn is_binary_seq_replayed(
+        &self,
+        session_id: &str,
+        participant_id: &str,
+        seq: u64,
+    ) -> bool {
+        let key = (session_id.to_string(), participant_id.to_string());
+        self.replay_last_seq
+            .get(&key)
+            .is_some_and(|last_seq| seq <= *last_seq)
+    }
+
+    pub(crate) fn mark_binary_seq(&mut self, session_id: &str, participant_id: &str, seq: u64) {
+        let key = (session_id.to_string(), participant_id.to_string());
+        self.replay_last_seq.insert(key, seq);
     }
 }
 
@@ -152,6 +199,7 @@ mod tests {
                 peer_a,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -162,6 +210,7 @@ mod tests {
                 peer_b,
                 ClientRequest::Attach {
                     participant_id: "node-b".to_string(),
+                    transport: None,
                     ticket,
                 },
             )
@@ -193,6 +242,7 @@ mod tests {
                 peer_a,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -202,6 +252,7 @@ mod tests {
                 peer_b,
                 ClientRequest::Attach {
                     participant_id: "node-b".to_string(),
+                    transport: None,
                     ticket,
                 },
             )
@@ -245,6 +296,90 @@ mod tests {
     }
 
     #[test]
+    fn binary_data_frame_rejects_replayed_sequence() {
+        let mut runtime = RelayRuntime::new(None, None);
+        let peer_a: SocketAddr = "127.0.0.1:31001".parse().unwrap();
+        let peer_b: SocketAddr = "127.0.0.1:31002".parse().unwrap();
+        let ticket = test_ticket();
+
+        runtime
+            .handle_request(
+                peer_a,
+                ClientRequest::Attach {
+                    participant_id: "node-a".to_string(),
+                    transport: None,
+                    ticket: ticket.clone(),
+                },
+            )
+            .unwrap();
+        runtime
+            .handle_request(
+                peer_b,
+                ClientRequest::Attach {
+                    participant_id: "node-b".to_string(),
+                    transport: None,
+                    ticket,
+                },
+            )
+            .unwrap();
+
+        let frame = binary::encode_data_frame(11, 22, b"ip-packet").unwrap();
+        runtime.handle_binary_data_frame(peer_a, &frame).unwrap();
+
+        let err = runtime
+            .handle_binary_data_frame(peer_a, &frame)
+            .unwrap_err();
+
+        assert_eq!(err.code, "replayed_binary_frame");
+    }
+
+    #[test]
+    fn binary_data_frame_replay_window_resets_after_reattach() {
+        let mut runtime = RelayRuntime::new(None, None);
+        let peer_a: SocketAddr = "127.0.0.1:31001".parse().unwrap();
+        let peer_b: SocketAddr = "127.0.0.1:31002".parse().unwrap();
+        let ticket = test_ticket();
+
+        runtime
+            .handle_request(
+                peer_a,
+                ClientRequest::Attach {
+                    participant_id: "node-a".to_string(),
+                    transport: None,
+                    ticket: ticket.clone(),
+                },
+            )
+            .unwrap();
+        runtime
+            .handle_request(
+                peer_b,
+                ClientRequest::Attach {
+                    participant_id: "node-b".to_string(),
+                    transport: None,
+                    ticket: ticket.clone(),
+                },
+            )
+            .unwrap();
+
+        let frame = binary::encode_data_frame(11, 22, b"ip-packet").unwrap();
+        runtime.handle_binary_data_frame(peer_a, &frame).unwrap();
+        runtime
+            .handle_request(
+                peer_a,
+                ClientRequest::Attach {
+                    participant_id: "node-a".to_string(),
+                    transport: None,
+                    ticket,
+                },
+            )
+            .unwrap();
+
+        let forwarded = runtime.handle_binary_data_frame(peer_a, &frame).unwrap();
+
+        assert!(forwarded.is_some());
+    }
+
+    #[test]
     fn binary_data_frame_reports_peer_not_attached() {
         let mut runtime = RelayRuntime::new(None, None);
         let peer_a: SocketAddr = "127.0.0.1:31001".parse().unwrap();
@@ -255,6 +390,7 @@ mod tests {
                 peer_a,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket,
                 },
             )
@@ -285,6 +421,7 @@ mod tests {
                 old_peer_a,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -294,6 +431,7 @@ mod tests {
                 new_peer_a,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -303,6 +441,7 @@ mod tests {
                 peer_b,
                 ClientRequest::Attach {
                     participant_id: "node-b".to_string(),
+                    transport: None,
                     ticket,
                 },
             )
@@ -334,6 +473,7 @@ mod tests {
                 source,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -343,12 +483,95 @@ mod tests {
                 source,
                 ClientRequest::Attach {
                     participant_id: "node-b".to_string(),
+                    transport: None,
                     ticket,
                 },
             )
             .unwrap_err();
 
         assert_eq!(err.code, "source_already_attached");
+    }
+
+    #[test]
+    fn attach_rejects_ticket_for_different_relay_node() {
+        let mut runtime = RelayRuntime::with_allowed_relay_node_ids(None, None, ["relay-local"]);
+        let source: SocketAddr = "127.0.0.1:31001".parse().unwrap();
+        let mut ticket = test_ticket();
+        ticket.allowed_derp_node_ids = vec!["relay-other".to_string()];
+
+        let err = runtime
+            .handle_request(
+                source,
+                ClientRequest::Attach {
+                    participant_id: "node-a".to_string(),
+                    transport: None,
+                    ticket,
+                },
+            )
+            .unwrap_err();
+
+        assert_eq!(err.code, "invalid_ticket");
+    }
+
+    #[test]
+    fn attach_rejects_http3_transport_on_udp_endpoint() {
+        let mut runtime = RelayRuntime::new(None, None);
+        let source: SocketAddr = "127.0.0.1:31001".parse().unwrap();
+        let ticket = test_ticket();
+
+        let err = runtime
+            .handle_request(
+                source,
+                ClientRequest::Attach {
+                    participant_id: "node-a".to_string(),
+                    transport: Some("relay_http3".to_string()),
+                    ticket,
+                },
+            )
+            .unwrap_err();
+
+        assert_eq!(err.code, "unsupported_transport");
+    }
+
+    #[test]
+    fn attach_accepts_http3_transport_on_tcp_endpoint() {
+        let mut runtime = RelayRuntime::new(None, None);
+        let source = RelayEndpoint::Tcp(7);
+        let mut ticket = test_ticket();
+        ticket.relay_url = "http3://127.0.0.1:9443".to_string();
+
+        let (response, _) = runtime
+            .handle_request_from(
+                source,
+                ClientRequest::Attach {
+                    participant_id: "node-a".to_string(),
+                    transport: Some("relay_http3".to_string()),
+                    ticket,
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(response, ServerResponse::Attached(_)));
+    }
+
+    #[test]
+    fn attach_rejects_transport_when_ticket_url_scheme_mismatches() {
+        let mut runtime = RelayRuntime::new(None, None);
+        let source = RelayEndpoint::Tcp(7);
+        let ticket = test_ticket();
+
+        let err = runtime
+            .handle_request_from(
+                source,
+                ClientRequest::Attach {
+                    participant_id: "node-a".to_string(),
+                    transport: Some("relay_http3".to_string()),
+                    ticket,
+                },
+            )
+            .unwrap_err();
+
+        assert_eq!(err.code, "transport_ticket_mismatch");
     }
 
     #[test]
@@ -363,6 +586,7 @@ mod tests {
                 peer_a,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -372,6 +596,7 @@ mod tests {
                 peer_b,
                 ClientRequest::Attach {
                     participant_id: "node-b".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -409,6 +634,7 @@ mod tests {
                 peer_a,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -418,6 +644,7 @@ mod tests {
                 peer_b,
                 ClientRequest::Attach {
                     participant_id: "node-b".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -457,6 +684,7 @@ mod tests {
                 tcp_a,
                 ClientRequest::Attach {
                     participant_id: "node-a".to_string(),
+                    transport: None,
                     ticket: ticket.clone(),
                 },
             )
@@ -466,6 +694,7 @@ mod tests {
                 tcp_b,
                 ClientRequest::Attach {
                     participant_id: "node-b".to_string(),
+                    transport: None,
                     ticket,
                 },
             )

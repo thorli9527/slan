@@ -74,6 +74,12 @@ type PathHealthReport struct {
 	RelayMtu *uint32 `json:"relayMtu,omitempty"`
 	// MaxFramePayload 是客户端当前使用的最大 frame payload。
 	MaxFramePayload *uint32 `json:"maxFramePayload,omitempty"`
+	// TicketExpiresAt 是当前 relay ticket 最早过期时间。
+	TicketExpiresAt string `json:"ticketExpiresAt,omitempty"`
+	// TicketExpiresInMs 是当前 relay ticket 距离过期的毫秒数。
+	TicketExpiresInMs *int64 `json:"ticketExpiresInMs,omitempty"`
+	// TicketRenewDue 标记客户端是否已进入 ticket 续期窗口。
+	TicketRenewDue *bool `json:"ticketRenewDue,omitempty"`
 	// PathDowngrades 是客户端本地路径降级次数。
 	PathDowngrades uint64 `json:"pathDowngrades,omitempty"`
 	// PathUpgrades 是客户端本地路径升级次数。
@@ -86,21 +92,25 @@ type PathHealthReport struct {
 
 // RelayDataPlanePolicy 是服务端下发给客户端的 relay 数据面策略。
 type RelayDataPlanePolicy struct {
-	PolicyID            string   `json:"policyId,omitempty"`
-	Version             int      `json:"version"`
-	Scope               string   `json:"scope,omitempty"`
-	NetworkID           string   `json:"networkId,omitempty"`
-	TargetDeviceIDs     []string `json:"targetDeviceIds,omitempty"`
-	PathType            string   `json:"pathType,omitempty"`
-	PreferredPathTypes  []string `json:"preferredPathTypes,omitempty"`
-	RecommendationLevel *uint8   `json:"recommendationLevel,omitempty"`
-	ExecutionLevel      *uint8   `json:"executionLevel,omitempty"`
-	RelayMtu            uint32   `json:"relayMtu"`
-	MaxFramePayload     uint32   `json:"maxFramePayload"`
-	Reason              string   `json:"reason,omitempty"`
-	TTLMS               uint64   `json:"ttlMs,omitempty"`
-	EffectiveMS         uint64   `json:"effectiveMs,omitempty"`
-	UpdatedAtMS         uint64   `json:"updatedAtMs,omitempty"`
+	PolicyID                 string   `json:"policyId,omitempty"`
+	Version                  int      `json:"version"`
+	Scope                    string   `json:"scope,omitempty"`
+	NetworkID                string   `json:"networkId,omitempty"`
+	TargetDeviceIDs          []string `json:"targetDeviceIds,omitempty"`
+	PathType                 string   `json:"pathType,omitempty"`
+	PreferredPathTypes       []string `json:"preferredPathTypes,omitempty"`
+	ProbeIntervalMS          uint64   `json:"probeIntervalMs,omitempty"`
+	FailoverAfterMS          uint64   `json:"failoverAfterMs,omitempty"`
+	UpgradeSuccesses         uint32   `json:"upgradeSuccesses,omitempty"`
+	FailedPathCooldownProbes uint32   `json:"failedPathCooldownProbes,omitempty"`
+	RecommendationLevel      *uint8   `json:"recommendationLevel,omitempty"`
+	ExecutionLevel           *uint8   `json:"executionLevel,omitempty"`
+	RelayMtu                 uint32   `json:"relayMtu"`
+	MaxFramePayload          uint32   `json:"maxFramePayload"`
+	Reason                   string   `json:"reason,omitempty"`
+	TTLMS                    uint64   `json:"ttlMs,omitempty"`
+	EffectiveMS              uint64   `json:"effectiveMs,omitempty"`
+	UpdatedAtMS              uint64   `json:"updatedAtMs,omitempty"`
 }
 
 // RelayPolicyReport 是客户端上报的 relay 数据面策略实际执行结果。
@@ -136,6 +146,7 @@ type RelayNodeHeartbeat struct {
 // PathOption 描述一条可尝试的连接路径。
 type PathOption struct {
 	// PathType 是路径类型，例如 direct_udp / relay_udp / relay_tcp / relay_http3 / relay_tls。
+	// 直连候选统一使用 direct_udp，具体 lan/wan/reflexive 端点类型保留在端点上报侧。
 	PathType string `json:"pathType"`
 	// Endpoint 是目标端点。
 	Endpoint string `json:"endpoint"`

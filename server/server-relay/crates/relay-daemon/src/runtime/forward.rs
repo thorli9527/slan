@@ -23,12 +23,18 @@ impl RelayRuntime {
                     "binary relay traffic requires a prior attach from the same udp address",
                 )
             })?;
+        if self.is_binary_seq_replayed(&session_id, &from_participant_id, decoded.seq) {
+            return Err(RelayRuntimeError::new(
+                "replayed_binary_frame",
+                "binary relay frame sequence was already processed",
+            ));
+        }
 
         let forwarded = self
             .relay
             .forward(RelayPacket {
                 session_id: session_id.clone(),
-                from_device_id: from_participant_id,
+                from_device_id: from_participant_id.clone(),
                 payload: decoded.payload.to_vec(),
             })
             .map_err(relay_runtime_error)?;
@@ -49,6 +55,7 @@ impl RelayRuntime {
             forwarded.payload.as_slice(),
         )
         .map_err(|err| RelayRuntimeError::new("encode_binary_frame_failed", err))?;
+        self.mark_binary_seq(&session_id, &from_participant_id, decoded.seq);
 
         Ok(Some((peer_addr, peer_frame)))
     }

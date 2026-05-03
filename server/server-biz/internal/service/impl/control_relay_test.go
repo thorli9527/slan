@@ -3,6 +3,7 @@ package impl
 import (
 	"testing"
 
+	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/configs"
 	"github.com/slan/server/server-biz/internal/netpath"
 )
@@ -97,5 +98,54 @@ func TestRelayPathOptionsPreserveClusterRankOrder(t *testing.T) {
 	}
 	if preferred[0] != "healthy-low-static" {
 		t.Fatalf("expected existing rank order to be preserved, got %#v", preferred)
+	}
+}
+
+func TestDirectPathOptionsExposeDirectUdpPathType(t *testing.T) {
+	paths, nextPriority := directPathOptions([]dto.Endpoint{
+		{Type: "lan", Address: "192.168.1.10:42000"},
+		{Type: "reflexive", Address: "203.0.113.9:42000"},
+	}, nil)
+
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 direct paths, got %d", len(paths))
+	}
+	for _, path := range paths {
+		if path.PathType != netpath.PathDirectUdp {
+			t.Fatalf("expected direct path type %q, got %#v", netpath.PathDirectUdp, path)
+		}
+	}
+	if paths[0].Priority != 10 || paths[1].Priority != 30 || nextPriority != 30 {
+		t.Fatalf("unexpected direct path priorities paths=%#v next=%d", paths, nextPriority)
+	}
+}
+
+func TestRelayTicketPrimaryNodeFollowsPreferredOrder(t *testing.T) {
+	nodes := []configs.RelayNodeConfig{
+		{NodeID: "relay-udp", Transport: "udp", Address: "127.0.0.1:9000"},
+		{NodeID: "relay-http3", Transport: "http3", Address: "127.0.0.1:9443"},
+	}
+	req := dto.RelayTicketRequest{
+		PreferredDerpNodeIDs: normalizePreferredRelayNodeIDs([]string{"relay-http3", "relay-udp"}, nodes),
+	}
+
+	node := relayTicketPrimaryNode(req, nodes)
+
+	if node.NodeID != "relay-http3" || node.Transport != "http3" {
+		t.Fatalf("expected preferred http3 node, got %#v", node)
+	}
+}
+
+func TestNormalizePreferredRelayNodeIDsPreservesPreferenceOrder(t *testing.T) {
+	nodes := []configs.RelayNodeConfig{
+		{NodeID: "relay-a"},
+		{NodeID: "relay-b"},
+		{NodeID: "relay-c"},
+	}
+
+	got := normalizePreferredRelayNodeIDs([]string{"relay-c", "relay-a", "relay-c", "missing"}, nodes)
+
+	if len(got) != 2 || got[0] != "relay-c" || got[1] != "relay-a" {
+		t.Fatalf("unexpected preferred node order: %#v", got)
 	}
 }

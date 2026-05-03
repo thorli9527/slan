@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::{
     control_plane::MqttCredential,
     control_tasks::{ControlTask, ControlTaskStatus},
+    time_utils::ticket_timing_with_window,
     PersistedSession,
 };
 
@@ -522,6 +523,8 @@ fn relay_policy_report_message(
                 "pathType": policy.path_type,
                 "relayMtu": policy.relay_mtu,
                 "maxFramePayload": policy.max_frame_payload,
+                "upgradeSuccesses": policy.upgrade_successes,
+                "failedPathCooldownProbes": policy.failed_path_cooldown_probes,
                 "executionLevel": policy.execution_level,
                 "applied": true,
                 "reason": policy.reason,
@@ -571,7 +574,9 @@ fn relay_path_health_messages(
                     "networkId": network_id,
                     "payload": {
                         "networkId": network_id,
-                        "pathType": "relay",
+                        "pathType": relay_path_type_for_transport(candidate.transport.as_str()),
+                        "relayTransport": normalize_relay_transport(&candidate.transport)
+                            .unwrap_or(candidate.transport.as_str()),
                         "endpoint": candidate.address,
                         "derpNodeId": candidate.endpoint_id,
                         "observedRttMs": sample.observed_rtt_ms,
@@ -634,11 +639,16 @@ fn peer_runtime_path_health_messages(
                         "peerNodeId": peer.peer_node_id,
                         "pathType": path_type,
                         "activePath": path_type,
+                        "relayTransport": relay_transport_from_path(path_type)
+                            .or(stats.relay_transport.as_deref()),
                         "endpoint": stats.relay_address,
                         "packetLossPpm": peer_packet_loss_ppm(peer),
                         "pathScore": peer_path_score(peer),
                         "relayMtu": stats.relay_mtu,
                         "maxFramePayload": stats.max_frame_payload,
+                        "ticketExpiresAt": stats.ticket_expires_at,
+                        "ticketExpiresInMs": stats.ticket_expires_in_ms,
+                        "ticketRenewDue": stats.ticket_renew_due,
                         "pathDowngrades": peer.path_downgrades,
                         "pathUpgrades": peer.path_upgrades,
                         "lastPathChange": peer.last_path_change,
@@ -666,6 +676,10 @@ struct RelayDataPlanePolicy {
     #[serde(default)]
     max_frame_payload: Option<u32>,
     #[serde(default)]
+    upgrade_successes: Option<u32>,
+    #[serde(default)]
+    failed_path_cooldown_probes: Option<u32>,
+    #[serde(default)]
     execution_level: Option<u8>,
     #[serde(default)]
     reason: Option<String>,
@@ -688,6 +702,8 @@ struct RelayPathHealthSample {
 struct RelayRuntimeStats {
     relay_address: String,
     #[serde(default)]
+    relay_transport: Option<String>,
+    #[serde(default)]
     active_path: Option<String>,
     #[serde(default)]
     peers: Vec<RelayRuntimePeerStats>,
@@ -702,6 +718,12 @@ struct RelayRuntimeStats {
     relay_mtu: Option<u32>,
     #[serde(default)]
     max_frame_payload: Option<u32>,
+    #[serde(default)]
+    ticket_expires_at: Option<String>,
+    #[serde(default)]
+    ticket_expires_in_ms: Option<i64>,
+    #[serde(default)]
+    ticket_renew_due: bool,
     updated_at_ms: u64,
 }
 
@@ -760,31 +782,22 @@ fn probe_relay_candidate(
             max_frame_payload: runtime_stats.and_then(|stats| stats.max_frame_payload),
         };
     }
-    if matches!(
-        normalize_relay_transport(&transport).unwrap_or(transport.as_str()),
-        "tcp"
-    ) {
+    let normalized_transport = normalize_relay_transport(&transport).unwrap_or(transport.as_str());
+    if matches!(normalized_transport, "tcp" | "tls" | "http3") {
         if let Some(rtt_ms) = probe_tcp_rtt_ms(&candidate.address) {
+            let transport_penalty = match normalized_transport {
+                "http3" => 40,
+                "tls" => 60,
+                _ => 10,
+            };
             return RelayPathHealthSample {
                 observed_rtt_ms: Some(rtt_ms),
                 packet_loss_ppm: Some(0),
-                path_score: Some(rtt_ms.saturating_add(10).min(10_000)),
+                path_score: Some(rtt_ms.saturating_add(transport_penalty).min(10_000)),
                 relay_mtu: None,
                 max_frame_payload: None,
             };
         }
-        return RelayPathHealthSample {
-            observed_rtt_ms: None,
-            packet_loss_ppm: Some(1_000_000),
-            path_score: Some(10_000),
-            relay_mtu: None,
-            max_frame_payload: None,
-        };
-    }
-    if matches!(
-        normalize_relay_transport(&transport).unwrap_or(transport.as_str()),
-        "tls" | "http3"
-    ) {
         return RelayPathHealthSample {
             observed_rtt_ms: None,
             packet_loss_ppm: Some(1_000_000),
@@ -799,6 +812,27 @@ fn probe_relay_candidate(
         path_score: Some(1_000),
         relay_mtu: None,
         max_frame_payload: None,
+    }
+}
+
+fn relay_path_type_for_transport(transport: &str) -> String {
+    match normalize_relay_transport(transport).unwrap_or(transport.trim()) {
+        "udp" => "relay_udp",
+        "tcp" => "relay_tcp",
+        "tls" => "relay_tls",
+        "http3" => "relay_http3",
+        _ => "relay",
+    }
+    .to_string()
+}
+
+fn relay_transport_from_path(path_type: &str) -> Option<&'static str> {
+    match path_type.trim() {
+        "relay_udp" => Some("udp"),
+        "relay_tcp" => Some("tcp"),
+        "relay_tls" => Some("tls"),
+        "relay_http3" => Some("http3"),
+        _ => None,
     }
 }
 
@@ -830,11 +864,22 @@ fn probe_udp_ping_rtt_ms(address: &str) -> Option<u32> {
 fn load_relay_runtime_stats(now_ms: u64) -> Option<RelayRuntimeStats> {
     let path = relay_stats_file_path();
     let payload = fs::read(path).ok()?;
-    let stats = serde_json::from_slice::<RelayRuntimeStats>(&payload).ok()?;
+    let mut stats = serde_json::from_slice::<RelayRuntimeStats>(&payload).ok()?;
     if now_ms.saturating_sub(stats.updated_at_ms) > 15 * 60 * 1000 {
         return None;
     }
+    refresh_relay_runtime_ticket_timing(&mut stats, now_ms);
     Some(stats)
+}
+
+fn refresh_relay_runtime_ticket_timing(stats: &mut RelayRuntimeStats, now_ms: u64) {
+    let timing = ticket_timing_with_window(
+        now_ms,
+        stats.ticket_expires_at.as_deref(),
+        RELAY_TICKET_RENEW_WINDOW_MS,
+    );
+    stats.ticket_expires_in_ms = timing.expires_in_ms;
+    stats.ticket_renew_due = timing.renew_due;
 }
 
 fn relay_stats_file_path() -> PathBuf {
@@ -1090,6 +1135,7 @@ fn transport_ack_message_id(task_id: &str) -> String {
 }
 
 const CONTROL_ACK_MESSAGE_ID_PREFIX: &str = "control-ack-";
+const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
 
 #[cfg(test)]
 mod tests {
@@ -1243,12 +1289,27 @@ mod tests {
                 .and_then(Value::as_str),
             Some("relay-cn-tcp")
         );
+        assert_eq!(
+            outbox.messages[0]
+                .payload
+                .pointer("/payload/pathType")
+                .and_then(Value::as_str),
+            Some("relay_udp")
+        );
+        assert_eq!(
+            outbox.messages[0]
+                .payload
+                .pointer("/payload/relayTransport")
+                .and_then(Value::as_str),
+            Some("udp")
+        );
     }
 
     #[test]
     fn peer_runtime_path_health_reports_path_switch_metadata() {
         let stats = RelayRuntimeStats {
             relay_address: "127.0.0.1:9000".to_string(),
+            relay_transport: Some("udp".to_string()),
             active_path: Some("relay_udp".to_string()),
             peers: vec![RelayRuntimePeerStats {
                 peer_node_id: "node-peer".to_string(),
@@ -1270,6 +1331,9 @@ mod tests {
             wintun_write_failures: 0,
             relay_mtu: Some(1280),
             max_frame_payload: Some(1200),
+            ticket_expires_at: Some("2026-05-03T10:01:30Z".to_string()),
+            ticket_expires_in_ms: Some(90_000),
+            ticket_renew_due: true,
             updated_at_ms: 1_000,
         };
 
@@ -1299,6 +1363,13 @@ mod tests {
         assert_eq!(
             messages[0]
                 .payload
+                .pointer("/payload/relayTransport")
+                .and_then(Value::as_str),
+            Some("udp")
+        );
+        assert_eq!(
+            messages[0]
+                .payload
                 .pointer("/payload/pathDowngrades")
                 .and_then(Value::as_u64),
             Some(2)
@@ -1317,6 +1388,48 @@ mod tests {
                 .and_then(Value::as_str),
             Some("relay_udp -> direct_udp after probe success")
         );
+        assert_eq!(
+            messages[0]
+                .payload
+                .pointer("/payload/ticketExpiresInMs")
+                .and_then(Value::as_i64),
+            Some(90_000)
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .pointer("/payload/ticketRenewDue")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn refresh_relay_runtime_ticket_timing_overwrites_stale_derived_values() {
+        let now_ms = crate::time_utils::parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
+        let mut stats = RelayRuntimeStats {
+            relay_address: "127.0.0.1:9000".to_string(),
+            relay_transport: Some("udp".to_string()),
+            active_path: Some("relay_udp".to_string()),
+            peers: Vec::new(),
+            tun_packets_sent: 0,
+            relay_packets_received: 0,
+            relay_decode_failures: 0,
+            unroutable_tun_packets: 0,
+            oversized_tun_packets: 0,
+            wintun_write_failures: 0,
+            relay_mtu: None,
+            max_frame_payload: None,
+            ticket_expires_at: Some("2026-05-03T10:01:30Z".to_string()),
+            ticket_expires_in_ms: Some(1),
+            ticket_renew_due: false,
+            updated_at_ms: now_ms,
+        };
+
+        refresh_relay_runtime_ticket_timing(&mut stats, now_ms);
+
+        assert_eq!(stats.ticket_expires_in_ms, Some(90_000));
+        assert!(stats.ticket_renew_due);
     }
 
     #[test]
@@ -1343,6 +1456,25 @@ mod tests {
         assert_eq!(candidates[0].endpoint_id, "relay-cn-udp");
         assert_eq!(candidates[0].country_code.as_deref(), Some("CN"));
         assert_eq!(candidates[0].cluster_id.as_deref(), Some("cn-a"));
+    }
+
+    #[test]
+    fn relay_http3_health_uses_stream_probe() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let candidate = crate::PersistedRelayCandidate {
+            endpoint_id: "relay-http3".to_string(),
+            transport: "http3".to_string(),
+            address: listener.local_addr().unwrap().to_string(),
+            country_code: Some("CN".to_string()),
+            region_id: Some("sha".to_string()),
+            cluster_id: Some("cn-a".to_string()),
+        };
+
+        let sample = probe_relay_candidate(&candidate, None);
+
+        assert!(sample.observed_rtt_ms.is_some());
+        assert_eq!(sample.packet_loss_ppm, Some(0));
+        assert!(sample.path_score.unwrap_or(10_000) < 10_000);
     }
 }
 

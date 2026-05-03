@@ -33,9 +33,11 @@ impl RelayRuntime {
             self.source_index.remove(&source);
             participants.is_empty()
         };
+        self.remove_participant_replay(&session_id, &participant_id);
 
         if should_remove_session {
             self.endpoints.remove(&session_id);
+            self.remove_session_replay(&session_id);
             self.relay
                 .detach(&session_id)
                 .map_err(relay_runtime_error)?;

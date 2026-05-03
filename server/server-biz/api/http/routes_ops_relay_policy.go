@@ -23,6 +23,18 @@ func publishOpsRelayDataPlanePolicy(deps routerDeps, req dto.OpsRelayDataPlanePo
 	if req.ExecutionLevel != nil && *req.ExecutionLevel > 7 {
 		return dto.OpsRelayDataPlanePolicyResponse{}, service.ErrInvalidArgument
 	}
+	if req.ProbeIntervalMS != 0 && (req.ProbeIntervalMS < 1000 || req.ProbeIntervalMS > 300000) {
+		return dto.OpsRelayDataPlanePolicyResponse{}, service.ErrInvalidArgument
+	}
+	if req.FailoverAfterMS != 0 && (req.FailoverAfterMS < 1000 || req.FailoverAfterMS > 600000) {
+		return dto.OpsRelayDataPlanePolicyResponse{}, service.ErrInvalidArgument
+	}
+	if req.UpgradeSuccesses != 0 && (req.UpgradeSuccesses < 1 || req.UpgradeSuccesses > 10) {
+		return dto.OpsRelayDataPlanePolicyResponse{}, service.ErrInvalidArgument
+	}
+	if req.FailedPathCooldownProbes != 0 && (req.FailedPathCooldownProbes < 1 || req.FailedPathCooldownProbes > 20) {
+		return dto.OpsRelayDataPlanePolicyResponse{}, service.ErrInvalidArgument
+	}
 	preferredPathTypes, ok := netpath.NormalizePreferredPathTypes(req.PreferredPathTypes)
 	if !ok {
 		return dto.OpsRelayDataPlanePolicyResponse{}, service.ErrInvalidArgument
@@ -50,21 +62,25 @@ func publishOpsRelayDataPlanePolicy(deps routerDeps, req dto.OpsRelayDataPlanePo
 	nowMS := uint64(time.Now().UnixMilli())
 	pathType := netpath.NormalizePolicyPathType(req.PathType)
 	policy := controlmsg.RelayDataPlanePolicy{
-		PolicyID:            policyID,
-		Version:             version,
-		Scope:               scope,
-		NetworkID:           networkID,
-		TargetDeviceIDs:     sortedOpsRelayPolicyTargets(targets),
-		PathType:            pathType,
-		PreferredPathTypes:  preferredPathTypes,
-		RecommendationLevel: req.RecommendationLevel,
-		ExecutionLevel:      req.ExecutionLevel,
-		RelayMtu:            req.RelayMtu,
-		MaxFramePayload:     req.MaxFramePayload,
-		Reason:              strings.TrimSpace(req.Reason),
-		TTLMS:               ttlMS,
-		EffectiveMS:         req.EffectiveMS,
-		UpdatedAtMS:         nowMS,
+		PolicyID:                 policyID,
+		Version:                  version,
+		Scope:                    scope,
+		NetworkID:                networkID,
+		TargetDeviceIDs:          sortedOpsRelayPolicyTargets(targets),
+		PathType:                 pathType,
+		PreferredPathTypes:       preferredPathTypes,
+		ProbeIntervalMS:          req.ProbeIntervalMS,
+		FailoverAfterMS:          req.FailoverAfterMS,
+		UpgradeSuccesses:         req.UpgradeSuccesses,
+		FailedPathCooldownProbes: req.FailedPathCooldownProbes,
+		RecommendationLevel:      req.RecommendationLevel,
+		ExecutionLevel:           req.ExecutionLevel,
+		RelayMtu:                 req.RelayMtu,
+		MaxFramePayload:          req.MaxFramePayload,
+		Reason:                   strings.TrimSpace(req.Reason),
+		TTLMS:                    ttlMS,
+		EffectiveMS:              req.EffectiveMS,
+		UpdatedAtMS:              nowMS,
 	}
 	sessions, err := deps.ControlChannel.ActiveSessions(networkID, "")
 	if err != nil {
@@ -99,17 +115,21 @@ func publishOpsRelayDataPlanePolicy(deps routerDeps, req dto.OpsRelayDataPlanePo
 		}
 	}
 	return dto.OpsRelayDataPlanePolicyResponse{
-		PolicyID:           policyID,
-		NetworkID:          networkID,
-		Scope:              scope,
-		TargetDeviceIDs:    sortedOpsRelayPolicyTargets(targets),
-		PathType:           pathType,
-		PreferredPathTypes: preferredPathTypes,
-		Published:          published,
-		Skipped:            skipped,
-		RelayMtu:           req.RelayMtu,
-		MaxFramePayload:    req.MaxFramePayload,
-		Reason:             strings.TrimSpace(req.Reason),
+		PolicyID:                 policyID,
+		NetworkID:                networkID,
+		Scope:                    scope,
+		TargetDeviceIDs:          sortedOpsRelayPolicyTargets(targets),
+		PathType:                 pathType,
+		PreferredPathTypes:       preferredPathTypes,
+		ProbeIntervalMS:          req.ProbeIntervalMS,
+		FailoverAfterMS:          req.FailoverAfterMS,
+		UpgradeSuccesses:         req.UpgradeSuccesses,
+		FailedPathCooldownProbes: req.FailedPathCooldownProbes,
+		Published:                published,
+		Skipped:                  skipped,
+		RelayMtu:                 req.RelayMtu,
+		MaxFramePayload:          req.MaxFramePayload,
+		Reason:                   strings.TrimSpace(req.Reason),
 	}, nil
 }
 

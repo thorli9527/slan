@@ -8,6 +8,8 @@ pub enum ClientRequest {
     Ping,
     Attach {
         participant_id: String,
+        #[serde(default)]
+        transport: Option<String>,
         ticket: RelayTicketWire,
     },
     Forward {

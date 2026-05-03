@@ -161,6 +161,9 @@ type OpsNetworkQualityItem struct {
 	CrossCountry       *bool  `json:"crossCountry,omitempty"`
 	RelayMtu           uint32 `json:"relayMtu,omitempty"`
 	MaxFramePayload    uint32 `json:"maxFramePayload,omitempty"`
+	TicketExpiresAt    string `json:"ticketExpiresAt,omitempty"`
+	TicketExpiresInMs  *int64 `json:"ticketExpiresInMs,omitempty"`
+	TicketRenewDue     *bool  `json:"ticketRenewDue,omitempty"`
 	PathDowngrades     uint64 `json:"pathDowngrades,omitempty"`
 	PathUpgrades       uint64 `json:"pathUpgrades,omitempty"`
 	LastPathChange     string `json:"lastPathChange,omitempty"`
@@ -211,35 +214,43 @@ type OpsNetworkQualityCountryPair struct {
 
 // OpsRelayDataPlanePolicyRequest 用于管理员向网络内客户端下发 relay 数据面策略。
 type OpsRelayDataPlanePolicyRequest struct {
-	NetworkID           string   `json:"networkId"`
-	Scope               string   `json:"scope,omitempty"`
-	TargetDeviceIDs     []string `json:"targetDeviceIds,omitempty"`
-	PathType            string   `json:"pathType,omitempty"`
-	PreferredPathTypes  []string `json:"preferredPathTypes,omitempty"`
-	PolicyID            string   `json:"policyId,omitempty"`
-	Version             int      `json:"version,omitempty"`
-	RecommendationLevel *uint8   `json:"recommendationLevel,omitempty"`
-	ExecutionLevel      *uint8   `json:"executionLevel,omitempty"`
-	RelayMtu            uint32   `json:"relayMtu"`
-	MaxFramePayload     uint32   `json:"maxFramePayload"`
-	Reason              string   `json:"reason,omitempty"`
-	TTLMS               uint64   `json:"ttlMs,omitempty"`
-	EffectiveMS         uint64   `json:"effectiveMs,omitempty"`
+	NetworkID                string   `json:"networkId"`
+	Scope                    string   `json:"scope,omitempty"`
+	TargetDeviceIDs          []string `json:"targetDeviceIds,omitempty"`
+	PathType                 string   `json:"pathType,omitempty"`
+	PreferredPathTypes       []string `json:"preferredPathTypes,omitempty"`
+	ProbeIntervalMS          uint64   `json:"probeIntervalMs,omitempty"`
+	FailoverAfterMS          uint64   `json:"failoverAfterMs,omitempty"`
+	UpgradeSuccesses         uint32   `json:"upgradeSuccesses,omitempty"`
+	FailedPathCooldownProbes uint32   `json:"failedPathCooldownProbes,omitempty"`
+	PolicyID                 string   `json:"policyId,omitempty"`
+	Version                  int      `json:"version,omitempty"`
+	RecommendationLevel      *uint8   `json:"recommendationLevel,omitempty"`
+	ExecutionLevel           *uint8   `json:"executionLevel,omitempty"`
+	RelayMtu                 uint32   `json:"relayMtu"`
+	MaxFramePayload          uint32   `json:"maxFramePayload"`
+	Reason                   string   `json:"reason,omitempty"`
+	TTLMS                    uint64   `json:"ttlMs,omitempty"`
+	EffectiveMS              uint64   `json:"effectiveMs,omitempty"`
 }
 
 // OpsRelayDataPlanePolicyResponse 描述策略下发结果。
 type OpsRelayDataPlanePolicyResponse struct {
-	PolicyID           string   `json:"policyId"`
-	NetworkID          string   `json:"networkId"`
-	Scope              string   `json:"scope,omitempty"`
-	TargetDeviceIDs    []string `json:"targetDeviceIds,omitempty"`
-	PathType           string   `json:"pathType,omitempty"`
-	PreferredPathTypes []string `json:"preferredPathTypes,omitempty"`
-	Published          int      `json:"published"`
-	Skipped            int      `json:"skipped"`
-	RelayMtu           uint32   `json:"relayMtu"`
-	MaxFramePayload    uint32   `json:"maxFramePayload"`
-	Reason             string   `json:"reason,omitempty"`
+	PolicyID                 string   `json:"policyId"`
+	NetworkID                string   `json:"networkId"`
+	Scope                    string   `json:"scope,omitempty"`
+	TargetDeviceIDs          []string `json:"targetDeviceIds,omitempty"`
+	PathType                 string   `json:"pathType,omitempty"`
+	PreferredPathTypes       []string `json:"preferredPathTypes,omitempty"`
+	ProbeIntervalMS          uint64   `json:"probeIntervalMs,omitempty"`
+	FailoverAfterMS          uint64   `json:"failoverAfterMs,omitempty"`
+	UpgradeSuccesses         uint32   `json:"upgradeSuccesses,omitempty"`
+	FailedPathCooldownProbes uint32   `json:"failedPathCooldownProbes,omitempty"`
+	Published                int      `json:"published"`
+	Skipped                  int      `json:"skipped"`
+	RelayMtu                 uint32   `json:"relayMtu"`
+	MaxFramePayload          uint32   `json:"maxFramePayload"`
+	Reason                   string   `json:"reason,omitempty"`
 }
 
 // OpsAdminInfo 描述管理员信息。
