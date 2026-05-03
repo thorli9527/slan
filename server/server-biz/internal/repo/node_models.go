@@ -83,6 +83,8 @@ type NodePathHealth struct {
 	PeerNodeID string `gorm:"column:peer_node_id;index;not null;default:'';uniqueIndex:idx_node_peer_path_health"`
 	// PathType 是路径类型。
 	PathType string `gorm:"column:path_type;not null;uniqueIndex:idx_node_peer_path_health"`
+	// ActivePath 是客户端实际选中的路径。
+	ActivePath string `gorm:"column:active_path;index;not null;default:''"`
 	// Endpoint 是对应端点地址。
 	Endpoint string `gorm:"column:endpoint;not null;default:'';uniqueIndex:idx_node_peer_path_health"`
 	// DerpNodeID 是对应 relay/DERP 节点。
@@ -93,6 +95,24 @@ type NodePathHealth struct {
 	PacketLossPpm *uint32 `gorm:"column:packet_loss_ppm"`
 	// PathScore 是路径评分。
 	PathScore *uint32 `gorm:"column:path_score"`
+	// SourceCountryCode 是客户端所在国家。
+	SourceCountryCode string `gorm:"column:source_country_code;index;not null;default:''"`
+	// RelayCountryCode 是 relay 节点所在国家。
+	RelayCountryCode string `gorm:"column:relay_country_code;index;not null;default:''"`
+	// PeerCountryCode 是对端所在国家。
+	PeerCountryCode string `gorm:"column:peer_country_code;index;not null;default:''"`
+	// CrossCountry 标记这条质量样本是否跨国。
+	CrossCountry *bool `gorm:"column:cross_country;index"`
+	// RelayMtu 是客户端当前使用的 relay MTU。
+	RelayMtu *uint32 `gorm:"column:relay_mtu"`
+	// MaxFramePayload 是客户端当前使用的最大 frame payload。
+	MaxFramePayload *uint32 `gorm:"column:max_frame_payload"`
+	// PathDowngrades 是客户端本地路径降级次数。
+	PathDowngrades uint64 `gorm:"column:path_downgrades;not null;default:0"`
+	// PathUpgrades 是客户端本地路径升级次数。
+	PathUpgrades uint64 `gorm:"column:path_upgrades;not null;default:0"`
+	// LastPathChange 是最近一次路径切换原因。
+	LastPathChange string `gorm:"column:last_path_change;not null;default:''"`
 	// SampledAtMs 是样本采集时间。
 	SampledAtMs uint64 `gorm:"column:sampled_at_ms;not null;default:0"`
 	// UpdatedAt 是样本写入时间。
@@ -100,6 +120,57 @@ type NodePathHealth struct {
 }
 
 func (NodePathHealth) TableName() string { return "node_path_health" }
+
+// NodePathHealthSample stores path-health history for dashboards and hourly
+// aggregation. NodePathHealth remains the compact latest-state table used by
+// routing decisions.
+type NodePathHealthSample struct {
+	SampleID          string  `gorm:"column:sample_id;primaryKey"`
+	NetworkID         string  `gorm:"column:network_id;index;not null"`
+	NodeID            string  `gorm:"column:node_id;index;not null"`
+	PeerNodeID        string  `gorm:"column:peer_node_id;index;not null;default:''"`
+	PathType          string  `gorm:"column:path_type;index;not null"`
+	ActivePath        string  `gorm:"column:active_path;index;not null;default:''"`
+	Endpoint          string  `gorm:"column:endpoint;not null;default:''"`
+	DerpNodeID        string  `gorm:"column:derp_node_id;index;not null;default:''"`
+	ObservedRttMs     *uint32 `gorm:"column:observed_rtt_ms"`
+	PacketLossPpm     *uint32 `gorm:"column:packet_loss_ppm"`
+	PathScore         *uint32 `gorm:"column:path_score"`
+	SourceCountryCode string  `gorm:"column:source_country_code;index;not null;default:''"`
+	RelayCountryCode  string  `gorm:"column:relay_country_code;index;not null;default:''"`
+	PeerCountryCode   string  `gorm:"column:peer_country_code;index;not null;default:''"`
+	CrossCountry      *bool   `gorm:"column:cross_country;index"`
+	RelayMtu          *uint32 `gorm:"column:relay_mtu"`
+	MaxFramePayload   *uint32 `gorm:"column:max_frame_payload"`
+	PathDowngrades    uint64  `gorm:"column:path_downgrades;not null;default:0"`
+	PathUpgrades      uint64  `gorm:"column:path_upgrades;not null;default:0"`
+	LastPathChange    string  `gorm:"column:last_path_change;not null;default:''"`
+	SampledAtMs       uint64  `gorm:"column:sampled_at_ms;index;not null;default:0"`
+	UpdatedAt         int64   `gorm:"column:updated_at;index;not null"`
+}
+
+func (NodePathHealthSample) TableName() string { return "node_path_health_samples" }
+
+// RelayPolicyExecution records the latest client-side execution result for a
+// relay data-plane MTU/payload policy.
+type RelayPolicyExecution struct {
+	ExecutionID       string `gorm:"column:execution_id;primaryKey"`
+	NetworkID         string `gorm:"column:network_id;index;not null;uniqueIndex:idx_relay_policy_execution"`
+	DeviceID          string `gorm:"column:device_id;index;not null;uniqueIndex:idx_relay_policy_execution"`
+	NodeID            string `gorm:"column:node_id;index;not null;default:''"`
+	PolicyID          string `gorm:"column:policy_id;index;not null;default:'';uniqueIndex:idx_relay_policy_execution"`
+	Scope             string `gorm:"column:scope;not null;default:''"`
+	RelayMtu          uint32 `gorm:"column:relay_mtu;not null;default:0"`
+	MaxFramePayload   uint32 `gorm:"column:max_frame_payload;not null;default:0"`
+	ExecutionLevel    *uint8 `gorm:"column:execution_level"`
+	Applied           bool   `gorm:"column:applied;index;not null;default:false"`
+	Reason            string `gorm:"column:reason;not null;default:''"`
+	PolicyUpdatedAtMs uint64 `gorm:"column:policy_updated_at_ms;not null;default:0"`
+	ReportedAtMs      uint64 `gorm:"column:reported_at_ms;not null;default:0"`
+	UpdatedAt         int64  `gorm:"column:updated_at;index;not null"`
+}
+
+func (RelayPolicyExecution) TableName() string { return "relay_policy_executions" }
 
 // RelayNodeHeartbeat records the latest MQTT heartbeat published by one relay node.
 type RelayNodeHeartbeat struct {

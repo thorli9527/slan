@@ -73,6 +73,17 @@ if (Test-Path $outputPath) {
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 Copy-Item -Path (Join-Path $releasePath '*') -Destination $outputPath -Recurse -Force
 Remove-Item -Path (Join-Path $outputPath 'client-core-helper.exe') -Force -ErrorAction SilentlyContinue
+$toolSource = Join-Path $PSScriptRoot '..\..\app_flutter\tool\test-windows-multipeer-relay.ps1'
+if (Test-Path $toolSource) {
+  New-Item -ItemType Directory -Force -Path (Join-Path $outputPath 'tools') | Out-Null
+  Copy-Item -Path $toolSource -Destination (Join-Path $outputPath 'tools\test-windows-multipeer-relay.ps1') -Force
+} else {
+  throw "Missing Windows relay diagnose tool: $toolSource"
+}
+$toolStagePath = Join-Path $outputPath 'tools\test-windows-multipeer-relay.ps1'
+if (-not (Test-Path -LiteralPath $toolStagePath -PathType Leaf)) {
+  throw "Failed to stage Windows relay diagnose tool: $toolStagePath"
+}
 New-InnoSetupScript -TemplatePath $issTemplatePath -StageDir $outputPath -GeneratedPath $generatedIssPath
 
 if (Test-Path $zipPath) {

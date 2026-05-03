@@ -12,6 +12,7 @@
 #include <windowsx.h>
 
 #include "resource.h"
+#include "utils.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -65,30 +66,6 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
     enable_non_client_dpi_scaling(hwnd);
   }
   FreeLibrary(user32_module);
-}
-
-void CenterWindowOnCurrentMonitor(HWND window) {
-  RECT window_rect;
-  if (!GetWindowRect(window, &window_rect)) {
-    return;
-  }
-
-  HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
-  MONITORINFO monitor_info{};
-  monitor_info.cbSize = sizeof(MONITORINFO);
-  if (!GetMonitorInfo(monitor, &monitor_info)) {
-    return;
-  }
-
-  const int window_width = window_rect.right - window_rect.left;
-  const int window_height = window_rect.bottom - window_rect.top;
-  const RECT work_area = monitor_info.rcWork;
-  const int x = work_area.left + ((work_area.right - work_area.left) - window_width) / 2;
-  const int y = work_area.top + ((work_area.bottom - work_area.top) - window_height) / 2;
-
-  SetWindowPos(
-      window, nullptr, x, y, 0, 0,
-      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 }  // namespace

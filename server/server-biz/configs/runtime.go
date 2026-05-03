@@ -132,6 +132,8 @@ func migratePostgres(ctx context.Context, db *gorm.DB) error {
 		&repo.NodeEndpoint{},
 		&repo.NodeConnectionState{},
 		&repo.NodePathHealth{},
+		&repo.NodePathHealthSample{},
+		&repo.RelayPolicyExecution{},
 		&repo.RelayNodeHeartbeat{},
 		&repo.Network{},
 		&repo.Subnet{},

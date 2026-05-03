@@ -142,7 +142,7 @@ message RelayRegion {
 // relay 区域内的具体端点。
 message RelayEndpoint {
   string endpoint_id = 1;
-  string transport = 2; // udp / tcp / quic
+  string transport = 2; // udp / tcp / tls / http3
   string address = 3;
 }
 
@@ -199,7 +199,7 @@ message ConnectPlan {
 
 // 单条连接路径选项。
 message PathOption {
-  string path_type = 1; // direct_udp / direct_ipv6 / relay
+  string path_type = 1; // direct_udp / relay_udp / relay_tcp / relay_http3 / relay_tls
   string endpoint = 2;
   int32 priority = 3;
 }
@@ -227,7 +227,7 @@ message RelayTicket {
 message ConnectionState {
   string network_id = 1;
   string peer_node_id = 2;
-  string path = 3;   // p2p / relay
+  string path = 3;   // direct_udp / relay_udp / relay_tcp / relay_http3 / relay_tls
   string state = 4;  // connecting / connected / failed / closed
   string reason = 5;
   uint32 observed_rtt_ms = 6;
@@ -247,6 +247,16 @@ message PathHealthReport {
   uint32 packet_loss_ppm = 7;
   uint32 path_score = 8;
   uint64 sampled_at_ms = 9;
+  string active_path = 10;
+  string source_country_code = 11;
+  string relay_country_code = 12;
+  string peer_country_code = 13;
+  bool cross_country = 14;
+  uint32 relay_mtu = 15;
+  uint32 max_frame_payload = 16;
+  uint64 path_downgrades = 17;
+  uint64 path_upgrades = 18;
+  string last_path_change = 19;
 }
 
 // 节点断开通知。

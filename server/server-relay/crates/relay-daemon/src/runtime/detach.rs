@@ -1,17 +1,15 @@
-use std::net::SocketAddr;
-
 use crate::errors::relay_runtime_error;
 use crate::protocol::ServerResponse;
 
-use super::{RelayRuntime, RelayRuntimeError};
+use super::{RelayEndpoint, RelayRuntime, RelayRuntimeError};
 
 impl RelayRuntime {
     pub(super) fn handle_detach(
         &mut self,
-        source: SocketAddr,
+        source: RelayEndpoint,
         session_id: String,
         participant_id: String,
-    ) -> Result<(ServerResponse, Option<(SocketAddr, ServerResponse)>), RelayRuntimeError> {
+    ) -> Result<(ServerResponse, Option<(RelayEndpoint, ServerResponse)>), RelayRuntimeError> {
         let should_remove_session = {
             let participants = self.endpoints.get_mut(&session_id).ok_or_else(|| {
                 RelayRuntimeError::new(
@@ -28,10 +26,11 @@ impl RelayRuntime {
             if *bound_addr != source {
                 return Err(RelayRuntimeError::new(
                     "participant_address_mismatch",
-                    "participant is bound to a different udp address",
+                    "participant is bound to a different relay endpoint",
                 ));
             }
             participants.remove(&participant_id);
+            self.source_index.remove(&source);
             participants.is_empty()
         };
 

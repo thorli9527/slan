@@ -4,24 +4,33 @@ mod control_plane;
 mod control_tasks;
 mod control_transport;
 mod control_transport_worker;
+mod local_api;
+#[cfg(test)]
+mod main_tests;
+mod relay_candidates;
+mod relay_models;
+mod relay_store;
+mod session_store;
 
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
-    net::{TcpListener, TcpStream, ToSocketAddrs},
-    path::PathBuf,
+    net::{TcpListener, TcpStream},
     sync::{Arc, Condvar, Mutex},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
 use client_core::{
-    AssignedIpPayload, AuthPayload, ClientCommand, ClientRuntime, ClientViewState, PlatformNetwork,
+    normalize_relay_transport, relay_path_kind_for_transport, AndroidVpnSessionConfig,
+    AssignedIpPayload, ClientCommand, ClientRuntime, ClientViewState, PathCandidate, PathKind,
+    PathState, PeerPathConfig, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
+    RelayPeerSession,
 };
 use client_core_platform::PlatformNetworkImpl;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(target_os = "windows")]
 use windows_service::define_windows_service;
@@ -35,7 +44,7 @@ use windows_service::service_control_handler::{self, ServiceControlHandlerResult
 use windows_service::service_dispatcher;
 
 use crate::control_plane::{
-    local_stable_device_id, ControlDevice, ControlPlaneClient, MqttCredential, RelayCandidate,
+    local_stable_device_id, ControlPeer, ControlPlaneClient, RelayCandidate,
 };
 use crate::control_tasks::{
     ControlTaskAction, ControlTaskDirection, ControlTaskQueue, EnqueueControlTaskRequest,
@@ -46,95 +55,50 @@ use crate::control_transport::{
     ControlTransportTickRequest, PublishedControlTransportMessage,
 };
 use crate::control_transport_worker::ControlTransportWorkerState;
+use crate::local_api::{
+    LocalServiceMethod, MarkControlAckedRequest, ServiceRequest, StoredBusinessEvent,
+    WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
+    BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
+    BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED,
+    BUSINESS_STATE_CHANGED,
+};
+use crate::relay_candidates::{
+    best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
+    extract_persisted_relay_candidates_from_network_map, select_relay_candidates,
+    sorted_persisted_relay_candidates,
+};
+use crate::relay_models::{
+    PathDiagnoseDns, PathDiagnoseMtu, PathDiagnosePathCount, PathDiagnoseRelay,
+    PathDiagnoseRelayPeer, PathDiagnoseResponse, PersistedRelayCandidate,
+    RelayCandidateListResponse, RelayCandidateSelection, RelayRuntimeStats,
+};
+use crate::relay_store::{
+    diagnostics_export_file_path, load_recent_relay_data_plane_policy_for_path,
+    load_relay_runtime_stats, relay_path_policy, relay_payload_policy, relay_runtime_failure_total,
+};
+use crate::session_store::{
+    app_data_dir, current_timestamp_ms, ensure_session_device_registered,
+    hydrate_session_from_control_plane, load_session, load_valid_registered_session,
+    persist_session, refresh_startup_session, remove_session, report_runtime_state,
+    session_auth_invalid_error, session_is_expired, sync_session_device_fields, PersistedSession,
+};
 
 const DEFAULT_SERVICE_HOST: &str = "127.0.0.1:46392";
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "SLANClientV2Service";
-pub(crate) const BUSINESS_SESSION_CHANGED: &str = "session.changed";
-pub(crate) const BUSINESS_NETWORK_SWITCH_FINISHED: &str = "network.switch.finished";
-pub(crate) const BUSINESS_NETWORK_SWITCH_FAILED: &str = "network.switch.failed";
-pub(crate) const BUSINESS_NETWORK_RUNTIME_CHANGED: &str = "network.runtime.changed";
-pub(crate) const BUSINESS_CONTROL_SYNC_CHANGED: &str = "control.sync.changed";
-pub(crate) const BUSINESS_STATE_CHANGED: &str = "state.changed";
+const RELAY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
+const RELAY_TICKET_RENEW_INTERVAL_MS: u64 = 20 * 60 * 1000;
+const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
+const RELAY_RECONFIGURE_BACKOFF_MS: u64 = 60 * 1000;
+const RELAY_STATS_STALE_MS: u64 = 45 * 1000;
+const RELAY_FAILURE_RECONFIGURE_DELTA: u64 = 5;
 
 #[cfg(target_os = "windows")]
 define_windows_service!(ffi_service_main, service_main);
 
-#[derive(Debug, Deserialize)]
-struct ServiceRequest {
-    method: String,
-    #[serde(default)]
-    args: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PersistedSession {
-    pub(crate) access_token: String,
-    pub(crate) refresh_token: Option<String>,
-    pub(crate) user_id: String,
-    pub(crate) user_label: String,
-    pub(crate) device_id: Option<String>,
-    pub(crate) active_network_id: Option<String>,
-    pub(crate) virtual_ip: Option<String>,
-    #[serde(default)]
-    pub(crate) relay_candidates: Vec<PersistedRelayCandidate>,
-    pub(crate) mqtt: Option<MqttCredential>,
-    pub(crate) expires_in: Option<u64>,
-    pub(crate) authenticated_at_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PersistedRelayCandidate {
-    pub(crate) endpoint_id: String,
-    pub(crate) transport: String,
-    pub(crate) address: String,
-    #[serde(default)]
-    pub(crate) country_code: Option<String>,
-    #[serde(default)]
-    pub(crate) region_id: Option<String>,
-    #[serde(default)]
-    pub(crate) cluster_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RelayCandidateSelection {
-    endpoint_id: String,
-    transport: String,
-    address: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    country_code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    region_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cluster_id: Option<String>,
-    reachable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rtt_ms: Option<u32>,
-    path_score: u32,
-    selected: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RelayCandidateListResponse {
-    network_id: Option<String>,
-    refreshed: bool,
-    candidates: Vec<RelayCandidateSelection>,
-    best: Option<RelayCandidateSelection>,
-}
-
 #[derive(Debug, Default)]
 struct ControlSyncThrottle {
     last_sync_ms: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MarkControlAckedRequest {
-    task_id: String,
 }
 
 #[derive(Debug, Default)]
@@ -144,45 +108,12 @@ pub(crate) struct StateChangeNotifier {
     changed: Condvar,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WatchStateRequest {
-    #[serde(default)]
-    last_revision: u64,
-    #[serde(default = "default_watch_timeout_ms")]
-    timeout_ms: u64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WatchStateResponse {
-    revision: u64,
-    state: ClientViewState,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredBusinessEvent {
-    business_type: String,
-    business_data: Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WatchBusinessEventRequest {
-    #[serde(default)]
-    last_revision: u64,
-    #[serde(default = "default_watch_timeout_ms")]
-    timeout_ms: u64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WatchBusinessEventResponse {
-    revision: u64,
-    business_type: String,
-    business_data: Value,
-    snapshot: ClientViewState,
+#[derive(Clone)]
+struct LocalServiceContext {
+    runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    task_queue: Arc<Mutex<ControlTaskQueue>>,
+    sync_throttle: Arc<Mutex<ControlSyncThrottle>>,
+    state_notifier: Arc<StateChangeNotifier>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +164,12 @@ fn run_service_server() -> Result<()> {
     let sync_throttle = Arc::new(Mutex::new(ControlSyncThrottle::default()));
     let transport_worker_state = Arc::new(Mutex::new(ControlTransportWorkerState::default()));
     let state_notifier = Arc::new(StateChangeNotifier::default());
+    let service_context = LocalServiceContext {
+        runtime: Arc::clone(&runtime),
+        task_queue: Arc::clone(&task_queue),
+        sync_throttle: Arc::clone(&sync_throttle),
+        state_notifier: Arc::clone(&state_notifier),
+    };
     spawn_auth_callback_poller(Arc::clone(&runtime), Arc::clone(&state_notifier));
     spawn_runtime_sync_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
     spawn_control_task_worker(
@@ -246,18 +183,14 @@ fn run_service_server() -> Result<()> {
         Arc::clone(&transport_worker_state),
         Arc::clone(&state_notifier),
     );
+    spawn_relay_data_plane_maintenance_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
     println!("client-core-service listening on {bind_address}");
 
     for stream in listener.incoming() {
         let stream = stream.context("accept client-core-service connection")?;
-        let runtime = Arc::clone(&runtime);
-        let task_queue = Arc::clone(&task_queue);
-        let sync_throttle = Arc::clone(&sync_throttle);
-        let state_notifier = Arc::clone(&state_notifier);
+        let context = service_context.clone();
         thread::spawn(move || {
-            if let Err(error) =
-                handle_connection(stream, runtime, task_queue, sync_throttle, state_notifier)
-            {
+            if let Err(error) = handle_connection(stream, context) {
                 log_service_error(format!("client-core-service connection error: {error:#}"));
             }
         });
@@ -340,25 +273,12 @@ fn is_elevated_runtime() -> bool {
     true
 }
 
-fn handle_connection(
-    stream: TcpStream,
-    runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-    task_queue: Arc<Mutex<ControlTaskQueue>>,
-    sync_throttle: Arc<Mutex<ControlSyncThrottle>>,
-    state_notifier: Arc<StateChangeNotifier>,
-) -> Result<()> {
+fn handle_connection(stream: TcpStream, context: LocalServiceContext) -> Result<()> {
     let mut writer = stream.try_clone().context("clone service stream")?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     while reader.read_line(&mut line)? > 0 {
-        let response = route_request(
-            line.trim(),
-            &runtime,
-            &task_queue,
-            &sync_throttle,
-            &state_notifier,
-        )
-        .unwrap_or_else(|error| {
+        let response = route_request(line.trim(), &context).unwrap_or_else(|error| {
             let message = error.to_string();
             log_service_error(format!("client-core-service request failed: {message}"));
             error_state_json(message)
@@ -371,86 +291,81 @@ fn handle_connection(
     Ok(())
 }
 
-fn route_request(
-    line: &str,
-    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-    task_queue: &Arc<Mutex<ControlTaskQueue>>,
-    sync_throttle: &Arc<Mutex<ControlSyncThrottle>>,
-    state_notifier: &Arc<StateChangeNotifier>,
-) -> Result<String> {
+fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
     let request: ServiceRequest = serde_json::from_str(line).context("decode service request")?;
-    if request.method == "watchState" {
-        return handle_watch_state(request, runtime, state_notifier);
+    let method = LocalServiceMethod::parse(&request.method);
+    match method {
+        LocalServiceMethod::WatchState => {
+            return handle_watch_state(request, &context.runtime, &context.state_notifier)
+        }
+        LocalServiceMethod::WatchBusinessEvent => {
+            return handle_watch_business_event(request, &context.runtime, &context.state_notifier)
+        }
+        LocalServiceMethod::State => return handle_state_snapshot(&context.runtime),
+        LocalServiceMethod::Start => {
+            sync_control_assignment(&context.runtime);
+            mark_control_sync(&context.sync_throttle);
+        }
+        LocalServiceMethod::Refresh if should_sync_control(&context.sync_throttle) => {
+            sync_control_assignment(&context.runtime);
+        }
+        LocalServiceMethod::EnqueueControlTask => {
+            let response = handle_task_request(request, &context.runtime, &context.task_queue)?;
+            publish_control_sync_event(&context.state_notifier, method);
+            return Ok(response);
+        }
+        LocalServiceMethod::EnqueueDownstreamControlTask => {
+            let response =
+                handle_downstream_task_request(request, &context.runtime, &context.task_queue)?;
+            publish_control_sync_event(&context.state_notifier, method);
+            return Ok(response);
+        }
+        LocalServiceMethod::IngestDownstreamControlMessage => {
+            let response =
+                handle_downstream_control_message(request, &context.runtime, &context.task_queue)?;
+            publish_control_sync_event(&context.state_notifier, method);
+            return Ok(response);
+        }
+        LocalServiceMethod::PendingControlAcks => {
+            return handle_pending_control_acks(&context.task_queue)
+        }
+        LocalServiceMethod::MarkControlAcked => {
+            return handle_mark_control_acked(request, &context.task_queue)
+        }
+        LocalServiceMethod::ControlTransportOutbox => {
+            return handle_control_transport_outbox(request, &context.runtime, &context.task_queue)
+        }
+        LocalServiceMethod::MarkTransportPublished => {
+            return handle_mark_transport_published(request, &context.runtime, &context.task_queue)
+        }
+        LocalServiceMethod::RelayCandidates => return handle_relay_candidates(false),
+        LocalServiceMethod::RefreshRelayCandidates => return handle_relay_candidates(true),
+        LocalServiceMethod::PrepareRelayDataPlane => return handle_prepare_relay_data_plane(),
+        LocalServiceMethod::PathDiagnose => return handle_path_diagnose(),
+        LocalServiceMethod::ExportDiagnostics => {
+            return handle_export_diagnostics(&context.runtime)
+        }
+        _ => {}
     }
-    if request.method == "watchBusinessEvent" {
-        return handle_watch_business_event(request, runtime, state_notifier);
-    }
-    if request.method == "state" {
-        return handle_state_snapshot(runtime);
-    }
-    if request.method == "start" {
-        sync_control_assignment(runtime);
-        mark_control_sync(sync_throttle);
-    } else if request.method == "refresh" && should_sync_control(sync_throttle) {
-        sync_control_assignment(runtime);
-    }
-    if request.method == "enqueueControlTask" {
-        let response = handle_task_request(request, runtime, task_queue)?;
-        publish_business_event(
-            state_notifier,
-            BUSINESS_CONTROL_SYNC_CHANGED,
-            serde_json::json!({"method": "enqueueControlTask"}),
-        );
-        return Ok(response);
-    }
-    if request.method == "enqueueDownstreamControlTask" {
-        let response = handle_downstream_task_request(request, runtime, task_queue)?;
-        publish_business_event(
-            state_notifier,
-            BUSINESS_CONTROL_SYNC_CHANGED,
-            serde_json::json!({"method": "enqueueDownstreamControlTask"}),
-        );
-        return Ok(response);
-    }
-    if request.method == "ingestDownstreamControlMessage" {
-        let response = handle_downstream_control_message(request, runtime, task_queue)?;
-        publish_business_event(
-            state_notifier,
-            BUSINESS_CONTROL_SYNC_CHANGED,
-            serde_json::json!({"method": "ingestDownstreamControlMessage"}),
-        );
-        return Ok(response);
-    }
-    if request.method == "pendingControlAcks" {
-        return handle_pending_control_acks(task_queue);
-    }
-    if request.method == "markControlAcked" {
-        return handle_mark_control_acked(request, task_queue);
-    }
-    if request.method == "controlTransportOutbox" {
-        return handle_control_transport_outbox(request, runtime, task_queue);
-    }
-    if request.method == "markTransportPublished" {
-        return handle_mark_transport_published(request, runtime, task_queue);
-    }
-    if request.method == "relayCandidates" || request.method == "refreshRelayCandidates" {
-        return handle_relay_candidates(request.method == "refreshRelayCandidates");
-    }
-    let should_notify = matches!(
-        request.method.as_str(),
-        "start"
-            | "dispatch"
-            | "refresh"
-            | "shutdownNetwork"
-            | "activateNetwork"
-            | "deactivateNetwork"
-            | "logout"
-    );
-    let response = handle_request(request, runtime)?;
+    let should_notify = method.should_notify();
+    let response = handle_request(request, &context.runtime)?;
     if should_notify {
-        publish_method_business_event(state_notifier, line, &response);
+        publish_method_business_event(&context.state_notifier, line, &response);
     }
     Ok(response)
+}
+
+fn publish_control_sync_event(
+    state_notifier: &Arc<StateChangeNotifier>,
+    method: LocalServiceMethod,
+) {
+    if let Some(method) = method.control_sync_event_method() {
+        publish_business_event(
+            state_notifier,
+            BUSINESS_CONTROL_SYNC_CHANGED,
+            serde_json::json!({ "method": method }),
+        );
+    }
 }
 
 fn handle_state_snapshot(
@@ -471,19 +386,20 @@ fn handle_request(
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
 ) -> Result<String> {
     let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
-    let state = match request.method.as_str() {
-        "start" => {
+    let method = LocalServiceMethod::parse(&request.method);
+    let state = match method {
+        LocalServiceMethod::Start => {
             refresh_startup_session(&mut runtime);
             match runtime.refresh() {
                 Ok(()) => runtime.state().clone(),
                 Err(error) => state_with_error(runtime.state(), error.to_string()),
             }
         }
-        "state" => match runtime.refresh() {
+        LocalServiceMethod::State => match runtime.refresh() {
             Ok(()) => runtime.state().clone(),
             Err(error) => state_with_error(runtime.state(), error.to_string()),
         },
-        "dispatch" => {
+        LocalServiceMethod::Dispatch => {
             let command: ClientCommand =
                 serde_json::from_value(request.args).context("decode client command")?;
             let is_login_with_browser = matches!(command, ClientCommand::LoginWithBrowser);
@@ -500,41 +416,53 @@ fn handle_request(
             }
             state
         }
-        "activateNetwork" => activate_network_from_latest_control(&mut runtime),
-        "deactivateNetwork" => {
+        LocalServiceMethod::ActivateNetwork => activate_network_from_latest_control(&mut runtime),
+        LocalServiceMethod::DeactivateNetwork => {
             dispatch_with_side_effects(&mut runtime, ClientCommand::DisableNetwork)
         }
-        "refresh" => match runtime.refresh() {
+        LocalServiceMethod::Refresh => match runtime.refresh() {
             Ok(()) => runtime.state().clone(),
             Err(error) => state_with_error(runtime.state(), error.to_string()),
         },
-        "shutdownNetwork" => {
+        LocalServiceMethod::ShutdownNetwork => {
             dispatch_with_side_effects(&mut runtime, ClientCommand::DisableNetwork)
         }
-        "controlTransportStatus" => {
+        LocalServiceMethod::ControlTransportStatus => {
             return serde_json::to_string(&control_transport_status()?)
                 .context("encode control transport status")
         }
-        "controlTransportPlan" => {
+        LocalServiceMethod::ControlTransportPlan => {
             return serde_json::to_string(&control_transport_plan()?)
                 .context("encode control transport plan")
         }
-        "controlTransportCadence" => {
+        LocalServiceMethod::ControlTransportCadence => {
             return serde_json::to_string(&control_transport_cadence())
                 .context("encode control transport cadence")
         }
-        "consoleLoginKey" => {
+        LocalServiceMethod::ConsoleLoginKey => {
             return serde_json::to_string(&console_login_key()?).context("encode console login key")
         }
-        "controlTransportTickPlan" => {
+        LocalServiceMethod::AndroidNetworkConfig => {
+            return serde_json::to_string(&android_network_config_from_latest_control(
+                &mut runtime,
+            )?)
+            .context("encode android network config")
+        }
+        LocalServiceMethod::ControlTransportTickPlan => {
             return serde_json::to_string(&control_transport_tick_plan(request.args)?)
                 .context("encode control transport tick plan")
         }
-        other => {
-            let command_json = serde_json::json!({ "type": other });
+        LocalServiceMethod::Other => {
+            let command_json = serde_json::json!({ "type": request.method });
             let command: ClientCommand = serde_json::from_value(command_json)
-                .with_context(|| format!("unsupported service method {other}"))?;
+                .with_context(|| format!("unsupported service method {}", request.method))?;
             dispatch_with_side_effects(&mut runtime, command)
+        }
+        _ => {
+            anyhow::bail!(
+                "service method {} is handled outside the runtime command interface",
+                request.method
+            )
         }
     };
     serde_json::to_string(&state).context("encode client state")
@@ -584,6 +512,45 @@ fn handle_relay_candidates(refresh: bool) -> Result<String> {
     serde_json::to_string(&response).context("encode relay candidates")
 }
 
+fn handle_prepare_relay_data_plane() -> Result<String> {
+    let config = prepare_relay_data_plane_from_latest_control()?;
+    serde_json::to_string(&config).context("encode relay data plane config")
+}
+
+fn handle_path_diagnose() -> Result<String> {
+    let response = path_diagnose_response()?;
+    serde_json::to_string(&response).context("encode path diagnose")
+}
+
+fn handle_export_diagnostics(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+) -> Result<String> {
+    let state = {
+        let runtime = runtime.lock().expect("client runtime mutex poisoned");
+        runtime.state().clone()
+    };
+    let diagnose = path_diagnose_response().ok();
+    let platform = PlatformNetworkImpl::default().diagnostics().ok();
+    let payload = serde_json::json!({
+        "exportedAtMs": current_timestamp_ms(),
+        "state": state,
+        "session": diagnostic_session_summary(),
+        "path": diagnose,
+        "platform": platform,
+        "relayStats": load_relay_runtime_stats(),
+    });
+    let path = diagnostics_export_file_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("create diagnostics directory")?;
+    }
+    fs::write(&path, serde_json::to_vec_pretty(&payload)?).context("write diagnostics export")?;
+    Ok(serde_json::json!({
+        "path": path.display().to_string(),
+        "exportedAtMs": current_timestamp_ms(),
+    })
+    .to_string())
+}
+
 fn relay_candidates_response(refresh: bool) -> Result<RelayCandidateListResponse> {
     let mut session = load_network_session()?;
     let network_id = ensure_active_network_id(&mut session)?;
@@ -600,6 +567,225 @@ fn relay_candidates_response(refresh: bool) -> Result<RelayCandidateListResponse
         candidates: selections,
         best,
     })
+}
+
+fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
+    let mut session = load_network_session()?;
+    let network_id = ensure_active_network_id(&mut session)?;
+    let client = ControlPlaneClient::from_env();
+    let device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("device unavailable: current device is not registered"))?;
+    let activation = client.activate_network(&session.access_token, device_id, &network_id)?;
+    if !activation.relay_candidates.is_empty() {
+        session.relay_candidates = sorted_persisted_relay_candidates(
+            activation
+                .relay_candidates
+                .iter()
+                .map(persisted_relay_candidate)
+                .collect(),
+        );
+    }
+    session.self_node_id = activation.self_node_id.clone();
+    session.virtual_ip = Some(activation.virtual_ip);
+    persist_session(&session)?;
+
+    let stats = load_relay_runtime_stats();
+    let platform = PlatformNetworkImpl::default()
+        .diagnostics()
+        .unwrap_or_else(|error| PlatformNetworkDiagnostics {
+            platform: std::env::consts::OS.to_string(),
+            checks: vec![client_core::PlatformDiagnosticCheck {
+                name: "platformDiagnostics".to_string(),
+                ok: false,
+                message: Some(error.to_string()),
+            }],
+            ..PlatformNetworkDiagnostics::default()
+        });
+    let runtime_state = PlatformNetworkImpl::default()
+        .read_runtime_state()
+        .unwrap_or_default();
+    let peer_paths = runtime_state.peer_paths;
+    let active_path_counts = path_diagnose_active_path_counts(&peer_paths);
+    let active_path_type = stats
+        .as_ref()
+        .filter(|stats| {
+            current_timestamp_ms().saturating_sub(stats.updated_at_ms) <= RELAY_STATS_STALE_MS
+        })
+        .and_then(|stats| stats.active_path.clone())
+        .or_else(|| {
+            runtime_state
+                .active_path
+                .map(|path| path.as_str().to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let relay = stats.as_ref().map(|stats| PathDiagnoseRelay {
+        address: stats.relay_address.clone(),
+        active_path: stats.active_path.clone(),
+        requested_relay_session_count: stats.requested_relay_session_count,
+        relay_session_count: stats.relay_session_count,
+        ticket_expires_at: stats.ticket_expires_at.clone(),
+        relay_attach_failures: stats.relay_attach_failures,
+        last_relay_attach_error: stats.last_relay_attach_error.clone(),
+        peers: stats
+            .peers
+            .iter()
+            .map(|peer| PathDiagnoseRelayPeer {
+                peer_node_id: peer.peer_node_id.clone(),
+                session_id: peer.session_id.clone(),
+                peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                attached: peer.attached,
+                attach_error: peer.attach_error.clone(),
+                tun_packets_sent: peer.tun_packets_sent,
+                relay_packets_received: peer.relay_packets_received,
+                relay_errors: peer.relay_errors,
+                last_relay_error: peer.last_relay_error.clone(),
+                last_send_path: peer.last_send_path.clone(),
+                path_downgrades: peer.path_downgrades,
+                path_upgrades: peer.path_upgrades,
+                last_path_change: peer.last_path_change.clone(),
+                replayed_frames: peer.replayed_frames,
+                config_hash_mismatches: peer.config_hash_mismatches,
+                last_rx_seq: peer.last_rx_seq,
+                send_failures: peer.send_failures,
+                receive_failures: peer.receive_failures,
+                wintun_write_failures: peer.wintun_write_failures,
+            })
+            .collect(),
+        relay_mtu: stats.relay_mtu,
+        max_frame_payload: stats.max_frame_payload,
+        tun_packets_sent: stats.tun_packets_sent,
+        relay_packets_received: stats.relay_packets_received,
+        relay_error_responses: stats.relay_error_responses,
+        relay_config_hash_mismatches: stats.relay_config_hash_mismatches,
+        last_relay_error: stats.last_relay_error.clone(),
+        failures: relay_runtime_failure_total(stats),
+        unroutable_tun_packets: stats.unroutable_tun_packets,
+        last_unroutable_destination: stats.last_unroutable_destination.clone(),
+        oversized_tun_packets: stats.oversized_tun_packets,
+        last_oversized_tun_packet_size: stats.last_oversized_tun_packet_size,
+        updated_at_ms: stats.updated_at_ms,
+        stale: current_timestamp_ms().saturating_sub(stats.updated_at_ms) > RELAY_STATS_STALE_MS,
+    });
+    let direct_candidates = diagnose_direct_candidates(&activation.peers);
+    let relay_candidates = select_relay_candidates(&session.relay_candidates);
+    let policy = load_recent_relay_data_plane_policy_for_path(
+        &network_id,
+        session.device_id.as_deref(),
+        Some("relay_udp"),
+    );
+    let expected_mtu = policy
+        .as_ref()
+        .and_then(|policy| policy.relay_mtu)
+        .or_else(|| stats.as_ref().and_then(|stats| stats.relay_mtu));
+    let expected_payload = policy
+        .as_ref()
+        .and_then(|policy| policy.max_frame_payload)
+        .or_else(|| stats.as_ref().and_then(|stats| stats.max_frame_payload));
+    let mtu = PathDiagnoseMtu {
+        relay_mtu: expected_mtu,
+        max_frame_payload: expected_payload,
+        policy_scope: policy.as_ref().and_then(|policy| policy.scope.clone()),
+        policy_path_type: policy.as_ref().and_then(|policy| policy.path_type.clone()),
+        actual_mtu_checked: expected_mtu.is_some() && platform.mtu.is_some(),
+        actual_mtu_ok: expected_mtu.and_then(|expected| {
+            platform
+                .mtu
+                .map(|actual| actual == u32::from(expected))
+        }),
+        actual_mss_checked: expected_payload.is_some() && platform.mss.is_some(),
+        actual_mss_ok: expected_payload.and_then(|expected| {
+            platform
+                .mss
+                .map(|actual| actual >= u32::from(expected))
+        }),
+        note: Some("Windows applies adapter MTU directly. MSS is reported as an effective IPv4 payload guard when platform readback is available; otherwise the relay maxFramePayload guard is enforced in the local data thread.".to_string()),
+    };
+    let dns = path_diagnose_dns(&activation.dns_servers, &platform.dns_servers);
+    Ok(PathDiagnoseResponse {
+        network_id: Some(network_id),
+        active_path_type,
+        active_path_counts,
+        peer_paths,
+        relay,
+        direct_candidates,
+        relay_candidates,
+        mtu,
+        dns,
+        platform,
+        export_path: None,
+    })
+}
+
+fn path_diagnose_active_path_counts(
+    peer_paths: &[client_core::PeerPathRuntime],
+) -> Vec<PathDiagnosePathCount> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for peer in peer_paths {
+        let path_type = peer
+            .active_path
+            .map(|path| path.as_str().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        *counts.entry(path_type).or_default() += 1;
+    }
+    let mut values = counts
+        .into_iter()
+        .map(|(path_type, count)| PathDiagnosePathCount { path_type, count })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.path_type.cmp(&right.path_type))
+    });
+    values
+}
+
+fn path_diagnose_dns(expected_servers: &[String], actual_servers: &[String]) -> PathDiagnoseDns {
+    let expected = normalized_dns_servers(expected_servers);
+    let actual = normalized_dns_servers(actual_servers);
+    let missing = expected
+        .iter()
+        .filter(|server| {
+            !actual
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(server))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let extra = actual
+        .iter()
+        .filter(|server| {
+            !expected
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(server))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let checked = !expected.is_empty();
+    PathDiagnoseDns {
+        expected_servers: expected,
+        actual_servers: actual,
+        checked,
+        ok: checked.then_some(missing.is_empty()),
+        missing_servers: missing,
+        extra_servers: extra,
+    }
+}
+
+fn normalized_dns_servers(servers: &[String]) -> Vec<String> {
+    let mut normalized = servers
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    normalized.sort_by_key(|value| value.to_ascii_lowercase());
+    normalized.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    normalized
 }
 
 fn handle_watch_state(
@@ -1095,6 +1281,102 @@ where
     }
 }
 
+fn android_network_config_from_latest_control<P>(
+    runtime: &mut ClientRuntime<P>,
+) -> Result<AndroidVpnSessionConfig>
+where
+    P: client_core::PlatformNetwork,
+{
+    let mut session = load_network_session()?;
+    let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.clone().into()));
+    let Some(device_id) = session.device_id.clone().filter(|value| !value.is_empty()) else {
+        return Err(anyhow::anyhow!(
+            "device unavailable: current device is not registered"
+        ));
+    };
+    let client = ControlPlaneClient::from_env();
+    let network_id = ensure_active_network_id(&mut session)?;
+    let _ = refresh_relay_candidates_for_session(&mut session, &network_id);
+    let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    session.self_node_id = activation.self_node_id.clone();
+    session.virtual_ip = Some(activation.virtual_ip.clone());
+    if !activation.relay_candidates.is_empty() {
+        session.relay_candidates = sorted_persisted_relay_candidates(
+            activation
+                .relay_candidates
+                .iter()
+                .map(persisted_relay_candidate)
+                .collect(),
+        );
+    }
+    let best_relay = best_relay_candidate(&session.relay_candidates);
+    persist_session(&session)?;
+    let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
+        virtual_ip: activation.virtual_ip.clone(),
+        prefix_len: Some(activation.prefix_len),
+    }));
+    let routes = routes_with_peer_virtual_ips(
+        activation.routes.clone(),
+        &activation.peers,
+        activation.virtual_ip.as_str(),
+    );
+    Ok(AndroidVpnSessionConfig {
+        session_name: "SLAN".to_string(),
+        virtual_ip: activation.virtual_ip,
+        prefix_len: activation.prefix_len,
+        dns_servers: activation.dns_servers,
+        routes,
+        mtu: Some(1280),
+        relay_endpoint_id: best_relay.as_ref().map(|relay| relay.endpoint_id.clone()),
+        relay_transport: best_relay.as_ref().map(|relay| relay.transport.clone()),
+        relay_address: best_relay.as_ref().map(|relay| relay.address.clone()),
+        relay_data_plane: build_relay_data_plane_config(
+            &client,
+            &session,
+            &network_id,
+            activation.self_node_id.as_deref(),
+            &activation.peers,
+            best_relay.as_ref(),
+        )
+        .ok(),
+    })
+}
+
+fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig> {
+    let mut session = load_network_session()?;
+    let Some(device_id) = session.device_id.clone().filter(|value| !value.is_empty()) else {
+        return Err(anyhow::anyhow!(
+            "device unavailable: current device is not registered"
+        ));
+    };
+    let client = ControlPlaneClient::from_env();
+    let network_id = ensure_active_network_id(&mut session)?;
+    let _ = refresh_relay_candidates_for_session(&mut session, &network_id);
+    let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    session.self_node_id = activation.self_node_id.clone();
+    if !activation.relay_candidates.is_empty() {
+        session.relay_candidates = sorted_persisted_relay_candidates(
+            activation
+                .relay_candidates
+                .iter()
+                .map(persisted_relay_candidate)
+                .collect(),
+        );
+    }
+    session.virtual_ip = Some(activation.virtual_ip);
+    persist_session(&session)?;
+    let best_relay = best_udp_relay_candidate(&session.relay_candidates)
+        .or_else(|| best_relay_candidate(&session.relay_candidates));
+    build_relay_data_plane_config(
+        &client,
+        &session,
+        &network_id,
+        activation.self_node_id.as_deref(),
+        &activation.peers,
+        best_relay.as_ref(),
+    )
+}
+
 fn load_network_session() -> Result<PersistedSession> {
     let session = load_session()?;
     if session.access_token.trim().is_empty() {
@@ -1137,6 +1419,7 @@ where
         });
     let best_relay = best_relay_candidate(&session.relay_candidates);
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    session.self_node_id = activation.self_node_id.clone();
     log_service_error(format!(
         "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={} relays={} refreshedRelays={} bestRelay={}",
         activation.virtual_ip,
@@ -1161,6 +1444,23 @@ where
                 .collect(),
         );
     }
+    let best_relay = best_udp_relay_candidate(&session.relay_candidates)
+        .or_else(|| best_relay_candidate(&session.relay_candidates));
+    let relay_config = build_relay_data_plane_config(
+        &client,
+        session,
+        &network_id,
+        activation.self_node_id.as_deref(),
+        &activation.peers,
+        best_relay.as_ref(),
+    )
+    .map_err(|error| {
+        log_service_error(format!(
+            "client-core-service relay data plane config skipped: {error:#}"
+        ));
+        error
+    })
+    .ok();
     persist_session(session)?;
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
         virtual_ip: activation.virtual_ip.clone(),
@@ -1173,7 +1473,12 @@ where
     runtime.enable_network_with_config(
         activation.prefix_len,
         &activation.dns_servers,
-        &activation.routes,
+        &routes_with_peer_virtual_ips(
+            activation.routes.clone(),
+            &activation.peers,
+            activation.virtual_ip.as_str(),
+        ),
+        relay_config.as_ref(),
     )?;
     Ok(())
 }
@@ -1212,6 +1517,235 @@ fn refresh_relay_candidates_for_session(
     );
     persist_session(session)?;
     Ok(true)
+}
+
+fn build_relay_data_plane_config(
+    client: &ControlPlaneClient,
+    session: &PersistedSession,
+    network_id: &str,
+    self_node_id: Option<&str>,
+    peers: &[ControlPeer],
+    best_relay: Option<&RelayCandidateSelection>,
+) -> Result<RelayDataPlaneConfig> {
+    let relay = best_relay
+        .filter(|relay| relay.transport.eq_ignore_ascii_case("udp"))
+        .ok_or_else(|| anyhow::anyhow!("no reachable udp relay candidate"))?;
+    let local_node_id = self_node_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("network map missing self node id"))?;
+
+    let sessions = peers
+        .iter()
+        .filter(|peer| peer.relay_allowed)
+        .filter(|peer| peer.node_id != local_node_id)
+        .filter_map(|peer| {
+            match client.issue_relay_ticket(
+                &session.access_token,
+                network_id,
+                local_node_id,
+                peer.node_id.as_str(),
+                relay.cluster_id.as_deref(),
+                Some(relay.endpoint_id.as_str()),
+                relay.region_id.as_deref(),
+            ) {
+                Ok(ticket) => Some(RelayPeerSession {
+                    session_id: ticket.session_id.clone(),
+                    peer_node_id: peer.node_id.clone(),
+                    peer_virtual_ips: peer.virtual_ips.clone(),
+                    ticket,
+                }),
+                Err(error) => {
+                    log_service_error(format!(
+                        "client-core-service issue relay ticket skipped: peerNodeId={} error={error:#}",
+                        peer.node_id
+                    ));
+                    None
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    let policy = relay_payload_policy(
+        relay.address.as_str(),
+        network_id,
+        session.device_id.as_deref(),
+        Some("relay_udp"),
+    );
+    let path_policy =
+        relay_path_policy(network_id, session.device_id.as_deref(), Some("relay_udp"));
+
+    Ok(RelayDataPlaneConfig {
+        enabled: !sessions.is_empty(),
+        transport: relay.transport.clone(),
+        relay_address: relay.address.clone(),
+        local_node_id: local_node_id.to_string(),
+        network_id: network_id.to_string(),
+        path_policy,
+        peer_paths: peer_path_configs(
+            peers,
+            local_node_id,
+            relay,
+            &select_relay_candidates(&session.relay_candidates),
+            &sessions,
+        ),
+        relay_mtu: Some(policy.relay_mtu),
+        max_frame_payload: Some(policy.max_frame_payload),
+        sessions,
+    })
+}
+
+fn peer_path_configs(
+    peers: &[ControlPeer],
+    local_node_id: &str,
+    relay: &RelayCandidateSelection,
+    relay_candidates: &[RelayCandidateSelection],
+    relay_sessions: &[RelayPeerSession],
+) -> Vec<PeerPathConfig> {
+    peers
+        .iter()
+        .filter(|peer| peer.node_id != local_node_id)
+        .map(|peer| {
+            let relay_session = relay_sessions
+                .iter()
+                .find(|session| session.peer_node_id == peer.node_id);
+            let mut candidates = Vec::new();
+            candidates.extend(peer.endpoints.iter().filter_map(|endpoint| {
+                let address = endpoint.address.trim();
+                if address.is_empty() {
+                    return None;
+                }
+                Some(PathCandidate {
+                    kind: PathKind::DirectUdp,
+                    state: PathState::Probing,
+                    endpoint_id: None,
+                    address: Some(address.to_string()),
+                    session_id: None,
+                    transport: Some("udp".to_string()),
+                    rtt_ms: None,
+                    path_score: None,
+                    last_ok_at_ms: None,
+                    last_error: None,
+                })
+            }));
+            if let Some(session) = relay_session {
+                let relay_transport = normalize_relay_transport(&relay.transport).unwrap_or("udp");
+                candidates.push(PathCandidate {
+                    kind: PathKind::RelayUdp,
+                    state: PathState::Standby,
+                    endpoint_id: Some(relay.endpoint_id.clone()),
+                    address: Some(relay.address.clone()),
+                    session_id: Some(session.session_id.clone()),
+                    transport: Some(relay_transport.to_string()),
+                    rtt_ms: relay.rtt_ms,
+                    path_score: Some(relay.path_score),
+                    last_ok_at_ms: None,
+                    last_error: None,
+                });
+            }
+            candidates.extend(relay_candidates.iter().filter_map(|candidate| {
+                let transport = normalize_relay_transport(&candidate.transport)?;
+                let path_kind = relay_path_kind_for_transport(transport)?;
+                Some(PathCandidate {
+                    kind: path_kind,
+                    state: PathState::Standby,
+                    endpoint_id: Some(candidate.endpoint_id.clone()),
+                    address: Some(candidate.address.clone()),
+                    session_id: None,
+                    transport: Some(transport.to_string()),
+                    rtt_ms: candidate.rtt_ms,
+                    path_score: Some(candidate.path_score),
+                    last_ok_at_ms: None,
+                    last_error: None,
+                })
+            }));
+            PeerPathConfig {
+                peer_node_id: peer.node_id.clone(),
+                peer_virtual_ips: peer.virtual_ips.clone(),
+                candidates,
+            }
+        })
+        .collect()
+}
+
+fn routes_with_peer_virtual_ips(
+    mut routes: Vec<client_core::RouteSpec>,
+    peers: &[ControlPeer],
+    self_virtual_ip: &str,
+) -> Vec<client_core::RouteSpec> {
+    let mut existing = routes
+        .iter()
+        .map(|route| normalize_route_destination(route.destination.as_str()))
+        .collect::<std::collections::HashSet<_>>();
+    let self_ip = normalize_virtual_ip_for_route(self_virtual_ip);
+    for peer in peers {
+        for ip in &peer.virtual_ips {
+            let Some(peer_ip) = usable_peer_virtual_ip(ip) else {
+                continue;
+            };
+            if peer_ip == self_ip {
+                continue;
+            }
+            let destination = format!("{peer_ip}/32");
+            if existing.insert(destination.clone()) {
+                routes.push(client_core::RouteSpec {
+                    destination,
+                    gateway: None,
+                });
+            }
+        }
+    }
+    routes
+}
+
+fn normalize_route_destination(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.contains('/') {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/32")
+    }
+}
+
+fn usable_peer_virtual_ip(value: &str) -> Option<String> {
+    let ip = normalize_virtual_ip_for_route(value);
+    if ip.is_empty()
+        || ip == "0.0.0.0"
+        || ip.starts_with("169.254.")
+        || ip.contains(':')
+        || ip.eq_ignore_ascii_case("pending")
+    {
+        return None;
+    }
+    Some(ip)
+}
+
+fn normalize_virtual_ip_for_route(value: &str) -> String {
+    value
+        .trim()
+        .split_once('/')
+        .map(|(ip, _)| ip)
+        .unwrap_or_else(|| value.trim())
+        .to_string()
+}
+
+fn diagnostic_session_summary() -> serde_json::Value {
+    match load_session() {
+        Ok(session) => serde_json::json!({
+            "signedIn": !session.access_token.trim().is_empty(),
+            "userId": session.user_id,
+            "userLabel": session.user_label,
+            "deviceId": session.device_id,
+            "activeNetworkId": session.active_network_id,
+            "virtualIp": session.virtual_ip,
+            "relayCandidateCount": session.relay_candidates.len(),
+            "mqttConfigured": session.mqtt.is_some(),
+            "authenticatedAtMs": session.authenticated_at_ms,
+        }),
+        Err(error) => serde_json::json!({
+            "signedIn": false,
+            "error": error.to_string(),
+        }),
+    }
 }
 
 fn sync_downstream_network_assignment<P>(runtime: &mut ClientRuntime<P>) -> Result<()>
@@ -1303,96 +1837,6 @@ fn persisted_relay_candidate(candidate: &RelayCandidate) -> PersistedRelayCandid
     }
 }
 
-fn sorted_persisted_relay_candidates(
-    mut candidates: Vec<PersistedRelayCandidate>,
-) -> Vec<PersistedRelayCandidate> {
-    let selections = select_relay_candidates(&candidates);
-    let rank_by_endpoint = selections
-        .iter()
-        .enumerate()
-        .map(|(index, item)| (item.endpoint_id.clone(), index))
-        .collect::<std::collections::HashMap<_, _>>();
-    candidates.sort_by_key(|candidate| {
-        rank_by_endpoint
-            .get(candidate.endpoint_id.as_str())
-            .copied()
-            .unwrap_or(usize::MAX)
-    });
-    candidates
-}
-
-fn best_relay_candidate(candidates: &[PersistedRelayCandidate]) -> Option<RelayCandidateSelection> {
-    select_relay_candidates(candidates)
-        .into_iter()
-        .find(|candidate| candidate.selected)
-}
-
-fn select_relay_candidates(candidates: &[PersistedRelayCandidate]) -> Vec<RelayCandidateSelection> {
-    let mut selections = candidates
-        .iter()
-        .filter(|candidate| {
-            !candidate.endpoint_id.trim().is_empty()
-                && !candidate.transport.trim().is_empty()
-                && !candidate.address.trim().is_empty()
-        })
-        .map(score_relay_candidate)
-        .collect::<Vec<_>>();
-    selections.sort_by(|left, right| {
-        right
-            .reachable
-            .cmp(&left.reachable)
-            .then_with(|| left.path_score.cmp(&right.path_score))
-            .then_with(|| left.endpoint_id.cmp(&right.endpoint_id))
-    });
-    for (index, selection) in selections.iter_mut().enumerate() {
-        selection.selected = index == 0 && selection.reachable;
-    }
-    selections
-}
-
-fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateSelection {
-    let transport = candidate.transport.trim().to_ascii_lowercase();
-    let mut reachable = true;
-    let mut rtt_ms = None;
-    let path_score = match transport.as_str() {
-        "tcp" | "tls" => match probe_relay_tcp_rtt_ms(&candidate.address) {
-            Some(rtt) => {
-                rtt_ms = Some(rtt);
-                rtt.saturating_add(if transport == "tls" { 150 } else { 100 })
-            }
-            None => {
-                reachable = false;
-                10_000
-            }
-        },
-        "quic" => 700,
-        "udp" => 800,
-        _ => 9_000,
-    };
-    RelayCandidateSelection {
-        endpoint_id: candidate.endpoint_id.clone(),
-        transport: candidate.transport.clone(),
-        address: candidate.address.clone(),
-        country_code: candidate.country_code.clone(),
-        region_id: candidate.region_id.clone(),
-        cluster_id: candidate.cluster_id.clone(),
-        reachable,
-        rtt_ms,
-        path_score,
-        selected: false,
-    }
-}
-
-fn probe_relay_tcp_rtt_ms(address: &str) -> Option<u32> {
-    let socket = address
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut values| values.next())?;
-    let started = Instant::now();
-    TcpStream::connect_timeout(&socket, Duration::from_millis(750)).ok()?;
-    Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
-}
-
 pub(crate) fn persist_relay_candidates_from_network_map(map: &Value) -> Result<usize> {
     let candidates = extract_persisted_relay_candidates_from_network_map(map);
     if candidates.is_empty() {
@@ -1402,48 +1846,6 @@ pub(crate) fn persist_relay_candidates_from_network_map(map: &Value) -> Result<u
     session.relay_candidates = sorted_persisted_relay_candidates(candidates);
     persist_session(&session)?;
     Ok(session.relay_candidates.len())
-}
-
-fn extract_persisted_relay_candidates_from_network_map(
-    map: &Value,
-) -> Vec<PersistedRelayCandidate> {
-    map.get("relayRegions")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .flat_map(|region| {
-            let country_code = optional_trimmed_string(region.get("countryCode"));
-            let region_id = optional_trimmed_string(region.get("regionId"));
-            let cluster_id = optional_trimmed_string(region.get("clusterId"));
-            region
-                .get("endpoints")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(move |endpoint| {
-                    let endpoint_id = optional_trimmed_string(endpoint.get("endpointId"))?;
-                    let transport = optional_trimmed_string(endpoint.get("transport"))?;
-                    let address = optional_trimmed_string(endpoint.get("address"))?;
-                    Some(PersistedRelayCandidate {
-                        endpoint_id,
-                        transport,
-                        address,
-                        country_code: country_code.clone(),
-                        region_id: region_id.clone(),
-                        cluster_id: cluster_id.clone(),
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-fn optional_trimmed_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 fn clear_session_virtual_ip() -> Result<()> {
@@ -1467,10 +1869,6 @@ fn state_with_error(state: &ClientViewState, error: String) -> ClientViewState {
     }
     state.error = Some(error);
     state
-}
-
-fn default_watch_timeout_ms() -> u64 {
-    30_000
 }
 
 fn notify_state_changed(state_notifier: &StateChangeNotifier) {
@@ -1520,20 +1918,19 @@ fn publish_method_business_event(
         .map(|request| request.method)
         .unwrap_or_default();
     let state = serde_json::from_str::<ClientViewState>(response).ok();
-    let business_type = match method.as_str() {
-        "activateNetwork" => state
+    let business_type = match LocalServiceMethod::parse(&method) {
+        LocalServiceMethod::ActivateNetwork => state
             .as_ref()
             .and_then(|state| state.error.as_ref())
             .map(|_| BUSINESS_NETWORK_SWITCH_FAILED)
             .unwrap_or(BUSINESS_NETWORK_SWITCH_FINISHED),
-        "deactivateNetwork" | "shutdownNetwork" => state
+        LocalServiceMethod::DeactivateNetwork | LocalServiceMethod::ShutdownNetwork => state
             .as_ref()
             .and_then(|state| state.error.as_ref())
             .map(|_| BUSINESS_NETWORK_SWITCH_FAILED)
             .unwrap_or(BUSINESS_NETWORK_SWITCH_FINISHED),
-        "logout" => BUSINESS_SESSION_CHANGED,
-        "dispatch" => BUSINESS_SESSION_CHANGED,
-        "start" | "refresh" => BUSINESS_STATE_CHANGED,
+        LocalServiceMethod::Logout | LocalServiceMethod::Dispatch => BUSINESS_SESSION_CHANGED,
+        LocalServiceMethod::Start | LocalServiceMethod::Refresh => BUSINESS_STATE_CHANGED,
         _ => BUSINESS_STATE_CHANGED,
     };
     let business_data = state
@@ -1639,6 +2036,207 @@ fn spawn_control_task_worker(
     });
 }
 
+#[derive(Default)]
+struct RelayMaintenanceState {
+    last_reconfigure_ms: u64,
+    last_failure_total: u64,
+    last_attach_failures: u64,
+}
+
+fn spawn_relay_data_plane_maintenance_worker(
+    runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: Arc<StateChangeNotifier>,
+) {
+    thread::spawn(move || {
+        let mut maintenance = RelayMaintenanceState::default();
+        loop {
+            thread::sleep(RELAY_MAINTENANCE_INTERVAL);
+            if let Err(error) =
+                maintain_relay_data_plane(&runtime, &state_notifier, &mut maintenance)
+            {
+                log_service_error(format!(
+                    "client-core-service relay data plane maintenance skipped: {error:#}"
+                ));
+            }
+        }
+    });
+}
+
+fn maintain_relay_data_plane(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &StateChangeNotifier,
+    maintenance: &mut RelayMaintenanceState,
+) -> Result<()> {
+    let now = current_timestamp_ms();
+    let before = {
+        let runtime = runtime.lock().expect("client runtime mutex poisoned");
+        runtime.state().clone()
+    };
+    if !before.signed_in || !before.network_enabled {
+        return Ok(());
+    }
+    let session = load_network_session()?;
+    if session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Ok(());
+    }
+    if session.relay_candidates.is_empty() {
+        return Ok(());
+    }
+    let stats = load_relay_runtime_stats();
+    let reconfigure_reason = relay_maintenance_reconfigure_reason(now, stats.as_ref(), maintenance);
+    let Some(reason) = reconfigure_reason else {
+        return Ok(());
+    };
+    if maintenance.last_reconfigure_ms > 0
+        && now.saturating_sub(maintenance.last_reconfigure_ms) < RELAY_RECONFIGURE_BACKOFF_MS
+    {
+        return Ok(());
+    }
+    maintenance.last_reconfigure_ms = now;
+    log_service_error(format!(
+        "client-core-service relay data plane reconfigure started: reason={reason}"
+    ));
+    let mut session = session;
+    let state = {
+        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+        match activate_control_network_for_session(&mut runtime, &mut session) {
+            Ok(()) => runtime.state().clone(),
+            Err(error) => state_with_error(runtime.state(), error.to_string()),
+        }
+    };
+    let next_stats = load_relay_runtime_stats();
+    if let Some(stats) = next_stats.as_ref() {
+        maintenance.last_failure_total = relay_runtime_failure_total(stats);
+        maintenance.last_attach_failures = stats.relay_attach_failures;
+    } else {
+        maintenance.last_failure_total = 0;
+        maintenance.last_attach_failures = 0;
+    }
+    let business_type = if state.error.is_some() {
+        BUSINESS_NETWORK_SWITCH_FAILED
+    } else {
+        BUSINESS_NETWORK_RUNTIME_CHANGED
+    };
+    let business_data = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
+    publish_business_event(state_notifier, business_type, business_data);
+    Ok(())
+}
+
+fn relay_maintenance_reconfigure_reason(
+    now: u64,
+    stats: Option<&RelayRuntimeStats>,
+    maintenance: &mut RelayMaintenanceState,
+) -> Option<&'static str> {
+    if maintenance.last_reconfigure_ms == 0 {
+        if let Some(stats) = stats {
+            maintenance.last_failure_total = relay_runtime_failure_total(stats);
+            maintenance.last_attach_failures = stats.relay_attach_failures;
+            if relay_ticket_should_renew(now, stats.ticket_expires_at.as_deref()) {
+                return Some("ticket_expiring");
+            }
+        }
+        maintenance.last_reconfigure_ms = now;
+        return None;
+    }
+    let Some(stats) = stats else {
+        return Some("missing_relay_stats");
+    };
+    if relay_ticket_should_renew(now, stats.ticket_expires_at.as_deref()) {
+        return Some("ticket_expiring");
+    }
+    if now.saturating_sub(maintenance.last_reconfigure_ms) >= RELAY_TICKET_RENEW_INTERVAL_MS {
+        return Some("ticket_renew");
+    }
+    if now.saturating_sub(stats.updated_at_ms) > RELAY_STATS_STALE_MS {
+        return Some("stale_relay_stats");
+    }
+    if relay_sessions_missing(stats) {
+        return Some("relay_session_missing");
+    }
+    if stats.relay_attach_failures > maintenance.last_attach_failures {
+        maintenance.last_attach_failures = stats.relay_attach_failures;
+        return Some("relay_attach_failure");
+    }
+    let failure_total = relay_runtime_failure_total(stats);
+    if failure_total.saturating_sub(maintenance.last_failure_total)
+        >= RELAY_FAILURE_RECONFIGURE_DELTA
+    {
+        maintenance.last_failure_total = failure_total;
+        return Some("relay_failure_delta");
+    }
+    maintenance.last_failure_total = failure_total;
+    maintenance.last_attach_failures = stats.relay_attach_failures;
+    None
+}
+
+fn relay_sessions_missing(stats: &RelayRuntimeStats) -> bool {
+    stats.requested_relay_session_count > 0
+        && stats.relay_session_count < stats.requested_relay_session_count
+}
+
+fn relay_ticket_should_renew(now_ms: u64, ticket_expires_at: Option<&str>) -> bool {
+    let Some(expires_at_ms) = ticket_expires_at.and_then(parse_rfc3339_utc_ms) else {
+        return false;
+    };
+    now_ms.saturating_add(RELAY_TICKET_RENEW_WINDOW_MS) >= expires_at_ms
+}
+
+fn parse_rfc3339_utc_ms(value: &str) -> Option<u64> {
+    let value = value.trim();
+    let (date, time) = value.split_once('T')?;
+    let time = time.strip_suffix('Z')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i32>().ok()?;
+    let month = date_parts.next()?.parse::<u32>().ok()?;
+    let day = date_parts.next()?.parse::<u32>().ok()?;
+    if date_parts.next().is_some() {
+        return None;
+    }
+    let time = time.split_once('.').map(|(whole, _)| whole).unwrap_or(time);
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<u32>().ok()?;
+    let minute = time_parts.next()?.parse::<u32>().ok()?;
+    let second = time_parts.next()?.parse::<u32>().ok()?;
+    if time_parts.next().is_some()
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+    let days = days_from_civil(year, month, day)?;
+    let seconds = days
+        .checked_mul(86_400)?
+        .checked_add(i64::from(hour) * 3_600)?
+        .checked_add(i64::from(minute) * 60)?
+        .checked_add(i64::from(second))?;
+    u64::try_from(seconds).ok()?.checked_mul(1_000)
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
+    let mut year = i64::from(year);
+    let month = i64::from(month);
+    let day = i64::from(day);
+    year -= if month <= 2 { 1 } else { 0 };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * month_prime + 2) / 5 + day - 1;
+    if !(0..=365).contains(&doy) {
+        return None;
+    }
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
 fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) {
     let Ok(mut session) = load_session() else {
         return;
@@ -1737,13 +2335,6 @@ fn control_device_network_available(device: &control_plane::ControlDevice) -> bo
         && !status_is_managed_disabled(device.membership_status.as_deref())
 }
 
-fn sync_session_device_fields(session: &mut PersistedSession, device: &ControlDevice) {
-    session.device_id = Some(device.device_id.clone());
-    if device.mqtt.is_some() {
-        session.mqtt = device.mqtt.clone();
-    }
-}
-
 fn status_is_managed_disabled(status: Option<&str>) -> bool {
     let Some(status) = status else {
         return false;
@@ -1752,72 +2343,6 @@ fn status_is_managed_disabled(status: Option<&str>) -> bool {
         status.trim().to_ascii_lowercase().as_str(),
         "disabled" | "suspended" | "blocked" | "revoked" | "deleted" | "removed"
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{select_relay_candidates, status_is_managed_disabled, PersistedRelayCandidate};
-
-    #[test]
-    fn online_presence_statuses_do_not_disable_local_network() {
-        for status in [
-            None,
-            Some(""),
-            Some("active"),
-            Some("online"),
-            Some("offline"),
-        ] {
-            assert!(!status_is_managed_disabled(status));
-        }
-    }
-
-    #[test]
-    fn managed_disable_statuses_disable_local_network() {
-        for status in [
-            Some("disabled"),
-            Some("suspended"),
-            Some("blocked"),
-            Some("revoked"),
-            Some("deleted"),
-            Some("removed"),
-        ] {
-            assert!(status_is_managed_disabled(status));
-        }
-    }
-
-    #[test]
-    fn relay_selection_prefers_reachable_low_score_candidate() {
-        let selections = select_relay_candidates(&[
-            PersistedRelayCandidate {
-                endpoint_id: "relay-bad".to_string(),
-                transport: "unknown".to_string(),
-                address: "127.0.0.1:1".to_string(),
-                country_code: None,
-                region_id: None,
-                cluster_id: None,
-            },
-            PersistedRelayCandidate {
-                endpoint_id: "relay-quic".to_string(),
-                transport: "quic".to_string(),
-                address: "127.0.0.1:9000".to_string(),
-                country_code: Some("CN".to_string()),
-                region_id: None,
-                cluster_id: None,
-            },
-            PersistedRelayCandidate {
-                endpoint_id: "relay-udp".to_string(),
-                transport: "udp".to_string(),
-                address: "127.0.0.1:9001".to_string(),
-                country_code: Some("CN".to_string()),
-                region_id: None,
-                cluster_id: None,
-            },
-        ]);
-        assert_eq!(selections[0].endpoint_id, "relay-quic");
-        assert!(selections[0].selected);
-        assert_eq!(selections[1].endpoint_id, "relay-udp");
-        assert!(!selections[1].selected);
-    }
 }
 
 fn should_sync_control(throttle: &Arc<Mutex<ControlSyncThrottle>>) -> bool {
@@ -1833,249 +2358,4 @@ fn should_sync_control(throttle: &Arc<Mutex<ControlSyncThrottle>>) -> bool {
 fn mark_control_sync(throttle: &Arc<Mutex<ControlSyncThrottle>>) {
     let mut throttle = throttle.lock().expect("control sync throttle poisoned");
     throttle.last_sync_ms = current_timestamp_ms();
-}
-
-impl From<PersistedSession> for AuthPayload {
-    fn from(session: PersistedSession) -> Self {
-        Self {
-            access_token: session.access_token,
-            refresh_token: session.refresh_token,
-            user_id: session.user_id,
-            user_label: session.user_label,
-            device_id: session.device_id,
-            virtual_ip: session.virtual_ip,
-            expires_in: session.expires_in,
-        }
-    }
-}
-
-impl From<AuthPayload> for PersistedSession {
-    fn from(payload: AuthPayload) -> Self {
-        Self {
-            access_token: payload.access_token,
-            refresh_token: payload.refresh_token,
-            user_id: payload.user_id,
-            user_label: payload.user_label,
-            device_id: payload.device_id,
-            active_network_id: None,
-            virtual_ip: payload.virtual_ip,
-            relay_candidates: Vec::new(),
-            mqtt: None,
-            expires_in: payload.expires_in,
-            authenticated_at_ms: current_timestamp_ms(),
-        }
-    }
-}
-
-impl PersistedSession {
-    fn empty() -> Self {
-        Self {
-            access_token: String::new(),
-            refresh_token: None,
-            user_id: String::new(),
-            user_label: String::new(),
-            device_id: None,
-            active_network_id: None,
-            virtual_ip: None,
-            relay_candidates: Vec::new(),
-            mqtt: None,
-            expires_in: None,
-            authenticated_at_ms: current_timestamp_ms(),
-        }
-    }
-}
-
-fn load_valid_registered_session() -> Option<PersistedSession> {
-    let Ok(session) = load_session() else {
-        return None;
-    };
-    if session.access_token.trim().is_empty() {
-        let _ = remove_session();
-        return None;
-    }
-    if session_is_expired(&session) {
-        let _ = remove_session();
-        return None;
-    }
-    match ensure_session_device_registered(session.clone()) {
-        Ok(session) => Some(session),
-        Err(error) if session_auth_invalid_error(&error) => {
-            eprintln!("client-core-service session invalid; clearing local session: {error:#}");
-            let _ = remove_session();
-            None
-        }
-        Err(error) => {
-            eprintln!("client-core-service startup device registration skipped: {error:#}");
-            Some(session)
-        }
-    }
-}
-
-fn refresh_startup_session<P>(runtime: &mut ClientRuntime<P>)
-where
-    P: client_core::PlatformNetwork,
-{
-    let Some(session) = load_valid_registered_session() else {
-        let _ = runtime.dispatch(ClientCommand::Logout);
-        return;
-    };
-    let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
-}
-
-fn session_is_expired(session: &PersistedSession) -> bool {
-    let Some(expires_in) = session.expires_in else {
-        return false;
-    };
-    let lifetime_ms = expires_in.saturating_mul(1_000);
-    let expires_at_ms = session.authenticated_at_ms.saturating_add(lifetime_ms);
-    current_timestamp_ms().saturating_add(30_000) >= expires_at_ms
-}
-
-fn session_auth_invalid_error(error: &anyhow::Error) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    message.contains("http 401")
-        || message.contains("unauthorized")
-        || message.contains("invalid token")
-        || message.contains("token expired")
-}
-
-fn ensure_session_device_registered(mut session: PersistedSession) -> Result<PersistedSession> {
-    if session.access_token.trim().is_empty() {
-        return Ok(session);
-    }
-    let client = ControlPlaneClient::from_env();
-    let device = client.ensure_device(&session.access_token, session.device_id.as_deref())?;
-    sync_session_device_fields(&mut session, &device);
-    if session.active_network_id.is_none() {
-        if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
-            session.active_network_id = Some(network_id);
-        }
-    }
-    if session.virtual_ip.is_none() {
-        if let Some(virtual_ip) = device
-            .current_virtual_ip
-            .or(device.virtual_ip)
-            .filter(|value| !value.trim().is_empty())
-        {
-            session.virtual_ip = Some(virtual_ip);
-        }
-    }
-    persist_session(&session)?;
-    Ok(session)
-}
-
-fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result<PersistedSession> {
-    let client = ControlPlaneClient::from_env();
-    let mut session = PersistedSession::from(payload);
-    let device = client.ensure_device(&session.access_token, session.device_id.as_deref())?;
-    sync_session_device_fields(&mut session, &device);
-    if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
-        session.active_network_id = Some(network_id);
-    }
-    if let Some(virtual_ip) = device
-        .current_virtual_ip
-        .filter(|value| !value.trim().is_empty())
-    {
-        session.virtual_ip = Some(virtual_ip);
-        return Ok(session);
-    }
-
-    let devices = client.list_devices(&session.access_token)?;
-    if let Some(current) = devices
-        .into_iter()
-        .find(|item| Some(item.device_id.as_str()) == session.device_id.as_deref())
-    {
-        if let Some(virtual_ip) = current
-            .current_virtual_ip
-            .or(current.virtual_ip)
-            .filter(|value| !value.trim().is_empty())
-        {
-            session.virtual_ip = Some(virtual_ip);
-        }
-    }
-    Ok(session)
-}
-
-fn report_runtime_state(state: &ClientViewState) {
-    let Ok(mut session) = load_session() else {
-        return;
-    };
-    if session.active_network_id.is_none() {
-        let client = ControlPlaneClient::from_env();
-        if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
-            session.active_network_id = Some(network_id);
-            let _ = persist_session(&session);
-        }
-    }
-    let Some(device_id) = session
-        .device_id
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-    let Some(network_id) = session
-        .active_network_id
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-    let client = ControlPlaneClient::from_env();
-    let _ = client.report_network_state(
-        &session.access_token,
-        device_id,
-        network_id,
-        state.network_enabled,
-        state.virtual_ip.as_deref(),
-    );
-}
-
-fn session_file_path() -> PathBuf {
-    let base = app_data_dir();
-    base.join("SLAN").join("client-v2-session.json")
-}
-
-fn app_data_dir() -> PathBuf {
-    if cfg!(target_os = "windows") {
-        return std::env::var_os("ProgramData")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-    }
-    if cfg!(target_os = "macos") {
-        return PathBuf::from("/Library/Application Support");
-    }
-    std::env::var_os("SLAN_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib"))
-}
-
-pub(crate) fn load_session() -> Result<PersistedSession> {
-    let path = session_file_path();
-    let payload = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_slice(&payload).with_context(|| format!("decode {}", path.display()))
-}
-
-pub(crate) fn persist_session(session: &PersistedSession) -> Result<()> {
-    let path = session_file_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let payload = serde_json::to_vec_pretty(session).context("encode client session")?;
-    fs::write(&path, payload).with_context(|| format!("write {}", path.display()))
-}
-
-fn remove_session() -> Result<()> {
-    let path = session_file_path();
-    if path.exists() {
-        fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-    }
-    Ok(())
-}
-
-pub(crate) fn current_timestamp_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
 }

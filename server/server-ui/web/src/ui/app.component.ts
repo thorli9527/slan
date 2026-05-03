@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 
-import { AuthResponse, Device, PlanStatus, NetworkAssignment, NetworkDetail, NetworkHome, NetworkMember, Subnet } from './api-contracts';
+import { AuthResponse, Device, PlanStatus, NetworkAssignment, NetworkDetail, NetworkHome, NetworkMember, NetworkQuality, NetworkQualityItem, Subnet } from './api-contracts';
 import { AuthPanelComponent } from './auth-panel.component';
 import { ConsoleApiError, ConsoleApiService } from './console-api.service';
 import { AuthenticateResult, ConsoleAppFacadeService, RefreshWorkspaceResult } from './console-app-facade.service';
@@ -30,7 +30,8 @@ export class AppComponent implements OnDestroy {
   private static readonly WORKSPACE_REFRESH_INTERVAL_MS = 5_000;
   readonly navItems: Array<{ id: ConsoleView; label: string; caption: string }> = [
     { id: 'account', label: '账户概览', caption: '账号、设备、接入状态' },
-    { id: 'network', label: '网络管理', caption: 'IP 绑定、设备接入和邀请码管理' }
+    { id: 'network', label: '网络管理', caption: 'IP 绑定、设备接入和邀请码管理' },
+    { id: 'quality', label: '网络质量', caption: '链路质量、包大小策略下发' }
   ];
   private readonly facade = inject(ConsoleAppFacadeService);
   private readonly callbackService = inject(ConsoleCallbackService);
@@ -63,6 +64,16 @@ export class AppComponent implements OnDestroy {
   updateCidr = '';
   networkJoinKey = '';
   dnsDocumentText = '';
+  qualityRelayMtu = 1280;
+  qualityMaxFramePayload = 1200;
+  qualityRecommendationLevel = 2;
+  qualityExecutionLevel = 1;
+  qualityReason = 'manual_network_quality_policy';
+  qualityTtlMinutes = 60;
+  qualityHours = 1;
+  qualityPathType = 'any';
+  qualityPathStrategy = 'bandwidth_saving';
+  readonly qualityHourOptions = [1, 2, 12, 24];
 
   readonly token = signal(localStorage.getItem('slan.accessToken') || '');
   readonly userId = signal(localStorage.getItem('slan.userId') || '');
@@ -83,6 +94,9 @@ export class AppComponent implements OnDestroy {
   readonly devices = signal<Device[]>([]);
   readonly subnets = signal<Subnet[]>([]);
   readonly plan = signal<PlanStatus | null>(null);
+  readonly networkQuality = signal<NetworkQuality | null>(null);
+  readonly qualityLoading = signal(false);
+  readonly qualitySelectedDevices = signal<Record<string, boolean>>({});
   readonly assignmentPage = signal(1);
   readonly currentDeviceId = signal(localStorage.getItem('slan.deviceId') || '');
   readonly draftIps = signal<Record<string, string>>({});
@@ -146,6 +160,24 @@ export class AppComponent implements OnDestroy {
   readonly pendingMembers = computed((): NetworkMember[] => {
     return (this.detail()?.members || []).filter((item) => item.status === 'pending');
   });
+  readonly qualityRows = computed(() => {
+    const byDevice = new Map<string, NetworkQualityItem>();
+    for (const item of this.networkQuality()?.items || []) {
+      const deviceId = (item.deviceId || '').trim();
+      if (!deviceId) {
+        continue;
+      }
+      const existing = byDevice.get(deviceId);
+      if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+        byDevice.set(deviceId, item);
+      }
+    }
+    return Array.from(byDevice.values()).sort((a, b) => (a.deviceName || a.deviceId || '').localeCompare(b.deviceName || b.deviceId || ''));
+  });
+  readonly qualitySummary = computed(() => this.networkQuality()?.summary.networks?.[0] || null);
+  readonly selectedQualityDeviceIds = computed(() => Object.entries(this.qualitySelectedDevices())
+    .filter(([, selected]) => selected)
+    .map(([deviceId]) => deviceId));
   readonly loginClientDeviceId = signal<string>('');
   readonly loginCallbackId = signal<string>('');
   readonly loginClientPlatform = signal<string>(this.sessionService.detectClientPlatform());
@@ -241,6 +273,100 @@ export class AppComponent implements OnDestroy {
 
   switchView(view: ConsoleView): void {
     this.activeView.set(view);
+    if (view === 'quality') {
+      void this.loadNetworkQuality();
+    }
+  }
+
+  async loadNetworkQuality(): Promise<void> {
+    this.clearNotices();
+    const active = this.activeNetwork();
+    if (!active || !this.canManageNetwork()) {
+      return;
+    }
+    this.qualityLoading.set(true);
+    try {
+      const quality = await this.api.getNetworkQuality(this.token(), active.networkId, this.qualityHours);
+      this.networkQuality.set(quality);
+      const rows = quality.items || [];
+      const latest = rows.find((item) => item.relayMtu && item.maxFramePayload);
+      if (latest?.relayMtu && latest.maxFramePayload) {
+        this.qualityRelayMtu = latest.relayMtu;
+        this.qualityMaxFramePayload = latest.maxFramePayload;
+      }
+      const existing = this.qualitySelectedDevices();
+      const next: Record<string, boolean> = {};
+      for (const row of rows) {
+        if (row.deviceId) {
+          next[row.deviceId] = existing[row.deviceId] === true;
+        }
+      }
+      this.qualitySelectedDevices.set(next);
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.qualityLoading.set(false);
+    }
+  }
+
+  setQualityHours(hours: number): void {
+    this.qualityHours = hours;
+    void this.loadNetworkQuality();
+  }
+
+  toggleQualityDevice(deviceId: string, selected: boolean): void {
+    this.qualitySelectedDevices.update((current) => ({ ...current, [deviceId]: selected }));
+  }
+
+  setAllQualityDevices(selected: boolean): void {
+    const next: Record<string, boolean> = {};
+    for (const row of this.qualityRows()) {
+      if (row.deviceId) {
+        next[row.deviceId] = selected;
+      }
+    }
+    this.qualitySelectedDevices.set(next);
+  }
+
+  async publishQualityPolicy(scope: 'network' | 'device_override'): Promise<void> {
+    this.clearNotices();
+    const active = this.activeNetwork();
+    if (!active || !this.canManageNetwork()) {
+      return;
+    }
+    const relayMtu = Math.trunc(Number(this.qualityRelayMtu));
+    const maxFramePayload = Math.trunc(Number(this.qualityMaxFramePayload));
+    if (relayMtu < 576 || relayMtu > 1500 || maxFramePayload < 512 || maxFramePayload > 1400 || maxFramePayload >= relayMtu) {
+      this.error.set('包大小参数不合法：MTU 需为 576-1500，Payload 需为 512-1400 且小于 MTU。');
+      return;
+    }
+    const targetDeviceIds = scope === 'device_override' ? this.selectedQualityDeviceIds() : [];
+    if (scope === 'device_override' && targetDeviceIds.length === 0) {
+      this.error.set('请先选择需要批量下发的客户端。');
+      return;
+    }
+    this.actionBusy.set(scope === 'network' ? 'publishQualityAll' : 'publishQualityBatch');
+    try {
+      const response = await this.api.publishRelayPolicy(this.token(), active.networkId, {
+        scope,
+        targetDeviceIds,
+        pathType: this.qualityPathType === 'any' ? undefined : this.qualityPathType,
+        preferredPathTypes: this.qualityPreferredPathTypes(),
+        version: 1,
+        recommendationLevel: Math.max(0, Math.min(11, Math.trunc(Number(this.qualityRecommendationLevel)))),
+        executionLevel: Math.max(0, Math.min(7, Math.trunc(Number(this.qualityExecutionLevel)))),
+        relayMtu,
+        maxFramePayload,
+        reason: this.qualityReason.trim() || (scope === 'network' ? 'manual_network_quality_policy' : 'manual_device_override'),
+        ttlMs: Math.max(1, Math.trunc(Number(this.qualityTtlMinutes))) * 60 * 1000,
+      });
+      this.message.set(`策略已下发：成功 ${response.published}，跳过 ${response.skipped}`);
+      await this.loadNetworkQuality();
+    } catch (error) {
+      this.setError(error);
+    } finally {
+      this.actionBusy.set('');
+    }
   }
 
   setAuthMode(mode: AuthMode): void {
@@ -299,6 +425,18 @@ export class AppComponent implements OnDestroy {
       this.dnsDocumentText = this.buildDnsDocument(detail);
     }
     this.networkDialog.set('dns');
+  }
+
+  qualityPreferredPathTypes(): string[] {
+    switch (this.qualityPathStrategy) {
+      case 'performance':
+        return ['direct_udp', 'relay_udp', 'relay_tcp', 'relay_http3', 'relay_tls'];
+      case 'relay_saving':
+        return ['relay_udp', 'relay_tcp', 'relay_http3', 'relay_tls'];
+      case 'bandwidth_saving':
+      default:
+        return ['direct_udp', 'relay_udp', 'relay_tcp', 'relay_http3', 'relay_tls'];
+    }
   }
 
   openInviteNetworkDialog(): void {
@@ -462,6 +600,9 @@ export class AppComponent implements OnDestroy {
       });
       this.applyRefreshWorkspaceResult(result);
       await this.loadPlanStatus();
+      if (this.activeView() === 'quality') {
+        await this.loadNetworkQuality();
+      }
       await this.resumeCachedLoginCallback(result.managedDevice.deviceId);
     } catch (error) {
       this.setError(error);
@@ -815,6 +956,30 @@ export class AppComponent implements OnDestroy {
       return '-';
     }
     return new Date(value * 1000).toLocaleString();
+  }
+
+  formatTimestampMs(value?: number): string {
+    if (!value) {
+      return '-';
+    }
+    return new Date(value).toLocaleString();
+  }
+
+  packetLossLabel(value?: number): string {
+    if (value === undefined || value === null) {
+      return '-';
+    }
+    return (value / 10_000).toFixed(2) + '%';
+  }
+
+  qualityStatusLabel(row: NetworkQualityItem): string {
+    if (row.policyApplied) {
+      return '已生效';
+    }
+    if (row.policyId) {
+      return '待生效';
+    }
+    return '未上报';
   }
 
   deviceLinkStatus(device: Device): string {

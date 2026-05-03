@@ -74,6 +74,15 @@ func TestRelayHeartbeatRankPrefersHealthyThenUnknownThenUnhealthy(t *testing.T) 
 	}
 }
 
+func TestNormalizeRelayTransportValue(t *testing.T) {
+	if got := normalizeRelayTransportValue(" HTTP3 "); got != "http3" {
+		t.Fatalf("expected http3, got %q", got)
+	}
+	if got := normalizeRelayTransportValue("quic"); got != "" {
+		t.Fatalf("expected unsupported alias to be rejected, got %q", got)
+	}
+}
+
 func TestRelayPathOptionsPreserveClusterRankOrder(t *testing.T) {
 	nodes := []configs.RelayNodeConfig{
 		{NodeID: "healthy-low-static", Transport: "udp", Address: "127.0.0.1:9000", Priority: 100},

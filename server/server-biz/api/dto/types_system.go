@@ -133,27 +133,113 @@ type OpsRelayTopology struct {
 type OpsNetworkQuality struct {
 	// Items 是最近上报的路径质量样本。
 	Items []OpsNetworkQualityItem `json:"items,omitempty"`
+	// Summary 是按网络/跨国/路径类型聚合的质量摘要。
+	Summary OpsNetworkQualitySummary `json:"summary"`
 }
 
 // OpsNetworkQualityItem 展示一条节点路径质量样本及其用户、设备、网络上下文。
 type OpsNetworkQualityItem struct {
-	HealthID      string `json:"healthId"`
-	NetworkID     string `json:"networkId"`
-	NetworkName   string `json:"networkName,omitempty"`
-	UserID        string `json:"userId,omitempty"`
-	UserEmail     string `json:"userEmail,omitempty"`
-	DeviceID      string `json:"deviceId,omitempty"`
-	DeviceName    string `json:"deviceName,omitempty"`
-	NodeID        string `json:"nodeId"`
-	PeerNodeID    string `json:"peerNodeId,omitempty"`
-	PathType      string `json:"pathType"`
-	Endpoint      string `json:"endpoint,omitempty"`
-	DerpNodeID    string `json:"derpNodeId,omitempty"`
-	ObservedRttMs uint32 `json:"observedRttMs,omitempty"`
-	PacketLossPpm uint32 `json:"packetLossPpm,omitempty"`
-	PathScore     uint32 `json:"pathScore,omitempty"`
-	SampledAtMs   uint64 `json:"sampledAtMs,omitempty"`
-	UpdatedAt     int64  `json:"updatedAt"`
+	HealthID           string `json:"healthId"`
+	NetworkID          string `json:"networkId"`
+	NetworkName        string `json:"networkName,omitempty"`
+	UserID             string `json:"userId,omitempty"`
+	UserEmail          string `json:"userEmail,omitempty"`
+	DeviceID           string `json:"deviceId,omitempty"`
+	DeviceName         string `json:"deviceName,omitempty"`
+	NodeID             string `json:"nodeId"`
+	PeerNodeID         string `json:"peerNodeId,omitempty"`
+	PathType           string `json:"pathType"`
+	ActivePath         string `json:"activePath,omitempty"`
+	Endpoint           string `json:"endpoint,omitempty"`
+	DerpNodeID         string `json:"derpNodeId,omitempty"`
+	ObservedRttMs      uint32 `json:"observedRttMs,omitempty"`
+	PacketLossPpm      uint32 `json:"packetLossPpm,omitempty"`
+	PathScore          uint32 `json:"pathScore,omitempty"`
+	SourceCountryCode  string `json:"sourceCountryCode,omitempty"`
+	RelayCountryCode   string `json:"relayCountryCode,omitempty"`
+	PeerCountryCode    string `json:"peerCountryCode,omitempty"`
+	CrossCountry       *bool  `json:"crossCountry,omitempty"`
+	RelayMtu           uint32 `json:"relayMtu,omitempty"`
+	MaxFramePayload    uint32 `json:"maxFramePayload,omitempty"`
+	PathDowngrades     uint64 `json:"pathDowngrades,omitempty"`
+	PathUpgrades       uint64 `json:"pathUpgrades,omitempty"`
+	LastPathChange     string `json:"lastPathChange,omitempty"`
+	PolicyID           string `json:"policyId,omitempty"`
+	PolicyScope        string `json:"policyScope,omitempty"`
+	PolicyApplied      bool   `json:"policyApplied,omitempty"`
+	PolicyReportedAtMs uint64 `json:"policyReportedAtMs,omitempty"`
+	SampledAtMs        uint64 `json:"sampledAtMs,omitempty"`
+	UpdatedAt          int64  `json:"updatedAt"`
+}
+
+type OpsNetworkQualitySummary struct {
+	Networks []OpsNetworkQualityNetworkSummary `json:"networks,omitempty"`
+}
+
+type OpsNetworkQualityNetworkSummary struct {
+	NetworkID       string                         `json:"networkId"`
+	NetworkName     string                         `json:"networkName,omitempty"`
+	HasCrossCountry bool                           `json:"hasCrossCountry"`
+	CrossCountry    OpsNetworkQualityCounter       `json:"crossCountry"`
+	NonCrossCountry OpsNetworkQualityCounter       `json:"nonCrossCountry"`
+	PathTypes       []OpsNetworkQualityPathType    `json:"pathTypes,omitempty"`
+	ActivePaths     []OpsNetworkQualityPathType    `json:"activePaths,omitempty"`
+	PathDowngrades  uint64                         `json:"pathDowngrades,omitempty"`
+	PathUpgrades    uint64                         `json:"pathUpgrades,omitempty"`
+	CountryPairs    []OpsNetworkQualityCountryPair `json:"countryPairs,omitempty"`
+}
+
+type OpsNetworkQualityCounter struct {
+	SampleCount      int    `json:"sampleCount"`
+	AvgRttMs         uint32 `json:"avgRttMs,omitempty"`
+	AvgPacketLossPpm uint32 `json:"avgPacketLossPpm,omitempty"`
+	AvgPathScore     uint32 `json:"avgPathScore,omitempty"`
+}
+
+type OpsNetworkQualityPathType struct {
+	PathType string `json:"pathType"`
+	Count    int    `json:"count"`
+}
+
+type OpsNetworkQualityCountryPair struct {
+	SourceCountryCode string                   `json:"sourceCountryCode,omitempty"`
+	RelayCountryCode  string                   `json:"relayCountryCode,omitempty"`
+	PeerCountryCode   string                   `json:"peerCountryCode,omitempty"`
+	CrossCountry      bool                     `json:"crossCountry"`
+	Counter           OpsNetworkQualityCounter `json:"counter"`
+}
+
+// OpsRelayDataPlanePolicyRequest 用于管理员向网络内客户端下发 relay 数据面策略。
+type OpsRelayDataPlanePolicyRequest struct {
+	NetworkID           string   `json:"networkId"`
+	Scope               string   `json:"scope,omitempty"`
+	TargetDeviceIDs     []string `json:"targetDeviceIds,omitempty"`
+	PathType            string   `json:"pathType,omitempty"`
+	PreferredPathTypes  []string `json:"preferredPathTypes,omitempty"`
+	PolicyID            string   `json:"policyId,omitempty"`
+	Version             int      `json:"version,omitempty"`
+	RecommendationLevel *uint8   `json:"recommendationLevel,omitempty"`
+	ExecutionLevel      *uint8   `json:"executionLevel,omitempty"`
+	RelayMtu            uint32   `json:"relayMtu"`
+	MaxFramePayload     uint32   `json:"maxFramePayload"`
+	Reason              string   `json:"reason,omitempty"`
+	TTLMS               uint64   `json:"ttlMs,omitempty"`
+	EffectiveMS         uint64   `json:"effectiveMs,omitempty"`
+}
+
+// OpsRelayDataPlanePolicyResponse 描述策略下发结果。
+type OpsRelayDataPlanePolicyResponse struct {
+	PolicyID           string   `json:"policyId"`
+	NetworkID          string   `json:"networkId"`
+	Scope              string   `json:"scope,omitempty"`
+	TargetDeviceIDs    []string `json:"targetDeviceIds,omitempty"`
+	PathType           string   `json:"pathType,omitempty"`
+	PreferredPathTypes []string `json:"preferredPathTypes,omitempty"`
+	Published          int      `json:"published"`
+	Skipped            int      `json:"skipped"`
+	RelayMtu           uint32   `json:"relayMtu"`
+	MaxFramePayload    uint32   `json:"maxFramePayload"`
+	Reason             string   `json:"reason,omitempty"`
 }
 
 // OpsAdminInfo 描述管理员信息。

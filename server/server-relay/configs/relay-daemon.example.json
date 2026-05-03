@@ -1,7 +1,9 @@
 {
   "udp_bind": "0.0.0.0:9000",
+  "tcp_bind": "0.0.0.0:9001",
   "relay_url_prefix": "udp://",
   "ticket_signing_secret": "change-me-relay-ticket-secret",
+  "allow_unsigned_tickets": false,
   "mqtt": {
     "enabled": true,
     "broker_url": "mqtt://127.0.0.1:1883",
@@ -14,6 +16,18 @@
     "city_code": "local",
     "transport": "udp",
     "address": "127.0.0.1:9000",
+    "nodes": [
+      {
+        "node_id": "relay-cn-local-udp",
+        "transport": "udp",
+        "address": "127.0.0.1:9000"
+      },
+      {
+        "node_id": "relay-cn-local-tcp",
+        "transport": "tcp",
+        "address": "127.0.0.1:9001"
+      }
+    ],
     "interval_seconds": 30,
     "credential_ttl_seconds": 86400
   }

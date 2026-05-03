@@ -490,7 +490,7 @@ server-biz 需求模型
 - `port`
   中文备注：接入端口。
 - `transport`
-  中文备注：接入协议，例如 `udp`、`tcp`、`quic`。
+  中文备注：接入协议，例如 `udp`、`tcp`、`http3`。
 - `priority`
   中文备注：控制面建议优先级，数值越小越优先。
 - `tags`

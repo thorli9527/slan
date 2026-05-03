@@ -50,6 +50,8 @@ type PathHealthReport struct {
 	PeerNodeID string `json:"peerNodeId"`
 	// PathType 是路径类型，例如 lan / wan / reflexive / relay / derp。
 	PathType string `json:"pathType"`
+	// ActivePath 是客户端当前实际选中的路径，例如 direct_udp / relay_udp / relay_tcp。
+	ActivePath string `json:"activePath,omitempty"`
 	// Endpoint 是采样对应的端点。
 	Endpoint string `json:"endpoint,omitempty"`
 	// DerpNodeID 是采样对应的 relay/DERP 节点。
@@ -60,8 +62,62 @@ type PathHealthReport struct {
 	PacketLossPpm *uint32 `json:"packetLossPpm,omitempty"`
 	// PathScore 是客户端本地评分。
 	PathScore *uint32 `json:"pathScore,omitempty"`
+	// SourceCountryCode 是客户端所在国家。
+	SourceCountryCode string `json:"sourceCountryCode,omitempty"`
+	// RelayCountryCode 是 relay 节点所在国家。
+	RelayCountryCode string `json:"relayCountryCode,omitempty"`
+	// PeerCountryCode 是对端所在国家。
+	PeerCountryCode string `json:"peerCountryCode,omitempty"`
+	// CrossCountry 标记这条质量样本是否跨国。
+	CrossCountry *bool `json:"crossCountry,omitempty"`
+	// RelayMtu 是客户端当前使用的 relay MTU。
+	RelayMtu *uint32 `json:"relayMtu,omitempty"`
+	// MaxFramePayload 是客户端当前使用的最大 frame payload。
+	MaxFramePayload *uint32 `json:"maxFramePayload,omitempty"`
+	// PathDowngrades 是客户端本地路径降级次数。
+	PathDowngrades uint64 `json:"pathDowngrades,omitempty"`
+	// PathUpgrades 是客户端本地路径升级次数。
+	PathUpgrades uint64 `json:"pathUpgrades,omitempty"`
+	// LastPathChange 是最近一次路径切换原因。
+	LastPathChange string `json:"lastPathChange,omitempty"`
 	// SampledAtMs 是采样时间戳，毫秒。
 	SampledAtMs uint64 `json:"sampledAtMs,omitempty"`
+}
+
+// RelayDataPlanePolicy 是服务端下发给客户端的 relay 数据面策略。
+type RelayDataPlanePolicy struct {
+	PolicyID            string   `json:"policyId,omitempty"`
+	Version             int      `json:"version"`
+	Scope               string   `json:"scope,omitempty"`
+	NetworkID           string   `json:"networkId,omitempty"`
+	TargetDeviceIDs     []string `json:"targetDeviceIds,omitempty"`
+	PathType            string   `json:"pathType,omitempty"`
+	PreferredPathTypes  []string `json:"preferredPathTypes,omitempty"`
+	RecommendationLevel *uint8   `json:"recommendationLevel,omitempty"`
+	ExecutionLevel      *uint8   `json:"executionLevel,omitempty"`
+	RelayMtu            uint32   `json:"relayMtu"`
+	MaxFramePayload     uint32   `json:"maxFramePayload"`
+	Reason              string   `json:"reason,omitempty"`
+	TTLMS               uint64   `json:"ttlMs,omitempty"`
+	EffectiveMS         uint64   `json:"effectiveMs,omitempty"`
+	UpdatedAtMS         uint64   `json:"updatedAtMs,omitempty"`
+}
+
+// RelayPolicyReport 是客户端上报的 relay 数据面策略实际执行结果。
+type RelayPolicyReport struct {
+	NetworkID         string   `json:"networkId"`
+	DeviceID          string   `json:"deviceId,omitempty"`
+	PolicyID          string   `json:"policyId,omitempty"`
+	Scope             string   `json:"scope,omitempty"`
+	TargetDeviceIDs   []string `json:"targetDeviceIds,omitempty"`
+	PathType          string   `json:"pathType,omitempty"`
+	RelayMtu          uint32   `json:"relayMtu,omitempty"`
+	MaxFramePayload   uint32   `json:"maxFramePayload,omitempty"`
+	ExecutionLevel    *uint8   `json:"executionLevel,omitempty"`
+	Applied           bool     `json:"applied"`
+	Reason            string   `json:"reason,omitempty"`
+	PolicyUpdatedAtMS uint64   `json:"policyUpdatedAtMs,omitempty"`
+	ReportedAtMS      uint64   `json:"reportedAtMs,omitempty"`
 }
 
 // RelayNodeHeartbeat is published by server-relay through MQTT.
@@ -79,7 +135,7 @@ type RelayNodeHeartbeat struct {
 
 // PathOption 描述一条可尝试的连接路径。
 type PathOption struct {
-	// PathType 是路径类型，例如 direct_udp / direct_ipv6 / relay。
+	// PathType 是路径类型，例如 direct_udp / relay_udp / relay_tcp / relay_http3 / relay_tls。
 	PathType string `json:"pathType"`
 	// Endpoint 是目标端点。
 	Endpoint string `json:"endpoint"`
@@ -139,7 +195,7 @@ type ConnectionState struct {
 	NetworkID string `json:"networkId"`
 	// PeerNodeID 是当前上报状态的远端节点 ID。
 	PeerNodeID string `json:"peerNodeId"`
-	// Path 是当前连接使用的路径类型，例如 p2p / relay。
+	// Path 是当前连接使用的路径类型，例如 direct_udp / relay_udp / relay_tcp / relay_http3 / relay_tls。
 	Path string `json:"path"`
 	// State 是标准化状态值，例如 connecting、connected、failed 或 closed。
 	State string `json:"state"`

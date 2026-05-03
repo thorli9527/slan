@@ -33,7 +33,7 @@ pub fn publish_relay_heartbeat(
     if !config.enabled {
         return Ok(());
     }
-    let credential = relay_credential(config)?;
+    let credential = relay_credential(config, payload.node_id.as_str())?;
     let endpoint = parse_mqtt_url(&config.broker_url)?;
     let mut stream = TcpStream::connect(endpoint.as_str())
         .map_err(|err| format!("connect relay mqtt {endpoint}: {err}"))?;
@@ -82,8 +82,11 @@ struct RelayMqttCredential {
     topic: String,
 }
 
-fn relay_credential(config: &RelayMqttConfig) -> Result<RelayMqttCredential, String> {
-    let node_id = config.node_id.trim();
+fn relay_credential(
+    config: &RelayMqttConfig,
+    node_id: &str,
+) -> Result<RelayMqttCredential, String> {
+    let node_id = node_id.trim();
     if node_id.is_empty() {
         return Err("relay mqtt node_id is required".to_string());
     }

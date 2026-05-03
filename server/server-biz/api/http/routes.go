@@ -72,6 +72,7 @@ func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	startControlSync(deps)
 	startControlMQTT(deps)
 	startRelayHeartbeatMQTT(deps)
+	startRelayDataPlanePolicyController(deps)
 
 	router.GET("/healthz", healthz)
 	router.GET("/debug/vars", gin.WrapH(expvar.Handler()))

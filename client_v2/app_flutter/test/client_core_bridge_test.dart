@@ -262,6 +262,41 @@ void main() {
     expect(bridge.state.value.errorSource, ClientErrorSource.networkSwitch);
   });
 
+  test('service error result restores switch without waiting for event timeout',
+      () async {
+    final service = await _FakeClientService.start([
+      _ServiceReply(
+        expectedMethod: 'activateNetwork',
+        body: {
+          'signedIn': true,
+          'networkEnabled': false,
+          'syncing': false,
+          'switchEnabled': true,
+          'error': '服务端停用，请联系管理员',
+        },
+      ),
+    ]);
+    addTearDown(service.close);
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: service.host,
+    );
+
+    await bridge.dispatch(
+      const ClientCommand(ClientCommandType.enableNetwork),
+    );
+
+    await _waitFor(
+      () => bridge.state.value.errorSource == ClientErrorSource.networkSwitch,
+      reason: 'service error should settle the switch immediately',
+    );
+    expect(bridge.state.value.error, '服务端停用，请联系管理员');
+    expect(bridge.state.value.networkEnabled, isFalse);
+    expect(bridge.state.value.syncing, isFalse);
+    expect(bridge.state.value.switchEnabled, isTrue);
+    expect(service.seenMethods, isNot(contains('watchBusinessEvent')));
+  });
+
   test('network switch failed keeps event error after state query', () async {
     final service = await _FakeClientService.start([
       _ServiceReply(
@@ -528,6 +563,7 @@ void main() {
     expect(state.networkEnabled, isFalse);
     expect(state.virtualIp, isNull);
   });
+
 }
 
 class _ServiceReply {

@@ -10,3 +10,572 @@ contracts:
       message:
         type: string
         required: true
+  OpsRelayDataPlanePolicyRequest:
+    fields:
+      networkId:
+        type: string
+        required: true
+      scope:
+        type: string
+        required: false
+        comment: global / region / network / device / device_override。
+      targetDeviceIds:
+        type: string[]
+        required: false
+      pathType:
+        type: string
+        required: false
+        comment: 可选路径维度，direct / p2p / relay / direct_udp / relay_udp / relay_tcp / relay_http3 / relay_tls；为空表示全部路径。
+      preferredPathTypes:
+        type: string[]
+        required: false
+        comment: 客户端路径优先级，例如 direct_udp, relay_udp, relay_tcp, relay_http3, relay_tls。
+      policyId:
+        type: string
+        required: false
+      version:
+        type: int
+        required: false
+      recommendationLevel:
+        type: int
+        required: false
+        comment: 服务端 12 级建议档位，范围 0..11。
+      executionLevel:
+        type: int
+        required: false
+        comment: 客户端 8 级执行档位，范围 0..7。
+      relayMtu:
+        type: int
+        required: true
+      maxFramePayload:
+        type: int
+        required: true
+      reason:
+        type: string
+        required: false
+      ttlMs:
+        type: int64
+        required: false
+      effectiveMs:
+        type: int64
+        required: false
+  OpsRelayDataPlanePolicyResponse:
+    fields:
+      policyId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      scope:
+        type: string
+        required: false
+      targetDeviceIds:
+        type: string[]
+        required: false
+      pathType:
+        type: string
+        required: false
+      preferredPathTypes:
+        type: string[]
+        required: false
+      published:
+        type: int
+        required: true
+      skipped:
+        type: int
+        required: true
+      relayMtu:
+        type: int
+        required: true
+      maxFramePayload:
+        type: int
+        required: true
+      reason:
+        type: string
+        required: false
+  OpsNetworkQualityItem:
+    fields:
+      healthId:
+        type: string
+        required: true
+      networkId:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: false
+      nodeId:
+        type: string
+        required: true
+      pathType:
+        type: string
+        required: true
+      activePath:
+        type: string
+        required: false
+      relayMtu:
+        type: int
+        required: false
+      maxFramePayload:
+        type: int
+        required: false
+      policyId:
+        type: string
+        required: false
+      policyScope:
+        type: string
+        required: false
+      policyApplied:
+        type: bool
+        required: false
+      policyReportedAtMs:
+        type: int64
+        required: false
+      observedRttMs:
+        type: int
+        required: false
+      packetLossPpm:
+        type: int
+        required: false
+      pathScore:
+        type: int
+        required: false
+      sourceCountryCode:
+        type: string
+        required: false
+      relayCountryCode:
+        type: string
+        required: false
+      peerCountryCode:
+        type: string
+        required: false
+      crossCountry:
+        type: bool
+        required: false
+      pathDowngrades:
+        type: int64
+        required: false
+      pathUpgrades:
+        type: int64
+        required: false
+      lastPathChange:
+        type: string
+        required: false
+      sampledAtMs:
+        type: int64
+        required: false
+        comment: 当前时间窗口内该客户端最新样本时间。
+  OpsNetworkQuality:
+    fields:
+      items:
+        type: OpsNetworkQualityItem[]
+        required: false
+        comment: 按客户端聚合后的当前时间窗口平均质量。
+      summary:
+        type: OpsNetworkQualitySummary
+        required: true
+  OpsNetworkQualitySummary:
+    fields:
+      networks:
+        type: OpsNetworkQualityNetworkSummary[]
+        required: false
+  OpsNetworkQualityNetworkSummary:
+    fields:
+      networkId:
+        type: string
+        required: true
+      hasCrossCountry:
+        type: bool
+        required: true
+      crossCountry:
+        type: OpsNetworkQualityCounter
+        required: true
+      nonCrossCountry:
+        type: OpsNetworkQualityCounter
+        required: true
+      pathTypes:
+        type: OpsNetworkQualityPathType[]
+        required: false
+      activePaths:
+        type: OpsNetworkQualityPathType[]
+        required: false
+      pathDowngrades:
+        type: int64
+        required: false
+      pathUpgrades:
+        type: int64
+        required: false
+      countryPairs:
+        type: OpsNetworkQualityCountryPair[]
+        required: false
+  OpsNetworkQualityCounter:
+    fields:
+      sampleCount:
+        type: int
+        required: true
+      avgRttMs:
+        type: int
+        required: false
+      avgPacketLossPpm:
+        type: int
+        required: false
+      avgPathScore:
+        type: int
+        required: false
+  OpsNetworkQualityPathType:
+    fields:
+      pathType:
+        type: string
+        required: true
+      count:
+        type: int
+        required: true
+  OpsNetworkQualityCountryPair:
+    fields:
+      sourceCountryCode:
+        type: string
+        required: false
+      relayCountryCode:
+        type: string
+        required: false
+      peerCountryCode:
+        type: string
+        required: false
+      crossCountry:
+        type: bool
+        required: true
+      counter:
+        type: OpsNetworkQualityCounter
+        required: true
+  PathDiagnoseResponse:
+    fields:
+      networkId:
+        type: string
+        required: false
+      activePathType:
+        type: string
+        required: true
+      activePathCounts:
+        type: PathDiagnosePathCount[]
+        required: false
+      peerPaths:
+        type: PeerPathRuntime[]
+        required: false
+      relay:
+        type: PathDiagnoseRelay
+        required: false
+      directCandidates:
+        type: PathDiagnoseDirectCandidate[]
+        required: false
+      relayCandidates:
+        type: RelayCandidateSelection[]
+        required: false
+      mtu:
+        type: PathDiagnoseMtu
+        required: true
+      dns:
+        type: PathDiagnoseDns
+        required: true
+      platform:
+        type: PlatformNetworkDiagnostics
+        required: true
+      exportPath:
+        type: string
+        required: false
+  PathDiagnosePathCount:
+    fields:
+      pathType:
+        type: string
+        required: true
+      count:
+        type: int
+        required: true
+  PathDiagnoseRelay:
+    fields:
+      address:
+        type: string
+        required: true
+      activePath:
+        type: string
+        required: false
+      requestedRelaySessionCount:
+        type: int
+        required: true
+      relaySessionCount:
+        type: int
+        required: true
+      ticketExpiresAt:
+        type: string
+        required: false
+      relayAttachFailures:
+        type: int64
+        required: true
+      lastRelayAttachError:
+        type: string
+        required: false
+      peers:
+        type: PathDiagnoseRelayPeer[]
+        required: false
+      relayMtu:
+        type: int
+        required: false
+      maxFramePayload:
+        type: int
+        required: false
+      tunPacketsSent:
+        type: int64
+        required: true
+      relayPacketsReceived:
+        type: int64
+        required: true
+      relayErrorResponses:
+        type: int64
+        required: true
+      relayConfigHashMismatches:
+        type: int64
+        required: true
+      lastRelayError:
+        type: string
+        required: false
+      failures:
+        type: int64
+        required: true
+      unroutableTunPackets:
+        type: int64
+        required: true
+      lastUnroutableDestination:
+        type: string
+        required: false
+      oversizedTunPackets:
+        type: int64
+        required: true
+      lastOversizedTunPacketSize:
+        type: int
+        required: false
+      updatedAtMs:
+        type: int64
+        required: true
+      stale:
+        type: bool
+        required: true
+  PathDiagnoseRelayPeer:
+    fields:
+      peerNodeId:
+        type: string
+        required: true
+      sessionId:
+        type: string
+        required: true
+      peerVirtualIps:
+        type: string[]
+        required: false
+      attached:
+        type: bool
+        required: true
+      attachError:
+        type: string
+        required: false
+      tunPacketsSent:
+        type: int64
+        required: true
+      relayPacketsReceived:
+        type: int64
+        required: true
+      relayErrors:
+        type: int64
+        required: true
+      lastRelayError:
+        type: string
+        required: false
+      lastSendPath:
+        type: string
+        required: false
+      pathDowngrades:
+        type: int64
+        required: true
+      pathUpgrades:
+        type: int64
+        required: true
+      lastPathChange:
+        type: string
+        required: false
+      replayedFrames:
+        type: int64
+        required: true
+      configHashMismatches:
+        type: int64
+        required: true
+      lastRxSeq:
+        type: int64
+        required: true
+      sendFailures:
+        type: int64
+        required: true
+      receiveFailures:
+        type: int64
+        required: true
+      wintunWriteFailures:
+        type: int64
+        required: true
+  PathDiagnoseDirectCandidate:
+    fields:
+      peerNodeId:
+        type: string
+        required: true
+      pathType:
+        type: string
+        required: true
+      endpointType:
+        type: string
+        required: true
+      address:
+        type: string
+        required: true
+      reachable:
+        type: bool
+        required: true
+      rttMs:
+        type: int
+        required: false
+  PathDiagnoseMtu:
+    fields:
+      relayMtu:
+        type: int
+        required: false
+      maxFramePayload:
+        type: int
+        required: false
+      policyScope:
+        type: string
+        required: false
+      policyPathType:
+        type: string
+        required: false
+      actualMtuChecked:
+        type: bool
+        required: true
+      actualMtuOk:
+        type: bool
+        required: false
+      actualMssChecked:
+        type: bool
+        required: true
+      actualMssOk:
+        type: bool
+        required: false
+      note:
+        type: string
+        required: false
+  PathDiagnoseDns:
+    fields:
+      expectedServers:
+        type: string[]
+        required: false
+      actualServers:
+        type: string[]
+        required: false
+      checked:
+        type: bool
+        required: true
+      ok:
+        type: bool
+        required: false
+      missingServers:
+        type: string[]
+        required: false
+      extraServers:
+        type: string[]
+        required: false
+  PlatformNetworkDiagnostics:
+    fields:
+      platform:
+        type: string
+        required: false
+      adapterPresent:
+        type: bool
+        required: true
+      adapterName:
+        type: string
+        required: false
+      adminStatus:
+        type: string
+        required: false
+      interfaceIndex:
+        type: int
+        required: false
+      virtualIp:
+        type: string
+        required: false
+      mtu:
+        type: int
+        required: false
+      mss:
+        type: int
+        required: false
+      dnsServers:
+        type: string[]
+        required: false
+      routes:
+        type: string[]
+        required: false
+      checks:
+        type: PlatformDiagnosticCheck[]
+        required: false
+  PlatformDiagnosticCheck:
+    fields:
+      name:
+        type: string
+        required: true
+      ok:
+        type: bool
+        required: true
+      message:
+        type: string
+        required: false
+  PeerPathRuntime:
+    fields:
+      peerNodeId:
+        type: string
+        required: true
+      peerVirtualIps:
+        type: string[]
+        required: false
+      activePath:
+        type: string
+        required: false
+      candidates:
+        type: PathCandidate[]
+        required: false
+  PathCandidate:
+    fields:
+      kind:
+        type: string
+        required: true
+      state:
+        type: string
+        required: true
+      endpointId:
+        type: string
+        required: false
+      address:
+        type: string
+        required: false
+      sessionId:
+        type: string
+        required: false
+      transport:
+        type: string
+        required: false
+      rttMs:
+        type: int
+        required: false
+      pathScore:
+        type: int
+        required: false
+      lastOkAtMs:
+        type: int64
+        required: false
+      lastError:
+        type: string
+        required: false

@@ -74,6 +74,20 @@ the app continues the 15-second control reachability heartbeat with
 Management views should treat `Device.networkState.networkOnline` as the
 source of truth for online devices.
 
+Path quality and relay data-plane policy use these canonical path types:
+
+- `direct_udp`
+- `relay_udp`
+- `relay_tcp`
+- `relay_http3`
+- `relay_tls`
+
+The current Windows local service has real data-plane support for
+`direct_udp`, `relay_udp`, and `relay_tcp`. `relay_http3` and `relay_tls` are
+reserved in the protocol and can be managed by policy, but they must not be
+selected as reachable until the local service and relay daemon have matching
+HTTP3/TLS listeners and attach logic.
+
 In the current desktop bridge/service architecture, the 15-second heartbeat and
 45-second freshness semantics are implemented below Flutter:
 

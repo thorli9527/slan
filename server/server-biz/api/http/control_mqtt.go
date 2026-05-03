@@ -193,6 +193,20 @@ func handleControlMQTTEnvelope(deps routerDeps, deviceID string, session *contro
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
 		}
 		metricRecordPathHealth(session, report)
+	case "relay_policy_report":
+		if err := hydrateMQTTSession(deps, session); err != nil {
+			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
+		}
+		_ = deps.ControlChannel.Heartbeat(session.userID, session.nodeID, session.networkID)
+		var report controlmsg.RelayPolicyReport
+		if err := json.Unmarshal(env.Payload, &report); err != nil {
+			return publishControlMQTTError(deps, deviceID, env.RequestID, service.ErrInvalidArgument)
+		}
+		report.NetworkID = util.FirstNonEmpty(report.NetworkID, session.networkID)
+		report.DeviceID = util.FirstNonEmpty(report.DeviceID, deviceID)
+		if err := deps.ControlChannel.ReportRelayPolicy(session.userID, session.nodeID, report); err != nil {
+			return publishControlMQTTError(deps, deviceID, env.RequestID, err)
+		}
 	case "disconnect_notice":
 		if err := hydrateMQTTSession(deps, session); err != nil {
 			return publishControlMQTTError(deps, deviceID, env.RequestID, err)

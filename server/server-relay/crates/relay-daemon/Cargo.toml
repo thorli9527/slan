@@ -17,3 +17,6 @@ serde_json = "1"
 session = { path = "../session" }
 sha2 = "0.10"
 udp-relay = { path = "../udp-relay" }
+
+[dev-dependencies]
+client-core = { path = "../../../../client_v2/rust/crates/client-core" }

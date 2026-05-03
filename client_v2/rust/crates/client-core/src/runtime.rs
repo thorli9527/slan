@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{
     command::ClientCommand,
-    platform::{PlatformNetwork, RouteSpec},
+    platform::{PlatformNetwork, RelayDataPlaneConfig, RouteSpec},
     state::ClientViewState,
 };
 
@@ -59,6 +59,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                         destination: "mesh".to_string(),
                         gateway: None,
                     }],
+                    None,
                 )?;
             }
             ClientCommand::DisableNetwork => {
@@ -113,6 +114,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         prefix_len: u8,
         dns_servers: &[String],
         routes: &[RouteSpec],
+        relay_config: Option<&RelayDataPlaneConfig>,
     ) -> Result<ClientViewState> {
         self.with_syncing("enableNetwork", |runtime| {
             let virtual_ip = runtime
@@ -127,6 +129,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
             runtime.platform.configure_ip(&virtual_ip, prefix_len)?;
             runtime.platform.configure_dns(dns_servers)?;
             runtime.platform.configure_routes(routes)?;
+            runtime.platform.configure_relay(relay_config)?;
             runtime.state.network_enabled = true;
             runtime.state.virtual_ip = Some(virtual_ip);
             runtime.state.notice = Some("networkEnabled".to_string());

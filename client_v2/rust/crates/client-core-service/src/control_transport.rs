@@ -1,10 +1,12 @@
 use std::{
-    net::{TcpStream, ToSocketAddrs},
+    env, fs,
+    net::{TcpStream, ToSocketAddrs, UdpSocket},
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
 use anyhow::Result;
-use client_core::ClientViewState;
+use client_core::{normalize_relay_transport, ClientViewState};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -63,6 +65,10 @@ pub enum ControlTransportMessageKind {
     RuntimeState,
     #[serde(rename = "pathHealth")]
     PathHealth,
+    #[serde(rename = "endpointReport")]
+    EndpointReport,
+    #[serde(rename = "relayPolicyReport")]
+    RelayPolicyReport,
     #[serde(rename = "controlAck")]
     ControlAck,
 }
@@ -332,6 +338,13 @@ pub fn control_transport_outbox(
                 }),
             });
         }
+        if let Some(topic) = plan.upstream_control_topic.clone() {
+            if let Some(message) =
+                endpoint_report_message(session, &topic, reported_at_ms, plan.control_qos)
+            {
+                messages.push(message);
+            }
+        }
     }
     if include_path_health {
         if let Some(topic) = plan.upstream_control_topic.clone() {
@@ -341,6 +354,11 @@ pub fn control_transport_outbox(
                 reported_at_ms,
                 plan.control_qos,
             ));
+            if let Some(message) =
+                relay_policy_report_message(session, &topic, reported_at_ms, plan.control_qos)
+            {
+                messages.push(message);
+            }
         }
     }
     if let Some(topic) = plan.upstream_control_ack_topic {
@@ -358,6 +376,162 @@ pub fn control_transport_outbox(
     ControlTransportOutbox { messages }
 }
 
+fn endpoint_report_message(
+    session: &PersistedSession,
+    topic: &str,
+    reported_at_ms: u64,
+    qos: MqttQos,
+) -> Option<ControlTransportMessage> {
+    let network_id = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let endpoint_report = load_direct_udp_endpoint_report(reported_at_ms)?;
+    let updated_at = i64::try_from(reported_at_ms / 1_000).unwrap_or(i64::MAX);
+
+    Some(ControlTransportMessage {
+        id: format!("endpoint-report-{reported_at_ms}"),
+        topic: topic.to_string(),
+        qos,
+        kind: ControlTransportMessageKind::EndpointReport,
+        ack_task_id: None,
+        payload: serde_json::json!({
+            "type": "endpoint_report",
+            "requestId": format!("endpoint-report-{reported_at_ms}"),
+            "networkId": network_id,
+            "payload": {
+                "networkId": network_id,
+                "nodeId": session.self_node_id.clone().unwrap_or_default(),
+                "natType": endpoint_report.nat_type,
+                "endpoints": [
+                    {
+                        "type": endpoint_report.endpoint_type,
+                        "address": endpoint_report.endpoint,
+                        "updatedAt": endpoint_report.updated_at().unwrap_or(updated_at)
+                    }
+                ]
+            }
+        }),
+    })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DirectUdpEndpointReport {
+    endpoint: String,
+    #[serde(default)]
+    endpoint_type: String,
+    #[serde(default)]
+    nat_type: String,
+    #[serde(default)]
+    updated_at_ms: Option<u64>,
+}
+
+impl DirectUdpEndpointReport {
+    fn normalized(mut self, fallback_updated_at_ms: u64) -> Option<Self> {
+        self.endpoint = self.endpoint.trim().to_string();
+        self.endpoint_type = self.endpoint_type.trim().to_string();
+        self.nat_type = self.nat_type.trim().to_string();
+        if self.endpoint.is_empty() {
+            return None;
+        }
+        if self.endpoint_type.is_empty() {
+            self.endpoint_type = "lan".to_string();
+        }
+        if self.nat_type.is_empty() {
+            self.nat_type = "unknown".to_string();
+        }
+        if self.updated_at_ms.is_none() {
+            self.updated_at_ms = Some(fallback_updated_at_ms);
+        }
+        Some(self)
+    }
+
+    fn updated_at(&self) -> Option<i64> {
+        self.updated_at_ms
+            .map(|value| i64::try_from(value / 1_000).unwrap_or(i64::MAX))
+    }
+}
+
+fn load_direct_udp_endpoint_report(now_ms: u64) -> Option<DirectUdpEndpointReport> {
+    if let Some(endpoint) = env::var("SLAN_DIRECT_UDP_ENDPOINT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return DirectUdpEndpointReport {
+            endpoint,
+            endpoint_type: env::var("SLAN_DIRECT_UDP_ENDPOINT_TYPE").unwrap_or_default(),
+            nat_type: env::var("SLAN_DIRECT_UDP_NAT_TYPE").unwrap_or_default(),
+            updated_at_ms: Some(now_ms),
+        }
+        .normalized(now_ms);
+    }
+    let payload = fs::read(direct_udp_endpoint_file_path()).ok()?;
+    let report = serde_json::from_slice::<DirectUdpEndpointReport>(&payload).ok()?;
+    let report = report.normalized(now_ms)?;
+    if let Some(updated_at_ms) = report.updated_at_ms {
+        if now_ms.saturating_sub(updated_at_ms) > 5 * 60 * 1_000 {
+            return None;
+        }
+    }
+    Some(report)
+}
+
+fn direct_udp_endpoint_file_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ProgramData") {
+        return PathBuf::from(dir)
+            .join("SLAN")
+            .join("client-v2-direct-udp-endpoint.json");
+    }
+    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
+        return PathBuf::from(dir).join("client-v2-direct-udp-endpoint.json");
+    }
+    PathBuf::from("client-v2-direct-udp-endpoint.json")
+}
+
+fn relay_policy_report_message(
+    session: &PersistedSession,
+    topic: &str,
+    reported_at_ms: u64,
+    qos: MqttQos,
+) -> Option<ControlTransportMessage> {
+    let network_id = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let policy = load_relay_data_plane_policy(reported_at_ms)?;
+    Some(ControlTransportMessage {
+        id: format!("relay-policy-report-{reported_at_ms}"),
+        topic: topic.to_string(),
+        qos,
+        kind: ControlTransportMessageKind::RelayPolicyReport,
+        ack_task_id: None,
+        payload: serde_json::json!({
+            "type": "relay_policy_report",
+            "requestId": format!("relay-policy-report-{reported_at_ms}"),
+            "networkId": network_id,
+            "payload": {
+                "networkId": network_id,
+                "deviceId": session.device_id.clone(),
+                "policyId": policy.policy_id,
+                "scope": policy.scope,
+                "targetDeviceIds": policy.target_device_ids,
+                "pathType": policy.path_type,
+                "relayMtu": policy.relay_mtu,
+                "maxFramePayload": policy.max_frame_payload,
+                "executionLevel": policy.execution_level,
+                "applied": true,
+                "reason": policy.reason,
+                "policyUpdatedAtMs": policy.updated_at_ms,
+                "reportedAtMs": reported_at_ms
+            }
+        }),
+    })
+}
+
 fn relay_path_health_messages(
     session: &PersistedSession,
     topic: &str,
@@ -372,13 +546,19 @@ fn relay_path_health_messages(
     else {
         return Vec::new();
     };
-    session
+    let relay_runtime_stats = load_relay_runtime_stats(reported_at_ms);
+    let mut messages = session
         .relay_candidates
         .iter()
         .take(12)
         .filter(|candidate| !candidate.endpoint_id.trim().is_empty())
         .map(|candidate| {
-            let sample = probe_relay_candidate(candidate);
+            let sample = probe_relay_candidate(
+                candidate,
+                relay_runtime_stats
+                    .as_ref()
+                    .filter(|stats| stats.relay_address == candidate.address),
+            );
             ControlTransportMessage {
                 id: format!("path-health-{}-{reported_at_ms}", candidate.endpoint_id),
                 topic: topic.to_string(),
@@ -397,6 +577,71 @@ fn relay_path_health_messages(
                         "observedRttMs": sample.observed_rtt_ms,
                         "packetLossPpm": sample.packet_loss_ppm,
                         "pathScore": sample.path_score,
+                        "sourceCountryCode": device_country_code(),
+                        "relayCountryCode": candidate.country_code,
+                        "crossCountry": cross_country(device_country_code().as_deref(), candidate.country_code.as_deref()),
+                        "relayMtu": sample.relay_mtu,
+                        "maxFramePayload": sample.max_frame_payload,
+                        "sampledAtMs": reported_at_ms
+                    }
+                }),
+            }
+        })
+        .collect::<Vec<_>>();
+    if let Some(stats) = relay_runtime_stats.as_ref() {
+        messages.extend(peer_runtime_path_health_messages(
+            network_id,
+            topic,
+            reported_at_ms,
+            qos,
+            stats,
+        ));
+    }
+    messages
+}
+
+fn peer_runtime_path_health_messages(
+    network_id: &str,
+    topic: &str,
+    reported_at_ms: u64,
+    qos: MqttQos,
+    stats: &RelayRuntimeStats,
+) -> Vec<ControlTransportMessage> {
+    stats
+        .peers
+        .iter()
+        .filter(|peer| !peer.peer_node_id.trim().is_empty())
+        .map(|peer| {
+            let path_type = peer
+                .last_send_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| stats.active_path.as_deref())
+                .unwrap_or("unknown");
+            ControlTransportMessage {
+                id: format!("peer-path-health-{}-{reported_at_ms}", peer.peer_node_id),
+                topic: topic.to_string(),
+                qos,
+                kind: ControlTransportMessageKind::PathHealth,
+                ack_task_id: None,
+                payload: serde_json::json!({
+                    "type": "path_health_report",
+                    "requestId": format!("peer-path-health-{reported_at_ms}"),
+                    "networkId": network_id,
+                    "payload": {
+                        "networkId": network_id,
+                        "peerNodeId": peer.peer_node_id,
+                        "pathType": path_type,
+                        "activePath": path_type,
+                        "endpoint": stats.relay_address,
+                        "packetLossPpm": peer_packet_loss_ppm(peer),
+                        "pathScore": peer_path_score(peer),
+                        "relayMtu": stats.relay_mtu,
+                        "maxFramePayload": stats.max_frame_payload,
+                        "pathDowngrades": peer.path_downgrades,
+                        "pathUpgrades": peer.path_upgrades,
+                        "lastPathChange": peer.last_path_change,
                         "sampledAtMs": reported_at_ms
                     }
                 }),
@@ -405,33 +650,286 @@ fn relay_path_health_messages(
         .collect()
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayDataPlanePolicy {
+    #[serde(default)]
+    policy_id: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    target_device_ids: Vec<String>,
+    #[serde(default)]
+    path_type: Option<String>,
+    #[serde(default)]
+    relay_mtu: Option<u32>,
+    #[serde(default)]
+    max_frame_payload: Option<u32>,
+    #[serde(default)]
+    execution_level: Option<u8>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    updated_at_ms: Option<u64>,
+    #[serde(default)]
+    ttl_ms: Option<u64>,
+}
+
 struct RelayPathHealthSample {
     observed_rtt_ms: Option<u32>,
     packet_loss_ppm: Option<u32>,
     path_score: Option<u32>,
+    relay_mtu: Option<u32>,
+    max_frame_payload: Option<u32>,
 }
 
-fn probe_relay_candidate(candidate: &crate::PersistedRelayCandidate) -> RelayPathHealthSample {
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayRuntimeStats {
+    relay_address: String,
+    #[serde(default)]
+    active_path: Option<String>,
+    #[serde(default)]
+    peers: Vec<RelayRuntimePeerStats>,
+    tun_packets_sent: u64,
+    relay_packets_received: u64,
+    relay_decode_failures: u64,
+    unroutable_tun_packets: u64,
+    #[serde(default)]
+    oversized_tun_packets: u64,
+    wintun_write_failures: u64,
+    #[serde(default)]
+    relay_mtu: Option<u32>,
+    #[serde(default)]
+    max_frame_payload: Option<u32>,
+    updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayRuntimePeerStats {
+    #[serde(default)]
+    peer_node_id: String,
+    #[serde(default)]
+    tun_packets_sent: u64,
+    #[serde(default)]
+    relay_packets_received: u64,
+    #[serde(default)]
+    last_send_path: Option<String>,
+    #[serde(default)]
+    path_downgrades: u64,
+    #[serde(default)]
+    path_upgrades: u64,
+    #[serde(default)]
+    last_path_change: Option<String>,
+    #[serde(default)]
+    send_failures: u64,
+    #[serde(default)]
+    receive_failures: u64,
+    #[serde(default)]
+    wintun_write_failures: u64,
+}
+
+fn probe_relay_candidate(
+    candidate: &crate::PersistedRelayCandidate,
+    runtime_stats: Option<&RelayRuntimeStats>,
+) -> RelayPathHealthSample {
     let transport = candidate.transport.trim().to_ascii_lowercase();
-    if transport == "tcp" || transport == "tls" || transport == "quic" {
-        if let Some(rtt_ms) = probe_tcp_rtt_ms(&candidate.address) {
+    if transport == "udp" {
+        if let Some(rtt_ms) = probe_udp_ping_rtt_ms(&candidate.address) {
+            let packet_loss_ppm = runtime_stats.and_then(runtime_packet_loss_ppm).unwrap_or(0);
+            let penalty = packet_loss_ppm / 1000;
             return RelayPathHealthSample {
                 observed_rtt_ms: Some(rtt_ms),
-                packet_loss_ppm: Some(0),
-                path_score: Some(rtt_ms.saturating_add(10).min(10_000)),
+                packet_loss_ppm: Some(packet_loss_ppm),
+                path_score: Some(
+                    rtt_ms
+                        .saturating_add(30)
+                        .saturating_add(penalty)
+                        .min(10_000),
+                ),
+                relay_mtu: runtime_stats.and_then(|stats| stats.relay_mtu),
+                max_frame_payload: runtime_stats.and_then(|stats| stats.max_frame_payload),
             };
         }
         return RelayPathHealthSample {
             observed_rtt_ms: None,
             packet_loss_ppm: Some(1_000_000),
             path_score: Some(10_000),
+            relay_mtu: runtime_stats.and_then(|stats| stats.relay_mtu),
+            max_frame_payload: runtime_stats.and_then(|stats| stats.max_frame_payload),
+        };
+    }
+    if matches!(
+        normalize_relay_transport(&transport).unwrap_or(transport.as_str()),
+        "tcp"
+    ) {
+        if let Some(rtt_ms) = probe_tcp_rtt_ms(&candidate.address) {
+            return RelayPathHealthSample {
+                observed_rtt_ms: Some(rtt_ms),
+                packet_loss_ppm: Some(0),
+                path_score: Some(rtt_ms.saturating_add(10).min(10_000)),
+                relay_mtu: None,
+                max_frame_payload: None,
+            };
+        }
+        return RelayPathHealthSample {
+            observed_rtt_ms: None,
+            packet_loss_ppm: Some(1_000_000),
+            path_score: Some(10_000),
+            relay_mtu: None,
+            max_frame_payload: None,
+        };
+    }
+    if matches!(
+        normalize_relay_transport(&transport).unwrap_or(transport.as_str()),
+        "tls" | "http3"
+    ) {
+        return RelayPathHealthSample {
+            observed_rtt_ms: None,
+            packet_loss_ppm: Some(1_000_000),
+            path_score: Some(10_000),
+            relay_mtu: None,
+            max_frame_payload: None,
         };
     }
     RelayPathHealthSample {
         observed_rtt_ms: None,
         packet_loss_ppm: None,
         path_score: Some(1_000),
+        relay_mtu: None,
+        max_frame_payload: None,
     }
+}
+
+fn probe_udp_ping_rtt_ms(address: &str) -> Option<u32> {
+    let socket_addr = address
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut values| values.next())?;
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(750)))
+        .ok()?;
+    socket
+        .set_write_timeout(Some(Duration::from_millis(750)))
+        .ok()?;
+    socket.connect(socket_addr).ok()?;
+    let started = Instant::now();
+    socket.send(br#"{"kind":"ping"}"#).ok()?;
+
+    let mut response = [0_u8; 512];
+    let len = socket.recv(&mut response).ok()?;
+    let value = serde_json::from_slice::<Value>(&response[..len]).ok()?;
+    if value.get("kind").and_then(Value::as_str) != Some("pong") {
+        return None;
+    }
+    Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
+}
+
+fn load_relay_runtime_stats(now_ms: u64) -> Option<RelayRuntimeStats> {
+    let path = relay_stats_file_path();
+    let payload = fs::read(path).ok()?;
+    let stats = serde_json::from_slice::<RelayRuntimeStats>(&payload).ok()?;
+    if now_ms.saturating_sub(stats.updated_at_ms) > 15 * 60 * 1000 {
+        return None;
+    }
+    Some(stats)
+}
+
+fn relay_stats_file_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ProgramData") {
+        return PathBuf::from(dir)
+            .join("SLAN")
+            .join("client-v2-relay-stats.json");
+    }
+    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
+        return PathBuf::from(dir).join("client-v2-relay-stats.json");
+    }
+    PathBuf::from("client-v2-relay-stats.json")
+}
+
+fn load_relay_data_plane_policy(now_ms: u64) -> Option<RelayDataPlanePolicy> {
+    let payload = fs::read(relay_policy_file_path()).ok()?;
+    let policy = serde_json::from_slice::<RelayDataPlanePolicy>(&payload).ok()?;
+    let updated_at_ms = policy.updated_at_ms?;
+    let ttl_ms = policy.ttl_ms.unwrap_or(60 * 60 * 1000);
+    if now_ms.saturating_sub(updated_at_ms) > ttl_ms {
+        return None;
+    }
+    Some(policy)
+}
+
+fn relay_policy_file_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ProgramData") {
+        return PathBuf::from(dir)
+            .join("SLAN")
+            .join("client-v2-relay-policy.json");
+    }
+    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
+        return PathBuf::from(dir).join("client-v2-relay-policy.json");
+    }
+    PathBuf::from("client-v2-relay-policy.json")
+}
+
+fn runtime_packet_loss_ppm(stats: &RelayRuntimeStats) -> Option<u32> {
+    let failures = stats
+        .unroutable_tun_packets
+        .saturating_add(stats.relay_decode_failures)
+        .saturating_add(stats.oversized_tun_packets)
+        .saturating_add(stats.wintun_write_failures);
+    let total = stats
+        .tun_packets_sent
+        .saturating_add(stats.relay_packets_received)
+        .saturating_add(failures);
+    if total == 0 {
+        return None;
+    }
+    let ppm = failures.saturating_mul(1_000_000) / total;
+    Some(ppm.min(1_000_000) as u32)
+}
+
+fn peer_packet_loss_ppm(peer: &RelayRuntimePeerStats) -> Option<u32> {
+    let failures = peer
+        .send_failures
+        .saturating_add(peer.receive_failures)
+        .saturating_add(peer.wintun_write_failures);
+    let total = peer
+        .tun_packets_sent
+        .saturating_add(peer.relay_packets_received)
+        .saturating_add(failures);
+    if total == 0 {
+        return None;
+    }
+    Some((failures.saturating_mul(1_000_000) / total).min(1_000_000) as u32)
+}
+
+fn peer_path_score(peer: &RelayRuntimePeerStats) -> Option<u32> {
+    let loss = peer_packet_loss_ppm(peer).unwrap_or(0);
+    let switch_penalty = peer
+        .path_downgrades
+        .saturating_add(peer.path_upgrades)
+        .saturating_mul(25)
+        .min(5_000) as u32;
+    Some(
+        (100_u32)
+            .saturating_add(loss / 1_000)
+            .saturating_add(switch_penalty)
+            .min(10_000),
+    )
+}
+
+fn device_country_code() -> Option<String> {
+    std::env::var("SLAN_DEVICE_COUNTRY_CODE")
+        .ok()
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty())
+}
+
+fn cross_country(source: Option<&str>, relay: Option<&str>) -> Option<bool> {
+    let source = source.map(str::trim).filter(|value| !value.is_empty())?;
+    let relay = relay.map(str::trim).filter(|value| !value.is_empty())?;
+    Some(!source.eq_ignore_ascii_case(relay))
 }
 
 fn probe_tcp_rtt_ms(address: &str) -> Option<u32> {
@@ -744,6 +1242,80 @@ mod tests {
                 .pointer("/payload/derpNodeId")
                 .and_then(Value::as_str),
             Some("relay-cn-tcp")
+        );
+    }
+
+    #[test]
+    fn peer_runtime_path_health_reports_path_switch_metadata() {
+        let stats = RelayRuntimeStats {
+            relay_address: "127.0.0.1:9000".to_string(),
+            active_path: Some("relay_udp".to_string()),
+            peers: vec![RelayRuntimePeerStats {
+                peer_node_id: "node-peer".to_string(),
+                tun_packets_sent: 90,
+                relay_packets_received: 10,
+                last_send_path: Some("direct_udp".to_string()),
+                path_downgrades: 2,
+                path_upgrades: 1,
+                last_path_change: Some("relay_udp -> direct_udp after probe success".to_string()),
+                send_failures: 5,
+                receive_failures: 3,
+                wintun_write_failures: 2,
+            }],
+            tun_packets_sent: 0,
+            relay_packets_received: 0,
+            relay_decode_failures: 0,
+            unroutable_tun_packets: 0,
+            oversized_tun_packets: 0,
+            wintun_write_failures: 0,
+            relay_mtu: Some(1280),
+            max_frame_payload: Some(1200),
+            updated_at_ms: 1_000,
+        };
+
+        let messages = peer_runtime_path_health_messages(
+            "net-1",
+            "slan/devices/dev-1/control/up",
+            2_000,
+            MqttQos::QoS2,
+            &stats,
+        );
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0]
+                .payload
+                .pointer("/payload/peerNodeId")
+                .and_then(Value::as_str),
+            Some("node-peer")
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .pointer("/payload/activePath")
+                .and_then(Value::as_str),
+            Some("direct_udp")
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .pointer("/payload/pathDowngrades")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .pointer("/payload/pathUpgrades")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            messages[0]
+                .payload
+                .pointer("/payload/lastPathChange")
+                .and_then(Value::as_str),
+            Some("relay_udp -> direct_udp after probe success")
         );
     }
 

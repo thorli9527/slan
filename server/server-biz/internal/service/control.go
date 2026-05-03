@@ -30,6 +30,8 @@ type ControlChannel interface {
 	ReportPathHealth(userID, nodeID string, report controlmsg.PathHealthReport) error
 	// ReportRelayHeartbeat records one relay node heartbeat from MQTT.
 	ReportRelayHeartbeat(report controlmsg.RelayNodeHeartbeat) error
+	// ReportRelayPolicy records client-side relay data-plane policy execution.
+	ReportRelayPolicy(userID, nodeID string, report controlmsg.RelayPolicyReport) error
 	// Disconnect 显式关闭当前节点到某个对端节点的连接关系。
 	Disconnect(userID, nodeID string, notice controlmsg.DisconnectNotice) error
 	// Heartbeat 刷新指定节点控制面会话的活跃时间，避免其被当作离线节点清理。

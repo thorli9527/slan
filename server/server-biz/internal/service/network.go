@@ -22,6 +22,7 @@ type Network interface {
 	UpdateMemberStatus(userID, networkID, memberID string, req dto.UpdateNetworkMemberStatusRequest) (dto.NetworkMember, error)
 	InviteMember(userID, networkID string, req dto.InviteNetworkMemberRequest) (dto.NetworkMember, error)
 	ListAssignments(userID, networkID string) ([]dto.NetworkAssignment, error)
+	NetworkQuality(userID, networkID string, hours int) (dto.OpsNetworkQuality, error)
 	ListSubnets(userID, networkID string) ([]dto.Subnet, error)
 	UpdateAttachmentIP(userID, networkID, attachmentID string, req dto.UpdateAttachmentIPRequest) (dto.SubnetAttachment, error)
 	UpdateAttachmentRemark(userID, networkID, attachmentID string, req dto.UpdateAttachmentRemarkRequest) (dto.NetworkAssignment, error)

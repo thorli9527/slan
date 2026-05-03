@@ -52,3 +52,14 @@ func TestDecodeRelayHeartbeatUsesTopicNodeID(t *testing.T) {
 		t.Fatalf("unexpected decoded heartbeat: %#v", heartbeat)
 	}
 }
+
+func TestNormalizeOpsRelayPolicyPathTypeAcceptsCanonicalPaths(t *testing.T) {
+	for _, value := range []string{"direct_udp", "relay_udp", "relay_tcp", "relay_http3", "relay_tls"} {
+		if got := normalizeOpsRelayPolicyPathType(value); got != value {
+			t.Fatalf("expected %q to be accepted, got %q", value, got)
+		}
+	}
+	if got := normalizeOpsRelayPolicyPathType("quic"); got != "" {
+		t.Fatalf("expected unsupported path to be rejected, got %q", got)
+	}
+}

@@ -1,5 +1,9 @@
+import 'dart:async';
+
+import 'package:client_core_plugin/client_core_plugin.dart';
 import 'package:flutter/material.dart';
 
+import '../../bridge/android_network_authorization.dart';
 import '../../bridge/client_commands.dart';
 import '../../bridge/client_core_bridge.dart';
 import '../../bridge/client_ui_diagnostics.dart';
@@ -17,13 +21,14 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   String? _lastDiagnosticsSnapshot;
   String? _lastShownError;
+  bool _lastSignedIn = false;
 
   @override
   void initState() {
     super.initState();
     widget.bridge.state.addListener(_logStateChange);
     _logStateChange();
-    widget.bridge.start();
+    unawaited(_startBridge());
   }
 
   @override
@@ -49,7 +54,13 @@ class _HomePageState extends State<HomePage> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         if (state.signedIn)
-                          _buildSignedInHeader(state: state)
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _buildSignedInHeader(state: state),
+                              _buildAndroidAuthorizationPanel(),
+                            ],
+                          )
                         else
                           const _SignedOutStatus(),
                         if (state.signedIn) ...[
@@ -108,6 +119,11 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<void> _startBridge() async {
+    await widget.bridge.start();
+    await widget.bridge.prepareAndroidNetworkAuthorization();
+  }
+
   void _logStateChange() {
     final state = widget.bridge.state.value;
     final snapshot = [
@@ -126,6 +142,10 @@ class _HomePageState extends State<HomePage> {
     }
     _lastDiagnosticsSnapshot = snapshot;
     ClientUiDiagnostics.unawaitedLog('home.state.changed', state: state);
+    if (state.signedIn && !_lastSignedIn) {
+      unawaited(widget.bridge.prepareAndroidNetworkAuthorization());
+    }
+    _lastSignedIn = state.signedIn;
     _showErrorDialogIfNeeded(state);
   }
 
@@ -232,6 +252,24 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildAndroidAuthorizationPanel() {
+    return ValueListenableBuilder<AndroidNetworkAuthorizationState>(
+      valueListenable: widget.bridge.androidNetworkAuthorization,
+      builder: (context, authorization, _) {
+        if (!authorization.visible) {
+          return const SizedBox.shrink();
+        }
+        return Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: _AndroidAuthorizationPanel(
+            authorization: authorization,
+            onRefresh: widget.bridge.prepareAndroidNetworkAuthorization,
+          ),
+        );
+      },
+    );
+  }
+
   String _userLabel(ClientViewState state) {
     final user = state.userLabel?.trim();
     return user == null || user.isEmpty ? '-' : user;
@@ -335,6 +373,133 @@ class _NetworkControl extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _AndroidAuthorizationPanel extends StatelessWidget {
+  const _AndroidAuthorizationPanel({
+    required this.authorization,
+    required this.onRefresh,
+  });
+
+  final AndroidNetworkAuthorizationState authorization;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final config = authorization.networkConfig;
+    final error = authorization.error?.trim();
+    final status = _statusText();
+    final statusColor = error != null && error.isNotEmpty
+        ? theme.colorScheme.error
+        : authorization.granted
+            ? theme.colorScheme.primary
+            : theme.colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            authorization.granted
+                ? Icons.verified_user_outlined
+                : Icons.vpn_key_outlined,
+            size: 18,
+            color: statusColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  status,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: statusColor,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (config != null || (error != null && error.isNotEmpty)) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    error != null && error.isNotEmpty
+                        ? _compactError(error)
+                        : _configText(config!),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (authorization.checking)
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: theme.colorScheme.primary,
+              ),
+            )
+          else if (authorization.needsUserConsent)
+            SizedBox(
+              height: 30,
+              child: FilledButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.check_circle_outline, size: 16),
+                label: const Text('授权'),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: '刷新',
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _statusText() {
+    final error = authorization.error?.trim();
+    if (error != null && error.isNotEmpty) {
+      return 'Android 网络配置异常';
+    }
+    if (authorization.checking) {
+      return 'Android 网络检查中';
+    }
+    if (authorization.needsUserConsent) {
+      return 'Android 网络待授权';
+    }
+    if (authorization.granted && authorization.networkConfig != null) {
+      return 'Android 网络配置已就绪';
+    }
+    if (authorization.granted) {
+      return 'Android 网络已授权';
+    }
+    return 'Android 网络状态待确认';
+  }
+
+  String _configText(AndroidVpnSessionConfig config) {
+    final dns = config.dnsServers.isEmpty ? '-' : config.dnsServers.join(',');
+    return '${config.virtualIp}/${config.prefixLen}  DNS $dns';
+  }
+
+  String _compactError(String error) {
+    return error.replaceAll(RegExp(r'\s+'), ' ');
   }
 }
 

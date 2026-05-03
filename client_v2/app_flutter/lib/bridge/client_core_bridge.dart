@@ -1,12 +1,13 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:client_core_plugin/client_core_plugin.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'android_network_authorization.dart';
 import 'client_commands.dart';
+import 'client_core_local_service.dart';
 import 'control_transport_status.dart';
 import 'client_ui_diagnostics.dart';
 import 'client_view_state.dart';
@@ -38,8 +39,11 @@ class _NetworkToggleOperation {
 
 abstract interface class ClientCoreBridge {
   ValueListenable<ClientViewState> get state;
+  ValueListenable<AndroidNetworkAuthorizationState>
+      get androidNetworkAuthorization;
 
   Future<void> start();
+  Future<void> prepareAndroidNetworkAuthorization();
   Future<void> dispatch(ClientCommand command);
   Future<ControlTransportStatus?> controlTransportStatus();
 }
@@ -47,28 +51,93 @@ abstract interface class ClientCoreBridge {
 class MethodChannelClientCoreBridge implements ClientCoreBridge {
   MethodChannelClientCoreBridge({String? localServiceHost})
       : _plugin = ClientCorePlugin(),
-        _localServiceHost = localServiceHost,
-        _state = ValueNotifier<ClientViewState>(ClientViewState.initial());
+        _localService = ClientCoreLocalService(host: localServiceHost),
+        _state = ValueNotifier<ClientViewState>(ClientViewState.initial()),
+        _androidNetworkAuthorization =
+            ValueNotifier<AndroidNetworkAuthorizationState>(
+          AndroidNetworkAuthorizationState.initial,
+        );
 
   final ClientCorePlugin _plugin;
-  final String? _localServiceHost;
+  final ClientCoreLocalService _localService;
   final ValueNotifier<ClientViewState> _state;
+  final ValueNotifier<AndroidNetworkAuthorizationState>
+      _androidNetworkAuthorization;
   int _networkToggleEpoch = 0;
   int _lastBusinessEventRevision = 0;
   bool _networkToggleInFlight = false;
   _NetworkToggleOperation? _networkToggleOperation;
   bool _localLogoutRequested = false;
   bool _watchingBusinessEvents = false;
+  bool _watchingAndroidNetworkEvents = false;
 
   @override
   ValueListenable<ClientViewState> get state => _state;
+
+  @override
+  ValueListenable<AndroidNetworkAuthorizationState>
+      get androidNetworkAuthorization => _androidNetworkAuthorization;
 
   @override
   Future<void> start() async {
     ClientUiDiagnostics.unawaitedLog('bridge.start.begin', state: _state.value);
     await _invokeState(_plugin.start);
     _startBusinessEventWatchLoop();
+    _startAndroidNetworkEventWatchLoop();
     ClientUiDiagnostics.unawaitedLog('bridge.start.end', state: _state.value);
+  }
+
+  @override
+  Future<void> prepareAndroidNetworkAuthorization() async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    _androidNetworkAuthorization.value =
+        _androidNetworkAuthorization.value.copyWith(
+      checking: true,
+      error: null,
+    );
+    try {
+      final permissionStateResult = await _plugin.androidVpnPermissionState();
+      final permissionState =
+          ClientCoreLocalService.stringResult(permissionStateResult);
+      AndroidVpnConsentRequest? consentRequest;
+      AndroidVpnSessionConfig? networkConfig;
+      if (permissionState == AndroidVpnPermissionState.needsUserConsent) {
+        consentRequest = await _plugin.androidRequestVpnPermission();
+      }
+      if (permissionState == AndroidVpnPermissionState.granted &&
+          _state.value.signedIn) {
+        networkConfig = await _localService.androidNetworkConfig();
+      }
+      _androidNetworkAuthorization.value = AndroidNetworkAuthorizationState(
+        checking: false,
+        permissionState: permissionState,
+        consentRequest: consentRequest,
+        networkConfig: networkConfig,
+      );
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.android.authorization.prepared',
+        state: _state.value,
+        fields: {
+          'permissionState': permissionState,
+          'hasConsentRequest': consentRequest != null,
+          'hasNetworkConfig': networkConfig != null,
+        },
+      );
+    } on Object catch (error) {
+      _androidNetworkAuthorization.value =
+          _androidNetworkAuthorization.value.copyWith(
+        checking: false,
+        error: error.toString(),
+        clearNetworkConfig: true,
+      );
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.android.authorization.failed',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+    }
   }
 
   @override
@@ -90,7 +159,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         state: _state.value,
       );
       try {
-        await _invokeLocalService('logout', null);
+        await _requestLocalService('logout');
         ClientUiDiagnostics.unawaitedLog(
           'bridge.logout.serviceCleared',
           state: _state.value,
@@ -111,6 +180,10 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return;
     }
     if (_isNetworkToggle(command.type)) {
+      if (Platform.isAndroid) {
+        _startAsyncAndroidNetworkToggle(command);
+        return;
+      }
       _startAsyncNetworkToggle(command);
       return;
     }
@@ -126,7 +199,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   Future<ControlTransportStatus?> controlTransportStatus() async {
     try {
       final result = await _plugin.controlTransportStatus();
-      final json = _jsonMapFromResult(result);
+      final json = ClientCoreLocalService.jsonMapFromResult(result);
       return json == null ? null : ControlTransportStatus.fromJson(json);
     } on Object {
       return null;
@@ -210,8 +283,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     unawaited(
       Future<void>(() async {
         try {
-          final result = await _invokeLocalService(method, null)
-              .timeout(_networkToggleTimeout);
+          final result =
+              await _requestLocalService(method).timeout(_networkToggleTimeout);
           ClientUiDiagnostics.unawaitedLog(
             'bridge.switch.serviceResult',
             state: _state.value,
@@ -229,6 +302,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           if (state != null &&
               state.error != null &&
               state.error!.trim().isNotEmpty) {
+            _finishNetworkToggle(operation);
+            _setStateIfChanged(_networkToggleFailureState(
+              operation,
+              state.error!,
+            ));
             ClientUiDiagnostics.unawaitedLog(
               'bridge.switch.serviceReturnedError',
               state: _state.value,
@@ -320,6 +398,106 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     );
   }
 
+  void _startAsyncAndroidNetworkToggle(ClientCommand command) {
+    if (_networkToggleInFlight) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.android.switch.ignoredInFlight',
+        state: _state.value,
+        fields: {'command': command.type.name},
+      );
+      return;
+    }
+    final previousState = _state.value;
+    final epoch = ++_networkToggleEpoch;
+    _networkToggleInFlight = true;
+    final targetEnabled = command.type == ClientCommandType.enableNetwork;
+    final operation = _NetworkToggleOperation(
+      epoch: epoch,
+      command: command.type,
+      method: targetEnabled ? 'androidStartVpn' : 'androidStopVpn',
+      targetEnabled: targetEnabled,
+      previousState: previousState,
+    );
+    _networkToggleOperation = operation;
+    _setStateIfChanged(_state.value.copyWith(
+      networkEnabled: targetEnabled,
+      syncing: true,
+      syncReason: command.type.name,
+      switchEnabled: false,
+      error: null,
+      notice: null,
+      clearVirtualIp: !targetEnabled,
+    ));
+    unawaited(
+      Future<void>(() async {
+        try {
+          if (targetEnabled) {
+            await prepareAndroidNetworkAuthorization();
+            if (!_isCurrentNetworkToggle(operation)) {
+              return;
+            }
+            final authorization = _androidNetworkAuthorization.value;
+            if (authorization.needsUserConsent) {
+              throw StateError('Android 网络需要授权后才能启用');
+            }
+            final config = authorization.networkConfig;
+            if (!authorization.granted || config == null) {
+              throw StateError('Android 网络配置未就绪');
+            }
+            await _plugin
+                .androidStartVpn(config)
+                .timeout(_networkToggleTimeout);
+          } else {
+            await _plugin.androidStopVpn().timeout(_networkToggleTimeout);
+          }
+          if (!_isCurrentNetworkToggle(operation)) {
+            return;
+          }
+          _finishNetworkToggle(operation);
+          _setStateIfChanged(_state.value.copyWith(
+            networkEnabled: targetEnabled,
+            syncing: false,
+            clearSyncReason: true,
+            switchEnabled: true,
+            notice: targetEnabled ? 'networkEnabled' : 'networkDisabled',
+            virtualIp: targetEnabled
+                ? _androidNetworkAuthorization.value.networkConfig?.virtualIp
+                : null,
+            clearVirtualIp: !targetEnabled,
+          ));
+          ClientUiDiagnostics.unawaitedLog(
+            'bridge.android.switch.finished',
+            state: _state.value,
+            fields: {'command': command.type.name, 'epoch': epoch},
+          );
+        } on Object catch (error) {
+          if (!_isCurrentNetworkToggle(operation)) {
+            return;
+          }
+          _finishNetworkToggle(operation);
+          _setStateIfChanged(_networkToggleFailureState(
+            operation,
+            error.toString(),
+          ));
+          _androidNetworkAuthorization.value =
+              _androidNetworkAuthorization.value.copyWith(
+            checking: false,
+            error: error.toString(),
+          );
+          ClientUiDiagnostics.unawaitedLog(
+            'bridge.android.switch.failed',
+            state: _state.value,
+            fields: {
+              'command': command.type.name,
+              'epoch': epoch,
+              'message': error.toString(),
+            },
+          );
+        }
+      }),
+    );
+  }
+
   static const Duration _networkToggleTimeout = Duration(seconds: 45);
 
   bool _isCurrentNetworkToggle(_NetworkToggleOperation operation) {
@@ -396,11 +574,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       Future<void>(() async {
         while (_watchingBusinessEvents) {
           try {
-            final result = await _invokeLocalService('watchBusinessEvent', {
-              'lastRevision': _lastBusinessEventRevision,
-              'timeoutMs': 30000,
-            });
-            final json = _jsonMapFromResult(result);
+            final json = await _localService.watchBusinessEvent(
+              lastRevision: _lastBusinessEventRevision,
+            );
             if (json == null) {
               continue;
             }
@@ -426,6 +602,63 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     );
   }
 
+  void _startAndroidNetworkEventWatchLoop() {
+    if (!Platform.isAndroid || _watchingAndroidNetworkEvents) {
+      return;
+    }
+    _watchingAndroidNetworkEvents = true;
+    unawaited(
+      Future<void>(() async {
+        while (_watchingAndroidNetworkEvents) {
+          try {
+            final event = await _plugin
+                .androidPollNetworkEvent()
+                .timeout(const Duration(seconds: 35));
+            if (event != null) {
+              _androidNetworkAuthorization.value =
+                  _androidNetworkAuthorization.value.applyEvent(event);
+              final runtimeState = event.runtimeState;
+              if (runtimeState != null) {
+                final networkEnabled = runtimeState['networkEnabled'] == true;
+                _setStateIfChanged(_state.value.copyWith(
+                  networkEnabled: networkEnabled,
+                  virtualIp: runtimeState['virtualIp'] as String?,
+                  syncing: false,
+                  clearSyncReason: true,
+                  switchEnabled: true,
+                  notice: event.eventType,
+                  error: event.eventType == AndroidNetworkEventType.error
+                      ? event.message
+                      : null,
+                  errorSource: event.eventType == AndroidNetworkEventType.error
+                      ? ClientErrorSource.networkSwitch
+                      : null,
+                  clearVirtualIp: !networkEnabled,
+                ));
+              }
+              if (event.eventType == AndroidNetworkEventType.vpnStarted ||
+                  event.eventType == AndroidNetworkEventType.vpnStopped ||
+                  event.eventType == AndroidNetworkEventType.error) {
+                _settleNetworkToggleFromEvent();
+              }
+            }
+          } on MissingPluginException {
+            await Future<void>.delayed(const Duration(seconds: 5));
+          } on TimeoutException {
+            // Polling methods may long-poll; a timeout simply starts the next cycle.
+          } on Object catch (error) {
+            ClientUiDiagnostics.unawaitedLog(
+              'bridge.android.event.watchError',
+              state: _state.value,
+              fields: {'message': error.toString()},
+            );
+            await Future<void>.delayed(const Duration(seconds: 2));
+          }
+        }
+      }),
+    );
+  }
+
   Future<ClientViewState?> _stateAfterBusinessEvent(
     Map<String, Object?> event,
   ) async {
@@ -434,7 +667,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return _reduceBusinessEvent(event);
     }
     try {
-      final state = _stateFromResult(await _invokeLocalService('state', null));
+      final state = _stateFromResult(await _localService.state());
       if (state != null) {
         ClientUiDiagnostics.unawaitedLog(
           'bridge.businessEvent.stateQueried',
@@ -457,8 +690,10 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   bool _businessEventRequiresStateQuery(String? type) {
+    if (type == ClientBusinessEventType.networkRuntimeChanged) {
+      return _networkToggleInFlight;
+    }
     return type == ClientBusinessEventType.networkSwitchFinished ||
-        type == ClientBusinessEventType.networkRuntimeChanged ||
         type == ClientBusinessEventType.networkSwitchFailed;
   }
 
@@ -545,62 +780,27 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     _state.value = next;
   }
 
-  Future<Object?> _invokeLocalService(String method, Object? arguments) async {
-    final host = _localServiceHost ??
-        Platform.environment['SLAN_CLIENT_CORE_SERVICE_HOST'] ??
-        '127.0.0.1:46392';
-    final separator = host.lastIndexOf(':');
-    if (separator <= 0 || separator == host.length - 1) {
-      throw PlatformException(
-        code: 'invalid_service_host',
-        message: 'invalid SLAN_CLIENT_CORE_SERVICE_HOST: $host',
-      );
-    }
-    final hostname = host.substring(0, separator);
-    final port = int.tryParse(host.substring(separator + 1));
-    if (port == null || port <= 0 || port > 65535) {
-      throw PlatformException(
-        code: 'invalid_service_port',
-        message: 'invalid SLAN client service port: $host',
-      );
-    }
-
-    final socket = await Socket.connect(
-      hostname,
-      port,
-      timeout: const Duration(seconds: 2),
+  Future<Object?> _requestLocalService(String method,
+      [Object? arguments]) async {
+    ClientUiDiagnostics.unawaitedLog(
+      'bridge.localService.request',
+      state: _state.value,
+      fields: {'method': method},
     );
-    try {
-      ClientUiDiagnostics.unawaitedLog(
-        'bridge.localService.request',
-        state: _state.value,
-        fields: {'method': method, 'host': host},
-      );
-      final payload = jsonEncode({
+    final response = await _localService.request(method, arguments: arguments);
+    ClientUiDiagnostics.unawaitedLog(
+      'bridge.localService.response',
+      state: _state.value,
+      fields: {
         'method': method,
-        'args': arguments ?? <String, Object?>{},
-      });
-      socket.write('$payload\n');
-      await socket.flush();
-      final response = await socket
-          .cast<List<int>>()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .first
-          .timeout(const Duration(seconds: 90));
-      ClientUiDiagnostics.unawaitedLog(
-        'bridge.localService.response',
-        state: _state.value,
-        fields: {'method': method, 'bytes': response.length},
-      );
-      return response;
-    } finally {
-      await socket.close();
-    }
+        'bytes': response is String ? response.length : 0,
+      },
+    );
+    return response;
   }
 
   ClientViewState? _stateFromResult(Object? result) {
-    final json = _jsonMapFromResult(result);
+    final json = ClientCoreLocalService.jsonMapFromResult(result);
     if (json == null) {
       return null;
     }
@@ -608,15 +808,5 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return null;
     }
     return ClientViewState.fromJson(json);
-  }
-
-  Map<String, Object?>? _jsonMapFromResult(Object? result) {
-    if (result is Map) {
-      return result.cast<String, Object?>();
-    }
-    if (result is String && result.trim().isNotEmpty) {
-      return jsonDecode(result) as Map<String, Object?>;
-    }
-    return null;
   }
 }

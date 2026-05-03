@@ -105,11 +105,29 @@ func (r *PostgresRepository) ListRecentNodePathHealth(ctx context.Context, cutof
 	return out, err
 }
 
+func (r *PostgresRepository) ListNodePathHealthSamplesByNetwork(ctx context.Context, networkID string, cutoffMs uint64) ([]NodePathHealthSample, error) {
+	var out []NodePathHealthSample
+	err := r.db.WithContext(ctx).
+		Where("network_id = ? AND sampled_at_ms >= ?", networkID, cutoffMs).
+		Order("sampled_at_ms desc, updated_at desc, sample_id").
+		Find(&out).Error
+	return out, err
+}
+
 func (r *PostgresRepository) ListRecentRelayNodeHeartbeats(ctx context.Context, cutoff int64) ([]RelayNodeHeartbeat, error) {
 	var out []RelayNodeHeartbeat
 	err := r.db.WithContext(ctx).
 		Where("updated_at >= ?", cutoff).
 		Order("updated_at desc, node_id").
+		Find(&out).Error
+	return out, err
+}
+
+func (r *PostgresRepository) ListRecentRelayPolicyExecutions(ctx context.Context, cutoff int64) ([]RelayPolicyExecution, error) {
+	var out []RelayPolicyExecution
+	err := r.db.WithContext(ctx).
+		Where("updated_at >= ?", cutoff).
+		Order("updated_at desc, network_id, device_id, policy_id").
 		Find(&out).Error
 	return out, err
 }

@@ -67,7 +67,7 @@ type AccessPolicy struct {
 type RelayEndpoint struct {
 	// EndpointID 是端点 ID。
 	EndpointID string `json:"endpointId"`
-	// Transport 是传输方式，例如 udp / tcp / quic。
+	// Transport 是传输方式，例如 udp / tcp / tls / http3。
 	Transport string `json:"transport"`
 	// Address 是接入地址。
 	Address string `json:"address"`

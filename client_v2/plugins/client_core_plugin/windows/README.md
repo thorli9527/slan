@@ -102,3 +102,16 @@ UI lifetime:
 - Closing UI must not imply network stop.
 - Tray/menu-bar `Quit` calls `shutdownNetwork` before exiting the Flutter shell.
 - `client-core-service` keeps local session, assigned IP, runtime sync, and MQTT control handling.
+
+Windows relay multi-peer verification:
+
+- The packaged installer stage includes `tools\test-windows-multipeer-relay.ps1`.
+- Run it after login and network enable to validate the local data plane:
+  - `powershell -ExecutionPolicy Bypass -File tools\test-windows-multipeer-relay.ps1 -ExportOnFailure`
+- The tool talks to `client-core-service` over the same TCP JSON-line protocol as Flutter.
+- It checks relay session count, per-peer attach state, replayed frames, config-hash mismatches, oversized packets, unroutable destinations, and DNS readback.
+- On failure, `-ExportOnFailure` writes a full diagnostics JSON through `exportDiagnostics` and prints the path.
+- `verify-installation.ps1 -Json` verifies the installed app, service, adapter, uninstall entry, and packaged relay diagnosis tool. It exits with code `1` when any check fails.
+- `verify-installation.ps1 -RunRelayDiagnose -AllowMissingPeerSessions` can call the same tool after install. Use `-AllowMissingPeerSessions` only when testing with peers intentionally offline.
+- `verify-installation.ps1 -ExpectUninstalled -Json` verifies uninstall cleanup, including service, adapter, shortcuts, scheduled tasks, state files, and diagnostics.
+- `verify-installation.ps1 -SkipRelayDiagnoseToolCheck` is only for local development runs where the app was copied without rebuilding the installer. Packaged installer verification should not use it.

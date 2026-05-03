@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/slan/server/server-biz/api/dto"
+	"github.com/slan/server/server-biz/internal/service"
 )
 
 // registerNetworkRoutes registers logical network, subnet, and attachment APIs.
@@ -101,6 +103,24 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		return deps.Network.ListAssignments(rc.user(), rc.networkID(c))
 	}))
 
+	networks.GET("/:networkId/quality", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.OpsNetworkQuality, error) {
+		rc := currentRouteContext(c)
+		return deps.Network.NetworkQuality(rc.user(), rc.networkID(c), networkQualityHours(c))
+	}))
+
+	networks.POST("/:networkId/quality/relay-policy", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.OpsRelayDataPlanePolicyRequest) (dto.OpsRelayDataPlanePolicyResponse, error) {
+		rc := currentRouteContext(c)
+		detail, err := deps.Network.Get(rc.user(), rc.networkID(c))
+		if err != nil {
+			return dto.OpsRelayDataPlanePolicyResponse{}, err
+		}
+		if !detail.OwnedByCurrentUser {
+			return dto.OpsRelayDataPlanePolicyResponse{}, service.ErrForbidden
+		}
+		req.NetworkID = rc.networkID(c)
+		return publishOpsRelayDataPlanePolicy(deps, req)
+	}))
+
 	networks.GET("/:networkId/subnets", respondWithItems(func(c *gin.Context) ([]dto.Subnet, error) {
 		rc := currentRouteContext(c)
 		return deps.Network.ListSubnets(rc.user(), rc.networkID(c))
@@ -121,4 +141,21 @@ func registerNetworkRoutes(protected *gin.RouterGroup, deps routerDeps) {
 		return deps.Network.UpdateAttachmentStatus(rc.user(), rc.networkID(c), rc.attachmentID(c), req)
 	}))
 
+}
+
+func networkQualityHours(c *gin.Context) int {
+	value, err := strconv.Atoi(c.DefaultQuery("hours", "1"))
+	if err != nil || value <= 0 {
+		return 1
+	}
+	switch {
+	case value <= 1:
+		return 1
+	case value <= 2:
+		return 2
+	case value <= 12:
+		return 12
+	default:
+		return 24
+	}
 }

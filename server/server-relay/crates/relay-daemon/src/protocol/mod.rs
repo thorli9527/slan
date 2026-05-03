@@ -1,3 +1,5 @@
+pub mod binary;
+
 mod request;
 mod response;
 mod wire_ticket;

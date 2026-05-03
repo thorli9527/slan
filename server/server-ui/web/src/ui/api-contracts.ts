@@ -361,3 +361,106 @@ export type PlanStatus = {
   p2pUnlimited?: boolean;
   dnsAvailable: boolean;
 };
+
+export type NetworkQualityItem = {
+  healthId: string;
+  networkId: string;
+  networkName?: string;
+  userId?: string;
+  userEmail?: string;
+  deviceId?: string;
+  deviceName?: string;
+  nodeId: string;
+  peerNodeId?: string;
+  pathType: string;
+  activePath?: string;
+  endpoint?: string;
+  derpNodeId?: string;
+  observedRttMs?: number;
+  packetLossPpm?: number;
+  pathScore?: number;
+  sourceCountryCode?: string;
+  relayCountryCode?: string;
+  peerCountryCode?: string;
+  crossCountry?: boolean;
+  relayMtu?: number;
+  maxFramePayload?: number;
+  pathDowngrades?: number;
+  pathUpgrades?: number;
+  lastPathChange?: string;
+  policyId?: string;
+  policyScope?: string;
+  policyApplied?: boolean;
+  policyReportedAtMs?: number;
+  sampledAtMs?: number;
+  updatedAt: number;
+};
+
+export type NetworkQualityCounter = {
+  sampleCount: number;
+  avgRttMs?: number;
+  avgPacketLossPpm?: number;
+  avgPathScore?: number;
+};
+
+export type NetworkQualityPathType = {
+  pathType: string;
+  count: number;
+};
+
+export type NetworkQualityNetworkSummary = {
+  networkId: string;
+  networkName?: string;
+  hasCrossCountry: boolean;
+  crossCountry: NetworkQualityCounter;
+  nonCrossCountry: NetworkQualityCounter;
+  pathTypes?: NetworkQualityPathType[];
+  activePaths?: NetworkQualityPathType[];
+  pathDowngrades?: number;
+  pathUpgrades?: number;
+  countryPairs?: NetworkQualityCountryPair[];
+};
+
+export type NetworkQualityCountryPair = {
+  sourceCountryCode?: string;
+  relayCountryCode?: string;
+  peerCountryCode?: string;
+  crossCountry: boolean;
+  counter: NetworkQualityCounter;
+};
+
+export type NetworkQuality = {
+  items?: NetworkQualityItem[];
+  summary: {
+    networks?: NetworkQualityNetworkSummary[];
+  };
+};
+
+export type RelayPolicyRequest = {
+  scope?: string;
+  targetDeviceIds?: string[];
+  policyId?: string;
+  pathType?: string;
+  preferredPathTypes?: string[];
+  version?: number;
+  recommendationLevel?: number;
+  executionLevel?: number;
+  relayMtu: number;
+  maxFramePayload: number;
+  reason?: string;
+  ttlMs?: number;
+};
+
+export type RelayPolicyResponse = {
+  policyId: string;
+  networkId: string;
+  scope?: string;
+  targetDeviceIds?: string[];
+  pathType?: string;
+  preferredPathTypes?: string[];
+  published: number;
+  skipped: number;
+  relayMtu: number;
+  maxFramePayload: number;
+  reason?: string;
+};

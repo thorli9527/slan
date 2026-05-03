@@ -10,11 +10,14 @@ import {
   PlanStatus,
   Network,
   NetworkAssignment,
+  NetworkQuality,
   NetworkMember,
   NetworkDetail,
   NetworkHome,
   NetworkJoinResult,
   PublicSystemConfig,
+  RelayPolicyRequest,
+  RelayPolicyResponse,
   Subnet,
   SubnetAttachment,
   UpdateNetworkDNSRequest,
@@ -132,6 +135,20 @@ export class ConsoleApiService {
 
   getAssignments(token: string, networkId: string): Promise<{ items: NetworkAssignment[] }> {
     return this.request<{ items: NetworkAssignment[] }>(`/networks/${networkId}/assignments`, { token });
+  }
+
+  getNetworkQuality(token: string, networkId: string, hours = 1): Promise<NetworkQuality> {
+    return this.request<NetworkQuality>(`/networks/${networkId}/quality?hours=${encodeURIComponent(String(hours))}`, { token });
+  }
+
+  publishRelayPolicy(token: string, networkId: string, input: RelayPolicyRequest): Promise<RelayPolicyResponse> {
+    return this.request<RelayPolicyResponse>(`/networks/${networkId}/quality/relay-policy`, {
+      token,
+      init: {
+        method: 'POST',
+        body: JSON.stringify(input)
+      }
+    });
   }
 
   createNetwork(token: string, input: CreateNetworkInput): Promise<Network> {

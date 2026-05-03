@@ -52,8 +52,24 @@ func (r *PostgresRepository) UpsertNodePathHealth(ctx context.Context, record No
 			{Name: "endpoint"},
 			{Name: "derp_node_id"},
 		},
-		DoUpdates: clause.AssignmentColumns([]string{"observed_rtt_ms", "packet_loss_ppm", "path_score", "sampled_at_ms", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{
+			"observed_rtt_ms",
+			"packet_loss_ppm",
+			"path_score",
+			"source_country_code",
+			"relay_country_code",
+			"peer_country_code",
+			"cross_country",
+			"relay_mtu",
+			"max_frame_payload",
+			"sampled_at_ms",
+			"updated_at",
+		}),
 	}).Create(&record).Error
+}
+
+func (r *PostgresRepository) InsertNodePathHealthSample(ctx context.Context, record NodePathHealthSample) error {
+	return r.db.WithContext(ctx).Create(&record).Error
 }
 
 func (r *PostgresRepository) UpsertRelayNodeHeartbeat(ctx context.Context, record RelayNodeHeartbeat) error {
@@ -67,6 +83,28 @@ func (r *PostgresRepository) UpsertRelayNodeHeartbeat(ctx context.Context, recor
 			"address",
 			"healthy",
 			"active_sessions",
+			"reported_at_ms",
+			"updated_at",
+		}),
+	}).Create(&record).Error
+}
+
+func (r *PostgresRepository) UpsertRelayPolicyExecution(ctx context.Context, record RelayPolicyExecution) error {
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "network_id"},
+			{Name: "device_id"},
+			{Name: "policy_id"},
+		},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"node_id",
+			"scope",
+			"relay_mtu",
+			"max_frame_payload",
+			"execution_level",
+			"applied",
+			"reason",
+			"policy_updated_at_ms",
 			"reported_at_ms",
 			"updated_at",
 		}),
@@ -119,6 +157,12 @@ func (r *PostgresRepository) DeleteNodePathHealthBeforeAll(ctx context.Context, 
 	return r.db.WithContext(ctx).
 		Where("updated_at < ?", cutoff).
 		Delete(&NodePathHealth{}).Error
+}
+
+func (r *PostgresRepository) DeleteNodePathHealthSamplesBeforeAll(ctx context.Context, cutoffMs uint64) error {
+	return r.db.WithContext(ctx).
+		Where("sampled_at_ms < ?", cutoffMs).
+		Delete(&NodePathHealthSample{}).Error
 }
 
 func (r *PostgresRepository) DeleteRelayNodeHeartbeatsBefore(ctx context.Context, cutoff int64) error {

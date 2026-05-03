@@ -1,4 +1,6 @@
 use std::{
+    fs,
+    path::PathBuf,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -7,6 +9,7 @@ use std::{
 use client_core::{AuthPayload, ClientCommand, ClientRuntime};
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
+use serde::Deserialize;
 
 use crate::{
     control_tasks::ControlTaskQueue,
@@ -139,6 +142,12 @@ fn run_control_transport_worker(
                 ControlTransportMessageKind::PathHealth => {
                     last_path_health_ms = Some(now_ms);
                 }
+                ControlTransportMessageKind::EndpointReport => {
+                    last_runtime_state_ms = Some(now_ms);
+                }
+                ControlTransportMessageKind::RelayPolicyReport => {
+                    last_path_health_ms = Some(now_ms);
+                }
             }
         }
     }
@@ -154,6 +163,9 @@ fn ingest_downstream_publish(
         return Ok(());
     }
     if try_ingest_network_map_response(payload, runtime, state_notifier)? {
+        return Ok(());
+    }
+    if try_ingest_relay_data_plane_policy(payload)? {
         return Ok(());
     }
     let message = serde_json::from_slice(payload)
@@ -204,6 +216,187 @@ fn ingest_downstream_publish(
         });
     }
     Ok(())
+}
+
+fn try_ingest_relay_data_plane_policy(payload: &[u8]) -> Result<bool, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("relay_data_plane_policy") {
+        return Ok(false);
+    }
+    let policy_value = value
+        .get("payload")
+        .cloned()
+        .ok_or_else(|| "relay_data_plane_policy payload is missing".to_string())?;
+    let mut incoming: RelayDataPlanePolicy = serde_json::from_value(policy_value)
+        .map_err(|err| format!("decode relay policy: {err}"))?;
+    validate_relay_data_plane_policy(&incoming)?;
+    if !relay_policy_targets_current_device(&incoming) {
+        log_service_error(format!(
+            "client-core-service ignored relay data plane policy for another device policyId={}",
+            incoming.policy_id.as_deref().unwrap_or_default()
+        ));
+        return Ok(true);
+    }
+    let now_ms = current_timestamp_ms();
+    incoming.updated_at_ms.get_or_insert(now_ms);
+    let current = load_relay_data_plane_policy();
+    if should_debounce_relay_policy(current.as_ref(), &incoming, now_ms) {
+        log_service_error(format!(
+            "client-core-service debounced relay data plane policy policyId={} level={:?}",
+            incoming.policy_id.as_deref().unwrap_or_default(),
+            incoming.recommendation_level
+        ));
+        return Ok(true);
+    }
+    let path = relay_policy_file_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create relay policy dir: {err}"))?;
+    }
+    let payload = serde_json::to_vec_pretty(&incoming)
+        .map_err(|err| format!("encode relay data plane policy: {err}"))?;
+    fs::write(&path, payload).map_err(|err| format!("write relay policy: {err}"))?;
+    log_service_error(format!(
+        "client-core-service accepted relay data plane policy path={}",
+        path.display()
+    ));
+    Ok(true)
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayDataPlanePolicy {
+    #[serde(default)]
+    policy_id: Option<String>,
+    #[serde(default)]
+    version: Option<u32>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    network_id: Option<String>,
+    #[serde(default)]
+    target_device_ids: Vec<String>,
+    #[serde(default)]
+    path_type: Option<String>,
+    #[serde(default)]
+    preferred_path_types: Vec<String>,
+    #[serde(default)]
+    recommendation_level: Option<u8>,
+    #[serde(default)]
+    execution_level: Option<u8>,
+    relay_mtu: u16,
+    max_frame_payload: u16,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    ttl_ms: Option<u64>,
+    #[serde(default)]
+    effective_ms: Option<u64>,
+    #[serde(default)]
+    updated_at_ms: Option<u64>,
+}
+
+fn validate_relay_data_plane_policy(policy: &RelayDataPlanePolicy) -> Result<(), String> {
+    if policy.version.unwrap_or(1) != 1 {
+        return Err("unsupported relay data plane policy version".to_string());
+    }
+    if let Some(scope) = policy.scope.as_deref() {
+        match scope {
+            "global" | "region" | "network" | "device" | "device_override" => {}
+            _ => return Err("unsupported relay data plane policy scope".to_string()),
+        }
+    }
+    if let Some(path_type) = policy.path_type.as_deref() {
+        match path_type.trim() {
+            "" | "direct" | "p2p" | "relay" | "relay_udp" | "relay_tcp" | "relay_tls"
+            | "relay_http3" => {}
+            _ => return Err("unsupported relay data plane policy pathType".to_string()),
+        }
+    }
+    for path_type in &policy.preferred_path_types {
+        match path_type.trim() {
+            "direct_udp" | "relay_udp" | "relay_tcp" | "relay_http3" | "relay_tls" => {}
+            _ => return Err("unsupported relay data plane policy preferredPathTypes".to_string()),
+        }
+    }
+    if !(576..=1500).contains(&policy.relay_mtu) {
+        return Err("relayMtu out of range".to_string());
+    }
+    if !(512..=1400).contains(&policy.max_frame_payload) {
+        return Err("maxFramePayload out of range".to_string());
+    }
+    if policy.max_frame_payload >= policy.relay_mtu {
+        return Err("maxFramePayload must be lower than relayMtu".to_string());
+    }
+    if let Some(level) = policy.recommendation_level {
+        if level > 11 {
+            return Err("recommendationLevel must be 0..11".to_string());
+        }
+    }
+    if let Some(level) = policy.execution_level {
+        if level > 7 {
+            return Err("executionLevel must be 0..7".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn relay_policy_targets_current_device(policy: &RelayDataPlanePolicy) -> bool {
+    let targets = policy
+        .target_device_ids
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        return true;
+    }
+    let Some(device_id) = load_session()
+        .ok()
+        .and_then(|session| session.device_id)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    targets.iter().any(|target| *target == device_id)
+}
+
+fn load_relay_data_plane_policy() -> Option<RelayDataPlanePolicy> {
+    let payload = fs::read(relay_policy_file_path()).ok()?;
+    serde_json::from_slice(&payload).ok()
+}
+
+fn should_debounce_relay_policy(
+    current: Option<&RelayDataPlanePolicy>,
+    incoming: &RelayDataPlanePolicy,
+    now_ms: u64,
+) -> bool {
+    let Some(current) = current else {
+        return false;
+    };
+    if current.policy_id.is_some() && current.policy_id == incoming.policy_id {
+        return true;
+    }
+    let last = current.updated_at_ms.unwrap_or_default();
+    if now_ms.saturating_sub(last) < 5 * 60 * 1000 {
+        let current_level = current.execution_level.unwrap_or(0);
+        let incoming_level = incoming.execution_level.unwrap_or(0);
+        return current_level.abs_diff(incoming_level) < 2;
+    }
+    false
+}
+
+fn relay_policy_file_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ProgramData") {
+        return PathBuf::from(dir)
+            .join("SLAN")
+            .join("client-v2-relay-policy.json");
+    }
+    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
+        return PathBuf::from(dir).join("client-v2-relay-policy.json");
+    }
+    PathBuf::from("client-v2-relay-policy.json")
 }
 
 fn try_ingest_network_map_response(

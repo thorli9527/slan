@@ -200,6 +200,200 @@
         </ng-container>
       </section>
 
+      <section class="quality-view" *ngIf="activeView() === 'quality'">
+        <article class="panel span-2">
+          <div class="panel-title split">
+            <div>
+              <h2>网络质量管理</h2>
+              <p>查看当前网络内客户端 relay 链路质量，并向全部或选中的客户端下发 MTU / Payload 策略。</p>
+            </div>
+            <div class="quality-toolbar">
+              <div class="quality-range">
+                <button
+                  type="button"
+                  *ngFor="let hours of qualityHourOptions"
+                  [class.active]="qualityHours === hours"
+                  (click)="setQualityHours(hours)"
+                >
+                  {{ hours === 24 ? '1天' : hours + '小时' }}
+                </button>
+              </div>
+              <button class="ghost" type="button" (click)="loadNetworkQuality()" [disabled]="qualityLoading() || !canManageNetwork()">
+                {{ qualityLoading() ? '刷新中...' : '刷新质量' }}
+              </button>
+            </div>
+          </div>
+
+          <section class="quality-locked" *ngIf="!canManageNetwork()">
+            <strong>仅网络 Owner 可管理质量策略</strong>
+            <p>当前账号不是该网络 owner，只能查看基础网络信息。</p>
+          </section>
+
+          <ng-container *ngIf="canManageNetwork()">
+            <div class="quality-stats">
+              <div class="health-card">
+                <span>样本数量</span>
+                <strong>{{ (qualitySummary()?.crossCountry?.sampleCount || 0) + (qualitySummary()?.nonCrossCountry?.sampleCount || 0) }}</strong>
+              <p>最近 {{ qualityHours === 24 ? '1天' : qualityHours + '小时' }} 平均</p>
+              </div>
+              <div class="health-card">
+                <span>跨国链路</span>
+                <strong>{{ qualitySummary()?.hasCrossCountry ? '存在' : '无' }}</strong>
+                <p>跨国 {{ qualitySummary()?.crossCountry?.sampleCount || 0 }} / 非跨国 {{ qualitySummary()?.nonCrossCountry?.sampleCount || 0 }}</p>
+                <div class="path-stack" *ngIf="qualitySummary()?.countryPairs?.length">
+                  <span *ngFor="let pair of qualitySummary()?.countryPairs?.slice(0, 4)">
+                    {{ pair.sourceCountryCode || '-' }} → {{ pair.relayCountryCode || pair.peerCountryCode || '-' }} {{ pair.counter.sampleCount }}
+                  </span>
+                </div>
+              </div>
+              <div class="health-card">
+                <span>平均丢包</span>
+                <strong>{{ packetLossLabel(qualitySummary()?.crossCountry?.avgPacketLossPpm || qualitySummary()?.nonCrossCountry?.avgPacketLossPpm) }}</strong>
+                <p>按当前时间窗口聚合</p>
+              </div>
+              <div class="health-card">
+                <span>当前路径</span>
+                <strong>{{ qualitySummary()?.activePaths?.[0]?.pathType || '-' }}</strong>
+                <div class="path-stack" *ngIf="qualitySummary()?.activePaths?.length">
+                  <span *ngFor="let path of qualitySummary()?.activePaths">{{ path.pathType }} {{ path.count }}</span>
+                </div>
+                <p>切换 降级 {{ qualitySummary()?.pathDowngrades || 0 }} / 升级 {{ qualitySummary()?.pathUpgrades || 0 }}</p>
+              </div>
+            </div>
+
+            <div class="quality-policy-grid">
+              <label>
+                <span>Relay MTU</span>
+                <input type="number" min="576" max="1500" [value]="qualityRelayMtu" (input)="qualityRelayMtu = $any($event.target).valueAsNumber" />
+              </label>
+              <label>
+                <span>最大 Payload</span>
+                <input type="number" min="512" max="1400" [value]="qualityMaxFramePayload" (input)="qualityMaxFramePayload = $any($event.target).valueAsNumber" />
+              </label>
+              <label>
+                <span>建议档位</span>
+                <input type="number" min="0" max="11" [value]="qualityRecommendationLevel" (input)="qualityRecommendationLevel = $any($event.target).valueAsNumber" />
+              </label>
+              <label>
+                <span>执行档位</span>
+                <input type="number" min="0" max="7" [value]="qualityExecutionLevel" (input)="qualityExecutionLevel = $any($event.target).valueAsNumber" />
+              </label>
+              <label>
+                <span>路径类型</span>
+                <select [value]="qualityPathType" (change)="qualityPathType = $any($event.target).value">
+                  <option value="any">全部路径</option>
+                  <option value="relay_udp">relay_udp</option>
+                  <option value="relay_tcp">relay_tcp</option>
+                  <option value="relay_http3">relay_http3</option>
+                  <option value="relay_tls">relay_tls</option>
+                  <option value="relay">relay</option>
+                  <option value="direct">direct</option>
+                  <option value="p2p">p2p</option>
+                </select>
+              </label>
+              <label>
+                <span>路径策略</span>
+                <select [value]="qualityPathStrategy" (change)="qualityPathStrategy = $any($event.target).value">
+                  <option value="bandwidth_saving">省流优先</option>
+                  <option value="performance">性能优先</option>
+                  <option value="relay_saving">Relay 省流</option>
+                </select>
+              </label>
+              <label>
+                <span>TTL 分钟</span>
+                <input type="number" min="1" [value]="qualityTtlMinutes" (input)="qualityTtlMinutes = $any($event.target).valueAsNumber" />
+              </label>
+              <label>
+                <span>原因</span>
+                <input [value]="qualityReason" (input)="qualityReason = $any($event.target).value" />
+              </label>
+            </div>
+
+            <div class="quality-actions">
+              <button class="primary-action" type="button" (click)="publishQualityPolicy('network')" [disabled]="isActionBusy('publishQualityAll')">
+                {{ isActionBusy('publishQualityAll') ? '下发中...' : '全量下发' }}
+              </button>
+              <button class="ghost" type="button" (click)="publishQualityPolicy('device_override')" [disabled]="isActionBusy('publishQualityBatch') || selectedQualityDeviceIds().length === 0">
+                {{ isActionBusy('publishQualityBatch') ? '下发中...' : '批量下发选中客户端' }}
+              </button>
+              <button class="ghost" type="button" (click)="setAllQualityDevices(true)" [disabled]="qualityRows().length === 0">全选</button>
+              <button class="ghost" type="button" (click)="setAllQualityDevices(false)" [disabled]="qualityRows().length === 0">清空</button>
+            </div>
+          </ng-container>
+        </article>
+
+        <article class="panel span-2" *ngIf="canManageNetwork()">
+          <div class="panel-title split">
+            <div>
+              <h2>客户端质量仪表盘</h2>
+              <p>每台客户端展示当前时间窗口内的平均质量，以及最近策略执行记录。</p>
+            </div>
+            <span class="quality-count">{{ selectedQualityDeviceIds().length }} 已选</span>
+          </div>
+
+          <div class="quality-table-wrap" *ngIf="qualityRows().length > 0; else noQualityRows">
+            <table class="quality-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>客户端</th>
+                  <th>当前路径</th>
+                  <th>端点</th>
+                  <th>RTT</th>
+                  <th>丢包</th>
+                  <th>切换</th>
+                  <th>MTU / Payload</th>
+                  <th>策略状态</th>
+                  <th>上报时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of qualityRows()">
+                  <td>
+                    <input
+                      type="checkbox"
+                      [checked]="!!qualitySelectedDevices()[row.deviceId || '']"
+                      (change)="toggleQualityDevice(row.deviceId || '', $any($event.target).checked)"
+                      [disabled]="!row.deviceId"
+                    />
+                  </td>
+                  <td>
+                    <strong>{{ row.deviceName || row.deviceId || '-' }}</strong>
+                    <span>{{ row.userEmail || row.deviceId || '-' }}</span>
+                  </td>
+                  <td>
+                    <strong>{{ row.activePath || row.pathType || '-' }}</strong>
+                    <span>{{ row.sourceCountryCode || '-' }} → {{ row.relayCountryCode || row.peerCountryCode || '-' }}</span>
+                  </td>
+                  <td>
+                    <strong>{{ row.derpNodeId || row.endpoint || '-' }}</strong>
+                    <span>{{ row.crossCountry ? '跨国' : '非跨国/未知' }}</span>
+                  </td>
+                  <td>{{ row.observedRttMs || '-' }} ms</td>
+                  <td>{{ packetLossLabel(row.packetLossPpm) }}</td>
+                  <td>
+                    <strong>{{ (row.pathDowngrades || 0) + (row.pathUpgrades || 0) }}</strong>
+                    <span>{{ row.lastPathChange || '-' }}</span>
+                  </td>
+                  <td>{{ row.relayMtu || '-' }} / {{ row.maxFramePayload || '-' }}</td>
+                  <td>
+                    <strong>{{ qualityStatusLabel(row) }}</strong>
+                    <span>{{ row.policyScope || row.policyId || '-' }}</span>
+                  </td>
+                  <td>{{ formatTimestampMs(row.sampledAtMs || row.policyReportedAtMs) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ng-template #noQualityRows>
+            <div class="empty-card">
+              <strong>暂无质量上报</strong>
+              <p>客户端连接控制通道后会每 10 分钟上报 relay 质量和策略执行状态。</p>
+            </div>
+          </ng-template>
+        </article>
+      </section>
+
     </main>
   </section>
 

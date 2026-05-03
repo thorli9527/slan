@@ -213,6 +213,106 @@ contracts:
       countries:
         type: RelayCountry[]
         required: false
+  RelayDataPlanePolicy:
+    fields:
+      policyId:
+        type: string
+        required: false
+      version:
+        type: int
+        required: true
+      scope:
+        type: string
+        required: false
+        comment: global / region / network / device / device_override。
+      networkId:
+        type: string
+        required: false
+      targetDeviceIds:
+        type: string[]
+        required: false
+      recommendationLevel:
+        type: int
+        required: false
+        comment: 服务端 12 级建议档位，范围 0..11。
+      executionLevel:
+        type: int
+        required: false
+        comment: 客户端 8 级执行档位，范围 0..7。
+      relayMtu:
+        type: int
+        required: true
+      maxFramePayload:
+        type: int
+        required: true
+      reason:
+        type: string
+        required: false
+      ttlMs:
+        type: int64
+        required: false
+      effectiveMs:
+        type: int64
+        required: false
+      updatedAtMs:
+        type: int64
+        required: false
+  RelayDataPlanePolicyEnvelope:
+    fields:
+      type:
+        type: string
+        required: true
+        comment: 固定 relay_data_plane_policy。
+      payload:
+        type: RelayDataPlanePolicy
+        required: true
+  RelayPolicyReport:
+    fields:
+      networkId:
+        type: string
+        required: true
+      deviceId:
+        type: string
+        required: false
+      policyId:
+        type: string
+        required: false
+      scope:
+        type: string
+        required: false
+      targetDeviceIds:
+        type: string[]
+        required: false
+      relayMtu:
+        type: int
+        required: false
+      maxFramePayload:
+        type: int
+        required: false
+      executionLevel:
+        type: int
+        required: false
+      applied:
+        type: bool
+        required: true
+      reason:
+        type: string
+        required: false
+      policyUpdatedAtMs:
+        type: int64
+        required: false
+      reportedAtMs:
+        type: int64
+        required: false
+  RelayPolicyReportEnvelope:
+    fields:
+      type:
+        type: string
+        required: true
+        comment: 固定 relay_policy_report。
+      payload:
+        type: RelayPolicyReport
+        required: true
   DerpNode:
     fields:
       nodeId:

@@ -3,6 +3,7 @@ package impl
 import (
 	"context"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -297,6 +298,10 @@ func (s dbOpsService) NetworkQuality() (dto.OpsNetworkQuality, error) {
 	if err != nil {
 		return dto.OpsNetworkQuality{}, err
 	}
+	policyExecutions, err := s.state.pg.ListRecentRelayPolicyExecutions(ctx, cutoff)
+	if err != nil {
+		return dto.OpsNetworkQuality{}, err
+	}
 	nodeByID := make(map[string]repo.Node, len(nodes))
 	for _, node := range nodes {
 		nodeByID[node.NodeID] = node
@@ -313,6 +318,13 @@ func (s dbOpsService) NetworkQuality() (dto.OpsNetworkQuality, error) {
 	for _, network := range networks {
 		networkNameByID[network.NetworkID] = network.Name
 	}
+	policyExecutionByNetworkDevice := make(map[string]repo.RelayPolicyExecution, len(policyExecutions))
+	for _, execution := range policyExecutions {
+		key := execution.NetworkID + "|" + execution.DeviceID
+		if current, ok := policyExecutionByNetworkDevice[key]; !ok || execution.UpdatedAt > current.UpdatedAt {
+			policyExecutionByNetworkDevice[key] = execution
+		}
+	}
 
 	items := make([]dto.OpsNetworkQualityItem, 0, len(records))
 	for _, record := range records {
@@ -323,6 +335,7 @@ func (s dbOpsService) NetworkQuality() (dto.OpsNetworkQuality, error) {
 			NodeID:      record.NodeID,
 			PeerNodeID:  record.PeerNodeID,
 			PathType:    record.PathType,
+			ActivePath:  record.ActivePath,
 			Endpoint:    record.Endpoint,
 			DerpNodeID:  record.DerpNodeID,
 			SampledAtMs: record.SampledAtMs,
@@ -337,6 +350,19 @@ func (s dbOpsService) NetworkQuality() (dto.OpsNetworkQuality, error) {
 		if value := record.PathScore; value != nil {
 			item.PathScore = *value
 		}
+		item.SourceCountryCode = record.SourceCountryCode
+		item.RelayCountryCode = record.RelayCountryCode
+		item.PeerCountryCode = record.PeerCountryCode
+		item.CrossCountry = record.CrossCountry
+		item.PathDowngrades = record.PathDowngrades
+		item.PathUpgrades = record.PathUpgrades
+		item.LastPathChange = record.LastPathChange
+		if value := record.RelayMtu; value != nil {
+			item.RelayMtu = *value
+		}
+		if value := record.MaxFramePayload; value != nil {
+			item.MaxFramePayload = *value
+		}
 		if node, ok := nodeByID[record.NodeID]; ok {
 			item.UserID = node.UserID
 			item.UserEmail = emailByUserID[node.UserID]
@@ -344,10 +370,170 @@ func (s dbOpsService) NetworkQuality() (dto.OpsNetworkQuality, error) {
 			if device, ok := deviceByID[node.DeviceID]; ok {
 				item.DeviceName = device.Name
 			}
+			if execution, ok := policyExecutionByNetworkDevice[record.NetworkID+"|"+node.DeviceID]; ok {
+				item.PolicyID = execution.PolicyID
+				item.PolicyScope = execution.Scope
+				item.PolicyApplied = execution.Applied
+				item.PolicyReportedAtMs = execution.ReportedAtMs
+			}
 		}
 		items = append(items, item)
 	}
-	return dto.OpsNetworkQuality{Items: items}, nil
+	return dto.OpsNetworkQuality{Items: items, Summary: buildOpsNetworkQualitySummary(records, networkNameByID)}, nil
+}
+
+type qualityAccumulator struct {
+	count      int
+	rttSum     uint64
+	rttCount   int
+	lossSum    uint64
+	lossCount  int
+	scoreSum   uint64
+	scoreCount int
+}
+
+func (a *qualityAccumulator) add(record repo.NodePathHealth) {
+	a.count++
+	if record.ObservedRttMs != nil {
+		a.rttSum += uint64(*record.ObservedRttMs)
+		a.rttCount++
+	}
+	if record.PacketLossPpm != nil {
+		a.lossSum += uint64(*record.PacketLossPpm)
+		a.lossCount++
+	}
+	if record.PathScore != nil {
+		a.scoreSum += uint64(*record.PathScore)
+		a.scoreCount++
+	}
+}
+
+func (a qualityAccumulator) dto() dto.OpsNetworkQualityCounter {
+	out := dto.OpsNetworkQualityCounter{SampleCount: a.count}
+	if a.rttCount > 0 {
+		out.AvgRttMs = uint32(a.rttSum / uint64(a.rttCount))
+	}
+	if a.lossCount > 0 {
+		out.AvgPacketLossPpm = uint32(a.lossSum / uint64(a.lossCount))
+	}
+	if a.scoreCount > 0 {
+		out.AvgPathScore = uint32(a.scoreSum / uint64(a.scoreCount))
+	}
+	return out
+}
+
+func buildOpsNetworkQualitySummary(records []repo.NodePathHealth, networkNameByID map[string]string) dto.OpsNetworkQualitySummary {
+	type networkAgg struct {
+		cross            qualityAccumulator
+		nonCross         qualityAccumulator
+		pathCounts       map[string]int
+		activePathCounts map[string]int
+		pathDowngrades   uint64
+		pathUpgrades     uint64
+		pairs            map[string]*qualityAccumulator
+		pairMeta         map[string]dto.OpsNetworkQualityCountryPair
+	}
+	grouped := make(map[string]*networkAgg)
+	for _, record := range records {
+		agg := grouped[record.NetworkID]
+		if agg == nil {
+			agg = &networkAgg{
+				pathCounts:       make(map[string]int),
+				activePathCounts: make(map[string]int),
+				pairs:            make(map[string]*qualityAccumulator),
+				pairMeta:         make(map[string]dto.OpsNetworkQualityCountryPair),
+			}
+			grouped[record.NetworkID] = agg
+		}
+		pathType := strings.TrimSpace(record.PathType)
+		if pathType == "" {
+			pathType = "unknown"
+		}
+		agg.pathCounts[pathType]++
+		activePath := strings.TrimSpace(record.ActivePath)
+		if activePath == "" {
+			activePath = pathType
+		}
+		agg.activePathCounts[activePath]++
+		agg.pathDowngrades += record.PathDowngrades
+		agg.pathUpgrades += record.PathUpgrades
+		isCross := record.CrossCountry != nil && *record.CrossCountry
+		if isCross {
+			agg.cross.add(record)
+		} else {
+			agg.nonCross.add(record)
+		}
+		pairKey := record.SourceCountryCode + "|" + record.RelayCountryCode + "|" + record.PeerCountryCode
+		pair := agg.pairs[pairKey]
+		if pair == nil {
+			pair = &qualityAccumulator{}
+			agg.pairs[pairKey] = pair
+			agg.pairMeta[pairKey] = dto.OpsNetworkQualityCountryPair{
+				SourceCountryCode: record.SourceCountryCode,
+				RelayCountryCode:  record.RelayCountryCode,
+				PeerCountryCode:   record.PeerCountryCode,
+				CrossCountry:      isCross,
+			}
+		}
+		pair.add(record)
+	}
+	out := make([]dto.OpsNetworkQualityNetworkSummary, 0, len(grouped))
+	for networkID, agg := range grouped {
+		pathTypes := make([]dto.OpsNetworkQualityPathType, 0, len(agg.pathCounts))
+		for pathType, count := range agg.pathCounts {
+			pathTypes = append(pathTypes, dto.OpsNetworkQualityPathType{PathType: pathType, Count: count})
+		}
+		sort.Slice(pathTypes, func(i, j int) bool {
+			if pathTypes[i].Count != pathTypes[j].Count {
+				return pathTypes[i].Count > pathTypes[j].Count
+			}
+			return pathTypes[i].PathType < pathTypes[j].PathType
+		})
+		activePaths := make([]dto.OpsNetworkQualityPathType, 0, len(agg.activePathCounts))
+		for pathType, count := range agg.activePathCounts {
+			activePaths = append(activePaths, dto.OpsNetworkQualityPathType{PathType: pathType, Count: count})
+		}
+		sort.Slice(activePaths, func(i, j int) bool {
+			if activePaths[i].Count != activePaths[j].Count {
+				return activePaths[i].Count > activePaths[j].Count
+			}
+			return activePaths[i].PathType < activePaths[j].PathType
+		})
+		pairs := make([]dto.OpsNetworkQualityCountryPair, 0, len(agg.pairs))
+		for key, acc := range agg.pairs {
+			item := agg.pairMeta[key]
+			item.Counter = acc.dto()
+			pairs = append(pairs, item)
+		}
+		sort.Slice(pairs, func(i, j int) bool {
+			if pairs[i].Counter.SampleCount != pairs[j].Counter.SampleCount {
+				return pairs[i].Counter.SampleCount > pairs[j].Counter.SampleCount
+			}
+			if pairs[i].SourceCountryCode != pairs[j].SourceCountryCode {
+				return pairs[i].SourceCountryCode < pairs[j].SourceCountryCode
+			}
+			if pairs[i].RelayCountryCode != pairs[j].RelayCountryCode {
+				return pairs[i].RelayCountryCode < pairs[j].RelayCountryCode
+			}
+			return pairs[i].PeerCountryCode < pairs[j].PeerCountryCode
+		})
+		out = append(out, dto.OpsNetworkQualityNetworkSummary{
+			NetworkID:       networkID,
+			NetworkName:     networkNameByID[networkID],
+			HasCrossCountry: agg.cross.count > 0,
+			CrossCountry:    agg.cross.dto(),
+			NonCrossCountry: agg.nonCross.dto(),
+			PathTypes:       pathTypes,
+			ActivePaths:     activePaths,
+			PathDowngrades:  agg.pathDowngrades,
+			PathUpgrades:    agg.pathUpgrades,
+			CountryPairs:    pairs,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].NetworkID < out[j].NetworkID
+	})
+	return dto.OpsNetworkQualitySummary{Networks: out}
 }
 
 func (s dbOpsService) ListAdmins() ([]dto.OpsAdminInfo, error) {

@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import 'android_vpn_contract.dart';
+
 class ClientCorePlugin {
   ClientCorePlugin({MethodChannel? channel})
-    : _channel = channel ?? const MethodChannel('dev.slan/client_core_v2');
+      : _channel = channel ?? const MethodChannel('dev.slan/client_core_v2');
 
   final MethodChannel _channel;
 
@@ -97,6 +99,38 @@ class ClientCorePlugin {
     return _invoke('markTransportPublished', message);
   }
 
+  Future<Object?> androidVpnPermissionState() {
+    return _invokeNativeOnly('androidVpnPermissionState');
+  }
+
+  Future<AndroidVpnConsentRequest?> androidRequestVpnPermission() async {
+    final result = await _invokeNativeOnly('androidRequestVpnPermission');
+    final json = _jsonMap(result);
+    return json == null ? null : AndroidVpnConsentRequest.fromJson(json);
+  }
+
+  Future<Object?> androidStartVpn(AndroidVpnSessionConfig config) {
+    return _invokeNativeOnly('androidStartVpn', config.toJson());
+  }
+
+  Future<Object?> androidStopVpn() {
+    return _invokeNativeOnly('androidStopVpn');
+  }
+
+  Future<Object?> androidProtectSocket(AndroidSocketProtectionRequest request) {
+    return _invokeNativeOnly('androidProtectSocket', request.toJson());
+  }
+
+  Future<Object?> androidRuntimeState() {
+    return _invokeNativeOnly('androidRuntimeState');
+  }
+
+  Future<AndroidNetworkEvent?> androidPollNetworkEvent() async {
+    final result = await _invokeNativeOnly('androidPollNetworkEvent');
+    final json = _jsonMap(result);
+    return json == null ? null : AndroidNetworkEvent.fromJson(json);
+  }
+
   Future<Object?> _invoke(String method, [Object? arguments]) async {
     try {
       return await _channel.invokeMethod<Object?>(method, arguments);
@@ -107,9 +141,23 @@ class ClientCorePlugin {
     }
   }
 
+  Future<Object?> _invokeNativeOnly(String method, [Object? arguments]) {
+    return _channel.invokeMethod<Object?>(method, arguments);
+  }
+
+  Map<String, Object?>? _jsonMap(Object? result) {
+    if (result is Map) {
+      return result.cast<String, Object?>();
+    }
+    if (result is String && result.trim().isNotEmpty) {
+      final decoded = jsonDecode(result);
+      return decoded is Map ? decoded.cast<String, Object?>() : null;
+    }
+    return null;
+  }
+
   Future<Object?> _invokeLocalService(String method, Object? arguments) async {
-    final host =
-        Platform.environment['SLAN_CLIENT_CORE_SERVICE_HOST'] ??
+    final host = Platform.environment['SLAN_CLIENT_CORE_SERVICE_HOST'] ??
         '127.0.0.1:46392';
     final separator = host.lastIndexOf(':');
     if (separator <= 0 || separator == host.length - 1) {
@@ -199,8 +247,7 @@ class ClientCorePlugin {
     String consoleLoginKey = '',
   }) async {
     final safeDeviceId = _usableClientDeviceId(deviceId);
-    final baseUrl =
-        Platform.environment['SLAN_WEB_CONSOLE_URL'] ??
+    final baseUrl = Platform.environment['SLAN_WEB_CONSOLE_URL'] ??
         'http://127.0.0.1:24200';
     final uri = Uri.parse(baseUrl).replace(
       queryParameters: {
@@ -219,12 +266,15 @@ class ClientCorePlugin {
     } else if (Platform.isMacOS) {
       await Process.start('open', [url], mode: ProcessStartMode.detached);
     } else if (Platform.isWindows) {
-      await Process.start('powershell.exe', [
-        '-NoProfile',
-        '-Command',
-        'Start-Process',
-        url,
-      ], mode: ProcessStartMode.detached);
+      await Process.start(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            'Start-Process',
+            url,
+          ],
+          mode: ProcessStartMode.detached);
     }
   }
 

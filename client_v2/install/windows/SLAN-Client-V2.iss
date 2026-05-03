@@ -48,6 +48,7 @@ Source: "{#SourceDir}\wintun.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\flutter_windows.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\client_core_plugin_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{autodesktop}\SLAN Client V2"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
@@ -107,7 +108,10 @@ begin
   DeleteFile(StateDir + '\client-v2-device-id.txt');
   DeleteFile(StateDir + '\client-v2-network-state.json');
   DeleteFile(StateDir + '\client-v2-assigned-ip.txt');
+  DeleteFile(StateDir + '\client-v2-relay-stats.json');
+  DeleteFile(StateDir + '\client-v2-relay-policy.json');
   DeleteFile(StateDir + '\mqtt-inbox.xml');
+  DelTree(StateDir + '\diagnostics', True, True, True);
   RemoveDir(StateDir);
 end;
 
@@ -198,6 +202,15 @@ begin
   DelTree(ExpandConstant('{app}'), True, True, True);
 end;
 
+procedure RemoveDedicatedAdapter();
+begin
+  ExecHidden(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$adapter=Get-PnpDevice -Class Net -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -eq ''SLAN LAN Adapter'' } | Select-Object -First 1; if ($adapter) { pnputil.exe /remove-device $adapter.InstanceId | Out-Null }"',
+    ewWaitUntilTerminated
+  );
+end;
+
 function InitializeSetup(): Boolean;
 begin
   StopExistingRuntime();
@@ -232,6 +245,7 @@ begin
     StopAndDeleteWindowsService();
     DeleteServiceTask();
     DeleteHelperTask();
+    RemoveDedicatedAdapter();
   end;
   if CurUninstallStep = usPostUninstall then begin
     ClearClientV2State();

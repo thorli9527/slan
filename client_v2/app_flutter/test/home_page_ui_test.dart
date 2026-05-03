@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:client_core_plugin/client_core_plugin.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_client_v2/app/slan_client_v2_app.dart';
+import 'package:slan_client_v2/bridge/android_network_authorization.dart';
 import 'package:slan_client_v2/bridge/client_commands.dart';
 import 'package:slan_client_v2/bridge/client_core_bridge.dart';
 import 'package:slan_client_v2/bridge/client_view_state.dart';
@@ -199,6 +201,68 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('操作失败'), findsOneWidget);
   });
+
+  testWidgets('android authorization panel shows fetched network config',
+      (tester) async {
+    final bridge = _UiTestBridge(
+      initialState: const ClientViewState(
+        signedIn: true,
+        userLabel: 'tester@example.com',
+        networkEnabled: false,
+        syncing: false,
+        switchEnabled: true,
+      ),
+      androidAuthorizationState: const AndroidNetworkAuthorizationState(
+        checking: false,
+        permissionState: AndroidVpnPermissionState.granted,
+        networkConfig: AndroidVpnSessionConfig(
+          sessionName: 'SLAN',
+          virtualIp: '100.64.0.10',
+          prefixLen: 32,
+          dnsServers: ['100.64.0.1'],
+          relayEndpointId: 'relay-cn',
+        ),
+      ),
+      activationDelay: Duration.zero,
+    );
+
+    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Android 网络配置已就绪'), findsOneWidget);
+    expect(find.textContaining('100.64.0.10/32'), findsOneWidget);
+    expect(find.textContaining('relay-cn'), findsNothing);
+  });
+
+  testWidgets('android authorization panel exposes consent action',
+      (tester) async {
+    final bridge = _UiTestBridge(
+      initialState: const ClientViewState(
+        signedIn: true,
+        userLabel: 'tester@example.com',
+        networkEnabled: false,
+        syncing: false,
+        switchEnabled: true,
+      ),
+      androidAuthorizationState: const AndroidNetworkAuthorizationState(
+        checking: false,
+        permissionState: AndroidVpnPermissionState.needsUserConsent,
+        consentRequest: AndroidVpnConsentRequest(callbackId: 'vpn-cb-1'),
+      ),
+      activationDelay: Duration.zero,
+    );
+
+    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Android 网络待授权'), findsOneWidget);
+    expect(find.text('授权'), findsOneWidget);
+
+    await tester.tap(find.text('授权'));
+    await tester.pumpAndSettle();
+
+    expect(bridge.androidPrepareCount, greaterThanOrEqualTo(2));
+  });
 }
 
 Switch _networkSwitch(WidgetTester tester) {
@@ -209,23 +273,41 @@ class _UiTestBridge implements ClientCoreBridge {
   _UiTestBridge({
     required ClientViewState initialState,
     required this.activationDelay,
+    AndroidNetworkAuthorizationState androidAuthorizationState =
+        AndroidNetworkAuthorizationState.initial,
     this.assignedIp,
     this.activationError,
     this.disableError,
-  }) : _state = ValueNotifier<ClientViewState>(initialState);
+  })  : _state = ValueNotifier<ClientViewState>(initialState),
+        _androidNetworkAuthorization =
+            ValueNotifier<AndroidNetworkAuthorizationState>(
+          androidAuthorizationState,
+        );
 
   final ValueNotifier<ClientViewState> _state;
+  final ValueNotifier<AndroidNetworkAuthorizationState>
+      _androidNetworkAuthorization;
   final Duration activationDelay;
   final String? assignedIp;
   final String? activationError;
   final String? disableError;
   ClientCommandType? lastCommand;
+  int androidPrepareCount = 0;
 
   @override
   ValueListenable<ClientViewState> get state => _state;
 
   @override
+  ValueListenable<AndroidNetworkAuthorizationState>
+      get androidNetworkAuthorization => _androidNetworkAuthorization;
+
+  @override
   Future<void> start() async {}
+
+  @override
+  Future<void> prepareAndroidNetworkAuthorization() async {
+    androidPrepareCount += 1;
+  }
 
   @override
   Future<void> dispatch(ClientCommand command) async {

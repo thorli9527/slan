@@ -44,7 +44,7 @@ type MQTTConfig struct {
 type RelayNodeConfig struct {
 	// NodeID 是 relay 节点唯一标识。
 	NodeID string `yaml:"node_id"`
-	// Transport 是节点支持的传输类型，例如 udp / tcp / quic。
+	// Transport 是节点支持的传输类型，例如 udp / tcp / tls / http3。
 	Transport string `yaml:"transport"`
 	// Address 是公网接入地址。
 	Address string `yaml:"address"`
@@ -298,7 +298,7 @@ func LoadConfig(path string) (Config, error) {
 	cfg := DefaultConfig()
 	if path == "" {
 		applyEnvOverrides(&cfg)
-		if err := validateRelayTopology(cfg.Relay); err != nil {
+		if err := validateRelayTopology(&cfg.Relay); err != nil {
 			return Config{}, err
 		}
 		if err := validateProductionConfig(cfg); err != nil {
@@ -438,7 +438,7 @@ func LoadConfig(path string) (Config, error) {
 		cfg.Redis.WriteTimeoutSeconds = DefaultConfig().Redis.WriteTimeoutSeconds
 	}
 	applyEnvOverrides(&cfg)
-	if err := validateRelayTopology(cfg.Relay); err != nil {
+	if err := validateRelayTopology(&cfg.Relay); err != nil {
 		return Config{}, err
 	}
 	if err := validateProductionConfig(cfg); err != nil {
@@ -530,7 +530,7 @@ func validateProductionConfig(cfg Config) error {
 	return nil
 }
 
-func validateRelayTopology(relay RelayConfig) error {
+func validateRelayTopology(relay *RelayConfig) error {
 	defaultClusterID := strings.TrimSpace(relay.DefaultClusterID)
 	if defaultClusterID == "" {
 		return fmt.Errorf("invalid relay config: default_cluster_id is required")
@@ -540,16 +540,16 @@ func validateRelayTopology(relay RelayConfig) error {
 	}
 	seenNodes := make(map[string]struct{})
 	defaultClusterFound := false
-	for _, country := range relay.Countries {
+	for countryIndex, country := range relay.Countries {
 		countryCode := strings.ToUpper(strings.TrimSpace(country.CountryCode))
 		if countryCode == "" {
 			return fmt.Errorf("invalid relay config: country_code is required")
 		}
-		for _, city := range country.Cities {
+		for cityIndex, city := range country.Cities {
 			if strings.TrimSpace(city.CityCode) == "" {
 				return fmt.Errorf("invalid relay config: city_code is required for country %s", countryCode)
 			}
-			for _, cluster := range city.Clusters {
+			for clusterIndex, cluster := range city.Clusters {
 				clusterID := strings.TrimSpace(cluster.ClusterID)
 				if clusterID == "" {
 					return fmt.Errorf("invalid relay config: cluster_id is required")
@@ -560,7 +560,7 @@ func validateRelayTopology(relay RelayConfig) error {
 				if len(cluster.Nodes) == 0 {
 					return fmt.Errorf("invalid relay config: cluster %s must contain at least one node", clusterID)
 				}
-				for _, node := range cluster.Nodes {
+				for nodeIndex, node := range cluster.Nodes {
 					nodeID := strings.TrimSpace(node.NodeID)
 					if nodeID == "" {
 						return fmt.Errorf("invalid relay config: node_id is required in cluster %s", clusterID)
@@ -569,12 +569,11 @@ func validateRelayTopology(relay RelayConfig) error {
 						return fmt.Errorf("invalid relay config: duplicate node_id %s", nodeID)
 					}
 					seenNodes[nodeID] = struct{}{}
-					transport := strings.ToLower(strings.TrimSpace(node.Transport))
-					switch transport {
-					case "udp", "tcp", "tls", "quic":
-					default:
+					transport := normalizeRelayTransport(node.Transport)
+					if transport == "" {
 						return fmt.Errorf("invalid relay config: node %s has unsupported transport %q", nodeID, node.Transport)
 					}
+					relay.Countries[countryIndex].Cities[cityIndex].Clusters[clusterIndex].Nodes[nodeIndex].Transport = transport
 					if strings.TrimSpace(node.Address) == "" {
 						return fmt.Errorf("invalid relay config: node %s address is required", nodeID)
 					}
@@ -586,6 +585,21 @@ func validateRelayTopology(relay RelayConfig) error {
 		return fmt.Errorf("invalid relay config: default_cluster_id %s does not exist", defaultClusterID)
 	}
 	return nil
+}
+
+func normalizeRelayTransport(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "udp":
+		return "udp"
+	case "tcp":
+		return "tcp"
+	case "tls":
+		return "tls"
+	case "http3":
+		return "http3"
+	default:
+		return ""
+	}
 }
 
 func isProductionEnv() bool {

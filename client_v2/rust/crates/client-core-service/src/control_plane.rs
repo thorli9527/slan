@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use client_core::{AuthPayload, RouteSpec};
+use client_core::{AuthPayload, RelayTicket, RouteSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -54,6 +54,8 @@ pub struct NetworkActivationPlan {
     pub dns_servers: Vec<String>,
     pub routes: Vec<RouteSpec>,
     pub relay_candidates: Vec<RelayCandidate>,
+    pub self_node_id: Option<String>,
+    pub peers: Vec<ControlPeer>,
     pub peer_count: usize,
 }
 
@@ -69,6 +71,44 @@ pub struct RelayCandidate {
     pub region_id: Option<String>,
     #[serde(default)]
     pub cluster_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlPeer {
+    pub node_id: String,
+    #[serde(default)]
+    pub relay_allowed: bool,
+    #[serde(default)]
+    pub virtual_ips: Vec<String>,
+    #[serde(default)]
+    pub endpoints: Vec<ControlEndpoint>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlEndpoint {
+    #[serde(default)]
+    #[serde(rename = "type")]
+    pub endpoint_type: String,
+    pub address: String,
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayTicketRequest<'a> {
+    network_id: &'a str,
+    src_node_id: &'a str,
+    dst_node_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    derp_cluster_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    preferred_derp_node_ids: Vec<&'a str>,
+    reason: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relay_region_id: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,8 +304,33 @@ impl ControlPlaneClient {
             dns_servers: extract_dns_servers(&response),
             routes: extract_routes(&response),
             relay_candidates: extract_relay_candidates(&response),
+            self_node_id: extract_self_node_id(&response),
+            peers: extract_peers(&response),
             peer_count: extract_peer_count(&response),
         })
+    }
+
+    pub fn issue_relay_ticket(
+        &self,
+        access_token: &str,
+        network_id: &str,
+        src_node_id: &str,
+        dst_node_id: &str,
+        derp_cluster_id: Option<&str>,
+        preferred_derp_node_id: Option<&str>,
+        relay_region_id: Option<&str>,
+    ) -> Result<RelayTicket> {
+        let body = serde_json::to_value(RelayTicketRequest {
+            network_id,
+            src_node_id,
+            dst_node_id,
+            derp_cluster_id,
+            preferred_derp_node_ids: preferred_derp_node_id.into_iter().collect(),
+            reason: "udp_relay_fallback",
+            relay_region_id,
+        })?;
+        let response = self.request_json("POST", "/relay/tickets", access_token, Some(body))?;
+        serde_json::from_value(response).context("decode relay ticket")
     }
 
     pub fn relay_candidates(
@@ -428,6 +493,28 @@ fn extract_peer_count(response: &Value) -> usize {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or_default()
+}
+
+fn extract_self_node_id(response: &Value) -> Option<String> {
+    response
+        .pointer("/networkMap/selfNodeId")
+        .or_else(|| response.pointer("/selfNodeId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn extract_peers(response: &Value) -> Vec<ControlPeer> {
+    response
+        .pointer("/networkMap/peers")
+        .or_else(|| response.pointer("/peers"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|peer| serde_json::from_value::<ControlPeer>(peer.clone()).ok())
+        .filter(|peer| !peer.node_id.trim().is_empty())
+        .collect()
 }
 
 fn extract_relay_candidates(response: &Value) -> Vec<RelayCandidate> {

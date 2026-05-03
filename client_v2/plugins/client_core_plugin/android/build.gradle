@@ -1,0 +1,31 @@
+group 'dev.slan.client_core_plugin'
+version '0.1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.5.2'
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'dev.slan.client_core_plugin'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 23
+    }
+}

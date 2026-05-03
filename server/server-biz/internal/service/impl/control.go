@@ -198,19 +198,57 @@ func (s dbControlChannelService) ReportPathHealth(userID, nodeID string, report 
 		sampledAtMs = uint64(time.Now().UnixMilli())
 	}
 
-	return s.state.pg.UpsertNodePathHealth(ctx, repo.NodePathHealth{
-		HealthID:      util.NewID("path"),
-		NetworkID:     report.NetworkID,
-		NodeID:        sourceNode.NodeID,
-		PeerNodeID:    peerNodeID,
-		PathType:      pathType,
-		Endpoint:      strings.TrimSpace(report.Endpoint),
-		DerpNodeID:    derpNodeID,
-		ObservedRttMs: report.ObservedRttMs,
-		PacketLossPpm: report.PacketLossPpm,
-		PathScore:     report.PathScore,
-		SampledAtMs:   sampledAtMs,
-		UpdatedAt:     time.Now().Unix(),
+	now := time.Now()
+	record := repo.NodePathHealth{
+		HealthID:          util.NewID("path"),
+		NetworkID:         report.NetworkID,
+		NodeID:            sourceNode.NodeID,
+		PeerNodeID:        peerNodeID,
+		PathType:          pathType,
+		ActivePath:        strings.TrimSpace(report.ActivePath),
+		Endpoint:          strings.TrimSpace(report.Endpoint),
+		DerpNodeID:        derpNodeID,
+		ObservedRttMs:     report.ObservedRttMs,
+		PacketLossPpm:     report.PacketLossPpm,
+		PathScore:         report.PathScore,
+		SourceCountryCode: strings.TrimSpace(report.SourceCountryCode),
+		RelayCountryCode:  strings.TrimSpace(report.RelayCountryCode),
+		PeerCountryCode:   strings.TrimSpace(report.PeerCountryCode),
+		CrossCountry:      report.CrossCountry,
+		RelayMtu:          report.RelayMtu,
+		MaxFramePayload:   report.MaxFramePayload,
+		PathDowngrades:    report.PathDowngrades,
+		PathUpgrades:      report.PathUpgrades,
+		LastPathChange:    strings.TrimSpace(report.LastPathChange),
+		SampledAtMs:       sampledAtMs,
+		UpdatedAt:         now.Unix(),
+	}
+	if err := s.state.pg.UpsertNodePathHealth(ctx, record); err != nil {
+		return err
+	}
+	return s.state.pg.InsertNodePathHealthSample(ctx, repo.NodePathHealthSample{
+		SampleID:          util.NewID("path-sample"),
+		NetworkID:         record.NetworkID,
+		NodeID:            record.NodeID,
+		PeerNodeID:        record.PeerNodeID,
+		PathType:          record.PathType,
+		ActivePath:        record.ActivePath,
+		Endpoint:          record.Endpoint,
+		DerpNodeID:        record.DerpNodeID,
+		ObservedRttMs:     record.ObservedRttMs,
+		PacketLossPpm:     record.PacketLossPpm,
+		PathScore:         record.PathScore,
+		SourceCountryCode: record.SourceCountryCode,
+		RelayCountryCode:  record.RelayCountryCode,
+		PeerCountryCode:   record.PeerCountryCode,
+		CrossCountry:      record.CrossCountry,
+		RelayMtu:          record.RelayMtu,
+		MaxFramePayload:   record.MaxFramePayload,
+		PathDowngrades:    record.PathDowngrades,
+		PathUpgrades:      record.PathUpgrades,
+		LastPathChange:    record.LastPathChange,
+		SampledAtMs:       record.SampledAtMs,
+		UpdatedAt:         record.UpdatedAt,
 	})
 }
 
@@ -218,6 +256,10 @@ func (s dbControlChannelService) ReportRelayHeartbeat(report controlmsg.RelayNod
 	nodeID := strings.TrimSpace(report.NodeID)
 	if nodeID == "" {
 		return fmt.Errorf("%w: nodeId is required", ErrInvalidArgument)
+	}
+	transport := normalizeRelayTransportValue(report.Transport)
+	if strings.TrimSpace(report.Transport) != "" && transport == "" {
+		return fmt.Errorf("%w: unsupported relay transport", ErrInvalidArgument)
 	}
 	reportedAtMs := report.ReportedAtMs
 	if reportedAtMs == 0 {
@@ -228,12 +270,68 @@ func (s dbControlChannelService) ReportRelayHeartbeat(report controlmsg.RelayNod
 		ClusterID:      strings.TrimSpace(report.ClusterID),
 		CountryCode:    normalizeRelayCountryCode(report.CountryCode),
 		CityCode:       strings.TrimSpace(report.CityCode),
-		Transport:      strings.TrimSpace(report.Transport),
+		Transport:      transport,
 		Address:        strings.TrimSpace(report.Address),
 		Healthy:        report.Healthy,
 		ActiveSessions: report.ActiveSessions,
 		ReportedAtMs:   reportedAtMs,
 		UpdatedAt:      time.Now().Unix(),
+	})
+}
+
+func normalizeRelayTransportValue(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return ""
+	case "udp":
+		return "udp"
+	case "tcp":
+		return "tcp"
+	case "tls":
+		return "tls"
+	case "http3":
+		return "http3"
+	default:
+		return ""
+	}
+}
+
+func (s dbControlChannelService) ReportRelayPolicy(userID, nodeID string, report controlmsg.RelayPolicyReport) error {
+	networkID := strings.TrimSpace(report.NetworkID)
+	if networkID == "" {
+		return fmt.Errorf("%w: networkId is required", ErrInvalidArgument)
+	}
+	ctx := context.Background()
+	node, err := s.state.requireNodeSession(ctx, userID, nodeID, networkID)
+	if err != nil {
+		return err
+	}
+	deviceID := strings.TrimSpace(report.DeviceID)
+	if deviceID == "" {
+		deviceID = node.DeviceID
+	}
+	if deviceID != node.DeviceID {
+		return ErrForbidden
+	}
+	reportedAtMs := report.ReportedAtMS
+	if reportedAtMs == 0 {
+		reportedAtMs = uint64(time.Now().UnixMilli())
+	}
+	return s.state.pg.UpsertRelayPolicyExecution(ctx, repo.RelayPolicyExecution{
+		ExecutionID:       util.NewID("relay-exec"),
+		NetworkID:         networkID,
+		DeviceID:          deviceID,
+		NodeID:            node.NodeID,
+		PolicyID:          strings.TrimSpace(report.PolicyID),
+		Scope:             strings.TrimSpace(report.Scope),
+		RelayMtu:          report.RelayMtu,
+		MaxFramePayload:   report.MaxFramePayload,
+		ExecutionLevel:    report.ExecutionLevel,
+		Applied:           report.Applied,
+		Reason:            strings.TrimSpace(report.Reason),
+		PolicyUpdatedAtMs: report.PolicyUpdatedAtMS,
+		ReportedAtMs:      reportedAtMs,
+		UpdatedAt:         time.Now().Unix(),
 	})
 }
 
@@ -686,6 +784,7 @@ func (s *dbState) cleanupExpiredControlPlaneState(ctx context.Context, now time.
 	_ = s.pg.DeleteNodeEndpointsBeforeAll(ctx, endpointCutoffUnix(now))
 	_ = s.pg.DeleteNodeConnectionStatesBeforeAll(ctx, connectionStateCutoffUnix(now))
 	_ = s.pg.DeleteNodePathHealthBeforeAll(ctx, pathHealthCutoffUnix(now))
+	_ = s.pg.DeleteNodePathHealthSamplesBeforeAll(ctx, uint64(now.Add(-7*24*time.Hour).UnixMilli()))
 	_ = s.pg.DeleteRelayNodeHeartbeatsBefore(ctx, now.Add(-24*time.Hour).Unix())
 	s.pruneExpiredRelayTickets(now)
 }

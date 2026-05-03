@@ -1,0 +1,642 @@
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathKind {
+    DirectUdp,
+    RelayUdp,
+    RelayTcp,
+    RelayTls,
+    RelayHttp3,
+}
+
+impl PathKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DirectUdp => "direct_udp",
+            Self::RelayUdp => "relay_udp",
+            Self::RelayTcp => "relay_tcp",
+            Self::RelayTls => "relay_tls",
+            Self::RelayHttp3 => "relay_http3",
+        }
+    }
+
+    pub fn is_relay(self) -> bool {
+        matches!(
+            self,
+            Self::RelayUdp | Self::RelayTcp | Self::RelayTls | Self::RelayHttp3
+        )
+    }
+}
+
+pub fn normalize_relay_transport(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "udp" => Some("udp"),
+        "tcp" => Some("tcp"),
+        "tls" => Some("tls"),
+        "http3" => Some("http3"),
+        _ => None,
+    }
+}
+
+pub fn relay_path_kind_for_transport(value: &str) -> Option<PathKind> {
+    match normalize_relay_transport(value)? {
+        "udp" => Some(PathKind::RelayUdp),
+        "tcp" => Some(PathKind::RelayTcp),
+        "tls" => Some(PathKind::RelayTls),
+        "http3" => Some(PathKind::RelayHttp3),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathState {
+    Disabled,
+    Probing,
+    Ready,
+    Standby,
+    Degraded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathPolicy {
+    pub preferred: Vec<PathKind>,
+    #[serde(default = "default_fallback_enabled")]
+    pub fallback_enabled: bool,
+    #[serde(default = "default_probe_interval_ms")]
+    pub probe_interval_ms: u64,
+    #[serde(default = "default_failover_after_ms")]
+    pub failover_after_ms: u64,
+}
+
+impl Default for PathPolicy {
+    fn default() -> Self {
+        Self {
+            preferred: vec![
+                PathKind::DirectUdp,
+                PathKind::RelayUdp,
+                PathKind::RelayTcp,
+                PathKind::RelayHttp3,
+                PathKind::RelayTls,
+            ],
+            fallback_enabled: true,
+            probe_interval_ms: default_probe_interval_ms(),
+            failover_after_ms: default_failover_after_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerPathConfig {
+    pub peer_node_id: String,
+    #[serde(default)]
+    pub peer_virtual_ips: Vec<String>,
+    #[serde(default)]
+    pub candidates: Vec<PathCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathCandidate {
+    pub kind: PathKind,
+    #[serde(default = "default_candidate_state")]
+    pub state: PathState,
+    #[serde(default)]
+    pub endpoint_id: Option<String>,
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub rtt_ms: Option<u32>,
+    #[serde(default)]
+    pub path_score: Option<u32>,
+    #[serde(default)]
+    pub last_ok_at_ms: Option<u64>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerPathRuntime {
+    pub peer_node_id: String,
+    #[serde(default)]
+    pub peer_virtual_ips: Vec<String>,
+    pub active_path: Option<PathKind>,
+    #[serde(default)]
+    pub candidates: Vec<PathCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathTracker {
+    policy: PathPolicy,
+    active_paths: HashMap<String, PathKind>,
+    send_failures: HashMap<String, u32>,
+}
+
+impl PathTracker {
+    pub fn new(
+        policy: PathPolicy,
+        active_paths: impl IntoIterator<Item = (String, PathKind)>,
+    ) -> Self {
+        Self {
+            policy,
+            active_paths: active_paths.into_iter().collect(),
+            send_failures: HashMap::new(),
+        }
+    }
+
+    pub fn fallback_enabled(&self) -> bool {
+        self.policy.fallback_enabled
+    }
+
+    pub fn apply_runtime_paths(&mut self, peer_paths: &[PeerPathRuntime]) {
+        for path in peer_paths {
+            if let Some(active_path) = path.active_path {
+                self.active_paths
+                    .insert(path.peer_node_id.clone(), active_path);
+            }
+        }
+    }
+
+    pub fn set_active_path(&mut self, peer_node_id: impl Into<String>, active_path: PathKind) {
+        self.active_paths.insert(peer_node_id.into(), active_path);
+    }
+
+    pub fn active_path_for_node(&self, peer_node_id: &str, default: PathKind) -> PathKind {
+        self.active_paths
+            .get(peer_node_id)
+            .copied()
+            .unwrap_or(default)
+    }
+
+    pub fn record_send_success(&mut self, peer_node_id: &str) {
+        self.send_failures.remove(peer_node_id);
+    }
+
+    pub fn record_send_failure(
+        &mut self,
+        peer_node_id: &str,
+        path_kind: PathKind,
+        failure_threshold: u32,
+    ) -> bool {
+        if !self.policy.fallback_enabled || path_kind == PathKind::RelayUdp {
+            return false;
+        }
+        let failures = self
+            .send_failures
+            .entry(peer_node_id.to_string())
+            .or_insert(0);
+        *failures = failures.saturating_add(1);
+        if *failures < failure_threshold {
+            return false;
+        }
+        self.active_paths
+            .insert(peer_node_id.to_string(), PathKind::RelayUdp);
+        self.send_failures.remove(peer_node_id);
+        true
+    }
+
+    pub fn record_probe_success(&mut self, peer_node_id: &str, path_kind: PathKind) -> bool {
+        self.send_failures.remove(peer_node_id);
+        let current = self.active_path_for_node(peer_node_id, PathKind::RelayUdp);
+        if current == path_kind || !path_should_upgrade(&self.policy, current, path_kind) {
+            return false;
+        }
+        self.active_paths
+            .insert(peer_node_id.to_string(), path_kind);
+        true
+    }
+
+    pub fn active_path_summary(&self) -> String {
+        let mut paths = self
+            .active_paths
+            .values()
+            .copied()
+            .collect::<Vec<PathKind>>();
+        paths.sort_by_key(|path| path.as_str());
+        paths.dedup();
+        match paths.as_slice() {
+            [] => "unknown".to_string(),
+            [path] => path.as_str().to_string(),
+            _ => "mixed".to_string(),
+        }
+    }
+}
+
+pub fn select_active_path(
+    policy: &PathPolicy,
+    current: Option<PathKind>,
+    candidates: &[PathCandidate],
+) -> Option<PathKind> {
+    if let Some(current) = current {
+        if !policy.fallback_enabled && path_is_ready(candidates, current) {
+            return Some(current);
+        }
+    }
+    for preferred in preferred_path_order(policy) {
+        if path_is_ready(candidates, preferred) {
+            return Some(preferred);
+        }
+    }
+    current.filter(|kind| path_is_ready(candidates, *kind))
+}
+
+pub fn path_should_upgrade(policy: &PathPolicy, current: PathKind, candidate: PathKind) -> bool {
+    let order = preferred_path_order(policy);
+    let current_rank = order
+        .iter()
+        .position(|path| *path == current)
+        .unwrap_or(usize::MAX);
+    let candidate_rank = order
+        .iter()
+        .position(|path| *path == candidate)
+        .unwrap_or(usize::MAX);
+    candidate_rank < current_rank
+}
+
+pub fn preferred_path_order(policy: &PathPolicy) -> Vec<PathKind> {
+    if policy.preferred.is_empty() {
+        return PathPolicy::default().preferred;
+    }
+    let mut values = Vec::new();
+    for kind in &policy.preferred {
+        if !values.contains(kind) {
+            values.push(*kind);
+        }
+    }
+    values
+}
+
+pub fn update_peer_active_path(
+    peer_paths: &mut [PeerPathRuntime],
+    peer_node_id: &str,
+    active_path: PathKind,
+) {
+    let Some(path) = peer_paths
+        .iter_mut()
+        .find(|path| path.peer_node_id == peer_node_id)
+    else {
+        return;
+    };
+    path.active_path = Some(active_path);
+    for candidate in &mut path.candidates {
+        if candidate.kind == active_path {
+            candidate.state = PathState::Ready;
+            candidate.last_error = None;
+        } else if candidate.kind != PathKind::RelayUdp {
+            candidate.state = PathState::Degraded;
+            candidate.last_error = Some("downgraded after consecutive send failures".to_string());
+        }
+    }
+}
+
+pub fn mark_peer_path_probe_success(
+    peer_paths: &mut [PeerPathRuntime],
+    peer_node_id: &str,
+    active_path: PathKind,
+    now_ms: u64,
+) {
+    let Some(path) = peer_paths
+        .iter_mut()
+        .find(|path| path.peer_node_id == peer_node_id)
+    else {
+        return;
+    };
+    path.active_path = Some(active_path);
+    for candidate in &mut path.candidates {
+        if candidate.kind == active_path {
+            candidate.state = PathState::Ready;
+            candidate.last_error = None;
+            candidate.last_ok_at_ms = Some(now_ms);
+        }
+    }
+}
+
+pub fn selected_runtime_paths(
+    policy: &PathPolicy,
+    mut peer_paths: Vec<PeerPathRuntime>,
+) -> Vec<PeerPathRuntime> {
+    for peer in &mut peer_paths {
+        peer.active_path = select_active_path(policy, peer.active_path, &peer.candidates);
+    }
+    peer_paths
+}
+
+pub fn mark_path_ready_for_nodes(
+    mut peer_paths: Vec<PeerPathRuntime>,
+    node_ids: impl IntoIterator<Item = impl AsRef<str>>,
+    kind: PathKind,
+) -> Vec<PeerPathRuntime> {
+    for node_id in node_ids {
+        mark_path_ready_for_node(&mut peer_paths, node_id.as_ref(), kind);
+    }
+    peer_paths
+}
+
+pub fn mark_path_ready_for_node(
+    peer_paths: &mut [PeerPathRuntime],
+    peer_node_id: &str,
+    kind: PathKind,
+) {
+    let Some(path) = peer_paths
+        .iter_mut()
+        .find(|path| path.peer_node_id == peer_node_id)
+    else {
+        return;
+    };
+    if let Some(candidate) = path
+        .candidates
+        .iter_mut()
+        .find(|candidate| candidate.kind == kind)
+    {
+        candidate.state = PathState::Ready;
+        candidate.last_error = None;
+    }
+}
+
+fn path_is_ready(candidates: &[PathCandidate], kind: PathKind) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| candidate.kind == kind && candidate.state == PathState::Ready)
+}
+
+fn default_fallback_enabled() -> bool {
+    true
+}
+
+fn default_probe_interval_ms() -> u64 {
+    15_000
+}
+
+fn default_failover_after_ms() -> u64 {
+    30_000
+}
+
+fn default_candidate_state() -> PathState {
+    PathState::Standby
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(kind: PathKind, state: PathState) -> PathCandidate {
+        PathCandidate {
+            kind,
+            state,
+            endpoint_id: None,
+            address: None,
+            session_id: None,
+            transport: None,
+            rtt_ms: None,
+            path_score: None,
+            last_ok_at_ms: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn select_active_path_prefers_ready_direct_udp() {
+        let policy = PathPolicy::default();
+        let candidates = vec![
+            candidate(PathKind::RelayUdp, PathState::Ready),
+            candidate(PathKind::DirectUdp, PathState::Ready),
+        ];
+
+        assert_eq!(
+            select_active_path(&policy, Some(PathKind::RelayUdp), &candidates),
+            Some(PathKind::DirectUdp)
+        );
+    }
+
+    #[test]
+    fn select_active_path_keeps_current_when_fallback_is_disabled() {
+        let policy = PathPolicy {
+            fallback_enabled: false,
+            ..PathPolicy::default()
+        };
+        let candidates = vec![
+            candidate(PathKind::RelayUdp, PathState::Ready),
+            candidate(PathKind::DirectUdp, PathState::Ready),
+        ];
+
+        assert_eq!(
+            select_active_path(&policy, Some(PathKind::RelayUdp), &candidates),
+            Some(PathKind::RelayUdp)
+        );
+    }
+
+    #[test]
+    fn path_should_upgrade_uses_policy_order() {
+        let policy = PathPolicy::default();
+
+        assert!(path_should_upgrade(
+            &policy,
+            PathKind::RelayUdp,
+            PathKind::DirectUdp
+        ));
+        assert!(!path_should_upgrade(
+            &policy,
+            PathKind::DirectUdp,
+            PathKind::RelayUdp
+        ));
+        assert!(path_should_upgrade(
+            &policy,
+            PathKind::RelayTls,
+            PathKind::RelayHttp3
+        ));
+        assert!(!path_should_upgrade(
+            &policy,
+            PathKind::RelayHttp3,
+            PathKind::RelayTls
+        ));
+    }
+
+    #[test]
+    fn preferred_path_order_deduplicates_and_defaults_empty_policy() {
+        let policy = PathPolicy {
+            preferred: vec![PathKind::RelayTcp, PathKind::RelayTcp, PathKind::RelayUdp],
+            ..PathPolicy::default()
+        };
+
+        assert_eq!(
+            preferred_path_order(&policy),
+            vec![PathKind::RelayTcp, PathKind::RelayUdp]
+        );
+        assert_eq!(
+            preferred_path_order(&PathPolicy {
+                preferred: Vec::new(),
+                ..PathPolicy::default()
+            }),
+            PathPolicy::default().preferred
+        );
+    }
+
+    #[test]
+    fn relay_http3_is_relay_path_kind() {
+        assert_eq!(PathKind::RelayHttp3.as_str(), "relay_http3");
+        assert!(PathKind::RelayHttp3.is_relay());
+    }
+
+    #[test]
+    fn relay_transport_accepts_http3_only() {
+        for value in ["http3", " HTTP3 "] {
+            assert_eq!(normalize_relay_transport(value), Some("http3"));
+            assert_eq!(
+                relay_path_kind_for_transport(value),
+                Some(PathKind::RelayHttp3)
+            );
+        }
+        for value in ["h3", "quic"] {
+            assert_eq!(normalize_relay_transport(value), None);
+            assert_eq!(relay_path_kind_for_transport(value), None);
+        }
+    }
+
+    #[test]
+    fn update_peer_active_path_marks_downgraded_candidates() {
+        let mut paths = vec![PeerPathRuntime {
+            peer_node_id: "node-a".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
+            active_path: Some(PathKind::DirectUdp),
+            candidates: vec![
+                candidate(PathKind::DirectUdp, PathState::Ready),
+                candidate(PathKind::RelayUdp, PathState::Ready),
+            ],
+        }];
+
+        update_peer_active_path(&mut paths, "node-a", PathKind::RelayUdp);
+
+        assert_eq!(paths[0].active_path, Some(PathKind::RelayUdp));
+        assert!(paths[0].candidates.iter().any(|candidate| {
+            candidate.kind == PathKind::DirectUdp
+                && candidate.state == PathState::Degraded
+                && candidate.last_error.is_some()
+        }));
+    }
+
+    #[test]
+    fn mark_peer_path_probe_success_sets_ready_timestamp() {
+        let mut paths = vec![PeerPathRuntime {
+            peer_node_id: "node-a".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
+            active_path: Some(PathKind::RelayUdp),
+            candidates: vec![
+                candidate(PathKind::DirectUdp, PathState::Standby),
+                candidate(PathKind::RelayUdp, PathState::Ready),
+            ],
+        }];
+
+        mark_peer_path_probe_success(&mut paths, "node-a", PathKind::DirectUdp, 1234);
+
+        assert_eq!(paths[0].active_path, Some(PathKind::DirectUdp));
+        assert!(paths[0].candidates.iter().any(|candidate| {
+            candidate.kind == PathKind::DirectUdp
+                && candidate.state == PathState::Ready
+                && candidate.last_ok_at_ms == Some(1234)
+                && candidate.last_error.is_none()
+        }));
+    }
+
+    #[test]
+    fn selected_runtime_paths_applies_policy_to_all_peers() {
+        let peers = vec![
+            PeerPathRuntime {
+                peer_node_id: "node-a".to_string(),
+                peer_virtual_ips: vec![],
+                active_path: Some(PathKind::RelayUdp),
+                candidates: vec![
+                    candidate(PathKind::RelayUdp, PathState::Ready),
+                    candidate(PathKind::DirectUdp, PathState::Ready),
+                ],
+            },
+            PeerPathRuntime {
+                peer_node_id: "node-b".to_string(),
+                peer_virtual_ips: vec![],
+                active_path: None,
+                candidates: vec![candidate(PathKind::RelayTcp, PathState::Ready)],
+            },
+        ];
+
+        let selected = selected_runtime_paths(&PathPolicy::default(), peers);
+
+        assert_eq!(selected[0].active_path, Some(PathKind::DirectUdp));
+        assert_eq!(selected[1].active_path, Some(PathKind::RelayTcp));
+    }
+
+    #[test]
+    fn mark_path_ready_for_nodes_updates_matching_candidates() {
+        let paths = vec![
+            PeerPathRuntime {
+                peer_node_id: "node-a".to_string(),
+                peer_virtual_ips: vec![],
+                active_path: None,
+                candidates: vec![candidate(PathKind::DirectUdp, PathState::Standby)],
+            },
+            PeerPathRuntime {
+                peer_node_id: "node-b".to_string(),
+                peer_virtual_ips: vec![],
+                active_path: None,
+                candidates: vec![candidate(PathKind::DirectUdp, PathState::Standby)],
+            },
+        ];
+
+        let marked = mark_path_ready_for_nodes(paths, ["node-a"], PathKind::DirectUdp);
+
+        assert_eq!(marked[0].candidates[0].state, PathState::Ready);
+        assert_eq!(marked[1].candidates[0].state, PathState::Standby);
+    }
+
+    #[test]
+    fn path_tracker_downgrades_after_send_failure_threshold() {
+        let mut tracker = PathTracker::new(
+            PathPolicy::default(),
+            [("node-a".to_string(), PathKind::DirectUdp)],
+        );
+
+        assert!(!tracker.record_send_failure("node-a", PathKind::DirectUdp, 3));
+        assert!(!tracker.record_send_failure("node-a", PathKind::DirectUdp, 3));
+        assert!(tracker.record_send_failure("node-a", PathKind::DirectUdp, 3));
+        assert_eq!(
+            tracker.active_path_for_node("node-a", PathKind::RelayUdp),
+            PathKind::RelayUdp
+        );
+    }
+
+    #[test]
+    fn path_tracker_upgrades_on_better_probe_success() {
+        let mut tracker = PathTracker::new(
+            PathPolicy::default(),
+            [("node-a".to_string(), PathKind::RelayUdp)],
+        );
+
+        assert!(tracker.record_probe_success("node-a", PathKind::DirectUdp));
+        assert_eq!(
+            tracker.active_path_for_node("node-a", PathKind::RelayUdp),
+            PathKind::DirectUdp
+        );
+    }
+
+    #[test]
+    fn path_tracker_reports_mixed_summary() {
+        let tracker = PathTracker::new(
+            PathPolicy::default(),
+            [
+                ("node-a".to_string(), PathKind::DirectUdp),
+                ("node-b".to_string(), PathKind::RelayUdp),
+            ],
+        );
+
+        assert_eq!(tracker.active_path_summary(), "mixed");
+    }
+}

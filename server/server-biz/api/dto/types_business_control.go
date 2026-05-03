@@ -74,7 +74,7 @@ type RelayCluster struct {
 type RelayNode struct {
 	// NodeID 是节点 ID。
 	NodeID string `json:"nodeId"`
-	// Transport 是传输类型，例如 udp / tcp / quic。
+	// Transport 是传输类型，例如 udp / tcp / tls / http3。
 	Transport string `json:"transport"`
 	// Address 是公网接入地址。
 	Address string `json:"address"`
@@ -92,7 +92,7 @@ type DerpNode struct {
 	Host string `json:"host"`
 	// Port 是节点监听端口。
 	Port int `json:"port"`
-	// Transport 是传输类型，例如 udp / tcp / quic。
+	// Transport 是传输类型，例如 udp / tcp / tls / http3。
 	Transport string `json:"transport"`
 	// Priority 是控制面建议优先级。
 	Priority int `json:"priority"`
@@ -199,7 +199,7 @@ type AccessPolicy struct {
 type RelayEndpoint struct {
 	// EndpointID 是 relay 端点 ID。
 	EndpointID string `json:"endpointId"`
-	// Transport 是传输类型，例如 udp / tcp / quic。
+	// Transport 是传输类型，例如 udp / tcp / tls / http3。
 	Transport string `json:"transport"`
 	// Address 是 relay 监听地址。
 	Address string `json:"address"`

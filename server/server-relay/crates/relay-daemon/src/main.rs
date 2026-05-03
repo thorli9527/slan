@@ -32,6 +32,12 @@ fn parse_args() -> Result<DaemonConfig, String> {
                     .ok_or_else(|| "missing value for --udp-bind".to_string())?;
                 config.udp_bind = value;
             }
+            "--tcp-bind" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing value for --tcp-bind".to_string())?;
+                config.tcp_bind = Some(value);
+            }
             "--relay-url-prefix" => {
                 let value = args
                     .next()
@@ -46,6 +52,9 @@ fn parse_args() -> Result<DaemonConfig, String> {
                     .next()
                     .ok_or_else(|| "missing value for --ticket-signing-secret".to_string())?;
                 config.ticket_signing_secret = Some(value);
+            }
+            "--allow-unsigned-tickets" => {
+                config.allow_unsigned_tickets = true;
             }
             "--mqtt-broker-url" => {
                 let value = args

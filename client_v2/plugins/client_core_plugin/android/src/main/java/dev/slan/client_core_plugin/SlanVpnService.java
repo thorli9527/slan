@@ -1,0 +1,345 @@
+package dev.slan.client_core_plugin;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.net.VpnService;
+import android.os.Build;
+import android.os.ParcelFileDescriptor;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.net.DatagramSocket;
+import java.net.InetSocketAddress;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public final class SlanVpnService extends VpnService {
+  static final String ACTION_START = "dev.slan.client_core_plugin.START_VPN";
+  static final String ACTION_STOP = "dev.slan.client_core_plugin.STOP_VPN";
+  static final String EXTRA_CONFIG_JSON = "configJson";
+
+  private static final String CHANNEL_ID = "slan_vpn";
+  private static final int NOTIFICATION_ID = 24018;
+  private static SlanVpnService activeService;
+
+  private ParcelFileDescriptor vpnInterface;
+  private final List<DatagramSocket> protectedRelaySockets = new ArrayList<>();
+
+  static boolean protectSocketFd(int socketFd) {
+    SlanVpnService service = activeService;
+    return service != null && service.protect(socketFd);
+  }
+
+  @Override
+  public void onCreate() {
+    super.onCreate();
+    activeService = this;
+  }
+
+  @Override
+  public int onStartCommand(Intent intent, int flags, int startId) {
+    if (intent == null || intent.getAction() == null) {
+      return START_STICKY;
+    }
+    if (ACTION_STOP.equals(intent.getAction())) {
+      stopVpn("Android VPN stopped");
+      stopSelf();
+      return START_NOT_STICKY;
+    }
+    if (ACTION_START.equals(intent.getAction())) {
+      try {
+        startForeground(NOTIFICATION_ID, notification());
+        startVpn(new JSONObject(intent.getStringExtra(EXTRA_CONFIG_JSON)));
+      } catch (Exception error) {
+        SlanVpnRuntime.markError(error.getMessage());
+        stopVpn("Android VPN start failed");
+        stopSelf();
+      }
+      return START_STICKY;
+    }
+    return START_STICKY;
+  }
+
+  @Override
+  public void onRevoke() {
+    stopVpn("Android VPN permission revoked");
+    SlanVpnRuntime.markRevoked();
+    stopSelf();
+    super.onRevoke();
+  }
+
+  @Override
+  public void onDestroy() {
+    stopVpn("Android VPN destroyed");
+    if (activeService == this) {
+      activeService = null;
+    }
+    super.onDestroy();
+  }
+
+  private void startVpn(JSONObject config) throws Exception {
+    String virtualIp = config.optString("virtualIp", "").trim();
+    int prefixLen = config.optInt("prefixLen", 32);
+    if (virtualIp.isEmpty()) {
+      throw new IllegalArgumentException("Android VPN virtualIp is empty");
+    }
+
+    Builder builder = new Builder()
+        .setSession(config.optString("sessionName", "SLAN"))
+        .addAddress(virtualIp, prefixLen);
+
+    int mtu = config.optInt("mtu", 1280);
+    if (mtu >= 576) {
+      builder.setMtu(mtu);
+    }
+    addDnsServers(builder, config.optJSONArray("dnsServers"));
+    addRoutes(builder, config.optJSONArray("routes"));
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      builder.setMetered(false);
+    }
+
+    ParcelFileDescriptor nextInterface = builder.establish();
+    if (nextInterface == null) {
+      throw new IllegalStateException("Android VPN establish returned null");
+    }
+    closeInterface();
+    int tunFd = nextInterface.detachFd();
+    int[] relayFds = detachProtectedRelaySockets(config);
+    vpnInterface = null;
+    int nativeStart = SlanNativeBridge.start(tunFd, relayFds, config.toString());
+    if (nativeStart != 0) {
+      try {
+        ParcelFileDescriptor.adoptFd(tunFd).close();
+      } catch (IOException ignored) {
+      }
+      if (nativeStart == -1) {
+        for (int relayFd : relayFds) {
+          try {
+            ParcelFileDescriptor.adoptFd(relayFd).close();
+          } catch (IOException ignored) {
+          }
+        }
+      }
+      closeRelaySockets();
+      throw new IllegalStateException("Rust Android TUN runtime is unavailable");
+    }
+    SlanVpnRuntime.markStarted(
+        virtualIp,
+        mtu >= 576 ? mtu : null,
+        relayAddress(config),
+        relaySessionCount(config));
+  }
+
+  private String relayAddress(JSONObject config) {
+    String relayAddress = config.optString("relayAddress", "").trim();
+    if (!relayAddress.isEmpty()) {
+      return relayAddress;
+    }
+    JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
+    return relayDataPlane == null ? "" : relayDataPlane.optString("relayAddress", "").trim();
+  }
+
+  private int[] detachProtectedRelaySockets(JSONObject config) throws Exception {
+    String relayAddress = config.optString("relayAddress", "").trim();
+    if (relayAddress.isEmpty()) {
+      JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
+      relayAddress = relayDataPlane == null
+          ? ""
+          : relayDataPlane.optString("relayAddress", "").trim();
+    }
+    if (relayAddress.isEmpty()) {
+      return new int[0];
+    }
+    HostPort hostPort = HostPort.parse(relayAddress);
+    if (hostPort == null) {
+      return new int[0];
+    }
+    int sessionCount = relaySessionCount(config);
+    if (sessionCount <= 0) {
+      return new int[0];
+    }
+    closeRelaySockets();
+    int[] fds = new int[sessionCount];
+    for (int index = 0; index < sessionCount; index += 1) {
+      DatagramSocket socket = new DatagramSocket();
+      if (!protect(socket)) {
+        socket.close();
+        throw new IllegalStateException("Android VPN failed to protect relay socket");
+      }
+      socket.connect(new InetSocketAddress(hostPort.host, hostPort.port));
+      ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
+      fds[index] = descriptor.detachFd();
+      protectedRelaySockets.add(socket);
+    }
+    return fds;
+  }
+
+  private int relaySessionCount(JSONObject config) {
+    JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
+    if (relayDataPlane == null || !relayDataPlane.optBoolean("enabled", false)) {
+      return 0;
+    }
+    JSONArray sessions = relayDataPlane.optJSONArray("sessions");
+    return sessions == null ? 0 : sessions.length();
+  }
+
+  private void addDnsServers(Builder builder, JSONArray dnsServers) {
+    if (dnsServers == null) {
+      return;
+    }
+    for (int index = 0; index < dnsServers.length(); index += 1) {
+      String dns = dnsServers.optString(index, "").trim();
+      if (isUsableIpv4(dns)) {
+        builder.addDnsServer(dns);
+      }
+    }
+  }
+
+  private void addRoutes(Builder builder, JSONArray routes) {
+    if (routes == null) {
+      return;
+    }
+    for (int index = 0; index < routes.length(); index += 1) {
+      JSONObject route = routes.optJSONObject(index);
+      if (route == null) {
+        continue;
+      }
+      String destination = route.optString("destination", "").trim();
+      Cidr cidr = Cidr.parse(destination);
+      if (cidr != null) {
+        builder.addRoute(cidr.address, cidr.prefixLen);
+      }
+    }
+  }
+
+  private boolean isUsableIpv4(String value) {
+    return !value.isEmpty()
+        && !"0.0.0.0".equals(value)
+        && !value.startsWith("169.254.")
+        && value.indexOf(':') < 0;
+  }
+
+  private void stopVpn(String message) {
+    SlanNativeBridge.stop();
+    closeRelaySockets();
+    closeInterface();
+    SlanVpnRuntime.markStopped(message);
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      stopForeground(STOP_FOREGROUND_REMOVE);
+    } else {
+      stopForeground(true);
+    }
+  }
+
+  private void closeInterface() {
+    ParcelFileDescriptor current = vpnInterface;
+    vpnInterface = null;
+    if (current != null) {
+      try {
+        current.close();
+      } catch (IOException ignored) {
+      }
+    }
+  }
+
+  private void closeRelaySockets() {
+    for (DatagramSocket socket : protectedRelaySockets) {
+      socket.close();
+    }
+    protectedRelaySockets.clear();
+  }
+
+  private Notification notification() {
+    NotificationManager manager =
+        (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager != null) {
+      NotificationChannel channel =
+          new NotificationChannel(CHANNEL_ID, "SLAN Network", NotificationManager.IMPORTANCE_LOW);
+      manager.createNotificationChannel(channel);
+    }
+    Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+    PendingIntent pendingIntent = null;
+    if (launchIntent != null) {
+      int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        flags |= PendingIntent.FLAG_IMMUTABLE;
+      }
+      pendingIntent = PendingIntent.getActivity(this, 0, launchIntent, flags);
+    }
+    Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+        ? new Notification.Builder(this, CHANNEL_ID)
+        : new Notification.Builder(this);
+    builder
+        .setSmallIcon(android.R.drawable.stat_sys_download_done)
+        .setContentTitle("SLAN Client V2")
+        .setContentText("SLAN network is running")
+        .setOngoing(true);
+    if (pendingIntent != null) {
+      builder.setContentIntent(pendingIntent);
+    }
+    return builder.build();
+  }
+
+  private static final class Cidr {
+    final String address;
+    final int prefixLen;
+
+    Cidr(String address, int prefixLen) {
+      this.address = address;
+      this.prefixLen = prefixLen;
+    }
+
+    static Cidr parse(String value) {
+      if (value == null || value.isEmpty() || "mesh".equalsIgnoreCase(value)) {
+        return null;
+      }
+      String[] parts = value.split("/", 2);
+      if (parts.length != 2) {
+        return null;
+      }
+      String address = parts[0].trim();
+      int prefix;
+      try {
+        prefix = Integer.parseInt(parts[1].trim());
+      } catch (NumberFormatException error) {
+        return null;
+      }
+      if (address.indexOf(':') >= 0 || prefix < 0 || prefix > 32) {
+        return null;
+      }
+      return new Cidr(address, prefix);
+    }
+  }
+
+  private static final class HostPort {
+    final String host;
+    final int port;
+
+    HostPort(String host, int port) {
+      this.host = host;
+      this.port = port;
+    }
+
+    static HostPort parse(String value) {
+      int separator = value.lastIndexOf(':');
+      if (separator <= 0 || separator == value.length() - 1) {
+        return null;
+      }
+      String host = value.substring(0, separator).trim();
+      int port;
+      try {
+        port = Integer.parseInt(value.substring(separator + 1).trim());
+      } catch (NumberFormatException error) {
+        return null;
+      }
+      if (host.isEmpty() || port <= 0 || port > 65535) {
+        return null;
+      }
+      return new HostPort(host, port);
+    }
+  }
+}

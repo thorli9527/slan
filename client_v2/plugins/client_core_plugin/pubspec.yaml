@@ -17,7 +17,8 @@ flutter:
   plugin:
     platforms:
       android:
-        dartPluginClass: ClientCorePlugin
+        package: dev.slan.client_core_plugin
+        pluginClass: ClientCorePlugin
       ios:
         dartPluginClass: ClientCorePlugin
       linux:

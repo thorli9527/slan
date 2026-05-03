@@ -452,6 +452,116 @@ h1 {
   gap: 12px;
 }
 
+.quality-view {
+  display: grid;
+  gap: 16px;
+}
+
+.quality-stats,
+.quality-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quality-policy-grid {
+  margin-top: 16px;
+}
+
+.quality-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.quality-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.quality-range {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(15, 23, 42, .1);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.quality-range button {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #475569;
+  background: transparent;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.quality-range button.active {
+  color: #fff;
+  background: #111827;
+}
+
+.quality-actions .primary-action,
+.quality-actions .ghost {
+  width: auto;
+  margin: 0;
+}
+
+.quality-locked {
+  padding: 18px;
+  border: 1px dashed rgba(15, 23, 42, .18);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.quality-count {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.quality-table-wrap {
+  overflow-x: auto;
+}
+
+.quality-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 920px;
+}
+
+.quality-table th,
+.quality-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid rgba(15, 23, 42, .08);
+  text-align: left;
+  vertical-align: top;
+}
+
+.quality-table th {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.quality-table td strong,
+.quality-table td span {
+  display: block;
+}
+
+.quality-table td span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
 .health-card {
   min-width: 0;
   padding: 16px;
@@ -469,6 +579,22 @@ h1 {
   display: block;
   margin: 8px 0 4px;
   font-size: 18px;
+}
+
+.path-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.path-stack span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #334155;
+  background: #e2e8f0;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .pager {
@@ -997,6 +1123,8 @@ button:disabled {
   .dashboard-grid,
   .network-management-actions,
   .health-row,
+  .quality-stats,
+  .quality-policy-grid,
   .overview-stats,
   .overview-actions,
   .grid.two,
