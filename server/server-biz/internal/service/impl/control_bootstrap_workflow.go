@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
 	"github.com/slan/server/server-biz/internal/repo"
+	"github.com/slan/server/server-biz/internal/util"
 )
 
 type bootstrapSessionContext struct {
@@ -48,6 +50,34 @@ func (s dbBootstrapService) createRuntimeSession(ctx context.Context, userID str
 		sessionToken:     sessionToken,
 		networkMap:       s.state.buildNetworkMap(ctx, userID, session.node, session.networkID),
 	}, nil
+}
+
+// createStoredControlSession persists a control session in the database and
+// stores its token in the token backend.
+func (s *dbState) createStoredControlSession(ctx context.Context, userID, deviceID, nodeID, networkID string) (string, string, error) {
+	controlSessionID := util.NewID("ctrl")
+	sessionToken := util.OpaqueToken("control", controlSessionID)
+	now := time.Now().Unix()
+
+	if err := s.pg.CreateControlSession(ctx, repo.ControlSession{
+		ControlSessionID: controlSessionID,
+		UserID:           userID,
+		DeviceID:         deviceID,
+		NodeID:           nodeID,
+		NetworkID:        networkID,
+		SessionToken:     sessionToken,
+		ConnectedAt:      now,
+		LastSeenAt:       now,
+	}); err != nil {
+		return "", "", err
+	}
+	if s.tokens == nil {
+		return controlSessionID, sessionToken, nil
+	}
+	if err := s.tokens.StoreControlSessionToken(ctx, sessionToken, userID, 24*time.Hour); err != nil {
+		return "", "", err
+	}
+	return controlSessionID, sessionToken, nil
 }
 
 func (s dbBootstrapService) buildBootstrapDevice(ctx context.Context, userID, deviceID string) (dto.DeviceBootstrap, error) {

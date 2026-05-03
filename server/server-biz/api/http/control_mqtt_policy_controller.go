@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/slan/server/server-biz/api/dto"
+	"github.com/slan/server/server-biz/internal/netpath"
 )
 
 const relayPolicyControllerInterval = 10 * time.Minute
@@ -85,7 +86,7 @@ func relayPolicyRequestForNetworkSummary(summary dto.OpsNetworkQualityNetworkSum
 		NetworkID:           summary.NetworkID,
 		Scope:               "network",
 		PathType:            "any",
-		PreferredPathTypes:  bandwidthSavingPreferredPathTypes(),
+		PreferredPathTypes:  netpath.BandwidthSavingPreferredPathTypes(),
 		PolicyID:            policyID,
 		Version:             1,
 		RecommendationLevel: &recLevel,
@@ -95,8 +96,4 @@ func relayPolicyRequestForNetworkSummary(summary dto.OpsNetworkQualityNetworkSum
 		Reason:              reason,
 		TTLMS:               uint64(relayPolicyControllerInterval * 2 / time.Millisecond),
 	}, true
-}
-
-func bandwidthSavingPreferredPathTypes() []string {
-	return []string{"direct_udp", "relay_udp", "relay_tcp", "relay_http3", "relay_tls"}
 }

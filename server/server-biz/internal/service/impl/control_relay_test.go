@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/slan/server/server-biz/configs"
+	"github.com/slan/server/server-biz/internal/netpath"
 )
 
 func TestRelayClustersForCountriesKeepsOnlyRequestedCountries(t *testing.T) {
@@ -75,10 +76,10 @@ func TestRelayHeartbeatRankPrefersHealthyThenUnknownThenUnhealthy(t *testing.T) 
 }
 
 func TestNormalizeRelayTransportValue(t *testing.T) {
-	if got := normalizeRelayTransportValue(" HTTP3 "); got != "http3" {
+	if got := netpath.NormalizeRelayTransport(" HTTP3 "); got != "http3" {
 		t.Fatalf("expected http3, got %q", got)
 	}
-	if got := normalizeRelayTransportValue("quic"); got != "" {
+	if got := netpath.NormalizeRelayTransport("quic"); got != "" {
 		t.Fatalf("expected unsupported alias to be rejected, got %q", got)
 	}
 }

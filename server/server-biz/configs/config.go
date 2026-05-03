@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/slan/server/server-biz/internal/netpath"
 	"gopkg.in/yaml.v3"
 )
 
@@ -569,7 +570,7 @@ func validateRelayTopology(relay *RelayConfig) error {
 						return fmt.Errorf("invalid relay config: duplicate node_id %s", nodeID)
 					}
 					seenNodes[nodeID] = struct{}{}
-					transport := normalizeRelayTransport(node.Transport)
+					transport := netpath.NormalizeRelayTransport(node.Transport)
 					if transport == "" {
 						return fmt.Errorf("invalid relay config: node %s has unsupported transport %q", nodeID, node.Transport)
 					}
@@ -585,21 +586,6 @@ func validateRelayTopology(relay *RelayConfig) error {
 		return fmt.Errorf("invalid relay config: default_cluster_id %s does not exist", defaultClusterID)
 	}
 	return nil
-}
-
-func normalizeRelayTransport(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "udp":
-		return "udp"
-	case "tcp":
-		return "tcp"
-	case "tls":
-		return "tls"
-	case "http3":
-		return "http3"
-	default:
-		return ""
-	}
 }
 
 func isProductionEnv() bool {
