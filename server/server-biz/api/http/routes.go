@@ -74,7 +74,19 @@ func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	startRelayHeartbeatMQTT(deps)
 	startRelayDataPlanePolicyController(deps)
 
+	// GET /healthz
+	//
+	// 健康检查（无需鉴权）。
+	//
+	// 用途：
+	// - 供负载均衡器、K8S、探活脚本判断进程存活
 	router.GET("/healthz", healthz)
+	// GET /debug/vars
+	//
+	// expvar 运行时指标输出（无需鉴权）。
+	//
+	// 注意：
+	// - 当前对外开放，生产环境如有安全要求应在网关层做访问控制
 	router.GET("/debug/vars", gin.WrapH(expvar.Handler()))
 
 	api := router.Group("")
