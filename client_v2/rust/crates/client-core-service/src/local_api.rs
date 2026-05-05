@@ -22,8 +22,14 @@ pub(crate) enum LocalServiceMethod {
     WatchBusinessEvent,
     State,
     LocalStatus,
+    LocalSession,
     LocalPeers,
     LocalPathPlan,
+    LocalPathDiagnose,
+    LocalRelayCandidates,
+    LocalRefreshRelayCandidates,
+    LocalControlStatus,
+    LocalControlPlan,
     Start,
     Refresh,
     Dispatch,
@@ -59,8 +65,14 @@ impl LocalServiceMethod {
             "watchBusinessEvent" => Self::WatchBusinessEvent,
             "state" => Self::State,
             "localStatus" => Self::LocalStatus,
+            "localSession" => Self::LocalSession,
             "localPeers" => Self::LocalPeers,
             "localPathPlan" => Self::LocalPathPlan,
+            "localPathDiagnose" => Self::LocalPathDiagnose,
+            "localRelayCandidates" => Self::LocalRelayCandidates,
+            "localRefreshRelayCandidates" => Self::LocalRefreshRelayCandidates,
+            "localControlStatus" => Self::LocalControlStatus,
+            "localControlPlan" => Self::LocalControlPlan,
             "start" => Self::Start,
             "refresh" => Self::Refresh,
             "dispatch" => Self::Dispatch,
@@ -133,6 +145,24 @@ pub(crate) struct LocalStatusResponse {
     pub(crate) connect_plan_count: usize,
     pub(crate) error: Option<String>,
     pub(crate) runtime_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalSessionResponse {
+    pub(crate) signed_in: bool,
+    pub(crate) expired: bool,
+    pub(crate) user_id: Option<String>,
+    pub(crate) user_label: Option<String>,
+    pub(crate) device_id: Option<String>,
+    pub(crate) self_node_id: Option<String>,
+    pub(crate) active_network_id: Option<String>,
+    pub(crate) virtual_ip: Option<String>,
+    pub(crate) relay_candidate_count: usize,
+    pub(crate) mqtt_configured: bool,
+    pub(crate) expires_in: Option<u64>,
+    pub(crate) authenticated_at_ms: Option<u64>,
+    pub(crate) expires_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -220,12 +250,36 @@ mod tests {
             LocalServiceMethod::LocalStatus
         );
         assert_eq!(
+            LocalServiceMethod::parse("localSession"),
+            LocalServiceMethod::LocalSession
+        );
+        assert_eq!(
             LocalServiceMethod::parse("localPeers"),
             LocalServiceMethod::LocalPeers
         );
         assert_eq!(
             LocalServiceMethod::parse("localPathPlan"),
             LocalServiceMethod::LocalPathPlan
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localPathDiagnose"),
+            LocalServiceMethod::LocalPathDiagnose
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localRelayCandidates"),
+            LocalServiceMethod::LocalRelayCandidates
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localRefreshRelayCandidates"),
+            LocalServiceMethod::LocalRefreshRelayCandidates
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localControlStatus"),
+            LocalServiceMethod::LocalControlStatus
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localControlPlan"),
+            LocalServiceMethod::LocalControlPlan
         );
     }
 }

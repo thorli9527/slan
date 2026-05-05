@@ -18,6 +18,10 @@ class ClientCoreLocalService {
     return requestJson('localStatus');
   }
 
+  Future<Map<String, Object?>?> localSession() async {
+    return requestJson('localSession');
+  }
+
   Future<Map<String, Object?>?> localPeers() async {
     return requestJson('localPeers');
   }
@@ -27,16 +31,22 @@ class ClientCoreLocalService {
   }
 
   Future<Map<String, Object?>?> localPathDiagnose() async {
-    return requestJson('pathDiagnose');
+    return requestJson('localPathDiagnose');
   }
 
   Future<Map<String, Object?>?> localRelayCandidates(
       {bool refresh = false}) async {
-    return requestJson(refresh ? 'refreshRelayCandidates' : 'relayCandidates');
+    return requestJson(
+      refresh ? 'localRefreshRelayCandidates' : 'localRelayCandidates',
+    );
   }
 
   Future<Map<String, Object?>?> localControlStatus() async {
-    return requestJson('controlTransportStatus');
+    return requestJson('localControlStatus');
+  }
+
+  Future<Map<String, Object?>?> localControlPlan() async {
+    return requestJson('localControlPlan');
   }
 
   Future<Map<String, Object?>?> logout() async {

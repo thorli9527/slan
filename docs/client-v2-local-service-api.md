@@ -76,33 +76,92 @@ RPC method: `localPathPlan`
 - `items[].relayTicket`
 - `items[].updatedAtMs`
 
+### `GET /local/session`
+
+RPC method: `localSession`
+
+用途：读取脱敏后的本地登录与网络会话摘要，给 UI 判断登录态、设备绑定、过期状态，不返回任何 credential。
+
+返回字段：
+
+- `signedIn`
+- `expired`
+- `userId`
+- `userLabel`
+- `deviceId`
+- `selfNodeId`
+- `activeNetworkId`
+- `virtualIp`
+- `relayCandidateCount`
+- `mqttConfigured`
+- `expiresIn`
+- `authenticatedAtMs`
+- `expiresAtMs`
+
+明确不返回：
+
+- `accessToken`
+- `refreshToken`
+- `mqtt.username`
+- `mqtt.password`
+
+### `GET /local/path-diagnose`
+
+RPC method: `localPathDiagnose`
+
+用途：读取本地路径诊断视图，聚合 direct、relay、MTU、DNS 和健康原因。
+
+### `GET /local/relay-candidates`
+
+RPC method: `localRelayCandidates`
+
+用途：读取本地 relay 候选与选择结果。
+
+### `POST /local/relay-candidates/refresh`
+
+RPC method: `localRefreshRelayCandidates`
+
+用途：触发一次 relay candidate 重新选择后返回结果。
+
+### `GET /local/control/status`
+
+RPC method: `localControlStatus`
+
+用途：读取本地控制面同步状态。
+
+### `GET /local/control/plan`
+
+RPC method: `localControlPlan`
+
+用途：读取本地控制面 transport 计划，用于排查 MQTT/HTTP fallback 选择。
+
 ## 可以继续抽出来的接口
 
 ### 状态与会话
 
 - `GET /local/status` -> `localStatus`
-- `GET /local/session` -> 可从 `PersistedSession` 抽出，但必须隐藏 `accessToken / refreshToken`
+- `GET /local/session` -> `localSession`
 - `POST /local/logout` -> 当前 `logout`
 
 ### Peer 与路径
 
 - `GET /local/peers` -> `localPeers`
 - `GET /local/path-plan` -> `localPathPlan`
-- `GET /local/path-diagnose` -> 当前 `pathDiagnose`
+- `GET /local/path-diagnose` -> `localPathDiagnose`
 - `POST /local/path/probe` -> 后续触发一次主动路径探测
 - `POST /local/path/select` -> 后续手动切换 active path，调试用，默认不开放给普通 UI
 
 ### Relay / DERP
 
-- `GET /local/relay-candidates` -> 当前 `relayCandidates`
-- `POST /local/relay-candidates/refresh` -> 当前 `refreshRelayCandidates`
+- `GET /local/relay-candidates` -> `localRelayCandidates`
+- `POST /local/relay-candidates/refresh` -> `localRefreshRelayCandidates`
 - `POST /local/relay/prepare` -> 当前 `prepareRelayDataPlane`
 - `GET /local/derp` -> 后续暴露 DERP map / candidate / ticket 状态
 
 ### Control sync
 
-- `GET /local/control/status` -> 当前 `controlTransportStatus`
-- `GET /local/control/plan` -> 当前 `controlTransportPlan`
+- `GET /local/control/status` -> `localControlStatus`
+- `GET /local/control/plan` -> `localControlPlan`
 - `GET /local/control/outbox` -> 当前 `controlTransportOutbox`
 - `POST /local/control/ack` -> 当前 `markControlAcked`
 

@@ -64,9 +64,9 @@ use crate::control_transport::{
 use crate::control_transport_worker::ControlTransportWorkerState;
 use crate::local_api::{
     LocalPathPlanResponse, LocalPeerView, LocalPeersResponse, LocalServiceMethod,
-    LocalStatusResponse, MarkControlAckedRequest, ServiceRequest, StoredBusinessEvent,
-    WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
-    BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
+    LocalSessionResponse, LocalStatusResponse, MarkControlAckedRequest, ServiceRequest,
+    StoredBusinessEvent, WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest,
+    WatchStateResponse, BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
     BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED,
     BUSINESS_STATE_CHANGED,
 };
@@ -315,8 +315,20 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         }
         LocalServiceMethod::State => return handle_state_snapshot(&context.runtime),
         LocalServiceMethod::LocalStatus => return handle_local_status(&context.runtime),
+        LocalServiceMethod::LocalSession => return handle_local_session(),
         LocalServiceMethod::LocalPeers => return handle_local_peers(),
         LocalServiceMethod::LocalPathPlan => return handle_local_path_plan(),
+        LocalServiceMethod::LocalPathDiagnose => return handle_path_diagnose(),
+        LocalServiceMethod::LocalRelayCandidates => return handle_relay_candidates(false),
+        LocalServiceMethod::LocalRefreshRelayCandidates => return handle_relay_candidates(true),
+        LocalServiceMethod::LocalControlStatus => {
+            return serde_json::to_string(&control_transport_status()?)
+                .context("encode local control status")
+        }
+        LocalServiceMethod::LocalControlPlan => {
+            return serde_json::to_string(&control_transport_plan()?)
+                .context("encode local control plan")
+        }
         LocalServiceMethod::Start => {
             sync_control_assignment(&context.runtime);
             mark_control_sync(&context.sync_throttle);
@@ -443,6 +455,50 @@ fn handle_local_status(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>)
         runtime_error,
     };
     serde_json::to_string(&response).context("encode local status")
+}
+
+fn handle_local_session() -> Result<String> {
+    let session = load_session().ok();
+    let response = match session {
+        Some(session) => {
+            let expires_at_ms = session.expires_in.map(|seconds| {
+                session
+                    .authenticated_at_ms
+                    .saturating_add(seconds.saturating_mul(1000))
+            });
+            LocalSessionResponse {
+                signed_in: !session.access_token.trim().is_empty(),
+                expired: session_is_expired(&session),
+                user_id: Some(session.user_id),
+                user_label: Some(session.user_label),
+                device_id: session.device_id,
+                self_node_id: session.self_node_id,
+                active_network_id: session.active_network_id,
+                virtual_ip: session.virtual_ip,
+                relay_candidate_count: session.relay_candidates.len(),
+                mqtt_configured: session.mqtt.is_some(),
+                expires_in: session.expires_in,
+                authenticated_at_ms: Some(session.authenticated_at_ms),
+                expires_at_ms,
+            }
+        }
+        None => LocalSessionResponse {
+            signed_in: false,
+            expired: false,
+            user_id: None,
+            user_label: None,
+            device_id: None,
+            self_node_id: None,
+            active_network_id: None,
+            virtual_ip: None,
+            relay_candidate_count: 0,
+            mqtt_configured: false,
+            expires_in: None,
+            authenticated_at_ms: None,
+            expires_at_ms: None,
+        },
+    };
+    serde_json::to_string(&response).context("encode local session")
 }
 
 fn handle_local_peers() -> Result<String> {
