@@ -574,7 +574,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       Future<void>(() async {
         while (_watchingBusinessEvents) {
           try {
-            final json = await _localService.watchBusinessEvent(
+            final json = await _localService.localBusinessEventWatch(
               lastRevision: _lastBusinessEventRevision,
             );
             if (json == null) {
@@ -667,7 +667,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return _reduceBusinessEvent(event);
     }
     try {
-      final state = _stateFromResult(await _localService.state());
+      final state = _stateFromResult(await _localService.localState());
       if (state != null) {
         ClientUiDiagnostics.unawaitedLog(
           'bridge.businessEvent.stateQueried',

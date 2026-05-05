@@ -10,6 +10,24 @@
 
 ## 第一批稳定接口
 
+### `GET /local/state`
+
+RPC method: `localState`
+
+用途：读取完整 `ClientViewState` 快照。该接口保留给 UI 桥接层做状态同步，普通页面优先使用更窄的 `localStatus`、`localSession`、`localPeers`。
+
+### `GET /local/state/watch`
+
+RPC method: `localStateWatch`
+
+用途：长轮询完整状态变化，返回 `revision` 与 `state`。
+
+### `GET /local/events/watch`
+
+RPC method: `localBusinessEventWatch`
+
+用途：长轮询业务事件，返回 `revision`、`businessType`、`businessData`、`snapshot`。
+
 ### `GET /local/status`
 
 RPC method: `localStatus`
@@ -208,14 +226,14 @@ RPC method: `localNetworkShutdown`
 
 ### 观测与事件
 
-- `GET /local/events/watch` -> 当前 `watchBusinessEvent`
-- `GET /local/state/watch` -> 当前 `watchState`
+- `GET /local/events/watch` -> `localBusinessEventWatch`
+- `GET /local/state/watch` -> `localStateWatch`
 - `GET /local/diagnostics/export` -> `localDiagnosticsExport`
 
 ## 接口化原则
 
 - UI 新代码优先调用 `local*` 稳定接口，不再直接依赖完整 `state`。
-- `state/start/refresh/dispatch` 是待下线的 runtime 低层入口，不作为新 UI 协议使用。
-- 已接口化的能力不保留旧 method 兼容，例如 `pathDiagnose`、`relayCandidates`、`controlTransportStatus`、`activateNetwork`。
+- `start/refresh/dispatch` 是待下线的 runtime 低层入口，不作为新 UI 协议使用。
+- 已接口化的能力不保留旧 method 兼容，例如 `state`、`watchState`、`watchBusinessEvent`、`pathDiagnose`、`relayCandidates`、`controlTransportStatus`、`activateNetwork`。
 - 本地服务返回的只读接口不携带 token、ticket secret、refresh token。
 - 控制类接口必须继续走明确 method，不要通过泛化 `dispatch` 暴露给 UI。

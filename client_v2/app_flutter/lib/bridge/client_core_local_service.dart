@@ -10,8 +10,22 @@ class ClientCoreLocalService {
 
   final String? _host;
 
-  Future<Map<String, Object?>?> state() async {
-    return requestJson('state');
+  Future<Map<String, Object?>?> localState() async {
+    return requestJson('localState');
+  }
+
+  Future<Map<String, Object?>?> localStateWatch({
+    required int lastRevision,
+    int timeoutMs = 30000,
+  }) async {
+    return requestJson(
+      'localStateWatch',
+      arguments: {
+        'lastRevision': lastRevision,
+        'timeoutMs': timeoutMs,
+      },
+      allowEmptyResponse: true,
+    );
   }
 
   Future<Map<String, Object?>?> localStatus() async {
@@ -104,12 +118,12 @@ class ClientCoreLocalService {
     return requestJson('localNetworkShutdown');
   }
 
-  Future<Map<String, Object?>?> watchBusinessEvent({
+  Future<Map<String, Object?>?> localBusinessEventWatch({
     required int lastRevision,
     int timeoutMs = 30000,
   }) async {
     return requestJson(
-      'watchBusinessEvent',
+      'localBusinessEventWatch',
       arguments: {
         'lastRevision': lastRevision,
         'timeoutMs': timeoutMs,

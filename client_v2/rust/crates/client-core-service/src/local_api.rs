@@ -18,9 +18,9 @@ pub(crate) struct ServiceRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LocalServiceMethod {
-    WatchState,
-    WatchBusinessEvent,
-    State,
+    LocalState,
+    LocalStateWatch,
+    LocalBusinessEventWatch,
     LocalStatus,
     LocalSession,
     LocalPeers,
@@ -56,9 +56,9 @@ pub(crate) enum LocalServiceMethod {
 impl LocalServiceMethod {
     pub(crate) fn parse(method: &str) -> Self {
         match method {
-            "watchState" => Self::WatchState,
-            "watchBusinessEvent" => Self::WatchBusinessEvent,
-            "state" => Self::State,
+            "localState" => Self::LocalState,
+            "localStateWatch" => Self::LocalStateWatch,
+            "localBusinessEventWatch" => Self::LocalBusinessEventWatch,
             "localStatus" => Self::LocalStatus,
             "localSession" => Self::LocalSession,
             "localPeers" => Self::LocalPeers,
@@ -236,6 +236,18 @@ mod tests {
     #[test]
     fn parses_local_interface_methods() {
         assert_eq!(
+            LocalServiceMethod::parse("localState"),
+            LocalServiceMethod::LocalState
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localStateWatch"),
+            LocalServiceMethod::LocalStateWatch
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localBusinessEventWatch"),
+            LocalServiceMethod::LocalBusinessEventWatch
+        );
+        assert_eq!(
             LocalServiceMethod::parse("localStatus"),
             LocalServiceMethod::LocalStatus
         );
@@ -305,6 +317,18 @@ mod tests {
         );
         assert_eq!(
             LocalServiceMethod::parse("controlTransportStatus"),
+            LocalServiceMethod::Other
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("state"),
+            LocalServiceMethod::Other
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("watchState"),
+            LocalServiceMethod::Other
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("watchBusinessEvent"),
             LocalServiceMethod::Other
         );
     }

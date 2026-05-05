@@ -307,13 +307,13 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
     let request: ServiceRequest = serde_json::from_str(line).context("decode service request")?;
     let method = LocalServiceMethod::parse(&request.method);
     match method {
-        LocalServiceMethod::WatchState => {
+        LocalServiceMethod::LocalStateWatch => {
             return handle_watch_state(request, &context.runtime, &context.state_notifier)
         }
-        LocalServiceMethod::WatchBusinessEvent => {
+        LocalServiceMethod::LocalBusinessEventWatch => {
             return handle_watch_business_event(request, &context.runtime, &context.state_notifier)
         }
-        LocalServiceMethod::State => return handle_state_snapshot(&context.runtime),
+        LocalServiceMethod::LocalState => return handle_state_snapshot(&context.runtime),
         LocalServiceMethod::LocalStatus => return handle_local_status(&context.runtime),
         LocalServiceMethod::LocalSession => return handle_local_session(),
         LocalServiceMethod::LocalPeers => return handle_local_peers(),
@@ -554,10 +554,6 @@ fn handle_request(
                 Err(error) => state_with_error(runtime.state(), error.to_string()),
             }
         }
-        LocalServiceMethod::State => match runtime.refresh() {
-            Ok(()) => runtime.state().clone(),
-            Err(error) => state_with_error(runtime.state(), error.to_string()),
-        },
         LocalServiceMethod::Dispatch => {
             let command: ClientCommand =
                 serde_json::from_value(request.args).context("decode client command")?;
@@ -637,6 +633,9 @@ fn removed_legacy_local_method(method: &str) -> bool {
             | "pendingControlAcks"
             | "markControlAcked"
             | "markTransportPublished"
+            | "state"
+            | "watchState"
+            | "watchBusinessEvent"
     )
 }
 

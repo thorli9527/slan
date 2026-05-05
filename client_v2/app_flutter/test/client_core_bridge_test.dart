@@ -11,7 +11,7 @@ void main() {
     final service = await _FakeClientService.start([
       _ServiceReply(
         delay: const Duration(milliseconds: 150),
-        expectedMethod: 'watchBusinessEvent',
+        expectedMethod: 'localBusinessEventWatch',
         body: _businessEvent(
           ClientBusinessEventType.networkSwitchFinished,
           {
@@ -24,7 +24,7 @@ void main() {
         ),
       ),
       _ServiceReply(
-        expectedMethod: 'state',
+        expectedMethod: 'localState',
         body: {
           'signedIn': true,
           'networkEnabled': true,
@@ -75,7 +75,7 @@ void main() {
     final service = await _FakeClientService.start([
       _ServiceReply(
         delay: const Duration(milliseconds: 250),
-        expectedMethod: 'watchBusinessEvent',
+        expectedMethod: 'localBusinessEventWatch',
         body: _businessEvent(
           ClientBusinessEventType.networkSwitchFinished,
           {
@@ -88,7 +88,7 @@ void main() {
         ),
       ),
       _ServiceReply(
-        expectedMethod: 'state',
+        expectedMethod: 'localState',
         body: {
           'signedIn': true,
           'networkEnabled': true,
@@ -143,7 +143,7 @@ void main() {
     final service = await _FakeClientService.start([
       _ServiceReply(
         delay: const Duration(milliseconds: 150),
-        expectedMethod: 'watchBusinessEvent',
+        expectedMethod: 'localBusinessEventWatch',
         body: _businessEvent(
           ClientBusinessEventType.networkSwitchFinished,
           {
@@ -156,7 +156,7 @@ void main() {
         ),
       ),
       _ServiceReply(
-        expectedMethod: 'state',
+        expectedMethod: 'localState',
         body: {
           'signedIn': true,
           'networkEnabled': false,
@@ -208,7 +208,7 @@ void main() {
     final service = await _FakeClientService.start([
       _ServiceReply(
         delay: const Duration(milliseconds: 80),
-        expectedMethod: 'watchBusinessEvent',
+        expectedMethod: 'localBusinessEventWatch',
         body: _businessEvent(
           ClientBusinessEventType.networkSwitchFailed,
           {
@@ -221,7 +221,7 @@ void main() {
         ),
       ),
       _ServiceReply(
-        expectedMethod: 'state',
+        expectedMethod: 'localState',
         body: {
           'signedIn': true,
           'networkEnabled': false,
@@ -294,14 +294,14 @@ void main() {
     expect(bridge.state.value.networkEnabled, isFalse);
     expect(bridge.state.value.syncing, isFalse);
     expect(bridge.state.value.switchEnabled, isTrue);
-    expect(service.seenMethods, isNot(contains('watchBusinessEvent')));
+    expect(service.seenMethods, isNot(contains('localBusinessEventWatch')));
   });
 
   test('network switch failed keeps event error after state query', () async {
     final service = await _FakeClientService.start([
       _ServiceReply(
         delay: const Duration(milliseconds: 80),
-        expectedMethod: 'watchBusinessEvent',
+        expectedMethod: 'localBusinessEventWatch',
         body: _businessEvent(
           ClientBusinessEventType.networkSwitchFailed,
           {
@@ -315,7 +315,7 @@ void main() {
         ),
       ),
       _ServiceReply(
-        expectedMethod: 'state',
+        expectedMethod: 'localState',
         body: {
           'signedIn': true,
           'networkEnabled': false,
@@ -393,7 +393,7 @@ void main() {
     final service = await _FakeClientService.start([
       _ServiceReply(
         delay: const Duration(milliseconds: 80),
-        expectedMethod: 'watchBusinessEvent',
+        expectedMethod: 'localBusinessEventWatch',
         body: _businessEvent(
           ClientBusinessEventType.networkSwitchFinished,
           {
@@ -406,7 +406,7 @@ void main() {
         ),
       ),
       _ServiceReply(
-        expectedMethod: 'state',
+        expectedMethod: 'localState',
         body: {
           'signedIn': true,
           'networkEnabled': true,
@@ -468,7 +468,7 @@ void main() {
     final service = await _FakeClientService.start([
       _ServiceReply(
         delay: const Duration(milliseconds: 80),
-        expectedMethod: 'watchBusinessEvent',
+        expectedMethod: 'localBusinessEventWatch',
         body: _businessEvent(
           ClientBusinessEventType.networkSwitchFinished,
           {
@@ -481,7 +481,7 @@ void main() {
         ),
       ),
       _ServiceReply(
-        expectedMethod: 'state',
+        expectedMethod: 'localState',
         body: {
           'signedIn': true,
           'networkEnabled': true,
@@ -518,8 +518,10 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(service.seenMethods, isNot(contains('refresh')));
-    expect(service.seenMethods,
-        containsAll(['localNetworkActivate', 'watchBusinessEvent', 'state']));
+    expect(
+        service.seenMethods,
+        containsAll(
+            ['localNetworkActivate', 'localBusinessEventWatch', 'localState']));
   });
 
   test('logout clears local service session before returning', () async {
