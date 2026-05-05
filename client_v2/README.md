@@ -62,6 +62,8 @@ If a platform has no native plugin handler yet, the Dart plugin facade falls bac
 
 For macOS/iOS/Android multi-device development on one Mac, see [`../docs/client-v2-multidevice-dev.md`](../docs/client-v2-multidevice-dev.md).
 
+For device ID stability and hardware-derived ID rules, see [`../docs/client-v2-device-id.md`](../docs/client-v2-device-id.md).
+
 ## Control Transport
 
 The service stores MQTT credentials in the local session after login/device registration. Flutter does not read or manage these credentials.

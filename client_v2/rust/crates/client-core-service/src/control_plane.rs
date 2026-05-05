@@ -749,7 +749,7 @@ fn deterministic_device_id() -> Result<String> {
 
 fn deterministic_device_id_from_anchor(anchor: &str) -> String {
     let normalized = anchor.trim().to_ascii_lowercase();
-    format!("dev-{:016x}", fnv1a64(normalized.as_bytes()))
+    format!("{:016x}", fnv1a64(normalized.as_bytes()))
 }
 
 fn machine_anchor() -> Option<String> {
