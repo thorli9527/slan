@@ -49,16 +49,59 @@ class ClientCoreLocalService {
     return requestJson('localControlPlan');
   }
 
+  Future<Map<String, Object?>?> localControlCadence() async {
+    return requestJson('localControlCadence');
+  }
+
+  Future<Map<String, Object?>?> localControlTickPlan({
+    Object? arguments,
+  }) async {
+    return requestJson('localControlTickPlan', arguments: arguments);
+  }
+
+  Future<Map<String, Object?>?> localControlOutbox({
+    Object? arguments,
+  }) async {
+    return requestJson('localControlOutbox', arguments: arguments);
+  }
+
+  Future<Map<String, Object?>?> localPendingControlAcks() async {
+    return requestJson('localPendingControlAcks');
+  }
+
+  Future<Map<String, Object?>?> localMarkControlAcked({
+    required String taskId,
+  }) async {
+    return requestJson(
+      'localMarkControlAcked',
+      arguments: {'taskId': taskId},
+    );
+  }
+
+  Future<Map<String, Object?>?> localMarkTransportPublished({
+    Object? arguments,
+  }) async {
+    return requestJson('localMarkTransportPublished', arguments: arguments);
+  }
+
+  Future<Map<String, Object?>?> localRelayPrepare() async {
+    return requestJson('localRelayPrepare');
+  }
+
   Future<Map<String, Object?>?> logout() async {
-    return requestJson('logout');
+    return requestJson('localLogout');
   }
 
   Future<Map<String, Object?>?> activateNetwork() async {
-    return requestJson('activateNetwork');
+    return requestJson('localNetworkActivate');
   }
 
   Future<Map<String, Object?>?> deactivateNetwork() async {
-    return requestJson('deactivateNetwork');
+    return requestJson('localNetworkDeactivate');
+  }
+
+  Future<Map<String, Object?>?> shutdownNetwork() async {
+    return requestJson('localNetworkShutdown');
   }
 
   Future<Map<String, Object?>?> watchBusinessEvent({
@@ -76,12 +119,12 @@ class ClientCoreLocalService {
   }
 
   Future<AndroidVpnSessionConfig?> androidNetworkConfig() async {
-    final json = await requestJson('androidNetworkConfig');
+    final json = await requestJson('localAndroidNetworkConfig');
     return json == null ? null : AndroidVpnSessionConfig.fromJson(json);
   }
 
   Future<Map<String, Object?>?> exportDiagnostics() async {
-    return requestJson('exportDiagnostics');
+    return requestJson('localDiagnosticsExport');
   }
 
   Future<Map<String, Object?>?> requestJson(

@@ -159,7 +159,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         state: _state.value,
       );
       try {
-        await _requestLocalService('logout');
+        await _requestLocalService('localLogout');
         ClientUiDiagnostics.unawaitedLog(
           'bridge.logout.serviceCleared',
           state: _state.value,
@@ -188,7 +188,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return;
     }
     if (command.type == ClientCommandType.shutdownNetwork) {
-      await _invokeState(_plugin.shutdownNetwork);
+      await _requestLocalService('localNetworkShutdown');
       await _refreshState();
       return;
     }
@@ -198,8 +198,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   @override
   Future<ControlTransportStatus?> controlTransportStatus() async {
     try {
-      final result = await _plugin.controlTransportStatus();
-      final json = ClientCoreLocalService.jsonMapFromResult(result);
+      final json = await _localService.localControlStatus();
       return json == null ? null : ControlTransportStatus.fromJson(json);
     } on Object {
       return null;
@@ -230,7 +229,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     final epoch = ++_networkToggleEpoch;
     _networkToggleInFlight = true;
     final targetEnabled = command.type == ClientCommandType.enableNetwork;
-    final method = targetEnabled ? 'activateNetwork' : 'deactivateNetwork';
+    final method =
+        targetEnabled ? 'localNetworkActivate' : 'localNetworkDeactivate';
     final operation = _NetworkToggleOperation(
       epoch: epoch,
       command: command.type,

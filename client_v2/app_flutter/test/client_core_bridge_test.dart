@@ -34,7 +34,7 @@ void main() {
         },
       ),
       _ServiceReply(
-        expectedMethod: 'activateNetwork',
+        expectedMethod: 'localNetworkActivate',
         body: {
           'signedIn': true,
           'networkEnabled': true,
@@ -98,7 +98,7 @@ void main() {
         },
       ),
       _ServiceReply(
-        expectedMethod: 'activateNetwork',
+        expectedMethod: 'localNetworkActivate',
         body: {
           'signedIn': true,
           'networkEnabled': true,
@@ -129,9 +129,9 @@ void main() {
       () => bridge.state.value.virtualIp == '100.64.0.10',
       reason: 'first toggle should settle without repeated clicks racing it',
     );
-    expect(service.seenMethods, isNot(contains('deactivateNetwork')));
+    expect(service.seenMethods, isNot(contains('localNetworkDeactivate')));
     expect(
-      service.seenMethods.where((method) => method == 'activateNetwork'),
+      service.seenMethods.where((method) => method == 'localNetworkActivate'),
       hasLength(1),
     );
     expect(bridge.state.value.networkEnabled, isTrue);
@@ -166,7 +166,7 @@ void main() {
         },
       ),
       _ServiceReply(
-        expectedMethod: 'deactivateNetwork',
+        expectedMethod: 'localNetworkDeactivate',
         body: {
           'signedIn': true,
           'networkEnabled': false,
@@ -231,7 +231,7 @@ void main() {
         },
       ),
       _ServiceReply(
-        expectedMethod: 'activateNetwork',
+        expectedMethod: 'localNetworkActivate',
         body: {
           'signedIn': true,
           'networkEnabled': false,
@@ -266,7 +266,7 @@ void main() {
       () async {
     final service = await _FakeClientService.start([
       _ServiceReply(
-        expectedMethod: 'activateNetwork',
+        expectedMethod: 'localNetworkActivate',
         body: {
           'signedIn': true,
           'networkEnabled': false,
@@ -324,7 +324,7 @@ void main() {
         },
       ),
       _ServiceReply(
-        expectedMethod: 'activateNetwork',
+        expectedMethod: 'localNetworkActivate',
         body: {
           'signedIn': true,
           'networkEnabled': false,
@@ -361,7 +361,7 @@ void main() {
   test('enable exception rolls back optimistic switch state', () async {
     final service = await _FakeClientService.start([
       const _ServiceReply(
-        expectedMethod: 'activateNetwork',
+        expectedMethod: 'localNetworkActivate',
         closeWithoutResponse: true,
         body: {},
       ),
@@ -416,7 +416,7 @@ void main() {
         },
       ),
       _ServiceReply(
-        expectedMethod: 'activateNetwork',
+        expectedMethod: 'localNetworkActivate',
         body: {
           'signedIn': true,
           'networkEnabled': true,
@@ -426,7 +426,7 @@ void main() {
         },
       ),
       const _ServiceReply(
-        expectedMethod: 'deactivateNetwork',
+        expectedMethod: 'localNetworkDeactivate',
         closeWithoutResponse: true,
         body: {},
       ),
@@ -491,7 +491,7 @@ void main() {
         },
       ),
       _ServiceReply(
-        expectedMethod: 'activateNetwork',
+        expectedMethod: 'localNetworkActivate',
         body: {
           'signedIn': true,
           'networkEnabled': true,
@@ -519,13 +519,13 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(service.seenMethods, isNot(contains('refresh')));
     expect(service.seenMethods,
-        containsAll(['activateNetwork', 'watchBusinessEvent', 'state']));
+        containsAll(['localNetworkActivate', 'watchBusinessEvent', 'state']));
   });
 
   test('logout clears local service session before returning', () async {
     final service = await _FakeClientService.start([
       _ServiceReply(
-        expectedMethod: 'logout',
+        expectedMethod: 'localLogout',
         body: {
           'signedIn': false,
           'networkEnabled': false,
@@ -545,7 +545,7 @@ void main() {
       const ClientCommand(ClientCommandType.logout),
     );
 
-    expect(service.seenMethods, contains('logout'));
+    expect(service.seenMethods, contains('localLogout'));
     expect(bridge.state.value.signedIn, isFalse);
     expect(bridge.state.value.networkEnabled, isFalse);
     expect(bridge.state.value.virtualIp, isNull);
@@ -563,7 +563,6 @@ void main() {
     expect(state.networkEnabled, isFalse);
     expect(state.virtualIp, isNull);
   });
-
 }
 
 class _ServiceReply {

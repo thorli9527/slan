@@ -321,6 +321,7 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalPathDiagnose => return handle_path_diagnose(),
         LocalServiceMethod::LocalRelayCandidates => return handle_relay_candidates(false),
         LocalServiceMethod::LocalRefreshRelayCandidates => return handle_relay_candidates(true),
+        LocalServiceMethod::LocalRelayPrepare => return handle_prepare_relay_data_plane(),
         LocalServiceMethod::LocalControlStatus => {
             return serde_json::to_string(&control_transport_status()?)
                 .context("encode local control status")
@@ -328,6 +329,32 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalControlPlan => {
             return serde_json::to_string(&control_transport_plan()?)
                 .context("encode local control plan")
+        }
+        LocalServiceMethod::LocalControlCadence => {
+            return serde_json::to_string(&control_transport_cadence())
+                .context("encode local control cadence")
+        }
+        LocalServiceMethod::LocalControlTickPlan => {
+            return serde_json::to_string(&control_transport_tick_plan(request.args)?)
+                .context("encode local control tick plan")
+        }
+        LocalServiceMethod::LocalPendingControlAcks => {
+            return handle_pending_control_acks(&context.task_queue)
+        }
+        LocalServiceMethod::LocalMarkControlAcked => {
+            return handle_mark_control_acked(request, &context.task_queue)
+        }
+        LocalServiceMethod::LocalControlOutbox => {
+            return handle_control_transport_outbox(request, &context.runtime, &context.task_queue)
+        }
+        LocalServiceMethod::LocalMarkTransportPublished => {
+            return handle_mark_transport_published(request, &context.runtime, &context.task_queue)
+        }
+        LocalServiceMethod::LocalAndroidNetworkConfig => {
+            return handle_local_android_network_config(&context.runtime)
+        }
+        LocalServiceMethod::LocalDiagnosticsExport => {
+            return handle_export_diagnostics(&context.runtime)
         }
         LocalServiceMethod::Start => {
             sync_control_assignment(&context.runtime);
@@ -352,25 +379,6 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
                 handle_downstream_control_message(request, &context.runtime, &context.task_queue)?;
             publish_control_sync_event(&context.state_notifier, method);
             return Ok(response);
-        }
-        LocalServiceMethod::PendingControlAcks => {
-            return handle_pending_control_acks(&context.task_queue)
-        }
-        LocalServiceMethod::MarkControlAcked => {
-            return handle_mark_control_acked(request, &context.task_queue)
-        }
-        LocalServiceMethod::ControlTransportOutbox => {
-            return handle_control_transport_outbox(request, &context.runtime, &context.task_queue)
-        }
-        LocalServiceMethod::MarkTransportPublished => {
-            return handle_mark_transport_published(request, &context.runtime, &context.task_queue)
-        }
-        LocalServiceMethod::RelayCandidates => return handle_relay_candidates(false),
-        LocalServiceMethod::RefreshRelayCandidates => return handle_relay_candidates(true),
-        LocalServiceMethod::PrepareRelayDataPlane => return handle_prepare_relay_data_plane(),
-        LocalServiceMethod::PathDiagnose => return handle_path_diagnose(),
-        LocalServiceMethod::ExportDiagnostics => {
-            return handle_export_diagnostics(&context.runtime)
         }
         _ => {}
     }
@@ -567,43 +575,32 @@ fn handle_request(
             }
             state
         }
-        LocalServiceMethod::ActivateNetwork => activate_network_from_latest_control(&mut runtime),
-        LocalServiceMethod::DeactivateNetwork => {
+        LocalServiceMethod::LocalNetworkActivate => {
+            activate_network_from_latest_control(&mut runtime)
+        }
+        LocalServiceMethod::LocalNetworkDeactivate => {
             dispatch_with_side_effects(&mut runtime, ClientCommand::DisableNetwork)
         }
         LocalServiceMethod::Refresh => match runtime.refresh() {
             Ok(()) => runtime.state().clone(),
             Err(error) => state_with_error(runtime.state(), error.to_string()),
         },
-        LocalServiceMethod::ShutdownNetwork => {
+        LocalServiceMethod::LocalNetworkShutdown => {
             dispatch_with_side_effects(&mut runtime, ClientCommand::DisableNetwork)
-        }
-        LocalServiceMethod::ControlTransportStatus => {
-            return serde_json::to_string(&control_transport_status()?)
-                .context("encode control transport status")
-        }
-        LocalServiceMethod::ControlTransportPlan => {
-            return serde_json::to_string(&control_transport_plan()?)
-                .context("encode control transport plan")
-        }
-        LocalServiceMethod::ControlTransportCadence => {
-            return serde_json::to_string(&control_transport_cadence())
-                .context("encode control transport cadence")
         }
         LocalServiceMethod::ConsoleLoginKey => {
             return serde_json::to_string(&console_login_key()?).context("encode console login key")
         }
-        LocalServiceMethod::AndroidNetworkConfig => {
-            return serde_json::to_string(&android_network_config_from_latest_control(
-                &mut runtime,
-            )?)
-            .context("encode android network config")
-        }
-        LocalServiceMethod::ControlTransportTickPlan => {
-            return serde_json::to_string(&control_transport_tick_plan(request.args)?)
-                .context("encode control transport tick plan")
+        LocalServiceMethod::LocalLogout => {
+            dispatch_with_side_effects(&mut runtime, ClientCommand::Logout)
         }
         LocalServiceMethod::Other => {
+            if removed_legacy_local_method(&request.method) {
+                anyhow::bail!(
+                    "legacy service method {} has been removed; use the local* service API",
+                    request.method
+                );
+            }
             let command_json = serde_json::json!({ "type": request.method });
             let command: ClientCommand = serde_json::from_value(command_json)
                 .with_context(|| format!("unsupported service method {}", request.method))?;
@@ -617,6 +614,38 @@ fn handle_request(
         }
     };
     serde_json::to_string(&state).context("encode client state")
+}
+
+fn removed_legacy_local_method(method: &str) -> bool {
+    matches!(
+        method,
+        "activateNetwork"
+            | "deactivateNetwork"
+            | "shutdownNetwork"
+            | "logout"
+            | "androidNetworkConfig"
+            | "exportDiagnostics"
+            | "pathDiagnose"
+            | "relayCandidates"
+            | "refreshRelayCandidates"
+            | "prepareRelayDataPlane"
+            | "controlTransportStatus"
+            | "controlTransportPlan"
+            | "controlTransportCadence"
+            | "controlTransportTickPlan"
+            | "controlTransportOutbox"
+            | "pendingControlAcks"
+            | "markControlAcked"
+            | "markTransportPublished"
+    )
+}
+
+fn handle_local_android_network_config(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+) -> Result<String> {
+    let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+    serde_json::to_string(&android_network_config_from_latest_control(&mut runtime)?)
+        .context("encode local android network config")
 }
 
 fn control_transport_status() -> Result<ControlTransportStatus> {
@@ -2822,17 +2851,19 @@ fn publish_method_business_event(
         .unwrap_or_default();
     let state = serde_json::from_str::<ClientViewState>(response).ok();
     let business_type = match LocalServiceMethod::parse(&method) {
-        LocalServiceMethod::ActivateNetwork => state
+        LocalServiceMethod::LocalNetworkActivate => state
             .as_ref()
             .and_then(|state| state.error.as_ref())
             .map(|_| BUSINESS_NETWORK_SWITCH_FAILED)
             .unwrap_or(BUSINESS_NETWORK_SWITCH_FINISHED),
-        LocalServiceMethod::DeactivateNetwork | LocalServiceMethod::ShutdownNetwork => state
-            .as_ref()
-            .and_then(|state| state.error.as_ref())
-            .map(|_| BUSINESS_NETWORK_SWITCH_FAILED)
-            .unwrap_or(BUSINESS_NETWORK_SWITCH_FINISHED),
-        LocalServiceMethod::Logout | LocalServiceMethod::Dispatch => BUSINESS_SESSION_CHANGED,
+        LocalServiceMethod::LocalNetworkDeactivate | LocalServiceMethod::LocalNetworkShutdown => {
+            state
+                .as_ref()
+                .and_then(|state| state.error.as_ref())
+                .map(|_| BUSINESS_NETWORK_SWITCH_FAILED)
+                .unwrap_or(BUSINESS_NETWORK_SWITCH_FINISHED)
+        }
+        LocalServiceMethod::LocalLogout | LocalServiceMethod::Dispatch => BUSINESS_SESSION_CHANGED,
         LocalServiceMethod::Start | LocalServiceMethod::Refresh => BUSINESS_STATE_CHANGED,
         _ => BUSINESS_STATE_CHANGED,
     };

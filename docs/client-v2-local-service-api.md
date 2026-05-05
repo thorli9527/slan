@@ -135,13 +135,43 @@ RPC method: `localControlPlan`
 
 用途：读取本地控制面 transport 计划，用于排查 MQTT/HTTP fallback 选择。
 
+### `GET /local/control/outbox`
+
+RPC method: `localControlOutbox`
+
+用途：读取本地控制面待发送消息 outbox。
+
+### `POST /local/control/ack`
+
+RPC method: `localMarkControlAcked`
+
+用途：确认控制任务已被处理。
+
+### `POST /local/network/activate`
+
+RPC method: `localNetworkActivate`
+
+用途：按最新控制面分配启用本地网络。
+
+### `POST /local/network/deactivate`
+
+RPC method: `localNetworkDeactivate`
+
+用途：停用本地网络。
+
+### `POST /local/network/shutdown`
+
+RPC method: `localNetworkShutdown`
+
+用途：关闭本地网络数据面。
+
 ## 可以继续抽出来的接口
 
 ### 状态与会话
 
 - `GET /local/status` -> `localStatus`
 - `GET /local/session` -> `localSession`
-- `POST /local/logout` -> 当前 `logout`
+- `POST /local/logout` -> `localLogout`
 
 ### Peer 与路径
 
@@ -155,32 +185,37 @@ RPC method: `localControlPlan`
 
 - `GET /local/relay-candidates` -> `localRelayCandidates`
 - `POST /local/relay-candidates/refresh` -> `localRefreshRelayCandidates`
-- `POST /local/relay/prepare` -> 当前 `prepareRelayDataPlane`
+- `POST /local/relay/prepare` -> `localRelayPrepare`
 - `GET /local/derp` -> 后续暴露 DERP map / candidate / ticket 状态
 
 ### Control sync
 
 - `GET /local/control/status` -> `localControlStatus`
 - `GET /local/control/plan` -> `localControlPlan`
-- `GET /local/control/outbox` -> 当前 `controlTransportOutbox`
-- `POST /local/control/ack` -> 当前 `markControlAcked`
+- `GET /local/control/cadence` -> `localControlCadence`
+- `POST /local/control/tick-plan` -> `localControlTickPlan`
+- `GET /local/control/outbox` -> `localControlOutbox`
+- `GET /local/control/acks/pending` -> `localPendingControlAcks`
+- `POST /local/control/ack` -> `localMarkControlAcked`
+- `POST /local/control/transport-published` -> `localMarkTransportPublished`
 
 ### 网络开关
 
-- `POST /local/network/activate` -> 当前 `activateNetwork`
-- `POST /local/network/deactivate` -> 当前 `deactivateNetwork`
-- `POST /local/network/shutdown` -> 当前 `shutdownNetwork`
-- `GET /local/android/network-config` -> 当前 `androidNetworkConfig`
+- `POST /local/network/activate` -> `localNetworkActivate`
+- `POST /local/network/deactivate` -> `localNetworkDeactivate`
+- `POST /local/network/shutdown` -> `localNetworkShutdown`
+- `GET /local/android/network-config` -> `localAndroidNetworkConfig`
 
 ### 观测与事件
 
 - `GET /local/events/watch` -> 当前 `watchBusinessEvent`
 - `GET /local/state/watch` -> 当前 `watchState`
-- `GET /local/diagnostics/export` -> 当前 `exportDiagnostics`
+- `GET /local/diagnostics/export` -> `localDiagnosticsExport`
 
 ## 接口化原则
 
 - UI 新代码优先调用 `local*` 稳定接口，不再直接依赖完整 `state`。
-- `state` 保留为兼容接口，只用于老 UI 和兜底。
+- `state/start/refresh/dispatch` 是待下线的 runtime 低层入口，不作为新 UI 协议使用。
+- 已接口化的能力不保留旧 method 兼容，例如 `pathDiagnose`、`relayCandidates`、`controlTransportStatus`、`activateNetwork`。
 - 本地服务返回的只读接口不携带 token、ticket secret、refresh token。
 - 控制类接口必须继续走明确 method，不要通过泛化 `dispatch` 暴露给 UI。

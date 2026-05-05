@@ -28,33 +28,28 @@ pub(crate) enum LocalServiceMethod {
     LocalPathDiagnose,
     LocalRelayCandidates,
     LocalRefreshRelayCandidates,
+    LocalRelayPrepare,
     LocalControlStatus,
     LocalControlPlan,
+    LocalControlCadence,
+    LocalControlTickPlan,
+    LocalControlOutbox,
+    LocalPendingControlAcks,
+    LocalMarkControlAcked,
+    LocalMarkTransportPublished,
+    LocalNetworkActivate,
+    LocalNetworkDeactivate,
+    LocalNetworkShutdown,
+    LocalAndroidNetworkConfig,
+    LocalDiagnosticsExport,
+    LocalLogout,
     Start,
     Refresh,
     Dispatch,
-    ShutdownNetwork,
-    ActivateNetwork,
-    DeactivateNetwork,
-    Logout,
     EnqueueControlTask,
     EnqueueDownstreamControlTask,
     IngestDownstreamControlMessage,
-    PendingControlAcks,
-    MarkControlAcked,
-    ControlTransportOutbox,
-    MarkTransportPublished,
-    ControlTransportStatus,
-    ControlTransportPlan,
-    ControlTransportCadence,
-    ControlTransportTickPlan,
-    RelayCandidates,
-    RefreshRelayCandidates,
-    PrepareRelayDataPlane,
-    PathDiagnose,
-    ExportDiagnostics,
     ConsoleLoginKey,
-    AndroidNetworkConfig,
     Other,
 }
 
@@ -71,33 +66,28 @@ impl LocalServiceMethod {
             "localPathDiagnose" => Self::LocalPathDiagnose,
             "localRelayCandidates" => Self::LocalRelayCandidates,
             "localRefreshRelayCandidates" => Self::LocalRefreshRelayCandidates,
+            "localRelayPrepare" => Self::LocalRelayPrepare,
             "localControlStatus" => Self::LocalControlStatus,
             "localControlPlan" => Self::LocalControlPlan,
+            "localControlCadence" => Self::LocalControlCadence,
+            "localControlTickPlan" => Self::LocalControlTickPlan,
+            "localControlOutbox" => Self::LocalControlOutbox,
+            "localPendingControlAcks" => Self::LocalPendingControlAcks,
+            "localMarkControlAcked" => Self::LocalMarkControlAcked,
+            "localMarkTransportPublished" => Self::LocalMarkTransportPublished,
+            "localNetworkActivate" => Self::LocalNetworkActivate,
+            "localNetworkDeactivate" => Self::LocalNetworkDeactivate,
+            "localNetworkShutdown" => Self::LocalNetworkShutdown,
+            "localAndroidNetworkConfig" => Self::LocalAndroidNetworkConfig,
+            "localDiagnosticsExport" => Self::LocalDiagnosticsExport,
+            "localLogout" => Self::LocalLogout,
             "start" => Self::Start,
             "refresh" => Self::Refresh,
             "dispatch" => Self::Dispatch,
-            "shutdownNetwork" => Self::ShutdownNetwork,
-            "activateNetwork" => Self::ActivateNetwork,
-            "deactivateNetwork" => Self::DeactivateNetwork,
-            "logout" => Self::Logout,
             "enqueueControlTask" => Self::EnqueueControlTask,
             "enqueueDownstreamControlTask" => Self::EnqueueDownstreamControlTask,
             "ingestDownstreamControlMessage" => Self::IngestDownstreamControlMessage,
-            "pendingControlAcks" => Self::PendingControlAcks,
-            "markControlAcked" => Self::MarkControlAcked,
-            "controlTransportOutbox" => Self::ControlTransportOutbox,
-            "markTransportPublished" => Self::MarkTransportPublished,
-            "controlTransportStatus" => Self::ControlTransportStatus,
-            "controlTransportPlan" => Self::ControlTransportPlan,
-            "controlTransportCadence" => Self::ControlTransportCadence,
-            "controlTransportTickPlan" => Self::ControlTransportTickPlan,
-            "relayCandidates" => Self::RelayCandidates,
-            "refreshRelayCandidates" => Self::RefreshRelayCandidates,
-            "prepareRelayDataPlane" => Self::PrepareRelayDataPlane,
-            "pathDiagnose" => Self::PathDiagnose,
-            "exportDiagnostics" => Self::ExportDiagnostics,
             "consoleLoginKey" => Self::ConsoleLoginKey,
-            "androidNetworkConfig" => Self::AndroidNetworkConfig,
             _ => Self::Other,
         }
     }
@@ -108,10 +98,10 @@ impl LocalServiceMethod {
             Self::Start
                 | Self::Dispatch
                 | Self::Refresh
-                | Self::ShutdownNetwork
-                | Self::ActivateNetwork
-                | Self::DeactivateNetwork
-                | Self::Logout
+                | Self::LocalNetworkShutdown
+                | Self::LocalNetworkActivate
+                | Self::LocalNetworkDeactivate
+                | Self::LocalLogout
         )
     }
 
@@ -274,12 +264,48 @@ mod tests {
             LocalServiceMethod::LocalRefreshRelayCandidates
         );
         assert_eq!(
+            LocalServiceMethod::parse("localRelayPrepare"),
+            LocalServiceMethod::LocalRelayPrepare
+        );
+        assert_eq!(
             LocalServiceMethod::parse("localControlStatus"),
             LocalServiceMethod::LocalControlStatus
         );
         assert_eq!(
             LocalServiceMethod::parse("localControlPlan"),
             LocalServiceMethod::LocalControlPlan
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localControlOutbox"),
+            LocalServiceMethod::LocalControlOutbox
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localMarkControlAcked"),
+            LocalServiceMethod::LocalMarkControlAcked
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localNetworkActivate"),
+            LocalServiceMethod::LocalNetworkActivate
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localAndroidNetworkConfig"),
+            LocalServiceMethod::LocalAndroidNetworkConfig
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localDiagnosticsExport"),
+            LocalServiceMethod::LocalDiagnosticsExport
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("pathDiagnose"),
+            LocalServiceMethod::Other
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("relayCandidates"),
+            LocalServiceMethod::Other
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("controlTransportStatus"),
+            LocalServiceMethod::Other
         );
     }
 }

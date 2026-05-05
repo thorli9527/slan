@@ -51,7 +51,7 @@ function Fail-SlanRelayCheck {
 
   if ($ExportOnFailure) {
     try {
-      $export = Invoke-SlanService -Method "exportDiagnostics"
+      $export = Invoke-SlanService -Method "localDiagnosticsExport"
       if ($export.path) {
         Write-Host "Diagnostics exported: $($export.path)"
       }
@@ -62,9 +62,9 @@ function Fail-SlanRelayCheck {
   Write-Error $Message
 }
 
-$diagnose = Invoke-SlanService -Method "pathDiagnose"
+$diagnose = Invoke-SlanService -Method "localPathDiagnose"
 if ($diagnose.error) {
-  Fail-SlanRelayCheck "pathDiagnose failed: $($diagnose.error)"
+  Fail-SlanRelayCheck "localPathDiagnose failed: $($diagnose.error)"
 }
 $relay = $diagnose.relay
 
