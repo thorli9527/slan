@@ -245,8 +245,12 @@ Response:
 ```
 
 `signature` is HMAC-SHA256 over `ticketId|peerId|sessionId|path|expiresAt`.
-`server-wire`, `server-wire-relay`, and `server-wire-derp` must share
-`SLAN_WIRE_TICKET_SECRET`.
+`server-wire`, `server-wire-relay`, and `server-wire-derp` must share the
+same ticket key ring. `SLAN_WIRE_TICKET_SECRET` is the signing key and
+`SLAN_WIRE_TICKET_SECRETS` is the accepted validation key ring. During
+rotation, put the new key first and set `SLAN_WIRE_TICKET_SECRET` to that
+same first key. Keep previous keys until all short-lived tickets have expired,
+then remove retired keys from the ring.
 
 ### Get DERP Map
 

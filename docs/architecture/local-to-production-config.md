@@ -12,6 +12,26 @@
 
 `server-wire`、`server-wire-relay`、`server-wire-derp` 已接入本地 compose。生产化 k8s / 多节点模板仍需单独补齐。
 
+## 生产启动强校验
+
+当 `SLAN_ENV=prod` 或 `SLAN_ENV=production` 时，服务会拒绝使用本地默认配置启动。
+
+`server-biz` 会强制检查：
+
+- `http.public_scheme=https`
+- `http.public_host` 不能是 `localhost / 127.0.0.1 / ::1`
+- relay ticket、MQTT、ops token、Postgres password、`internal.wire_token` 不能是空值、本地默认值或 `change-me-*`
+- 默认管理员如果启用，密码不能保持 `admin` 或示例值
+- `wire.control_plane_urls` 至少包含一个非 loopback 的 `server-wire` 实例
+
+`server-wire`、`server-wire-relay`、`server-wire-derp` 会强制检查：
+
+- `SLAN_WIRE_TICKET_SECRET` 和 `SLAN_WIRE_TICKET_SECRETS` 必须显式配置，不能使用 `dev-wire-ticket-secret` 或 `change-me-*`
+- `SLAN_WIRE_TICKET_SECRET` 必须等于 `SLAN_WIRE_TICKET_SECRETS` 的第一个 key，保证签发 key 和校验 keyring 不漂移
+- `SLAN_INTERNAL_WIRE_TOKEN` 必须显式配置为生产令牌
+- `server-wire` 必须配置 `SLAN_WIRE_BIZ_INTERNAL_URL` 和 `SLAN_WIRE_POSTGRES_DSN`
+- relay / DERP 必须配置 `SLAN_BIZ_URL`，且对外 host 不能是 loopback
+
 ## 必须替换的值
 
 ### `server-biz`
@@ -48,6 +68,6 @@
 ## 生产化缺口
 
 - 为 `server-wire`、`server-wire-relay`、`server-wire-derp` 补 k8s / 多节点部署模板。
-- 为票据签名密钥补轮换机制，避免单一长期 secret。
+- 将票据密钥轮换从环境变量密钥环推进到集中密钥管理；当前生命周期是“新密钥放第一位签发，旧密钥保留到所有短票据过期，过期后从 `SLAN_WIRE_TICKET_SECRETS` 删除”。
 - 为 relay / DERP 数据面补限流、连接配额、指标导出和告警。
 - 为 `server-biz -> server-wire` 授权同步补服务间认证和审计。

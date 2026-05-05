@@ -2,6 +2,7 @@ package configs
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -616,6 +617,18 @@ func validateProductionConfig(cfg Config) error {
 		weakSecret(cfg.Ops.DefaultAdmin.Password, defaults.Ops.DefaultAdmin.Password, "change-me") {
 		problems = append(problems, "ops.default_admin.password must be replaced or default admin disabled")
 	}
+	if weakSecret(cfg.Internal.WireToken, defaults.Internal.WireToken, "change-me") {
+		problems = append(problems, "internal.wire_token must be replaced")
+	}
+	if len(cfg.Wire.ControlPlaneURLs) == 0 {
+		problems = append(problems, "wire.control_plane_urls must contain at least one server-wire instance")
+	}
+	for _, url := range cfg.Wire.ControlPlaneURLs {
+		if isLoopbackPublicHost(url) {
+			problems = append(problems, "wire.control_plane_urls must not contain loopback URLs")
+			break
+		}
+	}
 	if weakSecret(cfg.Postgres.Password, defaults.Postgres.Password, "change-me") {
 		problems = append(problems, "postgres.password must be replaced")
 	}
@@ -711,6 +724,9 @@ func isLoopbackPublicHost(host string) bool {
 		return true
 	}
 	hostOnly := value
+	if parsed, err := url.Parse(value); err == nil && parsed.Hostname() != "" {
+		hostOnly = parsed.Hostname()
+	}
 	if strings.HasPrefix(hostOnly, "[::1]") {
 		return true
 	}

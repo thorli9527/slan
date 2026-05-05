@@ -99,6 +99,23 @@ func TestAttachAcceptsPreviousTicketSecretDuringRotation(t *testing.T) {
 	}
 }
 
+func TestAttachRejectsRetiredTicketSecretAfterRotationCleanup(t *testing.T) {
+	t.Setenv("SLAN_WIRE_TICKET_SECRETS", "new-secret")
+	store := NewStore()
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	ticket := protocol.RelayTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		SessionID: "s1",
+		Path:      "relay_udp",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	ticket.Signature = signRelayTicketWithSecret(ticket, "old-secret")
+	if _, _, err := store.Attach(addr, "node-a", ticket, "udp"); err != ErrTicketInvalid {
+		t.Fatalf("expected retired rotation secret to be rejected, got %v", err)
+	}
+}
+
 func TestAttachRejectsBadSignature(t *testing.T) {
 	store := NewStore()
 	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}

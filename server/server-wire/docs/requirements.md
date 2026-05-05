@@ -74,6 +74,8 @@
 - `wire_derp_health`
 - `wire_active_path`
 
+多实例运行时，`ActivePath` 更新必须在数据库事务内读取当前路径并写入新路径，避免不同 `server-wire` 实例用过期内存状态覆盖 downgrade / upgrade 计数。当前 Postgres store 以 `wire_peers` 行锁作为该并发边界；memory store 只允许开发和单实例 fallback。
+
 当 `SLAN_WIRE_POSTGRES_DSN` 未配置或启动连接失败时，允许回退到内存存储，仅用于开发与降级，不作为真实控制面边界。
 
 ## 与其他系统的边界

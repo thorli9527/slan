@@ -121,6 +121,27 @@ func TestConnectAcceptsPreviousTicketSecretDuringRotation(t *testing.T) {
 	}
 }
 
+func TestConnectRejectsRetiredTicketSecretAfterRotationCleanup(t *testing.T) {
+	t.Setenv("SLAN_WIRE_TICKET_SECRETS", "new-secret")
+	store := NewStore()
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	ticket := protocol.DerpTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		Path:      "derp_tcp_tls_443",
+		RegionID:  "region-a",
+		NodeID:    "node-a",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	ticket.Signature = signDerpTestTicketWithSecret(ticket, "old-secret")
+	if _, _, err := store.Connect(serverConn, "peer-a", "node-a", "region-a", ticket); err != ErrTicketInvalid {
+		t.Fatalf("expected retired rotation secret to be rejected, got %v", err)
+	}
+}
+
 func TestConnectRejectsBadSignature(t *testing.T) {
 	store := NewStore()
 	serverConn, clientConn := net.Pipe()

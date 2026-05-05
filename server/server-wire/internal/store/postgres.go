@@ -261,25 +261,36 @@ func (s *PostgresStore) UpdateDerpHealth(peerID string, samples []model.DerpHeal
 }
 
 func (s *PostgresStore) UpdateActivePath(peerID string, path model.PathKind) (model.PeerRecord, error) {
-	current, ok := s.GetPeer(peerID)
-	if !ok {
-		return model.PeerRecord{}, ErrPeerNotFound
-	}
-	downgrades := current.RecentPathDowngrades
-	upgrades := current.RecentPathUpgrades
-	if current.ActivePath != "" && current.ActivePath != path {
-		if path == model.PathRelayUDP {
-			downgrades++
-		} else {
-			upgrades++
-		}
-	}
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.PeerRecord{}, err
 	}
 	defer tx.Rollback()
+
+	var currentPath sql.NullString
+	var downgrades int
+	var upgrades int
+	err = tx.QueryRowContext(ctx, `
+SELECT COALESCE(ap.path, ''), p.recent_path_downgrades, p.recent_path_upgrades
+FROM wire_peers p
+LEFT JOIN wire_active_path ap ON ap.peer_id = p.peer_id
+WHERE p.peer_id = $1
+FOR UPDATE OF p
+`, peerID).Scan(&currentPath, &downgrades, &upgrades)
+	if err == sql.ErrNoRows {
+		return model.PeerRecord{}, ErrPeerNotFound
+	}
+	if err != nil {
+		return model.PeerRecord{}, err
+	}
+	if currentPath.String != "" && model.PathKind(currentPath.String) != path {
+		if path == model.PathRelayUDP {
+			downgrades++
+		} else {
+			upgrades++
+		}
+	}
 	now := time.Now().UnixMilli()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO wire_active_path (peer_id,path,updated_at_ms) VALUES ($1,$2,$3) ON CONFLICT (peer_id) DO UPDATE SET path=EXCLUDED.path, updated_at_ms=EXCLUDED.updated_at_ms`, peerID, string(path), now); err != nil {
 		return model.PeerRecord{}, err

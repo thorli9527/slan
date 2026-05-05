@@ -140,3 +140,48 @@ wire:
 		t.Fatalf("NodeEventRetentionSeconds=%d want 1800", cfg.Wire.NodeEventRetentionSeconds)
 	}
 }
+
+func TestValidateProductionConfigRejectsLocalDefaults(t *testing.T) {
+	t.Setenv("SLAN_ENV", "production")
+	cfg := DefaultConfig()
+
+	if err := validateProductionConfig(cfg); err == nil {
+		t.Fatal("expected production config validation to reject local defaults")
+	}
+}
+
+func TestValidateProductionConfigAcceptsExplicitSecrets(t *testing.T) {
+	t.Setenv("SLAN_ENV", "production")
+	cfg := DefaultConfig()
+	cfg.HTTP.PublicScheme = "https"
+	cfg.HTTP.PublicHost = "api.example.com"
+	cfg.Relay.TicketSigningSecret = "prod-relay-ticket-secret"
+	cfg.MQTT.PasswordSecret = "prod-mqtt-secret"
+	cfg.Ops.AccessToken = "prod-ops-token"
+	cfg.Ops.DefaultAdmin.Enabled = false
+	cfg.Internal.WireToken = "prod-wire-token"
+	cfg.Wire.ControlPlaneURLs = []string{"http://server-wire-a:29100", "http://server-wire-b:29100"}
+	cfg.Postgres.Password = "prod-postgres-password"
+
+	if err := validateProductionConfig(cfg); err != nil {
+		t.Fatalf("validateProductionConfig: %v", err)
+	}
+}
+
+func TestValidateProductionConfigRejectsLoopbackWireControlPlane(t *testing.T) {
+	t.Setenv("SLAN_ENV", "production")
+	cfg := DefaultConfig()
+	cfg.HTTP.PublicScheme = "https"
+	cfg.HTTP.PublicHost = "api.example.com"
+	cfg.Relay.TicketSigningSecret = "prod-relay-ticket-secret"
+	cfg.MQTT.PasswordSecret = "prod-mqtt-secret"
+	cfg.Ops.AccessToken = "prod-ops-token"
+	cfg.Ops.DefaultAdmin.Enabled = false
+	cfg.Internal.WireToken = "prod-wire-token"
+	cfg.Wire.ControlPlaneURLs = []string{"http://127.0.0.1:29100"}
+	cfg.Postgres.Password = "prod-postgres-password"
+
+	if err := validateProductionConfig(cfg); err == nil {
+		t.Fatal("expected production config validation to reject loopback wire control-plane URL")
+	}
+}

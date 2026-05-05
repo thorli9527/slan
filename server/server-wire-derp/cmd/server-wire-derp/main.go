@@ -9,6 +9,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatal(err)
+	}
 	server, err := derp.NewServer(cfg)
 	if err != nil {
 		log.Fatal(err)

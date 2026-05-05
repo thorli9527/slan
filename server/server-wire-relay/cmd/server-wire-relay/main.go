@@ -9,6 +9,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatal(err)
+	}
 	server, err := relay.NewUDPServer(cfg)
 	if err != nil {
 		log.Fatal(err)
