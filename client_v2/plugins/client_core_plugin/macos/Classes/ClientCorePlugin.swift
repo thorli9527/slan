@@ -6,6 +6,13 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private var statusItem: NSStatusItem?
   private var statusMenuItem: NSMenuItem?
   private var connectMenuItem: NSMenuItem?
+  private let stateWatchQueue = DispatchQueue(
+    label: "dev.slan.client_core_v2.macos.stateWatch",
+    qos: .utility
+  )
+  private var stateWatchStarted = false
+  private var lastStateRevision: Int64 = 0
+  private var latestMenuState: [String: Any]?
   private var state: [String: Any?] = [
     "signedIn": false,
     "userLabel": nil,
@@ -174,11 +181,12 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       keyEquivalent: ""
     )
     menu.addItem(connectItem)
-    let statusMenu = makeMenuItem(
+    let statusMenu = NSMenuItem(
       title: "Status: Unknown",
-      action: #selector(refreshStatusFromMenu),
+      action: nil,
       keyEquivalent: ""
     )
+    statusMenu.isEnabled = false
     menu.addItem(statusMenu)
     menu.addItem(makeMenuItem(
       title: "Open Console",
@@ -195,7 +203,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     connectMenuItem = connectItem
     statusMenuItem = statusMenu
     self.statusItem = item
-    refreshStatus()
+    startStateWatchLoop()
   }
 
   private func makeMenuItem(title: String, action: Selector, keyEquivalent: String) -> NSMenuItem {
@@ -245,36 +253,80 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   @objc private func toggleNetwork() {
-    let snapshot = refreshStatus()
-    let enabled = boolField(snapshot, "networkEnabled")
+    guard !boolField(latestMenuState, "syncing"),
+      boolField(latestMenuState, "switchEnabled")
+    else {
+      return
+    }
+    let enabled = boolField(latestMenuState, "networkEnabled")
     let method = enabled ? "localNetworkDeactivate" : "localNetworkActivate"
     _ = forwardToServiceWithAutoStart(method: method, arguments: nil)
-    _ = refreshStatus()
-  }
-
-  @objc private func refreshStatusFromMenu() {
-    _ = refreshStatus()
   }
 
   @objc private func openConsoleFromMenu() {
-    let snapshot = refreshStatus()
-    openConsole(deviceId: stringField(snapshot, "deviceId"))
+    openConsole(deviceId: stringField(latestMenuState, "deviceId"))
   }
 
-  @discardableResult
-  private func refreshStatus() -> [String: Any]? {
-    guard
-      let response = forwardToServiceWithAutoStart(method: "localStatus", arguments: nil),
-      let snapshot = parseJsonObject(response)
-    else {
-      statusMenuItem?.title = "Status: Service unavailable"
-      connectMenuItem?.title = "Connect"
-      statusItem?.button?.title = "SLAN: Off"
-      return nil
+  private func startStateWatchLoop() {
+    guard !stateWatchStarted else {
+      return
     }
+    stateWatchStarted = true
+    stateWatchQueue.async { [weak self] in
+      self?.runStateWatchLoop()
+    }
+  }
+
+  private func runStateWatchLoop() {
+    while true {
+      let arguments: [String: Any] = [
+        "lastRevision": lastStateRevision,
+        "timeoutMs": 30000
+      ]
+      guard
+        let response = forwardToServiceWithAutoStart(
+          method: "localStateWatch",
+          arguments: arguments
+        ),
+        let watch = parseJsonObject(response),
+        let snapshot = watch["state"] as? [String: Any]
+      else {
+        DispatchQueue.main.async { [weak self] in
+          self?.applyServiceUnavailableMenuState()
+        }
+        Thread.sleep(forTimeInterval: 2)
+        continue
+      }
+      let revision = int64Field(watch, "revision")
+      if revision > lastStateRevision {
+        lastStateRevision = revision
+      }
+      DispatchQueue.main.async { [weak self] in
+        self?.applyMenuStateIfChanged(snapshot)
+      }
+    }
+  }
+
+  private func applyServiceUnavailableMenuState() {
+    if latestMenuState == nil && statusMenuItem?.title == "Status: Service unavailable" {
+      return
+    }
+    latestMenuState = nil
+    statusMenuItem?.title = "Status: Service unavailable"
+    connectMenuItem?.title = "Connect"
+    connectMenuItem?.isEnabled = false
+    statusItem?.button?.title = "SLAN: Off"
+  }
+
+  private func applyMenuStateIfChanged(_ snapshot: [String: Any]) {
+    if menuStateEquals(latestMenuState, snapshot) {
+      return
+    }
+    latestMenuState = snapshot
     let signedIn = boolField(snapshot, "signedIn")
     let networkEnabled = boolField(snapshot, "networkEnabled")
     let syncing = boolField(snapshot, "syncing")
+    let switchEnabled = boolField(snapshot, "switchEnabled")
     let error = stringField(snapshot, "error")
     let statusText: String
     if !error.isEmpty {
@@ -289,9 +341,18 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       statusText = "Signed out"
     }
     connectMenuItem?.title = networkEnabled ? "Disconnect" : "Connect"
+    connectMenuItem?.isEnabled = switchEnabled && !syncing
     statusMenuItem?.title = error.isEmpty ? "Status: \(statusText)" : "Status: \(statusText) - \(error)"
     statusItem?.button?.title = networkEnabled ? "SLAN: On" : "SLAN: Off"
-    return snapshot
+  }
+
+  private func menuStateEquals(_ left: [String: Any]?, _ right: [String: Any]) -> Bool {
+    return boolField(left, "signedIn") == boolField(right, "signedIn")
+      && boolField(left, "networkEnabled") == boolField(right, "networkEnabled")
+      && boolField(left, "syncing") == boolField(right, "syncing")
+      && boolField(left, "switchEnabled") == boolField(right, "switchEnabled")
+      && stringField(left, "error") == stringField(right, "error")
+      && stringField(left, "deviceId") == stringField(right, "deviceId")
   }
 
   private func openConsole(callbackId: String = "", deviceId: String = "") {
@@ -362,6 +423,19 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
 
   private func boolField(_ object: [String: Any]?, _ field: String) -> Bool {
     return object?[field] as? Bool ?? false
+  }
+
+  private func int64Field(_ object: [String: Any]?, _ field: String) -> Int64 {
+    if let value = object?[field] as? Int64 {
+      return value
+    }
+    if let value = object?[field] as? Int {
+      return Int64(value)
+    }
+    if let value = object?[field] as? NSNumber {
+      return value.int64Value
+    }
+    return 0
   }
 
   private func forwardToServiceWithAutoStart(method: String, arguments: Any?) -> String? {

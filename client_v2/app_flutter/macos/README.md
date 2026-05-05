@@ -10,12 +10,14 @@ Policy:
 - `localNetworkShutdown` uses `SLAN_CLIENT_CORE_SERVICE_HOST` when provided.
 - MethodChannel calls are forwarded to `client-core-service`; Swift keeps only a fallback state for service-unavailable startup.
 - `client-core-service` owns runtime networking and should continue independently when installed as a launchd service.
+- Menu state follows the same model as the Flutter UI: it listens to `localStateWatch` and only updates when the service state revision changes.
 
 Implementation boundary:
 
 - AppKit status item lives in the macOS runner or macOS plugin.
 - Flutter UI only sends `ClientCommand`.
 - Network enable/disable still goes through `client-core-service`.
+- `Connect/Disconnect` only sends the local service command; it must not force a UI refresh.
 - No mesh, DNS, route, or adapter logic belongs in Swift UI code.
 
 Native pieces:
