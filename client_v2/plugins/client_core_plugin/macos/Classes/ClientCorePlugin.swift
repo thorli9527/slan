@@ -4,6 +4,8 @@ import Network
 
 public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private var statusItem: NSStatusItem?
+  private var statusMenuItem: NSMenuItem?
+  private var connectMenuItem: NSMenuItem?
   private var state: [String: Any?] = [
     "signedIn": false,
     "userLabel": nil,
@@ -24,6 +26,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       binaryMessenger: registrar.messenger
     )
     let instance = ClientCorePlugin()
+    NSApp.setActivationPolicy(.accessory)
     instance.installStatusItem()
     instance.installWindowClosePolicy()
     registrar.addMethodCallDelegate(instance, channel: channel)
@@ -157,21 +160,48 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private func installStatusItem() {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     item.button?.title = "SLAN"
+    item.button?.toolTip = "SLAN Client"
 
     let menu = NSMenu()
-    menu.addItem(NSMenuItem(
+    menu.addItem(makeMenuItem(
       title: "Open SLAN Client",
       action: #selector(openMainWindow),
       keyEquivalent: ""
     ))
+    let connectItem = makeMenuItem(
+      title: "Connect",
+      action: #selector(toggleNetwork),
+      keyEquivalent: ""
+    )
+    menu.addItem(connectItem)
+    let statusMenu = makeMenuItem(
+      title: "Status: Unknown",
+      action: #selector(refreshStatusFromMenu),
+      keyEquivalent: ""
+    )
+    menu.addItem(statusMenu)
+    menu.addItem(makeMenuItem(
+      title: "Open Console",
+      action: #selector(openConsoleFromMenu),
+      keyEquivalent: ""
+    ))
     menu.addItem(NSMenuItem.separator())
-    menu.addItem(NSMenuItem(
+    menu.addItem(makeMenuItem(
       title: "Quit",
       action: #selector(quitShell),
       keyEquivalent: "q"
     ))
     item.menu = menu
-    statusItem = item
+    connectMenuItem = connectItem
+    statusMenuItem = statusMenu
+    self.statusItem = item
+    refreshStatus()
+  }
+
+  private func makeMenuItem(title: String, action: Selector, keyEquivalent: String) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+    item.target = self
+    return item
   }
 
   private func installWindowClosePolicy() {
@@ -198,6 +228,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
 
   public func windowShouldClose(_ sender: NSWindow) -> Bool {
     sender.orderOut(nil)
+    NSApp.setActivationPolicy(.accessory)
     return false
   }
 
@@ -211,6 +242,56 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   @objc private func quitShell() {
     shutdownNetworkBeforeQuit()
     NSApp.terminate(nil)
+  }
+
+  @objc private func toggleNetwork() {
+    let snapshot = refreshStatus()
+    let enabled = boolField(snapshot, "networkEnabled")
+    let method = enabled ? "localNetworkDeactivate" : "localNetworkActivate"
+    _ = forwardToServiceWithAutoStart(method: method, arguments: nil)
+    _ = refreshStatus()
+  }
+
+  @objc private func refreshStatusFromMenu() {
+    _ = refreshStatus()
+  }
+
+  @objc private func openConsoleFromMenu() {
+    let snapshot = refreshStatus()
+    openConsole(deviceId: stringField(snapshot, "deviceId"))
+  }
+
+  @discardableResult
+  private func refreshStatus() -> [String: Any]? {
+    guard
+      let response = forwardToServiceWithAutoStart(method: "localStatus", arguments: nil),
+      let snapshot = parseJsonObject(response)
+    else {
+      statusMenuItem?.title = "Status: Service unavailable"
+      connectMenuItem?.title = "Connect"
+      statusItem?.button?.title = "SLAN: Off"
+      return nil
+    }
+    let signedIn = boolField(snapshot, "signedIn")
+    let networkEnabled = boolField(snapshot, "networkEnabled")
+    let syncing = boolField(snapshot, "syncing")
+    let error = stringField(snapshot, "error")
+    let statusText: String
+    if !error.isEmpty {
+      statusText = "Error"
+    } else if syncing {
+      statusText = "Connecting"
+    } else if networkEnabled {
+      statusText = "Connected"
+    } else if signedIn {
+      statusText = "Disconnected"
+    } else {
+      statusText = "Signed out"
+    }
+    connectMenuItem?.title = networkEnabled ? "Disconnect" : "Connect"
+    statusMenuItem?.title = error.isEmpty ? "Status: \(statusText)" : "Status: \(statusText) - \(error)"
+    statusItem?.button?.title = networkEnabled ? "SLAN: On" : "SLAN: Off"
+    return snapshot
   }
 
   private func openConsole(callbackId: String = "", deviceId: String = "") {
@@ -262,14 +343,25 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   private func extractStringField(_ json: String, _ field: String) -> String {
+    return stringField(parseJsonObject(json), field)
+  }
+
+  private func parseJsonObject(_ json: String) -> [String: Any]? {
     guard
       let data = json.data(using: .utf8),
-      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let value = object[field] as? String
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else {
-      return ""
+      return nil
     }
-    return value
+    return object
+  }
+
+  private func stringField(_ object: [String: Any]?, _ field: String) -> String {
+    return (object?[field] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  }
+
+  private func boolField(_ object: [String: Any]?, _ field: String) -> Bool {
+    return object?[field] as? Bool ?? false
   }
 
   private func forwardToServiceWithAutoStart(method: String, arguments: Any?) -> String? {
