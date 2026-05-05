@@ -15,14 +15,19 @@ mod time_utils;
 
 use std::{
     collections::BTreeMap,
-    ffi::OsString,
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
-    process::{Command, Stdio},
     sync::{Arc, Condvar, Mutex},
     thread,
-    time::{Duration, Instant, UNIX_EPOCH},
+    time::{Duration, UNIX_EPOCH},
+};
+
+#[cfg(target_os = "windows")]
+use std::{
+    ffi::OsString,
+    process::{Command, Stdio},
+    time::Instant,
 };
 
 use anyhow::{Context, Result};
@@ -58,7 +63,8 @@ use crate::control_transport::{
 };
 use crate::control_transport_worker::ControlTransportWorkerState;
 use crate::local_api::{
-    LocalServiceMethod, MarkControlAckedRequest, ServiceRequest, StoredBusinessEvent,
+    LocalPathPlanResponse, LocalPeerView, LocalPeersResponse, LocalServiceMethod,
+    LocalStatusResponse, MarkControlAckedRequest, ServiceRequest, StoredBusinessEvent,
     WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
     BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
     BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED,
@@ -308,6 +314,9 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
             return handle_watch_business_event(request, &context.runtime, &context.state_notifier)
         }
         LocalServiceMethod::State => return handle_state_snapshot(&context.runtime),
+        LocalServiceMethod::LocalStatus => return handle_local_status(&context.runtime),
+        LocalServiceMethod::LocalPeers => return handle_local_peers(),
+        LocalServiceMethod::LocalPathPlan => return handle_local_path_plan(),
         LocalServiceMethod::Start => {
             sync_control_assignment(&context.runtime);
             mark_control_sync(&context.sync_throttle);
@@ -385,6 +394,86 @@ fn handle_state_snapshot(
         }
     };
     serde_json::to_string(&state).context("encode client state")
+}
+
+fn handle_local_status(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) -> Result<String> {
+    let state = {
+        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+        match runtime.refresh() {
+            Ok(()) => runtime.state().clone(),
+            Err(error) => state_with_error(runtime.state(), error.to_string()),
+        }
+    };
+    let session = load_session().ok();
+    let runtime_state = PlatformNetworkImpl::default().read_runtime_state();
+    let (active_path, peer_count, runtime_error) = match runtime_state {
+        Ok(runtime_state) => (
+            runtime_state
+                .active_path
+                .and_then(|path| serde_json::to_value(path).ok()),
+            runtime_state.peer_paths.len(),
+            None,
+        ),
+        Err(error) => (None, 0, Some(error.to_string())),
+    };
+    let response = LocalStatusResponse {
+        service: "client-core-service".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        signed_in: state.signed_in,
+        device_id: state.device_id,
+        self_node_id: session
+            .as_ref()
+            .and_then(|session| session.self_node_id.clone()),
+        active_network_id: session
+            .as_ref()
+            .and_then(|session| session.active_network_id.clone()),
+        virtual_ip: state.virtual_ip,
+        network_enabled: state.network_enabled,
+        switch_enabled: state.switch_enabled,
+        syncing: state.syncing,
+        sync_reason: state.sync_reason,
+        active_path,
+        peer_count,
+        relay_candidate_count: session
+            .as_ref()
+            .map(|session| session.relay_candidates.len())
+            .unwrap_or_default(),
+        connect_plan_count: load_recent_connect_plans(current_timestamp_ms()).len(),
+        error: state.error,
+        runtime_error,
+    };
+    serde_json::to_string(&response).context("encode local status")
+}
+
+fn handle_local_peers() -> Result<String> {
+    let runtime_state = PlatformNetworkImpl::default()
+        .read_runtime_state()
+        .context("read local peer runtime state")?;
+    let items = runtime_state
+        .peer_paths
+        .into_iter()
+        .map(|peer| LocalPeerView {
+            peer_node_id: peer.peer_node_id,
+            peer_virtual_ips: peer.peer_virtual_ips,
+            active_path: peer
+                .active_path
+                .and_then(|path| serde_json::to_value(path).ok()),
+            candidates: peer
+                .candidates
+                .into_iter()
+                .filter_map(|candidate| serde_json::to_value(candidate).ok())
+                .collect(),
+        })
+        .collect();
+    serde_json::to_string(&LocalPeersResponse { items }).context("encode local peers")
+}
+
+fn handle_local_path_plan() -> Result<String> {
+    let items = load_recent_connect_plans(current_timestamp_ms())
+        .into_iter()
+        .filter_map(|plan| serde_json::to_value(plan).ok())
+        .collect();
+    serde_json::to_string(&LocalPathPlanResponse { items }).context("encode local path plan")
 }
 
 fn handle_request(

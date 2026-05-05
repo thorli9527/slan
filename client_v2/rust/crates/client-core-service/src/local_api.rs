@@ -21,6 +21,9 @@ pub(crate) enum LocalServiceMethod {
     WatchState,
     WatchBusinessEvent,
     State,
+    LocalStatus,
+    LocalPeers,
+    LocalPathPlan,
     Start,
     Refresh,
     Dispatch,
@@ -55,6 +58,9 @@ impl LocalServiceMethod {
             "watchState" => Self::WatchState,
             "watchBusinessEvent" => Self::WatchBusinessEvent,
             "state" => Self::State,
+            "localStatus" => Self::LocalStatus,
+            "localPeers" => Self::LocalPeers,
+            "localPathPlan" => Self::LocalPathPlan,
             "start" => Self::Start,
             "refresh" => Self::Refresh,
             "dispatch" => Self::Dispatch,
@@ -107,6 +113,51 @@ impl LocalServiceMethod {
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalStatusResponse {
+    pub(crate) service: String,
+    pub(crate) version: String,
+    pub(crate) signed_in: bool,
+    pub(crate) device_id: Option<String>,
+    pub(crate) self_node_id: Option<String>,
+    pub(crate) active_network_id: Option<String>,
+    pub(crate) virtual_ip: Option<String>,
+    pub(crate) network_enabled: bool,
+    pub(crate) switch_enabled: bool,
+    pub(crate) syncing: bool,
+    pub(crate) sync_reason: Option<String>,
+    pub(crate) active_path: Option<Value>,
+    pub(crate) peer_count: usize,
+    pub(crate) relay_candidate_count: usize,
+    pub(crate) connect_plan_count: usize,
+    pub(crate) error: Option<String>,
+    pub(crate) runtime_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalPeersResponse {
+    pub(crate) items: Vec<LocalPeerView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalPathPlanResponse {
+    pub(crate) items: Vec<Value>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LocalPeerView {
+    pub(crate) peer_node_id: String,
+    #[serde(default)]
+    pub(crate) peer_virtual_ips: Vec<String>,
+    pub(crate) active_path: Option<Value>,
+    #[serde(default)]
+    pub(crate) candidates: Vec<Value>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MarkControlAckedRequest {
@@ -156,4 +207,25 @@ pub(crate) struct WatchBusinessEventResponse {
 
 fn default_watch_timeout_ms() -> u64 {
     30_000
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalServiceMethod;
+
+    #[test]
+    fn parses_local_interface_methods() {
+        assert_eq!(
+            LocalServiceMethod::parse("localStatus"),
+            LocalServiceMethod::LocalStatus
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localPeers"),
+            LocalServiceMethod::LocalPeers
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localPathPlan"),
+            LocalServiceMethod::LocalPathPlan
+        );
+    }
 }

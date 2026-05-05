@@ -14,6 +14,31 @@ class ClientCoreLocalService {
     return requestJson('state');
   }
 
+  Future<Map<String, Object?>?> localStatus() async {
+    return requestJson('localStatus');
+  }
+
+  Future<Map<String, Object?>?> localPeers() async {
+    return requestJson('localPeers');
+  }
+
+  Future<Map<String, Object?>?> localPathPlan() async {
+    return requestJson('localPathPlan');
+  }
+
+  Future<Map<String, Object?>?> localPathDiagnose() async {
+    return requestJson('pathDiagnose');
+  }
+
+  Future<Map<String, Object?>?> localRelayCandidates(
+      {bool refresh = false}) async {
+    return requestJson(refresh ? 'refreshRelayCandidates' : 'relayCandidates');
+  }
+
+  Future<Map<String, Object?>?> localControlStatus() async {
+    return requestJson('controlTransportStatus');
+  }
+
   Future<Map<String, Object?>?> logout() async {
     return requestJson('logout');
   }
