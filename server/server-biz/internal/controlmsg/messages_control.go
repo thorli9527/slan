@@ -130,7 +130,7 @@ type RelayPolicyReport struct {
 	ReportedAtMS      uint64   `json:"reportedAtMs,omitempty"`
 }
 
-// RelayNodeHeartbeat is published by server-relay through MQTT.
+// RelayNodeHeartbeat is the legacy relay heartbeat shape kept for backward compatibility.
 type RelayNodeHeartbeat struct {
 	NodeID         string `json:"nodeId"`
 	ClusterID      string `json:"clusterId,omitempty"`

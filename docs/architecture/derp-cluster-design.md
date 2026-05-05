@@ -98,8 +98,8 @@ server-biz
 ├── 按节点/集群签发 derp ticket
 └── 控制面可返回推荐节点列表
 
-server-relay / derp cluster
-├── 多个 derp 节点
+server-wire-relay / server-wire-derp cluster
+├── 多个 relay / derp 节点
 ├── 节点间共享会话认证语义
 └── 同一集群内允许客户端快速切换
 ```
@@ -545,7 +545,7 @@ pub enum DerpPoolEvent {
 1. 固化 `bootstrap.derp_map` 与 cluster-aware relay ticket 的协议回归。
 2. 扩展客户端 `derp-client` / `derp-pool` 的真实网络和故障注入能力。
 3. 完善多连接、单路径发送、probe 评分和切换的诊断输出。
-4. 补齐 server-relay 多节点部署、attach、转发和指标。
+4. 补齐 server-wire-relay / server-wire-derp 多节点部署、attach、转发和指标。
 5. 最后完善动态切换与状态上报的生产观测。
 
 ## 14. 与当前代码结构的对应关系
@@ -569,11 +569,13 @@ server/server-biz/
 └── internal/service/impl/
     └── 补充 derp cluster 编排
 
-server/server-relay/
-├── crates/relay-core/
-│   └── 引入 cluster-aware ticket / session 语义
-└── crates/
-    └── 后续可拆出 derp-node / derp-cluster 相关实现
+server/server-wire-relay/
+└── internal/
+    └── 引入 cluster-aware relay ticket / session 语义
+
+server/server-wire-derp/
+└── internal/
+    └── 引入 derp region / node / connection 语义
 ```
 
 ## 15. 关键结论

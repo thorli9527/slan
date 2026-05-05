@@ -52,6 +52,13 @@ bootstrap:
   # Bootstrap 返回的默认 STUN 列表。
   stun_servers:
     - "stun:stun.l.google.com:19302"
+ice_probe:
+  # 独立 ICE UDP Probe Server 监听地址，只用于客户端 UDP 打洞观测。
+  bind_address: ":3478"
+  # 返回给客户端的 ICE Server ID，应与 ice_servers 表里的 server_id 一致。
+  server_id: "ice-local-udp"
+  # 单个 UDP JSON probe 包最大字节数。
+  max_packet_bytes: 2048
 auth:
   # 是否允许用户在 Web 端自助注册；关闭后只能登录已有账号。
   allow_registration: true
@@ -81,6 +88,19 @@ ops:
     login_name: "admin"
     # 默认管理员显示名称。
     display_name: "Default Admin"
+internal:
+  # server-wire 调用 /internal/wire/* 时必须携带的 X-Slan-Internal-Token。
+  wire_token: "change-me-wire-internal-token"
+wire:
+  # server-wire 控制面实例，用于 ops 健康页比对票据密钥环。
+  control_plane_urls:
+    - "http://127.0.0.1:29100"
+  # DERP/relay 节点心跳超过该窗口后视为 stale，并从调度中排除。
+  node_heartbeat_freshness_seconds: 120
+  # 后台清理 stale 节点健康状态的周期。
+  node_cleanup_interval_seconds: 60
+  # Wire 节点事件保留时间；<=0 表示不清理。
+  node_event_retention_seconds: 604800
 postgres:
   # PostgreSQL 主机。
   host: "127.0.0.1"

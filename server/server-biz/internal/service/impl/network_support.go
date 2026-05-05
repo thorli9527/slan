@@ -27,6 +27,7 @@ func (s *dbState) buildNetworkMap(ctx context.Context, userID string, self dto.N
 		Revision:                s.currentNetworkRevision(ctx, networkID),
 		HeartbeatSeconds:        defaultControlHeartbeatSeconds,
 		STUNServers:             append([]string(nil), s.cfg.Bootstrap.STUNServers...),
+		IceServers:              s.clientIceServersForNetworkMap(ctx, self),
 		Peers:                   peers,
 		Routes:                  s.routesForNetwork(ctx, networkID),
 		RelayRegions:            s.relayRegionsForCountries(relayCountries),

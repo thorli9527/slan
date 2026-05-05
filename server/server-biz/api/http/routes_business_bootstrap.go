@@ -48,7 +48,7 @@ func registerBootstrapRoutes(protected *gin.RouterGroup, deps routerDeps) {
 	//
 	// 用途：
 	// - 当客户端 P2P 直连失败时，向控制面申请短时效票据
-	// - 客户端再用该票据接入 server-relay 完成数据转发
+	// - 客户端再用该票据接入 server-wire-relay / server-wire-derp 完成数据转发
 	//
 	// 请求：RelayTicketRequest(networkId, srcNodeId, dstNodeId, reason, relayRegionId, derpClusterId...)
 	// 响应：201 RelayTicket(relayUrl, expiresAt, sessionKey, signature, ...)

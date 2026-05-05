@@ -1,180 +1,53 @@
 # local 到 production 配置迁移说明
 
-本文档只描述当前仓库里已经存在的配置项，帮助把本地 `docker-compose.local.yml` 迁到小规模生产部署。
+本文档只描述当前保留的服务。旧 `server/server-relay` 已删除，不再提供 Dockerfile、配置样例或生产迁移路径。
 
 ## 本地配置入口
-
-当前本地运行主要依赖：
-
-- [docker-compose.local.yml](/Users/thorli/workspace/slan/docker-compose.local.yml)
-- [\.env.local.example](/Users/thorli/workspace/slan/.env.local.example)
-- [server/server-biz/configs/config.docker.yaml](/Users/thorli/workspace/slan/server/server-biz/configs/config.docker.yaml)
-- [server/server-relay/configs/relay-daemon.example.json](/Users/thorli/workspace/slan/server/server-relay/configs/relay-daemon.example.json)
-- [deploy/local/Caddyfile](/Users/thorli/workspace/slan/deploy/local/Caddyfile)
-
-Maintained local entry points:
 
 - [`docker-compose.local.yml`](../../docker-compose.local.yml)
 - [`.env.local.example`](../../.env.local.example)
 - [`server/server-biz/configs/config.docker.yaml`](../../server/server-biz/configs/config.docker.yaml)
-- [`server/server-relay/configs/relay-daemon.example.json`](../../server/server-relay/configs/relay-daemon.example.json)
 - [`deploy/local/Caddyfile`](../../deploy/local/Caddyfile)
 - [`deploy/local/bifromq/standalone.yml`](../../deploy/local/bifromq/standalone.yml)
 
-MQTT/BifroMQ production notes:
-
-- Local compose uses Apache BifroMQ with the built-in WebHook demo Auth Provider.
-  Do not reuse `org.apache.bifromq.demo.plugin.DemoAuthProvider` as-is for
-  production.
-- Production BifroMQ should use a dedicated Auth Provider plugin or equivalent
-  deployment wiring that calls `POST /mqtt/bifromq/auth` for authentication and
-  `POST /mqtt/bifromq/check` for topic authorization.
-- Replace `SLAN_MQTT_PASSWORD_SECRET`, set `SLAN_MQTT_BROKER_URL` to the broker
-  address reachable from `server-biz`, and set `SLAN_MQTT_PUBLIC_BROKER_URL` to
-  the broker address reachable from desktop clients.
-- `server-relay` also publishes node heartbeats over MQTT. Keep
-  `SLAN_RELAY_MQTT_PASSWORD_SECRET` aligned with `SLAN_MQTT_PASSWORD_SECRET`;
-  the local example uses the same default value for both.
-- Expose only the required MQTT listener externally, and keep BifroMQ management
-  or plugin internals on trusted networks.
+`server-wire`、`server-wire-relay`、`server-wire-derp` 已接入本地 compose。生产化 k8s / 多节点模板仍需单独补齐。
 
 ## 必须替换的值
 
-### server-biz
+### `server-biz`
 
-- `POSTGRES_PASSWORD`
-  本地默认值不能直接上线。
+- `POSTGRES_PASSWORD`：本地默认值不能直接上线。
+- `SLAN_OPS_ACCESS_TOKEN`：仅作为应急运维旁路使用，生产必须换成高强度随机值。
+- `SLAN_OPS_DEFAULT_ADMIN_PASSWORD`：仅用于首启 seed，生产必须更换，并在首登后立即改密。
+- `SLAN_HTTP_PUBLIC_HOST`：本地是 `slan.localhost:18443`，生产必须改成真实域名。
+- `SLAN_HTTP_PUBLIC_SCHEME`：生产固定为 `https`。
 
-- `SLAN_OPS_ACCESS_TOKEN`
-  仅作为应急运维旁路使用，生产必须换成高强度随机值。
+### `server-wire`
 
-- `SLAN_OPS_DEFAULT_ADMIN_PASSWORD`
-  仅用于首启 seed，生产必须更换，并在首登后立即改密。
+- `SLAN_WIRE_BIZ_INTERNAL_URL`：指向 `server-biz` 内部 HTTP 地址，用于读取 peer 授权和静态拓扑。
+- `SLAN_INTERNAL_WIRE_TOKEN`：`server-wire` 调用 `server-biz /internal/wire/*` 的共享内部令牌，生产必须使用独立高强度随机值。
+- `SLAN_WIRE_TICKET_SECRET`：用于签发 relay / DERP ticket，必须使用独立高强度随机值。
+- `SLAN_WIRE_TICKET_SECRETS`：逗号分隔的校验密钥环；轮换时新密钥放第一位，旧密钥保留到所有短票据过期。
+- `SLAN_WIRE_POSTGRES_DSN`：`server-wire` 运行态持久化 Postgres DSN，生产必须启用，避免多实例和重启丢失 peer/path 状态。
+- HTTP 监听地址和公网地址需要在容器化时明确区分内部访问与客户端访问。
 
-- `SLAN_RELAY_TICKET_SIGNING_SECRET`
-  必须改成独立高强度随机值。
+### `server-wire-relay`
 
-- `SLAN_HTTP_PUBLIC_HOST`
-  本地是 `slan.localhost:18443`，生产必须改成真实域名。
+- `SLAN_WIRE_TICKET_SECRET`：必须与 `server-wire` 保持一致，用于校验 `relay_udp` ticket。
+- `SLAN_WIRE_TICKET_SECRETS`：必须与 `server-wire` 的校验密钥环保持一致。
+- UDP 监听端口、对外地址、安全组和限流策略必须按 region / node 单独配置。
+- 管理和观测接口只允许内网或受信任运维网络访问。
 
-- `SLAN_HTTP_PUBLIC_SCHEME`
-  生产固定为 `https`。
+### `server-wire-derp`
 
-- `SLAN_BIZ_PUBLIC_PORT`
-- `SLAN_BIZ_OPS_PORT`
-  这两个只影响本地宿主机调试映射。生产可以不暴露宿主机端口，而走反向代理或容器网络。
+- `SLAN_WIRE_TICKET_SECRET`：必须与 `server-wire` 保持一致，用于校验 `derp_tcp_tls_443` ticket。
+- `SLAN_WIRE_TICKET_SECRETS`：必须与 `server-wire` 的校验密钥环保持一致。
+- 生产必须使用真实 TCP/TLS 443 入口，证书、SNI、反向代理和健康检查需要单独配置。
+- region / node 标识要与 `server-wire` 下发的 DERP map 保持一致。
 
-### server-relay
+## 生产化缺口
 
-- `udp_bind`
-  本地可以是 `0.0.0.0:9000`，生产需要确认实际监听端口和安全组。
-
-- `relay_url_prefix`
-  当前是 `udp://`，如果后续有其他传输协议，需要和控制面返回值保持一致。
-
-- `ticket_signing_secret`
-  必须与 `server-biz` 的 relay ticket 签名密钥保持一致。
-
-- `SLAN_RELAY_NODE_ID`
-  必须与控制面 relay 拓扑里的 `node_id` 一致，例如本地默认
-  `relay-cn-local-udp`。
-
-- `SLAN_RELAY_CLUSTER_ID` / `SLAN_RELAY_COUNTRY_CODE` / `SLAN_RELAY_CITY_CODE`
-  用于心跳和运营界面展示，也会参与 relay 节点健康排序的可观测性。
-
-- `SLAN_RELAY_ADDRESS`
-  是控制面和客户端看到的 relay 入口地址。本地默认是
-  `127.0.0.1:19000`，生产应改成公网或可路由地址。
-
-- `SLAN_RELAY_MQTT_BROKER_URL`
-  是 relay 容器访问 MQTT broker 的地址。本地 compose 默认
-  `mqtt://bifromq:1883`。
-
-- `SLAN_RELAY_MQTT_INTERVAL_SECONDS`
-  relay 心跳周期，本地默认 30 秒；服务端 2 分钟内未收到心跳会将 relay
-  视为不在线。
-
-## 本地值与生产值对照
-
-### public host
-
-- local:
-  - `slan.localhost:18443`
-- production:
-  - 例如 `control.example.com`
-
-### public scheme
-
-- local:
-  - `https`
-- production:
-  - `https`
-
-### relay UDP
-
-- local:
-  - `127.0.0.1:19000`
-- production:
-  - 真实公网 `ip:port`
-  - 或真实域名解析到公网入口
-
-### ops 入口
-
-- local:
-  - `127.0.0.1:28081`
-  - `ops.slan.localhost:18443`
-- production:
-  - 建议只保留内网访问
-  - 或放到受限反向代理后
-
-## 建议的生产部署差异
-
-### 1. 反向代理
-
-本地使用 `caddy` 只为快速验证：
-
-- `https://slan.localhost:18443`
-- `https://ops.slan.localhost:18443`
-
-生产建议：
-
-- 使用真实域名
-- 使用真实证书
-- 让 public 和 ops 拥有独立入口策略
-
-### 2. 端口暴露
-
-本地暴露：
-
-- `28080`
-- `28081`
-- `18443`
-- `19000/udp`
-- `15432`
-- `16379`
-
-生产建议：
-
-- public 只暴露必要端口
-- PostgreSQL / Redis 不直接暴露公网
-- ops 不直接暴露公网
-
-### 3. 默认管理员
-
-本地保留默认管理员是为了联调方便。
-
-生产建议：
-
-- 首启时允许 seed
-- 首次登录后立即改密
-- 确认 `/overview.securityWarnings` 清零
-
-## 最低迁移动作
-
-1. 复制 `.env.local.example`
-2. 替换所有密码、token、secret
-3. 把 `SLAN_HTTP_PUBLIC_HOST` 改成真实域名
-4. 把 relay 地址改成真实公网地址
-5. 部署真实 TLS
-6. 首启后修改默认管理员密码
-7. 检查控制面和 relay 数据面运行状态
+- 为 `server-wire`、`server-wire-relay`、`server-wire-derp` 补 k8s / 多节点部署模板。
+- 为票据签名密钥补轮换机制，避免单一长期 secret。
+- 为 relay / DERP 数据面补限流、连接配额、指标导出和告警。
+- 为 `server-biz -> server-wire` 授权同步补服务间认证和审计。

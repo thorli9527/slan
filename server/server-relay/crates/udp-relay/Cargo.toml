@@ -1,9 +1,0 @@
-[package]
-name = "udp-relay"
-edition.workspace = true
-version.workspace = true
-
-[dependencies]
-auth = { path = "../auth" }
-relay-core = { path = "../relay-core" }
-session = { path = "../session" }

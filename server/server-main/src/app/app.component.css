@@ -318,6 +318,43 @@ code {
   margin-bottom: 14px;
 }
 
+.split-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  gap: 18px;
+  align-items: start;
+}
+
+.wire-key-card,
+.event-filter {
+  margin: 14px 0 18px;
+  padding: 14px;
+  border: 1px solid rgba(15, 23, 42, .08);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.wire-key-card {
+  display: grid;
+  gap: 5px;
+}
+
+.wire-key-card span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.event-filter h3,
+.event-filter p {
+  margin-top: 0;
+}
+
+.form-grid.wide {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .relay-regions {
   margin-top: 18px;
 }
@@ -462,6 +499,10 @@ textarea {
   .ops-sidebar,
   .editor {
     position: static;
+  }
+
+  .split-panel {
+    grid-template-columns: 1fr;
   }
 
   .dashboard {

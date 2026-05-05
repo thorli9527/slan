@@ -64,6 +64,23 @@ func InitRuntime(ctx context.Context, cfg Config) (*Runtime, error) {
 	}, nil
 }
 
+// InitPostgresRuntime initializes only PostgreSQL-backed state. It is used by
+// standalone data-plane-adjacent processes such as the UDP ICE probe server,
+// which need credential lookups but must not start Redis-backed control loops.
+func InitPostgresRuntime(ctx context.Context, cfg Config) (*Runtime, error) {
+	pgPool, err := connectPostgres(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := migratePostgres(ctx, pgPool); err != nil {
+		if sqlDB, dbErr := pgPool.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+		return nil, err
+	}
+	return &Runtime{Postgres: pgPool}, nil
+}
+
 func connectPostgres(ctx context.Context, cfg Config) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(cfg.Postgres.DSN()), &gorm.Config{
 		Logger: logger.New(
@@ -135,6 +152,14 @@ func migratePostgres(ctx context.Context, db *gorm.DB) error {
 		&repo.NodePathHealthSample{},
 		&repo.RelayPolicyExecution{},
 		&repo.RelayNodeHeartbeat{},
+		&repo.IceServer{},
+		&repo.PeerCandidate{},
+		&repo.PunchSession{},
+		&repo.PunchResult{},
+		&repo.IceServerStat{},
+		&repo.WireDerpNode{},
+		&repo.WireRelayNode{},
+		&repo.WireNodeEvent{},
 		&repo.Network{},
 		&repo.Subnet{},
 		&repo.NetworkMember{},
@@ -148,7 +173,10 @@ func migratePostgres(ctx context.Context, db *gorm.DB) error {
 	if err := migrateSubnetAttachmentIndexes(ctx, db); err != nil {
 		return err
 	}
-	return migrateNetworkMemberIndexes(ctx, db)
+	if err := migrateNetworkMemberIndexes(ctx, db); err != nil {
+		return err
+	}
+	return migrateDeviceIDOnly(ctx, db)
 }
 
 func migrateSubnetAttachmentIndexes(ctx context.Context, db *gorm.DB) error {
@@ -181,6 +209,14 @@ func migrateNetworkMemberIndexes(ctx context.Context, db *gorm.DB) error {
 	}
 	if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_network_device ON network_members (network_id, device_id)`).Error; err != nil {
 		return fmt.Errorf("create idx_network_device: %w", err)
+	}
+	return nil
+}
+
+func migrateDeviceIDOnly(ctx context.Context, db *gorm.DB) error {
+	tx := db.WithContext(ctx)
+	if err := tx.Exec(`ALTER TABLE devices DROP COLUMN IF EXISTS machine_id`).Error; err != nil {
+		return fmt.Errorf("drop devices.machine_id: %w", err)
 	}
 	return nil
 }

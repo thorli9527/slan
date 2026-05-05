@@ -1,0 +1,124 @@
+<section class="panel">
+  <div class="panel-title">
+    <div>
+      <h2>Wire 节点调度</h2>
+      <p class="muted">展示 server-biz 控制面的 DERP/Relay 候选、stale 状态和节点事件。</p>
+    </div>
+    <button type="button" (click)="refresh.emit()" [disabled]="loading()">刷新 Wire</button>
+  </div>
+
+  <div class="relay-summary">
+    <article class="metric compact">
+      <span>节点总数</span>
+      <strong>{{ wireNodeTotalCount() }}</strong>
+      <small>DERP {{ wireDerpNodes().length }} · Relay {{ wireRelayNodes().length }}</small>
+    </article>
+    <article class="metric compact">
+      <span>可调度</span>
+      <strong>{{ wireNodes()?.schedulableDerpCount || 0 }}/{{ wireNodes()?.schedulableRelayCount || 0 }}</strong>
+      <small>DERP / Relay</small>
+    </article>
+    <article class="metric compact">
+      <span>Stale</span>
+      <strong>{{ wireNodes()?.staleCount || 0 }}</strong>
+      <small>Key ready {{ wireNodes()?.ticketKeyRotation?.rotationReady ? 'yes' : 'no' }}</small>
+    </article>
+  </div>
+
+  <section class="wire-key-card">
+    <span>Ticket key rotation</span>
+    <strong>
+      signing={{ wireNodes()?.ticketKeyRotation?.signingConfigured ? 'true' : 'false' }}
+      · keyRing={{ wireNodes()?.ticketKeyRotation?.keyRingConfigured ? 'true' : 'false' }}
+      · size={{ wireNodes()?.ticketKeyRotation?.keyRingSize || 0 }}
+    </strong>
+  </section>
+
+  <h3>DERP Nodes</h3>
+  <table>
+    <thead><tr><th>区域</th><th>节点</th><th>地址</th><th>状态</th><th>Age</th><th>优先级</th><th>更新时间</th></tr></thead>
+    <tbody>
+      <tr *ngFor="let node of wireDerpNodes()">
+        <td>{{ node.regionId }}</td>
+        <td><code>{{ node.nodeId }}</code><small>{{ node.name || '-' }}</small></td>
+        <td>{{ node.host }}:{{ node.port }}</td>
+        <td><span [class]="wireNodeStatusClass(node)">{{ wireNodeStatus(node) }}</span></td>
+        <td>{{ formatAgeMs(node.updatedAtMs) }}</td>
+        <td>{{ node.priority }}</td>
+        <td>{{ formatTimeMs(node.updatedAtMs) }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Relay Nodes</h3>
+  <table>
+    <thead><tr><th>区域</th><th>节点</th><th>地址</th><th>UDP/Admin</th><th>状态</th><th>Age</th><th>优先级</th><th>更新时间</th></tr></thead>
+    <tbody>
+      <tr *ngFor="let node of wireRelayNodes()">
+        <td>{{ node.regionId }}</td>
+        <td><code>{{ node.nodeId }}</code></td>
+        <td>{{ node.host }}</td>
+        <td>{{ node.udpPort }} / {{ node.adminPort || '-' }}</td>
+        <td><span [class]="wireNodeStatusClass(node)">{{ wireNodeStatus(node) }}</span></td>
+        <td>{{ formatAgeMs(node.updatedAtMs) }}</td>
+        <td>{{ node.priority }}</td>
+        <td>{{ formatTimeMs(node.updatedAtMs) }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <section class="event-filter">
+    <div>
+      <h3>Wire Node Events</h3>
+      <p class="muted">按节点类型、区域、节点、事件类型和时间窗口筛选。</p>
+    </div>
+    <div class="form-grid wide">
+      <label><span>Node kind</span>
+        <select [(ngModel)]="filter().nodeKind">
+          <option value="">Any</option>
+          <option value="derp">DERP</option>
+          <option value="relay">Relay</option>
+        </select>
+      </label>
+      <label><span>Event type</span>
+        <select [(ngModel)]="filter().eventType">
+          <option value="">Any</option>
+          <option value="registered">registered</option>
+          <option value="heartbeat">heartbeat</option>
+          <option value="status_changed">status_changed</option>
+          <option value="stale_marked">stale_marked</option>
+        </select>
+      </label>
+      <label><span>Region</span><input [(ngModel)]="filter().regionId" /></label>
+      <label><span>Node</span><input [(ngModel)]="filter().nodeId" /></label>
+      <label><span>Created from ms</span><input [(ngModel)]="filter().createdFromMs" /></label>
+      <label><span>Created to ms</span><input [(ngModel)]="filter().createdToMs" /></label>
+      <label><span>Page size</span><input type="number" min="1" max="200" [(ngModel)]="filter().pageSize" /></label>
+    </div>
+    <div class="inline-actions">
+      <button type="button" class="primary narrow-primary" (click)="applyFilter.emit()" [disabled]="loading()">筛选</button>
+      <button type="button" (click)="resetFilter.emit()" [disabled]="loading()">重置</button>
+    </div>
+  </section>
+
+  <table>
+    <thead><tr><th>Age</th><th>类型</th><th>区域</th><th>节点</th><th>事件</th><th>Enabled</th><th>Healthy</th><th>原因</th></tr></thead>
+    <tbody>
+      <tr *ngFor="let event of wireEvents().items">
+        <td>{{ formatAgeMs(event.createdAtMs) }}</td>
+        <td>{{ event.nodeKind }}</td>
+        <td>{{ event.regionId }}</td>
+        <td><code>{{ event.nodeId }}</code></td>
+        <td>{{ event.eventType }}</td>
+        <td>{{ boolTransition(event.fromEnabled, event.toEnabled) }}</td>
+        <td>{{ boolTransition(event.fromHealthy, event.toHealthy) }}</td>
+        <td>{{ event.reason || '-' }}</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="pager">
+    <span>Page {{ wireEvents().page }} · PageSize {{ wireEvents().pageSize }} · Total {{ wireEvents().total }}</span>
+    <button type="button" (click)="previousPage.emit()" [disabled]="filter().page <= 1 || loading()">上一页</button>
+    <button type="button" (click)="nextPage.emit()" [disabled]="!canNextWireEventPage() || loading()">下一页</button>
+  </div>
+</section>

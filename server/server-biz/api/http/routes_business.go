@@ -28,10 +28,12 @@ func registerBusinessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	// - /auth：账号注册/登录/刷新、浏览器登录回调状态、MQTT 鉴权回调等
 	// - /devices /nodes：设备与节点注册、运行态上报
 	// - /networks：网络/子网/挂载/成员关系/激活编排
+	// - /client/ice-servers /peers /punch-*：ICE Server 下发、candidate 上报和打洞计划
 	// - /bootstrap /control：客户端启动载荷、控制会话刷新、relay ticket
 	api.GET("/system/public-config", respondWithJSON(http.StatusOK, func(c *gin.Context) (dto.PublicSystemConfig, error) {
 		return dto.PublicSystemConfig{AllowRegistration: deps.Config.Auth.AllowRegistration}, nil
 	}))
+	registerInternalWireRoutes(api, deps)
 	registerAccessRoutes(api, deps)
 
 	protected := api.Group("")
@@ -40,5 +42,6 @@ func registerBusinessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	registerProtectedAccessRoutes(protected, deps)
 	registerRegistrationRoutes(protected, deps)
 	registerNetworkRoutes(protected, deps)
+	registerIceRoutes(protected, deps)
 	registerBootstrapRoutes(protected, deps)
 }

@@ -61,6 +61,8 @@ func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 	service.ControlChannel,
 	service.ControlSync,
 	service.MessageDelivery,
+	service.Ice,
+	service.Wire,
 	service.Ops,
 ) {
 	state := &dbState{
@@ -78,6 +80,7 @@ func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 	state.cleanupExpiredControlPlaneState(context.Background(), time.Now())
 	state.enforceFixedAccessPolicy(context.Background())
 	state.startControlStateCleanupLoop()
+	state.startWireNodeCleanupLoop()
 	state.startAccessPolicySyncLoop()
 	state.startMQTTNetworkStateSubscriber()
 	return dbAuthService{state: state},
@@ -89,5 +92,7 @@ func NewDBServices(cfg configs.Config, runtime *configs.Runtime) (
 		dbControlChannelService{state: state},
 		dbControlSyncService{state: state},
 		dbMessageDeliveryService{state: state},
+		dbIceService{state: state},
+		dbWireService{state: state},
 		dbOpsService{state: state}
 }

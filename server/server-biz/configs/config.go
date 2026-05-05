@@ -101,6 +101,16 @@ type BootstrapConfig struct {
 	STUNServers []string `yaml:"stun_servers"`
 }
 
+// IceProbeConfig describes the standalone UDP ICE probe server.
+type IceProbeConfig struct {
+	// BindAddress is the UDP listener address for client probe packets.
+	BindAddress string `yaml:"bind_address"`
+	// ServerID is returned in probe responses and should match the registry row.
+	ServerID string `yaml:"server_id"`
+	// MaxPacketBytes caps accepted UDP JSON probe payload size.
+	MaxPacketBytes int `yaml:"max_packet_bytes"`
+}
+
 // AuthConfig 描述业务认证令牌有效期。
 type AuthConfig struct {
 	// AccessTokenTTLSeconds 是业务 access token 的有效期。
@@ -119,6 +129,26 @@ type OpsConfig struct {
 	DefaultAdmin OpsDefaultAdminConfig `yaml:"default_admin"`
 	// LoginRateLimit 描述运维登录入口的限流配置。
 	LoginRateLimit OpsLoginRateLimitConfig `yaml:"login_rate_limit"`
+}
+
+// InternalConfig describes service-to-service authentication.
+type InternalConfig struct {
+	// WireToken authorizes server-wire to read internal authz/topology views.
+	WireToken string `yaml:"wire_token"`
+}
+
+// WireConfig describes server-wire control-plane scheduling settings.
+type WireConfig struct {
+	// ControlPlaneURLs are server-wire internal HTTP endpoints used by ops
+	// health checks to compare ticket key rings across control-plane instances.
+	ControlPlaneURLs []string `yaml:"control_plane_urls"`
+	// NodeHeartbeatFreshnessSeconds is the max age of DERP/relay heartbeats
+	// before nodes are considered stale and excluded from scheduling.
+	NodeHeartbeatFreshnessSeconds int `yaml:"node_heartbeat_freshness_seconds"`
+	// NodeCleanupIntervalSeconds controls the background stale-node janitor.
+	NodeCleanupIntervalSeconds int `yaml:"node_cleanup_interval_seconds"`
+	// NodeEventRetentionSeconds controls how long wire node audit events are retained.
+	NodeEventRetentionSeconds int `yaml:"node_event_retention_seconds"`
 }
 
 // OpsLoginRateLimitConfig 描述运维登录入口的限流规则。
@@ -205,10 +235,16 @@ type Config struct {
 	Relay RelayConfig `yaml:"relay"`
 	// Bootstrap 包含客户端启动阶段的默认配置。
 	Bootstrap BootstrapConfig `yaml:"bootstrap"`
+	// IceProbe contains the standalone UDP ICE probe server config.
+	IceProbe IceProbeConfig `yaml:"ice_probe"`
 	// Auth 包含业务认证令牌有效期配置。
 	Auth AuthConfig `yaml:"auth"`
 	// Ops 包含运营入口鉴权配置。
 	Ops OpsConfig `yaml:"ops"`
+	// Internal 包含服务间访问控制配置。
+	Internal InternalConfig `yaml:"internal"`
+	// Wire 包含 server-wire 控制面调度配置。
+	Wire WireConfig `yaml:"wire"`
 	// Postgres 是 PostgreSQL 连接配置。
 	Postgres PostgresConfig `yaml:"postgres"`
 	// Redis 是 Redis 连接配置。
@@ -255,10 +291,18 @@ func DefaultConfig() Config {
 		},
 	}
 	cfg.Bootstrap.STUNServers = []string{"stun:stun.l.google.com:19302"}
+	cfg.IceProbe.BindAddress = ":3478"
+	cfg.IceProbe.ServerID = "ice-local-udp"
+	cfg.IceProbe.MaxPacketBytes = 2048
 	cfg.Auth.AccessTokenTTLSeconds = 3600
 	cfg.Auth.RefreshTokenTTLSeconds = 86400
 	cfg.Auth.AllowRegistration = true
 	cfg.Ops.AccessToken = "dev-ops-token"
+	cfg.Internal.WireToken = "dev-wire-internal-token"
+	cfg.Wire.ControlPlaneURLs = []string{"http://127.0.0.1:29100"}
+	cfg.Wire.NodeHeartbeatFreshnessSeconds = 120
+	cfg.Wire.NodeCleanupIntervalSeconds = 60
+	cfg.Wire.NodeEventRetentionSeconds = 7 * 24 * 3600
 	cfg.Ops.DefaultAdmin = OpsDefaultAdminConfig{
 		Enabled:     true,
 		Email:       "admin@local.slan",
@@ -357,6 +401,15 @@ func LoadConfig(path string) (Config, error) {
 	if len(cfg.Bootstrap.STUNServers) == 0 {
 		cfg.Bootstrap.STUNServers = DefaultConfig().Bootstrap.STUNServers
 	}
+	if cfg.IceProbe.BindAddress == "" {
+		cfg.IceProbe.BindAddress = DefaultConfig().IceProbe.BindAddress
+	}
+	if cfg.IceProbe.ServerID == "" {
+		cfg.IceProbe.ServerID = DefaultConfig().IceProbe.ServerID
+	}
+	if cfg.IceProbe.MaxPacketBytes == 0 {
+		cfg.IceProbe.MaxPacketBytes = DefaultConfig().IceProbe.MaxPacketBytes
+	}
 	if cfg.Auth.AccessTokenTTLSeconds == 0 {
 		cfg.Auth.AccessTokenTTLSeconds = DefaultConfig().Auth.AccessTokenTTLSeconds
 	}
@@ -389,6 +442,15 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.Ops.LoginRateLimit.LoginNameLimit == 0 {
 		cfg.Ops.LoginRateLimit.LoginNameLimit = DefaultConfig().Ops.LoginRateLimit.LoginNameLimit
+	}
+	if cfg.Wire.NodeHeartbeatFreshnessSeconds == 0 {
+		cfg.Wire.NodeHeartbeatFreshnessSeconds = DefaultConfig().Wire.NodeHeartbeatFreshnessSeconds
+	}
+	if cfg.Wire.NodeCleanupIntervalSeconds == 0 {
+		cfg.Wire.NodeCleanupIntervalSeconds = DefaultConfig().Wire.NodeCleanupIntervalSeconds
+	}
+	if cfg.Wire.NodeEventRetentionSeconds == 0 {
+		cfg.Wire.NodeEventRetentionSeconds = DefaultConfig().Wire.NodeEventRetentionSeconds
 	}
 	if cfg.Postgres.Host == "" {
 		cfg.Postgres = DefaultConfig().Postgres
@@ -483,8 +545,40 @@ func applyEnvOverrides(cfg *Config) {
 	if value := os.Getenv("SLAN_MQTT_PASSWORD_SECRET"); value != "" {
 		cfg.MQTT.PasswordSecret = value
 	}
+	if value := os.Getenv("SLAN_ICE_BIND_ADDRESS"); value != "" {
+		cfg.IceProbe.BindAddress = value
+	}
+	if value := os.Getenv("SLAN_ICE_SERVER_ID"); value != "" {
+		cfg.IceProbe.ServerID = value
+	}
+	if value := os.Getenv("SLAN_ICE_MAX_PACKET_BYTES"); value != "" {
+		if bytes, err := strconv.Atoi(value); err == nil && bytes > 0 {
+			cfg.IceProbe.MaxPacketBytes = bytes
+		}
+	}
 	if value := os.Getenv("SLAN_OPS_ACCESS_TOKEN"); value != "" {
 		cfg.Ops.AccessToken = value
+	}
+	if value := os.Getenv("SLAN_INTERNAL_WIRE_TOKEN"); value != "" {
+		cfg.Internal.WireToken = value
+	}
+	if value := os.Getenv("SLAN_WIRE_NODE_HEARTBEAT_FRESHNESS_SECONDS"); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+			cfg.Wire.NodeHeartbeatFreshnessSeconds = seconds
+		}
+	}
+	if value := os.Getenv("SLAN_WIRE_CONTROL_PLANE_URLS"); value != "" {
+		cfg.Wire.ControlPlaneURLs = splitCSV(value)
+	}
+	if value := os.Getenv("SLAN_WIRE_NODE_CLEANUP_INTERVAL_SECONDS"); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+			cfg.Wire.NodeCleanupIntervalSeconds = seconds
+		}
+	}
+	if value := os.Getenv("SLAN_WIRE_NODE_EVENT_RETENTION_SECONDS"); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil {
+			cfg.Wire.NodeEventRetentionSeconds = seconds
+		}
 	}
 	if value := os.Getenv("SLAN_OPS_DEFAULT_ADMIN_PASSWORD"); value != "" {
 		cfg.Ops.DefaultAdmin.Password = value
@@ -591,6 +685,16 @@ func validateRelayTopology(relay *RelayConfig) error {
 func isProductionEnv() bool {
 	env := strings.ToLower(strings.TrimSpace(os.Getenv("SLAN_ENV")))
 	return env == "prod" || env == "production"
+}
+
+func splitCSV(value string) []string {
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func weakSecret(value, defaultValue, placeholder string) bool {

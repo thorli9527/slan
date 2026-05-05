@@ -1,7 +1,7 @@
 # server-biz 本地 Docker 运行配置。
 #
 # 这个配置假设 PostgreSQL / Redis 都运行在同一个 docker compose 网络里。
-# relay 地址使用宿主机端口映射；server-relay 已接入本地 compose 并通过 MQTT 上报心跳。
+# 联网 relay / DERP 已切到 server-wire 系列服务；本配置只保留 server-biz 本地运行项。
 http:
   address: ":8080"
   ops_address: ":8081"
@@ -40,6 +40,10 @@ relay:
 bootstrap:
   stun_servers:
     - "stun:stun.l.google.com:19302"
+ice_probe:
+  bind_address: ":3478"
+  server_id: "ice-local-udp"
+  max_packet_bytes: 2048
 auth:
   allow_registration: true
   access_token_ttl_seconds: 3600
@@ -58,6 +62,15 @@ ops:
     password: "admin"
     login_name: "admin"
     display_name: "Docker Admin"
+internal:
+  wire_token: "docker-wire-internal-token"
+wire:
+  control_plane_urls:
+    - "http://server-wire:29100"
+    - "http://server-wire-b:29100"
+  node_heartbeat_freshness_seconds: 120
+  node_cleanup_interval_seconds: 60
+  node_event_retention_seconds: 604800
 postgres:
   host: "postgres"
   port: 5432

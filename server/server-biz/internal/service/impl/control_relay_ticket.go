@@ -73,7 +73,7 @@ func (s *dbState) issueRelayTicket(ctx context.Context, userID string, req dto.R
 }
 
 // buildRelayTicket materializes the relay ticket payload later verified by
-// server-relay.
+// the wire relay data plane.
 func (s *dbState) buildRelayTicket(req dto.RelayTicketRequest, cluster relayClusterView, expiresAt time.Time) dto.RelayTicket {
 	primaryNode := relayTicketPrimaryNode(req, cluster.nodes)
 	ticket := dto.RelayTicket{
@@ -118,7 +118,7 @@ func (s *dbState) newRelaySessionKey(ticketID, srcNodeID, dstNodeID string, expi
 	)
 }
 
-// signRelayTicket computes the HMAC signature shared with server-relay.
+// signRelayTicket computes the HMAC signature shared with the wire relay data plane.
 func (s *dbState) signRelayTicket(ticket dto.RelayTicket) string {
 	mac := hmac.New(sha256.New, []byte(s.cfg.Relay.TicketSigningSecret))
 	_, _ = mac.Write([]byte(relayTicketSigningPayload(ticket)))

@@ -21,8 +21,8 @@ WORKDIR /app
 
 RUN apk add --no-cache ca-certificates
 
-COPY --from=builder /out/app /app/${APP_TARGET}
+COPY --from=builder /out/app /app/app
 
-EXPOSE 8080 8081
+EXPOSE 8080 8081 3478/udp
 
-ENTRYPOINT ["/app/biz-server"]
+ENTRYPOINT ["/app/app"]

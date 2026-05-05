@@ -80,6 +80,23 @@ func authenticateOps(cfg configs.Config, deps routerDeps) gin.HandlerFunc {
 	}
 }
 
+func authenticateInternalWire(cfg configs.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		expected := strings.TrimSpace(cfg.Internal.WireToken)
+		if expected == "" {
+			writeError(c, service.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		if strings.TrimSpace(c.GetHeader("X-Slan-Internal-Token")) != expected {
+			writeError(c, service.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func authorizeOpsMenu(deps routerDeps, menuCode string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if staticToken, _ := c.Get(opsStaticTokenContextKey); staticToken == true {

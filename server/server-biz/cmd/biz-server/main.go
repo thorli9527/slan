@@ -36,7 +36,7 @@ func main() {
 	}
 	defer runtime.Close()
 
-	authService, deviceService, networkService, nodeService, bootstrapService, tokenVerifier, controlChannel, controlSync, messageDelivery, opsService := impl.NewDBServices(cfg, runtime)
+	authService, deviceService, networkService, nodeService, bootstrapService, tokenVerifier, controlChannel, controlSync, messageDelivery, iceService, wireService, opsService := impl.NewDBServices(cfg, runtime)
 	deps := httpapi.NewRouterDeps(
 		authService,
 		deviceService,
@@ -47,6 +47,8 @@ func main() {
 		controlChannel,
 		controlSync,
 		messageDelivery,
+		iceService,
+		wireService,
 		opsService,
 	)
 

@@ -1,10 +1,10 @@
-﻿<main class="ops-shell" *ngIf="token(); else loginPanel">
+﻿<main class="ops-shell" *ngIf="auth.token(); else loginPanel">
   <aside class="ops-sidebar">
     <section class="brand">
       <span class="brand-mark">S</span>
       <div>
         <strong>SLAN Main</strong>
-        <small>{{ adminName() || '运营后台' }}</small>
+        <small>{{ auth.adminName() || '运营后台' }}</small>
       </div>
     </section>
 
@@ -21,7 +21,7 @@
     </nav>
 
     <section class="sidebar-actions">
-      <button class="logout" type="button" *ngIf="adminId()" (click)="showPasswordPanel = !showPasswordPanel">修改密码</button>
+      <button class="logout" type="button" *ngIf="auth.adminId()" (click)="showPasswordPanel = !showPasswordPanel">修改密码</button>
       <button class="logout" type="button" (click)="logout()">退出</button>
     </section>
   </aside>
@@ -35,7 +35,7 @@
       <div class="topbar-actions">
         <input
           *ngIf="activeView() !== 'overview' && activeView() !== 'relays' && activeView() !== 'settings'"
-          [ngModel]="keyword()"
+          [ngModel]="table.keyword()"
           (ngModelChange)="setKeyword($event)"
           placeholder="搜索当前列表"
         />
@@ -46,10 +46,10 @@
     <section class="notice error" *ngIf="error()">{{ error() }}</section>
     <section class="notice ok" *ngIf="message()">{{ message() }}</section>
 
-    <section class="panel password-panel" *ngIf="showPasswordPanel && adminId()">
+    <section class="panel password-panel" *ngIf="showPasswordPanel && auth.adminId()">
       <div>
         <h2>修改运营密码</h2>
-        <p>修改当前管理员 {{ adminName() || adminId() }} 的登录密码。</p>
+        <p>修改当前管理员 {{ auth.adminName() || auth.adminId() }} 的登录密码。</p>
       </div>
       <label><span>新密码</span><input type="password" [(ngModel)]="opsNewPassword" autocomplete="new-password" /></label>
       <label><span>确认新密码</span><input type="password" [(ngModel)]="opsConfirmPassword" autocomplete="new-password" /></label>
@@ -59,274 +59,133 @@
     <section class="loading" *ngIf="loading()">正在读取运营数据...</section>
 
     <ng-container [ngSwitch]="activeView()">
-      <section class="dashboard" *ngSwitchCase="'overview'">
-        <article class="metric">
-          <span>用户</span>
-          <strong>{{ overview()?.userCount || 0 }}</strong>
-        </article>
-        <article class="metric">
-          <span>设备</span>
-          <strong>{{ overview()?.deviceCount || 0 }}</strong>
-          <small>{{ overview()?.onlineDeviceCount || 0 }} 在线</small>
-        </article>
-        <article class="metric">
-          <span>节点</span>
-          <strong>{{ overview()?.nodeCount || 0 }}</strong>
-        </article>
-        <article class="metric">
-          <span>Relay</span>
-          <strong>{{ overview()?.relayNodeCount || 0 }}</strong>
-          <small>{{ overview()?.relayOnlineNodeCount || 0 }} 在线 · {{ overview()?.relayClusterCount || 0 }} 集群</small>
-        </article>
-        <article class="panel span-2">
-          <h2>安全状态</h2>
-          <p>默认管理员：{{ overview()?.defaultAdminSeeded ? '已创建' : '未创建' }}</p>
-          <p>默认角色绑定：{{ overview()?.defaultAdminRoleBound ? '正常' : '缺失' }}</p>
-          <ul *ngIf="overview()?.securityWarnings?.length">
-            <li *ngFor="let item of overview()?.securityWarnings">{{ item }}</li>
-          </ul>
-        </article>
-      </section>
+      <slan-overview-view *ngSwitchCase="'overview'" [overview]="overview.overview()" />
 
-      <section class="panel" *ngSwitchCase="'users'">
-        <table>
-          <thead><tr><th>邮箱</th><th>用户 ID</th><th>设备</th><th>节点</th><th>角色</th><th>专属配置</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let user of pagedUsers()">
-              <td>{{ user.email }}</td>
-              <td><code>{{ user.userId }}</code></td>
-              <td>{{ user.deviceCount }}</td>
-              <td>{{ user.nodeCount }}</td>
-              <td>{{ user.roleCodes?.join(', ') || '-' }}</td>
-              <td>{{ user.planOverride ? '已配置' : '继承全局' }}</td>
-              <td><button type="button" (click)="openUserPlanDialog(user)">配置</button></td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pager" *ngIf="filteredUsers().length > pageSize">
-          <span>{{ pageSummary('users', filteredUsers().length) }}</span>
-          <button type="button" (click)="previousPage('users')" [disabled]="!canPreviousPage('users')">上一页</button>
-          <button type="button" (click)="nextPage('users', filteredUsers().length)" [disabled]="!canNextPage('users', filteredUsers().length)">下一页</button>
-        </div>
-      </section>
+      <slan-users-view
+        *ngSwitchCase="'users'"
+        [users]="pagedUsers()"
+        [filteredCount]="filteredUsers().length"
+        [pageSize]="table.pageSize"
+        [pageSummary]="table.pageSummary('users', filteredUsers().length)"
+        [canPrevious]="table.canPrevious('users')"
+        [canNext]="table.canNext('users', filteredUsers().length)"
+        (configure)="openUserPlanDialog($event)"
+        (previousPage)="table.previous('users')"
+        (nextPage)="table.next('users', filteredUsers().length)"
+      />
 
-      <section class="panel" *ngSwitchCase="'devices'">
-        <table>
-          <thead><tr><th>设备</th><th>设备 ID</th><th>用户</th><th>平台</th><th>状态</th><th>节点</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let device of pagedDevices()">
-              <td>{{ device.name }}</td>
-              <td><code>{{ device.deviceId }}</code></td>
-              <td><code>{{ device.userId }}</code></td>
-              <td>{{ device.platform }}</td>
-              <td><span class="pill">{{ device.status }}</span></td>
-              <td>{{ device.nodeCount }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pager" *ngIf="filteredDevices().length > pageSize">
-          <span>{{ pageSummary('devices', filteredDevices().length) }}</span>
-          <button type="button" (click)="previousPage('devices')" [disabled]="!canPreviousPage('devices')">上一页</button>
-          <button type="button" (click)="nextPage('devices', filteredDevices().length)" [disabled]="!canNextPage('devices', filteredDevices().length)">下一页</button>
-        </div>
-      </section>
+      <slan-devices-view
+        *ngSwitchCase="'devices'"
+        [devices]="pagedDevices()"
+        [filteredCount]="filteredDevices().length"
+        [pageSize]="table.pageSize"
+        [pageSummary]="table.pageSummary('devices', filteredDevices().length)"
+        [canPrevious]="table.canPrevious('devices')"
+        [canNext]="table.canNext('devices', filteredDevices().length)"
+        (previousPage)="table.previous('devices')"
+        (nextPage)="table.next('devices', filteredDevices().length)"
+      />
 
-      <section class="panel" *ngSwitchCase="'admins'">
-        <table>
-          <thead><tr><th>登录名</th><th>显示名</th><th>用户</th><th>部门</th><th>状态</th><th>角色</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let admin of pagedAdmins()">
-              <td>{{ admin.loginName }}</td>
-              <td>{{ admin.displayName }}</td>
-              <td><code>{{ admin.userId }}</code></td>
-              <td>{{ admin.department || '-' }}</td>
-              <td><span class="pill">{{ admin.status }}</span></td>
-              <td>{{ admin.roleCodes?.join(', ') || '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pager" *ngIf="filteredAdmins().length > pageSize">
-          <span>{{ pageSummary('admins', filteredAdmins().length) }}</span>
-          <button type="button" (click)="previousPage('admins')" [disabled]="!canPreviousPage('admins')">上一页</button>
-          <button type="button" (click)="nextPage('admins', filteredAdmins().length)" [disabled]="!canNextPage('admins', filteredAdmins().length)">下一页</button>
-        </div>
-      </section>
+      <slan-admins-view
+        *ngSwitchCase="'admins'"
+        [admins]="pagedAdmins()"
+        [filteredCount]="filteredAdmins().length"
+        [pageSize]="table.pageSize"
+        [pageSummary]="table.pageSummary('admins', filteredAdmins().length)"
+        [canPrevious]="table.canPrevious('admins')"
+        [canNext]="table.canNext('admins', filteredAdmins().length)"
+        (previousPage)="table.previous('admins')"
+        (nextPage)="table.next('admins', filteredAdmins().length)"
+      />
 
-      <section class="panel" *ngSwitchCase="'roles'">
-        <table>
-          <thead><tr><th>编码</th><th>名称</th><th>内置</th><th>菜单</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let role of pagedRoles()">
-              <td><code>{{ role.roleCode }}</code></td>
-              <td>{{ role.roleName }}</td>
-              <td>{{ role.builtin ? '是' : '否' }}</td>
-              <td>{{ role.menuCodes?.join(', ') || '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pager" *ngIf="roles().length > pageSize">
-          <span>{{ pageSummary('roles', roles().length) }}</span>
-          <button type="button" (click)="previousPage('roles')" [disabled]="!canPreviousPage('roles')">上一页</button>
-          <button type="button" (click)="nextPage('roles', roles().length)" [disabled]="!canNextPage('roles', roles().length)">下一页</button>
-        </div>
-      </section>
+      <slan-roles-view
+        *ngSwitchCase="'roles'"
+        [roles]="pagedRoles()"
+        [totalCount]="rbac.roles().length"
+        [pageSize]="table.pageSize"
+        [pageSummary]="table.pageSummary('roles', rbac.roles().length)"
+        [canPrevious]="table.canPrevious('roles')"
+        [canNext]="table.canNext('roles', rbac.roles().length)"
+        (previousPage)="table.previous('roles')"
+        (nextPage)="table.next('roles', rbac.roles().length)"
+      />
 
-      <section class="panel" *ngSwitchCase="'menus'">
-        <table>
-          <thead><tr><th>编码</th><th>名称</th><th>路径</th><th>排序</th><th>状态</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let menu of pagedMenus()">
-              <td><code>{{ menu.menuCode }}</code></td>
-              <td>{{ menu.menuName }}</td>
-              <td>{{ menu.path || '-' }}</td>
-              <td>{{ menu.sort }}</td>
-              <td><span class="pill">{{ menu.status }}</span></td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pager" *ngIf="menus().length > pageSize">
-          <span>{{ pageSummary('menus', menus().length) }}</span>
-          <button type="button" (click)="previousPage('menus')" [disabled]="!canPreviousPage('menus')">上一页</button>
-          <button type="button" (click)="nextPage('menus', menus().length)" [disabled]="!canNextPage('menus', menus().length)">下一页</button>
-        </div>
-      </section>
+      <slan-menus-view
+        *ngSwitchCase="'menus'"
+        [menus]="pagedMenus()"
+        [totalCount]="rbac.menus().length"
+        [pageSize]="table.pageSize"
+        [pageSummary]="table.pageSummary('menus', rbac.menus().length)"
+        [canPrevious]="table.canPrevious('menus')"
+        [canNext]="table.canNext('menus', rbac.menus().length)"
+        (previousPage)="table.previous('menus')"
+        (nextPage)="table.next('menus', rbac.menus().length)"
+      />
 
-      <section class="panel" *ngSwitchCase="'relays'">
-        <div class="panel-title">
-          <div>
-            <h2>Relay 节点管理</h2>
-            <p class="muted">默认集群：{{ relays()?.defaultClusterId || '-' }}</p>
-          </div>
-          <button type="button" (click)="refreshAll()" [disabled]="loading()">刷新</button>
-        </div>
-        <div class="relay-summary">
-          <article class="metric compact">
-            <span>节点在线</span>
-            <strong>{{ relayOnlineCount() }}/{{ relayNodes().length }}</strong>
-          </article>
-          <article class="metric compact">
-            <span>区域</span>
-            <strong>{{ relayRegionCount() }}</strong>
-          </article>
-          <article class="metric compact">
-            <span>活跃会话</span>
-            <strong>{{ relayActiveSessions() }}</strong>
-          </article>
-        </div>
-        <table>
-          <thead><tr><th>节点</th><th>集群</th><th>区域</th><th>地址</th><th>心跳</th><th>会话</th><th>质量</th><th>优先级</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let node of relayNodes()">
-              <td><code>{{ node.nodeId }}</code></td>
-              <td>{{ node.clusterName }}</td>
-              <td>{{ node.countryName || '-' }} {{ node.cityName || '' }}</td>
-              <td>{{ node.transport }} · {{ node.address }}</td>
-              <td>
-                <span [class.status-ok]="node.heartbeatOnline" [class.status-bad]="!node.heartbeatOnline">
-                  {{ node.heartbeatOnline ? '在线' : '不在线' }}
-                </span>
-                <small>{{ formatTime(node.heartbeatLastSeenAt) }}</small>
-              </td>
-              <td>{{ node.activeSessions || 0 }}</td>
-              <td>
-                <span>RTT {{ node.observedRttMs || '-' }}</span>
-                <small>丢包 {{ node.packetLossPpm ?? '-' }} · 评分 {{ node.pathScore ?? '-' }}</small>
-              </td>
-              <td>{{ node.priority }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <section class="relay-regions" *ngIf="relays()?.regions?.length">
-          <h3>区域与候选入口</h3>
-          <div class="region-grid">
-            <article class="region-card" *ngFor="let region of relays()?.regions || []">
-              <strong>{{ region.countryName || '-' }} {{ region.cityName || '' }}</strong>
-              <span>{{ region.clusterName || region.clusterId || '-' }}</span>
-              <small *ngFor="let endpoint of region.endpoints || []">{{ endpoint.transport }} · {{ endpoint.address }}</small>
-            </article>
-          </div>
-        </section>
-      </section>
+      <slan-relay-view *ngSwitchCase="'relays'" [relays]="relay.topology()" [loading]="loading()" (refresh)="refreshAll()" />
 
-      <section class="panel" *ngSwitchCase="'quality'">
-        <div class="panel-title">
-          <div>
-            <h2>用户实时网络质量</h2>
-            <p class="muted">展示最近 30 分钟客户端上报的路径质量样本。</p>
-          </div>
-          <button type="button" (click)="refreshAll()" [disabled]="loading()">刷新质量</button>
-        </div>
-        <table>
-          <thead><tr><th>质量</th><th>用户/设备</th><th>网络</th><th>路径</th><th>RTT</th><th>丢包</th><th>评分</th><th>时间</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let item of pagedNetworkQuality()">
-              <td><span [class]="qualityTone(item)">{{ qualityLabel(item) }}</span></td>
-              <td>
-                <strong>{{ item.userEmail || item.userId || '-' }}</strong>
-                <small>{{ item.deviceName || item.deviceId || '-' }}</small>
-              </td>
-              <td>
-                {{ item.networkName || item.networkId }}
-                <small><code>{{ item.networkId }}</code></small>
-              </td>
-              <td>
-                {{ item.pathType || '-' }}
-                <small>{{ item.derpNodeId || item.endpoint || item.peerNodeId || '-' }}</small>
-              </td>
-              <td>{{ item.observedRttMs ?? '-' }}</td>
-              <td>{{ item.packetLossPpm ?? '-' }}</td>
-              <td>{{ item.pathScore ?? '-' }}</td>
-              <td>
-                {{ formatTime(item.updatedAt) }}
-                <small>{{ formatSampleTime(item.sampledAtMs) }}</small>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="pager" *ngIf="filteredNetworkQuality().length > pageSize">
-          <span>{{ pageSummary('quality', filteredNetworkQuality().length) }}</span>
-          <button type="button" (click)="previousPage('quality')" [disabled]="!canPreviousPage('quality')">上一页</button>
-          <button type="button" (click)="nextPage('quality', filteredNetworkQuality().length)" [disabled]="!canNextPage('quality', filteredNetworkQuality().length)">下一页</button>
-        </div>
-      </section>
+      <slan-wire-view
+        *ngSwitchCase="'wire'"
+        [wireNodes]="wire.nodes()"
+        [wireEvents]="wire.events()"
+        [filter]="wire.filter"
+        [loading]="loading()"
+        (refresh)="refreshView('wire')"
+        (applyFilter)="applyWireEventFilter()"
+        (resetFilter)="resetWireEventFilter()"
+        (previousPage)="previousWireEventPage()"
+        (nextPage)="nextWireEventPage()"
+      />
 
-      <section class="panel" *ngSwitchCase="'settings'">
-        <div class="panel-title">
-          <div>
-            <h2>全局设备与流量配置</h2>
-            <p class="muted">用户未设置专属配置时，统一使用这里的全局限制。</p>
-          </div>
-          <button type="button" class="primary narrow-primary" (click)="saveGlobalPlanConfig()" [disabled]="loading()">保存配置</button>
-        </div>
-        <div class="form-grid">
-          <label>
-            <span>最大设备数</span>
-            <input type="number" min="1" [ngModel]="planConfig().maxActiveDevices" (ngModelChange)="updateGlobalPlanField('maxActiveDevices', $event)" />
-          </label>
-          <label>
-            <span>转发接收 Kbps</span>
-            <input type="number" min="0" [ngModel]="planConfig().relayIngressKbps" (ngModelChange)="updateGlobalPlanField('relayIngressKbps', $event)" />
-          </label>
-          <label>
-            <span>转发发送 Kbps</span>
-            <input type="number" min="0" [ngModel]="planConfig().relayEgressKbps" (ngModelChange)="updateGlobalPlanField('relayEgressKbps', $event)" />
-          </label>
-          <label>
-            <span>UDP/打洞接收 Kbps</span>
-            <input type="number" min="0" [ngModel]="planConfig().udpIngressKbps" (ngModelChange)="updateGlobalPlanField('udpIngressKbps', $event)" />
-          </label>
-          <label>
-            <span>UDP/打洞发送 Kbps</span>
-            <input type="number" min="0" [ngModel]="planConfig().udpEgressKbps" (ngModelChange)="updateGlobalPlanField('udpEgressKbps', $event)" />
-          </label>
-        </div>
-      </section>
+      <slan-ice-view
+        *ngSwitchCase="'ice'"
+        [servers]="ice.servers()"
+        [stats]="ice.stats()"
+        [pagedServers]="pagedIceServers()"
+        [filteredCount]="filteredIceServers().length"
+        [pageSize]="table.pageSize"
+        [pageSummary]="table.pageSummary('ice', filteredIceServers().length)"
+        [canPrevious]="table.canPrevious('ice')"
+        [canNext]="table.canNext('ice', filteredIceServers().length)"
+        [draft]="ice.draft"
+        [editingServerId]="ice.editingServerId"
+        [loading]="loading()"
+        (refresh)="refreshView('ice')"
+        (previousPage)="table.previous('ice')"
+        (nextPage)="table.next('ice', filteredIceServers().length)"
+        (edit)="editIceServer($event)"
+        (save)="saveIceServer()"
+        (resetDraft)="resetIceDraft()"
+        (updateStatus)="updateIceStatus($event.server, $event.status)"
+      />
+
+      <slan-quality-view
+        *ngSwitchCase="'quality'"
+        [items]="pagedNetworkQuality()"
+        [filteredCount]="filteredNetworkQuality().length"
+        [pageSize]="table.pageSize"
+        [pageSummary]="table.pageSummary('quality', filteredNetworkQuality().length)"
+        [canPrevious]="table.canPrevious('quality')"
+        [canNext]="table.canNext('quality', filteredNetworkQuality().length)"
+        [loading]="loading()"
+        (refresh)="refreshAll()"
+        (previousPage)="table.previous('quality')"
+        (nextPage)="table.next('quality', filteredNetworkQuality().length)"
+      />
+
+      <slan-settings-view
+        *ngSwitchCase="'settings'"
+        [config]="settings.config()"
+        [loading]="loading()"
+        (save)="saveGlobalPlanConfig()"
+        (update)="updateGlobalPlanField($event.key, $event.value)"
+      />
     </ng-container>
   </section>
 
 </main>
 
-<section class="modal-backdrop" *ngIf="editingUserPlan" (click)="closeUserPlanDialog()">
+<section class="modal-backdrop" *ngIf="userPlans.editingUser() as editingUserPlan" (click)="closeUserPlanDialog()">
   <article class="modal-panel" (click)="$event.stopPropagation()">
     <div class="modal-title">
       <div>
@@ -338,23 +197,23 @@
     <div class="form-grid">
       <label>
         <span>最大设备数</span>
-        <input type="number" min="1" [(ngModel)]="userPlanDraft.maxActiveDevices" />
+        <input type="number" min="1" [(ngModel)]="userPlans.draft.maxActiveDevices" />
       </label>
       <label>
         <span>转发接收 Kbps</span>
-        <input type="number" min="0" [(ngModel)]="userPlanDraft.relayIngressKbps" />
+        <input type="number" min="0" [(ngModel)]="userPlans.draft.relayIngressKbps" />
       </label>
       <label>
         <span>转发发送 Kbps</span>
-        <input type="number" min="0" [(ngModel)]="userPlanDraft.relayEgressKbps" />
+        <input type="number" min="0" [(ngModel)]="userPlans.draft.relayEgressKbps" />
       </label>
       <label>
         <span>UDP/打洞接收 Kbps</span>
-        <input type="number" min="0" [(ngModel)]="userPlanDraft.udpIngressKbps" />
+        <input type="number" min="0" [(ngModel)]="userPlans.draft.udpIngressKbps" />
       </label>
       <label>
         <span>UDP/打洞发送 Kbps</span>
-        <input type="number" min="0" [(ngModel)]="userPlanDraft.udpEgressKbps" />
+        <input type="number" min="0" [(ngModel)]="userPlans.draft.udpEgressKbps" />
       </label>
     </div>
     <div class="inline-actions">
@@ -378,4 +237,3 @@
     </section>
   </main>
 </ng-template>
-

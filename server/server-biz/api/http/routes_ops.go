@@ -241,6 +241,75 @@ func registerOpsRoutes(api *gin.RouterGroup, cfg configs.Config, deps routerDeps
 		}
 		c.JSON(http.StatusOK, resp)
 	})
+	ops.GET("/wire-nodes", authorizeOpsMenu(deps, "ops.wire"), func(c *gin.Context) {
+		resp, err := deps.Ops.WireNodes()
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+	ops.GET("/wire-node-events", authorizeOpsMenu(deps, "ops.wire"), func(c *gin.Context) {
+		resp, err := deps.Ops.WireNodeEvents(wireNodeEventQueryFromRequest(c, 50))
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+	ops.GET("/ice-servers", authorizeOpsMenu(deps, "ops.ice"), func(c *gin.Context) {
+		items, err := deps.Ice.ListOpsIceServers()
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		writeItems(c, items)
+	})
+	ops.POST("/ice-servers", authorizeOpsMenu(deps, "ops.ice"), func(c *gin.Context) {
+		var req dto.UpsertIceServerRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		resp, err := deps.Ice.UpsertOpsIceServer(req)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, resp)
+	})
+	ops.PUT("/ice-servers/:serverId", authorizeOpsMenu(deps, "ops.ice"), func(c *gin.Context) {
+		var req dto.UpsertIceServerRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		req.ServerID = c.Param("serverId")
+		resp, err := deps.Ice.UpsertOpsIceServer(req)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+	ops.PATCH("/ice-servers/:serverId/status", authorizeOpsMenu(deps, "ops.ice"), func(c *gin.Context) {
+		var req dto.UpdateIceServerStatusRequest
+		if !bindJSON(c, &req) {
+			return
+		}
+		resp, err := deps.Ice.UpdateOpsIceServerStatus(c.Param("serverId"), req)
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
+	ops.GET("/ice-stats", authorizeOpsMenu(deps, "ops.ice"), func(c *gin.Context) {
+		resp, err := deps.Ice.IceStats()
+		if err != nil {
+			writeError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+	})
 	// GET /network-quality 返回用户设备实时网络质量样本。
 	ops.GET("/network-quality", authorizeOpsMenu(deps, "ops.quality"), func(c *gin.Context) {
 		resp, err := deps.Ops.NetworkQuality()

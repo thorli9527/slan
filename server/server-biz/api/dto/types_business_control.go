@@ -243,6 +243,8 @@ type NetworkMap struct {
 	HeartbeatSeconds int `json:"heartbeatSeconds"`
 	// STUNServers 是 NAT 探测使用的 STUN 列表。
 	STUNServers []string `json:"stunServers,omitempty"`
+	// IceServers 是控制面建议客户端优先探测的 ICE Server 列表。
+	IceServers []IceServer `json:"iceServers,omitempty"`
 	// Peers 是当前网络中的对等节点列表。
 	Peers []Peer `json:"peers,omitempty"`
 	// Routes 是网络路由列表。

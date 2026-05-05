@@ -1,4 +1,4 @@
-.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test flutter-analyze-safe protocol-contract-check local-stack-smoke
+.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check
 
 help:
 	@echo "Available targets:"
@@ -7,6 +7,15 @@ help:
 	@echo "    make client-desktop-ui-test       # run widget tests covering the desktop client shell"
 	@echo "    make flutter-analyze-safe         # run Flutter analyze with stale Dart language-server cleanup"
 	@echo "    make protocol-contract-check      # run web + Flutter + Rust + Go + OpenAPI + protobuf + route drift checks"
+	@echo ""
+	@echo "  Wire Stack"
+	@echo "    make wire-stack-smoke             # run the isolated server-wire + relay + DERP smoke"
+	@echo "    make wire-biz-e2e-smoke           # run Docker server-biz -> server-wire authorization smoke"
+	@echo "    make wire-stale-nodes-smoke       # verify stale relay/DERP nodes leave scheduling"
+	@echo "    make wire-persistence-smoke       # verify server-wire Postgres state survives service restart"
+	@echo "    make wire-ticket-key-mismatch-smoke # verify ticket key ring drift is detected"
+	@echo "    make wire-biz-ticket-key-drift-smoke # verify server-biz reports ticket key drift"
+	@echo "    make wire-control-plane-check     # run wire authz unit tests + Docker biz/wire e2e smoke"
 	@echo ""
 	@echo "  Devices Integration"
 	@echo "    make cleanup-devices-integration  # kill lingering Flutter integration and slan_app processes"
@@ -50,3 +59,34 @@ ifeq ($(OS),Windows_NT)
 else
 	./scripts/local_stack_smoke.sh
 endif
+
+wire-stack-smoke:
+	GO111MODULE=off go run ./scripts/wire_stack_smoke.go
+
+wire-biz-e2e-smoke:
+	go run ./scripts/wire_biz_e2e_smoke.go
+
+wire-stale-nodes-smoke:
+	go run ./scripts/wire_stale_nodes_smoke.go
+
+wire-persistence-smoke:
+	go run ./scripts/wire_persistence_smoke.go seed
+	docker compose -f docker-compose.local.yml restart server-wire
+	go run ./scripts/wire_persistence_smoke.go verify
+
+wire-ticket-key-mismatch-smoke:
+	go run ./scripts/wire_ticket_key_mismatch_smoke.go
+
+wire-biz-ticket-key-drift-smoke:
+	go run ./scripts/wire_biz_ticket_key_drift_smoke.go
+
+wire-control-plane-check:
+	cd server/server-wire && GOCACHE=/private/tmp/slan-go-build-cache SLAN_WIRE_POSTGRES_TEST_DSN="postgres://postgres:$${POSTGRES_PASSWORD:-change-me-postgres-password}@127.0.0.1:15432/slan?sslmode=disable" go test ./...
+	cd server/server-wire-relay && GOCACHE=/private/tmp/slan-go-build-cache go test ./...
+	cd server/server-wire-derp && GOCACHE=/private/tmp/slan-go-build-cache go test ./...
+	cd server/server-biz && GOCACHE=/private/tmp/slan-go-build-cache go test ./api/http ./internal/service/impl ./configs ./internal/mqttauth ./internal/netpath
+	$(MAKE) wire-biz-e2e-smoke
+	$(MAKE) wire-ticket-key-mismatch-smoke
+	$(MAKE) wire-biz-ticket-key-drift-smoke
+	$(MAKE) wire-stale-nodes-smoke
+	$(MAKE) wire-persistence-smoke

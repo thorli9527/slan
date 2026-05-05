@@ -29,6 +29,10 @@ type routerDeps struct {
 	ControlSync service.ControlSync
 	// MessageDelivery 提供下行消息投递、重试和归档能力。
 	MessageDelivery service.MessageDelivery
+	// Ice 提供 ICE Server、candidate 和 punch plan 控制面能力。
+	Ice service.Ice
+	// Wire 提供给 server-wire 的内部授权与拓扑只读能力。
+	Wire service.Wire
 	// Ops 提供运营管理视图和 RBAC 管理能力。
 	Ops service.Ops
 }
@@ -43,6 +47,8 @@ func NewRouterDeps(
 	controlChannel service.ControlChannel,
 	controlSync service.ControlSync,
 	messageDelivery service.MessageDelivery,
+	ice service.Ice,
+	wire service.Wire,
 	ops service.Ops,
 ) routerDeps {
 	return routerDeps{
@@ -55,6 +61,8 @@ func NewRouterDeps(
 		ControlChannel:  controlChannel,
 		ControlSync:     controlSync,
 		MessageDelivery: messageDelivery,
+		Ice:             ice,
+		Wire:            wire,
 		Ops:             ops,
 	}
 }
@@ -62,7 +70,7 @@ func NewRouterDeps(
 // NewPublicRouter 构建对外客户使用的 HTTP 路由。
 func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	deps.Config = cfg
-	if deps.Auth == nil || deps.Device == nil || deps.Network == nil || deps.Node == nil || deps.Bootstrap == nil || deps.Tokens == nil || deps.ControlChannel == nil {
+	if deps.Auth == nil || deps.Device == nil || deps.Network == nil || deps.Node == nil || deps.Bootstrap == nil || deps.Tokens == nil || deps.ControlChannel == nil || deps.Ice == nil || deps.Wire == nil {
 		panic("http public router requires explicit services")
 	}
 	router := gin.New()
@@ -98,7 +106,7 @@ func NewPublicRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 // NewOpsRouter 构建运营管理 HTTP 路由。
 func NewOpsRouter(cfg configs.Config, deps routerDeps) *gin.Engine {
 	deps.Config = cfg
-	if deps.Ops == nil {
+	if deps.Ops == nil || deps.Ice == nil {
 		panic("http ops router requires ops service")
 	}
 	router := gin.New()

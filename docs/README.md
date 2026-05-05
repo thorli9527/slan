@@ -1,28 +1,21 @@
 # SLAN 文档索引
 
-本文档目录用于沉淀组网软件的需求、架构和阶段性实施方案。
+当前文档以新系统切割为准：
 
-## 文档列表
+- `server-biz`：业务控制面
+- `server-wire`：联网控制面
+- `server-wire-relay`：UDP relay 数据面
+- `server-wire-derp`：TCP/TLS 443 最终兜底数据面
 
-- [完整需求范围](./prd/full-scope.md)
-- [项目目录与模块设计](./architecture/project-structure.md)
-- [一期 MVP 方案](./architecture/phase-1-mvp.md)
-- [主要序列图](./architecture/sequence-diagrams.md)
-- [Relay 功能梳理](./architecture/relay-flow.md)
-- [DERP 集群与连接池设计](./architecture/derp-cluster-design.md)
-- [AppCore 内部需求接口](./architecture/app-core-derp-internal-interfaces.md)
-- [协议合同清单](./architecture/protocol-contract-inventory.md)
-- [Client 重构清单](./architecture/client-refactor-plan.md)
-- [系统边界与接口矩阵](./architecture/system-boundary-matrix.md)
-- [.gitignore 约定](./architecture/gitignore.md)
-- [上线准备清单（server-biz）](./architecture/production-readiness-checklist.md)
-- [local 到 production 配置迁移说明](./architecture/local-to-production-config.md)
-- [Token / 会话设计（生产建议）](./architecture/token-session-design.md)
+## 子系统文档
 
-## 当前约定
+- [server-biz docs](../server/server-biz/docs/README.md)
+- [server-wire docs](../server/server-wire/docs/README.md)
+- [server-wire-relay docs](../server/server-wire-relay/docs/README.md)
+- [server-wire-derp docs](../server/server-wire-derp/docs/README.md)
+- [Wire client protocol](./wire-client-protocol.md)
 
-- 客户端一级目录为 `client/`
-- 服务端一级目录为 `server/`
-- 客户端核心目录为 `client/app_core`
+## 说明
 
-当前设计文档统一以当前仓库实际目录为准，不再保留 `server-ops` 目标目录描述。
+- 原有 `server-relay` 子系统已删除，新系统统一使用 `server-wire-relay` 与 `server-wire-derp`
+- 原有 `server-biz` 控制通道/relay 混合职责说明已移除，当前只保留业务控制面定义

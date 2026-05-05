@@ -55,7 +55,6 @@ Phase 1 MVP 的 Go 控制面服务。
 - `postgres`
 - `redis`
 - `server-biz`
-- `server-relay`
 - `caddy`
 
 启动：
@@ -69,7 +68,6 @@ docker compose -f docker-compose.local.yml up --build server-biz
 - `server-biz public (direct debug)`: `28080` by default, configurable via `SLAN_BIZ_PUBLIC_PORT`
 - `server-biz ops`: `28081` by default, configurable via `SLAN_BIZ_OPS_PORT`
 - `public https / wss`: `18443`
-- `server-relay udp`: `19000/udp`
 - `postgres`: `15432`
 - `redis`: `16379`
 

@@ -56,6 +56,10 @@ services:
       SLAN_HTTP_PUBLIC_HOST: "${SLAN_HTTP_PUBLIC_HOST:-slan.localhost:18443}"
       SLAN_HTTP_PUBLIC_SCHEME: "${SLAN_HTTP_PUBLIC_SCHEME:-https}"
       SLAN_RELAY_TICKET_SIGNING_SECRET: "${SLAN_RELAY_TICKET_SIGNING_SECRET:-change-me-relay-ticket-secret}"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_WIRE_NODE_HEARTBEAT_FRESHNESS_SECONDS: "${SLAN_WIRE_NODE_HEARTBEAT_FRESHNESS_SECONDS:-120}"
+      SLAN_WIRE_NODE_CLEANUP_INTERVAL_SECONDS: "${SLAN_WIRE_NODE_CLEANUP_INTERVAL_SECONDS:-60}"
+      SLAN_WIRE_NODE_EVENT_RETENTION_SECONDS: "${SLAN_WIRE_NODE_EVENT_RETENTION_SECONDS:-604800}"
       SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
       SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
       SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
@@ -76,39 +80,165 @@ services:
       bifromq:
         condition: service_healthy
 
-  server-relay:
+  ice-server:
     build:
-      context: ./server/server-relay
+      context: ./server/server-biz
       dockerfile: Dockerfile
-    container_name: slan-server-relay
+      args:
+        APP_TARGET: ice-server
+    container_name: slan-ice-server
+    command: ["-config", "/app/config.yaml"]
     environment:
-      SLAN_RELAY_TICKET_SIGNING_SECRET: "${SLAN_RELAY_TICKET_SIGNING_SECRET:-change-me-relay-ticket-secret}"
-      SLAN_RELAY_MQTT_ENABLED: "${SLAN_RELAY_MQTT_ENABLED:-true}"
-      SLAN_RELAY_MQTT_BROKER_URL: "${SLAN_RELAY_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
-      SLAN_RELAY_MQTT_TOPIC_PREFIX: "${SLAN_RELAY_MQTT_TOPIC_PREFIX:-slan/devices}"
-      SLAN_RELAY_MQTT_USERNAME_PREFIX: "${SLAN_RELAY_MQTT_USERNAME_PREFIX:-slan}"
-      SLAN_RELAY_MQTT_PASSWORD_SECRET: "${SLAN_RELAY_MQTT_PASSWORD_SECRET:-change-me-mqtt-secret}"
-      SLAN_RELAY_NODE_ID: "${SLAN_RELAY_NODE_ID:-relay-cn-local-udp}"
-      SLAN_RELAY_CLUSTER_ID: "${SLAN_RELAY_CLUSTER_ID:-cn-local-a}"
-      SLAN_RELAY_COUNTRY_CODE: "${SLAN_RELAY_COUNTRY_CODE:-CN}"
-      SLAN_RELAY_CITY_CODE: "${SLAN_RELAY_CITY_CODE:-local}"
-      SLAN_RELAY_TRANSPORT: "${SLAN_RELAY_TRANSPORT:-udp}"
-      SLAN_RELAY_ADDRESS: "${SLAN_RELAY_ADDRESS:-127.0.0.1:19000}"
-      SLAN_RELAY_MQTT_INTERVAL_SECONDS: "${SLAN_RELAY_MQTT_INTERVAL_SECONDS:-30}"
-    command:
-      [
-        "--config",
-        "/app/relay-daemon.json",
-        "--ticket-signing-secret",
-        "${SLAN_RELAY_TICKET_SIGNING_SECRET:-change-me-relay-ticket-secret}"
-      ]
+      SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
+      SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-change-me-mqtt-secret}"
+      SLAN_POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
+      SLAN_ICE_BIND_ADDRESS: ":3478"
+      SLAN_ICE_SERVER_ID: "${SLAN_ICE_SERVER_ID:-ice-local-udp}"
     ports:
-      - "19000:9000/udp"
+      - "${SLAN_ICE_PORT:-13478}:3478/udp"
     volumes:
-      - ./server/server-relay/configs/relay-daemon.example.json:/app/relay-daemon.json:ro
+      - ./server/server-biz/configs/config.docker.yaml:/app/config.yaml:ro
     depends_on:
-      bifromq:
+      postgres:
         condition: service_healthy
+
+  server-wire:
+    build:
+      context: ./server/server-wire
+      dockerfile: Dockerfile
+    container_name: slan-server-wire
+    environment:
+      SLAN_WIRE_LISTEN_ADDR: ":29100"
+      SLAN_WIRE_BIZ_INTERNAL_URL: "http://server-biz:8080"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
+      SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
+      SLAN_WIRE_POSTGRES_DSN: "postgres://postgres:${POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/slan?sslmode=disable"
+    ports:
+      - "${SLAN_WIRE_PORT:-29100}:29100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      server-biz:
+        condition: service_started
+
+  server-wire-b:
+    build:
+      context: ./server/server-wire
+      dockerfile: Dockerfile
+    container_name: slan-server-wire-b
+    environment:
+      SLAN_WIRE_LISTEN_ADDR: ":29100"
+      SLAN_WIRE_BIZ_INTERNAL_URL: "http://server-biz:8080"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
+      SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
+      SLAN_WIRE_POSTGRES_DSN: "postgres://postgres:${POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/slan?sslmode=disable"
+    ports:
+      - "${SLAN_WIRE_B_PORT:-29101}:29100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      server-biz:
+        condition: service_started
+
+  server-wire-relay:
+    build:
+      context: ./server/server-wire-relay
+      dockerfile: Dockerfile
+    container_name: slan-server-wire-relay
+    environment:
+      SLAN_WIRE_RELAY_LISTEN_ADDR: ":29110"
+      SLAN_WIRE_RELAY_ADMIN_LISTEN_ADDR: ":29111"
+      SLAN_BIZ_URL: "http://server-biz:8080"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_WIRE_RELAY_REGION_ID: "${SLAN_WIRE_RELAY_REGION_ID:-local}"
+      SLAN_WIRE_RELAY_NODE_ID: "${SLAN_WIRE_RELAY_NODE_ID:-relay-local}"
+      SLAN_WIRE_RELAY_PUBLIC_HOST: "${SLAN_WIRE_RELAY_PUBLIC_HOST:-127.0.0.1}"
+      SLAN_WIRE_RELAY_PUBLIC_UDP_PORT: "${SLAN_WIRE_RELAY_PORT:-29110}"
+      SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
+      SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
+    ports:
+      - "${SLAN_WIRE_RELAY_PORT:-29110}:29110/udp"
+      - "${SLAN_WIRE_RELAY_ADMIN_PORT:-29111}:29111"
+    depends_on:
+      server-biz:
+        condition: service_started
+      server-wire:
+        condition: service_started
+
+  server-wire-relay-b:
+    build:
+      context: ./server/server-wire-relay
+      dockerfile: Dockerfile
+    container_name: slan-server-wire-relay-b
+    environment:
+      SLAN_WIRE_RELAY_LISTEN_ADDR: ":29110"
+      SLAN_WIRE_RELAY_ADMIN_LISTEN_ADDR: ":29111"
+      SLAN_BIZ_URL: "http://server-biz:8080"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_WIRE_RELAY_REGION_ID: "${SLAN_WIRE_RELAY_B_REGION_ID:-local}"
+      SLAN_WIRE_RELAY_NODE_ID: "${SLAN_WIRE_RELAY_B_NODE_ID:-relay-local-b}"
+      SLAN_WIRE_RELAY_PUBLIC_HOST: "${SLAN_WIRE_RELAY_B_PUBLIC_HOST:-127.0.0.1}"
+      SLAN_WIRE_RELAY_PUBLIC_UDP_PORT: "${SLAN_WIRE_RELAY_B_PUBLIC_UDP_PORT:-29110}"
+      SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
+      SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
+    ports:
+      - "${SLAN_WIRE_RELAY_B_ADMIN_PORT:-29113}:29111"
+    depends_on:
+      server-biz:
+        condition: service_started
+      server-wire:
+        condition: service_started
+
+  server-wire-derp:
+    build:
+      context: ./server/server-wire-derp
+      dockerfile: Dockerfile
+    container_name: slan-server-wire-derp
+    environment:
+      SLAN_WIRE_DERP_LISTEN_ADDR: ":29120"
+      SLAN_WIRE_DERP_ADMIN_LISTEN_ADDR: ":29121"
+      SLAN_BIZ_URL: "http://server-biz:8080"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_WIRE_DERP_REGION_ID: "${SLAN_WIRE_DERP_REGION_ID:-local}"
+      SLAN_WIRE_DERP_NODE_ID: "${SLAN_WIRE_DERP_NODE_ID:-derp-local}"
+      SLAN_WIRE_DERP_PUBLIC_HOST: "${SLAN_WIRE_DERP_PUBLIC_HOST:-127.0.0.1}"
+      SLAN_WIRE_DERP_PUBLIC_PORT: "${SLAN_WIRE_DERP_PUBLIC_PORT:-443}"
+      SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
+      SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
+    ports:
+      - "${SLAN_WIRE_DERP_PORT:-29120}:29120"
+      - "${SLAN_WIRE_DERP_ADMIN_PORT:-29121}:29121"
+    depends_on:
+      server-biz:
+        condition: service_started
+      server-wire:
+        condition: service_started
+
+  server-wire-derp-b:
+    build:
+      context: ./server/server-wire-derp
+      dockerfile: Dockerfile
+    container_name: slan-server-wire-derp-b
+    environment:
+      SLAN_WIRE_DERP_LISTEN_ADDR: ":29120"
+      SLAN_WIRE_DERP_ADMIN_LISTEN_ADDR: ":29121"
+      SLAN_BIZ_URL: "http://server-biz:8080"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_WIRE_DERP_REGION_ID: "${SLAN_WIRE_DERP_B_REGION_ID:-local}"
+      SLAN_WIRE_DERP_NODE_ID: "${SLAN_WIRE_DERP_B_NODE_ID:-derp-local-b}"
+      SLAN_WIRE_DERP_PUBLIC_HOST: "${SLAN_WIRE_DERP_B_PUBLIC_HOST:-127.0.0.1}"
+      SLAN_WIRE_DERP_PUBLIC_PORT: "${SLAN_WIRE_DERP_B_PUBLIC_PORT:-443}"
+      SLAN_WIRE_TICKET_SECRET: "${SLAN_WIRE_TICKET_SECRET:-change-me-wire-ticket-secret}"
+      SLAN_WIRE_TICKET_SECRETS: "${SLAN_WIRE_TICKET_SECRETS:-change-me-wire-ticket-secret}"
+    ports:
+      - "${SLAN_WIRE_DERP_B_ADMIN_PORT:-29123}:29121"
+    depends_on:
+      server-biz:
+        condition: service_started
+      server-wire:
+        condition: service_started
 
   server-ui-web:
     build:

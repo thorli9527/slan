@@ -49,6 +49,12 @@ type Ops interface {
 	// RelayTopology returns relay cluster topology and health information.
 	RelayTopology() (dto.OpsRelayTopology, error)
 
+	// WireNodes returns the server-wire data-plane node inventory for ops.
+	WireNodes() (dto.WireNodesOpsView, error)
+
+	// WireNodeEvents returns paged wire node audit events for ops troubleshooting.
+	WireNodeEvents(query dto.WireNodeEventQuery) (dto.WireNodeEventListResponse, error)
+
 	// NetworkQuality returns global network quality aggregates for the ops console.
 	NetworkQuality() (dto.OpsNetworkQuality, error)
 

@@ -89,6 +89,14 @@ func positiveQueryInt(c *gin.Context, key string, fallback int) int {
 	return value
 }
 
+func int64Query(c *gin.Context, key string, fallback int64) int64 {
+	value, err := strconv.ParseInt(c.Query(key), 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
 func respondWithStatus(status int, body gin.H, call func(*gin.Context) error) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if err := call(c); err != nil {

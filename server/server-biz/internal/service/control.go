@@ -42,7 +42,7 @@ type Bootstrap interface {
 	// IssueRelayTicket 为源节点到目标节点的回退中继路径签发可验证的 relay ticket。
 	//
 	// Use case:
-	// - When direct P2P paths fail, the client requests a short-lived relay ticket to attach to server-relay.
+	// - When direct P2P paths fail, the client requests a short-lived relay ticket to attach to the wire data plane.
 	//
 	// Security:
 	// - The issuer must validate that src/dst nodes are in the same network and the caller is allowed to connect them.

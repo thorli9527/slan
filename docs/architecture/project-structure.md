@@ -1,178 +1,71 @@
 # 项目目录与模块设计
 
-## 1. 目标
+## 目标
 
-在保留 `client/` 和 `server/` 两个一级目录的前提下，建立清晰的业务边界、模块职责和后续可扩展的仓库结构。
+仓库按客户端、业务控制面、联网控制面、数据面兜底服务拆分。旧 `server/server-relay` 已删除，不再作为目标结构或实现入口。
 
-核心原则：
-
-- `client/` 只放客户端相关能力
-- `server/` 只放服务端相关能力
-- 控制面与数据面严格分离
-- 协议定义独立管理
-- 先按业务边界拆分，再在边界内组织语言实现
-
-## 2. 目标目录结构
+## 目标目录结构
 
 ```text
 slan/
 ├─ client/
 │  ├─ app/                              # Flutter 客户端
-│  └─ app_core/                         # Rust 客户端核心
+│  └─ app_core/                         # 客户端核心
 │
 ├─ server/
-│  ├─ server-biz/                       # Go 控制面
-│  ├─ server-relay/                     # Rust Relay 数据面
+│  ├─ server-biz/                       # 业务控制面
+│  ├─ server-wire/                      # 联网控制面
+│  ├─ server-wire-relay/                # UDP relay 数据面
+│  └─ server-wire-derp/                 # TCP/TLS 443 兜底数据面
 │
-├─ protocol/                            # 协议定义
+├─ protocol/                            # 共享协议定义
 ├─ deploy/                              # 部署资源
 ├─ scripts/                             # 脚本
 ├─ docs/                                # 文档
 └─ README.md
 ```
 
-## 3. 详细模块结构
-
-### 3.1 客户端
-
-```text
-client/
-├─ app/
-│  ├─ lib/
-│  │  ├─ app/                           # 应用入口、路由、主题、启动流程
-│  │  ├─ features/
-│  │  │  ├─ auth/                       # 登录、注册
-│  │  │  ├─ home/                       # 首页、连接状态
-│  │  │  ├─ networks/                   # 网络列表、创建、加入、详情
-│  │  │  ├─ devices/                    # 设备列表、重命名、分组
-│  │  │  ├─ dns/                        # 私有 DNS、hosts 导入导出
-│  │  │  ├─ diagnostics/                # NAT 检测、Ping、Traceroute
-│  │  │  └─ settings/                   # 设置、日志、版本
-│  │  ├─ shared/                        # 公共组件、常量、工具
-│  │  ├─ infra/                         # API、存储、FFI 适配
-│  │  └─ main.dart
-│
-└─ app_core/
-   ├─ crates/
-   │  ├─ core/                          # 核心模型、状态机、错误定义
-   │  ├─ controller-client/             # 对接控制面 HTTP/MQTT
-   │  ├─ nat/                           # STUN、NAT 检测、打洞
-   │  ├─ p2p/                           # P2P 连接管理
-   │  ├─ relay-client/                  # Relay 客户端
-   │  ├─ tunnel/                        # Noise 或 WireGuard 封装
-   │  ├─ tun/                           # TUN/TAP 适配
-   │  ├─ dns/                           # 私有 DNS 与 hosts 处理
-   │  ├─ diagnostics/                   # 诊断能力
-   │  ├─ platform/                      # 各平台差异封装
-   │  └─ ffi-bridge/                    # 对 Flutter 暴露 FFI
-```
-
-### 3.2 服务端
-
-```text
-server/
-├─ server-biz/
-│  ├─ cmd/
-│  │  └─ biz-server/
-│  ├─ internal/
-│  │  ├─ auth/                          # 注册、登录、JWT、设备认证
-│  │  ├─ user/                          # 用户资料
-│  │  ├─ network/                       # 网络和成员管理
-│  │  ├─ device/                        # 设备注册、状态、分组
-│  │  ├─ ipam/                          # 虚拟 IP 分配
-│  │  ├─ acl/                           # ACL 策略
-│  │  ├─ control/                       # 配置下发与控制逻辑
-│  │  ├─ mqtt/                          # MQTT 控制信道
-│  │  ├─ service/                       # 跨模块编排
-│  │  ├─ repo/                          # 数据访问
-│  │  └─ infra/                         # DB、Redis、配置、日志、监控
-│  ├─ api/
-│  │  ├─ http/
-│  │  └─ dto/
-│  └─ migrations/
-│
-├─ server-relay/
-│  ├─ crates/
-│  │  ├─ relay-core/                    # Relay 抽象、路由、会话
-│  │  ├─ udp-relay/                     # UDP 中继
-│  │  ├─ tcp-relay/                     # TCP 中继
-│  │  ├─ auth/                          # 中继票据鉴权
-│  │  ├─ session/                       # 会话管理
-│  │  └─ metrics/                       # 指标采集
-```
-
-### 3.3 公共目录
-
-```text
-protocol/
-├─ openapi/                             # 控制面 API 定义
-├─ protobuf/                            # 实时消息与内部协议
-└─ errors/                              # 统一错误码
-
-deploy/
-├─ docker/
-├─ k8s/
-└─ local/
-```
-
-## 4. 模块职责
+## 模块职责
 
 ### `client/app`
 
-- 负责 UI、交互、页面状态、系统托盘和桌面端应用行为
-- 调用 `app_core` 提供的接口，不直接实现组网协议和隧道逻辑
-- 只处理展示和用户操作，不承担网络核心职责
+- 负责 UI、交互、页面状态、系统托盘和桌面端应用行为。
+- 调用 `app_core` 提供的接口，不直接实现组网协议和隧道逻辑。
 
 ### `client/app_core`
 
-- 负责客户端真正的网络核心
-- 包括登录后配置拉取、控制信道、NAT 检测、P2P、Relay、隧道、虚拟网卡、DNS 与诊断
-- 对上提供统一接口，对下屏蔽不同平台差异
+- 负责客户端网络核心。
+- 包括登录后配置拉取、WireGuard endpoint 管理、路径探测、LAN/IPv6/direct/relay/DERP 切换、TUN/TAP、DNS 与诊断。
 
 ### `server/server-biz`
 
-- 负责控制面业务
-- 包括用户、网络、设备、成员权限、IP 分配、ACL、MQTT 控制信道、配置下发
-- 不负责业务流量中继
+- 负责业务控制面。
+- 包括用户、网络、设备、成员权限、IP 分配、ACL、业务审计和业务 bootstrap。
+- 不负责 WireGuard 路径规划、联网票据签发和业务流量中继。
 
-### `server/server-relay`
+### `server/server-wire`
 
-- 负责数据面中继
-- 处理 P2P 失败后的 UDP 和 TCP 中继
-- 关注鉴权、会话管理、转发性能、保活和回收
-- 不负责用户系统、网络管理和运营逻辑
+- 负责联网控制面。
+- 包括 peer 注册、endpoint 上报、路径探测与评分、runtime config、relay/DERP ticket 签发、DERP map 和内部拓扑接口。
+- 不负责用户、组织、计费、审计等业务域。
 
-### `protocol`
+### `server/server-wire-relay`
 
-- 作为唯一协议来源
-- 放控制面 API、控制信道消息、Relay 票据、错误码
-- 避免 Flutter、Rust、Go 各自维护一套接口
+- 负责 UDP relay 数据面。
+- 消费 `server-wire` 签发的 `relay_udp` ticket，维护 session，转发 UDP payload，提供管理和观测接口。
+- 不负责路径规划、票据签发和业务域管理。
 
-## 5. 当前仓库与目标结构映射
+### `server/server-wire-derp`
 
-当前仓库已有目录：
+- 负责 TCP/TLS 443 最终兜底数据面。
+- 消费 `server-wire` 签发的 `derp_tcp_tls_443` ticket，维护连接和 session，提供 region/connection/session 观测接口。
+- 不负责路径规划、票据签发和业务域管理。
 
-```text
-client/
-├─ app/
-└─ app_core/
+## 实施约束
 
-server/
-├─ server-biz/
-└─ server-relay/
-```
-
-## 6. 实施约束
-
-- `client/app` 不实现网络协议与打洞逻辑
-- `client/app_core` 不依赖 Flutter 页面结构
-- `server/server-biz` 不承担流量中继职责
-- `server/server-relay` 不实现用户和网络管理
-- `protocol/` 是唯一协议定义来源
-
-## 7. 推荐的工程实践
-
-- `client/app_core` 和 `server/server-relay` 使用 Rust workspace + 多 crate
-- `server/server-biz` 使用 Go 标准 `cmd + internal + api` 结构
-- 每个服务维护独立配置样例、启动说明和本地开发方式
-- 在 `deploy/local/` 中维护本地联调环境
+- `client/app` 不实现网络协议与打洞逻辑。
+- `client/app_core` 不依赖 Flutter 页面结构。
+- `server/server-biz` 不承担联网控制面和数据面职责。
+- `server/server-wire` 不承担业务域职责。
+- `server/server-wire-relay` 和 `server/server-wire-derp` 不签发票据，只校验票据。
+- `protocol/` 和各子项目 `docs/` 保持接口语义一致。
