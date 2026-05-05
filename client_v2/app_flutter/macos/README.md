@@ -27,3 +27,8 @@ Native pieces:
 - Menu items: `Open SLAN Client`, `Connect/Disconnect`, `Status`, `Open Console`, `Quit`.
 - The plugin assigns window delegates so close hides the window instead of terminating.
 - Explicit menu bar `Quit` calls `localNetworkShutdown` before terminating.
+
+Build check:
+
+- `make client-macos-build`
+- Direct command: `cd client_v2/app_flutter && flutter build macos`

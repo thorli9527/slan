@@ -228,7 +228,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     }
   }
 
-  @objc private func windowDidBecomeKey(_ notification: Notification) {
+  @objc public func windowDidBecomeKey(_ notification: Notification) {
     if let window = notification.object as? NSWindow {
       window.delegate = self
     }
