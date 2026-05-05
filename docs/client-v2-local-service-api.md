@@ -233,7 +233,7 @@ RPC method: `localNetworkShutdown`
 ## 接口化原则
 
 - UI 新代码优先调用 `local*` 稳定接口，不再直接依赖完整 `state`。
-- `start/refresh/dispatch` 是待下线的 runtime 低层入口，不作为新 UI 协议使用。
-- 已接口化的能力不保留旧 method 兼容，例如 `state`、`watchState`、`watchBusinessEvent`、`pathDiagnose`、`relayCandidates`、`controlTransportStatus`、`activateNetwork`。
+- `start/refresh/dispatch` 是待收口的 runtime 低层入口，不作为新 UI 协议使用。
+- 未列在本文档中的 method 一律视为 unsupported，不做旧接口兼容。
 - 本地服务返回的只读接口不携带 token、ticket secret、refresh token。
 - 控制类接口必须继续走明确 method，不要通过泛化 `dispatch` 暴露给 UI。

@@ -4,7 +4,7 @@ enum ClientCommandType {
   disableNetwork,
   logout,
   refresh,
-  shutdownNetwork,
+  localNetworkShutdown,
   openWebConsole,
 }
 

@@ -307,29 +307,5 @@ mod tests {
             LocalServiceMethod::parse("localDiagnosticsExport"),
             LocalServiceMethod::LocalDiagnosticsExport
         );
-        assert_eq!(
-            LocalServiceMethod::parse("pathDiagnose"),
-            LocalServiceMethod::Other
-        );
-        assert_eq!(
-            LocalServiceMethod::parse("relayCandidates"),
-            LocalServiceMethod::Other
-        );
-        assert_eq!(
-            LocalServiceMethod::parse("controlTransportStatus"),
-            LocalServiceMethod::Other
-        );
-        assert_eq!(
-            LocalServiceMethod::parse("state"),
-            LocalServiceMethod::Other
-        );
-        assert_eq!(
-            LocalServiceMethod::parse("watchState"),
-            LocalServiceMethod::Other
-        );
-        assert_eq!(
-            LocalServiceMethod::parse("watchBusinessEvent"),
-            LocalServiceMethod::Other
-        );
     }
 }

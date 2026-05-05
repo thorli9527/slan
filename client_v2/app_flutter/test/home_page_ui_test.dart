@@ -394,5 +394,5 @@ class _UiTestBridge implements ClientCoreBridge {
   }
 
   @override
-  Future<ControlTransportStatus?> controlTransportStatus() async => null;
+  Future<ControlTransportStatus?> localControlStatus() async => null;
 }

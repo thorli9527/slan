@@ -45,7 +45,7 @@ abstract interface class ClientCoreBridge {
   Future<void> start();
   Future<void> prepareAndroidNetworkAuthorization();
   Future<void> dispatch(ClientCommand command);
-  Future<ControlTransportStatus?> controlTransportStatus();
+  Future<ControlTransportStatus?> localControlStatus();
 }
 
 class MethodChannelClientCoreBridge implements ClientCoreBridge {
@@ -108,7 +108,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       }
       if (permissionState == AndroidVpnPermissionState.granted &&
           _state.value.signedIn) {
-        networkConfig = await _localService.androidNetworkConfig();
+        networkConfig = await _localService.localAndroidNetworkConfig();
       }
       _androidNetworkAuthorization.value = AndroidNetworkAuthorizationState(
         checking: false,
@@ -187,7 +187,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       _startAsyncNetworkToggle(command);
       return;
     }
-    if (command.type == ClientCommandType.shutdownNetwork) {
+    if (command.type == ClientCommandType.localNetworkShutdown) {
       await _requestLocalService('localNetworkShutdown');
       await _refreshState();
       return;
@@ -196,7 +196,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   @override
-  Future<ControlTransportStatus?> controlTransportStatus() async {
+  Future<ControlTransportStatus?> localControlStatus() async {
     try {
       final json = await _localService.localControlStatus();
       return json == null ? null : ControlTransportStatus.fromJson(json);

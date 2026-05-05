@@ -106,15 +106,15 @@ class ClientCoreLocalService {
     return requestJson('localLogout');
   }
 
-  Future<Map<String, Object?>?> activateNetwork() async {
+  Future<Map<String, Object?>?> localNetworkActivate() async {
     return requestJson('localNetworkActivate');
   }
 
-  Future<Map<String, Object?>?> deactivateNetwork() async {
+  Future<Map<String, Object?>?> localNetworkDeactivate() async {
     return requestJson('localNetworkDeactivate');
   }
 
-  Future<Map<String, Object?>?> shutdownNetwork() async {
+  Future<Map<String, Object?>?> localNetworkShutdown() async {
     return requestJson('localNetworkShutdown');
   }
 
@@ -132,12 +132,12 @@ class ClientCoreLocalService {
     );
   }
 
-  Future<AndroidVpnSessionConfig?> androidNetworkConfig() async {
+  Future<AndroidVpnSessionConfig?> localAndroidNetworkConfig() async {
     final json = await requestJson('localAndroidNetworkConfig');
     return json == null ? null : AndroidVpnSessionConfig.fromJson(json);
   }
 
-  Future<Map<String, Object?>?> exportDiagnostics() async {
+  Future<Map<String, Object?>?> localDiagnosticsExport() async {
     return requestJson('localDiagnosticsExport');
   }
 

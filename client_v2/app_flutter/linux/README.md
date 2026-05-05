@@ -18,7 +18,7 @@ Runtime policy:
 
 - If enabled, closing the window hides it to tray.
 - Tray owns `Open` and `Quit`.
-- If tray is enabled, `Quit` should call `shutdownNetwork` before exiting the Flutter shell.
+- If tray is enabled, `Quit` should call `localNetworkShutdown` before exiting the Flutter shell.
 - `client-core-service` keeps networking, task queue, heartbeat, and runtime sync.
 
 Implementation boundary:

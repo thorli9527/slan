@@ -591,16 +591,7 @@ fn handle_request(
             dispatch_with_side_effects(&mut runtime, ClientCommand::Logout)
         }
         LocalServiceMethod::Other => {
-            if removed_legacy_local_method(&request.method) {
-                anyhow::bail!(
-                    "legacy service method {} has been removed; use the local* service API",
-                    request.method
-                );
-            }
-            let command_json = serde_json::json!({ "type": request.method });
-            let command: ClientCommand = serde_json::from_value(command_json)
-                .with_context(|| format!("unsupported service method {}", request.method))?;
-            dispatch_with_side_effects(&mut runtime, command)
+            anyhow::bail!("unsupported service method {}", request.method)
         }
         _ => {
             anyhow::bail!(
@@ -610,33 +601,6 @@ fn handle_request(
         }
     };
     serde_json::to_string(&state).context("encode client state")
-}
-
-fn removed_legacy_local_method(method: &str) -> bool {
-    matches!(
-        method,
-        "activateNetwork"
-            | "deactivateNetwork"
-            | "shutdownNetwork"
-            | "logout"
-            | "androidNetworkConfig"
-            | "exportDiagnostics"
-            | "pathDiagnose"
-            | "relayCandidates"
-            | "refreshRelayCandidates"
-            | "prepareRelayDataPlane"
-            | "controlTransportStatus"
-            | "controlTransportPlan"
-            | "controlTransportCadence"
-            | "controlTransportTickPlan"
-            | "controlTransportOutbox"
-            | "pendingControlAcks"
-            | "markControlAcked"
-            | "markTransportPublished"
-            | "state"
-            | "watchState"
-            | "watchBusinessEvent"
-    )
 }
 
 fn handle_local_android_network_config(

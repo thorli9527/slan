@@ -209,7 +209,7 @@ void ShutdownNetworkBeforeQuit() {
              reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
 
   const char request[] =
-      "{\"method\":\"shutdownNetwork\",\"args\":{}}\n";
+      "{\"method\":\"localNetworkShutdown\",\"args\":{}}\n";
   send(socket, request, static_cast<int>(strlen(request)), 0);
   shutdown(socket, SD_SEND);
 

@@ -512,10 +512,7 @@ class _NetworkSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final switchBusy = state.syncing &&
-        (state.syncReason == 'enableNetwork' ||
-            state.syncReason == 'disableNetwork' ||
-            state.syncReason == 'shutdownNetwork');
+    final switchBusy = state.syncing && !state.switchEnabled;
     return Align(
       alignment: Alignment.centerRight,
       child: Row(
