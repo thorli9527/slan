@@ -66,25 +66,25 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       state["switchEnabled"] = true
       state["error"] = "local service unavailable"
       result(compactState())
-    case "controlTransportStatus":
+    case "localControlStatus":
       result([
         "mqttCredentialReady": false,
         "controlSessionReady": false,
         "ready": false,
         "missing": ["localService"]
       ])
-    case "controlTransportPlan":
+    case "localControlPlan":
       result([
         "heartbeatQos": "qos0",
         "controlQos": "qos2"
       ])
-    case "controlTransportCadence":
+    case "localControlCadence":
       result([
         "ackFlushIntervalMs": 1000,
         "heartbeatIntervalMs": 30000,
         "runtimeStateIntervalMs": 10000
       ])
-    case "controlTransportTickPlan":
+    case "localControlTickPlan":
       result([
         "nowMs": 0,
         "outbox": [
@@ -96,23 +96,23 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
         "nextHeartbeatDueMs": 0,
         "nextRuntimeStateDueMs": 0
       ])
-    case "controlTransportOutbox":
+    case "localControlOutbox":
       result([
         "messages": []
       ])
-    case "pendingControlAcks":
+    case "localPendingControlAcks":
       result([])
-    case "markControlAcked":
+    case "localMarkControlAcked":
       result([
         "acknowledged": false,
         "error": "local service unavailable"
       ])
-    case "markTransportPublished":
+    case "localMarkTransportPublished":
       result([
         "published": false,
         "error": "local service unavailable"
       ])
-    case "shutdownNetwork":
+    case "localNetworkShutdown":
       shutdownNetworkBeforeQuit()
       state["networkEnabled"] = false
       state["virtualIp"] = nil
@@ -394,7 +394,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       using: .tcp
     )
     let semaphore = DispatchSemaphore(value: 0)
-    let payload = "{\"method\":\"shutdownNetwork\",\"args\":{}}\n".data(using: .utf8)
+    let payload = "{\"method\":\"localNetworkShutdown\",\"args\":{}}\n".data(using: .utf8)
     connection.stateUpdateHandler = { state in
       if case .ready = state {
         connection.send(content: payload, completion: .contentProcessed { _ in

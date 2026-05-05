@@ -9,6 +9,9 @@ class ClientCorePlugin {
   ClientCorePlugin({MethodChannel? channel})
       : _channel = channel ?? const MethodChannel('dev.slan/client_core_v2');
 
+  static const _definedServiceHost =
+      String.fromEnvironment('SLAN_CLIENT_CORE_SERVICE_HOST');
+
   final MethodChannel _channel;
 
   static void registerWith() {}
@@ -17,23 +20,23 @@ class ClientCorePlugin {
     return _invoke('start');
   }
 
-  Future<Object?> state() {
-    return _invoke('state');
+  Future<Object?> localState() {
+    return _invoke('localState');
   }
 
   Future<Object?> refresh() {
     return _invoke('refresh');
   }
 
-  Future<Object?> watchState(int lastRevision) {
-    return _invoke('watchState', {
+  Future<Object?> localStateWatch(int lastRevision) {
+    return _invoke('localStateWatch', {
       'lastRevision': lastRevision,
       'timeoutMs': 30000,
     });
   }
 
-  Future<Object?> watchBusinessEvent(int lastRevision) {
-    return _invoke('watchBusinessEvent', {
+  Future<Object?> localBusinessEventWatch(int lastRevision) {
+    return _invoke('localBusinessEventWatch', {
       'lastRevision': lastRevision,
       'timeoutMs': 30000,
     });
@@ -55,48 +58,48 @@ class ClientCorePlugin {
     return _invoke('ingestDownstreamControlMessage', message);
   }
 
-  Future<Object?> shutdownNetwork() {
-    return _invoke('shutdownNetwork');
+  Future<Object?> localNetworkShutdown() {
+    return _invoke('localNetworkShutdown');
   }
 
-  Future<Object?> controlTransportStatus() {
-    return _invoke('controlTransportStatus');
+  Future<Object?> localControlStatus() {
+    return _invoke('localControlStatus');
   }
 
-  Future<Object?> relayCandidates() {
-    return _invoke('relayCandidates');
+  Future<Object?> localRelayCandidates() {
+    return _invoke('localRelayCandidates');
   }
 
-  Future<Object?> refreshRelayCandidates() {
-    return _invoke('refreshRelayCandidates');
+  Future<Object?> localRefreshRelayCandidates() {
+    return _invoke('localRefreshRelayCandidates');
   }
 
-  Future<Object?> controlTransportPlan() {
-    return _invoke('controlTransportPlan');
+  Future<Object?> localControlPlan() {
+    return _invoke('localControlPlan');
   }
 
-  Future<Object?> controlTransportCadence() {
-    return _invoke('controlTransportCadence');
+  Future<Object?> localControlCadence() {
+    return _invoke('localControlCadence');
   }
 
-  Future<Object?> controlTransportTickPlan(Map<String, Object?> tick) {
-    return _invoke('controlTransportTickPlan', tick);
+  Future<Object?> localControlTickPlan(Map<String, Object?> tick) {
+    return _invoke('localControlTickPlan', tick);
   }
 
-  Future<Object?> controlTransportOutbox([Map<String, Object?>? options]) {
-    return _invoke('controlTransportOutbox', options);
+  Future<Object?> localControlOutbox([Map<String, Object?>? options]) {
+    return _invoke('localControlOutbox', options);
   }
 
-  Future<Object?> pendingControlAcks() {
-    return _invoke('pendingControlAcks');
+  Future<Object?> localPendingControlAcks() {
+    return _invoke('localPendingControlAcks');
   }
 
-  Future<Object?> markControlAcked(Map<String, Object?> ack) {
-    return _invoke('markControlAcked', ack);
+  Future<Object?> localMarkControlAcked(Map<String, Object?> ack) {
+    return _invoke('localMarkControlAcked', ack);
   }
 
-  Future<Object?> markTransportPublished(Map<String, Object?> message) {
-    return _invoke('markTransportPublished', message);
+  Future<Object?> localMarkTransportPublished(Map<String, Object?> message) {
+    return _invoke('localMarkTransportPublished', message);
   }
 
   Future<Object?> androidVpnPermissionState() {
@@ -157,7 +160,8 @@ class ClientCorePlugin {
   }
 
   Future<Object?> _invokeLocalService(String method, Object? arguments) async {
-    final host = Platform.environment['SLAN_CLIENT_CORE_SERVICE_HOST'] ??
+    final host = (_definedServiceHost.isEmpty ? null : _definedServiceHost) ??
+        Platform.environment['SLAN_CLIENT_CORE_SERVICE_HOST'] ??
         '127.0.0.1:46392';
     final separator = host.lastIndexOf(':');
     if (separator <= 0 || separator == host.length - 1) {

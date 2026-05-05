@@ -8,6 +8,9 @@ import 'package:flutter/services.dart';
 class ClientCoreLocalService {
   ClientCoreLocalService({String? host}) : _host = host;
 
+  static const _definedServiceHost =
+      String.fromEnvironment('SLAN_CLIENT_CORE_SERVICE_HOST');
+
   final String? _host;
 
   Future<Map<String, Object?>?> localState() async {
@@ -208,6 +211,7 @@ class ClientCoreLocalService {
 
   String _serviceHost() {
     return _host ??
+        (_definedServiceHost.isEmpty ? null : _definedServiceHost) ??
         Platform.environment['SLAN_CLIENT_CORE_SERVICE_HOST'] ??
         '127.0.0.1:46392';
   }

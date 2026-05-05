@@ -551,7 +551,7 @@ void ClientCorePlugin::HandleMethodCall(
     result->Success(flutter::EncodableValue(StateAsMap()));
     return;
   }
-  if (method == "controlTransportStatus") {
+  if (method == "localControlStatus") {
     flutter::EncodableMap map;
     map.insert({flutter::EncodableValue("mqttCredentialReady"), flutter::EncodableValue(false)});
     map.insert({flutter::EncodableValue("controlSessionReady"), flutter::EncodableValue(false)});
@@ -565,14 +565,14 @@ void ClientCorePlugin::HandleMethodCall(
     result->Success(flutter::EncodableValue(map));
     return;
   }
-  if (method == "controlTransportPlan") {
+  if (method == "localControlPlan") {
     flutter::EncodableMap map;
     map.insert({flutter::EncodableValue("heartbeatQos"), flutter::EncodableValue("qos0")});
     map.insert({flutter::EncodableValue("controlQos"), flutter::EncodableValue("qos2")});
     result->Success(flutter::EncodableValue(map));
     return;
   }
-  if (method == "controlTransportCadence") {
+  if (method == "localControlCadence") {
     flutter::EncodableMap map;
     map.insert({flutter::EncodableValue("ackFlushIntervalMs"), flutter::EncodableValue(1000)});
     map.insert({flutter::EncodableValue("heartbeatIntervalMs"), flutter::EncodableValue(30000)});
@@ -580,7 +580,7 @@ void ClientCorePlugin::HandleMethodCall(
     result->Success(flutter::EncodableValue(map));
     return;
   }
-  if (method == "controlTransportTickPlan") {
+  if (method == "localControlTickPlan") {
     flutter::EncodableMap outbox;
     outbox.insert({flutter::EncodableValue("includeHeartbeat"), flutter::EncodableValue(true)});
     outbox.insert({flutter::EncodableValue("includeRuntimeState"), flutter::EncodableValue(true)});
@@ -594,31 +594,31 @@ void ClientCorePlugin::HandleMethodCall(
     result->Success(flutter::EncodableValue(map));
     return;
   }
-  if (method == "controlTransportOutbox") {
+  if (method == "localControlOutbox") {
     flutter::EncodableMap map;
     map.insert({flutter::EncodableValue("messages"), flutter::EncodableValue(flutter::EncodableList{})});
     result->Success(flutter::EncodableValue(map));
     return;
   }
-  if (method == "pendingControlAcks") {
+  if (method == "localPendingControlAcks") {
     result->Success(flutter::EncodableValue(flutter::EncodableList{}));
     return;
   }
-  if (method == "markControlAcked") {
+  if (method == "localMarkControlAcked") {
     flutter::EncodableMap map;
     map.insert({flutter::EncodableValue("acknowledged"), flutter::EncodableValue(false)});
     map.insert({flutter::EncodableValue("error"), flutter::EncodableValue("local service unavailable")});
     result->Success(flutter::EncodableValue(map));
     return;
   }
-  if (method == "markTransportPublished") {
+  if (method == "localMarkTransportPublished") {
     flutter::EncodableMap map;
     map.insert({flutter::EncodableValue("published"), flutter::EncodableValue(false)});
     map.insert({flutter::EncodableValue("error"), flutter::EncodableValue("local service unavailable")});
     result->Success(flutter::EncodableValue(map));
     return;
   }
-  if (method == "shutdownNetwork") {
+  if (method == "localNetworkShutdown") {
     network_enabled_ = false;
     virtual_ip_.clear();
     notice_ = "networkShutdown";

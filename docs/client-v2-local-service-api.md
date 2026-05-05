@@ -6,6 +6,12 @@
 - 请求格式：`{"method":"localStatus","args":{}}\n`
 - 响应格式：单行 JSON
 
+Flutter 侧连接地址优先级：
+
+- `--dart-define=SLAN_CLIENT_CORE_SERVICE_HOST=host:port`
+- `SLAN_CLIENT_CORE_SERVICE_HOST`
+- `127.0.0.1:46392`
+
 后续如果增加 HTTP facade，可以一一映射为 `GET /local/*` 与 `POST /local/*`。
 
 ## 第一批稳定接口

@@ -56,9 +56,11 @@ Move behavior from the old Flutter client only when the target owner is clear:
 - Linux: tray is optional at install time; service-only installs are valid.
 
 The tray owns UI shell lifetime only. Runtime networking belongs to `client-core-service`.
-On Windows and macOS, explicit tray/menu-bar Quit calls `shutdownNetwork` before exiting the shell.
+On Windows and macOS, explicit tray/menu-bar Quit calls `localNetworkShutdown` before exiting the shell.
 
 If a platform has no native plugin handler yet, the Dart plugin facade falls back to the same local JSON-line TCP API exposed by `client-core-service`.
+
+For macOS/iOS/Android multi-device development on one Mac, see [`../docs/client-v2-multidevice-dev.md`](../docs/client-v2-multidevice-dev.md).
 
 ## Control Transport
 
@@ -69,10 +71,10 @@ The service stores MQTT credentials in the local session after login/device regi
 - A QoS 2 downstream message is acknowledged only after the service has durably written the task/update and reached a recoverable processing point.
 - Re-delivery is deduplicated with the server `messageId`/local `deliveryId` rather than by UI action name.
 - MQTT workers should feed received QoS 2 control payloads into `ingestDownstreamControlMessage`; the method only returns after the downstream XML task is durably accepted.
-- After a downstream task reaches `succeeded` or `failed`, MQTT workers read `pendingControlAcks`, publish the app-level ACK on the QoS 2 ack topic, then call `markControlAcked`.
-- MQTT workers can read `controlTransportOutbox` to get already-shaped publish messages: heartbeat/runtime state use QoS 0, control ACK uses QoS 2.
-- `controlTransportOutbox` accepts `includeHeartbeat`, `includeRuntimeState`, and `includeControlAcks` flags so workers can poll ACKs frequently without resending heartbeat/runtime state.
-- After each outbox message is published, workers call `markTransportPublished` with the message `id`; only `controlAck` messages update XML `acknowledgedAtMs`.
+- After a downstream task reaches `succeeded` or `failed`, MQTT workers read `localPendingControlAcks`, publish the app-level ACK on the QoS 2 ack topic, then call `localMarkControlAcked`.
+- MQTT workers can read `localControlOutbox` to get already-shaped publish messages: heartbeat/runtime state use QoS 0, control ACK uses QoS 2.
+- `localControlOutbox` accepts `includeHeartbeat`, `includeRuntimeState`, and `includeControlAcks` flags so workers can poll ACKs frequently without resending heartbeat/runtime state.
+- After each outbox message is published, workers call `localMarkTransportPublished` with the message `id`; only `controlAck` messages update XML `acknowledgedAtMs`.
 - XML control tasks are split into `upstreamTasks` and `downstreamTasks`.
   - `upstreamTasks`: local/UI intents or client-originated requests, such as clicking the switch. These may call control-plane activate/deactivate before local network changes.
   - `downstreamTasks`: server/Web/MQTT commands delivered to the client, such as remote enable/disable. These only execute the local network state machine and must not call back into control-plane activate/deactivate.
@@ -80,25 +82,25 @@ The service stores MQTT credentials in the local session after login/device regi
   - Completed downstream tasks keep an `acknowledgedAtMs` marker so worker restarts can resend missing ACKs safely.
   - Periodic control-plane sync is treated like downstream input: if the server says the device is disabled or has no assigned IP, the service only disables the local network and reports runtime state.
 
-`controlTransportStatus` is an internal service API for diagnostics and future workers. It reports whether MQTT credentials and the local control session are both ready. UI should continue to use the simplified client state.
-`controlTransportPlan` exposes the normalized MQTT topic/QoS plan for service workers and diagnostics; Flutter UI should not depend on it.
-`controlTransportCadence` exposes service-owned publish intervals for ACK flush, heartbeat, and runtime state ticks.
-`controlTransportTickPlan` turns worker cursor timestamps into `controlTransportOutbox` flags, keeping publish cadence decisions in the service.
-`controlTransportOutbox` exposes publish-ready messages for the MQTT worker; publishing success is reported with `markTransportPublished`.
+`localControlStatus` is an internal service API for diagnostics and future workers. It reports whether MQTT credentials and the local control session are both ready. UI should continue to use the simplified client state.
+`localControlPlan` exposes the normalized MQTT topic/QoS plan for service workers and diagnostics; Flutter UI should not depend on it.
+`localControlCadence` exposes service-owned publish intervals for ACK flush, heartbeat, and runtime state ticks.
+`localControlTickPlan` turns worker cursor timestamps into `localControlOutbox` flags, keeping publish cadence decisions in the service.
+`localControlOutbox` exposes publish-ready messages for the MQTT worker; publishing success is reported with `localMarkTransportPublished`.
 
 The service owns a control-transport supervisor. Once MQTT credentials and the control session are ready, it starts one worker per current session key. If the session, device, network, MQTT client id, or topic prefix changes, the worker exits and reconnects with backoff.
 
 Worker loop contract:
 
-1. Wait until `controlTransportStatus.ready` is true.
-2. Subscribe to `controlTransportPlan.downstreamControlTopic` with QoS 2.
+1. Wait until `localControlStatus.ready` is true.
+2. Subscribe to `localControlPlan.downstreamControlTopic` with QoS 2.
 3. For every received control payload, call `ingestDownstreamControlMessage`; only then complete the MQTT QoS 2 receive handshake.
-4. Call `controlTransportTickPlan` with the worker's last publish timestamps, then poll `controlTransportOutbox` with the returned flags:
+4. Call `localControlTickPlan` with the worker's last publish timestamps, then poll `localControlOutbox` with the returned flags:
    - Frequent ACK flush: `includeHeartbeat=false`, `includeRuntimeState=false`, `includeControlAcks=true`.
    - Heartbeat tick: `includeHeartbeat=true`, `includeRuntimeState=false`, `includeControlAcks=true`.
    - Runtime tick: `includeHeartbeat=false`, `includeRuntimeState=true`, `includeControlAcks=true`.
 5. Publish each outbox message with its provided QoS.
-6. After publish success, call `markTransportPublished` with the outbox message `id`.
+6. After publish success, call `localMarkTransportPublished` with the outbox message `id`.
 
 The current worker uses the local v2 `control-mqtt-client` crate as a thin raw publish/subscribe facade. It does not use the old node envelope workflow.
 

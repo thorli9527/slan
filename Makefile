@@ -1,10 +1,11 @@
-.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check
+.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test client-multidevice-dev flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check
 
 help:
 	@echo "Available targets:"
 	@echo ""
 	@echo "  Flutter UI"
 	@echo "    make client-desktop-ui-test       # run widget tests covering the desktop client shell"
+	@echo "    make client-multidevice-dev       # run macOS/iOS/Android against one local client-core-service"
 	@echo "    make flutter-analyze-safe         # run Flutter analyze with stale Dart language-server cleanup"
 	@echo "    make protocol-contract-check      # run web + Flutter + Rust + Go + OpenAPI + protobuf + route drift checks"
 	@echo ""
@@ -38,6 +39,9 @@ endif
 
 client-desktop-ui-test:
 	./scripts/test_client_desktop_ui.sh
+
+client-multidevice-dev:
+	./scripts/client_multidevice_dev.sh
 
 flutter-analyze-safe:
 ifeq ($(OS),Windows_NT)

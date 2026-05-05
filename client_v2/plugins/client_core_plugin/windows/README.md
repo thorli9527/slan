@@ -15,14 +15,14 @@ Methods:
 - `enqueueControlTask`
 - `enqueueDownstreamControlTask`
 - `ingestDownstreamControlMessage`
-- `controlTransportPlan`
-- `controlTransportCadence`
-- `controlTransportTickPlan`
-- `controlTransportOutbox`
-- `pendingControlAcks`
-- `markControlAcked`
-- `markTransportPublished`
-- `shutdownNetwork`
+- `localControlPlan`
+- `localControlCadence`
+- `localControlTickPlan`
+- `localControlOutbox`
+- `localPendingControlAcks`
+- `localMarkControlAcked`
+- `localMarkTransportPublished`
+- `localNetworkShutdown`
 
 Service host:
 
@@ -77,12 +77,12 @@ Control task queue:
 - UI sends `enqueueControlTask` with `enableNetwork` or `disableNetwork`; these are upstream tasks and may call control-plane activate/deactivate.
 - MQTT/Web control messages should call `enqueueDownstreamControlTask`; these are downstream tasks and only apply the server-decided local network action.
 - MQTT QoS2 receivers should call `ingestDownstreamControlMessage` and ACK only after that call returns successfully.
-- MQTT app-level ACK publishing reads `pendingControlAcks`; after the ACK publish succeeds, call `markControlAcked`.
-- MQTT publish loops can use `controlTransportOutbox` to get publish-ready heartbeat, runtime state, and control ACK messages with QoS already assigned.
-- `controlTransportOutbox` supports `includeHeartbeat`, `includeRuntimeState`, and `includeControlAcks` flags for separate publish cadences.
-- `controlTransportCadence` owns the default ACK flush, heartbeat, and runtime state intervals.
-- `controlTransportTickPlan` maps worker cursor timestamps to the next `controlTransportOutbox` flags.
-- After publish success, call `markTransportPublished` with the outbox message `id`; only control ACK messages are mapped back to their XML task.
+- MQTT app-level ACK publishing reads `localPendingControlAcks`; after the ACK publish succeeds, call `localMarkControlAcked`.
+- MQTT publish loops can use `localControlOutbox` to get publish-ready heartbeat, runtime state, and control ACK messages with QoS already assigned.
+- `localControlOutbox` supports `includeHeartbeat`, `includeRuntimeState`, and `includeControlAcks` flags for separate publish cadences.
+- `localControlCadence` owns the default ACK flush, heartbeat, and runtime state intervals.
+- `localControlTickPlan` maps worker cursor timestamps to the next `localControlOutbox` flags.
+- After publish success, call `localMarkTransportPublished` with the outbox message `id`; only control ACK messages are mapped back to their XML task.
 - Tasks are persisted at `C:\ProgramData\SLAN\client-v2-control-tasks.xml`.
 - The XML file separates `<upstreamTasks>` and `<downstreamTasks>`, and downstream pending tasks run first.
 - The service worker marks tasks as `pending`, `running`, `succeeded`, or `failed`.
@@ -100,7 +100,7 @@ UI lifetime:
 
 - The Flutter window is not the owner of runtime networking.
 - Closing UI must not imply network stop.
-- Tray/menu-bar `Quit` calls `shutdownNetwork` before exiting the Flutter shell.
+- Tray/menu-bar `Quit` calls `localNetworkShutdown` before exiting the Flutter shell.
 - `client-core-service` keeps local session, assigned IP, runtime sync, and MQTT control handling.
 
 Windows relay multi-peer verification:
@@ -110,7 +110,7 @@ Windows relay multi-peer verification:
   - `powershell -ExecutionPolicy Bypass -File tools\test-windows-multipeer-relay.ps1 -ExportOnFailure`
 - The tool talks to `client-core-service` over the same TCP JSON-line protocol as Flutter.
 - It checks relay session count, per-peer attach state, replayed frames, config-hash mismatches, oversized packets, unroutable destinations, and DNS readback.
-- On failure, `-ExportOnFailure` writes a full diagnostics JSON through `exportDiagnostics` and prints the path.
+- On failure, `-ExportOnFailure` writes a full diagnostics JSON through `localDiagnosticsExport` and prints the path.
 - `verify-installation.ps1 -Json` verifies the installed app, service, adapter, uninstall entry, and packaged relay diagnosis tool. It exits with code `1` when any check fails.
 - `verify-installation.ps1 -RunRelayDiagnose -AllowMissingPeerSessions` can call the same tool after install. Use `-AllowMissingPeerSessions` only when testing with peers intentionally offline.
 - `verify-installation.ps1 -ExpectUninstalled -Json` verifies uninstall cleanup, including service, adapter, shortcuts, scheduled tasks, state files, and diagnostics.
