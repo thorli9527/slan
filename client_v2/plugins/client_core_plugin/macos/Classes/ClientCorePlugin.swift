@@ -46,7 +46,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       arguments: call.arguments
     ) {
       if commandType == "openWebConsole" {
-        openConsole()
+        openAuthenticatedConsole()
       } else if commandType == "loginWithBrowser" {
         openConsole(
           callbackId: extractStringField(serviceResponse, "authCallbackId"),
@@ -63,7 +63,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     case "dispatch":
       handleDispatch(call.arguments)
       if commandType == "openWebConsole" {
-        openConsole()
+        openAuthenticatedConsole()
       } else if commandType == "loginWithBrowser" {
         openConsole(
           callbackId: state["authCallbackId"] as? String ?? "",
@@ -264,7 +264,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   @objc private func openConsoleFromMenu() {
-    openConsole(deviceId: stringField(latestMenuState, "deviceId"))
+    openAuthenticatedConsole()
   }
 
   private func startStateWatchLoop() {
@@ -355,7 +355,22 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       && stringField(left, "deviceId") == stringField(right, "deviceId")
   }
 
-  private func openConsole(callbackId: String = "", deviceId: String = "") {
+  private func openAuthenticatedConsole() {
+    if let response = forwardToServiceWithAutoStart(method: "consoleLoginKey", arguments: nil) {
+      openConsole(
+        deviceId: extractStringField(response, "deviceId"),
+        consoleLoginKey: extractStringField(response, "loginKey")
+      )
+      return
+    }
+    openConsole(deviceId: stringField(latestMenuState, "deviceId"))
+  }
+
+  private func openConsole(
+    callbackId: String = "",
+    deviceId: String = "",
+    consoleLoginKey: String = ""
+  ) {
     let target = ProcessInfo.processInfo.environment["SLAN_WEB_CONSOLE_URL"]
       ?? "http://127.0.0.1:24200"
     var components = URLComponents(string: target)
@@ -363,6 +378,9 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if !callbackId.isEmpty {
       queryItems.append(URLQueryItem(name: "auth", value: "login"))
       queryItems.append(URLQueryItem(name: "callbackId", value: callbackId))
+    }
+    if !consoleLoginKey.isEmpty {
+      queryItems.append(URLQueryItem(name: "consoleLoginKey", value: consoleLoginKey))
     }
     let safeDeviceId = usableClientDeviceId(deviceId)
     if !safeDeviceId.isEmpty {
