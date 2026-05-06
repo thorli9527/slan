@@ -28,6 +28,11 @@ echo "logDir: $LOG_DIR"
 if launchctl print "system/${LABEL}" >/tmp/slan-launchd-status.$$ 2>&1; then
   echo "launchdLoaded: true"
   sed -n '1,80p' /tmp/slan-launchd-status.$$
+  if awk '/^[[:space:]]*pid = / { found=1; print "launchdPid: "$3 } END { exit found ? 0 : 1 }' /tmp/slan-launchd-status.$$; then
+    :
+  else
+    echo "launchdPid:"
+  fi
 else
   echo "launchdLoaded: false"
   cat /tmp/slan-launchd-status.$$ >&2 || true
@@ -35,4 +40,4 @@ fi
 rm -f /tmp/slan-launchd-status.$$
 
 echo "processes:"
-pgrep -fl "client-core-service" || true
+pgrep -fl "client-core-service" 2>/dev/null || echo "processListUnavailableOrEmpty: true"

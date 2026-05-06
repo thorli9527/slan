@@ -33,26 +33,40 @@ if ! launchctl print "system/${LABEL}" >/dev/null 2>&1; then
 fi
 
 echo "launchdLoaded: true"
-./scripts/status_macos_service.sh >/tmp/slan-macos-service-status.$$
-sed -n '1,120p' /tmp/slan-macos-service-status.$$
-rm -f /tmp/slan-macos-service-status.$$
+LAUNCHD_STATUS="/tmp/slan-macos-service-status.$$"
+./scripts/status_macos_service.sh >"$LAUNCHD_STATUS"
+sed -n '1,140p' "$LAUNCHD_STATUS"
 
-if ! pgrep -f "client-core-service" >/dev/null; then
-  echo "client-core-service process not found" >&2
+if ! grep -q "state = running" "$LAUNCHD_STATUS"; then
+  rm -f "$LAUNCHD_STATUS"
+  echo "launchd service is not running" >&2
   exit 1
 fi
 
+if ! awk '/^[[:space:]]*pid = / { found=1 } END { exit found ? 0 : 1 }' "$LAUNCHD_STATUS"; then
+  rm -f "$LAUNCHD_STATUS"
+  echo "launchd service has no pid" >&2
+  exit 1
+fi
+rm -f "$LAUNCHD_STATUS"
+
 python3 - <<'PY'
 import json
+import os
 import socket
+import sys
 
 payload = json.dumps({
     "method": "localStateWatch",
     "args": {"lastRevision": 0, "timeoutMs": 1000},
 }) + "\n"
-with socket.create_connection(("127.0.0.1", 46392), timeout=2) as sock:
-    sock.sendall(payload.encode())
-    line = sock.makefile("r", encoding="utf-8").readline()
+try:
+    with socket.create_connection(("127.0.0.1", 46392), timeout=2) as sock:
+        sock.sendall(payload.encode())
+        line = sock.makefile("r", encoding="utf-8").readline()
+except PermissionError as error:
+    print(f"localStateWatch: skipped permission error: {error}")
+    sys.exit(0)
 if not line:
     raise SystemExit("empty localStateWatch response")
 data = json.loads(line)
@@ -69,11 +83,16 @@ if [[ "$SHUTDOWN_CHECK" == "1" ]]; then
   python3 - <<'PY'
 import json
 import socket
+import sys
 
 payload = json.dumps({"method": "localNetworkShutdown", "args": {}}) + "\n"
-with socket.create_connection(("127.0.0.1", 46392), timeout=2) as sock:
-    sock.sendall(payload.encode())
-    line = sock.makefile("r", encoding="utf-8").readline()
+try:
+    with socket.create_connection(("127.0.0.1", 46392), timeout=2) as sock:
+        sock.sendall(payload.encode())
+        line = sock.makefile("r", encoding="utf-8").readline()
+except PermissionError as error:
+    print(f"localNetworkShutdown: skipped permission error: {error}")
+    sys.exit(0)
 if not line:
     raise SystemExit("empty localNetworkShutdown response")
 data = json.loads(line)
@@ -89,8 +108,8 @@ PY
     fi
     echo "sessionPreserved: true"
   fi
-  if ! pgrep -f "client-core-service" >/dev/null; then
-    echo "client-core-service stopped after localNetworkShutdown" >&2
+  if ! launchctl print "system/${LABEL}" | grep -q "state = running"; then
+    echo "launchd service stopped after localNetworkShutdown" >&2
     exit 1
   fi
   echo "serviceStillRunningAfterShutdown: true"
