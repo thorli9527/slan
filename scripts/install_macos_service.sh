@@ -80,6 +80,9 @@ chmod 755 "$SERVICE_BIN"
 chown root:wheel "$INSTALL_DIR" "$LOG_DIR"
 chmod 755 "$INSTALL_DIR" "$LOG_DIR"
 
+DEVICE_ID="$("$SERVICE_BIN" --ensure-device-id)"
+echo "deviceId: $DEVICE_ID"
+
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -1,0 +1,70 @@
+#!/bin/sh
+set -eu
+
+LABEL="dev.slan.client-core-service"
+INSTALL_DIR="/Library/Application Support/SLAN"
+LOG_DIR="/Library/Logs/SLAN"
+PLIST="/Library/LaunchDaemons/${LABEL}.plist"
+SERVICE_BIN="${INSTALL_DIR}/client-core-service"
+INSTALL_LOG="${LOG_DIR}/installer.log"
+
+mkdir -p "$INSTALL_DIR" "$LOG_DIR"
+chown root:wheel "$INSTALL_DIR" "$LOG_DIR"
+chmod 755 "$INSTALL_DIR" "$LOG_DIR"
+
+if [ ! -x "$SERVICE_BIN" ]; then
+  echo "missing service binary: $SERVICE_BIN" >&2
+  exit 1
+fi
+
+chown root:wheel "$SERVICE_BIN"
+chmod 755 "$SERVICE_BIN"
+
+DEVICE_ID="$("$SERVICE_BIN" --ensure-device-id)"
+{
+  echo "installedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "deviceId: $DEVICE_ID"
+  echo "serviceInfo: $("$SERVICE_BIN" --service-info)"
+} >>"$INSTALL_LOG"
+chown root:wheel "$INSTALL_LOG"
+chmod 644 "$INSTALL_LOG"
+
+cat > "$PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${SERVICE_BIN}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>${INSTALL_DIR}</string>
+  <key>StandardOutPath</key>
+  <string>${LOG_DIR}/client-core-service.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${LOG_DIR}/client-core-service.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SLAN_CLIENT_CORE_SERVICE_HOST</key>
+    <string>127.0.0.1:46392</string>
+  </dict>
+</dict>
+</plist>
+PLIST
+
+chown root:wheel "$PLIST"
+chmod 644 "$PLIST"
+
+launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+launchctl bootstrap system "$PLIST"
+launchctl enable "system/${LABEL}"
+launchctl kickstart -k "system/${LABEL}"
+
+exit 0
