@@ -25,12 +25,28 @@ fi
 
 echo "appBundle: $APP_PATH"
 echo "bundledService: $SERVICE_IN_APP"
+echo "bundledServiceSha256: $(shasum -a 256 "$SERVICE_IN_APP" | awk '{print $1}')"
 
 if ! launchctl print "system/${LABEL}" >/dev/null 2>&1; then
   echo "launchdLoaded: false"
   echo "install with: scripts/install_macos_service.sh --app \"$APP_PATH\""
   exit 0
 fi
+
+INSTALLED_SERVICE="/Library/Application Support/SLAN/client-core-service"
+if [[ ! -x "$INSTALLED_SERVICE" ]]; then
+  echo "installed service binary missing: $INSTALLED_SERVICE" >&2
+  exit 1
+fi
+bundled_hash="$(shasum -a 256 "$SERVICE_IN_APP" | awk '{print $1}')"
+installed_hash="$(shasum -a 256 "$INSTALLED_SERVICE" | awk '{print $1}')"
+echo "installedServiceSha256: $installed_hash"
+if [[ "$bundled_hash" != "$installed_hash" ]]; then
+  echo "installed service does not match app bundle service" >&2
+  echo "reinstall with: scripts/install_macos_service.sh --app \"$APP_PATH\"" >&2
+  exit 1
+fi
+echo "installedServiceMatchesBundle: true"
 
 echo "launchdLoaded: true"
 LAUNCHD_STATUS="/tmp/slan-macos-service-status.$$"

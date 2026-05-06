@@ -18,6 +18,7 @@ fi
 echo "binary: $SERVICE_BIN"
 if [[ -x "$SERVICE_BIN" ]]; then
   echo "binaryExecutable: true"
+  echo "binarySha256: $(shasum -a 256 "$SERVICE_BIN" | awk '{print $1}')"
 else
   echo "binaryExecutable: false"
 fi

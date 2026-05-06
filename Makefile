@@ -47,6 +47,8 @@ client-macos-build:
 	cd client_v2/app_flutter && flutter build macos
 	cp client_v2/rust/target/release/client-core-service client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
 	chmod 755 client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
+	codesign --force --deep --sign - client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app
+	codesign --verify --deep --strict --verbose=2 client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app
 
 client-macos-service-smoke:
 	./scripts/macos_service_smoke.sh
