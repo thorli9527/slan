@@ -46,3 +46,4 @@ Service scripts:
 - Install/uninstall write `/Library/*` paths and require an interactive sudo/root terminal.
 - Service binary self-description: `client-core-service --service-info`.
 - Re-run install after every rebuilt service binary; `make client-macos-service-smoke` fails when installed and bundled service hashes differ.
+- Upgrade smoke: `make client-macos-service-upgrade-smoke`.
