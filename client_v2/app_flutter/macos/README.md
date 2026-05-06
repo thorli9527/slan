@@ -4,6 +4,11 @@ macOS should run SLAN Client V2 as a menu bar resident app.
 
 Policy:
 
+- launchd label: `dev.slan.client-core-service`.
+- Installed service binary: `/Library/Application Support/SLAN/client-core-service`.
+- App-bundled service binary: `slan_client_v2.app/Contents/MacOS/client-core-service`.
+- State directory: `/Library/Application Support/SLAN`.
+- Logs: `/Library/Logs/SLAN`.
 - Closing the main window hides it.
 - The menu bar item owns `Open`, `Connect/Disconnect`, `Status`, `Open Console`, and `Quit`.
 - `Quit` calls `localNetworkShutdown` and then exits the Flutter shell.
@@ -31,4 +36,11 @@ Native pieces:
 Build check:
 
 - `make client-macos-build`
-- Direct command: `cd client_v2/app_flutter && flutter build macos`
+- Smoke: `make client-macos-service-smoke`
+
+Service scripts:
+
+- Install: `scripts/install_macos_service.sh --app client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app`
+- Status: `scripts/status_macos_service.sh`
+- Uninstall: `scripts/uninstall_macos_service.sh`
+- Install/uninstall write `/Library/*` paths and require an interactive sudo/root terminal.

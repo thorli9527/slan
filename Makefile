@@ -1,4 +1,4 @@
-.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test client-macos-build client-multidevice-dev flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check
+.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test client-macos-build client-macos-service-smoke client-multidevice-dev flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check
 
 help:
 	@echo "Available targets:"
@@ -6,6 +6,7 @@ help:
 	@echo "  Flutter UI"
 	@echo "    make client-desktop-ui-test       # run widget tests covering the desktop client shell"
 	@echo "    make client-macos-build           # build the macOS menu bar client shell"
+	@echo "    make client-macos-service-smoke   # verify macOS app bundle and launchd service integration"
 	@echo "    make client-multidevice-dev       # run macOS/iOS/Android against one local client-core-service"
 	@echo "    make flutter-analyze-safe         # run Flutter analyze with stale Dart language-server cleanup"
 	@echo "    make protocol-contract-check      # run web + Flutter + Rust + Go + OpenAPI + protobuf + route drift checks"
@@ -42,7 +43,13 @@ client-desktop-ui-test:
 	./scripts/test_client_desktop_ui.sh
 
 client-macos-build:
+	cd client_v2/rust && cargo build -p client-core-service --release
 	cd client_v2/app_flutter && flutter build macos
+	cp client_v2/rust/target/release/client-core-service client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
+	chmod 755 client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
+
+client-macos-service-smoke:
+	./scripts/macos_service_smoke.sh
 
 client-multidevice-dev:
 	./scripts/client_multidevice_dev.sh

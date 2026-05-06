@@ -3,6 +3,7 @@ import FlutterMacOS
 import Network
 
 public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
+  private static let launchdServiceLabel = "dev.slan.client-core-service"
   private var statusItem: NSStatusItem?
   private var statusMenuItem: NSMenuItem?
   private var connectMenuItem: NSMenuItem?
@@ -460,6 +461,14 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if let response = forwardToService(method: method, arguments: arguments) {
       return response
     }
+    if tryStartLaunchdService() {
+      for _ in 0..<15 {
+        if let response = forwardToService(method: method, arguments: arguments) {
+          return response
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+      }
+    }
     guard tryStartBundledService() else {
       return nil
     }
@@ -470,6 +479,44 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       Thread.sleep(forTimeInterval: 0.1)
     }
     return nil
+  }
+
+  private func tryStartLaunchdService() -> Bool {
+    guard launchdServiceLoaded() else {
+      return false
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    process.arguments = [
+      "kickstart",
+      "-k",
+      "system/\(Self.launchdServiceLabel)"
+    ]
+    do {
+      try process.run()
+      process.waitUntilExit()
+      return process.terminationStatus == 0
+    } catch {
+      return false
+    }
+  }
+
+  private func launchdServiceLoaded() -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    process.arguments = [
+      "print",
+      "system/\(Self.launchdServiceLabel)"
+    ]
+    process.standardOutput = Pipe()
+    process.standardError = Pipe()
+    do {
+      try process.run()
+      process.waitUntilExit()
+      return process.terminationStatus == 0
+    } catch {
+      return false
+    }
   }
 
   private func tryStartBundledService() -> Bool {
