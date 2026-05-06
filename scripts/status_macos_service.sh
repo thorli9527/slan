@@ -7,6 +7,33 @@ LOG_DIR="/Library/Logs/SLAN"
 PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 SERVICE_BIN="${INSTALL_DIR}/client-core-service"
 
+service_info() {
+  local binary="$1"
+  local output
+  output="$(mktemp)"
+  SLAN_CLIENT_CORE_SERVICE_HOST=127.0.0.1:0 "$binary" --service-info >"$output" 2>/dev/null &
+  local pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" || true
+      local payload
+      payload="$(cat "$output")"
+      rm -f "$output"
+      if [[ "$payload" == \{* ]]; then
+        echo "$payload"
+      else
+        echo "unsupported"
+      fi
+      return
+    fi
+    sleep 0.1
+  done
+  kill "$pid" >/dev/null 2>&1 || true
+  wait "$pid" >/dev/null 2>&1 || true
+  rm -f "$output"
+  echo "unsupported"
+}
+
 echo "label: $LABEL"
 echo "plist: $PLIST"
 if [[ -f "$PLIST" ]]; then
@@ -19,6 +46,7 @@ echo "binary: $SERVICE_BIN"
 if [[ -x "$SERVICE_BIN" ]]; then
   echo "binaryExecutable: true"
   echo "binarySha256: $(shasum -a 256 "$SERVICE_BIN" | awk '{print $1}')"
+  echo "serviceInfo: $(service_info "$SERVICE_BIN")"
 else
   echo "binaryExecutable: false"
 fi

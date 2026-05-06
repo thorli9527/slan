@@ -44,3 +44,5 @@ Service scripts:
 - Status: `scripts/status_macos_service.sh`
 - Uninstall: `scripts/uninstall_macos_service.sh`
 - Install/uninstall write `/Library/*` paths and require an interactive sudo/root terminal.
+- Service binary self-description: `client-core-service --service-info`.
+- Re-run install after every rebuilt service binary; `make client-macos-service-smoke` fails when installed and bundled service hashes differ.

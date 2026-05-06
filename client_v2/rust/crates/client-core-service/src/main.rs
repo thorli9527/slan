@@ -135,6 +135,14 @@ enum CommandOrigin {
 }
 
 fn main() -> Result<()> {
+    if std::env::args().any(|arg| arg == "--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if std::env::args().any(|arg| arg == "--service-info") {
+        println!("{}", service_info_json()?);
+        return Ok(());
+    }
     if std::env::args().any(|arg| arg == "--ensure-device-id") {
         println!("{}", local_stable_device_id()?);
         return Ok(());
@@ -152,6 +160,18 @@ fn main() -> Result<()> {
     }
 
     run_service_server()
+}
+
+fn service_info_json() -> Result<String> {
+    serde_json::to_string(&serde_json::json!({
+        "service": "client-core-service",
+        "version": env!("CARGO_PKG_VERSION"),
+        "targetOs": std::env::consts::OS,
+        "targetArch": std::env::consts::ARCH,
+        "defaultHost": DEFAULT_SERVICE_HOST,
+        "stateDir": app_data_dir().join("SLAN").display().to_string(),
+    }))
+    .context("encode service info")
 }
 
 fn run_service_server() -> Result<()> {

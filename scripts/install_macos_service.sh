@@ -10,6 +10,33 @@ APP_PATH=""
 SOURCE_BIN=""
 ORIGINAL_ARGS=("$@")
 
+service_info() {
+  local binary="$1"
+  local output
+  output="$(mktemp)"
+  SLAN_CLIENT_CORE_SERVICE_HOST=127.0.0.1:0 "$binary" --service-info >"$output" 2>/dev/null &
+  local pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" || true
+      local payload
+      payload="$(cat "$output")"
+      rm -f "$output"
+      if [[ "$payload" == \{* ]]; then
+        echo "$payload"
+      else
+        echo "unsupported"
+      fi
+      return
+    fi
+    sleep 0.1
+  done
+  kill "$pid" >/dev/null 2>&1 || true
+  wait "$pid" >/dev/null 2>&1 || true
+  rm -f "$output"
+  echo "unsupported"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app)
@@ -40,6 +67,7 @@ if [[ ! -x "$SOURCE_BIN" ]]; then
   echo "run: make client-macos-build" >&2
   exit 1
 fi
+echo "sourceServiceInfo: $(service_info "$SOURCE_BIN")"
 
 if [[ "${EUID}" -ne 0 ]]; then
   exec sudo "$0" "${ORIGINAL_ARGS[@]}"
@@ -92,5 +120,6 @@ launchctl kickstart -k "system/${LABEL}"
 
 echo "installed ${LABEL}"
 echo "binary: $SERVICE_BIN"
+echo "serviceInfo: $(service_info "$SERVICE_BIN")"
 echo "plist: $PLIST"
 echo "logs: $LOG_DIR"
