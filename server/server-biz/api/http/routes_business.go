@@ -35,6 +35,7 @@ func registerBusinessRoutes(api *gin.RouterGroup, deps routerDeps) {
 	}))
 	registerInternalWireRoutes(api, deps)
 	registerAccessRoutes(api, deps)
+	registerPublicRegistrationRoutes(api, deps)
 
 	protected := api.Group("")
 	protected.Use(authenticate(deps))

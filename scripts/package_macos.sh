@@ -8,6 +8,7 @@ PKG_PATH="$OUTPUT_DIR/SLAN-Client-V2-macos.pkg"
 STAGE_DIR="$OUTPUT_DIR/stage"
 ROOT_STAGE="$STAGE_DIR/root"
 SCRIPT_STAGE="$STAGE_DIR/scripts"
+COMPONENT_PLIST="$STAGE_DIR/components.plist"
 PACKAGE_ID="${SLAN_MACOS_PACKAGE_ID:-dev.slan.client-v2}"
 VERSION="${SLAN_MACOS_PACKAGE_VERSION:-0.1.0}"
 SERVICE_IN_APP="${APP_PATH%/}/Contents/MacOS/client-core-service"
@@ -49,9 +50,13 @@ cp "$ROOT_DIR/client_v2/install/macos/scripts/postinstall" "$SCRIPT_STAGE/postin
 chmod 755 "$SCRIPT_STAGE/preinstall" "$SCRIPT_STAGE/postinstall"
 
 rm -f "$PKG_PATH"
+pkgbuild --analyze --root "$ROOT_STAGE" "$COMPONENT_PLIST"
+plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
+plutil -replace 0.BundleOverwriteAction -string upgrade "$COMPONENT_PLIST"
 COPYFILE_DISABLE=1 pkgbuild \
   --root "$ROOT_STAGE" \
   --scripts "$SCRIPT_STAGE" \
+  --component-plist "$COMPONENT_PLIST" \
   --identifier "$PACKAGE_ID" \
   --version "$VERSION" \
   --install-location / \

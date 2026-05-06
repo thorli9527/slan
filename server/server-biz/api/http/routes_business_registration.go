@@ -7,6 +7,13 @@ import (
 	"github.com/slan/server/server-biz/api/dto"
 )
 
+// registerPublicRegistrationRoutes registers install-time lifecycle endpoints.
+func registerPublicRegistrationRoutes(api *gin.RouterGroup, deps routerDeps) {
+	api.POST("/devices/install-register", respondWithBody(http.StatusCreated, func(c *gin.Context, req dto.RegisterDeviceRequest) (dto.Device, error) {
+		return deps.Device.InstallRegister(req)
+	}))
+}
+
 // registerRegistrationRoutes 注册设备与节点生命周期入口。
 func registerRegistrationRoutes(protected *gin.RouterGroup, deps routerDeps) {
 	devices := protected.Group("/devices")

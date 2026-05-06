@@ -30,6 +30,17 @@ type Device interface {
 	// - ErrInvalidArgument: missing/invalid fields.
 	Register(userID string, req dto.RegisterDeviceRequest) (dto.Device, error)
 
+	// InstallRegister creates or updates an unbound physical device record.
+	//
+	// Caller:
+	// - Client installer / local service startup before user login.
+	//
+	// Notes:
+	// - No user auth is required.
+	// - The device is stored with an empty userID until browser login binds the
+	//   same stable deviceId to the authenticated user.
+	InstallRegister(req dto.RegisterDeviceRequest) (dto.Device, error)
+
 	// ListByUser returns devices visible to the given user.
 	//
 	// Output:

@@ -29,8 +29,11 @@ func (s dbDeviceService) upsertDeviceRecord(ctx context.Context, userID string, 
 	if strings.TrimSpace(req.DeviceID) != "" {
 		current, err := s.state.pg.GetDeviceByID(ctx, deviceID)
 		if err == nil {
-			if current.UserID != userID {
+			if current.UserID != userID && strings.TrimSpace(current.UserID) != "" && strings.TrimSpace(userID) != "" {
 				return repo.Device{}, ErrForbidden
+			}
+			if strings.TrimSpace(current.UserID) != "" && strings.TrimSpace(userID) == "" {
+				record.UserID = current.UserID
 			}
 			record.CreatedAt = current.CreatedAt
 			if err := s.state.pg.UpdateDevice(ctx, record); err != nil {
@@ -49,7 +52,7 @@ func (s dbDeviceService) upsertDeviceRecord(ctx context.Context, userID string, 
 			if err != nil {
 				return repo.Device{}, err
 			}
-			if current.UserID != userID {
+			if current.UserID != userID && strings.TrimSpace(current.UserID) != "" && strings.TrimSpace(userID) != "" {
 				return repo.Device{}, ErrForbidden
 			}
 			return current, nil

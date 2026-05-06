@@ -217,6 +217,11 @@ impl ControlPlaneClient {
         self.register_device(access_token, preferred_device_id)
     }
 
+    pub fn install_register_device(&self) -> Result<ControlDevice> {
+        let device_id = local_stable_device_id()?;
+        self.register_device_without_auth("/devices/install-register", &device_id)
+    }
+
     pub fn list_devices(&self, access_token: &str) -> Result<Vec<ControlDevice>> {
         let response = self.request_json("GET", "/devices", access_token, None)?;
         let payload: ItemsResponse<ControlDevice> =
@@ -394,17 +399,18 @@ impl ControlPlaneClient {
     }
 
     fn register_device(&self, access_token: &str, device_id: &str) -> Result<ControlDevice> {
-        let device_id = device_id.trim();
-        let device_name = device_name();
-        let body = serde_json::to_value(RegisterDeviceRequest {
-            device_id: device_id.to_string(),
-            name: device_name,
-            platform: platform_name().to_string(),
-            device_version: env!("CARGO_PKG_VERSION").to_string(),
-            country_code: device_country_code(),
-            public_key: format!("client-v2-{device_id}"),
-        })?;
-        let response = self.request_json("POST", "/devices/register", access_token, Some(body))?;
+        let response = self.request_json(
+            "POST",
+            "/devices/register",
+            access_token,
+            Some(register_device_body(device_id)?),
+        )?;
+        serde_json::from_value(response).context("decode registered device")
+    }
+
+    fn register_device_without_auth(&self, path: &str, device_id: &str) -> Result<ControlDevice> {
+        let body = register_device_body(device_id)?;
+        let response = self.request_json_without_auth("POST", path, Some(body))?;
         serde_json::from_value(response).context("decode registered device")
     }
 
@@ -440,6 +446,20 @@ impl ControlPlaneClient {
         let response = endpoint.request(method, path, "", &body)?;
         serde_json::from_slice(&response).context("decode control response")
     }
+}
+
+fn register_device_body(device_id: &str) -> Result<Value> {
+    let device_id = device_id.trim();
+    let device_name = device_name();
+    serde_json::to_value(RegisterDeviceRequest {
+        device_id: device_id.to_string(),
+        name: device_name,
+        platform: platform_name().to_string(),
+        device_version: env!("CARGO_PKG_VERSION").to_string(),
+        country_code: device_country_code(),
+        public_key: format!("client-v2-{device_id}"),
+    })
+    .context("encode register device request")
 }
 
 fn extract_dns_servers(response: &Value) -> Vec<String> {

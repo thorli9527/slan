@@ -97,6 +97,7 @@ use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketT
 const DEFAULT_SERVICE_HOST: &str = "127.0.0.1:46392";
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "SLANClientV2Service";
+const INSTALL_DEVICE_REGISTRATION_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const RELAY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECT_PLAN_TTL_MS: u64 = 10 * 60 * 1000;
 const RELAY_TICKET_RENEW_INTERVAL_MS: u64 = 20 * 60 * 1000;
@@ -177,6 +178,7 @@ fn service_info_json() -> Result<String> {
 fn run_service_server() -> Result<()> {
     log_service_error("client-core-service starting");
     ensure_elevated_runtime()?;
+    spawn_install_device_registration_worker();
 
     let bind_address = std::env::var("SLAN_CLIENT_CORE_SERVICE_HOST")
         .unwrap_or_else(|_| DEFAULT_SERVICE_HOST.to_string());
@@ -228,6 +230,26 @@ fn run_service_server() -> Result<()> {
         });
     }
     Ok(())
+}
+
+fn spawn_install_device_registration_worker() {
+    thread::spawn(|| loop {
+        match ControlPlaneClient::from_env().install_register_device() {
+            Ok(device) => {
+                log_service_error(format!(
+                    "client-core-service install device registered: deviceId={}",
+                    device.device_id
+                ));
+                return;
+            }
+            Err(error) => {
+                log_service_error(format!(
+                    "client-core-service install device registration retry pending: {error:#}"
+                ));
+                thread::sleep(INSTALL_DEVICE_REGISTRATION_RETRY_INTERVAL);
+            }
+        }
+    });
 }
 
 #[cfg(target_os = "windows")]

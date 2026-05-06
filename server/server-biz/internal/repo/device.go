@@ -48,6 +48,7 @@ func (r *PostgresRepository) UpdateDevice(ctx context.Context, record Device) er
 		Where("device_id = ?", record.DeviceID).
 		Updates(map[string]any{
 			"name":           record.Name,
+			"user_id":        record.UserID,
 			"platform":       record.Platform,
 			"device_version": record.DeviceVersion,
 			"country_code":   record.CountryCode,

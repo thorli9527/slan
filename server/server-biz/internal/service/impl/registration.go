@@ -38,6 +38,21 @@ func (s dbDeviceService) Register(userID string, req dto.RegisterDeviceRequest) 
 	return device, nil
 }
 
+func (s dbDeviceService) InstallRegister(req dto.RegisterDeviceRequest) (dto.Device, error) {
+	if err := s.requireRegisterDeviceRequest(req); err != nil {
+		return dto.Device{}, err
+	}
+	if strings.TrimSpace(req.DeviceID) == "" {
+		return dto.Device{}, ErrInvalidArgument
+	}
+	ctx := context.Background()
+	record, err := s.upsertDeviceRecord(ctx, "", req)
+	if err != nil {
+		return dto.Device{}, err
+	}
+	return s.state.buildDeviceDTO(ctx, record), nil
+}
+
 func (s dbDeviceService) ListByUser(userID string) ([]dto.Device, error) {
 	ctx := context.Background()
 	s.state.cleanupExpiredControlPlaneState(ctx, time.Now())

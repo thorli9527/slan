@@ -11,6 +11,7 @@
 
 ### Device / Node
 
+- `POST /devices/install-register`
 - `POST /devices/register`
 - `GET /devices`
 - `POST /nodes/register`
