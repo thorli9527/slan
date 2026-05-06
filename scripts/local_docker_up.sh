@@ -11,4 +11,4 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build postgres redis server-biz server-wire server-wire-relay server-wire-derp caddy
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build postgres redis server-biz server-wire server-wire-relay server-wire-derp server-ui-web server-main caddy

@@ -24,6 +24,7 @@ Implementation boundary:
 - Network enable/disable still goes through `client-core-service`.
 - `Connect/Disconnect` only sends the local service command; it must not force a UI refresh.
 - `Open Console` first requests `consoleLoginKey` from `client-core-service`, matching the Windows tray behavior.
+- Web Console URL resolution matches Windows: `SLAN_WEB_CONSOLE_URL`, then `SLAN_CONTROL_BASE_URL`, then `http://127.0.0.1:24200`.
 - No mesh, DNS, route, or adapter logic belongs in Swift UI code.
 
 Native pieces:

@@ -251,8 +251,7 @@ class ClientCorePlugin {
     String consoleLoginKey = '',
   }) async {
     final safeDeviceId = _usableClientDeviceId(deviceId);
-    final baseUrl = Platform.environment['SLAN_WEB_CONSOLE_URL'] ??
-        'http://127.0.0.1:24200';
+    final baseUrl = _resolveWebConsoleUrl();
     final uri = Uri.parse(baseUrl).replace(
       queryParameters: {
         ...Uri.parse(baseUrl).queryParameters,
@@ -280,6 +279,25 @@ class ClientCorePlugin {
           ],
           mode: ProcessStartMode.detached);
     }
+  }
+
+  String _resolveWebConsoleUrl() {
+    final explicitUrl = Platform.environment['SLAN_WEB_CONSOLE_URL']?.trim();
+    if (explicitUrl != null && explicitUrl.isNotEmpty) {
+      return explicitUrl;
+    }
+    final controlBaseUrl =
+        Platform.environment['SLAN_CONTROL_BASE_URL']?.trim();
+    if (controlBaseUrl != null && controlBaseUrl.isNotEmpty) {
+      if (controlBaseUrl.contains('127.0.0.1') ||
+          controlBaseUrl.contains('localhost')) {
+        return 'http://127.0.0.1:24200';
+      }
+      if (controlBaseUrl.contains('slan.localhost')) {
+        return 'https://web.slan.localhost:18443';
+      }
+    }
+    return 'http://127.0.0.1:24200';
   }
 
   String _usableClientDeviceId(String deviceId) {

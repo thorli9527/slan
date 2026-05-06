@@ -372,8 +372,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     deviceId: String = "",
     consoleLoginKey: String = ""
   ) {
-    let target = ProcessInfo.processInfo.environment["SLAN_WEB_CONSOLE_URL"]
-      ?? "http://127.0.0.1:24200"
+    let target = resolveWebConsoleUrl()
     var components = URLComponents(string: target)
     var queryItems = components?.queryItems ?? []
     if !callbackId.isEmpty {
@@ -395,6 +394,26 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if let url = components?.url ?? URL(string: target) {
       NSWorkspace.shared.open(url)
     }
+  }
+
+  private func resolveWebConsoleUrl() -> String {
+    let environment = ProcessInfo.processInfo.environment
+    if let value = environment["SLAN_WEB_CONSOLE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !value.isEmpty
+    {
+      return value
+    }
+    if let value = environment["SLAN_CONTROL_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !value.isEmpty
+    {
+      if value.contains("127.0.0.1") || value.contains("localhost") {
+        return "http://127.0.0.1:24200"
+      }
+      if value.contains("slan.localhost") {
+        return "https://web.slan.localhost:18443"
+      }
+    }
+    return "http://127.0.0.1:24200"
   }
 
   private func usableClientDeviceId(_ deviceId: String) -> String {
