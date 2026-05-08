@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import QRCode from 'qrcode';
 import { AppApiClient } from './app-api.service';
 import { panelFromRoute, workspacePanelPath } from './app-routing';
 import {
@@ -22,7 +23,13 @@ import {
 } from './app.seed-data';
 import {
   ApiDevice,
+  ApiDNSRecord,
+  ApiDNSZone,
+  ApiPublicMapping,
+  ApiSecurityGroup,
+  ApiSecurityRule,
   ApiWorkspace,
+  ApiWorkspaceDevice,
   DeviceExposureRow,
   DeviceRow,
   DNSRow,
@@ -32,6 +39,7 @@ import {
   PublicMappingRow,
   RuleSubjectType,
   SecurityRuleRow,
+  SecurityGroupRow,
   SecurityRuleTemplate,
   UserAliasRow,
   WorkspaceDeviceInviteRow,
@@ -75,7 +83,7 @@ export class AppComponent implements OnInit {
   devicePlatform = 'macOS';
   deviceOSVersion = '15.3';
 
-  workspaceName = '默认工作组';
+  workspaceName = '默认网络';
   workspaceCode = 'default';
   workspaceDialogMessage = '';
   editingWorkspaceName = '';
@@ -83,7 +91,7 @@ export class AppComponent implements OnInit {
   domainName = 'api';
   ruleDirection = 'ingress';
   selectedWorkspaceId = 'default-user-000001';
-  workspacePanel: WorkspacePanel = 'devices';
+  workspacePanel: WorkspacePanel = 'zones';
   selectedZoneId = 'default';
   selectedSecurityGroupId = 'default';
   workspaceRouteMode: 'list' | 'detail' = 'list';
@@ -91,6 +99,7 @@ export class AppComponent implements OnInit {
   workspaceDialogMode: 'create' | 'edit' = 'create';
   showInviteDialog = false;
   workspaceInviteCode = '';
+  inviteQrDataUrl = '';
   showJoinDialog = false;
   joinInviteCode = '';
   joinInviteMessage = '';
@@ -174,6 +183,7 @@ export class AppComponent implements OnInit {
   dnsRecords: DNSRow[] = INITIAL_DNS_RECORDS.map((item) => ({ ...item }));
   publicMappings: PublicMappingRow[] = INITIAL_PUBLIC_MAPPINGS.map((item) => ({ ...item }));
   securityRules: SecurityRuleRow[] = INITIAL_SECURITY_RULES.map((item) => ({ ...item }));
+  securityGroups: SecurityGroupRow[] = [];
   deviceExposures: DeviceExposureRow[] = INITIAL_DEVICE_EXPOSURES.map((item) => ({ ...item }));
   workspaceDeviceInvites: WorkspaceDeviceInviteRow[] = INITIAL_WORKSPACE_DEVICE_INVITES.map((item) => ({ ...item }));
 
@@ -201,7 +211,7 @@ export class AppComponent implements OnInit {
     return [
       { value: 'device', label: '设备' },
       { value: 'user', label: '用户' },
-      { value: 'workspace', label: '工作组' },
+      { value: 'workspace', label: '网络' },
       { value: 'cidr', label: 'CIDR' },
       { value: 'all', label: '全部' },
     ];
@@ -210,7 +220,7 @@ export class AppComponent implements OnInit {
   get egressSubjectTypes(): Array<{ value: RuleSubjectType; label: string }> {
     return [
       { value: 'device', label: '设备' },
-      { value: 'workspace', label: '工作组' },
+      { value: 'workspace', label: '网络' },
       { value: 'cidr', label: 'CIDR' },
       { value: 'domain', label: '域名' },
       { value: 'all', label: '全部' },
@@ -220,12 +230,12 @@ export class AppComponent implements OnInit {
   get ruleSubjectOptions(): Array<{ value: string; label: string }> {
     switch (this.ruleSubjectType) {
       case 'device':
-        return this.workspaceDevices.map((device) => ({ value: device.deviceId, label: `${this.userLabel(device.owner)} / ${device.alias} / ${device.deviceId}` }));
+        return this.visibleDeviceOptions.map((device) => ({ value: device.deviceId, label: `${this.userLabel(device.owner)} / ${device.alias} / ${device.deviceId}` }));
       case 'user':
         return this.members.map((member) => ({ value: member.user, label: `${member.alias} / ${this.userLabel(member.user)}` }));
       case 'workspace':
         return [
-          { value: 'self', label: `${this.selectedWorkspace.name} / 当前工作组` },
+          { value: 'self', label: `${this.selectedWorkspace.name} / 当前网络` },
           ...this.workspaces.filter((workspace) => workspace.workspaceId !== this.selectedWorkspace.workspaceId).map((workspace) => ({ value: workspace.workspaceId, label: `${workspace.name} / ${workspace.code}` })),
         ];
       case 'all':
@@ -244,6 +254,12 @@ export class AppComponent implements OnInit {
     return this.devices;
   }
 
+  get joinDeviceOptions(): DeviceRow[] {
+    return this.currentUserDevices
+      .filter((device) => this.isCurrentUserDeviceOwner(device))
+      .sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+  }
+
   get currentDNSZones(): DNSZoneRow[] {
     return this.dnsZones.filter((zone) => zone.workspaceId === this.selectedWorkspaceId);
   }
@@ -254,6 +270,34 @@ export class AppComponent implements OnInit {
 
   get currentPublicMappings(): PublicMappingRow[] {
     return this.publicMappings.filter((mapping) => mapping.workspaceId === this.selectedWorkspaceId);
+  }
+
+  get currentSecurityGroups(): SecurityGroupRow[] {
+    return this.securityGroups.filter((group) => group.workspaceId === this.selectedWorkspaceId);
+  }
+
+  get recordDeviceOptions(): DeviceRow[] {
+    const byId = new Map<string, DeviceRow>();
+    this.visibleDeviceOptions.forEach((device) => byId.set(device.deviceId, device));
+    if (this.recordDeviceId) {
+      const selected = this.devices.find((device) => device.deviceId === this.recordDeviceId);
+      if (selected) {
+        byId.set(selected.deviceId, selected);
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+  }
+
+  get visibleDeviceOptions(): DeviceRow[] {
+    const byId = new Map<string, DeviceRow>();
+    [...this.workspaceDevices, ...this.currentUserDevices].forEach((device) => byId.set(device.deviceId, device));
+    if (this.ruleSubjectType === 'device' && this.ruleSubjectValue) {
+      const selected = this.devices.find((device) => device.deviceId === this.ruleSubjectValue);
+      if (selected) {
+        byId.set(selected.deviceId, selected);
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) => a.deviceId.localeCompare(b.deviceId));
   }
 
   get currentWorkspaceDeviceInvites(): WorkspaceDeviceInviteRow[] {
@@ -368,11 +412,7 @@ export class AppComponent implements OnInit {
   }
 
   get canJoinInvite(): boolean {
-    if (!this.invitedWorkspace || !this.deviceId) {
-      return false;
-    }
-    const currentIds = this.workspaceDeviceIdsByWorkspace[this.invitedWorkspace.workspaceId] ?? [];
-    if (currentIds.includes(this.deviceId)) {
+    if (!this.joinInviteCode.trim() || !this.deviceId) {
       return false;
     }
     const invite = this.selectedJoinInvite;
@@ -380,12 +420,8 @@ export class AppComponent implements OnInit {
   }
 
   get joinInviteValidationMessage(): string {
-    if (!this.joinInviteCode || !this.invitedWorkspace || !this.deviceId) {
+    if (!this.joinInviteCode || !this.deviceId) {
       return this.joinInviteMessage;
-    }
-    const currentIds = this.workspaceDeviceIdsByWorkspace[this.invitedWorkspace.workspaceId] ?? [];
-    if (currentIds.includes(this.deviceId)) {
-      return '该设备已在当前工作组中，不能重复接入。';
     }
     const invite = this.selectedJoinInvite;
     if (invite && this.effectiveInviteStatus(invite) !== 'pending') {
@@ -531,17 +567,17 @@ export class AppComponent implements OnInit {
   selectWorkspace(workspace: WorkspaceRow): void {
     this.selectedWorkspaceId = workspace.workspaceId;
     this.editingWorkspaceName = workspace.name;
-    this.workspacePanel = 'devices';
+    this.workspacePanel = 'zones';
   }
 
-  openWorkspaceDetail(workspace: WorkspaceRow, panel: WorkspacePanel = 'devices'): void {
+  openWorkspaceDetail(workspace: WorkspaceRow, panel: WorkspacePanel = 'zones'): void {
     this.selectedWorkspaceId = workspace.workspaceId;
     this.editingWorkspaceName = workspace.name;
     this.workspacePanel = panel;
     this.workspaceRouteMode = 'detail';
     this.active = 'workspaces';
     history.pushState({}, '', workspacePanelPath(workspace.workspaceId, panel, this.selectedZoneId, this.selectedSecurityGroupId));
-    void this.loadWorkspaceDeviceInvites(workspace.workspaceId);
+    void this.loadWorkspaceDevices(workspace.workspaceId);
   }
 
   backToWorkspaceList(): void {
@@ -563,17 +599,28 @@ export class AppComponent implements OnInit {
   }
 
   openSecurityRules(): void {
-    this.selectedSecurityGroupId = 'default';
+    this.selectedSecurityGroupId = this.currentSecurityGroups[0]?.securityGroupId ?? this.selectedSecurityGroupId;
     this.workspacePanel = 'securityRules';
     history.pushState({}, '', workspacePanelPath(this.selectedWorkspaceId, 'securityRules', this.selectedZoneId, this.selectedSecurityGroupId));
+  }
+
+  openSecurityGroupRules(group: SecurityGroupRow): void {
+    this.selectedSecurityGroupId = group.securityGroupId;
+    this.workspacePanel = 'securityRules';
+    history.pushState({}, '', workspacePanelPath(this.selectedWorkspaceId, 'securityRules', this.selectedZoneId, this.selectedSecurityGroupId));
+    void this.loadSecurityRules(group.securityGroupId);
   }
 
   setWorkspacePanel(panel: WorkspacePanel): void {
     this.workspacePanel = panel;
     history.pushState({}, '', workspacePanelPath(this.selectedWorkspaceId, panel, this.selectedZoneId, this.selectedSecurityGroupId));
-    if (panel === 'devices') {
-      void this.loadWorkspaceDeviceInvites(this.selectedWorkspaceId);
-    }
+    void this.loadWorkspaceResources(this.selectedWorkspaceId);
+  }
+
+  selectWorkspaceForDeviceManagement(workspaceId: string): void {
+    this.selectedWorkspaceId = workspaceId;
+    this.workspacePanel = 'zones';
+    void this.loadWorkspaceDevices(workspaceId);
   }
 
   onWorkspaceNameChanged(): void {
@@ -586,7 +633,7 @@ export class AppComponent implements OnInit {
   }
 
   openWorkspaceDialog(): void {
-    this.workspaceName = '默认工作组';
+    this.workspaceName = '默认网络';
     this.workspaceCode = 'default';
     this.workspaceDialogMessage = '';
     this.workspaceDialogMode = 'create';
@@ -617,7 +664,7 @@ export class AppComponent implements OnInit {
         osVersion: this.deviceOSVersion,
         alias: this.deviceAlias,
       });
-      await this.loadDashboard();
+      await this.loadDashboard(this.currentUserId);
       return;
     } catch {
       // Keep the page usable when the API service is not running.
@@ -637,7 +684,7 @@ export class AppComponent implements OnInit {
     }
     const code = slug(this.workspaceCode || this.workspaceName);
     if (this.isWorkspaceCodeDuplicated(code)) {
-      this.workspaceDialogMessage = '当前用户下工作组编码不能重复';
+      this.workspaceDialogMessage = '当前用户下网络编码不能重复';
       return;
     }
     try {
@@ -647,7 +694,7 @@ export class AppComponent implements OnInit {
         code,
         templateKey: code,
       });
-      await this.loadDashboard();
+      await this.loadDashboard(this.currentUserId);
       this.closeWorkspaceDialog();
       return;
     } catch {
@@ -668,7 +715,7 @@ export class AppComponent implements OnInit {
     }
     const code = slug(this.workspaceCode || this.workspaceName);
     if (this.isWorkspaceCodeDuplicated(code, workspace.workspaceId)) {
-      this.workspaceDialogMessage = '当前用户下工作组编码不能重复';
+      this.workspaceDialogMessage = '当前用户下网络编码不能重复';
       return;
     }
     workspace.name = this.workspaceName.trim();
@@ -763,7 +810,7 @@ export class AppComponent implements OnInit {
     this.editingWorkspace = null;
   }
 
-  saveWorkspaceTagDialog(): void {
+  async saveWorkspaceTagDialog(): Promise<void> {
     if (!this.editingWorkspace || !this.workspaceNameValue.trim() || !this.workspaceCodeValue.trim()) {
       return;
     }
@@ -771,9 +818,20 @@ export class AppComponent implements OnInit {
     if (this.isWorkspaceCodeDuplicated(code, this.editingWorkspace.workspaceId)) {
       return;
     }
-    this.editingWorkspace.name = this.workspaceNameValue.trim();
-    this.editingWorkspace.code = code;
-    this.editingWorkspace.template = this.editingWorkspace.code;
+    try {
+      const updated = await this.api.patch<ApiWorkspace>(`/api/workspaces/${encodeURIComponent(this.editingWorkspace.workspaceId)}`, {
+        name: this.workspaceNameValue.trim(),
+        code,
+        status: this.editingWorkspace.status,
+      });
+      this.editingWorkspace.name = updated.name;
+      this.editingWorkspace.code = updated.code ?? code;
+      this.editingWorkspace.template = updated.templateKey ?? this.editingWorkspace.code;
+    } catch {
+      this.editingWorkspace.name = this.workspaceNameValue.trim();
+      this.editingWorkspace.code = code;
+      this.editingWorkspace.template = this.editingWorkspace.code;
+    }
     this.editingWorkspace.zone = `${slug(this.editingWorkspace.code)}.${this.editingWorkspace.workspaceId}.user-000001.sub.slan.com`;
     this.closeWorkspaceTagDialogs();
   }
@@ -782,33 +840,33 @@ export class AppComponent implements OnInit {
     return this.workspaces.some((workspace) => workspace.workspaceId !== exceptWorkspaceId && workspace.code === code);
   }
 
-  toggleWorkspace(workspace: WorkspaceRow): void {
-    workspace.status = workspace.status === 'enabled' ? 'disabled' : 'enabled';
+  async toggleWorkspace(workspace: WorkspaceRow): Promise<void> {
+    const status = workspace.status === 'enabled' ? 'disabled' : 'enabled';
+    try {
+      const updated = await this.api.patch<ApiWorkspace>(`/api/workspaces/${encodeURIComponent(workspace.workspaceId)}`, {
+        name: workspace.name,
+        code: workspace.code,
+        status,
+      });
+      workspace.status = updated.status;
+    } catch {
+      workspace.status = status;
+    }
   }
 
   async openInviteDialog(): Promise<void> {
-    const workspace = this.selectedWorkspace;
     try {
-      const invite = await this.api.post<{ inviteCode: string }>(`/api/workspaces/${encodeURIComponent(workspace.workspaceId)}/device-invites`, {
+      const invite = await this.api.post<WorkspaceDeviceInviteRow>('/api/device-invites', {
         inviterUserId: this.currentUserId || 'user-000001',
         ttlSeconds: 86400,
       });
       this.workspaceInviteCode = invite.inviteCode;
-      this.upsertWorkspaceDeviceInvite({
-        inviteId: `device-invite-${invite.inviteCode}`,
-        workspaceId: workspace.workspaceId,
-        inviterUserId: this.currentUserId || 'user-000001',
-        inviteCode: invite.inviteCode,
-        status: 'pending',
-        createdAt: Math.floor(Date.now() / 1000),
-        expiresAt: Math.floor(Date.now() / 1000) + 86400,
-      });
+      this.upsertWorkspaceDeviceInvite(invite);
     } catch {
       const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
-      this.workspaceInviteCode = `${workspace.code.toUpperCase()}-${randomPart}`;
+      this.workspaceInviteCode = `JOIN-${randomPart}`;
       this.upsertWorkspaceDeviceInvite({
         inviteId: `device-invite-${this.workspaceInviteCode}`,
-        workspaceId: workspace.workspaceId,
         inviterUserId: this.currentUserId || 'user-000001',
         inviteCode: this.workspaceInviteCode,
         status: 'pending',
@@ -816,6 +874,15 @@ export class AppComponent implements OnInit {
         expiresAt: Math.floor(Date.now() / 1000) + 86400,
       });
     }
+    this.inviteQrDataUrl = await QRCode.toDataURL(this.workspaceInviteCode, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      scale: 8,
+      color: {
+        dark: '#111827',
+        light: '#ffffff',
+      },
+    });
     this.showInviteDialog = true;
   }
 
@@ -836,13 +903,7 @@ export class AppComponent implements OnInit {
   }
 
   async joinByInviteCode(): Promise<void> {
-    const workspace = this.invitedWorkspace;
-    if (!workspace || !this.deviceId) {
-      return;
-    }
-    const currentIds = this.workspaceDeviceIdsByWorkspace[workspace.workspaceId] ?? [];
-    if (currentIds.includes(this.deviceId)) {
-      this.joinInviteMessage = '该设备已在当前工作组中，不能重复接入。';
+    if (!this.joinInviteCode.trim() || !this.deviceId) {
       return;
     }
     const invite = this.selectedJoinInvite;
@@ -851,20 +912,17 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      const result = await this.api.post<{ invite?: WorkspaceDeviceInviteRow }>('/api/workspaces/device-invites/accept', {
+      const result = await this.api.post<{ invite?: WorkspaceDeviceInviteRow }>('/api/device-invites/accept', {
         inviteCode: this.joinInviteCode,
         deviceId: this.deviceId,
-        alias: this.devices.find((device) => device.deviceId === this.deviceId)?.alias ?? '',
+        actorUserId: this.currentUserId || this.devices.find((device) => device.deviceId === this.deviceId)?.owner || 'user-000001',
       });
       if (result.invite) {
         this.upsertWorkspaceDeviceInvite(result.invite);
       }
       await this.loadDashboard(this.currentUserId);
     } catch {
-      this.workspaceDeviceIdsByWorkspace[workspace.workspaceId] = [...currentIds, this.deviceId];
-      this.workspaceDeviceJoinMethods[`${workspace.workspaceId}|${this.deviceId}`] = '邀请接入';
-      workspace.devices = this.workspaceDeviceIdsByWorkspace[workspace.workspaceId].length;
-      this.markInviteAccepted(this.joinInviteCode, workspace.workspaceId, this.deviceId);
+      this.markInviteAccepted(this.joinInviteCode, '', this.deviceId);
     }
     this.showJoinDialog = false;
   }
@@ -900,7 +958,12 @@ export class AppComponent implements OnInit {
     this.members = this.members.filter((item) => item !== member);
   }
 
-  removeWorkspaceDevice(device: DeviceRow): void {
+  async removeWorkspaceDevice(device: DeviceRow): Promise<void> {
+    try {
+      await this.api.delete(`/api/workspaces/${encodeURIComponent(this.selectedWorkspaceId)}/devices/${encodeURIComponent(device.deviceId)}`);
+    } catch {
+      // Local preview mode removes the row below.
+    }
     const currentIds = this.currentWorkspaceDeviceIds().filter((deviceId) => deviceId !== device.deviceId);
     this.workspaceDeviceIdsByWorkspace[this.selectedWorkspaceId] = currentIds;
     this.selectedWorkspace.devices = currentIds.length;
@@ -923,10 +986,24 @@ export class AppComponent implements OnInit {
     this.showWorkspaceDeviceDialog = false;
   }
 
-  saveWorkspaceDeviceDialog(): void {
+  async saveWorkspaceDeviceDialog(): Promise<void> {
     const currentIds = this.currentWorkspaceDeviceIds();
     if (!this.selectedWorkspaceDeviceId || currentIds.includes(this.selectedWorkspaceDeviceId)) {
       return;
+    }
+    const selected = this.devices.find((device) => device.deviceId === this.selectedWorkspaceDeviceId);
+    try {
+      await this.api.post(`/api/workspaces/${encodeURIComponent(this.selectedWorkspaceId)}/devices`, {
+        deviceId: this.selectedWorkspaceDeviceId,
+        actorUserId: this.currentUserId || selected?.owner || 'user-000001',
+        alias: selected?.alias ?? '',
+        enabled: true,
+      });
+      await this.loadWorkspaceDevices(this.selectedWorkspaceId);
+      this.closeWorkspaceDeviceDialog();
+      return;
+    } catch {
+      // Local preview mode updates the in-memory relationship below.
     }
     const nextIds = [...currentIds, this.selectedWorkspaceDeviceId];
     this.workspaceDeviceIdsByWorkspace[this.selectedWorkspaceId] = nextIds;
@@ -1013,24 +1090,45 @@ export class AppComponent implements OnInit {
     this.showZoneDialog = false;
   }
 
-  saveZoneDialog(): void {
+  async saveZoneDialog(): Promise<void> {
     const workspace = this.selectedWorkspace;
     const zone = this.normalizePrivateZone(this.zoneName);
     if (this.zoneDialogMode === 'edit' && this.editingZone) {
-      this.editingZone.zone = zone;
-      this.editingZone.recordType = this.zoneRecordType;
-      this.editingZone.value = this.zoneValue;
+      try {
+        const updated = await this.api.patch<ApiDNSZone>(`/api/workspaces/${encodeURIComponent(workspace.workspaceId)}/dns/zones/${encodeURIComponent(this.editingZone.zoneId ?? this.editingZone.zone)}`, {
+          zoneName: zone,
+          exposeGlobal: this.editingZone.expose,
+        });
+        Object.assign(this.editingZone, this.mapDNSZone(updated));
+      } catch {
+        this.editingZone.zone = zone;
+        this.editingZone.recordType = this.zoneRecordType;
+        this.editingZone.value = this.zoneValue;
+      }
       this.closeZoneDialog();
       return;
     }
-    this.dnsZones = [
-      ...this.dnsZones,
-      { workspaceId: workspace.workspaceId, zone, recordType: this.zoneRecordType, value: this.zoneValue, expose: workspace.name !== '默认工作组', status: 'active' },
-    ];
+    try {
+      const created = await this.api.post<ApiDNSZone>(`/api/workspaces/${encodeURIComponent(workspace.workspaceId)}/dns/zones`, {
+        zoneName: zone,
+        exposeGlobal: workspace.name !== '默认网络',
+      });
+      this.dnsZones = [...this.dnsZones, this.mapDNSZone(created)];
+    } catch {
+      this.dnsZones = [
+        ...this.dnsZones,
+        { workspaceId: workspace.workspaceId, zone, recordType: this.zoneRecordType, value: this.zoneValue, expose: workspace.name !== '默认网络', status: 'active' },
+      ];
+    }
     this.closeZoneDialog();
   }
 
-  removeZone(zone: DNSZoneRow): void {
+  async removeZone(zone: DNSZoneRow): Promise<void> {
+    try {
+      await this.api.delete(`/api/workspaces/${encodeURIComponent(zone.workspaceId)}/dns/zones/${encodeURIComponent(zone.zoneId ?? zone.zone)}`);
+    } catch {
+      // Local preview mode removes below.
+    }
     this.dnsZones = this.dnsZones.filter((item) => item !== zone);
   }
 
@@ -1064,34 +1162,83 @@ export class AppComponent implements OnInit {
     return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${this.recordPort}`;
   }
 
+  dnsRecordValue(record: DNSRow): string {
+    const device = this.devices.find((item) => item.deviceId === record.deviceId);
+    if (!device) {
+      return this.displayUserText(record.value || '-');
+    }
+    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${record.port || '-'}`;
+  }
+
+  publicMappingDeviceLabel(mapping: PublicMappingRow): string {
+    const device = this.devices.find((item) => item.deviceId === mapping.deviceId);
+    if (!device) {
+      return mapping.deviceId || '-';
+    }
+    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId}`;
+  }
+
+  syncRecordValue(): void {
+    this.recordValue = this.buildRecordValue();
+  }
+
   closeRecordDialog(): void {
     this.showRecordDialog = false;
   }
 
-  saveRecordDialog(): void {
+  async saveRecordDialog(): Promise<void> {
     const workspace = this.selectedWorkspace;
     const name = slug(this.recordName);
-    const zone = this.currentDNSZones[0]?.zone ?? `${workspace.code}.internal`;
+    const zoneRow = this.currentDNSZones.find((item) => item.zone === this.selectedZoneId) ?? this.currentDNSZones[0];
+    const zone = zoneRow?.zone ?? `${workspace.code}.internal`;
     const fqdn = `${name}.${zone}`;
     this.recordValue = this.buildRecordValue();
     if (this.recordDialogMode === 'edit' && this.editingRecord) {
-      this.editingRecord.name = name;
-      this.editingRecord.fqdn = fqdn;
-      this.editingRecord.recordType = this.recordType;
-      this.editingRecord.value = this.recordValue;
-      this.editingRecord.deviceId = this.recordDeviceId;
-      this.editingRecord.port = this.recordPort;
+      try {
+        const updated = await this.api.patch<ApiDNSRecord>(`/api/workspaces/${encodeURIComponent(workspace.workspaceId)}/dns/records/${encodeURIComponent(this.editingRecord.recordId ?? this.editingRecord.fqdn)}`, {
+          name,
+          recordType: this.recordType,
+          targetDeviceId: this.recordDeviceId,
+          port: this.recordPort,
+          ttl: 60,
+        });
+        Object.assign(this.editingRecord, this.mapDNSRecord(updated));
+      } catch {
+        this.editingRecord.name = name;
+        this.editingRecord.fqdn = fqdn;
+        this.editingRecord.recordType = this.recordType;
+        this.editingRecord.value = this.recordValue;
+        this.editingRecord.deviceId = this.recordDeviceId;
+        this.editingRecord.port = this.recordPort;
+      }
       this.closeRecordDialog();
       return;
     }
-    this.dnsRecords = [
-      ...this.dnsRecords,
-      { workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: this.recordDeviceId, port: this.recordPort, expose: false },
-    ];
+    try {
+      const created = await this.api.post<ApiDNSRecord>(`/api/workspaces/${encodeURIComponent(workspace.workspaceId)}/dns/records`, {
+        zoneId: zoneRow?.zoneId ?? zoneRow?.zone ?? '',
+        name,
+        recordType: this.recordType,
+        targetDeviceId: this.recordDeviceId,
+        port: this.recordPort,
+        ttl: 60,
+      });
+      this.dnsRecords = [...this.dnsRecords, this.mapDNSRecord(created)];
+    } catch {
+      this.dnsRecords = [
+        ...this.dnsRecords,
+        { workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: this.recordDeviceId, port: this.recordPort, expose: false },
+      ];
+    }
     this.closeRecordDialog();
   }
 
-  removeDomainRecord(record: DNSRow): void {
+  async removeDomainRecord(record: DNSRow): Promise<void> {
+    try {
+      await this.api.delete(`/api/workspaces/${encodeURIComponent(record.workspaceId)}/dns/records/${encodeURIComponent(record.recordId ?? record.fqdn)}`);
+    } catch {
+      // Local preview mode removes below.
+    }
     this.dnsRecords = this.dnsRecords.filter((item) => item !== record);
   }
 
@@ -1106,9 +1253,9 @@ export class AppComponent implements OnInit {
   }
 
   openPublicMappingDialog(): void {
-    const record = this.currentDNSRecords[0];
-    this.publicAlias = record?.name ?? 'api';
-    this.publicSourceRecord = record?.name ?? '';
+    const device = this.currentUserDevices[0];
+    this.publicAlias = 'api';
+    this.publicSourceRecord = device?.deviceId ?? '';
     this.publicProtocol = 'HTTP';
     this.publicExternalPort = '443';
     this.publicAccessMode = 'public';
@@ -1120,7 +1267,7 @@ export class AppComponent implements OnInit {
 
   openEditPublicMappingDialog(mapping: PublicMappingRow): void {
     this.publicAlias = mapping.alias;
-    this.publicSourceRecord = mapping.sourceRecord;
+    this.publicSourceRecord = mapping.deviceId || mapping.sourceRecord;
     this.publicProtocol = mapping.protocol;
     this.publicExternalPort = mapping.externalPort;
     this.publicAccessMode = mapping.accessMode;
@@ -1134,32 +1281,77 @@ export class AppComponent implements OnInit {
     this.showPublicMappingDialog = false;
   }
 
-  savePublicMappingDialog(): void {
-    const record = this.currentDNSRecords.find((item) => item.name === this.publicSourceRecord) ?? this.currentDNSRecords[0];
+  async savePublicMappingDialog(): Promise<void> {
+    const device = this.currentUserDevices.find((item) => item.deviceId === this.publicSourceRecord) ?? this.currentUserDevices[0];
     const alias = slug(this.publicAlias);
     const publicDomain = `${alias}.${this.selectedWorkspace.code}.${this.userSlug}.pub.slan.com`;
     if (this.publicMappingDialogMode === 'edit' && this.editingPublicMapping) {
-      this.editingPublicMapping.alias = alias;
-      this.editingPublicMapping.publicDomain = publicDomain;
-      this.editingPublicMapping.sourceRecord = record?.name ?? '';
-      this.editingPublicMapping.deviceId = record?.deviceId ?? '';
-      this.editingPublicMapping.protocol = this.publicProtocol;
-      this.editingPublicMapping.port = record?.port ?? '';
-      this.editingPublicMapping.externalPort = this.publicExternalPort;
-      this.editingPublicMapping.accessMode = this.publicAccessMode;
-      this.editingPublicMapping.tlsMode = this.publicTlsMode;
+      try {
+        const updated = await this.api.patch<ApiPublicMapping>(`/api/workspaces/${encodeURIComponent(this.selectedWorkspaceId)}/public-mappings/${encodeURIComponent(this.editingPublicMapping.mappingId ?? this.editingPublicMapping.publicDomain)}`, {
+          alias,
+          publicDomain,
+          sourceRecord: device?.alias || device?.deviceId || '',
+          deviceId: device?.deviceId ?? '',
+          protocol: this.publicProtocol,
+          port: this.publicExternalPort,
+          externalPort: this.publicExternalPort,
+          status: this.editingPublicMapping.status,
+        });
+        Object.assign(this.editingPublicMapping, this.mapPublicMapping(updated));
+      } catch {
+        this.editingPublicMapping.alias = alias;
+        this.editingPublicMapping.publicDomain = publicDomain;
+        this.editingPublicMapping.sourceRecord = device?.alias || device?.deviceId || '';
+        this.editingPublicMapping.deviceId = device?.deviceId ?? '';
+        this.editingPublicMapping.protocol = this.publicProtocol;
+        this.editingPublicMapping.port = this.publicExternalPort;
+        this.editingPublicMapping.externalPort = this.publicExternalPort;
+        this.editingPublicMapping.accessMode = this.publicAccessMode;
+        this.editingPublicMapping.tlsMode = this.publicTlsMode;
+      }
       this.closePublicMappingDialog();
       return;
     }
-    this.publicMappings = [
-      ...this.publicMappings,
-      { workspaceId: this.selectedWorkspaceId, alias, publicDomain, sourceRecord: record?.name ?? '', deviceId: record?.deviceId ?? '', protocol: this.publicProtocol, port: record?.port ?? '', externalPort: this.publicExternalPort, accessMode: this.publicAccessMode, tlsMode: this.publicTlsMode, status: 'enabled' },
-    ];
+    try {
+      const created = await this.api.post<ApiPublicMapping>(`/api/workspaces/${encodeURIComponent(this.selectedWorkspaceId)}/public-mappings`, {
+        alias,
+        publicDomain,
+        sourceRecord: device?.alias || device?.deviceId || '',
+        deviceId: device?.deviceId ?? '',
+        protocol: this.publicProtocol,
+        port: this.publicExternalPort,
+        externalPort: this.publicExternalPort,
+        status: 'enabled',
+      });
+      this.publicMappings = [...this.publicMappings, this.mapPublicMapping(created)];
+    } catch {
+      this.publicMappings = [
+        ...this.publicMappings,
+        { workspaceId: this.selectedWorkspaceId, alias, publicDomain, sourceRecord: device?.alias || device?.deviceId || '', deviceId: device?.deviceId ?? '', protocol: this.publicProtocol, port: this.publicExternalPort, externalPort: this.publicExternalPort, accessMode: this.publicAccessMode, tlsMode: this.publicTlsMode, status: 'enabled' },
+      ];
+    }
     this.closePublicMappingDialog();
   }
 
-  removePublicMapping(mapping: PublicMappingRow): void {
+  async removePublicMapping(mapping: PublicMappingRow): Promise<void> {
+    try {
+      await this.api.delete(`/api/workspaces/${encodeURIComponent(mapping.workspaceId)}/public-mappings/${encodeURIComponent(mapping.mappingId ?? mapping.publicDomain)}`);
+    } catch {
+      // Local preview mode removes below.
+    }
     this.publicMappings = this.publicMappings.filter((item) => item !== mapping);
+  }
+
+  async removeSecurityGroup(group: SecurityGroupRow): Promise<void> {
+    try {
+      await this.api.delete(`/api/workspaces/${encodeURIComponent(group.workspaceId)}/security-groups/${encodeURIComponent(group.securityGroupId)}`);
+    } catch {
+      // Local preview mode removes below.
+    }
+    this.securityGroups = this.securityGroups.filter((item) => item.securityGroupId !== group.securityGroupId);
+    if (this.selectedSecurityGroupId === group.securityGroupId) {
+      this.selectedSecurityGroupId = this.currentSecurityGroups[0]?.securityGroupId ?? '';
+    }
   }
 
   openRuleDialog(direction: string): void {
@@ -1207,7 +1399,7 @@ export class AppComponent implements OnInit {
     const prefix = this.subjectTypeLabel(rule.subjectType);
     if (rule.subjectType === 'device') {
       const device = this.devices.find((item) => item.deviceId === rule.subjectValue);
-      return `${prefix}:${device?.alias ?? rule.subjectValue}`;
+      return `${prefix}:${device ? `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${device.deviceId}` : rule.subjectValue}`;
     }
     if (rule.subjectType === 'workspace') {
       const workspace = rule.subjectValue === 'self' ? this.selectedWorkspace : this.workspaces.find((item) => item.workspaceId === rule.subjectValue);
@@ -1217,7 +1409,7 @@ export class AppComponent implements OnInit {
   }
 
   subjectTypeLabel(type: RuleSubjectType): string {
-    return ({ device: '设备', user: '用户', workspace: '工作组', cidr: 'CIDR', domain: '域名', all: '全部' } as Record<RuleSubjectType, string>)[type];
+    return ({ device: '设备', user: '用户', workspace: '网络', cidr: 'CIDR', domain: '域名', all: '全部' } as Record<RuleSubjectType, string>)[type];
   }
 
   onRuleSubjectTypeChanged(): void {
@@ -1234,26 +1426,63 @@ export class AppComponent implements OnInit {
     this.showEgressRuleDialog = false;
   }
 
-  saveRuleDialog(): void {
+  async saveRuleDialog(): Promise<void> {
+    const portFrom = this.rulePort === 'all' ? 0 : Number.parseInt(this.rulePort.split(',')[0], 10) || 0;
+    const portTo = this.rulePort === 'all' ? 0 : Number.parseInt(this.rulePort.split(',').at(-1) ?? this.rulePort, 10) || portFrom;
     if (this.ruleDialogMode === 'edit' && this.editingRule) {
-      this.editingRule.direction = this.ruleDirection;
-      this.editingRule.priority = this.rulePriority;
-      this.editingRule.action = this.ruleAction;
-      this.editingRule.protocol = this.ruleProtocol;
-      this.editingRule.port = this.rulePort;
-      this.editingRule.subjectType = this.ruleSubjectType;
-      this.editingRule.subjectValue = this.ruleSubjectValue;
+      try {
+        const updated = await this.api.patch<ApiSecurityRule>(`/api/security-groups/rules/${encodeURIComponent(this.editingRule.ruleId ?? '')}`, {
+          direction: this.ruleDirection,
+          priority: this.rulePriority,
+          action: this.ruleAction,
+          protocol: this.ruleProtocol,
+          portFrom,
+          portTo,
+          peerType: this.ruleSubjectType,
+          peerValue: this.ruleSubjectValue,
+          enabled: true,
+        });
+        Object.assign(this.editingRule, this.mapSecurityRule(updated));
+      } catch {
+        this.editingRule.direction = this.ruleDirection;
+        this.editingRule.priority = this.rulePriority;
+        this.editingRule.action = this.ruleAction;
+        this.editingRule.protocol = this.ruleProtocol;
+        this.editingRule.port = this.rulePort;
+        this.editingRule.subjectType = this.ruleSubjectType;
+        this.editingRule.subjectValue = this.ruleSubjectValue;
+      }
       this.closeRuleDialog();
       return;
     }
-    this.securityRules = [
-      ...this.securityRules,
-      { direction: this.ruleDirection, priority: this.rulePriority, action: this.ruleAction, protocol: this.ruleProtocol, port: this.rulePort, subjectType: this.ruleSubjectType, subjectValue: this.ruleSubjectValue },
-    ];
+    try {
+      const created = await this.api.post<ApiSecurityRule>(`/api/security-groups/${encodeURIComponent(this.selectedSecurityGroupId)}/rules`, {
+        direction: this.ruleDirection,
+        priority: this.rulePriority,
+        action: this.ruleAction,
+        protocol: this.ruleProtocol,
+        portFrom,
+        portTo,
+        peerType: this.ruleSubjectType,
+        peerValue: this.ruleSubjectValue,
+        enabled: true,
+      });
+      this.securityRules = [...this.securityRules, this.mapSecurityRule(created)];
+    } catch {
+      this.securityRules = [
+        ...this.securityRules,
+        { direction: this.ruleDirection, priority: this.rulePriority, action: this.ruleAction, protocol: this.ruleProtocol, port: this.rulePort, subjectType: this.ruleSubjectType, subjectValue: this.ruleSubjectValue },
+      ];
+    }
     this.closeRuleDialog();
   }
 
-  removeSecurityRule(rule: SecurityRuleRow): void {
+  async removeSecurityRule(rule: SecurityRuleRow): Promise<void> {
+    try {
+      await this.api.delete(`/api/security-groups/rules/${encodeURIComponent(rule.ruleId ?? '')}`);
+    } catch {
+      // Local preview mode removes below.
+    }
     this.securityRules = this.securityRules.filter((item) => item !== rule);
   }
 
@@ -1283,13 +1512,6 @@ export class AppComponent implements OnInit {
 
   copyInviteCode(invite: WorkspaceDeviceInviteRow): void {
     void navigator.clipboard?.writeText(invite.inviteCode);
-  }
-
-  revokeInvite(invite: WorkspaceDeviceInviteRow): void {
-    if (this.effectiveInviteStatus(invite) !== 'pending') {
-      return;
-    }
-    this.workspaceDeviceInvites = this.workspaceDeviceInvites.map((item) => item.inviteCode === invite.inviteCode ? { ...item, status: 'revoked' } : item);
   }
 
   formatTime(value?: number): string {
@@ -1337,7 +1559,7 @@ export class AppComponent implements OnInit {
   private async loadDashboard(userId = ''): Promise<void> {
     try {
       const [devices, workspaces] = await Promise.all([
-        this.api.get<{ items: ApiDevice[] }>(`/api/devices${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`),
+        this.api.get<{ items: ApiDevice[] }>(`/api/devices/visible${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`),
         this.api.get<{ items: ApiWorkspace[] }>(`/api/workspaces${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`),
       ]);
       this.devices = devices.items.map((device) => ({
@@ -1359,19 +1581,117 @@ export class AppComponent implements OnInit {
         devices: 0,
         zone: `${workspace.code ?? slug(workspace.name)}.${workspace.workspaceId}.${userId || 'user'}.sub.slan.com`,
       }));
+      await Promise.all(this.workspaces.map((workspace) => this.loadWorkspaceDevices(workspace.workspaceId)));
     } catch {
       // The checked-in UI remains previewable without a running API.
     }
   }
 
-  private async loadWorkspaceDeviceInvites(workspaceId: string): Promise<void> {
+  private async loadWorkspaceDevices(workspaceId: string): Promise<void> {
     try {
-      const response = await this.api.get<{ items: WorkspaceDeviceInviteRow[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/device-invites`);
-      const otherWorkspaceInvites = this.workspaceDeviceInvites.filter((invite) => invite.workspaceId !== workspaceId);
-      this.workspaceDeviceInvites = [...response.items, ...otherWorkspaceInvites];
+      const response = await this.api.get<{ items: ApiWorkspaceDevice[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/devices`);
+      const deviceIds = response.items.map((item) => item.deviceId);
+      this.workspaceDeviceIdsByWorkspace = { ...this.workspaceDeviceIdsByWorkspace, [workspaceId]: deviceIds };
+      this.workspaceDeviceJoinMethods = {
+        ...this.workspaceDeviceJoinMethods,
+        ...Object.fromEntries(response.items.map((item) => [`${workspaceId}|${item.deviceId}`, '手动添加'])),
+      };
+      this.workspaces = this.workspaces.map((workspace) => workspace.workspaceId === workspaceId ? { ...workspace, devices: deviceIds.length } : workspace);
+      if (this.selectedWorkspaceId === workspaceId) {
+        const selected = this.workspaces.find((workspace) => workspace.workspaceId === workspaceId);
+        if (selected) {
+          this.selectedWorkspaceId = selected.workspaceId;
+        }
+      }
     } catch {
       // Preview seed data remains available without the API.
     }
+  }
+
+  private async loadWorkspaceResources(workspaceId: string): Promise<void> {
+    await Promise.all([
+      this.loadDNSZones(workspaceId),
+      this.loadDNSRecords(workspaceId),
+      this.loadPublicMappings(workspaceId),
+      this.loadSecurityResources(workspaceId),
+    ]);
+  }
+
+  private async loadDNSZones(workspaceId: string): Promise<void> {
+    try {
+      const response = await this.api.get<{ items: ApiDNSZone[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/dns/zones`);
+      this.dnsZones = [...this.dnsZones.filter((zone) => zone.workspaceId !== workspaceId), ...response.items.map((zone) => this.mapDNSZone(zone))];
+    } catch {
+      // Preview seed data remains available without the API.
+    }
+  }
+
+  private async loadDNSRecords(workspaceId: string): Promise<void> {
+    try {
+      const response = await this.api.get<{ items: ApiDNSRecord[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/dns/records`);
+      this.dnsRecords = [...this.dnsRecords.filter((record) => record.workspaceId !== workspaceId), ...response.items.map((record) => this.mapDNSRecord(record))];
+    } catch {
+      // Preview seed data remains available without the API.
+    }
+  }
+
+  private async loadPublicMappings(workspaceId: string): Promise<void> {
+    try {
+      const response = await this.api.get<{ items: ApiPublicMapping[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/public-mappings`);
+      this.publicMappings = [...this.publicMappings.filter((mapping) => mapping.workspaceId !== workspaceId), ...response.items.map((mapping) => this.mapPublicMapping(mapping))];
+    } catch {
+      // Preview seed data remains available without the API.
+    }
+  }
+
+  private async loadSecurityResources(workspaceId: string): Promise<void> {
+    try {
+      const groups = await this.api.get<{ items: ApiSecurityGroup[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/security-groups`);
+      this.securityGroups = [
+        ...this.securityGroups.filter((group) => group.workspaceId !== workspaceId),
+        ...groups.items.map((group) => this.mapSecurityGroup(group)),
+      ];
+      const group = groups.items[0];
+      if (!group) {
+        return;
+      }
+      this.selectedSecurityGroupId = group.securityGroupId;
+      await this.loadSecurityRules(group.securityGroupId);
+    } catch {
+      // Preview seed data remains available without the API.
+    }
+  }
+
+  private async loadSecurityRules(securityGroupId: string): Promise<void> {
+    try {
+      const rules = await this.api.get<{ items: ApiSecurityRule[] }>(`/api/security-groups/${encodeURIComponent(securityGroupId)}/rules`);
+      this.securityRules = rules.items.map((rule) => this.mapSecurityRule(rule));
+    } catch {
+      // Preview seed data remains available without the API.
+    }
+  }
+
+  private mapDNSZone(zone: ApiDNSZone): DNSZoneRow {
+    return { zoneId: zone.zoneId, workspaceId: zone.workspaceId, zone: zone.zoneName, recordType: 'A', value: '', expose: zone.exposeGlobal, status: zone.status };
+  }
+
+  private mapDNSRecord(record: ApiDNSRecord): DNSRow {
+    const port = record.port ?? '';
+    const value = record.targetDeviceId ? this.dnsRecordValue({ workspaceId: record.workspaceId, name: record.name, fqdn: record.fqdn, recordType: record.recordType, value: '', deviceId: record.targetDeviceId, port, expose: false }) : (record.targetIp || record.cname || '');
+    return { recordId: record.recordId, zoneId: record.zoneId, workspaceId: record.workspaceId, name: record.name, fqdn: record.fqdn, recordType: record.recordType, value, deviceId: record.targetDeviceId ?? '', port, expose: false };
+  }
+
+  private mapPublicMapping(mapping: ApiPublicMapping): PublicMappingRow {
+    return { mappingId: mapping.mappingId, workspaceId: mapping.workspaceId, alias: mapping.alias, publicDomain: mapping.publicDomain, sourceRecord: mapping.sourceRecord, deviceId: mapping.deviceId, protocol: mapping.protocol, port: mapping.port, externalPort: mapping.externalPort, accessMode: 'public', tlsMode: 'off', status: mapping.status };
+  }
+
+  private mapSecurityGroup(group: ApiSecurityGroup): SecurityGroupRow {
+    return { securityGroupId: group.securityGroupId, workspaceId: group.workspaceId, name: group.name, defaultPolicy: group.defaultPolicy, status: group.status };
+  }
+
+  private mapSecurityRule(rule: ApiSecurityRule): SecurityRuleRow {
+    const port = rule.portFrom === 0 && rule.portTo === 0 ? 'all' : rule.portFrom === rule.portTo ? String(rule.portFrom) : `${rule.portFrom},${rule.portTo}`;
+    return { ruleId: rule.ruleId, direction: rule.direction, priority: rule.priority, action: rule.action, protocol: rule.protocol, port, subjectType: rule.peerType, subjectValue: rule.peerValue };
   }
 
   private upsertWorkspaceDeviceInvite(invite: WorkspaceDeviceInviteRow): void {

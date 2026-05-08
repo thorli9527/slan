@@ -108,13 +108,12 @@ code { color: #0f62fe; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
 .form { display: grid; gap: 12px; }
 .device-query-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 12px; }
 .record-value-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 12px; align-items: end; }
-.invite-layout { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 18px; align-items: center; }
-.qr-code { width: 132px; height: 132px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding: 10px; border: 1px solid #d9dce3; border-radius: 4px; background: #fff; box-sizing: border-box; }
-.qr-code span { border-radius: 2px; background: #eef2f7; }
-.qr-code span.dark { background: #111827; }
+.invite-layout { display: grid; gap: 16px; justify-items: center; }
+.qr-code { width: 220px; height: 220px; display: grid; place-items: center; padding: 12px; border: 1px solid #d9dce3; border-radius: 4px; background: #fff; box-sizing: border-box; }
+.qr-code img { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
 .invite-code { display: grid; gap: 8px; }
 .invite-code span { color: #7b8494; font-size: 13px; font-weight: 700; }
-.invite-code strong { display: inline-flex; width: fit-content; padding: 10px 12px; border: 1px solid #d9dce3; border-radius: 4px; background: #f7f9fc; color: #0f62fe; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 18px; letter-spacing: 0; }
+.invite-code strong { display: block; max-width: 100%; padding: 10px 12px; border: 1px solid #d9dce3; border-radius: 4px; background: #f7f9fc; color: #0f62fe; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 16px; line-height: 1.6; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; word-break: break-all; text-align: center; box-sizing: border-box; }
 .invite-target { display: grid; gap: 4px; padding: 12px; border: 1px solid #d9dce3; border-radius: 4px; background: #f7f9fc; }
 .invite-target span, .invite-target small { color: #6b7280; font-size: 12px; font-weight: 700; }
 .invite-target strong { color: #111827; font-size: 16px; }

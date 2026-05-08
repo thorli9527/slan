@@ -35,4 +35,12 @@ export class AppApiClient {
     }
     return response.json() as Promise<T>;
   }
+
+  async delete<T>(path: string): Promise<T> {
+    const response = await fetch(`${API_BASE}${path}`, { method: 'DELETE' });
+    if (!response.ok) {
+      throw new Error(`DELETE ${path} ${response.status}`);
+    }
+    return response.json() as Promise<T>;
+  }
 }

@@ -17,7 +17,7 @@ import {
 export const ROOT_DOMAIN = 'vlan.com';
 
 export const WORKSPACE_PRESETS: WorkspacePreset[] = [
-  { name: '默认工作组', code: 'default' },
+  { name: '默认网络', code: 'default' },
   { name: '开发组', code: 'dev' },
   { name: '工作部', code: 'eng' },
   { name: '运营部', code: 'ops' },
@@ -39,14 +39,14 @@ export const NAV_GROUPS: NavGroup[] = [
     title: '账号与设备',
     items: [
       { id: 'overview', label: '控制台概览', desc: '账号资源与入口' },
-      { id: 'devices', label: '我的设备', desc: '设备、系统、别名' },
+      { id: 'devices', label: '设备', desc: '我能管理或访问的设备' },
       { id: 'userAliases', label: '用户别名', desc: '邮箱显示别名' },
     ],
   },
   {
-    title: '工作组',
+    title: '网络',
     items: [
-      { id: 'workspaces', label: '工作组管理', desc: '设备、域名、安全组' },
+      { id: 'workspaces', label: '网络管理', desc: '设备和访问策略' },
     ],
   },
 ];
@@ -63,7 +63,7 @@ export const INITIAL_WORKSPACE_DEVICE_IDS: Record<string, string[]> = {
 };
 
 export const INITIAL_WORKSPACES: WorkspaceRow[] = [
-  { workspaceId: 'default-user-000001', name: '默认工作组', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: 'default.default-user-000001.user-000001.sub.slan.com' },
+  { workspaceId: 'default-user-000001', name: '默认网络', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: 'default.default-user-000001.user-000001.sub.slan.com' },
   { workspaceId: 'workspace-000001', name: '开发组', code: 'dev', template: 'dev', status: 'enabled', members: 2, devices: 1, zone: 'dev.workspace-000001.user-000001.sub.slan.com' },
 ];
 

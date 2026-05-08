@@ -65,11 +65,11 @@
       </div>
     </header>
 
-    <section class="summary-grid">
+    <section class="summary-grid" *ngIf="active !== 'devices'">
       <article><span>设备</span><strong>{{ currentUserDevices.length }}</strong><small>{{ enabledDeviceCount() }} 台启用</small></article>
       <article><span>短码域名</span><strong class="domain-text">{{ userShortSubdomain }}</strong><small>用户别名子域名</small></article>
-      <article><span>工作组</span><strong>{{ workspaces.length }}</strong><small>默认工作组自动创建</small></article>
-      <article><span>域名</span><strong>{{ dnsRecords.length }}</strong><small>工作组内分发</small></article>
+      <article><span>网络</span><strong>{{ workspaces.length }}</strong><small>默认网络自动创建</small></article>
+      <article><span>域名</span><strong>{{ dnsRecords.length }}</strong><small>网络内分发</small></article>
     </section>
 
     <section class="page" *ngIf="active === 'overview'">
@@ -77,7 +77,7 @@
         <div class="panel-title">
           <div>
             <h2>我的短码子域名</h2>
-            <p>注册用户自动分配短码别名，可用于公有域映射和用户级域名识别。</p>
+            <p>注册用户自动分配短码别名，可用于公网访问和用户级域名识别。</p>
           </div>
         </div>
         <div class="kv single">
@@ -107,14 +107,18 @@
           </tbody>
         </table>
       </article>
+
     </section>
 
     <section class="page" *ngIf="active === 'devices'">
       <article class="panel">
         <div class="panel-title">
           <div>
-            <h2>我的设备与接入设备</h2>
-            <p>展示当前用户可见的设备；只有设备 owner 可以确认邀请码接入。</p>
+            <h2>设备</h2>
+            <p>我能管理或访问的设备；只有设备 owner 可以确认邀请码接入。</p>
+          </div>
+          <div class="table-actions">
+            <button class="ghost small" type="button" (click)="openInviteDialog()">生成接入码</button>
           </div>
         </div>
         <table>
@@ -204,10 +208,10 @@
       <article class="panel wide-panel" *ngIf="workspaceRouteMode === 'list'">
         <div class="panel-title">
           <div>
-            <h2>工作组列表</h2>
-            <p>点击名称进入详情，地址同步为 /space/id；一对多关系从详情里维护。</p>
+            <h2>网络列表</h2>
+            <p>网络是一组设备和访问策略；点击名称进入详情，地址同步为 /space/id。</p>
           </div>
-          <button class="primary" type="button" (click)="openWorkspaceDialog()">新增工作组</button>
+          <button class="primary" type="button" (click)="openWorkspaceDialog()">新增网络</button>
         </div>
         <table>
           <thead><tr><th>名称</th><th>编码</th><th>设备</th><th>状态</th></tr></thead>
@@ -275,7 +279,7 @@
       <article class="panel relation-panel" *ngIf="workspaceRouteMode === 'detail'">
         <div class="panel-title">
           <div>
-            <h2>{{ selectedWorkspace.name }} / 工作组详情</h2>
+            <h2>{{ selectedWorkspace.name }} / 网络详情</h2>
             <div class="workspace-meta">
               <span>编码：<code>{{ selectedWorkspace.code }}</code></span>
               <span>状态：{{ selectedWorkspace.status === 'enabled' ? '启用' : '停用' }}</span>
@@ -284,88 +288,17 @@
         </div>
 
         <div class="panel-tabs">
-          <button type="button" class="back-tab" *ngIf="workspacePanel !== 'devices'" (click)="setWorkspacePanel('devices')">返回</button>
-          <button type="button" [class.active]="workspacePanel === 'zones' || workspacePanel === 'records'" (click)="setWorkspacePanel('zones')">私有域</button>
-          <button type="button" [class.active]="workspacePanel === 'publicMappings'" (click)="setWorkspacePanel('publicMappings')">公有域映射</button>
+          <button type="button" class="back-tab" *ngIf="workspacePanel === 'records'" (click)="setWorkspacePanel('zones')">返回</button>
+          <button type="button" class="back-tab" *ngIf="workspacePanel === 'securityRules'" (click)="setWorkspacePanel('securityGroups')">返回</button>
+          <button type="button" [class.active]="workspacePanel === 'zones' || workspacePanel === 'records'" (click)="setWorkspacePanel('zones')">内网域名</button>
+          <button type="button" [class.active]="workspacePanel === 'publicMappings'" (click)="setWorkspacePanel('publicMappings')">公网访问</button>
           <button type="button" [class.active]="workspacePanel === 'securityGroups' || workspacePanel === 'securityRules'" (click)="setWorkspacePanel('securityGroups')">安全组</button>
         </div>
 
         <div class="detail-grid one-column">
-          <section class="detail-card" *ngIf="workspacePanel === 'devices'">
-            <div class="section-title">
-              <h3>设备管理</h3>
-              <div class="table-actions">
-                <button class="ghost small" type="button" (click)="openWorkspaceDeviceDialog()">添加设备</button>
-                <button class="ghost small" type="button" (click)="openInviteDialog()">邀请设备接入</button>
-              </div>
-            </div>
-            <p>工作组设备是一对多关系；owner/admin 只能手动添加自己的设备，别人的设备需要邀请码确认。</p>
-            <table class="compact-table">
-              <thead><tr><th>设备</th><th>归属</th><th>接入方式</th><th>别名</th><th>IP</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody>
-                <tr *ngFor="let device of workspaceDevices">
-                  <td>{{ device.deviceId }}</td>
-                  <td>{{ workspaceDeviceOwnerLabel(device) }}</td>
-                  <td>{{ workspaceDeviceJoinMethod(selectedWorkspaceId, device.deviceId) }}</td>
-                  <td class="tag-cell-wrapper">
-                    <div class="alias-tag-cell">
-                      <span>{{ device.alias }}</span>
-                      <button class="tag-icon-button" type="button" title="修改别名" (click)="openWorkspaceDeviceAliasDialog(device)">
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
-                          <circle cx="8.5" cy="8.5" r="1.4"></circle>
-                        </svg>
-                      </button>
-                      <div class="tag-popover" *ngIf="showWorkspaceDeviceAliasDialog && editingWorkspaceDevice?.deviceId === device.deviceId">
-                        <div class="tag-popover-arrow"></div>
-                        <div class="tag-editor-row">
-                          <span>别名</span>
-                          <input [(ngModel)]="workspaceDeviceAliasValue" />
-                        </div>
-                        <div class="tag-popover-actions">
-                          <button class="text-link" type="button" (click)="saveWorkspaceDeviceAliasDialog()">保存</button>
-                          <button class="text-link muted" type="button" (click)="closeWorkspaceDeviceAliasDialog()">取消</button>
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td><code>{{ device.ip }}</code></td>
-                  <td><span class="status online">active</span></td>
-                  <td>
-                    <button class="link-danger" type="button" (click)="removeWorkspaceDevice(device)">删除</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-
-            <div class="subsection-title">
-              <h3>邀请记录</h3>
-            </div>
-            <table class="compact-table">
-              <thead><tr><th>邀请码</th><th>状态</th><th>过期时间</th><th>接入设备</th><th>接入用户</th><th>接入时间</th><th>操作</th></tr></thead>
-              <tbody>
-                <tr *ngFor="let invite of currentWorkspaceDeviceInvites">
-                  <td><code>{{ invite.inviteCode }}</code></td>
-                  <td><span class="status" [class.online]="effectiveInviteStatus(invite) === 'accepted'">{{ inviteStatusLabel(effectiveInviteStatus(invite)) }}</span></td>
-                  <td>{{ formatTime(invite.expiresAt) }}</td>
-                  <td>{{ invite.acceptedDeviceId || '-' }}</td>
-                  <td>{{ invite.acceptedUserId ? userLabel(invite.acceptedUserId) : '-' }}</td>
-                  <td>{{ formatTime(invite.acceptedAt) }}</td>
-                  <td>
-                    <button class="ghost small" type="button" (click)="copyInviteCode(invite)">复制</button>
-                    <button class="link-danger" type="button" *ngIf="effectiveInviteStatus(invite) === 'pending'" (click)="revokeInvite(invite)">作废</button>
-                  </td>
-                </tr>
-                <tr *ngIf="!currentWorkspaceDeviceInvites.length">
-                  <td colspan="7">暂无邀请记录</td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
-
           <section class="detail-card" *ngIf="workspacePanel === 'zones'">
             <div class="section-title">
-              <h3>私有域 Zone</h3>
+              <h3>内网域名</h3>
               <button class="ghost small" type="button" (click)="openZoneDialog()">新增域</button>
             </div>
             <table class="compact-table">
@@ -408,14 +341,14 @@
               <h3>解析管理</h3>
               <button class="ghost small" type="button" (click)="openRecordDialog()">新增解析</button>
             </div>
-            <p>解析记录归属于当前私有域 Zone。</p>
+            <p>解析记录归属于当前内网域名。</p>
             <table class="compact-table">
               <thead><tr><th>名称</th><th>解析类型</th><th>值</th><th>操作</th></tr></thead>
               <tbody>
                 <tr *ngFor="let item of currentDNSRecords">
                   <td>{{ item.name }}</td>
                   <td>{{ item.recordType }}</td>
-                  <td>{{ displayUserText(item.value) }}</td>
+                  <td>{{ dnsRecordValue(item) }}</td>
                   <td class="table-actions">
                     <button class="ghost small" type="button" (click)="openEditRecordDialog(item)">修改</button>
                     <button class="link-danger" type="button" (click)="removeDomainRecord(item)">删除</button>
@@ -427,18 +360,18 @@
 
           <section class="detail-card" *ngIf="workspacePanel === 'publicMappings'">
             <div class="section-title">
-              <h3>公有域映射</h3>
+              <h3>公网访问</h3>
               <button class="ghost small" type="button" (click)="openPublicMappingDialog()">新增映射</button>
             </div>
-            <p>公有域格式：alias.workspaceCode.userSlug.pub.slan.com。</p>
+            <p>公网访问格式：alias.networkCode.userSlug.pub.slan.com。</p>
             <table class="compact-table">
-              <thead><tr><th>公有域名</th><th>协议</th><th>来源解析</th><th>设备</th><th>内部/外部端口</th><th>状态</th><th>操作</th></tr></thead>
+              <thead><tr><th>公网域名</th><th>协议</th><th>来源设备</th><th>设备</th><th>内部/外部端口</th><th>状态</th><th>操作</th></tr></thead>
               <tbody>
                 <tr *ngFor="let item of currentPublicMappings">
                   <td><code>{{ item.publicDomain }}</code></td>
                   <td>{{ item.protocol }}</td>
                   <td>{{ item.sourceRecord }}</td>
-                  <td>{{ item.deviceId }}</td>
+                  <td>{{ publicMappingDeviceLabel(item) }}</td>
                   <td>{{ item.port }} / {{ item.externalPort }}</td>
                   <td><span class="status online">{{ item.status }}</span></td>
                   <td class="table-actions">
@@ -455,13 +388,20 @@
               <h3>安全组管理</h3>
               <button class="ghost small" type="button">新增安全组</button>
             </div>
-            <p>默认安全组自动作用于当前工作组全部设备；后续再扩展设备级绑定。</p>
+            <p>默认安全组自动作用于当前网络全部设备；后续再扩展设备级绑定。</p>
             <table class="compact-table">
-              <thead><tr><th>安全组</th><th>默认策略</th></tr></thead>
+              <thead><tr><th>安全组</th><th>默认策略</th><th>状态</th><th>操作</th></tr></thead>
               <tbody>
-                <tr>
-                  <td><button class="text-link" type="button" (click)="openSecurityRules()">{{ selectedWorkspace.name }} 默认安全组</button></td>
-                  <td>deny</td>
+                <tr *ngFor="let group of currentSecurityGroups">
+                  <td><button class="text-link" type="button" (click)="openSecurityGroupRules(group)">{{ group.name }}</button></td>
+                  <td>{{ group.defaultPolicy }}</td>
+                  <td><span class="status online">{{ group.status }}</span></td>
+                  <td class="table-actions">
+                    <button class="link-danger" type="button" (click)="removeSecurityGroup(group)">删除</button>
+                  </td>
+                </tr>
+                <tr *ngIf="currentSecurityGroups.length === 0">
+                  <td colspan="4">暂无安全组</td>
                 </tr>
               </tbody>
             </table>
@@ -523,17 +463,17 @@
   <section class="modal">
     <header class="modal-header">
       <div>
-        <h2>邀请加入工作组</h2>
-        <p>使用二维码或邀请码加入 {{ selectedWorkspace.name }}。</p>
+        <h2>生成接入码</h2>
+        <p>把二维码或接入字符串发送给设备 owner，由对方确认接入。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeInviteDialog()">×</button>
     </header>
     <div class="invite-layout">
       <div class="qr-code" aria-label="邀请二维码">
-        <span *ngFor="let dark of inviteQrCells" [class.dark]="dark"></span>
+        <img *ngIf="inviteQrDataUrl" [src]="inviteQrDataUrl" alt="接入码二维码" />
       </div>
       <div class="invite-code">
-        <span>邀请码</span>
+        <span>接入字符串</span>
         <strong>{{ workspaceInviteCode }}</strong>
       </div>
     </div>
@@ -548,7 +488,7 @@
     <header class="modal-header">
       <div>
         <h2>添加设备</h2>
-        <p>可从我的设备列表中选择任意可见设备；同一个工作组内不能重复添加同一设备。</p>
+        <p>可从设备列表中选择任意可见设备；同一个网络内不能重复添加同一设备。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeWorkspaceDeviceDialog()">×</button>
     </header>
@@ -580,23 +520,13 @@
   <section class="modal">
     <header class="modal-header">
       <div>
-        <h2>设备接入</h2>
-        <p>设备 {{ deviceId }} 使用邀请码接入工作组。</p>
+        <h2>邀请确认</h2>
+        <p>输入邀请码后确认，当前设备将允许邀请方可见。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeJoinDialog()">×</button>
     </header>
     <div class="form">
       <label><span>邀请码</span><input [(ngModel)]="joinInviteCode" /></label>
-      <div class="invite-target" *ngIf="invitedWorkspace">
-        <span>被邀请的工作组</span>
-        <strong>{{ invitedWorkspace.name }}</strong>
-        <small>编码 {{ invitedWorkspace.code }} / 状态 {{ invitedWorkspace.status === 'enabled' ? '启用' : '停用' }}</small>
-      </div>
-      <div class="invite-target muted" *ngIf="joinInviteCode && !invitedWorkspace">
-        <span>被邀请的工作组</span>
-        <strong>未识别</strong>
-        <small>请确认邀请码是否正确</small>
-      </div>
       <div class="invite-target muted" *ngIf="joinInviteValidationMessage">
         <span>接入提示</span>
         <strong>{{ joinInviteValidationMessage }}</strong>
@@ -614,12 +544,12 @@
     <header class="modal-header">
       <div>
         <h2>使用关系</h2>
-        <p>设备 {{ selectedExposureDevice?.deviceId }} 当前被哪些工作组使用。</p>
+        <p>设备 {{ selectedExposureDevice?.deviceId }} 当前被哪些网络使用。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeDeviceExposureDialog()">×</button>
     </header>
     <table class="compact-table">
-      <thead><tr><th>工作组</th><th>编码</th><th>归属</th><th>接入方式</th></tr></thead>
+      <thead><tr><th>网络</th><th>编码</th><th>归属</th><th>接入方式</th></tr></thead>
       <tbody>
         <tr *ngFor="let item of selectedDeviceUsages">
           <td>{{ item.workspaceName }}</td>
@@ -643,7 +573,7 @@
     <header class="modal-header">
       <div>
         <h2>{{ zoneDialogMode === 'create' ? '新增域' : '修改域' }}</h2>
-        <p>配置当前工作组私有域 Zone 名称。</p>
+        <p>配置当前网络内网域名。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeZoneDialog()">×</button>
     </header>
@@ -662,7 +592,7 @@
     <header class="modal-header">
       <div>
         <h2>{{ recordDialogMode === 'create' ? '新增解析' : '修改解析' }}</h2>
-        <p>解析记录归属于当前私有域。</p>
+        <p>解析记录归属于当前内网域名。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeRecordDialog()">×</button>
     </header>
@@ -678,13 +608,13 @@
       <div class="record-value-row">
         <label>
           <span>值</span>
-          <select [(ngModel)]="recordDeviceId">
-            <option *ngFor="let device of workspaceDevices" [value]="device.deviceId">{{ userLabel(device.owner) }} / {{ device.alias }} / {{ device.deviceId }}</option>
+          <select [(ngModel)]="recordDeviceId" (ngModelChange)="syncRecordValue()">
+            <option *ngFor="let device of recordDeviceOptions" [value]="device.deviceId">{{ userLabel(device.owner) }} / {{ device.alias }} / {{ device.deviceId }}</option>
           </select>
         </label>
         <label>
           <span>端口</span>
-          <input [(ngModel)]="recordPort" />
+          <input [(ngModel)]="recordPort" (ngModelChange)="syncRecordValue()" />
         </label>
       </div>
     </div>
@@ -699,7 +629,7 @@
   <section class="modal">
     <header class="modal-header">
       <div>
-        <h2>{{ publicMappingDialogMode === 'create' ? '新增公有域映射' : '修改公有域映射' }}</h2>
+        <h2>{{ publicMappingDialogMode === 'create' ? '新增公网访问' : '修改公网访问' }}</h2>
         <p>{{ publicDomainPreview }}</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closePublicMappingDialog()">×</button>
@@ -707,9 +637,9 @@
     <div class="form">
       <label><span>别名</span><input [(ngModel)]="publicAlias" /></label>
       <label>
-        <span>来源解析</span>
+        <span>来源设备</span>
         <select [(ngModel)]="publicSourceRecord">
-          <option *ngFor="let record of currentDNSRecords" [value]="record.name">{{ record.name }} / {{ displayUserText(record.value) }}</option>
+          <option *ngFor="let device of currentUserDevices" [value]="device.deviceId">{{ userLabel(device.owner) }} / {{ device.alias || device.deviceId }} / {{ device.ip }}</option>
         </select>
       </label>
       <label>
@@ -734,7 +664,7 @@
     <header class="modal-header">
       <div>
         <h2>{{ ruleDialogMode === 'create' ? '新增入方向规则' : '修改入方向规则' }}</h2>
-        <p>入方向规则控制外部访问当前工作组设备。</p>
+        <p>入方向规则控制外部访问当前网络设备。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeRuleDialog()">×</button>
     </header>
@@ -769,11 +699,11 @@
           <option *ngFor="let item of ingressSubjectTypes" [value]="item.value">{{ item.label }}</option>
         </select>
       </label>
-      <label *ngIf="ruleSubjectType === 'cidr'">
+      <label *ngIf="ruleSubjectType === 'cidr' || ruleSubjectType === 'domain'">
         <span>来源对象</span>
         <input [(ngModel)]="ruleSubjectValue" />
       </label>
-      <label *ngIf="ruleSubjectType !== 'cidr'">
+      <label *ngIf="ruleSubjectType !== 'cidr' && ruleSubjectType !== 'domain'">
         <span>来源对象</span>
         <select [(ngModel)]="ruleSubjectValue">
           <option *ngFor="let item of ruleSubjectOptions" [value]="item.value">{{ item.label }}</option>
@@ -793,7 +723,7 @@
     <header class="modal-header">
       <div>
         <h2>{{ ruleDialogMode === 'create' ? '新增出方向规则' : '修改出方向规则' }}</h2>
-        <p>出方向规则控制当前工作组设备访问外部目标。</p>
+        <p>出方向规则控制当前网络设备访问外部目标。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeRuleDialog()">×</button>
     </header>
@@ -851,14 +781,14 @@
   <section class="modal">
     <header class="modal-header">
       <div>
-        <h2>{{ workspaceDialogMode === 'create' ? '新增工作组' : '修改工作组' }}</h2>
-        <p>选择或输入工作组名称，系统自动映射编码。</p>
+        <h2>{{ workspaceDialogMode === 'create' ? '新增网络' : '修改网络' }}</h2>
+        <p>选择或输入网络名称，系统自动映射编码。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="closeWorkspaceDialog()">×</button>
     </header>
     <div class="form">
       <label>
-        <span>工作组名称</span>
+        <span>网络名称</span>
         <input [(ngModel)]="workspaceName" list="workspace-name-options" (input)="onWorkspaceNameChanged()" />
         <datalist id="workspace-name-options">
           <option *ngFor="let preset of workspacePresets" [value]="preset.name">{{ preset.code }}</option>
@@ -869,7 +799,7 @@
     </div>
     <footer class="modal-footer">
       <button class="ghost" type="button" (click)="closeWorkspaceDialog()">取消</button>
-      <button class="primary" type="button" (click)="addWorkspace()">{{ workspaceDialogMode === 'create' ? '创建工作组' : '保存修改' }}</button>
+      <button class="primary" type="button" (click)="addWorkspace()">{{ workspaceDialogMode === 'create' ? '创建网络' : '保存修改' }}</button>
     </footer>
   </section>
 </div>

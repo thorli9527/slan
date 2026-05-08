@@ -46,7 +46,7 @@ func TestWorkspaceNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	if len(zones) == 0 {
 		t.Fatal("expected default dns zone")
 	}
-	record, err := store.AddDNSRecord(workspace.WorkspaceID, zones[0].ZoneID, "phone", "A", deviceB.DeviceID, "", "", 60)
+	record, err := store.AddDNSRecord(workspace.WorkspaceID, zones[0].ZoneID, "phone", "A", deviceB.DeviceID, "", "", "443", 60)
 	if err != nil {
 		t.Fatalf("add dns: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestGlobalIPPoolPreGeneratesAndRefills(t *testing.T) {
 	}
 }
 
-func TestWorkspaceDeviceInviteAddsDeviceAndRejectsDuplicate(t *testing.T) {
+func TestDeviceInviteIsSingleUseAndExpiresInThirtyMinutes(t *testing.T) {
 	store := NewStore()
 	auth, _, workspace, err := store.RegisterUser("alice@example.com", "secret", "Alice")
 	if err != nil {
@@ -101,25 +101,6 @@ func TestWorkspaceDeviceInviteAddsDeviceAndRejectsDuplicate(t *testing.T) {
 	_, _, err = store.RegisterDevice(auth.User.UserID, "ios-1", "iPhone", "ios", "iOS", "18.0", "Alice Phone", "pub")
 	if err != nil {
 		t.Fatalf("register device: %v", err)
-	}
-	workspaceB, _, _, _, err := store.CreateWorkspace(auth.User.UserID, "开发组", "dev", "dev")
-	if err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-
-	invite, err := store.CreateWorkspaceDeviceInvite(workspaceB.WorkspaceID, auth.User.UserID, 3600)
-	if err != nil {
-		t.Fatalf("create device invite: %v", err)
-	}
-	membership, accepted, err := store.AcceptWorkspaceDeviceInvite(invite.InviteCode, "ios-1", "开发手机")
-	if err != nil {
-		t.Fatalf("accept device invite: %v", err)
-	}
-	if membership.WorkspaceID != workspaceB.WorkspaceID || membership.OwnerUserID != auth.User.UserID || membership.Alias != "开发手机" {
-		t.Fatalf("unexpected workspace device: %+v", membership)
-	}
-	if accepted.Status != "accepted" || accepted.AcceptedDeviceID != "ios-1" {
-		t.Fatalf("unexpected accepted invite: %+v", accepted)
 	}
 	if _, err := store.AddWorkspaceDevice(workspace.WorkspaceID, "ios-1", auth.User.UserID, "", true); err != errConflict {
 		t.Fatalf("expected duplicate default workspace add conflict, got %v", err)
@@ -131,12 +112,29 @@ func TestWorkspaceDeviceInviteAddsDeviceAndRejectsDuplicate(t *testing.T) {
 	if _, err := store.AddWorkspaceDevice(otherWorkspace.WorkspaceID, "ios-1", otherAuth.User.UserID, "", true); err != errBadRequest {
 		t.Fatalf("expected invisible device add to fail, got %v", err)
 	}
-	visibleInvite, err := store.CreateWorkspaceDeviceInvite(otherWorkspace.WorkspaceID, otherAuth.User.UserID, 3600)
+	visibleInvite, err := store.CreateDeviceInvite(otherAuth.User.UserID, 3600)
 	if err != nil {
 		t.Fatalf("create visible invite: %v", err)
 	}
-	if _, _, err := store.AcceptWorkspaceDeviceInvite(visibleInvite.InviteCode, "ios-1", "Bob 可见手机"); err != nil {
+	if visibleInvite.ExpiresAt-visibleInvite.CreatedAt != int64(deviceInviteTTL.Seconds()) {
+		t.Fatalf("expected 30 minute ttl, got invite %+v", visibleInvite)
+	}
+	if len(visibleInvite.InviteCode) != 32 {
+		t.Fatalf("expected 32 char invite code, got %q", visibleInvite.InviteCode)
+	}
+	grant, accepted, err := store.AcceptDeviceInvite(visibleInvite.InviteCode, "ios-1", auth.User.UserID)
+	if err != nil {
 		t.Fatalf("accept visible invite: %v", err)
+	}
+	if grant.DeviceID != "ios-1" || grant.UserID != otherAuth.User.UserID || accepted.Status != "accepted" {
+		t.Fatalf("unexpected accepted invite grant=%+v invite=%+v", grant, accepted)
+	}
+	if _, _, err := store.AcceptDeviceInvite(visibleInvite.InviteCode, "ios-1", auth.User.UserID); err != errNotFound {
+		t.Fatalf("expected invite single-use not found, got %v", err)
+	}
+	visible := store.ListVisibleDevices(otherAuth.User.UserID)
+	if len(visible) != 1 || visible[0].DeviceID != "ios-1" {
+		t.Fatalf("expected invited device visible to other user, got %+v", visible)
 	}
 	otherWorkspaceB, _, _, _, err := store.CreateWorkspace(otherAuth.User.UserID, "测试组", "test", "test")
 	if err != nil {
@@ -144,6 +142,9 @@ func TestWorkspaceDeviceInviteAddsDeviceAndRejectsDuplicate(t *testing.T) {
 	}
 	if _, err := store.AddWorkspaceDevice(otherWorkspaceB.WorkspaceID, "ios-1", otherAuth.User.UserID, "", true); err != nil {
 		t.Fatalf("expected visible device add to another workspace: %v", err)
+	}
+	if err := store.RemoveWorkspaceDevice(otherWorkspaceB.WorkspaceID, "ios-1"); err != nil {
+		t.Fatalf("remove workspace device: %v", err)
 	}
 }
 

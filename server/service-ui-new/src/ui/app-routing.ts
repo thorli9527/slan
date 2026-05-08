@@ -9,8 +9,6 @@ export type WorkspaceRoutePanel = {
 export function workspacePanelPath(workspaceId: string, panel: WorkspacePanel, selectedZoneId: string, selectedSecurityGroupId: string): string {
   const base = `/space/${encodeURIComponent(workspaceId)}`;
   switch (panel) {
-    case 'devices':
-      return base;
     case 'zones':
       return `${base}/zones`;
     case 'records':
@@ -39,7 +37,7 @@ export function panelFromRoute(route: string): WorkspaceRoutePanel {
     case '':
     case 'devices':
     case 'members':
-      return { panel: 'devices' };
+      return { panel: 'zones' };
     case 'zones':
       return { panel: 'zones' };
     case 'public-mappings':
@@ -47,6 +45,6 @@ export function panelFromRoute(route: string): WorkspaceRoutePanel {
     case 'security-groups':
       return { panel: 'securityGroups' };
     default:
-      return { panel: 'devices' };
+      return { panel: 'zones' };
   }
 }

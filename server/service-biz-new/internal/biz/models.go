@@ -118,7 +118,7 @@ type WorkspaceInvite struct {
 
 type WorkspaceDeviceInvite struct {
 	InviteID         string `json:"inviteId"`
-	WorkspaceID      string `json:"workspaceId"`
+	WorkspaceID      string `json:"workspaceId,omitempty"`
 	InviterUserID    string `json:"inviterUserId,omitempty"`
 	InviteCode       string `json:"inviteCode"`
 	Status           string `json:"status"`
@@ -127,6 +127,16 @@ type WorkspaceDeviceInvite struct {
 	AcceptedDeviceID string `json:"acceptedDeviceId,omitempty"`
 	AcceptedUserID   string `json:"acceptedUserId,omitempty"`
 	AcceptedAt       int64  `json:"acceptedAt,omitempty"`
+}
+
+type DeviceAccessGrant struct {
+	GrantID    string `json:"grantId"`
+	DeviceID   string `json:"deviceId"`
+	UserID     string `json:"userId"`
+	GrantedBy  string `json:"grantedBy,omitempty"`
+	InviteCode string `json:"inviteCode,omitempty"`
+	Status     string `json:"status"`
+	CreatedAt  int64  `json:"createdAt"`
 }
 
 type WorkspaceDevice struct {
@@ -160,9 +170,25 @@ type WorkspaceDNSRecord struct {
 	TargetDeviceID string `json:"targetDeviceId,omitempty"`
 	TargetIP       string `json:"targetIp,omitempty"`
 	CNAME          string `json:"cname,omitempty"`
+	Port           string `json:"port,omitempty"`
 	TTL            int    `json:"ttl"`
 	Status         string `json:"status"`
 	CreatedAt      int64  `json:"createdAt"`
+}
+
+type PublicDomainMapping struct {
+	MappingID    string `json:"mappingId"`
+	WorkspaceID  string `json:"workspaceId"`
+	Alias        string `json:"alias"`
+	PublicDomain string `json:"publicDomain"`
+	SourceRecord string `json:"sourceRecord"`
+	DeviceID     string `json:"deviceId"`
+	Protocol     string `json:"protocol"`
+	Port         string `json:"port"`
+	ExternalPort string `json:"externalPort"`
+	Status       string `json:"status"`
+	CreatedAt    int64  `json:"createdAt"`
+	UpdatedAt    int64  `json:"updatedAt"`
 }
 
 type SecurityGroup struct {
