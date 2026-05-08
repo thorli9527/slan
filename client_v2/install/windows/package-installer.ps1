@@ -84,6 +84,12 @@ $toolStagePath = Join-Path $outputPath 'tools\test-windows-multipeer-relay.ps1'
 if (-not (Test-Path -LiteralPath $toolStagePath -PathType Leaf)) {
   throw "Failed to stage Windows relay diagnose tool: $toolStagePath"
 }
+$consoleSource = Join-Path $PSScriptRoot 'slan-console.ps1'
+if (Test-Path $consoleSource) {
+  Copy-Item -Path $consoleSource -Destination (Join-Path $outputPath 'tools\slan-console.ps1') -Force
+} else {
+  throw "Missing Windows console bootstrap script: $consoleSource"
+}
 New-InnoSetupScript -TemplatePath $issTemplatePath -StageDir $outputPath -GeneratedPath $generatedIssPath
 
 if (Test-Path $zipPath) {

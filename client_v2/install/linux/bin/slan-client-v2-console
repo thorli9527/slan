@@ -1,0 +1,167 @@
+#!/usr/bin/env sh
+set -eu
+
+service_bin="${SLAN_CLIENT_CORE_SERVICE_BIN:-/opt/slan-client-v2/bin/client-core-service}"
+config_dir="${SLAN_CONFIG_DIR:-/etc/slan}"
+env_file="$config_dir/client-v2-console.env"
+server_url="${SLAN_CONTROL_BASE_URL:-}"
+email=""
+password=""
+join_key=""
+device_name=""
+enable_network="false"
+foreground="false"
+
+usage() {
+  cat <<'EOF'
+Usage: slan-client-v2-console --server-url URL [options]
+
+Options:
+  --server-url URL       Server control base URL.
+  --email EMAIL          Login account.
+  --password PASSWORD    Login password.
+  --join-key KEY         Network invitation key.
+  --invite KEY_OR_URL    Alias for --join-key; invite URLs are accepted.
+  --device-name NAME     Optional device display name.
+  --enable-network       Enable network after bootstrap is consumed by core-service.
+  --foreground           Run client-core-service in this console.
+  -h, --help             Show this help.
+EOF
+}
+
+need_value() {
+  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    echo "Missing value for $1" >&2
+    exit 2
+  fi
+}
+
+extract_invite_key() {
+  value="$1"
+  case "$value" in
+    *joinKey=*)
+      value="${value#*joinKey=}"
+      value="${value%%[&#]*}"
+      ;;
+    *code=*)
+      value="${value#*code=}"
+      value="${value%%[&#]*}"
+      ;;
+    *key=*)
+      value="${value#*key=}"
+      value="${value%%[&#]*}"
+      ;;
+  esac
+  printf '%s' "$value"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --server-url)
+      need_value "$@"
+      server_url="$2"
+      shift 2
+      ;;
+    --server-url=*)
+      server_url="${1#--server-url=}"
+      shift
+      ;;
+    --email)
+      need_value "$@"
+      email="$2"
+      shift 2
+      ;;
+    --email=*)
+      email="${1#--email=}"
+      shift
+      ;;
+    --password)
+      need_value "$@"
+      password="$2"
+      shift 2
+      ;;
+    --password=*)
+      password="${1#--password=}"
+      shift
+      ;;
+    --join-key)
+      need_value "$@"
+      join_key="$2"
+      shift 2
+      ;;
+    --join-key=*)
+      join_key="${1#--join-key=}"
+      shift
+      ;;
+    --invite)
+      need_value "$@"
+      join_key="$(extract_invite_key "$2")"
+      shift 2
+      ;;
+    --invite=*)
+      join_key="$(extract_invite_key "${1#--invite=}")"
+      shift
+      ;;
+    --device-name)
+      need_value "$@"
+      device_name="$2"
+      shift 2
+      ;;
+    --device-name=*)
+      device_name="${1#--device-name=}"
+      shift
+      ;;
+    --enable-network)
+      enable_network="true"
+      shift
+      ;;
+    --foreground)
+      foreground="true"
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ -z "$server_url" ]; then
+  echo "--server-url is required" >&2
+  exit 2
+fi
+
+umask 077
+mkdir -p "$config_dir"
+tmp_file="$env_file.tmp"
+{
+  printf 'SLAN_CONTROL_BASE_URL=%s\n' "$server_url"
+  printf 'SLAN_PENDING_EMAIL=%s\n' "$email"
+  printf 'SLAN_PENDING_PASSWORD=%s\n' "$password"
+  printf 'SLAN_PENDING_JOIN_KEY=%s\n' "$join_key"
+  printf 'SLAN_PENDING_DEVICE_NAME=%s\n' "$device_name"
+  printf 'SLAN_PENDING_ENABLE_NETWORK=%s\n' "$enable_network"
+} > "$tmp_file"
+mv "$tmp_file" "$env_file"
+
+if [ "$foreground" = "true" ]; then
+  export SLAN_CONTROL_BASE_URL="$server_url"
+  export SLAN_PENDING_EMAIL="$email"
+  export SLAN_PENDING_PASSWORD="$password"
+  export SLAN_PENDING_JOIN_KEY="$join_key"
+  export SLAN_PENDING_DEVICE_NAME="$device_name"
+  export SLAN_PENDING_ENABLE_NETWORK="$enable_network"
+  exec "$service_bin"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl restart slan-client-v2.service
+  systemctl status --no-pager slan-client-v2.service || true
+else
+  echo "Wrote $env_file. Start $service_bin manually or run with --foreground."
+fi

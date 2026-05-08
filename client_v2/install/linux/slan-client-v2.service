@@ -1,0 +1,17 @@
+[Unit]
+Description=SLAN Client V2 Core Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/slan/client-v2.env
+EnvironmentFile=-/etc/slan/client-v2-console.env
+ExecStart=/opt/slan-client-v2/bin/client-core-service
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=slan-client-v2
+StateDirectory=slan
+
+[Install]
+WantedBy=multi-user.target

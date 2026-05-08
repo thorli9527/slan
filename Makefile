@@ -1,4 +1,4 @@
-.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test client-macos-build client-macos-package client-macos-service-smoke client-macos-service-upgrade-smoke client-multidevice-dev flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check
+.PHONY: help cleanup-devices-integration devices-integration client-desktop-ui-test client-macos-build client-macos-package client-windows-package client-linux-build client-linux-package client-linux-docker-package client-macos-service-smoke client-macos-service-upgrade-smoke client-multidevice-dev flutter-analyze-safe protocol-contract-check local-stack-smoke wire-stack-smoke wire-biz-e2e-smoke wire-stale-nodes-smoke wire-persistence-smoke wire-ticket-key-mismatch-smoke wire-biz-ticket-key-drift-smoke wire-control-plane-check
 
 help:
 	@echo "Available targets:"
@@ -7,6 +7,10 @@ help:
 	@echo "    make client-desktop-ui-test       # run widget tests covering the desktop client shell"
 	@echo "    make client-macos-build           # build the macOS menu bar client shell"
 	@echo "    make client-macos-package         # build the macOS .pkg installer"
+	@echo "    make client-windows-package       # package Windows installer stage/zip and Inno Setup exe when available"
+	@echo "    make client-linux-build           # build Linux Rust service and Flutter GUI"
+	@echo "    make client-linux-package         # package Linux tarball and .deb when dpkg-deb is available"
+	@echo "    make client-linux-docker-package  # build Linux GUI/service bundle inside Docker and package it"
 	@echo "    make client-macos-service-smoke   # verify macOS app bundle and launchd service integration"
 	@echo "    make client-macos-service-upgrade-smoke # install/upgrade launchd service then verify it"
 	@echo "    make client-multidevice-dev       # run macOS/iOS/Android against one local client-core-service"
@@ -54,6 +58,24 @@ client-macos-build:
 
 client-macos-package: client-macos-build
 	./scripts/package_macos.sh
+
+client-windows-package:
+ifeq ($(OS),Windows_NT)
+	powershell -ExecutionPolicy Bypass -File .\client_v2\install\windows\package-installer.ps1
+else
+	@echo "client-windows-package must run on Windows with the Flutter Windows release bundle present."
+	@echo "Run: powershell -ExecutionPolicy Bypass -File .\\client_v2\\install\\windows\\package-installer.ps1"
+endif
+
+client-linux-build:
+	cd client_v2/rust && cargo build -p client-core-service --release
+	cd client_v2/app_flutter && flutter build linux
+
+client-linux-package:
+	client_v2/install/linux/package-linux.sh
+
+client-linux-docker-package:
+	client_v2/install/linux/build-linux-bundle-docker.sh
 
 client-macos-service-smoke:
 	./scripts/macos_service_smoke.sh

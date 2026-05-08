@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SLAN Client V2
+Comment=SLAN desktop client
+Exec=/opt/slan-client-v2/gui/slan_client_v2
+Icon=slan-client-v2
+Terminal=false
+Categories=Network;
