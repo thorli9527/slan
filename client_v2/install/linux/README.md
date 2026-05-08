@@ -38,14 +38,6 @@ client_v2/install/linux/package-linux.sh --variant=all
 client_v2/install/linux/package-linux.sh --variant=console
 ```
 
-On macOS or another non-Linux host, build the Linux bundle in Docker:
-
-```sh
-make client-linux-docker-package
-```
-
-This builds `client-core-service` and the Flutter Linux GUI inside a `linux/amd64` container, then calls `package-linux.sh`.
-
 Outputs are written to `client_v2/.tmp/installer/linux`:
 
 - `SLAN-Client-V2-linux-x64.tar.gz`
