@@ -1,0 +1,566 @@
+﻿<div class="router-console">
+  <header class="router-topbar" *ngIf="!token() || loading() || home().hasNetwork">
+    <div class="brand-lockup">
+      <span class="brand-mark">S</span>
+      <div>
+        <p class="eyebrow">SLAN Console</p>
+        <h1>网络管理中心</h1>
+      </div>
+    </div>
+    <div class="topbar-actions" *ngIf="token()">
+      <button class="icon-button" type="button" (click)="refreshWorkspace()" [disabled]="loading()" title="刷新">
+        ↻
+      </button>
+      <button class="ghost" type="button" (click)="openPasswordDialog()">修改密码</button>
+      <button class="ghost danger" type="button" (click)="logout()">退出登录</button>
+    </div>
+  </header>
+
+  <slan-auth-panel
+    *ngIf="!token()"
+    [mode]="authMode()"
+    [email]="email"
+    [password]="password"
+    [allowRegistration]="allowRegistration()"
+    (modeChange)="setAuthMode($event)"
+    (emailChange)="email = $event"
+    (passwordChange)="password = $event"
+    (submit)="submitAuth()"
+  />
+
+  <section class="notice notice-error" *ngIf="error()">
+    <strong>操作失败</strong>
+    <p>{{ error() }}</p>
+  </section>
+  <section class="loading-panel" *ngIf="token() && loading()">
+    <strong>正在同步网络状态</strong>
+    <p>正在拉取账户、网络、设备和接入关系。</p>
+  </section>
+
+  <section class="network-only-empty" *ngIf="token() && !loading() && !home().hasNetwork">
+    <slan-network-empty-state
+      (openCreateNetwork)="openCreateNetworkDialog()"
+      (openJoinNetwork)="openJoinNetworkDialog()"
+    />
+  </section>
+
+  <section class="router-layout" *ngIf="token() && !loading() && home().hasNetwork">
+    <aside class="router-sidebar">
+      <section class="side-card account-card">
+        <div class="avatar">{{ userEmail() ? userEmail().slice(0, 1).toUpperCase() : (userId() ? userId().slice(0, 1).toUpperCase() : 'U') }}</div>
+        <div>
+          <span>当前账户</span>
+          <strong>{{ userEmail() || userId() || '-' }}</strong>
+        </div>
+      </section>
+
+      <nav class="router-nav" aria-label="控制台导航">
+        <ng-container *ngFor="let item of navItems">
+          <button
+            type="button"
+            class="nav-item"
+            [class.nav-item-active]="activeView() === item.id"
+            (click)="switchView(item.id)"
+          >
+            <strong>{{ item.label }}</strong>
+            <span>{{ item.caption }}</span>
+          </button>
+        </ng-container>
+      </nav>
+
+      <section class="side-card compact-metrics">
+        <div>
+          <span>心跳在线设备</span>
+          <strong>{{ onlineNetworkDeviceCount() }}/{{ networkDeviceCount() }}</strong>
+        </div>
+        <div>
+          <span>当前角色</span>
+          <strong>{{ roleLabel() }}</strong>
+        </div>
+        <div>
+          <span>虚拟 IP</span>
+          <strong>{{ currentVirtualIp() }}</strong>
+        </div>
+      </section>
+    </aside>
+
+    <main class="router-main">
+      <section class="overview-band">
+        <div class="network-focus">
+          <div class="router-unit">
+            <span></span>
+          </div>
+          <div>
+            <p class="eyebrow">当前所有的网络</p>
+            <h2>{{ userEmail() || userId() || '-' }}</h2>
+            <p>{{ joinedNetworks().length }} 个网络</p>
+          </div>
+        </div>
+        <div class="overview-actions">
+          <button class="invite-action-button" type="button" (click)="openInviteNetworkDialog()" [disabled]="!canManageNetwork()">邀请入网</button>
+          <button
+            class="invite-action-button"
+            type="button"
+            (click)="openJoinNetworkDialog()"
+            [disabled]="!canManageNetwork()"
+          >
+            入网确认
+          </button>
+        </div>
+      </section>
+
+      <section class="dashboard-grid" *ngIf="activeView() === 'account'">
+        <article class="panel span-2">
+          <div class="panel-title split">
+            <div>
+              <h2>网络总览</h2>
+              <p>像路由器后台一样，先看当前网络、设备在线情况和接入状态。</p>
+            </div>
+            <button class="ghost" type="button" (click)="refreshWorkspace()" [disabled]="loading()">刷新状态</button>
+          </div>
+          <div class="health-row">
+            <div class="health-card good">
+              <span>运行状态</span>
+              <strong>{{ activeNetwork() ? '已接入' : '未接入' }}</strong>
+              <p>{{ activeNetwork()?.networkId || '暂无活动网络' }}</p>
+            </div>
+            <div class="health-card">
+              <span>默认网段</span>
+              <strong>{{ activeNetwork()?.defaultSubnetCidr || '-' }}</strong>
+              <p>{{ currentSubnetLabel() }}</p>
+            </div>
+            <div class="health-card">
+              <span>当前设备</span>
+              <strong>{{ selectedDeviceLabel() || '未选择' }}</strong>
+              <p>{{ currentVirtualIp() }}</p>
+            </div>
+            <div class="health-card">
+              <span>接入策略</span>
+              <strong>免费版</strong>
+              <p>{{ deviceLimitLabel() }}，中转 512K，P2P 不限</p>
+            </div>
+          </div>
+        </article>
+
+      </section>
+
+      <section *ngIf="activeView() === 'network'">
+        <slan-network-empty-state
+          *ngIf="!home().hasNetwork"
+          (openCreateNetwork)="openCreateNetworkDialog()"
+          (openJoinNetwork)="openJoinNetworkDialog()"
+        />
+
+        <ng-container *ngIf="home().hasNetwork">
+          <section class="network-management-actions">
+            <button class="network-tool-button primary-tool" type="button" (click)="openManageNetworkDialog()" [disabled]="!canManageNetwork()">
+              网络管理
+            </button>
+            <button class="network-tool-button" type="button" (click)="openCurrentNetworkDialog()" [disabled]="networkSwitchTargets().length <= 1">
+              切换网络
+            </button>
+            <button class="network-tool-button" type="button" (click)="openDnsNetworkDialog()" [disabled]="!canManageNetwork()">
+              DNS 管理
+            </button>
+          </section>
+
+          <slan-network-workspace
+            [activeNetwork]="activeNetwork()"
+            [detail]="detail()"
+            [assignments]="pagedAssignments()"
+            [pendingMembers]="pendingMembers()"
+            [selectedDeviceLabel]="selectedDeviceLabel()"
+            [updateName]="updateName"
+            [updateDescription]="updateDescription"
+            [updateCidr]="updateCidr"
+            [draftIps]="draftIps()"
+            [draftRemarks]="draftRemarks()"
+            [showSwitchToOwned]="showSwitchToOwned()"
+            [actionBusy]="actionBusy()"
+            [qualityRows]="qualityRows()"
+            [qualitySelectedDevices]="qualitySelectedDevices()"
+            (refresh)="refreshWorkspace()"
+            (switchToOwned)="switchToOwnedNetwork()"
+            (openJoinNetwork)="openJoinNetworkDialog()"
+            (updateNameChange)="updateName = $event"
+            (updateDescriptionChange)="updateDescription = $event"
+            (updateCidrChange)="updateCidr = $event"
+            (saveNetwork)="updateOwnedNetwork()"
+            (draftIpChange)="setDraftIp($event.attachmentId, $event.value)"
+            (saveAttachmentIp)="updateAttachmentIp($event)"
+            (draftRemarkChange)="setDraftRemark($event.attachmentId, $event.value)"
+            (saveAttachmentRemark)="updateAttachmentRemark($event)"
+            (saveAttachmentEdit)="updateAttachmentEdit($event)"
+            (toggleAttachmentStatus)="toggleAttachmentStatus($event.attachmentId, $event.status)"
+            (updateMemberStatus)="updateMemberStatus($event.memberId, $event.status)"
+            (toggleQualityDevice)="toggleQualityDevice($event.deviceId, $event.selected)"
+            (openQualityDialog)="openQualityDialog($event)"
+          />
+          <div class="pager" *ngIf="filteredAssignments().length > pageSize">
+            <span>{{ pageSummary(assignmentPage(), filteredAssignments().length) }}</span>
+            <button type="button" class="ghost" (click)="previousAssignmentPage()" [disabled]="assignmentPage() <= 1">上一页</button>
+            <button type="button" class="ghost" (click)="nextAssignmentPage()" [disabled]="assignmentPage() >= totalPages(filteredAssignments().length)">下一页</button>
+          </div>
+
+        </ng-container>
+      </section>
+
+    </main>
+  </section>
+
+  <section class="dialog-backdrop" *ngIf="qualityDialog()" (click)="closeQualityDialog()">
+    <article class="dialog-panel quality-dialog" (click)="$event.stopPropagation()">
+      <div class="dialog-title quality-dialog-title">
+        <div>
+          <h2>客户端网络质量</h2>
+          <p>当前设备：{{ selectedQualityDeviceIds()[0] || '-' }}</p>
+        </div>
+        <div class="quality-toolbar dialog-quality-toolbar">
+          <div class="quality-range">
+            <button
+              type="button"
+              *ngFor="let hours of qualityHourOptions"
+              [class.active]="qualityHours === hours"
+              (click)="setQualityHours(hours)"
+            >
+              {{ hours === 24 ? '1天' : hours + '小时' }}
+            </button>
+          </div>
+          <button class="ghost" type="button" (click)="loadNetworkQuality()" [disabled]="qualityLoading() || !canManageNetwork()">
+            {{ qualityLoading() ? '刷新中...' : '刷新' }}
+          </button>
+        </div>
+        <button class="icon-button" type="button" (click)="closeQualityDialog()" [disabled]="!!actionBusy()" title="关闭">×</button>
+      </div>
+
+      <section class="quality-locked" *ngIf="!canManageNetwork()">
+        <strong>仅网络 Owner 可查看和管理客户端质量策略</strong>
+        <p>当前账号不是该网络 owner，只能查看基础网络信息。</p>
+      </section>
+
+      <ng-container *ngIf="canManageNetwork()">
+        <section class="quality-template-list">
+          <button
+            type="button"
+            class="quality-template-item"
+            *ngFor="let template of qualityTemplates()"
+            [class.active]="qualityTemplate === template.templateId"
+            (click)="applyQualityTemplate(template.templateId)"
+          >
+            <strong>{{ template.name }}</strong>
+            <span>MTU {{ template.relayMtu }} / Payload {{ template.maxFramePayload }}</span>
+            <span>{{ template.pathType === 'any' ? '全部路径' : template.pathType }} · {{ template.pathStrategy }} · TTL {{ template.ttlMinutes }} 分钟</span>
+            <span>建议 {{ template.recommendationLevel }} / 执行 {{ template.executionLevel }}</span>
+            <span class="template-actions" *ngIf="!template.isBuiltin && template.scope !== 'global'">
+              <span (click)="$event.stopPropagation(); openQualityTemplateEditor(template)">编辑</span>
+              <span (click)="$event.stopPropagation(); deleteQualityTemplate(template)">删除</span>
+            </span>
+          </button>
+        </section>
+
+        <div class="quality-actions">
+          <button class="ghost" type="button" (click)="openQualityTemplateEditor()" [disabled]="!!actionBusy()">新增模板</button>
+          <button class="primary-action" type="button" (click)="publishQualityPolicy()" [disabled]="isActionBusy('publishQualityBatch') || selectedQualityDeviceIds().length === 0">
+            {{ isActionBusy('publishQualityBatch') ? '下发中...' : '下发' }}
+          </button>
+          <button class="ghost" type="button" (click)="closeQualityDialog()" [disabled]="!!actionBusy()">取消</button>
+        </div>
+      </ng-container>
+    </article>
+  </section>
+
+  <section class="dialog-backdrop" *ngIf="qualityTemplateEditor()" (click)="closeQualityTemplateEditor()">
+    <article class="dialog-panel quality-template-dialog" (click)="$event.stopPropagation()">
+      <div class="dialog-title">
+        <div>
+          <h2>{{ qualityTemplateEditor() === 'edit' ? '编辑质量模板' : '新增质量模板' }}</h2>
+        </div>
+        <button class="icon-button" type="button" (click)="closeQualityTemplateEditor()" [disabled]="!!actionBusy()" title="关闭">×</button>
+      </div>
+      <div class="quality-policy-grid quality-template-form">
+        <label>
+          <span>名称</span>
+          <input [value]="qualityTemplateDraftName" (input)="qualityTemplateDraftName = $any($event.target).value" />
+        </label>
+        <label>
+          <span>说明</span>
+          <input [value]="qualityTemplateDraftDescription" (input)="qualityTemplateDraftDescription = $any($event.target).value" />
+        </label>
+        <label>
+          <span>Relay MTU</span>
+          <input type="number" min="576" max="1500" [value]="qualityTemplateDraftRelayMtu" (input)="qualityTemplateDraftRelayMtu = $any($event.target).valueAsNumber" />
+        </label>
+        <label>
+          <span>最大 Payload</span>
+          <input type="number" min="512" max="1400" [value]="qualityTemplateDraftMaxFramePayload" (input)="qualityTemplateDraftMaxFramePayload = $any($event.target).valueAsNumber" />
+        </label>
+        <label>
+          <span>建议档位</span>
+          <input type="number" min="0" max="11" [value]="qualityTemplateDraftRecommendationLevel" (input)="qualityTemplateDraftRecommendationLevel = $any($event.target).valueAsNumber" />
+        </label>
+        <label>
+          <span>执行档位</span>
+          <input type="number" min="0" max="7" [value]="qualityTemplateDraftExecutionLevel" (input)="qualityTemplateDraftExecutionLevel = $any($event.target).valueAsNumber" />
+        </label>
+        <label>
+          <span>路径类型</span>
+          <select [value]="qualityTemplateDraftPathType" (change)="qualityTemplateDraftPathType = $any($event.target).value">
+            <option value="any">全部路径</option>
+            <option value="lan_udp">lan_udp</option>
+            <option value="ipv6_udp">ipv6_udp</option>
+            <option value="direct_udp">direct_udp</option>
+            <option value="relay_udp">relay_udp</option>
+            <option value="derp_tcp_tls_443">derp_tcp_tls_443</option>
+          </select>
+        </label>
+        <label>
+          <span>路径策略</span>
+          <select [value]="qualityTemplateDraftPathStrategy" (change)="qualityTemplateDraftPathStrategy = $any($event.target).value">
+            <option value="bandwidth_saving">省流优先</option>
+            <option value="performance">性能优先</option>
+            <option value="relay_saving">Relay 省流</option>
+          </select>
+        </label>
+        <label>
+          <span>TTL 分钟</span>
+          <input type="number" min="1" [value]="qualityTemplateDraftTtlMinutes" (input)="qualityTemplateDraftTtlMinutes = $any($event.target).valueAsNumber" />
+        </label>
+        <label>
+          <span>原因</span>
+          <input [value]="qualityTemplateDraftReason" (input)="qualityTemplateDraftReason = $any($event.target).value" />
+        </label>
+      </div>
+      <div class="quality-actions">
+        <button class="primary-action" type="button" (click)="saveQualityTemplate()" [disabled]="isActionBusy('saveQualityTemplate')">
+          {{ isActionBusy('saveQualityTemplate') ? '保存中...' : '保存' }}
+        </button>
+        <button class="ghost" type="button" (click)="closeQualityTemplateEditor()" [disabled]="!!actionBusy()">取消</button>
+      </div>
+    </article>
+  </section>
+
+  <section class="dialog-backdrop" *ngIf="networkDialog()" (click)="closeNetworkDialog()">
+    <article class="dialog-panel" (click)="$event.stopPropagation()">
+      <div class="dialog-title">
+        <div>
+          <h2>{{ networkDialogTitle() }}</h2>
+        </div>
+        <button class="icon-button" type="button" (click)="closeNetworkDialog()" [disabled]="!!actionBusy()" title="关闭">×</button>
+      </div>
+
+      <ng-container *ngIf="networkDialog() === 'create'">
+        <div class="create-network-form">
+          <section class="dialog-section">
+            <div class="form-grid two">
+              <label>
+                <span>IP 地址</span>
+                <input [value]="createNetworkIp" (input)="createNetworkIp = $any($event.target).value" placeholder="100.64.0.0" />
+              </label>
+              <label>
+                <span>子网掩码</span>
+                <input [value]="createSubnetMask" (input)="createSubnetMask = $any($event.target).value" placeholder="255.255.252.0" />
+              </label>
+            </div>
+          </section>
+
+          <section class="dialog-section">
+            <div class="field-group-label">DHCP</div>
+            <div class="form-grid two">
+              <label>
+                <span>起始地址</span>
+                <input [value]="createAllocationStartIp" (input)="createAllocationStartIp = $any($event.target).value" placeholder="100.64.0.10" />
+              </label>
+              <label>
+                <span>结束地址</span>
+                <input [value]="createAllocationEndIp" (input)="createAllocationEndIp = $any($event.target).value" placeholder="100.64.0.254" />
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()" [disabled]="isActionBusy('createNetwork')">取消</button>
+          <button class="primary-action" type="button" (click)="createOwnNetwork()" [disabled]="isActionBusy('createNetwork') || !!home().ownedNetwork">
+            {{ home().ownedNetwork ? '已有自己的网络' : (isActionBusy('createNetwork') ? '创建中...' : '创建网络') }}
+          </button>
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'manage'">
+        <div class="create-network-form">
+          <section class="dialog-section">
+            <div class="form-grid two">
+              <label>
+                <span>IP 地址</span>
+                <input [value]="manageNetworkIp" (input)="manageNetworkIp = $any($event.target).value" placeholder="100.64.0.0" />
+              </label>
+              <label>
+                <span>子网掩码</span>
+                <input [value]="manageSubnetMask" (input)="manageSubnetMask = $any($event.target).value" placeholder="255.255.255.0" />
+              </label>
+            </div>
+          </section>
+
+          <section class="dialog-section">
+            <div class="field-group-label">DHCP</div>
+            <div class="form-grid two">
+              <label>
+                <span>起始地址</span>
+                <input [value]="manageAllocationStartIp" (input)="manageAllocationStartIp = $any($event.target).value" placeholder="100.64.0.10" />
+              </label>
+              <label>
+                <span>结束地址</span>
+                <input [value]="manageAllocationEndIp" (input)="manageAllocationEndIp = $any($event.target).value" placeholder="100.64.0.254" />
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()">取消</button>
+          <button class="primary-action" type="button" (click)="updateManagedNetworkPlan()">
+            保存网络
+          </button>
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'join'">
+        <div class="form-grid">
+          <label>
+            <span>邀请码</span>
+            <input [value]="joinKey" (input)="joinKey = $any($event.target).value" placeholder="输入邀请人生成的邀请码" />
+          </label>
+          <button class="primary-action" type="button" (click)="joinByKey()" [disabled]="isActionBusy('joinByKey')">
+            {{ isActionBusy('joinByKey') ? '提交中...' : '确认入网' }}
+          </button>
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'invite'">
+        <div class="form-grid invite-network-dialog">
+          <section class="dialog-section">
+            <button class="primary-action invite-generate-button" type="button" (click)="generateInviteCode()" [disabled]="isActionBusy('generateInviteCode')">
+              {{ isActionBusy('generateInviteCode') ? '生成中...' : '生成邀请码' }}
+            </button>
+            <div class="invite-code-panel" *ngIf="generatedInviteCode">
+              <div class="qr-box">
+                <img [src]="inviteQrUrl()" alt="邀请入网二维码" />
+              </div>
+              <label>
+                <span>邀请码</span>
+                <input [value]="generatedInviteCode" readonly />
+              </label>
+            </div>
+          </section>
+        </div>
+        <div class="dialog-actions dialog-actions-single">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()" [disabled]="isActionBusy('generateInviteCode')">关闭</button>
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'current'">
+        <div class="current-network-dialog">
+          <section class="dialog-section">
+            <div class="current-network-summary">
+              <div>
+                <span>当前网络</span>
+                <strong>{{ activeNetwork()?.name || '-' }}</strong>
+                <p>{{ activeNetwork()?.networkId || '-' }}</p>
+              </div>
+              <span class="status-pill">{{ canManageNetwork() ? 'Owner' : 'Member' }}</span>
+            </div>
+          </section>
+
+          <section class="dialog-section" *ngIf="networkSwitchTargets().length > 0">
+            <div class="field-group-label">切换网络</div>
+            <div class="network-dialog-list">
+              <button
+                type="button"
+                class="network-dialog-item"
+                *ngFor="let network of networkSwitchTargets()"
+                [class.network-dialog-item-active]="activeNetwork()?.networkId === network.networkId"
+                [disabled]="activeNetwork()?.networkId === network.networkId"
+                (click)="switchToNetwork(network.networkId); closeNetworkDialog()"
+              >
+                <strong>{{ network.name }}</strong>
+                <span>{{ network.description || network.networkId }}</span>
+              </button>
+            </div>
+          </section>
+
+        </div>
+
+        <div class="dialog-actions dialog-actions-single">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()">关闭</button>
+        </div>
+      </ng-container>
+
+      <ng-container *ngIf="networkDialog() === 'dns'">
+        <div class="dns-dialog">
+          <section class="dialog-section">
+            <p class="dialog-copy">客户端固定使用本机轻量 DNS，这里只配置域名到虚拟 IP 的通配符映射。</p>
+            <label class="dns-document-field">
+              <span>DNS 配置</span>
+              <textarea
+                [value]="dnsDocumentText"
+                (input)="onDnsDocumentInput($any($event.target).value)"
+                placeholder="*.xx.com=100.64.0.10&#10;*.*.xx.com=100.64.0.10"
+              ></textarea>
+              <span class="dns-document-help">
+                每行一条规则，仅支持 *.xx.com=100.64.0.10 或 *.*.xx.com=100.64.0.10。
+              </span>
+            </label>
+          </section>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="ghost" type="button" (click)="closeNetworkDialog()" [disabled]="isActionBusy('saveDns')">取消</button>
+          <button class="primary-action" type="button" (click)="updateNetworkDns()" [disabled]="isActionBusy('saveDns')">
+            {{ isActionBusy('saveDns') ? '保存中...' : '保存 DNS' }}
+          </button>
+        </div>
+      </ng-container>
+
+    </article>
+  </section>
+
+  <section class="dialog-backdrop" *ngIf="passwordDialog()" (click)="closePasswordDialog()">
+    <article class="dialog-panel password-dialog" (click)="$event.stopPropagation()">
+      <div class="dialog-title">
+        <h2>修改密码</h2>
+        <button class="icon-button" type="button" (click)="closePasswordDialog()" [disabled]="!!actionBusy()" title="关闭">×</button>
+      </div>
+      <div class="form-grid password-form">
+        <label>
+          <span>当前密码</span>
+          <input type="password" [value]="currentPassword" (input)="currentPassword = $any($event.target).value" autocomplete="current-password" />
+        </label>
+        <label>
+          <span>新密码</span>
+          <input type="password" [value]="newPassword" (input)="newPassword = $any($event.target).value" autocomplete="new-password" />
+        </label>
+        <label>
+          <span>确认新密码</span>
+          <input type="password" [value]="confirmPassword" (input)="confirmPassword = $any($event.target).value" autocomplete="new-password" />
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button class="ghost" type="button" (click)="closePasswordDialog()" [disabled]="isActionBusy('changePassword')">取消</button>
+        <button class="primary-action" type="button" (click)="changePassword()" [disabled]="isActionBusy('changePassword')">
+          {{ isActionBusy('changePassword') ? '保存中...' : '保存密码' }}
+        </button>
+      </div>
+    </article>
+  </section>
+
+  <section class="panel callback-panel" *ngIf="pendingCallbackId() && (!token() || loading() || home().hasNetwork)">
+    <p class="callback-title">等待客户端确认</p>
+    <p class="callback-copy">
+      网页端已经把认证结果转交给服务端，桌面客户端会主动取回并确认。
+    </p>
+    <p class="callback-copy callback-copy-ok" *ngIf="callbackAcknowledged()">
+      已检测到客户端确认登录结果，可以切回桌面端继续。
+    </p>
+    <code class="callback-url">{{ pendingCallbackId() }}</code>
+  </section>
+</div>
