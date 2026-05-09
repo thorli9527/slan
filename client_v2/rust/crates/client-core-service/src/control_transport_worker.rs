@@ -6,7 +6,9 @@ use std::{
     time::Duration,
 };
 
-use client_core::{AuthPayload, ClientCommand, ClientRuntime};
+use client_core::{
+    AssignedIpPayload, AuthPayload, ClientCommand, ClientMessageNoticePayload, ClientRuntime,
+};
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
 use serde::Deserialize;
@@ -21,6 +23,11 @@ use crate::{
     PersistedSession, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
     BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
 };
+
+const DEVICE_NETWORK_ENABLED_EVENT: &str = "device_network_enabled";
+const DEVICE_NETWORK_DISABLED_EVENT: &str = "device_network_disabled";
+const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
+const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Debug, Default)]
 pub struct ControlTransportWorkerState {
@@ -57,7 +64,8 @@ pub fn spawn_control_transport_supervisor(
         let state_notifier = Arc::clone(&state_notifier);
         thread::spawn(move || {
             let result = run_control_transport_worker(session, runtime, task_queue, state_notifier);
-            release_worker(&worker_state, reconnect_key, result.err());
+            let error = result.err();
+            release_worker(&worker_state, reconnect_key, error);
         });
     });
 }
@@ -84,22 +92,70 @@ fn run_control_transport_worker(
         },
         &downstream_topic,
     )?;
+    if let Some(topic) = network_broadcast_topic(&session) {
+        match client.subscribe(&topic) {
+            Ok(()) => log_service_error(format!(
+                "client-core-service subscribed network broadcast topic={topic}"
+            )),
+            Err(error) => log_service_error(format!(
+                "client-core-service failed to subscribe network broadcast topic={topic}: {error}"
+            )),
+        }
+    }
+    log_service_error(format!(
+        "client-core-service control mqtt connected topic={} deviceId={}",
+        downstream_topic,
+        session.device_id.as_deref().unwrap_or_default()
+    ));
 
     let mut last_ack_flush_ms = None;
     let mut last_heartbeat_ms = None;
     let mut last_runtime_state_ms = None;
     let mut last_path_health_ms = None;
+    let mut last_keepalive_ping_ms = Some(current_timestamp_ms());
+    let connected_at_ms = current_timestamp_ms();
     loop {
         if reconnect_key(&load_session().map_err(|err| err.to_string())?) != reconnect_key(&session)
         {
             return Err("control transport session changed".to_string());
         }
         if let Some(publish) = client.read_publish(Duration::from_millis(500))? {
+            log_service_error(format!(
+                "client-core-service received control mqtt down topic={} qos={} packetId={} bytes={}",
+                publish.topic,
+                publish.qos,
+                publish
+                    .packet_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                publish.payload.len()
+            ));
             ingest_downstream_publish(&publish.payload, &runtime, &task_queue, &state_notifier)?;
             client.ack_publish(&publish)?;
+            log_service_error(format!(
+                "client-core-service acked control mqtt down topic={} qos={} packetId={}",
+                publish.topic,
+                publish.qos,
+                publish
+                    .packet_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+            ));
         }
 
         let now_ms = current_timestamp_ms();
+        if now_ms.saturating_sub(connected_at_ms) >= MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS {
+            return Err(
+                "control mqtt proactive reconnect after session refresh window".to_string(),
+            );
+        }
+        if now_ms.saturating_sub(last_keepalive_ping_ms.unwrap_or(0))
+            >= MQTT_KEEPALIVE_PING_INTERVAL_MS
+        {
+            client.ping()?;
+            last_keepalive_ping_ms = Some(now_ms);
+            log_service_error("client-core-service sent mqtt keepalive ping");
+        }
         let tick = control_transport::control_transport_tick_plan(
             ControlTransportTickRequest {
                 now_ms: Some(now_ms),
@@ -128,6 +184,7 @@ fn run_control_transport_worker(
         );
         for message in messages {
             publish_outbox_message(&mut client, &message)?;
+            last_keepalive_ping_ms = Some(now_ms);
             mark_transport_published(&message, &task_queue)?;
             match message.kind {
                 ControlTransportMessageKind::ControlAck => {
@@ -153,16 +210,64 @@ fn run_control_transport_worker(
     }
 }
 
+fn network_broadcast_topic(session: &PersistedSession) -> Option<String> {
+    let network_id = session.active_network_id.as_deref()?.trim();
+    if network_id.is_empty() {
+        return None;
+    }
+    let mqtt = session.mqtt.as_ref()?;
+    let mut prefix = mqtt.topic_prefix.trim_end_matches('/').to_string();
+    if let Some(device_id) = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let suffix = format!("/{device_id}");
+        if prefix.ends_with(&suffix) {
+            prefix.truncate(prefix.len() - suffix.len());
+        }
+    }
+    Some(format!("{prefix}/networks/{network_id}/broadcast"))
+}
+
 fn ingest_downstream_publish(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     task_queue: &Arc<Mutex<ControlTaskQueue>>,
     state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<(), String> {
+    let message_type = serde_json::from_slice::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|value| log_downstream_message_summary(&value))
+        .unwrap_or_else(|| "unknown".to_string());
+    log_service_error(format!(
+        "client-core-service ingesting downstream control message type={} bytes={}",
+        message_type,
+        payload.len()
+    ));
     if try_ingest_auth_callback(payload, runtime, state_notifier)? {
+        log_service_error(
+            "client-core-service consumed downstream control message as auth_callback",
+        );
+        return Ok(());
+    }
+    if try_ingest_device_ip_reassigned(payload, runtime, state_notifier)? {
+        log_service_error(
+            "client-core-service consumed downstream control message as device_ip_reassigned",
+        );
         return Ok(());
     }
     if try_ingest_network_map_response(payload, runtime, state_notifier)? {
+        log_service_error(
+            "client-core-service consumed downstream control message as network_map_response",
+        );
+        return Ok(());
+    }
+    if try_ingest_network_config_changed(payload, runtime, task_queue, state_notifier)? {
+        log_service_error(
+            "client-core-service consumed downstream control message as network_config_changed",
+        );
         return Ok(());
     }
     if let Some(connect_plan) = try_ingest_connect_plan(payload)? {
@@ -212,11 +317,31 @@ fn ingest_downstream_publish(
         }
         return Ok(());
     }
-    if try_ingest_relay_data_plane_policy(payload)? {
+    if try_ingest_relay_data_plane_policy(payload, runtime, state_notifier)? {
+        log_service_error(
+            "client-core-service consumed downstream control message as relay_data_plane_policy",
+        );
         return Ok(());
     }
-    let message = serde_json::from_slice(payload)
+    if try_ingest_client_message(payload, runtime, state_notifier)? {
+        log_service_error(
+            "client-core-service consumed downstream control message as client_message",
+        );
+        return Ok(());
+    }
+    if try_ingest_device_network_presence(payload, runtime, task_queue, state_notifier)? {
+        log_service_error(
+            "client-core-service consumed downstream control message as device_network_presence",
+        );
+        return Ok(());
+    }
+    let message: serde_json::Value = serde_json::from_slice(payload)
         .map_err(|err| format!("decode downstream control message: {err}"))?;
+    let message_type = message
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let self_device_id = load_session()
         .ok()
         .and_then(|session| session.device_id)
@@ -229,7 +354,9 @@ fn ingest_downstream_publish(
     {
         Some(accepted) => accepted,
         None => {
-            log_service_error("client-core-service ignored downstream control message");
+            log_service_error(format!(
+                "client-core-service ignored downstream control message type={message_type}"
+            ));
             return Ok(());
         }
     };
@@ -265,7 +392,168 @@ fn ingest_downstream_publish(
     Ok(())
 }
 
-fn try_ingest_relay_data_plane_policy(payload: &[u8]) -> Result<bool, String> {
+fn try_ingest_device_network_presence(
+    payload: &[u8],
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<bool, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    let message_type = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !is_device_network_presence_event(message_type) {
+        return Ok(false);
+    }
+    let payload_value = value.get("payload").unwrap_or(&value);
+    let device_id = payload_value
+        .get("deviceId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let network_id = payload_value
+        .get("networkId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let online = payload_value
+        .get("online")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(message_type == DEVICE_NETWORK_ENABLED_EVENT);
+    let online_count = payload_value
+        .get("onlineDevices")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    let changed_at = payload_value
+        .get("changedAt")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_default();
+    log_service_error(format!(
+        "client-core-service network presence message type={message_type} networkId={network_id} deviceId={device_id} online={online} onlineDevices={online_count}"
+    ));
+    if let Ok(session) = load_session() {
+        let is_self = session
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            == Some(device_id.trim());
+        let state = {
+            let runtime = runtime
+                .lock()
+                .map_err(|_| "client runtime mutex poisoned".to_string())?;
+            runtime.state().clone()
+        };
+        if state.signed_in && state.network_enabled && !is_self {
+            let delivery_id = network_presence_delivery_id(
+                &value,
+                message_type,
+                network_id,
+                device_id,
+                changed_at,
+            );
+            log_service_error(format!(
+                "client-core-service scheduling peer rebuild for network presence deliveryId={delivery_id}"
+            ));
+            {
+                let mut queue = task_queue
+                    .lock()
+                    .map_err(|_| "control task queue mutex poisoned".to_string())?;
+                queue
+                    .enqueue_downstream(
+                        crate::control_tasks::ControlTaskAction::EnableNetwork,
+                        delivery_id,
+                        false,
+                    )
+                    .map_err(|err| err.to_string())?;
+            }
+            let state = crate::drain_pending_control_tasks(runtime, task_queue);
+            let business_type = if state.error.is_some() {
+                BUSINESS_NETWORK_SWITCH_FAILED
+            } else {
+                BUSINESS_NETWORK_RUNTIME_CHANGED
+            };
+            publish_state_business_event(state_notifier, business_type, &state);
+        } else {
+            publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
+        }
+    }
+    Ok(true)
+}
+
+fn is_device_network_presence_event(message_type: &str) -> bool {
+    matches!(
+        message_type,
+        DEVICE_NETWORK_ENABLED_EVENT | DEVICE_NETWORK_DISABLED_EVENT
+    )
+}
+
+fn network_presence_delivery_id(
+    envelope: &serde_json::Value,
+    message_type: &str,
+    network_id: &str,
+    device_id: &str,
+    changed_at: i64,
+) -> String {
+    envelope
+        .get("messageId")
+        .or_else(|| envelope.get("message_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            format!("network-presence-{message_type}-{network_id}-{device_id}-{changed_at}")
+        })
+}
+
+fn log_downstream_message_summary(value: &serde_json::Value) -> Option<String> {
+    let message_type = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if message_type.is_empty() {
+        return None;
+    }
+    let payload = value.get("payload");
+    let message_id = value
+        .get("messageId")
+        .or_else(|| value.get("message_id"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let device_id = payload
+        .and_then(|payload| payload.get("deviceId"))
+        .or_else(|| payload.and_then(|payload| payload.get("device_id")))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let virtual_ip = payload
+        .and_then(|payload| payload.get("virtualIp"))
+        .or_else(|| payload.and_then(|payload| payload.get("virtual_ip")))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let policy_id = payload
+        .and_then(|payload| payload.get("policyId"))
+        .or_else(|| payload.and_then(|payload| payload.get("policy_id")))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let network_id = payload
+        .and_then(|payload| payload.get("networkId"))
+        .or_else(|| payload.and_then(|payload| payload.get("network_id")))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    log_service_error(format!(
+        "client-core-service downstream envelope type={} messageId={} networkId={} deviceId={} virtualIp={} policyId={}",
+        message_type, message_id, network_id, device_id, virtual_ip, policy_id
+    ));
+    Some(message_type.to_string())
+}
+
+fn try_ingest_relay_data_plane_policy(
+    payload: &[u8],
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<bool, String> {
     let value: serde_json::Value =
         serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
     if value.get("type").and_then(serde_json::Value::as_str) != Some("relay_data_plane_policy") {
@@ -277,6 +565,16 @@ fn try_ingest_relay_data_plane_policy(payload: &[u8]) -> Result<bool, String> {
         .ok_or_else(|| "relay_data_plane_policy payload is missing".to_string())?;
     let mut incoming: RelayDataPlanePolicy = serde_json::from_value(policy_value)
         .map_err(|err| format!("decode relay policy: {err}"))?;
+    log_service_error(format!(
+        "client-core-service decoded relay data plane policy policyId={} networkId={} pathType={} ttlMs={} targetDevices={}",
+        incoming.policy_id.as_deref().unwrap_or_default(),
+        incoming.network_id.as_deref().unwrap_or_default(),
+        incoming.path_type.as_deref().unwrap_or_default(),
+        incoming.ttl_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+        incoming.target_device_ids.len()
+    ));
     validate_relay_data_plane_policy(&incoming)?;
     if !relay_policy_targets_current_device(&incoming) {
         log_service_error(format!(
@@ -304,10 +602,99 @@ fn try_ingest_relay_data_plane_policy(payload: &[u8]) -> Result<bool, String> {
         .map_err(|err| format!("encode relay data plane policy: {err}"))?;
     fs::write(&path, payload).map_err(|err| format!("write relay policy: {err}"))?;
     log_service_error(format!(
-        "client-core-service accepted relay data plane policy path={}",
+        "client-core-service accepted relay data plane policy policyId={} networkId={} pathType={} relayMtu={} maxFramePayload={} path={}",
+        incoming.policy_id.as_deref().unwrap_or_default(),
+        incoming.network_id.as_deref().unwrap_or_default(),
+        incoming.path_type.as_deref().unwrap_or_default(),
+        incoming.relay_mtu,
+        incoming.max_frame_payload,
         path.display()
     ));
+    apply_relay_data_plane_policy(runtime, state_notifier, incoming.policy_id.as_deref());
     Ok(true)
+}
+
+fn try_ingest_client_message(
+    payload: &[u8],
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<bool, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("client_message") {
+        return Ok(false);
+    }
+    let message_value = value
+        .get("payload")
+        .cloned()
+        .ok_or_else(|| "client_message payload is missing".to_string())?;
+    let message: ClientMessagePayload = serde_json::from_value(message_value)
+        .map_err(|err| format!("decode client_message: {err}"))?;
+    log_service_error(format!(
+        "client-core-service accepted client_message messageId={} networkId={} fromDeviceId={} targetDeviceId={} bodyBytes={}",
+        message.message_id.as_deref().unwrap_or_default(),
+        message.network_id.as_deref().unwrap_or_default(),
+        message.from_device_id.as_deref().unwrap_or_default(),
+        message.target_device_id.as_deref().unwrap_or_default(),
+        message.body.as_deref().unwrap_or_default().len()
+    ));
+    let state = {
+        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+        runtime
+            .dispatch(ClientCommand::ApplyClientMessage(
+                ClientMessageNoticePayload {
+                    message_id: message.message_id,
+                    from_device_id: message.from_device_id,
+                    body: message.body,
+                },
+            ))
+            .map_err(|err| format!("apply client_message: {err}"))?
+    };
+    publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
+    Ok(true)
+}
+
+fn apply_relay_data_plane_policy(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+    policy_id: Option<&str>,
+) {
+    let current_state = {
+        let runtime = runtime.lock().expect("client runtime mutex poisoned");
+        runtime.state().clone()
+    };
+    if !current_state.signed_in || !current_state.network_enabled {
+        log_service_error(format!(
+            "client-core-service relay data plane policy stored without active apply policyId={} signedIn={} networkEnabled={}",
+            policy_id.unwrap_or_default(),
+            current_state.signed_in,
+            current_state.network_enabled
+        ));
+        publish_state_business_event(
+            state_notifier,
+            BUSINESS_CONTROL_SYNC_CHANGED,
+            &current_state,
+        );
+        return;
+    }
+    log_service_error(format!(
+        "client-core-service applying relay data plane policy policyId={}",
+        policy_id.unwrap_or_default()
+    ));
+    let state = crate::reconfigure_active_control_network(runtime);
+    log_service_error(format!(
+        "client-core-service applied relay data plane policy policyId={} networkEnabled={} ip={} error={}",
+        policy_id.unwrap_or_default(),
+        state.network_enabled,
+        state.virtual_ip.as_deref().unwrap_or_default(),
+        state.error.as_deref().unwrap_or_default()
+    ));
+    let business_type = if state.error.is_some() {
+        BUSINESS_NETWORK_SWITCH_FAILED
+    } else {
+        BUSINESS_NETWORK_RUNTIME_CHANGED
+    };
+    publish_state_business_event(state_notifier, business_type, &state);
 }
 
 #[derive(Debug)]
@@ -359,6 +746,21 @@ fn connect_plan_delivery_id(envelope: &serde_json::Value, plan: &serde_json::Val
         })
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientMessagePayload {
+    #[serde(default)]
+    message_id: Option<String>,
+    #[serde(default)]
+    network_id: Option<String>,
+    #[serde(default)]
+    from_device_id: Option<String>,
+    #[serde(default)]
+    target_device_id: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RelayDataPlanePolicy {
@@ -372,6 +774,10 @@ struct RelayDataPlanePolicy {
     network_id: Option<String>,
     #[serde(default)]
     target_device_ids: Vec<String>,
+    #[serde(default)]
+    source_device_id: Option<String>,
+    #[serde(default)]
+    peer_device_id: Option<String>,
     #[serde(default)]
     path_type: Option<String>,
     #[serde(default)]
@@ -406,20 +812,37 @@ fn validate_relay_data_plane_policy(policy: &RelayDataPlanePolicy) -> Result<(),
     }
     if let Some(scope) = policy.scope.as_deref() {
         match scope {
-            "global" | "region" | "network" | "device" | "device_override" => {}
+            "global" | "region" | "network" | "device" | "device_override" | "peer_pair" => {}
             _ => return Err("unsupported relay data plane policy scope".to_string()),
+        }
+        if scope == "peer_pair" {
+            let source_device_id = policy
+                .source_device_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            let peer_device_id = policy
+                .peer_device_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            if source_device_id.is_empty() || peer_device_id.is_empty() {
+                return Err(
+                    "peer_pair relay policy requires sourceDeviceId and peerDeviceId".to_string(),
+                );
+            }
         }
     }
     if let Some(path_type) = policy.path_type.as_deref() {
         match path_type.trim() {
-            "" | "direct" | "p2p" | "relay" | "relay_udp" | "relay_tcp" | "relay_tls"
-            | "relay_http3" => {}
+            "" | "direct" | "p2p" | "relay" | "lan_udp" | "ipv6_udp" | "direct_udp"
+            | "relay_udp" | "derp_tcp_tls_443" => {}
             _ => return Err("unsupported relay data plane policy pathType".to_string()),
         }
     }
     for path_type in &policy.preferred_path_types {
         match path_type.trim() {
-            "direct_udp" | "relay_udp" | "relay_tcp" | "relay_http3" | "relay_tls" => {}
+            "lan_udp" | "ipv6_udp" | "direct_udp" | "relay_udp" | "derp_tcp_tls_443" => {}
             _ => return Err("unsupported relay data plane policy preferredPathTypes".to_string()),
         }
     }
@@ -511,6 +934,62 @@ fn should_debounce_relay_policy(
     false
 }
 
+fn try_ingest_network_config_changed(
+    payload: &[u8],
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<bool, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    let message_type = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if message_type != "network_config_changed" && message_type != "network_member_state_changed" {
+        return Ok(false);
+    }
+    let session =
+        load_session().map_err(|err| format!("load session for network module: {err}"))?;
+    let client = crate::control_plane::ControlPlaneClient::from_env();
+    crate::network_module::refresh_network_module_from_session(&client, &session)
+        .map_err(|err| format!("refresh client network module: {err:#}"))?;
+    let current_state = {
+        let runtime = runtime
+            .lock()
+            .map_err(|_| "client runtime mutex poisoned".to_string())?;
+        runtime.state().clone()
+    };
+    if current_state.signed_in && current_state.network_enabled {
+        {
+            let mut queue = task_queue
+                .lock()
+                .map_err(|_| "control task queue mutex poisoned".to_string())?;
+            queue
+                .enqueue_downstream(
+                    crate::control_tasks::ControlTaskAction::EnableNetwork,
+                    format!("network-module-refresh-{}", crate::current_timestamp_ms()),
+                    false,
+                )
+                .map_err(|err| err.to_string())?;
+        }
+        let state = crate::drain_pending_control_tasks(runtime, task_queue);
+        let business_type = if state.error.is_some() {
+            BUSINESS_NETWORK_SWITCH_FAILED
+        } else {
+            BUSINESS_NETWORK_RUNTIME_CHANGED
+        };
+        publish_state_business_event(state_notifier, business_type, &state);
+    } else {
+        publish_state_business_event(
+            state_notifier,
+            BUSINESS_CONTROL_SYNC_CHANGED,
+            &current_state,
+        );
+    }
+    Ok(true)
+}
+
 fn relay_policy_file_path() -> PathBuf {
     if let Some(dir) = std::env::var_os("ProgramData") {
         return PathBuf::from(dir)
@@ -575,6 +1054,61 @@ fn try_ingest_auth_callback(
         return Err(error);
     }
     publish_state_business_event(state_notifier, BUSINESS_SESSION_CHANGED, &state);
+    Ok(true)
+}
+
+fn try_ingest_device_ip_reassigned(
+    payload: &[u8],
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<bool, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("device_ip_reassigned") {
+        return Ok(false);
+    }
+    let Some(ip_payload) = value.get("payload") else {
+        return Err("device_ip_reassigned payload is missing".to_string());
+    };
+    let target_device_id = ip_payload
+        .get("deviceId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    let self_device_id = load_session()
+        .ok()
+        .and_then(|session| session.device_id)
+        .unwrap_or_default();
+    if target_device_id.is_empty() || target_device_id != self_device_id.trim() {
+        return Ok(false);
+    }
+    let virtual_ip = ip_payload
+        .get("virtualIp")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    if virtual_ip.is_empty() {
+        return Ok(false);
+    }
+    let prefix_len = ip_payload
+        .get("prefixLen")
+        .or_else(|| ip_payload.get("prefixLength"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok());
+    let mut runtime = runtime
+        .lock()
+        .map_err(|_| "client runtime mutex poisoned".to_string())?;
+    let state = crate::dispatch_with_side_effects(
+        &mut runtime,
+        ClientCommand::SyncAssignedIp(AssignedIpPayload {
+            virtual_ip: virtual_ip.to_string(),
+            prefix_len,
+        }),
+    );
+    if let Some(error) = state.error {
+        return Err(error);
+    }
+    publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
     Ok(true)
 }
 
@@ -689,6 +1223,17 @@ fn release_worker(
     if state.reconnect_key.as_deref() != Some(reconnect_key.as_str()) {
         return;
     }
+    if let Some(error) = error.as_deref() {
+        log_service_error(format!(
+            "client-core-service control mqtt worker stopped reconnectKey={} error={}",
+            reconnect_key, error
+        ));
+    } else {
+        log_service_error(format!(
+            "client-core-service control mqtt worker stopped reconnectKey={} error=",
+            reconnect_key
+        ));
+    }
     state.running = false;
     state.backoff_ms = if error.is_some() {
         (state.backoff_ms.max(1_000) * 2).min(30_000)
@@ -708,4 +1253,70 @@ fn reset_worker_gate(worker_state: &Arc<Mutex<ControlTransportWorkerState>>) {
     state.reconnect_key = None;
     state.backoff_ms = 1_000;
     state.next_attempt_ms = 0;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use client_core::ClientRuntime;
+    use client_core_platform::PlatformNetworkImpl;
+
+    use super::ingest_downstream_publish;
+    use crate::{
+        control_tasks::ControlTaskQueue, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
+    };
+
+    #[test]
+    fn client_message_downstream_updates_runtime_state_and_notifies() {
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(
+            PlatformNetworkImpl::default(),
+        )));
+        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        let state_notifier = Arc::new(StateChangeNotifier::default());
+        let payload = serde_json::json!({
+            "type": "client_message",
+            "messageId": "envelope-msg-1",
+            "payload": {
+                "messageId": "client-msg-1",
+                "networkId": "net-1",
+                "fromDeviceId": "mac-device",
+                "targetDeviceId": "ios-device",
+                "body": "hello ios"
+            }
+        });
+        let payload = serde_json::to_vec(&payload).expect("encode payload");
+
+        ingest_downstream_publish(&payload, &runtime, &task_queue, &state_notifier)
+            .expect("ingest client message");
+
+        let state = runtime.lock().expect("runtime mutex").state().clone();
+        assert_eq!(
+            state.last_client_message_id.as_deref(),
+            Some("client-msg-1")
+        );
+        assert_eq!(
+            state.last_client_message_from_device_id.as_deref(),
+            Some("mac-device")
+        );
+        assert_eq!(state.last_client_message_body.as_deref(), Some("hello ios"));
+        assert_eq!(state.notice.as_deref(), Some("clientMessageReceived"));
+
+        let revision = *state_notifier.revision.lock().expect("revision mutex");
+        assert_eq!(revision, 1);
+        let event = state_notifier
+            .event
+            .lock()
+            .expect("event mutex")
+            .clone()
+            .expect("business event");
+        assert_eq!(event.business_type, BUSINESS_CONTROL_SYNC_CHANGED);
+        assert_eq!(
+            event
+                .business_data
+                .get("lastClientMessageBody")
+                .and_then(serde_json::Value::as_str),
+            Some("hello ios")
+        );
+    }
 }

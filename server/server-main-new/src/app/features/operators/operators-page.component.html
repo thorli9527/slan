@@ -1,0 +1,29 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>运营用户管理</h2>
+        <p>管理运营后台账号、角色和启停状态。</p>
+      </div>
+      <button class="primary" type="button">新增运营用户</button>
+    </div>
+    <table>
+      <thead><tr><th>姓名</th><th>邮箱</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let operator of vm.operators">
+          <td><strong>{{ operator.name }}</strong></td>
+          <td><code>{{ operator.email }}</code></td>
+          <td>{{ operator.role }}</td>
+          <td><span class="status" [class.online]="operator.status === 'active'">{{ operator.status }}</span></td>
+          <td>{{ operator.lastLoginAt }}</td>
+          <td>
+            <div class="row-actions">
+              <button class="ghost small" type="button" (click)="vm.openOperatorPasswordDialog(operator)">改密</button>
+              <button class="ghost small" type="button" (click)="vm.toggleOperator(operator)">{{ operator.status === 'active' ? '停用' : '启用' }}</button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

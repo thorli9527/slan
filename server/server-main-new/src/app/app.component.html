@@ -1,0 +1,136 @@
+<div class="shell">
+  <aside class="sider">
+    <div class="brand">
+      <div class="brand-mark">S</div>
+      <div>
+        <strong>SLAN Main</strong>
+        <span>Operations Console</span>
+      </div>
+    </div>
+    <nav>
+      <button type="button" *ngFor="let item of navItems" [class.active]="active === item.id" (click)="setActive(item.id)">
+        <strong>{{ item.label }}</strong>
+        <span>{{ item.desc }}</span>
+      </button>
+    </nav>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div>
+        <span class="crumb">运营管理控制台 / {{ activeNav.label }}</span>
+        <h1>{{ activeNav.label }}</h1>
+      </div>
+      <div class="operator">
+        <span>admin@slan.com</span>
+        <button class="ghost" type="button" (click)="openCurrentPasswordDialog()">修改密码</button>
+        <button class="ghost" type="button">退出</button>
+      </div>
+    </header>
+
+    <section class="summary-grid">
+      <article><span>客户</span><strong>{{ totalCustomers }}</strong><small>{{ limitedCustomers }} 个客户已限流</small></article>
+      <article><span>中继节点</span><strong>{{ activeRelayNodes }}/{{ relayNodes.length }}</strong><small>健康节点 / 总节点</small></article>
+      <article><span>Relay 月流量</span><strong>{{ totalRelayUsedGb }}GB</strong><small>只统计 relay_udp 与 DERP</small></article>
+      <article><span>套餐</span><strong>{{ plans.length }}</strong><small>免费版 / 专业版 / 企业版</small></article>
+    </section>
+
+    <ops-overview-page *ngIf="active === 'overview'" [vm]="vm"></ops-overview-page>
+    <ops-operators-page *ngIf="active === 'operators'" [vm]="vm"></ops-operators-page>
+    <ops-relay-nodes-page *ngIf="active === 'relayNodes'" [vm]="vm"></ops-relay-nodes-page>
+    <ops-customers-page *ngIf="active === 'customers'" [vm]="vm"></ops-customers-page>
+    <ops-products-page *ngIf="active === 'products'" [vm]="vm"></ops-products-page>
+    <ops-orders-page *ngIf="active === 'orders'" [vm]="vm"></ops-orders-page>
+    <ops-renewals-page *ngIf="active === 'renewals'" [vm]="vm"></ops-renewals-page>
+  </main>
+</div>
+
+<div class="modal-backdrop" *ngIf="showCurrentPasswordDialog">
+  <section class="modal">
+    <div class="modal-header">
+      <div>
+        <h2>修改登录用户密码</h2>
+        <p>当前登录用户：admin@slan.com</p>
+      </div>
+      <button class="icon-close" type="button" (click)="closeCurrentPasswordDialog()">x</button>
+    </div>
+    <div class="form-grid">
+      <label>
+        <span>旧密码</span>
+        <input [(ngModel)]="oldPassword" type="password">
+      </label>
+      <label>
+        <span>新密码</span>
+        <input [(ngModel)]="newPassword" type="password">
+      </label>
+      <label>
+        <span>确认新密码</span>
+        <input [(ngModel)]="confirmPassword" type="password">
+      </label>
+      <p class="form-error" *ngIf="passwordMessage">{{ passwordMessage }}</p>
+    </div>
+    <div class="modal-footer">
+      <button class="ghost" type="button" (click)="closeCurrentPasswordDialog()">取消</button>
+      <button class="primary" type="button" (click)="saveCurrentPassword()">确认修改</button>
+    </div>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="showOperatorPasswordDialog">
+  <section class="modal">
+    <div class="modal-header">
+      <div>
+        <h2>修改运营用户密码</h2>
+        <p>{{ selectedOperator?.email }}</p>
+      </div>
+      <button class="icon-close" type="button" (click)="closeOperatorPasswordDialog()">x</button>
+    </div>
+    <div class="form-grid">
+      <label>
+        <span>新密码</span>
+        <input [(ngModel)]="operatorNewPassword" type="password">
+      </label>
+      <label>
+        <span>确认新密码</span>
+        <input [(ngModel)]="operatorConfirmPassword" type="password">
+      </label>
+      <p class="form-error" *ngIf="passwordMessage">{{ passwordMessage }}</p>
+    </div>
+    <div class="modal-footer">
+      <button class="ghost" type="button" (click)="closeOperatorPasswordDialog()">取消</button>
+      <button class="primary" type="button" (click)="saveOperatorPassword()">确认修改</button>
+    </div>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="showAssignPlanDialog">
+  <section class="modal">
+    <div class="modal-header">
+      <div>
+        <h2>指定客户级别</h2>
+        <p>{{ selectedCustomer?.email }}</p>
+      </div>
+      <button class="icon-close" type="button" (click)="closeAssignPlan()">x</button>
+    </div>
+    <div class="form-grid">
+      <label>
+        <span>客户级别</span>
+        <select [(ngModel)]="assignPlanCode">
+          <option *ngFor="let plan of plans" [value]="plan.code">{{ plan.name }}</option>
+        </select>
+      </label>
+      <label>
+        <span>有效期</span>
+        <input [(ngModel)]="assignExpiresAt" type="date">
+      </label>
+      <label>
+        <span>续费金额</span>
+        <input [(ngModel)]="renewalAmount" type="number">
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="ghost" type="button" (click)="closeAssignPlan()">取消</button>
+      <button class="primary" type="button" (click)="saveAssignPlan()">确认</button>
+    </div>
+  </section>
+</div>

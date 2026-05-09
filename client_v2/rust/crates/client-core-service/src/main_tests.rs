@@ -17,7 +17,7 @@ use crate::{
     relay_store::relay_runtime_failure_total,
 };
 use client_core::{PathKind, PeerPathRuntime, PlatformNetworkDiagnostics, RelayTicket, RouteSpec};
-use std::net::TcpListener;
+use std::net::UdpSocket;
 
 #[test]
 fn online_presence_statuses_do_not_disable_local_network() {
@@ -48,51 +48,32 @@ fn managed_disable_statuses_disable_local_network() {
 
 #[test]
 fn relay_selection_prefers_reachable_low_score_candidate() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test relay tcp listener");
-    let address = listener.local_addr().unwrap().to_string();
-    let selections = select_relay_candidates(&[
-        PersistedRelayCandidate {
-            endpoint_id: "relay-http3".to_string(),
-            transport: "http3".to_string(),
-            address: address.clone(),
-            country_code: None,
-            region_id: None,
-            cluster_id: None,
-        },
-        PersistedRelayCandidate {
-            endpoint_id: "relay-tls".to_string(),
-            transport: "tls".to_string(),
-            address: address.clone(),
-            country_code: Some("CN".to_string()),
-            region_id: None,
-            cluster_id: None,
-        },
-        PersistedRelayCandidate {
-            endpoint_id: "relay-tcp".to_string(),
-            transport: "tcp".to_string(),
-            address,
-            country_code: Some("CN".to_string()),
-            region_id: None,
-            cluster_id: None,
-        },
-    ]);
-    assert_eq!(selections[0].endpoint_id, "relay-tcp");
+    let relay = UdpSocket::bind("127.0.0.1:0").expect("bind test relay udp socket");
+    let address = relay.local_addr().unwrap().to_string();
+    std::thread::spawn(move || {
+        let mut buffer = [0_u8; 512];
+        if let Ok((_, peer)) = relay.recv_from(&mut buffer) {
+            let _ = relay.send_to(br#"{"kind":"pong"}"#, peer);
+        }
+    });
+    let selections = select_relay_candidates(&[PersistedRelayCandidate {
+        endpoint_id: "relay-udp".to_string(),
+        transport: "udp".to_string(),
+        address,
+        country_code: Some("CN".to_string()),
+        region_id: None,
+        cluster_id: None,
+    }]);
+    assert_eq!(selections[0].endpoint_id, "relay-udp");
     assert!(selections[0].selected);
-    assert!(selections
-        .iter()
-        .filter(|item| item.transport == "tls" || item.transport == "http3")
-        .all(|item| item.reachable && !item.selected));
 }
 
 #[test]
 fn android_data_plane_does_not_select_non_udp_relay() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test relay tcp listener");
-    let address = listener.local_addr().unwrap().to_string();
-
     let selected = android_data_plane_relay_candidate(&[PersistedRelayCandidate {
         endpoint_id: "relay-tcp".to_string(),
         transport: "tcp".to_string(),
-        address,
+        address: "127.0.0.1:9001".to_string(),
         country_code: Some("CN".to_string()),
         region_id: None,
         cluster_id: None,
@@ -105,18 +86,18 @@ fn android_data_plane_does_not_select_non_udp_relay() {
 fn connect_plan_relay_path_becomes_path_candidate() {
     let candidate = relay_path_candidate_from_connect_plan(
         &PersistedConnectPlanPath {
-            path_type: "relay_http3".to_string(),
-            endpoint: "http3://relay.example:443".to_string(),
+            path_type: "relay_udp".to_string(),
+            endpoint: "udp://relay.example:3478".to_string(),
             priority: 42,
         },
         None,
         &test_relay_selection("relay-other", "udp", "127.0.0.1:3478"),
     )
-    .expect("relay_http3 connect plan path should become candidate");
+    .expect("relay_udp connect plan path should become candidate");
 
-    assert_eq!(candidate.kind, PathKind::RelayHttp3);
-    assert_eq!(candidate.address.as_deref(), Some("relay.example:443"));
-    assert_eq!(candidate.transport.as_deref(), Some("http3"));
+    assert_eq!(candidate.kind, PathKind::RelayUdp);
+    assert_eq!(candidate.address.as_deref(), Some("relay.example:3478"));
+    assert_eq!(candidate.transport.as_deref(), Some("udp"));
     assert_eq!(candidate.path_score, Some(42));
 }
 
@@ -124,15 +105,16 @@ fn connect_plan_relay_path_becomes_path_candidate() {
 fn connect_plan_rejects_relay_protocol_aliases() {
     assert!(relay_path_candidate_from_connect_plan(
         &PersistedConnectPlanPath {
-            path_type: "relay_http3".to_string(),
-            endpoint: "h3://relay.example:443".to_string(),
+            path_type: "relay_udp".to_string(),
+            endpoint: "tcp://relay.example:443".to_string(),
             priority: 1,
         },
         None,
         &test_relay_selection("relay-other", "udp", "127.0.0.1:3478"),
     )
     .is_none());
-    assert_eq!(relay_transport_for_path_type("relay_http3"), Some("http3"));
+    assert_eq!(relay_transport_for_path_type("relay_udp"), Some("udp"));
+    assert_eq!(relay_transport_for_path_type("relay_http3"), None);
     assert_eq!(relay_transport_for_path_type("h3"), None);
     assert_eq!(relay_transport_for_path_type("quic"), None);
 }
@@ -141,30 +123,31 @@ fn connect_plan_rejects_relay_protocol_aliases() {
 fn connect_plan_path_selects_matching_reachable_relay_candidate() {
     let selected = relay_candidate_matching_connect_plan_path(
         &PersistedConnectPlanPath {
-            path_type: "relay_http3".to_string(),
-            endpoint: "relay+http3://relay.example:443".to_string(),
+            path_type: "relay_udp".to_string(),
+            endpoint: "relay+udp://relay.example:3478".to_string(),
             priority: 1,
         },
-        &[
-            test_relay_selection("relay-udp", "udp", "relay.example:3478"),
-            test_relay_selection("relay-http3", "http3", "relay.example:443"),
-        ],
+        &[test_relay_selection(
+            "relay-udp",
+            "udp",
+            "relay.example:3478",
+        )],
     )
     .expect("connect_plan relay path should match candidate");
 
-    assert_eq!(selected.endpoint_id, "relay-http3");
-    assert_eq!(selected.transport, "http3");
+    assert_eq!(selected.endpoint_id, "relay-udp");
+    assert_eq!(selected.transport, "udp");
 }
 
 #[test]
 fn connect_plan_path_ignores_unreachable_relay_candidate() {
-    let mut candidate = test_relay_selection("relay-http3", "http3", "relay.example:443");
+    let mut candidate = test_relay_selection("relay-udp", "udp", "relay.example:3478");
     candidate.reachable = false;
 
     assert!(relay_candidate_matching_connect_plan_path(
         &PersistedConnectPlanPath {
-            path_type: "relay_http3".to_string(),
-            endpoint: "http3://relay.example:443".to_string(),
+            path_type: "relay_udp".to_string(),
+            endpoint: "udp://relay.example:3478".to_string(),
             priority: 1,
         },
         &[candidate],

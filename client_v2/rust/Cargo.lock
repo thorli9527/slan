@@ -46,6 +46,7 @@ name = "client-core-ffi"
 version = "0.1.0"
 dependencies = [
  "client-core",
+ "client-core-service",
  "jni",
  "libc",
  "serde_json",
@@ -57,6 +58,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client-core",
+ "libc",
  "libloading",
  "serde",
  "serde_json",

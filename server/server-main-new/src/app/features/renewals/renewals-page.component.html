@@ -1,0 +1,26 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>客户续费管理</h2>
+        <p>记录客户续费、手动开通、有效期调整和操作人。</p>
+      </div>
+      <button class="primary" type="button" (click)="vm.openAssignPlan(vm.customers[0])">手动续费</button>
+    </div>
+    <table>
+      <thead><tr><th>客户</th><th>套餐</th><th>周期</th><th>金额</th><th>支付时间</th><th>有效期至</th><th>来源</th><th>操作人</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let renewal of vm.renewals">
+          <td><code>{{ renewal.customerEmail }}</code></td>
+          <td>{{ vm.planName(renewal.planCode) }}</td>
+          <td>{{ renewal.period }}</td>
+          <td>{{ renewal.amount }} 元</td>
+          <td>{{ renewal.paidAt }}</td>
+          <td>{{ renewal.validUntil }}</td>
+          <td>{{ renewal.source }}</td>
+          <td><code>{{ renewal.operator }}</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

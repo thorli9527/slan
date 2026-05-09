@@ -24,21 +24,6 @@ class ClientCorePlugin : public flutter::Plugin {
   void HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-
-  flutter::EncodableMap StateAsMap() const;
-  flutter::EncodableMap Dispatch(const flutter::EncodableValue* arguments);
-
-  bool signed_in_ = false;
-  std::string user_label_;
-  std::string device_id_;
-  std::string auth_callback_id_;
-  std::string virtual_ip_;
-  bool network_enabled_ = false;
-  bool syncing_ = false;
-  std::string sync_reason_;
-  bool switch_enabled_ = true;
-  std::string notice_;
-  std::string error_;
 };
 
 }  // namespace client_core_plugin

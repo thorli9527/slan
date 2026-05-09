@@ -58,111 +58,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       return
     }
 
-    switch call.method {
-    case "start", "state", "refresh":
-      result(compactState())
-    case "dispatch":
-      handleDispatch(call.arguments)
-      if commandType == "openWebConsole" {
-        openAuthenticatedConsole()
-      } else if commandType == "loginWithBrowser" {
-        openConsole(
-          callbackId: state["authCallbackId"] as? String ?? "",
-          deviceId: state["deviceId"] as? String ?? ""
-        )
-      }
-      result(compactState())
-    case "enqueueControlTask", "enqueueDownstreamControlTask", "ingestDownstreamControlMessage":
-      state["syncing"] = false
-      state["switchEnabled"] = true
-      state["error"] = "local service unavailable"
-      result(compactState())
-    case "localControlStatus":
-      result([
-        "mqttCredentialReady": false,
-        "controlSessionReady": false,
-        "ready": false,
-        "missing": ["localService"]
-      ])
-    case "localControlPlan":
-      result([
-        "heartbeatQos": "qos0",
-        "controlQos": "qos2"
-      ])
-    case "localControlCadence":
-      result([
-        "ackFlushIntervalMs": 1000,
-        "heartbeatIntervalMs": 30000,
-        "runtimeStateIntervalMs": 10000
-      ])
-    case "localControlTickPlan":
-      result([
-        "nowMs": 0,
-        "outbox": [
-          "includeHeartbeat": true,
-          "includeRuntimeState": true,
-          "includeControlAcks": true
-        ],
-        "nextAckFlushDueMs": 0,
-        "nextHeartbeatDueMs": 0,
-        "nextRuntimeStateDueMs": 0
-      ])
-    case "localControlOutbox":
-      result([
-        "messages": []
-      ])
-    case "localPendingControlAcks":
-      result([])
-    case "localMarkControlAcked":
-      result([
-        "acknowledged": false,
-        "error": "local service unavailable"
-      ])
-    case "localMarkTransportPublished":
-      result([
-        "published": false,
-        "error": "local service unavailable"
-      ])
-    case "localNetworkShutdown":
-      shutdownNetworkBeforeQuit()
-      state["networkEnabled"] = false
-      state["virtualIp"] = nil
-      state["notice"] = "networkShutdown"
-      result(compactState())
-    default:
-      result(FlutterMethodNotImplemented)
-    }
-  }
-
-  private func handleDispatch(_ arguments: Any?) {
-    guard
-      let command = arguments as? [String: Any],
-      let type = command["type"] as? String
-    else {
-      state["error"] = "invalid command"
-      return
-    }
-
-    state["error"] = nil
-    state["syncReason"] = type
-    switch type {
-    case "loginWithBrowser":
-      state["authCallbackId"] = "cb-\(Int(Date().timeIntervalSince1970 * 1000))"
-      state["notice"] = "loginBrowserRequested"
-    case "openWebConsole":
-      state["notice"] = "webConsoleRequested"
-    case "logout":
-      state["signedIn"] = false
-      state["userLabel"] = nil
-      state["deviceId"] = nil
-      state["authCallbackId"] = nil
-      state["virtualIp"] = nil
-      state["networkEnabled"] = false
-      state["notice"] = "signedOut"
-    default:
-      state["notice"] = "\(type)Requested"
-    }
-    state["syncReason"] = nil
+    result(FlutterMethodNotImplemented)
   }
 
   private func installStatusItem() {
@@ -242,10 +138,36 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   @objc private func openMainWindow() {
+    NSApp.setActivationPolicy(.regular)
+    NSApp.unhide(nil)
     NSApp.activate(ignoringOtherApps: true)
     for window in NSApp.windows {
+      if !window.isVisible {
+        window.center()
+      }
+      positionWindowOnCurrentScreen(window)
+      window.deminiaturize(nil)
+      window.level = .floating
       window.makeKeyAndOrderFront(nil)
+      window.orderFrontRegardless()
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        window.level = .normal
+      }
     }
+  }
+
+  private func positionWindowOnCurrentScreen(_ window: NSWindow) {
+    let mouse = NSEvent.mouseLocation
+    let screen = NSScreen.screens.first { screen in
+      screen.frame.contains(mouse)
+    } ?? NSScreen.main
+    guard let visibleFrame = screen?.visibleFrame else {
+      return
+    }
+    let size = window.frame.size
+    let x = visibleFrame.midX - size.width / 2
+    let y = visibleFrame.midY - size.height / 2
+    window.setFrameOrigin(NSPoint(x: x, y: y))
   }
 
   @objc private func quitShell() {

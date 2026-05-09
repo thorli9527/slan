@@ -4,9 +4,14 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
-    let windowFrame = self.frame
     self.contentViewController = flutterViewController
-    self.setFrame(windowFrame, display: true)
+    self.setContentSize(NSSize(width: 460, height: 220))
+    self.minSize = NSSize(width: 460, height: 220)
+    self.maxSize = NSSize(width: 460, height: 220)
+    self.styleMask.remove([.miniaturizable, .resizable])
+    self.standardWindowButton(.miniaturizeButton)?.isHidden = true
+    self.standardWindowButton(.zoomButton)?.isHidden = true
+    self.center()
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 

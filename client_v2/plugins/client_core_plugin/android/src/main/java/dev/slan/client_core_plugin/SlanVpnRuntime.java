@@ -90,6 +90,7 @@ final class SlanVpnRuntime {
 
   private static Map<String, Object> stateLocked() {
     Map<String, Object> state = new HashMap<>();
+    state.putAll(nativeStats());
     state.put("adapterPresent", adapterPresent);
     state.put("networkEnabled", networkEnabled);
     if (virtualIp != null && !virtualIp.isEmpty()) {
@@ -103,8 +104,18 @@ final class SlanVpnRuntime {
     }
     if (relaySessionCount != null) {
       state.put("relaySessionCount", relaySessionCount);
+      state.put("requestedRelaySessionCount", relaySessionCount);
+      state.put("attachedRelaySessionCount", relaySessionCount);
     }
     return state;
+  }
+
+  private static Map<String, Object> nativeStats() {
+    try {
+      return JsonCodec.toMap(SlanNativeBridge.statsJson());
+    } catch (Exception ignored) {
+      return new HashMap<>();
+    }
   }
 
   private static String emptyToNull(String value) {

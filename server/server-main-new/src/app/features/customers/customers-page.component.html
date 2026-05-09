@@ -1,0 +1,27 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>客户管理</h2>
+        <p>查看客户设备、Relay 用量、限流状态，并可手动指定客户级别与有效期。</p>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>客户</th><th>当前级别</th><th>有效期</th><th>设备</th><th>Relay 用量</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let customer of vm.customers">
+          <td><strong>{{ customer.name }}</strong><br><code>{{ customer.email }}</code></td>
+          <td>{{ vm.planName(customer.planCode) }}</td>
+          <td>{{ customer.planExpiresAt }}</td>
+          <td>自有 {{ customer.ownDevices }} / 邀请 {{ customer.invitedDevices }}</td>
+          <td>
+            {{ customer.relayUsedGb }} / {{ vm.planOf(customer.planCode).relayMonthlyGb }}GB
+            <div class="meter"><span [class.warn]="vm.customerRelayPercent(customer) >= 80" [style.width.%]="vm.customerRelayPercent(customer)"></span></div>
+          </td>
+          <td><span class="status" [class.online]="customer.status === 'active'">{{ customer.status }}</span></td>
+          <td><button class="ghost small" type="button" (click)="vm.openAssignPlan(customer)">指定级别</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

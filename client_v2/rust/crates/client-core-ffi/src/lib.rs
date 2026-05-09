@@ -1,5 +1,5 @@
 use std::{
-    ffi::{c_char, CString},
+    ffi::{c_char, CStr, CString},
     ptr,
 };
 
@@ -14,7 +14,7 @@ mod android_tun {
         os::fd::FromRawFd,
         os::raw::c_int,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, OnceLock,
         },
         thread::{self, JoinHandle},
@@ -32,8 +32,27 @@ mod android_tun {
 
     struct TunRuntime {
         stop: Arc<AtomicBool>,
+        stats: Arc<TunStats>,
+        last_attach_error: Arc<Mutex<Option<String>>>,
         handle: Option<JoinHandle<()>>,
         config_json: String,
+    }
+
+    #[derive(Default)]
+    struct TunStats {
+        requested_relay_session_count: AtomicU64,
+        attached_relay_session_count: AtomicU64,
+        relay_attach_failures: AtomicU64,
+        packets_read: AtomicU64,
+        bytes_read: AtomicU64,
+        bytes_written: AtomicU64,
+        packets_too_large: AtomicU64,
+        relay_frames_sent: AtomicU64,
+        relay_frames_received: AtomicU64,
+        relay_detach_sent: AtomicU64,
+        relay_no_peer_packets: AtomicU64,
+        relay_write_failures: AtomicU64,
+        tun_write_failures: AtomicU64,
     }
 
     impl Drop for TunRuntime {
@@ -96,6 +115,43 @@ mod android_tun {
         }
     }
 
+    #[no_mangle]
+    pub extern "system" fn Java_dev_slan_client_1core_1plugin_SlanNativeBridge_tunStatsJson<'a>(
+        env: JNIEnv<'a>,
+        _class: JClass<'a>,
+    ) -> JString<'a> {
+        let json = {
+            let guard = runtime()
+                .lock()
+                .expect("android tun runtime mutex poisoned");
+            guard
+                .as_ref()
+                .map(tun_stats_json)
+                .unwrap_or_else(|| "{}".to_string())
+        };
+        env.new_string(json)
+            .unwrap_or_else(|_| env.new_string("{}").expect("static json string"))
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_dev_slan_client_1core_1plugin_SlanNativeBridge_serviceRequestJson<
+        'a,
+    >(
+        mut env: JNIEnv<'a>,
+        _class: JClass<'a>,
+        request_json: JString<'a>,
+    ) -> JString<'a> {
+        let request = env
+            .get_string(&request_json)
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let response = client_core_service::embedded::embedded_handle_request_json(&request);
+        env.new_string(response).unwrap_or_else(|_| {
+            env.new_string("{\"error\":\"encode response\"}")
+                .expect("static json string")
+        })
+    }
+
     struct AndroidRelayPeer {
         session_id: String,
         peer_virtual_ips: Vec<String>,
@@ -106,7 +162,27 @@ mod android_tun {
         stop_tun();
         set_nonblocking(tun_fd);
         let parsed_config = serde_json::from_str::<AndroidVpnSessionConfig>(&config_json).ok();
-        let relay_peers = prepare_relay_sockets(relay_fds, parsed_config.as_ref())?;
+        let stats = Arc::new(TunStats::default());
+        let last_attach_error = Arc::new(Mutex::new(None));
+        stats.requested_relay_session_count.store(
+            requested_relay_session_count(parsed_config.as_ref()),
+            Ordering::Relaxed,
+        );
+        let relay_peers = prepare_relay_sockets(
+            relay_fds,
+            parsed_config.as_ref(),
+            Arc::clone(&last_attach_error),
+        )?;
+        stats
+            .attached_relay_session_count
+            .store(relay_peers.len() as u64, Ordering::Relaxed);
+        stats.relay_attach_failures.store(
+            stats
+                .requested_relay_session_count
+                .load(Ordering::Relaxed)
+                .saturating_sub(relay_peers.len() as u64),
+            Ordering::Relaxed,
+        );
         let max_frame_payload = parsed_config
             .as_ref()
             .and_then(|config| config.relay_data_plane.as_ref())
@@ -115,10 +191,12 @@ mod android_tun {
             .clamp(512, 1400) as usize;
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
+        let thread_stats = Arc::clone(&stats);
+        let thread_config_json = config_json.clone();
         let handle = thread::spawn(move || {
             let mut file = unsafe { File::from_raw_fd(tun_fd) };
             let relay_peers = relay_peers;
-            let config_hash = stable_hash64(&config_json);
+            let config_hash = stable_hash64(&thread_config_json);
             let mut seq = 0_u64;
             let mut tun_buffer = vec![0_u8; 2048];
             let mut relay_buffer = vec![0_u8; 4096];
@@ -126,7 +204,14 @@ mod android_tun {
                 match file.read(&mut tun_buffer) {
                     Ok(0) => thread::sleep(Duration::from_millis(20)),
                     Ok(packet_len) => {
+                        thread_stats.packets_read.fetch_add(1, Ordering::Relaxed);
+                        thread_stats
+                            .bytes_read
+                            .fetch_add(packet_len as u64, Ordering::Relaxed);
                         if packet_len > max_frame_payload {
+                            thread_stats
+                                .packets_too_large
+                                .fetch_add(1, Ordering::Relaxed);
                             continue;
                         }
                         if let Some(peer) =
@@ -138,8 +223,23 @@ mod android_tun {
                                 config_hash,
                                 &tun_buffer[..packet_len],
                             ) {
-                                let _ = peer.socket.send(&frame);
+                                match peer.socket.send(&frame) {
+                                    Ok(_) => {
+                                        thread_stats
+                                            .relay_frames_sent
+                                            .fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(_) => {
+                                        thread_stats
+                                            .relay_write_failures
+                                            .fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
                             }
+                        } else {
+                            thread_stats
+                                .relay_no_peer_packets
+                                .fetch_add(1, Ordering::Relaxed);
                         }
                     }
                     Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -154,7 +254,18 @@ mod android_tun {
                             if let Some(packet) =
                                 decode_slan_relay_data_frame(&relay_buffer[..frame_len])
                             {
-                                let _ = file.write_all(packet);
+                                thread_stats
+                                    .relay_frames_received
+                                    .fetch_add(1, Ordering::Relaxed);
+                                if file.write_all(packet).is_err() {
+                                    thread_stats
+                                        .tun_write_failures
+                                        .fetch_add(1, Ordering::Relaxed);
+                                } else {
+                                    thread_stats
+                                        .bytes_written
+                                        .fetch_add(packet.len() as u64, Ordering::Relaxed);
+                                }
                             }
                         }
                         Err(error) if error.kind() == ErrorKind::WouldBlock => {}
@@ -163,17 +274,53 @@ mod android_tun {
                     }
                 }
             }
-            detach_udp_relay_sessions(&relay_peers, parsed_config.as_ref());
+            detach_udp_relay_sessions(&relay_peers, parsed_config.as_ref(), &thread_stats);
         });
         let mut guard = runtime()
             .lock()
             .expect("android tun runtime mutex poisoned");
         *guard = Some(TunRuntime {
             stop,
+            stats,
+            last_attach_error,
             handle: Some(handle),
             config_json,
         });
         Ok(())
+    }
+
+    fn tun_stats_json(runtime: &TunRuntime) -> String {
+        serde_json::json!({
+            "running": true,
+            "requestedRelaySessionCount": runtime.stats.requested_relay_session_count.load(Ordering::Relaxed),
+            "attachedRelaySessionCount": runtime.stats.attached_relay_session_count.load(Ordering::Relaxed),
+            "relayAttachFailures": runtime.stats.relay_attach_failures.load(Ordering::Relaxed),
+            "lastRelayAttachError": runtime
+                .last_attach_error
+                .lock()
+                .ok()
+                .and_then(|value| value.clone()),
+            "packetsRead": runtime.stats.packets_read.load(Ordering::Relaxed),
+            "bytesRead": runtime.stats.bytes_read.load(Ordering::Relaxed),
+            "bytesWritten": runtime.stats.bytes_written.load(Ordering::Relaxed),
+            "packetsTooLarge": runtime.stats.packets_too_large.load(Ordering::Relaxed),
+            "relayFramesSent": runtime.stats.relay_frames_sent.load(Ordering::Relaxed),
+            "relayFramesReceived": runtime.stats.relay_frames_received.load(Ordering::Relaxed),
+            "relayDetachSent": runtime.stats.relay_detach_sent.load(Ordering::Relaxed),
+            "relayNoPeerPackets": runtime.stats.relay_no_peer_packets.load(Ordering::Relaxed),
+            "relayWriteFailures": runtime.stats.relay_write_failures.load(Ordering::Relaxed),
+            "tunWriteFailures": runtime.stats.tun_write_failures.load(Ordering::Relaxed),
+            "configBytes": runtime.config_json.len(),
+        })
+        .to_string()
+    }
+
+    fn requested_relay_session_count(config: Option<&AndroidVpnSessionConfig>) -> u64 {
+        config
+            .and_then(|value| value.relay_data_plane.as_ref())
+            .filter(|relay_config| relay_config.enabled)
+            .map(|relay_config| relay_config.sessions.len() as u64)
+            .unwrap_or(0)
     }
 
     fn read_relay_fds(env: &mut JNIEnv, relay_fds: JIntArray) -> jni::errors::Result<Vec<c_int>> {
@@ -189,6 +336,7 @@ mod android_tun {
     fn prepare_relay_sockets(
         relay_fds: Vec<c_int>,
         config: Option<&AndroidVpnSessionConfig>,
+        last_attach_error: Arc<Mutex<Option<String>>>,
     ) -> std::io::Result<Vec<AndroidRelayPeer>> {
         if relay_fds.is_empty() {
             return Ok(Vec::new());
@@ -221,7 +369,14 @@ mod android_tun {
                 continue;
             };
             let socket = unsafe { UdpSocket::from_raw_fd(fd) };
-            attach_udp_relay_session(&socket, relay_config.local_node_id.as_str(), session)?;
+            if let Err(error) =
+                attach_udp_relay_session(&socket, relay_config.local_node_id.as_str(), session)
+            {
+                if let Ok(mut guard) = last_attach_error.lock() {
+                    *guard = Some(error.to_string());
+                }
+                continue;
+            }
             socket.set_nonblocking(true)?;
             peers.push(AndroidRelayPeer {
                 session_id: session.session_id.clone(),
@@ -241,6 +396,7 @@ mod android_tun {
     fn detach_udp_relay_sessions(
         peers: &[AndroidRelayPeer],
         config: Option<&AndroidVpnSessionConfig>,
+        stats: &TunStats,
     ) {
         let local_node_id = config
             .and_then(|value| value.relay_data_plane.as_ref())
@@ -259,7 +415,9 @@ mod android_tun {
                 "participant_id": local_node_id,
             });
             if let Ok(payload) = serde_json::to_vec(&detach) {
-                let _ = peer.socket.send(&payload);
+                if peer.socket.send(&payload).is_ok() {
+                    stats.relay_detach_sent.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
     }
@@ -432,6 +590,24 @@ pub extern "C" fn client_core_v2_default_state_json() -> *mut c_char {
         Ok(value) => string_to_ptr(value),
         Err(_) => ptr::null_mut(),
     }
+}
+
+#[no_mangle]
+pub extern "C" fn client_core_v2_service_request_json(request_json: *const c_char) -> *mut c_char {
+    if request_json.is_null() {
+        return string_to_ptr(
+            serde_json::json!({
+                "error": "request_json is null",
+            })
+            .to_string(),
+        );
+    }
+    let request = unsafe { CStr::from_ptr(request_json) }
+        .to_string_lossy()
+        .into_owned();
+    string_to_ptr(client_core_service::embedded::embedded_handle_request_json(
+        &request,
+    ))
 }
 
 #[no_mangle]

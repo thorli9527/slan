@@ -1,0 +1,57 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>套餐管理</h2>
+        <p>P2P 流量不限，只对 Relay/DERP 月流量和带宽限额。</p>
+      </div>
+      <button class="primary" type="button">新增套餐</button>
+    </div>
+    <table>
+      <thead><tr><th>套餐</th><th>自有设备</th><th>邀请设备</th><th>总设备</th><th>Relay 月流量</th><th>Relay 带宽</th><th>超限限速</th><th>功能</th><th>价格</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let plan of vm.plans">
+          <td><strong>{{ plan.name }}</strong><br><code>{{ plan.code }}</code></td>
+          <td>{{ plan.ownDeviceLimit }}</td>
+          <td>{{ plan.invitedDeviceLimit }}</td>
+          <td>{{ plan.totalDeviceLimit }}</td>
+          <td>{{ plan.relayMonthlyGb }}GB</td>
+          <td>{{ plan.relayBandwidthMbps }}Mbps</td>
+          <td>{{ plan.relayThrottleMbps }}Mbps</td>
+          <td>{{ plan.customDomain ? '域名 ' : '' }}{{ plan.acl ? 'ACL ' : '' }}{{ plan.dedicatedRelay ? '专属Relay ' : '' }}{{ plan.auditLog ? '审计 ' : '' }}{{ plan.apiAccess ? 'API' : '' }}</td>
+          <td>{{ plan.yearlyPrice ? plan.yearlyPrice + ' 元/年' : '免费' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>商品管理</h2>
+        <p>商品绑定客户级别，负责售卖周期、价格、有效期、Relay 资源和上架状态。</p>
+      </div>
+      <button class="primary" type="button">新增商品</button>
+    </div>
+    <table>
+      <thead><tr><th>商品</th><th>类型</th><th>客户级别</th><th>售卖周期</th><th>有效期</th><th>Relay 资源</th><th>价格</th><th>续费</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let product of vm.products">
+          <td><strong>{{ product.name }}</strong><br><code>{{ product.productId }}</code></td>
+          <td>{{ product.type }}</td>
+          <td>{{ product.planCode ? vm.planName(product.planCode) : '-' }}</td>
+          <td>{{ product.period }}</td>
+          <td>{{ product.validDays }} 天</td>
+          <td>{{ product.relayTrafficGb }}GB / {{ product.relayBandwidthMbps || '-' }}Mbps</td>
+          <td>
+            <span *ngIf="product.listPrice !== product.salePrice" class="price-muted">{{ product.listPrice }} 元</span>
+            <strong>{{ product.salePrice }} 元</strong>
+          </td>
+          <td>{{ product.autoRenew ? '自动续费' : '不自动' }}</td>
+          <td><span class="status" [class.online]="product.status === 'active'">{{ product.status }}</span></td>
+          <td><button class="ghost small" type="button" (click)="vm.toggleProduct(product)">{{ product.status === 'active' ? '下架' : '上架' }}</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

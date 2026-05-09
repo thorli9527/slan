@@ -23,9 +23,10 @@ const (
 )
 
 var (
-	errBadRequest = errors.New("bad request")
-	errNotFound   = errors.New("not found")
-	errConflict   = errors.New("conflict")
+	errBadRequest   = errors.New("bad request")
+	errUnauthorized = errors.New("unauthorized")
+	errNotFound     = errors.New("not found")
+	errConflict     = errors.New("conflict")
 )
 
 type Store struct {
@@ -33,9 +34,7 @@ type Store struct {
 
 	nextUserID          int
 	nextDeviceSeq       int
-	nextWorkspaceSeq    int
-	nextMemberSeq       int
-	nextInviteSeq       int
+	nextNetworkSeq      int
 	nextDeviceInviteSeq int
 	nextOwnerSeq        int
 	nextOwnerLogSeq     int
@@ -48,30 +47,44 @@ type Store struct {
 	nextIPSubnetSeq     int
 	nextIPAddressSeq    int
 	nextIPOffset        uint32
+	nextOperatorSeq     int
+	nextRelayNodeSeq    int
+	nextProductSeq      int
+	nextOrderSeq        int
+	nextRenewalSeq      int
 
 	users              map[string]User
 	userByEmail        map[string]string
+	userAliases        map[string]UserAlias
 	sessions           map[string]UserSession
+	operators          map[string]OperatorUser
+	operatorByEmail    map[string]string
+	operatorSessions   map[string]OperatorSession
 	devices            map[string]Device
 	deviceOwners       map[string]DeviceOwner
 	ownerLogs          map[string]DeviceOwnerChangeLog
 	ipamSubnets        map[string]IPAMSubnet
 	globalIPs          map[string]GlobalIPAddress
-	workspaces         map[string]Workspace
-	workspaceMembers   map[string]WorkspaceMember
-	workspaceInvites   map[string]WorkspaceInvite
-	deviceInvites      map[string]WorkspaceDeviceInvite
+	networks           map[string]Network
+	deviceInvites      map[string]DeviceInvite
 	deviceAccessGrants map[string]DeviceAccessGrant
 	deviceInviteStore  deviceInviteStore
-	workspaceDevices   map[string]WorkspaceDevice
-	dnsZones           map[string]WorkspaceDNSZone
-	dnsRecords         map[string]WorkspaceDNSRecord
+	loginCallbacks     map[string]DeviceLoginCallback
+	authCallbackStore  authCallbackStore
+	networkDevices     map[string]NetworkDevice
+	dnsZones           map[string]NetworkDNSZone
+	dnsRecords         map[string]NetworkDNSRecord
 	publicMappings     map[string]PublicDomainMapping
 	securityGroups     map[string]SecurityGroup
-	securityGroupDevs  map[string]SecurityGroupDevice
 	securityGroupRules map[string]SecurityGroupRule
 	runtimeStatuses    map[string]DeviceRuntimeStatus
 	configVersions     map[string]NetworkConfigVersion
+	customerPlans      map[string]CustomerPlanAssignment
+	opsPlans           map[string]OpsPlan
+	products           map[string]Product
+	orders             map[string]Order
+	renewals           map[string]Renewal
+	relayNodes         map[string]OpsRelayNode
 }
 
 func NewStore() *Store {
@@ -82,12 +95,14 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 	if inviteStore == nil {
 		inviteStore = newMemoryDeviceInviteStore()
 	}
+	authCallbackStore, _ := inviteStore.(authCallbackStore)
+	if authCallbackStore == nil {
+		authCallbackStore = newMemoryDeviceInviteStore()
+	}
 	store := &Store{
 		nextUserID:          1,
 		nextDeviceSeq:       1,
-		nextWorkspaceSeq:    1,
-		nextMemberSeq:       1,
-		nextInviteSeq:       1,
+		nextNetworkSeq:      1,
 		nextDeviceInviteSeq: 1,
 		nextOwnerSeq:        1,
 		nextOwnerLogSeq:     1,
@@ -100,43 +115,58 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 		nextIPSubnetSeq:     1,
 		nextIPAddressSeq:    1,
 		nextIPOffset:        0,
+		nextOperatorSeq:     1,
+		nextRelayNodeSeq:    1,
+		nextProductSeq:      1,
+		nextOrderSeq:        1,
+		nextRenewalSeq:      1,
 		users:               make(map[string]User),
 		userByEmail:         make(map[string]string),
+		userAliases:         make(map[string]UserAlias),
 		sessions:            make(map[string]UserSession),
+		operators:           make(map[string]OperatorUser),
+		operatorByEmail:     make(map[string]string),
+		operatorSessions:    make(map[string]OperatorSession),
 		devices:             make(map[string]Device),
 		deviceOwners:        make(map[string]DeviceOwner),
 		ownerLogs:           make(map[string]DeviceOwnerChangeLog),
 		ipamSubnets:         make(map[string]IPAMSubnet),
 		globalIPs:           make(map[string]GlobalIPAddress),
-		workspaces:          make(map[string]Workspace),
-		workspaceMembers:    make(map[string]WorkspaceMember),
-		workspaceInvites:    make(map[string]WorkspaceInvite),
-		deviceInvites:       make(map[string]WorkspaceDeviceInvite),
+		networks:            make(map[string]Network),
+		deviceInvites:       make(map[string]DeviceInvite),
 		deviceAccessGrants:  make(map[string]DeviceAccessGrant),
 		deviceInviteStore:   inviteStore,
-		workspaceDevices:    make(map[string]WorkspaceDevice),
-		dnsZones:            make(map[string]WorkspaceDNSZone),
-		dnsRecords:          make(map[string]WorkspaceDNSRecord),
+		loginCallbacks:      make(map[string]DeviceLoginCallback),
+		authCallbackStore:   authCallbackStore,
+		networkDevices:      make(map[string]NetworkDevice),
+		dnsZones:            make(map[string]NetworkDNSZone),
+		dnsRecords:          make(map[string]NetworkDNSRecord),
 		publicMappings:      make(map[string]PublicDomainMapping),
 		securityGroups:      make(map[string]SecurityGroup),
-		securityGroupDevs:   make(map[string]SecurityGroupDevice),
 		securityGroupRules:  make(map[string]SecurityGroupRule),
 		runtimeStatuses:     make(map[string]DeviceRuntimeStatus),
 		configVersions:      make(map[string]NetworkConfigVersion),
+		customerPlans:       make(map[string]CustomerPlanAssignment),
+		opsPlans:            make(map[string]OpsPlan),
+		products:            make(map[string]Product),
+		orders:              make(map[string]Order),
+		renewals:            make(map[string]Renewal),
+		relayNodes:          make(map[string]OpsRelayNode),
 	}
 	store.ensureIPPoolLocked(time.Now().Unix())
+	store.seedOpsDefaultsLocked(time.Now().Unix())
 	return store
 }
 
-func (s *Store) RegisterUser(email, password, name string) (AuthResponse, WorkspaceMember, Workspace, error) {
+func (s *Store) RegisterUser(email, password, name string) (AuthResponse, Network, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || strings.TrimSpace(password) == "" {
-		return AuthResponse{}, WorkspaceMember{}, Workspace{}, errBadRequest
+		return AuthResponse{}, Network{}, errBadRequest
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.userByEmail[email]; ok {
-		return AuthResponse{}, WorkspaceMember{}, Workspace{}, errConflict
+		return AuthResponse{}, Network{}, errConflict
 	}
 	now := time.Now().Unix()
 	user := User{
@@ -151,10 +181,9 @@ func (s *Store) RegisterUser(email, password, name string) (AuthResponse, Worksp
 	s.nextUserID++
 	s.users[user.UserID] = user
 	s.userByEmail[email] = user.UserID
-	workspace := s.ensureDefaultWorkspaceForUserLocked(user.UserID, now)
-	member := s.addWorkspaceMemberLocked(workspace.WorkspaceID, user.UserID, "owner", "active", now)
+	network := s.ensureDefaultNetworkForUserLocked(user.UserID, now)
 	session := s.createSessionLocked(user.UserID, now)
-	return AuthResponse{User: user, Session: session}, member, workspace, nil
+	return AuthResponse{User: user, Session: session}, network, nil
 }
 
 func (s *Store) LoginUser(email, password string) (AuthResponse, error) {
@@ -170,6 +199,126 @@ func (s *Store) LoginUser(email, password string) (AuthResponse, error) {
 		return AuthResponse{}, errBadRequest
 	}
 	return AuthResponse{User: user, Session: s.createSessionLocked(user.UserID, time.Now().Unix())}, nil
+}
+
+func (s *Store) AuthByToken(token string) (AuthResponse, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return AuthResponse{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, session := range s.sessions {
+		if session.Token != token {
+			continue
+		}
+		if session.ExpiresAt < time.Now().Unix() {
+			return AuthResponse{}, errNotFound
+		}
+		user, ok := s.users[session.UserID]
+		if !ok || user.Status != "active" {
+			return AuthResponse{}, errNotFound
+		}
+		return AuthResponse{User: user, Session: session}, nil
+	}
+	return AuthResponse{}, errNotFound
+}
+
+func (s *Store) CreateDeviceLoginCallback(callbackID, deviceID, platform string, ttl time.Duration) (DeviceLoginCallback, error) {
+	callbackID = strings.TrimSpace(callbackID)
+	if callbackID == "" {
+		generated, err := secureCallbackID()
+		if err != nil {
+			return DeviceLoginCallback{}, err
+		}
+		callbackID = generated
+	}
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	now := time.Now().Unix()
+	callback := DeviceLoginCallback{
+		CallbackID: callbackID,
+		DeviceID:   strings.TrimSpace(deviceID),
+		Platform:   strings.TrimSpace(platform),
+		Status:     "pending",
+		CreatedAt:  now,
+		ExpiresAt:  now + int64(ttl.Seconds()),
+	}
+	if err := s.authCallbackStore.SaveCallback(callback, ttl, true); err != nil {
+		return DeviceLoginCallback{}, err
+	}
+	s.mu.Lock()
+	s.loginCallbacks[callback.CallbackID] = callback
+	s.mu.Unlock()
+	return callback, nil
+}
+
+func (s *Store) CompleteDeviceLoginCallback(callbackID, accessToken, deviceID, action string) (DeviceLoginCallback, error) {
+	callbackID = strings.TrimSpace(callbackID)
+	if callbackID == "" {
+		return DeviceLoginCallback{}, errBadRequest
+	}
+	auth, err := s.AuthByToken(accessToken)
+	if err != nil {
+		return DeviceLoginCallback{}, err
+	}
+	callback, err := s.authCallbackStore.LoadCallback(callbackID)
+	if err != nil {
+		now := time.Now().Unix()
+		callback = DeviceLoginCallback{CallbackID: callbackID, Status: "pending", CreatedAt: now, ExpiresAt: now + int64((10 * time.Minute).Seconds())}
+	}
+	if callback.Status == "completed" {
+		return DeviceLoginCallback{}, errConflict
+	}
+	if callback.ExpiresAt < time.Now().Unix() {
+		return DeviceLoginCallback{}, errNotFound
+	}
+	if strings.TrimSpace(deviceID) == "" {
+		deviceID = callback.DeviceID
+	}
+	if strings.TrimSpace(deviceID) != "" {
+		s.bindExistingDeviceToUser(deviceID, auth.User.UserID)
+	}
+	refreshToken := auth.Session.Token
+	payload := AuthCallbackPayload{
+		CallbackID:   callbackID,
+		AccessToken:  auth.Session.Token,
+		RefreshToken: &refreshToken,
+		UserID:       auth.User.UserID,
+		UserLabel:    defaultString(auth.User.Email, auth.User.UserID),
+		DeviceID:     optionalStringPtr(deviceID),
+		ExpiresIn:    uint64(maxInt64(auth.Session.ExpiresAt-time.Now().Unix(), 0)),
+		Action:       defaultString(action, "login"),
+	}
+	callback.Status = "completed"
+	callback.UserID = auth.User.UserID
+	callback.DeviceID = strings.TrimSpace(deviceID)
+	callback.CompletedAt = time.Now().Unix()
+	callback.Payload = &payload
+	ttl := time.Duration(maxInt64(callback.ExpiresAt-time.Now().Unix(), 60)) * time.Second
+	if err := s.authCallbackStore.SaveCallback(callback, ttl, false); err != nil {
+		return DeviceLoginCallback{}, err
+	}
+	s.mu.Lock()
+	s.loginCallbacks[callback.CallbackID] = callback
+	s.mu.Unlock()
+	return callback, nil
+}
+
+func (s *Store) DeviceLoginCallbackStatus(callbackID string) (DeviceLoginCallback, bool, error) {
+	callbackID = strings.TrimSpace(callbackID)
+	if callbackID == "" {
+		return DeviceLoginCallback{}, false, errBadRequest
+	}
+	callback, err := s.authCallbackStore.LoadCallback(callbackID)
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			return DeviceLoginCallback{CallbackID: callbackID, Status: "pending"}, false, nil
+		}
+		return DeviceLoginCallback{}, false, err
+	}
+	return callback, callback.Status == "completed" && callback.Payload != nil, nil
 }
 
 func (s *Store) ChangeUserPassword(userID, oldPassword, newPassword string) error {
@@ -192,15 +341,15 @@ func (s *Store) ChangeUserPassword(userID, oldPassword, newPassword string) erro
 	return nil
 }
 
-func (s *Store) RegisterDevice(ownerID, deviceID, name, platform, osName, osVersion, alias, publicKey string) (Device, WorkspaceDevice, error) {
+func (s *Store) RegisterDevice(ownerID, deviceID, name, platform, osName, osVersion, alias, publicKey string) (Device, NetworkDevice, error) {
 	ownerID = strings.TrimSpace(ownerID)
 	if ownerID == "" {
-		return Device{}, WorkspaceDevice{}, errBadRequest
+		return Device{}, NetworkDevice{}, errBadRequest
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.users[ownerID]; !ok {
-		return Device{}, WorkspaceDevice{}, errNotFound
+		return Device{}, NetworkDevice{}, errNotFound
 	}
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -214,10 +363,10 @@ func (s *Store) RegisterDevice(ownerID, deviceID, name, platform, osName, osVers
 			existing.OwnerID = ownerID
 			existing.UpdatedAt = now
 			s.devices[deviceID] = existing
-			defaultWorkspace := s.ensureDefaultWorkspaceForUserLocked(ownerID, now)
-			return existing, s.addWorkspaceDeviceLocked(defaultWorkspace.WorkspaceID, deviceID, ownerID, alias, true, now), nil
+			defaultNetwork := s.ensureDefaultNetworkForUserLocked(ownerID, now)
+			return existing, s.addNetworkDeviceLocked(defaultNetwork.NetworkID, deviceID, ownerID, alias, true, now), nil
 		}
-		return Device{}, WorkspaceDevice{}, errConflict
+		return Device{}, NetworkDevice{}, errConflict
 	}
 	ip := s.allocateGlobalIPLocked(deviceID, now)
 	device := Device{
@@ -237,10 +386,10 @@ func (s *Store) RegisterDevice(ownerID, deviceID, name, platform, osName, osVers
 	}
 	s.devices[device.DeviceID] = device
 	s.addDeviceOwnerLocked(device.DeviceID, ownerID, now)
-	defaultWorkspace := s.ensureDefaultWorkspaceForUserLocked(ownerID, now)
-	workspaceDevice := s.addWorkspaceDeviceLocked(defaultWorkspace.WorkspaceID, device.DeviceID, ownerID, alias, true, now)
+	defaultNetwork := s.ensureDefaultNetworkForUserLocked(ownerID, now)
+	networkDevice := s.addNetworkDeviceLocked(defaultNetwork.NetworkID, device.DeviceID, ownerID, alias, true, now)
 	s.runtimeStatuses[device.DeviceID] = DeviceRuntimeStatus{DeviceID: device.DeviceID, DeviceEnabled: true, LastReportAt: now}
-	return device, workspaceDevice, nil
+	return device, networkDevice, nil
 }
 
 func (s *Store) ListUsers() []User {
@@ -255,11 +404,119 @@ func (s *Store) ListDevices(userID string) []Device {
 	out := make([]Device, 0)
 	for _, device := range s.devices {
 		if userID == "" || device.OwnerID == userID {
-			out = append(out, device)
+			out = append(out, s.deviceWithOwnerEmailLocked(device))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].DeviceID < out[j].DeviceID })
 	return out
+}
+
+func (s *Store) RenewDevice(deviceID, userID string, networkEnabled bool, rxBytesTotal, txBytesTotal uint64) (Device, []NetworkConfig, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	userID = strings.TrimSpace(userID)
+	if deviceID == "" || userID == "" {
+		return Device{}, nil, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.devices[deviceID]
+	if !ok {
+		return Device{}, nil, errNotFound
+	}
+	if !s.canUserSeeDeviceLocked(userID, deviceID, device.OwnerID) {
+		return Device{}, nil, errNotFound
+	}
+	now := time.Now().Unix()
+	device.Status = "active"
+	device.UpdatedAt = now
+	s.devices[deviceID] = device
+	status := s.runtimeStatuses[deviceID]
+	status.DeviceID = deviceID
+	status.HeartbeatOnline = true
+	status.NetworkEnabled = networkEnabled
+	status.DeviceEnabled = true
+	status.RxBytesTotal = rxBytesTotal
+	status.TxBytesTotal = txBytesTotal
+	status.LastSeenAt = now
+	status.LastReportAt = now
+	s.runtimeStatuses[deviceID] = status
+	configs, err := s.networkConfigsForDeviceLocked(deviceID)
+	if err != nil {
+		return Device{}, nil, err
+	}
+	return s.deviceWithOwnerEmailLocked(device), configs, nil
+}
+
+func (s *Store) GetDevice(deviceID string) (Device, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.devices[strings.TrimSpace(deviceID)]
+	if !ok {
+		return Device{}, errNotFound
+	}
+	return s.deviceWithOwnerEmailLocked(device), nil
+}
+
+func (s *Store) DeviceQuota(userID string) (DeviceQuota, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return DeviceQuota{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[userID]; !ok {
+		return DeviceQuota{}, errNotFound
+	}
+	return s.deviceQuotaLocked(userID), nil
+}
+
+func (s *Store) RemoveVisibleDevice(deviceID, actorUserID string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	actorUserID = strings.TrimSpace(actorUserID)
+	if deviceID == "" || actorUserID == "" {
+		return errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.devices[deviceID]
+	if !ok {
+		return errNotFound
+	}
+	if device.OwnerID != actorUserID {
+		key := actorUserID + "|" + deviceID
+		if grant, ok := s.deviceAccessGrants[key]; ok && grant.Status == "active" {
+			grant.Status = "revoked"
+			s.deviceAccessGrants[key] = grant
+			return nil
+		}
+		return errNotFound
+	}
+	delete(s.devices, deviceID)
+	delete(s.runtimeStatuses, deviceID)
+	for key, owner := range s.deviceOwners {
+		if owner.DeviceID == deviceID {
+			delete(s.deviceOwners, key)
+		}
+	}
+	for key, networkDevice := range s.networkDevices {
+		if networkDevice.DeviceID == deviceID {
+			delete(s.networkDevices, key)
+		}
+	}
+	for key, grant := range s.deviceAccessGrants {
+		if grant.DeviceID == deviceID {
+			delete(s.deviceAccessGrants, key)
+		}
+	}
+	for ipID, ip := range s.globalIPs {
+		if ip.DeviceID == deviceID {
+			ip.DeviceID = ""
+			ip.Status = "available"
+			ip.ReleasedAt = time.Now().Unix()
+			s.globalIPs[ipID] = ip
+		}
+	}
+	return nil
 }
 
 func (s *Store) ListVisibleDevices(userID string) []Device {
@@ -275,11 +532,6 @@ func (s *Store) ListVisibleDevices(userID string) []Device {
 			deviceIDs[device.DeviceID] = true
 		}
 	}
-	for _, workspaceDevice := range s.workspaceDevices {
-		if s.isWorkspaceMemberLocked(workspaceDevice.WorkspaceID, userID) {
-			deviceIDs[workspaceDevice.DeviceID] = true
-		}
-	}
 	for _, grant := range s.deviceAccessGrants {
 		if grant.UserID == userID && grant.Status == "active" {
 			deviceIDs[grant.DeviceID] = true
@@ -288,11 +540,64 @@ func (s *Store) ListVisibleDevices(userID string) []Device {
 	out := make([]Device, 0, len(deviceIDs))
 	for deviceID := range deviceIDs {
 		if device, ok := s.devices[deviceID]; ok {
-			out = append(out, device)
+			out = append(out, s.deviceWithOwnerEmailLocked(device))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].DeviceID < out[j].DeviceID })
 	return out
+}
+
+func (s *Store) UpdateDeviceAlias(deviceID, actorUserID, alias string) (Device, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	actorUserID = strings.TrimSpace(actorUserID)
+	alias = strings.TrimSpace(alias)
+	if deviceID == "" || actorUserID == "" || alias == "" {
+		return Device{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.devices[deviceID]
+	if !ok {
+		return Device{}, errNotFound
+	}
+	if !s.canUserSeeDeviceLocked(actorUserID, deviceID, device.OwnerID) {
+		return Device{}, errNotFound
+	}
+	device.Alias = alias
+	device.UpdatedAt = time.Now().Unix()
+	s.devices[deviceID] = device
+	return s.deviceWithOwnerEmailLocked(device), nil
+}
+
+func (s *Store) ListUserAliases(ownerUserID string) []UserAlias {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]UserAlias, 0)
+	for _, alias := range s.userAliases {
+		if ownerUserID == "" || alias.OwnerUserID == ownerUserID {
+			out = append(out, alias)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
+	return out
+}
+
+func (s *Store) UpsertUserAlias(ownerUserID, email, alias string) (UserAlias, error) {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	email = strings.ToLower(strings.TrimSpace(email))
+	alias = strings.TrimSpace(alias)
+	if ownerUserID == "" || email == "" || alias == "" {
+		return UserAlias{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[ownerUserID]; !ok {
+		return UserAlias{}, errNotFound
+	}
+	item := UserAlias{OwnerUserID: ownerUserID, Email: email, Alias: alias, UpdatedAt: time.Now().Unix()}
+	s.userAliases[ownerUserID+"|"+email] = item
+	return item, nil
 }
 
 func (s *Store) ListDeviceOwnerLogs(deviceID string) []DeviceOwnerChangeLog {
@@ -320,172 +625,113 @@ func (s *Store) ListIPAMSubnets() []IPAMSubnet {
 	return sortedValues(s.ipamSubnets, func(a, b IPAMSubnet) bool { return a.StartOffset < b.StartOffset })
 }
 
-func (s *Store) CreateWorkspace(ownerUserID, name, code, templateKey string) (Workspace, WorkspaceMember, SecurityGroup, WorkspaceDNSZone, error) {
+func (s *Store) CreateNetwork(ownerUserID, name, code, templateKey string) (Network, SecurityGroup, NetworkDNSZone, error) {
 	ownerUserID = strings.TrimSpace(ownerUserID)
 	name = strings.TrimSpace(name)
 	if ownerUserID == "" || name == "" {
-		return Workspace{}, WorkspaceMember{}, SecurityGroup{}, WorkspaceDNSZone{}, errBadRequest
+		return Network{}, SecurityGroup{}, NetworkDNSZone{}, errBadRequest
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.users[ownerUserID]; !ok {
-		return Workspace{}, WorkspaceMember{}, SecurityGroup{}, WorkspaceDNSZone{}, errNotFound
+		return Network{}, SecurityGroup{}, NetworkDNSZone{}, errNotFound
 	}
 	now := time.Now().Unix()
-	id := fmt.Sprintf("workspace-%06d", s.nextWorkspaceSeq)
-	s.nextWorkspaceSeq++
-	workspace := Workspace{WorkspaceID: id, OwnerUserID: ownerUserID, Name: name, Code: defaultString(sanitizeDNSLabel(code), sanitizeDNSLabel(name)), TemplateKey: defaultString(templateKey, "custom"), Status: "enabled", CreatedAt: now, UpdatedAt: now}
-	s.workspaces[id] = workspace
-	member := s.addWorkspaceMemberLocked(id, ownerUserID, "owner", "active", now)
+	id := fmt.Sprintf("network-%06d", s.nextNetworkSeq)
+	s.nextNetworkSeq++
+	network := Network{NetworkID: id, OwnerUserID: ownerUserID, Name: name, Code: defaultString(sanitizeDNSLabel(code), sanitizeDNSLabel(name)), TemplateKey: defaultString(templateKey, "custom"), Status: "enabled", CreatedAt: now, UpdatedAt: now}
+	s.networks[id] = network
 	group := s.addSecurityGroupLocked(id, "默认安全组", "网络默认安全组", "deny", now)
-	zone := s.addDNSZoneLocked(id, workspaceZoneName(workspace), false, now)
-	return workspace, member, group, zone, nil
+	zone := s.addDNSZoneLocked(id, networkZoneName(network), false, now)
+	return network, group, zone, nil
 }
 
-func (s *Store) ListWorkspaces(userID string) []Workspace {
+func (s *Store) ListNetworks(userID string) []Network {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]Workspace, 0)
-	for _, workspace := range s.workspaces {
-		if workspace.Status == "deleted" {
+	out := make([]Network, 0)
+	for _, network := range s.networks {
+		if network.Status == "deleted" {
 			continue
 		}
-		if userID == "" || s.isWorkspaceMemberLocked(workspace.WorkspaceID, userID) {
-			out = append(out, workspace)
+		if userID == "" || network.OwnerUserID == userID {
+			out = append(out, network)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].WorkspaceID < out[j].WorkspaceID })
+	sort.Slice(out, func(i, j int) bool { return out[i].NetworkID < out[j].NetworkID })
 	return out
 }
 
-func (s *Store) UpdateWorkspace(workspaceID, name, status string) (Workspace, error) {
+func (s *Store) UpdateNetwork(networkID, name, status string) (Network, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	workspace, ok := s.workspaces[workspaceID]
+	network, ok := s.networks[networkID]
 	if !ok {
-		return Workspace{}, errNotFound
+		return Network{}, errNotFound
 	}
 	if name = strings.TrimSpace(name); name != "" {
-		workspace.Name = name
+		network.Name = name
 	}
 	if status = strings.TrimSpace(status); status != "" {
-		workspace.Status = status
+		network.Status = status
 	}
-	workspace.UpdatedAt = time.Now().Unix()
-	s.workspaces[workspaceID] = workspace
-	return workspace, nil
+	network.UpdatedAt = time.Now().Unix()
+	s.networks[networkID] = network
+	return network, nil
 }
 
-func (s *Store) UpdateWorkspaceFull(workspaceID, name, code, status string) (Workspace, error) {
+func (s *Store) UpdateNetworkFull(networkID, name, code, status string) (Network, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	workspace, ok := s.workspaces[workspaceID]
+	network, ok := s.networks[networkID]
 	if !ok {
-		return Workspace{}, errNotFound
+		return Network{}, errNotFound
 	}
 	if name = strings.TrimSpace(name); name != "" {
-		workspace.Name = name
+		network.Name = name
 	}
 	if code = sanitizeDNSLabel(code); code != "" {
-		for _, existing := range s.workspaces {
-			if existing.WorkspaceID != workspaceID && existing.OwnerUserID == workspace.OwnerUserID && existing.Code == code && existing.Status != "deleted" {
-				return Workspace{}, errConflict
+		for _, existing := range s.networks {
+			if existing.NetworkID != networkID && existing.OwnerUserID == network.OwnerUserID && existing.Code == code && existing.Status != "deleted" {
+				return Network{}, errConflict
 			}
 		}
-		workspace.Code = code
-		workspace.TemplateKey = defaultString(workspace.TemplateKey, code)
+		network.Code = code
+		network.TemplateKey = defaultString(network.TemplateKey, code)
 	}
 	if status = strings.TrimSpace(status); status != "" {
-		workspace.Status = status
+		network.Status = status
 	}
-	workspace.UpdatedAt = time.Now().Unix()
-	s.workspaces[workspaceID] = workspace
-	return workspace, nil
+	network.UpdatedAt = time.Now().Unix()
+	s.networks[networkID] = network
+	return network, nil
 }
 
-func (s *Store) InviteWorkspaceMember(workspaceID, inviterUserID, inviteeEmail, role string) (WorkspaceInvite, error) {
-	inviteeEmail = strings.ToLower(strings.TrimSpace(inviteeEmail))
-	if inviteeEmail == "" {
-		return WorkspaceInvite{}, errBadRequest
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.workspaces[workspaceID]; !ok {
-		return WorkspaceInvite{}, errNotFound
-	}
-	inviteeUserID := s.userByEmail[inviteeEmail]
-	now := time.Now().Unix()
-	invite := WorkspaceInvite{
-		InviteID:      fmt.Sprintf("invite-%06d", s.nextInviteSeq),
-		WorkspaceID:   workspaceID,
-		InviterUserID: inviterUserID,
-		InviteeUserID: inviteeUserID,
-		InviteeEmail:  inviteeEmail,
-		Role:          defaultString(role, "member"),
-		Status:        "pending",
-		CreatedAt:     now,
-	}
-	s.nextInviteSeq++
-	s.workspaceInvites[invite.InviteID] = invite
-	return invite, nil
-}
-
-func (s *Store) AcceptWorkspaceInvite(inviteID, userID string) (WorkspaceMember, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	invite, ok := s.workspaceInvites[inviteID]
-	if !ok || invite.Status != "pending" {
-		return WorkspaceMember{}, errNotFound
-	}
-	if invite.InviteeUserID != "" && invite.InviteeUserID != userID {
-		return WorkspaceMember{}, errBadRequest
-	}
-	if _, ok := s.users[userID]; !ok {
-		return WorkspaceMember{}, errNotFound
-	}
-	now := time.Now().Unix()
-	invite.InviteeUserID = userID
-	invite.Status = "accepted"
-	invite.HandledAt = now
-	s.workspaceInvites[inviteID] = invite
-	return s.addWorkspaceMemberLocked(invite.WorkspaceID, userID, invite.Role, "active", now), nil
-}
-
-func (s *Store) ListWorkspaceMembers(workspaceID string) []WorkspaceMember {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]WorkspaceMember, 0)
-	for _, member := range s.workspaceMembers {
-		if member.WorkspaceID == workspaceID {
-			member.Email = s.users[member.UserID].Email
-			out = append(out, member)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
-	return out
-}
-
-func (s *Store) CreateDeviceInvite(inviterUserID string, ttlSeconds int64) (WorkspaceDeviceInvite, error) {
+func (s *Store) CreateDeviceInvite(inviterUserID string, ttlSeconds int64) (DeviceInvite, error) {
 	inviterUserID = strings.TrimSpace(inviterUserID)
 	if inviterUserID == "" {
-		return WorkspaceDeviceInvite{}, errBadRequest
+		return DeviceInvite{}, errBadRequest
 	}
 	s.mu.Lock()
 	if _, ok := s.users[inviterUserID]; !ok {
 		s.mu.Unlock()
-		return WorkspaceDeviceInvite{}, errNotFound
+		return DeviceInvite{}, errNotFound
+	}
+	if quota := s.deviceQuotaLocked(inviterUserID); quota.TotalDeviceLimit > 0 && quota.RemainingDevices <= 0 {
+		s.mu.Unlock()
+		return DeviceInvite{}, errConflict
 	}
 	now := time.Now().Unix()
 	code, err := secureInviteCode()
 	if err != nil {
 		s.mu.Unlock()
-		return WorkspaceDeviceInvite{}, err
+		return DeviceInvite{}, err
 	}
 	ttl := deviceInviteTTL
 	if ttlSeconds > 0 && ttlSeconds < int64(deviceInviteTTL.Seconds()) {
 		ttl = time.Duration(ttlSeconds) * time.Second
 	}
-	invite := WorkspaceDeviceInvite{
+	invite := DeviceInvite{
 		InviteID:      fmt.Sprintf("device-invite-%06d", s.nextDeviceInviteSeq),
 		InviterUserID: inviterUserID,
 		InviteCode:    code,
@@ -496,9 +742,26 @@ func (s *Store) CreateDeviceInvite(inviterUserID string, ttlSeconds int64) (Work
 	s.nextDeviceInviteSeq++
 	s.mu.Unlock()
 	if err := s.deviceInviteStore.Save(invite, ttl); err != nil {
-		return WorkspaceDeviceInvite{}, err
+		return DeviceInvite{}, err
 	}
+	s.mu.Lock()
+	s.deviceInvites[invite.InviteCode] = invite
+	s.mu.Unlock()
 	return invite, nil
+}
+
+func (s *Store) ListDeviceInvites(inviterUserID string) []DeviceInvite {
+	inviterUserID = strings.TrimSpace(inviterUserID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]DeviceInvite, 0)
+	for _, invite := range s.deviceInvites {
+		if inviterUserID == "" || invite.InviterUserID == inviterUserID {
+			out = append(out, invite)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
+	return out
 }
 
 func secureInviteCode() (string, error) {
@@ -509,35 +772,43 @@ func secureInviteCode() (string, error) {
 	return strings.ToUpper(hex.EncodeToString(raw[:])), nil
 }
 
-func (s *Store) AcceptDeviceInvite(inviteCode, deviceID, actorUserID string) (DeviceAccessGrant, WorkspaceDeviceInvite, error) {
+func secureCallbackID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return "cb-" + hex.EncodeToString(raw[:]), nil
+}
+
+func (s *Store) AcceptDeviceInvite(inviteCode, deviceID, actorUserID string) (DeviceAccessGrant, DeviceInvite, error) {
 	inviteCode = strings.ToUpper(strings.TrimSpace(inviteCode))
 	deviceID = strings.TrimSpace(deviceID)
 	actorUserID = strings.TrimSpace(actorUserID)
 	if inviteCode == "" || deviceID == "" || actorUserID == "" {
-		return DeviceAccessGrant{}, WorkspaceDeviceInvite{}, errBadRequest
+		return DeviceAccessGrant{}, DeviceInvite{}, errBadRequest
 	}
 	invite, err := s.deviceInviteStore.Consume(inviteCode)
 	if err != nil {
-		return DeviceAccessGrant{}, WorkspaceDeviceInvite{}, err
+		return DeviceAccessGrant{}, DeviceInvite{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if invite.WorkspaceID != "" {
-		return DeviceAccessGrant{}, WorkspaceDeviceInvite{}, errBadRequest
-	}
 	device, ok := s.devices[deviceID]
 	if !ok {
-		return DeviceAccessGrant{}, WorkspaceDeviceInvite{}, errNotFound
+		return DeviceAccessGrant{}, DeviceInvite{}, errNotFound
 	}
 	if device.OwnerID != actorUserID {
-		return DeviceAccessGrant{}, WorkspaceDeviceInvite{}, errBadRequest
+		return DeviceAccessGrant{}, DeviceInvite{}, errBadRequest
 	}
 	if invite.InviterUserID == actorUserID {
-		return DeviceAccessGrant{}, WorkspaceDeviceInvite{}, errConflict
+		return DeviceAccessGrant{}, DeviceInvite{}, errConflict
+	}
+	if quota := s.deviceQuotaLocked(invite.InviterUserID); quota.TotalDeviceLimit > 0 && quota.RemainingDevices <= 0 {
+		return DeviceAccessGrant{}, DeviceInvite{}, errConflict
 	}
 	key := invite.InviterUserID + "|" + deviceID
 	if existing, ok := s.deviceAccessGrants[key]; ok && existing.Status == "active" {
-		return DeviceAccessGrant{}, WorkspaceDeviceInvite{}, errConflict
+		return DeviceAccessGrant{}, DeviceInvite{}, errConflict
 	}
 	now := time.Now().Unix()
 	grant := DeviceAccessGrant{
@@ -558,61 +829,69 @@ func (s *Store) AcceptDeviceInvite(inviteCode, deviceID, actorUserID string) (De
 	return grant, invite, nil
 }
 
-func (s *Store) AddWorkspaceDevice(workspaceID, deviceID, actorUserID, alias string, enabled bool) (WorkspaceDevice, error) {
+func (s *Store) AddNetworkDevice(networkID, deviceID, actorUserID, alias string, enabled bool) (NetworkDevice, error) {
 	actorUserID = strings.TrimSpace(actorUserID)
 	if actorUserID == "" {
-		return WorkspaceDevice{}, errBadRequest
+		return NetworkDevice{}, errBadRequest
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.workspaces[workspaceID]; !ok {
-		return WorkspaceDevice{}, errNotFound
+	if _, ok := s.networks[networkID]; !ok {
+		return NetworkDevice{}, errNotFound
 	}
 	device, ok := s.devices[deviceID]
 	if !ok {
-		return WorkspaceDevice{}, errNotFound
+		return NetworkDevice{}, errNotFound
 	}
-	if !s.canUserAddWorkspaceDeviceLocked(actorUserID, device.DeviceID, device.OwnerID) {
-		return WorkspaceDevice{}, errBadRequest
+	if !s.canUserAddNetworkDeviceLocked(actorUserID, device.DeviceID, device.OwnerID) {
+		return NetworkDevice{}, errBadRequest
 	}
-	if _, ok := s.workspaceDevices[workspaceID+"|"+deviceID]; ok {
-		return WorkspaceDevice{}, errConflict
+	if _, ok := s.networkDevices[networkID+"|"+deviceID]; ok {
+		return NetworkDevice{}, errConflict
 	}
-	return s.addWorkspaceDeviceLocked(workspaceID, deviceID, device.OwnerID, alias, enabled, time.Now().Unix()), nil
+	return s.addNetworkDeviceLocked(networkID, deviceID, device.OwnerID, alias, enabled, time.Now().Unix()), nil
 }
 
-func (s *Store) UpdateWorkspaceDeviceAlias(workspaceID, deviceID, alias string) (WorkspaceDevice, error) {
+func (s *Store) UpdateNetworkDevice(networkID, deviceID, alias string, enabled *bool) (NetworkDevice, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := workspaceID + "|" + deviceID
-	workspaceDevice, ok := s.workspaceDevices[key]
+	key := networkID + "|" + deviceID
+	networkDevice, ok := s.networkDevices[key]
 	if !ok {
-		return WorkspaceDevice{}, errNotFound
+		return NetworkDevice{}, errNotFound
 	}
 	now := time.Now().Unix()
-	workspaceDevice.Alias = strings.TrimSpace(alias)
-	workspaceDevice.UpdatedAt = now
-	s.workspaceDevices[key] = workspaceDevice
-	return workspaceDevice, nil
+	networkDevice.Alias = strings.TrimSpace(alias)
+	if enabled != nil {
+		networkDevice.Enabled = *enabled
+		if *enabled {
+			networkDevice.Status = "active"
+		} else {
+			networkDevice.Status = "disabled"
+		}
+	}
+	networkDevice.UpdatedAt = now
+	s.networkDevices[key] = networkDevice
+	return networkDevice, nil
 }
 
-func (s *Store) RemoveWorkspaceDevice(workspaceID, deviceID string) error {
+func (s *Store) RemoveNetworkDevice(networkID, deviceID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := workspaceID + "|" + deviceID
-	if _, ok := s.workspaceDevices[key]; !ok {
+	key := networkID + "|" + deviceID
+	if _, ok := s.networkDevices[key]; !ok {
 		return errNotFound
 	}
-	delete(s.workspaceDevices, key)
+	delete(s.networkDevices, key)
 	return nil
 }
 
-func (s *Store) ListWorkspaceDevices(workspaceID string) []WorkspaceDevice {
+func (s *Store) ListNetworkDevices(networkID string) []NetworkDevice {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]WorkspaceDevice, 0)
-	for _, device := range s.workspaceDevices {
-		if workspaceID == "" || device.WorkspaceID == workspaceID {
+	out := make([]NetworkDevice, 0)
+	for _, device := range s.networkDevices {
+		if networkID == "" || device.NetworkID == networkID {
 			out = append(out, device)
 		}
 	}
@@ -620,21 +899,21 @@ func (s *Store) ListWorkspaceDevices(workspaceID string) []WorkspaceDevice {
 	return out
 }
 
-func (s *Store) AddDNSZone(workspaceID, zoneName string, exposeGlobal bool) (WorkspaceDNSZone, error) {
+func (s *Store) AddDNSZone(networkID, zoneName string, exposeGlobal bool) (NetworkDNSZone, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.workspaces[workspaceID]; !ok {
-		return WorkspaceDNSZone{}, errNotFound
+	if _, ok := s.networks[networkID]; !ok {
+		return NetworkDNSZone{}, errNotFound
 	}
-	return s.addDNSZoneLocked(workspaceID, zoneName, exposeGlobal, time.Now().Unix()), nil
+	return s.addDNSZoneLocked(networkID, zoneName, exposeGlobal, time.Now().Unix()), nil
 }
 
-func (s *Store) UpdateDNSZone(workspaceID, zoneID, zoneName string, exposeGlobal bool) (WorkspaceDNSZone, error) {
+func (s *Store) UpdateDNSZone(networkID, zoneID, zoneName string, exposeGlobal bool) (NetworkDNSZone, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	zone, ok := s.dnsZones[zoneID]
-	if !ok || zone.WorkspaceID != workspaceID {
-		return WorkspaceDNSZone{}, errNotFound
+	if !ok || zone.NetworkID != networkID {
+		return NetworkDNSZone{}, errNotFound
 	}
 	if zoneName = strings.TrimSpace(zoneName); zoneName != "" {
 		zone.ZoneName = zoneName
@@ -644,11 +923,11 @@ func (s *Store) UpdateDNSZone(workspaceID, zoneID, zoneName string, exposeGlobal
 	return zone, nil
 }
 
-func (s *Store) DeleteDNSZone(workspaceID, zoneID string) error {
+func (s *Store) DeleteDNSZone(networkID, zoneID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	zone, ok := s.dnsZones[zoneID]
-	if !ok || zone.WorkspaceID != workspaceID {
+	if !ok || zone.NetworkID != networkID {
 		return errNotFound
 	}
 	delete(s.dnsZones, zoneID)
@@ -660,31 +939,31 @@ func (s *Store) DeleteDNSZone(workspaceID, zoneID string) error {
 	return nil
 }
 
-func (s *Store) AddDNSRecord(workspaceID, zoneID, name, recordType, targetDeviceID, targetIP, cname, port string, ttl int) (WorkspaceDNSRecord, error) {
+func (s *Store) AddDNSRecord(networkID, zoneID, name, recordType, targetDeviceID, targetIP, cname, port string, ttl int) (NetworkDNSRecord, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return WorkspaceDNSRecord{}, errBadRequest
+		return NetworkDNSRecord{}, errBadRequest
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	zone, ok := s.dnsZones[zoneID]
-	if !ok || zone.WorkspaceID != workspaceID {
-		return WorkspaceDNSRecord{}, errNotFound
+	if !ok || zone.NetworkID != networkID {
+		return NetworkDNSRecord{}, errNotFound
 	}
 	if targetDeviceID != "" {
 		device, ok := s.devices[targetDeviceID]
 		if !ok {
-			return WorkspaceDNSRecord{}, errNotFound
+			return NetworkDNSRecord{}, errNotFound
 		}
 		if targetIP == "" {
 			targetIP = device.GlobalIP
 		}
 	}
 	now := time.Now().Unix()
-	record := WorkspaceDNSRecord{
+	record := NetworkDNSRecord{
 		RecordID:       fmt.Sprintf("dns-%06d", s.nextRecordSeq),
 		ZoneID:         zoneID,
-		WorkspaceID:    workspaceID,
+		NetworkID:      networkID,
 		Name:           name,
 		FQDN:           sanitizeDNSLabel(name) + "." + strings.TrimSuffix(zone.ZoneName, "."),
 		RecordType:     defaultString(recordType, "A"),
@@ -701,25 +980,25 @@ func (s *Store) AddDNSRecord(workspaceID, zoneID, name, recordType, targetDevice
 	return record, nil
 }
 
-func (s *Store) UpdateDNSRecord(workspaceID, recordID, name, recordType, targetDeviceID, targetIP, cname, port string, ttl int) (WorkspaceDNSRecord, error) {
+func (s *Store) UpdateDNSRecord(networkID, recordID, name, recordType, targetDeviceID, targetIP, cname, port string, ttl int) (NetworkDNSRecord, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return WorkspaceDNSRecord{}, errBadRequest
+		return NetworkDNSRecord{}, errBadRequest
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.dnsRecords[recordID]
-	if !ok || record.WorkspaceID != workspaceID {
-		return WorkspaceDNSRecord{}, errNotFound
+	if !ok || record.NetworkID != networkID {
+		return NetworkDNSRecord{}, errNotFound
 	}
 	zone, ok := s.dnsZones[record.ZoneID]
 	if !ok {
-		return WorkspaceDNSRecord{}, errNotFound
+		return NetworkDNSRecord{}, errNotFound
 	}
 	if targetDeviceID != "" {
 		device, ok := s.devices[targetDeviceID]
 		if !ok {
-			return WorkspaceDNSRecord{}, errNotFound
+			return NetworkDNSRecord{}, errNotFound
 		}
 		if targetIP == "" {
 			targetIP = device.GlobalIP
@@ -737,23 +1016,23 @@ func (s *Store) UpdateDNSRecord(workspaceID, recordID, name, recordType, targetD
 	return record, nil
 }
 
-func (s *Store) DeleteDNSRecord(workspaceID, recordID string) error {
+func (s *Store) DeleteDNSRecord(networkID, recordID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.dnsRecords[recordID]
-	if !ok || record.WorkspaceID != workspaceID {
+	if !ok || record.NetworkID != networkID {
 		return errNotFound
 	}
 	delete(s.dnsRecords, recordID)
 	return nil
 }
 
-func (s *Store) ListDNSZones(workspaceID string) []WorkspaceDNSZone {
+func (s *Store) ListDNSZones(networkID string) []NetworkDNSZone {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]WorkspaceDNSZone, 0)
+	out := make([]NetworkDNSZone, 0)
 	for _, zone := range s.dnsZones {
-		if workspaceID == "" || zone.WorkspaceID == workspaceID {
+		if networkID == "" || zone.NetworkID == networkID {
 			out = append(out, zone)
 		}
 	}
@@ -761,12 +1040,12 @@ func (s *Store) ListDNSZones(workspaceID string) []WorkspaceDNSZone {
 	return out
 }
 
-func (s *Store) ListDNSRecords(workspaceID string) []WorkspaceDNSRecord {
+func (s *Store) ListDNSRecords(networkID string) []NetworkDNSRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]WorkspaceDNSRecord, 0)
+	out := make([]NetworkDNSRecord, 0)
 	for _, record := range s.dnsRecords {
-		if workspaceID == "" || record.WorkspaceID == workspaceID {
+		if networkID == "" || record.NetworkID == networkID {
 			out = append(out, record)
 		}
 	}
@@ -774,12 +1053,12 @@ func (s *Store) ListDNSRecords(workspaceID string) []WorkspaceDNSRecord {
 	return out
 }
 
-func (s *Store) ListPublicMappings(workspaceID string) []PublicDomainMapping {
+func (s *Store) ListPublicMappings(networkID string) []PublicDomainMapping {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]PublicDomainMapping, 0)
 	for _, mapping := range s.publicMappings {
-		if workspaceID == "" || mapping.WorkspaceID == workspaceID {
+		if networkID == "" || mapping.NetworkID == networkID {
 			out = append(out, mapping)
 		}
 	}
@@ -787,10 +1066,10 @@ func (s *Store) ListPublicMappings(workspaceID string) []PublicDomainMapping {
 	return out
 }
 
-func (s *Store) UpsertPublicMapping(mappingID, workspaceID, alias, publicDomain, sourceRecord, deviceID, protocol, port, externalPort, status string) (PublicDomainMapping, error) {
+func (s *Store) UpsertPublicMapping(mappingID, networkID, alias, publicDomain, sourceRecord, deviceID, protocol, port, externalPort, status string) (PublicDomainMapping, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.workspaces[workspaceID]; !ok {
+	if _, ok := s.networks[networkID]; !ok {
 		return PublicDomainMapping{}, errNotFound
 	}
 	deviceID = strings.TrimSpace(deviceID)
@@ -802,13 +1081,13 @@ func (s *Store) UpsertPublicMapping(mappingID, workspaceID, alias, publicDomain,
 	mapping := PublicDomainMapping{}
 	if mappingID != "" {
 		existing, ok := s.publicMappings[mappingID]
-		if !ok || existing.WorkspaceID != workspaceID {
+		if !ok || existing.NetworkID != networkID {
 			return PublicDomainMapping{}, errNotFound
 		}
 		mapping = existing
 	} else {
 		mapping.MappingID = fmt.Sprintf("pub-%06d", s.nextPublicMapSeq)
-		mapping.WorkspaceID = workspaceID
+		mapping.NetworkID = networkID
 		mapping.CreatedAt = now
 		s.nextPublicMapSeq++
 	}
@@ -825,42 +1104,37 @@ func (s *Store) UpsertPublicMapping(mappingID, workspaceID, alias, publicDomain,
 	return mapping, nil
 }
 
-func (s *Store) DeletePublicMapping(workspaceID, mappingID string) error {
+func (s *Store) DeletePublicMapping(networkID, mappingID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	mapping, ok := s.publicMappings[mappingID]
-	if !ok || mapping.WorkspaceID != workspaceID {
+	if !ok || mapping.NetworkID != networkID {
 		return errNotFound
 	}
 	delete(s.publicMappings, mappingID)
 	return nil
 }
 
-func (s *Store) CreateSecurityGroup(workspaceID, name, description, defaultPolicy string) (SecurityGroup, error) {
+func (s *Store) CreateSecurityGroup(networkID, name, description, defaultPolicy string) (SecurityGroup, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.workspaces[workspaceID]; !ok {
+	if _, ok := s.networks[networkID]; !ok {
 		return SecurityGroup{}, errNotFound
 	}
-	return s.addSecurityGroupLocked(workspaceID, name, description, defaultString(defaultPolicy, "deny"), time.Now().Unix()), nil
+	return s.addSecurityGroupLocked(networkID, name, description, defaultString(defaultPolicy, "deny"), time.Now().Unix()), nil
 }
 
-func (s *Store) DeleteSecurityGroup(workspaceID, securityGroupID string) error {
+func (s *Store) DeleteSecurityGroup(networkID, securityGroupID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	group, ok := s.securityGroups[securityGroupID]
-	if !ok || group.WorkspaceID != workspaceID {
+	if !ok || group.NetworkID != networkID {
 		return errNotFound
 	}
 	delete(s.securityGroups, securityGroupID)
 	for ruleID, rule := range s.securityGroupRules {
 		if rule.SecurityGroupID == securityGroupID {
 			delete(s.securityGroupRules, ruleID)
-		}
-	}
-	for key, device := range s.securityGroupDevs {
-		if device.SecurityGroupID == securityGroupID {
-			delete(s.securityGroupDevs, key)
 		}
 	}
 	return nil
@@ -884,7 +1158,7 @@ func (s *Store) AddSecurityGroupRule(securityGroupID, direction, action, protoco
 		Protocol:        defaultString(protocol, "all"),
 		PortFrom:        portFrom,
 		PortTo:          portTo,
-		PeerType:        defaultString(peerType, "workspace"),
+		PeerType:        defaultString(peerType, "network"),
 		PeerValue:       strings.TrimSpace(peerValue),
 		Description:     strings.TrimSpace(description),
 		Enabled:         enabled,
@@ -926,12 +1200,46 @@ func (s *Store) DeleteSecurityGroupRule(ruleID string) error {
 	return nil
 }
 
-func (s *Store) ListSecurityGroups(workspaceID string) []SecurityGroup {
+func (s *Store) SecurityGroupNetworkID(securityGroupID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	group, ok := s.securityGroups[securityGroupID]
+	if !ok {
+		return "", errNotFound
+	}
+	return group.NetworkID, nil
+}
+
+func (s *Store) SecurityRuleNetworkID(ruleID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rule, ok := s.securityGroupRules[ruleID]
+	if !ok {
+		return "", errNotFound
+	}
+	group, ok := s.securityGroups[rule.SecurityGroupID]
+	if !ok {
+		return "", errNotFound
+	}
+	return group.NetworkID, nil
+}
+
+func (s *Store) GetSecurityRule(ruleID string) (SecurityGroupRule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rule, ok := s.securityGroupRules[ruleID]
+	if !ok {
+		return SecurityGroupRule{}, errNotFound
+	}
+	return rule, nil
+}
+
+func (s *Store) ListSecurityGroups(networkID string) []SecurityGroup {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]SecurityGroup, 0)
 	for _, group := range s.securityGroups {
-		if workspaceID == "" || group.WorkspaceID == workspaceID {
+		if networkID == "" || group.NetworkID == networkID {
 			out = append(out, group)
 		}
 	}
@@ -952,6 +1260,58 @@ func (s *Store) ListSecurityGroupRules(securityGroupID string) []SecurityGroupRu
 	return out
 }
 
+func (s *Store) ListActiveNetworkDeviceIDs(networkID string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0)
+	for _, device := range s.networkDevices {
+		if device.NetworkID == networkID && device.Enabled && device.Status == "active" {
+			out = append(out, device.DeviceID)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Store) HasActiveNetworkDevice(networkID, deviceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.networkDevices[networkID+"|"+deviceID]
+	return ok && device.Enabled && device.Status == "active"
+}
+
+func (s *Store) NextNetworkConfigVersion(networkID string, now int64) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	version := int64(1)
+	for _, item := range s.configVersions {
+		if item.NetworkID == networkID && item.ConfigVersion >= version {
+			version = item.ConfigVersion + 1
+		}
+	}
+	config := NetworkConfigVersion{
+		ConfigID:      fmt.Sprintf("config-%06d", s.nextConfigSeq),
+		NetworkID:     networkID,
+		ConfigVersion: version,
+		ConfigHash:    fmt.Sprintf("%s-%d", networkID, version),
+		PushedAt:      now,
+		Status:        "pushed",
+	}
+	s.nextConfigSeq++
+	s.configVersions[config.ConfigID] = config
+	return version
+}
+
+func (s *Store) currentNetworkConfigVersionLocked(networkID string) int64 {
+	version := int64(1)
+	for _, item := range s.configVersions {
+		if item.NetworkID == networkID && item.ConfigVersion > version {
+			version = item.ConfigVersion
+		}
+	}
+	return version
+}
+
 func (s *Store) GlobalDNS() []GlobalDNSRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -963,44 +1323,91 @@ func (s *Store) GlobalDNS() []GlobalDNSRecord {
 	return out
 }
 
-func (s *Store) NetworkConfig(workspaceID, deviceID string) (NetworkConfig, error) {
+func (s *Store) NetworkConfig(networkID, deviceID string) (NetworkConfig, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.networkConfigLocked(networkID, deviceID)
+}
+
+func (s *Store) NetworkConfigsForDevice(deviceID string) ([]NetworkConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.networkConfigsForDeviceLocked(deviceID)
+}
+
+func (s *Store) networkConfigsForDeviceLocked(deviceID string) ([]NetworkConfig, error) {
+	if _, ok := s.devices[deviceID]; !ok {
+		return nil, errNotFound
+	}
+	networkIDs := make([]string, 0)
+	for _, membership := range s.networkDevices {
+		if membership.DeviceID != deviceID || !membership.Enabled || membership.Status != "active" {
+			continue
+		}
+		network, ok := s.networks[membership.NetworkID]
+		if !ok || network.Status != "enabled" {
+			continue
+		}
+		networkIDs = append(networkIDs, membership.NetworkID)
+	}
+	sort.Strings(networkIDs)
+	out := make([]NetworkConfig, 0, len(networkIDs))
+	for _, networkID := range networkIDs {
+		config, err := s.networkConfigLocked(networkID, deviceID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, config)
+	}
+	return out, nil
+}
+
+func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, error) {
 	device, ok := s.devices[deviceID]
 	if !ok {
 		return NetworkConfig{}, errNotFound
 	}
-	if _, ok := s.workspaces[workspaceID]; !ok {
+	network, ok := s.networks[networkID]
+	if !ok {
+		return NetworkConfig{}, errNotFound
+	}
+	membership, ok := s.networkDevices[networkID+"|"+deviceID]
+	if !ok || !membership.Enabled || membership.Status != "active" {
 		return NetworkConfig{}, errNotFound
 	}
 	peers := make([]Device, 0)
-	for _, membership := range s.workspaceDevices {
-		if membership.WorkspaceID == workspaceID && membership.Enabled && membership.Status == "active" && membership.DeviceID != deviceID {
+	for _, membership := range s.networkDevices {
+		if membership.NetworkID == networkID && membership.Enabled && membership.Status == "active" && membership.DeviceID != deviceID {
 			peers = append(peers, s.devices[membership.DeviceID])
 		}
 	}
 	groups := make([]SecurityGroup, 0)
+	groupIDs := make(map[string]bool)
 	for _, group := range s.securityGroups {
-		if group.WorkspaceID == workspaceID && group.Status == "active" {
+		if group.NetworkID == networkID && group.Status == "active" {
 			groups = append(groups, group)
+			groupIDs[group.SecurityGroupID] = true
 		}
 	}
 	rules := make([]SecurityGroupRule, 0)
 	for _, rule := range s.securityGroupRules {
-		if rule.Enabled {
+		if rule.Enabled && groupIDs[rule.SecurityGroupID] {
 			rules = append(rules, rule)
 		}
 	}
 	return NetworkConfig{
-		WorkspaceID:    workspaceID,
+		NetworkID:      networkID,
+		NetworkName:    network.Name,
+		NetworkCode:    network.Code,
+		ConfigVersion:  s.currentNetworkConfigVersionLocked(networkID),
 		DeviceID:       deviceID,
 		GlobalIP:       device.GlobalIP,
 		GlobalName:     device.GlobalName,
 		Peers:          peers,
 		SecurityGroups: groups,
 		Rules:          rules,
-		DNSZones:       s.listDNSZonesLocked(workspaceID),
-		DNSRecords:     s.listDNSRecordsLocked(workspaceID),
+		DNSZones:       s.listDNSZonesLocked(networkID),
+		DNSRecords:     s.listDNSRecordsLocked(networkID),
 	}, nil
 }
 
@@ -1010,23 +1417,16 @@ func (s *Store) createSessionLocked(userID string, now int64) UserSession {
 	return session
 }
 
-func (s *Store) ensureDefaultWorkspaceForUserLocked(userID string, now int64) Workspace {
+func (s *Store) ensureDefaultNetworkForUserLocked(userID string, now int64) Network {
 	id := "default-" + userID
-	if workspace, ok := s.workspaces[id]; ok {
-		return workspace
+	if network, ok := s.networks[id]; ok {
+		return network
 	}
-	workspace := Workspace{WorkspaceID: id, OwnerUserID: userID, Name: "默认网络", Code: "default", TemplateKey: "default", Status: "enabled", Default: true, CreatedAt: now, UpdatedAt: now}
-	s.workspaces[id] = workspace
+	network := Network{NetworkID: id, OwnerUserID: userID, Name: "默认网络", Code: "default", TemplateKey: "default", Status: "enabled", Default: true, CreatedAt: now, UpdatedAt: now}
+	s.networks[id] = network
 	s.addSecurityGroupLocked(id, "默认安全组", "默认网络安全组", "deny", now)
-	s.addDNSZoneLocked(id, workspaceZoneName(workspace), false, now)
-	return workspace
-}
-
-func (s *Store) addWorkspaceMemberLocked(workspaceID, userID, role, status string, now int64) WorkspaceMember {
-	member := WorkspaceMember{MemberID: fmt.Sprintf("member-%06d", s.nextMemberSeq), WorkspaceID: workspaceID, UserID: userID, Role: defaultString(role, "member"), Status: defaultString(status, "active"), JoinedAt: now}
-	s.nextMemberSeq++
-	s.workspaceMembers[workspaceID+"|"+userID] = member
-	return member
+	s.addDNSZoneLocked(id, networkZoneName(network), false, now)
+	return network
 }
 
 func (s *Store) addDeviceOwnerLocked(deviceID, userID string, now int64) DeviceOwner {
@@ -1047,40 +1447,75 @@ func (s *Store) transferDeviceOwnerLocked(deviceID, fromUserID, toUserID, reason
 	s.ownerLogs[log.LogID] = log
 }
 
-func (s *Store) addWorkspaceDeviceLocked(workspaceID, deviceID, ownerUserID, alias string, enabled bool, now int64) WorkspaceDevice {
+func (s *Store) bindExistingDeviceToUser(deviceID, userID string) {
+	deviceID = strings.TrimSpace(deviceID)
+	userID = strings.TrimSpace(userID)
+	if deviceID == "" || userID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.devices[deviceID]
+	if !ok {
+		return
+	}
+	if _, ok := s.users[userID]; !ok {
+		return
+	}
+	now := time.Now().Unix()
+	if device.OwnerID != userID {
+		s.transferDeviceOwnerLocked(deviceID, device.OwnerID, userID, "browser_login", now)
+		device.OwnerID = userID
+		device.UpdatedAt = now
+		s.devices[deviceID] = device
+	}
+	network := s.ensureDefaultNetworkForUserLocked(userID, now)
+	s.networkDevices[network.NetworkID+"|"+deviceID] = NetworkDevice{
+		NetworkDeviceID: fmt.Sprintf("network-device-%s-%s", network.NetworkID, deviceID),
+		NetworkID:       network.NetworkID,
+		DeviceID:        deviceID,
+		OwnerUserID:     userID,
+		Alias:           device.Alias,
+		Enabled:         true,
+		Status:          "active",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+}
+
+func (s *Store) addNetworkDeviceLocked(networkID, deviceID, ownerUserID, alias string, enabled bool, now int64) NetworkDevice {
 	status := "active"
 	if !enabled {
 		status = "disabled"
 	}
-	workspaceDevice := WorkspaceDevice{WorkspaceDeviceID: fmt.Sprintf("workspace-device-%s-%s", workspaceID, deviceID), WorkspaceID: workspaceID, DeviceID: deviceID, OwnerUserID: ownerUserID, Alias: strings.TrimSpace(alias), Enabled: enabled, Status: status, CreatedAt: now, UpdatedAt: now}
-	s.workspaceDevices[workspaceID+"|"+deviceID] = workspaceDevice
-	return workspaceDevice
+	networkDevice := NetworkDevice{NetworkDeviceID: fmt.Sprintf("network-device-%s-%s", networkID, deviceID), NetworkID: networkID, DeviceID: deviceID, OwnerUserID: ownerUserID, Alias: strings.TrimSpace(alias), Enabled: enabled, Status: status, CreatedAt: now, UpdatedAt: now}
+	s.networkDevices[networkID+"|"+deviceID] = networkDevice
+	return networkDevice
 }
 
-func (s *Store) addDNSZoneLocked(workspaceID, zoneName string, exposeGlobal bool, now int64) WorkspaceDNSZone {
+func (s *Store) addDNSZoneLocked(networkID, zoneName string, exposeGlobal bool, now int64) NetworkDNSZone {
 	zoneName = strings.TrimSpace(zoneName)
 	if zoneName == "" {
 		zoneName = "default.lan"
 	}
-	zone := WorkspaceDNSZone{ZoneID: fmt.Sprintf("zone-%06d", s.nextZoneSeq), WorkspaceID: workspaceID, ZoneName: zoneName, ExposeGlobal: exposeGlobal, Status: "active", CreatedAt: now}
+	zone := NetworkDNSZone{ZoneID: fmt.Sprintf("zone-%06d", s.nextZoneSeq), NetworkID: networkID, ZoneName: zoneName, ExposeGlobal: exposeGlobal, Status: "active", CreatedAt: now}
 	s.nextZoneSeq++
 	s.dnsZones[zone.ZoneID] = zone
 	return zone
 }
 
-func (s *Store) addSecurityGroupLocked(workspaceID, name, description, defaultPolicy string, now int64) SecurityGroup {
-	group := SecurityGroup{SecurityGroupID: fmt.Sprintf("sg-%06d", s.nextSecuritySeq), WorkspaceID: workspaceID, Name: defaultString(name, "默认安全组"), Description: description, DefaultPolicy: defaultString(defaultPolicy, "deny"), Status: "active", CreatedAt: now}
+func (s *Store) addSecurityGroupLocked(networkID, name, description, defaultPolicy string, now int64) SecurityGroup {
+	group := SecurityGroup{SecurityGroupID: fmt.Sprintf("sg-%06d", s.nextSecuritySeq), NetworkID: networkID, Name: defaultString(name, "默认安全组"), Description: description, DefaultPolicy: defaultString(defaultPolicy, "deny"), Status: "active", CreatedAt: now}
 	s.nextSecuritySeq++
 	s.securityGroups[group.SecurityGroupID] = group
 	return group
 }
 
-func (s *Store) isWorkspaceMemberLocked(workspaceID, userID string) bool {
-	member, ok := s.workspaceMembers[workspaceID+"|"+userID]
-	return ok && member.Status == "active"
+func (s *Store) canUserAddNetworkDeviceLocked(userID, deviceID, ownerUserID string) bool {
+	return s.canUserSeeDeviceLocked(userID, deviceID, ownerUserID)
 }
 
-func (s *Store) canUserAddWorkspaceDeviceLocked(userID, deviceID, ownerUserID string) bool {
+func (s *Store) canUserSeeDeviceLocked(userID, deviceID, ownerUserID string) bool {
 	if userID == "" {
 		return false
 	}
@@ -1090,12 +1525,14 @@ func (s *Store) canUserAddWorkspaceDeviceLocked(userID, deviceID, ownerUserID st
 	if grant, ok := s.deviceAccessGrants[userID+"|"+deviceID]; ok && grant.Status == "active" {
 		return true
 	}
-	for _, workspaceDevice := range s.workspaceDevices {
-		if workspaceDevice.DeviceID == deviceID && s.isWorkspaceMemberLocked(workspaceDevice.WorkspaceID, userID) {
-			return true
-		}
-	}
 	return false
+}
+
+func (s *Store) deviceWithOwnerEmailLocked(device Device) Device {
+	if user, ok := s.users[device.OwnerID]; ok {
+		device.OwnerEmail = user.Email
+	}
+	return device
 }
 
 func (s *Store) allocateGlobalIPLocked(deviceID string, now int64) string {
@@ -1187,20 +1624,20 @@ func ipFrom10Offset(offset uint32) string {
 	return netip.AddrFrom4([4]byte{10, byte(offset >> 16), byte(offset >> 8), byte(offset)}).String()
 }
 
-func (s *Store) listDNSZonesLocked(workspaceID string) []WorkspaceDNSZone {
-	out := make([]WorkspaceDNSZone, 0)
+func (s *Store) listDNSZonesLocked(networkID string) []NetworkDNSZone {
+	out := make([]NetworkDNSZone, 0)
 	for _, zone := range s.dnsZones {
-		if zone.WorkspaceID == workspaceID {
+		if zone.NetworkID == networkID {
 			out = append(out, zone)
 		}
 	}
 	return out
 }
 
-func (s *Store) listDNSRecordsLocked(workspaceID string) []WorkspaceDNSRecord {
-	out := make([]WorkspaceDNSRecord, 0)
+func (s *Store) listDNSRecordsLocked(networkID string) []NetworkDNSRecord {
+	out := make([]NetworkDNSRecord, 0)
 	for _, record := range s.dnsRecords {
-		if record.WorkspaceID == workspaceID {
+		if record.NetworkID == networkID {
 			out = append(out, record)
 		}
 	}
@@ -1212,11 +1649,11 @@ func hashPassword(password string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func workspaceZoneName(workspace Workspace) string {
-	if workspace.Code == "default" {
+func networkZoneName(network Network) string {
+	if network.Code == "default" {
 		return "default.lan"
 	}
-	return sanitizeDNSLabel(workspace.Code) + ".internal"
+	return sanitizeDNSLabel(network.Code) + ".internal"
 }
 
 func sortedValues[T any](values map[string]T, less func(a, b T) bool) []T {
@@ -1238,6 +1675,21 @@ func defaultString(value, fallback string) string {
 
 func defaultInt(value, fallback int) int {
 	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func optionalStringPtr(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func maxInt64(value, fallback int64) int64 {
+	if value < fallback {
 		return fallback
 	}
 	return value

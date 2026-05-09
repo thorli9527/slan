@@ -16,3 +16,26 @@ web.slan.localhost {
 	tls internal
 	reverse_proxy server-ui-web:80
 }
+
+main.slan.localhost {
+	tls internal
+	reverse_proxy server-main:80
+}
+
+https://127.0.0.1 {
+	tls internal
+	reverse_proxy server-main:80
+}
+
+https://localhost {
+	tls internal
+	reverse_proxy server-main:80
+}
+
+http://127.0.0.1 {
+	reverse_proxy server-main:80
+}
+
+http://localhost {
+	reverse_proxy server-main:80
+}

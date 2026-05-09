@@ -4,15 +4,19 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
+	"time"
 )
 
 type Server struct {
 	store *Store
+	mqtt  MQTTConfig
 }
 
 func NewServer() *Server {
-	return &Server{store: NewStore()}
+	return &Server{store: NewStore(), mqtt: mqttConfigFromEnv()}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -23,49 +27,63 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("POST /api/auth/register", s.registerUser)
 	mux.HandleFunc("POST /api/auth/login", s.loginUser)
+	mux.HandleFunc("POST /api/auth/device-login-callbacks", s.createDeviceLoginCallback)
+	mux.HandleFunc("GET /api/auth/device-login-callbacks/{callbackId}", s.deviceLoginCallbackStatus)
+	mux.HandleFunc("POST /api/auth/device-login-callbacks/{callbackId}/complete", s.completeDeviceLoginCallback)
 	mux.HandleFunc("GET /api/users", s.listUsers)
+	mux.HandleFunc("GET /api/users/{userId}/entitlement", s.userEntitlement)
 	mux.HandleFunc("PATCH /api/users/{userId}/password", s.changeUserPassword)
+	mux.HandleFunc("GET /api/user-aliases", s.listUserAliases)
+	mux.HandleFunc("PATCH /api/user-aliases", s.upsertUserAlias)
 
 	mux.HandleFunc("GET /api/devices", s.listDevices)
 	mux.HandleFunc("GET /api/devices/visible", s.listVisibleDevices)
 	mux.HandleFunc("POST /api/devices/register", s.registerDevice)
+	mux.HandleFunc("POST /api/devices/{deviceId}/renew", s.renewDevice)
+	mux.HandleFunc("GET /api/devices/{deviceId}/network-configs", s.deviceNetworkConfigs)
+	mux.HandleFunc("GET /api/devices/{deviceId}/networks/configs", s.deviceNetworkConfigs)
+	mux.HandleFunc("GET /api/devices/{deviceId}/mqtt-credential", s.deviceMQTTCredential)
+	mux.HandleFunc("PATCH /api/devices/{deviceId}", s.updateDeviceAlias)
+	mux.HandleFunc("DELETE /api/devices/{deviceId}", s.deleteDevice)
 	mux.HandleFunc("POST /api/device-invites", s.createDeviceInvite)
+	mux.HandleFunc("GET /api/device-invites", s.listDeviceInvites)
 	mux.HandleFunc("POST /api/device-invites/accept", s.acceptDeviceInvite)
-	mux.HandleFunc("GET /api/devices/owner-logs", s.listDeviceOwnerLogs)
-	mux.HandleFunc("GET /api/ipam/addresses", s.listIPAddresses)
-	mux.HandleFunc("GET /api/ipam/subnets", s.listIPAMSubnets)
-	mux.HandleFunc("GET /api/dns/global", s.globalDNS)
 
-	mux.HandleFunc("GET /api/workspaces", s.listWorkspaces)
-	mux.HandleFunc("POST /api/workspaces", s.createWorkspace)
-	mux.HandleFunc("PATCH /api/workspaces/{workspaceId}", s.updateWorkspace)
-	mux.HandleFunc("GET /api/workspaces/{workspaceId}/members", s.listWorkspaceMembers)
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/invites", s.inviteWorkspaceMember)
-	mux.HandleFunc("POST /api/workspaces/invites/{inviteId}/accept", s.acceptWorkspaceInvite)
-	mux.HandleFunc("GET /api/workspaces/{workspaceId}/devices", s.listWorkspaceDevices)
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/devices", s.addWorkspaceDevice)
-	mux.HandleFunc("PATCH /api/workspaces/{workspaceId}/devices/{deviceId}", s.updateWorkspaceDevice)
-	mux.HandleFunc("DELETE /api/workspaces/{workspaceId}/devices/{deviceId}", s.removeWorkspaceDevice)
-	mux.HandleFunc("GET /api/workspaces/{workspaceId}/dns/zones", s.listDNSZones)
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/dns/zones", s.addDNSZone)
-	mux.HandleFunc("PATCH /api/workspaces/{workspaceId}/dns/zones/{zoneId}", s.updateDNSZone)
-	mux.HandleFunc("DELETE /api/workspaces/{workspaceId}/dns/zones/{zoneId}", s.deleteDNSZone)
-	mux.HandleFunc("GET /api/workspaces/{workspaceId}/dns/records", s.listDNSRecords)
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/dns/records", s.addDNSRecord)
-	mux.HandleFunc("PATCH /api/workspaces/{workspaceId}/dns/records/{recordId}", s.updateDNSRecord)
-	mux.HandleFunc("DELETE /api/workspaces/{workspaceId}/dns/records/{recordId}", s.deleteDNSRecord)
-	mux.HandleFunc("GET /api/workspaces/{workspaceId}/public-mappings", s.listPublicMappings)
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/public-mappings", s.createPublicMapping)
-	mux.HandleFunc("PATCH /api/workspaces/{workspaceId}/public-mappings/{mappingId}", s.updatePublicMapping)
-	mux.HandleFunc("DELETE /api/workspaces/{workspaceId}/public-mappings/{mappingId}", s.deletePublicMapping)
-	mux.HandleFunc("GET /api/workspaces/{workspaceId}/security-groups", s.listSecurityGroups)
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/security-groups", s.createSecurityGroup)
-	mux.HandleFunc("DELETE /api/workspaces/{workspaceId}/security-groups/{securityGroupId}", s.deleteSecurityGroup)
+	mux.HandleFunc("GET /api/networks", s.listNetworks)
+	mux.HandleFunc("POST /api/networks", s.createNetwork)
+	mux.HandleFunc("PATCH /api/networks/{networkId}", s.updateNetwork)
+	mux.HandleFunc("GET /api/networks/{networkId}/devices", s.listNetworkDevices)
+	mux.HandleFunc("POST /api/networks/{networkId}/devices", s.addNetworkDevice)
+	mux.HandleFunc("PATCH /api/networks/{networkId}/devices/{deviceId}", s.updateNetworkDevice)
+	mux.HandleFunc("DELETE /api/networks/{networkId}/devices/{deviceId}", s.removeNetworkDevice)
+	mux.HandleFunc("GET /api/networks/{networkId}/dns/zones", s.listDNSZones)
+	mux.HandleFunc("POST /api/networks/{networkId}/dns/zones", s.addDNSZone)
+	mux.HandleFunc("PATCH /api/networks/{networkId}/dns/zones/{zoneId}", s.updateDNSZone)
+	mux.HandleFunc("DELETE /api/networks/{networkId}/dns/zones/{zoneId}", s.deleteDNSZone)
+	mux.HandleFunc("GET /api/networks/{networkId}/dns/records", s.listDNSRecords)
+	mux.HandleFunc("POST /api/networks/{networkId}/dns/records", s.addDNSRecord)
+	mux.HandleFunc("PATCH /api/networks/{networkId}/dns/records/{recordId}", s.updateDNSRecord)
+	mux.HandleFunc("DELETE /api/networks/{networkId}/dns/records/{recordId}", s.deleteDNSRecord)
+	mux.HandleFunc("GET /api/networks/{networkId}/public-mappings", s.listPublicMappings)
+	mux.HandleFunc("POST /api/networks/{networkId}/public-mappings", s.createPublicMapping)
+	mux.HandleFunc("PATCH /api/networks/{networkId}/public-mappings/{mappingId}", s.updatePublicMapping)
+	mux.HandleFunc("DELETE /api/networks/{networkId}/public-mappings/{mappingId}", s.deletePublicMapping)
+	mux.HandleFunc("GET /api/networks/{networkId}/security-groups", s.listSecurityGroups)
+	mux.HandleFunc("POST /api/networks/{networkId}/security-groups", s.createSecurityGroup)
+	mux.HandleFunc("DELETE /api/networks/{networkId}/security-groups/{securityGroupId}", s.deleteSecurityGroup)
 	mux.HandleFunc("GET /api/security-groups/{securityGroupId}/rules", s.listSecurityRules)
 	mux.HandleFunc("POST /api/security-groups/{securityGroupId}/rules", s.addSecurityRule)
 	mux.HandleFunc("PATCH /api/security-groups/rules/{ruleId}", s.updateSecurityRule)
 	mux.HandleFunc("DELETE /api/security-groups/rules/{ruleId}", s.deleteSecurityRule)
-	mux.HandleFunc("GET /api/workspaces/{workspaceId}/network-config", s.networkConfig)
+	mux.HandleFunc("GET /api/networks/{networkId}/network-config", s.networkConfig)
+	mux.HandleFunc("GET /api/networks/{networkId}/relay-candidates", s.relayCandidates)
+	mux.HandleFunc("POST /api/networks/{networkId}/relay-candidates", s.relayCandidates)
+	mux.HandleFunc("POST /api/relay/tickets", s.issueRelayTicket)
+
+	s.registerOpsRoutes(mux)
+
+	mux.HandleFunc("POST /mqtt/bifromq/auth", s.bifroMQAuth)
+	mux.HandleFunc("POST /mqtt/bifromq/check", s.bifroMQCheck)
 	return withCORS(mux)
 }
 
@@ -78,12 +96,12 @@ func (s *Server) registerUser(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	auth, member, workspace, err := s.store.RegisterUser(req.Email, req.Password, req.Name)
+	auth, network, err := s.store.RegisterUser(req.Email, req.Password, req.Name)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"auth": auth, "defaultWorkspaceMember": member, "defaultWorkspace": workspace})
+	writeJSON(w, http.StatusCreated, map[string]any{"auth": auth, "defaultNetwork": network})
 }
 
 func (s *Server) loginUser(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +118,68 @@ func (s *Server) loginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"auth": auth})
+}
+
+func (s *Server) createDeviceLoginCallback(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CallbackID string `json:"callbackId"`
+		DeviceID   string `json:"deviceId"`
+		Platform   string `json:"platform"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	callback, err := s.store.CreateDeviceLoginCallback(req.CallbackID, req.DeviceID, req.Platform, 10*time.Minute)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"callbackId": callback.CallbackID,
+		"deviceId":   callback.DeviceID,
+		"expiresIn":  callback.ExpiresAt - timeNow().Unix(),
+		"loginUrl":   deviceLoginURL(callback),
+	})
+}
+
+func (s *Server) deviceLoginCallbackStatus(w http.ResponseWriter, r *http.Request) {
+	callback, ready, err := s.store.DeviceLoginCallbackStatus(r.PathValue("callbackId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"callbackId": callback.CallbackID,
+		"ready":      ready,
+		"payload":    callback.Payload,
+		"status":     callback.Status,
+		"expiresAt":  callback.ExpiresAt,
+	})
+}
+
+func (s *Server) completeDeviceLoginCallback(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccessToken string `json:"accessToken"`
+		Token       string `json:"token"`
+		DeviceID    string `json:"deviceId"`
+		Action      string `json:"action"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	token := req.AccessToken
+	if strings.TrimSpace(token) == "" {
+		token = req.Token
+	}
+	callback, err := s.store.CompleteDeviceLoginCallback(r.PathValue("callbackId"), token, req.DeviceID, req.Action)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if callback.Payload != nil && callback.Payload.DeviceID != nil {
+		s.notifyAuthCallback(*callback.Payload.DeviceID, *callback.Payload)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "callback": callback})
 }
 
 func (s *Server) changeUserPassword(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +201,36 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListUsers()})
 }
 
+func (s *Server) userEntitlement(w http.ResponseWriter, r *http.Request) {
+	quota, err := s.store.DeviceQuota(r.PathValue("userId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, quota)
+}
+
+func (s *Server) listUserAliases(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListUserAliases(r.URL.Query().Get("ownerUserId"))})
+}
+
+func (s *Server) upsertUserAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OwnerUserID string `json:"ownerUserId"`
+		Email       string `json:"email"`
+		Alias       string `json:"alias"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	alias, err := s.store.UpsertUserAlias(req.OwnerUserID, req.Email, req.Alias)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, alias)
+}
+
 func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID    string `json:"userId"`
@@ -140,7 +250,31 @@ func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"device": device, "defaultWorkspaceDevice": membership})
+	writeJSON(w, http.StatusCreated, map[string]any{"device": device, "defaultNetworkDevice": membership, "mqtt": deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow())})
+}
+
+func (s *Server) renewDevice(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID         string `json:"userId"`
+		NetworkEnabled bool   `json:"networkEnabled"`
+		RxBytesTotal   uint64 `json:"rxBytesTotal"`
+		TxBytesTotal   uint64 `json:"txBytesTotal"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	device, configs, err := s.store.RenewDevice(r.PathValue("deviceId"), req.UserID, req.NetworkEnabled, req.RxBytesTotal, req.TxBytesTotal)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	now := timeNow()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"device":         device,
+		"mqtt":           deviceMQTTCredential(s.mqtt, device.DeviceID, now),
+		"networkConfigs": map[string]any{"items": configs},
+		"leaseExpiresAt": now.Add(3 * time.Minute).Unix(),
+	})
 }
 
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
@@ -151,27 +285,58 @@ func (s *Server) listVisibleDevices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListVisibleDevices(r.URL.Query().Get("userId"))})
 }
 
-func (s *Server) listDeviceOwnerLogs(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListDeviceOwnerLogs(r.URL.Query().Get("deviceId"))})
+func (s *Server) updateDeviceAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ActorUserID string `json:"actorUserId"`
+		Alias       string `json:"alias"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	device, err := s.store.UpdateDeviceAlias(r.PathValue("deviceId"), req.ActorUserID, req.Alias)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, device)
 }
 
-func (s *Server) listIPAddresses(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListGlobalIPs()})
+func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
+	actorUserID := r.URL.Query().Get("actorUserId")
+	if actorUserID == "" {
+		var req struct {
+			ActorUserID string `json:"actorUserId"`
+		}
+		if decodeJSON(w, r, &req) {
+			actorUserID = req.ActorUserID
+		} else {
+			return
+		}
+	}
+	if err := s.store.RemoveVisibleDevice(r.PathValue("deviceId"), actorUserID); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) listIPAMSubnets(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListIPAMSubnets()})
+func (s *Server) deviceNetworkConfigs(w http.ResponseWriter, r *http.Request) {
+	configs, err := s.store.NetworkConfigsForDevice(r.PathValue("deviceId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deviceId": r.PathValue("deviceId"),
+		"items":    configs,
+	})
 }
 
-func (s *Server) globalDNS(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.GlobalDNS()})
+func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListNetworks(r.URL.Query().Get("userId"))})
 }
 
-func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListWorkspaces(r.URL.Query().Get("userId"))})
-}
-
-func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
+func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OwnerUserID string `json:"ownerUserId"`
 		Name        string `json:"name"`
@@ -181,15 +346,15 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	workspace, member, group, zone, err := s.store.CreateWorkspace(req.OwnerUserID, req.Name, req.Code, req.TemplateKey)
+	network, group, zone, err := s.store.CreateNetwork(req.OwnerUserID, req.Name, req.Code, req.TemplateKey)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"workspace": workspace, "ownerMember": member, "defaultSecurityGroup": group, "defaultDNSZone": zone})
+	writeJSON(w, http.StatusCreated, map[string]any{"network": network, "defaultSecurityGroup": group, "defaultDNSZone": zone})
 }
 
-func (s *Server) updateWorkspace(w http.ResponseWriter, r *http.Request) {
+func (s *Server) updateNetwork(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name   string `json:"name"`
 		Code   string `json:"code"`
@@ -198,48 +363,19 @@ func (s *Server) updateWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	workspace, err := s.store.UpdateWorkspaceFull(r.PathValue("workspaceId"), req.Name, req.Code, req.Status)
+	network, err := s.store.UpdateNetworkFull(r.PathValue("networkId"), req.Name, req.Code, req.Status)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workspace)
-}
-
-func (s *Server) listWorkspaceMembers(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListWorkspaceMembers(r.PathValue("workspaceId"))})
-}
-
-func (s *Server) inviteWorkspaceMember(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		InviterUserID string `json:"inviterUserId"`
-		Email         string `json:"email"`
-		Role          string `json:"role"`
+	reason := "network_updated"
+	if network.Status == "enabled" {
+		reason = "network_enabled"
+	} else if network.Status == "disabled" {
+		reason = "network_disabled"
 	}
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	invite, err := s.store.InviteWorkspaceMember(r.PathValue("workspaceId"), req.InviterUserID, req.Email, req.Role)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, invite)
-}
-
-func (s *Server) acceptWorkspaceInvite(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserID string `json:"userId"`
-	}
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	member, err := s.store.AcceptWorkspaceInvite(r.PathValue("inviteId"), req.UserID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, member)
+	s.notifyNetworkConfigChanged(network.NetworkID, reason, "network", "update", network.NetworkID, "")
+	writeJSON(w, http.StatusOK, network)
 }
 
 func (s *Server) createDeviceInvite(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +392,10 @@ func (s *Server) createDeviceInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, invite)
+}
+
+func (s *Server) listDeviceInvites(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListDeviceInvites(r.URL.Query().Get("userId"))})
 }
 
 func (s *Server) acceptDeviceInvite(w http.ResponseWriter, r *http.Request) {
@@ -275,11 +415,11 @@ func (s *Server) acceptDeviceInvite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"grant": grant, "invite": invite})
 }
 
-func (s *Server) listWorkspaceDevices(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListWorkspaceDevices(r.PathValue("workspaceId"))})
+func (s *Server) listNetworkDevices(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListNetworkDevices(r.PathValue("networkId"))})
 }
 
-func (s *Server) addWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
+func (s *Server) addNetworkDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DeviceID    string `json:"deviceId"`
 		ActorUserID string `json:"actorUserId"`
@@ -293,39 +433,65 @@ func (s *Server) addWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	device, err := s.store.AddWorkspaceDevice(r.PathValue("workspaceId"), req.DeviceID, req.ActorUserID, req.Alias, enabled)
+	device, err := s.store.AddNetworkDevice(r.PathValue("networkId"), req.DeviceID, req.ActorUserID, req.Alias, enabled)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	reason := "network_device_added"
+	memberState := "enabled"
+	if !device.Enabled || device.Status != "active" {
+		memberState = "disabled"
+	}
+	s.notifyNetworkConfigChanged(device.NetworkID, reason, "network_device", "add", device.NetworkDeviceID, device.DeviceID)
+	s.notifyNetworkMemberState(device.NetworkID, device.DeviceID, memberState, reason)
 	writeJSON(w, http.StatusCreated, device)
 }
 
-func (s *Server) updateWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
+func (s *Server) updateNetworkDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Alias string `json:"alias"`
+		Alias   string `json:"alias"`
+		Enabled *bool  `json:"enabled"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	device, err := s.store.UpdateWorkspaceDeviceAlias(r.PathValue("workspaceId"), r.PathValue("deviceId"), req.Alias)
+	device, err := s.store.UpdateNetworkDevice(r.PathValue("networkId"), r.PathValue("deviceId"), req.Alias, req.Enabled)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	reason := "network_device_updated"
+	if req.Enabled != nil && *req.Enabled {
+		reason = "network_device_enabled"
+	} else if req.Enabled != nil && !*req.Enabled {
+		reason = "network_device_disabled"
+	}
+	s.notifyNetworkConfigChanged(device.NetworkID, reason, "network_device", "update", device.NetworkDeviceID, device.DeviceID)
+	if req.Enabled != nil {
+		memberState := "enabled"
+		if !*req.Enabled {
+			memberState = "disabled"
+		}
+		s.notifyNetworkMemberState(device.NetworkID, device.DeviceID, memberState, reason)
+	}
 	writeJSON(w, http.StatusOK, device)
 }
 
-func (s *Server) removeWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.RemoveWorkspaceDevice(r.PathValue("workspaceId"), r.PathValue("deviceId")); err != nil {
+func (s *Server) removeNetworkDevice(w http.ResponseWriter, r *http.Request) {
+	networkID := r.PathValue("networkId")
+	deviceID := r.PathValue("deviceId")
+	if err := s.store.RemoveNetworkDevice(networkID, deviceID); err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(networkID, "network_device_removed", "network_device", "remove", deviceID, deviceID)
+	s.notifyNetworkMemberState(networkID, deviceID, "disabled", "network_device_removed")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) listDNSZones(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListDNSZones(r.PathValue("workspaceId"))})
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListDNSZones(r.PathValue("networkId"))})
 }
 
 func (s *Server) addDNSZone(w http.ResponseWriter, r *http.Request) {
@@ -336,11 +502,12 @@ func (s *Server) addDNSZone(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	zone, err := s.store.AddDNSZone(r.PathValue("workspaceId"), req.ZoneName, req.ExposeGlobal)
+	zone, err := s.store.AddDNSZone(r.PathValue("networkId"), req.ZoneName, req.ExposeGlobal)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(zone.NetworkID, "dns_zone_added", "dns_zone", "add", zone.ZoneID, "")
 	writeJSON(w, http.StatusCreated, zone)
 }
 
@@ -352,24 +519,28 @@ func (s *Server) updateDNSZone(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	zone, err := s.store.UpdateDNSZone(r.PathValue("workspaceId"), r.PathValue("zoneId"), req.ZoneName, req.ExposeGlobal)
+	zone, err := s.store.UpdateDNSZone(r.PathValue("networkId"), r.PathValue("zoneId"), req.ZoneName, req.ExposeGlobal)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(zone.NetworkID, "dns_zone_updated", "dns_zone", "update", zone.ZoneID, "")
 	writeJSON(w, http.StatusOK, zone)
 }
 
 func (s *Server) deleteDNSZone(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteDNSZone(r.PathValue("workspaceId"), r.PathValue("zoneId")); err != nil {
+	networkID := r.PathValue("networkId")
+	zoneID := r.PathValue("zoneId")
+	if err := s.store.DeleteDNSZone(networkID, zoneID); err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(networkID, "dns_zone_removed", "dns_zone", "remove", zoneID, "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) listDNSRecords(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListDNSRecords(r.PathValue("workspaceId"))})
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListDNSRecords(r.PathValue("networkId"))})
 }
 
 func (s *Server) addDNSRecord(w http.ResponseWriter, r *http.Request) {
@@ -386,11 +557,12 @@ func (s *Server) addDNSRecord(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	record, err := s.store.AddDNSRecord(r.PathValue("workspaceId"), req.ZoneID, req.Name, req.RecordType, req.TargetDeviceID, req.TargetIP, req.CNAME, req.Port, req.TTL)
+	record, err := s.store.AddDNSRecord(r.PathValue("networkId"), req.ZoneID, req.Name, req.RecordType, req.TargetDeviceID, req.TargetIP, req.CNAME, req.Port, req.TTL)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(record.NetworkID, "dns_record_added", "dns_record", "add", record.RecordID, record.TargetDeviceID)
 	writeJSON(w, http.StatusCreated, record)
 }
 
@@ -407,24 +579,28 @@ func (s *Server) updateDNSRecord(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	record, err := s.store.UpdateDNSRecord(r.PathValue("workspaceId"), r.PathValue("recordId"), req.Name, req.RecordType, req.TargetDeviceID, req.TargetIP, req.CNAME, req.Port, req.TTL)
+	record, err := s.store.UpdateDNSRecord(r.PathValue("networkId"), r.PathValue("recordId"), req.Name, req.RecordType, req.TargetDeviceID, req.TargetIP, req.CNAME, req.Port, req.TTL)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(record.NetworkID, "dns_record_updated", "dns_record", "update", record.RecordID, record.TargetDeviceID)
 	writeJSON(w, http.StatusOK, record)
 }
 
 func (s *Server) deleteDNSRecord(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteDNSRecord(r.PathValue("workspaceId"), r.PathValue("recordId")); err != nil {
+	networkID := r.PathValue("networkId")
+	recordID := r.PathValue("recordId")
+	if err := s.store.DeleteDNSRecord(networkID, recordID); err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(networkID, "dns_record_removed", "dns_record", "remove", recordID, "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) listPublicMappings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListPublicMappings(r.PathValue("workspaceId"))})
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListPublicMappings(r.PathValue("networkId"))})
 }
 
 func (s *Server) createPublicMapping(w http.ResponseWriter, r *http.Request) {
@@ -457,7 +633,7 @@ func (s *Server) decodePublicMapping(w http.ResponseWriter, r *http.Request, map
 	if !decodeJSON(w, r, &req) {
 		return PublicDomainMapping{}, false
 	}
-	mapping, err := s.store.UpsertPublicMapping(mappingID, r.PathValue("workspaceId"), req.Alias, req.PublicDomain, req.SourceRecord, req.DeviceID, req.Protocol, req.Port, req.ExternalPort, req.Status)
+	mapping, err := s.store.UpsertPublicMapping(mappingID, r.PathValue("networkId"), req.Alias, req.PublicDomain, req.SourceRecord, req.DeviceID, req.Protocol, req.Port, req.ExternalPort, req.Status)
 	if err != nil {
 		writeError(w, err)
 		return PublicDomainMapping{}, false
@@ -466,7 +642,7 @@ func (s *Server) decodePublicMapping(w http.ResponseWriter, r *http.Request, map
 }
 
 func (s *Server) deletePublicMapping(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeletePublicMapping(r.PathValue("workspaceId"), r.PathValue("mappingId")); err != nil {
+	if err := s.store.DeletePublicMapping(r.PathValue("networkId"), r.PathValue("mappingId")); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -474,7 +650,7 @@ func (s *Server) deletePublicMapping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSecurityGroups(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListSecurityGroups(r.PathValue("workspaceId"))})
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListSecurityGroups(r.PathValue("networkId"))})
 }
 
 func (s *Server) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
@@ -486,19 +662,23 @@ func (s *Server) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	group, err := s.store.CreateSecurityGroup(r.PathValue("workspaceId"), req.Name, req.Description, req.DefaultPolicy)
+	group, err := s.store.CreateSecurityGroup(r.PathValue("networkId"), req.Name, req.Description, req.DefaultPolicy)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(group.NetworkID, "security_group_added", "security_group", "add", group.SecurityGroupID, "")
 	writeJSON(w, http.StatusCreated, group)
 }
 
 func (s *Server) deleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteSecurityGroup(r.PathValue("workspaceId"), r.PathValue("securityGroupId")); err != nil {
+	networkID := r.PathValue("networkId")
+	securityGroupID := r.PathValue("securityGroupId")
+	if err := s.store.DeleteSecurityGroup(networkID, securityGroupID); err != nil {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(networkID, "security_group_removed", "security_group", "remove", securityGroupID, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -531,6 +711,10 @@ func (s *Server) addSecurityRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	networkID, err := s.store.SecurityGroupNetworkID(rule.SecurityGroupID)
+	if err == nil {
+		s.notifyNetworkConfigChanged(networkID, securityRuleReason(rule.Direction, "added"), "security_rule", "add", rule.RuleID, "")
+	}
 	writeJSON(w, http.StatusCreated, rule)
 }
 
@@ -559,14 +743,30 @@ func (s *Server) updateSecurityRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	networkID, err := s.store.SecurityGroupNetworkID(rule.SecurityGroupID)
+	if err == nil {
+		s.notifyNetworkConfigChanged(networkID, securityRuleReason(rule.Direction, "updated"), "security_rule", "update", rule.RuleID, "")
+	}
 	writeJSON(w, http.StatusOK, rule)
 }
 
 func (s *Server) deleteSecurityRule(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteSecurityGroupRule(r.PathValue("ruleId")); err != nil {
+	ruleID := r.PathValue("ruleId")
+	rule, err := s.store.GetSecurityRule(ruleID)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
+	networkID, err := s.store.SecurityGroupNetworkID(rule.SecurityGroupID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.store.DeleteSecurityGroupRule(ruleID); err != nil {
+		writeError(w, err)
+		return
+	}
+	s.notifyNetworkConfigChanged(networkID, securityRuleReason(rule.Direction, "removed"), "security_rule", "remove", ruleID, "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -576,12 +776,59 @@ func (s *Server) networkConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errBadRequest)
 		return
 	}
-	config, err := s.store.NetworkConfig(r.PathValue("workspaceId"), deviceID)
+	config, err := s.store.NetworkConfig(r.PathValue("networkId"), deviceID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, config)
+}
+
+func (s *Server) relayCandidates(w http.ResponseWriter, r *http.Request) {
+	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
+	if deviceID == "" && r.Method == http.MethodPost {
+		var req struct {
+			DeviceID string `json:"deviceId"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		deviceID = strings.TrimSpace(req.DeviceID)
+	}
+	if deviceID == "" {
+		writeError(w, errBadRequest)
+		return
+	}
+	candidates, err := s.store.RelayCandidates(r.PathValue("networkId"), deviceID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": candidates})
+}
+
+func (s *Server) issueRelayTicket(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NetworkID                 string   `json:"networkId"`
+		SrcNodeID                 string   `json:"srcNodeId"`
+		DstNodeID                 string   `json:"dstNodeId"`
+		DERPClusterID             string   `json:"derpClusterId"`
+		PreferredDERPNodeIDs      []string `json:"preferredDerpNodeIds"`
+		PreferredRelayEndpointIDs []string `json:"preferredRelayEndpointIds"`
+		Reason                    string   `json:"reason"`
+		RelayRegionID             string   `json:"relayRegionId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	preferred := append([]string{}, req.PreferredRelayEndpointIDs...)
+	preferred = append(preferred, req.PreferredDERPNodeIDs...)
+	ticket, err := s.store.IssueRelayTicket(req.NetworkID, req.SrcNodeID, req.DstNodeID, req.DERPClusterID, preferred)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, ticket)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
@@ -605,12 +852,36 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errBadRequest):
 		status, code = http.StatusBadRequest, "BAD_REQUEST"
+	case errors.Is(err, errUnauthorized):
+		status, code = http.StatusUnauthorized, "UNAUTHORIZED"
 	case errors.Is(err, errNotFound):
 		status, code = http.StatusNotFound, "NOT_FOUND"
 	case errors.Is(err, errConflict):
 		status, code = http.StatusConflict, "CONFLICT"
 	}
 	writeJSON(w, status, map[string]string{"error": code})
+}
+
+func deviceLoginURL(callback DeviceLoginCallback) string {
+	base := strings.TrimSpace(os.Getenv("SLAN_WEB_CONSOLE_URL"))
+	if base == "" {
+		base = "http://127.0.0.1:18443/"
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	query := parsed.Query()
+	query.Set("auth", "login")
+	query.Set("callbackId", callback.CallbackID)
+	if strings.TrimSpace(callback.DeviceID) != "" {
+		query.Set("deviceId", callback.DeviceID)
+	}
+	if strings.TrimSpace(callback.Platform) != "" {
+		query.Set("clientPlatform", callback.Platform)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func withCORS(next http.Handler) http.Handler {

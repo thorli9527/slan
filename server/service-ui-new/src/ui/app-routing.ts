@@ -9,6 +9,8 @@ export type WorkspaceRoutePanel = {
 export function workspacePanelPath(workspaceId: string, panel: WorkspacePanel, selectedZoneId: string, selectedSecurityGroupId: string): string {
   const base = `/space/${encodeURIComponent(workspaceId)}`;
   switch (panel) {
+    case 'devices':
+      return `${base}/devices`;
     case 'zones':
       return `${base}/zones`;
     case 'records':
@@ -36,6 +38,7 @@ export function panelFromRoute(route: string): WorkspaceRoutePanel {
   switch (route) {
     case '':
     case 'devices':
+      return { panel: 'devices' };
     case 'members':
       return { panel: 'zones' };
     case 'zones':

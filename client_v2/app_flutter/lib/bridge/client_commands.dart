@@ -1,11 +1,13 @@
 enum ClientCommandType {
   loginWithBrowser,
+  loginWithPassword,
   enableNetwork,
   disableNetwork,
   logout,
   refresh,
   localNetworkShutdown,
   openWebConsole,
+  sendClientMessage,
 }
 
 class ClientCommand {

@@ -2,7 +2,7 @@ param(
   [string]$ServiceHost = $(if ($env:SLAN_CLIENT_CORE_SERVICE_HOST) { $env:SLAN_CLIENT_CORE_SERVICE_HOST } else { "127.0.0.1:46392" }),
   [int]$MinRelaySessions = 1,
   [switch]$AllowMissingPeerSessions,
-  [switch]$RequireRelayTcpCandidate,
+  [switch]$RequireDerpCandidate,
   [switch]$RequireDirectUdpActive,
   [switch]$RequireMtuOk,
   [switch]$RequireMssOk,
@@ -185,13 +185,13 @@ if ($diagnose.peerPaths) {
   }
 }
 
-if ($RequireRelayTcpCandidate) {
-  $tcpCandidates = @()
+if ($RequireDerpCandidate) {
+  $derpCandidates = @()
   if ($diagnose.peerPaths) {
-    $tcpCandidates = @($diagnose.peerPaths | ForEach-Object { $_.candidates } | Where-Object { $_.kind -eq "relay_tcp" })
+    $derpCandidates = @($diagnose.peerPaths | ForEach-Object { $_.candidates } | Where-Object { $_.kind -eq "derp_tcp_tls_443" })
   }
-  if ($tcpCandidates.Count -eq 0) {
-    Fail-SlanRelayCheck "No relay_tcp candidate found in peer path diagnose output."
+  if ($derpCandidates.Count -eq 0) {
+    Fail-SlanRelayCheck "No derp_tcp_tls_443 candidate found in peer path diagnose output."
   }
 }
 

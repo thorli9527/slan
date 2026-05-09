@@ -14,6 +14,26 @@ pub struct ClientViewState {
     pub switch_enabled: bool,
     pub notice: Option<String>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub last_client_message_id: Option<String>,
+    #[serde(default)]
+    pub last_client_message_from_device_id: Option<String>,
+    #[serde(default)]
+    pub last_client_message_body: Option<String>,
+    #[serde(default)]
+    pub last_relay_policy_id: Option<String>,
+    #[serde(default)]
+    pub last_relay_policy_updated_at_ms: Option<u64>,
+    #[serde(default)]
+    pub traffic_tx_bytes: Option<u64>,
+    #[serde(default)]
+    pub traffic_rx_bytes: Option<u64>,
+    #[serde(default)]
+    pub traffic_tx_bytes_per_minute: Option<u64>,
+    #[serde(default)]
+    pub traffic_rx_bytes_per_minute: Option<u64>,
+    #[serde(default)]
+    pub traffic_updated_at_ms: Option<u64>,
 }
 
 impl Default for ClientViewState {
@@ -30,6 +50,16 @@ impl Default for ClientViewState {
             switch_enabled: true,
             notice: None,
             error: None,
+            last_client_message_id: None,
+            last_client_message_from_device_id: None,
+            last_client_message_body: None,
+            last_relay_policy_id: None,
+            last_relay_policy_updated_at_ms: None,
+            traffic_tx_bytes: None,
+            traffic_rx_bytes: None,
+            traffic_tx_bytes_per_minute: None,
+            traffic_rx_bytes_per_minute: None,
+            traffic_updated_at_ms: None,
         }
     }
 }

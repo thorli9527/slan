@@ -1,0 +1,356 @@
+<section class="page workspace-layout">
+  <article class="panel wide-panel" *ngIf="vm.workspaceRouteMode === 'list'">
+    <div class="panel-title">
+      <div>
+        <h2>网络列表</h2>
+        <p>网络是一组设备和访问策略；点击名称进入详情，地址同步为 /space/id。</p>
+      </div>
+      <button class="primary" type="button" (click)="vm.openWorkspaceDialog()">新增网络</button>
+    </div>
+    <table>
+      <thead><tr><th>名称</th><th>编码</th><th>设备</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let workspace of vm.workspaces" [class.selected-row]="workspace.workspaceId === vm.selectedWorkspace.workspaceId">
+          <td class="tag-cell-wrapper">
+            <div class="alias-tag-cell">
+              <button class="text-link" type="button" (click)="vm.openWorkspaceDetail(workspace)">{{ workspace.name }}</button>
+              <button class="tag-icon-button" type="button" title="修改名称" (click)="vm.openWorkspaceNameTagDialog(workspace); $event.stopPropagation()">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                  <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                </svg>
+              </button>
+              <div class="tag-popover" *ngIf="vm.showWorkspaceNameTagDialog && vm.editingWorkspace?.workspaceId === workspace.workspaceId">
+                <div class="tag-popover-arrow"></div>
+                <div class="tag-editor-row"><span>名称</span><input [(ngModel)]="vm.workspaceNameValue" /></div>
+                <div class="tag-editor-row stacked"><span>编码</span><input [(ngModel)]="vm.workspaceCodeValue" /></div>
+                <div class="tag-popover-actions">
+                  <button class="text-link" type="button" (click)="vm.saveWorkspaceTagDialog()">保存</button>
+                  <button class="text-link muted" type="button" (click)="vm.closeWorkspaceTagDialogs()">取消</button>
+                </div>
+              </div>
+            </div>
+          </td>
+          <td class="tag-cell-wrapper">
+            <div class="alias-tag-cell">
+              <code>{{ workspace.code }}</code>
+              <button class="tag-icon-button" type="button" title="修改编码" (click)="vm.openWorkspaceCodeTagDialog(workspace); $event.stopPropagation()">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                  <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                </svg>
+              </button>
+              <div class="tag-popover" *ngIf="vm.showWorkspaceCodeTagDialog && vm.editingWorkspace?.workspaceId === workspace.workspaceId">
+                <div class="tag-popover-arrow"></div>
+                <div class="tag-editor-row"><span>编码</span><input [(ngModel)]="vm.workspaceCodeValue" /></div>
+                <div class="tag-popover-actions">
+                  <button class="text-link" type="button" (click)="vm.saveWorkspaceTagDialog()">保存</button>
+                  <button class="text-link muted" type="button" (click)="vm.closeWorkspaceTagDialogs()">取消</button>
+                </div>
+              </div>
+            </div>
+          </td>
+          <td>{{ workspace.devices }}</td>
+          <td>
+            <button class="status-button" type="button" [class.online]="workspace.status === 'enabled'" (click)="vm.toggleWorkspace(workspace); $event.stopPropagation()">
+              {{ workspace.status === 'enabled' ? '启用' : '停用' }}
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+
+  <article class="panel relation-panel" *ngIf="vm.workspaceRouteMode === 'detail'">
+    <div class="panel-title">
+      <div>
+        <h2>{{ vm.selectedWorkspace.name }} / 网络详情</h2>
+        <div class="workspace-meta">
+          <span>编码：<code>{{ vm.selectedWorkspace.code }}</code></span>
+          <span>状态：{{ vm.selectedWorkspace.status === 'enabled' ? '启用' : '停用' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-tabs">
+      <button type="button" class="back-tab" *ngIf="vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">返回</button>
+      <button type="button" class="back-tab" *ngIf="vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">返回</button>
+      <button type="button" [class.active]="vm.workspacePanel === 'devices'" (click)="vm.setWorkspacePanel('devices')">设备管理</button>
+      <button type="button" [class.active]="vm.workspacePanel === 'zones' || vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">内网域名</button>
+      <button type="button" *ngIf="vm.publicMappingsEnabled" [class.active]="vm.workspacePanel === 'publicMappings'" (click)="vm.setWorkspacePanel('publicMappings')">公网访问</button>
+      <button type="button" [class.active]="vm.workspacePanel === 'securityGroups' || vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">安全组</button>
+    </div>
+
+    <div class="detail-grid one-column">
+      <section class="detail-card" *ngIf="vm.workspacePanel === 'devices'">
+        <div class="section-title">
+          <div>
+            <h3>设备管理</h3>
+            <p>管理当前网络内可访问的设备，同一网络内设备不能重复添加。</p>
+          </div>
+          <button class="ghost small" type="button" (click)="vm.openWorkspaceDeviceDialog()">添加设备</button>
+        </div>
+        <table class="compact-table">
+          <thead><tr><th>设备</th><th>归属</th><th>接入方式</th><th>别名</th><th>IP</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let device of vm.workspaceDevices">
+              <td><button class="text-link" type="button" (click)="vm.openDeviceExposureDialog(device)">{{ device.deviceId }}</button></td>
+              <td>{{ vm.workspaceDeviceOwnerLabel(device) }}</td>
+              <td>{{ vm.workspaceDeviceJoinMethod(vm.selectedWorkspaceId, device.deviceId) }}</td>
+              <td class="tag-cell-wrapper">
+                <div class="alias-tag-cell">
+                  <span>{{ device.alias }}</span>
+                  <button class="tag-icon-button" type="button" title="修改别名" (click)="vm.openWorkspaceDeviceAliasDialog(device)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                      <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                    </svg>
+                  </button>
+                  <div class="tag-popover" *ngIf="vm.showWorkspaceDeviceAliasDialog && vm.editingWorkspaceDevice?.deviceId === device.deviceId">
+                    <div class="tag-popover-arrow"></div>
+                    <div class="tag-editor-row"><span>别名</span><input [(ngModel)]="vm.workspaceDeviceAliasValue" /></div>
+                    <div class="tag-popover-actions">
+                      <button class="text-link" type="button" (click)="vm.saveWorkspaceDeviceAliasDialog()">保存</button>
+                      <button class="text-link muted" type="button" (click)="vm.closeWorkspaceDeviceAliasDialog()">取消</button>
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td><code>{{ device.ip }}</code></td>
+              <td><span class="status" [class.online]="device.status === 'active'">{{ device.status }}</span></td>
+              <td class="table-actions"><button class="link-danger" type="button" (click)="vm.removeWorkspaceDevice(device)">移除</button></td>
+            </tr>
+            <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="7">暂无网络设备</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="detail-card" *ngIf="vm.workspacePanel === 'zones'">
+        <div class="section-title">
+          <h3>内网域名</h3>
+          <button class="ghost small" type="button" (click)="vm.openZoneDialog()">新增域</button>
+        </div>
+        <table class="compact-table">
+          <thead><tr><th>Zone</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let zone of vm.currentDNSZones">
+              <td class="tag-cell-wrapper">
+                <div class="alias-tag-cell">
+                  <code>{{ zone.zone }}</code>
+                  <button class="tag-icon-button" type="button" title="修改 Zone" (click)="vm.openZoneTagDialog(zone)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                      <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                    </svg>
+                  </button>
+                  <div class="tag-popover" *ngIf="vm.showZoneTagDialog && vm.editingZone === zone">
+                    <div class="tag-popover-arrow"></div>
+                    <div class="tag-editor-row"><span>Zone</span><input [(ngModel)]="vm.zoneNameValue" /></div>
+                    <div class="tag-popover-actions">
+                      <button class="text-link" type="button" (click)="vm.saveZoneTagDialog()">保存</button>
+                      <button class="text-link muted" type="button" (click)="vm.closeZoneTagDialog()">取消</button>
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td class="table-actions">
+                <button class="ghost small" type="button" (click)="vm.openZoneRecords(zone)">解析</button>
+                <button class="link-danger" type="button" (click)="vm.removeZone(zone)">删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="detail-card" *ngIf="vm.workspacePanel === 'records'">
+        <div class="section-title">
+          <h3>解析管理</h3>
+          <button class="ghost small" type="button" (click)="vm.openRecordDialog()">新增解析</button>
+        </div>
+        <p>解析记录归属于当前内网域名。</p>
+        <table class="compact-table">
+          <thead><tr><th>名称</th><th>解析类型</th><th>值</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let item of vm.currentDNSRecords">
+              <td>{{ item.name }}</td>
+              <td>{{ item.recordType }}</td>
+              <td>{{ vm.dnsRecordValue(item) }}</td>
+              <td class="table-actions">
+                <button class="ghost small" type="button" (click)="vm.openEditRecordDialog(item)">修改</button>
+                <button class="link-danger" type="button" (click)="vm.removeDomainRecord(item)">删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="detail-card" *ngIf="vm.workspacePanel === 'securityGroups'">
+        <div class="section-title">
+          <h3>安全组管理</h3>
+          <button class="ghost small" type="button" (click)="vm.openSecurityGroupDialog()">新增安全组</button>
+        </div>
+        <p>默认安全组自动作用于当前网络全部设备；后续再扩展设备级绑定。</p>
+        <table class="compact-table">
+          <thead><tr><th>安全组</th><th>默认策略</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let group of vm.currentSecurityGroups">
+              <td><button class="text-link" type="button" (click)="vm.openSecurityGroupRules(group)">{{ group.name }}</button></td>
+              <td>{{ group.defaultPolicy }}</td>
+              <td><span class="status online">{{ group.status }}</span></td>
+              <td class="table-actions"><button class="link-danger" type="button" (click)="vm.removeSecurityGroup(group)">删除</button></td>
+            </tr>
+            <tr *ngIf="vm.currentSecurityGroups.length === 0"><td colspan="4">暂无安全组</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="detail-card" *ngIf="vm.workspacePanel === 'securityRules'">
+        <div class="rules-columns">
+          <div>
+            <div class="section-title"><button class="ghost small" type="button" (click)="vm.openRuleDialog('ingress')">新增入方向</button></div>
+            <table class="compact-table">
+              <thead><tr><th>优先级</th><th>动作</th><th>协议</th><th>端口</th><th>来源对象</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr *ngFor="let rule of vm.ingressRules">
+                  <td>{{ rule.priority }}</td><td><span class="status online">{{ rule.action }}</span></td><td>{{ rule.protocol }}</td><td>{{ rule.port }}</td><td><code>{{ vm.ruleSubjectLabel(rule) }}</code></td>
+                  <td class="table-actions"><button class="ghost small" type="button" (click)="vm.openEditRuleDialog(rule)">修改</button><button class="link-danger" type="button" (click)="vm.removeSecurityRule(rule)">删除</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <div class="section-title"><button class="ghost small" type="button" (click)="vm.openRuleDialog('egress')">新增出方向</button></div>
+            <table class="compact-table">
+              <thead><tr><th>优先级</th><th>动作</th><th>协议</th><th>端口</th><th>目标对象</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr *ngFor="let rule of vm.egressRules">
+                  <td>{{ rule.priority }}</td><td><span class="status online">{{ rule.action }}</span></td><td>{{ rule.protocol }}</td><td>{{ rule.port }}</td><td><code>{{ vm.ruleSubjectLabel(rule) }}</code></td>
+                  <td class="table-actions"><button class="ghost small" type="button" (click)="vm.openEditRuleDialog(rule)">修改</button><button class="link-danger" type="button" (click)="vm.removeSecurityRule(rule)">删除</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </article>
+</section>
+
+<div class="modal-backdrop" *ngIf="vm.showWorkspaceDeviceDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>添加设备</h2><p>可从设备列表中选择任意可见设备；同一个网络内不能重复添加同一设备。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeWorkspaceDeviceDialog()">×</button>
+    </header>
+    <div class="device-query-row">
+      <label><span>查询</span><input [(ngModel)]="vm.bindDeviceQuery" placeholder="按设备、用户、别名、IP 查询" (ngModelChange)="vm.queryWorkspaceDevices()" /></label>
+      <button class="ghost" type="button" (click)="vm.queryWorkspaceDevices()">查询</button>
+    </div>
+    <table class="compact-table">
+      <thead><tr><th>选择</th><th>设备</th><th>所属用户</th><th>别名</th><th>系统</th><th>IP</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let device of vm.queriedBindableWorkspaceDevices">
+          <td><input type="radio" name="own-workspace-device" [value]="device.deviceId" [(ngModel)]="vm.selectedWorkspaceDeviceId" /></td>
+          <td>{{ device.deviceId }}</td><td>{{ vm.userLabel(device.owner) }}</td><td>{{ device.alias }}</td><td>{{ device.platform }} {{ device.osVersion }}</td><td><code>{{ device.ip }}</code></td><td><span class="status" [class.online]="device.status === 'active'">{{ device.status }}</span></td>
+        </tr>
+        <tr *ngIf="vm.queriedBindableWorkspaceDevices.length === 0"><td colspan="7">暂无可添加设备</td></tr>
+      </tbody>
+    </table>
+    <footer class="modal-footer">
+      <button class="ghost" type="button" (click)="vm.closeWorkspaceDeviceDialog()">取消</button>
+      <button class="primary" type="button" [disabled]="!vm.selectedWorkspaceDeviceId" (click)="vm.saveWorkspaceDeviceDialog()">确认</button>
+    </footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showZoneDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>{{ vm.zoneDialogMode === 'create' ? '新增域' : '修改域' }}</h2><p>配置当前网络内网域名。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeZoneDialog()">×</button>
+    </header>
+    <div class="form"><label><span>域名</span><input [(ngModel)]="vm.zoneName" /></label></div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeZoneDialog()">取消</button><button class="primary" type="button" (click)="vm.saveZoneDialog()">{{ vm.zoneDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showRecordDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>{{ vm.recordDialogMode === 'create' ? '新增解析' : '修改解析' }}</h2><p>解析记录归属于当前内网域名。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeRecordDialog()">×</button>
+    </header>
+    <div class="form">
+      <label><span>主机名</span><input [(ngModel)]="vm.recordName" /></label>
+      <label><span>解析类型</span><select [(ngModel)]="vm.recordType"><option value="A">A</option><option value="CNAME">CNAME</option></select></label>
+      <div class="record-value-row">
+        <label><span>值</span><select [(ngModel)]="vm.recordDeviceId" (ngModelChange)="vm.syncRecordValue()"><option *ngFor="let device of vm.recordDeviceOptions" [value]="device.deviceId">{{ vm.userLabel(device.owner) }} / {{ device.alias }} / {{ device.deviceId }}</option></select></label>
+        <label><span>端口</span><input [(ngModel)]="vm.recordPort" (ngModelChange)="vm.syncRecordValue()" /></label>
+      </div>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeRecordDialog()">取消</button><button class="primary" type="button" (click)="vm.saveRecordDialog()">{{ vm.recordDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showSecurityGroupDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>新增安全组</h2><p>安全组属于当前网络，默认作用于网络内全部设备。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeSecurityGroupDialog()">×</button>
+    </header>
+    <div class="form">
+      <label><span>安全组名称</span><input [(ngModel)]="vm.securityGroupName" /></label>
+      <label><span>默认策略</span><select [(ngModel)]="vm.securityGroupDefaultPolicy"><option value="deny">deny</option><option value="allow">allow</option></select></label>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeSecurityGroupDialog()">取消</button><button class="primary" type="button" (click)="vm.saveSecurityGroupDialog()">创建</button></footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showIngressRuleDialog || vm.showEgressRuleDialog">
+  <section class="modal rule-modal">
+    <header class="modal-header">
+      <div>
+        <h2>{{ vm.ruleDialogMode === 'create' ? (vm.showIngressRuleDialog ? '新增入方向规则' : '新增出方向规则') : (vm.showIngressRuleDialog ? '修改入方向规则' : '修改出方向规则') }}</h2>
+        <p>{{ vm.showIngressRuleDialog ? '入方向规则控制外部访问当前网络设备。' : '出方向规则控制当前网络设备访问外部目标。' }}</p>
+      </div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeRuleDialog()">×</button>
+    </header>
+    <div class="form">
+      <div class="rule-template-grid" *ngIf="vm.showIngressRuleDialog && vm.ruleDialogMode === 'create'">
+        <button type="button" *ngFor="let template of vm.ingressRuleTemplates" [class.active]="vm.selectedRuleTemplate === template.name" (click)="vm.selectRuleTemplate('ingress', template.name)">
+          <strong>{{ template.name }}</strong><span>{{ template.description || (template.protocol + ' / ' + template.port) }}</span>
+        </button>
+      </div>
+      <div class="rule-fields-grid">
+        <label><span>模板</span><select [(ngModel)]="vm.selectedRuleTemplate" (change)="vm.applyRuleTemplate(vm.showIngressRuleDialog ? 'ingress' : 'egress')"><option value="自定义">自定义</option><option *ngFor="let template of (vm.showIngressRuleDialog ? vm.ingressRuleTemplates : vm.egressRuleTemplates)" [value]="template.name">{{ template.name }}</option></select></label>
+        <label><span>优先级</span><input type="number" [(ngModel)]="vm.rulePriority" /></label>
+        <label><span>动作</span><select [(ngModel)]="vm.ruleAction"><option value="allow">allow</option><option value="deny">deny</option></select></label>
+        <label><span>协议</span><select [(ngModel)]="vm.ruleProtocol"><option value="tcp">tcp</option><option value="udp">udp</option><option value="icmp">icmp</option><option value="all">all</option></select></label>
+        <label><span>{{ vm.showIngressRuleDialog ? '来源类型' : '目标类型' }}</span><select [(ngModel)]="vm.ruleSubjectType" (change)="vm.onRuleSubjectTypeChanged()"><option *ngFor="let item of (vm.showIngressRuleDialog ? vm.ingressSubjectTypes : vm.egressSubjectTypes)" [value]="item.value">{{ item.label }}</option></select></label>
+        <label class="span-2" *ngIf="vm.ruleSubjectType === 'cidr' || vm.ruleSubjectType === 'domain'"><span>{{ vm.showIngressRuleDialog ? '来源对象' : '目标对象' }}</span><input [(ngModel)]="vm.ruleSubjectValue" /></label>
+        <label class="span-2" *ngIf="vm.ruleSubjectType !== 'cidr' && vm.ruleSubjectType !== 'domain'"><span>{{ vm.showIngressRuleDialog ? '来源对象' : '目标对象' }}</span><select [(ngModel)]="vm.ruleSubjectValue"><option *ngFor="let item of vm.ruleSubjectOptions" [value]="item.value">{{ item.label }}</option></select></label>
+        <label><span>端口</span><input [(ngModel)]="vm.rulePort" /></label>
+      </div>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeRuleDialog()">取消</button><button class="primary" type="button" (click)="vm.saveRuleDialog()">{{ vm.ruleDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showWorkspaceDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>{{ vm.workspaceDialogMode === 'create' ? '新增网络' : '修改网络' }}</h2><p>选择或输入网络名称，系统自动映射编码。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeWorkspaceDialog()">×</button>
+    </header>
+    <div class="form">
+      <label>
+        <span>网络名称</span>
+        <input [(ngModel)]="vm.workspaceName" list="workspace-name-options" (input)="vm.onWorkspaceNameChanged()" />
+        <datalist id="workspace-name-options"><option *ngFor="let preset of vm.workspacePresets" [value]="preset.name">{{ preset.code }}</option></datalist>
+      </label>
+      <label><span>编码 Code</span><input [(ngModel)]="vm.workspaceCode" /></label>
+      <p class="form-error" *ngIf="vm.workspaceDialogMessage">{{ vm.workspaceDialogMessage }}</p>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeWorkspaceDialog()">取消</button><button class="primary" type="button" (click)="vm.addWorkspace()">{{ vm.workspaceDialogMode === 'create' ? '创建网络' : '保存修改' }}</button></footer>
+  </section>
+</div>

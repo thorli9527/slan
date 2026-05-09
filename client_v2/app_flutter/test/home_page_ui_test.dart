@@ -12,6 +12,43 @@ import 'package:slan_client_v2/bridge/client_view_state.dart';
 import 'package:slan_client_v2/bridge/control_transport_status.dart';
 
 void main() {
+  testWidgets('mobile login server settings updates bridge url',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+    try {
+      final bridge = _UiTestBridge(
+        initialState: const ClientViewState(
+          signedIn: false,
+          networkEnabled: false,
+          syncing: false,
+          switchEnabled: true,
+        ),
+        activationDelay: Duration.zero,
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('server-base-url-value')), findsOneWidget);
+      expect(find.text('http://127.0.0.1:28080'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('server-settings')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('server-base-url')),
+        '10.0.2.2:28080/',
+      );
+      await tester.tap(find.byKey(const Key('server-save')));
+      await tester.pumpAndSettle();
+
+      expect(bridge.serverUrl, 'http://10.0.2.2:28080');
+      expect(find.text('http://10.0.2.2:28080'), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   testWidgets('switch stays enabled while activating and shows assigned ip',
       (tester) async {
     final bridge = _UiTestBridge(
@@ -263,6 +300,115 @@ void main() {
 
     expect(bridge.androidPrepareCount, greaterThanOrEqualTo(2));
   });
+
+  testWidgets('signed in panel shows latest client message and policy',
+      (tester) async {
+    final bridge = _UiTestBridge(
+      initialState: const ClientViewState(
+        signedIn: true,
+        userLabel: 'tester@example.com',
+        deviceId: 'device-current',
+        networkEnabled: true,
+        syncing: false,
+        switchEnabled: true,
+        virtualIp: '100.64.0.10',
+        lastClientMessageFromDeviceId: 'ios-peer',
+        lastClientMessageBody: 'hello',
+        lastRelayPolicyId: 'policy-fast',
+      ),
+      activationDelay: Duration.zero,
+    );
+
+    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('last-client-message-value')), findsOneWidget);
+    expect(find.text('ios-peer: hello'), findsOneWidget);
+    expect(find.byKey(const Key('client-device-id-value')), findsOneWidget);
+    expect(find.text('device-current'), findsOneWidget);
+    expect(find.byKey(const Key('last-policy-value')), findsOneWidget);
+    expect(find.text('policy-fast'), findsOneWidget);
+  });
+
+  testWidgets('message composer dispatches send client message command',
+      (tester) async {
+    final bridge = _UiTestBridge(
+      initialState: const ClientViewState(
+        signedIn: true,
+        userLabel: 'tester@example.com',
+        networkEnabled: true,
+        syncing: false,
+        switchEnabled: true,
+        virtualIp: '100.64.0.10',
+      ),
+      activationDelay: Duration.zero,
+      messageDelay: const Duration(milliseconds: 150),
+    );
+
+    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('client-message-target')),
+      'ios-target',
+    );
+    await tester.enterText(
+      find.byKey(const Key('client-message-body')),
+      'hello',
+    );
+    await tester.tap(find.byKey(const Key('client-message-send')));
+    await tester.pump();
+
+    expect(bridge.lastCommand, ClientCommandType.sendClientMessage);
+    expect(bridge.lastPayload?['targetDeviceId'], 'ios-target');
+    expect(bridge.lastPayload?['body'], 'hello');
+    expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('client-message-send')))
+            .onPressed,
+        isNull);
+    expect(find.text('发送中'), findsOneWidget);
+    expect(find.text('消息已发送'), findsNothing);
+
+    await tester.pump(bridge.messageDelay);
+    await tester.pumpAndSettle();
+
+    expect(find.text('消息已发送'), findsOneWidget);
+    expect(find.text('hello'), findsNothing);
+  });
+
+  testWidgets('message composer keeps input when send fails', (tester) async {
+    final bridge = _UiTestBridge(
+      initialState: const ClientViewState(
+        signedIn: true,
+        userLabel: 'tester@example.com',
+        networkEnabled: true,
+        syncing: false,
+        switchEnabled: true,
+        virtualIp: '100.64.0.10',
+      ),
+      activationDelay: Duration.zero,
+      messageError: 'mqtt publish failed',
+    );
+
+    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('client-message-target')),
+      'ios-target',
+    );
+    await tester.enterText(
+      find.byKey(const Key('client-message-body')),
+      'hello',
+    );
+    await tester.tap(find.byKey(const Key('client-message-send')));
+    await tester.pumpAndSettle();
+
+    expect(bridge.lastCommand, ClientCommandType.sendClientMessage);
+    expect(find.text('消息发送失败：mqtt publish failed'), findsOneWidget);
+    expect(find.text('hello'), findsOneWidget);
+  });
 }
 
 Switch _networkSwitch(WidgetTester tester) {
@@ -278,6 +424,8 @@ class _UiTestBridge implements ClientCoreBridge {
     this.assignedIp,
     this.activationError,
     this.disableError,
+    this.messageDelay = Duration.zero,
+    this.messageError,
   })  : _state = ValueNotifier<ClientViewState>(initialState),
         _androidNetworkAuthorization =
             ValueNotifier<AndroidNetworkAuthorizationState>(
@@ -291,8 +439,12 @@ class _UiTestBridge implements ClientCoreBridge {
   final String? assignedIp;
   final String? activationError;
   final String? disableError;
+  final Duration messageDelay;
+  final String? messageError;
   ClientCommandType? lastCommand;
+  Map<String, Object?>? lastPayload;
   int androidPrepareCount = 0;
+  String serverUrl = 'http://127.0.0.1:28080';
 
   @override
   ValueListenable<ClientViewState> get state => _state;
@@ -305,6 +457,18 @@ class _UiTestBridge implements ClientCoreBridge {
   Future<void> start() async {}
 
   @override
+  Future<String> serverBaseUrl() async => serverUrl;
+
+  @override
+  Future<void> updateServerBaseUrl(String serverBaseUrl) async {
+    var value = serverBaseUrl.trim();
+    if (!value.contains('://')) {
+      value = 'http://$value';
+    }
+    serverUrl = value.replaceFirst(RegExp(r'/+$'), '');
+  }
+
+  @override
   Future<void> prepareAndroidNetworkAuthorization() async {
     androidPrepareCount += 1;
   }
@@ -312,12 +476,20 @@ class _UiTestBridge implements ClientCoreBridge {
   @override
   Future<void> dispatch(ClientCommand command) async {
     lastCommand = command.type;
+    lastPayload = command.payload;
     if (command.type == ClientCommandType.enableNetwork) {
       _enable(command);
       return;
     }
     if (command.type == ClientCommandType.disableNetwork) {
       _disable(command);
+      return;
+    }
+    if (command.type == ClientCommandType.sendClientMessage) {
+      await Future<void>.delayed(messageDelay);
+      if (messageError != null) {
+        throw messageError!;
+      }
       return;
     }
   }

@@ -4,6 +4,7 @@ use std::{
     net::TcpStream,
     path::PathBuf,
     process::Command,
+    sync::{Mutex, OnceLock},
     time::Duration,
 };
 
@@ -13,16 +14,54 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const DEFAULT_CONTROL_BASE_URL: &str = "http://127.0.0.1:28080";
+static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static CLIENT_DEVICE_ID_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+#[allow(dead_code)]
+pub fn set_control_base_url_override(value: &str) {
+    let value = value.trim();
+    if value.is_empty() {
+        return;
+    }
+    let mutex = CONTROL_BASE_URL_OVERRIDE.get_or_init(|| Mutex::new(None));
+    let mut override_value = mutex
+        .lock()
+        .expect("control base url override mutex poisoned");
+    *override_value = Some(value.trim_end_matches('/').to_string());
+}
+
+#[allow(dead_code)]
+pub fn set_client_device_id_override(value: &str) {
+    let value = value.trim();
+    if !is_usable_device_id(value) {
+        return;
+    }
+    let mutex = CLIENT_DEVICE_ID_OVERRIDE.get_or_init(|| Mutex::new(None));
+    let mut override_value = mutex
+        .lock()
+        .expect("client device id override mutex poisoned");
+    *override_value = Some(value.to_string());
+}
+
+fn control_base_url_override() -> Option<String> {
+    CONTROL_BASE_URL_OVERRIDE
+        .get()
+        .and_then(|mutex| mutex.lock().ok().and_then(|value| value.clone()))
+}
 
 #[derive(Debug, Clone)]
 pub struct ControlPlaneClient {
     base_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlDevice {
     pub device_id: String,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub owner_email: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
@@ -31,6 +70,10 @@ pub struct ControlDevice {
     pub current_virtual_ip: Option<String>,
     #[serde(default)]
     pub virtual_ip: Option<String>,
+    #[serde(default)]
+    pub global_ip: Option<String>,
+    #[serde(default)]
+    pub global_name: Option<String>,
     #[serde(default)]
     pub mqtt: Option<MqttCredential>,
 }
@@ -73,7 +116,7 @@ pub struct RelayCandidate {
     pub cluster_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlPeer {
     pub node_id: String,
@@ -85,7 +128,7 @@ pub struct ControlPeer {
     pub endpoints: Vec<ControlEndpoint>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlEndpoint {
     #[serde(default)]
@@ -96,19 +139,10 @@ pub struct ControlEndpoint {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RelayTicketRequest<'a> {
-    network_id: &'a str,
-    src_node_id: &'a str,
-    dst_node_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    derp_cluster_id: Option<&'a str>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    preferred_derp_node_ids: Vec<&'a str>,
-    reason: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    relay_region_id: Option<&'a str>,
+pub struct ControlNode {
+    pub node_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,25 +150,106 @@ struct ItemsResponse<T> {
     items: Vec<T>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct NetworkHomeResponse {
-    active_network: Option<ControlNetwork>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ControlNetwork {
-    network_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ControlSubnet {
-    subnet_id: String,
-    cidr: String,
+pub struct DeviceNetworkConfig {
+    pub network_id: String,
     #[serde(default)]
-    is_default: bool,
+    pub network_name: Option<String>,
+    #[serde(default)]
+    pub network_code: Option<String>,
+    #[serde(default)]
+    pub config_version: Option<i64>,
+    pub device_id: String,
+    #[serde(default)]
+    pub global_ip: Option<String>,
+    #[serde(default)]
+    pub global_name: Option<String>,
+    #[serde(default)]
+    pub peers: Vec<DeviceNetworkPeer>,
+    #[serde(default)]
+    pub security_groups: Vec<DeviceSecurityGroup>,
+    #[serde(default)]
+    pub rules: Vec<DeviceSecurityRule>,
+    #[serde(default)]
+    pub dns_zones: Vec<DeviceDnsZone>,
+    #[serde(default)]
+    pub dns_records: Vec<DeviceDnsRecord>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceNetworkPeer {
+    pub device_id: String,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub owner_email: Option<String>,
+    #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub global_ip: Option<String>,
+    #[serde(default)]
+    pub global_name: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSecurityGroup {
+    pub security_group_id: String,
+    pub network_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub default_policy: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSecurityRule {
+    pub rule_id: String,
+    pub security_group_id: String,
+    pub direction: String,
+    pub priority: i64,
+    pub action: String,
+    pub protocol: String,
+    pub port_from: i64,
+    pub port_to: i64,
+    pub peer_type: String,
+    pub peer_value: String,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceDnsZone {
+    pub zone_id: String,
+    pub network_id: String,
+    pub zone_name: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceDnsRecord {
+    pub record_id: String,
+    pub zone_id: String,
+    pub network_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub fqdn: Option<String>,
+    pub record_type: String,
+    #[serde(default)]
+    pub target_device_id: Option<String>,
+    #[serde(default)]
+    pub target_ip: Option<String>,
+    #[serde(default)]
+    pub cname: Option<String>,
+    #[serde(default)]
+    pub port: Option<String>,
+    #[serde(default)]
+    pub ttl: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,6 +276,9 @@ struct RegisterDeviceRequest {
     device_id: String,
     name: String,
     platform: String,
+    os_name: String,
+    os_version: String,
+    alias: String,
     device_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     country_code: Option<String>,
@@ -169,68 +287,107 @@ struct RegisterDeviceRequest {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceNetworkStateRequest<'a> {
-    device_id: &'a str,
-    network_id: &'a str,
-    control_reachable: bool,
-    network_online: bool,
-    tunnel_up: bool,
-    last_probe_ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    virtual_ip: Option<&'a str>,
-    reported_at: i64,
+struct DeviceRenewRequest<'a> {
+    user_id: &'a str,
+    network_enabled: bool,
+    rx_bytes_total: u64,
+    tx_bytes_total: u64,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ConsoleLoginKeyRequest<'a> {
+struct PasswordLoginRequest<'a> {
+    email: &'a str,
+    password: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     device_id: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayTicketRequest<'a> {
+    network_id: &'a str,
+    src_node_id: &'a str,
+    dst_node_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    derp_cluster_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    preferred_derp_node_ids: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    preferred_relay_endpoint_ids: Vec<&'a str>,
+    reason: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relay_region_id: Option<&'a str>,
 }
 
 impl ControlPlaneClient {
     pub fn from_env() -> Self {
         Self {
-            base_url: env::var("SLAN_CONTROL_BASE_URL")
-                .unwrap_or_else(|_| DEFAULT_CONTROL_BASE_URL.to_string()),
+            base_url: control_base_url_override()
+                .or_else(|| env::var("SLAN_CONTROL_BASE_URL").ok())
+                .unwrap_or_else(|| DEFAULT_CONTROL_BASE_URL.to_string()),
         }
     }
 
-    pub fn ensure_device(
+    pub fn ensure_device_for_user(
         &self,
         access_token: &str,
+        user_id: &str,
         preferred_device_id: Option<&str>,
     ) -> Result<ControlDevice> {
         let stable_device_id = stable_device_id(preferred_device_id)?;
-        let devices = self.list_devices(access_token).unwrap_or_default();
-        let preferred_device_id = stable_device_id.as_str();
-        if let Some(device) = devices
-            .iter()
-            .find(|item| item.device_id == preferred_device_id)
-            .cloned()
-        {
-            if device.mqtt.is_some() {
-                return Ok(device);
+        let device_id = stable_device_id.as_str();
+        if let Ok(devices) = self.list_devices_for_user(access_token, user_id) {
+            if let Some(mut device) = devices
+                .into_iter()
+                .find(|item| item.device_id == device_id)
+            {
+                normalize_control_device(&mut device);
+                return self.renew_device(access_token, user_id, device_id, false, 0, 0);
             }
-            return self.register_device(access_token, preferred_device_id);
         }
-        self.register_device(access_token, preferred_device_id)
-    }
-
-    pub fn install_register_device(&self) -> Result<ControlDevice> {
-        let device_id = local_stable_device_id()?;
-        self.register_device_without_auth("/devices/install-register", &device_id)
+        self.register_device_for_user(access_token, user_id, device_id)
     }
 
     pub fn list_devices(&self, access_token: &str) -> Result<Vec<ControlDevice>> {
-        let response = self.request_json("GET", "/devices", access_token, None)?;
+        let response = self.request_json("GET", "/api/devices", access_token, None)?;
         let payload: ItemsResponse<ControlDevice> =
             serde_json::from_value(response).context("decode device list")?;
-        Ok(payload.items)
+        Ok(payload
+            .items
+            .into_iter()
+            .map(|mut device| {
+                normalize_control_device(&mut device);
+                device
+            })
+            .collect())
+    }
+
+    pub fn list_devices_for_user(
+        &self,
+        access_token: &str,
+        user_id: &str,
+    ) -> Result<Vec<ControlDevice>> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return self.list_devices(access_token);
+        }
+        let path = format!("/api/devices?userId={user_id}");
+        let response = self.request_json("GET", &path, access_token, None)?;
+        let payload: ItemsResponse<ControlDevice> =
+            serde_json::from_value(response).context("decode device list")?;
+        Ok(payload
+            .items
+            .into_iter()
+            .map(|mut device| {
+                normalize_control_device(&mut device);
+                device
+            })
+            .collect())
     }
 
     pub fn callback_payload(&self, callback_id: &str) -> Result<Option<AuthPayload>> {
-        let path = format!("/auth/callback-status/{callback_id}");
+        let path = format!("/api/auth/device-login-callbacks/{callback_id}");
         let response = self.request_json_without_auth("GET", &path, None)?;
         let payload: CallbackStatusResponse =
             serde_json::from_value(response).context("decode callback status")?;
@@ -251,33 +408,71 @@ impl ControlPlaneClient {
         }))
     }
 
+    pub fn login_with_password(&self, email: &str, password: &str) -> Result<AuthPayload> {
+        let email = email.trim();
+        if email.is_empty() || password.is_empty() {
+            bail!("账号和密码不能为空");
+        }
+        let device_id = local_stable_device_id()?;
+        let body = serde_json::to_value(PasswordLoginRequest {
+            email,
+            password,
+            device_id: Some(device_id.as_str()),
+        })?;
+        let response = self.request_json_without_auth("POST", "/api/auth/login", Some(body))?;
+        parse_login_response(&response, email, &device_id)
+    }
+
     pub fn active_network_id(&self, access_token: &str) -> Result<Option<String>> {
-        let response = self.request_json("GET", "/networks/home", access_token, None)?;
-        let payload: NetworkHomeResponse =
-            serde_json::from_value(response).context("decode network home")?;
-        Ok(payload.active_network.map(|network| network.network_id))
+        let _ = access_token;
+        Ok(None)
+    }
+
+    pub fn device_network_configs(
+        &self,
+        access_token: &str,
+        device_id: &str,
+    ) -> Result<Vec<DeviceNetworkConfig>> {
+        let path = format!("/api/devices/{device_id}/network-configs");
+        let response = self.request_json("GET", &path, access_token, None)?;
+        let payload: ItemsResponse<DeviceNetworkConfig> =
+            serde_json::from_value(response).context("decode device network configs")?;
+        Ok(payload.items)
     }
 
     pub fn report_network_state(
         &self,
         access_token: &str,
+        user_id: &str,
         device_id: &str,
         network_id: &str,
         network_enabled: bool,
         virtual_ip: Option<&str>,
     ) -> Result<()> {
-        let body = serde_json::to_value(DeviceNetworkStateRequest {
-            device_id,
-            network_id,
-            control_reachable: true,
-            network_online: network_enabled,
-            tunnel_up: network_enabled,
-            last_probe_ok: network_enabled,
-            virtual_ip,
-            reported_at: current_timestamp_seconds(),
-        })?;
-        let path = format!("/devices/{device_id}/networks/{network_id}/state");
-        self.request_json("PUT", &path, access_token, Some(body))?;
+        let _ = (network_id, virtual_ip);
+        self.renew_device(access_token, user_id, device_id, network_enabled, 0, 0)
+            .map(|_| ())
+    }
+
+    pub fn register_node(
+        &self,
+        access_token: &str,
+        device_id: &str,
+        node_id: &str,
+    ) -> Result<ControlNode> {
+        let _ = (access_token, device_id);
+        Ok(ControlNode {
+            node_id: node_id.to_string(),
+        })
+    }
+
+    pub fn create_control_session(
+        &self,
+        access_token: &str,
+        node_id: &str,
+        network_id: &str,
+    ) -> Result<()> {
+        let _ = (access_token, node_id, network_id);
         Ok(())
     }
 
@@ -287,32 +482,9 @@ impl ControlPlaneClient {
         device_id: &str,
         network_id: &str,
     ) -> Result<NetworkActivationPlan> {
-        let body = serde_json::json!({ "deviceId": device_id });
-        let path = format!("/networks/{network_id}/activate");
-        let response = self.request_json("POST", &path, access_token, Some(body))?;
-        let attachment = response.get("attachment");
-        let virtual_ip = attachment
-            .and_then(|attachment| attachment.get("virtualIp"))
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .ok_or_else(|| {
-                anyhow::anyhow!("device unavailable: current device has no assigned virtual IP")
-            })?;
-        let subnet_id = attachment
-            .and_then(|attachment| attachment.get("subnetId"))
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty());
-        Ok(NetworkActivationPlan {
-            virtual_ip,
-            prefix_len: self.network_prefix_len(access_token, network_id, subnet_id)?,
-            dns_servers: extract_dns_servers(&response),
-            routes: extract_routes(&response),
-            relay_candidates: extract_relay_candidates(&response),
-            self_node_id: extract_self_node_id(&response),
-            peers: extract_peers(&response),
-            peer_count: extract_peer_count(&response),
-        })
+        let config_path = format!("/api/networks/{network_id}/network-config?deviceId={device_id}");
+        let response = self.request_json("GET", &config_path, access_token, None)?;
+        activation_plan_from_network_config(&response)
     }
 
     pub fn issue_relay_ticket(
@@ -331,10 +503,11 @@ impl ControlPlaneClient {
             dst_node_id,
             derp_cluster_id,
             preferred_derp_node_ids: preferred_derp_node_id.into_iter().collect(),
+            preferred_relay_endpoint_ids: preferred_derp_node_id.into_iter().collect(),
             reason: "udp_relay_fallback",
             relay_region_id,
         })?;
-        let response = self.request_json("POST", "/relay/tickets", access_token, Some(body))?;
+        let response = self.request_json("POST", "/api/relay/tickets", access_token, Some(body))?;
         serde_json::from_value(response).context("decode relay ticket")
     }
 
@@ -344,10 +517,11 @@ impl ControlPlaneClient {
         device_id: &str,
         network_id: &str,
     ) -> Result<Vec<RelayCandidate>> {
-        let body = serde_json::json!({ "deviceId": device_id });
-        let path = format!("/networks/{network_id}/relay-candidates");
-        let response = self.request_json("POST", &path, access_token, Some(body))?;
-        Ok(extract_relay_candidates(&response))
+        let path = format!("/api/networks/{network_id}/relay-candidates?deviceId={device_id}");
+        let response = self.request_json("GET", &path, access_token, None)?;
+        let payload: ItemsResponse<RelayCandidate> =
+            serde_json::from_value(response).context("decode relay candidates")?;
+        Ok(payload.items)
     }
 
     pub fn deactivate_network(
@@ -356,10 +530,32 @@ impl ControlPlaneClient {
         device_id: &str,
         network_id: &str,
     ) -> Result<()> {
-        let body = serde_json::json!({ "deviceId": device_id });
-        let path = format!("/networks/{network_id}/deactivate");
-        self.request_json("POST", &path, access_token, Some(body))?;
+        let _ = (access_token, device_id, network_id);
         Ok(())
+    }
+
+    pub fn send_client_message(
+        &self,
+        access_token: &str,
+        network_id: &str,
+        from_device_id: &str,
+        target_device_id: &str,
+        body: &str,
+        metadata: Option<&Value>,
+    ) -> Result<Value> {
+        let target_device_id = target_device_id.trim();
+        let body = body.trim();
+        if target_device_id.is_empty() || body.is_empty() {
+            bail!("targetDeviceId and body are required");
+        }
+        let _ = (
+            access_token,
+            network_id,
+            from_device_id,
+            target_device_id,
+            metadata,
+        );
+        bail!("client message HTTP delivery is not exposed by service-biz-new")
     }
 
     pub fn network_prefix_len(
@@ -368,19 +564,8 @@ impl ControlPlaneClient {
         network_id: &str,
         subnet_id: Option<&str>,
     ) -> Result<u8> {
-        let path = format!("/networks/{network_id}/subnets");
-        let response = self.request_json("GET", &path, access_token, None)?;
-        let payload: ItemsResponse<ControlSubnet> =
-            serde_json::from_value(response).context("decode network subnets")?;
-        let cidr = payload
-            .items
-            .iter()
-            .find(|subnet| subnet_id == Some(subnet.subnet_id.as_str()))
-            .or_else(|| payload.items.iter().find(|subnet| subnet.is_default))
-            .or_else(|| payload.items.first())
-            .map(|subnet| subnet.cidr.as_str())
-            .ok_or_else(|| anyhow::anyhow!("network has no subnet cidr"))?;
-        prefix_len_from_cidr(cidr)
+        let _ = (access_token, network_id, subnet_id);
+        Ok(8)
     }
 
     pub fn console_login_key(
@@ -388,30 +573,42 @@ impl ControlPlaneClient {
         access_token: &str,
         device_id: Option<&str>,
     ) -> Result<Option<String>> {
-        let body = serde_json::to_value(ConsoleLoginKeyRequest { device_id })?;
-        let response =
-            self.request_json("POST", "/auth/console-login-key", access_token, Some(body))?;
-        Ok(response
-            .get("loginKey")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string))
+        let _ = (access_token, device_id);
+        Ok(None)
     }
 
-    fn register_device(&self, access_token: &str, device_id: &str) -> Result<ControlDevice> {
-        let response = self.request_json(
-            "POST",
-            "/devices/register",
-            access_token,
-            Some(register_device_body(device_id)?),
-        )?;
-        serde_json::from_value(response).context("decode registered device")
+    fn register_device_for_user(
+        &self,
+        access_token: &str,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<ControlDevice> {
+        let mut body = register_device_body(device_id)?;
+        if let Some(object) = body.as_object_mut() {
+            object.insert("userId".to_string(), Value::String(user_id.trim().to_string()));
+        }
+        let response = self.request_json("POST", "/api/devices/register", access_token, Some(body))?;
+        decode_control_device_response(response)
     }
 
-    fn register_device_without_auth(&self, path: &str, device_id: &str) -> Result<ControlDevice> {
-        let body = register_device_body(device_id)?;
-        let response = self.request_json_without_auth("POST", path, Some(body))?;
-        serde_json::from_value(response).context("decode registered device")
+    fn renew_device(
+        &self,
+        access_token: &str,
+        user_id: &str,
+        device_id: &str,
+        network_enabled: bool,
+        rx_bytes_total: u64,
+        tx_bytes_total: u64,
+    ) -> Result<ControlDevice> {
+        let body = serde_json::to_value(DeviceRenewRequest {
+            user_id,
+            network_enabled,
+            rx_bytes_total,
+            tx_bytes_total,
+        })?;
+        let path = format!("/api/devices/{device_id}/renew");
+        let response = self.request_json("POST", &path, access_token, Some(body))?;
+        decode_control_device_response(response)
     }
 
     fn request_json(
@@ -453,13 +650,165 @@ fn register_device_body(device_id: &str) -> Result<Value> {
     let device_name = device_name();
     serde_json::to_value(RegisterDeviceRequest {
         device_id: device_id.to_string(),
-        name: device_name,
+        name: device_name.clone(),
         platform: platform_name().to_string(),
+        os_name: platform_name().to_string(),
+        os_version: env::var("SLAN_OS_VERSION").unwrap_or_default(),
+        alias: device_name,
         device_version: env!("CARGO_PKG_VERSION").to_string(),
         country_code: device_country_code(),
         public_key: format!("client-v2-{device_id}"),
     })
     .context("encode register device request")
+}
+
+fn parse_login_response(response: &Value, email: &str, device_id: &str) -> Result<AuthPayload> {
+    if let Some(auth) = response.get("auth") {
+        let user = auth
+            .get("user")
+            .ok_or_else(|| anyhow::anyhow!("login response missing auth.user"))?;
+        let session = auth
+            .get("session")
+            .ok_or_else(|| anyhow::anyhow!("login response missing auth.session"))?;
+        return Ok(AuthPayload {
+            access_token: required_string(session, "token")?,
+            refresh_token: optional_string(session, "token"),
+            user_id: required_string(user, "userId")?,
+            user_label: optional_string(user, "email").unwrap_or_else(|| email.to_string()),
+            device_id: Some(device_id.to_string()),
+            virtual_ip: None,
+            expires_in: login_expires_in(session),
+        });
+    }
+    Ok(AuthPayload {
+        access_token: required_string(response, "accessToken")?,
+        refresh_token: optional_string(response, "refreshToken"),
+        user_id: required_string(response, "userId")?,
+        user_label: optional_string(response, "email").unwrap_or_else(|| email.to_string()),
+        device_id: optional_string(response, "deviceId").or_else(|| Some(device_id.to_string())),
+        virtual_ip: optional_string(response, "virtualIp"),
+        expires_in: response.get("expiresIn").and_then(Value::as_u64),
+    })
+}
+
+fn login_expires_in(session: &Value) -> Option<u64> {
+    let expires_at = session.get("expiresAt").and_then(Value::as_i64)?;
+    let now = current_timestamp_seconds();
+    Some(expires_at.saturating_sub(now).max(0) as u64)
+}
+
+fn decode_control_device_response(response: Value) -> Result<ControlDevice> {
+    let mut device: ControlDevice = if let Some(device) = response.get("device") {
+        serde_json::from_value(device.clone()).context("decode registered device")?
+    } else {
+        serde_json::from_value(response.clone()).context("decode registered device")?
+    };
+    if device.mqtt.is_none() {
+        device.mqtt = response
+            .get("mqtt")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .context("decode device mqtt credential")?;
+    }
+    normalize_control_device(&mut device);
+    Ok(device)
+}
+
+fn normalize_control_device(device: &mut ControlDevice) {
+    if device.current_virtual_ip.is_none() {
+        device.current_virtual_ip = device.global_ip.clone().or_else(|| device.virtual_ip.clone());
+    }
+    if device.virtual_ip.is_none() {
+        device.virtual_ip = device.global_ip.clone();
+    }
+}
+
+fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActivationPlan> {
+    let virtual_ip = response
+        .get("globalIp")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            anyhow::anyhow!("device unavailable: current device has no assigned global IP")
+        })?;
+    let peers = network_config_control_peers(response);
+    let peer_count = peers.len();
+    Ok(NetworkActivationPlan {
+        virtual_ip,
+        prefix_len: 8,
+        dns_servers: extract_dns_servers(response),
+        routes: network_config_routes(response),
+        relay_candidates: extract_relay_candidates(response),
+        self_node_id: None,
+        peers,
+        peer_count,
+    })
+}
+
+fn network_config_control_peers(response: &Value) -> Vec<ControlPeer> {
+    response
+        .get("peers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|peer| {
+            let device_id = peer
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let global_ip = peer
+                .get("globalIp")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            Some(ControlPeer {
+                node_id: format!("node-{device_id}"),
+                relay_allowed: true,
+                virtual_ips: global_ip.into_iter().collect(),
+                endpoints: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+fn network_config_routes(response: &Value) -> Vec<RouteSpec> {
+    response
+        .get("peers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|peer| {
+            let destination = peer
+                .get("globalIp")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            Some(RouteSpec {
+                destination: format!("{destination}/32"),
+                gateway: None,
+            })
+        })
+        .collect()
+}
+
+fn required_string(response: &Value, field: &str) -> Result<String> {
+    optional_string(response, field)
+        .ok_or_else(|| anyhow::anyhow!("login response missing {field}"))
+}
+
+fn optional_string(response: &Value, field: &str) -> Option<String> {
+    response
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn extract_dns_servers(response: &Value) -> Vec<String> {
@@ -473,67 +822,6 @@ fn extract_dns_servers(response: &Value) -> Vec<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .collect()
-}
-
-fn extract_routes(response: &Value) -> Vec<RouteSpec> {
-    response
-        .pointer("/networkMap/routes")
-        .or_else(|| response.pointer("/routes"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|route| {
-            let destination = route
-                .get("cidr")
-                .or_else(|| route.get("destination"))
-                .and_then(Value::as_str)?
-                .trim()
-                .to_string();
-            if destination.is_empty() {
-                return None;
-            }
-            Some(RouteSpec {
-                destination,
-                gateway: route
-                    .get("gateway")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string),
-            })
-        })
-        .collect()
-}
-
-fn extract_peer_count(response: &Value) -> usize {
-    response
-        .pointer("/networkMap/peers")
-        .or_else(|| response.pointer("/peers"))
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or_default()
-}
-
-fn extract_self_node_id(response: &Value) -> Option<String> {
-    response
-        .pointer("/networkMap/selfNodeId")
-        .or_else(|| response.pointer("/selfNodeId"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn extract_peers(response: &Value) -> Vec<ControlPeer> {
-    response
-        .pointer("/networkMap/peers")
-        .or_else(|| response.pointer("/peers"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|peer| serde_json::from_value::<ControlPeer>(peer.clone()).ok())
-        .filter(|peer| !peer.node_id.trim().is_empty())
         .collect()
 }
 
@@ -606,20 +894,6 @@ fn device_country_code() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_ascii_uppercase())
         .filter(|value| !value.is_empty())
-}
-
-fn prefix_len_from_cidr(cidr: &str) -> Result<u8> {
-    let (_, prefix) = cidr
-        .trim()
-        .split_once('/')
-        .ok_or_else(|| anyhow::anyhow!("invalid subnet cidr: {cidr}"))?;
-    let prefix_len = prefix
-        .parse::<u8>()
-        .with_context(|| format!("parse subnet prefix from {cidr}"))?;
-    if prefix_len > 32 {
-        bail!("invalid IPv4 subnet prefix length {prefix_len} from {cidr}");
-    }
-    Ok(prefix_len)
 }
 
 #[derive(Debug, Clone)]
@@ -734,6 +1008,13 @@ fn decode_http_response(response: &[u8]) -> Result<Vec<u8>> {
 
 fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
     let path = state_dir().join("client-v2-device-id.txt");
+    if let Some(value) = env_device_id_override() {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        fs::write(&path, &value).with_context(|| format!("write {}", path.display()))?;
+        return Ok(value);
+    }
     let deterministic = deterministic_device_id();
     if let Ok(value) = fs::read_to_string(&path) {
         let value = value.trim();
@@ -760,6 +1041,20 @@ fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
 
 pub fn local_stable_device_id() -> Result<String> {
     stable_device_id(None)
+}
+
+fn env_device_id_override() -> Option<String> {
+    if let Some(value) = CLIENT_DEVICE_ID_OVERRIDE
+        .get()
+        .and_then(|mutex| mutex.lock().ok().and_then(|value| value.clone()))
+        .filter(|value| is_usable_device_id(value))
+    {
+        return Some(value);
+    }
+    env::var("SLAN_CLIENT_DEVICE_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| is_usable_device_id(value))
 }
 
 fn deterministic_device_id() -> Result<String> {
@@ -863,6 +1158,9 @@ fn is_usable_device_id(device_id: &str) -> bool {
 }
 
 fn state_dir() -> PathBuf {
+    if let Some(dir) = env::var_os("SLAN_STATE_DIR") {
+        return PathBuf::from(dir).join("SLAN");
+    }
     if cfg!(target_os = "windows") {
         return env::var_os("ProgramData")
             .map(PathBuf::from)
@@ -872,10 +1170,19 @@ fn state_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
         return PathBuf::from("/Library/Application Support/SLAN");
     }
-    env::var_os("SLAN_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib"))
-        .join("SLAN")
+    if cfg!(target_os = "ios") {
+        if let Some(home) = env::var_os("HOME") {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("SLAN");
+        }
+        return env::temp_dir().join("SLAN");
+    }
+    if cfg!(target_os = "android") {
+        return env::temp_dir().join("SLAN");
+    }
+    PathBuf::from("/var/lib").join("SLAN")
 }
 
 fn device_name() -> String {
@@ -907,4 +1214,146 @@ fn current_timestamp_seconds() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        env, fs,
+        io::{Read, Write},
+        net::TcpListener,
+        path::PathBuf,
+        thread,
+    };
+
+    use serde_json::Value;
+
+    use super::ControlPlaneClient;
+
+    #[test]
+    fn password_login_posts_stable_device_id() {
+        let device_id = "android-login-device-1";
+        let state_dir = unique_test_state_dir("password-login-device-id");
+        fs::create_dir_all(&state_dir).expect("create state dir");
+        env::set_var("SLAN_CLIENT_DEVICE_ID", device_id);
+        env::set_var("SLAN_STATE_DIR", &state_dir);
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let address = listener.local_addr().expect("local address");
+        let request_handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let request = read_http_request(&mut stream);
+            let response_body = br#"{"auth":{"user":{"userId":"user-1","email":"android@example.test","status":"active","createdAt":1,"updatedAt":1},"session":{"sessionId":"session-1","userId":"user-1","token":"access-1","createdAt":1,"expiresAt":4102444800}}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_body.len()
+            )
+            .expect("write response headers");
+            stream
+                .write_all(response_body)
+                .expect("write response body");
+            request
+        });
+
+        let client = ControlPlaneClient {
+            base_url: format!("http://{address}"),
+        };
+        let auth = client
+            .login_with_password("android@example.test", "password-1")
+            .expect("login with password");
+
+        assert_eq!(auth.device_id.as_deref(), Some(device_id));
+        let request = request_handle.join().expect("request handle");
+        assert!(request.starts_with("POST /api/auth/login HTTP/1.1"));
+        let (_, body) = request.split_once("\r\n\r\n").expect("login body");
+        let body: Value = serde_json::from_str(body).expect("decode login body");
+        assert_eq!(
+            body.get("deviceId").and_then(Value::as_str),
+            Some(device_id)
+        );
+
+        env::remove_var("SLAN_CLIENT_DEVICE_ID");
+        env::remove_var("SLAN_STATE_DIR");
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[test]
+    fn send_client_message_http_delivery_is_not_exposed() {
+        let client = ControlPlaneClient {
+            base_url: "http://127.0.0.1:1".to_string(),
+        };
+        let error = client
+            .send_client_message(
+                "token-1",
+                "net-1",
+                "mac-device",
+                "ios-device",
+                " hello ",
+                Some(&serde_json::json!({ "kind": "manual" })),
+            )
+            .expect_err("service-biz-new does not expose HTTP client messages");
+
+        assert!(error
+            .to_string()
+            .contains("not exposed by service-biz-new"));
+    }
+
+    #[test]
+    fn send_client_message_rejects_empty_target_or_body() {
+        let client = ControlPlaneClient {
+            base_url: "http://127.0.0.1:1".to_string(),
+        };
+
+        let missing_target = client
+            .send_client_message("token-1", "net-1", "mac-device", " ", "hello", None)
+            .expect_err("missing target should fail before http");
+        assert!(missing_target
+            .to_string()
+            .contains("targetDeviceId and body are required"));
+
+        let missing_body = client
+            .send_client_message("token-1", "net-1", "mac-device", "ios-device", " ", None)
+            .expect_err("missing body should fail before http");
+        assert!(missing_body
+            .to_string()
+            .contains("targetDeviceId and body are required"));
+    }
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 512];
+        loop {
+            let read = stream.read(&mut chunk).expect("read request");
+            assert!(read > 0, "request closed before headers");
+            buffer.extend_from_slice(&chunk[..read]);
+            let Some(separator) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&buffer[..separator]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or_default();
+            let body_start = separator + 4;
+            if buffer.len() >= body_start + content_length {
+                return String::from_utf8(buffer).expect("utf8 request");
+            }
+        }
+    }
+
+    fn unique_test_state_dir(name: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "slan-client-core-service-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ))
+    }
 }

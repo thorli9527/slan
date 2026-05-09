@@ -15,22 +15,29 @@ import (
 )
 
 const deviceInviteRedisPrefix = "slan:device_invite:"
+const authCallbackRedisPrefix = "slan:auth_callback:"
 
 type deviceInviteStore interface {
-	Save(invite WorkspaceDeviceInvite, ttl time.Duration) error
-	Consume(inviteCode string) (WorkspaceDeviceInvite, error)
+	Save(invite DeviceInvite, ttl time.Duration) error
+	Consume(inviteCode string) (DeviceInvite, error)
+}
+
+type authCallbackStore interface {
+	SaveCallback(callback DeviceLoginCallback, ttl time.Duration, onlyIfAbsent bool) error
+	LoadCallback(callbackID string) (DeviceLoginCallback, error)
 }
 
 type memoryDeviceInviteStore struct {
-	mu      sync.Mutex
-	invites map[string]WorkspaceDeviceInvite
+	mu        sync.Mutex
+	invites   map[string]DeviceInvite
+	callbacks map[string]DeviceLoginCallback
 }
 
 func newMemoryDeviceInviteStore() *memoryDeviceInviteStore {
-	return &memoryDeviceInviteStore{invites: make(map[string]WorkspaceDeviceInvite)}
+	return &memoryDeviceInviteStore{invites: make(map[string]DeviceInvite), callbacks: make(map[string]DeviceLoginCallback)}
 }
 
-func (s *memoryDeviceInviteStore) Save(invite WorkspaceDeviceInvite, ttl time.Duration) error {
+func (s *memoryDeviceInviteStore) Save(invite DeviceInvite, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	invite.ExpiresAt = time.Now().Add(ttl).Unix()
@@ -38,15 +45,40 @@ func (s *memoryDeviceInviteStore) Save(invite WorkspaceDeviceInvite, ttl time.Du
 	return nil
 }
 
-func (s *memoryDeviceInviteStore) Consume(inviteCode string) (WorkspaceDeviceInvite, error) {
+func (s *memoryDeviceInviteStore) Consume(inviteCode string) (DeviceInvite, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	invite, ok := s.invites[inviteCode]
 	if !ok || invite.Status != "pending" || invite.ExpiresAt < time.Now().Unix() {
-		return WorkspaceDeviceInvite{}, errNotFound
+		return DeviceInvite{}, errNotFound
 	}
 	delete(s.invites, inviteCode)
 	return invite, nil
+}
+
+func (s *memoryDeviceInviteStore) SaveCallback(callback DeviceLoginCallback, ttl time.Duration, onlyIfAbsent bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if onlyIfAbsent {
+		if _, ok := s.callbacks[callback.CallbackID]; ok {
+			return errConflict
+		}
+	}
+	if callback.ExpiresAt <= 0 {
+		callback.ExpiresAt = time.Now().Add(ttl).Unix()
+	}
+	s.callbacks[callback.CallbackID] = callback
+	return nil
+}
+
+func (s *memoryDeviceInviteStore) LoadCallback(callbackID string) (DeviceLoginCallback, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	callback, ok := s.callbacks[callbackID]
+	if !ok || callback.ExpiresAt < time.Now().Unix() {
+		return DeviceLoginCallback{}, errNotFound
+	}
+	return callback, nil
 }
 
 type redisDeviceInviteStore struct {
@@ -73,7 +105,7 @@ func newDeviceInviteStoreFromEnv() deviceInviteStore {
 	}
 }
 
-func (s *redisDeviceInviteStore) Save(invite WorkspaceDeviceInvite, ttl time.Duration) error {
+func (s *redisDeviceInviteStore) Save(invite DeviceInvite, ttl time.Duration) error {
 	payload, err := json.Marshal(invite)
 	if err != nil {
 		return err
@@ -92,22 +124,63 @@ func (s *redisDeviceInviteStore) Save(invite WorkspaceDeviceInvite, ttl time.Dur
 	return errConflict
 }
 
-func (s *redisDeviceInviteStore) Consume(inviteCode string) (WorkspaceDeviceInvite, error) {
+func (s *redisDeviceInviteStore) Consume(inviteCode string) (DeviceInvite, error) {
 	resp, err := s.command(context.Background(), "GETDEL", deviceInviteRedisPrefix+inviteCode)
 	if err != nil {
-		return WorkspaceDeviceInvite{}, err
+		return DeviceInvite{}, err
 	}
 	if resp.nil {
-		return WorkspaceDeviceInvite{}, errNotFound
+		return DeviceInvite{}, errNotFound
 	}
-	var invite WorkspaceDeviceInvite
+	var invite DeviceInvite
 	if err := json.Unmarshal([]byte(resp.bulk), &invite); err != nil {
-		return WorkspaceDeviceInvite{}, err
+		return DeviceInvite{}, err
 	}
 	if invite.Status != "pending" || invite.ExpiresAt < time.Now().Unix() {
-		return WorkspaceDeviceInvite{}, errNotFound
+		return DeviceInvite{}, errNotFound
 	}
 	return invite, nil
+}
+
+func (s *redisDeviceInviteStore) SaveCallback(callback DeviceLoginCallback, ttl time.Duration, onlyIfAbsent bool) error {
+	payload, err := json.Marshal(callback)
+	if err != nil {
+		return err
+	}
+	ttlSeconds := int(ttl.Seconds())
+	if ttlSeconds <= 0 {
+		ttlSeconds = 600
+	}
+	args := []string{"SET", authCallbackRedisPrefix + callback.CallbackID, string(payload), "EX", strconv.Itoa(ttlSeconds)}
+	if onlyIfAbsent {
+		args = append(args, "NX")
+	}
+	resp, err := s.command(context.Background(), args...)
+	if err != nil {
+		return err
+	}
+	if resp.simple == "OK" {
+		return nil
+	}
+	return errConflict
+}
+
+func (s *redisDeviceInviteStore) LoadCallback(callbackID string) (DeviceLoginCallback, error) {
+	resp, err := s.command(context.Background(), "GET", authCallbackRedisPrefix+callbackID)
+	if err != nil {
+		return DeviceLoginCallback{}, err
+	}
+	if resp.nil {
+		return DeviceLoginCallback{}, errNotFound
+	}
+	var callback DeviceLoginCallback
+	if err := json.Unmarshal([]byte(resp.bulk), &callback); err != nil {
+		return DeviceLoginCallback{}, err
+	}
+	if callback.ExpiresAt < time.Now().Unix() {
+		return DeviceLoginCallback{}, errNotFound
+	}
+	return callback, nil
 }
 
 type redisResp struct {

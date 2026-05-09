@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
+import android.util.Log;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,6 +19,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class SlanVpnService extends VpnService {
+  private static final String TAG = "SlanVpnService";
   static final String ACTION_START = "dev.slan.client_core_plugin.START_VPN";
   static final String ACTION_STOP = "dev.slan.client_core_plugin.STOP_VPN";
   static final String EXTRA_CONFIG_JSON = "configJson";
@@ -55,8 +57,9 @@ public final class SlanVpnService extends VpnService {
         startForeground(NOTIFICATION_ID, notification());
         startVpn(new JSONObject(intent.getStringExtra(EXTRA_CONFIG_JSON)));
       } catch (Exception error) {
+        Log.e(TAG, "Android VPN start failed", error);
         SlanVpnRuntime.markError(error.getMessage());
-        stopVpn("Android VPN start failed");
+        stopVpn("Android VPN start failed: " + error.getMessage());
         stopSelf();
       }
       return START_STICKY;

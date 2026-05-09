@@ -6,23 +6,17 @@ Channel:
 
 - `dev.slan/client_core_v2`
 
-Methods:
+Forwarded control-plane methods:
 
 - `start`
 - `state`
 - `refresh`
 - `dispatch`
-- `enqueueControlTask`
-- `enqueueDownstreamControlTask`
-- `ingestDownstreamControlMessage`
-- `localControlPlan`
-- `localControlCadence`
-- `localControlTickPlan`
-- `localControlOutbox`
-- `localPendingControlAcks`
-- `localMarkControlAcked`
-- `localMarkTransportPublished`
 - `localNetworkShutdown`
+
+The plugin does not synthesize fallback responses for these methods. If
+`client-core-service` is unavailable, the MethodChannel call is not implemented
+and the Flutter bridge must surface the local service failure.
 
 Service host:
 
@@ -71,22 +65,11 @@ Session and assigned IP:
 - Independently of UI clicks, service periodically reads helper runtime state and reports it to the control plane.
 - Device heartbeat/control reachability belongs to service and must not depend on whether network is enabled.
 
-Control task queue:
+Control tasks and MQTT:
 
-- UI switch does not execute network changes directly.
-- UI sends `enqueueControlTask` with `enableNetwork` or `disableNetwork`; these are upstream tasks and may call control-plane activate/deactivate.
-- MQTT/Web control messages should call `enqueueDownstreamControlTask`; these are downstream tasks and only apply the server-decided local network action.
-- MQTT QoS2 receivers should call `ingestDownstreamControlMessage` and ACK only after that call returns successfully.
-- MQTT app-level ACK publishing reads `localPendingControlAcks`; after the ACK publish succeeds, call `localMarkControlAcked`.
-- MQTT publish loops can use `localControlOutbox` to get publish-ready heartbeat, runtime state, and control ACK messages with QoS already assigned.
-- `localControlOutbox` supports `includeHeartbeat`, `includeRuntimeState`, and `includeControlAcks` flags for separate publish cadences.
-- `localControlCadence` owns the default ACK flush, heartbeat, and runtime state intervals.
-- `localControlTickPlan` maps worker cursor timestamps to the next `localControlOutbox` flags.
-- After publish success, call `localMarkTransportPublished` with the outbox message `id`; only control ACK messages are mapped back to their XML task.
-- Tasks are persisted at `C:\ProgramData\SLAN\client-v2-control-tasks.xml`.
-- The XML file separates `<upstreamTasks>` and `<downstreamTasks>`, and downstream pending tasks run first.
-- The service worker marks tasks as `pending`, `running`, `succeeded`, or `failed`.
-- If `requireUiRefresh=true`, the service drains pending tasks in queue order before returning the latest UI state.
+- `client-core-service` owns MQTT subscribe/publish, QoS handling, control task queueing, ACK state, heartbeat, runtime state, and downstream message ingestion.
+- The Windows plugin no longer exposes compatibility methods such as `localControlOutbox`, `localPendingControlAcks`, `localMarkControlAcked`, or `ingestDownstreamControlMessage`.
+- Tasks are persisted by the service at `C:\ProgramData\SLAN\client-v2-control-tasks.xml`.
 
 Browser login:
 

@@ -34,6 +34,8 @@ impl ThinMqttQoS {
 pub struct ThinMqttPublish {
     pub topic: String,
     pub payload: Vec<u8>,
+    pub qos: u8,
+    pub packet_id: Option<u16>,
     publish: ParsedMqttPublish,
 }
 
@@ -68,19 +70,24 @@ impl ThinControlMqttClient {
             .map_err(|err| format!("flush mqtt connect: {err}"))?;
         read_mqtt_connack(&mut stream)?;
 
-        let subscribe = mqtt_subscribe_packet(1, subscribe_topic)?;
-        stream
-            .write_all(&subscribe)
-            .map_err(|err| format!("write mqtt subscribe: {err}"))?;
-        stream
-            .flush()
-            .map_err(|err| format!("flush mqtt subscribe: {err}"))?;
-        read_mqtt_suback(&mut stream, 1)?;
-
-        Ok(Self {
+        let mut client = Self {
             stream,
             next_packet_id: 2,
-        })
+        };
+        client.subscribe(subscribe_topic)?;
+        Ok(client)
+    }
+
+    pub fn subscribe(&mut self, topic_filter: &str) -> Result<(), String> {
+        let packet_id = self.next_publish_packet_id();
+        let subscribe = mqtt_subscribe_packet(packet_id, topic_filter)?;
+        self.stream
+            .write_all(&subscribe)
+            .map_err(|err| format!("write mqtt subscribe: {err}"))?;
+        self.stream
+            .flush()
+            .map_err(|err| format!("flush mqtt subscribe: {err}"))?;
+        read_mqtt_suback(&mut self.stream, packet_id)
     }
 
     pub fn publish(&mut self, topic: &str, payload: &[u8], qos: ThinMqttQoS) -> Result<(), String> {
@@ -125,12 +132,23 @@ impl ThinControlMqttClient {
         Ok(Some(ThinMqttPublish {
             topic: publish.topic.clone(),
             payload: publish.payload.clone(),
+            qos: publish.qos,
+            packet_id: publish.packet_id,
             publish,
         }))
     }
 
     pub fn ack_publish(&mut self, publish: &ThinMqttPublish) -> Result<(), String> {
         ack_mqtt_publish(&mut self.stream, &publish.publish)
+    }
+
+    pub fn ping(&mut self) -> Result<(), String> {
+        self.stream
+            .write_all(&[0xc0, 0x00])
+            .map_err(|err| format!("write mqtt ping request: {err}"))?;
+        self.stream
+            .flush()
+            .map_err(|err| format!("flush mqtt ping request: {err}"))
     }
 
     fn next_publish_packet_id(&mut self) -> u16 {
@@ -184,9 +202,10 @@ fn parse_mqtt_url(url: &str) -> Result<MqttEndpoint, String> {
 fn mqtt_connect_packet(client_id: &str, username: &str, password: &str) -> Result<Vec<u8>, String> {
     let mut variable = Vec::new();
     mqtt_write_string(&mut variable, "MQTT")?;
-    variable.push(0x04);
+    variable.push(0x05);
     variable.push(0x02 | 0x80 | 0x40);
     variable.extend_from_slice(&30_u16.to_be_bytes());
+    variable.push(0x00);
     mqtt_write_string(&mut variable, client_id)?;
     mqtt_write_string(&mut variable, username)?;
     mqtt_write_string(&mut variable, password)?;
@@ -209,6 +228,7 @@ fn mqtt_publish_packet(
             packet_id.ok_or_else(|| "mqtt qos2 publish missing packet id".to_string())?;
         variable.extend_from_slice(&packet_id.to_be_bytes());
     }
+    variable.push(0x00);
     variable.extend_from_slice(payload);
     let mut packet = vec![0x30 | (qos.packet_qos() << 1)];
     packet.extend_from_slice(&mqtt_remaining_length(variable.len())?);
@@ -219,6 +239,7 @@ fn mqtt_publish_packet(
 fn mqtt_subscribe_packet(packet_id: u16, topic_filter: &str) -> Result<Vec<u8>, String> {
     let mut variable = Vec::new();
     variable.extend_from_slice(&packet_id.to_be_bytes());
+    variable.push(0x00);
     mqtt_write_string(&mut variable, topic_filter)?;
     variable.push(MQTT_QOS_EXACTLY_ONCE);
     let mut packet = vec![0x82];
@@ -292,7 +313,7 @@ fn mqtt_remaining_length(mut length: usize) -> Result<Vec<u8>, String> {
 
 fn read_mqtt_connack(stream: &mut TcpStream) -> Result<(), String> {
     let packet = read_mqtt_packet(stream)?;
-    if packet.header != 0x20 || packet.body.len() != 2 || packet.body[1] != 0 {
+    if packet.header != 0x20 || packet.body.len() < 2 || packet.body[1] != 0 {
         return Err("mqtt broker rejected connection".to_string());
     }
     Ok(())
@@ -306,7 +327,13 @@ fn read_mqtt_suback(reader: &mut impl Read, packet_id: u16) -> Result<(), String
     if u16::from_be_bytes([packet.body[0], packet.body[1]]) != packet_id {
         return Err("mqtt subscribe packet id mismatch".to_string());
     }
-    if packet.body[2..].iter().any(|code| *code != 0x02) {
+    let (property_len, property_bytes) = mqtt_decode_remaining_length(&packet.body, 2)
+        .ok_or_else(|| "mqtt suback properties truncated".to_string())?;
+    let cursor = 2 + property_bytes + property_len;
+    if cursor >= packet.body.len() {
+        return Err("mqtt subscribe rejected".to_string());
+    }
+    if packet.body[cursor..].iter().any(|code| *code != 0x02) {
         return Err("mqtt subscribe qos2 rejected".to_string());
     }
     Ok(())
@@ -392,12 +419,37 @@ fn parse_mqtt_publish(header: u8, body: &[u8]) -> Result<ParsedMqttPublish, Stri
     } else {
         None
     };
+    let (property_len, property_bytes) = mqtt_decode_remaining_length(body, payload_offset)
+        .ok_or_else(|| "mqtt publish properties truncated".to_string())?;
+    payload_offset += property_bytes + property_len;
+    if payload_offset > body.len() {
+        return Err("mqtt publish properties truncated".to_string());
+    }
     Ok(ParsedMqttPublish {
         topic,
         packet_id,
         qos,
         payload: body[payload_offset..].to_vec(),
     })
+}
+
+fn mqtt_decode_remaining_length(data: &[u8], start: usize) -> Option<(usize, usize)> {
+    let mut multiplier = 1_usize;
+    let mut value = 0_usize;
+    let mut index = start;
+    while index < data.len() {
+        let encoded = data[index];
+        value += ((encoded & 127) as usize) * multiplier;
+        index += 1;
+        if encoded & 128 == 0 {
+            return Some((value, index - start));
+        }
+        multiplier *= 128;
+        if multiplier > 128 * 128 * 128 {
+            return None;
+        }
+    }
+    None
 }
 
 fn ack_mqtt_publish(stream: &mut TcpStream, publish: &ParsedMqttPublish) -> Result<(), String> {
@@ -544,7 +596,9 @@ fn is_control_mqtt_timeout_error(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     lower.contains("timed out")
         || lower.contains("would block")
+        || lower.contains("try again")
         || lower.contains("resource temporarily unavailable")
+        || lower.contains("os error 11")
         || lower.contains("os error 35")
         || lower.contains("os error 10060")
 }

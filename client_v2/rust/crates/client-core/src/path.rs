@@ -5,38 +5,37 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathKind {
+    #[serde(rename = "lan_udp")]
+    LanUdp,
+    #[serde(rename = "ipv6_udp")]
+    Ipv6Udp,
+    #[serde(rename = "direct_udp")]
     DirectUdp,
+    #[serde(rename = "relay_udp")]
     RelayUdp,
-    RelayTcp,
-    RelayTls,
-    RelayHttp3,
+    #[serde(rename = "derp_tcp_tls_443")]
+    DerpTcpTls443,
 }
 
 impl PathKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::LanUdp => "lan_udp",
+            Self::Ipv6Udp => "ipv6_udp",
             Self::DirectUdp => "direct_udp",
             Self::RelayUdp => "relay_udp",
-            Self::RelayTcp => "relay_tcp",
-            Self::RelayTls => "relay_tls",
-            Self::RelayHttp3 => "relay_http3",
+            Self::DerpTcpTls443 => "derp_tcp_tls_443",
         }
     }
 
     pub fn is_relay(self) -> bool {
-        matches!(
-            self,
-            Self::RelayUdp | Self::RelayTcp | Self::RelayTls | Self::RelayHttp3
-        )
+        matches!(self, Self::RelayUdp | Self::DerpTcpTls443)
     }
 }
 
 pub fn normalize_relay_transport(value: &str) -> Option<&'static str> {
     match value.trim().to_ascii_lowercase().as_str() {
         "udp" => Some("udp"),
-        "tcp" => Some("tcp"),
-        "tls" => Some("tls"),
-        "http3" => Some("http3"),
         _ => None,
     }
 }
@@ -44,9 +43,6 @@ pub fn normalize_relay_transport(value: &str) -> Option<&'static str> {
 pub fn relay_path_kind_for_transport(value: &str) -> Option<PathKind> {
     match normalize_relay_transport(value)? {
         "udp" => Some(PathKind::RelayUdp),
-        "tcp" => Some(PathKind::RelayTcp),
-        "tls" => Some(PathKind::RelayTls),
-        "http3" => Some(PathKind::RelayHttp3),
         _ => None,
     }
 }
@@ -82,11 +78,11 @@ impl Default for PathPolicy {
     fn default() -> Self {
         Self {
             preferred: vec![
+                PathKind::LanUdp,
+                PathKind::Ipv6Udp,
                 PathKind::DirectUdp,
                 PathKind::RelayUdp,
-                PathKind::RelayTcp,
-                PathKind::RelayTls,
-                PathKind::RelayHttp3,
+                PathKind::DerpTcpTls443,
             ],
             fallback_enabled: true,
             probe_interval_ms: default_probe_interval_ms(),
@@ -535,26 +531,30 @@ mod tests {
         ));
         assert!(path_should_upgrade(
             &policy,
-            PathKind::RelayHttp3,
-            PathKind::RelayTls
+            PathKind::DerpTcpTls443,
+            PathKind::RelayUdp
         ));
         assert!(!path_should_upgrade(
             &policy,
-            PathKind::RelayTls,
-            PathKind::RelayHttp3
+            PathKind::RelayUdp,
+            PathKind::DerpTcpTls443
         ));
     }
 
     #[test]
     fn preferred_path_order_deduplicates_and_defaults_empty_policy() {
         let policy = PathPolicy {
-            preferred: vec![PathKind::RelayTcp, PathKind::RelayTcp, PathKind::RelayUdp],
+            preferred: vec![
+                PathKind::RelayUdp,
+                PathKind::RelayUdp,
+                PathKind::DerpTcpTls443,
+            ],
             ..PathPolicy::default()
         };
 
         assert_eq!(
             preferred_path_order(&policy),
-            vec![PathKind::RelayTcp, PathKind::RelayUdp]
+            vec![PathKind::RelayUdp, PathKind::DerpTcpTls443]
         );
         assert_eq!(
             preferred_path_order(&PathPolicy {
@@ -566,21 +566,21 @@ mod tests {
     }
 
     #[test]
-    fn relay_http3_is_relay_path_kind() {
-        assert_eq!(PathKind::RelayHttp3.as_str(), "relay_http3");
-        assert!(PathKind::RelayHttp3.is_relay());
+    fn derp_tcp_tls_443_is_relay_path_kind() {
+        assert_eq!(PathKind::DerpTcpTls443.as_str(), "derp_tcp_tls_443");
+        assert!(PathKind::DerpTcpTls443.is_relay());
     }
 
     #[test]
-    fn relay_transport_accepts_http3_only() {
-        for value in ["http3", " HTTP3 "] {
-            assert_eq!(normalize_relay_transport(value), Some("http3"));
+    fn relay_transport_accepts_udp_only() {
+        for value in ["udp", " UDP "] {
+            assert_eq!(normalize_relay_transport(value), Some("udp"));
             assert_eq!(
                 relay_path_kind_for_transport(value),
-                Some(PathKind::RelayHttp3)
+                Some(PathKind::RelayUdp)
             );
         }
-        for value in ["h3", "quic"] {
+        for value in ["tcp", "tls", "http3", "h3", "quic"] {
             assert_eq!(normalize_relay_transport(value), None);
             assert_eq!(relay_path_kind_for_transport(value), None);
         }
@@ -647,14 +647,14 @@ mod tests {
                 peer_node_id: "node-b".to_string(),
                 peer_virtual_ips: vec![],
                 active_path: None,
-                candidates: vec![candidate(PathKind::RelayTcp, PathState::Ready)],
+                candidates: vec![candidate(PathKind::DerpTcpTls443, PathState::Ready)],
             },
         ];
 
         let selected = selected_runtime_paths(&PathPolicy::default(), peers);
 
         assert_eq!(selected[0].active_path, Some(PathKind::DirectUdp));
-        assert_eq!(selected[1].active_path, Some(PathKind::RelayTcp));
+        assert_eq!(selected[1].active_path, Some(PathKind::DerpTcpTls443));
     }
 
     #[test]

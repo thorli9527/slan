@@ -23,9 +23,34 @@ type AuthResponse struct {
 	Session UserSession `json:"session"`
 }
 
+type AuthCallbackPayload struct {
+	CallbackID   string  `json:"callbackId,omitempty"`
+	AccessToken  string  `json:"accessToken"`
+	RefreshToken *string `json:"refreshToken,omitempty"`
+	UserID       string  `json:"userId"`
+	UserLabel    string  `json:"userLabel"`
+	DeviceID     *string `json:"deviceId,omitempty"`
+	VirtualIP    *string `json:"virtualIp,omitempty"`
+	ExpiresIn    uint64  `json:"expiresIn,omitempty"`
+	Action       string  `json:"action,omitempty"`
+}
+
+type DeviceLoginCallback struct {
+	CallbackID  string               `json:"callbackId"`
+	DeviceID    string               `json:"deviceId,omitempty"`
+	Platform    string               `json:"platform,omitempty"`
+	Status      string               `json:"status"`
+	CreatedAt   int64                `json:"createdAt"`
+	ExpiresAt   int64                `json:"expiresAt"`
+	CompletedAt int64                `json:"completedAt,omitempty"`
+	UserID      string               `json:"userId,omitempty"`
+	Payload     *AuthCallbackPayload `json:"payload,omitempty"`
+}
+
 type Device struct {
 	DeviceID   string `json:"deviceId"`
 	OwnerID    string `json:"ownerId"`
+	OwnerEmail string `json:"ownerEmail,omitempty"`
 	Name       string `json:"name"`
 	Platform   string `json:"platform"`
 	OSName     string `json:"osName,omitempty"`
@@ -37,6 +62,13 @@ type Device struct {
 	Status     string `json:"status"`
 	CreatedAt  int64  `json:"createdAt"`
 	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+type UserAlias struct {
+	OwnerUserID string `json:"ownerUserId"`
+	Email       string `json:"email"`
+	Alias       string `json:"alias"`
+	UpdatedAt   int64  `json:"updatedAt"`
 }
 
 type DeviceOwner struct {
@@ -82,8 +114,8 @@ type IPAMSubnet struct {
 	CreatedAt         int64  `json:"createdAt"`
 }
 
-type Workspace struct {
-	WorkspaceID string `json:"workspaceId"`
+type Network struct {
+	NetworkID   string `json:"networkId"`
 	OwnerUserID string `json:"ownerUserId"`
 	Name        string `json:"name"`
 	Code        string `json:"code"`
@@ -94,31 +126,8 @@ type Workspace struct {
 	UpdatedAt   int64  `json:"updatedAt"`
 }
 
-type WorkspaceMember struct {
-	MemberID    string `json:"memberId"`
-	WorkspaceID string `json:"workspaceId"`
-	UserID      string `json:"userId"`
-	Email       string `json:"email,omitempty"`
-	Role        string `json:"role"`
-	Status      string `json:"status"`
-	JoinedAt    int64  `json:"joinedAt"`
-}
-
-type WorkspaceInvite struct {
-	InviteID      string `json:"inviteId"`
-	WorkspaceID   string `json:"workspaceId"`
-	InviterUserID string `json:"inviterUserId"`
-	InviteeUserID string `json:"inviteeUserId,omitempty"`
-	InviteeEmail  string `json:"inviteeEmail"`
-	Role          string `json:"role"`
-	Status        string `json:"status"`
-	CreatedAt     int64  `json:"createdAt"`
-	HandledAt     int64  `json:"handledAt,omitempty"`
-}
-
-type WorkspaceDeviceInvite struct {
+type DeviceInvite struct {
 	InviteID         string `json:"inviteId"`
-	WorkspaceID      string `json:"workspaceId,omitempty"`
 	InviterUserID    string `json:"inviterUserId,omitempty"`
 	InviteCode       string `json:"inviteCode"`
 	Status           string `json:"status"`
@@ -139,31 +148,31 @@ type DeviceAccessGrant struct {
 	CreatedAt  int64  `json:"createdAt"`
 }
 
-type WorkspaceDevice struct {
-	WorkspaceDeviceID string `json:"workspaceDeviceId"`
-	WorkspaceID       string `json:"workspaceId"`
-	DeviceID          string `json:"deviceId"`
-	OwnerUserID       string `json:"ownerUserId"`
-	Alias             string `json:"alias,omitempty"`
-	Enabled           bool   `json:"enabled"`
-	Status            string `json:"status"`
-	CreatedAt         int64  `json:"createdAt"`
-	UpdatedAt         int64  `json:"updatedAt"`
+type NetworkDevice struct {
+	NetworkDeviceID string `json:"networkDeviceId"`
+	NetworkID       string `json:"networkId"`
+	DeviceID        string `json:"deviceId"`
+	OwnerUserID     string `json:"ownerUserId"`
+	Alias           string `json:"alias,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	Status          string `json:"status"`
+	CreatedAt       int64  `json:"createdAt"`
+	UpdatedAt       int64  `json:"updatedAt"`
 }
 
-type WorkspaceDNSZone struct {
+type NetworkDNSZone struct {
 	ZoneID       string `json:"zoneId"`
-	WorkspaceID  string `json:"workspaceId"`
+	NetworkID    string `json:"networkId"`
 	ZoneName     string `json:"zoneName"`
 	ExposeGlobal bool   `json:"exposeGlobal"`
 	Status       string `json:"status"`
 	CreatedAt    int64  `json:"createdAt"`
 }
 
-type WorkspaceDNSRecord struct {
+type NetworkDNSRecord struct {
 	RecordID       string `json:"recordId"`
 	ZoneID         string `json:"zoneId"`
-	WorkspaceID    string `json:"workspaceId"`
+	NetworkID      string `json:"networkId"`
 	Name           string `json:"name"`
 	FQDN           string `json:"fqdn"`
 	RecordType     string `json:"recordType"`
@@ -178,7 +187,7 @@ type WorkspaceDNSRecord struct {
 
 type PublicDomainMapping struct {
 	MappingID    string `json:"mappingId"`
-	WorkspaceID  string `json:"workspaceId"`
+	NetworkID    string `json:"networkId"`
 	Alias        string `json:"alias"`
 	PublicDomain string `json:"publicDomain"`
 	SourceRecord string `json:"sourceRecord"`
@@ -193,17 +202,12 @@ type PublicDomainMapping struct {
 
 type SecurityGroup struct {
 	SecurityGroupID string `json:"securityGroupId"`
-	WorkspaceID     string `json:"workspaceId"`
+	NetworkID       string `json:"networkId"`
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`
 	DefaultPolicy   string `json:"defaultPolicy"`
 	Status          string `json:"status"`
 	CreatedAt       int64  `json:"createdAt"`
-}
-
-type SecurityGroupDevice struct {
-	SecurityGroupID string `json:"securityGroupId"`
-	DeviceID        string `json:"deviceId"`
 }
 
 type SecurityGroupRule struct {
@@ -235,7 +239,7 @@ type DeviceRuntimeStatus struct {
 
 type NetworkConfigVersion struct {
 	ConfigID      string `json:"configId"`
-	WorkspaceID   string `json:"workspaceId"`
+	NetworkID     string `json:"networkId"`
 	DeviceID      string `json:"deviceId"`
 	ConfigVersion int64  `json:"configVersion"`
 	ConfigHash    string `json:"configHash"`
@@ -251,13 +255,41 @@ type GlobalDNSRecord struct {
 }
 
 type NetworkConfig struct {
-	WorkspaceID    string               `json:"workspaceId"`
-	DeviceID       string               `json:"deviceId"`
-	GlobalIP       string               `json:"globalIp"`
-	GlobalName     string               `json:"globalName"`
-	Peers          []Device             `json:"peers"`
-	SecurityGroups []SecurityGroup      `json:"securityGroups"`
-	Rules          []SecurityGroupRule  `json:"rules"`
-	DNSZones       []WorkspaceDNSZone   `json:"dnsZones"`
-	DNSRecords     []WorkspaceDNSRecord `json:"dnsRecords"`
+	NetworkID      string              `json:"networkId"`
+	NetworkName    string              `json:"networkName,omitempty"`
+	NetworkCode    string              `json:"networkCode,omitempty"`
+	ConfigVersion  int64               `json:"configVersion,omitempty"`
+	DeviceID       string              `json:"deviceId"`
+	GlobalIP       string              `json:"globalIp"`
+	GlobalName     string              `json:"globalName"`
+	Peers          []Device            `json:"peers"`
+	SecurityGroups []SecurityGroup     `json:"securityGroups"`
+	Rules          []SecurityGroupRule `json:"rules"`
+	DNSZones       []NetworkDNSZone    `json:"dnsZones"`
+	DNSRecords     []NetworkDNSRecord  `json:"dnsRecords"`
+}
+
+type RelayCandidate struct {
+	EndpointID  string `json:"endpointId"`
+	Transport   string `json:"transport"`
+	Address     string `json:"address"`
+	CountryCode string `json:"countryCode,omitempty"`
+	RegionID    string `json:"regionId,omitempty"`
+	ClusterID   string `json:"clusterId,omitempty"`
+}
+
+type RelayTicket struct {
+	TicketID           string   `json:"ticketId"`
+	NetworkID          string   `json:"networkId"`
+	SessionID          string   `json:"sessionId"`
+	SrcNodeID          string   `json:"srcNodeId"`
+	DstNodeID          string   `json:"dstNodeId"`
+	DERPClusterID      string   `json:"derpClusterId,omitempty"`
+	CountryCode        string   `json:"countryCode,omitempty"`
+	CityCode           string   `json:"cityCode,omitempty"`
+	AllowedDERPNodeIDs []string `json:"allowedDerpNodeIds"`
+	RelayURL           string   `json:"relayUrl"`
+	ExpiresAt          string   `json:"expiresAt"`
+	SessionKey         string   `json:"sessionKey"`
+	Signature          string   `json:"signature"`
 }

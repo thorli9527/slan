@@ -20,7 +20,7 @@ flutter:
         package: dev.slan.client_core_plugin
         pluginClass: ClientCorePlugin
       ios:
-        dartPluginClass: ClientCorePlugin
+        pluginClass: ClientCorePlugin
       linux:
         dartPluginClass: ClientCorePlugin
       macos:

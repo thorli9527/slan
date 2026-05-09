@@ -1,12 +1,541 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_client_v2/bridge/client_commands.dart';
 import 'package:slan_client_v2/bridge/client_core_bridge.dart';
 import 'package:slan_client_v2/bridge/client_view_state.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('android runtime diagnostics preserve native relay counters', () {
+    final fields = androidRuntimeDiagnosticsFields({
+      'adapterPresent': true,
+      'networkEnabled': true,
+      'virtualIp': '10.0.0.2',
+      'mtu': 1280,
+      'relayAddress': '127.0.0.1:3478',
+      'relaySessionCount': 2,
+      'requestedRelaySessionCount': 2,
+      'attachedRelaySessionCount': 1,
+      'relayAttachFailures': 1,
+      'lastRelayAttachError': 'relay attach timed out',
+      'packetsRead': 7,
+      'bytesRead': 900,
+      'packetsTooLarge': 1,
+      'relayFramesSent': 3,
+      'relayFramesReceived': 4,
+      'relayDetachSent': 1,
+      'relayNoPeerPackets': 2,
+      'relayWriteFailures': 1,
+      'tunWriteFailures': 1,
+    });
+
+    expect(fields['requestedRelaySessionCount'], 2);
+    expect(fields['attachedRelaySessionCount'], 1);
+    expect(fields['relayDetachSent'], 1);
+    expect(fields['lastRelayAttachError'], 'relay attach timed out');
+  });
+
+  test('ios packet tunnel diagnostics preserve routing counters', () {
+    final fields = iosPacketTunnelDiagnosticsFields({
+      'relaySessionCount': 2,
+      'relayAttachedSessionCount': 2,
+      'relayAttachFailures': 0,
+      'lastRelayAttachError': null,
+      'packetsRead': 12,
+      'bytesRead': 1800,
+      'routedPackets': 9,
+      'unroutablePackets': 2,
+      'nonIpv4Packets': 1,
+      'relayFramesSent': 8,
+      'relayFramesReceived': 7,
+      'relayPacketsWritten': 6,
+      'relayDetachSent': 2,
+      'relayNoPeerPackets': 2,
+      'lastDestination': '10.0.0.3',
+      'lastRoute': '10.0.0.3/32',
+      'lastRoutedAtMs': 1780000000000,
+      'updatedAtMs': 1780000005000,
+    });
+
+    expect(fields['bytesRead'], 1800);
+    expect(fields['unroutablePackets'], 2);
+    expect(fields['nonIpv4Packets'], 1);
+    expect(fields['relayPacketsWritten'], 6);
+    expect(fields['lastRoutedAtMs'], 1780000000000);
+  });
+
+  test('mobile control dispatch uses embedded service before old native path',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    final embeddedMethods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        final method = request['method'] as String;
+        embeddedMethods.add(method);
+        if (method == 'dispatch') {
+          final args = request['args'] as Map<Object?, Object?>;
+          expect(args['type'], ClientCommandType.loginWithPassword.name);
+          return {
+            'signedIn': true,
+            'userLabel': 'ios-user@example.com',
+            'deviceId': 'ios-device-1',
+            'networkEnabled': false,
+            'syncing': false,
+            'switchEnabled': true,
+          };
+        }
+        if (method == 'localEnsureDevice') {
+          return {
+            'registered': true,
+            'deviceId': 'ios-device-1',
+            'mqttCredentialReady': true,
+          };
+        }
+        if (method == 'localConnectControlMqtt') {
+          return {
+            'connected': true,
+            'deviceId': 'ios-device-1',
+            'downstreamTopic': 'slan/devices/ios-device-1/control/down',
+          };
+        }
+        fail('unexpected embedded method $method');
+      }
+      if (call.method == 'dispatch') {
+        fail('deprecated native dispatch should not be used before embedded');
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+
+    await bridge.dispatch(const ClientCommand(
+      ClientCommandType.loginWithPassword,
+      {
+        'email': 'ios-user@example.com',
+        'password': 'secret',
+      },
+    ));
+
+    expect(calls, [
+      'embeddedServiceRequest',
+      'embeddedServiceRequest',
+      'embeddedServiceRequest',
+    ]);
+    expect(embeddedMethods, [
+      'dispatch',
+      'localEnsureDevice',
+      'localConnectControlMqtt',
+    ]);
+    expect(bridge.state.value.signedIn, isTrue);
+    expect(bridge.state.value.userLabel, 'ios-user@example.com');
+    expect(bridge.state.value.deviceId, 'ios-device-1');
+  });
+
+  test('mobile start uses embedded service before native state', () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    final embeddedMethods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        final method = request['method'] as String;
+        embeddedMethods.add(method);
+        if (method == 'start') {
+          return {
+            'signedIn': true,
+            'userLabel': 'embedded-user@example.com',
+            'deviceId': 'embedded-device-1',
+            'networkEnabled': false,
+            'syncing': false,
+            'switchEnabled': true,
+          };
+        }
+        if (method == 'localEnsureDevice') {
+          return {
+            'registered': true,
+            'deviceId': 'embedded-device-1',
+            'mqttCredentialReady': true,
+          };
+        }
+        if (method == 'localConnectControlMqtt') {
+          return {
+            'connected': true,
+            'deviceId': 'embedded-device-1',
+            'downstreamTopic': 'slan/devices/embedded-device-1/control/down',
+          };
+        }
+        if (method == 'localBusinessEventWatch') {
+          return {
+            'revision': 0,
+            'businessType': ClientBusinessEventType.stateChanged,
+            'businessData': <String, Object?>{},
+            'snapshot': {
+              'signedIn': true,
+              'networkEnabled': false,
+              'syncing': false,
+              'switchEnabled': true,
+            },
+          };
+        }
+        fail('unexpected embedded method $method');
+      }
+      if (call.method == 'start' || call.method == 'localState') {
+        fail('mobile start should not use deprecated native state');
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+    await bridge.start();
+
+    expect(calls.first, 'embeddedServiceRequest');
+    expect(calls, isNot(contains('start')));
+    await _waitFor(
+      () => embeddedMethods.contains('localConnectControlMqtt'),
+      reason: 'mobile start should register device before connecting mqtt',
+    );
+    expect(embeddedMethods.take(3), [
+      'start',
+      'localEnsureDevice',
+      'localConnectControlMqtt',
+    ]);
+    expect(bridge.state.value.signedIn, isTrue);
+    expect(bridge.state.value.deviceId, 'embedded-device-1');
+  });
+
+  test(
+      'mobile control dispatch does not fall back to old native on embedded error',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'embeddedServiceRequest') {
+        return {'error': 'embedded unavailable'};
+      }
+      if (call.method == 'dispatch') {
+        fail(
+            'deprecated native dispatch should not be used after embedded error');
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+
+    await expectLater(
+      bridge.dispatch(const ClientCommand(
+        ClientCommandType.loginWithPassword,
+        {
+          'email': 'ios-user@example.com',
+          'password': 'secret',
+        },
+      )),
+      throwsA(isA<StateError>()),
+    );
+    expect(calls, ['embeddedServiceRequest']);
+  });
+
+  test('ios network switch uses embedded config and packet tunnel plugin',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        expect(request['method'], 'localPlatformNetworkConfig');
+        return {
+          'sessionName': 'SLAN',
+          'virtualIp': '100.64.0.44',
+          'prefixLen': 32,
+          'dnsServers': ['100.64.0.1'],
+          'routes': [
+            {'destination': '100.64.0.0/10'}
+          ],
+          'mtu': 1280,
+        };
+      }
+      if (call.method == 'iosStartPacketTunnel') {
+        final config = (call.arguments as Map).cast<String, Object?>();
+        expect(config['virtualIp'], '100.64.0.44');
+        return {
+          'signedIn': true,
+          'networkEnabled': true,
+          'virtualIp': '100.64.0.44',
+          'syncing': false,
+          'switchEnabled': true,
+          'notice': 'networkEnabled',
+        };
+      }
+      if (call.method == 'dispatch') {
+        fail('iOS switch should not call deprecated native dispatch');
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      runtimePlatform: ClientBridgeRuntimePlatform.ios,
+    );
+
+    await bridge.dispatch(
+      const ClientCommand(ClientCommandType.enableNetwork),
+    );
+
+    await _waitFor(
+      () => bridge.state.value.virtualIp == '100.64.0.44',
+      reason: 'iOS switch should start packet tunnel with embedded config',
+    );
+    expect(calls.take(2), ['embeddedServiceRequest', 'iosStartPacketTunnel']);
+    expect(calls, isNot(contains('dispatch')));
+    expect(bridge.state.value.networkEnabled, isTrue);
+    expect(bridge.state.value.switchEnabled, isTrue);
+  });
+
+  test('mobile business event watch uses embedded service before native queue',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    final embeddedMethods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        final method = request['method'] as String;
+        embeddedMethods.add(method);
+        if (method == 'start') {
+          return {
+            'signedIn': true,
+            'networkEnabled': false,
+            'syncing': false,
+            'switchEnabled': true,
+          };
+        }
+        if (method == 'localEnsureDevice') {
+          return {
+            'registered': true,
+            'deviceId': 'embedded-device-1',
+            'mqttCredentialReady': true,
+          };
+        }
+        if (method == 'localConnectControlMqtt') {
+          return {
+            'connected': true,
+            'deviceId': 'embedded-device-1',
+            'downstreamTopic': 'slan/devices/embedded-device-1/control/down',
+          };
+        }
+        expect(method, 'localBusinessEventWatch');
+        return {
+          'revision': 0,
+          'businessType': ClientBusinessEventType.stateChanged,
+          'businessData': <String, Object?>{},
+          'snapshot': {
+            'signedIn': true,
+            'networkEnabled': false,
+            'syncing': false,
+            'switchEnabled': true,
+          },
+        };
+      }
+      if (call.method == 'localBusinessEventWatch') {
+        fail('deprecated native business event queue should not be used');
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+    await bridge.start();
+
+    await _waitFor(
+      () => calls.contains('embeddedServiceRequest'),
+      reason: 'mobile business event watch should fall back to embedded',
+    );
+    await _waitFor(
+      () => embeddedMethods.contains('localConnectControlMqtt'),
+      reason: 'mobile start should connect mqtt after device registration',
+    );
+    expect(embeddedMethods.take(3), [
+      'start',
+      'localEnsureDevice',
+      'localConnectControlMqtt',
+    ]);
+    expect(calls, isNot(contains('localBusinessEventWatch')));
+  });
+
+  test('mobile business event applies latest client message fields', () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final embeddedMethods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        final method = request['method'] as String;
+        embeddedMethods.add(method);
+        if (method == 'start') {
+          return {
+            'signedIn': true,
+            'networkEnabled': false,
+            'syncing': false,
+            'switchEnabled': true,
+          };
+        }
+        if (method == 'localEnsureDevice') {
+          return {
+            'registered': true,
+            'deviceId': 'embedded-device-1',
+            'mqttCredentialReady': true,
+          };
+        }
+        if (method == 'localConnectControlMqtt') {
+          return {
+            'connected': true,
+            'deviceId': 'embedded-device-1',
+            'downstreamTopic': 'slan/devices/embedded-device-1/control/down',
+          };
+        }
+        if (method == 'localBusinessEventWatch') {
+          return {
+            'revision': 1,
+            'businessType': ClientBusinessEventType.controlSyncChanged,
+            'businessData': {
+              'signedIn': true,
+              'networkEnabled': false,
+              'syncing': false,
+              'switchEnabled': true,
+              'lastClientMessageId': 'msg-1',
+              'lastClientMessageFromDeviceId': 'ios-peer',
+              'lastClientMessageBody': 'hello',
+            },
+            'snapshot': {
+              'signedIn': true,
+              'networkEnabled': false,
+              'syncing': false,
+              'switchEnabled': true,
+            },
+          };
+        }
+        fail('unexpected embedded method $method');
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+    await bridge.start();
+
+    await _waitFor(
+      () => bridge.state.value.lastClientMessageBody == 'hello',
+      reason: 'business event should update latest client message fields',
+    );
+    expect(bridge.state.value.lastClientMessageId, 'msg-1');
+    expect(bridge.state.value.lastClientMessageFromDeviceId, 'ios-peer');
+    expect(embeddedMethods, contains('localBusinessEventWatch'));
+  });
+
+  test('mobile send client message uses embedded service request', () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final embeddedMethods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        embeddedMethods.add(request['method'] as String);
+        expect(request['method'], 'localSendClientMessage');
+        final args = request['args'] as Map<Object?, Object?>;
+        expect(args['targetDeviceId'], 'ios-target');
+        expect(args['body'], 'hello');
+        return {
+          'messageId': 'client-msg-1',
+          'networkId': 'net-a',
+          'fromDeviceId': 'ios-source',
+          'targetDeviceId': 'ios-target',
+          'sentAtMs': 1780000000000,
+        };
+      }
+      if (call.method == 'dispatch') {
+        fail('deprecated native dispatch should not send client messages');
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+
+    await bridge.dispatch(const ClientCommand(
+      ClientCommandType.sendClientMessage,
+      {
+        'targetDeviceId': 'ios-target',
+        'body': 'hello',
+      },
+    ));
+
+    expect(embeddedMethods, ['localSendClientMessage']);
+  });
+
   test('enable switch updates asynchronously after service result', () async {
     final service = await _FakeClientService.start([
       _ServiceReply(
@@ -694,4 +1223,11 @@ Future<void> _waitFor(
     }
     await Future<void>.delayed(const Duration(milliseconds: 20));
   }
+}
+
+Future<String> _unusedLoopbackHost() async {
+  final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final port = server.port;
+  await server.close();
+  return '127.0.0.1:$port';
 }

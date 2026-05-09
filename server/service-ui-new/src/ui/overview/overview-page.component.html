@@ -1,0 +1,36 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>我的短码子域名</h2>
+        <p>注册用户自动分配短码别名，可用于用户级域名识别。</p>
+      </div>
+    </div>
+    <div class="kv single">
+      <span>短码</span><strong>{{ vm.userSlug }}</strong>
+      <span>子域名</span><strong><code>{{ vm.userShortSubdomain }}</code></strong>
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>最近设备</h2>
+        <p>设备注册后直接分配全局 IP，IP 不在界面单独管理。</p>
+      </div>
+      <button class="ghost small" type="button" (click)="vm.setActive('devices')">管理设备</button>
+    </div>
+    <table>
+      <thead><tr><th>设备 ID</th><th>别名</th><th>系统</th><th>IP</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let device of vm.currentUserDevices">
+          <td><strong>{{ device.deviceId }}</strong></td>
+          <td>{{ device.alias }}</td>
+          <td>{{ device.platform }} {{ device.osVersion }}</td>
+          <td><code>{{ device.ip }}</code></td>
+          <td><span class="status online">{{ device.status }}</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

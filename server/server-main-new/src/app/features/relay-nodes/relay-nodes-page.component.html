@@ -1,0 +1,30 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>中继节点管理</h2>
+        <p>控制 Relay/DERP 节点容量，节点最大流量和最大并发会话。</p>
+      </div>
+      <button class="primary" type="button">新增中继节点</button>
+    </div>
+    <table>
+      <thead><tr><th>节点</th><th>区域</th><th>协议</th><th>公网地址</th><th>最大带宽</th><th>月流量</th><th>会话</th><th>健康</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let node of vm.relayNodes">
+          <td><strong>{{ node.name }}</strong><br><code>{{ node.nodeId }}</code></td>
+          <td>{{ node.region }}</td>
+          <td>{{ node.transport }}</td>
+          <td><code>{{ node.publicAddr }}</code></td>
+          <td>{{ node.maxBandwidthMbps }}Mbps</td>
+          <td>
+            {{ node.usedTrafficGb }} / {{ node.monthlyTrafficGb }}GB
+            <div class="meter"><span [style.width.%]="vm.relayNodePercent(node)"></span></div>
+          </td>
+          <td>{{ node.activeSessions }} / {{ node.maxSessions }}</td>
+          <td><span class="status" [class.online]="node.health === 'healthy'">{{ node.health }}</span></td>
+          <td><button class="ghost small" type="button" (click)="vm.toggleRelayNode(node)">{{ node.status === 'active' ? '停用' : '启用' }}</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

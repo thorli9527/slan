@@ -40,6 +40,9 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 self.state.auth_callback_id = Some(format!("cb-{}", current_timestamp_ms()));
                 self.state.notice = Some("loginBrowserRequested".to_string());
             }
+            ClientCommand::LoginWithPassword(_) => {
+                self.state.notice = Some("passwordLoginRequested".to_string());
+            }
             ClientCommand::ApplyAuthCallback(payload) => {
                 self.state.signed_in = true;
                 self.state.user_label = Some(payload.user_label);
@@ -83,6 +86,39 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                     self.state.virtual_ip = Some(virtual_ip.to_string());
                     self.state.notice = Some("assignedIpSynced".to_string());
                 }
+            }
+            ClientCommand::ApplyPlatformRuntimeState(runtime_state) => {
+                self.state.network_enabled = runtime_state.network_enabled;
+                self.state.virtual_ip = runtime_state
+                    .virtual_ip
+                    .filter(|value| !value.trim().is_empty())
+                    .or_else(|| {
+                        if runtime_state.network_enabled {
+                            self.state.virtual_ip.take()
+                        } else {
+                            None
+                        }
+                    });
+                self.state.notice = Some("platformRuntimeStateSynced".to_string());
+            }
+            ClientCommand::ApplyTrafficStats(payload) => {
+                self.state.traffic_tx_bytes = Some(payload.tx_bytes);
+                self.state.traffic_rx_bytes = Some(payload.rx_bytes);
+                self.state.traffic_tx_bytes_per_minute = Some(payload.tx_bytes_per_minute);
+                self.state.traffic_rx_bytes_per_minute = Some(payload.rx_bytes_per_minute);
+                self.state.traffic_updated_at_ms = Some(payload.updated_at_ms);
+                self.state.notice = Some("trafficStatsSynced".to_string());
+            }
+            ClientCommand::ApplyClientMessage(payload) => {
+                self.state.last_client_message_id = payload.message_id;
+                self.state.last_client_message_from_device_id = payload.from_device_id;
+                self.state.last_client_message_body = payload.body;
+                self.state.notice = Some("clientMessageReceived".to_string());
+            }
+            ClientCommand::ApplyRelayPolicyNotice(payload) => {
+                self.state.last_relay_policy_id = payload.policy_id;
+                self.state.last_relay_policy_updated_at_ms = payload.updated_at_ms;
+                self.state.notice = Some("relayPolicyUpdated".to_string());
             }
             ClientCommand::Logout => {
                 let _ = self.platform.disable_network();

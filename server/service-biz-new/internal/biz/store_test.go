@@ -1,19 +1,22 @@
 package biz
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-func TestRegisterUserAndDeviceJoinDefaultWorkspace(t *testing.T) {
+func TestRegisterUserAndDeviceJoinDefaultNetwork(t *testing.T) {
 	store := NewStore()
-	auth, member, workspace, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
 	if err != nil {
 		t.Fatalf("register user: %v", err)
 	}
 	user := auth.User
-	if workspace.WorkspaceID != "default-"+user.UserID || member.WorkspaceID != workspace.WorkspaceID || member.UserID != user.UserID {
-		t.Fatalf("expected user to join default workspace, got %+v", member)
+	if network.NetworkID != "default-"+user.UserID || network.OwnerUserID != user.UserID {
+		t.Fatalf("expected user to own default network, got %+v", network)
 	}
-	if workspace.Code != "default" {
-		t.Fatalf("expected default workspace code, got %+v", workspace)
+	if network.Code != "default" {
+		t.Fatalf("expected default network code, got %+v", network)
 	}
 
 	device, deviceMember, err := store.RegisterDevice(user.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "work mac", "pub")
@@ -23,18 +26,18 @@ func TestRegisterUserAndDeviceJoinDefaultWorkspace(t *testing.T) {
 	if device.GlobalIP != "10.0.0.1" || device.GlobalName != "mac-1.vlan.com" {
 		t.Fatalf("unexpected global device identity: %+v", device)
 	}
-	if deviceMember.WorkspaceID != workspace.WorkspaceID || !deviceMember.Enabled {
-		t.Fatalf("expected device to join default workspace enabled, got %+v", deviceMember)
+	if deviceMember.NetworkID != network.NetworkID || !deviceMember.Enabled {
+		t.Fatalf("expected device to join default network enabled, got %+v", deviceMember)
 	}
 }
 
-func TestWorkspaceNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
+func TestNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	store := NewStore()
-	auth, _, workspace, _ := store.RegisterUser("alice@example.com", "secret", "Alice")
+	auth, network, _ := store.RegisterUser("alice@example.com", "secret", "Alice")
 	user := auth.User
 	deviceA, _, _ := store.RegisterDevice(user.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
 	deviceB, _, _ := store.RegisterDevice(user.UserID, "ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
-	groups := store.ListSecurityGroups(workspace.WorkspaceID)
+	groups := store.ListSecurityGroups(network.NetworkID)
 	if len(groups) == 0 {
 		t.Fatal("expected default security group")
 	}
@@ -42,16 +45,16 @@ func TestWorkspaceNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add acl: %v", err)
 	}
-	zones := store.ListDNSZones(workspace.WorkspaceID)
+	zones := store.ListDNSZones(network.NetworkID)
 	if len(zones) == 0 {
 		t.Fatal("expected default dns zone")
 	}
-	record, err := store.AddDNSRecord(workspace.WorkspaceID, zones[0].ZoneID, "phone", "A", deviceB.DeviceID, "", "", "443", 60)
+	record, err := store.AddDNSRecord(network.NetworkID, zones[0].ZoneID, "phone", "A", deviceB.DeviceID, "", "", "443", 60)
 	if err != nil {
 		t.Fatalf("add dns: %v", err)
 	}
 
-	config, err := store.NetworkConfig(workspace.WorkspaceID, deviceA.DeviceID)
+	config, err := store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
 	if err != nil {
 		t.Fatalf("network config: %v", err)
 	}
@@ -66,6 +69,91 @@ func TestWorkspaceNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	}
 }
 
+func TestNetworkConfigsForDeviceReturnsAllEnabledMemberships(t *testing.T) {
+	store := NewStore()
+	auth, defaultNetwork, _ := store.RegisterUser("alice@example.com", "secret", "Alice")
+	user := auth.User
+	deviceA, _, _ := store.RegisterDevice(user.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	networkB, _, _, err := store.CreateNetwork(user.UserID, "开发网络", "dev", "dev")
+	if err != nil {
+		t.Fatalf("create network: %v", err)
+	}
+	if _, err := store.AddNetworkDevice(networkB.NetworkID, deviceA.DeviceID, user.UserID, "", true); err != nil {
+		t.Fatalf("add device to second network: %v", err)
+	}
+	configs, err := store.NetworkConfigsForDevice(deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("device network configs: %v", err)
+	}
+	if len(configs) != 2 {
+		t.Fatalf("expected two network configs, got %+v", configs)
+	}
+	ids := map[string]bool{}
+	for _, config := range configs {
+		ids[config.NetworkID] = true
+		if config.DeviceID != deviceA.DeviceID || config.GlobalIP != deviceA.GlobalIP {
+			t.Fatalf("unexpected config device identity: %+v", config)
+		}
+	}
+	if !ids[defaultNetwork.NetworkID] || !ids[networkB.NetworkID] {
+		t.Fatalf("missing expected networks: %+v", ids)
+	}
+}
+
+func TestNetworkDeviceEnableStateControlsMQTTMembership(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	if !store.HasActiveNetworkDevice(network.NetworkID, device.DeviceID) {
+		t.Fatalf("expected default network device to be active")
+	}
+	disabled := false
+	updated, err := store.UpdateNetworkDevice(network.NetworkID, device.DeviceID, "disabled mac", &disabled)
+	if err != nil {
+		t.Fatalf("disable network device: %v", err)
+	}
+	if updated.Enabled || updated.Status != "disabled" || store.HasActiveNetworkDevice(network.NetworkID, device.DeviceID) {
+		t.Fatalf("expected disabled network membership, got %+v", updated)
+	}
+	enabled := true
+	updated, err = store.UpdateNetworkDevice(network.NetworkID, device.DeviceID, "enabled mac", &enabled)
+	if err != nil {
+		t.Fatalf("enable network device: %v", err)
+	}
+	if !updated.Enabled || updated.Status != "active" || !store.HasActiveNetworkDevice(network.NetworkID, device.DeviceID) {
+		t.Fatalf("expected enabled network membership, got %+v", updated)
+	}
+}
+
+func TestMQTTTopicAccessSeparatesQoS0UpstreamFromQoS2DownstreamTopics(t *testing.T) {
+	cfg := MQTTConfig{Enabled: true, TopicPrefix: "slan/v1"}
+	deviceID := "mac-1"
+	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/v1/devices/mac-1/heartbeat", false) {
+		t.Fatalf("device heartbeat topic should be publishable")
+	}
+	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/v1/devices/mac-1/runtime", false) {
+		t.Fatalf("device runtime topic should be publishable")
+	}
+	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/v1/devices/mac-1/control/down", true) {
+		t.Fatalf("device control down topic should be subscribable")
+	}
+	if !mqttAllowTopicAccess(cfg, "server", "", "slan/v1/devices/mac-1/control/down", false) {
+		t.Fatalf("server should publish control down topics")
+	}
+	if !mqttAllowTopicAccess(cfg, "server", "", "slan/v1/networks/net-1/broadcast", false) {
+		t.Fatalf("server should publish network broadcast topics")
+	}
+	if mqttAllowTopicAccess(cfg, "device", deviceID, "slan/v1/devices/ios-1/heartbeat", false) {
+		t.Fatalf("device must not publish another device heartbeat")
+	}
+}
+
 func TestGlobalIPPoolPreGeneratesAndRefills(t *testing.T) {
 	store := NewStore()
 	subnets := store.ListIPAMSubnets()
@@ -73,7 +161,7 @@ func TestGlobalIPPoolPreGeneratesAndRefills(t *testing.T) {
 		t.Fatalf("unexpected initial ip pool: %+v", subnets)
 	}
 
-	auth, _, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	auth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
 	if err != nil {
 		t.Fatalf("register user: %v", err)
 	}
@@ -94,7 +182,7 @@ func TestGlobalIPPoolPreGeneratesAndRefills(t *testing.T) {
 
 func TestDeviceInviteIsSingleUseAndExpiresInThirtyMinutes(t *testing.T) {
 	store := NewStore()
-	auth, _, workspace, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
 	if err != nil {
 		t.Fatalf("register user: %v", err)
 	}
@@ -102,14 +190,14 @@ func TestDeviceInviteIsSingleUseAndExpiresInThirtyMinutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register device: %v", err)
 	}
-	if _, err := store.AddWorkspaceDevice(workspace.WorkspaceID, "ios-1", auth.User.UserID, "", true); err != errConflict {
-		t.Fatalf("expected duplicate default workspace add conflict, got %v", err)
+	if _, err := store.AddNetworkDevice(network.NetworkID, "ios-1", auth.User.UserID, "", true); err != errConflict {
+		t.Fatalf("expected duplicate default network add conflict, got %v", err)
 	}
-	otherAuth, _, otherWorkspace, err := store.RegisterUser("bob@example.com", "secret", "Bob")
+	otherAuth, otherNetwork, err := store.RegisterUser("bob@example.com", "secret", "Bob")
 	if err != nil {
 		t.Fatalf("register other user: %v", err)
 	}
-	if _, err := store.AddWorkspaceDevice(otherWorkspace.WorkspaceID, "ios-1", otherAuth.User.UserID, "", true); err != errBadRequest {
+	if _, err := store.AddNetworkDevice(otherNetwork.NetworkID, "ios-1", otherAuth.User.UserID, "", true); err != errBadRequest {
 		t.Fatalf("expected invisible device add to fail, got %v", err)
 	}
 	visibleInvite, err := store.CreateDeviceInvite(otherAuth.User.UserID, 3600)
@@ -136,21 +224,57 @@ func TestDeviceInviteIsSingleUseAndExpiresInThirtyMinutes(t *testing.T) {
 	if len(visible) != 1 || visible[0].DeviceID != "ios-1" {
 		t.Fatalf("expected invited device visible to other user, got %+v", visible)
 	}
-	otherWorkspaceB, _, _, _, err := store.CreateWorkspace(otherAuth.User.UserID, "测试组", "test", "test")
+	otherNetworkB, _, _, err := store.CreateNetwork(otherAuth.User.UserID, "测试组", "test", "test")
 	if err != nil {
-		t.Fatalf("create other workspace: %v", err)
+		t.Fatalf("create other network: %v", err)
 	}
-	if _, err := store.AddWorkspaceDevice(otherWorkspaceB.WorkspaceID, "ios-1", otherAuth.User.UserID, "", true); err != nil {
-		t.Fatalf("expected visible device add to another workspace: %v", err)
+	if _, err := store.AddNetworkDevice(otherNetworkB.NetworkID, "ios-1", otherAuth.User.UserID, "", true); err != nil {
+		t.Fatalf("expected visible device add to another network: %v", err)
 	}
-	if err := store.RemoveWorkspaceDevice(otherWorkspaceB.WorkspaceID, "ios-1"); err != nil {
-		t.Fatalf("remove workspace device: %v", err)
+	if err := store.RemoveNetworkDevice(otherNetworkB.NetworkID, "ios-1"); err != nil {
+		t.Fatalf("remove network device: %v", err)
+	}
+}
+
+func TestDeviceLoginCallbackCompletesAndReturnsAuthPayload(t *testing.T) {
+	store := NewStore()
+	auth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	callback, err := store.CreateDeviceLoginCallback("cb-test", device.DeviceID, "macos", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("create callback: %v", err)
+	}
+	if callback.Status != "pending" {
+		t.Fatalf("expected pending callback, got %+v", callback)
+	}
+	completed, err := store.CompleteDeviceLoginCallback(callback.CallbackID, auth.Session.Token, device.DeviceID, "login")
+	if err != nil {
+		t.Fatalf("complete callback: %v", err)
+	}
+	if completed.Status != "completed" || completed.Payload == nil || completed.Payload.UserID != auth.User.UserID {
+		t.Fatalf("unexpected completed callback: %+v", completed)
+	}
+	status, ready, err := store.DeviceLoginCallbackStatus(callback.CallbackID)
+	if err != nil {
+		t.Fatalf("callback status: %v", err)
+	}
+	if !ready || status.Payload == nil || status.Payload.AccessToken != auth.Session.Token {
+		t.Fatalf("expected ready auth payload, ready=%v status=%+v", ready, status)
+	}
+	if _, err := store.CompleteDeviceLoginCallback(callback.CallbackID, auth.Session.Token, device.DeviceID, "login"); err != errConflict {
+		t.Fatalf("expected completed callback conflict, got %v", err)
 	}
 }
 
 func TestChangeUserPassword(t *testing.T) {
 	store := NewStore()
-	auth, _, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	auth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
 	if err != nil {
 		t.Fatalf("register user: %v", err)
 	}
@@ -165,6 +289,105 @@ func TestChangeUserPassword(t *testing.T) {
 	}
 	if _, err := store.LoginUser("alice@example.com", "new-secret"); err != nil {
 		t.Fatalf("expected new password login: %v", err)
+	}
+}
+
+func TestRenewDeviceRefreshesRuntimeAndConfigs(t *testing.T) {
+	store := NewStore()
+	auth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	renewed, configs, err := store.RenewDevice(device.DeviceID, auth.User.UserID, true, 123, 456)
+	if err != nil {
+		t.Fatalf("renew device: %v", err)
+	}
+	if renewed.DeviceID != device.DeviceID || len(configs) == 0 {
+		t.Fatalf("unexpected renew response device=%+v configs=%+v", renewed, configs)
+	}
+	status := store.runtimeStatuses[device.DeviceID]
+	if !status.HeartbeatOnline || !status.NetworkEnabled || status.RxBytesTotal != 123 || status.TxBytesTotal != 456 {
+		t.Fatalf("runtime status not refreshed: %+v", status)
+	}
+}
+
+func TestRelayCandidatesAndTicketRequireNetworkMembership(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	deviceA, _, _ := store.RegisterDevice(auth.User.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	deviceB, _, _ := store.RegisterDevice(auth.User.UserID, "ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
+	candidates, err := store.RelayCandidates(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("relay candidates: %v", err)
+	}
+	if len(candidates) == 0 || candidates[0].Transport != "udp" {
+		t.Fatalf("unexpected candidates: %+v", candidates)
+	}
+	ticket, err := store.IssueRelayTicket(network.NetworkID, "node-"+deviceA.DeviceID, "node-"+deviceB.DeviceID, "", []string{candidates[0].EndpointID})
+	if err != nil {
+		t.Fatalf("issue ticket: %v", err)
+	}
+	if ticket.NetworkID != network.NetworkID || ticket.SessionKey == "" || ticket.Signature == "" || ticket.RelayURL == "" {
+		t.Fatalf("unexpected relay ticket: %+v", ticket)
+	}
+	if _, err := store.IssueRelayTicket(network.NetworkID, "node-"+deviceA.DeviceID, "node-missing", "", nil); err != errNotFound {
+		t.Fatalf("expected missing peer not found, got %v", err)
+	}
+}
+
+func TestOpsLoginAssignPlanAndQuota(t *testing.T) {
+	store := NewStore()
+	operatorAuth, err := store.LoginOperator("admin@slan.local", "admin123456")
+	if err != nil {
+		t.Fatalf("operator login: %v", err)
+	}
+	if operatorAuth.Session.Token == "" || operatorAuth.Operator.OperatorID == "" {
+		t.Fatalf("unexpected operator auth: %+v", operatorAuth)
+	}
+	auth, _, err := store.RegisterUser("quota@example.com", "secret", "Quota")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	expiresAt := time.Now().Add(30 * 24 * time.Hour).Unix()
+	customer, renewal, err := store.AssignCustomerPlan(auth.User.UserID, "pro", expiresAt, 39, "monthly", operatorAuth.Operator.Email)
+	if err != nil {
+		t.Fatalf("assign plan: %v", err)
+	}
+	if customer.PlanCode != "pro" || renewal.PlanCode != "pro" {
+		t.Fatalf("unexpected plan assignment: %+v %+v", customer, renewal)
+	}
+	quota, err := store.DeviceQuota(auth.User.UserID)
+	if err != nil {
+		t.Fatalf("quota: %v", err)
+	}
+	if quota.PlanCode != "pro" || quota.TotalDeviceLimit != 130 || quota.RemainingDevices != 130 {
+		t.Fatalf("unexpected quota: %+v", quota)
+	}
+}
+
+func TestDeviceInviteRespectsTotalDeviceLimit(t *testing.T) {
+	store := NewStore()
+	auth, _, err := store.RegisterUser("free@example.com", "secret", "Free")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	for i := 0; i < 10; i++ {
+		if _, _, err := store.RegisterDevice(auth.User.UserID, "dev-"+stringID(i), "Device", "test", "test", "1", "", ""); err != nil {
+			t.Fatalf("register device %d: %v", i, err)
+		}
+	}
+	if quota, err := store.DeviceQuota(auth.User.UserID); err != nil || quota.RemainingDevices != 0 {
+		t.Fatalf("expected exhausted quota, got %+v err=%v", quota, err)
+	}
+	if _, err := store.CreateDeviceInvite(auth.User.UserID, 0); err != errConflict {
+		t.Fatalf("expected invite conflict when quota exhausted, got %v", err)
 	}
 }
 

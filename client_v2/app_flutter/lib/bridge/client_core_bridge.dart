@@ -1,4 +1,9 @@
+// ignore_for_file: deprecated_member_use
+// Mobile control-plane state is routed through embedded client-core-service.
+// Deprecated native methods are retained only for platform method compatibility.
+
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:client_core_plugin/client_core_plugin.dart';
@@ -43,15 +48,85 @@ abstract interface class ClientCoreBridge {
       get androidNetworkAuthorization;
 
   Future<void> start();
+  Future<String> serverBaseUrl();
+  Future<void> updateServerBaseUrl(String serverBaseUrl);
   Future<void> prepareAndroidNetworkAuthorization();
   Future<void> dispatch(ClientCommand command);
   Future<ControlTransportStatus?> localControlStatus();
 }
 
+@visibleForTesting
+enum ClientBridgeRuntimePlatform {
+  host,
+  android,
+  ios,
+}
+
+@visibleForTesting
+Map<String, Object?> iosPacketTunnelDiagnosticsFields(
+  Map<String, Object?> stats,
+) {
+  return {
+    'relaySessionCount': stats['relaySessionCount'],
+    'relayAttachedSessionCount': stats['relayAttachedSessionCount'],
+    'relayAttachFailures': stats['relayAttachFailures'],
+    'lastRelayAttachError': stats['lastRelayAttachError'],
+    'packetsRead': stats['packetsRead'],
+    'bytesRead': stats['bytesRead'],
+    'bytesWritten': stats['bytesWritten'],
+    'routedPackets': stats['routedPackets'],
+    'unroutablePackets': stats['unroutablePackets'],
+    'nonIpv4Packets': stats['nonIpv4Packets'],
+    'relayFramesSent': stats['relayFramesSent'],
+    'relayFramesReceived': stats['relayFramesReceived'],
+    'relayPacketsWritten': stats['relayPacketsWritten'],
+    'relayDetachSent': stats['relayDetachSent'],
+    'relayNoPeerPackets': stats['relayNoPeerPackets'],
+    'lastDestination': stats['lastDestination'],
+    'lastRoute': stats['lastRoute'],
+    'lastRoutedAtMs': stats['lastRoutedAtMs'],
+    'updatedAtMs': stats['updatedAtMs'],
+  };
+}
+
+@visibleForTesting
+Map<String, Object?> androidRuntimeDiagnosticsFields(
+  Map<String, Object?> state,
+) {
+  return {
+    'adapterPresent': state['adapterPresent'],
+    'networkEnabled': state['networkEnabled'],
+    'virtualIp': state['virtualIp'],
+    'mtu': state['mtu'],
+    'relayAddress': state['relayAddress'],
+    'relaySessionCount': state['relaySessionCount'],
+    'requestedRelaySessionCount': state['requestedRelaySessionCount'],
+    'attachedRelaySessionCount': state['attachedRelaySessionCount'],
+    'relayAttachFailures': state['relayAttachFailures'],
+    'lastRelayAttachError': state['lastRelayAttachError'],
+    'packetsRead': state['packetsRead'],
+    'bytesRead': state['bytesRead'],
+    'bytesWritten': state['bytesWritten'],
+    'packetsTooLarge': state['packetsTooLarge'],
+    'relayFramesSent': state['relayFramesSent'],
+    'relayFramesReceived': state['relayFramesReceived'],
+    'relayDetachSent': state['relayDetachSent'],
+    'relayNoPeerPackets': state['relayNoPeerPackets'],
+    'relayWriteFailures': state['relayWriteFailures'],
+    'tunWriteFailures': state['tunWriteFailures'],
+  };
+}
+
 class MethodChannelClientCoreBridge implements ClientCoreBridge {
-  MethodChannelClientCoreBridge({String? localServiceHost})
-      : _plugin = ClientCorePlugin(),
+  MethodChannelClientCoreBridge({
+    String? localServiceHost,
+    @visibleForTesting bool? useMobileControlPlane,
+    @visibleForTesting ClientBridgeRuntimePlatform runtimePlatform =
+        ClientBridgeRuntimePlatform.host,
+  })  : _plugin = ClientCorePlugin(),
         _localService = ClientCoreLocalService(host: localServiceHost),
+        _useMobileControlPlaneOverride = useMobileControlPlane,
+        _runtimePlatform = runtimePlatform,
         _state = ValueNotifier<ClientViewState>(ClientViewState.initial()),
         _androidNetworkAuthorization =
             ValueNotifier<AndroidNetworkAuthorizationState>(
@@ -60,6 +135,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   final ClientCorePlugin _plugin;
   final ClientCoreLocalService _localService;
+  final bool? _useMobileControlPlaneOverride;
+  final ClientBridgeRuntimePlatform _runtimePlatform;
   final ValueNotifier<ClientViewState> _state;
   final ValueNotifier<AndroidNetworkAuthorizationState>
       _androidNetworkAuthorization;
@@ -70,6 +147,18 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   bool _localLogoutRequested = false;
   bool _watchingBusinessEvents = false;
   bool _watchingAndroidNetworkEvents = false;
+  bool _watchingAndroidRuntimeStats = false;
+  bool _watchingIosPacketTunnelStats = false;
+  bool _repairingNativeMobileMqtt = false;
+  DateTime? _lastNativeMobileMqttRepairAt;
+  String? _runtimeControlBaseUrl;
+
+  static const _embeddedControlBaseUrl =
+      String.fromEnvironment('SLAN_EMBEDDED_CONTROL_BASE_URL');
+  static const _testDeviceId = String.fromEnvironment('SLAN_TEST_DEVICE_ID');
+  static const _defaultControlBaseUrl = String.fromEnvironment(
+      'SLAN_CONTROL_BASE_URL',
+      defaultValue: 'http://127.0.0.1:28080');
 
   @override
   ValueListenable<ClientViewState> get state => _state;
@@ -80,16 +169,39 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   @override
   Future<void> start() async {
+    await _loadServerBaseUrl();
     ClientUiDiagnostics.unawaitedLog('bridge.start.begin', state: _state.value);
-    await _invokeState(_plugin.start);
+    await _startStateWithFallback();
     _startBusinessEventWatchLoop();
     _startAndroidNetworkEventWatchLoop();
+    _startAndroidRuntimeStatsLoop();
+    _startIosPacketTunnelStatsLoop();
     ClientUiDiagnostics.unawaitedLog('bridge.start.end', state: _state.value);
   }
 
   @override
+  Future<String> serverBaseUrl() async {
+    await _loadServerBaseUrl();
+    return _effectiveControlBaseUrl;
+  }
+
+  @override
+  Future<void> updateServerBaseUrl(String serverBaseUrl) async {
+    final normalized = _normalizeServerBaseUrl(serverBaseUrl);
+    _runtimeControlBaseUrl = normalized;
+    if (_usesNativeMobileControlPlane) {
+      await _plugin.setMobileServerBaseUrl(normalized);
+    }
+    ClientUiDiagnostics.unawaitedLog(
+      'bridge.serverBaseUrl.updated',
+      state: _state.value,
+      fields: {'serverBaseUrl': normalized},
+    );
+  }
+
+  @override
   Future<void> prepareAndroidNetworkAuthorization() async {
-    if (!Platform.isAndroid) {
+    if (!_isAndroid) {
       return;
     }
     _androidNetworkAuthorization.value =
@@ -108,7 +220,13 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       }
       if (permissionState == AndroidVpnPermissionState.granted &&
           _state.value.signedIn) {
-        networkConfig = await _localService.localAndroidNetworkConfig();
+        networkConfig = await _platformNetworkConfig();
+        debugPrint(
+          'SLAN_ANDROID_NETWORK_CONFIG relaySessions='
+          '${networkConfig?.relayDataPlane?.sessions.length ?? 0} '
+          'relayEnabled=${networkConfig?.relayDataPlane?.enabled ?? false} '
+          'relayAddress=${networkConfig?.relayDataPlane?.relayAddress ?? networkConfig?.relayAddress ?? ''}',
+        );
       }
       _androidNetworkAuthorization.value = AndroidNetworkAuthorizationState(
         checking: false,
@@ -170,35 +288,39 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           state: _state.value,
           fields: {'message': error.toString()},
         );
-        try {
-          await _plugin.dispatch(command.toJson());
-        } on Object {
-          // Logout is local-first: the UI session is already cleared.
-        }
       }
       await _refreshState();
       return;
     }
     if (_isNetworkToggle(command.type)) {
-      if (Platform.isAndroid) {
+      if (_isAndroid) {
         _startAsyncAndroidNetworkToggle(command);
+        return;
+      }
+      if (_isIos) {
+        _startAsyncIosNetworkToggle(command);
         return;
       }
       _startAsyncNetworkToggle(command);
       return;
     }
     if (command.type == ClientCommandType.localNetworkShutdown) {
-      await _requestLocalService('localNetworkShutdown');
+      await _localNetworkShutdownWithFallback();
       await _refreshState();
       return;
     }
-    await _invokeState(() => _plugin.dispatch(command.toJson()));
+    if (command.type == ClientCommandType.sendClientMessage) {
+      await _sendClientMessageWithFallback(command.payload);
+      return;
+    }
+    await _dispatchControlWithFallback(command);
   }
 
   @override
   Future<ControlTransportStatus?> localControlStatus() async {
     try {
-      final json = await _localService.localControlStatus();
+      final result = await _localControlStatusWithFallback();
+      final json = ClientCoreLocalService.jsonMapFromResult(result);
       return json == null ? null : ControlTransportStatus.fromJson(json);
     } on Object {
       return null;
@@ -208,6 +330,469 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   bool _isNetworkToggle(ClientCommandType type) {
     return type == ClientCommandType.enableNetwork ||
         type == ClientCommandType.disableNetwork;
+  }
+
+  Future<void> _startStateWithFallback() async {
+    if (_usesNativeMobileControlPlane) {
+      final embedded = await _embeddedServiceRequest('start');
+      if (embedded == null) {
+        throw StateError('embedded start is not available');
+      }
+      final state = _stateFromResult(embedded);
+      if (state != null) {
+        _setStateIfChanged(state);
+        if (state.signedIn) {
+          unawaited(_ensureDeviceThenConnectMqtt('bridge.start.mqtt'));
+        }
+      }
+      return;
+    }
+    try {
+      final result = await _requestLocalService('start');
+      final state = _stateFromResult(result);
+      if (state != null) {
+        _setStateIfChanged(state);
+      }
+      return;
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.start.fallback',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      _setStateIfChanged(_state.value.copyWith(
+        syncing: false,
+        clearSyncReason: true,
+        switchEnabled: true,
+        notice: 'localServiceNotConnected',
+      ));
+    }
+  }
+
+  Future<AndroidVpnSessionConfig?> _platformNetworkConfig() async {
+    if (_usesNativeMobileControlPlane) {
+      final embedded = await _embeddedServiceRequest(
+        'localPlatformNetworkConfig',
+        null,
+        true,
+      );
+      if (embedded == null) {
+        throw StateError('embedded platform network config is not available');
+      }
+      final relayDebug = embedded['relayDebug'];
+      if (relayDebug != null) {
+        debugPrint('SLAN_EMBEDDED_RELAY_DEBUG=${jsonEncode(relayDebug)}');
+      }
+      return AndroidVpnSessionConfig.fromJson(embedded);
+    }
+    try {
+      return await _localService.localPlatformNetworkConfig();
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.platformNetworkConfig.fallback',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _dispatchControlWithFallback(ClientCommand command) async {
+    if (_usesNativeMobileControlPlane) {
+      final embedded = await _embeddedServiceRequest(
+        'dispatch',
+        command.toJson(),
+        true,
+      );
+      if (embedded == null) {
+        throw StateError('embedded control dispatch is not available');
+      }
+      final state = _stateFromResult(embedded);
+      if (state != null) {
+        _setStateIfChanged(state);
+        if (command.type == ClientCommandType.loginWithPassword &&
+            state.signedIn) {
+          await _ensureDeviceThenConnectMqtt('bridge.login.mqtt');
+        }
+      }
+      return;
+    }
+    try {
+      final result = await _requestLocalService('dispatch', command.toJson());
+      final state = _stateFromResult(result);
+      if (state != null) {
+        _setStateIfChanged(state);
+      }
+      await _openDesktopBrowserForCommand(command, state);
+      return;
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.controlPlane.fallback',
+        state: _state.value,
+        fields: {
+          'command': command.type.name,
+          'message': error.toString(),
+        },
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _localNetworkShutdownWithFallback() async {
+    if (_usesNativeMobileControlPlane) {
+      final embedded = await _embeddedServiceRequest('localNetworkShutdown');
+      if (embedded == null) {
+        throw StateError('embedded local network shutdown is not available');
+      }
+      return;
+    }
+    try {
+      await _requestLocalService('localNetworkShutdown');
+      return;
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.localNetworkShutdown.fallback',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _openDesktopBrowserForCommand(
+    ClientCommand command,
+    ClientViewState? state,
+  ) async {
+    if (_usesNativeMobileControlPlane) {
+      return;
+    }
+    if (command.type == ClientCommandType.loginWithBrowser) {
+      await _openWebConsoleUrl(
+        authCallbackId: state?.authCallbackId,
+        deviceId: state?.deviceId,
+        clientPlatform: _desktopClientPlatform,
+      );
+      return;
+    }
+    if (command.type == ClientCommandType.openWebConsole) {
+      String? consoleLoginKey;
+      try {
+        final response = await _requestLocalService('consoleLoginKey');
+        final json = ClientCoreLocalService.jsonMapFromResult(response);
+        consoleLoginKey = json?['loginKey'] as String?;
+      } on Object catch (error) {
+        ClientUiDiagnostics.unawaitedLog(
+          'bridge.openConsole.loginKeyFailed',
+          state: _state.value,
+          fields: {'message': error.toString()},
+        );
+      }
+      await _openWebConsoleUrl(
+        consoleLoginKey: consoleLoginKey,
+        deviceId: state?.deviceId ?? _state.value.deviceId,
+        clientPlatform: _desktopClientPlatform,
+      );
+    }
+  }
+
+  Future<void> _openWebConsoleUrl({
+    String? authCallbackId,
+    String? consoleLoginKey,
+    String? deviceId,
+    required String clientPlatform,
+  }) async {
+    final query = <String, String>{};
+    final callbackId = authCallbackId?.trim() ?? '';
+    if (callbackId.isNotEmpty) {
+      query['auth'] = 'login';
+      query['callbackId'] = callbackId;
+    }
+    final loginKey = consoleLoginKey?.trim() ?? '';
+    if (loginKey.isNotEmpty) {
+      query['consoleLoginKey'] = loginKey;
+    }
+    final safeDeviceId = _usableClientDeviceId(deviceId);
+    if (safeDeviceId.isNotEmpty) {
+      query['deviceId'] = safeDeviceId;
+    }
+    query['clientPlatform'] = clientPlatform;
+    query['clientName'] = 'SLAN Client V2';
+    final base = Uri.parse(_resolveWebConsoleUrl());
+    final url = base.replace(queryParameters: {
+      ...base.queryParameters,
+      ...query,
+    }).toString();
+    await _openExternalUrl(url);
+  }
+
+  Future<void> _openExternalUrl(String url) async {
+    if (_isMacOS) {
+      await Process.start('open', [url], mode: ProcessStartMode.detached);
+      return;
+    }
+    if (_isWindows) {
+      await Process.start(
+        'cmd',
+        ['/c', 'start', '', url],
+        mode: ProcessStartMode.detached,
+      );
+      return;
+    }
+    if (_isLinux) {
+      await Process.start('xdg-open', [url], mode: ProcessStartMode.detached);
+      return;
+    }
+    throw UnsupportedError('open browser is not supported on this platform');
+  }
+
+  String _resolveWebConsoleUrl() {
+    final webConsoleUrl =
+        Platform.environment['SLAN_WEB_CONSOLE_URL']?.trim() ?? '';
+    if (webConsoleUrl.isNotEmpty) {
+      return webConsoleUrl;
+    }
+    final controlBaseUrl =
+        Platform.environment['SLAN_CONTROL_BASE_URL']?.trim() ?? '';
+    if (controlBaseUrl.contains('127.0.0.1') ||
+        controlBaseUrl.contains('localhost')) {
+      return 'http://127.0.0.1:24200';
+    }
+    if (controlBaseUrl.contains('slan.localhost')) {
+      return 'https://web.slan.localhost:18443';
+    }
+    return 'http://127.0.0.1:24200';
+  }
+
+  String _usableClientDeviceId(String? deviceId) {
+    final value = deviceId?.trim() ?? '';
+    if (value.isEmpty) {
+      return '';
+    }
+    final lower = value.toLowerCase();
+    if (lower == 'authcallbackid' ||
+        lower == 'windows-plugin-login' ||
+        lower == 'macos-plugin-login' ||
+        lower.startsWith('cb-')) {
+      return '';
+    }
+    return value;
+  }
+
+  String get _desktopClientPlatform {
+    if (_isMacOS) {
+      return 'macos';
+    }
+    if (_isWindows) {
+      return 'windows';
+    }
+    if (_isLinux) {
+      return 'linux';
+    }
+    return 'desktop';
+  }
+
+  Future<void> _sendClientMessageWithFallback(
+    Map<String, Object?>? payload,
+  ) async {
+    final targetDeviceId = (payload?['targetDeviceId'] as String?)?.trim();
+    final body = (payload?['body'] as String?)?.trim();
+    final metadata = payload?['metadata'];
+    if (targetDeviceId == null ||
+        targetDeviceId.isEmpty ||
+        body == null ||
+        body.isEmpty) {
+      throw StateError('targetDeviceId and body are required');
+    }
+    if (_usesNativeMobileControlPlane) {
+      final embedded = await _embeddedServiceRequest(
+        'localSendClientMessage',
+        {
+          'targetDeviceId': targetDeviceId,
+          'body': body,
+          if (metadata is Map) 'metadata': metadata.cast<String, Object?>(),
+        },
+        true,
+      );
+      if (embedded == null) {
+        throw StateError('embedded send client message is not available');
+      }
+      return;
+    }
+    try {
+      await _localService.localSendClientMessage(
+        targetDeviceId: targetDeviceId,
+        body: body,
+        metadata: metadata is Map ? metadata.cast<String, Object?>() : null,
+      );
+      return;
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.sendClientMessage.fallback',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  Future<Object?> _localControlStatusWithFallback() async {
+    if (_usesNativeMobileControlPlane) {
+      final embedded = await _embeddedServiceRequest('localControlStatus');
+      if (embedded == null) {
+        throw StateError('embedded local control status is not available');
+      }
+      return embedded;
+    }
+    try {
+      return await _localService.localControlStatus();
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.localControlStatus.fallback',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  Future<Map<String, Object?>?> _embeddedServiceRequest(
+    String method, [
+    Object? arguments,
+    bool rethrowErrors = false,
+  ]) async {
+    if (!_usesNativeMobileControlPlane) {
+      return null;
+    }
+    try {
+      final response = await _plugin.embeddedServiceRequest(jsonEncode({
+        'method': method,
+        'args': _embeddedArguments(arguments),
+      }));
+      final error = response?['error'];
+      if (error is String && error.trim().isNotEmpty) {
+        throw PlatformException(
+          code: 'embedded_service_error',
+          message: error,
+        );
+      }
+      return response;
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.embeddedService.failed',
+        state: _state.value,
+        fields: {
+          'method': method,
+          'message': error.toString(),
+        },
+      );
+      if (rethrowErrors) {
+        rethrow;
+      }
+      return null;
+    }
+  }
+
+  Object _embeddedArguments(Object? arguments) {
+    final controlBaseUrl = _effectiveControlBaseUrl;
+    if (controlBaseUrl.isEmpty) {
+      return arguments ?? <String, Object?>{};
+    }
+    if (arguments is Map) {
+      return {
+        ...arguments.cast<String, Object?>(),
+        'controlBaseUrl': controlBaseUrl,
+        if (_testDeviceId.trim().isNotEmpty) 'deviceId': _testDeviceId.trim(),
+      };
+    }
+    return {
+      'value': arguments,
+      'controlBaseUrl': controlBaseUrl,
+      if (_testDeviceId.trim().isNotEmpty) 'deviceId': _testDeviceId.trim(),
+    };
+  }
+
+  Future<void> _loadServerBaseUrl() async {
+    if (_runtimeControlBaseUrl != null) {
+      return;
+    }
+    var value = '';
+    if (_usesNativeMobileControlPlane) {
+      value = (await _plugin.mobileServerBaseUrl()) ?? '';
+    }
+    _runtimeControlBaseUrl = _normalizeServerBaseUrl(
+      value.isNotEmpty ? value : _defaultEmbeddedControlBaseUrl,
+    );
+  }
+
+  String get _effectiveControlBaseUrl =>
+      _runtimeControlBaseUrl ??
+      _normalizeServerBaseUrl(_defaultEmbeddedControlBaseUrl);
+
+  String get _defaultEmbeddedControlBaseUrl =>
+      _embeddedControlBaseUrl.isNotEmpty
+          ? _embeddedControlBaseUrl
+          : _defaultControlBaseUrl;
+
+  static String _normalizeServerBaseUrl(String value) {
+    var normalized = value.trim();
+    if (normalized.isEmpty) {
+      normalized = _defaultControlBaseUrl;
+    }
+    if (!normalized.contains('://')) {
+      normalized = 'http://$normalized';
+    }
+    return normalized.replaceFirst(RegExp(r'/+$'), '');
+  }
+
+  Future<void> _ensureDeviceThenConnectMqtt(String event) async {
+    if (!_usesNativeMobileControlPlane || !_state.value.signedIn) {
+      return;
+    }
+    final device = await _embeddedServiceRequest('localEnsureDevice');
+    ClientUiDiagnostics.unawaitedLog(
+      '$event.ensureDevice',
+      state: _state.value,
+      fields: device ?? {'accepted': false},
+    );
+    if (device == null) {
+      return;
+    }
+    final mqtt = await _embeddedServiceRequest('localConnectControlMqtt');
+    ClientUiDiagnostics.unawaitedLog(
+      '$event.connectMqtt',
+      state: _state.value,
+      fields: mqtt ?? {'connected': false},
+    );
+  }
+
+  Future<void> _repairNativeMobileMqttIfNeeded(String event) async {
+    if (!_usesNativeMobileControlPlane ||
+        !_state.value.signedIn ||
+        _repairingNativeMobileMqtt) {
+      return;
+    }
+    final now = DateTime.now();
+    final last = _lastNativeMobileMqttRepairAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 15)) {
+      return;
+    }
+    _lastNativeMobileMqttRepairAt = now;
+    _repairingNativeMobileMqtt = true;
+    try {
+      final status = await localControlStatus();
+      if (status?.mqttConnected == true) {
+        return;
+      }
+      await _ensureDeviceThenConnectMqtt(event);
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        '$event.failed',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+    } finally {
+      _repairingNativeMobileMqtt = false;
+    }
   }
 
   void _clearNetworkToggle() {
@@ -470,6 +1055,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
             state: _state.value,
             fields: {'command': command.type.name, 'epoch': epoch},
           );
+          unawaited(_logAndroidRuntimeState('bridge.android.switch.runtime'));
         } on Object catch (error) {
           if (!_isCurrentNetworkToggle(operation)) {
             return;
@@ -486,6 +1072,110 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           );
           ClientUiDiagnostics.unawaitedLog(
             'bridge.android.switch.failed',
+            state: _state.value,
+            fields: {
+              'command': command.type.name,
+              'epoch': epoch,
+              'message': error.toString(),
+            },
+          );
+        }
+      }),
+    );
+  }
+
+  void _startAsyncIosNetworkToggle(ClientCommand command) {
+    if (_networkToggleInFlight) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.ios.switch.ignoredInFlight',
+        state: _state.value,
+        fields: {'command': command.type.name},
+      );
+      return;
+    }
+    final previousState = _state.value;
+    final epoch = ++_networkToggleEpoch;
+    _networkToggleInFlight = true;
+    final targetEnabled = command.type == ClientCommandType.enableNetwork;
+    final operation = _NetworkToggleOperation(
+      epoch: epoch,
+      command: command.type,
+      method: targetEnabled ? 'iosEnableNetwork' : 'iosDisableNetwork',
+      targetEnabled: targetEnabled,
+      previousState: previousState,
+    );
+    _networkToggleOperation = operation;
+    _setStateIfChanged(_state.value.copyWith(
+      networkEnabled: targetEnabled,
+      syncing: true,
+      syncReason: command.type.name,
+      switchEnabled: false,
+      error: null,
+      notice: null,
+      clearVirtualIp: !targetEnabled,
+    ));
+    unawaited(
+      Future<void>(() async {
+        try {
+          Object? result;
+          AndroidVpnSessionConfig? config;
+          if (targetEnabled) {
+            config = await _platformNetworkConfig();
+            if (config == null) {
+              throw StateError('iOS 网络配置未就绪');
+            }
+            result = await _plugin
+                .iosStartPacketTunnel(config)
+                .timeout(_networkToggleTimeout);
+          } else {
+            result = await _plugin
+                .iosStopPacketTunnel()
+                .timeout(_networkToggleTimeout);
+          }
+          if (!_isCurrentNetworkToggle(operation)) {
+            return;
+          }
+          final next = _stateFromResult(result);
+          _finishNetworkToggle(operation);
+          if (next != null &&
+              next.error != null &&
+              next.error!.trim().isNotEmpty) {
+            _setStateIfChanged(_networkToggleFailureState(
+              operation,
+              next.error!,
+              notice: next.notice,
+            ));
+            return;
+          }
+          _setStateIfChanged((next ?? _state.value).copyWith(
+            networkEnabled: next?.networkEnabled ?? targetEnabled,
+            virtualIp:
+                targetEnabled ? (next?.virtualIp ?? config?.virtualIp) : null,
+            syncing: false,
+            clearSyncReason: true,
+            switchEnabled: true,
+            clearVirtualIp: !(next?.networkEnabled ?? targetEnabled),
+          ));
+          ClientUiDiagnostics.unawaitedLog(
+            'bridge.ios.switch.finished',
+            state: _state.value,
+            fields: {'command': command.type.name, 'epoch': epoch},
+          );
+          unawaited(_logIosSharedStoreDiagnostics(
+            'bridge.ios.switch.sharedStore',
+          ));
+          unawaited(_logIosPacketTunnelStats('bridge.ios.switch.stats'));
+        } on Object catch (error) {
+          if (!_isCurrentNetworkToggle(operation)) {
+            return;
+          }
+          _finishNetworkToggle(operation);
+          _setStateIfChanged(_networkToggleFailureState(
+            operation,
+            error.toString(),
+          ));
+          ClientUiDiagnostics.unawaitedLog(
+            'bridge.ios.switch.failed',
             state: _state.value,
             fields: {
               'command': command.type.name,
@@ -530,40 +1220,56 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     );
   }
 
-  Future<void> _invokeState(Future<Object?> Function() invoke) async {
+  Future<void> _refreshState() async {
+    if (_usesNativeMobileControlPlane) {
+      final embedded = await _embeddedServiceRequest('refresh');
+      if (embedded == null) {
+        throw StateError('embedded refresh is not available');
+      }
+      final state = _stateFromResult(embedded);
+      if (state != null) {
+        _setStateIfChanged(state);
+      }
+      return;
+    }
     try {
-      final result = await invoke();
+      final result = await _requestLocalService('refresh');
       final state = _stateFromResult(result);
       if (state != null) {
         _setStateIfChanged(state);
       }
-    } on MissingPluginException {
-      _setStateIfChanged(_state.value.copyWith(
-        syncing: false,
-        clearSyncReason: true,
-        switchEnabled: true,
-        notice: 'localServiceNotConnected',
-      ));
-    } on PlatformException catch (error) {
-      _setStateIfChanged(_state.value.copyWith(
-        syncing: false,
-        clearSyncReason: true,
-        switchEnabled: true,
-        error: error.message ?? error.code,
-      ));
+      return;
     } on Object catch (error) {
-      _setStateIfChanged(_state.value.copyWith(
-        syncing: false,
-        clearSyncReason: true,
-        switchEnabled: true,
-        error: error.toString(),
-      ));
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.refresh.fallback',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      rethrow;
     }
   }
 
-  Future<void> _refreshState() async {
-    await _invokeState(_plugin.refresh);
-  }
+  bool get _usesNativeMobileControlPlane =>
+      _useMobileControlPlaneOverride ?? (_isAndroid || _isIos);
+
+  bool get _isAndroid =>
+      _runtimePlatform == ClientBridgeRuntimePlatform.android ||
+      (_runtimePlatform == ClientBridgeRuntimePlatform.host &&
+          Platform.isAndroid);
+
+  bool get _isIos =>
+      _runtimePlatform == ClientBridgeRuntimePlatform.ios ||
+      (_runtimePlatform == ClientBridgeRuntimePlatform.host && Platform.isIOS);
+
+  bool get _isMacOS =>
+      _runtimePlatform == ClientBridgeRuntimePlatform.host && Platform.isMacOS;
+
+  bool get _isWindows =>
+      _runtimePlatform == ClientBridgeRuntimePlatform.host &&
+      Platform.isWindows;
+
+  bool get _isLinux =>
+      _runtimePlatform == ClientBridgeRuntimePlatform.host && Platform.isLinux;
 
   void _startBusinessEventWatchLoop() {
     if (_watchingBusinessEvents) {
@@ -574,14 +1280,21 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       Future<void>(() async {
         while (_watchingBusinessEvents) {
           try {
-            final json = await _localService.localBusinessEventWatch(
-              lastRevision: _lastBusinessEventRevision,
+            await _repairNativeMobileMqttIfNeeded(
+              'bridge.businessEvent.mqttRepair',
             );
+            final json = await _watchBusinessEvents(_lastBusinessEventRevision);
             if (json == null) {
+              if (_usesNativeMobileControlPlane) {
+                await Future<void>.delayed(const Duration(seconds: 1));
+              }
               continue;
             }
             final revision = json['revision'];
             if (revision is! int || revision <= _lastBusinessEventRevision) {
+              if (_usesNativeMobileControlPlane) {
+                await Future<void>.delayed(const Duration(seconds: 1));
+              }
               continue;
             }
             _lastBusinessEventRevision = revision;
@@ -603,7 +1316,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   void _startAndroidNetworkEventWatchLoop() {
-    if (!Platform.isAndroid || _watchingAndroidNetworkEvents) {
+    if (!_isAndroid || _watchingAndroidNetworkEvents) {
       return;
     }
     _watchingAndroidNetworkEvents = true;
@@ -619,6 +1332,10 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
                   _androidNetworkAuthorization.value.applyEvent(event);
               final runtimeState = event.runtimeState;
               if (runtimeState != null) {
+                unawaited(_logAndroidRuntimeState(
+                  'bridge.android.event.runtime',
+                  runtimeState: runtimeState,
+                ));
                 final networkEnabled = runtimeState['networkEnabled'] == true;
                 _setStateIfChanged(_state.value.copyWith(
                   networkEnabled: networkEnabled,
@@ -659,15 +1376,182 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     );
   }
 
+  void _startAndroidRuntimeStatsLoop() {
+    if (!_isAndroid || _watchingAndroidRuntimeStats) {
+      return;
+    }
+    _watchingAndroidRuntimeStats = true;
+    unawaited(
+      Future<void>(() async {
+        while (_watchingAndroidRuntimeStats) {
+          try {
+            if (_state.value.networkEnabled) {
+              await _logAndroidRuntimeState('bridge.android.runtime.stats');
+            }
+            await Future<void>.delayed(const Duration(seconds: 5));
+          } on MissingPluginException {
+            await Future<void>.delayed(const Duration(seconds: 5));
+          } on Object catch (error) {
+            ClientUiDiagnostics.unawaitedLog(
+              'bridge.android.runtime.statsError',
+              state: _state.value,
+              fields: {'message': error.toString()},
+            );
+            await Future<void>.delayed(const Duration(seconds: 5));
+          }
+        }
+      }),
+    );
+  }
+
+  void _startIosPacketTunnelStatsLoop() {
+    if (!_isIos || _watchingIosPacketTunnelStats) {
+      return;
+    }
+    _watchingIosPacketTunnelStats = true;
+    unawaited(
+      Future<void>(() async {
+        while (_watchingIosPacketTunnelStats) {
+          try {
+            if (_state.value.networkEnabled) {
+              await _logIosPacketTunnelStats('bridge.ios.packetTunnel.stats');
+            }
+            await Future<void>.delayed(const Duration(seconds: 5));
+          } on MissingPluginException {
+            await Future<void>.delayed(const Duration(seconds: 5));
+          } on Object catch (error) {
+            ClientUiDiagnostics.unawaitedLog(
+              'bridge.ios.packetTunnel.statsError',
+              state: _state.value,
+              fields: {'message': error.toString()},
+            );
+            await Future<void>.delayed(const Duration(seconds: 5));
+          }
+        }
+      }),
+    );
+  }
+
+  Future<void> _logIosPacketTunnelStats(String event) async {
+    if (!_isIos || !_state.value.networkEnabled) {
+      return;
+    }
+    await _logIosSharedStoreDiagnostics('$event.sharedStore');
+    final stats = await _plugin.iosPacketTunnelStats();
+    if (stats == null || stats.isEmpty) {
+      return;
+    }
+    ClientUiDiagnostics.unawaitedLog(
+      event,
+      state: _state.value,
+      fields: iosPacketTunnelDiagnosticsFields(stats),
+    );
+    unawaited(_reportPlatformRuntimeState(
+      platform: 'ios',
+      runtimeState: {
+        'adapterPresent': true,
+        'networkEnabled': _state.value.networkEnabled,
+        if (_state.value.virtualIp != null) 'virtualIp': _state.value.virtualIp,
+      },
+      traffic: iosPacketTunnelDiagnosticsFields(stats),
+    ));
+  }
+
+  Future<void> _logIosSharedStoreDiagnostics(String event) async {
+    if (!_isIos) {
+      return;
+    }
+    try {
+      final diagnostics = await _plugin.iosSharedStoreDiagnostics();
+      if (diagnostics == null || diagnostics.isEmpty) {
+        return;
+      }
+      ClientUiDiagnostics.unawaitedLog(
+        event,
+        state: _state.value,
+        fields: diagnostics,
+      );
+    } on MissingPluginException {
+      return;
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.ios.sharedStore.diagnosticsFailed',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+    }
+  }
+
+  Future<void> _logAndroidRuntimeState(
+    String event, {
+    Map<String, Object?>? runtimeState,
+  }) async {
+    if (!_isAndroid) {
+      return;
+    }
+    final state = runtimeState ?? _jsonMap(await _plugin.androidRuntimeState());
+    if (state == null || state.isEmpty) {
+      return;
+    }
+    ClientUiDiagnostics.unawaitedLog(
+      event,
+      state: _state.value,
+      fields: androidRuntimeDiagnosticsFields(state),
+    );
+    unawaited(_reportPlatformRuntimeState(
+      platform: 'android',
+      runtimeState: state,
+      traffic: androidRuntimeDiagnosticsFields(state),
+    ));
+  }
+
+  Future<void> _reportPlatformRuntimeState({
+    required String platform,
+    required Map<String, Object?> runtimeState,
+    Map<String, Object?>? traffic,
+    String? error,
+  }) async {
+    try {
+      final payload = {
+        'platform': platform,
+        'runtimeState': runtimeState,
+        if (traffic != null) 'traffic': traffic,
+        if (error != null) 'error': error,
+      };
+      if (_usesNativeMobileControlPlane) {
+        await _embeddedServiceRequest('ingestPlatformRuntimeState', payload);
+      } else {
+        await _localService.ingestPlatformRuntimeState(
+          platform: platform,
+          runtimeState: runtimeState,
+          traffic: traffic,
+          error: error,
+        );
+      }
+    } on Object catch (reportError) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.platformRuntimeState.reportFailed',
+        state: _state.value,
+        fields: {
+          'platform': platform,
+          'message': reportError.toString(),
+        },
+      );
+    }
+  }
+
   Future<ClientViewState?> _stateAfterBusinessEvent(
     Map<String, Object?> event,
   ) async {
-    final type = event['businessType'] as String?;
+    final type = _businessEventType(event);
+    if (_nativeMobilePeerRefreshRequired(event)) {
+      await _refreshNativeMobilePeersFromControlSync();
+    }
     if (!_businessEventRequiresStateQuery(type)) {
       return _reduceBusinessEvent(event);
     }
     try {
-      final state = _stateFromResult(await _localService.localState());
+      final state = await _queryCurrentState();
       if (state != null) {
         ClientUiDiagnostics.unawaitedLog(
           'bridge.businessEvent.stateQueried',
@@ -689,7 +1573,68 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     return _reduceBusinessEvent(event);
   }
 
+  bool _nativeMobilePeerRefreshRequired(Map<String, Object?> event) {
+    if (!_usesNativeMobileControlPlane ||
+        _networkToggleInFlight ||
+        !_state.value.networkEnabled) {
+      return false;
+    }
+    final type = _businessEventType(event);
+    if (type != ClientBusinessEventType.controlSyncChanged &&
+        type != ClientBusinessEventType.networkRuntimeChanged) {
+      return false;
+    }
+    final data = event['businessData'];
+    if (data is! Map) {
+      return false;
+    }
+    final messageType = data['messageType']?.toString();
+    if (type == ClientBusinessEventType.networkRuntimeChanged &&
+        messageType == 'relay_data_plane_policy') {
+      return true;
+    }
+    return data['reconfigureRequired'] == true &&
+        (messageType == 'device_network_enabled' ||
+            messageType == 'device_network_disabled');
+  }
+
+  Future<void> _refreshNativeMobilePeersFromControlSync() async {
+    try {
+      final config = await _platformNetworkConfig();
+      if (config == null) {
+        return;
+      }
+      if (_isAndroid) {
+        await _plugin.androidStartVpn(config).timeout(_networkToggleTimeout);
+      } else if (_isIos) {
+        await _plugin
+            .iosStartPacketTunnel(config)
+            .timeout(_networkToggleTimeout);
+      } else {
+        return;
+      }
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.mobile.peersRefreshed',
+        state: _state.value,
+        fields: {
+          'virtualIp': config.virtualIp,
+          'relaySessions': config.relayDataPlane?.sessions.length,
+        },
+      );
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.mobile.peersRefreshFailed',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+    }
+  }
+
   bool _businessEventRequiresStateQuery(String? type) {
+    if (_usesNativeMobileControlPlane &&
+        type == ClientBusinessEventType.sessionChanged) {
+      return true;
+    }
     if (type == ClientBusinessEventType.networkRuntimeChanged) {
       return _networkToggleInFlight;
     }
@@ -701,7 +1646,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     Map<String, Object?> event, {
     ClientViewState? queriedState,
   }) {
-    final type = event['businessType'] as String?;
+    final type = _businessEventType(event);
     final businessData = event['businessData'];
     final snapshot = event['snapshot'];
     final dataState = businessData is Map
@@ -763,6 +1708,51 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     }
   }
 
+  String? _businessEventType(Map<String, Object?> event) {
+    return event['businessType'] as String? ?? event['type'] as String?;
+  }
+
+  Future<Map<String, Object?>?> _watchBusinessEvents(int lastRevision) async {
+    if (_usesNativeMobileControlPlane) {
+      return _embeddedServiceRequest(
+        'localBusinessEventWatch',
+        {
+          'lastRevision': lastRevision,
+          'timeoutMs': 30000,
+        },
+      );
+    }
+    try {
+      return await _localService.localBusinessEventWatch(
+        lastRevision: lastRevision,
+      );
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.businessEvent.watchFallback',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  Future<ClientViewState?> _queryCurrentState() async {
+    if (_usesNativeMobileControlPlane) {
+      final embedded = await _embeddedServiceRequest('localState');
+      return embedded == null ? null : _stateFromResult(embedded);
+    }
+    try {
+      return _stateFromResult(await _localService.localState());
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.localState.fallback',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+      rethrow;
+    }
+  }
+
   void _settleNetworkToggleFromEvent() {
     if (!_networkToggleInFlight && _networkToggleOperation == null) {
       return;
@@ -773,11 +1763,30 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   void _setStateIfChanged(ClientViewState state) {
-    final next = _localLogoutRequested ? ClientViewState.initial() : state;
+    final next = _localLogoutRequested
+        ? ClientViewState.initial()
+        : _preserveIosPlatformNetworkState(state);
     if (_state.value == next) {
       return;
     }
     _state.value = next;
+  }
+
+  ClientViewState _preserveIosPlatformNetworkState(ClientViewState incoming) {
+    if (!_isIos || !_state.value.networkEnabled || incoming.networkEnabled) {
+      return incoming;
+    }
+    if (incoming.error != null && incoming.error!.trim().isNotEmpty) {
+      return incoming;
+    }
+    if (_networkToggleOperation?.targetEnabled == false) {
+      return incoming;
+    }
+    return incoming.copyWith(
+      networkEnabled: true,
+      virtualIp: _state.value.virtualIp ?? incoming.virtualIp,
+      clearVirtualIp: false,
+    );
   }
 
   Future<Object?> _requestLocalService(String method,
@@ -808,5 +1817,12 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return null;
     }
     return ClientViewState.fromJson(json);
+  }
+
+  Map<String, Object?>? _jsonMap(Object? result) {
+    if (result is Map) {
+      return result.cast<String, Object?>();
+    }
+    return ClientCoreLocalService.jsonMapFromResult(result);
   }
 }

@@ -78,6 +78,8 @@ class AndroidVpnSessionConfig {
   }
 }
 
+typedef PlatformNetworkConfig = AndroidVpnSessionConfig;
+
 class RelayDataPlaneConfig {
   const RelayDataPlaneConfig({
     required this.enabled,
@@ -137,11 +139,11 @@ class RelayDataPlaneConfig {
 class PathKind {
   const PathKind._();
 
+  static const lanUdp = 'lan_udp';
+  static const ipv6Udp = 'ipv6_udp';
   static const directUdp = 'direct_udp';
   static const relayUdp = 'relay_udp';
-  static const relayTcp = 'relay_tcp';
-  static const relayHttp3 = 'relay_http3';
-  static const relayTls = 'relay_tls';
+  static const derpTcpTls443 = 'derp_tcp_tls_443';
 }
 
 class PathState {
@@ -158,11 +160,11 @@ class PathState {
 class PathPolicy {
   const PathPolicy({
     this.preferred = const <String>[
+      PathKind.lanUdp,
+      PathKind.ipv6Udp,
       PathKind.directUdp,
       PathKind.relayUdp,
-      PathKind.relayTcp,
-      PathKind.relayHttp3,
-      PathKind.relayTls,
+      PathKind.derpTcpTls443,
     ],
     this.fallbackEnabled = true,
     this.probeIntervalMs = 15000,

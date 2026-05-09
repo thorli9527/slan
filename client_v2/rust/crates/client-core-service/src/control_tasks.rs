@@ -284,6 +284,9 @@ fn default_task_direction() -> String {
 }
 
 fn app_data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
+        return PathBuf::from(dir);
+    }
     if cfg!(target_os = "windows") {
         return std::env::var_os("ProgramData")
             .map(PathBuf::from)
@@ -292,9 +295,18 @@ fn app_data_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
         return PathBuf::from("/Library/Application Support");
     }
-    std::env::var_os("SLAN_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib"))
+    if cfg!(target_os = "ios") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support");
+        }
+        return std::env::temp_dir();
+    }
+    if cfg!(target_os = "android") {
+        return std::env::temp_dir();
+    }
+    PathBuf::from("/var/lib")
 }
 
 fn render_tasks(tasks: &[ControlTask]) -> String {

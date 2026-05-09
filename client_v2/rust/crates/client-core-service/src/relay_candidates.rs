@@ -1,5 +1,5 @@
 use std::{
-    net::{TcpStream, ToSocketAddrs, UdpSocket},
+    net::{ToSocketAddrs, UdpSocket},
     time::{Duration, Instant},
 };
 
@@ -151,39 +151,6 @@ fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateS
     let mut reachable = true;
     let mut rtt_ms = None;
     let path_score = match transport.as_str() {
-        "tcp" => match probe_relay_tcp_rtt_ms(&address) {
-            Some(rtt) => {
-                rtt_ms = Some(rtt);
-                rtt.saturating_add(100)
-            }
-            None => {
-                reachable = false;
-                10_000
-            }
-        },
-        // Windows currently uses the same framed stream data-plane handshake for
-        // TCP, TLS and HTTP3 relay path kinds. The transport name still stays
-        // canonical so policy and server-side stats can distinguish them.
-        "tls" => match probe_relay_tcp_rtt_ms(&address) {
-            Some(rtt) => {
-                rtt_ms = Some(rtt);
-                rtt.saturating_add(160)
-            }
-            None => {
-                reachable = false;
-                10_000
-            }
-        },
-        "http3" => match probe_relay_tcp_rtt_ms(&address) {
-            Some(rtt) => {
-                rtt_ms = Some(rtt);
-                rtt.saturating_add(140)
-            }
-            None => {
-                reachable = false;
-                10_000
-            }
-        },
         "udp" => match probe_relay_udp_rtt_ms(&address) {
             Some(rtt) => {
                 rtt_ms = Some(rtt);
@@ -223,15 +190,6 @@ pub(crate) fn normalize_relay_candidate_address(address: &str, transport: &str) 
         "udp" => trimmed
             .strip_prefix("udp://")
             .or_else(|| trimmed.strip_prefix("relay+udp://")),
-        "tcp" => trimmed
-            .strip_prefix("tcp://")
-            .or_else(|| trimmed.strip_prefix("relay+tcp://")),
-        "tls" => trimmed
-            .strip_prefix("tls://")
-            .or_else(|| trimmed.strip_prefix("relay+tls://")),
-        "http3" => trimmed
-            .strip_prefix("http3://")
-            .or_else(|| trimmed.strip_prefix("relay+http3://")),
         _ => None,
     };
     if stripped.is_none() && trimmed.contains("://") {
@@ -273,16 +231,6 @@ fn probe_relay_udp_rtt_ms(address: &str) -> Option<u32> {
     Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
 }
 
-fn probe_relay_tcp_rtt_ms(address: &str) -> Option<u32> {
-    let socket = address
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut values| values.next())?;
-    let started = Instant::now();
-    TcpStream::connect_timeout(&socket, Duration::from_millis(750)).ok()?;
-    Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
-}
-
 fn optional_trimmed_string(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
@@ -298,31 +246,27 @@ mod tests {
     #[test]
     fn relay_candidate_address_accepts_matching_scheme_or_bare_address() {
         assert_eq!(
-            normalize_relay_candidate_address("http3://127.0.0.1:9443", "http3").as_deref(),
-            Some("127.0.0.1:9443")
+            normalize_relay_candidate_address("udp://127.0.0.1:9000", "udp").as_deref(),
+            Some("127.0.0.1:9000")
         );
         assert_eq!(
-            normalize_relay_candidate_address("127.0.0.1:9443", "http3").as_deref(),
-            Some("127.0.0.1:9443")
-        );
-        assert_eq!(
-            normalize_relay_candidate_address("relay+tls://relay.example:443", "tls").as_deref(),
-            Some("relay.example:443")
+            normalize_relay_candidate_address("127.0.0.1:9000", "udp").as_deref(),
+            Some("127.0.0.1:9000")
         );
     }
 
     #[test]
     fn relay_candidate_address_rejects_mismatched_or_alias_scheme() {
         assert_eq!(
-            normalize_relay_candidate_address("udp://127.0.0.1:9000", "http3"),
+            normalize_relay_candidate_address("tcp://127.0.0.1:9001", "udp"),
             None
         );
         assert_eq!(
-            normalize_relay_candidate_address("h3://127.0.0.1:9443", "http3"),
+            normalize_relay_candidate_address("tls://127.0.0.1:9443", "tls"),
             None
         );
         assert_eq!(
-            normalize_relay_candidate_address("quic://127.0.0.1:9443", "http3"),
+            normalize_relay_candidate_address("http3://127.0.0.1:9443", "http3"),
             None
         );
     }

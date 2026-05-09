@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    net::{TcpStream, ToSocketAddrs, UdpSocket},
+    net::{ToSocketAddrs, UdpSocket},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -13,8 +13,9 @@ use serde_json::Value;
 use crate::{
     control_plane::MqttCredential,
     control_tasks::{ControlTask, ControlTaskStatus},
+    relay_models::PersistedRelayCandidate,
+    session_store::PersistedSession,
     time_utils::ticket_timing_with_window,
-    PersistedSession,
 };
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -520,6 +521,8 @@ fn relay_policy_report_message(
                 "policyId": policy.policy_id,
                 "scope": policy.scope,
                 "targetDeviceIds": policy.target_device_ids,
+                "sourceDeviceId": policy.source_device_id,
+                "peerDeviceId": policy.peer_device_id,
                 "pathType": policy.path_type,
                 "relayMtu": policy.relay_mtu,
                 "maxFramePayload": policy.max_frame_payload,
@@ -670,6 +673,10 @@ struct RelayDataPlanePolicy {
     #[serde(default)]
     target_device_ids: Vec<String>,
     #[serde(default)]
+    source_device_id: Option<String>,
+    #[serde(default)]
+    peer_device_id: Option<String>,
+    #[serde(default)]
     path_type: Option<String>,
     #[serde(default)]
     relay_mtu: Option<u32>,
@@ -753,7 +760,7 @@ struct RelayRuntimePeerStats {
 }
 
 fn probe_relay_candidate(
-    candidate: &crate::PersistedRelayCandidate,
+    candidate: &PersistedRelayCandidate,
     runtime_stats: Option<&RelayRuntimeStats>,
 ) -> RelayPathHealthSample {
     let transport = candidate.transport.trim().to_ascii_lowercase();
@@ -782,30 +789,6 @@ fn probe_relay_candidate(
             max_frame_payload: runtime_stats.and_then(|stats| stats.max_frame_payload),
         };
     }
-    let normalized_transport = normalize_relay_transport(&transport).unwrap_or(transport.as_str());
-    if matches!(normalized_transport, "tcp" | "tls" | "http3") {
-        if let Some(rtt_ms) = probe_tcp_rtt_ms(&candidate.address) {
-            let transport_penalty = match normalized_transport {
-                "http3" => 40,
-                "tls" => 60,
-                _ => 10,
-            };
-            return RelayPathHealthSample {
-                observed_rtt_ms: Some(rtt_ms),
-                packet_loss_ppm: Some(0),
-                path_score: Some(rtt_ms.saturating_add(transport_penalty).min(10_000)),
-                relay_mtu: None,
-                max_frame_payload: None,
-            };
-        }
-        return RelayPathHealthSample {
-            observed_rtt_ms: None,
-            packet_loss_ppm: Some(1_000_000),
-            path_score: Some(10_000),
-            relay_mtu: None,
-            max_frame_payload: None,
-        };
-    }
     RelayPathHealthSample {
         observed_rtt_ms: None,
         packet_loss_ppm: None,
@@ -818,9 +801,6 @@ fn probe_relay_candidate(
 fn relay_path_type_for_transport(transport: &str) -> String {
     match normalize_relay_transport(transport).unwrap_or(transport.trim()) {
         "udp" => "relay_udp",
-        "tcp" => "relay_tcp",
-        "tls" => "relay_tls",
-        "http3" => "relay_http3",
         _ => "relay",
     }
     .to_string()
@@ -829,9 +809,6 @@ fn relay_path_type_for_transport(transport: &str) -> String {
 fn relay_transport_from_path(path_type: &str) -> Option<&'static str> {
     match path_type.trim() {
         "relay_udp" => Some("udp"),
-        "relay_tcp" => Some("tcp"),
-        "relay_tls" => Some("tls"),
-        "relay_http3" => Some("http3"),
         _ => None,
     }
 }
@@ -975,16 +952,6 @@ fn cross_country(source: Option<&str>, relay: Option<&str>) -> Option<bool> {
     let source = source.map(str::trim).filter(|value| !value.is_empty())?;
     let relay = relay.map(str::trim).filter(|value| !value.is_empty())?;
     Some(!source.eq_ignore_ascii_case(relay))
-}
-
-fn probe_tcp_rtt_ms(address: &str) -> Option<u32> {
-    let socket = address
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut values| values.next())?;
-    let started = Instant::now();
-    TcpStream::connect_timeout(&socket, Duration::from_millis(750)).ok()?;
-    Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
 }
 
 pub fn normalize_downstream_control_message(
@@ -1250,7 +1217,7 @@ mod tests {
             topic_prefix: "slan/devices/dev-1".to_string(),
             expires_at: None,
         });
-        session.relay_candidates = vec![crate::PersistedRelayCandidate {
+        session.relay_candidates = vec![PersistedRelayCandidate {
             endpoint_id: "relay-cn-tcp".to_string(),
             transport: "udp".to_string(),
             address: "127.0.0.1:9000".to_string(),
@@ -1435,46 +1402,29 @@ mod tests {
     #[test]
     fn network_map_relay_candidates_are_extracted_for_persistence() {
         let candidates =
-            crate::extract_persisted_relay_candidates_from_network_map(&serde_json::json!({
-                "relayRegions": [
-                    {
-                        "countryCode": "CN",
-                        "regionId": "sha",
-                        "clusterId": "cn-a",
-                        "endpoints": [
-                            {
-                                "endpointId": "relay-cn-udp",
-                                "transport": "udp",
-                                "address": "127.0.0.1:9000"
-                            }
-                        ]
-                    }
-                ]
-            }));
+            crate::relay_candidates::extract_persisted_relay_candidates_from_network_map(
+                &serde_json::json!({
+                    "relayRegions": [
+                        {
+                            "countryCode": "CN",
+                            "regionId": "sha",
+                            "clusterId": "cn-a",
+                            "endpoints": [
+                                {
+                                    "endpointId": "relay-cn-udp",
+                                    "transport": "udp",
+                                    "address": "127.0.0.1:9000"
+                                }
+                            ]
+                        }
+                    ]
+                }),
+            );
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].endpoint_id, "relay-cn-udp");
         assert_eq!(candidates[0].country_code.as_deref(), Some("CN"));
         assert_eq!(candidates[0].cluster_id.as_deref(), Some("cn-a"));
-    }
-
-    #[test]
-    fn relay_http3_health_uses_stream_probe() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let candidate = crate::PersistedRelayCandidate {
-            endpoint_id: "relay-http3".to_string(),
-            transport: "http3".to_string(),
-            address: listener.local_addr().unwrap().to_string(),
-            country_code: Some("CN".to_string()),
-            region_id: Some("sha".to_string()),
-            cluster_id: Some("cn-a".to_string()),
-        };
-
-        let sample = probe_relay_candidate(&candidate, None);
-
-        assert!(sample.observed_rtt_ms.is_some());
-        assert_eq!(sample.packet_loss_ppm, Some(0));
-        assert!(sample.path_score.unwrap_or(10_000) < 10_000);
     }
 }
 

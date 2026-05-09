@@ -19,21 +19,36 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _messageTargetController =
+      TextEditingController();
+  final TextEditingController _messageBodyController = TextEditingController();
+  final TextEditingController _serverBaseUrlController =
+      TextEditingController();
   String? _lastDiagnosticsSnapshot;
   String? _lastShownError;
+  String? _serverBaseUrl;
   bool _lastSignedIn = false;
+  bool _messageSending = false;
 
   @override
   void initState() {
     super.initState();
     widget.bridge.state.addListener(_logStateChange);
     _logStateChange();
+    unawaited(_loadServerBaseUrl());
     unawaited(_startBridge());
   }
 
   @override
   void dispose() {
     widget.bridge.state.removeListener(_logStateChange);
+    _emailController.dispose();
+    _passwordController.dispose();
+    _messageTargetController.dispose();
+    _messageBodyController.dispose();
+    _serverBaseUrlController.dispose();
     super.dispose();
   }
 
@@ -44,41 +59,55 @@ class _HomePageState extends State<HomePage> {
         child: ValueListenableBuilder<ClientViewState>(
           valueListenable: widget.bridge.state,
           builder: (context, state, _) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (state.signedIn)
-                          Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _buildSignedInHeader(state: state),
-                              _buildAndroidAuthorizationPanel(),
-                            ],
+            return Align(
+              alignment: Alignment.topCenter,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (state.signedIn) ...[
+                        _buildSignedInHeader(state: state),
+                        _buildAndroidAuthorizationPanel(),
+                        const SizedBox(height: 14),
+                        _ClientMessageComposer(
+                          targetController: _messageTargetController,
+                          bodyController: _messageBodyController,
+                          syncing: state.syncing || _messageSending,
+                          onSend: _sendClientMessage,
+                        ),
+                        const SizedBox(height: 14),
+                        _SignedInActions(
+                          showConsole: _showWebConsoleAction,
+                          onOpenConsole: _showWebConsoleAction
+                              ? () => widget.bridge.dispatch(
+                                    const ClientCommand(
+                                      ClientCommandType.openWebConsole,
+                                    ),
+                                  )
+                              : null,
+                          onLogout: () => widget.bridge.dispatch(
+                            const ClientCommand(ClientCommandType.logout),
+                          ),
+                        ),
+                      ] else ...[
+                        const _SignedOutStatus(),
+                        const SizedBox(height: 14),
+                        if (_usesPasswordLogin)
+                          _PasswordLoginForm(
+                            emailController: _emailController,
+                            passwordController: _passwordController,
+                            serverBaseUrl: _serverBaseUrl,
+                            syncing: state.syncing,
+                            onSettings: _showServerSettings,
+                            onSubmit: _loginWithPassword,
                           )
                         else
-                          const _SignedOutStatus(),
-                        if (state.signedIn) ...[
-                          const Spacer(),
-                          _SignedInActions(
-                            onOpenConsole: () => widget.bridge.dispatch(
-                              const ClientCommand(
-                                ClientCommandType.openWebConsole,
-                              ),
-                            ),
-                            onLogout: () => widget.bridge.dispatch(
-                              const ClientCommand(ClientCommandType.logout),
-                            ),
-                          ),
-                        ] else ...[
-                          const Spacer(),
                           SizedBox(
-                            height: 38,
+                            height: 40,
                             child: FilledButton(
                               onPressed: state.syncing
                                   ? null
@@ -90,17 +119,131 @@ class _HomePageState extends State<HomePage> {
                               child: const Text('Login'),
                             ),
                           ),
-                        ],
                       ],
-                    ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             );
           },
         ),
       ),
     );
+  }
+
+  bool get _usesPasswordLogin =>
+      Theme.of(context).platform == TargetPlatform.iOS ||
+      Theme.of(context).platform == TargetPlatform.android;
+
+  bool get _showWebConsoleAction => !_usesPasswordLogin;
+
+  Future<void> _loadServerBaseUrl() async {
+    final value = await widget.bridge.serverBaseUrl();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _serverBaseUrl = value;
+      _serverBaseUrlController.text = value;
+    });
+  }
+
+  Future<void> _showServerSettings() async {
+    _serverBaseUrlController.text =
+        _serverBaseUrl ?? await widget.bridge.serverBaseUrl();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('服务器设置'),
+        content: TextField(
+          key: const Key('server-base-url'),
+          controller: _serverBaseUrlController,
+          keyboardType: TextInputType.url,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: '服务器地址',
+            hintText: 'http://example.com:28080',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          onSubmitted: (_) => Navigator.of(context).pop(true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('server-save'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (saved != true || !mounted) {
+      return;
+    }
+    final value = _serverBaseUrlController.text.trim();
+    try {
+      await widget.bridge.updateServerBaseUrl(value);
+      final normalized = await widget.bridge.serverBaseUrl();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverBaseUrl = normalized;
+        _serverBaseUrlController.text = normalized;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('服务器已设置为 $normalized')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存服务器失败：$error')),
+      );
+    }
+  }
+
+  Future<void> _loginWithPassword() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    ClientUiDiagnostics.unawaitedLog(
+      'home.login.submit',
+      state: widget.bridge.state.value,
+      fields: {
+        'hasEmail': email.isNotEmpty,
+        'hasPassword': password.isNotEmpty,
+      },
+    );
+    if (email.isEmpty || password.isEmpty) {
+      _lastShownError = null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入账号和密码')),
+      );
+      return;
+    }
+    try {
+      await widget.bridge.dispatch(
+        ClientCommand(
+          ClientCommandType.loginWithPassword,
+          {
+            'email': email,
+            'password': password,
+          },
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('登录失败：$error')),
+      );
+    }
   }
 
   void _toggleNetwork(bool enabled) {
@@ -117,6 +260,50 @@ class _HomePageState extends State<HomePage> {
             : ClientCommandType.disableNetwork,
       ),
     );
+  }
+
+  Future<void> _sendClientMessage() async {
+    if (_messageSending) {
+      return;
+    }
+    final targetDeviceId = _messageTargetController.text.trim();
+    final body = _messageBodyController.text.trim();
+    if (targetDeviceId.isEmpty || body.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入目标设备和消息')),
+      );
+      return;
+    }
+    setState(() => _messageSending = true);
+    try {
+      await widget.bridge.dispatch(
+        ClientCommand(
+          ClientCommandType.sendClientMessage,
+          {
+            'targetDeviceId': targetDeviceId,
+            'body': body,
+          },
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      _messageBodyController.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('消息已发送')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('消息发送失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _messageSending = false);
+      }
+    }
   }
 
   Future<void> _startBridge() async {
@@ -330,9 +517,106 @@ class _SignedInStatusPanel extends StatelessWidget {
             label: '当前 IP',
             value: currentIp,
           ),
+          if (_hasTraffic(state)) ...[
+            const SizedBox(height: 7),
+            _CompactInfoRow(
+              valueKey: const Key('client-traffic-total-value'),
+              icon: Icons.speed_rounded,
+              label: '已用',
+              value: _trafficTotalText(state),
+            ),
+            const SizedBox(height: 7),
+            _CompactInfoRow(
+              valueKey: const Key('client-traffic-current-value'),
+              icon: Icons.swap_vert_rounded,
+              label: '当前',
+              value: _trafficCurrentText(state),
+            ),
+          ],
+          if (_deviceIdText(state) != null) ...[
+            const SizedBox(height: 7),
+            _CompactInfoRow(
+              valueKey: const Key('client-device-id-value'),
+              icon: Icons.devices_other_rounded,
+              label: '设备 ID',
+              value: _deviceIdText(state)!,
+            ),
+          ],
+          if (_lastClientMessageText(state) != null) ...[
+            const SizedBox(height: 7),
+            _CompactInfoRow(
+              valueKey: const Key('last-client-message-value'),
+              icon: Icons.chat_bubble_outline_rounded,
+              label: '消息',
+              value: _lastClientMessageText(state)!,
+            ),
+          ],
+          if (_lastPolicyText(state) != null) ...[
+            const SizedBox(height: 7),
+            _CompactInfoRow(
+              valueKey: const Key('last-policy-value'),
+              icon: Icons.tune_rounded,
+              label: '策略',
+              value: _lastPolicyText(state)!,
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  String? _lastClientMessageText(ClientViewState state) {
+    final body = state.lastClientMessageBody?.trim();
+    final from = state.lastClientMessageFromDeviceId?.trim();
+    if ((body == null || body.isEmpty) && (from == null || from.isEmpty)) {
+      return null;
+    }
+    if (from != null && from.isNotEmpty && body != null && body.isNotEmpty) {
+      return '$from: $body';
+    }
+    return body?.isNotEmpty == true ? body : from;
+  }
+
+  String? _deviceIdText(ClientViewState state) {
+    final deviceId = state.deviceId?.trim();
+    if (deviceId == null || deviceId.isEmpty) {
+      return null;
+    }
+    return deviceId;
+  }
+
+  bool _hasTraffic(ClientViewState state) {
+    return state.trafficTxBytes != null || state.trafficRxBytes != null;
+  }
+
+  String _trafficTotalText(ClientViewState state) {
+    final txTotal = _formatBytes(state.trafficTxBytes ?? 0);
+    final rxTotal = _formatBytes(state.trafficRxBytes ?? 0);
+    return '↑$txTotal ↓$rxTotal';
+  }
+
+  String _trafficCurrentText(ClientViewState state) {
+    final txRate = _formatBytes(state.trafficTxBytesPerMinute ?? 0);
+    final rxRate = _formatBytes(state.trafficRxBytesPerMinute ?? 0);
+    return '↑$txRate/分 ↓$rxRate/分';
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)}M';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(bytes >= 10 * 1024 ? 0 : 1)}K';
+    }
+    return '${bytes}B';
+  }
+
+  String? _lastPolicyText(ClientViewState state) {
+    final policyId = state.lastRelayPolicyId?.trim();
+    if (policyId == null || policyId.isEmpty) {
+      return null;
+    }
+    return policyId;
   }
 }
 
@@ -667,28 +951,32 @@ class _SignedOutStatus extends StatelessWidget {
 
 class _SignedInActions extends StatelessWidget {
   const _SignedInActions({
+    required this.showConsole,
     required this.onOpenConsole,
     required this.onLogout,
   });
 
-  final VoidCallback onOpenConsole;
+  final bool showConsole;
+  final VoidCallback? onOpenConsole;
   final VoidCallback onLogout;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(
-          child: SizedBox(
-            height: 38,
-            child: OutlinedButton.icon(
-              onPressed: onOpenConsole,
-              icon: const Icon(Icons.open_in_browser_rounded, size: 17),
-              label: const Text('Web Console'),
+        if (showConsole) ...[
+          Expanded(
+            child: SizedBox(
+              height: 38,
+              child: OutlinedButton.icon(
+                onPressed: onOpenConsole,
+                icon: const Icon(Icons.open_in_browser_rounded, size: 17),
+                label: const Text('Web Console'),
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
+          const SizedBox(width: 8),
+        ],
         Expanded(
           child: SizedBox(
             height: 38,
@@ -700,6 +988,236 @@ class _SignedInActions extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ClientMessageComposer extends StatelessWidget {
+  const _ClientMessageComposer({
+    required this.targetController,
+    required this.bodyController,
+    required this.syncing,
+    required this.onSend,
+  });
+
+  final TextEditingController targetController;
+  final TextEditingController bodyController;
+  final bool syncing;
+  final Future<void> Function() onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.send_to_mobile_rounded,
+                size: 18,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '发送消息',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          TextField(
+            key: const Key('client-message-target'),
+            controller: targetController,
+            enabled: !syncing,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: '目标设备 ID',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const Key('client-message-body'),
+                  controller: bodyController,
+                  enabled: !syncing,
+                  minLines: 1,
+                  maxLines: 2,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) {
+                    if (!syncing) {
+                      unawaited(onSend());
+                    }
+                  },
+                  decoration: const InputDecoration(
+                    labelText: '消息',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 42,
+                child: FilledButton.icon(
+                  key: const Key('client-message-send'),
+                  onPressed: syncing ? null : () => unawaited(onSend()),
+                  icon: const Icon(Icons.send_rounded, size: 17),
+                  label: Text(syncing ? '发送中' : '发送'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PasswordLoginForm extends StatelessWidget {
+  const _PasswordLoginForm({
+    required this.emailController,
+    required this.passwordController,
+    required this.serverBaseUrl,
+    required this.syncing,
+    required this.onSettings,
+    required this.onSubmit,
+  });
+
+  final TextEditingController emailController;
+  final TextEditingController passwordController;
+  final String? serverBaseUrl;
+  final bool syncing;
+  final VoidCallback onSettings;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _ServerSettingsSummary(
+          serverBaseUrl: serverBaseUrl,
+          syncing: syncing,
+          onSettings: onSettings,
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          key: const Key('login-email'),
+          controller: emailController,
+          enabled: !syncing,
+          keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.next,
+          decoration: const InputDecoration(
+            labelText: '账号',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          key: const Key('login-password'),
+          controller: passwordController,
+          enabled: !syncing,
+          obscureText: true,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => syncing ? null : onSubmit(),
+          decoration: const InputDecoration(
+            labelText: '密码',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 42,
+          child: FilledButton(
+            key: const Key('login-submit'),
+            onPressed: syncing ? null : onSubmit,
+            child: Text(syncing ? '登录中' : '登录'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ServerSettingsSummary extends StatelessWidget {
+  const _ServerSettingsSummary({
+    required this.serverBaseUrl,
+    required this.syncing,
+    required this.onSettings,
+  });
+
+  final String? serverBaseUrl;
+  final bool syncing;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final value = serverBaseUrl?.trim();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.dns_rounded,
+            size: 18,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '服务器',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  value == null || value.isEmpty ? '未设置' : value,
+                  key: const Key('server-base-url-value'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            key: const Key('server-settings'),
+            tooltip: '服务器设置',
+            onPressed: syncing ? null : onSettings,
+            icon: const Icon(Icons.settings_rounded),
+          ),
+        ],
+      ),
     );
   }
 }

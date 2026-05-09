@@ -19,7 +19,13 @@ void main() {
         'localNodeId': 'node-a',
         'networkId': 'net-1',
         'pathPolicy': {
-          'preferred': ['direct_udp', 'relay_udp', 'relay_tcp'],
+          'preferred': [
+            'lan_udp',
+            'ipv6_udp',
+            'direct_udp',
+            'relay_udp',
+            'derp_tcp_tls_443'
+          ],
           'fallbackEnabled': true,
           'probeIntervalMs': 15000,
           'failoverAfterMs': 30000,
@@ -73,7 +79,13 @@ void main() {
     final relay = config.relayDataPlane;
     expect(relay, isNotNull);
     expect(relay!.enabled, isTrue);
-    expect(relay.pathPolicy!.preferred, ['direct_udp', 'relay_udp', 'relay_tcp']);
+    expect(relay.pathPolicy!.preferred, [
+      'lan_udp',
+      'ipv6_udp',
+      'direct_udp',
+      'relay_udp',
+      'derp_tcp_tls_443',
+    ]);
     expect(relay.peerPaths.single.candidates.first.kind, 'direct_udp');
     expect(relay.sessions.single.peerVirtualIps, ['10.0.0.9']);
     expect(relay.sessions.single.ticket.signature, 'sig');
@@ -87,7 +99,8 @@ void main() {
     final session = sessions.single as Map<String, Object?>;
     final ticket = session['ticket'] as Map<String, Object?>;
     expect(relayJson['relayAddress'], '127.0.0.1:3478');
-    expect((relayJson['pathPolicy'] as Map<String, Object?>)['fallbackEnabled'], isTrue);
+    expect((relayJson['pathPolicy'] as Map<String, Object?>)['fallbackEnabled'],
+        isTrue);
     expect(peerPath['peerNodeId'], 'node-b');
     expect((candidates.first as Map<String, Object?>)['kind'], 'direct_udp');
     expect(session['peerNodeId'], 'node-b');
@@ -98,11 +111,11 @@ void main() {
     const policy = PathPolicy();
 
     expect(policy.preferred, [
+      PathKind.lanUdp,
+      PathKind.ipv6Udp,
       PathKind.directUdp,
       PathKind.relayUdp,
-      PathKind.relayTcp,
-      PathKind.relayHttp3,
-      PathKind.relayTls,
+      PathKind.derpTcpTls443,
     ]);
   });
 }

@@ -1,4 +1,4 @@
-use client_core::ClientViewState;
+use client_core::{ClientViewState, NetworkRuntimeState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -23,6 +23,7 @@ pub(crate) enum LocalServiceMethod {
     LocalBusinessEventWatch,
     LocalStatus,
     LocalSession,
+    LocalNetworkModule,
     LocalPeers,
     LocalPathPlan,
     LocalPathDiagnose,
@@ -30,6 +31,9 @@ pub(crate) enum LocalServiceMethod {
     LocalRefreshRelayCandidates,
     LocalRelayPrepare,
     LocalControlStatus,
+    LocalEnsureDevice,
+    LocalConnectControlMqtt,
+    LocalSendClientMessage,
     LocalControlPlan,
     LocalControlCadence,
     LocalControlTickPlan,
@@ -40,6 +44,8 @@ pub(crate) enum LocalServiceMethod {
     LocalNetworkActivate,
     LocalNetworkDeactivate,
     LocalNetworkShutdown,
+    LocalPlatformNetworkConfig,
+    IngestPlatformRuntimeState,
     LocalAndroidNetworkConfig,
     LocalDiagnosticsExport,
     LocalLogout,
@@ -61,6 +67,7 @@ impl LocalServiceMethod {
             "localBusinessEventWatch" => Self::LocalBusinessEventWatch,
             "localStatus" => Self::LocalStatus,
             "localSession" => Self::LocalSession,
+            "localNetworkModule" => Self::LocalNetworkModule,
             "localPeers" => Self::LocalPeers,
             "localPathPlan" => Self::LocalPathPlan,
             "localPathDiagnose" => Self::LocalPathDiagnose,
@@ -68,6 +75,9 @@ impl LocalServiceMethod {
             "localRefreshRelayCandidates" => Self::LocalRefreshRelayCandidates,
             "localRelayPrepare" => Self::LocalRelayPrepare,
             "localControlStatus" => Self::LocalControlStatus,
+            "localEnsureDevice" => Self::LocalEnsureDevice,
+            "localConnectControlMqtt" => Self::LocalConnectControlMqtt,
+            "localSendClientMessage" => Self::LocalSendClientMessage,
             "localControlPlan" => Self::LocalControlPlan,
             "localControlCadence" => Self::LocalControlCadence,
             "localControlTickPlan" => Self::LocalControlTickPlan,
@@ -78,6 +88,8 @@ impl LocalServiceMethod {
             "localNetworkActivate" => Self::LocalNetworkActivate,
             "localNetworkDeactivate" => Self::LocalNetworkDeactivate,
             "localNetworkShutdown" => Self::LocalNetworkShutdown,
+            "localPlatformNetworkConfig" => Self::LocalPlatformNetworkConfig,
+            "ingestPlatformRuntimeState" => Self::IngestPlatformRuntimeState,
             "localAndroidNetworkConfig" => Self::LocalAndroidNetworkConfig,
             "localDiagnosticsExport" => Self::LocalDiagnosticsExport,
             "localLogout" => Self::LocalLogout,
@@ -186,6 +198,30 @@ pub(crate) struct MarkControlAckedRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct PlatformRuntimeStateReportRequest {
+    #[serde(default)]
+    pub(crate) platform: Option<String>,
+    #[serde(default)]
+    pub(crate) runtime_state: NetworkRuntimeState,
+    #[serde(default)]
+    pub(crate) traffic: Option<Value>,
+    #[serde(default)]
+    pub(crate) error: Option<String>,
+    #[serde(default)]
+    pub(crate) reported_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SendClientMessageRequest {
+    pub(crate) target_device_id: String,
+    pub(crate) body: String,
+    #[serde(default)]
+    pub(crate) metadata: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct WatchStateRequest {
     #[serde(default)]
     pub(crate) last_revision: u64,
@@ -260,6 +296,10 @@ mod tests {
             LocalServiceMethod::LocalPeers
         );
         assert_eq!(
+            LocalServiceMethod::parse("localNetworkModule"),
+            LocalServiceMethod::LocalNetworkModule
+        );
+        assert_eq!(
             LocalServiceMethod::parse("localPathPlan"),
             LocalServiceMethod::LocalPathPlan
         );
@@ -284,6 +324,18 @@ mod tests {
             LocalServiceMethod::LocalControlStatus
         );
         assert_eq!(
+            LocalServiceMethod::parse("localEnsureDevice"),
+            LocalServiceMethod::LocalEnsureDevice
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localConnectControlMqtt"),
+            LocalServiceMethod::LocalConnectControlMqtt
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localSendClientMessage"),
+            LocalServiceMethod::LocalSendClientMessage
+        );
+        assert_eq!(
             LocalServiceMethod::parse("localControlPlan"),
             LocalServiceMethod::LocalControlPlan
         );
@@ -298,6 +350,14 @@ mod tests {
         assert_eq!(
             LocalServiceMethod::parse("localNetworkActivate"),
             LocalServiceMethod::LocalNetworkActivate
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localPlatformNetworkConfig"),
+            LocalServiceMethod::LocalPlatformNetworkConfig
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("ingestPlatformRuntimeState"),
+            LocalServiceMethod::IngestPlatformRuntimeState
         );
         assert_eq!(
             LocalServiceMethod::parse("localAndroidNetworkConfig"),

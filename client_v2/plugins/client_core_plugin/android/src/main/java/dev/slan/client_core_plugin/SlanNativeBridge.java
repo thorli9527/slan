@@ -36,9 +36,27 @@ final class SlanNativeBridge {
     return isAvailable() && isTunRunning() == 1;
   }
 
+  static String statsJson() {
+    if (!isAvailable()) {
+      return "{}";
+    }
+    return tunStatsJson();
+  }
+
+  static String serviceRequest(String requestJson) {
+    if (!isAvailable()) {
+      return "{\"error\":\"client_core_ffi is not available\"}";
+    }
+    return serviceRequestJson(requestJson == null ? "{}" : requestJson);
+  }
+
   private static native int startTun(int tunFd, int[] relayFds, String configJson);
 
   private static native void stopTun();
 
   private static native int isTunRunning();
+
+  private static native String tunStatsJson();
+
+  private static native String serviceRequestJson(String requestJson);
 }

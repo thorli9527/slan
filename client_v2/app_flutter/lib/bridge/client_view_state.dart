@@ -12,6 +12,16 @@ class ClientViewState {
     this.notice,
     this.error,
     this.errorSource,
+    this.lastClientMessageId,
+    this.lastClientMessageFromDeviceId,
+    this.lastClientMessageBody,
+    this.lastRelayPolicyId,
+    this.lastRelayPolicyUpdatedAtMs,
+    this.trafficTxBytes,
+    this.trafficRxBytes,
+    this.trafficTxBytesPerMinute,
+    this.trafficRxBytesPerMinute,
+    this.trafficUpdatedAtMs,
   });
 
   final bool signedIn;
@@ -26,6 +36,16 @@ class ClientViewState {
   final String? notice;
   final String? error;
   final String? errorSource;
+  final String? lastClientMessageId;
+  final String? lastClientMessageFromDeviceId;
+  final String? lastClientMessageBody;
+  final String? lastRelayPolicyId;
+  final int? lastRelayPolicyUpdatedAtMs;
+  final int? trafficTxBytes;
+  final int? trafficRxBytes;
+  final int? trafficTxBytesPerMinute;
+  final int? trafficRxBytesPerMinute;
+  final int? trafficUpdatedAtMs;
 
   factory ClientViewState.initial() {
     return const ClientViewState(
@@ -51,6 +71,17 @@ class ClientViewState {
       notice: json['notice'] as String?,
       error: json['error'] as String?,
       errorSource: json['errorSource'] as String?,
+      lastClientMessageId: json['lastClientMessageId'] as String?,
+      lastClientMessageFromDeviceId:
+          json['lastClientMessageFromDeviceId'] as String?,
+      lastClientMessageBody: json['lastClientMessageBody'] as String?,
+      lastRelayPolicyId: json['lastRelayPolicyId'] as String?,
+      lastRelayPolicyUpdatedAtMs: json['lastRelayPolicyUpdatedAtMs'] as int?,
+      trafficTxBytes: _intValue(json['trafficTxBytes']),
+      trafficRxBytes: _intValue(json['trafficRxBytes']),
+      trafficTxBytesPerMinute: _intValue(json['trafficTxBytesPerMinute']),
+      trafficRxBytesPerMinute: _intValue(json['trafficRxBytesPerMinute']),
+      trafficUpdatedAtMs: _intValue(json['trafficUpdatedAtMs']),
     );
   }
 
@@ -67,6 +98,16 @@ class ClientViewState {
     String? notice,
     String? error,
     String? errorSource,
+    String? lastClientMessageId,
+    String? lastClientMessageFromDeviceId,
+    String? lastClientMessageBody,
+    String? lastRelayPolicyId,
+    int? lastRelayPolicyUpdatedAtMs,
+    int? trafficTxBytes,
+    int? trafficRxBytes,
+    int? trafficTxBytesPerMinute,
+    int? trafficRxBytesPerMinute,
+    int? trafficUpdatedAtMs,
     bool clearSyncReason = false,
     bool clearVirtualIp = false,
   }) {
@@ -83,6 +124,21 @@ class ClientViewState {
       notice: notice,
       error: error,
       errorSource: errorSource,
+      lastClientMessageId: lastClientMessageId ?? this.lastClientMessageId,
+      lastClientMessageFromDeviceId:
+          lastClientMessageFromDeviceId ?? this.lastClientMessageFromDeviceId,
+      lastClientMessageBody:
+          lastClientMessageBody ?? this.lastClientMessageBody,
+      lastRelayPolicyId: lastRelayPolicyId ?? this.lastRelayPolicyId,
+      lastRelayPolicyUpdatedAtMs:
+          lastRelayPolicyUpdatedAtMs ?? this.lastRelayPolicyUpdatedAtMs,
+      trafficTxBytes: trafficTxBytes ?? this.trafficTxBytes,
+      trafficRxBytes: trafficRxBytes ?? this.trafficRxBytes,
+      trafficTxBytesPerMinute:
+          trafficTxBytesPerMinute ?? this.trafficTxBytesPerMinute,
+      trafficRxBytesPerMinute:
+          trafficRxBytesPerMinute ?? this.trafficRxBytesPerMinute,
+      trafficUpdatedAtMs: trafficUpdatedAtMs ?? this.trafficUpdatedAtMs,
     );
   }
 
@@ -101,12 +157,23 @@ class ClientViewState {
             switchEnabled == other.switchEnabled &&
             notice == other.notice &&
             error == other.error &&
-            errorSource == other.errorSource;
+            errorSource == other.errorSource &&
+            lastClientMessageId == other.lastClientMessageId &&
+            lastClientMessageFromDeviceId ==
+                other.lastClientMessageFromDeviceId &&
+            lastClientMessageBody == other.lastClientMessageBody &&
+            lastRelayPolicyId == other.lastRelayPolicyId &&
+            lastRelayPolicyUpdatedAtMs == other.lastRelayPolicyUpdatedAtMs &&
+            trafficTxBytes == other.trafficTxBytes &&
+            trafficRxBytes == other.trafficRxBytes &&
+            trafficTxBytesPerMinute == other.trafficTxBytesPerMinute &&
+            trafficRxBytesPerMinute == other.trafficRxBytesPerMinute &&
+            trafficUpdatedAtMs == other.trafficUpdatedAtMs;
   }
 
   @override
   int get hashCode {
-    return Object.hash(
+    return Object.hashAll([
       signedIn,
       userLabel,
       deviceId,
@@ -119,7 +186,30 @@ class ClientViewState {
       notice,
       error,
       errorSource,
-    );
+      lastClientMessageId,
+      lastClientMessageFromDeviceId,
+      lastClientMessageBody,
+      lastRelayPolicyId,
+      lastRelayPolicyUpdatedAtMs,
+      trafficTxBytes,
+      trafficRxBytes,
+      trafficTxBytesPerMinute,
+      trafficRxBytesPerMinute,
+      trafficUpdatedAtMs,
+    ]);
+  }
+
+  static int? _intValue(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value);
+    }
+    return null;
   }
 }
 

@@ -7,6 +7,7 @@ mod control_transport_worker;
 mod local_api;
 #[cfg(test)]
 mod main_tests;
+mod network_module;
 mod relay_candidates;
 mod relay_models;
 mod relay_store;
@@ -18,7 +19,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, OnceLock},
     thread,
     time::{Duration, UNIX_EPOCH},
 };
@@ -32,10 +33,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use client_core::{
-    normalize_relay_transport, relay_path_kind_for_transport, AndroidVpnSessionConfig,
-    AssignedIpPayload, ClientCommand, ClientRuntime, ClientViewState, PathCandidate, PathKind,
-    PathState, PeerPathConfig, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
-    RelayPeerSession, RelayTicket,
+    normalize_relay_transport, relay_path_kind_for_transport, AssignedIpPayload, ClientCommand,
+    ClientRuntime, ClientViewState, PathCandidate, PathKind, PathState, PeerPathConfig,
+    PlatformNetwork, PlatformNetworkConfig, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
+    RelayPeerSession, RelayTicket, TrafficStatsPayload,
 };
 use client_core_platform::PlatformNetworkImpl;
 use serde_json::Value;
@@ -64,9 +65,10 @@ use crate::control_transport::{
 use crate::control_transport_worker::ControlTransportWorkerState;
 use crate::local_api::{
     LocalPathPlanResponse, LocalPeerView, LocalPeersResponse, LocalServiceMethod,
-    LocalSessionResponse, LocalStatusResponse, MarkControlAckedRequest, ServiceRequest,
-    StoredBusinessEvent, WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest,
-    WatchStateResponse, BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
+    LocalSessionResponse, LocalStatusResponse, MarkControlAckedRequest,
+    PlatformRuntimeStateReportRequest, ServiceRequest, StoredBusinessEvent,
+    WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
+    BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
     BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED,
     BUSINESS_STATE_CHANGED,
 };
@@ -88,16 +90,16 @@ use crate::relay_store::{
 };
 use crate::session_store::{
     app_data_dir, current_timestamp_ms, ensure_session_device_registered,
-    hydrate_session_from_control_plane, load_session, load_valid_registered_session,
-    persist_session, refresh_startup_session, remove_session, report_runtime_state,
-    session_auth_invalid_error, session_is_expired, sync_session_device_fields, PersistedSession,
+    ensure_session_node_and_control_session, hydrate_session_from_control_plane, load_session,
+    load_valid_registered_session, persist_session, refresh_startup_session, remove_session,
+    report_runtime_state, session_auth_invalid_error, session_is_expired,
+    sync_session_device_fields, PersistedSession,
 };
 use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
 
 const DEFAULT_SERVICE_HOST: &str = "127.0.0.1:46392";
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "SLANClientV2Service";
-const INSTALL_DEVICE_REGISTRATION_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const RELAY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECT_PLAN_TTL_MS: u64 = 10 * 60 * 1000;
 const RELAY_TICKET_RENEW_INTERVAL_MS: u64 = 20 * 60 * 1000;
@@ -105,6 +107,7 @@ const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
 const RELAY_RECONFIGURE_BACKOFF_MS: u64 = 60 * 1000;
 const RELAY_STATS_STALE_MS: u64 = 45 * 1000;
 const RELAY_FAILURE_RECONFIGURE_DELTA: u64 = 5;
+const SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[cfg(target_os = "windows")]
 define_windows_service!(ffi_service_main, service_main);
@@ -128,6 +131,15 @@ struct LocalServiceContext {
     sync_throttle: Arc<Mutex<ControlSyncThrottle>>,
     state_notifier: Arc<StateChangeNotifier>,
 }
+
+#[derive(Debug, Clone, Copy)]
+struct TrafficSample {
+    tx_bytes: u64,
+    rx_bytes: u64,
+    updated_at_ms: u64,
+}
+
+static LAST_TRAFFIC_SAMPLE: OnceLock<Mutex<Option<TrafficSample>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandOrigin {
@@ -178,7 +190,6 @@ fn service_info_json() -> Result<String> {
 fn run_service_server() -> Result<()> {
     log_service_error("client-core-service starting");
     ensure_elevated_runtime()?;
-    spawn_install_device_registration_worker();
 
     let bind_address = std::env::var("SLAN_CLIENT_CORE_SERVICE_HOST")
         .unwrap_or_else(|_| DEFAULT_SERVICE_HOST.to_string());
@@ -205,6 +216,7 @@ fn run_service_server() -> Result<()> {
         state_notifier: Arc::clone(&state_notifier),
     };
     spawn_auth_callback_poller(Arc::clone(&runtime), Arc::clone(&state_notifier));
+    spawn_session_refresh_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
     spawn_runtime_sync_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
     spawn_control_task_worker(
         Arc::clone(&runtime),
@@ -230,26 +242,6 @@ fn run_service_server() -> Result<()> {
         });
     }
     Ok(())
-}
-
-fn spawn_install_device_registration_worker() {
-    thread::spawn(|| loop {
-        match ControlPlaneClient::from_env().install_register_device() {
-            Ok(device) => {
-                log_service_error(format!(
-                    "client-core-service install device registered: deviceId={}",
-                    device.device_id
-                ));
-                return;
-            }
-            Err(error) => {
-                log_service_error(format!(
-                    "client-core-service install device registration retry pending: {error:#}"
-                ));
-                thread::sleep(INSTALL_DEVICE_REGISTRATION_RETRY_INTERVAL);
-            }
-        }
-    });
 }
 
 #[cfg(target_os = "windows")]
@@ -359,6 +351,10 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalStatus => return handle_local_status(&context.runtime),
         LocalServiceMethod::LocalSession => return handle_local_session(),
         LocalServiceMethod::LocalPeers => return handle_local_peers(),
+        LocalServiceMethod::LocalNetworkModule => {
+            return serde_json::to_string(&crate::network_module::network_module_snapshot())
+                .context("encode local network module")
+        }
         LocalServiceMethod::LocalPathPlan => return handle_local_path_plan(),
         LocalServiceMethod::LocalPathDiagnose => return handle_path_diagnose(),
         LocalServiceMethod::LocalRelayCandidates => return handle_relay_candidates(false),
@@ -392,9 +388,18 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalMarkTransportPublished => {
             return handle_mark_transport_published(request, &context.runtime, &context.task_queue)
         }
-        LocalServiceMethod::LocalAndroidNetworkConfig => {
-            return handle_local_android_network_config(&context.runtime)
+        LocalServiceMethod::LocalPlatformNetworkConfig
+        | LocalServiceMethod::LocalAndroidNetworkConfig => {
+            return handle_local_platform_network_config(&context.runtime)
         }
+        LocalServiceMethod::IngestPlatformRuntimeState => {
+            return handle_ingest_platform_runtime_state(
+                request,
+                &context.runtime,
+                &context.state_notifier,
+            )
+        }
+        LocalServiceMethod::LocalSendClientMessage => return handle_send_client_message(request),
         LocalServiceMethod::LocalDiagnosticsExport => {
             return handle_export_diagnostics(&context.runtime)
         }
@@ -645,12 +650,129 @@ fn handle_request(
     serde_json::to_string(&state).context("encode client state")
 }
 
-fn handle_local_android_network_config(
+fn handle_local_platform_network_config(
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
 ) -> Result<String> {
     let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
-    serde_json::to_string(&android_network_config_from_latest_control(&mut runtime)?)
-        .context("encode local android network config")
+    serde_json::to_string(&platform_network_config_from_latest_control(&mut runtime)?)
+        .context("encode local platform network config")
+}
+
+fn handle_ingest_platform_runtime_state(
+    request: ServiceRequest,
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<String> {
+    let report: PlatformRuntimeStateReportRequest =
+        serde_json::from_value(request.args).context("decode platform runtime state report")?;
+    let state = {
+        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+        let mut state = runtime
+            .dispatch(ClientCommand::ApplyPlatformRuntimeState(
+                report.runtime_state.clone(),
+            ))
+            .unwrap_or_else(|error| state_with_error(runtime.state(), error.to_string()));
+        if let Some(traffic) = traffic_stats_payload(report.traffic.as_ref(), report.reported_at_ms)
+        {
+            state = runtime
+                .dispatch(ClientCommand::ApplyTrafficStats(traffic))
+                .unwrap_or_else(|error| state_with_error(runtime.state(), error.to_string()));
+        }
+        state
+    };
+    publish_business_event(
+        state_notifier,
+        BUSINESS_NETWORK_RUNTIME_CHANGED,
+        serde_json::json!({
+            "platform": report.platform,
+            "runtimeState": report.runtime_state,
+            "traffic": report.traffic,
+            "error": report.error,
+            "reportedAtMs": report.reported_at_ms,
+            "state": state,
+        }),
+    );
+    serde_json::to_string(&serde_json::json!({
+        "accepted": true,
+        "state": state,
+    }))
+    .context("encode platform runtime state ingest response")
+}
+
+fn traffic_stats_payload(
+    traffic: Option<&Value>,
+    reported_at_ms: Option<u64>,
+) -> Option<TrafficStatsPayload> {
+    let traffic = traffic?;
+    let updated_at_ms = reported_at_ms
+        .or_else(|| value_u64(traffic, &["updatedAtMs", "reportedAtMs"]))
+        .unwrap_or_else(current_timestamp_ms);
+    let tx_bytes = value_u64(
+        traffic,
+        &["txBytes", "outboundBytes", "sentBytes", "bytesRead"],
+    )
+    .unwrap_or_default();
+    let rx_bytes = value_u64(
+        traffic,
+        &[
+            "rxBytes",
+            "inboundBytes",
+            "receivedBytes",
+            "bytesWritten",
+            "tunBytesWritten",
+        ],
+    )
+    .unwrap_or_default();
+    let previous = {
+        let mut guard = LAST_TRAFFIC_SAMPLE
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("traffic sample mutex poisoned");
+        let previous = *guard;
+        *guard = Some(TrafficSample {
+            tx_bytes,
+            rx_bytes,
+            updated_at_ms,
+        });
+        previous
+    };
+    let (tx_bytes_per_minute, rx_bytes_per_minute) = previous
+        .filter(|sample| updated_at_ms > sample.updated_at_ms)
+        .map(|sample| {
+            let elapsed_ms = updated_at_ms.saturating_sub(sample.updated_at_ms).max(1);
+            (
+                bytes_per_minute(tx_bytes.saturating_sub(sample.tx_bytes), elapsed_ms),
+                bytes_per_minute(rx_bytes.saturating_sub(sample.rx_bytes), elapsed_ms),
+            )
+        })
+        .unwrap_or((0, 0));
+    Some(TrafficStatsPayload {
+        tx_bytes,
+        rx_bytes,
+        tx_bytes_per_minute,
+        rx_bytes_per_minute,
+        updated_at_ms,
+    })
+}
+
+fn bytes_per_minute(delta_bytes: u64, elapsed_ms: u64) -> u64 {
+    ((delta_bytes as u128).saturating_mul(60_000) / elapsed_ms as u128) as u64
+}
+
+fn value_u64(value: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| {
+        value.get(*key).and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|value| u64::try_from(value).ok()))
+                .or_else(|| {
+                    value
+                        .as_f64()
+                        .filter(|value| *value >= 0.0)
+                        .map(|value| value as u64)
+                })
+        })
+    })
 }
 
 fn control_transport_status() -> Result<ControlTransportStatus> {
@@ -681,6 +803,31 @@ fn console_login_key() -> Result<Value> {
         "loginKey": login_key,
         "deviceId": session.device_id,
     }))
+}
+
+fn handle_send_client_message(request: ServiceRequest) -> Result<String> {
+    let input: crate::local_api::SendClientMessageRequest =
+        serde_json::from_value(request.args).context("decode send client message request")?;
+    let session = load_session().context("load session")?;
+    let network_id = session
+        .active_network_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("active network is not available"))?;
+    let from_device_id = session
+        .device_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("device id is not available"))?;
+    let response = ControlPlaneClient::from_env().send_client_message(
+        &session.access_token,
+        network_id,
+        from_device_id,
+        &input.target_device_id,
+        &input.body,
+        input.metadata.as_ref(),
+    )?;
+    serde_json::to_string(&response).context("encode send client message response")
 }
 
 fn control_transport_tick_plan(args: Value) -> Result<ControlTransportTickPlan> {
@@ -1776,6 +1923,26 @@ where
     P: client_core::PlatformNetwork,
 {
     let (command, side_effect) = match command {
+        ClientCommand::LoginWithPassword(payload) => {
+            let auth_payload = match ControlPlaneClient::from_env()
+                .login_with_password(&payload.email, &payload.password)
+            {
+                Ok(payload) => payload,
+                Err(error) => {
+                    log_service_error(format!(
+                        "client-core-service password login failed: {error:#}"
+                    ));
+                    return state_with_error(runtime.state(), format!("登录失败: {error:#}"));
+                }
+            };
+            let session = hydrate_session_from_control_plane(auth_payload.clone())
+                .unwrap_or_else(|_| PersistedSession::from(auth_payload));
+            let side_effect = persist_session(&session);
+            (
+                ClientCommand::ApplyAuthCallback(session.into()),
+                side_effect,
+            )
+        }
         ClientCommand::ApplyAuthCallback(payload) => {
             let session = hydrate_session_from_control_plane(payload.clone())
                 .unwrap_or_else(|_| PersistedSession::from(payload.clone()));
@@ -1926,9 +2093,9 @@ where
     }
 }
 
-fn android_network_config_from_latest_control<P>(
+fn platform_network_config_from_latest_control<P>(
     runtime: &mut ClientRuntime<P>,
-) -> Result<AndroidVpnSessionConfig>
+) -> Result<PlatformNetworkConfig>
 where
     P: client_core::PlatformNetwork,
 {
@@ -1945,6 +2112,8 @@ where
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
+    ensure_session_node_and_control_session(&client, &mut session)
+        .context("ensure node control session after network activation")?;
     if !activation.relay_candidates.is_empty() {
         session.relay_candidates = sorted_persisted_relay_candidates(
             activation
@@ -1965,7 +2134,7 @@ where
         &activation.peers,
         activation.virtual_ip.as_str(),
     );
-    Ok(AndroidVpnSessionConfig {
+    Ok(PlatformNetworkConfig {
         session_name: "SLAN".to_string(),
         virtual_ip: activation.virtual_ip,
         prefix_len: activation.prefix_len,
@@ -2063,7 +2232,16 @@ fn relay_candidate_matching_connect_plan_path(
 }
 
 fn load_network_session() -> Result<PersistedSession> {
-    let session = load_session()?;
+    let session = match load_session() {
+        Ok(session) => session,
+        Err(error) => {
+            if error.to_string().contains("No such file or directory") {
+                let _ = remove_session();
+                return Err(anyhow::anyhow!("login required"));
+            }
+            return Err(error);
+        }
+    };
     if session.access_token.trim().is_empty() {
         let _ = remove_session();
         return Err(anyhow::anyhow!("login required"));
@@ -2121,6 +2299,8 @@ where
             .unwrap_or_else(|| "none".to_string())
     ));
     session.virtual_ip = Some(activation.virtual_ip.clone());
+    ensure_session_node_and_control_session(&client, session)
+        .context("ensure node control session after network activation")?;
     if !activation.relay_candidates.is_empty() {
         session.relay_candidates = sorted_persisted_relay_candidates(
             activation
@@ -2324,7 +2504,7 @@ fn peer_path_configs(
                     if address.is_empty() {
                         continue;
                     }
-                    if path.path_type == PathKind::DirectUdp.as_str() {
+                    if let Some(kind) = direct_path_kind_for_path_type(&path.path_type) {
                         if direct_addresses
                             .iter()
                             .any(|value: &String| value == address)
@@ -2332,7 +2512,7 @@ fn peer_path_configs(
                             continue;
                         }
                         direct_addresses.push(address.to_string());
-                        candidates.push(direct_udp_path_candidate(address));
+                        candidates.push(direct_path_candidate(kind, address));
                     } else if let Some(candidate) =
                         relay_path_candidate_from_connect_plan(path, relay_session, relay)
                     {
@@ -2349,7 +2529,7 @@ fn peer_path_configs(
                     return None;
                 }
                 direct_addresses.push(address.to_string());
-                Some(direct_udp_path_candidate(address))
+                Some(direct_path_candidate(PathKind::DirectUdp, address))
             }));
             if let Some(session) = relay_session {
                 let relay_transport = normalize_relay_transport(&relay.transport).unwrap_or("udp");
@@ -2471,9 +2651,15 @@ fn relay_path_candidate_from_connect_plan(
 fn relay_transport_for_path_type(path_type: &str) -> Option<&'static str> {
     match path_type.trim() {
         "relay_udp" => Some("udp"),
-        "relay_tcp" => Some("tcp"),
-        "relay_tls" => Some("tls"),
-        "relay_http3" => Some("http3"),
+        _ => None,
+    }
+}
+
+fn direct_path_kind_for_path_type(path_type: &str) -> Option<PathKind> {
+    match path_type.trim() {
+        "lan_udp" => Some(PathKind::LanUdp),
+        "ipv6_udp" => Some(PathKind::Ipv6Udp),
+        "direct_udp" => Some(PathKind::DirectUdp),
         _ => None,
     }
 }
@@ -2492,9 +2678,9 @@ fn relay_path_candidate_exists(candidates: &[PathCandidate], candidate: &PathCan
     })
 }
 
-fn direct_udp_path_candidate(address: &str) -> PathCandidate {
+fn direct_path_candidate(kind: PathKind, address: &str) -> PathCandidate {
     PathCandidate {
-        kind: PathKind::DirectUdp,
+        kind,
         state: PathState::Probing,
         endpoint_id: None,
         address: Some(address.to_string()),
@@ -2908,6 +3094,79 @@ fn spawn_auth_callback_poller(
     });
 }
 
+fn spawn_session_refresh_worker(
+    runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: Arc<StateChangeNotifier>,
+) {
+    thread::spawn(move || loop {
+        thread::sleep(SESSION_REFRESH_INTERVAL);
+        let signed_in = {
+            let runtime = runtime.lock().expect("client runtime mutex poisoned");
+            runtime.state().signed_in
+        };
+        if !signed_in {
+            continue;
+        }
+        match refresh_logged_in_session() {
+            Ok(Some(session)) => {
+                let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+                let before = runtime.state().clone();
+                let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+                let state = runtime.state().clone();
+                if state != before {
+                    let business_data =
+                        serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
+                    publish_business_event(
+                        &state_notifier,
+                        BUSINESS_SESSION_CHANGED,
+                        business_data,
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                log_service_error(format!(
+                    "client-core-service session refresh skipped: {error:#}"
+                ));
+                if session_auth_invalid_error(&error)
+                    || error.to_string().contains("session expired")
+                {
+                    let _ = remove_session();
+                    let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+                    let _ = runtime.dispatch(ClientCommand::Logout);
+                    let business_data = serde_json::to_value(runtime.state())
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                    publish_business_event(
+                        &state_notifier,
+                        BUSINESS_SESSION_CHANGED,
+                        business_data,
+                    );
+                }
+            }
+        }
+    });
+}
+
+fn refresh_logged_in_session() -> Result<Option<PersistedSession>> {
+    let session = match load_session() {
+        Ok(session) => session,
+        Err(error) => {
+            if error.to_string().contains("No such file or directory") {
+                return Err(anyhow::anyhow!("login required"));
+            }
+            return Err(error);
+        }
+    };
+    if session.access_token.trim().is_empty() {
+        return Ok(None);
+    }
+    if session_is_expired(&session) {
+        let _ = remove_session();
+        return Err(anyhow::anyhow!("session expired; please login again"));
+    }
+    ensure_session_device_registered(session).map(Some)
+}
+
 fn spawn_runtime_sync_worker(
     runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     state_notifier: Arc<StateChangeNotifier>,
@@ -3073,6 +3332,26 @@ fn maintain_relay_data_plane(
     let business_data = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
     publish_business_event(state_notifier, business_type, business_data);
     Ok(())
+}
+
+pub(crate) fn reconfigure_active_control_network(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+) -> ClientViewState {
+    let mut session = match load_network_session() {
+        Ok(session) => session,
+        Err(error) => {
+            let state = {
+                let runtime = runtime.lock().expect("client runtime mutex poisoned");
+                runtime.state().clone()
+            };
+            return state_with_error(&state, error.to_string());
+        }
+    };
+    let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+    match activate_control_network_for_session(&mut runtime, &mut session) {
+        Ok(()) => runtime.state().clone(),
+        Err(error) => state_with_error(runtime.state(), error.to_string()),
+    }
 }
 
 fn relay_maintenance_reconfigure_reason(

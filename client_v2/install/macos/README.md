@@ -4,6 +4,7 @@ The macOS installer mirrors the Windows installer boundary:
 
 - The package installs `SLAN Client V2.app` into `/Applications`.
 - The package installs `client-core-service` into `/Library/Application Support/SLAN`.
+- The package installs LaunchAgent `dev.slan.client-v2` to run the menu bar app in the logged-in user session.
 - `postinstall` runs `client-core-service --ensure-device-id` to persist the stable hardware-derived device ID before the service starts.
 - `postinstall` installs and starts launchd label `dev.slan.client-core-service`.
 - Device install registration does not require login: `client-core-service` retries `/devices/install-register` on startup until the stable device ID exists in server-biz.

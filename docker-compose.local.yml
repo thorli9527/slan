@@ -64,6 +64,7 @@ services:
       SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
       SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
       SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-change-me-mqtt-secret}"
+      SLAN_MQTT_PUBLISH_TIMEOUT_MILLISECONDS: "${SLAN_MQTT_PUBLISH_TIMEOUT_MILLISECONDS:-15000}"
       SLAN_OPS_ACCESS_TOKEN: "${SLAN_OPS_ACCESS_TOKEN:-change-me-ops-token}"
       SLAN_OPS_DEFAULT_ADMIN_PASSWORD: "${SLAN_OPS_DEFAULT_ADMIN_PASSWORD:-admin}"
       SLAN_POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
@@ -266,6 +267,7 @@ services:
     image: caddy:2-alpine
     container_name: slan-caddy
     ports:
+      - "18080:80"
       - "18443:443"
     volumes:
       - ./deploy/local/Caddyfile:/etc/caddy/Caddyfile:ro

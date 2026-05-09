@@ -56,6 +56,9 @@ button.link { border: 0; background: transparent; color: #1677ff; font-weight: 7
 .wide-panel { grid-column: 1 / -1; }
 .relation-panel { grid-column: 1 / -1; }
 .panel-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.quota-strip { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid #e6e8ef; border-radius: 4px; background: #fafbfc; color: #6b7280; font-size: 13px; font-weight: 700; }
+.quota-strip strong { color: #111827; }
+.notice { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #ffd8bf; border-radius: 4px; background: #fff7f0; color: #d4380d; font-weight: 800; }
 .workspace-meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; color: #4b5563; font-size: 13px; font-weight: 700; }
 .sub-panel { margin-top: 18px; padding-top: 16px; border-top: 1px solid #edf0f5; display: grid; gap: 10px; }
 .sub-panel ul { margin: 4px 0 0; padding-left: 18px; color: #475569; font-size: 13px; }
@@ -106,6 +109,17 @@ code { color: #0f62fe; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
 .segmented button.active { background: #1677ff; color: #fff; }
 .rules-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .form { display: grid; gap: 12px; }
+.rule-template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rule-template-grid button { min-height: 52px; padding: 8px 10px; border: 1px solid #d9dce3; border-radius: 4px; background: #fff; color: #1f2937; text-align: left; cursor: pointer; }
+.rule-template-grid button:hover { border-color: #1677ff; background: #f7fbff; }
+.rule-template-grid button.active { border-color: #1677ff; background: #f0f7ff; box-shadow: inset 3px 0 0 #1677ff; }
+.rule-template-grid strong, .rule-template-grid span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-template-grid strong { font-size: 13px; line-height: 1.4; }
+.rule-template-grid span { margin-top: 3px; color: #6b7280; font-size: 12px; }
+.rule-fields-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; align-items: center; }
+.rule-fields-grid label { grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 10px; }
+.rule-fields-grid label span { white-space: nowrap; }
+.rule-fields-grid .span-2 { grid-column: auto; }
 .device-query-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 12px; }
 .record-value-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 12px; align-items: end; }
 .invite-layout { display: grid; gap: 16px; justify-items: center; }
@@ -126,12 +140,14 @@ input[type="radio"] { width: auto; height: auto; padding: 0; }
 input:focus, select:focus { border-color: #1677ff; outline: 0; box-shadow: 0 0 0 2px rgba(22, 119, 255, .12); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; background: rgba(15, 23, 42, .38); }
 .modal { width: min(520px, 100%); background: #fff; border: 1px solid #e6e8ef; border-radius: 6px; box-shadow: 0 24px 72px rgba(15, 23, 42, .22); padding: 18px; }
+.rule-modal { width: min(820px, 100%); max-height: calc(100vh - 48px); overflow: auto; }
 .modal-header, .modal-footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .modal-header { margin-bottom: 16px; }
 .modal-footer { justify-content: flex-end; margin-top: 18px; }
 @media (max-width: 1080px) {
   .shell { display: block; }
   .sider { width: auto; min-height: 0; }
-  .summary-grid, .summary-grid.compact, .page.two, .workspace-layout, .detail-grid, .rules-columns, .create-workspace-form { grid-template-columns: 1fr; }
+  .summary-grid, .summary-grid.compact, .page.two, .workspace-layout, .detail-grid, .rules-columns, .create-workspace-form, .rule-template-grid, .rule-fields-grid { grid-template-columns: 1fr; }
+  .rule-fields-grid .span-2 { grid-column: auto; }
   .wide-panel, .detail-card.span-2 { grid-column: auto; }
 }

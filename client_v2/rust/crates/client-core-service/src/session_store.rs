@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     control_plane::{ControlDevice, ControlPlaneClient, MqttCredential},
+    network_module::refresh_network_module_from_session,
     relay_models::PersistedRelayCandidate,
 };
 
@@ -145,17 +146,19 @@ pub(crate) fn ensure_session_device_registered(
         return Ok(session);
     }
     let client = ControlPlaneClient::from_env();
-    let device = client.ensure_device(&session.access_token, session.device_id.as_deref())?;
+    let device = client.ensure_device_for_user(
+        &session.access_token,
+        &session.user_id,
+        session.device_id.as_deref(),
+    )?;
     sync_session_device_fields(&mut session, &device);
-    if session.active_network_id.is_none() {
-        if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
-            session.active_network_id = Some(network_id);
-        }
-    }
+    refresh_session_network_from_device_configs(&client, &mut session);
+    ensure_session_node_and_control_session(&client, &mut session)?;
     if session.virtual_ip.is_none() {
         if let Some(virtual_ip) = device
             .current_virtual_ip
             .or(device.virtual_ip)
+            .or(device.global_ip)
             .filter(|value| !value.trim().is_empty())
         {
             session.virtual_ip = Some(virtual_ip);
@@ -168,20 +171,24 @@ pub(crate) fn ensure_session_device_registered(
 pub(crate) fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result<PersistedSession> {
     let client = ControlPlaneClient::from_env();
     let mut session = PersistedSession::from(payload);
-    let device = client.ensure_device(&session.access_token, session.device_id.as_deref())?;
+    let device = client.ensure_device_for_user(
+        &session.access_token,
+        &session.user_id,
+        session.device_id.as_deref(),
+    )?;
     sync_session_device_fields(&mut session, &device);
-    if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
-        session.active_network_id = Some(network_id);
-    }
+    refresh_session_network_from_device_configs(&client, &mut session);
+    ensure_session_node_and_control_session(&client, &mut session)?;
     if let Some(virtual_ip) = device
         .current_virtual_ip
+        .or(device.global_ip)
         .filter(|value| !value.trim().is_empty())
     {
         session.virtual_ip = Some(virtual_ip);
         return Ok(session);
     }
 
-    let devices = client.list_devices(&session.access_token)?;
+    let devices = client.list_devices_for_user(&session.access_token, &session.user_id)?;
     if let Some(current) = devices
         .into_iter()
         .find(|item| Some(item.device_id.as_str()) == session.device_id.as_deref())
@@ -189,12 +196,80 @@ pub(crate) fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result
         if let Some(virtual_ip) = current
             .current_virtual_ip
             .or(current.virtual_ip)
+            .or(current.global_ip)
             .filter(|value| !value.trim().is_empty())
         {
             session.virtual_ip = Some(virtual_ip);
         }
     }
     Ok(session)
+}
+
+fn refresh_session_network_from_device_configs(
+    client: &ControlPlaneClient,
+    session: &mut PersistedSession,
+) {
+    if let Ok(configs) = refresh_network_module_from_session(client, session) {
+        if let Some(config) = configs.first() {
+            session.active_network_id = Some(config.network_id.clone());
+            if let Some(global_ip) = config
+                .global_ip
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                session.virtual_ip = Some(global_ip.to_string());
+            }
+            return;
+        }
+    }
+    if session.active_network_id.is_none() {
+        if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
+            session.active_network_id = Some(network_id);
+        }
+    }
+}
+
+pub(crate) fn ensure_session_node_and_control_session(
+    client: &ControlPlaneClient,
+    session: &mut PersistedSession,
+) -> Result<()> {
+    let Some(device_id) = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    let Some(network_id) = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    let node_id = session
+        .self_node_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("node-{device_id}"));
+    let Ok(node) = client.register_node(&session.access_token, &device_id, &node_id) else {
+        session.self_node_id = Some(node_id);
+        return Ok(());
+    };
+    let node_id = node.node_id.trim();
+    if node_id.is_empty() {
+        return Ok(());
+    }
+    session.self_node_id = Some(node_id.to_string());
+    let _ = client.create_control_session(&session.access_token, node_id, &network_id);
+    Ok(())
 }
 
 pub(crate) fn report_runtime_state(state: &ClientViewState) {
@@ -225,6 +300,7 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
     let client = ControlPlaneClient::from_env();
     let _ = client.report_network_state(
         &session.access_token,
+        &session.user_id,
         device_id,
         network_id,
         state.network_enabled,
@@ -245,6 +321,9 @@ fn session_file_path() -> PathBuf {
 }
 
 pub(crate) fn app_data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
+        return PathBuf::from(dir);
+    }
     if cfg!(target_os = "windows") {
         return std::env::var_os("ProgramData")
             .map(PathBuf::from)
@@ -253,9 +332,18 @@ pub(crate) fn app_data_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
         return PathBuf::from("/Library/Application Support");
     }
-    std::env::var_os("SLAN_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib"))
+    if cfg!(target_os = "ios") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support");
+        }
+        return std::env::temp_dir();
+    }
+    if cfg!(target_os = "android") {
+        return std::env::temp_dir();
+    }
+    PathBuf::from("/var/lib")
 }
 
 pub(crate) fn load_session() -> Result<PersistedSession> {

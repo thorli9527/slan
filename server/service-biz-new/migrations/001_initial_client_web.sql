@@ -19,7 +19,9 @@ create table user_sessions (
 
 create table devices (
   id uuid primary key,
+  owner_user_id uuid not null references users(id),
   device_id varchar(128) not null unique,
+  name varchar(128),
   platform varchar(32) not null,
   os_name varchar(64),
   os_version varchar(64),
@@ -30,16 +32,14 @@ create table devices (
   updated_at timestamptz not null default now()
 );
 
-create table device_owners (
+create table user_aliases (
   id uuid primary key,
-  device_id uuid not null references devices(id),
-  user_id uuid not null references users(id),
-  status varchar(32) not null default 'active',
-  bound_at timestamptz not null default now(),
-  unbound_at timestamptz
+  owner_user_id uuid not null references users(id),
+  email varchar(320) not null,
+  alias varchar(128) not null,
+  updated_at timestamptz not null default now(),
+  unique(owner_user_id, email)
 );
-
-create unique index ux_device_active_owner on device_owners(device_id) where status = 'active';
 
 create table device_owner_change_logs (
   id uuid primary key,
@@ -48,6 +48,29 @@ create table device_owner_change_logs (
   to_user_id uuid not null references users(id),
   reason varchar(64) not null,
   changed_at timestamptz not null default now()
+);
+
+create table device_invites (
+  id uuid primary key,
+  inviter_user_id uuid not null references users(id),
+  invite_code varchar(64) not null unique,
+  status varchar(32) not null default 'active',
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  accepted_device_id uuid references devices(id),
+  accepted_user_id uuid references users(id),
+  accepted_at timestamptz
+);
+
+create table device_access_grants (
+  id uuid primary key,
+  device_id uuid not null references devices(id),
+  user_id uuid not null references users(id),
+  granted_by uuid references users(id),
+  invite_code varchar(64),
+  status varchar(32) not null default 'active',
+  created_at timestamptz not null default now(),
+  unique(device_id, user_id)
 );
 
 create table ipam_subnets (
@@ -93,7 +116,7 @@ create index ix_global_ip_pool_available on global_ip_addresses(subnet_id, addre
 --   global_ip_addresses_10_0_16_0_20
 -- The service layer should route inserts by subnet_id/address_offset.
 
-create table workspaces (
+create table networks (
   id uuid primary key,
   owner_user_id uuid not null references users(id),
   name varchar(128) not null,
@@ -105,48 +128,11 @@ create table workspaces (
   updated_at timestamptz not null default now()
 );
 
-create unique index ux_workspaces_owner_code on workspaces(owner_user_id, code) where status <> 'deleted';
+create unique index ux_networks_owner_code on networks(owner_user_id, code) where status <> 'deleted';
 
-create table workspace_members (
+create table network_devices (
   id uuid primary key,
-  workspace_id uuid not null references workspaces(id),
-  user_id uuid not null references users(id),
-  role varchar(32) not null default 'member',
-  status varchar(32) not null default 'active',
-  joined_at timestamptz not null default now(),
-  unique(workspace_id, user_id)
-);
-
-create table workspace_invites (
-  id uuid primary key,
-  workspace_id uuid not null references workspaces(id),
-  inviter_user_id uuid not null references users(id),
-  invitee_user_id uuid references users(id),
-  invitee_email varchar(320) not null,
-  role varchar(32) not null default 'member',
-  status varchar(32) not null default 'pending',
-  token_hash varchar(255),
-  expires_at timestamptz,
-  created_at timestamptz not null default now(),
-  handled_at timestamptz
-);
-
-create table workspace_device_invites (
-  id uuid primary key,
-  workspace_id uuid not null references workspaces(id),
-  inviter_user_id uuid references users(id),
-  invite_code varchar(64) not null unique,
-  status varchar(32) not null default 'pending',
-  expires_at timestamptz not null,
-  created_at timestamptz not null default now(),
-  accepted_device_id uuid references devices(id),
-  accepted_user_id uuid references users(id),
-  accepted_at timestamptz
-);
-
-create table workspace_devices (
-  id uuid primary key,
-  workspace_id uuid not null references workspaces(id),
+  network_id uuid not null references networks(id),
   device_id uuid not null references devices(id),
   owner_user_id uuid not null references users(id),
   alias varchar(128),
@@ -154,49 +140,59 @@ create table workspace_devices (
   status varchar(32) not null default 'active',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique(workspace_id, device_id)
+  unique(network_id, device_id)
 );
 
-create table workspace_dns_zones (
+create table network_dns_zones (
   id uuid primary key,
-  workspace_id uuid not null references workspaces(id),
+  network_id uuid not null references networks(id),
   zone_name varchar(255) not null,
   expose_global boolean not null default false,
   status varchar(32) not null default 'active',
   created_at timestamptz not null default now(),
-  unique(workspace_id, zone_name)
+  unique(network_id, zone_name)
 );
 
-create table workspace_dns_records (
+create table network_dns_records (
   id uuid primary key,
-  zone_id uuid not null references workspace_dns_zones(id),
-  workspace_id uuid not null references workspaces(id),
+  zone_id uuid not null references network_dns_zones(id),
+  network_id uuid not null references networks(id),
   name varchar(128) not null,
   fqdn varchar(255) not null unique,
   record_type varchar(16) not null default 'A',
   target_device_id uuid references devices(id),
   target_ip inet,
   cname varchar(255),
+  port varchar(16),
   ttl integer not null default 60,
   status varchar(32) not null default 'active',
   created_at timestamptz not null default now()
 );
 
+create table public_domain_mappings (
+  id uuid primary key,
+  network_id uuid not null references networks(id),
+  alias varchar(128) not null,
+  public_domain varchar(255) not null unique,
+  source_record varchar(255),
+  device_id uuid not null references devices(id),
+  protocol varchar(16) not null default 'HTTP',
+  port varchar(16) not null,
+  external_port varchar(16) not null,
+  status varchar(32) not null default 'enabled',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(network_id, alias)
+);
+
 create table security_groups (
   id uuid primary key,
-  workspace_id uuid not null references workspaces(id),
+  network_id uuid not null references networks(id),
   name varchar(128) not null,
   description text,
   default_policy varchar(16) not null default 'deny',
   status varchar(32) not null default 'active',
   created_at timestamptz not null default now()
-);
-
-create table security_group_devices (
-  id uuid primary key,
-  security_group_id uuid not null references security_groups(id),
-  device_id uuid not null references devices(id),
-  unique(security_group_id, device_id)
 );
 
 create table security_group_rules (
@@ -228,7 +224,7 @@ create table device_runtime_status (
 
 create table network_config_versions (
   id uuid primary key,
-  workspace_id uuid not null references workspaces(id),
+  network_id uuid not null references networks(id),
   device_id uuid not null references devices(id),
   config_version bigint not null,
   config_hash varchar(128) not null,

@@ -70,7 +70,7 @@ fi
 echo "sourceServiceInfo: $(service_info "$SOURCE_BIN")"
 
 if [[ "${EUID}" -ne 0 ]]; then
-  exec sudo "$0" "${ORIGINAL_ARGS[@]}"
+  exec sudo "$0" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
 fi
 
 mkdir -p "$INSTALL_DIR" "$LOG_DIR"

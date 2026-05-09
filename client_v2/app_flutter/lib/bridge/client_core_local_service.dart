@@ -121,6 +121,21 @@ class ClientCoreLocalService {
     return requestJson('localNetworkShutdown');
   }
 
+  Future<Map<String, Object?>?> localSendClientMessage({
+    required String targetDeviceId,
+    required String body,
+    Map<String, Object?>? metadata,
+  }) async {
+    return requestJson(
+      'localSendClientMessage',
+      arguments: {
+        'targetDeviceId': targetDeviceId,
+        'body': body,
+        if (metadata != null) 'metadata': metadata,
+      },
+    );
+  }
+
   Future<Map<String, Object?>?> localBusinessEventWatch({
     required int lastRevision,
     int timeoutMs = 30000,
@@ -135,9 +150,33 @@ class ClientCoreLocalService {
     );
   }
 
-  Future<AndroidVpnSessionConfig?> localAndroidNetworkConfig() async {
-    final json = await requestJson('localAndroidNetworkConfig');
+  Future<AndroidVpnSessionConfig?> localPlatformNetworkConfig() async {
+    final json = await requestJson('localPlatformNetworkConfig');
     return json == null ? null : AndroidVpnSessionConfig.fromJson(json);
+  }
+
+  @Deprecated(
+      'Use localPlatformNetworkConfig; config is no longer Android-only.')
+  Future<AndroidVpnSessionConfig?> localAndroidNetworkConfig() {
+    return localPlatformNetworkConfig();
+  }
+
+  Future<Map<String, Object?>?> ingestPlatformRuntimeState({
+    required Map<String, Object?> runtimeState,
+    String? platform,
+    Map<String, Object?>? traffic,
+    String? error,
+  }) {
+    return requestJson(
+      'ingestPlatformRuntimeState',
+      arguments: {
+        if (platform != null) 'platform': platform,
+        'runtimeState': runtimeState,
+        if (traffic != null) 'traffic': traffic,
+        if (error != null) 'error': error,
+        'reportedAtMs': DateTime.now().millisecondsSinceEpoch,
+      },
+    );
   }
 
   Future<Map<String, Object?>?> localDiagnosticsExport() async {

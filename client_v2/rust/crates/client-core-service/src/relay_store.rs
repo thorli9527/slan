@@ -103,11 +103,11 @@ pub(crate) fn relay_path_policy(
 
 fn path_kind_from_policy_value(value: &str) -> Option<PathKind> {
     match value.trim() {
+        "lan_udp" => Some(PathKind::LanUdp),
+        "ipv6_udp" => Some(PathKind::Ipv6Udp),
         "direct_udp" => Some(PathKind::DirectUdp),
         "relay_udp" => Some(PathKind::RelayUdp),
-        "relay_tcp" => Some(PathKind::RelayTcp),
-        "relay_http3" => Some(PathKind::RelayHttp3),
-        "relay_tls" => Some(PathKind::RelayTls),
+        "derp_tcp_tls_443" => Some(PathKind::DerpTcpTls443),
         _ => None,
     }
 }
@@ -159,8 +159,23 @@ pub(crate) fn load_recent_relay_data_plane_policy_for_path(
     let policy = serde_json::from_slice::<RelayDataPlanePolicy>(&payload).ok()?;
     if let Some(scope) = policy.scope.as_deref() {
         match scope {
-            "global" | "region" | "network" | "device" | "device_override" => {}
+            "global" | "region" | "network" | "device" | "device_override" | "peer_pair" => {}
             _ => return None,
+        }
+        if scope == "peer_pair" {
+            let source_device_id = policy
+                .source_device_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            let peer_device_id = policy
+                .peer_device_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            if source_device_id.is_empty() || peer_device_id.is_empty() {
+                return None;
+            }
         }
     }
     if let Some(policy_network_id) = policy.network_id.as_deref() {

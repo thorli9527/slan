@@ -7,7 +7,10 @@ pub mod relay_frame;
 pub mod runtime;
 pub mod state;
 
-pub use command::{AssignedIpPayload, AuthPayload, ClientCommand};
+pub use command::{
+    AssignedIpPayload, AuthPayload, ClientCommand, ClientMessageNoticePayload,
+    PasswordLoginPayload, RelayPolicyNoticePayload, TrafficStatsPayload,
+};
 pub use error::{ClientCoreError, ClientCoreResult};
 pub use packet::{
     ipv4_destination, ipv4_source, normalize_virtual_ip, relay_peer_index_for_packet,
@@ -23,7 +26,8 @@ pub use platform::{
     AndroidNetworkEvent, AndroidNetworkEventType, AndroidSocketProtectionReason,
     AndroidSocketProtectionRequest, AndroidVpnConsentRequest, AndroidVpnPermissionState,
     AndroidVpnSessionConfig, NetworkRuntimeState, PlatformDiagnosticCheck, PlatformNetwork,
-    PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession, RelayTicket, RouteSpec,
+    PlatformNetworkConfig, PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession,
+    RelayTicket, RouteSpec,
 };
 pub use relay_frame::relay_frame_is_replayed;
 pub use runtime::ClientRuntime;

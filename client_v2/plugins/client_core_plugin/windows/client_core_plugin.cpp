@@ -12,7 +12,6 @@
 #include <flutter/plugin_registrar_windows.h>
 #include <flutter/standard_method_codec.h>
 
-#include <chrono>
 #include <cctype>
 #include <cstdio>
 #include <memory>
@@ -28,13 +27,6 @@ namespace {
 constexpr char kChannelName[] = "dev.slan/client_core_v2";
 constexpr char kDefaultServiceHost[] = "127.0.0.1:46392";
 constexpr wchar_t kWindowsServiceName[] = L"SLANClientV2Service";
-
-std::string NewAuthCallbackId() {
-  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::system_clock::now().time_since_epoch())
-                       .count();
-  return "cb-" + std::to_string(now);
-}
 
 bool IsUsableClientDeviceId(const std::string& device_id) {
   if (device_id.empty()) {
@@ -472,17 +464,6 @@ std::string ReadCommandType(const flutter::EncodableValue* arguments) {
   return value == nullptr ? "" : *value;
 }
 
-void PutOptionalString(
-    flutter::EncodableMap* map,
-    const char* key,
-    const std::string& value) {
-  if (value.empty()) {
-    map->insert({flutter::EncodableValue(key), flutter::EncodableValue()});
-  } else {
-    map->insert({flutter::EncodableValue(key), flutter::EncodableValue(value)});
-  }
-}
-
 }  // namespace
 
 ClientCorePlugin::ClientCorePlugin() = default;
@@ -523,166 +504,7 @@ void ClientCorePlugin::HandleMethodCall(
     result->Success(flutter::EncodableValue(*service_response));
     return;
   }
-  if (method == "start") {
-    notice_ = "windowsPluginReady";
-    error_.clear();
-    result->Success(flutter::EncodableValue(StateAsMap()));
-    return;
-  }
-  if (method == "state" || method == "refresh") {
-    result->Success(flutter::EncodableValue(StateAsMap()));
-    return;
-  }
-  if (method == "dispatch") {
-    auto state = Dispatch(method_call.arguments());
-    if (command_type == "openWebConsole") {
-      OpenAuthenticatedWebConsole();
-    } else if (command_type == "loginWithBrowser") {
-      OpenWebConsole(auth_callback_id_, device_id_);
-    }
-    result->Success(flutter::EncodableValue(state));
-    return;
-  }
-  if (method == "enqueueControlTask" || method == "enqueueDownstreamControlTask" ||
-      method == "ingestDownstreamControlMessage") {
-    syncing_ = false;
-    switch_enabled_ = true;
-    error_ = "local service unavailable";
-    result->Success(flutter::EncodableValue(StateAsMap()));
-    return;
-  }
-  if (method == "localControlStatus") {
-    flutter::EncodableMap map;
-    map.insert({flutter::EncodableValue("mqttCredentialReady"), flutter::EncodableValue(false)});
-    map.insert({flutter::EncodableValue("controlSessionReady"), flutter::EncodableValue(false)});
-    map.insert({flutter::EncodableValue("ready"), flutter::EncodableValue(false)});
-    map.insert({
-        flutter::EncodableValue("missing"),
-        flutter::EncodableValue(flutter::EncodableList{
-            flutter::EncodableValue("localService"),
-        }),
-    });
-    result->Success(flutter::EncodableValue(map));
-    return;
-  }
-  if (method == "localControlPlan") {
-    flutter::EncodableMap map;
-    map.insert({flutter::EncodableValue("heartbeatQos"), flutter::EncodableValue("qos0")});
-    map.insert({flutter::EncodableValue("controlQos"), flutter::EncodableValue("qos2")});
-    result->Success(flutter::EncodableValue(map));
-    return;
-  }
-  if (method == "localControlCadence") {
-    flutter::EncodableMap map;
-    map.insert({flutter::EncodableValue("ackFlushIntervalMs"), flutter::EncodableValue(1000)});
-    map.insert({flutter::EncodableValue("heartbeatIntervalMs"), flutter::EncodableValue(30000)});
-    map.insert({flutter::EncodableValue("runtimeStateIntervalMs"), flutter::EncodableValue(10000)});
-    result->Success(flutter::EncodableValue(map));
-    return;
-  }
-  if (method == "localControlTickPlan") {
-    flutter::EncodableMap outbox;
-    outbox.insert({flutter::EncodableValue("includeHeartbeat"), flutter::EncodableValue(true)});
-    outbox.insert({flutter::EncodableValue("includeRuntimeState"), flutter::EncodableValue(true)});
-    outbox.insert({flutter::EncodableValue("includeControlAcks"), flutter::EncodableValue(true)});
-    flutter::EncodableMap map;
-    map.insert({flutter::EncodableValue("nowMs"), flutter::EncodableValue(static_cast<int64_t>(0))});
-    map.insert({flutter::EncodableValue("outbox"), flutter::EncodableValue(outbox)});
-    map.insert({flutter::EncodableValue("nextAckFlushDueMs"), flutter::EncodableValue(static_cast<int64_t>(0))});
-    map.insert({flutter::EncodableValue("nextHeartbeatDueMs"), flutter::EncodableValue(static_cast<int64_t>(0))});
-    map.insert({flutter::EncodableValue("nextRuntimeStateDueMs"), flutter::EncodableValue(static_cast<int64_t>(0))});
-    result->Success(flutter::EncodableValue(map));
-    return;
-  }
-  if (method == "localControlOutbox") {
-    flutter::EncodableMap map;
-    map.insert({flutter::EncodableValue("messages"), flutter::EncodableValue(flutter::EncodableList{})});
-    result->Success(flutter::EncodableValue(map));
-    return;
-  }
-  if (method == "localPendingControlAcks") {
-    result->Success(flutter::EncodableValue(flutter::EncodableList{}));
-    return;
-  }
-  if (method == "localMarkControlAcked") {
-    flutter::EncodableMap map;
-    map.insert({flutter::EncodableValue("acknowledged"), flutter::EncodableValue(false)});
-    map.insert({flutter::EncodableValue("error"), flutter::EncodableValue("local service unavailable")});
-    result->Success(flutter::EncodableValue(map));
-    return;
-  }
-  if (method == "localMarkTransportPublished") {
-    flutter::EncodableMap map;
-    map.insert({flutter::EncodableValue("published"), flutter::EncodableValue(false)});
-    map.insert({flutter::EncodableValue("error"), flutter::EncodableValue("local service unavailable")});
-    result->Success(flutter::EncodableValue(map));
-    return;
-  }
-  if (method == "localNetworkShutdown") {
-    network_enabled_ = false;
-    virtual_ip_.clear();
-    notice_ = "networkShutdown";
-    result->Success(flutter::EncodableValue(StateAsMap()));
-    return;
-  }
   result->NotImplemented();
-}
-
-flutter::EncodableMap ClientCorePlugin::Dispatch(
-    const flutter::EncodableValue* arguments) {
-  const std::string type = ReadCommandType(arguments);
-  syncing_ = true;
-  sync_reason_ = type;
-  switch_enabled_ = false;
-  error_.clear();
-  notice_.clear();
-
-  if (type == "loginWithBrowser") {
-    auth_callback_id_ = NewAuthCallbackId();
-    notice_ = "loginBrowserRequested";
-  } else if (type == "enableNetwork") {
-    network_enabled_ = false;
-    error_ = "local service unavailable: cannot enable network";
-  } else if (type == "disableNetwork") {
-    network_enabled_ = false;
-    virtual_ip_.clear();
-    notice_ = "networkDisableRequested";
-  } else if (type == "logout") {
-    signed_in_ = false;
-    user_label_.clear();
-    device_id_.clear();
-    auth_callback_id_.clear();
-    network_enabled_ = false;
-    virtual_ip_.clear();
-    notice_ = "signedOut";
-  } else if (type == "refresh") {
-    notice_ = "refreshed";
-  } else if (type == "openWebConsole") {
-    notice_ = "webConsoleRequested";
-  } else {
-    error_ = "unsupported command: " + type;
-  }
-
-  syncing_ = false;
-  sync_reason_.clear();
-  switch_enabled_ = true;
-  return StateAsMap();
-}
-
-flutter::EncodableMap ClientCorePlugin::StateAsMap() const {
-  flutter::EncodableMap map;
-  map.insert({flutter::EncodableValue("signedIn"), flutter::EncodableValue(signed_in_)});
-  PutOptionalString(&map, "userLabel", user_label_);
-  PutOptionalString(&map, "deviceId", device_id_);
-  PutOptionalString(&map, "authCallbackId", auth_callback_id_);
-  PutOptionalString(&map, "virtualIp", virtual_ip_);
-  map.insert({flutter::EncodableValue("networkEnabled"), flutter::EncodableValue(network_enabled_)});
-  map.insert({flutter::EncodableValue("syncing"), flutter::EncodableValue(syncing_)});
-  PutOptionalString(&map, "syncReason", sync_reason_);
-  map.insert({flutter::EncodableValue("switchEnabled"), flutter::EncodableValue(switch_enabled_)});
-  PutOptionalString(&map, "notice", notice_);
-  PutOptionalString(&map, "error", error_);
-  return map;
 }
 
 }  // namespace client_core_plugin

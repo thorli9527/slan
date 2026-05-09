@@ -27,11 +27,17 @@ export const WORKSPACE_PRESETS: WorkspacePreset[] = [
 ];
 
 export const SECURITY_RULE_TEMPLATES: SecurityRuleTemplate[] = [
-  { name: 'SSH 登录', direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self' },
-  { name: 'Web 服务', direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '80,443', subjectType: 'workspace', subjectValue: 'self' },
-  { name: 'ICMP Ping', direction: 'ingress', priority: 110, action: 'allow', protocol: 'icmp', port: 'all', subjectType: 'workspace', subjectValue: 'self' },
+  { name: 'SSH 登录', description: 'Linux 运维登录，TCP 22', direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self' },
+  { name: 'RDP 远程桌面', description: 'Windows 远程桌面，TCP 3389', direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '3389', subjectType: 'workspace', subjectValue: 'self' },
+  { name: 'HTTP 服务', description: 'Web 明文访问，TCP 80', direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '80', subjectType: 'workspace', subjectValue: 'self' },
+  { name: 'HTTPS 服务', description: 'Web 加密访问，TCP 443', direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '443', subjectType: 'workspace', subjectValue: 'self' },
+  { name: 'Web 服务', description: '同时开放 HTTP/HTTPS', direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '80,443', subjectType: 'workspace', subjectValue: 'self' },
+  { name: 'MySQL', description: '数据库访问，TCP 3306', direction: 'ingress', priority: 120, action: 'allow', protocol: 'tcp', port: '3306', subjectType: 'workspace', subjectValue: 'self' },
+  { name: 'Redis', description: '缓存访问，TCP 6379', direction: 'ingress', priority: 120, action: 'allow', protocol: 'tcp', port: '6379', subjectType: 'workspace', subjectValue: 'self' },
+  { name: 'ICMP Ping', description: '允许网络探测', direction: 'ingress', priority: 110, action: 'allow', protocol: 'icmp', port: 'all', subjectType: 'workspace', subjectValue: 'self' },
+  { name: '内网互通', description: '当前网络内全部协议互通', direction: 'ingress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'workspace', subjectValue: 'self' },
   { name: '全部出站', direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all' },
-  { name: '拒绝全部入站', direction: 'ingress', priority: 900, action: 'deny', protocol: 'all', port: 'all', subjectType: 'cidr', subjectValue: '0.0.0.0/0' },
+  { name: '拒绝全部入站', description: '兜底拒绝所有来源', direction: 'ingress', priority: 900, action: 'deny', protocol: 'all', port: 'all', subjectType: 'cidr', subjectValue: '0.0.0.0/0' },
 ];
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -63,8 +69,8 @@ export const INITIAL_WORKSPACE_DEVICE_IDS: Record<string, string[]> = {
 };
 
 export const INITIAL_WORKSPACES: WorkspaceRow[] = [
-  { workspaceId: 'default-user-000001', name: '默认网络', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: 'default.default-user-000001.user-000001.sub.slan.com' },
-  { workspaceId: 'workspace-000001', name: '开发组', code: 'dev', template: 'dev', status: 'enabled', members: 2, devices: 1, zone: 'dev.workspace-000001.user-000001.sub.slan.com' },
+  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: '默认网络', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: 'default.default-user-000001.user-000001.sub.slan.com' },
+  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: '开发组', code: 'dev', template: 'dev', status: 'enabled', members: 2, devices: 1, zone: 'dev.workspace-000001.user-000001.sub.slan.com' },
 ];
 
 export const INITIAL_MEMBERS: MemberRow[] = [
@@ -79,17 +85,17 @@ export const INITIAL_USER_ALIASES: UserAliasRow[] = [
 ];
 
 export const INITIAL_DNS_ZONES: DNSZoneRow[] = [
-  { workspaceId: 'default-user-000001', zone: 'default.lan', recordType: 'A', value: '10.0.0.1', expose: false, status: 'active' },
-  { workspaceId: 'workspace-000001', zone: 'dev.internal', recordType: 'A', value: '10.0.0.2', expose: true, status: 'active' },
+  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', zone: 'default.lan', recordType: 'A', value: '10.0.0.1', expose: false, status: 'active' },
+  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', zone: 'dev.internal', recordType: 'A', value: '10.0.0.2', expose: true, status: 'active' },
 ];
 
 export const INITIAL_DNS_RECORDS: DNSRow[] = [
-  { workspaceId: 'default-user-000001', name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@vlan.com / 办公 Mac / 443', deviceId: 'mac-001', port: '443', expose: false },
-  { workspaceId: 'workspace-000001', name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@vlan.com / Alice iPhone / 8443', deviceId: 'iphone-001', port: '8443', expose: true },
+  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@vlan.com / 办公 Mac / 443', deviceId: 'mac-001', port: '443', expose: false },
+  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@vlan.com / Alice iPhone / 8443', deviceId: 'iphone-001', port: '8443', expose: true },
 ];
 
 export const INITIAL_PUBLIC_MAPPINGS: PublicMappingRow[] = [
-  { workspaceId: 'default-user-000001', alias: 'api', publicDomain: 'api.default.alice.pub.slan.com', sourceRecord: 'api', deviceId: 'iphone-001', protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
+  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', alias: 'api', publicDomain: 'api.default.alice.pub.slan.com', sourceRecord: 'api', deviceId: 'iphone-001', protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
 ];
 
 export const INITIAL_SECURITY_RULES: SecurityRuleRow[] = [

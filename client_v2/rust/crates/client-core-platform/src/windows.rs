@@ -1,8 +1,7 @@
 use std::{
     ffi::{c_void, OsStr},
     fs,
-    io::{Read, Write},
-    net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
+    net::{SocketAddr, ToSocketAddrs, UdpSocket},
     os::windows::{ffi::OsStrExt, process::CommandExt},
     path::{Path, PathBuf},
     process::Command,
@@ -41,7 +40,6 @@ const RELAY_DATA_PLANE_FAILURE_THRESHOLD: u32 = 20;
 const PATH_SEND_FAILURES_BEFORE_DOWNGRADE: u32 = 3;
 const DIRECT_UDP_PROBE_PACKET: &[u8] = b"slan-direct-udp-probe-v1";
 const DIRECT_UDP_PONG_PACKET: &[u8] = b"slan-direct-udp-pong-v1";
-const RELAY_TCP_FRAME_SIZE_LIMIT: usize = 64 * 1024;
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
 
 type WintunAdapterHandle = *mut c_void;
@@ -372,6 +370,7 @@ struct RelayUdpTransport {
 struct DirectUdpPeer {
     peer_node_id: String,
     peer_virtual_ips: Vec<String>,
+    path_kind: PathKind,
     address: String,
     socket_addr: SocketAddr,
     last_rx_seq: u64,
@@ -388,18 +387,6 @@ struct DirectUdpReceive {
     frame_len: usize,
     remote_addr: SocketAddr,
     endpoint_changed: bool,
-}
-
-struct AttachedRelayTcpPeer {
-    peer_node_id: String,
-    peer_virtual_ips: Vec<String>,
-    stream: Mutex<TcpStream>,
-    last_rx_seq: u64,
-}
-
-struct RelayTcpTransport {
-    path_kind: PathKind,
-    peers: Vec<AttachedRelayTcpPeer>,
 }
 
 impl DirectUdpTransport {
@@ -426,13 +413,14 @@ impl DirectUdpTransport {
             }
         };
         for path in configured_paths {
-            let Some(address) = direct_udp_address_for_peer(path) else {
+            let Some((path_kind, address)) = udp_address_for_peer(path) else {
                 continue;
             };
             match resolve_direct_udp_peer_address(address.as_str()) {
                 Ok(socket_addr) => peers.push(DirectUdpPeer {
                     peer_node_id: path.peer_node_id.clone(),
                     peer_virtual_ips: path.peer_virtual_ips.clone(),
+                    path_kind,
                     address,
                     socket_addr,
                     last_rx_seq: 0,
@@ -477,13 +465,13 @@ impl DirectUdpTransport {
             PathSendResult::Sent {
                 peer_index,
                 peer_node_id: peer.peer_node_id.clone(),
-                path_kind: PathKind::DirectUdp,
+                path_kind: peer.path_kind,
             }
         } else {
             PathSendResult::SendFailed {
                 peer_index,
                 peer_node_id: peer.peer_node_id.clone(),
-                path_kind: PathKind::DirectUdp,
+                path_kind: peer.path_kind,
             }
         }
     }
@@ -563,105 +551,6 @@ impl DirectUdpTransport {
         peer.socket_addr = remote_addr;
         peer.address = remote_addr.to_string();
         true
-    }
-}
-
-impl RelayTcpTransport {
-    #[cfg(test)]
-    fn new(peers: Vec<AttachedRelayTcpPeer>) -> Self {
-        Self {
-            path_kind: PathKind::RelayTcp,
-            peers,
-        }
-    }
-
-    fn attach(
-        configured_paths: &[client_core::PeerPathConfig],
-        local_node_id: &str,
-        sessions: &[RelayPeerSession],
-    ) -> Option<Self> {
-        Self::attach_kind(
-            PathKind::RelayTcp,
-            configured_paths,
-            local_node_id,
-            sessions,
-        )
-    }
-
-    fn attach_kind(
-        path_kind: PathKind,
-        configured_paths: &[client_core::PeerPathConfig],
-        local_node_id: &str,
-        sessions: &[RelayPeerSession],
-    ) -> Option<Self> {
-        let mut peers = Vec::new();
-        for session in sessions {
-            let Some(address) =
-                relay_stream_address_for_peer(configured_paths, &session.peer_node_id, path_kind)
-                    .or_else(|| relay_stream_address_from_ticket(session, path_kind))
-            else {
-                continue;
-            };
-            match attach_stream_relay_session(address.as_str(), local_node_id, session, path_kind) {
-                Ok(stream) => peers.push(AttachedRelayTcpPeer {
-                    peer_node_id: session.peer_node_id.clone(),
-                    peer_virtual_ips: session.peer_virtual_ips.clone(),
-                    stream: Mutex::new(stream),
-                    last_rx_seq: 0,
-                }),
-                Err(error) => {
-                    eprintln!(
-                        "client-core-platform {} attach skipped peer={} error={error:#}",
-                        path_kind.as_str(),
-                        session.peer_node_id,
-                    );
-                }
-            }
-        }
-        (!peers.is_empty()).then_some(Self { path_kind, peers })
-    }
-
-    fn peer_index_for_packet(&self, payload: &[u8]) -> Option<usize> {
-        relay_peer_index_for_packet(
-            &self
-                .peers
-                .iter()
-                .map(|peer| peer.peer_virtual_ips.as_slice())
-                .collect::<Vec<_>>(),
-            payload,
-        )
-        .or_else(|| (self.peers.len() == 1).then_some(0))
-    }
-
-    fn send_to_peer(&self, peer_index: usize, frame: &[u8]) -> PathSendResult {
-        let Some(peer) = self.peers.get(peer_index) else {
-            return PathSendResult::NoRoute;
-        };
-        if send_relay_tcp_frame(peer, frame) {
-            PathSendResult::Sent {
-                peer_index,
-                peer_node_id: peer.peer_node_id.clone(),
-                path_kind: self.path_kind,
-            }
-        } else {
-            PathSendResult::SendFailed {
-                peer_index,
-                peer_node_id: peer.peer_node_id.clone(),
-                path_kind: self.path_kind,
-            }
-        }
-    }
-
-    fn peers_mut(&mut self) -> &mut [AttachedRelayTcpPeer] {
-        &mut self.peers
-    }
-
-    fn path_kind(&self) -> PathKind {
-        self.path_kind
-    }
-
-    fn peer_count(&self) -> usize {
-        self.peers.len()
     }
 }
 
@@ -812,21 +701,10 @@ impl Drop for RelayUdpTransport {
     }
 }
 
-impl Drop for RelayTcpTransport {
-    fn drop(&mut self) {
-        for peer in &self.peers {
-            if let Ok(stream) = peer.stream.lock() {
-                let _ = stream.shutdown(std::net::Shutdown::Both);
-            }
-        }
-    }
-}
-
 struct WindowsPathManager {
     tracker: PathTracker,
     direct_udp: Option<DirectUdpTransport>,
     relay_udp: RelayUdpTransport,
-    relay_streams: Vec<RelayTcpTransport>,
 }
 
 struct PacketRoute {
@@ -840,7 +718,6 @@ impl WindowsPathManager {
         policy: PathPolicy,
         direct_udp: Option<DirectUdpTransport>,
         relay_udp: RelayUdpTransport,
-        relay_tcp: Option<RelayTcpTransport>,
     ) -> Self {
         let active_paths = relay_udp
             .peers()
@@ -851,13 +728,6 @@ impl WindowsPathManager {
             tracker: PathTracker::new(policy, active_paths),
             direct_udp,
             relay_udp,
-            relay_streams: relay_tcp.into_iter().collect(),
-        }
-    }
-
-    fn add_stream_transport(&mut self, transport: Option<RelayTcpTransport>) {
-        if let Some(transport) = transport {
-            self.relay_streams.push(transport);
         }
     }
 
@@ -873,16 +743,12 @@ impl WindowsPathManager {
         self.direct_udp.as_mut()
     }
 
-    fn relay_streams_mut(&mut self) -> &mut [RelayTcpTransport] {
-        &mut self.relay_streams
-    }
-
     fn send(&self, payload: &[u8], frame: &[u8]) -> PathSendResult {
         let Some(route) = self.route_for_packet(payload) else {
             return PathSendResult::NoRoute;
         };
         match self.active_path_for_route(&route) {
-            PathKind::DirectUdp => self
+            PathKind::LanUdp | PathKind::Ipv6Udp | PathKind::DirectUdp => self
                 .direct_udp
                 .as_ref()
                 .and_then(|transport| {
@@ -890,20 +756,16 @@ impl WindowsPathManager {
                         .peer_index_for_packet(payload)
                         .map(|index| transport.send_to_peer(index, frame))
                 })
-                .unwrap_or_else(|| self.fallback_or_missing(&route, PathKind::DirectUdp, frame)),
+                .unwrap_or_else(|| {
+                    self.fallback_or_missing(&route, self.active_path_for_route(&route), frame)
+                }),
             PathKind::RelayUdp => route
                 .relay_udp_index
                 .map(|peer_index| self.relay_udp.send_to_peer(peer_index, frame))
                 .unwrap_or_else(|| self.fallback_or_missing(&route, PathKind::RelayUdp, frame)),
-            PathKind::RelayTcp => self
-                .send_stream_path_for_node(PathKind::RelayTcp, &route.peer_node_id, frame)
-                .unwrap_or_else(|| self.fallback_or_missing(&route, PathKind::RelayTcp, frame)),
-            PathKind::RelayTls => self
-                .send_stream_path_for_node(PathKind::RelayTls, &route.peer_node_id, frame)
-                .unwrap_or_else(|| self.fallback_or_missing(&route, PathKind::RelayTls, frame)),
-            PathKind::RelayHttp3 => self
-                .send_stream_path_for_node(PathKind::RelayHttp3, &route.peer_node_id, frame)
-                .unwrap_or_else(|| self.fallback_or_missing(&route, PathKind::RelayHttp3, frame)),
+            PathKind::DerpTcpTls443 => {
+                self.fallback_or_missing(&route, self.active_path_for_route(&route), frame)
+            }
         }
     }
 
@@ -922,18 +784,7 @@ impl WindowsPathManager {
                 if let Some(peer) = direct_udp.peers.get(peer_index) {
                     return Some(PacketRoute {
                         peer_node_id: peer.peer_node_id.clone(),
-                        default_path: PathKind::DirectUdp,
-                        relay_udp_index: self.relay_udp_index_by_node(&peer.peer_node_id),
-                    });
-                }
-            }
-        }
-        for transport in &self.relay_streams {
-            if let Some(peer_index) = transport.peer_index_for_packet(payload) {
-                if let Some(peer) = transport.peers.get(peer_index) {
-                    return Some(PacketRoute {
-                        peer_node_id: peer.peer_node_id.clone(),
-                        default_path: transport.path_kind(),
+                        default_path: peer.path_kind,
                         relay_udp_index: self.relay_udp_index_by_node(&peer.peer_node_id),
                     });
                 }
@@ -947,24 +798,6 @@ impl WindowsPathManager {
             .peers()
             .iter()
             .position(|peer| peer.peer_node_id == peer_node_id)
-    }
-
-    fn send_stream_path_for_node(
-        &self,
-        path_kind: PathKind,
-        peer_node_id: &str,
-        frame: &[u8],
-    ) -> Option<PathSendResult> {
-        self.relay_streams
-            .iter()
-            .find(|transport| transport.path_kind() == path_kind)
-            .and_then(|transport| {
-                transport
-                    .peers
-                    .iter()
-                    .position(|peer| peer.peer_node_id == peer_node_id)
-                    .map(|index| transport.send_to_peer(index, frame))
-            })
     }
 
     fn active_path_for_route(&self, route: &PacketRoute) -> PathKind {
@@ -990,22 +823,15 @@ impl WindowsPathManager {
 
     fn path_available_for_node(&self, peer_node_id: &str, path_kind: PathKind) -> bool {
         match path_kind {
-            PathKind::DirectUdp => self.direct_udp.as_ref().is_some_and(|transport| {
-                transport
-                    .peers
-                    .iter()
-                    .any(|peer| peer.peer_node_id == peer_node_id)
-            }),
-            PathKind::RelayUdp => self.relay_udp_index_by_node(peer_node_id).is_some(),
-            PathKind::RelayTcp | PathKind::RelayTls | PathKind::RelayHttp3 => {
-                self.relay_streams.iter().any(|transport| {
-                    transport.path_kind() == path_kind
-                        && transport
-                            .peers
-                            .iter()
-                            .any(|peer| peer.peer_node_id == peer_node_id)
+            PathKind::LanUdp | PathKind::Ipv6Udp | PathKind::DirectUdp => {
+                self.direct_udp.as_ref().is_some_and(|transport| {
+                    transport.peers.iter().any(|peer| {
+                        peer.peer_node_id == peer_node_id && peer.path_kind == path_kind
+                    })
                 })
             }
+            PathKind::RelayUdp => self.relay_udp_index_by_node(peer_node_id).is_some(),
+            PathKind::DerpTcpTls443 => false,
         }
     }
 
@@ -1074,16 +900,18 @@ impl WindowsPathManager {
             PathKind::RelayUdp => self
                 .relay_udp_index_by_node(peer_node_id)
                 .map(|peer_index| self.relay_udp.send_to_peer(peer_index, frame)),
-            PathKind::RelayTcp | PathKind::RelayTls | PathKind::RelayHttp3 => {
-                self.send_stream_path_for_node(path_kind, peer_node_id, frame)
+            PathKind::LanUdp | PathKind::Ipv6Udp | PathKind::DirectUdp => {
+                self.direct_udp.as_ref().and_then(|transport| {
+                    transport
+                        .peers
+                        .iter()
+                        .position(|peer| {
+                            peer.peer_node_id == peer_node_id && peer.path_kind == path_kind
+                        })
+                        .map(|peer_index| transport.send_to_peer(peer_index, frame))
+                })
             }
-            PathKind::DirectUdp => self.direct_udp.as_ref().and_then(|transport| {
-                transport
-                    .peers
-                    .iter()
-                    .position(|peer| peer.peer_node_id == peer_node_id)
-                    .map(|peer_index| transport.send_to_peer(peer_index, frame))
-            }),
+            PathKind::DerpTcpTls443 => None,
         }
     }
 }
@@ -1200,75 +1028,29 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
     let config_path_policy = config.path_policy.clone();
     let config_path_count = config.peer_paths.len() as u32;
     let config_peer_paths = config.peer_paths.clone();
-    let config_sessions = config.sessions.clone();
     let attached_peer_paths = relay_runtime_paths_from_config(&config.peer_paths, &config.sessions);
     let direct_udp_transport =
         DirectUdpTransport::attach(config.local_node_id.as_str(), &config_peer_paths);
-    let relay_tcp_transport = RelayTcpTransport::attach(
-        &config_peer_paths,
-        config.local_node_id.as_str(),
-        &config_sessions,
-    );
-    let relay_tls_transport = RelayTcpTransport::attach_kind(
-        PathKind::RelayTls,
-        &config_peer_paths,
-        config.local_node_id.as_str(),
-        &config_sessions,
-    );
-    let relay_http3_transport = RelayTcpTransport::attach_kind(
-        PathKind::RelayHttp3,
-        &config_peer_paths,
-        config.local_node_id.as_str(),
-        &config_sessions,
-    );
     let mut selected_peer_paths = selected_runtime_paths(
         &config_path_policy,
-        mark_ready_stream_transports(
-            mark_ready_transports(
-                attached_peer_paths.clone(),
-                direct_udp_transport.as_ref(),
-                relay_tcp_transport.as_ref(),
-            ),
-            [relay_tls_transport.as_ref(), relay_http3_transport.as_ref()],
-        ),
+        mark_ready_transports(attached_peer_paths.clone(), direct_udp_transport.as_ref()),
     );
     let active_path = selected_peer_paths
         .iter()
         .find_map(|path| path.active_path)
         .unwrap_or(PathKind::RelayUdp);
-    let stream_session_count = relay_tcp_transport
-        .as_ref()
-        .map(RelayTcpTransport::peer_count)
-        .unwrap_or(0)
-        + relay_tls_transport
-            .as_ref()
-            .map(RelayTcpTransport::peer_count)
-            .unwrap_or(0)
-        + relay_http3_transport
-            .as_ref()
-            .map(RelayTcpTransport::peer_count)
-            .unwrap_or(0);
     let attached_transport_count = relay_udp_attachment_count
         + direct_udp_transport
             .as_ref()
             .map(DirectUdpTransport::peer_count)
-            .unwrap_or(0) as u32
-        + stream_session_count as u32;
+            .unwrap_or(0) as u32;
     let RelayUdpAttachResult {
         transport: relay_udp_transport,
         mut peer_stats,
         attach_failures: _relay_udp_attach_failures,
         last_attach_error: relay_udp_last_attach_error,
     } = relay_udp_attach;
-    mark_peer_stats_attached_from_transports(
-        &mut peer_stats,
-        direct_udp_transport.as_ref(),
-        &[
-            relay_tcp_transport.as_ref(),
-            relay_tls_transport.as_ref(),
-            relay_http3_transport.as_ref(),
-        ],
-    );
+    mark_peer_stats_attached_from_transports(&mut peer_stats, direct_udp_transport.as_ref());
     let relay_attach_failures = peer_stats.iter().filter(|peer| !peer.attached).count() as u64;
     let relay_session_count = peer_stats.len() as u32;
     let attached_peer_session_count = peer_stats.iter().filter(|peer| peer.attached).count() as u32;
@@ -1323,10 +1105,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             config_path_policy.clone(),
             direct_udp_transport,
             relay_udp_transport,
-            relay_tcp_transport,
         );
-        path_manager.add_stream_transport(relay_tls_transport);
-        path_manager.add_stream_transport(relay_http3_transport);
         path_manager.apply_runtime_paths(&selected_peer_paths);
         let mut stats = WindowsRelayDataPlaneStats {
             relay_address: relay_address_owned,
@@ -1761,133 +1540,6 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                     persist_active_path_state(PathKind::DirectUdp, selected_peer_paths.clone());
                 }
             }
-            for transport in path_manager.relay_streams_mut() {
-                let stream_path = transport.path_kind();
-                for peer in transport.peers_mut() {
-                    let frame = {
-                        let Ok(mut stream) = peer.stream.lock() else {
-                            stats.relay_receive_failures =
-                                stats.relay_receive_failures.saturating_add(1);
-                            consecutive_data_plane_failures =
-                                consecutive_data_plane_failures.saturating_add(1);
-                            continue;
-                        };
-                        match read_relay_tcp_frame(&mut stream) {
-                            Ok(frame) => frame,
-                            Err(error)
-                                if error.downcast_ref::<std::io::Error>().is_some_and(
-                                    |io_error| {
-                                        io_error.kind() == std::io::ErrorKind::WouldBlock
-                                            || io_error.kind() == std::io::ErrorKind::TimedOut
-                                    },
-                                ) =>
-                            {
-                                continue;
-                            }
-                            Err(error) => {
-                                stats.relay_receive_failures =
-                                    stats.relay_receive_failures.saturating_add(1);
-                                if let Some(peer_stats) =
-                                    peer_stats_mut_by_node_id(&mut stats.peers, &peer.peer_node_id)
-                                {
-                                    peer_stats.receive_failures =
-                                        peer_stats.receive_failures.saturating_add(1);
-                                    peer_stats.last_relay_error = Some(format!(
-                                        "{} receive failed: {error:#}",
-                                        stream_path.as_str()
-                                    ));
-                                }
-                                stats.last_relay_error = Some(format!(
-                                    "peer {} {} receive failed: {error:#}",
-                                    peer.peer_node_id,
-                                    stream_path.as_str()
-                                ));
-                                consecutive_data_plane_failures =
-                                    consecutive_data_plane_failures.saturating_add(1);
-                                continue;
-                            }
-                        }
-                    };
-                    if let Some(decoded) = decode_slan_relay_data_frame_full(&frame) {
-                        if decoded.config_hash != config_hash {
-                            stats.relay_config_hash_mismatches =
-                                stats.relay_config_hash_mismatches.saturating_add(1);
-                            if let Some(peer_stats) =
-                                peer_stats_mut_by_node_id(&mut stats.peers, &peer.peer_node_id)
-                            {
-                                peer_stats.config_hash_mismatches =
-                                    peer_stats.config_hash_mismatches.saturating_add(1);
-                                peer_stats.last_relay_error =
-                                    Some(format!("{} config hash mismatch", stream_path.as_str()));
-                            }
-                            continue;
-                        }
-                        if relay_frame_is_replayed(peer.last_rx_seq, decoded.seq) {
-                            if let Some(peer_stats) =
-                                peer_stats_mut_by_node_id(&mut stats.peers, &peer.peer_node_id)
-                            {
-                                peer_stats.replayed_frames =
-                                    peer_stats.replayed_frames.saturating_add(1);
-                            }
-                            continue;
-                        }
-                        peer.last_rx_seq = decoded.seq;
-                        if let Some(peer_stats) =
-                            peer_stats_mut_by_node_id(&mut stats.peers, &peer.peer_node_id)
-                        {
-                            peer_stats.last_rx_seq = decoded.seq;
-                        }
-                        if write_wintun_packet(
-                            session,
-                            allocate_send_packet,
-                            send_packet,
-                            decoded.payload,
-                        ) {
-                            stats.relay_packets_received =
-                                stats.relay_packets_received.saturating_add(1);
-                            if let Some(peer_stats) =
-                                peer_stats_mut_by_node_id(&mut stats.peers, &peer.peer_node_id)
-                            {
-                                peer_stats.relay_packets_received =
-                                    peer_stats.relay_packets_received.saturating_add(1);
-                            }
-                            consecutive_data_plane_failures = 0;
-                        } else {
-                            stats.wintun_write_failures =
-                                stats.wintun_write_failures.saturating_add(1);
-                            if let Some(peer_stats) =
-                                peer_stats_mut_by_node_id(&mut stats.peers, &peer.peer_node_id)
-                            {
-                                peer_stats.wintun_write_failures =
-                                    peer_stats.wintun_write_failures.saturating_add(1);
-                            }
-                            consecutive_data_plane_failures =
-                                consecutive_data_plane_failures.saturating_add(1);
-                        }
-                    } else if let Some(error) = relay_error_message(&frame) {
-                        stats.relay_error_responses = stats.relay_error_responses.saturating_add(1);
-                        stats.last_relay_error = Some(format!(
-                            "peer {} {}: {error}",
-                            peer.peer_node_id,
-                            stream_path.as_str()
-                        ));
-                        if let Some(peer_stats) =
-                            peer_stats_mut_by_node_id(&mut stats.peers, &peer.peer_node_id)
-                        {
-                            peer_stats.relay_errors = peer_stats.relay_errors.saturating_add(1);
-                            peer_stats.last_relay_error = Some(error);
-                        }
-                    } else {
-                        stats.relay_decode_failures = stats.relay_decode_failures.saturating_add(1);
-                        if let Some(peer_stats) =
-                            peer_stats_mut_by_node_id(&mut stats.peers, &peer.peer_node_id)
-                        {
-                            peer_stats.receive_failures =
-                                peer_stats.receive_failures.saturating_add(1);
-                        }
-                    }
-                }
-            }
             if consecutive_data_plane_failures >= RELAY_DATA_PLANE_FAILURE_THRESHOLD {
                 persist_relay_stats(&mut stats);
                 break;
@@ -2012,9 +1664,7 @@ fn relay_path_kind_from_ticket(session: &RelayPeerSession) -> Option<PathKind> {
     let (scheme, _) = relay_url.split_once("://")?;
     match scheme.to_ascii_lowercase().as_str() {
         "udp" => Some(PathKind::RelayUdp),
-        "tcp" => Some(PathKind::RelayTcp),
-        "tls" => Some(PathKind::RelayTls),
-        "http3" => Some(PathKind::RelayHttp3),
+        "derp" | "derp+tcp+tls" | "derp_tcp_tls_443" => Some(PathKind::DerpTcpTls443),
         _ => None,
     }
 }
@@ -2022,44 +1672,19 @@ fn relay_path_kind_from_ticket(session: &RelayPeerSession) -> Option<PathKind> {
 fn mark_ready_transports(
     mut peer_paths: Vec<PeerPathRuntime>,
     direct_udp: Option<&DirectUdpTransport>,
-    relay_tcp: Option<&RelayTcpTransport>,
 ) -> Vec<PeerPathRuntime> {
     if let Some(direct_udp) = direct_udp {
-        peer_paths = mark_path_ready_for_nodes(
-            peer_paths,
-            direct_udp
-                .peers
-                .iter()
-                .map(|peer| peer.peer_node_id.as_str()),
-            PathKind::DirectUdp,
-        );
-    }
-    let Some(relay_tcp) = relay_tcp else {
-        return peer_paths;
-    };
-    mark_path_ready_for_nodes(
-        peer_paths,
-        relay_tcp
-            .peers
-            .iter()
-            .map(|peer| peer.peer_node_id.as_str()),
-        PathKind::RelayTcp,
-    )
-}
-
-fn mark_ready_stream_transports<'a>(
-    mut peer_paths: Vec<PeerPathRuntime>,
-    transports: impl IntoIterator<Item = Option<&'a RelayTcpTransport>>,
-) -> Vec<PeerPathRuntime> {
-    for transport in transports.into_iter().flatten() {
-        peer_paths = mark_path_ready_for_nodes(
-            peer_paths,
-            transport
-                .peers
-                .iter()
-                .map(|peer| peer.peer_node_id.as_str()),
-            transport.path_kind(),
-        );
+        for path_kind in [PathKind::LanUdp, PathKind::Ipv6Udp, PathKind::DirectUdp] {
+            peer_paths = mark_path_ready_for_nodes(
+                peer_paths,
+                direct_udp
+                    .peers
+                    .iter()
+                    .filter(|peer| peer.path_kind == path_kind)
+                    .map(|peer| peer.peer_node_id.as_str()),
+                path_kind,
+            );
+        }
     }
     peer_paths
 }
@@ -2139,15 +1764,19 @@ fn attach_udp_relay_session(
     Ok(socket)
 }
 
-fn direct_udp_address_for_peer(path: &client_core::PeerPathConfig) -> Option<String> {
-    path.candidates.iter().find_map(|candidate| {
-        (candidate.kind == PathKind::DirectUdp)
-            .then(|| candidate.address.as_deref())
-            .flatten()
-            .map(str::trim)
-            .filter(|address| !address.is_empty())
-            .map(str::to_string)
-    })
+fn udp_address_for_peer(path: &client_core::PeerPathConfig) -> Option<(PathKind, String)> {
+    [PathKind::LanUdp, PathKind::Ipv6Udp, PathKind::DirectUdp]
+        .into_iter()
+        .find_map(|path_kind| {
+            path.candidates.iter().find_map(|candidate| {
+                (candidate.kind == path_kind)
+                    .then(|| candidate.address.as_deref())
+                    .flatten()
+                    .map(str::trim)
+                    .filter(|address| !address.is_empty())
+                    .map(|address| (path_kind, address.to_string()))
+            })
+        })
 }
 
 fn attach_direct_udp_socket() -> Result<UdpSocket> {
@@ -2199,123 +1828,6 @@ fn normalize_relay_udp_address(address: &str) -> Option<String> {
     (!normalized.is_empty()).then(|| normalized.to_string())
 }
 
-fn relay_stream_address_from_ticket(
-    session: &RelayPeerSession,
-    path_kind: PathKind,
-) -> Option<String> {
-    normalize_relay_stream_address(session.ticket.relay_url.as_str(), path_kind)
-}
-
-fn relay_stream_address_for_peer(
-    configured_paths: &[client_core::PeerPathConfig],
-    peer_node_id: &str,
-    path_kind: PathKind,
-) -> Option<String> {
-    configured_paths
-        .iter()
-        .find(|peer| peer.peer_node_id == peer_node_id)
-        .and_then(|peer| {
-            peer.candidates.iter().find_map(|candidate| {
-                (candidate.kind == path_kind)
-                    .then(|| candidate.address.as_deref())
-                    .flatten()
-                    .and_then(|address| normalize_relay_stream_address(address, path_kind))
-            })
-        })
-        .filter(|address| !address.trim().is_empty())
-}
-
-fn normalize_relay_stream_address(address: &str, path_kind: PathKind) -> Option<String> {
-    let trimmed = address.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let stripped = match path_kind {
-        PathKind::RelayTcp => trimmed
-            .strip_prefix("tcp://")
-            .or_else(|| trimmed.strip_prefix("relay+tcp://")),
-        PathKind::RelayTls => trimmed
-            .strip_prefix("tls://")
-            .or_else(|| trimmed.strip_prefix("relay+tls://")),
-        PathKind::RelayHttp3 => trimmed
-            .strip_prefix("http3://")
-            .or_else(|| trimmed.strip_prefix("relay+http3://")),
-        _ => None,
-    };
-    if stripped.is_none() && trimmed.contains("://") {
-        return None;
-    }
-    Some(stripped.unwrap_or(trimmed).to_string())
-}
-
-fn attach_stream_relay_session(
-    relay_address: &str,
-    local_node_id: &str,
-    session: &RelayPeerSession,
-    path_kind: PathKind,
-) -> Result<TcpStream> {
-    validate_relay_peer_session_for_path(local_node_id, session, path_kind)?;
-    let mut stream = TcpStream::connect(relay_address).with_context(|| {
-        format!(
-            "connect Wintun {} stream to {relay_address}",
-            path_kind.as_str()
-        )
-    })?;
-    stream
-        .set_read_timeout(Some(RELAY_ATTACH_TIMEOUT))
-        .with_context(|| format!("set Wintun {} attach read timeout", path_kind.as_str()))?;
-    stream
-        .set_write_timeout(Some(RELAY_ATTACH_TIMEOUT))
-        .with_context(|| format!("set Wintun {} attach write timeout", path_kind.as_str()))?;
-
-    let attach = serde_json::json!({
-        "kind": "attach",
-        "participant_id": local_node_id,
-        "ticket": relay_ticket_wire(session),
-        "transport": path_kind.as_str(),
-    });
-    let payload = serde_json::to_vec(&attach)
-        .with_context(|| format!("encode Wintun {} attach", path_kind.as_str()))?;
-    write_relay_tcp_frame(&mut stream, &payload)
-        .with_context(|| format!("send Wintun {} attach", path_kind.as_str()))?;
-    let response = read_relay_tcp_frame(&mut stream)
-        .with_context(|| format!("receive Wintun {} attach ack", path_kind.as_str()))?;
-    verify_relay_attach_ack(&response, &session.session_id)?;
-    stream
-        .set_read_timeout(Some(Duration::from_millis(1)))
-        .with_context(|| format!("set Wintun {} nonblocking read timeout", path_kind.as_str()))?;
-    stream
-        .set_write_timeout(None)
-        .with_context(|| format!("clear Wintun {} write timeout", path_kind.as_str()))?;
-    Ok(stream)
-}
-
-fn read_relay_tcp_frame(stream: &mut TcpStream) -> Result<Vec<u8>> {
-    let mut len_buffer = [0_u8; 4];
-    stream
-        .read_exact(&mut len_buffer)
-        .context("read relay TCP frame length")?;
-    let len = u32::from_be_bytes(len_buffer) as usize;
-    if len == 0 || len > RELAY_TCP_FRAME_SIZE_LIMIT {
-        bail!("invalid relay TCP frame length: {len}");
-    }
-    let mut frame = vec![0_u8; len];
-    stream
-        .read_exact(&mut frame)
-        .context("read relay TCP frame payload")?;
-    Ok(frame)
-}
-
-fn write_relay_tcp_frame(stream: &mut TcpStream, frame: &[u8]) -> Result<()> {
-    if frame.is_empty() || frame.len() > RELAY_TCP_FRAME_SIZE_LIMIT {
-        bail!("invalid relay TCP frame length: {}", frame.len());
-    }
-    stream
-        .write_all(&(frame.len() as u32).to_be_bytes())
-        .and_then(|_| stream.write_all(frame))
-        .context("write relay TCP frame")
-}
-
 fn validate_relay_peer_session(local_node_id: &str, session: &RelayPeerSession) -> Result<()> {
     let local_node_id = local_node_id.trim();
     let ticket = &session.ticket;
@@ -2362,6 +1874,9 @@ fn validate_relay_peer_session_for_path(
     let Some((scheme, _)) = relay_url.split_once("://") else {
         return Ok(());
     };
+    if path_kind == PathKind::DerpTcpTls443 && derp_relay_scheme_matches(scheme) {
+        return Ok(());
+    }
     if scheme.eq_ignore_ascii_case(expected_scheme) {
         return Ok(());
     }
@@ -2376,11 +1891,16 @@ fn validate_relay_peer_session_for_path(
 fn relay_url_scheme_for_path(path_kind: PathKind) -> Option<&'static str> {
     match path_kind {
         PathKind::RelayUdp => Some("udp"),
-        PathKind::RelayTcp => Some("tcp"),
-        PathKind::RelayTls => Some("tls"),
-        PathKind::RelayHttp3 => Some("http3"),
-        PathKind::DirectUdp => None,
+        PathKind::DerpTcpTls443 => Some("derp"),
+        PathKind::LanUdp | PathKind::Ipv6Udp | PathKind::DirectUdp => None,
     }
+}
+
+fn derp_relay_scheme_matches(scheme: &str) -> bool {
+    matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "derp" | "derp+tcp+tls" | "derp_tcp_tls_443"
+    )
 }
 
 fn relay_ticket_wire(session: &RelayPeerSession) -> serde_json::Value {
@@ -2494,19 +2014,6 @@ fn send_relay_udp_frame(peer: &AttachedRelayPeer, frame: &[u8]) -> bool {
     peer.path_kind == PathKind::RelayUdp && peer.socket.send(frame).is_ok()
 }
 
-fn send_relay_tcp_frame(peer: &AttachedRelayTcpPeer, frame: &[u8]) -> bool {
-    if peer.peer_node_id.trim().is_empty()
-        || frame.is_empty()
-        || frame.len() > RELAY_TCP_FRAME_SIZE_LIMIT
-    {
-        return false;
-    }
-    let Ok(mut stream) = peer.stream.lock() else {
-        return false;
-    };
-    write_relay_tcp_frame(&mut stream, frame).is_ok()
-}
-
 fn peer_stats_mut_by_node_id<'a>(
     peers: &'a mut [WindowsRelayPeerStats],
     peer_node_id: &str,
@@ -2519,18 +2026,9 @@ fn peer_stats_mut_by_node_id<'a>(
 fn mark_peer_stats_attached_from_transports(
     peers: &mut [WindowsRelayPeerStats],
     direct_udp: Option<&DirectUdpTransport>,
-    stream_transports: &[Option<&RelayTcpTransport>],
 ) {
     if let Some(direct_udp) = direct_udp {
         for peer in &direct_udp.peers {
-            if let Some(stats) = peer_stats_mut_by_node_id(peers, &peer.peer_node_id) {
-                stats.attached = true;
-                stats.attach_error = None;
-            }
-        }
-    }
-    for transport in stream_transports.iter().flatten() {
-        for peer in &transport.peers {
             if let Some(stats) = peer_stats_mut_by_node_id(peers, &peer.peer_node_id) {
                 stats.attached = true;
                 stats.attach_error = None;
@@ -3166,13 +2664,12 @@ mod tests {
         detach_udp_relay_sessions, direct_udp_control_packet, direct_udp_control_payload,
         direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at,
         is_usable_dns_server, is_usable_virtual_ip, mark_ready_transports,
-        normalize_relay_stream_address, refresh_relay_ticket_timing, relay_error_message,
-        relay_runtime_paths_from_config, relay_stream_address_from_ticket,
+        refresh_relay_ticket_timing, relay_error_message, relay_runtime_paths_from_config,
         relay_udp_address_for_session, send_frame_to_peer, validate_relay_peer_session,
-        validate_relay_peer_session_for_path, AttachedRelayPeer, AttachedRelayTcpPeer,
-        DirectUdpControlKind, DirectUdpPeer, DirectUdpTransport, PathSendResult, RelayTcpTransport,
-        RelayUdpTransport, WindowsPathManager, WindowsRelayDataPlaneStats, DIRECT_UDP_PONG_PACKET,
-        DIRECT_UDP_PROBE_PACKET, MAX_DIRECT_UDP_PROBE_INTERVAL, MIN_DIRECT_UDP_PROBE_INTERVAL,
+        validate_relay_peer_session_for_path, AttachedRelayPeer, DirectUdpControlKind,
+        DirectUdpPeer, DirectUdpTransport, PathSendResult, RelayUdpTransport, WindowsPathManager,
+        WindowsRelayDataPlaneStats, DIRECT_UDP_PONG_PACKET, DIRECT_UDP_PROBE_PACKET,
+        MAX_DIRECT_UDP_PROBE_INTERVAL, MIN_DIRECT_UDP_PROBE_INTERVAL,
     };
     use crate::windows::parse_rfc3339_utc_ms;
     use client_core::{
@@ -3181,9 +2678,7 @@ mod tests {
         update_peer_active_path, PathCandidate, PathKind, PathPolicy, PathState, PeerPathConfig,
         PeerPathRuntime, RelayPeerSession, RelayTicket,
     };
-    use std::io::Read;
-    use std::net::{TcpListener, TcpStream, UdpSocket};
-    use std::sync::Mutex;
+    use std::net::UdpSocket;
     use std::time::Duration;
 
     #[test]
@@ -3242,7 +2737,7 @@ mod tests {
         let candidates = vec![
             path_candidate(PathKind::RelayUdp, PathState::Ready),
             path_candidate(PathKind::DirectUdp, PathState::Ready),
-            path_candidate(PathKind::RelayTcp, PathState::Ready),
+            path_candidate(PathKind::DerpTcpTls443, PathState::Ready),
         ];
 
         assert_eq!(
@@ -3277,7 +2772,7 @@ mod tests {
             candidates: vec![
                 path_candidate(PathKind::DirectUdp, PathState::Probing),
                 path_candidate(PathKind::RelayUdp, PathState::Standby),
-                path_candidate(PathKind::RelayTcp, PathState::Standby),
+                path_candidate(PathKind::DerpTcpTls443, PathState::Standby),
             ],
         }];
 
@@ -3298,26 +2793,26 @@ mod tests {
         assert!(paths[0]
             .candidates
             .iter()
-            .any(|candidate| candidate.kind == PathKind::RelayTcp));
+            .any(|candidate| candidate.kind == PathKind::DerpTcpTls443));
     }
 
     #[test]
     fn runtime_paths_mark_ticket_scheme_path_ready_only() {
-        let mut session = test_relay_peer_session("session-http3", "2026-05-03T10:00:00Z");
-        session.ticket.relay_url = "http3://127.0.0.1:9443".to_string();
+        let mut session = test_relay_peer_session("session-derp", "2026-05-03T10:00:00Z");
+        session.ticket.relay_url = "derp://127.0.0.1:443".to_string();
         let configured = vec![PeerPathConfig {
             peer_node_id: "node-peer".to_string(),
             peer_virtual_ips: vec!["10.0.0.9".to_string()],
             candidates: vec![
                 path_candidate(PathKind::RelayUdp, PathState::Standby),
-                path_candidate(PathKind::RelayHttp3, PathState::Standby),
+                path_candidate(PathKind::DerpTcpTls443, PathState::Standby),
             ],
         }];
 
         let paths = relay_runtime_paths_from_config(&configured, &[session]);
 
         assert!(paths[0].candidates.iter().any(|candidate| {
-            candidate.kind == PathKind::RelayHttp3 && candidate.state == PathState::Ready
+            candidate.kind == PathKind::DerpTcpTls443 && candidate.state == PathState::Ready
         }));
         assert!(paths[0].candidates.iter().any(|candidate| {
             candidate.kind == PathKind::RelayUdp && candidate.state == PathState::Standby
@@ -3331,7 +2826,7 @@ mod tests {
         let configured = vec![PeerPathConfig {
             peer_node_id: "node-peer".to_string(),
             peer_virtual_ips: vec!["10.0.0.9".to_string()],
-            candidates: vec![path_candidate(PathKind::RelayHttp3, PathState::Standby)],
+            candidates: vec![path_candidate(PathKind::DerpTcpTls443, PathState::Standby)],
         }];
 
         let paths = relay_runtime_paths_from_config(&configured, &[session]);
@@ -3340,42 +2835,6 @@ mod tests {
             .candidates
             .iter()
             .all(|candidate| candidate.state != PathState::Ready));
-    }
-
-    #[test]
-    fn runtime_paths_mark_attached_relay_tcp_ready_and_select_it_when_preferred() {
-        let configured = vec![PeerPathConfig {
-            peer_node_id: "node-peer".to_string(),
-            peer_virtual_ips: vec!["10.0.0.9".to_string()],
-            candidates: vec![
-                path_candidate(PathKind::RelayUdp, PathState::Ready),
-                path_candidate(PathKind::RelayTcp, PathState::Standby),
-            ],
-        }];
-        let tcp_transport = RelayTcpTransport::new(vec![AttachedRelayTcpPeer {
-            peer_node_id: "node-peer".to_string(),
-            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-            stream: Mutex::new(tcp_pair().0),
-            last_rx_seq: 0,
-        }]);
-        let policy = PathPolicy {
-            preferred: vec![PathKind::RelayTcp, PathKind::RelayUdp],
-            ..PathPolicy::default()
-        };
-
-        let paths = selected_runtime_paths(
-            &policy,
-            mark_ready_transports(
-                configured_runtime_paths(configured),
-                None,
-                Some(&tcp_transport),
-            ),
-        );
-
-        assert_eq!(paths[0].active_path, Some(PathKind::RelayTcp));
-        assert!(paths[0].candidates.iter().any(|candidate| {
-            candidate.kind == PathKind::RelayTcp && candidate.state == PathState::Ready
-        }));
     }
 
     #[test]
@@ -3395,6 +2854,7 @@ mod tests {
             vec![DirectUdpPeer {
                 peer_node_id: "node-peer".to_string(),
                 peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
+                path_kind: PathKind::DirectUdp,
                 address: peer_socket.local_addr().unwrap().to_string(),
                 socket_addr: peer_socket.local_addr().unwrap(),
                 last_rx_seq: 0,
@@ -3436,6 +2896,7 @@ mod tests {
                 DirectUdpPeer {
                     peer_node_id: "node-a".to_string(),
                     peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
+                    path_kind: PathKind::DirectUdp,
                     address: peer_a_addr.to_string(),
                     socket_addr: peer_a_addr,
                     last_rx_seq: 0,
@@ -3443,6 +2904,7 @@ mod tests {
                 DirectUdpPeer {
                     peer_node_id: "node-b".to_string(),
                     peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
+                    path_kind: PathKind::DirectUdp,
                     address: peer_b_addr.to_string(),
                     socket_addr: peer_b_addr,
                     last_rx_seq: 0,
@@ -3483,6 +2945,7 @@ mod tests {
             vec![DirectUdpPeer {
                 peer_node_id: "node-a".to_string(),
                 peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
+                path_kind: PathKind::DirectUdp,
                 address: old_peer_addr.to_string(),
                 socket_addr: old_peer_addr,
                 last_rx_seq: 0,
@@ -3513,6 +2976,7 @@ mod tests {
             vec![DirectUdpPeer {
                 peer_node_id: "node-a".to_string(),
                 peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
+                path_kind: PathKind::DirectUdp,
                 address: old_peer_addr.to_string(),
                 socket_addr: old_peer_addr,
                 last_rx_seq: 0,
@@ -3541,6 +3005,7 @@ mod tests {
             vec![DirectUdpPeer {
                 peer_node_id: "node-a".to_string(),
                 peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
+                path_kind: PathKind::DirectUdp,
                 address: old_peer_addr.to_string(),
                 socket_addr: old_peer_addr,
                 last_rx_seq: 0,
@@ -3577,6 +3042,7 @@ mod tests {
                 DirectUdpPeer {
                     peer_node_id: "node-a".to_string(),
                     peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
+                    path_kind: PathKind::DirectUdp,
                     address: peer_a_socket.local_addr().unwrap().to_string(),
                     socket_addr: peer_a_socket.local_addr().unwrap(),
                     last_rx_seq: 0,
@@ -3584,6 +3050,7 @@ mod tests {
                 DirectUdpPeer {
                     peer_node_id: "node-b".to_string(),
                     peer_virtual_ips: vec!["10.0.0.3/32".to_string()],
+                    path_kind: PathKind::DirectUdp,
                     address: peer_b_socket.local_addr().unwrap().to_string(),
                     socket_addr: peer_b_socket.local_addr().unwrap(),
                     last_rx_seq: 0,
@@ -3615,6 +3082,7 @@ mod tests {
                 DirectUdpPeer {
                     peer_node_id: "node-a".to_string(),
                     peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
+                    path_kind: PathKind::DirectUdp,
                     address: peer_a_socket.local_addr().unwrap().to_string(),
                     socket_addr: peer_a_socket.local_addr().unwrap(),
                     last_rx_seq: 0,
@@ -3622,6 +3090,7 @@ mod tests {
                 DirectUdpPeer {
                     peer_node_id: "node-b".to_string(),
                     peer_virtual_ips: vec!["10.0.0.3/32".to_string()],
+                    path_kind: PathKind::DirectUdp,
                     address: peer_b_socket.local_addr().unwrap().to_string(),
                     socket_addr: peer_b_socket.local_addr().unwrap(),
                     last_rx_seq: 0,
@@ -3662,10 +3131,10 @@ mod tests {
             }],
             "node-local".to_string(),
         );
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
+        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp);
         manager
             .tracker
-            .set_active_path("node-a".to_string(), PathKind::RelayTcp);
+            .set_active_path("node-a".to_string(), PathKind::DerpTcpTls443);
         let packet = ipv4_packet("10.0.0.1", "10.0.0.9");
 
         assert!(matches!(
@@ -3680,7 +3149,7 @@ mod tests {
     #[test]
     fn path_manager_records_actual_sent_path_after_fallback_success() {
         let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
+        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp);
         manager
             .tracker
             .set_active_path("node-a".to_string(), PathKind::DirectUdp);
@@ -3718,18 +3187,17 @@ mod tests {
             },
             None,
             relay_udp,
-            None,
         );
         manager
             .tracker
-            .set_active_path("node-a".to_string(), PathKind::RelayTcp);
+            .set_active_path("node-a".to_string(), PathKind::DerpTcpTls443);
         let packet = ipv4_packet("10.0.0.1", "10.0.0.9");
 
         assert!(matches!(
             manager.send(&packet, b"relay-frame"),
             PathSendResult::NoTransport {
                 peer_index: 0,
-                path_kind: PathKind::RelayTcp,
+                path_kind: PathKind::DerpTcpTls443,
                 ..
             }
         ));
@@ -3738,7 +3206,7 @@ mod tests {
     #[test]
     fn path_manager_records_failed_preferred_path_without_inventing_fallback() {
         let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
+        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp);
         manager
             .tracker
             .set_active_path("node-a".to_string(), PathKind::DirectUdp);
@@ -3757,7 +3225,7 @@ mod tests {
     #[test]
     fn path_manager_upgrades_after_stable_direct_udp_probe_success() {
         let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
+        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp);
         manager
             .tracker
             .set_active_path("node-a".to_string(), PathKind::RelayUdp);
@@ -3781,7 +3249,7 @@ mod tests {
     #[test]
     fn path_manager_treats_inbound_direct_probe_as_success() {
         let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
+        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp);
         manager
             .tracker
             .set_active_path("node-a".to_string(), PathKind::RelayUdp);
@@ -3803,7 +3271,7 @@ mod tests {
     #[test]
     fn path_manager_reports_previous_active_path_for_peer_node() {
         let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
+        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp);
 
         assert_eq!(
             manager.active_path_for_peer_node("node-a"),
@@ -3811,10 +3279,10 @@ mod tests {
         );
         manager
             .tracker
-            .set_active_path("node-a".to_string(), PathKind::RelayTcp);
+            .set_active_path("node-a".to_string(), PathKind::DerpTcpTls443);
         assert_eq!(
             manager.active_path_for_peer_node("node-a"),
-            PathKind::RelayTcp
+            PathKind::DerpTcpTls443
         );
     }
 
@@ -3880,253 +3348,12 @@ mod tests {
     }
 
     #[test]
-    fn path_manager_uses_relay_tcp_when_transport_exists() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client_stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server_stream, _) = listener.accept().unwrap();
-        server_stream
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
-
-        let relay_udp = RelayUdpTransport::new(
-            vec![AttachedRelayPeer {
-                session_id: "session-a".to_string(),
-                peer_node_id: "node-a".to_string(),
-                peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-                path_kind: PathKind::RelayUdp,
-                socket: UdpSocket::bind("127.0.0.1:0").unwrap(),
-                stats_index: 0,
-                last_rx_seq: 0,
-            }],
-            "node-local".to_string(),
-        );
-        let relay_tcp = RelayTcpTransport::new(vec![AttachedRelayTcpPeer {
-            peer_node_id: "node-a".to_string(),
-            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-            stream: Mutex::new(client_stream),
-            last_rx_seq: 0,
-        }]);
-        let mut manager =
-            WindowsPathManager::new(PathPolicy::default(), None, relay_udp, Some(relay_tcp));
-        manager
-            .tracker
-            .set_active_path("node-a".to_string(), PathKind::RelayTcp);
-        let packet = ipv4_packet("10.0.0.1", "10.0.0.9");
-
-        assert!(matches!(
-            manager.send(&packet, b"tcp-frame"),
-            PathSendResult::Sent { peer_index: 0, .. }
-        ));
-
-        let mut len_buffer = [0_u8; 4];
-        server_stream.read_exact(&mut len_buffer).unwrap();
-        let frame_len = u32::from_be_bytes(len_buffer) as usize;
-        let mut frame_buffer = vec![0_u8; frame_len];
-        server_stream.read_exact(&mut frame_buffer).unwrap();
-        assert_eq!(frame_buffer, b"tcp-frame");
-    }
-
-    #[test]
-    fn path_manager_uses_relay_http3_when_transport_exists() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client_stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server_stream, _) = listener.accept().unwrap();
-        server_stream
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
-
-        let relay_udp = RelayUdpTransport::new(
-            vec![AttachedRelayPeer {
-                session_id: "session-a".to_string(),
-                peer_node_id: "node-a".to_string(),
-                peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-                path_kind: PathKind::RelayUdp,
-                socket: UdpSocket::bind("127.0.0.1:0").unwrap(),
-                stats_index: 0,
-                last_rx_seq: 0,
-            }],
-            "node-local".to_string(),
-        );
-        let mut relay_http3 = RelayTcpTransport::new(vec![AttachedRelayTcpPeer {
-            peer_node_id: "node-a".to_string(),
-            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-            stream: Mutex::new(client_stream),
-            last_rx_seq: 0,
-        }]);
-        relay_http3.path_kind = PathKind::RelayHttp3;
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
-        manager.add_stream_transport(Some(relay_http3));
-        manager
-            .tracker
-            .set_active_path("node-a".to_string(), PathKind::RelayHttp3);
-        let packet = ipv4_packet("10.0.0.1", "10.0.0.9");
-
-        assert!(matches!(
-            manager.send(&packet, b"http3-frame"),
-            PathSendResult::Sent {
-                peer_index: 0,
-                path_kind: PathKind::RelayHttp3,
-                ..
-            }
-        ));
-
-        let mut len_buffer = [0_u8; 4];
-        server_stream.read_exact(&mut len_buffer).unwrap();
-        let frame_len = u32::from_be_bytes(len_buffer) as usize;
-        let mut frame_buffer = vec![0_u8; frame_len];
-        server_stream.read_exact(&mut frame_buffer).unwrap();
-        assert_eq!(frame_buffer, b"http3-frame");
-    }
-
-    #[test]
-    fn path_manager_routes_stream_only_without_relay_udp() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client_stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server_stream, _) = listener.accept().unwrap();
-        server_stream
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
-
-        let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let mut relay_tls = RelayTcpTransport::new(vec![AttachedRelayTcpPeer {
-            peer_node_id: "node-a".to_string(),
-            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-            stream: Mutex::new(client_stream),
-            last_rx_seq: 0,
-        }]);
-        relay_tls.path_kind = PathKind::RelayTls;
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
-        manager.add_stream_transport(Some(relay_tls));
-        manager
-            .tracker
-            .set_active_path("node-a".to_string(), PathKind::RelayTls);
-        let packet = ipv4_packet("10.0.0.1", "10.0.0.9");
-
-        assert!(matches!(
-            manager.send(&packet, b"tls-frame"),
-            PathSendResult::Sent {
-                peer_index: 0,
-                path_kind: PathKind::RelayTls,
-                ..
-            }
-        ));
-
-        let mut len_buffer = [0_u8; 4];
-        server_stream.read_exact(&mut len_buffer).unwrap();
-        let frame_len = u32::from_be_bytes(len_buffer) as usize;
-        let mut frame_buffer = vec![0_u8; frame_len];
-        server_stream.read_exact(&mut frame_buffer).unwrap();
-        assert_eq!(frame_buffer, b"tls-frame");
-    }
-
-    #[test]
-    fn path_manager_fallback_prefers_available_stream_when_relay_udp_is_absent() {
-        let (client_stream, _server_stream) = tcp_pair();
-        let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let mut relay_http3 = RelayTcpTransport::new(vec![AttachedRelayTcpPeer {
-            peer_node_id: "node-a".to_string(),
-            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-            stream: Mutex::new(client_stream),
-            last_rx_seq: 0,
-        }]);
-        relay_http3.path_kind = PathKind::RelayHttp3;
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
-        manager.add_stream_transport(Some(relay_http3));
-
-        assert_eq!(
-            manager.fallback_path_for_node("node-a", PathKind::DirectUdp),
-            Some(PathKind::RelayHttp3)
-        );
-    }
-
-    #[test]
-    fn path_manager_sends_missing_path_via_available_stream_fallback() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client_stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server_stream, _) = listener.accept().unwrap();
-        server_stream
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
-
-        let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let mut relay_http3 = RelayTcpTransport::new(vec![AttachedRelayTcpPeer {
-            peer_node_id: "node-a".to_string(),
-            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-            stream: Mutex::new(client_stream),
-            last_rx_seq: 0,
-        }]);
-        relay_http3.path_kind = PathKind::RelayHttp3;
-        let mut manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
-        manager.add_stream_transport(Some(relay_http3));
-        manager
-            .tracker
-            .set_active_path("node-a".to_string(), PathKind::DirectUdp);
-        let packet = ipv4_packet("10.0.0.1", "10.0.0.9");
-
-        assert!(matches!(
-            manager.send(&packet, b"http3-fallback-frame"),
-            PathSendResult::Sent {
-                peer_index: 0,
-                path_kind: PathKind::RelayHttp3,
-                ..
-            }
-        ));
-
-        let mut len_buffer = [0_u8; 4];
-        server_stream.read_exact(&mut len_buffer).unwrap();
-        let frame_len = u32::from_be_bytes(len_buffer) as usize;
-        let mut frame_buffer = vec![0_u8; frame_len];
-        server_stream.read_exact(&mut frame_buffer).unwrap();
-        assert_eq!(frame_buffer, b"http3-fallback-frame");
-    }
-
-    #[test]
     fn path_manager_reports_no_fallback_when_no_path_is_available() {
         let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
-        let manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp, None);
+        let manager = WindowsPathManager::new(PathPolicy::default(), None, relay_udp);
 
         assert_eq!(
             manager.fallback_path_for_node("node-a", PathKind::DirectUdp),
-            None
-        );
-    }
-
-    #[test]
-    fn relay_stream_address_rejects_wrong_protocol_aliases() {
-        assert_eq!(
-            normalize_relay_stream_address("http3://127.0.0.1:443", PathKind::RelayHttp3)
-                .as_deref(),
-            Some("127.0.0.1:443")
-        );
-        assert_eq!(
-            normalize_relay_stream_address("127.0.0.1:443", PathKind::RelayHttp3).as_deref(),
-            Some("127.0.0.1:443")
-        );
-        assert_eq!(
-            normalize_relay_stream_address("h3://127.0.0.1:443", PathKind::RelayHttp3),
-            None
-        );
-        assert_eq!(
-            normalize_relay_stream_address("quic://127.0.0.1:443", PathKind::RelayHttp3),
-            None
-        );
-        assert_eq!(
-            normalize_relay_stream_address("http3://127.0.0.1:443", PathKind::RelayTls),
-            None
-        );
-    }
-
-    #[test]
-    fn relay_stream_address_can_fallback_to_matching_ticket_url() {
-        let mut session = test_relay_peer_session("session-http3", "2026-05-03T10:00:00Z");
-        session.ticket.relay_url = "http3://127.0.0.1:9443".to_string();
-
-        assert_eq!(
-            relay_stream_address_from_ticket(&session, PathKind::RelayHttp3).as_deref(),
-            Some("127.0.0.1:9443")
-        );
-        assert_eq!(
-            relay_stream_address_from_ticket(&session, PathKind::RelayTcp),
             None
         );
     }
@@ -4144,8 +3371,8 @@ mod tests {
 
     #[test]
     fn relay_udp_address_falls_back_when_ticket_is_not_udp() {
-        let mut session = test_relay_peer_session("session-http3", "2026-05-03T10:00:00Z");
-        session.ticket.relay_url = "http3://127.0.0.1:9443".to_string();
+        let mut session = test_relay_peer_session("session-derp", "2026-05-03T10:00:00Z");
+        session.ticket.relay_url = "derp://127.0.0.1:443".to_string();
 
         assert_eq!(
             relay_udp_address_for_session("udp://127.0.0.1:3478", &session).as_deref(),
@@ -4170,23 +3397,20 @@ mod tests {
             validate_relay_peer_session_for_path("node-local", &session, PathKind::RelayUdp)
                 .is_ok()
         );
-        assert!(
-            validate_relay_peer_session_for_path("node-local", &session, PathKind::RelayHttp3)
-                .is_err()
-        );
+        assert!(validate_relay_peer_session_for_path(
+            "node-local",
+            &session,
+            PathKind::DerpTcpTls443
+        )
+        .is_err());
 
-        session.ticket.relay_url = "http3://127.0.0.1:9443".to_string();
-        assert!(
-            validate_relay_peer_session_for_path("node-local", &session, PathKind::RelayHttp3)
-                .is_ok()
-        );
-    }
-
-    fn tcp_pair() -> (TcpStream, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client_stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (server_stream, _) = listener.accept().unwrap();
-        (client_stream, server_stream)
+        session.ticket.relay_url = "derp://127.0.0.1:443".to_string();
+        assert!(validate_relay_peer_session_for_path(
+            "node-local",
+            &session,
+            PathKind::DerpTcpTls443
+        )
+        .is_ok());
     }
 
     fn configured_runtime_paths(configured: Vec<PeerPathConfig>) -> Vec<PeerPathRuntime> {

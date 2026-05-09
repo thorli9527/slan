@@ -284,6 +284,10 @@ pub(crate) struct RelayDataPlanePolicy {
     #[serde(default)]
     pub(crate) target_device_ids: Vec<String>,
     #[serde(default)]
+    pub(crate) source_device_id: Option<String>,
+    #[serde(default)]
+    pub(crate) peer_device_id: Option<String>,
+    #[serde(default)]
     pub(crate) path_type: Option<String>,
     #[serde(default)]
     pub(crate) preferred_path_types: Vec<String>,
