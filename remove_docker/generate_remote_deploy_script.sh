@@ -109,6 +109,16 @@ ROOT_DIR=\$(CDPATH= cd -- "\$(dirname "\$0")/../.." && pwd)
 REMOTE_HOST="${SERVER_HOST}"
 REMOTE_DIR="${REMOTE_DIR}"
 ENV_SOURCE="\$(CDPATH= cd -- "\$(dirname "\$0")" && pwd)/.env.prod"
+SSH_ENV="\$(CDPATH= cd -- "\$(dirname "\$0")" && pwd)/ssh.env"
+
+if [ -f "\$SSH_ENV" ]; then
+  set -a
+  . "\$SSH_ENV"
+  set +a
+fi
+
+REMOTE_USER="\${REMOTE_USER:-root}"
+export REMOTE_USER
 
 if [ ! -f "\$ENV_SOURCE" ]; then
   echo "env file not found: \$ENV_SOURCE" >&2
@@ -140,8 +150,12 @@ Next:
      $DEPLOY_SCRIPT
 
 Optional password mode:
-  If you use SSH password and have sshpass installed:
-     SSHPASS='your-root-password' $DEPLOY_SCRIPT
+  If you use SSH password and have sshpass installed, create this local ignored file:
+     $OUT_DIR/ssh.env
+
+  Example:
+     REMOTE_USER=root
+     SSHPASS='your-root-password'
 
   Otherwise SSH will prompt for the root password normally.
 EOF
