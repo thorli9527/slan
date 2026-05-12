@@ -34,9 +34,9 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>SLAN needs local network access to reach the development control server and peers.</string>
 	<key>SLANControlBaseURL</key>
-	<string>http://127.0.0.1:28080</string>
+	<string>http://api.dev.staticlss.com</string>
 	<key>SLANWebConsoleURL</key>
-	<string>http://127.0.0.1:24200</string>
+	<string>http://web.dev.staticlss.com</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

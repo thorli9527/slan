@@ -27,6 +27,7 @@ class AndroidVpnSessionConfig {
     required this.sessionName,
     required this.virtualIp,
     required this.prefixLen,
+    this.networkConfigs = const <PlatformDeviceNetworkConfig>[],
     this.dnsServers = const <String>[],
     this.routes = const <Map<String, Object?>>[],
     this.mtu,
@@ -39,6 +40,7 @@ class AndroidVpnSessionConfig {
   final String sessionName;
   final String virtualIp;
   final int prefixLen;
+  final List<PlatformDeviceNetworkConfig> networkConfigs;
   final List<String> dnsServers;
   final List<Map<String, Object?>> routes;
   final int? mtu;
@@ -52,6 +54,7 @@ class AndroidVpnSessionConfig {
       sessionName: json['sessionName'] as String? ?? 'SLAN',
       virtualIp: json['virtualIp'] as String? ?? '',
       prefixLen: json['prefixLen'] as int? ?? 32,
+      networkConfigs: _platformDeviceNetworkConfigs(json['networkConfigs']),
       dnsServers: _stringList(json['dnsServers']),
       routes: _mapList(json['routes']),
       mtu: json['mtu'] as int?,
@@ -67,6 +70,8 @@ class AndroidVpnSessionConfig {
       'sessionName': sessionName,
       'virtualIp': virtualIp,
       'prefixLen': prefixLen,
+      'networkConfigs':
+          networkConfigs.map((config) => config.toJson()).toList(),
       'dnsServers': dnsServers,
       'routes': routes,
       if (mtu != null) 'mtu': mtu,
@@ -79,6 +84,66 @@ class AndroidVpnSessionConfig {
 }
 
 typedef PlatformNetworkConfig = AndroidVpnSessionConfig;
+
+class PlatformDeviceNetworkConfig {
+  const PlatformDeviceNetworkConfig({
+    required this.networkId,
+    required this.deviceId,
+    this.networkName,
+    this.networkCode,
+    this.configVersion,
+    this.globalIp,
+    this.globalName,
+    this.peerCount = 0,
+    this.dnsRecordCount = 0,
+    this.securityRuleCount = 0,
+    this.relayCandidateCount = 0,
+  });
+
+  final String networkId;
+  final String deviceId;
+  final String? networkName;
+  final String? networkCode;
+  final int? configVersion;
+  final String? globalIp;
+  final String? globalName;
+  final int peerCount;
+  final int dnsRecordCount;
+  final int securityRuleCount;
+  final int relayCandidateCount;
+
+  factory PlatformDeviceNetworkConfig.fromJson(Map<String, Object?> json) {
+    return PlatformDeviceNetworkConfig(
+      networkId: json['networkId'] as String? ?? '',
+      deviceId: json['deviceId'] as String? ?? '',
+      networkName: json['networkName'] as String?,
+      networkCode: json['networkCode'] as String?,
+      configVersion: json['configVersion'] as int?,
+      globalIp: json['globalIp'] as String?,
+      globalName: json['globalName'] as String?,
+      peerCount: json['peerCount'] as int? ?? 0,
+      dnsRecordCount: json['dnsRecordCount'] as int? ?? 0,
+      securityRuleCount: json['securityRuleCount'] as int? ?? 0,
+      relayCandidateCount: json['relayCandidateCount'] as int? ?? 0,
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      'networkId': networkId,
+      'deviceId': deviceId,
+      if (networkName != null) 'networkName': networkName,
+      if (networkCode != null) 'networkCode': networkCode,
+      if (configVersion != null) 'configVersion': configVersion,
+      if (globalIp != null) 'globalIp': globalIp,
+      if (globalName != null) 'globalName': globalName,
+      'peerCount': peerCount,
+      'dnsRecordCount': dnsRecordCount,
+      'securityRuleCount': securityRuleCount,
+      'relayCandidateCount': relayCandidateCount,
+    };
+  }
+}
 
 class RelayDataPlaneConfig {
   const RelayDataPlaneConfig({
@@ -394,6 +459,18 @@ PathPolicy? _pathPolicy(Object? value) {
     return null;
   }
   return PathPolicy.fromJson(value.cast<String, Object?>());
+}
+
+List<PlatformDeviceNetworkConfig> _platformDeviceNetworkConfigs(Object? value) {
+  if (value is! List) {
+    return const <PlatformDeviceNetworkConfig>[];
+  }
+  return value
+      .whereType<Map>()
+      .map((item) => PlatformDeviceNetworkConfig.fromJson(
+            item.cast<String, Object?>(),
+          ))
+      .toList();
 }
 
 List<PeerPathConfig> _peerPathConfigs(Object? value) {

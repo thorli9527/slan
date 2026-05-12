@@ -15,10 +15,22 @@ TIMEOUT="${SLAN_ANDROID_TIMEOUT:-60s}"
 WORK_DIR="${SLAN_ANDROID_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-android.XXXXXX")}"
 MAC_LOG="$WORK_DIR/macos-service.log"
 ANDROID_LOG="$WORK_DIR/android-flutter-test.log"
+MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-mac-android-$(date +%s%N)}"
+ANDROID_TEST_DEVICE_ID="${SLAN_ANDROID_TEST_DEVICE_ID:-android-integration-$(date +%s%N)}"
 ANDROID_TO_MAC_BODY="${SLAN_ANDROID_TO_MAC_BODY:-hello-android-to-mac-$(date +%s%N)}"
 MAC_TO_ANDROID_BODY="${SLAN_MAC_TO_ANDROID_BODY:-hello-mac-to-android-$(date +%s%N)}"
 
 PIDS=()
+
+start_android_vpn_appops_guard() {
+  (
+    while true; do
+      "$ADB" shell cmd appops set dev.slan.slan_client_v2 ACTIVATE_VPN allow >/dev/null 2>&1 || true
+      sleep 0.25
+    done
+  ) &
+  PIDS+=("$!")
+}
 
 cleanup() {
   status=$?
@@ -63,12 +75,17 @@ if [[ "$boot_completed" != "1" ]]; then
   echo "Android device is connected but did not finish booting" >&2
   exit 1
 fi
+"$ADB" shell pm clear dev.slan.slan_client_v2 >/dev/null 2>&1 || true
+"$ADB" shell cmd appops set dev.slan.slan_client_v2 ACTIVATE_VPN allow >/dev/null 2>&1 || true
+start_android_vpn_appops_guard
 
 mkdir -p "$WORK_DIR/state"
 
 echo "+ start mac client-core-service on $SERVICE_HOST"
 SLAN_CLIENT_CORE_SERVICE_HOST="$SERVICE_HOST" \
   SLAN_CONTROL_BASE_URL="$BIZ_URL" \
+  SLAN_CLIENT_DEVICE_ID="$MAC_TEST_DEVICE_ID" \
+  SLAN_MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-1}" \
   SLAN_STATE_DIR="$WORK_DIR/state" \
   "$SERVICE_BIN" >"$MAC_LOG" 2>&1 &
 PIDS+=("$!")
@@ -82,6 +99,7 @@ MAC_OUTPUT="$(
     -email "$EMAIL" \
     -password "$PASSWORD" \
     -register=true \
+    -enable-network=true \
     -timeout "$TIMEOUT"
 )"
 echo "$MAC_OUTPUT"
@@ -101,7 +119,16 @@ echo "+ flutter test Android login and message send/wait"
     --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
     --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
     --dart-define="SLAN_TEST_REGISTER_USER=false" \
+    --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=${SLAN_TEST_CHECK_SWITCH:-false}" \
+    --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=${SLAN_TEST_EXPECT_NETWORK_MODULE:-false}" \
+    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=${SLAN_TEST_MIN_NETWORK_MODULE_PEERS:-0}" \
+    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=${SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS:-0}" \
+    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=${SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES:-0}" \
+    --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=${SLAN_TEST_POST_ENABLE_WAIT_SECONDS:-0}" \
+    --dart-define="SLAN_TEST_UDP_ECHO_PORT=${SLAN_TEST_UDP_ECHO_PORT:-0}" \
+    --dart-define="SLAN_TEST_TCP_ECHO_PORT=${SLAN_TEST_TCP_ECHO_PORT:-0}" \
     --dart-define="SLAN_TEST_SEND_TARGET_DEVICE_ID=$MAC_DEVICE_ID" \
     --dart-define="SLAN_TEST_SEND_BODY=$ANDROID_TO_MAC_BODY" \
     --dart-define="SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID=$MAC_DEVICE_ID" \
@@ -139,6 +166,7 @@ echo "+ wait mac receive Android message"
     -address "$SERVICE_HOST" \
     -email "$EMAIL" \
     -password "$PASSWORD" \
+    -login=false \
     -expect-from "$ANDROID_DEVICE_ID" \
     -expect-body "$ANDROID_TO_MAC_BODY" \
     -timeout "$TIMEOUT"
@@ -152,6 +180,7 @@ echo "+ send mac message to Android"
     -address "$SERVICE_HOST" \
     -email "$EMAIL" \
     -password "$PASSWORD" \
+    -login=false \
     -send-target "$ANDROID_DEVICE_ID" \
     -send-body "$MAC_TO_ANDROID_BODY" \
     -timeout "$TIMEOUT"

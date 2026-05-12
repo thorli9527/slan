@@ -12,6 +12,8 @@ TIMEOUT="${SLAN_MAC_IOS_TIMEOUT:-60s}"
 WORK_DIR="${SLAN_MAC_IOS_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-ios.XXXXXX")}"
 MAC_LOG="$WORK_DIR/macos-service.log"
 IOS_LOG="$WORK_DIR/ios-flutter-test.log"
+MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-mac-ios-$(date +%s%N)}"
+IOS_TEST_DEVICE_ID="${SLAN_IOS_TEST_DEVICE_ID:-ios-integration-$(date +%s%N)}"
 IOS_TO_MAC_BODY="${SLAN_IOS_TO_MAC_BODY:-hello-ios-to-mac-$(date +%s%N)}"
 MAC_TO_IOS_BODY="${SLAN_MAC_TO_IOS_BODY:-hello-mac-to-ios-$(date +%s%N)}"
 
@@ -56,6 +58,8 @@ mkdir -p "$WORK_DIR/state"
 echo "+ start mac client-core-service on $SERVICE_HOST"
 SLAN_CLIENT_CORE_SERVICE_HOST="$SERVICE_HOST" \
   SLAN_CONTROL_BASE_URL="$BIZ_URL" \
+  SLAN_CLIENT_DEVICE_ID="$MAC_TEST_DEVICE_ID" \
+  SLAN_MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-1}" \
   SLAN_STATE_DIR="$WORK_DIR/state" \
   "$SERVICE_BIN" >"$MAC_LOG" 2>&1 &
 PIDS+=("$!")
@@ -69,6 +73,7 @@ MAC_OUTPUT="$(
     -email "$EMAIL" \
     -password "$PASSWORD" \
     -register=true \
+    -enable-network=true \
     -timeout "$TIMEOUT"
 )"
 echo "$MAC_OUTPUT"
@@ -88,6 +93,8 @@ echo "+ flutter test iOS login and message send/wait"
     --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
     --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
     --dart-define="SLAN_TEST_REGISTER_USER=false" \
+    --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$IOS_TEST_DEVICE_ID" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=${SLAN_TEST_CHECK_SWITCH:-false}" \
     --dart-define="SLAN_TEST_SEND_TARGET_DEVICE_ID=$MAC_DEVICE_ID" \
     --dart-define="SLAN_TEST_SEND_BODY=$IOS_TO_MAC_BODY" \
@@ -126,6 +133,7 @@ echo "+ wait mac receive iOS message"
     -address "$SERVICE_HOST" \
     -email "$EMAIL" \
     -password "$PASSWORD" \
+    -login=false \
     -expect-from "$IOS_DEVICE_ID" \
     -expect-body "$IOS_TO_MAC_BODY" \
     -timeout "$TIMEOUT"
@@ -139,6 +147,7 @@ echo "+ send mac message to iOS"
     -address "$SERVICE_HOST" \
     -email "$EMAIL" \
     -password "$PASSWORD" \
+    -login=false \
     -send-target "$IOS_DEVICE_ID" \
     -send-body "$MAC_TO_IOS_BODY" \
     -timeout "$TIMEOUT"

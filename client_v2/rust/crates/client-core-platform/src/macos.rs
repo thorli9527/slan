@@ -1,6 +1,7 @@
 //! macOS platform bridge for SLAN mesh networking.
 
 use std::{
+    env,
     ffi::CString,
     fs::File,
     io::{ErrorKind, Read, Write},
@@ -30,6 +31,7 @@ const DEFAULT_UTUN_MTU: u16 = 1280;
 const MAX_PACKET_SIZE: usize = 4096;
 const UTUN_HEADER_LEN: usize = 4;
 const AF_INET_HEADER: [u8; UTUN_HEADER_LEN] = [0, 0, 0, libc::AF_INET as u8];
+const MOCK_INTERFACE_NAME: &str = "utun-mock";
 
 #[derive(Debug, Clone, Default)]
 pub struct MacosPlatformNetwork;
@@ -80,6 +82,10 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        if macos_network_mock_enabled() {
+            ensure_mock_runtime(&mut runtime);
+            return Ok(());
+        }
         ensure_utun_runtime(&mut runtime)
     }
 
@@ -94,6 +100,12 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        if macos_network_mock_enabled() {
+            ensure_mock_runtime(&mut runtime);
+            runtime.virtual_ip = Some(virtual_ip.to_string());
+            runtime.prefix_len = Some(prefix_len);
+            return Ok(());
+        }
         ensure_utun_runtime(&mut runtime)?;
         let interface_name = runtime
             .interface_name
@@ -109,6 +121,11 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        if macos_network_mock_enabled() {
+            ensure_mock_runtime(&mut runtime);
+            runtime.routes = routes.to_vec();
+            return Ok(());
+        }
         ensure_utun_runtime(&mut runtime)?;
         let interface_name = runtime
             .interface_name
@@ -125,6 +142,16 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        if macos_network_mock_enabled() {
+            ensure_mock_runtime(&mut runtime);
+            runtime.dns_servers = dns_servers
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect();
+            return Ok(());
+        }
         ensure_utun_runtime(&mut runtime)?;
         let interface_name = runtime
             .interface_name
@@ -145,6 +172,10 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
         runtime.relay_config = relay_config.cloned();
+        if macos_network_mock_enabled() {
+            ensure_mock_runtime(&mut runtime);
+            return Ok(());
+        }
         restart_data_plane(&mut runtime)
     }
 
@@ -152,6 +183,16 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        if macos_network_mock_enabled() {
+            runtime.interface_name = None;
+            runtime.virtual_ip = None;
+            runtime.prefix_len = None;
+            runtime.dns_servers.clear();
+            runtime.routes.clear();
+            runtime.relay_config = None;
+            runtime.utun = None;
+            return Ok(());
+        }
         runtime.utun = None;
         let interface_name = runtime.interface_name.take();
         let routes = mem::take(&mut runtime.routes);
@@ -173,9 +214,14 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        let network_enabled = if macos_network_mock_enabled() {
+            runtime.virtual_ip.is_some()
+        } else {
+            runtime.utun.is_some() && runtime.virtual_ip.is_some()
+        };
         Ok(NetworkRuntimeState {
             adapter_present: runtime.interface_name.is_some(),
-            network_enabled: runtime.utun.is_some() && runtime.virtual_ip.is_some(),
+            network_enabled,
             virtual_ip: runtime.virtual_ip.clone(),
             active_path: runtime
                 .relay_config
@@ -230,6 +276,19 @@ impl PlatformNetwork for MacosPlatformNetwork {
                 .collect(),
             checks: macos_diagnostic_checks(&runtime),
         })
+    }
+}
+
+fn macos_network_mock_enabled() -> bool {
+    matches!(
+        env::var("SLAN_MACOS_NETWORK_MOCK").ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "yes" | "YES")
+    )
+}
+
+fn ensure_mock_runtime(runtime: &mut MacosRuntime) {
+    if runtime.interface_name.is_none() {
+        runtime.interface_name = Some(MOCK_INTERFACE_NAME.to_string());
     }
 }
 

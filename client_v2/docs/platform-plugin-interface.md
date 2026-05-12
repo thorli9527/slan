@@ -32,13 +32,10 @@ Flutter and platform plugins should use these service methods for control-plane 
 | `localState` | core-service | Current UI state snapshot. |
 | `localBusinessEventWatch` | core-service | State/control event stream. |
 | `localControlStatus` | core-service | MQTT/control connection status. |
-| `localPlatformNetworkConfig` | core-service | Final IP/DNS/routes/MTU/relay/path config for platform application. |
+| `localPlatformNetworkConfig` | core-service | Final IP/DNS/routes/MTU/relay/path config plus current server network configs for platform application. |
 | `ingestPlatformRuntimeState` | core-service | Receive platform runtime, traffic, heartbeat, and error reports. |
 | `localNetworkShutdown` | core-service | Disable local network and clear runtime state. |
 | `localDiagnosticsExport` | core-service | Unified diagnostics. |
-
-`localAndroidNetworkConfig` is a deprecated compatibility alias for
-`localPlatformNetworkConfig`.
 
 ## Stable Platform Plugin Methods
 
@@ -68,30 +65,6 @@ execution remains platform-owned:
 - macOS: NetworkExtension/utun, DNS, routes
 - Windows: WinTun/WFP, DNS, routes
 - Linux: tun, ip route, resolv or systemd-resolved
-
-## Deprecated Plugin Control Methods
-
-These methods exist only for compatibility while mobile is being migrated to
-the Rust control plane. New code should not call them on platform plugins:
-
-- `localState`
-- `refresh`
-- `localStateWatch`
-- `localBusinessEventWatch`
-- `dispatch`
-- `enqueueControlTask`
-- `enqueueDownstreamControlTask`
-- `ingestDownstreamControlMessage`
-- `localControlStatus`
-- `localControlPlan`
-- `localControlCadence`
-- `localControlTickPlan`
-- `localControlOutbox`
-- `localPendingControlAcks`
-- `localMarkControlAcked`
-- `localMarkTransportPublished`
-- `localRelayCandidates`
-- `localRefreshRelayCandidates`
 
 ## Migration Status
 

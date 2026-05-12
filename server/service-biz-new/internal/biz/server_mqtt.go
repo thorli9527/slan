@@ -49,7 +49,13 @@ func (s *Server) bifroMQAuth(w http.ResponseWriter, r *http.Request) {
 			result, ok = validateMQTTCredential(s.mqtt, clientID, username, string(decoded), timeNow())
 		}
 	}
+	mqtt5 := mqttAuthRequestIsV5(req)
 	if !ok {
+		log.Printf("mqtt auth rejected clientId=%s username=%s mqtt5=%v keys=%v", clientID, username, mqtt5, mqttRequestKeys(req))
+		if mqtt5 {
+			writeJSON(w, http.StatusForbidden, MQTT5AuthResponse{Failed: &MQTT5AuthFailed{Code: "NotAuthorized"}})
+			return
+		}
 		writeJSON(w, http.StatusForbidden, MQTTAuthResponse{Reject: "NotAuthorized"})
 		return
 	}
@@ -57,14 +63,20 @@ func (s *Server) bifroMQAuth(w http.ResponseWriter, r *http.Request) {
 	if result.Principal == "server" {
 		userID = mqttServerID
 	}
-	writeJSON(w, http.StatusOK, MQTTAuthResponse{OK: &MQTTAuthOK{
+	authOK := &MQTTAuthOK{
 		TenantID: "slan",
 		UserID:   userID,
 		Attrs: map[string]string{
 			"principal": result.Principal,
 			"deviceId":  result.DeviceID,
+			"userId":    userID,
 		},
-	}})
+	}
+	if mqtt5 {
+		writeJSON(w, http.StatusOK, MQTT5AuthResponse{Success: authOK})
+		return
+	}
+	writeJSON(w, http.StatusOK, MQTTAuthResponse{OK: authOK})
 }
 
 func (s *Server) bifroMQCheck(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +87,12 @@ func (s *Server) bifroMQCheck(w http.ResponseWriter, r *http.Request) {
 	principal := mqttStringValue(req, "principal")
 	deviceID := mqttStringValue(req, "deviceId", "device_id")
 	userID := mqttStringValue(req, "userId", "user_id")
+	if userID == "" {
+		userID = mqttHeaderValue(r, "user_id", "user-id", "userid", "userId")
+	}
+	if deviceID == "" {
+		deviceID = mqttHeaderValue(r, "device_id", "device-id", "deviceId")
+	}
 	if principal == "" {
 		if userID == mqttServerID {
 			principal = "server"
@@ -180,22 +198,87 @@ func (s *Server) notifyNetworkMemberState(networkID, deviceID, state, reason str
 func mqttStringValue(values map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := values[key]; ok {
+			if text, ok := mqttBytesString(value); ok {
+				return strings.TrimSpace(text)
+			}
 			return strings.TrimSpace(fmt.Sprint(value))
 		}
 	}
 	return ""
 }
 
+func mqttBytesString(value any) (string, bool) {
+	items, ok := value.([]any)
+	if !ok {
+		return "", false
+	}
+	out := make([]byte, 0, len(items))
+	for _, item := range items {
+		switch typed := item.(type) {
+		case float64:
+			if typed < 0 || typed > 255 {
+				return "", false
+			}
+			out = append(out, byte(typed))
+		case int:
+			if typed < 0 || typed > 255 {
+				return "", false
+			}
+			out = append(out, byte(typed))
+		default:
+			return "", false
+		}
+	}
+	return string(out), true
+}
+
+func mqttRequestKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func mqttHeaderValue(r *http.Request, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(r.Header.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func mqttAuthRequestIsV5(values map[string]any) bool {
+	if _, ok := values["responseInfo"]; ok {
+		return true
+	}
+	if _, ok := values["userProps"]; ok {
+		return true
+	}
+	if version := mqttStringValue(values, "version", "ver", "protocolVersion"); version == "5" || strings.EqualFold(version, "MQTT5") {
+		return true
+	}
+	return false
+}
+
 func mqttCheckTopic(req map[string]any) (string, bool, bool) {
+	if _, ok := req["conn"]; ok {
+		return "", false, true
+	}
+	if sub, ok := req["sub"].(map[string]any); ok {
+		return mqttTopicFromValues(sub), true, false
+	}
+	if pub, ok := req["pub"].(map[string]any); ok {
+		return mqttTopicFromValues(pub), false, false
+	}
 	action := strings.ToLower(mqttStringValue(req, "action", "operation", "type"))
 	if strings.Contains(action, "connect") {
 		return "", false, true
 	}
 	subscribe := strings.Contains(action, "sub")
-	for _, key := range []string{"topic", "topicFilter", "topic_filter"} {
-		if topic := mqttStringValue(req, key); topic != "" {
-			return topic, subscribe, false
-		}
+	if topic := mqttTopicFromValues(req); topic != "" {
+		return topic, subscribe, false
 	}
 	for _, key := range []string{"topics", "topicFilters", "topic_filters"} {
 		if values, ok := req[key].([]any); ok && len(values) > 0 {
@@ -203,6 +286,10 @@ func mqttCheckTopic(req map[string]any) (string, bool, bool) {
 		}
 	}
 	return "", subscribe, false
+}
+
+func mqttTopicFromValues(values map[string]any) string {
+	return mqttStringValue(values, "topic", "topicFilter", "topic_filter")
 }
 
 func isNetworkTopic(cfg MQTTConfig, topic string) bool {

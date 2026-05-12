@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result};
 use client_core::{
     AssignedIpPayload, ClientCommand, ClientMessageNoticePayload, ClientRuntime, ClientViewState,
-    PlatformNetworkConfig, RelayDataPlaneConfig, RelayPeerSession, RelayPolicyNoticePayload,
+    PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig, RelayPeerSession,
 };
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
@@ -23,7 +23,7 @@ use crate::{
     local_api::{
         LocalServiceMethod, SendClientMessageRequest, ServiceRequest, WatchBusinessEventRequest,
         WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
-        BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_STATE_CHANGED,
+        BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_STATE_CHANGED,
     },
     session_store::{
         app_data_dir, current_timestamp_ms, ensure_session_device_registered,
@@ -34,6 +34,7 @@ use crate::{
 
 static RUNTIME: OnceLock<Mutex<ClientRuntime<PlatformNetworkImpl>>> = OnceLock::new();
 static MQTT: OnceLock<Mutex<Option<EmbeddedMqttConnection>>> = OnceLock::new();
+static MQTT_LAST_ERROR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static BUSINESS_EVENT: OnceLock<Mutex<EmbeddedBusinessEvent>> = OnceLock::new();
 static EMBEDDED_CONTROL_BASE_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -57,6 +58,10 @@ struct EmbeddedBusinessEvent {
 
 fn mqtt_connection() -> &'static Mutex<Option<EmbeddedMqttConnection>> {
     MQTT.get_or_init(|| Mutex::new(None))
+}
+
+fn mqtt_last_error_store() -> &'static Mutex<Option<String>> {
+    MQTT_LAST_ERROR.get_or_init(|| Mutex::new(None))
 }
 
 fn business_event() -> &'static Mutex<EmbeddedBusinessEvent> {
@@ -112,6 +117,14 @@ fn handle_request_json(request_json: &str) -> Result<String> {
         }
         LocalServiceMethod::LocalSession => local_session_json(),
         LocalServiceMethod::LocalNetworkModule => {
+            if let Ok(session) = load_session() {
+                let client = ControlPlaneClient::from_env();
+                if let Err(err) =
+                    crate::network_module::refresh_network_module_from_session(&client, &session)
+                {
+                    eprintln!("client-core-service localNetworkModule refresh failed: {err:#}");
+                }
+            }
             serde_json::to_string(&crate::network_module::network_module_snapshot())
                 .context("encode local network module")
         }
@@ -160,8 +173,7 @@ fn handle_request_json(request_json: &str) -> Result<String> {
             }))
             .context("encode runtime state ingest")
         }
-        LocalServiceMethod::LocalPlatformNetworkConfig
-        | LocalServiceMethod::LocalAndroidNetworkConfig => {
+        LocalServiceMethod::LocalPlatformNetworkConfig => {
             serde_json::to_string(&platform_network_config()?).context("encode platform config")
         }
         _ => anyhow::bail!("unsupported embedded service method {}", request.method),
@@ -195,6 +207,9 @@ fn apply_embedded_request_overrides(args: &Value) {
 fn platform_network_config() -> Result<Value> {
     let mut session = ensure_device_session().context("ensure device")?;
     let client = ControlPlaneClient::from_env();
+    let network_configs =
+        crate::network_module::refresh_network_module_from_session(&client, &session)
+            .unwrap_or_default();
     let network_id = match session
         .active_network_id
         .clone()
@@ -251,6 +266,7 @@ fn platform_network_config() -> Result<Value> {
         session_name: "SLAN".to_string(),
         virtual_ip: activation.virtual_ip,
         prefix_len: activation.prefix_len,
+        network_configs: platform_network_configs(&network_configs),
         dns_servers: activation.dns_servers,
         routes: activation.routes,
         mtu: Some(1280),
@@ -273,6 +289,27 @@ fn platform_network_config() -> Result<Value> {
         );
     }
     Ok(value)
+}
+
+fn platform_network_configs(
+    configs: &[crate::control_plane::DeviceNetworkConfig],
+) -> Vec<PlatformDeviceNetworkConfig> {
+    configs
+        .iter()
+        .map(|config| PlatformDeviceNetworkConfig {
+            network_id: config.network_id.clone(),
+            device_id: config.device_id.clone(),
+            network_name: config.network_name.clone(),
+            network_code: config.network_code.clone(),
+            config_version: config.config_version,
+            global_ip: config.global_ip.clone(),
+            global_name: config.global_name.clone(),
+            peer_count: config.peers.len(),
+            dns_record_count: config.dns_records.len(),
+            security_rule_count: config.rules.len(),
+            relay_candidate_count: config.relay_candidates.len(),
+        })
+        .collect()
 }
 
 fn embedded_eligible_relay_peer_count(
@@ -381,6 +418,10 @@ fn ensure_embedded_device() -> Result<Value> {
 
 fn connect_embedded_control_mqtt() -> Result<Value> {
     let session = ensure_device_session().context("ensure device before mqtt")?;
+    connect_embedded_control_mqtt_with_session(&session)
+}
+
+fn connect_embedded_control_mqtt_with_session(session: &PersistedSession) -> Result<Value> {
     let mqtt = session
         .mqtt
         .clone()
@@ -396,8 +437,11 @@ fn connect_embedded_control_mqtt() -> Result<Value> {
         },
         &downstream_topic,
     )
-    .map_err(|error| anyhow::anyhow!(error))
-    .context("connect control mqtt")?;
+    .map_err(|error| {
+        let message = format!("connect control mqtt: {error}");
+        set_embedded_mqtt_last_error(Some(message.clone()));
+        anyhow::anyhow!(message)
+    })?;
     let network_broadcast_topic = embedded_network_broadcast_topic(&session);
     if let Some(topic) = network_broadcast_topic.as_deref() {
         if let Err(error) = client.subscribe(topic) {
@@ -419,6 +463,7 @@ fn connect_embedded_control_mqtt() -> Result<Value> {
             last_error: None,
         });
     }
+    set_embedded_mqtt_last_error(None);
     spawn_embedded_mqtt_consumer(client, device_id.clone(), downstream_topic.clone());
     Ok(serde_json::json!({
         "connected": true,
@@ -428,6 +473,13 @@ fn connect_embedded_control_mqtt() -> Result<Value> {
         "brokerUrl": embedded_mqtt_broker_url(&mqtt.broker_url),
         "controlStatus": embedded_control_status(),
     }))
+}
+
+fn set_embedded_mqtt_last_error(error: Option<String>) {
+    let mut guard = mqtt_last_error_store()
+        .lock()
+        .expect("embedded mqtt last error mutex poisoned");
+    *guard = error;
 }
 
 fn embedded_network_broadcast_topic(session: &PersistedSession) -> Option<String> {
@@ -443,7 +495,7 @@ fn embedded_network_broadcast_topic(session: &PersistedSession) -> Option<String
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let suffix = format!("/{device_id}");
+        let suffix = format!("/devices/{device_id}");
         if prefix.ends_with(&suffix) {
             prefix.truncate(prefix.len() - suffix.len());
         }
@@ -661,8 +713,7 @@ fn spawn_embedded_mqtt_consumer(
                     | control_transport::ControlTransportMessageKind::EndpointReport => {
                         last_runtime_state_ms = Some(now_ms);
                     }
-                    control_transport::ControlTransportMessageKind::PathHealth
-                    | control_transport::ControlTransportMessageKind::RelayPolicyReport => {
+                    control_transport::ControlTransportMessageKind::PathHealth => {
                         last_path_health_ms = Some(now_ms);
                     }
                     control_transport::ControlTransportMessageKind::ControlAck => {}
@@ -740,14 +791,43 @@ fn ingest_embedded_downstream_publish(payload: &[u8]) -> Result<()> {
         .and_then(Value::as_str)
         .unwrap_or_default()
     {
+        "network_config_changed" => ingest_embedded_network_config_changed(&value),
         "device_ip_reassigned" => ingest_embedded_device_ip_reassigned(&value),
         "device_network_enabled" | "device_network_disabled" => {
             ingest_embedded_device_network_presence(&value)
         }
-        "relay_data_plane_policy" => persist_embedded_policy_payload(&value),
         "client_message" => persist_embedded_client_message(&value),
         _ => Ok(()),
     }
+}
+
+fn ingest_embedded_network_config_changed(value: &Value) -> Result<()> {
+    let session = load_session().context("load session for network config refresh")?;
+    let client = ControlPlaneClient::from_env();
+    let configs = crate::network_module::refresh_network_module_from_session(&client, &session)
+        .context("refresh device network configs")?;
+    let payload = value.get("payload").unwrap_or(value);
+    let network_id = payload
+        .get("networkId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let config_version = payload.get("configVersion").and_then(Value::as_i64);
+    let state = {
+        let runtime = runtime().lock().expect("embedded runtime mutex poisoned");
+        runtime.state().clone()
+    };
+    publish_embedded_business_event(
+        BUSINESS_CONTROL_SYNC_CHANGED,
+        serde_json::json!({
+            "messageType": "network_config_changed",
+            "networkId": network_id,
+            "configVersion": config_version,
+            "networkConfigCount": configs.len(),
+            "reconfigureRequired": true,
+        }),
+        &state,
+    );
+    Ok(())
 }
 
 fn ingest_embedded_device_network_presence(value: &Value) -> Result<()> {
@@ -843,70 +923,6 @@ fn ingest_embedded_device_ip_reassigned(value: &Value) -> Result<()> {
         &state,
     );
     Ok(())
-}
-
-fn persist_embedded_policy_payload(value: &Value) -> Result<()> {
-    let payload = value.get("payload").unwrap_or(value);
-    if !embedded_policy_targets_current_device(payload) {
-        return Ok(());
-    }
-    write_embedded_downstream_payload("client-v2-relay-policy.json", payload)?;
-    let policy_id = payload
-        .get("policyId")
-        .or_else(|| payload.get("policy_id"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let updated_at_ms = payload
-        .get("updatedAtMs")
-        .or_else(|| payload.get("updated_at_ms"))
-        .and_then(Value::as_u64);
-    let state = {
-        let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
-        runtime.dispatch(ClientCommand::ApplyRelayPolicyNotice(
-            RelayPolicyNoticePayload {
-                policy_id: policy_id.clone(),
-                updated_at_ms,
-            },
-        ))?
-    };
-    publish_embedded_business_event(
-        BUSINESS_NETWORK_RUNTIME_CHANGED,
-        serde_json::json!({
-            "messageType": "relay_data_plane_policy",
-            "policyId": policy_id,
-            "updatedAtMs": updated_at_ms,
-        }),
-        &state,
-    );
-    Ok(())
-}
-
-fn embedded_policy_targets_current_device(payload: &Value) -> bool {
-    let targets = payload
-        .get("targetDeviceIds")
-        .or_else(|| payload.get("target_device_ids"))
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if targets.is_empty() {
-        return true;
-    }
-    let Some(device_id) = load_session()
-        .ok()
-        .and_then(|session| session.device_id)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
-        return false;
-    };
-    targets.iter().any(|target| *target == device_id)
 }
 
 fn persist_embedded_client_message(value: &Value) -> Result<()> {
@@ -1017,8 +1033,12 @@ fn send_embedded_client_message(input: SendClientMessageRequest) -> Result<Value
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("device id is not available"))?;
-    ControlPlaneClient::from_env().send_client_message(
-        &session.access_token,
+    let mqtt = session
+        .mqtt
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("mqtt credential is not available"))?;
+    crate::client_message_mqtt::publish_client_message(
+        mqtt,
         network_id,
         from_device_id,
         &input.target_device_id,
@@ -1045,6 +1065,12 @@ fn embedded_control_status() -> Value {
                     })
                     .unwrap_or((false, None, None))
             };
+            let mqtt_last_error = mqtt_last_error.or_else(|| {
+                mqtt_last_error_store()
+                    .lock()
+                    .expect("embedded mqtt last error mutex poisoned")
+                    .clone()
+            });
             let mqtt_credential_ready = session.mqtt.is_some();
             let device_ready = session
                 .device_id
@@ -1096,6 +1122,8 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
             let session =
                 hydrate_session_from_control_plane(auth).context("hydrate password session")?;
             persist_session(&session)?;
+            connect_embedded_control_mqtt_with_session(&session)
+                .context("connect mqtt after login")?;
             runtime
                 .dispatch(ClientCommand::ApplyAuthCallback(session.into()))
                 .context("apply login session")
@@ -1104,6 +1132,8 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
             let session =
                 hydrate_session_from_control_plane(payload).context("hydrate auth callback")?;
             persist_session(&session)?;
+            connect_embedded_control_mqtt_with_session(&session)
+                .context("connect mqtt after auth callback")?;
             runtime
                 .dispatch(ClientCommand::ApplyAuthCallback(session.into()))
                 .context("apply auth callback")

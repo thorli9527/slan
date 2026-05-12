@@ -1,6 +1,4 @@
-// ignore_for_file: deprecated_member_use
 // Mobile control-plane state is routed through embedded client-core-service.
-// Deprecated native methods are retained only for platform method compatibility.
 
 import 'dart:async';
 import 'dart:convert';
@@ -150,6 +148,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   bool _watchingAndroidRuntimeStats = false;
   bool _watchingIosPacketTunnelStats = false;
   bool _repairingNativeMobileMqtt = false;
+  bool _mobileMqttEnsureRunning = false;
+  Future<void>? _mobileMqttEnsureInFlight;
   DateTime? _lastNativeMobileMqttRepairAt;
   String? _runtimeControlBaseUrl;
 
@@ -158,7 +158,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   static const _testDeviceId = String.fromEnvironment('SLAN_TEST_DEVICE_ID');
   static const _defaultControlBaseUrl = String.fromEnvironment(
       'SLAN_CONTROL_BASE_URL',
-      defaultValue: 'http://127.0.0.1:28080');
+      defaultValue: 'http://api.dev.staticlss.com');
 
   @override
   ValueListenable<ClientViewState> get state => _state;
@@ -321,7 +321,16 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     try {
       final result = await _localControlStatusWithFallback();
       final json = ClientCoreLocalService.jsonMapFromResult(result);
-      return json == null ? null : ControlTransportStatus.fromJson(json);
+      final status =
+          json == null ? null : ControlTransportStatus.fromJson(json);
+      if (_usesNativeMobileControlPlane &&
+          status?.ready == true &&
+          status?.mqttConnected != true) {
+        unawaited(_repairNativeMobileMqttIfNeeded(
+          'bridge.localControlStatus.mqttRepair',
+        ));
+      }
+      return status;
     } on Object {
       return null;
     }
@@ -553,14 +562,10 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     }
     final controlBaseUrl =
         Platform.environment['SLAN_CONTROL_BASE_URL']?.trim() ?? '';
-    if (controlBaseUrl.contains('127.0.0.1') ||
-        controlBaseUrl.contains('localhost')) {
-      return 'http://127.0.0.1:24200';
+    if (controlBaseUrl.contains('api.dev.staticlss.com')) {
+      return 'http://web.dev.staticlss.com';
     }
-    if (controlBaseUrl.contains('slan.localhost')) {
-      return 'https://web.slan.localhost:18443';
-    }
-    return 'http://127.0.0.1:24200';
+    return 'http://web.dev.staticlss.com';
   }
 
   String _usableClientDeviceId(String? deviceId) {
@@ -745,10 +750,37 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   Future<void> _ensureDeviceThenConnectMqtt(String event) async {
-    if (!_usesNativeMobileControlPlane || !_state.value.signedIn) {
+    if (!_usesNativeMobileControlPlane) {
       return;
     }
-    final device = await _embeddedServiceRequest('localEnsureDevice');
+    if (_mobileMqttEnsureRunning) {
+      final inFlight = _mobileMqttEnsureInFlight;
+      if (inFlight != null) {
+        await inFlight;
+      }
+      return;
+    }
+    final inFlight = _mobileMqttEnsureInFlight;
+    if (inFlight != null) {
+      await inFlight;
+      return;
+    }
+    _mobileMqttEnsureRunning = true;
+    final task = _ensureDeviceThenConnectMqttOnce(event);
+    _mobileMqttEnsureInFlight = task;
+    try {
+      await task;
+    } finally {
+      _mobileMqttEnsureRunning = false;
+      if (identical(_mobileMqttEnsureInFlight, task)) {
+        _mobileMqttEnsureInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _ensureDeviceThenConnectMqttOnce(String event) async {
+    final device =
+        await _embeddedServiceRequest('localEnsureDevice', null, true);
     ClientUiDiagnostics.unawaitedLog(
       '$event.ensureDevice',
       state: _state.value,
@@ -766,9 +798,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   Future<void> _repairNativeMobileMqttIfNeeded(String event) async {
-    if (!_usesNativeMobileControlPlane ||
-        !_state.value.signedIn ||
-        _repairingNativeMobileMqtt) {
+    if (!_usesNativeMobileControlPlane || _repairingNativeMobileMqtt) {
       return;
     }
     final now = DateTime.now();
@@ -1280,9 +1310,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       Future<void>(() async {
         while (_watchingBusinessEvents) {
           try {
-            await _repairNativeMobileMqttIfNeeded(
-              'bridge.businessEvent.mqttRepair',
-            );
+            if (_state.value.signedIn) {
+              await _repairNativeMobileMqttIfNeeded(
+                'bridge.businessEvent.mqttRepair',
+              );
+            }
             final json = await _watchBusinessEvents(_lastBusinessEventRevision);
             if (json == null) {
               if (_usesNativeMobileControlPlane) {
@@ -1589,13 +1621,10 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return false;
     }
     final messageType = data['messageType']?.toString();
-    if (type == ClientBusinessEventType.networkRuntimeChanged &&
-        messageType == 'relay_data_plane_policy') {
-      return true;
-    }
     return data['reconfigureRequired'] == true &&
         (messageType == 'device_network_enabled' ||
-            messageType == 'device_network_disabled');
+            messageType == 'device_network_disabled' ||
+            messageType == 'network_config_changed');
   }
 
   Future<void> _refreshNativeMobilePeersFromControlSync() async {

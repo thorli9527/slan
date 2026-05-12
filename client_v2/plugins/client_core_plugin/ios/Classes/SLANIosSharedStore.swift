@@ -3,11 +3,9 @@ import Foundation
 enum SLANIosSharedStore {
   static let appGroupIdentifier = "group.dev.slan.client.v2"
   static let networkConfigKey = "dev.slan.client.v2.ios.networkConfig"
-  static let relayPolicyKey = "dev.slan.client.v2.ios.relayPolicy"
   static let packetTunnelStatsKey = "dev.slan.client.v2.packetTunnelStats"
 
   private static let networkConfigFile = "network-config.json"
-  private static let relayPolicyFile = "relay-policy.json"
   private static let packetTunnelStatsFile = "packet-tunnel-stats.json"
 
   static func readNetworkConfig() -> [String: Any]? {
@@ -16,14 +14,6 @@ enum SLANIosSharedStore {
 
   static func writeNetworkConfig(_ config: [String: Any]) {
     writeJson(config, fileName: networkConfigFile, defaultsKey: networkConfigKey)
-  }
-
-  static func readRelayPolicy() -> [String: Any]? {
-    readJson(fileName: relayPolicyFile, defaultsKey: relayPolicyKey)
-  }
-
-  static func writeRelayPolicy(_ policy: [String: Any]) {
-    writeJson(policy, fileName: relayPolicyFile, defaultsKey: relayPolicyKey)
   }
 
   static func readPacketTunnelStats() -> [String: Any]? {
@@ -39,10 +29,8 @@ enum SLANIosSharedStore {
       "appGroupIdentifier": appGroupIdentifier,
       "appGroupAvailable": sharedContainerURL() != nil,
       "networkConfigPresent": readNetworkConfig() != nil,
-      "relayPolicyPresent": readRelayPolicy() != nil,
       "packetTunnelStatsPresent": readPacketTunnelStats() != nil,
       "networkConfigFile": sharedFileURL(fileName: networkConfigFile)?.path as Any,
-      "relayPolicyFile": sharedFileURL(fileName: relayPolicyFile)?.path as Any,
       "packetTunnelStatsFile": sharedFileURL(fileName: packetTunnelStatsFile)?.path as Any
     ]
   }

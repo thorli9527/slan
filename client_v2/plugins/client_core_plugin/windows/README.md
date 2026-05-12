@@ -68,7 +68,7 @@ Session and assigned IP:
 Control tasks and MQTT:
 
 - `client-core-service` owns MQTT subscribe/publish, QoS handling, control task queueing, ACK state, heartbeat, runtime state, and downstream message ingestion.
-- The Windows plugin no longer exposes compatibility methods such as `localControlOutbox`, `localPendingControlAcks`, `localMarkControlAcked`, or `ingestDownstreamControlMessage`.
+- The Windows plugin exposes only platform execution methods; control outbox, ACK handling, and downstream ingestion stay inside `client-core-service`.
 - Tasks are persisted by the service at `C:\ProgramData\SLAN\client-v2-control-tasks.xml`.
 
 Browser login:

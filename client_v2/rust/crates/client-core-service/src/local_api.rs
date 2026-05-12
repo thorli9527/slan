@@ -46,7 +46,6 @@ pub(crate) enum LocalServiceMethod {
     LocalNetworkShutdown,
     LocalPlatformNetworkConfig,
     IngestPlatformRuntimeState,
-    LocalAndroidNetworkConfig,
     LocalDiagnosticsExport,
     LocalLogout,
     Start,
@@ -90,7 +89,6 @@ impl LocalServiceMethod {
             "localNetworkShutdown" => Self::LocalNetworkShutdown,
             "localPlatformNetworkConfig" => Self::LocalPlatformNetworkConfig,
             "ingestPlatformRuntimeState" => Self::IngestPlatformRuntimeState,
-            "localAndroidNetworkConfig" => Self::LocalAndroidNetworkConfig,
             "localDiagnosticsExport" => Self::LocalDiagnosticsExport,
             "localLogout" => Self::LocalLogout,
             "start" => Self::Start,
@@ -358,10 +356,6 @@ mod tests {
         assert_eq!(
             LocalServiceMethod::parse("ingestPlatformRuntimeState"),
             LocalServiceMethod::IngestPlatformRuntimeState
-        );
-        assert_eq!(
-            LocalServiceMethod::parse("localAndroidNetworkConfig"),
-            LocalServiceMethod::LocalAndroidNetworkConfig
         );
         assert_eq!(
             LocalServiceMethod::parse("localDiagnosticsExport"),

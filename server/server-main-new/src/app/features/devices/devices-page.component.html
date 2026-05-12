@@ -1,0 +1,63 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>设备管理</h2>
+        <p>运营端查看全局设备、客户归属、IP、心跳、网络启用状态和流量。</p>
+      </div>
+      <div class="toolbar">
+        <input class="search-input" [(ngModel)]="vm.deviceKeyword" placeholder="搜索设备、客户、IP、系统">
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>设备</th>
+          <th>客户</th>
+          <th>系统</th>
+          <th>IP</th>
+          <th>心跳/网络/设备</th>
+          <th>网络</th>
+          <th>流量</th>
+          <th>上报时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let device of vm.filteredDevices">
+          <td>
+            <strong>{{ device.alias || device.name || device.deviceId }}</strong><br>
+            <code>{{ device.deviceId }}</code>
+          </td>
+          <td>
+            <strong>{{ device.ownerEmail || device.ownerId }}</strong><br>
+            <code>{{ device.ownerId }}</code>
+          </td>
+          <td>{{ device.osName || device.platform }} {{ device.osVersion }}</td>
+          <td><code>{{ device.globalIp }}</code><br><small>{{ device.globalName }}</small></td>
+          <td>
+            <span class="status" [class.online]="device.heartbeatOnline">{{ device.heartbeatOnline ? '在线' : '不在线' }}</span>
+            <span class="status" [class.online]="device.networkEnabled">{{ device.networkEnabled ? '启用' : '停用' }}</span>
+            <span class="status" [class.online]="device.deviceEnabled">{{ device.deviceEnabled ? '启用' : '禁用' }}</span>
+          </td>
+          <td>{{ device.networkCount }}</td>
+          <td>
+            收 {{ vm.formatBytes(device.rxBytesTotal) }}<br>
+            发 {{ vm.formatBytes(device.txBytesTotal) }}
+          </td>
+          <td>{{ device.lastReportAt || '-' }}</td>
+          <td>
+            <div class="row-actions">
+              <button class="ghost small" type="button" (click)="vm.toggleDevice(device)">{{ device.deviceEnabled ? '停用' : '启用' }}</button>
+              <button class="danger small" type="button" (click)="vm.deleteDevice(device)">删除</button>
+            </div>
+          </td>
+        </tr>
+        <tr *ngIf="vm.filteredDevices.length === 0">
+          <td colspan="9" class="empty-cell">暂无设备</td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

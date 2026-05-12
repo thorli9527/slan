@@ -180,16 +180,12 @@ std::string ResolveWebConsoleUrl() {
   }
   if (const auto value = ReadEnvironmentString(L"SLAN_CONTROL_BASE_URL")) {
     if (!value->empty()) {
-      if (value->find("127.0.0.1") != std::string::npos ||
-          value->find("localhost") != std::string::npos) {
-        return "http://127.0.0.1:24200";
-      }
-      if (value->find("slan.localhost") != std::string::npos) {
-        return "https://web.slan.localhost:18443";
+      if (value->find("api.dev.staticlss.com") != std::string::npos) {
+        return "http://web.dev.staticlss.com";
       }
     }
   }
-  return "http://127.0.0.1:24200";
+  return "http://web.dev.staticlss.com";
 }
 
 std::string ExtractJsonStringField(const std::string& json, const std::string& field_name) {

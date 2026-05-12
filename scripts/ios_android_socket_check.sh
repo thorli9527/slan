@@ -18,11 +18,21 @@ IOS_SEND_UDP="${SLAN_IOS_SEND_UDP:-0}"
 WORK_DIR="${SLAN_IOS_ANDROID_SOCKET_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-ios-android-socket.XXXXXX")}"
 ANDROID_LOG="$WORK_DIR/android-echo.log"
 IOS_LOG="$WORK_DIR/ios-client.log"
-POSTGRES_CONTAINER="${SLAN_POSTGRES_CONTAINER:-slan-postgres}"
+POSTGRES_CONTAINER="${SLAN_POSTGRES_CONTAINER:-}"
 POSTGRES_USER="${SLAN_POSTGRES_USER:-postgres}"
 POSTGRES_DB="${SLAN_POSTGRES_DB:-slan}"
 
 PIDS=()
+
+resolve_postgres_container() {
+  if [[ -n "$POSTGRES_CONTAINER" ]]; then
+    return 0
+  fi
+  POSTGRES_CONTAINER="$(docker compose -f "$ROOT_DIR/docker-compose.local.yml" ps -q postgres 2>/dev/null || true)"
+  if [[ -z "$POSTGRES_CONTAINER" ]]; then
+    POSTGRES_CONTAINER="slan-postgres"
+  fi
+}
 
 start_android_vpn_appops_guard() {
   (
@@ -44,6 +54,7 @@ wait_fresh_control_session() {
     echo "$label device id is empty; cannot wait for control session" >&2
     return 1
   fi
+  resolve_postgres_container
   local escaped_email="${EMAIL//\'/\'\'}"
   local escaped_device_id="${device_id//\'/\'\'}"
   local sql="
@@ -77,6 +88,7 @@ wait_online_network_state() {
     echo "$label device id is empty; cannot wait for online network state" >&2
     return 1
   fi
+  resolve_postgres_container
   local escaped_email="${EMAIL//\'/\'\'}"
   local escaped_device_id="${device_id//\'/\'\'}"
   local sql="

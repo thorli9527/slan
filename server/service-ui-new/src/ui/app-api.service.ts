@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 
-export const API_BASE = 'http://127.0.0.1:38080';
+export const API_BASE = '';
 
 @Injectable({ providedIn: 'root' })
 export class AppApiClient {

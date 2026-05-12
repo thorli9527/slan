@@ -1,11 +1,11 @@
 use std::{fs, path::PathBuf};
 
 use crate::{
-    relay_models::{RelayDataPlanePolicy, RelayPayloadPolicy, RelayRuntimeStats},
+    relay_models::{RelayPayloadPolicy, RelayRuntimeStats},
     session_store::current_timestamp_ms,
     time_utils::ticket_timing_with_window,
 };
-use client_core::{PathKind, PathPolicy};
+use client_core::PathPolicy;
 
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
 
@@ -15,18 +15,7 @@ pub(crate) fn relay_payload_policy(
     device_id: Option<&str>,
     path_type: Option<&str>,
 ) -> RelayPayloadPolicy {
-    if let Some(policy) =
-        load_recent_relay_data_plane_policy_for_path(network_id, device_id, path_type)
-    {
-        if let (Some(relay_mtu), Some(max_frame_payload)) =
-            (policy.relay_mtu, policy.max_frame_payload)
-        {
-            return RelayPayloadPolicy {
-                relay_mtu: relay_mtu.clamp(576, 1500),
-                max_frame_payload: max_frame_payload.clamp(512, 1400),
-            };
-        }
-    }
+    let _ = (network_id, device_id, path_type);
     let Some(stats) =
         load_recent_relay_runtime_stats().filter(|stats| stats.relay_address == relay_address)
     else {
@@ -59,57 +48,8 @@ pub(crate) fn relay_path_policy(
     device_id: Option<&str>,
     path_type: Option<&str>,
 ) -> PathPolicy {
-    let Some(policy) =
-        load_recent_relay_data_plane_policy_for_path(network_id, device_id, path_type)
-    else {
-        return PathPolicy::default();
-    };
-    let preferred = policy
-        .preferred_path_types
-        .iter()
-        .filter_map(|value| path_kind_from_policy_value(value))
-        .fold(Vec::new(), |mut acc, kind| {
-            if !acc.contains(&kind) {
-                acc.push(kind);
-            }
-            acc
-        });
-    let defaults = PathPolicy::default();
-    PathPolicy {
-        preferred: if preferred.is_empty() {
-            defaults.preferred.clone()
-        } else {
-            preferred
-        },
-        probe_interval_ms: policy
-            .probe_interval_ms
-            .unwrap_or(defaults.probe_interval_ms)
-            .clamp(1_000, 300_000),
-        failover_after_ms: policy
-            .failover_after_ms
-            .unwrap_or(defaults.failover_after_ms)
-            .clamp(1_000, 600_000),
-        upgrade_successes: policy
-            .upgrade_successes
-            .unwrap_or(defaults.upgrade_successes)
-            .clamp(1, 10),
-        failed_path_cooldown_probes: policy
-            .failed_path_cooldown_probes
-            .unwrap_or(defaults.failed_path_cooldown_probes)
-            .clamp(1, 20),
-        fallback_enabled: defaults.fallback_enabled,
-    }
-}
-
-fn path_kind_from_policy_value(value: &str) -> Option<PathKind> {
-    match value.trim() {
-        "lan_udp" => Some(PathKind::LanUdp),
-        "ipv6_udp" => Some(PathKind::Ipv6Udp),
-        "direct_udp" => Some(PathKind::DirectUdp),
-        "relay_udp" => Some(PathKind::RelayUdp),
-        "derp_tcp_tls_443" => Some(PathKind::DerpTcpTls443),
-        _ => None,
-    }
+    let _ = (network_id, device_id, path_type);
+    PathPolicy::default()
 }
 
 pub(crate) fn load_recent_relay_runtime_stats() -> Option<RelayRuntimeStats> {
@@ -148,74 +88,6 @@ pub(crate) fn relay_runtime_failure_total(stats: &RelayRuntimeStats) -> u64 {
         .saturating_add(stats.unroutable_tun_packets)
         .saturating_add(stats.oversized_tun_packets)
         .saturating_add(stats.wintun_write_failures)
-}
-
-pub(crate) fn load_recent_relay_data_plane_policy_for_path(
-    network_id: &str,
-    device_id: Option<&str>,
-    path_type: Option<&str>,
-) -> Option<RelayDataPlanePolicy> {
-    let payload = fs::read(relay_policy_file_path()).ok()?;
-    let policy = serde_json::from_slice::<RelayDataPlanePolicy>(&payload).ok()?;
-    if let Some(scope) = policy.scope.as_deref() {
-        match scope {
-            "global" | "region" | "network" | "device" | "device_override" | "peer_pair" => {}
-            _ => return None,
-        }
-        if scope == "peer_pair" {
-            let source_device_id = policy
-                .source_device_id
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or_default();
-            let peer_device_id = policy
-                .peer_device_id
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or_default();
-            if source_device_id.is_empty() || peer_device_id.is_empty() {
-                return None;
-            }
-        }
-    }
-    if let Some(policy_network_id) = policy.network_id.as_deref() {
-        if !policy_network_id.trim().is_empty() && policy_network_id.trim() != network_id {
-            return None;
-        }
-    }
-    let targets = policy
-        .target_device_ids
-        .iter()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    if !targets.is_empty() {
-        let current_device_id = device_id?.trim();
-        if current_device_id.is_empty()
-            || !targets.iter().any(|target| *target == current_device_id)
-        {
-            return None;
-        }
-    }
-    if let Some(policy_path_type) = policy
-        .path_type
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let current_path_type = path_type.map(str::trim).filter(|value| !value.is_empty())?;
-        if policy_path_type != current_path_type
-            && !(policy_path_type == "relay" && current_path_type.starts_with("relay_"))
-        {
-            return None;
-        }
-    }
-    let updated_at_ms = policy.updated_at_ms?;
-    let ttl_ms = policy.ttl_ms.unwrap_or(60 * 60 * 1000);
-    if current_timestamp_ms().saturating_sub(updated_at_ms) > ttl_ms {
-        return None;
-    }
-    Some(policy)
 }
 
 pub(crate) fn diagnostics_export_file_path() -> PathBuf {
@@ -259,18 +131,6 @@ pub(crate) fn relay_stats_file_path() -> PathBuf {
         return PathBuf::from(dir).join("client-v2-relay-stats.json");
     }
     PathBuf::from("client-v2-relay-stats.json")
-}
-
-pub(crate) fn relay_policy_file_path() -> PathBuf {
-    if let Some(dir) = std::env::var_os("ProgramData") {
-        return PathBuf::from(dir)
-            .join("SLAN")
-            .join("client-v2-relay-policy.json");
-    }
-    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
-        return PathBuf::from(dir).join("client-v2-relay-policy.json");
-    }
-    PathBuf::from("client-v2-relay-policy.json")
 }
 
 #[cfg(test)]

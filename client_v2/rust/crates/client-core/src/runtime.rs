@@ -115,11 +115,6 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 self.state.last_client_message_body = payload.body;
                 self.state.notice = Some("clientMessageReceived".to_string());
             }
-            ClientCommand::ApplyRelayPolicyNotice(payload) => {
-                self.state.last_relay_policy_id = payload.policy_id;
-                self.state.last_relay_policy_updated_at_ms = payload.updated_at_ms;
-                self.state.notice = Some("relayPolicyUpdated".to_string());
-            }
             ClientCommand::Logout => {
                 let _ = self.platform.disable_network();
                 self.state = ClientViewState::default();

@@ -69,8 +69,6 @@ pub enum ControlTransportMessageKind {
     PathHealth,
     #[serde(rename = "endpointReport")]
     EndpointReport,
-    #[serde(rename = "relayPolicyReport")]
-    RelayPolicyReport,
     #[serde(rename = "controlAck")]
     ControlAck,
 }
@@ -356,11 +354,6 @@ pub fn control_transport_outbox(
                 reported_at_ms,
                 plan.control_qos,
             ));
-            if let Some(message) =
-                relay_policy_report_message(session, &topic, reported_at_ms, plan.control_qos)
-            {
-                messages.push(message);
-            }
         }
     }
     if let Some(topic) = plan.upstream_control_ack_topic {
@@ -493,51 +486,6 @@ fn direct_udp_endpoint_file_path() -> PathBuf {
     PathBuf::from("client-v2-direct-udp-endpoint.json")
 }
 
-fn relay_policy_report_message(
-    session: &PersistedSession,
-    topic: &str,
-    reported_at_ms: u64,
-    qos: MqttQos,
-) -> Option<ControlTransportMessage> {
-    let network_id = session
-        .active_network_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let policy = load_relay_data_plane_policy(reported_at_ms)?;
-    Some(ControlTransportMessage {
-        id: format!("relay-policy-report-{reported_at_ms}"),
-        topic: topic.to_string(),
-        qos,
-        kind: ControlTransportMessageKind::RelayPolicyReport,
-        ack_task_id: None,
-        payload: serde_json::json!({
-            "type": "relay_policy_report",
-            "requestId": format!("relay-policy-report-{reported_at_ms}"),
-            "networkId": network_id,
-            "payload": {
-                "networkId": network_id,
-                "deviceId": session.device_id.clone(),
-                "policyId": policy.policy_id,
-                "scope": policy.scope,
-                "targetDeviceIds": policy.target_device_ids,
-                "sourceDeviceId": policy.source_device_id,
-                "peerDeviceId": policy.peer_device_id,
-                "pathType": policy.path_type,
-                "relayMtu": policy.relay_mtu,
-                "maxFramePayload": policy.max_frame_payload,
-                "upgradeSuccesses": policy.upgrade_successes,
-                "failedPathCooldownProbes": policy.failed_path_cooldown_probes,
-                "executionLevel": policy.execution_level,
-                "applied": true,
-                "reason": policy.reason,
-                "policyUpdatedAtMs": policy.updated_at_ms,
-                "reportedAtMs": reported_at_ms
-            }
-        }),
-    })
-}
-
 fn relay_path_health_messages(
     session: &PersistedSession,
     topic: &str,
@@ -661,39 +609,6 @@ fn peer_runtime_path_health_messages(
             }
         })
         .collect()
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RelayDataPlanePolicy {
-    #[serde(default)]
-    policy_id: Option<String>,
-    #[serde(default)]
-    scope: Option<String>,
-    #[serde(default)]
-    target_device_ids: Vec<String>,
-    #[serde(default)]
-    source_device_id: Option<String>,
-    #[serde(default)]
-    peer_device_id: Option<String>,
-    #[serde(default)]
-    path_type: Option<String>,
-    #[serde(default)]
-    relay_mtu: Option<u32>,
-    #[serde(default)]
-    max_frame_payload: Option<u32>,
-    #[serde(default)]
-    upgrade_successes: Option<u32>,
-    #[serde(default)]
-    failed_path_cooldown_probes: Option<u32>,
-    #[serde(default)]
-    execution_level: Option<u8>,
-    #[serde(default)]
-    reason: Option<String>,
-    #[serde(default)]
-    updated_at_ms: Option<u64>,
-    #[serde(default)]
-    ttl_ms: Option<u64>,
 }
 
 struct RelayPathHealthSample {
@@ -869,29 +784,6 @@ fn relay_stats_file_path() -> PathBuf {
         return PathBuf::from(dir).join("client-v2-relay-stats.json");
     }
     PathBuf::from("client-v2-relay-stats.json")
-}
-
-fn load_relay_data_plane_policy(now_ms: u64) -> Option<RelayDataPlanePolicy> {
-    let payload = fs::read(relay_policy_file_path()).ok()?;
-    let policy = serde_json::from_slice::<RelayDataPlanePolicy>(&payload).ok()?;
-    let updated_at_ms = policy.updated_at_ms?;
-    let ttl_ms = policy.ttl_ms.unwrap_or(60 * 60 * 1000);
-    if now_ms.saturating_sub(updated_at_ms) > ttl_ms {
-        return None;
-    }
-    Some(policy)
-}
-
-fn relay_policy_file_path() -> PathBuf {
-    if let Some(dir) = std::env::var_os("ProgramData") {
-        return PathBuf::from(dir)
-            .join("SLAN")
-            .join("client-v2-relay-policy.json");
-    }
-    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
-        return PathBuf::from(dir).join("client-v2-relay-policy.json");
-    }
-    PathBuf::from("client-v2-relay-policy.json")
 }
 
 fn runtime_packet_loss_ppm(stats: &RelayRuntimeStats) -> Option<u32> {

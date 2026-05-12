@@ -5,7 +5,7 @@
         <h2>中继节点管理</h2>
         <p>控制 Relay/DERP 节点容量，节点最大流量和最大并发会话。</p>
       </div>
-      <button class="primary" type="button">新增中继节点</button>
+      <button class="primary" type="button" (click)="vm.openRelayNodeDialog()">新增中继节点</button>
     </div>
     <table>
       <thead><tr><th>节点</th><th>区域</th><th>协议</th><th>公网地址</th><th>最大带宽</th><th>月流量</th><th>会话</th><th>健康</th><th>操作</th></tr></thead>

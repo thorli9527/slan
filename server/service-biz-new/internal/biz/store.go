@@ -491,6 +491,16 @@ func (s *Store) RemoveVisibleDevice(deviceID, actorUserID string) error {
 		}
 		return errNotFound
 	}
+	return s.removeDeviceLocked(deviceID)
+}
+
+func (s *Store) removeDeviceLocked(deviceID string) error {
+	if strings.TrimSpace(deviceID) == "" {
+		return errBadRequest
+	}
+	if _, ok := s.devices[deviceID]; !ok {
+		return errNotFound
+	}
 	delete(s.devices, deviceID)
 	delete(s.runtimeStatuses, deviceID)
 	for key, owner := range s.deviceOwners {
@@ -1395,19 +1405,24 @@ func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, 
 			rules = append(rules, rule)
 		}
 	}
+	relayCandidates := s.activeRelayCandidatesLocked()
+	if len(relayCandidates) == 0 {
+		relayCandidates = configuredRelayCandidates()
+	}
 	return NetworkConfig{
-		NetworkID:      networkID,
-		NetworkName:    network.Name,
-		NetworkCode:    network.Code,
-		ConfigVersion:  s.currentNetworkConfigVersionLocked(networkID),
-		DeviceID:       deviceID,
-		GlobalIP:       device.GlobalIP,
-		GlobalName:     device.GlobalName,
-		Peers:          peers,
-		SecurityGroups: groups,
-		Rules:          rules,
-		DNSZones:       s.listDNSZonesLocked(networkID),
-		DNSRecords:     s.listDNSRecordsLocked(networkID),
+		NetworkID:       networkID,
+		NetworkName:     network.Name,
+		NetworkCode:     network.Code,
+		ConfigVersion:   s.currentNetworkConfigVersionLocked(networkID),
+		DeviceID:        deviceID,
+		GlobalIP:        device.GlobalIP,
+		GlobalName:      device.GlobalName,
+		Peers:           peers,
+		SecurityGroups:  groups,
+		Rules:           rules,
+		DNSZones:        s.listDNSZonesLocked(networkID),
+		DNSRecords:      s.listDNSRecordsLocked(networkID),
+		RelayCandidates: relayCandidates,
 	}, nil
 }
 

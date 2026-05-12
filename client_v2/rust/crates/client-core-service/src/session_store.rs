@@ -310,6 +310,16 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
 
 pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device: &ControlDevice) {
     session.device_id = Some(device.device_id.clone());
+    if session.active_network_id.is_none() {
+        if let Some(network_id) = device
+            .active_network_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            session.active_network_id = Some(network_id.to_string());
+        }
+    }
     if device.mqtt.is_some() {
         session.mqtt = device.mqtt.clone();
     }

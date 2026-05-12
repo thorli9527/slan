@@ -1,11 +1,26 @@
-<section class="page workspace-layout">
+<section class="page workspace-layout network-page">
+  <article class="panel wide-panel network-landing" *ngIf="vm.workspaceRouteMode === 'list'">
+    <div class="network-hero-card">
+      <div>
+        <span class="eyebrow">我的网络</span>
+        <h2>把自己的设备放进一个安全网络</h2>
+        <p>网络用来组织你的电脑、手机和服务。进入网络后，可以添加设备、配置内网域名，并设置哪些设备能访问哪些端口。</p>
+      </div>
+      <button class="primary" type="button" (click)="vm.openWorkspaceDialog()">新增网络</button>
+    </div>
+    <div class="network-tips">
+      <div><strong>1</strong><span>添加设备</span><small>把可见设备加入当前网络</small></div>
+      <div><strong>2</strong><span>设置域名</span><small>用 mac.home.lan 访问设备端口</small></div>
+      <div><strong>3</strong><span>配置访问</span><small>按入站/出站规则控制访问</small></div>
+    </div>
+  </article>
+
   <article class="panel wide-panel" *ngIf="vm.workspaceRouteMode === 'list'">
     <div class="panel-title">
       <div>
         <h2>网络列表</h2>
-        <p>网络是一组设备和访问策略；点击名称进入详情，地址同步为 /space/id。</p>
+        <p>点击网络名称进入详情。每个网络都有独立设备、内网域名和访问规则。</p>
       </div>
-      <button class="primary" type="button" (click)="vm.openWorkspaceDialog()">新增网络</button>
     </div>
     <table>
       <thead><tr><th>名称</th><th>编码</th><th>设备</th><th>状态</th></tr></thead>
@@ -61,32 +76,40 @@
     </table>
   </article>
 
-  <article class="panel relation-panel" *ngIf="vm.workspaceRouteMode === 'detail'">
+  <article class="panel relation-panel network-detail-hero" *ngIf="vm.workspaceRouteMode === 'detail'">
     <div class="panel-title">
       <div>
-        <h2>{{ vm.selectedWorkspace.name }} / 网络详情</h2>
+        <span class="eyebrow">当前网络</span>
+        <h2>{{ vm.selectedWorkspace.name }}</h2>
         <div class="workspace-meta">
           <span>编码：<code>{{ vm.selectedWorkspace.code }}</code></span>
           <span>状态：{{ vm.selectedWorkspace.status === 'enabled' ? '启用' : '停用' }}</span>
         </div>
       </div>
+      <button class="ghost" type="button" (click)="vm.backToWorkspaceList()">返回网络列表</button>
+    </div>
+
+    <div class="network-detail-metrics">
+      <div><span>设备</span><strong>{{ vm.workspaceDevices.length }}</strong><small>当前网络可访问设备</small></div>
+      <div><span>内网域名</span><strong>{{ vm.currentDNSZones.length }}</strong><small>仅网络内生效</small></div>
+      <div><span>访问规则</span><strong>{{ vm.currentSecurityGroups.length }}</strong><small>默认作用于全网络</small></div>
     </div>
 
     <div class="panel-tabs">
       <button type="button" class="back-tab" *ngIf="vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">返回</button>
       <button type="button" class="back-tab" *ngIf="vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">返回</button>
-      <button type="button" [class.active]="vm.workspacePanel === 'devices'" (click)="vm.setWorkspacePanel('devices')">设备管理</button>
+      <button type="button" [class.active]="vm.workspacePanel === 'devices'" (click)="vm.setWorkspacePanel('devices')">设备</button>
       <button type="button" [class.active]="vm.workspacePanel === 'zones' || vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">内网域名</button>
       <button type="button" *ngIf="vm.publicMappingsEnabled" [class.active]="vm.workspacePanel === 'publicMappings'" (click)="vm.setWorkspacePanel('publicMappings')">公网访问</button>
-      <button type="button" [class.active]="vm.workspacePanel === 'securityGroups' || vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">安全组</button>
+      <button type="button" [class.active]="vm.workspacePanel === 'securityGroups' || vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">访问规则</button>
     </div>
 
     <div class="detail-grid one-column">
       <section class="detail-card" *ngIf="vm.workspacePanel === 'devices'">
         <div class="section-title">
           <div>
-            <h3>设备管理</h3>
-            <p>管理当前网络内可访问的设备，同一网络内设备不能重复添加。</p>
+            <h3>网络设备</h3>
+            <p>这些设备可以加入当前网络。一个网络里不能重复添加同一台设备。</p>
           </div>
           <button class="ghost small" type="button" (click)="vm.openWorkspaceDeviceDialog()">添加设备</button>
         </div>
@@ -120,14 +143,17 @@
               <td><span class="status" [class.online]="device.status === 'active'">{{ device.status }}</span></td>
               <td class="table-actions"><button class="link-danger" type="button" (click)="vm.removeWorkspaceDevice(device)">移除</button></td>
             </tr>
-            <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="7">暂无网络设备</td></tr>
+            <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="7">暂无设备，点击右上角“添加设备”开始。</td></tr>
           </tbody>
         </table>
       </section>
 
       <section class="detail-card" *ngIf="vm.workspacePanel === 'zones'">
         <div class="section-title">
-          <h3>内网域名</h3>
+          <div>
+            <h3>内网域名</h3>
+            <p>给当前网络配置私有域名，例如 home.lan、dev.internal。</p>
+          </div>
           <button class="ghost small" type="button" (click)="vm.openZoneDialog()">新增域</button>
         </div>
         <table class="compact-table">
@@ -164,10 +190,12 @@
 
       <section class="detail-card" *ngIf="vm.workspacePanel === 'records'">
         <div class="section-title">
-          <h3>解析管理</h3>
+          <div>
+            <h3>解析管理</h3>
+            <p>把一个名称解析到当前网络里的某台设备和端口。</p>
+          </div>
           <button class="ghost small" type="button" (click)="vm.openRecordDialog()">新增解析</button>
         </div>
-        <p>解析记录归属于当前内网域名。</p>
         <table class="compact-table">
           <thead><tr><th>名称</th><th>解析类型</th><th>值</th><th>操作</th></tr></thead>
           <tbody>
@@ -186,10 +214,13 @@
 
       <section class="detail-card" *ngIf="vm.workspacePanel === 'securityGroups'">
         <div class="section-title">
-          <h3>安全组管理</h3>
+          <div>
+            <h3>访问规则</h3>
+            <p>用入方向和出方向规则控制当前网络里的设备访问。</p>
+          </div>
           <button class="ghost small" type="button" (click)="vm.openSecurityGroupDialog()">新增安全组</button>
         </div>
-        <p>默认安全组自动作用于当前网络全部设备；后续再扩展设备级绑定。</p>
+        <p>默认规则会作用于当前网络全部设备；入方向控制谁能访问你，出方向控制你能访问哪里。</p>
         <table class="compact-table">
           <thead><tr><th>安全组</th><th>默认策略</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>

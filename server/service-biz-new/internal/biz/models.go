@@ -255,18 +255,19 @@ type GlobalDNSRecord struct {
 }
 
 type NetworkConfig struct {
-	NetworkID      string              `json:"networkId"`
-	NetworkName    string              `json:"networkName,omitempty"`
-	NetworkCode    string              `json:"networkCode,omitempty"`
-	ConfigVersion  int64               `json:"configVersion,omitempty"`
-	DeviceID       string              `json:"deviceId"`
-	GlobalIP       string              `json:"globalIp"`
-	GlobalName     string              `json:"globalName"`
-	Peers          []Device            `json:"peers"`
-	SecurityGroups []SecurityGroup     `json:"securityGroups"`
-	Rules          []SecurityGroupRule `json:"rules"`
-	DNSZones       []NetworkDNSZone    `json:"dnsZones"`
-	DNSRecords     []NetworkDNSRecord  `json:"dnsRecords"`
+	NetworkID       string              `json:"networkId"`
+	NetworkName     string              `json:"networkName,omitempty"`
+	NetworkCode     string              `json:"networkCode,omitempty"`
+	ConfigVersion   int64               `json:"configVersion,omitempty"`
+	DeviceID        string              `json:"deviceId"`
+	GlobalIP        string              `json:"globalIp"`
+	GlobalName      string              `json:"globalName"`
+	Peers           []Device            `json:"peers"`
+	SecurityGroups  []SecurityGroup     `json:"securityGroups"`
+	Rules           []SecurityGroupRule `json:"rules"`
+	DNSZones        []NetworkDNSZone    `json:"dnsZones"`
+	DNSRecords      []NetworkDNSRecord  `json:"dnsRecords"`
+	RelayCandidates []RelayCandidate    `json:"relayCandidates,omitempty"`
 }
 
 type RelayCandidate struct {

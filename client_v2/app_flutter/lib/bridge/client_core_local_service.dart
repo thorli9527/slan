@@ -155,12 +155,6 @@ class ClientCoreLocalService {
     return json == null ? null : AndroidVpnSessionConfig.fromJson(json);
   }
 
-  @Deprecated(
-      'Use localPlatformNetworkConfig; config is no longer Android-only.')
-  Future<AndroidVpnSessionConfig?> localAndroidNetworkConfig() {
-    return localPlatformNetworkConfig();
-  }
-
   Future<Map<String, Object?>?> ingestPlatformRuntimeState({
     required Map<String, Object?> runtimeState,
     String? platform,

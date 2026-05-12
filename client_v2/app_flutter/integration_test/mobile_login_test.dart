@@ -16,7 +16,7 @@ void main() {
       (tester) async {
     const bizUrl = String.fromEnvironment(
       'SLAN_TEST_BIZ_URL',
-      defaultValue: 'http://127.0.0.1:28080',
+      defaultValue: 'http://api.dev.staticlss.com',
     );
     const checkSwitch = bool.fromEnvironment(
       'SLAN_TEST_CHECK_SWITCH',
@@ -52,6 +52,22 @@ void main() {
       'SLAN_TEST_HOLD_SECONDS',
       defaultValue: 0,
     );
+    const expectNetworkModule = bool.fromEnvironment(
+      'SLAN_TEST_EXPECT_NETWORK_MODULE',
+      defaultValue: false,
+    );
+    const minNetworkModulePeers = int.fromEnvironment(
+      'SLAN_TEST_MIN_NETWORK_MODULE_PEERS',
+      defaultValue: 0,
+    );
+    const minNetworkModuleDnsRecords = int.fromEnvironment(
+      'SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS',
+      defaultValue: 0,
+    );
+    const minNetworkModuleSecurityRules = int.fromEnvironment(
+      'SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES',
+      defaultValue: 0,
+    );
     const udpEchoPort = int.fromEnvironment(
       'SLAN_TEST_UDP_ECHO_PORT',
       defaultValue: 0,
@@ -84,12 +100,12 @@ void main() {
     final bridge = MethodChannelClientCoreBridge();
     await tester.pumpWidget(SlanClientV2App(bridge: bridge));
     await tester.pumpAndSettle(const Duration(seconds: 1));
+    await tester.setMobileServerUrl(bizUrl);
 
     if (tester.any(find.text('当前用户邮箱')) && !tester.any(find.text(email))) {
       await tester.logoutSignedInUser();
     }
     if (!tester.any(find.text('当前用户邮箱'))) {
-      await tester.setMobileServerUrl(bizUrl);
       await tester.enterText(find.byKey(const Key('login-email')), email);
       await tester.enterText(find.byKey(const Key('login-password')), password);
       final loginButton = find.byKey(const Key('login-submit'));
@@ -219,6 +235,16 @@ void main() {
       );
     }
 
+    if (expectNetworkModule) {
+      await tester.pumpUntilNetworkModule(
+        bridge,
+        minPeers: minNetworkModulePeers,
+        minDnsRecords: minNetworkModuleDnsRecords,
+        minSecurityRules: minNetworkModuleSecurityRules,
+        timeout: const Duration(seconds: 45),
+      );
+    }
+
     if (holdSeconds > 0) {
       await tester.pump(Duration(seconds: holdSeconds));
     }
@@ -232,7 +258,7 @@ Future<void> _registerTestUser(
   String email,
   String password,
 ) async {
-  final uri = Uri.parse(bizUrl).resolve('/auth/register');
+  final uri = Uri.parse(bizUrl).resolve('/api/auth/register');
   final client = HttpClient();
   client.connectionTimeout = const Duration(seconds: 5);
   try {
@@ -255,7 +281,11 @@ Future<void> _registerTestUser(
       fail('register failed: HTTP ${response.statusCode}: $body');
     }
     final json = jsonDecode(body) as Map<String, dynamic>;
-    if ((json['accessToken'] as String? ?? '').trim().isEmpty) {
+    final auth = json['auth'] as Map<String, dynamic>?;
+    final session = auth?['session'] as Map<String, dynamic>?;
+    final accessToken = (json['accessToken'] as String? ?? '').trim();
+    final nestedToken = (session?['token'] as String? ?? '').trim();
+    if (accessToken.isEmpty && nestedToken.isEmpty) {
       fail('register returned empty accessToken: $body');
     }
   } finally {
@@ -468,6 +498,43 @@ extension on WidgetTester {
     fail('MQTT did not connect before waiting for client message: $lastStatus');
   }
 
+  Future<void> pumpUntilNetworkModule(
+    MethodChannelClientCoreBridge bridge, {
+    required int minPeers,
+    required int minDnsRecords,
+    required int minSecurityRules,
+    required Duration timeout,
+  }) async {
+    final plugin = ClientCorePlugin();
+    final end = DateTime.now().add(timeout);
+    Map<String, Object?>? lastSnapshot;
+    while (DateTime.now().isBefore(end)) {
+      await pump(const Duration(milliseconds: 500));
+      final snapshot = await plugin.embeddedServiceRequest(jsonEncode({
+        'method': 'localNetworkModule',
+        'args': <String, Object?>{},
+      }));
+      lastSnapshot = snapshot;
+      final peers = (snapshot?['peerCount'] as num?)?.toInt() ?? 0;
+      final dnsRecords = (snapshot?['dnsRecordCount'] as num?)?.toInt() ?? 0;
+      final securityRules =
+          (snapshot?['securityRuleCount'] as num?)?.toInt() ?? 0;
+      if (peers >= minPeers &&
+          dnsRecords >= minDnsRecords &&
+          securityRules >= minSecurityRules) {
+        debugPrint(
+          'SLAN_TEST_NETWORK_MODULE=peers=$peers dnsRecords=$dnsRecords securityRules=$securityRules',
+        );
+        return;
+      }
+    }
+    fail(
+      'network module did not reach expected counts: '
+      'minPeers=$minPeers minDnsRecords=$minDnsRecords '
+      'minSecurityRules=$minSecurityRules last=$lastSnapshot',
+    );
+  }
+
   Future<RawDatagramSocket> startUdpEchoServer(int port) async {
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, port);
     socket.listen((event) {
@@ -592,26 +659,31 @@ extension on WidgetTester {
     String prefix = 'SLAN_TEST_TUNNEL_STATE',
   }) async {
     final plugin = ClientCorePlugin();
-    try {
-      if (Platform.isIOS) {
+    if (Platform.isIOS) {
+      try {
         final stats = await plugin.iosPacketTunnelStats();
         debugPrint('$prefix=${jsonEncode(stats ?? <String, Object?>{})}');
-        return;
+      } catch (error) {
+        debugPrint('$prefix.error=$error');
       }
-      if (Platform.isAndroid) {
-        var state = await plugin.androidRuntimeState();
-        final end = DateTime.now().add(const Duration(seconds: 10));
-        while (DateTime.now().isBefore(end) &&
-            state is Map &&
-            state['networkEnabled'] != true &&
-            state['adapterPresent'] != true) {
-          await pump(const Duration(milliseconds: 500));
-          state = await plugin.androidRuntimeState();
-        }
-        debugPrint('$prefix=${jsonEncode(state)}');
+      return;
+    }
+    if (Platform.isAndroid) {
+      var state = await plugin.androidRuntimeState();
+      final end = DateTime.now().add(const Duration(seconds: 10));
+      while (DateTime.now().isBefore(end) &&
+          state is Map &&
+          state['networkEnabled'] != true &&
+          state['adapterPresent'] != true) {
+        await pump(const Duration(milliseconds: 500));
+        state = await plugin.androidRuntimeState();
       }
-    } catch (error) {
-      debugPrint('$prefix.error=$error');
+      debugPrint('$prefix=${jsonEncode(state)}');
+      if (state is Map &&
+          (state['networkEnabled'] != true ||
+              state['adapterPresent'] != true)) {
+        fail('Android tunnel is not running: ${jsonEncode(state)}');
+      }
     }
   }
 }

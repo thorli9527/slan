@@ -47,6 +47,23 @@ pub struct ThinControlMqttClient {
 
 impl ThinControlMqttClient {
     pub fn connect(credential: &ThinMqttCredential, subscribe_topic: &str) -> Result<Self, String> {
+        Self::connect_with_subscription_suffix(credential, subscribe_topic, "v2-worker")
+    }
+
+    pub fn connect_with_subscription_suffix(
+        credential: &ThinMqttCredential,
+        subscribe_topic: &str,
+        client_suffix: &str,
+    ) -> Result<Self, String> {
+        let mut client = Self::connect_without_subscription(credential, client_suffix)?;
+        client.subscribe(subscribe_topic)?;
+        Ok(client)
+    }
+
+    pub fn connect_without_subscription(
+        credential: &ThinMqttCredential,
+        client_suffix: &str,
+    ) -> Result<Self, String> {
         let endpoint = parse_mqtt_url(&credential.broker_url)?;
         let mut stream = TcpStream::connect(endpoint.authority.as_str())
             .map_err(|err| format!("connect control mqtt {}: {err}", endpoint.authority))?;
@@ -57,11 +74,13 @@ impl ThinControlMqttClient {
             .set_write_timeout(Some(DEFAULT_IO_TIMEOUT))
             .map_err(|err| format!("set write timeout: {err}"))?;
 
-        let connect = mqtt_connect_packet(
-            &format!("{}-v2-worker", credential.client_id),
-            &credential.username,
-            &credential.password,
-        )?;
+        let suffix = client_suffix.trim_matches('-').trim();
+        let client_id = if suffix.is_empty() {
+            credential.client_id.clone()
+        } else {
+            format!("{}-{suffix}", credential.client_id)
+        };
+        let connect = mqtt_connect_packet(&client_id, &credential.username, &credential.password)?;
         stream
             .write_all(&connect)
             .map_err(|err| format!("write mqtt connect: {err}"))?;
@@ -70,12 +89,10 @@ impl ThinControlMqttClient {
             .map_err(|err| format!("flush mqtt connect: {err}"))?;
         read_mqtt_connack(&mut stream)?;
 
-        let mut client = Self {
+        Ok(Self {
             stream,
             next_packet_id: 2,
-        };
-        client.subscribe(subscribe_topic)?;
-        Ok(client)
+        })
     }
 
     pub fn subscribe(&mut self, topic_filter: &str) -> Result<(), String> {
@@ -333,10 +350,19 @@ fn read_mqtt_suback(reader: &mut impl Read, packet_id: u16) -> Result<(), String
     if cursor >= packet.body.len() {
         return Err("mqtt subscribe rejected".to_string());
     }
-    if packet.body[cursor..].iter().any(|code| *code != 0x02) {
-        return Err("mqtt subscribe qos2 rejected".to_string());
+    let codes = &packet.body[cursor..];
+    if codes.iter().any(|code| *code >= 0x80) {
+        return Err(format!("mqtt subscribe rejected codes={}", mqtt_hex(codes)));
     }
     Ok(())
+}
+
+fn mqtt_hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn read_mqtt_publish(stream: &mut TcpStream) -> Result<ParsedMqttPublish, String> {

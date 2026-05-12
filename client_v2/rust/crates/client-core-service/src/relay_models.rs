@@ -274,41 +274,6 @@ pub(crate) struct RelayRuntimePeerStats {
     pub(crate) wintun_write_failures: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RelayDataPlanePolicy {
-    #[serde(default)]
-    pub(crate) scope: Option<String>,
-    #[serde(default)]
-    pub(crate) network_id: Option<String>,
-    #[serde(default)]
-    pub(crate) target_device_ids: Vec<String>,
-    #[serde(default)]
-    pub(crate) source_device_id: Option<String>,
-    #[serde(default)]
-    pub(crate) peer_device_id: Option<String>,
-    #[serde(default)]
-    pub(crate) path_type: Option<String>,
-    #[serde(default)]
-    pub(crate) preferred_path_types: Vec<String>,
-    #[serde(default)]
-    pub(crate) probe_interval_ms: Option<u64>,
-    #[serde(default)]
-    pub(crate) failover_after_ms: Option<u64>,
-    #[serde(default)]
-    pub(crate) upgrade_successes: Option<u32>,
-    #[serde(default)]
-    pub(crate) failed_path_cooldown_probes: Option<u32>,
-    #[serde(default)]
-    pub(crate) relay_mtu: Option<u16>,
-    #[serde(default)]
-    pub(crate) max_frame_payload: Option<u16>,
-    #[serde(default)]
-    pub(crate) ttl_ms: Option<u64>,
-    #[serde(default)]
-    pub(crate) updated_at_ms: Option<u64>,
-}
-
 pub(crate) struct RelayPayloadPolicy {
     pub(crate) relay_mtu: u16,
     pub(crate) max_frame_payload: u16,

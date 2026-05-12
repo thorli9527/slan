@@ -17,7 +17,12 @@ import (
 )
 
 type loginAuthResponse struct {
-	AccessToken string `json:"accessToken"`
+	AccessToken string `json:"accessToken,omitempty"`
+	Auth        struct {
+		Session struct {
+			Token string `json:"token"`
+		} `json:"session"`
+	} `json:"auth,omitempty"`
 }
 
 func main() {
@@ -26,6 +31,7 @@ func main() {
 	var email string
 	var password string
 	var registerUser bool
+	var loginUser bool
 	var enableNetwork bool
 	var sendTarget string
 	var sendBody string
@@ -37,6 +43,7 @@ func main() {
 	flag.StringVar(&email, "email", envDefault("SLAN_TEST_EMAIL", ""), "login email")
 	flag.StringVar(&password, "password", envDefault("SLAN_TEST_PASSWORD", "Password123!"), "login password")
 	flag.BoolVar(&registerUser, "register", envBoolDefault("SLAN_TEST_REGISTER_USER", false), "register user before login")
+	flag.BoolVar(&loginUser, "login", envBoolDefault("SLAN_TEST_LOGIN_USER", true), "login with password before checks")
 	flag.BoolVar(&enableNetwork, "enable-network", envBoolDefault("SLAN_TEST_ENABLE_NETWORK", false), "enable local network after login")
 	flag.StringVar(&sendTarget, "send-target", envDefault("SLAN_TEST_SEND_TARGET_DEVICE_ID", ""), "target device ID to send a client message to after login")
 	flag.StringVar(&sendBody, "send-body", envDefault("SLAN_TEST_SEND_BODY", ""), "client message body to send after login")
@@ -57,7 +64,19 @@ func main() {
 		register(ctx, bizURL, email, password)
 	}
 	waitServiceReady(ctx, address)
-	state := login(ctx, address, email, password)
+	var state map[string]any
+	if loginUser {
+		state = login(ctx, address, email, password)
+	} else {
+		var err error
+		state, err = localRequest(address, "localStatus", map[string]any{}, 2*time.Second)
+		if err != nil {
+			fail("local status request failed: %v", err)
+		}
+		if state["signedIn"] != true {
+			fail("local status is not signed in: %#v", state)
+		}
+	}
 	deviceID := strings.TrimSpace(stringField(state, "deviceId"))
 	if deviceID == "" {
 		fail("login response returned empty deviceId: %#v", state)
@@ -245,12 +264,15 @@ func localRequest(address, method string, args map[string]any, timeout time.Dura
 
 func register(ctx context.Context, bizURL, email, password string) {
 	var out loginAuthResponse
-	postJSON(ctx, bizURL+"/auth/register", map[string]any{
+	postJSON(ctx, bizURL+"/api/auth/register", map[string]any{
 		"email":    email,
 		"password": password,
 	}, &out)
 	if strings.TrimSpace(out.AccessToken) == "" {
-		fail("register returned empty access token")
+		out.AccessToken = out.Auth.Session.Token
+	}
+	if strings.TrimSpace(out.AccessToken) == "" {
+		fail("register returned empty session token")
 	}
 }
 

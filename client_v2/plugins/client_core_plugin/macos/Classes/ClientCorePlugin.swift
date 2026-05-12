@@ -328,14 +328,11 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if let value = environment["SLAN_CONTROL_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
       !value.isEmpty
     {
-      if value.contains("127.0.0.1") || value.contains("localhost") {
-        return "http://127.0.0.1:24200"
-      }
-      if value.contains("slan.localhost") {
-        return "https://web.slan.localhost:18443"
+      if value.contains("api.dev.staticlss.com") {
+        return "http://web.dev.staticlss.com"
       }
     }
-    return "http://127.0.0.1:24200"
+    return "http://web.dev.staticlss.com"
   }
 
   private func usableClientDeviceId(_ deviceId: String) -> String {

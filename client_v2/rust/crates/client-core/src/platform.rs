@@ -77,6 +77,8 @@ pub struct AndroidVpnSessionConfig {
     pub session_name: String,
     pub virtual_ip: String,
     pub prefix_len: u8,
+    #[serde(default)]
+    pub network_configs: Vec<PlatformDeviceNetworkConfig>,
     pub dns_servers: Vec<String>,
     pub routes: Vec<RouteSpec>,
     pub mtu: Option<u16>,
@@ -88,6 +90,31 @@ pub struct AndroidVpnSessionConfig {
 }
 
 pub type PlatformNetworkConfig = AndroidVpnSessionConfig;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformDeviceNetworkConfig {
+    pub network_id: String,
+    pub device_id: String,
+    #[serde(default)]
+    pub network_name: Option<String>,
+    #[serde(default)]
+    pub network_code: Option<String>,
+    #[serde(default)]
+    pub config_version: Option<i64>,
+    #[serde(default)]
+    pub global_ip: Option<String>,
+    #[serde(default)]
+    pub global_name: Option<String>,
+    #[serde(default)]
+    pub peer_count: usize,
+    #[serde(default)]
+    pub dns_record_count: usize,
+    #[serde(default)]
+    pub security_rule_count: usize,
+    #[serde(default)]
+    pub relay_candidate_count: usize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -15,8 +15,6 @@ class ClientViewState {
     this.lastClientMessageId,
     this.lastClientMessageFromDeviceId,
     this.lastClientMessageBody,
-    this.lastRelayPolicyId,
-    this.lastRelayPolicyUpdatedAtMs,
     this.trafficTxBytes,
     this.trafficRxBytes,
     this.trafficTxBytesPerMinute,
@@ -39,8 +37,6 @@ class ClientViewState {
   final String? lastClientMessageId;
   final String? lastClientMessageFromDeviceId;
   final String? lastClientMessageBody;
-  final String? lastRelayPolicyId;
-  final int? lastRelayPolicyUpdatedAtMs;
   final int? trafficTxBytes;
   final int? trafficRxBytes;
   final int? trafficTxBytesPerMinute;
@@ -75,8 +71,6 @@ class ClientViewState {
       lastClientMessageFromDeviceId:
           json['lastClientMessageFromDeviceId'] as String?,
       lastClientMessageBody: json['lastClientMessageBody'] as String?,
-      lastRelayPolicyId: json['lastRelayPolicyId'] as String?,
-      lastRelayPolicyUpdatedAtMs: json['lastRelayPolicyUpdatedAtMs'] as int?,
       trafficTxBytes: _intValue(json['trafficTxBytes']),
       trafficRxBytes: _intValue(json['trafficRxBytes']),
       trafficTxBytesPerMinute: _intValue(json['trafficTxBytesPerMinute']),
@@ -101,8 +95,6 @@ class ClientViewState {
     String? lastClientMessageId,
     String? lastClientMessageFromDeviceId,
     String? lastClientMessageBody,
-    String? lastRelayPolicyId,
-    int? lastRelayPolicyUpdatedAtMs,
     int? trafficTxBytes,
     int? trafficRxBytes,
     int? trafficTxBytesPerMinute,
@@ -129,9 +121,6 @@ class ClientViewState {
           lastClientMessageFromDeviceId ?? this.lastClientMessageFromDeviceId,
       lastClientMessageBody:
           lastClientMessageBody ?? this.lastClientMessageBody,
-      lastRelayPolicyId: lastRelayPolicyId ?? this.lastRelayPolicyId,
-      lastRelayPolicyUpdatedAtMs:
-          lastRelayPolicyUpdatedAtMs ?? this.lastRelayPolicyUpdatedAtMs,
       trafficTxBytes: trafficTxBytes ?? this.trafficTxBytes,
       trafficRxBytes: trafficRxBytes ?? this.trafficRxBytes,
       trafficTxBytesPerMinute:
@@ -162,8 +151,6 @@ class ClientViewState {
             lastClientMessageFromDeviceId ==
                 other.lastClientMessageFromDeviceId &&
             lastClientMessageBody == other.lastClientMessageBody &&
-            lastRelayPolicyId == other.lastRelayPolicyId &&
-            lastRelayPolicyUpdatedAtMs == other.lastRelayPolicyUpdatedAtMs &&
             trafficTxBytes == other.trafficTxBytes &&
             trafficRxBytes == other.trafficRxBytes &&
             trafficTxBytesPerMinute == other.trafficTxBytesPerMinute &&
@@ -189,8 +176,6 @@ class ClientViewState {
       lastClientMessageId,
       lastClientMessageFromDeviceId,
       lastClientMessageBody,
-      lastRelayPolicyId,
-      lastRelayPolicyUpdatedAtMs,
       trafficTxBytes,
       trafficRxBytes,
       trafficTxBytesPerMinute,

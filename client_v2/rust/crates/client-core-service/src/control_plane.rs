@@ -13,7 +13,7 @@ use client_core::{AuthPayload, RelayTicket, RouteSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const DEFAULT_CONTROL_BASE_URL: &str = "http://127.0.0.1:28080";
+const DEFAULT_CONTROL_BASE_URL: &str = "http://api.dev.staticlss.com";
 static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CLIENT_DEVICE_ID_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -59,6 +59,8 @@ pub struct ControlPlaneClient {
 pub struct ControlDevice {
     pub device_id: String,
     #[serde(default)]
+    pub active_network_id: Option<String>,
+    #[serde(default)]
     pub owner_id: Option<String>,
     #[serde(default)]
     pub owner_email: Option<String>,
@@ -102,7 +104,7 @@ pub struct NetworkActivationPlan {
     pub peer_count: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayCandidate {
     pub endpoint_id: String,
@@ -175,6 +177,8 @@ pub struct DeviceNetworkConfig {
     pub dns_zones: Vec<DeviceDnsZone>,
     #[serde(default)]
     pub dns_records: Vec<DeviceDnsRecord>,
+    #[serde(default)]
+    pub relay_candidates: Vec<RelayCandidate>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -338,10 +342,7 @@ impl ControlPlaneClient {
         let stable_device_id = stable_device_id(preferred_device_id)?;
         let device_id = stable_device_id.as_str();
         if let Ok(devices) = self.list_devices_for_user(access_token, user_id) {
-            if let Some(mut device) = devices
-                .into_iter()
-                .find(|item| item.device_id == device_id)
-            {
+            if let Some(mut device) = devices.into_iter().find(|item| item.device_id == device_id) {
                 normalize_control_device(&mut device);
                 return self.renew_device(access_token, user_id, device_id, false, 0, 0);
             }
@@ -424,8 +425,12 @@ impl ControlPlaneClient {
     }
 
     pub fn active_network_id(&self, access_token: &str) -> Result<Option<String>> {
-        let _ = access_token;
-        Ok(None)
+        let device_id = local_stable_device_id()?;
+        Ok(self
+            .device_network_configs(access_token, &device_id)?
+            .into_iter()
+            .next()
+            .map(|config| config.network_id))
     }
 
     pub fn device_network_configs(
@@ -534,30 +539,6 @@ impl ControlPlaneClient {
         Ok(())
     }
 
-    pub fn send_client_message(
-        &self,
-        access_token: &str,
-        network_id: &str,
-        from_device_id: &str,
-        target_device_id: &str,
-        body: &str,
-        metadata: Option<&Value>,
-    ) -> Result<Value> {
-        let target_device_id = target_device_id.trim();
-        let body = body.trim();
-        if target_device_id.is_empty() || body.is_empty() {
-            bail!("targetDeviceId and body are required");
-        }
-        let _ = (
-            access_token,
-            network_id,
-            from_device_id,
-            target_device_id,
-            metadata,
-        );
-        bail!("client message HTTP delivery is not exposed by service-biz-new")
-    }
-
     pub fn network_prefix_len(
         &self,
         access_token: &str,
@@ -585,9 +566,13 @@ impl ControlPlaneClient {
     ) -> Result<ControlDevice> {
         let mut body = register_device_body(device_id)?;
         if let Some(object) = body.as_object_mut() {
-            object.insert("userId".to_string(), Value::String(user_id.trim().to_string()));
+            object.insert(
+                "userId".to_string(),
+                Value::String(user_id.trim().to_string()),
+            );
         }
-        let response = self.request_json("POST", "/api/devices/register", access_token, Some(body))?;
+        let response =
+            self.request_json("POST", "/api/devices/register", access_token, Some(body))?;
         decode_control_device_response(response)
     }
 
@@ -625,7 +610,7 @@ impl ControlPlaneClient {
             .context("encode control request")?
             .unwrap_or_default();
         let response = endpoint.request(method, path, access_token, &body)?;
-        serde_json::from_slice(&response).context("decode control response")
+        decode_control_json(&response)
     }
 
     fn request_json_without_auth(
@@ -641,7 +626,20 @@ impl ControlPlaneClient {
             .context("encode control request")?
             .unwrap_or_default();
         let response = endpoint.request(method, path, "", &body)?;
-        serde_json::from_slice(&response).context("decode control response")
+        decode_control_json(&response)
+    }
+}
+
+fn decode_control_json(response: &[u8]) -> Result<Value> {
+    match serde_json::from_slice(response) {
+        Ok(value) => Ok(value),
+        Err(strict_error) => {
+            let mut stream = serde_json::Deserializer::from_slice(response).into_iter::<Value>();
+            match stream.next() {
+                Some(Ok(value)) => Ok(value),
+                _ => Err(strict_error).context("decode control response"),
+            }
+        }
     }
 }
 
@@ -711,13 +709,28 @@ fn decode_control_device_response(response: Value) -> Result<ControlDevice> {
             .transpose()
             .context("decode device mqtt credential")?;
     }
+    if device.active_network_id.is_none() {
+        device.active_network_id = response
+            .get("defaultNetworkDevice")
+            .and_then(|value| optional_string(value, "networkId"))
+            .or_else(|| {
+                response
+                    .get("networkDevice")
+                    .and_then(|value| optional_string(value, "networkId"))
+            })
+            .or_else(|| optional_string(&response, "activeNetworkId"))
+            .or_else(|| optional_string(&response, "networkId"));
+    }
     normalize_control_device(&mut device);
     Ok(device)
 }
 
 fn normalize_control_device(device: &mut ControlDevice) {
     if device.current_virtual_ip.is_none() {
-        device.current_virtual_ip = device.global_ip.clone().or_else(|| device.virtual_ip.clone());
+        device.current_virtual_ip = device
+            .global_ip
+            .clone()
+            .or_else(|| device.virtual_ip.clone());
     }
     if device.virtual_ip.is_none() {
         device.virtual_ip = device.global_ip.clone();
@@ -736,13 +749,19 @@ fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActiva
         })?;
     let peers = network_config_control_peers(response);
     let peer_count = peers.len();
+    let self_node_id = optional_string(response, "selfNodeId")
+        .or_else(|| optional_string(response, "nodeId"))
+        .or_else(|| optional_string(response, "self_node_id"))
+        .or_else(|| {
+            optional_string(response, "deviceId").map(|device_id| format!("node-{device_id}"))
+        });
     Ok(NetworkActivationPlan {
         virtual_ip,
         prefix_len: 8,
         dns_servers: extract_dns_servers(response),
         routes: network_config_routes(response),
         relay_candidates: extract_relay_candidates(response),
-        self_node_id: None,
+        self_node_id,
         peers,
         peer_count,
     })
@@ -826,6 +845,19 @@ fn extract_dns_servers(response: &Value) -> Vec<String> {
 }
 
 fn extract_relay_candidates(response: &Value) -> Vec<RelayCandidate> {
+    if let Some(items) = response
+        .get("relayCandidates")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| serde_json::from_value(item.clone()).ok())
+                .collect::<Vec<RelayCandidate>>()
+        })
+        .filter(|items| !items.is_empty())
+    {
+        return items;
+    }
     response
         .pointer("/networkMap/relayRegions")
         .or_else(|| response.pointer("/relayRegions"))
@@ -986,7 +1018,13 @@ fn decode_http_response(response: &[u8]) -> Result<Vec<u8>> {
         .nth(1)
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or_default();
-    let body = response[separator + 4..].to_vec();
+    let mut body = response[separator + 4..].to_vec();
+    if headers.lines().any(|line| {
+        line.to_ascii_lowercase().starts_with("transfer-encoding:")
+            && line.to_ascii_lowercase().contains("chunked")
+    }) {
+        body = decode_chunked_body(&body)?;
+    }
     if (200..300).contains(&status) {
         return Ok(body);
     }
@@ -1004,6 +1042,30 @@ fn decode_http_response(response: &[u8]) -> Result<Vec<u8>> {
         bail!("device unavailable: current device is disabled by network administrator");
     }
     bail!("control plane returned HTTP {status}: {detail}");
+}
+
+fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>> {
+    let mut offset = 0usize;
+    let mut out = Vec::new();
+    loop {
+        let line_end = body[offset..]
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .map(|pos| offset + pos)
+            .ok_or_else(|| anyhow::anyhow!("invalid chunked control response"))?;
+        let size_line = String::from_utf8_lossy(&body[offset..line_end]);
+        let size_hex = size_line.split(';').next().unwrap_or_default().trim();
+        let size = usize::from_str_radix(size_hex, 16).context("parse chunk size")?;
+        offset = line_end + 2;
+        if size == 0 {
+            return Ok(out);
+        }
+        if offset + size + 2 > body.len() || &body[offset + size..offset + size + 2] != b"\r\n" {
+            bail!("invalid chunked control response body");
+        }
+        out.extend_from_slice(&body[offset..offset + size]);
+        offset += size + 2;
+    }
 }
 
 fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
@@ -1228,7 +1290,7 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::ControlPlaneClient;
+    use super::{decode_control_json, ControlPlaneClient};
 
     #[test]
     fn password_login_posts_stable_device_id() {
@@ -1279,45 +1341,12 @@ mod tests {
     }
 
     #[test]
-    fn send_client_message_http_delivery_is_not_exposed() {
-        let client = ControlPlaneClient {
-            base_url: "http://127.0.0.1:1".to_string(),
-        };
-        let error = client
-            .send_client_message(
-                "token-1",
-                "net-1",
-                "mac-device",
-                "ios-device",
-                " hello ",
-                Some(&serde_json::json!({ "kind": "manual" })),
-            )
-            .expect_err("service-biz-new does not expose HTTP client messages");
-
-        assert!(error
-            .to_string()
-            .contains("not exposed by service-biz-new"));
-    }
-
-    #[test]
-    fn send_client_message_rejects_empty_target_or_body() {
-        let client = ControlPlaneClient {
-            base_url: "http://127.0.0.1:1".to_string(),
-        };
-
-        let missing_target = client
-            .send_client_message("token-1", "net-1", "mac-device", " ", "hello", None)
-            .expect_err("missing target should fail before http");
-        assert!(missing_target
-            .to_string()
-            .contains("targetDeviceId and body are required"));
-
-        let missing_body = client
-            .send_client_message("token-1", "net-1", "mac-device", "ios-device", " ", None)
-            .expect_err("missing body should fail before http");
-        assert!(missing_body
-            .to_string()
-            .contains("targetDeviceId and body are required"));
+    fn decode_control_json_accepts_trailing_response_bytes() {
+        let value = decode_control_json(br#"{"ok":true}
+0
+"#)
+        .expect("decode first json value");
+        assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
     }
 
     fn read_http_request(stream: &mut std::net::TcpStream) -> String {

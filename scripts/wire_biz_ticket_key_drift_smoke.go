@@ -40,29 +40,8 @@ type relayNode struct {
 	TicketKeyRotation ticketKeyStatus `json:"ticketKeyRotation,omitempty"`
 }
 
-type wireNodesOpsView struct {
-	TicketKeyHealth ticketKeyHealth `json:"ticketKeyHealth"`
-}
-
-type ticketKeyHealth struct {
-	BaselineKeyRingID string              `json:"baselineKeyRingId"`
-	Drifted           bool                `json:"drifted"`
-	UnavailableCount  int                 `json:"unavailableCount"`
-	Instances         []ticketKeyInstance `json:"instances"`
-}
-
-type ticketKeyInstance struct {
-	Kind     string          `json:"kind"`
-	RegionID string          `json:"regionId,omitempty"`
-	NodeID   string          `json:"nodeId,omitempty"`
-	Status   ticketKeyStatus `json:"status"`
-	Drifted  bool            `json:"drifted"`
-}
-
 func main() {
 	bizURL := env("SLAN_BIZ_E2E_BIZ_URL", "http://127.0.0.1:28080")
-	opsURL := env("SLAN_BIZ_E2E_OPS_URL", "http://127.0.0.1:28081")
-	opsToken := env("SLAN_BIZ_E2E_OPS_TOKEN", "change-me-ops-token")
 	internalToken := env("SLAN_INTERNAL_WIRE_TOKEN", "change-me-wire-internal-token")
 	relayBAdminURL := env("SLAN_BIZ_E2E_RELAY_B_ADMIN_URL", "http://127.0.0.1:29113")
 
@@ -77,19 +56,19 @@ func main() {
 	node := chooseRelayNode(bizURL, internalToken)
 	node.TicketKeyRotation = correct
 	upsertRelayNode(bizURL, internalToken, node)
-	expectBizDrift(opsURL, opsToken, false, node.NodeID)
+	expectRelayTicketKeyRotation(bizURL, internalToken, node.NodeID, correct)
 
 	driftedNode := node
 	driftedStatus := correct
 	driftedStatus.KeyRingID = "mismatch-" + correct.KeyRingID
 	driftedNode.TicketKeyRotation = driftedStatus
 	upsertRelayNode(bizURL, internalToken, driftedNode)
-	expectBizDrift(opsURL, opsToken, true, node.NodeID)
+	expectRelayTicketKeyRotation(bizURL, internalToken, node.NodeID, driftedStatus)
 
 	upsertRelayNode(bizURL, internalToken, node)
-	expectBizDrift(opsURL, opsToken, false, node.NodeID)
+	expectRelayTicketKeyRotation(bizURL, internalToken, node.NodeID, correct)
 
-	fmt.Println("wire biz ticket key drift smoke passed")
+	fmt.Println("wire biz ticket key metadata smoke passed")
 }
 
 func chooseRelayNode(bizURL, internalToken string) relayNode {
@@ -126,31 +105,22 @@ func disableKnownSmokeNodes(bizURL, internalToken string) {
 	patchJSONWithHeaders(bizURL+"/internal/wire/admin/derp-nodes/smoke-region/derp-smoke/status", headers, payload, nil)
 }
 
-func expectBizDrift(opsURL, opsToken string, wantDrift bool, nodeID string) {
-	var view wireNodesOpsView
-	getJSON(opsURL+"/wire-nodes", opsToken, &view)
-	health := view.TicketKeyHealth
-	if health.UnavailableCount != 0 {
-		fail("expected no unavailable ticket key instances: %+v", health)
-	}
-	if health.Drifted != wantDrift {
-		fail("ticket key drift=%v want=%v health=%+v", health.Drifted, wantDrift, health)
-	}
-	if wantDrift && !hasDriftedNode(health.Instances, nodeID) {
-		fail("expected node %s to be marked drifted: %+v", nodeID, health.Instances)
-	}
-	if !wantDrift && hasDriftedNode(health.Instances, nodeID) {
-		fail("expected node %s drift to be cleared: %+v", nodeID, health.Instances)
-	}
-}
-
-func hasDriftedNode(instances []ticketKeyInstance, nodeID string) bool {
-	for _, instance := range instances {
-		if instance.NodeID == nodeID && instance.Drifted {
-			return true
+func expectRelayTicketKeyRotation(bizURL, internalToken, nodeID string, want ticketKeyStatus) {
+	var list relayNodeList
+	getJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes", map[string]string{"X-Slan-Internal-Token": internalToken}, &list)
+	for _, node := range list.Items {
+		if node.NodeID != nodeID {
+			continue
 		}
+		if node.TicketKeyRotation.KeyRingID != want.KeyRingID ||
+			node.TicketKeyRotation.SigningConfigured != want.SigningConfigured ||
+			node.TicketKeyRotation.KeyRingConfigured != want.KeyRingConfigured ||
+			node.TicketKeyRotation.RotationReady != want.RotationReady {
+			fail("relay node ticket key metadata mismatch: got=%+v want=%+v", node.TicketKeyRotation, want)
+		}
+		return
 	}
-	return false
+	fail("relay node %s not found in internal view: %+v", nodeID, list.Items)
 }
 
 func getJSON(url, token string, out any) {

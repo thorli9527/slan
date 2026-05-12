@@ -1,8 +1,0 @@
-.git
-.gitignore
-tmp
-dist
-build
-vendor
-coverage
-*.log

@@ -18,12 +18,22 @@ import (
 )
 
 type authResponse struct {
-	AccessToken string `json:"accessToken"`
+	AccessToken    string      `json:"accessToken,omitempty"`
+	Auth           authPayload `json:"auth,omitempty"`
+	DefaultNetwork network     `json:"defaultNetwork,omitempty"`
 }
 
-type networkHome struct {
-	ActiveNetwork *network `json:"activeNetwork"`
-	OwnedNetwork  *network `json:"ownedNetwork"`
+type authPayload struct {
+	User    authUser    `json:"user"`
+	Session authSession `json:"session"`
+}
+
+type authUser struct {
+	UserID string `json:"userId"`
+}
+
+type authSession struct {
+	Token string `json:"token"`
 }
 
 type network struct {
@@ -32,7 +42,12 @@ type network struct {
 
 type device struct {
 	DeviceID string          `json:"deviceId"`
+	Device   *devicePayload  `json:"device,omitempty"`
 	MQTT     *mqttCredential `json:"mqtt"`
+}
+
+type devicePayload struct {
+	DeviceID string `json:"deviceId"`
 }
 
 type mqttCredential struct {
@@ -61,10 +76,12 @@ func main() {
 	var bizURL string
 	var email string
 	var password string
+	var expectMQTTHost string
 	var timeout time.Duration
 	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "server-biz base URL")
 	flag.StringVar(&email, "email", "", "test user email; defaults to unique smoke user")
 	flag.StringVar(&password, "password", "Password123!", "test user password")
+	flag.StringVar(&expectMQTTHost, "expect-mqtt-host", envDefault("SLAN_EXPECT_MQTT_HOST", ""), "expected public MQTT broker host returned by server-biz")
 	flag.DurationVar(&timeout, "timeout", 8*time.Second, "MQTT receive timeout")
 	flag.Parse()
 
@@ -76,14 +93,28 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	token := register(ctx, bizURL, email, password)
-	mac := registerDevice(ctx, bizURL, token, "smoke-mac-"+uniqueSuffix(), "macos")
-	ios := registerDevice(ctx, bizURL, token, "smoke-ios-"+uniqueSuffix(), "ios")
+	auth := register(ctx, bizURL, email, password)
+	token := auth.AccessToken
+	if token == "" {
+		token = auth.Auth.Session.Token
+	}
+	userID := auth.Auth.User.UserID
+	if token == "" || userID == "" || auth.DefaultNetwork.NetworkID == "" {
+		fail("register returned incomplete auth response: %+v", auth)
+	}
+	mac := registerDevice(ctx, bizURL, token, userID, "smoke-mac-"+uniqueSuffix(), "macos")
+	ios := registerDevice(ctx, bizURL, token, userID, "smoke-ios-"+uniqueSuffix(), "ios")
+	assertMQTTHost(mac.MQTT, expectMQTTHost)
+	assertMQTTHost(ios.MQTT, expectMQTTHost)
 	if ios.MQTT == nil {
 		fail("target device returned no MQTT credential")
 	}
-	networkID := activeNetworkID(ctx, bizURL, token)
+	if mac.MQTT == nil {
+		fail("source device returned no MQTT credential")
+	}
+	networkID := auth.DefaultNetwork.NetworkID
 	body := "hello-from-smoke-" + uniqueSuffix()
+	messageID := "client-msg-smoke-" + uniqueSuffix()
 	messageCh := make(chan map[string]any, 1)
 	errCh := make(chan error, 1)
 	go func() {
@@ -91,83 +122,151 @@ func main() {
 	}()
 	time.Sleep(300 * time.Millisecond)
 
-	response := sendClientMessage(ctx, bizURL, token, networkID, mac.DeviceID, ios.DeviceID, body)
-	select {
-	case message := <-messageCh:
-		payload, ok := message["payload"].(map[string]any)
-		if !ok {
-			fail("client_message payload missing: %#v", message)
+	response := publishClientMessage(ctx, *mac.MQTT, networkID, mac.DeviceID, ios.DeviceID, messageID, body)
+	for {
+		select {
+		case message := <-messageCh:
+			payload, ok := message["payload"].(map[string]any)
+			if !ok {
+				fail("client_message payload missing: %#v", message)
+			}
+			if payload["messageId"] != response.MessageID {
+				fail("messageId mismatch: mqtt=%v http=%s", payload["messageId"], response.MessageID)
+			}
+			if payload["fromDeviceId"] != mac.DeviceID || payload["targetDeviceId"] != ios.DeviceID {
+				fail("device mismatch in mqtt payload: %#v", payload)
+			}
+			if payload["body"] != body {
+				fail("body mismatch in mqtt payload: %#v", payload)
+			}
+			fmt.Printf("clientMessageMqttSmoke: ok email=%s networkId=%s from=%s target=%s messageId=%s\n", email, networkID, mac.DeviceID, ios.DeviceID, response.MessageID)
+			return
+		case err := <-errCh:
+			if err != nil {
+				fail("mqtt subscribe failed before message: %v", err)
+			}
+			errCh = nil
+		case <-ctx.Done():
+			fail("timed out waiting for MQTT client_message: %v", ctx.Err())
 		}
-		if payload["messageId"] != response.MessageID {
-			fail("messageId mismatch: mqtt=%v http=%s", payload["messageId"], response.MessageID)
-		}
-		if payload["fromDeviceId"] != mac.DeviceID || payload["targetDeviceId"] != ios.DeviceID {
-			fail("device mismatch in mqtt payload: %#v", payload)
-		}
-		if payload["body"] != body {
-			fail("body mismatch in mqtt payload: %#v", payload)
-		}
-		fmt.Printf("clientMessageMqttSmoke: ok email=%s networkId=%s from=%s target=%s messageId=%s\n", email, networkID, mac.DeviceID, ios.DeviceID, response.MessageID)
-	case err := <-errCh:
-		fail("mqtt subscribe failed before message: %v", err)
-	case <-ctx.Done():
-		fail("timed out waiting for MQTT client_message: %v", ctx.Err())
 	}
 }
 
-func register(ctx context.Context, bizURL, email, password string) string {
+func register(ctx context.Context, bizURL, email, password string) authResponse {
 	var out authResponse
-	postJSON(ctx, bizURL+"/auth/register", "", map[string]any{
+	postJSON(ctx, bizURL+"/api/auth/register", "", map[string]any{
 		"email":    email,
 		"password": password,
 	}, &out)
 	if strings.TrimSpace(out.AccessToken) == "" {
-		fail("register returned empty access token")
+		out.AccessToken = out.Auth.Session.Token
 	}
-	return out.AccessToken
+	if strings.TrimSpace(out.AccessToken) == "" {
+		fail("register returned empty session token")
+	}
+	return out
 }
 
-func registerDevice(ctx context.Context, bizURL, token, deviceID, platform string) device {
+func registerDevice(ctx context.Context, bizURL, token, userID, deviceID, platform string) device {
 	var out device
-	postJSON(ctx, bizURL+"/devices/register", token, map[string]any{
-		"deviceId":      deviceID,
-		"name":          deviceID,
-		"platform":      platform,
-		"deviceVersion": "smoke",
-		"publicKey":     "smoke-public-key-" + deviceID,
+	postJSON(ctx, bizURL+"/api/devices/register", token, map[string]any{
+		"userId":    userID,
+		"deviceId":  deviceID,
+		"name":      deviceID,
+		"platform":  platform,
+		"osName":    platform,
+		"osVersion": "smoke",
+		"publicKey": "smoke-public-key-" + deviceID,
 	}, &out)
+	if out.DeviceID == "" && out.Device != nil {
+		out.DeviceID = out.Device.DeviceID
+	}
 	if out.DeviceID == "" {
 		fail("register device %s returned empty deviceId", deviceID)
 	}
 	return out
 }
 
-func activeNetworkID(ctx context.Context, bizURL, token string) string {
-	var home networkHome
-	getJSON(ctx, bizURL+"/networks/home", token, &home)
-	if home.ActiveNetwork != nil && home.ActiveNetwork.NetworkID != "" {
-		return home.ActiveNetwork.NetworkID
+func assertMQTTHost(credential *mqttCredential, expectedHost string) {
+	if credential == nil || strings.TrimSpace(expectedHost) == "" {
+		return
 	}
-	if home.OwnedNetwork != nil && home.OwnedNetwork.NetworkID != "" {
-		return home.OwnedNetwork.NetworkID
+	parsed, err := url.Parse(credential.BrokerURL)
+	if err != nil {
+		fail("parse mqtt broker url: %v url=%s", err, credential.BrokerURL)
 	}
-	fail("network home returned no active/owned network")
-	return ""
+	if !strings.EqualFold(parsed.Hostname(), expectedHost) {
+		fail("mqtt broker host mismatch: got=%s expected=%s url=%s", parsed.Hostname(), expectedHost, credential.BrokerURL)
+	}
+	fmt.Printf("clientMessageMqttSmoke: mqtt broker=%s\n", credential.BrokerURL)
 }
 
-func sendClientMessage(ctx context.Context, bizURL, token, networkID, fromDeviceID, targetDeviceID, body string) clientMessageResponse {
-	var out clientMessageResponse
-	postJSON(ctx, bizURL+"/networks/"+url.PathEscape(networkID)+"/devices/"+url.PathEscape(targetDeviceID)+"/messages", token, map[string]any{
-		"fromDeviceId": fromDeviceID,
-		"body":         body,
-		"metadata": map[string]any{
-			"smoke": true,
+func publishClientMessage(ctx context.Context, credential mqttCredential, networkID, fromDeviceID, targetDeviceID, messageID, body string) clientMessageResponse {
+	envelope := map[string]any{
+		"type":      "client_message",
+		"messageId": messageID,
+		"payload": map[string]any{
+			"messageId":      messageID,
+			"networkId":      networkID,
+			"fromDeviceId":   fromDeviceID,
+			"targetDeviceId": targetDeviceID,
+			"body":           body,
+			"metadata": map[string]any{
+				"smoke": true,
+			},
 		},
-	}, &out)
-	if out.MessageID == "" {
-		fail("send client message returned empty messageId")
 	}
-	return out
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		fail("encode client message mqtt envelope: %v", err)
+	}
+	if err := publishQoS2(ctx, credential, credential.TopicPrefix+"/control/up", payload); err != nil {
+		fail("publish client message mqtt: %v", err)
+	}
+	return clientMessageResponse{MessageID: messageID, NetworkID: networkID, FromDeviceID: fromDeviceID, TargetDeviceID: targetDeviceID}
+}
+
+func publishQoS2(ctx context.Context, credential mqttCredential, topic string, payload []byte) error {
+	address, err := brokerAddress(credential.BrokerURL)
+	if err != nil {
+		return err
+	}
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if _, err := conn.Write(connectPacket(credential.ClientID+"-publisher", credential.Username, credential.Password)); err != nil {
+		return err
+	}
+	if err := readConnAck(conn); err != nil {
+		return err
+	}
+	if _, err := conn.Write(publishPacket(topic, payload, 2, 1)); err != nil {
+		return err
+	}
+	header, packetBody, err := readPacket(conn)
+	if err != nil {
+		return err
+	}
+	if header&0xf0 != 0x50 || len(packetBody) < 2 || binary.BigEndian.Uint16(packetBody[:2]) != 1 {
+		return fmt.Errorf("mqtt pubrec rejected")
+	}
+	if _, err := conn.Write(packetIDPacket(0x62, 1)); err != nil {
+		return err
+	}
+	header, packetBody, err = readPacket(conn)
+	if err != nil {
+		return err
+	}
+	if header&0xf0 != 0x70 || len(packetBody) < 2 || binary.BigEndian.Uint16(packetBody[:2]) != 1 {
+		return fmt.Errorf("mqtt pubcomp rejected")
+	}
+	return nil
 }
 
 func subscribeOne(ctx context.Context, credential mqttCredential, topicFilter string, messageCh chan<- map[string]any) error {
@@ -300,6 +399,17 @@ func subscribePacket(packetID uint16, topicFilter string) []byte {
 	writeString(&variable, topicFilter)
 	variable.WriteByte(0x02)
 	return packet(0x82, variable.Bytes())
+}
+
+func publishPacket(topic string, payload []byte, qos byte, packetID uint16) []byte {
+	var variable bytes.Buffer
+	writeString(&variable, topic)
+	if qos > 0 {
+		_ = binary.Write(&variable, binary.BigEndian, packetID)
+	}
+	variable.WriteByte(0x00)
+	variable.Write(payload)
+	return packet(0x30|(qos<<1), variable.Bytes())
 }
 
 func readConnAck(reader io.Reader) error {

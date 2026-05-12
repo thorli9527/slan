@@ -9,7 +9,7 @@ slan.localhost {
 
 ops.slan.localhost {
 	tls internal
-	reverse_proxy server-biz:8081
+	reverse_proxy server-main:80
 }
 
 web.slan.localhost {

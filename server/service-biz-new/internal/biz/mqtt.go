@@ -55,6 +55,15 @@ type MQTTAuthResponse struct {
 	Reject string      `json:"reject,omitempty"`
 }
 
+type MQTT5AuthResponse struct {
+	Success *MQTTAuthOK      `json:"success,omitempty"`
+	Failed  *MQTT5AuthFailed `json:"failed,omitempty"`
+}
+
+type MQTT5AuthFailed struct {
+	Code string `json:"code"`
+}
+
 type mqttAuthResult struct {
 	Principal string
 	DeviceID  string
@@ -206,8 +215,10 @@ func mqttAllowTopicAccess(cfg MQTTConfig, principal, deviceID, topic string, sub
 			isNetworkBroadcastTopic(cfg, topic)
 	}
 	return topic == devicePrefix+"/control/up" ||
+		topic == devicePrefix+"/control/ack" ||
 		topic == devicePrefix+"/heartbeat" ||
 		topic == devicePrefix+"/runtime" ||
+		topic == devicePrefix+"/runtime-state" ||
 		isDeviceNetworkStateTopic(cfg, deviceID, topic)
 }
 

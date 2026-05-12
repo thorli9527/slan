@@ -18,6 +18,9 @@ func (s *Server) registerOpsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/ops/relay-nodes/{nodeId}", s.opsUpdateRelayNode)
 	mux.HandleFunc("GET /api/ops/customers", s.opsListCustomers)
 	mux.HandleFunc("POST /api/ops/customers/{customerId}/assign-plan", s.opsAssignCustomerPlan)
+	mux.HandleFunc("GET /api/ops/devices", s.opsListDevices)
+	mux.HandleFunc("PATCH /api/ops/devices/{deviceId}", s.opsUpdateDevice)
+	mux.HandleFunc("DELETE /api/ops/devices/{deviceId}", s.opsDeleteDevice)
 	mux.HandleFunc("GET /api/ops/plans", s.opsListPlans)
 	mux.HandleFunc("POST /api/ops/plans", s.opsUpsertPlan)
 	mux.HandleFunc("PATCH /api/ops/plans/{planCode}", s.opsUpsertPlan)
@@ -183,6 +186,47 @@ func (s *Server) opsListCustomers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListCustomers()})
+}
+
+func (s *Server) opsListDevices(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListOpsDevices()})
+}
+
+func (s *Server) opsUpdateDevice(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	var req struct {
+		Alias   string `json:"alias"`
+		Status  string `json:"status"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	device, err := s.store.UpdateOpsDevice(r.PathValue("deviceId"), req.Alias, req.Status, req.Enabled)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, device)
+}
+
+func (s *Server) opsDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.store.DeleteOpsDevice(r.PathValue("deviceId")); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) opsAssignCustomerPlan(w http.ResponseWriter, r *http.Request) {

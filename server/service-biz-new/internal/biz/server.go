@@ -16,7 +16,9 @@ type Server struct {
 }
 
 func NewServer() *Server {
-	return &Server{store: NewStore(), mqtt: mqttConfigFromEnv()}
+	server := &Server{store: NewStore(), mqtt: mqttConfigFromEnv()}
+	server.startMQTTControlSubscriber()
+	return server
 }
 
 func (s *Server) Routes() http.Handler {
@@ -41,7 +43,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/devices/register", s.registerDevice)
 	mux.HandleFunc("POST /api/devices/{deviceId}/renew", s.renewDevice)
 	mux.HandleFunc("GET /api/devices/{deviceId}/network-configs", s.deviceNetworkConfigs)
-	mux.HandleFunc("GET /api/devices/{deviceId}/networks/configs", s.deviceNetworkConfigs)
 	mux.HandleFunc("GET /api/devices/{deviceId}/mqtt-credential", s.deviceMQTTCredential)
 	mux.HandleFunc("PATCH /api/devices/{deviceId}", s.updateDeviceAlias)
 	mux.HandleFunc("DELETE /api/devices/{deviceId}", s.deleteDevice)
@@ -80,6 +81,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/networks/{networkId}/relay-candidates", s.relayCandidates)
 	mux.HandleFunc("POST /api/relay/tickets", s.issueRelayTicket)
 
+	s.registerInternalWireRoutes(mux)
 	s.registerOpsRoutes(mux)
 
 	mux.HandleFunc("POST /mqtt/bifromq/auth", s.bifroMQAuth)
@@ -865,7 +867,7 @@ func writeError(w http.ResponseWriter, err error) {
 func deviceLoginURL(callback DeviceLoginCallback) string {
 	base := strings.TrimSpace(os.Getenv("SLAN_WEB_CONSOLE_URL"))
 	if base == "" {
-		base = "http://127.0.0.1:18443/"
+		base = "http://web.dev.staticlss.com/"
 	}
 	parsed, err := url.Parse(base)
 	if err != nil {

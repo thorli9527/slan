@@ -75,6 +75,14 @@ func NewStore() *Store {
 }
 
 func (s *Store) Attach(addr *net.UDPAddr, participantID string, ticket protocol.RelayTicket, transport string) (*Session, string, error) {
+	if ticket.PeerID == "" {
+		switch participantID {
+		case ticket.SrcNodeID:
+			ticket.PeerID = ticket.DstNodeID
+		case ticket.DstNodeID:
+			ticket.PeerID = ticket.SrcNodeID
+		}
+	}
 	if participantID == "" || ticket.SessionID == "" || ticket.PeerID == "" {
 		return nil, "", ErrTicketInvalid
 	}
@@ -132,19 +140,35 @@ func validRelayTicketSignature(ticket protocol.RelayTicket) bool {
 	if ticket.Signature == "" {
 		return false
 	}
-	payload := fmt.Sprintf("%s|%s|%s|%s|%s",
+	payloads := []string{fmt.Sprintf("%s|%s|%s|%s|%s",
 		ticket.TicketID,
 		ticket.PeerID,
 		ticket.SessionID,
 		ticket.Path,
 		ticket.ExpiresAt.UTC().Format(time.RFC3339Nano),
-	)
-	for _, secret := range ticketSecrets() {
-		mac := hmac.New(sha256.New, []byte(secret))
-		_, _ = mac.Write([]byte(payload))
-		want := hex.EncodeToString(mac.Sum(nil))
-		if hmac.Equal([]byte(want), []byte(ticket.Signature)) {
-			return true
+	)}
+	if ticket.NetworkID != "" && ticket.SrcNodeID != "" && ticket.DstNodeID != "" {
+		expiresAt := ticket.ExpiresAtRaw
+		if expiresAt == "" && !ticket.ExpiresAt.IsZero() {
+			expiresAt = ticket.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		payloads = append(payloads, fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+			ticket.TicketID,
+			ticket.NetworkID,
+			ticket.SessionID,
+			ticket.SrcNodeID,
+			ticket.DstNodeID,
+			expiresAt,
+		))
+	}
+	for _, secret := range relayTicketSecrets() {
+		for _, payload := range payloads {
+			mac := hmac.New(sha256.New, []byte(secret))
+			_, _ = mac.Write([]byte(payload))
+			want := hex.EncodeToString(mac.Sum(nil))
+			if hmac.Equal([]byte(want), []byte(ticket.Signature)) {
+				return true
+			}
 		}
 	}
 	return false
@@ -173,6 +197,19 @@ func ticketSecrets() []string {
 		return []string{value}
 	}
 	return []string{"dev-wire-ticket-secret"}
+}
+
+func relayTicketSecrets() []string {
+	secrets := ticketSecrets()
+	if value := strings.TrimSpace(os.Getenv("SLAN_RELAY_TICKET_SECRET")); value != "" {
+		for _, secret := range secrets {
+			if secret == value {
+				return secrets
+			}
+		}
+		return append([]string{value}, secrets...)
+	}
+	return secrets
 }
 
 func ticketKeyRingID(secrets []string) string {

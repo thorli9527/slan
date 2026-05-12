@@ -22,12 +22,41 @@ var httpClient = &http.Client{
 }
 
 type authResponse struct {
-	AccessToken string `json:"accessToken"`
+	AccessToken    string          `json:"accessToken,omitempty"`
+	Auth           authPayload     `json:"auth,omitempty"`
+	DefaultNetwork networkResponse `json:"defaultNetwork,omitempty"`
+}
+
+type authPayload struct {
+	User    authUser    `json:"user"`
+	Session authSession `json:"session"`
+}
+
+type authUser struct {
+	UserID string `json:"userId"`
+}
+
+type authSession struct {
+	Token string `json:"token"`
 }
 
 type deviceResponse struct {
-	DeviceID         string `json:"deviceId"`
-	CurrentVirtualIP string `json:"currentVirtualIp,omitempty"`
+	DeviceID             string              `json:"deviceId,omitempty"`
+	CurrentVirtualIP     string              `json:"currentVirtualIp,omitempty"`
+	Device               devicePayload       `json:"device,omitempty"`
+	DefaultNetworkDevice networkDeviceRecord `json:"defaultNetworkDevice,omitempty"`
+}
+
+type devicePayload struct {
+	DeviceID string `json:"deviceId"`
+}
+
+type networkDeviceRecord struct {
+	NetworkDeviceID string `json:"networkDeviceId"`
+	NetworkID       string `json:"networkId"`
+	DeviceID        string `json:"deviceId"`
+	Enabled         bool   `json:"enabled"`
+	Status          string `json:"status"`
 }
 
 type networkHomeResponse struct {
@@ -100,19 +129,25 @@ type pathPlan struct {
 }
 
 type relayNode struct {
-	RegionID string `json:"regionId"`
-	NodeID   string `json:"nodeId"`
-	Host     string `json:"host"`
-	UDPPort  int    `json:"udpPort"`
-	Enabled  bool   `json:"enabled"`
-	Healthy  bool   `json:"healthy"`
+	RegionID          string          `json:"regionId"`
+	NodeID            string          `json:"nodeId"`
+	Host              string          `json:"host"`
+	UDPPort           int             `json:"udpPort"`
+	Enabled           bool            `json:"enabled"`
+	Healthy           bool            `json:"healthy"`
+	Stale             bool            `json:"stale,omitempty"`
+	TicketKeyRotation ticketKeyStatus `json:"ticketKeyRotation,omitempty"`
 }
 
 type derpNode struct {
-	RegionID string `json:"regionId"`
-	NodeID   string `json:"nodeId"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
+	RegionID          string          `json:"regionId"`
+	NodeID            string          `json:"nodeId"`
+	Host              string          `json:"host"`
+	Port              int             `json:"port"`
+	Enabled           bool            `json:"enabled,omitempty"`
+	Healthy           bool            `json:"healthy,omitempty"`
+	Stale             bool            `json:"stale,omitempty"`
+	TicketKeyRotation ticketKeyStatus `json:"ticketKeyRotation,omitempty"`
 }
 
 type ticketKeyStatus struct {
@@ -125,25 +160,12 @@ type ticketKeyStatus struct {
 	AcceptsDevFallback bool   `json:"acceptsDevFallback"`
 }
 
-type wireNodesOpsView struct {
-	TicketKeyHealth ticketKeyHealth `json:"ticketKeyHealth"`
+type relayNodeList struct {
+	Items []relayNode `json:"items"`
 }
 
-type ticketKeyHealth struct {
-	BaselineKeyRingID string              `json:"baselineKeyRingId"`
-	RotationReady     bool                `json:"rotationReady"`
-	Drifted           bool                `json:"drifted"`
-	UnavailableCount  int                 `json:"unavailableCount"`
-	Instances         []ticketKeyInstance `json:"instances"`
-}
-
-type ticketKeyInstance struct {
-	Kind     string          `json:"kind"`
-	RegionID string          `json:"regionId,omitempty"`
-	NodeID   string          `json:"nodeId,omitempty"`
-	URL      string          `json:"url,omitempty"`
-	Status   ticketKeyStatus `json:"status"`
-	Drifted  bool            `json:"drifted"`
+type derpNodeList struct {
+	Items []derpNode `json:"items"`
 }
 
 func main() {
@@ -179,60 +201,47 @@ func main() {
 	email := "wire-e2e-" + suffix + "@local.slan"
 	password := "Password123!"
 	deviceID := "dev-wire-e2e-" + suffix
-	nodeID := "node-wire-e2e-" + suffix
+	nodeID := "node-" + deviceID
 
 	var auth authResponse
-	postJSON(bizURL+"/auth/register", "", map[string]any{
+	postJSON(bizURL+"/api/auth/register", "", map[string]any{
 		"email":    email,
 		"password": password,
 	}, &auth)
 	if auth.AccessToken == "" {
+		auth.AccessToken = auth.Auth.Session.Token
+	}
+	if auth.AccessToken == "" {
 		fail("missing access token from register")
+	}
+	userID := auth.Auth.User.UserID
+	if userID == "" {
+		fail("missing userId from register: %+v", auth)
 	}
 
 	var device deviceResponse
-	postJSON(bizURL+"/devices/register", auth.AccessToken, map[string]any{
-		"deviceId":    deviceID,
-		"name":        "wire e2e device",
-		"platform":    "smoke",
-		"countryCode": "CN",
-		"publicKey":   "device-public-key-" + suffix,
+	postJSON(bizURL+"/api/devices/register", auth.AccessToken, map[string]any{
+		"userId":    userID,
+		"deviceId":  deviceID,
+		"name":      "wire e2e device",
+		"platform":  "smoke",
+		"osName":    "smoke",
+		"osVersion": "1",
+		"publicKey": "device-public-key-" + suffix,
 	}, &device)
+	if device.DeviceID == "" {
+		device.DeviceID = device.Device.DeviceID
+	}
 	if device.DeviceID != deviceID {
 		fail("unexpected device response: %+v", device)
 	}
 
-	var home networkHomeResponse
-	getJSON(bizURL+"/networks/home", auth.AccessToken, &home)
-	networkID := ""
-	if home.ActiveNetwork != nil {
-		networkID = home.ActiveNetwork.NetworkID
-	}
-	if networkID == "" && home.OwnedNetwork != nil {
-		networkID = home.OwnedNetwork.NetworkID
+	networkID := auth.DefaultNetwork.NetworkID
+	if networkID == "" {
+		networkID = device.DefaultNetworkDevice.NetworkID
 	}
 	if networkID == "" {
-		fail("missing active/owned network from home: %+v", home)
-	}
-
-	var activation activationResponse
-	postJSON(bizURL+"/networks/"+networkID+"/activate", auth.AccessToken, map[string]any{
-		"deviceId": deviceID,
-	}, &activation)
-	attachmentID := activation.Attachment.AttachmentID
-	if attachmentID == "" || activation.Attachment.NetworkID != networkID || activation.Attachment.DeviceID != deviceID {
-		fail("unexpected activation response: %+v want network=%s device=%s", activation.Attachment, networkID, deviceID)
-	}
-
-	var node nodeResponse
-	postJSON(bizURL+"/nodes/register", auth.AccessToken, map[string]any{
-		"deviceId":      deviceID,
-		"nodeId":        nodeID,
-		"nodePublicKey": "node-public-key-" + suffix,
-		"capabilities":  []string{"wireguard", "relay_udp", "derp_tcp_tls_443"},
-	}, &node)
-	if node.NodeID != nodeID {
-		fail("unexpected node response: %+v", node)
+		fail("missing default network: auth=%+v device=%+v", auth, device)
 	}
 
 	expectGETStatus(bizURL+"/internal/wire/peers/"+nodeID+"/authz", nil, http.StatusUnauthorized)
@@ -457,17 +466,18 @@ func main() {
 			nil,
 		)
 	}
-	expectBizTicketKeyHealth(bizURL)
+	expectWireAdminNodeViews(bizURL, internalToken)
 
 	smokeRelay(relayAddr, relayResp.Ticket, nodeID)
 	smokeDerp(derpAddr, derpResp.Ticket, nodeID)
 
-	var disabled attachmentResponse
-	putJSON(bizURL+"/networks/"+networkID+"/attachments/"+attachmentID+"/status", auth.AccessToken, map[string]any{
-		"status": "disabled",
+	disabledValue := false
+	var disabled networkDeviceRecord
+	patchJSON(bizURL+"/api/networks/"+networkID+"/devices/"+deviceID, auth.AccessToken, map[string]any{
+		"enabled": disabledValue,
 	}, &disabled)
-	if disabled.AttachmentID != attachmentID || disabled.Status != "disabled" {
-		fail("unexpected disabled attachment response: %+v want attachment=%s", disabled, attachmentID)
+	if disabled.DeviceID != deviceID || disabled.Enabled {
+		fail("unexpected disabled network device response: %+v want device=%s enabled=false", disabled, deviceID)
 	}
 
 	expectPostStatus(wireURL+"/v1/relay/tickets", "", map[string]any{
@@ -501,17 +511,22 @@ func waitHTTP(url string) {
 }
 
 func restoreLocalWireDataPlaneNodes(bizURL, internalToken string) {
-	for _, nodeID := range []string{"relay-local", "relay-local-b"} {
+	headers := map[string]string{"X-Slan-Internal-Token": internalToken}
+	var relayList relayNodeList
+	getJSONWithHeader(bizURL+"/internal/wire/admin/relay-nodes", headers, &relayList)
+	for _, node := range relayList.Items {
 		patchJSONWithInternalToken(
-			bizURL+"/internal/wire/admin/relay-nodes/local/"+nodeID+"/status",
+			bizURL+"/internal/wire/admin/relay-nodes/"+node.RegionID+"/"+node.NodeID+"/status",
 			internalToken,
 			map[string]any{"enabled": true, "healthy": true},
 			nil,
 		)
 	}
-	for _, nodeID := range []string{"derp-local", "derp-local-b"} {
+	var derpList derpNodeList
+	getJSONWithHeader(bizURL+"/internal/wire/admin/derp-nodes", headers, &derpList)
+	for _, node := range derpList.Items {
 		patchJSONWithInternalToken(
-			bizURL+"/internal/wire/admin/derp-nodes/local/"+nodeID+"/status",
+			bizURL+"/internal/wire/admin/derp-nodes/"+node.RegionID+"/"+node.NodeID+"/status",
 			internalToken,
 			map[string]any{"enabled": true, "healthy": true},
 			nil,
@@ -539,29 +554,32 @@ func expectConsistentTicketKeyStatus(endpoints map[string]string) {
 	}
 }
 
-func expectBizTicketKeyHealth(bizURL string) {
-	var view wireNodesOpsView
-	getJSON(env("SLAN_BIZ_E2E_OPS_URL", "http://127.0.0.1:28081")+"/wire-nodes", env("SLAN_BIZ_E2E_OPS_TOKEN", "change-me-ops-token"), &view)
-	health := view.TicketKeyHealth
-	if health.BaselineKeyRingID == "" {
-		fail("biz ticket key health missing baseline: %+v", health)
+func expectWireAdminNodeViews(bizURL, internalToken string) {
+	headers := map[string]string{"X-Slan-Internal-Token": internalToken}
+	var relayList relayNodeList
+	getJSONWithHeader(bizURL+"/internal/wire/admin/relay-nodes", headers, &relayList)
+	if !hasActiveRelayNode(relayList.Items) {
+		fail("biz internal relay node view has no active node: %+v", relayList.Items)
 	}
-	if health.Drifted || health.UnavailableCount != 0 {
-		fail("biz ticket key health should be stable: %+v", health)
-	}
-	if !hasTicketKeyKind(health.Instances, "wire") || !hasTicketKeyKind(health.Instances, "relay") || !hasTicketKeyKind(health.Instances, "derp") {
-		fail("biz ticket key health missing wire/relay/derp instances: %+v", health.Instances)
-	}
-	for _, instance := range health.Instances {
-		if instance.Status.KeyRingID == "" || instance.Status.KeyRingID != health.BaselineKeyRingID || instance.Drifted {
-			fail("biz ticket key instance mismatch: baseline=%s instance=%+v", health.BaselineKeyRingID, instance)
-		}
+	var derpList derpNodeList
+	getJSONWithHeader(bizURL+"/internal/wire/admin/derp-nodes", headers, &derpList)
+	if !hasActiveDerpNode(derpList.Items) {
+		fail("biz internal derp node view has no active node: %+v", derpList.Items)
 	}
 }
 
-func hasTicketKeyKind(instances []ticketKeyInstance, kind string) bool {
-	for _, instance := range instances {
-		if instance.Kind == kind {
+func hasActiveRelayNode(nodes []relayNode) bool {
+	for _, node := range nodes {
+		if node.Enabled && node.Healthy && !node.Stale && strings.TrimSpace(node.Host) != "" && node.UDPPort > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasActiveDerpNode(nodes []derpNode) bool {
+	for _, node := range nodes {
+		if node.Enabled && node.Healthy && !node.Stale && strings.TrimSpace(node.Host) != "" && node.Port > 0 {
 			return true
 		}
 	}
@@ -647,6 +665,27 @@ func putJSON(url, token string, in, out any) {
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		fail("PUT %s status=%d body=%s", url, resp.StatusCode, string(body))
+	}
+	if out != nil {
+		must(json.Unmarshal(body, out))
+	}
+}
+
+func patchJSON(url, token string, in, out any) {
+	payload, err := json.Marshal(in)
+	must(err)
+	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(payload))
+	must(err)
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("PATCH %s status=%d body=%s", url, resp.StatusCode, string(body))
 	}
 	if out != nil {
 		must(json.Unmarshal(body, out))
@@ -796,7 +835,7 @@ func smokeDerp(address string, ticket derpTicket, nodeID string) {
 }
 
 func udpConn() *net.UDPConn {
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
 	must(err)
 	return conn
 }

@@ -40,6 +40,7 @@ public final class SlanVpnService extends VpnService {
   public void onCreate() {
     super.onCreate();
     activeService = this;
+    SlanVpnRuntime.configure(this);
   }
 
   @Override
@@ -53,15 +54,18 @@ public final class SlanVpnService extends VpnService {
       return START_NOT_STICKY;
     }
     if (ACTION_START.equals(intent.getAction())) {
-      try {
-        startForeground(NOTIFICATION_ID, notification());
-        startVpn(new JSONObject(intent.getStringExtra(EXTRA_CONFIG_JSON)));
-      } catch (Exception error) {
-        Log.e(TAG, "Android VPN start failed", error);
-        SlanVpnRuntime.markError(error.getMessage());
-        stopVpn("Android VPN start failed: " + error.getMessage());
-        stopSelf();
-      }
+      startForeground(NOTIFICATION_ID, notification());
+      String configJson = intent.getStringExtra(EXTRA_CONFIG_JSON);
+      new Thread(() -> {
+        try {
+          startVpn(new JSONObject(configJson));
+        } catch (Exception error) {
+          Log.e(TAG, "Android VPN start failed", error);
+          SlanVpnRuntime.markError(error.getMessage());
+          stopVpn("Android VPN start failed: " + error.getMessage());
+          stopSelf();
+        }
+      }, "slan-vpn-start").start();
       return START_STICKY;
     }
     return START_STICKY;
@@ -328,6 +332,11 @@ public final class SlanVpnService extends VpnService {
     }
 
     static HostPort parse(String value) {
+      value = value == null ? "" : value.trim();
+      int schemeSeparator = value.indexOf("://");
+      if (schemeSeparator >= 0) {
+        value = value.substring(schemeSeparator + 3).trim();
+      }
       int separator = value.lastIndexOf(':');
       if (separator <= 0 || separator == value.length() - 1) {
         return null;

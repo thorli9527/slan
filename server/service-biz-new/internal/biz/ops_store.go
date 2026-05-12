@@ -38,8 +38,22 @@ func (s *Store) seedOpsDefaultsLocked(now int64) {
 		s.addProductLocked(Product{Name: "企业版年付", Type: "plan", PlanCode: "enterprise", Period: "yearly", ValidDays: 365, RelayTrafficGB: 10240, RelayBandwidthMbps: 1000, ListPrice: 2999, SalePrice: 2999, Currency: "CNY", AutoRenew: false, Status: "active", Description: "企业版基础年付"})
 	}
 	if len(s.relayNodes) == 0 {
-		s.addRelayNodeLocked(OpsRelayNode{Name: "默认 UDP Relay", Region: "local", Transport: "relay_udp", PublicAddr: "udp://127.0.0.1:3478", MaxBandwidthMbps: 1000, MonthlyTrafficGB: 10240, MaxSessions: 10000, Status: "active", Health: "healthy"})
+		s.addRelayNodeLocked(defaultOpsRelayNode())
 	}
+}
+
+func defaultOpsRelayNode() OpsRelayNode {
+	publicAddr := "udp://127.0.0.1:3478"
+	region := "local"
+	for _, candidate := range configuredRelayCandidates() {
+		if candidate.Transport != "udp" || strings.TrimSpace(candidate.Address) == "" {
+			continue
+		}
+		publicAddr = relayURL(candidate)
+		region = defaultString(candidate.RegionID, region)
+		break
+	}
+	return OpsRelayNode{Name: "默认 UDP Relay", Region: region, Transport: "relay_udp", PublicAddr: publicAddr, MaxBandwidthMbps: 1000, MonthlyTrafficGB: 10240, MaxSessions: 10000, Status: "active", Health: "healthy"}
 }
 
 func (s *Store) LoginOperator(email, password string) (OperatorAuthResponse, error) {
@@ -297,6 +311,78 @@ func (s *Store) ListCustomers() []CustomerProfile {
 	return out
 }
 
+func (s *Store) ListOpsDevices() []OpsDeviceView {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]OpsDeviceView, 0, len(s.devices))
+	for _, device := range s.devices {
+		out = append(out, s.opsDeviceViewLocked(device))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAt == out[j].UpdatedAt {
+			return out[i].DeviceID < out[j].DeviceID
+		}
+		return out[i].UpdatedAt > out[j].UpdatedAt
+	})
+	return out
+}
+
+func (s *Store) UpdateOpsDevice(deviceID, alias, status string, enabled *bool) (OpsDeviceView, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return OpsDeviceView{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.devices[deviceID]
+	if !ok {
+		return OpsDeviceView{}, errNotFound
+	}
+	if strings.TrimSpace(alias) != "" {
+		device.Alias = strings.TrimSpace(alias)
+	}
+	if strings.TrimSpace(status) != "" {
+		device.Status = strings.TrimSpace(status)
+	}
+	now := time.Now().Unix()
+	device.UpdatedAt = now
+	s.devices[deviceID] = device
+	if enabled != nil {
+		runtime := s.runtimeStatuses[deviceID]
+		runtime.DeviceID = deviceID
+		runtime.DeviceEnabled = *enabled
+		runtime.LastReportAt = now
+		if !*enabled {
+			runtime.NetworkEnabled = false
+		}
+		s.runtimeStatuses[deviceID] = runtime
+		for key, networkDevice := range s.networkDevices {
+			if networkDevice.DeviceID != deviceID {
+				continue
+			}
+			networkDevice.Enabled = *enabled
+			if *enabled {
+				networkDevice.Status = "active"
+			} else {
+				networkDevice.Status = "disabled"
+			}
+			networkDevice.UpdatedAt = now
+			s.networkDevices[key] = networkDevice
+		}
+	}
+	return s.opsDeviceViewLocked(device), nil
+}
+
+func (s *Store) DeleteOpsDevice(deviceID string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.removeDeviceLocked(deviceID)
+}
+
 func (s *Store) AssignCustomerPlan(customerID, planCode string, expiresAt int64, amount float64, period, operatorEmail string) (CustomerProfile, Renewal, error) {
 	customerID = strings.TrimSpace(customerID)
 	planCode = strings.TrimSpace(planCode)
@@ -333,6 +419,43 @@ func (s *Store) AssignCustomerPlan(customerID, planCode string, expiresAt int64,
 	s.nextRenewalSeq++
 	s.renewals[renewal.RenewalID] = renewal
 	return s.customerProfileLocked(user), renewal, nil
+}
+
+func (s *Store) opsDeviceViewLocked(device Device) OpsDeviceView {
+	ownerEmail := ""
+	if user, ok := s.users[device.OwnerID]; ok {
+		ownerEmail = user.Email
+	}
+	runtime := s.runtimeStatuses[device.DeviceID]
+	networkCount := 0
+	for _, networkDevice := range s.networkDevices {
+		if networkDevice.DeviceID == device.DeviceID {
+			networkCount++
+		}
+	}
+	return OpsDeviceView{
+		DeviceID:        device.DeviceID,
+		OwnerID:         device.OwnerID,
+		OwnerEmail:      ownerEmail,
+		Name:            device.Name,
+		Alias:           device.Alias,
+		Platform:        device.Platform,
+		OSName:          device.OSName,
+		OSVersion:       device.OSVersion,
+		GlobalIP:        device.GlobalIP,
+		GlobalName:      device.GlobalName,
+		Status:          device.Status,
+		HeartbeatOnline: runtime.HeartbeatOnline,
+		NetworkEnabled:  runtime.NetworkEnabled,
+		DeviceEnabled:   runtime.DeviceEnabled,
+		RxBytesTotal:    runtime.RxBytesTotal,
+		TxBytesTotal:    runtime.TxBytesTotal,
+		NetworkCount:    networkCount,
+		LastSeenAt:      runtime.LastSeenAt,
+		LastReportAt:    runtime.LastReportAt,
+		CreatedAt:       device.CreatedAt,
+		UpdatedAt:       device.UpdatedAt,
+	}
 }
 
 func (s *Store) ListOrders() []Order {
@@ -479,8 +602,9 @@ func (s *Store) deviceQuotaLocked(userID string) DeviceQuota {
 
 func (s *Store) activeRelayCandidatesLocked() []RelayCandidate {
 	out := make([]RelayCandidate, 0, len(s.relayNodes))
+	now := time.Now().Unix()
 	for _, node := range s.relayNodes {
-		if node.Status != "active" || node.Health == "down" {
+		if node.Status != "active" || node.Health == "down" || wireNodeStale(node, now) {
 			continue
 		}
 		transport := node.Transport

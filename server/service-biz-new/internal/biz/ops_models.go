@@ -80,21 +80,23 @@ type Product struct {
 }
 
 type OpsRelayNode struct {
-	NodeID           string `json:"nodeId"`
-	Name             string `json:"name"`
-	Region           string `json:"region"`
-	Transport        string `json:"transport"`
-	PublicAddr       string `json:"publicAddr"`
-	InternalAddr     string `json:"internalAddr,omitempty"`
-	MaxBandwidthMbps int    `json:"maxBandwidthMbps"`
-	MonthlyTrafficGB int    `json:"monthlyTrafficGb"`
-	UsedTrafficGB    int    `json:"usedTrafficGb"`
-	MaxSessions      int    `json:"maxSessions"`
-	ActiveSessions   int    `json:"activeSessions"`
-	Status           string `json:"status"`
-	Health           string `json:"health"`
-	CreatedAt        int64  `json:"createdAt"`
-	UpdatedAt        int64  `json:"updatedAt"`
+	NodeID            string              `json:"nodeId"`
+	Name              string              `json:"name"`
+	Region            string              `json:"region"`
+	Transport         string              `json:"transport"`
+	PublicAddr        string              `json:"publicAddr"`
+	InternalAddr      string              `json:"internalAddr,omitempty"`
+	MaxBandwidthMbps  int                 `json:"maxBandwidthMbps"`
+	MonthlyTrafficGB  int                 `json:"monthlyTrafficGb"`
+	UsedTrafficGB     int                 `json:"usedTrafficGb"`
+	MaxSessions       int                 `json:"maxSessions"`
+	ActiveSessions    int                 `json:"activeSessions"`
+	Status            string              `json:"status"`
+	Health            string              `json:"health"`
+	Priority          int                 `json:"priority,omitempty"`
+	TicketKeyRotation wireTicketKeyStatus `json:"ticketKeyRotation,omitempty"`
+	CreatedAt         int64               `json:"createdAt"`
+	UpdatedAt         int64               `json:"updatedAt"`
 }
 
 type CustomerPlanAssignment struct {
@@ -118,6 +120,30 @@ type CustomerProfile struct {
 	InvitedDevices int     `json:"invitedDevices"`
 	RelayUsedGB    float64 `json:"relayUsedGb"`
 	Status         string  `json:"status"`
+}
+
+type OpsDeviceView struct {
+	DeviceID        string `json:"deviceId"`
+	OwnerID         string `json:"ownerId"`
+	OwnerEmail      string `json:"ownerEmail,omitempty"`
+	Name            string `json:"name"`
+	Alias           string `json:"alias,omitempty"`
+	Platform        string `json:"platform"`
+	OSName          string `json:"osName,omitempty"`
+	OSVersion       string `json:"osVersion,omitempty"`
+	GlobalIP        string `json:"globalIp"`
+	GlobalName      string `json:"globalName"`
+	Status          string `json:"status"`
+	HeartbeatOnline bool   `json:"heartbeatOnline"`
+	NetworkEnabled  bool   `json:"networkEnabled"`
+	DeviceEnabled   bool   `json:"deviceEnabled"`
+	RxBytesTotal    uint64 `json:"rxBytesTotal"`
+	TxBytesTotal    uint64 `json:"txBytesTotal"`
+	NetworkCount    int    `json:"networkCount"`
+	LastSeenAt      int64  `json:"lastSeenAt,omitempty"`
+	LastReportAt    int64  `json:"lastReportAt,omitempty"`
+	CreatedAt       int64  `json:"createdAt"`
+	UpdatedAt       int64  `json:"updatedAt"`
 }
 
 type Order struct {

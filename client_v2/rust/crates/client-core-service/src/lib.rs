@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod client_message_mqtt;
 mod control_plane;
 mod control_tasks;
 mod control_transport;

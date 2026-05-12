@@ -551,15 +551,6 @@ class _SignedInStatusPanel extends StatelessWidget {
               value: _lastClientMessageText(state)!,
             ),
           ],
-          if (_lastPolicyText(state) != null) ...[
-            const SizedBox(height: 7),
-            _CompactInfoRow(
-              valueKey: const Key('last-policy-value'),
-              icon: Icons.tune_rounded,
-              label: '策略',
-              value: _lastPolicyText(state)!,
-            ),
-          ],
         ],
       ),
     );
@@ -609,14 +600,6 @@ class _SignedInStatusPanel extends StatelessWidget {
       return '${(bytes / 1024).toStringAsFixed(bytes >= 10 * 1024 ? 0 : 1)}K';
     }
     return '${bytes}B';
-  }
-
-  String? _lastPolicyText(ClientViewState state) {
-    final policyId = state.lastRelayPolicyId?.trim();
-    if (policyId == null || policyId.isEmpty) {
-      return null;
-    }
-    return policyId;
   }
 }
 

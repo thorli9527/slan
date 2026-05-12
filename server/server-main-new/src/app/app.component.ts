@@ -1,7 +1,8 @@
 import { CommonModule } from '@angular/common';
-import { Component, ViewEncapsulation } from '@angular/core';
+import { Component, OnInit, ViewEncapsulation } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CustomersPageComponent } from './features/customers/customers-page.component';
+import { DevicesPageComponent } from './features/devices/devices-page.component';
 import { OperatorsPageComponent } from './features/operators/operators-page.component';
 import { OrdersPageComponent } from './features/orders/orders-page.component';
 import { OverviewPageComponent } from './features/overview/overview-page.component';
@@ -9,7 +10,7 @@ import { ProductsPageComponent } from './features/products/products-page.compone
 import { RelayNodesPageComponent } from './features/relay-nodes/relay-nodes-page.component';
 import { RenewalsPageComponent } from './features/renewals/renewals-page.component';
 
-type NavId = 'overview' | 'operators' | 'relayNodes' | 'customers' | 'products' | 'orders' | 'renewals';
+type NavId = 'overview' | 'operators' | 'relayNodes' | 'customers' | 'devices' | 'products' | 'orders' | 'renewals';
 
 type OperatorUser = {
   operatorId: string;
@@ -36,7 +37,7 @@ type RelayNode = {
 };
 
 type CustomerPlan = {
-  code: 'free' | 'pro' | 'enterprise';
+  code: string;
   name: string;
   ownDeviceLimit: number;
   invitedDeviceLimit: number;
@@ -87,6 +88,30 @@ type Customer = {
   status: 'active' | 'limited' | 'expired' | 'disabled';
 };
 
+type OpsDevice = {
+  deviceId: string;
+  ownerId: string;
+  ownerEmail?: string;
+  name: string;
+  alias?: string;
+  platform: string;
+  osName?: string;
+  osVersion?: string;
+  globalIp: string;
+  globalName: string;
+  status: 'active' | 'disabled';
+  heartbeatOnline: boolean;
+  networkEnabled: boolean;
+  deviceEnabled: boolean;
+  rxBytesTotal: number;
+  txBytesTotal: number;
+  networkCount: number;
+  lastSeenAt?: string;
+  lastReportAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Renewal = {
   renewalId: string;
   customerEmail: string;
@@ -101,10 +126,13 @@ type Renewal = {
 
 type Order = {
   orderId: string;
+  customerId?: string;
   customerEmail: string;
+  productId?: string;
   productName: string;
   productType: Product['type'];
   amount: number;
+  currency?: 'CNY';
   payStatus: 'pending' | 'paid' | 'refunded' | 'closed';
   provisionStatus: 'pending' | 'provisioned' | 'failed';
   createdAt: string;
@@ -123,6 +151,7 @@ type Order = {
     OperatorsPageComponent,
     RelayNodesPageComponent,
     CustomersPageComponent,
+    DevicesPageComponent,
     ProductsPageComponent,
     OrdersPageComponent,
     RenewalsPageComponent,
@@ -131,21 +160,35 @@ type Order = {
   styleUrl: './app.component.css',
   encapsulation: ViewEncapsulation.None,
 })
-export class AppComponent {
+export class AppComponent implements OnInit {
   readonly navItems: Array<{ id: NavId; label: string; desc: string }> = [
     { id: 'overview', label: '运营管理', desc: '平台指标与待处理事项' },
     { id: 'operators', label: '运营用户', desc: '后台账号与角色' },
     { id: 'relayNodes', label: '中继节点', desc: 'Relay/DERP 容量管理' },
     { id: 'customers', label: '客户管理', desc: '客户资源与限流状态' },
+    { id: 'devices', label: '设备管理', desc: '全局设备、在线与启用状态' },
     { id: 'products', label: '商品管理', desc: '客户级别、套餐商品与流量包' },
     { id: 'orders', label: '订单管理', desc: '购买、支付与开通状态' },
     { id: 'renewals', label: '续费管理', desc: '有效期和手动续费' },
   ];
 
   active: NavId = 'overview';
+  readonly opsTokenKey = 'slan_ops_token';
+  readonly opsEmailKey = 'slan_ops_email';
+  operatorEmail = localStorage.getItem(this.opsEmailKey) || 'admin@slan.local';
+  loginEmail = this.operatorEmail;
+  loginPassword = '';
+  loginMessage = '';
+  loading = false;
+  apiMessage = '';
   showAssignPlanDialog = false;
   showCurrentPasswordDialog = false;
   showOperatorPasswordDialog = false;
+  showOperatorDialog = false;
+  showRelayNodeDialog = false;
+  showPlanDialog = false;
+  showProductDialog = false;
+  showOrderDialog = false;
   selectedCustomer: Customer | null = null;
   selectedOperator: OperatorUser | null = null;
   assignPlanCode: CustomerPlan['code'] = 'pro';
@@ -157,9 +200,25 @@ export class AppComponent {
   operatorNewPassword = '';
   operatorConfirmPassword = '';
   passwordMessage = '';
+  operatorForm: Partial<OperatorUser> = {};
+  relayNodeForm: Partial<RelayNode> = {};
+  planForm: Partial<CustomerPlan> = {};
+  productForm: Partial<Product> = {};
+  orderForm: Partial<Order> = {};
+  deviceKeyword = '';
 
   get vm(): this {
     return this;
+  }
+
+  get isLoggedIn(): boolean {
+    return Boolean(localStorage.getItem(this.opsTokenKey));
+  }
+
+  ngOnInit(): void {
+    if (this.isLoggedIn) {
+      void this.loadOpsData();
+    }
   }
 
   operators: OperatorUser[] = [
@@ -205,12 +264,156 @@ export class AppComponent {
     { orderId: 'ord-202601010001', customerEmail: 'corp@example.com', productName: '企业定制包', productType: 'enterprise', amount: 12999, payStatus: 'paid', provisionStatus: 'provisioned', createdAt: '2026-01-01 13:20', paidAt: '2026-01-01 14:02', validUntil: '2028-01-01', channel: 'bank' },
   ];
 
+  devices: OpsDevice[] = [
+    { deviceId: 'mac-001', ownerId: 'user-000001', ownerEmail: 'alice@vlan.com', name: '办公 Mac', alias: '办公 Mac', platform: 'macos', osName: 'macOS', osVersion: '15.3', globalIp: '10.0.0.1', globalName: 'mac-001.vlan.com', status: 'active', heartbeatOnline: true, networkEnabled: true, deviceEnabled: true, rxBytesTotal: 0, txBytesTotal: 0, networkCount: 1, lastSeenAt: '2026-05-09 09:20', lastReportAt: '2026-05-09 09:20', createdAt: '2026-05-09 09:00', updatedAt: '2026-05-09 09:20' },
+  ];
+
+  async login(): Promise<void> {
+    this.loginMessage = '';
+    if (!this.loginEmail.trim() || !this.loginPassword.trim()) {
+      this.loginMessage = '请输入邮箱和密码';
+      return;
+    }
+    try {
+      const response = await this.request<{ auth: { operator: OperatorUser; session: { token: string } } }>('POST', '/api/ops/auth/login', {
+        email: this.loginEmail.trim(),
+        password: this.loginPassword,
+      }, false);
+      localStorage.setItem(this.opsTokenKey, response.auth.session.token);
+      localStorage.setItem(this.opsEmailKey, response.auth.operator.email);
+      this.operatorEmail = response.auth.operator.email;
+      this.loginEmail = response.auth.operator.email;
+      this.loginPassword = '';
+      await this.loadOpsData();
+    } catch (error) {
+      this.loginMessage = this.errorMessage(error);
+    }
+  }
+
+  logout(): void {
+    localStorage.removeItem(this.opsTokenKey);
+    localStorage.removeItem(this.opsEmailKey);
+    this.operatorEmail = 'admin@slan.local';
+    this.loginEmail = this.operatorEmail;
+  }
+
+  async loadOpsData(): Promise<void> {
+    this.loading = true;
+    this.apiMessage = '';
+    try {
+      const [operators, relayNodes, customers, devices, plans, products, orders, renewals] = await Promise.all([
+        this.request<{ items: OperatorUser[] }>('GET', '/api/ops/operators'),
+        this.request<{ items: RelayNode[] }>('GET', '/api/ops/relay-nodes'),
+        this.request<{ items: Customer[] }>('GET', '/api/ops/customers'),
+        this.request<{ items: OpsDevice[] }>('GET', '/api/ops/devices'),
+        this.request<{ items: CustomerPlan[] }>('GET', '/api/ops/plans'),
+        this.request<{ items: Product[] }>('GET', '/api/ops/products'),
+        this.request<{ items: Order[] }>('GET', '/api/ops/orders'),
+        this.request<{ items: Renewal[] }>('GET', '/api/ops/renewals'),
+      ]);
+      this.operators = operators.items.map((item) => ({ ...item, lastLoginAt: this.formatDateTime(item.lastLoginAt) }));
+      this.relayNodes = relayNodes.items;
+      this.customers = customers.items.map((item) => ({ ...item, planExpiresAt: this.formatDate(item.planExpiresAt) }));
+      this.devices = devices.items.map((item) => this.formatDevice(item));
+      this.plans = plans.items;
+      this.products = products.items;
+      this.orders = orders.items.map((item) => ({
+        ...item,
+        createdAt: this.formatDateTime(item.createdAt),
+        paidAt: item.paidAt ? this.formatDateTime(item.paidAt) : undefined,
+        validUntil: item.validUntil ? this.formatDate(item.validUntil) : undefined,
+      }));
+      this.renewals = renewals.items.map((item) => ({
+        ...item,
+        paidAt: this.formatDate(item.paidAt),
+        validUntil: this.formatDate(item.validUntil),
+      }));
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+      if (this.apiMessage.includes('401')) {
+        this.logout();
+      }
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown, requireAuth = true): Promise<T> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = localStorage.getItem(this.opsTokenKey);
+    if (requireAuth && token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    return response.json() as Promise<T>;
+  }
+
+  private formatDate(value: string | number | undefined): string {
+    if (!value) {
+      return '';
+    }
+    if (typeof value === 'string' && value.includes('-')) {
+      return value.slice(0, 10);
+    }
+    return new Date(Number(value) * 1000).toISOString().slice(0, 10);
+  }
+
+  private formatDateTime(value: string | number | undefined): string {
+    if (!value) {
+      return '-';
+    }
+    if (typeof value === 'string' && value.includes('-')) {
+      return value;
+    }
+    return new Date(Number(value) * 1000).toISOString().replace('T', ' ').slice(0, 16);
+  }
+
+  private dateToUnix(value: string): number {
+    return Math.floor(new Date(`${value}T00:00:00`).getTime() / 1000);
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
   get activeNav() {
     return this.navItems.find((item) => item.id === this.active) ?? this.navItems[0];
   }
 
   get totalCustomers(): number {
     return this.customers.length;
+  }
+
+  get filteredDevices(): OpsDevice[] {
+    const keyword = this.deviceKeyword.trim().toLowerCase();
+    if (!keyword) {
+      return this.devices;
+    }
+    return this.devices.filter((device) => [
+      device.deviceId,
+      device.ownerEmail,
+      device.alias,
+      device.name,
+      device.platform,
+      device.osName,
+      device.globalIp,
+      device.globalName,
+    ].some((value) => String(value ?? '').toLowerCase().includes(keyword)));
+  }
+
+  get onlineDeviceCount(): number {
+    return this.devices.filter((device) => device.heartbeatOnline).length;
   }
 
   get totalRelayUsedGb(): number {
@@ -313,6 +516,20 @@ export class AppComponent {
     return Math.min(100, Math.round((node.usedTrafficGb / node.monthlyTrafficGb) * 100));
   }
 
+  formatBytes(value: number | undefined): string {
+    const bytes = Number(value ?? 0);
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    }
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    }
+    if (bytes >= 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${bytes} B`;
+  }
+
   openAssignPlan(customer: Customer): void {
     this.selectedCustomer = customer;
     this.assignPlanCode = customer.planCode;
@@ -326,32 +543,230 @@ export class AppComponent {
     this.selectedCustomer = null;
   }
 
-  saveAssignPlan(): void {
+  openOperatorDialog(): void {
+    this.operatorForm = { name: '', email: '', role: 'ops', status: 'active' };
+    this.showOperatorDialog = true;
+  }
+
+  closeOperatorDialog(): void {
+    this.showOperatorDialog = false;
+  }
+
+  async saveOperatorDialog(): Promise<void> {
+    if (!this.operatorForm.name?.trim() || !this.operatorForm.email?.trim()) {
+      this.apiMessage = '请输入运营用户姓名和邮箱';
+      return;
+    }
+    try {
+      const operator = await this.request<OperatorUser>('POST', '/api/ops/operators', this.operatorForm);
+      this.operators = [{ ...operator, lastLoginAt: this.formatDateTime(operator.lastLoginAt) }, ...this.operators];
+      this.closeOperatorDialog();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  openRelayNodeDialog(): void {
+    this.relayNodeForm = {
+      name: '',
+      region: 'ap-east-1',
+      transport: 'relay_udp',
+      publicAddr: '',
+      maxBandwidthMbps: 1000,
+      monthlyTrafficGb: 10240,
+      usedTrafficGb: 0,
+      maxSessions: 5000,
+      activeSessions: 0,
+      status: 'active',
+      health: 'healthy',
+    };
+    this.showRelayNodeDialog = true;
+  }
+
+  closeRelayNodeDialog(): void {
+    this.showRelayNodeDialog = false;
+  }
+
+  async saveRelayNodeDialog(): Promise<void> {
+    if (!this.relayNodeForm.name?.trim() || !this.relayNodeForm.publicAddr?.trim()) {
+      this.apiMessage = '请输入节点名称和公网地址';
+      return;
+    }
+    try {
+      const node = await this.request<RelayNode>('POST', '/api/ops/relay-nodes', this.relayNodeForm);
+      this.relayNodes = [node, ...this.relayNodes];
+      this.closeRelayNodeDialog();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  openPlanDialog(): void {
+    this.planForm = {
+      code: 'custom' as CustomerPlan['code'],
+      name: '',
+      ownDeviceLimit: 5,
+      invitedDeviceLimit: 5,
+      totalDeviceLimit: 10,
+      relayMonthlyGb: 50,
+      relayBandwidthMbps: 5,
+      relayThrottleMbps: 1,
+      p2pUnlimited: true,
+      customDomain: false,
+      acl: false,
+      dedicatedRelay: false,
+      auditLog: false,
+      apiAccess: false,
+      monthlyPrice: 0,
+      yearlyPrice: 0,
+    };
+    this.showPlanDialog = true;
+  }
+
+  closePlanDialog(): void {
+    this.showPlanDialog = false;
+  }
+
+  async savePlanDialog(): Promise<void> {
+    if (!this.planForm.code?.trim() || !this.planForm.name?.trim()) {
+      this.apiMessage = '请输入套餐编码和名称';
+      return;
+    }
+    try {
+      const plan = await this.request<CustomerPlan>('POST', '/api/ops/plans', this.planForm);
+      this.plans = [plan, ...this.plans.filter((item) => item.code !== plan.code)];
+      this.closePlanDialog();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  openProductDialog(): void {
+    this.productForm = {
+      name: '',
+      type: 'plan',
+      planCode: this.plans[0]?.code,
+      period: 'monthly',
+      validDays: 31,
+      relayTrafficGb: 50,
+      relayBandwidthMbps: 5,
+      listPrice: 0,
+      salePrice: 0,
+      currency: 'CNY',
+      autoRenew: false,
+      status: 'active',
+      description: '',
+    };
+    this.showProductDialog = true;
+  }
+
+  closeProductDialog(): void {
+    this.showProductDialog = false;
+  }
+
+  async saveProductDialog(): Promise<void> {
+    if (!this.productForm.name?.trim()) {
+      this.apiMessage = '请输入商品名称';
+      return;
+    }
+    try {
+      const product = await this.request<Product>('POST', '/api/ops/products', this.productForm);
+      this.products = [product, ...this.products];
+      this.closeProductDialog();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  openOrderDialog(): void {
+    const customer = this.customers[0];
+    const product = this.products[0];
+    this.orderForm = {
+      customerId: customer?.customerId,
+      customerEmail: customer?.email,
+      productId: product?.productId,
+      productName: product?.name,
+      productType: product?.type,
+      amount: product?.salePrice ?? 0,
+      currency: 'CNY',
+      payStatus: 'pending',
+      provisionStatus: 'pending',
+      channel: 'manual',
+    } as Partial<Order>;
+    this.showOrderDialog = true;
+  }
+
+  closeOrderDialog(): void {
+    this.showOrderDialog = false;
+  }
+
+  async saveOrderDialog(): Promise<void> {
+    if (!this.orderForm.customerId || !this.orderForm.productId) {
+      this.apiMessage = '请选择客户和商品';
+      return;
+    }
+    try {
+      const product = this.products.find((item) => item.productId === this.orderForm.productId);
+      const customer = this.customers.find((item) => item.customerId === this.orderForm.customerId);
+      const order = await this.request<Order>('POST', '/api/ops/orders', {
+        ...this.orderForm,
+        customerEmail: customer?.email ?? this.orderForm.customerEmail,
+        productName: product?.name ?? this.orderForm.productName,
+        productType: product?.type ?? this.orderForm.productType,
+      });
+      this.orders = [{
+        ...order,
+        createdAt: this.formatDateTime(order.createdAt),
+        paidAt: order.paidAt ? this.formatDateTime(order.paidAt) : undefined,
+        validUntil: order.validUntil ? this.formatDate(order.validUntil) : undefined,
+      }, ...this.orders];
+      this.closeOrderDialog();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  async saveAssignPlan(): Promise<void> {
     if (!this.selectedCustomer) {
       return;
     }
-    this.selectedCustomer.planCode = this.assignPlanCode;
-    this.selectedCustomer.planExpiresAt = this.assignExpiresAt;
-    this.selectedCustomer.status = 'active';
-    this.renewals = [
-      {
-        renewalId: `renew-${String(this.renewals.length + 1).padStart(6, '0')}`,
-        customerEmail: this.selectedCustomer.email,
+    this.apiMessage = '';
+    try {
+      const response = await this.request<{ customer: Customer; renewal: Renewal }>('POST', `/api/ops/customers/${encodeURIComponent(this.selectedCustomer.customerId)}/assign-plan`, {
         planCode: this.assignPlanCode,
-        period: 'custom',
+        expiresAt: this.dateToUnix(this.assignExpiresAt),
         amount: this.renewalAmount,
-        paidAt: '2026-05-09',
-        validUntil: this.assignExpiresAt,
-        source: 'manual',
-        operator: 'admin@slan.com',
-      },
-      ...this.renewals,
-    ];
-    this.closeAssignPlan();
+        period: 'custom',
+      });
+      Object.assign(this.selectedCustomer, {
+        ...response.customer,
+        planExpiresAt: this.formatDate(response.customer.planExpiresAt),
+      });
+      this.renewals = [
+        {
+          ...response.renewal,
+          paidAt: this.formatDate(response.renewal.paidAt),
+          validUntil: this.formatDate(response.renewal.validUntil),
+        },
+        ...this.renewals,
+      ];
+      this.closeAssignPlan();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
   }
 
-  toggleOperator(operator: OperatorUser): void {
-    operator.status = operator.status === 'active' ? 'disabled' : 'active';
+  async toggleOperator(operator: OperatorUser): Promise<void> {
+    const nextStatus = operator.status === 'active' ? 'disabled' : 'active';
+    try {
+      const updated = await this.request<OperatorUser>('PATCH', `/api/ops/operators/${encodeURIComponent(operator.operatorId)}`, {
+        ...operator,
+        status: nextStatus,
+      });
+      Object.assign(operator, { ...updated, lastLoginAt: this.formatDateTime(updated.lastLoginAt) });
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
   }
 
   openCurrentPasswordDialog(): void {
@@ -366,12 +781,20 @@ export class AppComponent {
     this.showCurrentPasswordDialog = false;
   }
 
-  saveCurrentPassword(): void {
+  async saveCurrentPassword(): Promise<void> {
     this.passwordMessage = this.validatePassword(this.newPassword, this.confirmPassword, true);
     if (this.passwordMessage) {
       return;
     }
-    this.closeCurrentPasswordDialog();
+    try {
+      await this.request('PATCH', '/api/ops/auth/password', {
+        oldPassword: this.oldPassword,
+        newPassword: this.newPassword,
+      });
+      this.closeCurrentPasswordDialog();
+    } catch (error) {
+      this.passwordMessage = this.errorMessage(error);
+    }
   }
 
   openOperatorPasswordDialog(operator: OperatorUser): void {
@@ -387,12 +810,19 @@ export class AppComponent {
     this.selectedOperator = null;
   }
 
-  saveOperatorPassword(): void {
+  async saveOperatorPassword(): Promise<void> {
     this.passwordMessage = this.validatePassword(this.operatorNewPassword, this.operatorConfirmPassword, false);
-    if (this.passwordMessage) {
+    if (this.passwordMessage || !this.selectedOperator) {
       return;
     }
-    this.closeOperatorPasswordDialog();
+    try {
+      await this.request('POST', `/api/ops/operators/${encodeURIComponent(this.selectedOperator.operatorId)}/password`, {
+        newPassword: this.operatorNewPassword,
+      });
+      this.closeOperatorPasswordDialog();
+    } catch (error) {
+      this.passwordMessage = this.errorMessage(error);
+    }
   }
 
   private validatePassword(password: string, confirmPassword: string, requireOldPassword: boolean): string {
@@ -411,12 +841,66 @@ export class AppComponent {
     return '';
   }
 
-  toggleRelayNode(node: RelayNode): void {
-    node.status = node.status === 'active' ? 'disabled' : 'active';
-    node.health = node.status === 'active' ? 'healthy' : 'down';
+  async toggleRelayNode(node: RelayNode): Promise<void> {
+    const nextStatus = node.status === 'active' ? 'disabled' : 'active';
+    try {
+      const updated = await this.request<RelayNode>('PATCH', `/api/ops/relay-nodes/${encodeURIComponent(node.nodeId)}`, {
+        ...node,
+        status: nextStatus,
+        health: nextStatus === 'active' ? 'healthy' : 'down',
+      });
+      Object.assign(node, updated);
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
   }
 
-  toggleProduct(product: Product): void {
-    product.status = product.status === 'active' ? 'offline' : 'active';
+  async toggleProduct(product: Product): Promise<void> {
+    const nextStatus = product.status === 'active' ? 'offline' : 'active';
+    try {
+      const updated = await this.request<Product>('PATCH', `/api/ops/products/${encodeURIComponent(product.productId)}`, {
+        ...product,
+        status: nextStatus,
+      });
+      Object.assign(product, updated);
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  async toggleDevice(device: OpsDevice): Promise<void> {
+    const enabled = !device.deviceEnabled;
+    try {
+      const updated = await this.request<OpsDevice>('PATCH', `/api/ops/devices/${encodeURIComponent(device.deviceId)}`, {
+        alias: device.alias,
+        status: enabled ? 'active' : 'disabled',
+        enabled,
+      });
+      Object.assign(device, this.formatDevice(updated));
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  async deleteDevice(device: OpsDevice): Promise<void> {
+    if (!confirm(`确认删除设备 ${device.deviceId}？`)) {
+      return;
+    }
+    try {
+      await this.request('DELETE', `/api/ops/devices/${encodeURIComponent(device.deviceId)}`);
+      this.devices = this.devices.filter((item) => item.deviceId !== device.deviceId);
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  private formatDevice(device: OpsDevice): OpsDevice {
+    return {
+      ...device,
+      lastSeenAt: device.lastSeenAt ? this.formatDateTime(device.lastSeenAt) : '-',
+      lastReportAt: device.lastReportAt ? this.formatDateTime(device.lastReportAt) : '-',
+      createdAt: this.formatDateTime(device.createdAt),
+      updatedAt: this.formatDateTime(device.updatedAt),
+    };
   }
 }

@@ -91,7 +91,7 @@ cp "$repo_root/client_v2/install/linux/bin/slan-client-v2-console" "$root_dir/us
 chmod 755 "$root_dir/usr/bin/slan-client-v2-console"
 
 cat > "$root_dir/etc/slan/client-v2.env.example" <<EOF
-SLAN_CONTROL_BASE_URL=http://127.0.0.1:18080
+SLAN_CONTROL_BASE_URL=http://api.dev.staticlss.com
 SLAN_CLIENT_CORE_SERVICE_HOST=127.0.0.1:46392
 EOF
 

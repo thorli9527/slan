@@ -30,6 +30,7 @@ pub(crate) struct ClientNetworkSnapshot {
     pub(crate) peer_count: usize,
     pub(crate) dns_record_count: usize,
     pub(crate) security_rule_count: usize,
+    pub(crate) relay_candidate_count: usize,
     pub(crate) configs: Vec<DeviceNetworkConfig>,
 }
 
@@ -48,6 +49,7 @@ impl ClientNetworkModule {
             peer_count: configs.iter().map(|item| item.peers.len()).sum(),
             dns_record_count: configs.iter().map(|item| item.dns_records.len()).sum(),
             security_rule_count: configs.iter().map(|item| item.rules.len()).sum(),
+            relay_candidate_count: configs.iter().map(|item| item.relay_candidates.len()).sum(),
             configs,
         }
     }

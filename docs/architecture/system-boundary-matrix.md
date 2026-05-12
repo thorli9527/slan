@@ -7,7 +7,9 @@
 | 子系统 | 定位 | 不负责 |
 | --- | --- | --- |
 | `client/app_core` | 客户端运行时编排层，承接控制面配置、WireGuard、路径切换、relay / DERP 兜底与隧道编排 | UI、业务控制面存储、服务端数据面转发 |
-| `server/server-biz` | 业务控制面，负责账号、组织、网络资产、设备归属和业务权限 | WireGuard 路径规划、联网票据签发、真实流量转发 |
+| `server/service-biz-new` | 业务控制面，负责账号、网络资产、设备归属、业务权限、套餐和运营 API | WireGuard 路径规划、真实流量转发 |
+| `server/service-ui-new` | 客户 Web Console，负责客户侧设备、网络、域名和安全组管理界面 | 业务数据持久化、联网控制面、数据面转发 |
+| `server/server-main-new` | 运营管理控制台，负责运营用户、客户、商品、订单、续费和中继节点运营界面 | 客户端控制面、数据面转发 |
 | `server/server-wire` | 联网控制面，负责 peer 注册、runtime config、路径规划、relay/DERP ticket 签发 | 用户、组织、计费、审计等业务域 |
 | `server/server-wire-relay` | UDP relay 数据面，负责 `relay_udp` ticket 消费、session 和 UDP 转发 | 业务域管理、路径评分、票据签发 |
 | `server/server-wire-derp` | TCP/TLS 443 兜底数据面，负责 `derp_tcp_tls_443` ticket 消费、连接和转发 | 业务域管理、路径评分、票据签发 |
@@ -30,7 +32,7 @@
 | 边界 | 协议/模型 | 当前承载 |
 | --- | --- | --- |
 | app_core -> server-biz | 业务 HTTP DTO | `server-biz` HTTP API |
-| server-wire -> server-biz | 业务授权 / peer 授权 / runtime config / topology | `server-biz` `/internal/wire/*` 只读内部 API，`X-Slan-Internal-Token` 鉴权 |
+| server-wire -> service-biz-new | 业务授权 / peer 授权 / runtime config / topology | `service-biz-new` `/internal/wire/*` 只读内部 API，`X-Slan-Internal-Token` 鉴权 |
 | app_core -> server-wire | peer register、runtime config、path plan、ticket | `server-wire` HTTP API |
 | app_core -> server-wire-relay | attach / forward UDP 数据面语义 | `server-wire-relay` UDP JSON 协议 |
 | app_core -> server-wire-derp | connect / send TCP 兜底语义 | `server-wire-derp` TCP JSON 协议 |
@@ -45,7 +47,9 @@ LAN Direct -> IPv6 Direct -> Direct UDP -> Relay UDP -> DERP TCP/TLS 443
 
 ## 文档入口
 
-- `server/server-biz/docs`
+- `server/service-biz-new/README.md`
+- `server/service-ui-new`
+- `server/server-main-new`
 - `server/server-wire/docs`
 - `server/server-wire-relay/docs`
 - `server/server-wire-derp/docs`

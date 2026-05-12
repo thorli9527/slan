@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod client_message_mqtt;
 mod control_plane;
 mod control_tasks;
 mod control_transport;
@@ -35,8 +36,9 @@ use anyhow::{Context, Result};
 use client_core::{
     normalize_relay_transport, relay_path_kind_for_transport, AssignedIpPayload, ClientCommand,
     ClientRuntime, ClientViewState, PathCandidate, PathKind, PathState, PeerPathConfig,
-    PlatformNetwork, PlatformNetworkConfig, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
-    RelayPeerSession, RelayTicket, TrafficStatsPayload,
+    PlatformDeviceNetworkConfig, PlatformNetwork, PlatformNetworkConfig,
+    PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession, RelayTicket,
+    TrafficStatsPayload,
 };
 use client_core_platform::PlatformNetworkImpl;
 use serde_json::Value;
@@ -84,9 +86,8 @@ use crate::relay_models::{
     RelayRuntimeStats,
 };
 use crate::relay_store::{
-    diagnostics_export_file_path, load_recent_relay_data_plane_policy_for_path,
-    load_relay_runtime_stats, relay_path_policy, relay_payload_policy, relay_policy_file_path,
-    relay_runtime_failure_total, relay_stats_file_path,
+    diagnostics_export_file_path, load_relay_runtime_stats, relay_path_policy,
+    relay_payload_policy, relay_runtime_failure_total, relay_stats_file_path,
 };
 use crate::session_store::{
     app_data_dir, current_timestamp_ms, ensure_session_device_registered,
@@ -352,8 +353,23 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalSession => return handle_local_session(),
         LocalServiceMethod::LocalPeers => return handle_local_peers(),
         LocalServiceMethod::LocalNetworkModule => {
+            match load_session() {
+                Ok(session) => {
+                    let client = ControlPlaneClient::from_env();
+                    if let Err(err) = crate::network_module::refresh_network_module_from_session(
+                        &client, &session,
+                    ) {
+                        eprintln!("client-core-service localNetworkModule refresh failed: {err:#}");
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "client-core-service localNetworkModule session load failed: {err:#}"
+                    );
+                }
+            }
             return serde_json::to_string(&crate::network_module::network_module_snapshot())
-                .context("encode local network module")
+                .context("encode local network module");
         }
         LocalServiceMethod::LocalPathPlan => return handle_local_path_plan(),
         LocalServiceMethod::LocalPathDiagnose => return handle_path_diagnose(),
@@ -388,8 +404,7 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalMarkTransportPublished => {
             return handle_mark_transport_published(request, &context.runtime, &context.task_queue)
         }
-        LocalServiceMethod::LocalPlatformNetworkConfig
-        | LocalServiceMethod::LocalAndroidNetworkConfig => {
+        LocalServiceMethod::LocalPlatformNetworkConfig => {
             return handle_local_platform_network_config(&context.runtime)
         }
         LocalServiceMethod::IngestPlatformRuntimeState => {
@@ -819,8 +834,12 @@ fn handle_send_client_message(request: ServiceRequest) -> Result<String> {
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("device id is not available"))?;
-    let response = ControlPlaneClient::from_env().send_client_message(
-        &session.access_token,
+    let mqtt = session
+        .mqtt
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("mqtt credential is not available"))?;
+    let response = client_message_mqtt::publish_client_message(
+        mqtt,
         network_id,
         from_device_id,
         &input.target_device_id,
@@ -889,7 +908,6 @@ fn handle_export_diagnostics(
 fn diagnostic_local_data_snapshot() -> serde_json::Value {
     serde_json::json!({
         "relayStatsFile": diagnostic_json_file_snapshot(&relay_stats_file_path()),
-        "relayPolicyFile": diagnostic_json_file_snapshot(&relay_policy_file_path()),
         "connectPlanFile": diagnostic_connect_plan_file_snapshot(),
     })
 }
@@ -1219,31 +1237,13 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
     });
     let direct_candidates = diagnose_direct_candidates(&activation.peers);
     let relay_candidates = select_relay_candidates(&session.relay_candidates);
-    let policy = load_recent_relay_data_plane_policy_for_path(
-        &network_id,
-        session.device_id.as_deref(),
-        Some(active_path_type.as_str()),
-    )
-    .or_else(|| {
-        load_recent_relay_data_plane_policy_for_path(
-            &network_id,
-            session.device_id.as_deref(),
-            Some("relay_udp"),
-        )
-    });
-    let expected_mtu = policy
-        .as_ref()
-        .and_then(|policy| policy.relay_mtu)
-        .or_else(|| stats.as_ref().and_then(|stats| stats.relay_mtu));
-    let expected_payload = policy
-        .as_ref()
-        .and_then(|policy| policy.max_frame_payload)
-        .or_else(|| stats.as_ref().and_then(|stats| stats.max_frame_payload));
+    let expected_mtu = stats.as_ref().and_then(|stats| stats.relay_mtu);
+    let expected_payload = stats.as_ref().and_then(|stats| stats.max_frame_payload);
     let mtu = PathDiagnoseMtu {
         relay_mtu: expected_mtu,
         max_frame_payload: expected_payload,
-        policy_scope: policy.as_ref().and_then(|policy| policy.scope.clone()),
-        policy_path_type: policy.as_ref().and_then(|policy| policy.path_type.clone()),
+        policy_scope: None,
+        policy_path_type: None,
         actual_mtu_checked: expected_mtu.is_some() && platform.mtu.is_some(),
         actual_mtu_ok: expected_mtu.and_then(|expected| {
             platform
@@ -2108,7 +2108,9 @@ where
     };
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(&mut session)?;
-    let _ = refresh_relay_candidates_for_session(&mut session, &network_id);
+    let network_configs =
+        crate::network_module::refresh_network_module_from_session(&client, &session)
+            .unwrap_or_default();
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
@@ -2138,6 +2140,7 @@ where
         session_name: "SLAN".to_string(),
         virtual_ip: activation.virtual_ip,
         prefix_len: activation.prefix_len,
+        network_configs: platform_network_configs(&network_configs),
         dns_servers: activation.dns_servers,
         routes,
         mtu: Some(1280),
@@ -2156,6 +2159,27 @@ where
     })
 }
 
+fn platform_network_configs(
+    configs: &[crate::control_plane::DeviceNetworkConfig],
+) -> Vec<PlatformDeviceNetworkConfig> {
+    configs
+        .iter()
+        .map(|config| PlatformDeviceNetworkConfig {
+            network_id: config.network_id.clone(),
+            device_id: config.device_id.clone(),
+            network_name: config.network_name.clone(),
+            network_code: config.network_code.clone(),
+            config_version: config.config_version,
+            global_ip: config.global_ip.clone(),
+            global_name: config.global_name.clone(),
+            peer_count: config.peers.len(),
+            dns_record_count: config.dns_records.len(),
+            security_rule_count: config.rules.len(),
+            relay_candidate_count: config.relay_candidates.len(),
+        })
+        .collect()
+}
+
 fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig> {
     let mut session = load_network_session()?;
     let Some(device_id) = session.device_id.clone().filter(|value| !value.is_empty()) else {
@@ -2165,7 +2189,6 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
     };
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(&mut session)?;
-    let _ = refresh_relay_candidates_for_session(&mut session, &network_id);
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     if !activation.relay_candidates.is_empty() {
@@ -2272,31 +2295,16 @@ where
     };
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(session)?;
-    let refreshed_relay_count = refresh_relay_candidates_for_session(session, &network_id)
-        .map(|_| session.relay_candidates.len())
-        .unwrap_or_else(|error| {
-            log_service_error(format!(
-                "client-core-service relay candidate refresh skipped before enable: {error:#}"
-            ));
-            session.relay_candidates.len()
-        });
-    let best_relay = best_relay_candidate_for_connect_plans(&session.relay_candidates)
-        .or_else(|| best_relay_candidate(&session.relay_candidates));
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     log_service_error(format!(
-        "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={} relays={} refreshedRelays={} bestRelay={}",
+        "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={} relays={}",
         activation.virtual_ip,
         activation.prefix_len,
         activation.dns_servers.len(),
         activation.routes.len(),
         activation.peer_count,
-        activation.relay_candidates.len(),
-        refreshed_relay_count,
-        best_relay
-            .as_ref()
-            .map(|relay| format!("{}:{} score={}", relay.transport, relay.address, relay.path_score))
-            .unwrap_or_else(|| "none".to_string())
+        activation.relay_candidates.len()
     ));
     session.virtual_ip = Some(activation.virtual_ip.clone());
     ensure_session_node_and_control_session(&client, session)
@@ -2353,7 +2361,14 @@ where
 fn ensure_active_network_id(session: &mut PersistedSession) -> Result<String> {
     if session.active_network_id.is_none() {
         let client = ControlPlaneClient::from_env();
-        session.active_network_id = client.active_network_id(&session.access_token)?;
+        if let Ok(configs) =
+            crate::network_module::refresh_network_module_from_session(&client, session)
+        {
+            session.active_network_id = configs.into_iter().next().map(|config| config.network_id);
+        }
+        if session.active_network_id.is_none() {
+            session.active_network_id = client.active_network_id(&session.access_token)?;
+        }
     }
     let Some(network_id) = session.active_network_id.clone() else {
         persist_session(session)?;
@@ -3332,26 +3347,6 @@ fn maintain_relay_data_plane(
     let business_data = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
     publish_business_event(state_notifier, business_type, business_data);
     Ok(())
-}
-
-pub(crate) fn reconfigure_active_control_network(
-    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-) -> ClientViewState {
-    let mut session = match load_network_session() {
-        Ok(session) => session,
-        Err(error) => {
-            let state = {
-                let runtime = runtime.lock().expect("client runtime mutex poisoned");
-                runtime.state().clone()
-            };
-            return state_with_error(&state, error.to_string());
-        }
-    };
-    let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
-    match activate_control_network_for_session(&mut runtime, &mut session) {
-        Ok(()) => runtime.state().clone(),
-        Err(error) => state_with_error(runtime.state(), error.to_string()),
-    }
 }
 
 fn relay_maintenance_reconfigure_reason(

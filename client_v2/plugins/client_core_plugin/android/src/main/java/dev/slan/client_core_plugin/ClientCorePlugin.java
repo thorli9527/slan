@@ -43,6 +43,7 @@ public final class ClientCorePlugin
   @Override
   public void onAttachedToEngine(FlutterPluginBinding binding) {
     applicationContext = binding.getApplicationContext();
+    SlanVpnRuntime.configure(applicationContext);
     synchronized (stateLock) {
       state.put("deviceId", stableDeviceId());
       state.put("nodeId", stableNodeId());
