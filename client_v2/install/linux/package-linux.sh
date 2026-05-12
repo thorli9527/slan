@@ -93,6 +93,7 @@ chmod 755 "$root_dir/usr/bin/slan-client-v2-console"
 cat > "$root_dir/etc/slan/client-v2.env.example" <<EOF
 SLAN_CONTROL_BASE_URL=http://api.dev.staticlss.com
 SLAN_CLIENT_CORE_SERVICE_HOST=127.0.0.1:46392
+SLAN_LINUX_TUN_NAME=slan0
 EOF
 
 if [ "$variant" != "console" ]; then

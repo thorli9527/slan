@@ -50,6 +50,14 @@ The package installs:
 - `/lib/systemd/system/slan-client-v2.service`
 - `/usr/bin/slan-client-v2-console`
 
+The systemd service grants `CAP_NET_ADMIN` and `CAP_NET_RAW` so the Linux
+backend can create `slan0`, assign the device IP, install routes, and apply DNS
+with `resolvectl`. For local development without privileged networking, set:
+
+```sh
+SLAN_LINUX_NETWORK_MOCK=1
+```
+
 ## Console bootstrap
 
 The console entry accepts server and invite parameters without showing Web Console:

@@ -12,6 +12,9 @@ Restart=on-failure
 RestartSec=3
 RuntimeDirectory=slan-client-v2
 StateDirectory=slan
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=false
 
 [Install]
 WantedBy=multi-user.target

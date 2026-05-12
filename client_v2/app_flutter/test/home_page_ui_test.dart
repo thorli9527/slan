@@ -301,8 +301,7 @@ void main() {
     expect(bridge.androidPrepareCount, greaterThanOrEqualTo(2));
   });
 
-  testWidgets('signed in panel shows latest client message and policy',
-      (tester) async {
+  testWidgets('signed in panel shows latest client message', (tester) async {
     final bridge = _UiTestBridge(
       initialState: const ClientViewState(
         signedIn: true,
@@ -314,7 +313,6 @@ void main() {
         virtualIp: '100.64.0.10',
         lastClientMessageFromDeviceId: 'ios-peer',
         lastClientMessageBody: 'hello',
-        lastRelayPolicyId: 'policy-fast',
       ),
       activationDelay: Duration.zero,
     );
@@ -326,8 +324,6 @@ void main() {
     expect(find.text('ios-peer: hello'), findsOneWidget);
     expect(find.byKey(const Key('client-device-id-value')), findsOneWidget);
     expect(find.text('device-current'), findsOneWidget);
-    expect(find.byKey(const Key('last-policy-value')), findsOneWidget);
-    expect(find.text('policy-fast'), findsOneWidget);
   });
 
   testWidgets('message composer dispatches send client message command',

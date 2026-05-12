@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  client_core_plugin
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

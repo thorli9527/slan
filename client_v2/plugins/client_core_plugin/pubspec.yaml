@@ -22,7 +22,7 @@ flutter:
       ios:
         pluginClass: ClientCorePlugin
       linux:
-        dartPluginClass: ClientCorePlugin
+        pluginClass: ClientCorePlugin
       macos:
         pluginClass: ClientCorePlugin
       windows:
