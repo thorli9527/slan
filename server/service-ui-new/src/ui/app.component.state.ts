@@ -61,7 +61,7 @@ export abstract class AppComponentState {
   currentUserShortCode = '';
   deviceQuota: ApiDeviceQuota | null = null;
 
-  authEmail = 'alice@vlan.com';
+  authEmail = 'alice@staticlss.com';
   authPassword = '123456';
   authName = 'Alice';
   showPasswordDialog = false;
@@ -79,7 +79,7 @@ export abstract class AppComponentState {
   workspaceCode = 'default';
   workspaceDialogMessage = '';
   editingWorkspaceName = '';
-  inviteEmail = 'bob@vlan.com';
+  inviteEmail = 'bob@staticlss.com';
   domainName = 'api';
   ruleDirection = 'ingress';
   selectedWorkspaceId = 'default-user-000001';
@@ -97,7 +97,7 @@ export abstract class AppComponentState {
   joinInviteMessage = '';
   showDeviceExposureDialog = false;
   selectedExposureDevice: DeviceRow | null = null;
-  exposureUser = 'bob@vlan.com';
+  exposureUser = 'bob@staticlss.com';
   showWorkspaceDeviceDialog = false;
   showWorkspaceDeviceAliasDialog = false;
   showDeviceAliasDialog = false;
@@ -116,7 +116,7 @@ export abstract class AppComponentState {
   workspaceCodeValue = '';
   userAliasValue = '';
   workspaceDeviceId = 'android-001';
-  workspaceDeviceOwner = 'alice@vlan.com';
+  workspaceDeviceOwner = 'alice@staticlss.com';
   workspaceDeviceAlias = 'Android 测试机';
   workspaceDeviceIp = '10.0.0.3';
   workspaceDevicePlatform = 'Android';
@@ -461,7 +461,7 @@ export abstract class AppComponentState {
   }
 
   get publicDomainPreview(): string {
-    return `${slug(this.publicAlias)}.${this.selectedWorkspace.code}.${this.userSlug}.pub.slan.com`;
+    return `${slug(this.publicAlias)}.${this.selectedWorkspace.code}.${this.userSlug}.pub.staticlss.com`;
   }
 
   get selectedDeviceExposures(): DeviceExposureRow[] {

@@ -23,7 +23,7 @@ func TestRegisterUserAndDeviceJoinDefaultNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register device: %v", err)
 	}
-	if device.GlobalIP != "10.0.0.1" || device.GlobalName != "mac-1.vlan.com" {
+	if device.GlobalIP != "10.0.0.1" || device.GlobalName != "mac-1.staticlss.com" {
 		t.Fatalf("unexpected global device identity: %+v", device)
 	}
 	if deviceMember.NetworkID != network.NetworkID || !deviceMember.Enabled {

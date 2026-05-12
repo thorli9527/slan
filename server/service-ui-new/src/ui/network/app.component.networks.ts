@@ -171,7 +171,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     const id = `workspace-${String(this.workspaces.length + 1).padStart(6, '0')}`;
     this.workspaces = [
       ...this.workspaces,
-      { networkId: id, workspaceId: id, name: this.workspaceName, code, template: code || 'custom', status: 'enabled', members: 1, devices: 0, zone: `${code}.${id}.user-000001.sub.slan.com` },
+      { networkId: id, workspaceId: id, name: this.workspaceName, code, template: code || 'custom', status: 'enabled', members: 1, devices: 0, zone: `${code}.${id}.user-000001.sub.staticlss.com` },
     ];
     this.closeWorkspaceDialog();
   }
@@ -189,7 +189,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     workspace.name = this.workspaceName.trim();
     workspace.code = code;
     workspace.template = workspace.code;
-    workspace.zone = `${slug(workspace.code)}.${workspace.workspaceId}.user-000001.sub.slan.com`;
+    workspace.zone = `${slug(workspace.code)}.${workspace.workspaceId}.user-000001.sub.staticlss.com`;
     this.closeWorkspaceDialog();
   }
 
@@ -245,7 +245,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
       this.editingWorkspace.code = code;
       this.editingWorkspace.template = this.editingWorkspace.code;
     }
-    this.editingWorkspace.zone = `${slug(this.editingWorkspace.code)}.${this.editingWorkspace.workspaceId}.user-000001.sub.slan.com`;
+    this.editingWorkspace.zone = `${slug(this.editingWorkspace.code)}.${this.editingWorkspace.workspaceId}.user-000001.sub.staticlss.com`;
     this.closeWorkspaceTagDialogs();
   }
 

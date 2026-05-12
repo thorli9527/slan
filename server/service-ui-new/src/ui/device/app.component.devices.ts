@@ -168,7 +168,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
 
   openDeviceExposureDialog(device: DeviceRow): void {
     this.selectedExposureDevice = device;
-    this.exposureUser = 'bob@vlan.com';
+    this.exposureUser = 'bob@staticlss.com';
     this.showDeviceExposureDialog = true;
   }
 

@@ -7,7 +7,7 @@
 - 网络模型：网络是一组设备和访问策略，默认网络为 `default`。
 - 设备授权：生成 32 位一次性接入码，设备 owner 确认后授权邀请方可见。
 - 内网域名：每个网络维护自己的 DNS Zone 和解析记录。
-- 公网访问：按 `{alias}.{networkCode}.{userSlug}.pub.slan.com` 映射到设备端口。
+- 公网访问：按 `{alias}.{networkCode}.{userSlug}.pub.staticlss.com` 映射到设备端口。
 - 安全组：默认 deny，按网络规则生成最终 peers/ACL 配置。
 
 ## Run

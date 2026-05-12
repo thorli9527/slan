@@ -262,24 +262,24 @@ export class AppComponent implements OnInit {
   ];
 
   customers: Customer[] = [
-    { customerId: 'cust-000001', email: 'alice@vlan.com', name: 'Alice', country: '中国', province: '广东', city: '深圳', ipRegion: '华南', planCode: 'pro', planExpiresAt: '2027-05-09', ownDevices: 3, invitedDevices: 2, relayUsedGb: 318, status: 'active' },
-    { customerId: 'cust-000002', email: 'bob@vlan.com', name: 'Bob', country: '中国', province: '上海', city: '上海', ipRegion: '华东', planCode: 'free', planExpiresAt: '2026-06-01', ownDevices: 5, invitedDevices: 4, relayUsedGb: 48, status: 'limited' },
+    { customerId: 'cust-000001', email: 'alice@staticlss.com', name: 'Alice', country: '中国', province: '广东', city: '深圳', ipRegion: '华南', planCode: 'pro', planExpiresAt: '2027-05-09', ownDevices: 3, invitedDevices: 2, relayUsedGb: 318, status: 'active' },
+    { customerId: 'cust-000002', email: 'bob@staticlss.com', name: 'Bob', country: '中国', province: '上海', city: '上海', ipRegion: '华东', planCode: 'free', planExpiresAt: '2026-06-01', ownDevices: 5, invitedDevices: 4, relayUsedGb: 48, status: 'limited' },
     { customerId: 'cust-000003', email: 'corp@example.com', name: '企业客户', country: '新加坡', province: '-', city: 'Singapore', ipRegion: '亚太', planCode: 'enterprise', planExpiresAt: '2028-01-01', ownDevices: 560, invitedDevices: 820, relayUsedGb: 6230, status: 'active' },
   ];
 
   renewals: Renewal[] = [
-    { renewalId: 'renew-000001', customerEmail: 'alice@vlan.com', planCode: 'pro', period: 'yearly', amount: 299, paidAt: '2026-05-09', validUntil: '2027-05-09', source: 'alipay', operator: 'admin@slan.com' },
+    { renewalId: 'renew-000001', customerEmail: 'alice@staticlss.com', planCode: 'pro', period: 'yearly', amount: 299, paidAt: '2026-05-09', validUntil: '2027-05-09', source: 'alipay', operator: 'admin@slan.com' },
     { renewalId: 'renew-000002', customerEmail: 'corp@example.com', planCode: 'enterprise', period: 'yearly', amount: 12999, paidAt: '2026-01-01', validUntil: '2028-01-01', source: 'bank', operator: 'finance@slan.com' },
   ];
 
   orders: Order[] = [
-    { orderId: 'ord-202605090001', customerEmail: 'alice@vlan.com', productName: '专业版年付', productType: 'plan', amount: 299, payStatus: 'paid', provisionStatus: 'provisioned', createdAt: '2026-05-09 09:10', paidAt: '2026-05-09 09:12', validUntil: '2027-05-09', channel: 'alipay' },
-    { orderId: 'ord-202605090002', customerEmail: 'bob@vlan.com', productName: 'Relay 加油包 100GB', productType: 'traffic_pack', amount: 19, payStatus: 'pending', provisionStatus: 'pending', createdAt: '2026-05-09 10:40', channel: 'wechat' },
+    { orderId: 'ord-202605090001', customerEmail: 'alice@staticlss.com', productName: '专业版年付', productType: 'plan', amount: 299, payStatus: 'paid', provisionStatus: 'provisioned', createdAt: '2026-05-09 09:10', paidAt: '2026-05-09 09:12', validUntil: '2027-05-09', channel: 'alipay' },
+    { orderId: 'ord-202605090002', customerEmail: 'bob@staticlss.com', productName: 'Relay 加油包 100GB', productType: 'traffic_pack', amount: 19, payStatus: 'pending', provisionStatus: 'pending', createdAt: '2026-05-09 10:40', channel: 'wechat' },
     { orderId: 'ord-202601010001', customerEmail: 'corp@example.com', productName: '企业定制包', productType: 'enterprise', amount: 12999, payStatus: 'paid', provisionStatus: 'provisioned', createdAt: '2026-01-01 13:20', paidAt: '2026-01-01 14:02', validUntil: '2028-01-01', channel: 'bank' },
   ];
 
   devices: OpsDevice[] = [
-    { deviceId: 'mac-001', ownerId: 'user-000001', ownerEmail: 'alice@vlan.com', name: '办公 Mac', alias: '办公 Mac', platform: 'macos', osName: 'macOS', osVersion: '15.3', globalIp: '10.0.0.1', globalName: 'mac-001.vlan.com', status: 'active', heartbeatOnline: true, networkEnabled: true, deviceEnabled: true, rxBytesTotal: 0, txBytesTotal: 0, networkCount: 1, lastSeenAt: '2026-05-09 09:20', lastReportAt: '2026-05-09 09:20', createdAt: '2026-05-09 09:00', updatedAt: '2026-05-09 09:20' },
+    { deviceId: 'mac-001', ownerId: 'user-000001', ownerEmail: 'alice@staticlss.com', name: '办公 Mac', alias: '办公 Mac', platform: 'macos', osName: 'macOS', osVersion: '15.3', globalIp: '10.0.0.1', globalName: 'mac-001.staticlss.com', status: 'active', heartbeatOnline: true, networkEnabled: true, deviceEnabled: true, rxBytesTotal: 0, txBytesTotal: 0, networkCount: 1, lastSeenAt: '2026-05-09 09:20', lastReportAt: '2026-05-09 09:20', createdAt: '2026-05-09 09:00', updatedAt: '2026-05-09 09:20' },
   ];
 
   async login(): Promise<void> {

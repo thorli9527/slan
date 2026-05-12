@@ -60,7 +60,7 @@ func TestInternalWireRoutesRegisterRelayAndDerpNodes(t *testing.T) {
 func TestInternalWirePeerAuthzRuntimeAndTopology(t *testing.T) {
 	t.Setenv("SLAN_INTERNAL_WIRE_TOKEN", "wire-token")
 	server := NewServer()
-	auth, network, err := server.store.RegisterUser("alice@vlan.com", "password", "Alice")
+	auth, network, err := server.store.RegisterUser("alice@staticlss.com", "password", "Alice")
 	if err != nil {
 		t.Fatalf("register user: %v", err)
 	}

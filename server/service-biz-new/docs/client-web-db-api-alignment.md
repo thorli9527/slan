@@ -62,7 +62,7 @@ UI 中的“网络”。同一 owner 下 `code` 不可重复。
 
 公网访问映射，格式为：
 
-`{alias}.{networkCode}.{userSlug}.pub.slan.com`
+`{alias}.{networkCode}.{userSlug}.pub.staticlss.com`
 
 绑定来源设备、协议和端口。
 

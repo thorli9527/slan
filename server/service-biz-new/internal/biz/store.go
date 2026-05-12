@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -381,7 +382,7 @@ func (s *Store) RegisterDevice(ownerID, deviceID, name, platform, osName, osVers
 		Alias:      strings.TrimSpace(alias),
 		PublicKey:  strings.TrimSpace(publicKey),
 		GlobalIP:   ip,
-		GlobalName: sanitizeDNSLabel(deviceID) + ".vlan.com",
+		GlobalName: sanitizeDNSLabel(deviceID) + "." + globalDeviceDomain(),
 		Status:     "active",
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -1725,4 +1726,12 @@ func sanitizeDNSLabel(value string) string {
 		return "x"
 	}
 	return value
+}
+
+func globalDeviceDomain() string {
+	domain := strings.Trim(strings.TrimSpace(os.Getenv("SLAN_GLOBAL_DEVICE_DOMAIN")), ".")
+	if domain == "" {
+		return "staticlss.com"
+	}
+	return domain
 }

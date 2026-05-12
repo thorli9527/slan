@@ -57,7 +57,7 @@ fi
 
 USER_AUTH="$(curl --silent --fail -X POST "${BASE_URL}/api/auth/register" \
   -H 'Content-Type: application/json' \
-  -d '{"email":"smoke@vlan.com","password":"password","name":"Smoke"}')"
+  -d '{"email":"smoke@staticlss.com","password":"password","name":"Smoke"}')"
 USER_ID="$(printf '%s' "${USER_AUTH}" | sed -n 's/.*"userId":"\([^"]*\)".*/\1/p')"
 NETWORK_ID="$(printf '%s' "${USER_AUTH}" | sed -n 's/.*"networkId":"\([^"]*\)".*/\1/p')"
 if [[ -z "${USER_ID}" || -z "${NETWORK_ID}" ]]; then

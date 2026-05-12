@@ -278,7 +278,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
   async savePublicMappingDialog(): Promise<void> {
     const device = this.currentUserDevices.find((item) => item.deviceId === this.publicSourceRecord) ?? this.currentUserDevices[0];
     const alias = slug(this.publicAlias);
-    const publicDomain = `${alias}.${this.selectedWorkspace.code}.${this.userSlug}.pub.slan.com`;
+    const publicDomain = `${alias}.${this.selectedWorkspace.code}.${this.userSlug}.pub.staticlss.com`;
     if (this.publicMappingDialogMode === 'edit' && this.editingPublicMapping) {
       try {
         const updated = await this.api.patch<ApiPublicMapping>(`/api/networks/${encodeURIComponent(this.selectedWorkspaceId)}/public-mappings/${encodeURIComponent(this.editingPublicMapping.mappingId ?? this.editingPublicMapping.publicDomain)}`, {

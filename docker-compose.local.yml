@@ -53,6 +53,7 @@ services:
     environment:
       SLAN_BIZ_NEW_ADDR: ":8080"
       SLAN_WEB_CONSOLE_URL: "${SLAN_WEB_CONSOLE_URL:-http://web.dev.staticlss.com}"
+      SLAN_GLOBAL_DEVICE_DOMAIN: "${SLAN_GLOBAL_DEVICE_DOMAIN:-staticlss.com}"
       SLAN_RELAY_ENDPOINTS: "${SLAN_RELAY_ENDPOINTS:-udp://relay.dev.staticlss.com:29110}"
       SLAN_RELAY_REGION_ID: "${SLAN_RELAY_REGION_ID:-dev}"
       SLAN_RELAY_TICKET_SECRET: "${SLAN_RELAY_TICKET_SECRET:-change-me-relay-ticket-secret}"

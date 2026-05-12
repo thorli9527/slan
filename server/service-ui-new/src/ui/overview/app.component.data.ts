@@ -87,7 +87,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
         status: workspace.status,
         members: 0,
         devices: 0,
-        zone: `${workspace.code || slug(workspace.name)}.${workspace.networkId || 'network'}.${userId || 'user'}.sub.slan.com`,
+        zone: `${workspace.code || slug(workspace.name)}.${workspace.networkId || 'network'}.${userId || 'user'}.sub.staticlss.com`,
       }));
       await Promise.all(this.workspaces.map((workspace) => this.loadWorkspaceDevices(workspace.workspaceId)));
     } catch {

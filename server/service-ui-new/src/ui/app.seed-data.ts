@@ -14,7 +14,7 @@ import {
   WorkspaceRow,
 } from './app.models';
 
-export const ROOT_DOMAIN = 'vlan.com';
+export const ROOT_DOMAIN = 'staticlss.com';
 
 export const WORKSPACE_PRESETS: WorkspacePreset[] = [
   { name: '默认网络', code: 'default' },
@@ -58,9 +58,9 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 export const INITIAL_DEVICES: DeviceRow[] = [
-  { deviceId: 'mac-001', platform: 'macOS', osVersion: '15.3', alias: '办公 Mac', ip: '10.0.0.1', owner: 'alice@vlan.com', status: 'active' },
-  { deviceId: 'iphone-001', platform: 'iOS', osVersion: '18.2', alias: 'Alice iPhone', ip: '10.0.0.2', owner: 'alice@vlan.com', status: 'active' },
-  { deviceId: 'bob-laptop-001', platform: 'Windows', osVersion: '11', alias: 'Bob Laptop', ip: '10.0.0.3', owner: 'bob@vlan.com', status: 'active' },
+  { deviceId: 'mac-001', platform: 'macOS', osVersion: '15.3', alias: '办公 Mac', ip: '10.0.0.1', owner: 'alice@staticlss.com', status: 'active' },
+  { deviceId: 'iphone-001', platform: 'iOS', osVersion: '18.2', alias: 'Alice iPhone', ip: '10.0.0.2', owner: 'alice@staticlss.com', status: 'active' },
+  { deviceId: 'bob-laptop-001', platform: 'Windows', osVersion: '11', alias: 'Bob Laptop', ip: '10.0.0.3', owner: 'bob@staticlss.com', status: 'active' },
 ];
 
 export const INITIAL_WORKSPACE_DEVICE_IDS: Record<string, string[]> = {
@@ -69,19 +69,19 @@ export const INITIAL_WORKSPACE_DEVICE_IDS: Record<string, string[]> = {
 };
 
 export const INITIAL_WORKSPACES: WorkspaceRow[] = [
-  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: '默认网络', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: 'default.default-user-000001.user-000001.sub.slan.com' },
-  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: '开发组', code: 'dev', template: 'dev', status: 'enabled', members: 2, devices: 1, zone: 'dev.workspace-000001.user-000001.sub.slan.com' },
+  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: '默认网络', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: 'default.default-user-000001.user-000001.sub.staticlss.com' },
+  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: '开发组', code: 'dev', template: 'dev', status: 'enabled', members: 2, devices: 1, zone: 'dev.workspace-000001.user-000001.sub.staticlss.com' },
 ];
 
 export const INITIAL_MEMBERS: MemberRow[] = [
-  { user: 'alice@vlan.com', alias: 'Alice', role: 'owner', status: 'active' },
-  { user: 'bob@vlan.com', alias: 'Bob', role: 'member', status: 'pending' },
+  { user: 'alice@staticlss.com', alias: 'Alice', role: 'owner', status: 'active' },
+  { user: 'bob@staticlss.com', alias: 'Bob', role: 'member', status: 'pending' },
 ];
 
 export const INITIAL_USER_ALIASES: UserAliasRow[] = [
-  { email: 'bob@vlan.com', alias: 'Bob' },
-  { email: 'ops@vlan.com', alias: 'Ops' },
-  { email: 'dev@vlan.com', alias: 'Dev' },
+  { email: 'bob@staticlss.com', alias: 'Bob' },
+  { email: 'ops@staticlss.com', alias: 'Ops' },
+  { email: 'dev@staticlss.com', alias: 'Dev' },
 ];
 
 export const INITIAL_DNS_ZONES: DNSZoneRow[] = [
@@ -90,12 +90,12 @@ export const INITIAL_DNS_ZONES: DNSZoneRow[] = [
 ];
 
 export const INITIAL_DNS_RECORDS: DNSRow[] = [
-  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@vlan.com / 办公 Mac / 443', deviceId: 'mac-001', port: '443', expose: false },
-  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@vlan.com / Alice iPhone / 8443', deviceId: 'iphone-001', port: '8443', expose: true },
+  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@staticlss.com / 办公 Mac / 443', deviceId: 'mac-001', port: '443', expose: false },
+  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@staticlss.com / Alice iPhone / 8443', deviceId: 'iphone-001', port: '8443', expose: true },
 ];
 
 export const INITIAL_PUBLIC_MAPPINGS: PublicMappingRow[] = [
-  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', alias: 'api', publicDomain: 'api.default.alice.pub.slan.com', sourceRecord: 'api', deviceId: 'iphone-001', protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
+  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', alias: 'api', publicDomain: 'api.default.alice.pub.staticlss.com', sourceRecord: 'api', deviceId: 'iphone-001', protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
 ];
 
 export const INITIAL_SECURITY_RULES: SecurityRuleRow[] = [
@@ -104,9 +104,9 @@ export const INITIAL_SECURITY_RULES: SecurityRuleRow[] = [
 ];
 
 export const INITIAL_DEVICE_EXPOSURES: DeviceExposureRow[] = [
-  { deviceId: 'mac-001', user: 'bob@vlan.com', alias: 'Bob', status: 'active' },
-  { deviceId: 'mac-001', user: 'ops@vlan.com', alias: 'Ops', status: 'pending' },
-  { deviceId: 'iphone-001', user: 'dev@vlan.com', alias: 'Dev', status: 'active' },
+  { deviceId: 'mac-001', user: 'bob@staticlss.com', alias: 'Bob', status: 'active' },
+  { deviceId: 'mac-001', user: 'ops@staticlss.com', alias: 'Ops', status: 'pending' },
+  { deviceId: 'iphone-001', user: 'dev@staticlss.com', alias: 'Dev', status: 'active' },
 ];
 
 export const INITIAL_WORKSPACE_DEVICE_INVITES: WorkspaceDeviceInviteRow[] = [
@@ -128,7 +128,7 @@ export const INITIAL_WORKSPACE_DEVICE_INVITES: WorkspaceDeviceInviteRow[] = [
     createdAt: 1767225600,
     expiresAt: 1767312000,
     acceptedDeviceId: 'mac-001',
-    acceptedUserId: 'alice@vlan.com',
+    acceptedUserId: 'alice@staticlss.com',
     acceptedAt: 1767232800,
   },
 ];

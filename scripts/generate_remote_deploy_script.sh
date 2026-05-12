@@ -14,8 +14,8 @@ Usage:
   scripts/generate_remote_deploy_script.sh <server-ip-or-domain> [domain] [remote-dir]
 
 Examples:
-  scripts/generate_remote_deploy_script.sh 1.2.3.4 dev.vlan.com
-  scripts/generate_remote_deploy_script.sh slan-dev.example.com dev.vlan.com /opt/slan
+  scripts/generate_remote_deploy_script.sh 1.2.3.4 dev.staticlss.com
+  scripts/generate_remote_deploy_script.sh slan-dev.example.com dev.staticlss.com /opt/slan
 
 Output:
   .tmp/remote-deploy/.env.prod
@@ -56,6 +56,7 @@ SLAN_WEB_PORT=24200
 SLAN_MAIN_PORT=24201
 
 SLAN_WEB_CONSOLE_URL=http://web.${DOMAIN}
+SLAN_GLOBAL_DEVICE_DOMAIN=staticlss.com
 SLAN_RELAY_ENDPOINTS=udp://relay.${DOMAIN}:29110
 SLAN_RELAY_REGION_ID=dev
 SLAN_RELAY_TICKET_SECRET=$(rand_hex 32)
