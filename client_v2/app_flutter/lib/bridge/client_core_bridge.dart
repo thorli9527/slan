@@ -1177,13 +1177,16 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
             ));
             return;
           }
-          _setStateIfChanged((next ?? _state.value).copyWith(
+          final current = _state.value;
+          _setStateIfChanged(current.copyWith(
             networkEnabled: next?.networkEnabled ?? targetEnabled,
             virtualIp:
                 targetEnabled ? (next?.virtualIp ?? config?.virtualIp) : null,
             syncing: false,
             clearSyncReason: true,
             switchEnabled: true,
+            notice: next?.notice,
+            error: next?.error,
             clearVirtualIp: !(next?.networkEnabled ?? targetEnabled),
           ));
           ClientUiDiagnostics.unawaitedLog(

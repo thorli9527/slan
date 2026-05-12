@@ -100,7 +100,11 @@ void main() {
     final bridge = MethodChannelClientCoreBridge();
     await tester.pumpWidget(SlanClientV2App(bridge: bridge));
     await tester.pumpAndSettle(const Duration(seconds: 1));
-    await tester.setMobileServerUrl(bizUrl);
+    await bridge.updateServerBaseUrl(bizUrl);
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    if (tester.any(find.byKey(const Key('server-settings')))) {
+      await tester.setMobileServerUrl(bizUrl);
+    }
 
     if (tester.any(find.text('当前用户邮箱')) && !tester.any(find.text(email))) {
       await tester.logoutSignedInUser();
@@ -189,6 +193,7 @@ void main() {
       if (!checkSwitch) {
         fail('SLAN_TEST_UDP_SEND_TARGET requires SLAN_TEST_CHECK_SWITCH=true');
       }
+      await tester.ensureRealPacketTunnelForSocketSend();
       await tester.sendUdpEcho(
         target: udpSendTarget.trim(),
         body: udpSendBody.trim(),
@@ -199,6 +204,7 @@ void main() {
       if (!checkSwitch) {
         fail('SLAN_TEST_TCP_SEND_TARGET requires SLAN_TEST_CHECK_SWITCH=true');
       }
+      await tester.ensureRealPacketTunnelForSocketSend();
       await tester.sendTcpEcho(
         target: tcpSendTarget.trim(),
         body: tcpSendBody.trim(),
@@ -684,6 +690,22 @@ extension on WidgetTester {
               state['adapterPresent'] != true)) {
         fail('Android tunnel is not running: ${jsonEncode(state)}');
       }
+    }
+  }
+
+  Future<void> ensureRealPacketTunnelForSocketSend() async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    final stats = await ClientCorePlugin().iosPacketTunnelStats();
+    final tunnelStats = stats ?? <String, Object?>{};
+    debugPrint('SLAN_TEST_IOS_PACKET_TUNNEL_STATE=${jsonEncode(tunnelStats)}');
+    if (tunnelStats['simulatorFallback'] == true) {
+      fail(
+        'iOS Simulator uses PacketTunnel fallback and cannot route real '
+        'UDP/TCP sockets through the tunnel. Use a real iOS device for '
+        'system packet send/receive tests.',
+      );
     }
   }
 }

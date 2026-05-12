@@ -19,7 +19,12 @@
             <div class="meter"><span [class.warn]="vm.customerRelayPercent(customer) >= 80" [style.width.%]="vm.customerRelayPercent(customer)"></span></div>
           </td>
           <td><span class="status" [class.online]="customer.status === 'active'">{{ customer.status }}</span></td>
-          <td><button class="ghost small" type="button" (click)="vm.openAssignPlan(customer)">指定级别</button></td>
+          <td>
+            <div class="row-actions">
+              <button class="ghost small" type="button" (click)="vm.openCustomerDialog(customer)">查看/修改</button>
+              <button class="ghost small" type="button" (click)="vm.openAssignPlan(customer)">指定级别</button>
+            </div>
+          </td>
         </tr>
       </tbody>
     </table>

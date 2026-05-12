@@ -8,7 +8,7 @@
       <button class="primary" type="button" (click)="vm.openPlanDialog()">新增套餐</button>
     </div>
     <table>
-      <thead><tr><th>套餐</th><th>自有设备</th><th>邀请设备</th><th>总设备</th><th>Relay 月流量</th><th>Relay 带宽</th><th>超限限速</th><th>功能</th><th>价格</th></tr></thead>
+      <thead><tr><th>套餐</th><th>自有设备</th><th>邀请设备</th><th>总设备</th><th>Relay 月流量</th><th>Relay 带宽</th><th>超限限速</th><th>功能</th><th>价格</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let plan of vm.plans">
           <td><strong>{{ plan.name }}</strong><br><code>{{ plan.code }}</code></td>
@@ -20,6 +20,7 @@
           <td>{{ plan.relayThrottleMbps }}Mbps</td>
           <td>{{ plan.customDomain ? '域名 ' : '' }}{{ plan.acl ? 'ACL ' : '' }}{{ plan.dedicatedRelay ? '专属Relay ' : '' }}{{ plan.auditLog ? '审计 ' : '' }}{{ plan.apiAccess ? 'API' : '' }}</td>
           <td>{{ plan.yearlyPrice ? plan.yearlyPrice + ' 元/年' : '免费' }}</td>
+          <td><button class="ghost small" type="button" (click)="vm.openPlanDialog(plan)">查看/修改</button></td>
         </tr>
       </tbody>
     </table>
@@ -49,7 +50,12 @@
           </td>
           <td>{{ product.autoRenew ? '自动续费' : '不自动' }}</td>
           <td><span class="status" [class.online]="product.status === 'active'">{{ product.status }}</span></td>
-          <td><button class="ghost small" type="button" (click)="vm.toggleProduct(product)">{{ product.status === 'active' ? '下架' : '上架' }}</button></td>
+          <td>
+            <div class="row-actions">
+              <button class="ghost small" type="button" (click)="vm.openProductDialog(product)">查看/修改</button>
+              <button class="ghost small" type="button" (click)="vm.toggleProduct(product)">{{ product.status === 'active' ? '下架' : '上架' }}</button>
+            </div>
+          </td>
         </tr>
       </tbody>
     </table>

@@ -22,7 +22,12 @@
           </td>
           <td>{{ node.activeSessions }} / {{ node.maxSessions }}</td>
           <td><span class="status" [class.online]="node.health === 'healthy'">{{ node.health }}</span></td>
-          <td><button class="ghost small" type="button" (click)="vm.toggleRelayNode(node)">{{ node.status === 'active' ? '停用' : '启用' }}</button></td>
+          <td>
+            <div class="row-actions">
+              <button class="ghost small" type="button" (click)="vm.openRelayNodeDialog(node)">查看/修改</button>
+              <button class="ghost small" type="button" (click)="vm.toggleRelayNode(node)">{{ node.status === 'active' ? '停用' : '启用' }}</button>
+            </div>
+          </td>
         </tr>
       </tbody>
     </table>

@@ -16,7 +16,7 @@ type OperatorUser = {
   operatorId: string;
   name: string;
   email: string;
-  role: 'owner' | 'admin' | 'ops' | 'finance';
+  role: 'super_admin' | 'owner' | 'admin' | 'ops' | 'finance';
   status: 'active' | 'disabled';
   lastLoginAt: string;
 };
@@ -53,6 +53,7 @@ type CustomerPlan = {
   apiAccess: boolean;
   monthlyPrice: number;
   yearlyPrice: number;
+  status?: 'active' | 'offline';
 };
 
 type Product = {
@@ -114,6 +115,7 @@ type OpsDevice = {
 
 type Renewal = {
   renewalId: string;
+  customerId?: string;
   customerEmail: string;
   planCode: CustomerPlan['code'];
   period: 'monthly' | 'yearly' | 'custom';
@@ -189,8 +191,17 @@ export class AppComponent implements OnInit {
   showPlanDialog = false;
   showProductDialog = false;
   showOrderDialog = false;
+  showCustomerDialog = false;
+  showDeviceDialog = false;
+  showRenewalDialog = false;
   selectedCustomer: Customer | null = null;
   selectedOperator: OperatorUser | null = null;
+  selectedRelayNode: RelayNode | null = null;
+  selectedPlan: CustomerPlan | null = null;
+  selectedProduct: Product | null = null;
+  selectedOrder: Order | null = null;
+  selectedDevice: OpsDevice | null = null;
+  selectedRenewal: Renewal | null = null;
   assignPlanCode: CustomerPlan['code'] = 'pro';
   assignExpiresAt = '2027-05-09';
   renewalAmount = 299;
@@ -205,6 +216,9 @@ export class AppComponent implements OnInit {
   planForm: Partial<CustomerPlan> = {};
   productForm: Partial<Product> = {};
   orderForm: Partial<Order> = {};
+  customerForm: Partial<Customer> = {};
+  deviceForm: Partial<OpsDevice> = {};
+  renewalForm: Partial<Renewal> = {};
   deviceKeyword = '';
 
   get vm(): this {
@@ -290,11 +304,14 @@ export class AppComponent implements OnInit {
     }
   }
 
-  logout(): void {
+  logout(message = ''): void {
     localStorage.removeItem(this.opsTokenKey);
     localStorage.removeItem(this.opsEmailKey);
     this.operatorEmail = 'admin@slan.local';
     this.loginEmail = this.operatorEmail;
+    this.loginPassword = '';
+    this.loginMessage = message;
+    this.apiMessage = '';
   }
 
   async loadOpsData(): Promise<void> {
@@ -330,9 +347,6 @@ export class AppComponent implements OnInit {
       }));
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
-      if (this.apiMessage.includes('401')) {
-        this.logout();
-      }
     } finally {
       this.loading = false;
     }
@@ -351,6 +365,10 @@ export class AppComponent implements OnInit {
     });
     if (!response.ok) {
       const text = await response.text();
+      if (response.status === 401 && requireAuth) {
+        this.logout('登录已过期，请重新登录');
+        throw new Error('登录已过期，请重新登录');
+      }
       throw new Error(text || `HTTP ${response.status}`);
     }
     if (response.status === 204) {
@@ -384,7 +402,22 @@ export class AppComponent implements OnInit {
   }
 
   private errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.trim().toLowerCase();
+    if (normalized === 'conflict') {
+      return '数据已存在或唯一字段重复，请检查后再保存';
+    }
+    if (normalized === 'bad request') {
+      return '请求参数不完整或格式不正确';
+    }
+    if (normalized === 'not found') {
+      return '数据不存在或已被删除，请刷新后重试';
+    }
+    if (normalized === 'unauthorized') {
+      this.logout('登录已过期，请重新登录');
+      return '登录已过期，请重新登录';
+    }
+    return message;
   }
 
   get activeNav() {
@@ -543,13 +576,15 @@ export class AppComponent implements OnInit {
     this.selectedCustomer = null;
   }
 
-  openOperatorDialog(): void {
-    this.operatorForm = { name: '', email: '', role: 'ops', status: 'active' };
+  openOperatorDialog(operator?: OperatorUser): void {
+    this.selectedOperator = operator ?? null;
+    this.operatorForm = operator ? { ...operator } : { name: '', email: '', role: 'ops', status: 'active' };
     this.showOperatorDialog = true;
   }
 
   closeOperatorDialog(): void {
     this.showOperatorDialog = false;
+    this.selectedOperator = null;
   }
 
   async saveOperatorDialog(): Promise<void> {
@@ -558,16 +593,20 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      const operator = await this.request<OperatorUser>('POST', '/api/ops/operators', this.operatorForm);
-      this.operators = [{ ...operator, lastLoginAt: this.formatDateTime(operator.lastLoginAt) }, ...this.operators];
+      const isEdit = Boolean(this.selectedOperator);
+      const path = isEdit ? `/api/ops/operators/${encodeURIComponent(this.selectedOperator!.operatorId)}` : '/api/ops/operators';
+      const operator = await this.request<OperatorUser>(isEdit ? 'PATCH' : 'POST', path, this.operatorForm);
+      const formatted = { ...operator, lastLoginAt: this.formatDateTime(operator.lastLoginAt) };
+      this.operators = [formatted, ...this.operators.filter((item) => item.operatorId !== operator.operatorId)];
       this.closeOperatorDialog();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
     }
   }
 
-  openRelayNodeDialog(): void {
-    this.relayNodeForm = {
+  openRelayNodeDialog(node?: RelayNode): void {
+    this.selectedRelayNode = node ?? null;
+    this.relayNodeForm = node ? { ...node } : {
       name: '',
       region: 'ap-east-1',
       transport: 'relay_udp',
@@ -585,6 +624,7 @@ export class AppComponent implements OnInit {
 
   closeRelayNodeDialog(): void {
     this.showRelayNodeDialog = false;
+    this.selectedRelayNode = null;
   }
 
   async saveRelayNodeDialog(): Promise<void> {
@@ -592,17 +632,36 @@ export class AppComponent implements OnInit {
       this.apiMessage = '请输入节点名称和公网地址';
       return;
     }
+    const publicAddr = this.relayNodeForm.publicAddr.trim();
+    const duplicated = this.relayNodes.some((node) => node.publicAddr === publicAddr && node.nodeId !== this.selectedRelayNode?.nodeId);
+    if (duplicated) {
+      this.apiMessage = '公网地址已存在，不能重复配置到多个中继节点';
+      return;
+    }
     try {
-      const node = await this.request<RelayNode>('POST', '/api/ops/relay-nodes', this.relayNodeForm);
-      this.relayNodes = [node, ...this.relayNodes];
+      const isEdit = Boolean(this.selectedRelayNode);
+      const path = isEdit ? `/api/ops/relay-nodes/${encodeURIComponent(this.selectedRelayNode!.nodeId)}` : '/api/ops/relay-nodes';
+      const node = await this.request<RelayNode>(isEdit ? 'PATCH' : 'POST', path, {
+        nodeId: this.selectedRelayNode?.nodeId,
+        name: this.relayNodeForm.name,
+        region: this.relayNodeForm.region,
+        transport: this.relayNodeForm.transport,
+        publicAddr,
+        maxBandwidthMbps: this.relayNodeForm.maxBandwidthMbps,
+        monthlyTrafficGb: this.relayNodeForm.monthlyTrafficGb,
+        maxSessions: this.relayNodeForm.maxSessions,
+        status: this.relayNodeForm.status,
+      });
+      this.relayNodes = [node, ...this.relayNodes.filter((item) => item.nodeId !== node.nodeId)];
       this.closeRelayNodeDialog();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
     }
   }
 
-  openPlanDialog(): void {
-    this.planForm = {
+  openPlanDialog(plan?: CustomerPlan): void {
+    this.selectedPlan = plan ?? null;
+    this.planForm = plan ? { ...plan } : {
       code: 'custom' as CustomerPlan['code'],
       name: '',
       ownDeviceLimit: 5,
@@ -625,6 +684,7 @@ export class AppComponent implements OnInit {
 
   closePlanDialog(): void {
     this.showPlanDialog = false;
+    this.selectedPlan = null;
   }
 
   async savePlanDialog(): Promise<void> {
@@ -633,7 +693,9 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      const plan = await this.request<CustomerPlan>('POST', '/api/ops/plans', this.planForm);
+      const isEdit = Boolean(this.selectedPlan);
+      const path = isEdit ? `/api/ops/plans/${encodeURIComponent(this.selectedPlan!.code)}` : '/api/ops/plans';
+      const plan = await this.request<CustomerPlan>(isEdit ? 'PATCH' : 'POST', path, this.planForm);
       this.plans = [plan, ...this.plans.filter((item) => item.code !== plan.code)];
       this.closePlanDialog();
     } catch (error) {
@@ -641,8 +703,9 @@ export class AppComponent implements OnInit {
     }
   }
 
-  openProductDialog(): void {
-    this.productForm = {
+  openProductDialog(product?: Product): void {
+    this.selectedProduct = product ?? null;
+    this.productForm = product ? { ...product } : {
       name: '',
       type: 'plan',
       planCode: this.plans[0]?.code,
@@ -662,6 +725,7 @@ export class AppComponent implements OnInit {
 
   closeProductDialog(): void {
     this.showProductDialog = false;
+    this.selectedProduct = null;
   }
 
   async saveProductDialog(): Promise<void> {
@@ -670,15 +734,22 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      const product = await this.request<Product>('POST', '/api/ops/products', this.productForm);
-      this.products = [product, ...this.products];
+      const isEdit = Boolean(this.selectedProduct);
+      const path = isEdit ? `/api/ops/products/${encodeURIComponent(this.selectedProduct!.productId)}` : '/api/ops/products';
+      const product = await this.request<Product>(isEdit ? 'PATCH' : 'POST', path, this.productForm);
+      this.products = [product, ...this.products.filter((item) => item.productId !== product.productId)];
       this.closeProductDialog();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
     }
   }
 
-  openOrderDialog(): void {
+  openOrderDialog(order?: Order): void {
+    this.selectedOrder = order ?? null;
+    if (order) {
+      this.orderForm = { ...order };
+      return void (this.showOrderDialog = true);
+    }
     const customer = this.customers[0];
     const product = this.products[0];
     this.orderForm = {
@@ -698,6 +769,7 @@ export class AppComponent implements OnInit {
 
   closeOrderDialog(): void {
     this.showOrderDialog = false;
+    this.selectedOrder = null;
   }
 
   async saveOrderDialog(): Promise<void> {
@@ -708,19 +780,84 @@ export class AppComponent implements OnInit {
     try {
       const product = this.products.find((item) => item.productId === this.orderForm.productId);
       const customer = this.customers.find((item) => item.customerId === this.orderForm.customerId);
-      const order = await this.request<Order>('POST', '/api/ops/orders', {
-        ...this.orderForm,
+      const isEdit = Boolean(this.selectedOrder);
+      const path = isEdit ? `/api/ops/orders/${encodeURIComponent(this.selectedOrder!.orderId)}` : '/api/ops/orders';
+      const order = await this.request<Order>(isEdit ? 'PATCH' : 'POST', path, {
+        orderId: this.selectedOrder?.orderId,
+        customerId: this.orderForm.customerId,
         customerEmail: customer?.email ?? this.orderForm.customerEmail,
+        productId: this.orderForm.productId,
         productName: product?.name ?? this.orderForm.productName,
         productType: product?.type ?? this.orderForm.productType,
+        amount: this.orderForm.amount,
+        currency: this.orderForm.currency ?? 'CNY',
+        payStatus: this.orderForm.payStatus,
+        provisionStatus: this.orderForm.provisionStatus,
+        channel: this.orderForm.channel,
       });
-      this.orders = [{
+      const formatted = {
         ...order,
         createdAt: this.formatDateTime(order.createdAt),
         paidAt: order.paidAt ? this.formatDateTime(order.paidAt) : undefined,
         validUntil: order.validUntil ? this.formatDate(order.validUntil) : undefined,
-      }, ...this.orders];
+      };
+      this.orders = [formatted, ...this.orders.filter((item) => item.orderId !== order.orderId)];
       this.closeOrderDialog();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  openCustomerDialog(customer: Customer): void {
+    this.selectedCustomer = customer;
+    this.customerForm = { ...customer };
+    this.showCustomerDialog = true;
+  }
+
+  closeCustomerDialog(): void {
+    this.showCustomerDialog = false;
+    this.selectedCustomer = null;
+  }
+
+  async saveCustomerDialog(): Promise<void> {
+    if (!this.selectedCustomer || !this.customerForm.email?.trim()) {
+      this.apiMessage = '请输入客户邮箱';
+      return;
+    }
+    try {
+      const customer = await this.request<Customer>('PATCH', `/api/ops/customers/${encodeURIComponent(this.selectedCustomer.customerId)}`, this.customerForm);
+      const formatted = { ...customer, planExpiresAt: this.formatDate(customer.planExpiresAt) };
+      this.customers = [formatted, ...this.customers.filter((item) => item.customerId !== customer.customerId)];
+      this.closeCustomerDialog();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  openDeviceDialog(device: OpsDevice): void {
+    this.selectedDevice = device;
+    this.deviceForm = { ...device };
+    this.showDeviceDialog = true;
+  }
+
+  closeDeviceDialog(): void {
+    this.showDeviceDialog = false;
+    this.selectedDevice = null;
+  }
+
+  async saveDeviceDialog(): Promise<void> {
+    if (!this.selectedDevice) {
+      return;
+    }
+    try {
+      const updated = await this.request<OpsDevice>('PATCH', `/api/ops/devices/${encodeURIComponent(this.selectedDevice.deviceId)}`, {
+        alias: this.deviceForm.alias,
+        status: this.deviceForm.status,
+        enabled: this.deviceForm.deviceEnabled,
+      });
+      const formatted = this.formatDevice(updated);
+      this.devices = [formatted, ...this.devices.filter((item) => item.deviceId !== updated.deviceId)];
+      this.closeDeviceDialog();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
     }
@@ -751,6 +888,45 @@ export class AppComponent implements OnInit {
         ...this.renewals,
       ];
       this.closeAssignPlan();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  openRenewalDialog(renewal: Renewal): void {
+    this.selectedRenewal = renewal;
+    this.renewalForm = { ...renewal };
+    this.showRenewalDialog = true;
+  }
+
+  closeRenewalDialog(): void {
+    this.showRenewalDialog = false;
+    this.selectedRenewal = null;
+  }
+
+  async saveRenewalDialog(): Promise<void> {
+    if (!this.selectedRenewal || !this.renewalForm.customerEmail || !this.renewalForm.planCode) {
+      this.apiMessage = '请选择客户和套餐';
+      return;
+    }
+    try {
+      const renewal = await this.request<Renewal>('PATCH', `/api/ops/renewals/${encodeURIComponent(this.selectedRenewal.renewalId)}`, {
+        ...this.renewalForm,
+        paidAt: this.dateToUnix(String(this.renewalForm.paidAt)),
+        validUntil: this.dateToUnix(String(this.renewalForm.validUntil)),
+      });
+      const formatted = {
+        ...renewal,
+        paidAt: this.formatDate(renewal.paidAt),
+        validUntil: this.formatDate(renewal.validUntil),
+      };
+      this.renewals = [formatted, ...this.renewals.filter((item) => item.renewalId !== renewal.renewalId)];
+      const customer = this.customers.find((item) => item.customerId === renewal.customerId);
+      if (customer) {
+        customer.planCode = renewal.planCode;
+        customer.planExpiresAt = formatted.validUntil;
+      }
+      this.closeRenewalDialog();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
     }

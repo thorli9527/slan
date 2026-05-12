@@ -17,6 +17,7 @@ func (s *Server) registerOpsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/ops/relay-nodes", s.opsCreateRelayNode)
 	mux.HandleFunc("PATCH /api/ops/relay-nodes/{nodeId}", s.opsUpdateRelayNode)
 	mux.HandleFunc("GET /api/ops/customers", s.opsListCustomers)
+	mux.HandleFunc("PATCH /api/ops/customers/{customerId}", s.opsUpdateCustomer)
 	mux.HandleFunc("POST /api/ops/customers/{customerId}/assign-plan", s.opsAssignCustomerPlan)
 	mux.HandleFunc("GET /api/ops/devices", s.opsListDevices)
 	mux.HandleFunc("PATCH /api/ops/devices/{deviceId}", s.opsUpdateDevice)
@@ -29,7 +30,9 @@ func (s *Server) registerOpsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/ops/products/{productId}", s.opsUpdateProduct)
 	mux.HandleFunc("GET /api/ops/orders", s.opsListOrders)
 	mux.HandleFunc("POST /api/ops/orders", s.opsCreateOrder)
+	mux.HandleFunc("PATCH /api/ops/orders/{orderId}", s.opsUpdateOrder)
 	mux.HandleFunc("GET /api/ops/renewals", s.opsListRenewals)
+	mux.HandleFunc("PATCH /api/ops/renewals/{renewalId}", s.opsUpdateRenewal)
 }
 
 func (s *Server) opsLogin(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +189,24 @@ func (s *Server) opsListCustomers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListCustomers()})
+}
+
+func (s *Server) opsUpdateCustomer(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	var req CustomerProfile
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.CustomerID = r.PathValue("customerId")
+	customer, err := s.store.UpdateCustomerProfile(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, customer)
 }
 
 func (s *Server) opsListDevices(w http.ResponseWriter, r *http.Request) {
@@ -348,12 +369,48 @@ func (s *Server) opsCreateOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, order)
 }
 
+func (s *Server) opsUpdateOrder(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	var req Order
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.OrderID = r.PathValue("orderId")
+	order, err := s.store.UpsertOrder(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, order)
+}
+
 func (s *Server) opsListRenewals(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.requireOperator(r); err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListRenewals()})
+}
+
+func (s *Server) opsUpdateRenewal(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	var req Renewal
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.RenewalID = r.PathValue("renewalId")
+	renewal, err := s.store.UpdateRenewal(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, renewal)
 }
 
 func (s *Server) requireOperator(r *http.Request) (OperatorUser, error) {

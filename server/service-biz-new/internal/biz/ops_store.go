@@ -276,8 +276,14 @@ func (s *Store) UpsertRelayNode(node OpsRelayNode) (OpsRelayNode, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, existing := range s.relayNodes {
+		if existing.PublicAddr == node.PublicAddr && existing.NodeID != node.NodeID {
+			return OpsRelayNode{}, errConflict
+		}
+	}
 	now := time.Now().Unix()
 	if strings.TrimSpace(node.NodeID) == "" {
+		node.Health = "healthy"
 		return s.addRelayNodeLocked(node), nil
 	}
 	existing, ok := s.relayNodes[node.NodeID]
@@ -286,6 +292,10 @@ func (s *Store) UpsertRelayNode(node OpsRelayNode) (OpsRelayNode, error) {
 	}
 	node.CreatedAt = existing.CreatedAt
 	node.UpdatedAt = now
+	node.UsedTrafficGB = existing.UsedTrafficGB
+	node.ActiveSessions = existing.ActiveSessions
+	node.Health = existing.Health
+	node.TicketKeyRotation = existing.TicketKeyRotation
 	s.relayNodes[node.NodeID] = node
 	return node, nil
 }
@@ -309,6 +319,51 @@ func (s *Store) ListCustomers() []CustomerProfile {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
 	return out
+}
+
+func (s *Store) UpdateCustomerProfile(profile CustomerProfile) (CustomerProfile, error) {
+	profile.CustomerID = strings.TrimSpace(profile.CustomerID)
+	profile.Email = strings.ToLower(strings.TrimSpace(profile.Email))
+	profile.Name = strings.TrimSpace(profile.Name)
+	profile.Country = strings.TrimSpace(profile.Country)
+	profile.Province = strings.TrimSpace(profile.Province)
+	profile.City = strings.TrimSpace(profile.City)
+	profile.IPRegion = strings.TrimSpace(profile.IPRegion)
+	profile.Status = defaultString(profile.Status, "active")
+	if profile.CustomerID == "" || profile.Email == "" {
+		return CustomerProfile{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[profile.CustomerID]
+	if !ok {
+		return CustomerProfile{}, errNotFound
+	}
+	if user.Email != profile.Email {
+		if _, exists := s.userByEmail[profile.Email]; exists {
+			return CustomerProfile{}, errConflict
+		}
+		delete(s.userByEmail, user.Email)
+		user.Email = profile.Email
+		s.userByEmail[user.Email] = user.UserID
+	}
+	user.Name = profile.Name
+	if profile.Status == "disabled" {
+		user.Status = "disabled"
+	} else {
+		user.Status = "active"
+	}
+	user.UpdatedAt = time.Now().Unix()
+	s.users[user.UserID] = user
+	s.customerProfiles[user.UserID] = CustomerProfile{
+		CustomerID: user.UserID,
+		Country:    profile.Country,
+		Province:   profile.Province,
+		City:       profile.City,
+		IPRegion:   profile.IPRegion,
+		Status:     profile.Status,
+	}
+	return s.customerProfileLocked(user), nil
 }
 
 func (s *Store) ListOpsDevices() []OpsDeviceView {
@@ -489,6 +544,20 @@ func (s *Store) UpsertOrder(order Order) (Order, error) {
 		order.OrderID = fmt.Sprintf("ord-%06d", s.nextOrderSeq)
 		s.nextOrderSeq++
 		order.CreatedAt = now
+	} else {
+		existing, ok := s.orders[order.OrderID]
+		if !ok {
+			return Order{}, errNotFound
+		}
+		if order.CreatedAt == 0 {
+			order.CreatedAt = existing.CreatedAt
+		}
+		if order.PaidAt == 0 {
+			order.PaidAt = existing.PaidAt
+		}
+		if order.ValidUntil == 0 {
+			order.ValidUntil = existing.ValidUntil
+		}
 	}
 	order.CustomerID = userID
 	order.ProductName = product.Name
@@ -507,6 +576,46 @@ func (s *Store) ListRenewals() []Renewal {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return sortedValues(s.renewals, func(a, b Renewal) bool { return a.PaidAt > b.PaidAt })
+}
+
+func (s *Store) UpdateRenewal(renewal Renewal) (Renewal, error) {
+	renewal.RenewalID = strings.TrimSpace(renewal.RenewalID)
+	renewal.CustomerEmail = strings.ToLower(strings.TrimSpace(renewal.CustomerEmail))
+	renewal.PlanCode = strings.TrimSpace(renewal.PlanCode)
+	renewal.Period = defaultString(renewal.Period, "manual")
+	renewal.Currency = defaultString(renewal.Currency, "CNY")
+	renewal.Source = defaultString(renewal.Source, "manual")
+	if renewal.RenewalID == "" || renewal.CustomerEmail == "" || renewal.PlanCode == "" {
+		return Renewal{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.renewals[renewal.RenewalID]
+	if !ok {
+		return Renewal{}, errNotFound
+	}
+	userID, ok := s.userByEmail[renewal.CustomerEmail]
+	if !ok {
+		return Renewal{}, errNotFound
+	}
+	if _, ok := s.opsPlans[renewal.PlanCode]; !ok {
+		return Renewal{}, errNotFound
+	}
+	if renewal.PaidAt == 0 {
+		renewal.PaidAt = existing.PaidAt
+	}
+	if renewal.ValidUntil == 0 {
+		renewal.ValidUntil = existing.ValidUntil
+	}
+	renewal.CustomerID = userID
+	s.renewals[renewal.RenewalID] = renewal
+	s.customerPlans[userID] = CustomerPlanAssignment{
+		UserID:    userID,
+		PlanCode:  renewal.PlanCode,
+		ExpiresAt: renewal.ValidUntil,
+		UpdatedAt: time.Now().Unix(),
+	}
+	return renewal, nil
 }
 
 func (s *Store) OpsDashboard() map[string]any {
@@ -543,15 +652,27 @@ func (s *Store) OpsDashboard() map[string]any {
 
 func (s *Store) customerProfileLocked(user User) CustomerProfile {
 	quota := s.deviceQuotaLocked(user.UserID)
+	profile := s.customerProfiles[user.UserID]
+	status := quota.Status
+	if strings.TrimSpace(profile.Status) != "" {
+		status = profile.Status
+	}
+	if user.Status != "" && user.Status != "active" {
+		status = user.Status
+	}
 	return CustomerProfile{
 		CustomerID:     user.UserID,
 		Email:          user.Email,
 		Name:           user.Name,
+		Country:        profile.Country,
+		Province:       profile.Province,
+		City:           profile.City,
+		IPRegion:       profile.IPRegion,
 		PlanCode:       quota.PlanCode,
 		PlanExpiresAt:  quota.PlanExpiresAt,
 		OwnDevices:     quota.OwnDevices,
 		InvitedDevices: quota.InvitedDevices,
-		Status:         quota.Status,
+		Status:         status,
 	}
 }
 

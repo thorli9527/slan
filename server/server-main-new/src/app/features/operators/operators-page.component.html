@@ -18,6 +18,7 @@
           <td>{{ operator.lastLoginAt }}</td>
           <td>
             <div class="row-actions">
+              <button class="ghost small" type="button" (click)="vm.openOperatorDialog(operator)">查看/修改</button>
               <button class="ghost small" type="button" (click)="vm.openOperatorPasswordDialog(operator)">改密</button>
               <button class="ghost small" type="button" (click)="vm.toggleOperator(operator)">{{ operator.status === 'active' ? '停用' : '启用' }}</button>
             </div>

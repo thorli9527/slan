@@ -31,6 +31,97 @@ func TestRegisterUserAndDeviceJoinDefaultNetwork(t *testing.T) {
 	}
 }
 
+func TestUpdateCustomerProfilePersistsOpsFields(t *testing.T) {
+	store := NewStore()
+	auth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	customer, err := store.UpdateCustomerProfile(CustomerProfile{
+		CustomerID: auth.User.UserID,
+		Email:      "alice.ops@example.com",
+		Name:       "Alice Ops",
+		Country:    "中国",
+		Province:   "广东",
+		City:       "深圳",
+		IPRegion:   "华南",
+		Status:     "limited",
+	})
+	if err != nil {
+		t.Fatalf("update customer profile: %v", err)
+	}
+	if customer.Email != "alice.ops@example.com" || customer.Name != "Alice Ops" || customer.Country != "中国" || customer.IPRegion != "华南" || customer.Status != "limited" {
+		t.Fatalf("unexpected updated customer: %+v", customer)
+	}
+	customers := store.ListCustomers()
+	if len(customers) != 1 || customers[0].City != "深圳" || customers[0].Status != "limited" {
+		t.Fatalf("expected persisted ops customer fields, got %+v", customers)
+	}
+	if _, err := store.LoginUser("alice.ops@example.com", "secret"); err != nil {
+		t.Fatalf("limited customer should still be able to login: %v", err)
+	}
+	if _, err := store.UpdateCustomerProfile(CustomerProfile{CustomerID: auth.User.UserID, Email: "alice.ops@example.com", Name: "Alice Ops", Status: "disabled"}); err != nil {
+		t.Fatalf("disable customer: %v", err)
+	}
+	if _, err := store.LoginUser("alice.ops@example.com", "secret"); err != errBadRequest {
+		t.Fatalf("disabled customer login should fail with bad request, got %v", err)
+	}
+}
+
+func TestRelayNodePublicAddressUniqueAndHealthReadOnly(t *testing.T) {
+	store := NewStore()
+	node, err := store.UpsertRelayNode(OpsRelayNode{
+		Name:             "Relay A",
+		Region:           "hk",
+		Transport:        "relay_udp",
+		PublicAddr:       "udp://relay.example.com:29110",
+		MaxBandwidthMbps: 100,
+		MonthlyTrafficGB: 1000,
+		MaxSessions:      1000,
+		Status:           "active",
+	})
+	if err != nil {
+		t.Fatalf("create relay node: %v", err)
+	}
+	if _, err := store.UpsertRelayNode(OpsRelayNode{
+		Name:             "Relay B",
+		Region:           "hk",
+		Transport:        "relay_udp",
+		PublicAddr:       "udp://relay.example.com:29110",
+		MaxBandwidthMbps: 100,
+		MonthlyTrafficGB: 1000,
+		MaxSessions:      1000,
+		Status:           "active",
+	}); err != errConflict {
+		t.Fatalf("expected duplicate public address conflict, got %v", err)
+	}
+	store.mu.Lock()
+	existing := store.relayNodes[node.NodeID]
+	existing.Health = "warning"
+	existing.ActiveSessions = 42
+	existing.UsedTrafficGB = 7
+	store.relayNodes[node.NodeID] = existing
+	store.mu.Unlock()
+	updated, err := store.UpsertRelayNode(OpsRelayNode{
+		NodeID:           node.NodeID,
+		Name:             "Relay A Updated",
+		Region:           "hk",
+		Transport:        "relay_udp",
+		PublicAddr:       "udp://relay-a.example.com:29110",
+		MaxBandwidthMbps: 200,
+		MonthlyTrafficGB: 2000,
+		MaxSessions:      2000,
+		Status:           "maintenance",
+		Health:           "healthy",
+	})
+	if err != nil {
+		t.Fatalf("update relay node: %v", err)
+	}
+	if updated.Health != "warning" || updated.ActiveSessions != 42 || updated.UsedTrafficGB != 7 {
+		t.Fatalf("expected runtime fields to be preserved, got %+v", updated)
+	}
+}
+
 func TestNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	store := NewStore()
 	auth, network, _ := store.RegisterUser("alice@example.com", "secret", "Alice")

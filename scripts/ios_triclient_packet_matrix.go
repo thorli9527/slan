@@ -27,6 +27,7 @@ type iosClient struct {
 	name string
 	id   string
 	ip   string
+	dns  string
 
 	udp4     *net.UDPConn
 	udp6     *net.UDPConn
@@ -100,6 +101,11 @@ func main() {
 	defer derp.close()
 	go derp.serve(ctx)
 
+	dnsIndex := map[string]*iosClient{}
+	for _, client := range clients {
+		dnsIndex[client.dns] = client
+	}
+
 	protocols := []string{"lan_udp", "ipv6_udp", "direct_udp", "relay_udp", "derp_tcp_tls_443"}
 	for _, protocol := range protocols {
 		for _, from := range clients {
@@ -107,19 +113,32 @@ func main() {
 				if from == to {
 					continue
 				}
-				body := fmt.Sprintf("%s:%s->%s:%d", protocol, from.id, to.id, time.Now().UnixNano())
-				if err := sendByProtocol(protocol, from, to, relay, derp, body); err != nil {
-					fail("send %s %s -> %s: %v", protocol, from.id, to.id, err)
+				ipBody := fmt.Sprintf("ip_ping:%s:%s->%s:%s:%d", protocol, from.ip, to.ip, from.id, time.Now().UnixNano())
+				if err := sendByProtocol(protocol, from, to, relay, derp, ipBody); err != nil {
+					fail("send ip ping %s %s -> %s: %v", protocol, from.id, to.id, err)
 				}
-				if err := waitPacket(ctx, to, protocol, from.id, from.ip, to.ip, body); err != nil {
-					fail("receive %s %s -> %s: %v", protocol, from.id, to.id, err)
+				if err := waitPacket(ctx, to, protocol, from.id, from.ip, to.ip, ipBody); err != nil {
+					fail("receive ip ping %s %s -> %s: %v", protocol, from.id, to.id, err)
 				}
-				fmt.Printf("%sTriClientPacketMatrix: delivered protocol=%s from=%s target=%s body=%s\n", platform, protocol, from.id, to.id, body)
+				fmt.Printf("%sTriClientPacketMatrix: ping=ip delivered protocol=%s from=%s srcIP=%s target=%s dstIP=%s body=%s\n", platform, protocol, from.id, from.ip, to.id, to.ip, ipBody)
+
+				resolved := dnsIndex[to.dns]
+				if resolved == nil || resolved.ip != to.ip {
+					fail("resolve dns %s: got=%v expected=%s", to.dns, resolved, to.ip)
+				}
+				dnsBody := fmt.Sprintf("dns_ping:%s:%s=>%s:%s->%s:%d", protocol, to.dns, to.ip, from.id, to.id, time.Now().UnixNano())
+				if err := sendByProtocol(protocol, from, resolved, relay, derp, dnsBody); err != nil {
+					fail("send dns ping %s %s -> %s: %v", protocol, from.id, to.dns, err)
+				}
+				if err := waitPacket(ctx, to, protocol, from.id, from.ip, to.ip, dnsBody); err != nil {
+					fail("receive dns ping %s %s -> %s: %v", protocol, from.id, to.dns, err)
+				}
+				fmt.Printf("%sTriClientPacketMatrix: ping=dns delivered protocol=%s from=%s srcIP=%s targetName=%s resolvedIP=%s target=%s body=%s\n", platform, protocol, from.id, from.ip, to.dns, to.ip, to.id, dnsBody)
 			}
 		}
 	}
 
-	fmt.Printf("%sTriClientPacketMatrix: ok clients=%s,%s,%s protocols=%s\n",
+	fmt.Printf("%sTriClientPacketMatrix: ok clients=%s,%s,%s protocols=%s ping=ip,dns\n",
 		platform,
 		clients[0].id,
 		clients[1].id,
@@ -132,15 +151,15 @@ func newPlatformClients(platform string) []*iosClient {
 	switch platform {
 	case "ios":
 		return []*iosClient{
-			newIOSClient("ios-1", "ios-sim-001", "10.0.10.1"),
-			newIOSClient("ios-2", "ios-sim-002", "10.0.10.2"),
-			newIOSClient("ios-3", "ios-sim-003", "10.0.10.3"),
+			newIOSClient("ios-1", "ios-sim-001", "10.0.10.1", "ios-1.mobile.test"),
+			newIOSClient("ios-2", "ios-sim-002", "10.0.10.2", "ios-2.mobile.test"),
+			newIOSClient("ios-3", "ios-sim-003", "10.0.10.3", "ios-3.mobile.test"),
 		}
 	case "android":
 		return []*iosClient{
-			newIOSClient("android-1", "android-sim-001", "10.0.20.1"),
-			newIOSClient("android-2", "android-sim-002", "10.0.20.2"),
-			newIOSClient("android-3", "android-sim-003", "10.0.20.3"),
+			newIOSClient("android-1", "android-sim-001", "10.0.20.1", "android-1.mobile.test"),
+			newIOSClient("android-2", "android-sim-002", "10.0.20.2", "android-2.mobile.test"),
+			newIOSClient("android-3", "android-sim-003", "10.0.20.3", "android-3.mobile.test"),
 		}
 	default:
 		fail("unsupported platform %q", platform)
@@ -148,7 +167,7 @@ func newPlatformClients(platform string) []*iosClient {
 	}
 }
 
-func newIOSClient(name, id, ip string) *iosClient {
+func newIOSClient(name, id, ip, dns string) *iosClient {
 	udp4, err := net.ListenUDP("udp4", mustUDPAddr("127.0.0.1:0"))
 	if err != nil {
 		fail("listen udp4 %s: %v", id, err)
@@ -162,6 +181,7 @@ func newIOSClient(name, id, ip string) *iosClient {
 		name:     name,
 		id:       id,
 		ip:       ip,
+		dns:      dns,
 		udp4:     udp4,
 		udp6:     udp6,
 		udp4Addr: udp4.LocalAddr().(*net.UDPAddr),

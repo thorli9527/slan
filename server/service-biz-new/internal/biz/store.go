@@ -80,6 +80,7 @@ type Store struct {
 	runtimeStatuses    map[string]DeviceRuntimeStatus
 	configVersions     map[string]NetworkConfigVersion
 	customerPlans      map[string]CustomerPlanAssignment
+	customerProfiles   map[string]CustomerProfile
 	opsPlans           map[string]OpsPlan
 	products           map[string]Product
 	orders             map[string]Order
@@ -147,6 +148,7 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 		runtimeStatuses:     make(map[string]DeviceRuntimeStatus),
 		configVersions:      make(map[string]NetworkConfigVersion),
 		customerPlans:       make(map[string]CustomerPlanAssignment),
+		customerProfiles:    make(map[string]CustomerProfile),
 		opsPlans:            make(map[string]OpsPlan),
 		products:            make(map[string]Product),
 		orders:              make(map[string]Order),

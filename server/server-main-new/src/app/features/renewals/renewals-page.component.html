@@ -8,7 +8,7 @@
       <button class="primary" type="button" (click)="vm.openAssignPlan(vm.customers[0])">手动续费</button>
     </div>
     <table>
-      <thead><tr><th>客户</th><th>套餐</th><th>周期</th><th>金额</th><th>支付时间</th><th>有效期至</th><th>来源</th><th>操作人</th></tr></thead>
+      <thead><tr><th>客户</th><th>套餐</th><th>周期</th><th>金额</th><th>支付时间</th><th>有效期至</th><th>来源</th><th>操作人</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let renewal of vm.renewals">
           <td><code>{{ renewal.customerEmail }}</code></td>
@@ -19,6 +19,7 @@
           <td>{{ renewal.validUntil }}</td>
           <td>{{ renewal.source }}</td>
           <td><code>{{ renewal.operator }}</code></td>
+          <td><button class="ghost small" type="button" (click)="vm.openRenewalDialog(renewal)">查看/修改</button></td>
         </tr>
       </tbody>
     </table>
