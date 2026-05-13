@@ -35,13 +35,17 @@ cat <<EOF
 
 Remote Docker context is active.
 
-All local docker commands now target:
+All docker commands on this Mac now target the remote host:
   ${SSH_TARGET}
 
-Switch back to local Docker:
-  docker context use default
+Project policy:
+  Use remote Docker for development and deployment.
+  Do not start the local Docker Compose stack unless explicitly debugging.
 
 Check current context:
   docker context show
+
+Deploy:
+  .tmp/remote-deploy/deploy_to_47.245.40.231.sh
 
 EOF

@@ -124,4 +124,6 @@ SLAN_INTERNAL_WIRE_TOKEN=change-me-wire-internal-token
 - `POST /internal/wire/admin/derp-nodes/{regionId}/{nodeId}/heartbeat`
 - `PATCH /internal/wire/admin/derp-nodes/{regionId}/{nodeId}/status`
 
-本地开发栈见仓库根目录 `docker-compose.local.yml` 与 `scripts/local_docker_up.sh`。
+开发与部署统一使用远程 Docker context `slan-remote`，详见仓库根目录
+`docs/remote-docker-only.md`。`scripts/local_docker_*.sh` 仅保留为显式
+本机调试/清理入口，默认拒绝运行。

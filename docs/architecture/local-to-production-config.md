@@ -1,16 +1,18 @@
-# local 到 production 配置迁移说明
+# remote-dev 到 production 配置迁移说明
 
 本文档只描述当前保留的服务。旧 `server/server-relay` 已删除，不再提供 Dockerfile、配置样例或生产迁移路径。
 
-## 本地配置入口
+## 远程开发 Docker 入口
 
-- [`docker-compose.local.yml`](../../docker-compose.local.yml)
-- [`.env.local.example`](../../.env.local.example)
+- [`docs/remote-docker-only.md`](../remote-docker-only.md)
+- [`.tmp/remote-deploy/deploy_to_47.245.40.231.sh`](../../.tmp/remote-deploy/deploy_to_47.245.40.231.sh)
+- [`docker-compose.local.yml`](../../docker-compose.local.yml) 仅作为远程开发 compose 文件使用
 - [`server/server-biz/configs/config.docker.yaml`](../../server/server-biz/configs/config.docker.yaml)
 - [`deploy/local/Caddyfile`](../../deploy/local/Caddyfile)
 - [`deploy/local/bifromq/standalone.yml`](../../deploy/local/bifromq/standalone.yml)
 
-`server-wire`、`server-wire-relay`、`server-wire-derp` 已接入本地 compose。生产化 k8s / 多节点模板仍需单独补齐。
+`server-wire`、`server-wire-relay`、`server-wire-derp` 已接入远程开发 compose。
+本机 Docker Compose 栈不再作为默认开发入口。生产化 k8s / 多节点模板仍需单独补齐。
 
 ## 生产启动强校验
 

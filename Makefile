@@ -114,7 +114,8 @@ wire-stale-nodes-smoke:
 
 wire-persistence-smoke:
 	go run ./scripts/wire_persistence_smoke.go seed
-	docker compose -f docker-compose.local.yml restart server-wire
+	@if [ "$${SLAN_ALLOW_LOCAL_DOCKER:-0}" != "1" ]; then echo "wire-persistence-smoke needs an explicit local Docker stack: SLAN_ALLOW_LOCAL_DOCKER=1 make wire-persistence-smoke"; exit 2; fi
+	docker --context "$${SLAN_LOCAL_DOCKER_CONTEXT:-desktop-linux}" compose -f docker-compose.local.yml restart server-wire
 	go run ./scripts/wire_persistence_smoke.go verify
 
 wire-ticket-key-mismatch-smoke:

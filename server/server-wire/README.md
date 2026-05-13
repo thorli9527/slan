@@ -39,10 +39,12 @@ Default listen address:
 
 - `127.0.0.1:29100`
 
-Docker:
+Remote Docker:
 
 ```bash
-docker compose -f ../../docker-compose.local.yml up --build server-wire
+cd ../..
+sh scripts/setup_remote_docker_context.sh
+.tmp/remote-deploy/deploy_to_47.245.40.231.sh
 ```
 
 Container environment:
@@ -61,7 +63,7 @@ and `allowedIps`.
 
 When `SLAN_WIRE_POSTGRES_DSN` is set, runtime state is stored in Postgres.
 If Postgres is unavailable at startup, `server-wire` falls back to the in-memory
-store for local development. The local Docker stack sets the DSN by default.
+store for isolated development. The remote Docker stack sets the DSN by default.
 
 Ticket key rotation:
 

@@ -151,7 +151,14 @@ func restartBizWithWireTTL(freshnessSeconds, cleanupSeconds string) error {
 }
 
 func compose(args []string, env map[string]string) error {
-	fullArgs := append([]string{"compose", "-f", "docker-compose.local.yml"}, args...)
+	if os.Getenv("SLAN_ALLOW_LOCAL_DOCKER") != "1" {
+		return fmt.Errorf("local Docker smoke compose is disabled; set SLAN_ALLOW_LOCAL_DOCKER=1 for one-off local debugging")
+	}
+	contextName := os.Getenv("SLAN_LOCAL_DOCKER_CONTEXT")
+	if contextName == "" {
+		contextName = "desktop-linux"
+	}
+	fullArgs := append([]string{"--context", contextName, "compose", "-f", "docker-compose.local.yml"}, args...)
 	cmd := exec.Command("docker", fullArgs...)
 	cmd.Env = os.Environ()
 	for key, value := range env {

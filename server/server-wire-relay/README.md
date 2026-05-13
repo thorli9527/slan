@@ -39,10 +39,12 @@ Default admin address:
 
 - `127.0.0.1:29111`
 
-Docker:
+Remote Docker:
 
 ```bash
-docker compose -f ../../docker-compose.local.yml up --build server-wire-relay
+cd ../..
+sh scripts/setup_remote_docker_context.sh
+.tmp/remote-deploy/deploy_to_47.245.40.231.sh
 ```
 
 Container environment:
