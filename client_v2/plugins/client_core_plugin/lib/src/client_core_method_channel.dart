@@ -71,7 +71,7 @@ class ClientCorePlugin {
 
   Future<String?> mobileServerBaseUrl() async {
     final result = await _invokeNativeOnly('mobileServerBaseUrl');
-    return (result as String?)?.trim();
+    return result is String ? result.trim() : null;
   }
 
   Future<void> setMobileServerBaseUrl(String serverBaseUrl) {

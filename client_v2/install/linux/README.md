@@ -60,17 +60,15 @@ SLAN_LINUX_NETWORK_MOCK=1
 
 ## Console bootstrap
 
-The console entry accepts server and invite parameters without showing Web Console:
+The console entry accepts server and login parameters without showing Web Console.
+Invitation and access-code flows are only available in the Web Console.
 
 ```sh
 sudo slan-client-v2-console \
   --server-url http://127.0.0.1:18080 \
   --email user@example.com \
   --password secret \
-  --join-key 0123456789abcdef0123456789abcdef \
   --enable-network
 ```
 
-`--invite` is an alias for `--join-key` and can parse invite URLs containing `joinKey`, `code`, or `key`.
-
-For the first installer pass, the script writes `/etc/slan/client-v2-console.env` and restarts `slan-client-v2.service`. The next core-service command should consume these pending values and call `/networks/join-by-key` after password login.
+For the first installer pass, the script writes `/etc/slan/client-v2-console.env` and restarts `slan-client-v2.service`. Device access-code generation and confirmation should be completed from Web Console before the client logs in.

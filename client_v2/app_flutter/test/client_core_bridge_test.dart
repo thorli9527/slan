@@ -214,7 +214,8 @@ void main() {
     );
     await bridge.start();
 
-    expect(calls.first, 'embeddedServiceRequest');
+    expect(calls.first, 'mobileServerBaseUrl');
+    expect(calls.skip(1).first, 'embeddedServiceRequest');
     expect(calls, isNot(contains('start')));
     await _waitFor(
       () => embeddedMethods.contains('localConnectControlMqtt'),
@@ -264,7 +265,11 @@ void main() {
           'password': 'secret',
         },
       )),
-      throwsA(isA<StateError>()),
+      throwsA(isA<PlatformException>().having(
+        (error) => error.code,
+        'code',
+        'embedded_service_error',
+      )),
     );
     expect(calls, ['embeddedServiceRequest']);
   });
