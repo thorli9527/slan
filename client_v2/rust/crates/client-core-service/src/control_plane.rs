@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     net::TcpStream,
     path::PathBuf,
     process::Command,
@@ -1019,12 +1019,53 @@ impl HttpEndpoint {
         }
         stream.flush().context("flush control request")?;
 
-        let mut response = Vec::new();
-        stream
-            .read_to_end(&mut response)
-            .context("read control response")?;
+        let response = read_control_response(&mut stream).context("read control response")?;
         decode_http_response(&response)
     }
+}
+
+fn read_control_response(stream: &mut TcpStream) -> Result<Vec<u8>> {
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return Ok(response),
+            Ok(size) => response.extend_from_slice(&buffer[..size]),
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error)
+                if (error.kind() == ErrorKind::WouldBlock
+                    || error.kind() == ErrorKind::TimedOut)
+                    && looks_like_complete_http_response(&response) =>
+            {
+                return Ok(response);
+            }
+            Err(error) => return Err(error).context("read control socket"),
+        }
+    }
+}
+
+fn looks_like_complete_http_response(response: &[u8]) -> bool {
+    let Some(separator) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return false;
+    };
+    let headers = String::from_utf8_lossy(&response[..separator]);
+    if headers.lines().any(|line| {
+        line.to_ascii_lowercase().starts_with("transfer-encoding:")
+            && line.to_ascii_lowercase().contains("chunked")
+    }) {
+        return response.ends_with(b"\r\n0\r\n\r\n") || response.ends_with(b"0\r\n\r\n");
+    }
+    let Some(content_length) = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if name.trim().eq_ignore_ascii_case("content-length") {
+            value.trim().parse::<usize>().ok()
+        } else {
+            None
+        }
+    }) else {
+        return !response[separator + 4..].is_empty();
+    };
+    response.len().saturating_sub(separator + 4) >= content_length
 }
 
 fn decode_http_response(response: &[u8]) -> Result<Vec<u8>> {
