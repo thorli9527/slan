@@ -404,6 +404,7 @@ impl ControlPlaneClient {
             user_id: payload.user_id,
             user_label: payload.user_label.unwrap_or_default(),
             device_id: payload.device_id,
+            active_network_id: None,
             virtual_ip: None,
             expires_in: payload.expires_in,
         }))
@@ -674,6 +675,7 @@ fn parse_login_response(response: &Value, email: &str, device_id: &str) -> Resul
             user_id: required_string(user, "userId")?,
             user_label: optional_string(user, "email").unwrap_or_else(|| email.to_string()),
             device_id: Some(device_id.to_string()),
+            active_network_id: login_active_network_id(response),
             virtual_ip: None,
             expires_in: login_expires_in(session),
         });
@@ -684,9 +686,28 @@ fn parse_login_response(response: &Value, email: &str, device_id: &str) -> Resul
         user_id: required_string(response, "userId")?,
         user_label: optional_string(response, "email").unwrap_or_else(|| email.to_string()),
         device_id: optional_string(response, "deviceId").or_else(|| Some(device_id.to_string())),
+        active_network_id: login_active_network_id(response),
         virtual_ip: optional_string(response, "virtualIp"),
         expires_in: response.get("expiresIn").and_then(Value::as_u64),
     })
+}
+
+fn login_active_network_id(response: &Value) -> Option<String> {
+    response
+        .get("defaultNetwork")
+        .and_then(|value| optional_string(value, "networkId"))
+        .or_else(|| {
+            response
+                .get("defaultNetworkDevice")
+                .and_then(|value| optional_string(value, "networkId"))
+        })
+        .or_else(|| {
+            response
+                .get("networkDevice")
+                .and_then(|value| optional_string(value, "networkId"))
+        })
+        .or_else(|| optional_string(response, "activeNetworkId"))
+        .or_else(|| optional_string(response, "networkId"))
 }
 
 fn login_expires_in(session: &Value) -> Option<u64> {
@@ -1342,9 +1363,11 @@ mod tests {
 
     #[test]
     fn decode_control_json_accepts_trailing_response_bytes() {
-        let value = decode_control_json(br#"{"ok":true}
+        let value = decode_control_json(
+            br#"{"ok":true}
 0
-"#)
+"#,
+        )
         .expect("decode first json value");
         assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
     }

@@ -117,13 +117,16 @@ fn handle_request_json(request_json: &str) -> Result<String> {
         }
         LocalServiceMethod::LocalSession => local_session_json(),
         LocalServiceMethod::LocalNetworkModule => {
-            if let Ok(session) = load_session() {
-                let client = ControlPlaneClient::from_env();
-                if let Err(err) =
-                    crate::network_module::refresh_network_module_from_session(&client, &session)
-                {
-                    eprintln!("client-core-service localNetworkModule refresh failed: {err:#}");
+            match load_session() {
+                Ok(session) => {
+                    let client = ControlPlaneClient::from_env();
+                    if let Err(err) = crate::network_module::refresh_network_module_from_session(
+                        &client, &session,
+                    ) {
+                        eprintln!("client-core-service localNetworkModule refresh failed: {err:#}");
+                    }
                 }
+                Err(_) => crate::network_module::clear_network_module(),
             }
             serde_json::to_string(&crate::network_module::network_module_snapshot())
                 .context("encode local network module")
@@ -1139,6 +1142,7 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
                 .context("apply auth callback")
         }
         ClientCommand::Logout => {
+            crate::network_module::clear_network_module();
             remove_session()?;
             runtime.dispatch(ClientCommand::Logout).context("logout")
         }

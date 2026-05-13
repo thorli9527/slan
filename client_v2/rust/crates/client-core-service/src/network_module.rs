@@ -42,6 +42,10 @@ impl ClientNetworkModule {
             .collect();
     }
 
+    fn clear(&mut self) {
+        self.configs.clear();
+    }
+
     fn snapshot(&self) -> ClientNetworkSnapshot {
         let configs = self.configs.values().cloned().collect::<Vec<_>>();
         ClientNetworkSnapshot {
@@ -73,6 +77,13 @@ pub(crate) fn refresh_network_module_from_session(
         .expect("client network module mutex poisoned")
         .replace_all(configs.clone());
     Ok(configs)
+}
+
+pub(crate) fn clear_network_module() {
+    module()
+        .lock()
+        .expect("client network module mutex poisoned")
+        .clear();
 }
 
 pub(crate) fn network_module_snapshot() -> ClientNetworkSnapshot {

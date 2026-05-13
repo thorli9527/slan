@@ -41,6 +41,7 @@ impl From<PersistedSession> for AuthPayload {
             user_id: session.user_id,
             user_label: session.user_label,
             device_id: session.device_id,
+            active_network_id: session.active_network_id,
             virtual_ip: session.virtual_ip,
             expires_in: session.expires_in,
         }
@@ -56,7 +57,7 @@ impl From<AuthPayload> for PersistedSession {
             user_label: payload.user_label,
             device_id: payload.device_id,
             self_node_id: None,
-            active_network_id: None,
+            active_network_id: payload.active_network_id,
             virtual_ip: payload.virtual_ip,
             relay_candidates: Vec::new(),
             mqtt: None,
@@ -210,7 +211,16 @@ fn refresh_session_network_from_device_configs(
     session: &mut PersistedSession,
 ) {
     if let Ok(configs) = refresh_network_module_from_session(client, session) {
-        if let Some(config) = configs.first() {
+        let selected = session
+            .active_network_id
+            .as_deref()
+            .and_then(|network_id| {
+                configs
+                    .iter()
+                    .find(|config| config.network_id == network_id)
+            })
+            .or_else(|| configs.last());
+        if let Some(config) = selected {
             session.active_network_id = Some(config.network_id.clone());
             if let Some(global_ip) = config
                 .global_ip

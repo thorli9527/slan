@@ -28,7 +28,12 @@ type triClient struct {
 }
 
 type triAuthResponse struct {
-	AccessToken string `json:"accessToken"`
+	AccessToken string `json:"accessToken,omitempty"`
+	Auth        struct {
+		Session struct {
+			Token string `json:"token"`
+		} `json:"session"`
+	} `json:"auth,omitempty"`
 }
 
 func main() {
@@ -282,10 +287,13 @@ func localRequest(address, method string, args map[string]any, timeout time.Dura
 
 func register(ctx context.Context, bizURL, email, password string) {
 	var out triAuthResponse
-	postJSON(ctx, bizURL+"/auth/register", "", map[string]any{
+	postJSON(ctx, bizURL+"/api/auth/register", "", map[string]any{
 		"email":    email,
 		"password": password,
 	}, &out)
+	if strings.TrimSpace(out.AccessToken) == "" {
+		out.AccessToken = out.Auth.Session.Token
+	}
 	if strings.TrimSpace(out.AccessToken) == "" {
 		fail("register returned empty access token")
 	}

@@ -516,6 +516,24 @@ fn path_diagnose_health_reports_ok_for_clean_relay() {
 }
 
 #[test]
+fn path_diagnose_health_accepts_runtime_peer_paths_without_stats() {
+    let relay_candidates = vec![test_relay_selection("relay-udp", "udp", "127.0.0.1:3478")];
+    let peer_paths = vec![test_peer_path("node-peer", Some(PathKind::RelayUdp))];
+
+    let health = path_diagnose_health(
+        None,
+        &PathDiagnoseMtu::default(),
+        &PathDiagnoseDns::default(),
+        &PlatformNetworkDiagnostics::default(),
+        &relay_candidates,
+        &peer_paths,
+    );
+
+    assert_eq!(health.status, "ok");
+    assert!(health.reasons.is_empty());
+}
+
+#[test]
 fn diagnostic_connect_plan_summary_redacts_ticket_secret_fields() {
     let store = PersistedConnectPlanStore {
         plans: vec![PersistedConnectPlan {

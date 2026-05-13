@@ -2,12 +2,46 @@
 set -eu
 
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)"
-flutter_build_dir="$repo_root/client_v2/app_flutter/build/linux/x64/release/bundle"
+flutter_build_dir=""
 service_bin="$repo_root/client_v2/rust/target/release/client-core-service"
 output_dir="$repo_root/client_v2/.tmp/installer/linux"
 variant="all"
 version="${SLAN_CLIENT_V2_VERSION:-0.1.0}"
-arch="${SLAN_CLIENT_V2_ARCH:-amd64}"
+arch="${SLAN_CLIENT_V2_ARCH:-}"
+
+host_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64)
+      echo "amd64"
+      ;;
+    aarch64|arm64)
+      echo "arm64"
+      ;;
+    armv7l|armhf)
+      echo "armhf"
+      ;;
+    *)
+      uname -m
+      ;;
+  esac
+}
+
+flutter_arch_dir() {
+  case "$1" in
+    amd64)
+      echo "x64"
+      ;;
+    arm64)
+      echo "arm64"
+      ;;
+    armhf)
+      echo "arm"
+      ;;
+    *)
+      echo "$1"
+      ;;
+  esac
+}
 
 usage() {
   cat <<'EOF'
@@ -52,6 +86,14 @@ for arg in "$@"; do
   esac
 done
 
+if [ -z "$arch" ]; then
+  arch="$(host_arch)"
+fi
+
+if [ -z "$flutter_build_dir" ]; then
+  flutter_build_dir="$repo_root/client_v2/app_flutter/build/linux/$(flutter_arch_dir "$arch")/release/bundle"
+fi
+
 case "$variant" in
   gui|console|all)
     ;;
@@ -74,7 +116,7 @@ fi
 stage_dir="$output_dir/stage"
 root_dir="$stage_dir/root"
 package_name="slan-client-v2"
-tar_path="$output_dir/SLAN-Client-V2-linux-x64.tar.gz"
+tar_path="$output_dir/SLAN-Client-V2-linux-$arch.tar.gz"
 deb_path="$output_dir/${package_name}_${version}_${arch}.deb"
 
 rm -rf "$stage_dir"

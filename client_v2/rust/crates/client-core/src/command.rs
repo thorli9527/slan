@@ -10,6 +10,8 @@ pub struct AuthPayload {
     pub user_id: String,
     pub user_label: String,
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub active_network_id: Option<String>,
     pub virtual_ip: Option<String>,
     pub expires_in: Option<u64>,
 }

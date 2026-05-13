@@ -362,11 +362,7 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
                         eprintln!("client-core-service localNetworkModule refresh failed: {err:#}");
                     }
                 }
-                Err(err) => {
-                    eprintln!(
-                        "client-core-service localNetworkModule session load failed: {err:#}"
-                    );
-                }
+                Err(_) => crate::network_module::clear_network_module(),
             }
             return serde_json::to_string(&crate::network_module::network_module_snapshot())
                 .context("encode local network module");
@@ -1408,13 +1404,15 @@ fn path_diagnose_health(
             }
         }
         None => {
-            failed = true;
-            push_path_health_reason(
-                &mut reasons,
-                "missing_relay_stats",
-                "failed",
-                "relay runtime stats are missing",
-            );
+            if peer_paths.is_empty() {
+                failed = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "missing_relay_stats",
+                    "failed",
+                    "relay runtime stats are missing",
+                );
+            }
         }
     }
 
@@ -1960,6 +1958,7 @@ where
         }
         ClientCommand::Logout => {
             deactivate_control_network();
+            crate::network_module::clear_network_module();
             (ClientCommand::Logout, remove_session())
         }
         other => (other, Ok(())),

@@ -2,6 +2,7 @@ use std::{fs, path::PathBuf};
 
 use crate::{
     relay_models::{RelayPayloadPolicy, RelayRuntimeStats},
+    session_store::app_data_dir,
     session_store::current_timestamp_ms,
     time_utils::ticket_timing_with_window,
 };
@@ -92,16 +93,7 @@ pub(crate) fn relay_runtime_failure_total(stats: &RelayRuntimeStats) -> u64 {
 
 pub(crate) fn diagnostics_export_file_path() -> PathBuf {
     let file_name = format!("client-v2-diagnostics-{}.json", current_timestamp_ms());
-    if let Some(dir) = std::env::var_os("ProgramData") {
-        return PathBuf::from(dir)
-            .join("SLAN")
-            .join("diagnostics")
-            .join(file_name);
-    }
-    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
-        return PathBuf::from(dir).join("diagnostics").join(file_name);
-    }
-    PathBuf::from(file_name)
+    service_state_dir().join("diagnostics").join(file_name)
 }
 
 pub(crate) fn runtime_packet_loss_ppm(stats: &RelayRuntimeStats) -> Option<u32> {
@@ -122,15 +114,11 @@ pub(crate) fn runtime_packet_loss_ppm(stats: &RelayRuntimeStats) -> Option<u32> 
 }
 
 pub(crate) fn relay_stats_file_path() -> PathBuf {
-    if let Some(dir) = std::env::var_os("ProgramData") {
-        return PathBuf::from(dir)
-            .join("SLAN")
-            .join("client-v2-relay-stats.json");
-    }
-    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
-        return PathBuf::from(dir).join("client-v2-relay-stats.json");
-    }
-    PathBuf::from("client-v2-relay-stats.json")
+    service_state_dir().join("client-v2-relay-stats.json")
+}
+
+fn service_state_dir() -> PathBuf {
+    app_data_dir().join("SLAN")
 }
 
 #[cfg(test)]
