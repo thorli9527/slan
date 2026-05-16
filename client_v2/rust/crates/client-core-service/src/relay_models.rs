@@ -110,6 +110,10 @@ pub(crate) struct PathDiagnoseRelay {
     pub(crate) last_unroutable_destination: Option<String>,
     pub(crate) oversized_tun_packets: u64,
     pub(crate) last_oversized_tun_packet_size: Option<u32>,
+    pub(crate) started_at_ms: u64,
+    pub(crate) last_tun_packet_at_ms: Option<u64>,
+    pub(crate) last_relay_packet_at_ms: Option<u64>,
+    pub(crate) last_relay_keepalive_at_ms: Option<u64>,
     pub(crate) updated_at_ms: u64,
     pub(crate) stale: bool,
 }

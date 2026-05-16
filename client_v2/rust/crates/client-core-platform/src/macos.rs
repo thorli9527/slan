@@ -1013,7 +1013,6 @@ fn run_udp_data_plane(
         for peer in &peers {
             match peer.socket.recv(&mut relay_buffer) {
                 Ok(frame_len) => {
-                    stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
                     let decoded_payload = relay_packet_payload(&relay_buffer[..frame_len]);
                     if decoded_payload.is_none()
                         && relay_control_kind(&relay_buffer[..frame_len]).is_some()
@@ -1024,6 +1023,7 @@ fn run_udp_data_plane(
                         .as_deref()
                         .unwrap_or(&relay_buffer[..frame_len]);
                     if let Some(packet) = decode_slan_relay_data_frame(frame) {
+                        stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
                         if let Some(reply) =
                             icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
                         {

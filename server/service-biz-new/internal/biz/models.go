@@ -279,6 +279,14 @@ type DeviceRuntimeStatus struct {
 	LastReportAt    int64  `json:"lastReportAt"`
 }
 
+type DeviceRuntimeReportResult struct {
+	DeviceID              string   `json:"deviceId"`
+	NetworkEnabled        bool     `json:"networkEnabled"`
+	NetworkEnabledChanged bool     `json:"networkEnabledChanged"`
+	NetworkIDs            []string `json:"networkIds"`
+	ChangedAt             int64    `json:"changedAt"`
+}
+
 type NetworkConfigVersion struct {
 	ConfigID      string `json:"configId"`
 	NetworkID     string `json:"networkId"`

@@ -872,18 +872,19 @@ func (s *Store) RenewDevice(deviceID, userID string, networkEnabled bool, rxByte
 	return s.deviceWithOwnerEmailLocked(device), configs, nil
 }
 
-func (s *Store) ReportDeviceRuntime(deviceID string, networkEnabled bool, rxBytesTotal, txBytesTotal uint64) {
+func (s *Store) ReportDeviceRuntime(deviceID string, networkEnabled bool, rxBytesTotal, txBytesTotal uint64) DeviceRuntimeReportResult {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		return
+		return DeviceRuntimeReportResult{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	device, ok := s.devices[deviceID]
 	if !ok {
-		return
+		return DeviceRuntimeReportResult{}
 	}
 	now := time.Now().Unix()
+	previous := s.runtimeStatuses[deviceID]
 	status := s.runtimeStatuses[deviceID]
 	status.DeviceID = deviceID
 	status.HeartbeatOnline = true
@@ -894,6 +895,20 @@ func (s *Store) ReportDeviceRuntime(deviceID string, networkEnabled bool, rxByte
 	status.LastSeenAt = now
 	status.LastReportAt = now
 	s.runtimeStatuses[deviceID] = status
+	networkIDs := make([]string, 0)
+	for _, membership := range s.networkDevices {
+		if membership.DeviceID == deviceID && membership.Enabled && membership.Status == "active" {
+			networkIDs = append(networkIDs, membership.NetworkID)
+		}
+	}
+	sort.Strings(networkIDs)
+	return DeviceRuntimeReportResult{
+		DeviceID:              deviceID,
+		NetworkEnabled:        networkEnabled,
+		NetworkEnabledChanged: previous.LastReportAt == 0 || previous.NetworkEnabled != networkEnabled,
+		NetworkIDs:            networkIDs,
+		ChangedAt:             now,
+	}
 }
 
 func (s *Store) GetDevice(deviceID string) (Device, error) {

@@ -42,8 +42,13 @@ type SessionView struct {
 }
 
 type Metrics struct {
-	SessionCount       int `json:"sessionCount"`
-	SourceBindingCount int `json:"sourceBindingCount"`
+	SessionCount                  int    `json:"sessionCount"`
+	SourceBindingCount            int    `json:"sourceBindingCount"`
+	AttachCount                   uint64 `json:"attachCount"`
+	ParticipantRefreshCount       uint64 `json:"participantRefreshCount"`
+	ParticipantAddressChangeCount uint64 `json:"participantAddressChangeCount"`
+	ForwardCount                  uint64 `json:"forwardCount"`
+	ForwardPeerNotAttachedCount   uint64 `json:"forwardPeerNotAttachedCount"`
 }
 
 type TicketKeyStatus struct {
@@ -57,9 +62,14 @@ type TicketKeyStatus struct {
 }
 
 type Store struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	sources  map[string]sourceBinding
+	mu                            sync.RWMutex
+	sessions                      map[string]*Session
+	sources                       map[string]sourceBinding
+	attachCount                   uint64
+	participantRefreshCount       uint64
+	participantAddressChangeCount uint64
+	forwardCount                  uint64
+	forwardPeerNotAttachedCount   uint64
 }
 
 type sourceBinding struct {
@@ -122,11 +132,15 @@ func (s *Store) Attach(addr *net.UDPAddr, participantID string, ticket protocol.
 	} else if session.ExpiresAt.IsZero() || session.ExpiresAt.Before(ticket.ExpiresAt) {
 		session.ExpiresAt = ticket.ExpiresAt
 	}
+	if previous, ok := session.Participants[participantID]; ok && previous.String() != addr.String() {
+		s.participantAddressChangeCount++
+	}
 	session.Participants[participantID] = cloneAddr(addr)
 	s.sources[sourceKey] = sourceBinding{
 		SessionID:     ticket.SessionID,
 		ParticipantID: participantID,
 	}
+	s.attachCount++
 
 	peer := ""
 	for id := range session.Participants {
@@ -259,8 +273,8 @@ func parseTicketSecretList(value string) []string {
 }
 
 func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []byte) (*net.UDPAddr, string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	session, ok := s.sessions[sessionID]
 	if !ok {
@@ -275,9 +289,11 @@ func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []
 	}
 	for peerID, peerAddr := range session.Participants {
 		if peerID != participantID {
+			s.forwardCount++
 			return cloneAddr(peerAddr), peerID, nil
 		}
 	}
+	s.forwardPeerNotAttachedCount++
 	return nil, "", ErrPeerNotAttached
 }
 
@@ -296,6 +312,9 @@ func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID s
 	if _, ok := session.Participants[participantID]; !ok {
 		return ErrParticipantNotFound
 	}
+	if previous := session.Participants[participantID]; previous != nil && previous.String() != addr.String() {
+		s.participantAddressChangeCount++
+	}
 	for sourceKey, binding := range s.sources {
 		if binding.SessionID == sessionID && binding.ParticipantID == participantID {
 			delete(s.sources, sourceKey)
@@ -306,6 +325,7 @@ func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID s
 		SessionID:     sessionID,
 		ParticipantID: participantID,
 	}
+	s.participantRefreshCount++
 	return nil
 }
 
@@ -353,8 +373,13 @@ func (s *Store) Metrics() Metrics {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return Metrics{
-		SessionCount:       len(s.sessions),
-		SourceBindingCount: len(s.sources),
+		SessionCount:                  len(s.sessions),
+		SourceBindingCount:            len(s.sources),
+		AttachCount:                   s.attachCount,
+		ParticipantRefreshCount:       s.participantRefreshCount,
+		ParticipantAddressChangeCount: s.participantAddressChangeCount,
+		ForwardCount:                  s.forwardCount,
+		ForwardPeerNotAttachedCount:   s.forwardPeerNotAttachedCount,
 	}
 }
 

@@ -108,6 +108,8 @@ const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 const RELAY_RECONFIGURE_BACKOFF_MS: u64 = 60 * 1000;
 const RELAY_STATS_STALE_MS: u64 = 45 * 1000;
 const RELAY_IDLE_RECONFIGURE_MS: u64 = 60 * 1000;
+const RELAY_NO_RX_RECONFIGURE_INTERVALS: u32 = 2;
+const RELAY_RESPONSE_GAP_DEGRADED_PACKETS: u64 = 10;
 const RELAY_FAILURE_RECONFIGURE_DELTA: u64 = 5;
 static RUNTIME_CONNECT_PLANS: OnceLock<Mutex<PersistedConnectPlanStore>> = OnceLock::new();
 const SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
@@ -1329,6 +1331,10 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
             last_unroutable_destination: stats.last_unroutable_destination.clone(),
             oversized_tun_packets: stats.oversized_tun_packets,
             last_oversized_tun_packet_size: stats.last_oversized_tun_packet_size,
+            started_at_ms: stats.started_at_ms,
+            last_tun_packet_at_ms: stats.last_tun_packet_at_ms,
+            last_relay_packet_at_ms: stats.last_relay_packet_at_ms,
+            last_relay_keepalive_at_ms: stats.last_relay_keepalive_at_ms,
             updated_at_ms: stats.updated_at_ms,
             stale: current_timestamp_ms().saturating_sub(stats.updated_at_ms)
                 > RELAY_STATS_STALE_MS,
@@ -1494,6 +1500,15 @@ fn path_diagnose_health(
                     "relay_replayed_frames",
                     "failed",
                     "old or replayed relay frames were received",
+                );
+            }
+            if relay_response_gap_is_active(relay) {
+                degraded = true;
+                push_path_health_reason(
+                    &mut reasons,
+                    "relay_response_gap",
+                    "degraded",
+                    "relay sent packets are not being matched by relay receive packets",
                 );
             }
             if relay.failures > 0 {
@@ -3396,6 +3411,9 @@ struct RelayMaintenanceState {
     last_failure_total: u64,
     last_attach_failures: u64,
     last_connect_plan_ms: u64,
+    last_tun_packets_sent: u64,
+    last_relay_packets_received: u64,
+    no_rx_intervals: u32,
 }
 
 fn spawn_relay_data_plane_maintenance_worker(
@@ -3476,9 +3494,15 @@ fn maintain_relay_data_plane(
     if let Some(stats) = next_stats.as_ref() {
         maintenance.last_failure_total = relay_runtime_failure_total(stats);
         maintenance.last_attach_failures = stats.relay_attach_failures;
+        maintenance.last_tun_packets_sent = stats.tun_packets_sent;
+        maintenance.last_relay_packets_received = stats.relay_packets_received;
+        maintenance.no_rx_intervals = 0;
     } else {
         maintenance.last_failure_total = 0;
         maintenance.last_attach_failures = 0;
+        maintenance.last_tun_packets_sent = 0;
+        maintenance.last_relay_packets_received = 0;
+        maintenance.no_rx_intervals = 0;
     }
     let business_type = if state.error.is_some() {
         BUSINESS_NETWORK_SWITCH_FAILED
@@ -3501,6 +3525,9 @@ fn relay_maintenance_reconfigure_reason(
         if let Some(stats) = stats {
             maintenance.last_failure_total = relay_runtime_failure_total(stats);
             maintenance.last_attach_failures = stats.relay_attach_failures;
+            maintenance.last_tun_packets_sent = stats.tun_packets_sent;
+            maintenance.last_relay_packets_received = stats.relay_packets_received;
+            maintenance.no_rx_intervals = 0;
             if relay_ticket_expired(now, stats.ticket_expires_at.as_deref()) {
                 return Some("ticket_expired");
             }
@@ -3535,6 +3562,9 @@ fn relay_maintenance_reconfigure_reason(
     }
     if relay_sessions_missing(stats) {
         return Some("relay_session_missing");
+    }
+    if relay_response_stalled(stats, maintenance) {
+        return Some("relay_response_stalled");
     }
     if stats.relay_attach_failures > maintenance.last_attach_failures {
         maintenance.last_attach_failures = stats.relay_attach_failures;
@@ -3576,6 +3606,53 @@ fn relay_runtime_idle(now_ms: u64, stats: &RelayRuntimeStats) -> bool {
 fn relay_sessions_missing(stats: &RelayRuntimeStats) -> bool {
     stats.requested_relay_session_count > 0
         && relay_attached_peer_session_count(stats) < stats.requested_relay_session_count
+}
+
+fn relay_response_stalled(
+    stats: &RelayRuntimeStats,
+    maintenance: &mut RelayMaintenanceState,
+) -> bool {
+    let tun_delta = stats
+        .tun_packets_sent
+        .saturating_sub(maintenance.last_tun_packets_sent);
+    let relay_rx_delta = stats
+        .relay_packets_received
+        .saturating_sub(maintenance.last_relay_packets_received);
+    maintenance.last_tun_packets_sent = stats.tun_packets_sent;
+    maintenance.last_relay_packets_received = stats.relay_packets_received;
+
+    if stats.requested_relay_session_count == 0
+        || relay_attached_peer_session_count(stats) == 0
+        || tun_delta == 0
+    {
+        maintenance.no_rx_intervals = 0;
+        return false;
+    }
+    if relay_rx_delta > 0 {
+        maintenance.no_rx_intervals = 0;
+        return false;
+    }
+    maintenance.no_rx_intervals = maintenance.no_rx_intervals.saturating_add(1);
+    maintenance.no_rx_intervals >= RELAY_NO_RX_RECONFIGURE_INTERVALS
+}
+
+fn relay_response_gap(tun_packets_sent: u64, relay_packets_received: u64) -> u64 {
+    tun_packets_sent.saturating_sub(relay_packets_received)
+}
+
+fn relay_response_gap_is_active(relay: &PathDiagnoseRelay) -> bool {
+    if relay_response_gap(relay.tun_packets_sent, relay.relay_packets_received)
+        < RELAY_RESPONSE_GAP_DEGRADED_PACKETS
+    {
+        return false;
+    }
+    let Some(last_tun_packet_at_ms) = relay.last_tun_packet_at_ms else {
+        return false;
+    };
+    match relay.last_relay_packet_at_ms {
+        Some(last_relay_packet_at_ms) => last_tun_packet_at_ms > last_relay_packet_at_ms,
+        None => true,
+    }
 }
 
 fn relay_ticket_should_renew(now_ms: u64, ticket_expires_at: Option<&str>) -> bool {

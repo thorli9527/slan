@@ -6,7 +6,8 @@ use super::{
     relay_session_from_connect_plan_ticket, relay_sessions_missing, relay_ticket_should_renew,
     relay_ticket_timing, relay_transport_for_path_type, routes_with_peer_virtual_ips,
     status_is_managed_disabled, ControlPeer, PersistedConnectPlan, PersistedConnectPlanPath,
-    PersistedConnectPlanStore, RelayMaintenanceState,
+    PersistedConnectPlanStore, RelayMaintenanceState, RELAY_NO_RX_RECONFIGURE_INTERVALS,
+    RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
 };
 use crate::{
     relay_candidates::select_relay_candidates,
@@ -293,6 +294,7 @@ fn relay_maintenance_marks_expired_ticket_as_urgent() {
         last_failure_total: 0,
         last_attach_failures: 0,
         last_connect_plan_ms: 0,
+        ..RelayMaintenanceState::default()
     };
 
     assert_eq!(
@@ -313,6 +315,7 @@ fn relay_maintenance_reconfigures_when_peer_sessions_are_missing() {
         last_failure_total: 0,
         last_attach_failures: 0,
         last_connect_plan_ms: 0,
+        ..RelayMaintenanceState::default()
     };
 
     assert_eq!(
@@ -346,6 +349,7 @@ fn relay_maintenance_reconfigures_when_attach_failures_increase() {
         last_failure_total: 0,
         last_attach_failures: 1,
         last_connect_plan_ms: 0,
+        ..RelayMaintenanceState::default()
     };
 
     assert_eq!(
@@ -364,6 +368,7 @@ fn relay_maintenance_reconfigures_when_connect_plan_is_newer() {
         last_failure_total: 0,
         last_attach_failures: 0,
         last_connect_plan_ms: now.saturating_sub(60 * 1000),
+        ..RelayMaintenanceState::default()
     };
 
     assert_eq!(
@@ -371,6 +376,47 @@ fn relay_maintenance_reconfigures_when_connect_plan_is_newer() {
         Some("connect_plan_updated")
     );
     assert_eq!(maintenance.last_connect_plan_ms, now);
+}
+
+#[test]
+fn relay_maintenance_reconfigures_when_relay_stops_returning_packets() {
+    let now = parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
+    let mut stats = test_relay_stats("2026-05-03T10:10:00Z", now);
+    stats.tun_packets_sent = 10;
+    stats.relay_packets_received = 8;
+    let mut maintenance = RelayMaintenanceState {
+        last_reconfigure_ms: now.saturating_sub(5 * 60 * 1000),
+        last_tun_packets_sent: 5,
+        last_relay_packets_received: 8,
+        no_rx_intervals: RELAY_NO_RX_RECONFIGURE_INTERVALS - 1,
+        ..RelayMaintenanceState::default()
+    };
+
+    assert_eq!(
+        relay_maintenance_reconfigure_reason(now, Some(&stats), &mut maintenance, 0),
+        Some("relay_response_stalled")
+    );
+}
+
+#[test]
+fn relay_maintenance_does_not_count_stall_when_replies_progress() {
+    let now = parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
+    let mut stats = test_relay_stats("2026-05-03T10:10:00Z", now);
+    stats.tun_packets_sent = 10;
+    stats.relay_packets_received = 9;
+    let mut maintenance = RelayMaintenanceState {
+        last_reconfigure_ms: now.saturating_sub(5 * 60 * 1000),
+        last_tun_packets_sent: 5,
+        last_relay_packets_received: 8,
+        no_rx_intervals: RELAY_NO_RX_RECONFIGURE_INTERVALS - 1,
+        ..RelayMaintenanceState::default()
+    };
+
+    assert_eq!(
+        relay_maintenance_reconfigure_reason(now, Some(&stats), &mut maintenance, 0),
+        None
+    );
+    assert_eq!(maintenance.no_rx_intervals, 0);
 }
 
 #[test]
@@ -447,6 +493,10 @@ fn path_diagnose_health_fails_on_missing_attached_peer_sessions() {
         last_unroutable_destination: None,
         oversized_tun_packets: 0,
         last_oversized_tun_packet_size: None,
+        started_at_ms: 0,
+        last_tun_packet_at_ms: None,
+        last_relay_packet_at_ms: None,
+        last_relay_keepalive_at_ms: None,
         updated_at_ms: 0,
         stale: false,
     };
@@ -497,6 +547,10 @@ fn path_diagnose_health_reports_ok_for_clean_relay() {
         last_unroutable_destination: None,
         oversized_tun_packets: 0,
         last_oversized_tun_packet_size: None,
+        started_at_ms: 0,
+        last_tun_packet_at_ms: None,
+        last_relay_packet_at_ms: None,
+        last_relay_keepalive_at_ms: None,
         updated_at_ms: 0,
         stale: false,
     };
@@ -514,6 +568,60 @@ fn path_diagnose_health_reports_ok_for_clean_relay() {
 
     assert_eq!(health.status, "ok");
     assert!(health.reasons.is_empty());
+}
+
+#[test]
+fn path_diagnose_health_reports_degraded_for_relay_response_gap() {
+    let relay = PathDiagnoseRelay {
+        address: "127.0.0.1:3478".to_string(),
+        transport: Some("udp".to_string()),
+        active_path: Some("relay_udp".to_string()),
+        requested_relay_session_count: 1,
+        relay_session_count: 1,
+        attached_peer_session_count: 1,
+        attached_transport_count: 1,
+        ticket_expires_at: None,
+        ticket_expires_in_ms: Some(60_000),
+        ticket_renew_due: false,
+        relay_attach_failures: 0,
+        last_relay_attach_error: None,
+        peers: Vec::new(),
+        relay_mtu: Some(1280),
+        max_frame_payload: Some(1200),
+        tun_packets_sent: RELAY_RESPONSE_GAP_DEGRADED_PACKETS + 5,
+        relay_packets_received: 5,
+        relay_error_responses: 0,
+        relay_config_hash_mismatches: 0,
+        last_relay_error: None,
+        failures: 0,
+        unroutable_tun_packets: 0,
+        last_unroutable_destination: None,
+        oversized_tun_packets: 0,
+        last_oversized_tun_packet_size: None,
+        started_at_ms: 0,
+        last_tun_packet_at_ms: Some(2),
+        last_relay_packet_at_ms: Some(1),
+        last_relay_keepalive_at_ms: None,
+        updated_at_ms: 0,
+        stale: false,
+    };
+    let relay_candidates = vec![test_relay_selection("relay-udp", "udp", "127.0.0.1:3478")];
+    let peer_paths = vec![test_peer_path("node-peer", Some(PathKind::RelayUdp))];
+
+    let health = path_diagnose_health(
+        Some(&relay),
+        &PathDiagnoseMtu::default(),
+        &PathDiagnoseDns::default(),
+        &PlatformNetworkDiagnostics::default(),
+        &relay_candidates,
+        &peer_paths,
+    );
+
+    assert_eq!(health.status, "degraded");
+    assert!(health
+        .reasons
+        .iter()
+        .any(|reason| reason.code == "relay_response_gap"));
 }
 
 #[test]

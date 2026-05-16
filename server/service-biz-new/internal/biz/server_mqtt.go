@@ -220,6 +220,40 @@ func (s *Server) notifyNetworkMemberState(networkID, deviceID, state, reason str
 	}()
 }
 
+func (s *Server) notifyDeviceNetworkPresence(networkID, deviceID string, online bool, changedAt int64) {
+	if !s.mqtt.Enabled || strings.TrimSpace(networkID) == "" || strings.TrimSpace(deviceID) == "" {
+		return
+	}
+	messageType := "device_network_disabled"
+	if online {
+		messageType = "device_network_enabled"
+	}
+	payload := map[string]any{
+		"networkId": networkID,
+		"deviceId":  deviceID,
+		"online":    online,
+		"changedAt": changedAt,
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.mqtt.PublishTimeoutMilliseconds)*time.Millisecond)
+		defer cancel()
+		topic := mqttNetworkBroadcastTopic(s.mqtt, networkID)
+		credential := serverMQTTCredential(s.mqtt, timeNow())
+		if credential == nil {
+			return
+		}
+		clientID := fmt.Sprintf("%s-presence-%d", credential.ClientID, timeNow().UnixNano())
+		err := mqttPublishJSON(ctx, s.mqtt, clientID, credential.Username, credential.Password, topic, controlEnvelope{
+			Type:      messageType,
+			MessageID: fmt.Sprintf("msg-%d", timeNow().UnixNano()),
+			Payload:   payload,
+		}, mqttQoSExactlyOnce)
+		if err != nil {
+			log.Printf("mqtt publish %s failed device=%s network=%s: %v", messageType, deviceID, networkID, err)
+		}
+	}()
+}
+
 func mqttStringValue(values map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := values[key]; ok {

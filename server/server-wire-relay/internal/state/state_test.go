@@ -95,6 +95,48 @@ func TestAttachRefreshesSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestMetricsTrackRefreshAddressChangesAndForwarding(t *testing.T) {
+	store := NewStore()
+	a := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	a2 := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 11001}
+	b := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10002}
+	ticket := protocol.RelayTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		SessionID: "s1",
+		Path:      "relay_udp",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	ticket.Signature = signRelayTicket(ticket)
+
+	if _, _, err := store.Attach(a, "node-a", ticket, "udp"); err != nil {
+		t.Fatalf("attach a: %v", err)
+	}
+	if _, _, err := store.Attach(b, "node-b", ticket, "udp"); err != nil {
+		t.Fatalf("attach b: %v", err)
+	}
+	if err := store.RefreshParticipant(a2, "s1", "node-a"); err != nil {
+		t.Fatalf("refresh a: %v", err)
+	}
+	if _, _, err := store.Forward(a2, "s1", "node-a", []byte("hello")); err != nil {
+		t.Fatalf("forward a: %v", err)
+	}
+
+	metrics := store.Metrics()
+	if metrics.AttachCount != 2 {
+		t.Fatalf("want attach count 2, got %#v", metrics)
+	}
+	if metrics.ParticipantRefreshCount != 1 {
+		t.Fatalf("want refresh count 1, got %#v", metrics)
+	}
+	if metrics.ParticipantAddressChangeCount != 1 {
+		t.Fatalf("want address change count 1, got %#v", metrics)
+	}
+	if metrics.ForwardCount != 1 {
+		t.Fatalf("want forward count 1, got %#v", metrics)
+	}
+}
+
 func signRelayTicket(ticket protocol.RelayTicket) string {
 	return signRelayTicketWithSecret(ticket, ticketSecret())
 }

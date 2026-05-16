@@ -180,7 +180,12 @@ func (s *Server) handleMQTTRuntimeUp(topicDeviceID string, body []byte) error {
 	if payload.DeviceID != "" && strings.TrimSpace(payload.DeviceID) != topicDeviceID {
 		return fmt.Errorf("runtime deviceId does not match mqtt topic")
 	}
-	s.store.ReportDeviceRuntime(topicDeviceID, payload.NetworkEnabled, payload.RxBytesTotal, payload.TxBytesTotal)
+	result := s.store.ReportDeviceRuntime(topicDeviceID, payload.NetworkEnabled, payload.RxBytesTotal, payload.TxBytesTotal)
+	if result.NetworkEnabledChanged {
+		for _, networkID := range result.NetworkIDs {
+			s.notifyDeviceNetworkPresence(networkID, result.DeviceID, result.NetworkEnabled, result.ChangedAt)
+		}
+	}
 	return nil
 }
 
