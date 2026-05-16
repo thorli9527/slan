@@ -160,6 +160,6 @@ echo "SLAN Client V2 Linux install policy written to $config_dir"
 echo "trayMode=$tray_mode"
 echo "controlBaseUrl=$server"
 if [ -x "$install_root/bin/client-core-service" ]; then
-  "$install_root/bin/client-core-service" --reset-device-id >/dev/null
+  "$install_root/bin/client-core-service" --ensure-device-id >/dev/null
 fi
 restart_installed_service

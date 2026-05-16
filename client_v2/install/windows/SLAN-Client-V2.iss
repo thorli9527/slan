@@ -157,13 +157,13 @@ begin
   ) and (ResultCode = 0);
 end;
 
-function ResetStableDeviceId(): Boolean;
+function EnsureStableDeviceId(): Boolean;
 var
   ResultCode: Integer;
 begin
   Result := Exec(
     ExpandConstant('{app}\client-core-service.exe'),
-    '--reset-device-id',
+    '--ensure-device-id',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,
@@ -255,7 +255,7 @@ begin
     ClearPreviousInstallDir();
   end;
   if CurStep = ssPostInstall then begin
-    if not ResetStableDeviceId() then begin
+    if not EnsureStableDeviceId() then begin
       RaiseException('Failed to initialize the SLAN device identity.');
     end;
     if not PrepareDedicatedAdapter() then begin

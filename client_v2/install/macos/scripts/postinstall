@@ -43,7 +43,7 @@ chown root:wheel "$SERVICE_BIN"
 chmod 755 "$SERVICE_BIN"
 chown -R root:wheel "$APP_PATH"
 
-DEVICE_ID="$("$SERVICE_BIN" --reset-device-id)"
+DEVICE_ID="$("$SERVICE_BIN" --ensure-device-id)"
 {
   echo "installedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "deviceId: $DEVICE_ID"

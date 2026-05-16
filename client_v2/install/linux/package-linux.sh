@@ -181,7 +181,7 @@ EOF
   cat > "$deb_root/DEBIAN/postinst" <<'EOF'
 #!/usr/bin/env sh
 set -e
-/opt/slan-client-v2/bin/client-core-service --reset-device-id >/dev/null
+/opt/slan-client-v2/bin/client-core-service --ensure-device-id >/dev/null
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
   systemctl enable slan-client-v2.service || true
