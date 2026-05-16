@@ -81,9 +81,12 @@ export class AppComponentAuth extends AppComponentData {
       this.navigateToDefaultHome();
       return true;
     } catch (error) {
-      this.authMessage = `客户端临时登录失败：${error instanceof Error ? error.message : String(error)}`;
+      const message = '非法或已过期的客户端登录凭证，请从客户端重新打开 Web Console。';
+      window.alert(message);
+      this.authMessage = message;
       replaceUrl('/', sanitizedHomeParams());
       this.mode = 'login';
+      this.notifyStateChanged();
       return false;
     }
   }

@@ -79,6 +79,13 @@ Browser login:
 - Web Console completes login by asking the server to publish the auth payload to that device over MQTT.
 - After callback is ready, service registers or resolves the current device and stores the assigned IP.
 
+Signed-in Web Console open:
+
+- `openWebConsole` is forwarded to `client-core-service` first.
+- The service creates a new server-side `consoleLoginKey` from the current user session every time the user clicks Web Console.
+- The Windows plugin opens Web Console with `consoleLoginKey` and `deviceId`.
+- Web Console accepts only server-valid keys; valid keys navigate to the default user page, and invalid or expired keys show an illegal credential prompt.
+
 UI lifetime:
 
 - The Flutter window is not the owner of runtime networking.

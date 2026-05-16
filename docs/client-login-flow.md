@@ -31,12 +31,15 @@ The browser login URL must not include:
 
 Opening Web Console from an already signed-in client is a separate flow.
 
-1. Client asks local service for `consoleLoginKey`.
-2. Local service requests `POST /api/auth/console-login-keys` using the current user session.
-3. Client opens Web Console with `consoleLoginKey` and optional `deviceId`.
-4. Web Console consumes the key through `POST /api/auth/console-login`.
+1. Client asks local service for a new `consoleLoginKey` every time the signed-in user clicks Web Console.
+2. Local service requests `POST /api/auth/console-login-keys` using the current user session and the current `deviceId`.
+3. Server creates a short-lived, single-use `consoleLoginKey` bound to the current user session and optional device.
+4. Client opens Web Console with `consoleLoginKey` and optional `deviceId`.
+5. Web Console consumes the key through `POST /api/auth/console-login`.
+6. If the server accepts the key, Web Console persists the returned browser session and navigates to the user's default page.
+7. If the server rejects the key, Web Console must show an invalid/expired credential prompt and must not enter the authenticated UI.
 
-`consoleLoginKey` is only for opening Web Console from a signed-in client. It is not used for client browser login.
+`consoleLoginKey` is only for opening Web Console from a signed-in client. It is not used for client browser login, and the client must not reuse an old key.
 
 ## Angular Web Console Responsibilities
 
@@ -49,7 +52,7 @@ Angular keeps these concerns separated:
 Startup order:
 
 1. If `auth=login&deviceId=...` is present and browser auth already exists, complete client login immediately. This calls the server complete endpoint, and the server publishes MQTT login success to that device.
-2. Consume `consoleLoginKey` if present. This is only for opening Web Console from an already signed-in client.
+2. Consume `consoleLoginKey` if present. This is only for opening Web Console from an already signed-in client. A valid key goes to the default signed-in page; an invalid or expired key shows an illegal credential message and returns to the login screen.
 3. Restore browser auth from local storage for normal Web Console navigation.
 4. If client login completion fails, stay on the login screen and clear stale browser auth.
 
