@@ -669,6 +669,56 @@ func TestDeviceInviteRespectsTotalDeviceLimit(t *testing.T) {
 	}
 }
 
+func TestConsoleLoginKeyIsSingleUseAndUserScoped(t *testing.T) {
+	store := NewStore()
+	auth, _, err := store.RegisterUser("console@example.com", "secret", "Console")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	key, err := store.CreateConsoleLoginKey(auth.Session.Token, "mac-1", 2*time.Minute)
+	if err != nil {
+		t.Fatalf("create console login key: %v", err)
+	}
+	if key.LoginKey == "" || key.UserID != auth.User.UserID || key.DeviceID != "mac-1" || key.Status != "unused" {
+		t.Fatalf("unexpected console login key: %+v", key)
+	}
+	consumed, err := store.ConsumeConsoleLoginKey(key.LoginKey)
+	if err != nil {
+		t.Fatalf("consume console login key: %v", err)
+	}
+	if consumed.User.UserID != auth.User.UserID || consumed.Session.Token == "" || consumed.Session.UserID != auth.User.UserID {
+		t.Fatalf("unexpected console auth response: %+v", consumed)
+	}
+	if _, err := store.ConsumeConsoleLoginKey(key.LoginKey); err != errNotFound {
+		t.Fatalf("expected used console login key to be rejected, got %v", err)
+	}
+}
+
+func TestConsoleLoginKeyRejectsInvalidOrExpiredCredentials(t *testing.T) {
+	store := NewStore()
+	auth, _, err := store.RegisterUser("expired-console@example.com", "secret", "Expired")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	if _, err := store.CreateConsoleLoginKey("bad-token", "mac-1", 2*time.Minute); err != errNotFound {
+		t.Fatalf("expected invalid session token to be not found, got %v", err)
+	}
+	if _, err := store.ConsumeConsoleLoginKey("not-a-key"); err != errNotFound {
+		t.Fatalf("expected unknown console login key to be not found, got %v", err)
+	}
+	key, err := store.CreateConsoleLoginKey(auth.Session.Token, "mac-1", 2*time.Minute)
+	if err != nil {
+		t.Fatalf("create console login key: %v", err)
+	}
+	store.mu.Lock()
+	key.ExpiresAt = time.Now().Unix() - 1
+	store.consoleLoginKeys[key.LoginKey] = key
+	store.mu.Unlock()
+	if _, err := store.ConsumeConsoleLoginKey(key.LoginKey); err != errNotFound {
+		t.Fatalf("expected expired console login key to be rejected, got %v", err)
+	}
+}
+
 func stringID(v int) string {
 	if v == 0 {
 		return "0"
