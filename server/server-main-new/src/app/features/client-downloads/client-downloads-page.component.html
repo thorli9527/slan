@@ -1,0 +1,103 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>客户端发布</h2>
+        <p>上传 Mac、Windows、iOS、Linux、Android 安装包。客户 Web 登录页会展示 active 状态的最新包。</p>
+      </div>
+      <button class="ghost" type="button" (click)="vm.loadOpsData()">刷新</button>
+    </div>
+
+    <div class="form-grid two-col upload-grid">
+      <label>
+        <span>平台</span>
+        <select [(ngModel)]="vm.downloadForm.platform">
+          <option value="macos">Mac</option>
+          <option value="windows">Windows</option>
+          <option value="ios">iOS</option>
+          <option value="linux">Linux</option>
+          <option value="android">Android</option>
+        </select>
+      </label>
+      <label>
+        <span>版本</span>
+        <input [(ngModel)]="vm.downloadForm.version" placeholder="2.0.0">
+      </label>
+      <label>
+        <span>架构</span>
+        <input [(ngModel)]="vm.downloadForm.arch" placeholder="universal / x64 / arm64">
+      </label>
+      <label>
+        <span>渠道</span>
+        <select [(ngModel)]="vm.downloadForm.channel">
+          <option value="stable">stable</option>
+          <option value="beta">beta</option>
+          <option value="dev">dev</option>
+        </select>
+      </label>
+      <label>
+        <span>状态</span>
+        <select [(ngModel)]="vm.downloadForm.status">
+          <option value="active">active</option>
+          <option value="offline">offline</option>
+        </select>
+      </label>
+      <label>
+        <span>安装包</span>
+        <input type="file" (change)="vm.onClientDownloadFileSelected($event)">
+      </label>
+      <label class="span-two">
+        <span>发布说明</span>
+        <input [(ngModel)]="vm.downloadForm.releaseNotes" placeholder="修复内容或兼容说明">
+      </label>
+    </div>
+
+    <div class="modal-footer upload-actions">
+      <span class="muted">{{ vm.selectedDownloadFileName || '未选择文件' }}</span>
+      <button class="primary" type="button" (click)="vm.uploadClientDownload()">上传发布</button>
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>安装包列表</h2>
+        <p>同一平台可以保留多个历史版本，客户 Web 只展示 active 状态的最新版本。</p>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>平台</th>
+          <th>版本</th>
+          <th>渠道</th>
+          <th>文件</th>
+          <th>大小</th>
+          <th>状态</th>
+          <th>更新时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let item of vm.clientDownloads">
+          <td><strong>{{ item.platformName || item.platform }}</strong><br><code>{{ item.arch || '-' }}</code></td>
+          <td>{{ item.version || '-' }}</td>
+          <td>{{ item.channel }}</td>
+          <td><a [href]="item.downloadUrl" target="_blank" rel="noopener">{{ item.fileName }}</a></td>
+          <td>{{ vm.formatBytes(item.fileSize) }}</td>
+          <td><span class="status" [class.online]="item.status === 'active'">{{ item.status }}</span></td>
+          <td>{{ vm.formatDateTime(item.updatedAt) }}</td>
+          <td>
+            <div class="row-actions">
+              <a class="text-link" [href]="item.downloadUrl" target="_blank" rel="noopener">下载</a>
+              <button class="danger small" type="button" (click)="vm.deleteClientDownload(item)">删除</button>
+            </div>
+          </td>
+        </tr>
+        <tr *ngIf="vm.clientDownloads.length === 0">
+          <td colspan="8" class="empty-cell">暂无安装包，请先上传。</td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>

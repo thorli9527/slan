@@ -4,8 +4,6 @@
 #include <gio/gio.h>
 #include <glib.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -45,21 +43,21 @@ std::string ResolveWebConsoleUrl() {
   if (control_url.find("api.dev.staticlss.com") != std::string::npos) {
     return "http://web.dev.staticlss.com";
   }
+  if (control_url.find("api.slan.localhost") != std::string::npos ||
+      control_url.find("://slan.localhost") != std::string::npos) {
+    return "https://web.slan.localhost";
+  }
+  auto local_url = control_url;
+  const auto port_pos = local_url.find(":28080");
+  if (port_pos != std::string::npos) {
+    local_url.replace(port_pos, 6, ":24200");
+    return local_url;
+  }
   return "http://web.dev.staticlss.com";
 }
 
 bool IsUsableClientDeviceId(const std::string& device_id) {
-  if (device_id.empty()) {
-    return false;
-  }
-  std::string lower;
-  lower.reserve(device_id.size());
-  for (const unsigned char ch : device_id) {
-    lower.push_back(static_cast<char>(std::tolower(ch)));
-  }
-  return lower != "authcallbackid" && lower != "windows-plugin-login" &&
-         lower != "macos-plugin-login" && lower != "linux-plugin-login" &&
-         lower.rfind("cb-", 0) != 0;
+  return !device_id.empty();
 }
 
 std::string EscapeJsonString(const std::string& value) {
@@ -216,13 +214,12 @@ void OpenUrl(const std::string& url) {
   }
 }
 
-void OpenWebConsole(const std::string& callback_id = "",
-                    const std::string& device_id = "",
-                    const std::string& console_login_key = "") {
+void OpenWebConsole(const std::string& device_id = "",
+                    const std::string& console_login_key = "",
+                    bool browser_login = false) {
   std::string url = ResolveWebConsoleUrl();
-  if (!callback_id.empty()) {
+  if (browser_login) {
     url = AppendQueryParam(url, "auth", "login");
-    url = AppendQueryParam(url, "callbackId", callback_id);
   }
   if (!console_login_key.empty()) {
     url = AppendQueryParam(url, "consoleLoginKey", console_login_key);
@@ -230,8 +227,6 @@ void OpenWebConsole(const std::string& callback_id = "",
   if (IsUsableClientDeviceId(device_id)) {
     url = AppendQueryParam(url, "deviceId", device_id);
   }
-  url = AppendQueryParam(url, "clientPlatform", "linux");
-  url = AppendQueryParam(url, "clientName", "SLAN Client V2");
   OpenUrl(url);
 }
 
@@ -346,11 +341,13 @@ std::string ReadCommandType(FlValue* arguments) {
 void OpenAuthenticatedWebConsole() {
   if (auto response = ForwardToServiceWithAutoStart("consoleLoginKey", nullptr);
       !response.empty()) {
-    OpenWebConsole("", ExtractJsonStringField(response, "deviceId"),
-                   ExtractJsonStringField(response, "loginKey"));
+    const auto login_key = ExtractJsonStringField(response, "loginKey");
+    if (login_key.empty()) {
+      return;
+    }
+    OpenWebConsole(ExtractJsonStringField(response, "deviceId"), login_key);
     return;
   }
-  OpenWebConsole();
 }
 
 void client_core_plugin_handle_method_call(ClientCorePlugin* self,
@@ -364,8 +361,10 @@ void client_core_plugin_handle_method_call(ClientCorePlugin* self,
     if (command_type == "openWebConsole") {
       OpenAuthenticatedWebConsole();
     } else if (command_type == "loginWithBrowser") {
-      OpenWebConsole(ExtractJsonStringField(response, "authCallbackId"),
-                     ExtractJsonStringField(response, "deviceId"));
+      OpenWebConsole(
+          ExtractJsonStringField(response, "deviceId"),
+          "",
+          true);
     }
     g_autoptr(FlValue) result = fl_value_new_string(response.c_str());
     fl_method_call_respond_success(method_call, result, nullptr);

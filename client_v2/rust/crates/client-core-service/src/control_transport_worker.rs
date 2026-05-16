@@ -12,6 +12,7 @@ use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS
 use serde::Deserialize;
 
 use crate::{
+    client_message_mqtt,
     control_tasks::ControlTaskQueue,
     control_transport::{
         self, ControlTransportMessage, ControlTransportMessageKind, ControlTransportTickRequest,
@@ -43,28 +44,42 @@ pub fn spawn_control_transport_supervisor(
 ) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_secs(5));
-        let Ok(session) = load_session() else {
-            reset_worker_gate(&worker_state);
-            continue;
-        };
-        let status = control_transport::control_transport_status(&session);
-        if !status.ready {
-            reset_worker_gate(&worker_state);
-            continue;
-        }
-        let reconnect_key = reconnect_key(&session);
-        if !claim_worker(&worker_state, reconnect_key.clone(), current_timestamp_ms()) {
-            continue;
-        }
-        let runtime = Arc::clone(&runtime);
-        let task_queue = Arc::clone(&task_queue);
-        let worker_state = Arc::clone(&worker_state);
-        let state_notifier = Arc::clone(&state_notifier);
-        thread::spawn(move || {
-            let result = run_control_transport_worker(session, runtime, task_queue, state_notifier);
-            let error = result.err();
-            release_worker(&worker_state, reconnect_key, error);
-        });
+        wake_control_transport_worker(&runtime, &task_queue, &worker_state, &state_notifier);
+    });
+}
+
+pub fn wake_control_transport_worker(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    worker_state: &Arc<Mutex<ControlTransportWorkerState>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) {
+    let Ok(session) = load_session() else {
+        reset_worker_gate(worker_state);
+        return;
+    };
+    let status = control_transport::control_transport_status(&session);
+    if !status.ready {
+        log_service_error(format!(
+            "client-core-service control mqtt not ready missing={:?} deviceId={}",
+            status.missing,
+            status.device_id.as_deref().unwrap_or_default()
+        ));
+        reset_worker_gate(worker_state);
+        return;
+    }
+    let reconnect_key = reconnect_key(&session);
+    if !claim_worker(worker_state, reconnect_key.clone(), current_timestamp_ms()) {
+        return;
+    }
+    let runtime = Arc::clone(runtime);
+    let task_queue = Arc::clone(task_queue);
+    let worker_state = Arc::clone(worker_state);
+    let state_notifier = Arc::clone(state_notifier);
+    thread::spawn(move || {
+        let result = run_control_transport_worker(session, runtime, task_queue, state_notifier);
+        let error = result.err();
+        release_worker(&worker_state, reconnect_key, error);
     });
 }
 
@@ -241,9 +256,9 @@ fn ingest_downstream_publish(
         message_type,
         payload.len()
     ));
-    if try_ingest_auth_callback(payload, runtime, state_notifier)? {
+    if try_ingest_device_user_login_succeeded(payload, runtime, state_notifier)? {
         log_service_error(
-            "client-core-service consumed downstream control message as auth_callback",
+            "client-core-service consumed downstream control message as device_user_login_succeeded",
         );
         return Ok(());
     }
@@ -562,6 +577,9 @@ fn try_ingest_client_message(
         message.target_device_id.as_deref().unwrap_or_default(),
         message.body.as_deref().unwrap_or_default().len()
     ));
+    if maybe_reply_client_ping(&message) {
+        return Ok(true);
+    }
     let state = {
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
         runtime
@@ -576,6 +594,85 @@ fn try_ingest_client_message(
     };
     publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
     Ok(true)
+}
+
+fn maybe_reply_client_ping(message: &ClientMessagePayload) -> bool {
+    let Some(from_device_id) = message
+        .from_device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    let Some((ping_id, sent_at_ms)) = message
+        .body
+        .as_deref()
+        .and_then(client_message_mqtt::parse_client_ping_body)
+    else {
+        return false;
+    };
+    let Ok(session) = load_session() else {
+        log_service_error("client-core-service ignored client ping because session is missing");
+        return true;
+    };
+    let Some(local_device_id) = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        log_service_error(
+            "client-core-service ignored client ping because local device is missing",
+        );
+        return true;
+    };
+    if local_device_id == from_device_id {
+        return true;
+    }
+    let Some(network_id) = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        log_service_error(
+            "client-core-service ignored client ping because active network is missing",
+        );
+        return true;
+    };
+    let Some(mqtt) = session.mqtt.as_ref() else {
+        log_service_error(
+            "client-core-service ignored client ping because mqtt credential is missing",
+        );
+        return true;
+    };
+    let replied_at_ms = current_timestamp_ms();
+    let pong_body =
+        client_message_mqtt::build_client_pong_body(&ping_id, sent_at_ms, replied_at_ms);
+    match client_message_mqtt::publish_client_message(
+        mqtt,
+        network_id,
+        local_device_id,
+        from_device_id,
+        &pong_body,
+        Some(&serde_json::json!({
+            "kind": "client_ping_pong",
+            "pingId": ping_id,
+            "sentAtMs": sent_at_ms,
+            "repliedAtMs": replied_at_ms,
+        })),
+    ) {
+        Ok(_) => log_service_error(format!(
+            "client-core-service replied client ping pingId={} fromDeviceId={} toDeviceId={}",
+            ping_id, from_device_id, local_device_id
+        )),
+        Err(error) => log_service_error(format!(
+            "client-core-service failed to reply client ping pingId={}: {error:#}",
+            ping_id
+        )),
+    }
+    true
 }
 
 #[derive(Debug)]
@@ -726,26 +823,27 @@ fn try_ingest_network_map_response(
     Ok(true)
 }
 
-fn try_ingest_auth_callback(
+fn try_ingest_device_user_login_succeeded(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<bool, String> {
     let value: serde_json::Value =
         serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
-    if value.get("type").and_then(serde_json::Value::as_str) != Some("auth_callback") {
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("device_user_login_succeeded")
+    {
         return Ok(false);
     }
     let Some(auth_value) = value.get("payload").cloned() else {
-        return Err("auth_callback payload is missing".to_string());
+        return Err("device_user_login_succeeded payload is missing".to_string());
     };
     let auth: AuthPayload = serde_json::from_value(auth_value)
-        .map_err(|err| format!("decode auth_callback payload: {err}"))?;
+        .map_err(|err| format!("decode device_user_login_succeeded payload: {err}"))?;
     let mut runtime = runtime
         .lock()
         .map_err(|_| "client runtime mutex poisoned".to_string())?;
     let state =
-        crate::dispatch_with_side_effects(&mut runtime, ClientCommand::ApplyAuthCallback(auth));
+        crate::dispatch_with_side_effects(&mut runtime, ClientCommand::ApplyDeviceUserLogin(auth));
     if let Some(error) = state.error {
         return Err(error);
     }
@@ -879,7 +977,9 @@ fn thin_qos(qos: MqttQos) -> ThinMqttQoS {
 fn reconnect_key(session: &PersistedSession) -> String {
     let mqtt = session.mqtt.as_ref();
     format!(
-        "{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
+        session.session_kind.as_str(),
+        session.user_id.as_str(),
         session.device_id.as_deref().unwrap_or_default(),
         session.active_network_id.as_deref().unwrap_or_default(),
         mqtt.map(|value| value.client_id.as_str())

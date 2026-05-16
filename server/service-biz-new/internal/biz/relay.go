@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const relayTicketTTL = 10 * time.Minute
+const relayTicketTTL = 15 * time.Minute
 
 func (s *Store) RelayCandidates(networkID, deviceID string) ([]RelayCandidate, error) {
 	s.mu.Lock()
@@ -61,14 +61,10 @@ func (s *Store) IssueRelayTicket(networkID, srcNodeID, dstNodeID, derpClusterID 
 	if err != nil {
 		return RelayTicket{}, err
 	}
-	sessionID, err := secureTokenHex(16)
-	if err != nil {
-		return RelayTicket{}, err
-	}
 	ticket := RelayTicket{
 		TicketID:           "rt-" + ticketID,
 		NetworkID:          networkID,
-		SessionID:          "rs-" + sessionID,
+		SessionID:          relaySessionID(networkID, srcNodeID, dstNodeID),
 		SrcNodeID:          srcNodeID,
 		DstNodeID:          dstNodeID,
 		DERPClusterID:      derpClusterID,
@@ -80,6 +76,16 @@ func (s *Store) IssueRelayTicket(networkID, srcNodeID, dstNodeID, derpClusterID 
 	}
 	ticket.Signature = signRelayTicket(ticket)
 	return ticket, nil
+}
+
+func relaySessionID(networkID, srcNodeID, dstNodeID string) string {
+	a := strings.TrimSpace(srcNodeID)
+	b := strings.TrimSpace(dstNodeID)
+	if b < a {
+		a, b = b, a
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(networkID) + "|" + a + "|" + b))
+	return "rs-" + hex.EncodeToString(sum[:16])
 }
 
 func configuredRelayCandidates() []RelayCandidate {

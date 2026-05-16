@@ -33,9 +33,8 @@ SLAN_INTERNAL_WIRE_TOKEN=change-me-wire-internal-token
 
 - `POST /api/auth/register`
 - `POST /api/auth/login`
-- `POST /api/auth/device-login-callbacks`
-- `GET /api/auth/device-login-callbacks/{callbackId}`
-- `POST /api/auth/device-login-callbacks/{callbackId}/complete`
+- `POST /api/auth/device-login-devices`
+- `POST /api/auth/device-login-devices/{deviceId}/complete`
 - `GET /api/users`
 - `GET /api/users/{userId}/entitlement`
 - `PATCH /api/users/{userId}/password`

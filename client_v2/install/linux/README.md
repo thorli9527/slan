@@ -16,6 +16,12 @@ The installer writes:
 - `/etc/slan/client-v2-install.env`
 - `/etc/slan/client-v2-desktop.policy`
 
+When a downloadable package is available, `install.sh` stops and disables the
+existing `slan-client-v2.service`, kills stale `slan_client_v2` and
+`client-core-service` processes, removes the old systemd unit, clears the old
+application root, extracts the new package, and then enables/restarts the newly
+installed service.
+
 Packagers can override paths with:
 
 ```sh
@@ -49,6 +55,11 @@ The package installs:
 - `/opt/slan-client-v2/gui/slan_client_v2` for GUI builds
 - `/lib/systemd/system/slan-client-v2.service`
 - `/usr/bin/slan-client-v2-console`
+
+The `.deb` lifecycle scripts perform the same reinstall boundary: `preinst`
+stops the old UI/service processes and removes the old systemd unit before the
+new payload is unpacked, `postinst` reloads systemd and restarts the new service,
+and `prerm` stops the runtime during uninstall or replacement.
 
 The systemd service grants `CAP_NET_ADMIN` and `CAP_NET_RAW` so the Linux
 backend can create `slan0`, assign the device IP, install routes, and apply DNS

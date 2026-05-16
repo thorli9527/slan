@@ -259,16 +259,25 @@ public final class ClientCorePlugin
   private String stableDeviceId() {
     Context context = applicationContext;
     if (context == null) {
-      return "android-" + UUID.randomUUID().toString().toLowerCase();
+      return UUID.randomUUID().toString().toLowerCase();
     }
     SharedPreferences prefs = prefs();
     String existing = prefs.getString(DEVICE_ID_KEY, "");
-    if (existing != null && !existing.trim().isEmpty()) {
-      return existing;
+    if (existing != null && isUuidV4(existing.trim())) {
+      return existing.trim();
     }
-    String value = "android-" + UUID.randomUUID().toString().toLowerCase();
+    String value = UUID.randomUUID().toString().toLowerCase();
     prefs.edit().putString(DEVICE_ID_KEY, value).apply();
     return value;
+  }
+
+  private boolean isUuidV4(String value) {
+    if (value == null) {
+      return false;
+    }
+    String normalized = value.trim();
+    return normalized.matches(
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$");
   }
 
   private String stableNodeId() {

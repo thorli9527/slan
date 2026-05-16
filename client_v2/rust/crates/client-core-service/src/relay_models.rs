@@ -228,6 +228,14 @@ pub(crate) struct RelayRuntimeStats {
     #[serde(default)]
     pub(crate) last_oversized_tun_packet_size: Option<u32>,
     pub(crate) wintun_write_failures: u64,
+    #[serde(default)]
+    pub(crate) started_at_ms: u64,
+    #[serde(default)]
+    pub(crate) last_tun_packet_at_ms: Option<u64>,
+    #[serde(default)]
+    pub(crate) last_relay_packet_at_ms: Option<u64>,
+    #[serde(default)]
+    pub(crate) last_relay_keepalive_at_ms: Option<u64>,
     pub(crate) updated_at_ms: u64,
 }
 

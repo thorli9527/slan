@@ -160,6 +160,11 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 	}
 	switch msg.Kind {
 	case "ping":
+		if msg.SessionID != "" && msg.ParticipantID != "" {
+			if err := s.store.RefreshParticipant(addr, msg.SessionID, msg.ParticipantID); err != nil {
+				return err
+			}
+		}
 		return writer(addr, protocol.ServerMessage{Kind: "pong"})
 	case "attach":
 		if msg.Ticket == nil {

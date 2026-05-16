@@ -31,6 +31,42 @@ func TestRegisterUserAndDeviceJoinDefaultNetwork(t *testing.T) {
 	}
 }
 
+func TestBindDeviceSessionTransfersSamePhysicalDeviceBetweenUsers(t *testing.T) {
+	store := NewStore()
+	aliceAuth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register alice: %v", err)
+	}
+	bobAuth, _, err := store.RegisterUser("bob@example.com", "secret", "Bob")
+	if err != nil {
+		t.Fatalf("register bob: %v", err)
+	}
+	aliceDevice, aliceSession, _, err := store.BindDeviceSession(aliceAuth.Session.Token, "same-client", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	if err != nil {
+		t.Fatalf("bind alice device session: %v", err)
+	}
+	bobDevice, bobSession, _, err := store.BindDeviceSession(bobAuth.Session.Token, "same-client", "Mac", "macos", "macOS", "15.0", "", "pub-b")
+	if err != nil {
+		t.Fatalf("bind bob device session: %v", err)
+	}
+	if aliceDevice.DeviceID != bobDevice.DeviceID {
+		t.Fatalf("expected same physical device id after user switch, got alice=%s bob=%s", aliceDevice.DeviceID, bobDevice.DeviceID)
+	}
+	if aliceDevice.OwnerID != aliceAuth.User.UserID || bobDevice.OwnerID != bobAuth.User.UserID {
+		t.Fatalf("unexpected device owners: alice=%+v bob=%+v", aliceDevice, bobDevice)
+	}
+	if aliceSession.DeviceID != aliceDevice.DeviceID || bobSession.DeviceID != bobDevice.DeviceID {
+		t.Fatalf("session device ids should match returned devices: alice=%+v bob=%+v", aliceSession, bobSession)
+	}
+	devices := store.ListDevices("")
+	if len(devices) != 1 || devices[0].OwnerID != bobAuth.User.UserID {
+		t.Fatalf("expected one transferred device owned by bob, got %+v", devices)
+	}
+	if _, _, _, err := store.RenewDeviceSession(aliceSession.DeviceToken, true, 1, 1); err != errUnauthorized {
+		t.Fatalf("expected old user device session to be revoked, got %v", err)
+	}
+}
+
 func TestUpdateCustomerProfilePersistsOpsFields(t *testing.T) {
 	store := NewStore()
 	auth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
@@ -128,6 +164,9 @@ func TestNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	user := auth.User
 	deviceA, _, _ := store.RegisterDevice(user.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
 	deviceB, _, _ := store.RegisterDevice(user.UserID, "ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
+	if _, _, err := store.RenewDevice(deviceB.DeviceID, user.UserID, true, 0, 0); err != nil {
+		t.Fatalf("mark peer active: %v", err)
+	}
 	groups := store.ListSecurityGroups(network.NetworkID)
 	if len(groups) == 0 {
 		t.Fatal("expected default security group")
@@ -157,6 +196,39 @@ func TestNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	}
 	if len(config.DNSRecords) != 1 || config.DNSRecords[0].RecordID != record.RecordID {
 		t.Fatalf("unexpected dns: %+v", config.DNSRecords)
+	}
+}
+
+func TestReportDeviceRuntimeMarksPeerActiveForNetworkConfig(t *testing.T) {
+	store := NewStore()
+	auth, network, _ := store.RegisterUser("alice@example.com", "secret", "Alice")
+	deviceA, _, _ := store.RegisterDevice(auth.User.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	deviceB, _, _ := store.RegisterDevice(auth.User.UserID, "ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
+
+	config, err := store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config before runtime report: %v", err)
+	}
+	if len(config.Peers) != 0 {
+		t.Fatalf("expected inactive peer to be filtered, got %+v", config.Peers)
+	}
+
+	store.ReportDeviceRuntime(deviceB.DeviceID, true, 10, 20)
+	config, err = store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config after runtime report: %v", err)
+	}
+	if len(config.Peers) != 1 || config.Peers[0].DeviceID != deviceB.DeviceID {
+		t.Fatalf("expected active peer from runtime report, got %+v", config.Peers)
+	}
+
+	store.ReportDeviceRuntime(deviceB.DeviceID, false, 10, 20)
+	config, err = store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config after runtime disabled: %v", err)
+	}
+	if len(config.Peers) != 0 {
+		t.Fatalf("expected disabled runtime peer to be filtered, got %+v", config.Peers)
 	}
 }
 
@@ -271,6 +343,49 @@ func TestGlobalIPPoolPreGeneratesAndRefills(t *testing.T) {
 	}
 }
 
+func TestNetworkConfigRepairsDuplicateDeviceGlobalIPs(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	deviceA, _, err := store.RegisterDevice(auth.User.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	if err != nil {
+		t.Fatalf("register device a: %v", err)
+	}
+	deviceB, _, err := store.RegisterDevice(auth.User.UserID, "linux-1", "Linux", "linux", "Linux", "6.0", "", "pub-b")
+	if err != nil {
+		t.Fatalf("register device b: %v", err)
+	}
+	if _, _, err := store.RenewDevice(deviceB.DeviceID, auth.User.UserID, true, 0, 0); err != nil {
+		t.Fatalf("mark peer active: %v", err)
+	}
+
+	store.mu.Lock()
+	deviceB.GlobalIP = deviceA.GlobalIP
+	store.devices[deviceB.DeviceID] = deviceB
+	store.mu.Unlock()
+
+	config, err := store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config: %v", err)
+	}
+	if len(config.Peers) != 1 {
+		t.Fatalf("expected one peer, got %+v", config.Peers)
+	}
+	if config.GlobalIP == config.Peers[0].GlobalIP {
+		t.Fatalf("expected duplicate IP to be repaired, got self=%s peer=%s", config.GlobalIP, config.Peers[0].GlobalIP)
+	}
+	repaired := store.ListDevices(auth.User.UserID)
+	seen := map[string]string{}
+	for _, device := range repaired {
+		if existing := seen[device.GlobalIP]; existing != "" {
+			t.Fatalf("duplicate global IP after repair: ip=%s devices=%s,%s", device.GlobalIP, existing, device.DeviceID)
+		}
+		seen[device.GlobalIP] = device.DeviceID
+	}
+}
+
 func TestDeviceInviteIsSingleUseAndExpiresInThirtyMinutes(t *testing.T) {
 	store := NewStore()
 	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
@@ -327,39 +442,111 @@ func TestDeviceInviteIsSingleUseAndExpiresInThirtyMinutes(t *testing.T) {
 	}
 }
 
-func TestDeviceLoginCallbackCompletesAndReturnsAuthPayload(t *testing.T) {
+func TestDeviceBootstrapKeyCreatesDeviceSessionAndIsSingleUse(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	key, err := store.CreateDeviceBootstrapKey(auth.User.UserID, network.NetworkID, "edge box", 1800)
+	if err != nil {
+		t.Fatalf("create bootstrap key: %v", err)
+	}
+	if key.Key == "" || key.KeyHash == "" {
+		t.Fatalf("expected clear key and stored hash, got %+v", key)
+	}
+	device, session, configs, err := store.BootstrapDeviceSession(key.Key, "linux-1", "Linux", "linux", "Linux", "6.0", "", "pub")
+	if err != nil {
+		t.Fatalf("bootstrap device session: %v", err)
+	}
+	if device.OwnerID != auth.User.UserID || device.Alias != "edge box" || device.GlobalIP == "" {
+		t.Fatalf("unexpected bootstrapped device: %+v", device)
+	}
+	if session.DeviceToken == "" || session.State != "active" || session.UserID != auth.User.UserID {
+		t.Fatalf("unexpected device session: %+v", session)
+	}
+	if session.DeviceTokenExpiresAt-session.RegisteredAt != int64(deviceSessionTTL.Seconds()) {
+		t.Fatalf("expected device session ttl %s, got %+v", deviceSessionTTL, session)
+	}
+	if len(configs) == 0 || configs[0].NetworkID != network.NetworkID {
+		t.Fatalf("expected network config for bootstrap network, got %+v", configs)
+	}
+	if _, _, _, err := store.BootstrapDeviceSession(key.Key, "linux-2", "Linux", "linux", "Linux", "6.0", "", "pub"); err != errNotFound {
+		t.Fatalf("expected bootstrap key single use, got %v", err)
+	}
+	renewedDevice, renewedSession, renewedConfigs, err := store.RenewDeviceSession(session.DeviceToken, true, 10, 20)
+	if err != nil {
+		t.Fatalf("renew device session: %v", err)
+	}
+	if renewedDevice.DeviceID != device.DeviceID || renewedSession.SessionID != session.SessionID || len(renewedConfigs) == 0 {
+		t.Fatalf("unexpected renewed session: device=%+v session=%+v configs=%+v", renewedDevice, renewedSession, renewedConfigs)
+	}
+	if renewedSession.DeviceTokenExpiresAt-renewedSession.LastRenewedAt != int64(deviceSessionTTL.Seconds()) {
+		t.Fatalf("expected renewed device session ttl %s, got %+v", deviceSessionTTL, renewedSession)
+	}
+}
+
+func TestRenewUserSessionExtendsExistingToken(t *testing.T) {
 	store := NewStore()
 	auth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
 	if err != nil {
 		t.Fatalf("register user: %v", err)
 	}
-	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub")
+	store.mu.Lock()
+	session := store.sessions[auth.Session.Token]
+	session.ExpiresAt = time.Now().Unix() + 120
+	store.sessions[auth.Session.Token] = session
+	store.mu.Unlock()
+
+	renewed, err := store.RenewUserSession(auth.Session.Token)
 	if err != nil {
-		t.Fatalf("register device: %v", err)
+		t.Fatalf("renew user session: %v", err)
 	}
-	callback, err := store.CreateDeviceLoginCallback("cb-test", device.DeviceID, "macos", 10*time.Minute)
+	if renewed.Session.Token != auth.Session.Token {
+		t.Fatalf("expected renew to keep token, got old=%s new=%s", auth.Session.Token, renewed.Session.Token)
+	}
+	if renewed.Session.ExpiresAt <= session.ExpiresAt {
+		t.Fatalf("expected renewed session expiry to extend, before=%d after=%d", session.ExpiresAt, renewed.Session.ExpiresAt)
+	}
+	if renewed.Session.ExpiresAt-time.Now().Unix() > int64(userSessionTTL.Seconds()) {
+		t.Fatalf("expected renewed session ttl to be at most %s, got %+v", userSessionTTL, renewed.Session)
+	}
+}
+
+func TestDeviceLoginForDeviceRestoresBrowserSessionByEmailWithoutCallback(t *testing.T) {
+	store := NewStore()
+	alice, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
 	if err != nil {
-		t.Fatalf("create callback: %v", err)
+		t.Fatalf("register alice: %v", err)
 	}
-	if callback.Status != "pending" {
-		t.Fatalf("expected pending callback, got %+v", callback)
-	}
-	completed, err := store.CompleteDeviceLoginCallback(callback.CallbackID, auth.Session.Token, device.DeviceID, "login")
+	bob, _, err := store.RegisterUser("bob@example.com", "secret", "Bob")
 	if err != nil {
-		t.Fatalf("complete callback: %v", err)
+		t.Fatalf("register bob: %v", err)
 	}
-	if completed.Status != "completed" || completed.Payload == nil || completed.Payload.UserID != auth.User.UserID {
-		t.Fatalf("unexpected completed callback: %+v", completed)
-	}
-	status, ready, err := store.DeviceLoginCallbackStatus(callback.CallbackID)
+
+	payload, err := store.CompleteDeviceLoginForDevice("mac-1", "stale-token", "login", bob.User.UserID, alice.User.Email)
 	if err != nil {
-		t.Fatalf("callback status: %v", err)
+		t.Fatalf("complete device login: %v", err)
 	}
-	if !ready || status.Payload == nil || status.Payload.AccessToken != auth.Session.Token {
-		t.Fatalf("expected ready auth payload, ready=%v status=%+v", ready, status)
+	if payload.UserID != alice.User.UserID || payload.UserLabel != alice.User.Email {
+		t.Fatalf("expected device login restored by email without callback, got %+v", payload)
 	}
-	if _, err := store.CompleteDeviceLoginCallback(callback.CallbackID, auth.Session.Token, device.DeviceID, "login"); err != errConflict {
-		t.Fatalf("expected completed callback conflict, got %v", err)
+	if payload.DeviceID == nil || *payload.DeviceID != "mac-1" {
+		t.Fatalf("expected device id in payload, got %+v", payload)
+	}
+	device, err := store.GetDevice("mac-1")
+	if err != nil {
+		t.Fatalf("expected browser login to create missing device: %v", err)
+	}
+	if device.OwnerID != alice.User.UserID {
+		t.Fatalf("expected created device owner %s, got %s", alice.User.UserID, device.OwnerID)
+	}
+	configs, err := store.NetworkConfigsForDevice("mac-1")
+	if err != nil {
+		t.Fatalf("expected created device network config: %v", err)
+	}
+	if len(configs) == 0 {
+		t.Fatalf("expected created device to join default network")
 	}
 }
 

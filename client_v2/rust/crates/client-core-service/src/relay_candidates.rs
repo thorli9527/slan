@@ -1,5 +1,6 @@
 use std::{
     net::{ToSocketAddrs, UdpSocket},
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -11,6 +12,29 @@ use crate::{
     control_plane::{ControlEndpoint, ControlPeer},
     relay_models::{PathDiagnoseDirectCandidate, PersistedRelayCandidate, RelayCandidateSelection},
 };
+
+static RUNTIME_RELAY_CANDIDATES: OnceLock<Mutex<Vec<PersistedRelayCandidate>>> = OnceLock::new();
+
+fn runtime_store() -> &'static Mutex<Vec<PersistedRelayCandidate>> {
+    RUNTIME_RELAY_CANDIDATES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub(crate) fn replace_runtime_relay_candidates(
+    candidates: Vec<PersistedRelayCandidate>,
+) -> Vec<PersistedRelayCandidate> {
+    let candidates = sorted_persisted_relay_candidates(candidates);
+    *runtime_store()
+        .lock()
+        .expect("runtime relay candidates mutex poisoned") = candidates.clone();
+    candidates
+}
+
+pub(crate) fn runtime_relay_candidates() -> Vec<PersistedRelayCandidate> {
+    runtime_store()
+        .lock()
+        .expect("runtime relay candidates mutex poisoned")
+        .clone()
+}
 
 pub(crate) fn sorted_persisted_relay_candidates(
     mut candidates: Vec<PersistedRelayCandidate>,

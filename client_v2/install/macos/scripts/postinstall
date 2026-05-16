@@ -11,10 +11,24 @@ APP_PATH="/Applications/SLAN Client V2.app"
 APP_BIN="${APP_PATH}/Contents/MacOS/slan_client_v2"
 SERVICE_BIN="${INSTALL_DIR}/client-core-service"
 INSTALL_LOG="${LOG_DIR}/installer.log"
+SERVICE_PID="${INSTALL_DIR}/client-core-service.pid"
 
 mkdir -p "$INSTALL_DIR" "$LOG_DIR"
 chown root:wheel "$INSTALL_DIR" "$LOG_DIR"
 chmod 755 "$INSTALL_DIR" "$LOG_DIR"
+
+launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+launchctl disable "system/${LABEL}" >/dev/null 2>&1 || true
+if [ -f "$APP_PLIST" ]; then
+  CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo "")"
+  if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ]; then
+    launchctl bootout "gui/${CONSOLE_UID}/${APP_LABEL}" >/dev/null 2>&1 || true
+    launchctl disable "gui/${CONSOLE_UID}/${APP_LABEL}" >/dev/null 2>&1 || true
+  fi
+fi
+pkill -x "slan_client_v2" >/dev/null 2>&1 || true
+pkill -x "client-core-service" >/dev/null 2>&1 || true
+rm -f "$SERVICE_PID"
 
 if [ ! -x "$SERVICE_BIN" ]; then
   echo "missing service binary: $SERVICE_BIN" >&2
@@ -29,7 +43,7 @@ chown root:wheel "$SERVICE_BIN"
 chmod 755 "$SERVICE_BIN"
 chown -R root:wheel "$APP_PATH"
 
-DEVICE_ID="$("$SERVICE_BIN" --ensure-device-id)"
+DEVICE_ID="$("$SERVICE_BIN" --reset-device-id)"
 {
   echo "installedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "deviceId: $DEVICE_ID"
@@ -99,16 +113,15 @@ PLIST
 chown root:wheel "$APP_PLIST"
 chmod 644 "$APP_PLIST"
 
-launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+launchctl enable "system/${LABEL}" >/dev/null 2>&1 || true
 launchctl bootstrap system "$PLIST"
-launchctl enable "system/${LABEL}"
 launchctl kickstart -k "system/${LABEL}"
 
 CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo "")"
 if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" != "0" ]; then
   launchctl bootout "gui/${CONSOLE_UID}/${APP_LABEL}" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/${CONSOLE_UID}" "$APP_PLIST" >/dev/null 2>&1 || true
   launchctl enable "gui/${CONSOLE_UID}/${APP_LABEL}" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/${CONSOLE_UID}" "$APP_PLIST" >/dev/null 2>&1 || true
   launchctl kickstart -k "gui/${CONSOLE_UID}/${APP_LABEL}" >/dev/null 2>&1 || true
 fi
 

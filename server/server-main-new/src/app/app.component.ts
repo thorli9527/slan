@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit, ViewEncapsulation } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ClientDownloadsPageComponent } from './features/client-downloads/client-downloads-page.component';
 import { CustomersPageComponent } from './features/customers/customers-page.component';
 import { DevicesPageComponent } from './features/devices/devices-page.component';
 import { OperatorsPageComponent } from './features/operators/operators-page.component';
@@ -10,7 +11,7 @@ import { ProductsPageComponent } from './features/products/products-page.compone
 import { RelayNodesPageComponent } from './features/relay-nodes/relay-nodes-page.component';
 import { RenewalsPageComponent } from './features/renewals/renewals-page.component';
 
-type NavId = 'overview' | 'operators' | 'relayNodes' | 'customers' | 'devices' | 'products' | 'orders' | 'renewals';
+type NavId = 'overview' | 'operators' | 'relayNodes' | 'customers' | 'devices' | 'clientDownloads' | 'products' | 'orders' | 'renewals';
 
 type OperatorUser = {
   operatorId: string;
@@ -113,6 +114,23 @@ type OpsDevice = {
   updatedAt: string;
 };
 
+type ClientDownload = {
+  downloadId: string;
+  platform: 'macos' | 'windows' | 'ios' | 'linux' | 'android';
+  platformName: string;
+  version: string;
+  arch?: string;
+  channel: 'stable' | 'beta' | 'dev';
+  fileName: string;
+  fileSize: number;
+  sha256?: string;
+  downloadUrl: string;
+  releaseNotes?: string;
+  status: 'active' | 'offline';
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Renewal = {
   renewalId: string;
   customerId?: string;
@@ -154,6 +172,7 @@ type Order = {
     RelayNodesPageComponent,
     CustomersPageComponent,
     DevicesPageComponent,
+    ClientDownloadsPageComponent,
     ProductsPageComponent,
     OrdersPageComponent,
     RenewalsPageComponent,
@@ -169,6 +188,7 @@ export class AppComponent implements OnInit {
     { id: 'relayNodes', label: '中继节点', desc: 'Relay/DERP 容量管理' },
     { id: 'customers', label: '客户管理', desc: '客户资源与限流状态' },
     { id: 'devices', label: '设备管理', desc: '全局设备、在线与启用状态' },
+    { id: 'clientDownloads', label: '客户端发布', desc: '安装包上传与下载' },
     { id: 'products', label: '商品管理', desc: '客户级别、套餐商品与流量包' },
     { id: 'orders', label: '订单管理', desc: '购买、支付与开通状态' },
     { id: 'renewals', label: '续费管理', desc: '有效期和手动续费' },
@@ -219,6 +239,16 @@ export class AppComponent implements OnInit {
   customerForm: Partial<Customer> = {};
   deviceForm: Partial<OpsDevice> = {};
   renewalForm: Partial<Renewal> = {};
+  downloadForm: Partial<ClientDownload> = {
+    platform: 'macos',
+    version: '2.0.0',
+    arch: 'universal',
+    channel: 'stable',
+    status: 'active',
+    releaseNotes: '',
+  };
+  selectedDownloadFile: File | null = null;
+  selectedDownloadFileName = '';
   deviceKeyword = '';
 
   get vm(): this {
@@ -281,6 +311,7 @@ export class AppComponent implements OnInit {
   devices: OpsDevice[] = [
     { deviceId: 'mac-001', ownerId: 'user-000001', ownerEmail: 'alice@staticlss.com', name: '办公 Mac', alias: '办公 Mac', platform: 'macos', osName: 'macOS', osVersion: '15.3', globalIp: '10.0.0.1', globalName: 'mac-001.staticlss.com', status: 'active', heartbeatOnline: true, networkEnabled: true, deviceEnabled: true, rxBytesTotal: 0, txBytesTotal: 0, networkCount: 1, lastSeenAt: '2026-05-09 09:20', lastReportAt: '2026-05-09 09:20', createdAt: '2026-05-09 09:00', updatedAt: '2026-05-09 09:20' },
   ];
+  clientDownloads: ClientDownload[] = [];
 
   async login(): Promise<void> {
     this.loginMessage = '';
@@ -318,11 +349,12 @@ export class AppComponent implements OnInit {
     this.loading = true;
     this.apiMessage = '';
     try {
-      const [operators, relayNodes, customers, devices, plans, products, orders, renewals] = await Promise.all([
+      const [operators, relayNodes, customers, devices, downloads, plans, products, orders, renewals] = await Promise.all([
         this.request<{ items: OperatorUser[] }>('GET', '/api/ops/operators'),
         this.request<{ items: RelayNode[] }>('GET', '/api/ops/relay-nodes'),
         this.request<{ items: Customer[] }>('GET', '/api/ops/customers'),
         this.request<{ items: OpsDevice[] }>('GET', '/api/ops/devices'),
+        this.request<{ items: ClientDownload[] }>('GET', '/api/ops/client-downloads'),
         this.request<{ items: CustomerPlan[] }>('GET', '/api/ops/plans'),
         this.request<{ items: Product[] }>('GET', '/api/ops/products'),
         this.request<{ items: Order[] }>('GET', '/api/ops/orders'),
@@ -332,6 +364,11 @@ export class AppComponent implements OnInit {
       this.relayNodes = relayNodes.items;
       this.customers = customers.items.map((item) => ({ ...item, planExpiresAt: this.formatDate(item.planExpiresAt) }));
       this.devices = devices.items.map((item) => this.formatDevice(item));
+      this.clientDownloads = downloads.items.map((item) => ({
+        ...item,
+        createdAt: this.formatDateTime(item.createdAt),
+        updatedAt: this.formatDateTime(item.updatedAt),
+      }));
       this.plans = plans.items;
       this.products = products.items;
       this.orders = orders.items.map((item) => ({
@@ -387,7 +424,7 @@ export class AppComponent implements OnInit {
     return new Date(Number(value) * 1000).toISOString().slice(0, 10);
   }
 
-  private formatDateTime(value: string | number | undefined): string {
+  formatDateTime(value: string | number | undefined): string {
     if (!value) {
       return '-';
     }
@@ -858,6 +895,61 @@ export class AppComponent implements OnInit {
       const formatted = this.formatDevice(updated);
       this.devices = [formatted, ...this.devices.filter((item) => item.deviceId !== updated.deviceId)];
       this.closeDeviceDialog();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  onClientDownloadFileSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    this.selectedDownloadFile = file;
+    this.selectedDownloadFileName = file?.name ?? '';
+  }
+
+  async uploadClientDownload(): Promise<void> {
+    this.apiMessage = '';
+    if (!this.downloadForm.platform || !this.downloadForm.version?.trim() || !this.selectedDownloadFile) {
+      this.apiMessage = '请选择平台、填写版本并选择安装包';
+      return;
+    }
+    const body = new FormData();
+    body.set('platform', this.downloadForm.platform);
+    body.set('version', this.downloadForm.version);
+    body.set('arch', this.downloadForm.arch ?? '');
+    body.set('channel', this.downloadForm.channel ?? 'stable');
+    body.set('status', this.downloadForm.status ?? 'active');
+    body.set('releaseNotes', this.downloadForm.releaseNotes ?? '');
+    body.set('file', this.selectedDownloadFile);
+    try {
+      const token = localStorage.getItem(this.opsTokenKey);
+      const response = await fetch('/api/ops/client-downloads', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body,
+      });
+      if (!response.ok) {
+        if (response.status === 401) {
+          this.logout('登录已过期，请重新登录');
+        }
+        throw new Error(await response.text() || `HTTP ${response.status}`);
+      }
+      const item = await response.json() as ClientDownload;
+      this.clientDownloads = [
+        { ...item, createdAt: this.formatDateTime(item.createdAt), updatedAt: this.formatDateTime(item.updatedAt) },
+        ...this.clientDownloads.filter((download) => download.downloadId !== item.downloadId),
+      ];
+      this.selectedDownloadFile = null;
+      this.selectedDownloadFileName = '';
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+    }
+  }
+
+  async deleteClientDownload(item: ClientDownload): Promise<void> {
+    try {
+      await this.request('DELETE', `/api/ops/client-downloads/${encodeURIComponent(item.downloadId)}`);
+      this.clientDownloads = this.clientDownloads.filter((download) => download.downloadId !== item.downloadId);
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
     }

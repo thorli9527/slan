@@ -7,26 +7,32 @@
 
 use std::{
     ffi::CString,
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{ErrorKind, Read, Write},
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket},
     os::fd::{AsRawFd, RawFd},
+    path::PathBuf,
     process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use client_core::{
-    relay_frame::{decode_slan_relay_data_frame, encode_slan_relay_data_frame, stable_hash64},
+    icmp_echo_reply_for_request,
+    relay_frame::{
+        base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
+        stable_hash64,
+    },
     NetworkRuntimeState, PathCandidate, PathKind, PathState, PeerPathRuntime,
     PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
     RelayPeerSession, RouteSpec,
 };
+use serde::Serialize;
 
 const DEFAULT_INTERFACE_NAME: &str = "slan0";
 const DEFAULT_MTU: u32 = 1280;
@@ -34,6 +40,8 @@ const MAX_PACKET_SIZE: usize = 4096;
 const TUNSETIFF: libc::c_ulong = 0x400454ca;
 const IFF_TUN: libc::c_short = 0x0001;
 const IFF_NO_PI: libc::c_short = 0x1000;
+const RELAY_STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(10);
+const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Default)]
 pub struct LinuxPlatformNetwork;
@@ -79,8 +87,72 @@ impl Drop for TunRuntime {
 #[derive(Debug)]
 struct RelayPeer {
     session_id: String,
+    peer_node_id: String,
+    local_node_id: String,
     peer_virtual_ips: Vec<String>,
     socket: UdpSocket,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayDataPlaneStats {
+    relay_address: String,
+    relay_transport: Option<String>,
+    active_path: Option<String>,
+    requested_relay_session_count: u32,
+    relay_session_count: u32,
+    attached_peer_session_count: u32,
+    attached_transport_count: u32,
+    ticket_expires_at: Option<String>,
+    ticket_expires_in_ms: Option<i64>,
+    ticket_renew_due: bool,
+    relay_attach_failures: u64,
+    last_relay_attach_error: Option<String>,
+    peers: Vec<RelayPeerStats>,
+    relay_mtu: Option<u16>,
+    max_frame_payload: Option<u16>,
+    tun_packets_sent: u64,
+    relay_packets_received: u64,
+    relay_decode_failures: u64,
+    relay_config_hash_mismatches: u64,
+    relay_error_responses: u64,
+    last_relay_error: Option<String>,
+    relay_send_failures: u64,
+    relay_receive_failures: u64,
+    unroutable_tun_packets: u64,
+    last_unroutable_destination: Option<String>,
+    oversized_tun_packets: u64,
+    last_oversized_tun_packet_size: Option<u32>,
+    wintun_write_failures: u64,
+    started_at_ms: u64,
+    last_tun_packet_at_ms: Option<u64>,
+    last_relay_packet_at_ms: Option<u64>,
+    last_relay_keepalive_at_ms: Option<u64>,
+    updated_at_ms: u64,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayPeerStats {
+    peer_node_id: String,
+    session_id: String,
+    peer_virtual_ips: Vec<String>,
+    attached: bool,
+    attach_error: Option<String>,
+    tun_packets_sent: u64,
+    relay_packets_received: u64,
+    relay_errors: u64,
+    last_relay_error: Option<String>,
+    last_send_path: Option<String>,
+    path_downgrades: u64,
+    path_upgrades: u64,
+    last_path_change: Option<String>,
+    replayed_frames: u64,
+    config_hash_mismatches: u64,
+    last_rx_seq: u64,
+    send_failures: u64,
+    receive_failures: u64,
+    wintun_write_failures: u64,
 }
 
 fn runtime() -> &'static Mutex<LinuxRuntime> {
@@ -368,17 +440,26 @@ fn restart_data_plane(runtime: &mut LinuxRuntime) -> Result<()> {
     });
     runtime.tun = None;
     if let Some(config) = config {
-        runtime.tun = Some(start_udp_data_plane(runtime.interface_name(), config)?);
+        runtime.tun = Some(start_udp_data_plane(
+            runtime.interface_name(),
+            config,
+            runtime.virtual_ip.clone().unwrap_or_default(),
+        )?);
     }
     Ok(())
 }
 
-fn start_udp_data_plane(interface_name: &str, config: RelayDataPlaneConfig) -> Result<TunRuntime> {
+fn start_udp_data_plane(
+    interface_name: &str,
+    config: RelayDataPlaneConfig,
+    local_virtual_ip: String,
+) -> Result<TunRuntime> {
     let file = open_tun(interface_name)
         .with_context(|| format!("open Linux TUN interface {interface_name}"))?;
     let peers = attach_udp_relay_sessions(&config)?;
     let config_hash = stable_hash64(&serde_json::to_string(&config)?);
     let max_frame_payload = usize::from(config.max_frame_payload.unwrap_or(1200).clamp(512, 1400));
+    let mut stats = relay_data_plane_stats_from_config(&config, &peers);
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
     let local_node_id = config.local_node_id.clone();
@@ -387,8 +468,10 @@ fn start_udp_data_plane(interface_name: &str, config: RelayDataPlaneConfig) -> R
             file,
             peers,
             local_node_id,
+            local_virtual_ip,
             max_frame_payload,
             config_hash,
+            &mut stats,
             thread_stop,
         );
     });
@@ -442,6 +525,7 @@ impl TunIfReq {
 
 fn attach_udp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<RelayPeer>> {
     let mut peers = Vec::new();
+    let mut failures = Vec::new();
     for session in &config.sessions {
         let relay_addr = relay_udp_address_for_session(config.relay_address.as_str(), session)
             .with_context(|| format!("parse relay address {}", config.relay_address))?;
@@ -449,14 +533,26 @@ fn attach_udp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<RelayP
         socket
             .connect(relay_addr)
             .with_context(|| format!("connect Linux relay UDP socket {relay_addr}"))?;
-        attach_udp_relay_session(&socket, config.local_node_id.as_str(), session)
-            .with_context(|| format!("attach Linux relay session {}", session.session_id))?;
+        if let Err(error) =
+            attach_udp_relay_session(&socket, config.local_node_id.as_str(), session)
+        {
+            failures.push(format!("{}: {error}", session.session_id));
+            continue;
+        }
         socket.set_nonblocking(true)?;
         peers.push(RelayPeer {
             session_id: session.session_id.clone(),
+            peer_node_id: session.peer_node_id.clone(),
+            local_node_id: config.local_node_id.clone(),
             peer_virtual_ips: session.peer_virtual_ips.clone(),
             socket,
         });
+    }
+    if peers.is_empty() {
+        bail!(
+            "attach Linux relay sessions failed: {}",
+            failures.join("; ")
+        );
     }
     Ok(peers)
 }
@@ -587,18 +683,36 @@ fn run_udp_data_plane(
     mut file: File,
     peers: Vec<RelayPeer>,
     local_node_id: String,
+    local_virtual_ip: String,
     max_frame_payload: usize,
     config_hash: u64,
+    stats: &mut RelayDataPlaneStats,
     stop: Arc<AtomicBool>,
 ) {
     let mut seq = 0_u64;
     let mut tun_buffer = vec![0_u8; MAX_PACKET_SIZE];
     let mut relay_buffer = vec![0_u8; MAX_PACKET_SIZE + 512];
+    let mut last_stats_flush = Instant::now();
+    let mut last_keepalive = Instant::now()
+        .checked_sub(RELAY_KEEPALIVE_INTERVAL)
+        .unwrap_or_else(Instant::now);
+    persist_relay_stats(stats);
     while !stop.load(Ordering::SeqCst) {
+        if last_keepalive.elapsed() >= RELAY_KEEPALIVE_INTERVAL {
+            send_relay_keepalives(&peers);
+            stats.last_relay_keepalive_at_ms = Some(current_timestamp_ms());
+            last_keepalive = Instant::now();
+        }
         match file.read(&mut tun_buffer) {
             Ok(0) => thread::sleep(Duration::from_millis(10)),
             Ok(packet_len) => {
                 let packet = &tun_buffer[..packet_len];
+                if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
+                    continue;
+                }
+                if packet.first().map(|byte| byte >> 4) == Some(4) {
+                    stats.last_tun_packet_at_ms = Some(current_timestamp_ms());
+                }
                 if packet.first().map(|byte| byte >> 4) == Some(4)
                     && packet.len() <= max_frame_payload
                 {
@@ -606,9 +720,28 @@ fn run_udp_data_plane(
                         seq = seq.wrapping_add(1);
                         if let Some(frame) = encode_slan_relay_data_frame(seq, config_hash, packet)
                         {
-                            let _ = peer.socket.send(&frame);
+                            if let Some(payload) = encode_relay_forward(peer, &frame) {
+                                match peer.socket.send(&payload) {
+                                    Ok(_) => record_relay_tun_packet_sent(stats, peer),
+                                    Err(error) => {
+                                        record_relay_send_failure(stats, peer, error.to_string())
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        if let Some(destination) = ipv4_destination(packet) {
+                            if should_ignore_unroutable_destination(&destination) {
+                                continue;
+                            }
+                            stats.unroutable_tun_packets =
+                                stats.unroutable_tun_packets.saturating_add(1);
+                            stats.last_unroutable_destination = Some(destination);
                         }
                     }
+                } else if packet.first().map(|byte| byte >> 4) == Some(4) {
+                    stats.oversized_tun_packets = stats.oversized_tun_packets.saturating_add(1);
+                    stats.last_oversized_tun_packet_size = Some(packet.len() as u32);
                 }
             }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -620,32 +753,245 @@ fn run_udp_data_plane(
         for peer in &peers {
             match peer.socket.recv(&mut relay_buffer) {
                 Ok(frame_len) => {
-                    if let Some(packet) = decode_slan_relay_data_frame(&relay_buffer[..frame_len]) {
-                        let _ = file.write_all(packet);
+                    stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                    let decoded_payload = relay_packet_payload(&relay_buffer[..frame_len]);
+                    if decoded_payload.is_none()
+                        && relay_control_kind(&relay_buffer[..frame_len]).is_some()
+                    {
+                        continue;
+                    }
+                    let frame = decoded_payload
+                        .as_deref()
+                        .unwrap_or(&relay_buffer[..frame_len]);
+                    if let Some(packet) = decode_slan_relay_data_frame(frame) {
+                        if let Some(reply) =
+                            icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
+                        {
+                            seq = seq.wrapping_add(1);
+                            if let Some(frame) =
+                                encode_slan_relay_data_frame(seq, config_hash, &reply)
+                            {
+                                if let Some(payload) = encode_relay_forward(peer, &frame) {
+                                    match peer.socket.send(&payload) {
+                                        Ok(_) => record_relay_tun_packet_sent(stats, peer),
+                                        Err(error) => record_relay_send_failure(
+                                            stats,
+                                            peer,
+                                            error.to_string(),
+                                        ),
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        match file.write_all(packet) {
+                            Ok(_) => record_relay_packet_received(stats, peer),
+                            Err(_) => record_relay_write_failure(stats, peer),
+                        }
+                    } else {
+                        stats.relay_decode_failures = stats.relay_decode_failures.saturating_add(1);
                     }
                 }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {}
                 Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                Err(_) => {}
+                Err(error) => {
+                    stats.relay_receive_failures = stats.relay_receive_failures.saturating_add(1);
+                    if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
+                        peer_stats.receive_failures = peer_stats.receive_failures.saturating_add(1);
+                    }
+                    stats.last_relay_error = Some(error.to_string());
+                }
             }
         }
+        if last_stats_flush.elapsed() >= RELAY_STATS_FLUSH_INTERVAL {
+            persist_relay_stats(stats);
+            last_stats_flush = Instant::now();
+        }
     }
+    persist_relay_stats(stats);
     detach_udp_relay_sessions(&peers, local_node_id.as_str());
 }
 
-fn relay_peer_for_packet<'a>(peers: &'a [RelayPeer], packet: &[u8]) -> Option<&'a RelayPeer> {
-    if peers.is_empty() {
+fn encode_relay_forward(peer: &RelayPeer, frame: &[u8]) -> Option<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({
+        "kind": "forward",
+        "session_id": peer.session_id,
+        "participant_id": peer.local_node_id,
+        "payload": base64_encode(frame),
+    }))
+    .ok()
+}
+
+fn send_relay_keepalives(peers: &[RelayPeer]) {
+    for peer in peers {
+        let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+            "kind": "ping",
+            "session_id": peer.session_id,
+            "participant_id": peer.local_node_id,
+        })) else {
+            continue;
+        };
+        let _ = peer.socket.send(&payload);
+    }
+}
+
+fn relay_packet_payload(frame: &[u8]) -> Option<Vec<u8>> {
+    let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
+    if value.get("kind").and_then(serde_json::Value::as_str) != Some("packet") {
         return None;
     }
-    if peers.len() == 1 {
-        return Some(&peers[0]);
+    base64_decode(value.get("payload")?.as_str()?)
+}
+
+fn relay_control_kind(frame: &[u8]) -> Option<String> {
+    let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
+    match value.get("kind").and_then(serde_json::Value::as_str)? {
+        "pong" | "attached" | "forwarded" | "detached" | "error" => value
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        _ => None,
     }
+}
+
+fn relay_data_plane_stats_from_config(
+    config: &RelayDataPlaneConfig,
+    peers: &[RelayPeer],
+) -> RelayDataPlaneStats {
+    RelayDataPlaneStats {
+        relay_address: config.relay_address.clone(),
+        relay_transport: Some(config.transport.clone()),
+        active_path: Some(PathKind::RelayUdp.as_str().to_string()),
+        requested_relay_session_count: peers.len() as u32,
+        relay_session_count: peers.len() as u32,
+        attached_peer_session_count: peers.len() as u32,
+        attached_transport_count: peers.len() as u32,
+        ticket_expires_at: earliest_relay_ticket_expires_at(&config.sessions),
+        peers: peers
+            .iter()
+            .map(|peer| RelayPeerStats {
+                peer_node_id: peer.peer_node_id.clone(),
+                session_id: peer.session_id.clone(),
+                peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                attached: true,
+                ..RelayPeerStats::default()
+            })
+            .collect(),
+        relay_mtu: config.relay_mtu,
+        max_frame_payload: config.max_frame_payload,
+        started_at_ms: current_timestamp_ms(),
+        ..RelayDataPlaneStats::default()
+    }
+}
+
+fn record_relay_tun_packet_sent(stats: &mut RelayDataPlaneStats, peer: &RelayPeer) {
+    stats.tun_packets_sent = stats.tun_packets_sent.saturating_add(1);
+    if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
+        peer_stats.tun_packets_sent = peer_stats.tun_packets_sent.saturating_add(1);
+        peer_stats.last_send_path = Some(PathKind::RelayUdp.as_str().to_string());
+    }
+}
+
+fn record_relay_packet_received(stats: &mut RelayDataPlaneStats, peer: &RelayPeer) {
+    stats.relay_packets_received = stats.relay_packets_received.saturating_add(1);
+    if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
+        peer_stats.relay_packets_received = peer_stats.relay_packets_received.saturating_add(1);
+    }
+}
+
+fn record_relay_send_failure(stats: &mut RelayDataPlaneStats, peer: &RelayPeer, error: String) {
+    stats.relay_send_failures = stats.relay_send_failures.saturating_add(1);
+    stats.last_relay_error = Some(error.clone());
+    if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
+        peer_stats.send_failures = peer_stats.send_failures.saturating_add(1);
+        peer_stats.last_relay_error = Some(error);
+        peer_stats.last_send_path = Some(PathKind::RelayUdp.as_str().to_string());
+    }
+}
+
+fn record_relay_write_failure(stats: &mut RelayDataPlaneStats, peer: &RelayPeer) {
+    stats.wintun_write_failures = stats.wintun_write_failures.saturating_add(1);
+    if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
+        peer_stats.wintun_write_failures = peer_stats.wintun_write_failures.saturating_add(1);
+    }
+}
+
+fn relay_peer_stats_mut<'a>(
+    stats: &'a mut RelayDataPlaneStats,
+    peer: &RelayPeer,
+) -> Option<&'a mut RelayPeerStats> {
+    stats
+        .peers
+        .iter_mut()
+        .find(|stats| stats.session_id == peer.session_id)
+}
+
+fn persist_relay_stats(stats: &mut RelayDataPlaneStats) {
+    stats.updated_at_ms = current_timestamp_ms();
+    let path = relay_stats_file_path();
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(payload) = serde_json::to_vec_pretty(stats) else {
+        return;
+    };
+    let _ = fs::write(path, payload);
+}
+
+fn relay_stats_file_path() -> PathBuf {
+    app_data_dir()
+        .join("SLAN")
+        .join("client-v2-relay-stats.json")
+}
+
+fn app_data_dir() -> PathBuf {
+    std::env::var_os("SLAN_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/lib"))
+}
+
+fn current_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn earliest_relay_ticket_expires_at(sessions: &[RelayPeerSession]) -> Option<String> {
+    sessions
+        .iter()
+        .map(|session| session.ticket.expires_at.trim())
+        .filter(|value| !value.is_empty())
+        .min()
+        .map(str::to_string)
+}
+
+fn relay_peer_for_packet<'a>(peers: &'a [RelayPeer], packet: &[u8]) -> Option<&'a RelayPeer> {
     let destination = ipv4_destination(packet)?;
     peers.iter().find(|peer| {
         peer.peer_virtual_ips
             .iter()
             .any(|ip| normalize_virtual_ip(ip) == destination)
     })
+}
+
+fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> bool {
+    ipv4_destination(packet)
+        .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
+        .unwrap_or(false)
+}
+
+fn should_ignore_unroutable_destination(destination: &str) -> bool {
+    let mut parts = destination
+        .split('.')
+        .filter_map(|part| part.parse::<u8>().ok());
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    first >= 224 || destination == "255.255.255.255"
 }
 
 fn ipv4_destination(packet: &[u8]) -> Option<String> {

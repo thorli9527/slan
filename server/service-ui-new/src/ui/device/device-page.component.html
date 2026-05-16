@@ -6,6 +6,7 @@
         <p>我能管理或访问的设备；只有设备 owner 可以确认邀请码接入。</p>
       </div>
       <div class="table-actions">
+        <button class="ghost small" type="button" (click)="vm.openBootstrapDialog()">生成安装命令</button>
         <button class="ghost small" type="button" (click)="vm.openInviteDialog()">生成接入码</button>
       </div>
     </div>
@@ -55,6 +56,33 @@
     </table>
   </article>
 </section>
+
+<div class="modal-backdrop" *ngIf="vm.showBootstrapDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div>
+        <h2>生成安装命令</h2>
+        <p>一次性 session key 30 分钟有效，用于无用户登录设备接入当前网络。</p>
+      </div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeBootstrapDialog()">×</button>
+    </header>
+    <div class="notice danger" *ngIf="vm.bootstrapMessage">{{ vm.bootstrapMessage }}</div>
+    <div class="invite-layout" *ngIf="vm.bootstrapSessionKey">
+      <div class="qr-code" aria-label="安装命令二维码">
+        <img *ngIf="vm.bootstrapQrDataUrl" [src]="vm.bootstrapQrDataUrl" alt="安装命令二维码" />
+      </div>
+      <div class="invite-code">
+        <span>一次性 session key</span>
+        <strong>{{ vm.bootstrapSessionKey }}</strong>
+        <span>安装命令</span>
+        <code>{{ vm.bootstrapInstallCommand }}</code>
+      </div>
+    </div>
+    <footer class="modal-footer">
+      <button class="primary" type="button" (click)="vm.closeBootstrapDialog()">完成</button>
+    </footer>
+  </section>
+</div>
 
 <div class="modal-backdrop" *ngIf="vm.showInviteDialog">
   <section class="modal">

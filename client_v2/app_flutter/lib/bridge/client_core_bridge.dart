@@ -477,44 +477,48 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     }
     if (command.type == ClientCommandType.loginWithBrowser) {
       await _openWebConsoleUrl(
-        authCallbackId: state?.authCallbackId,
         deviceId: state?.deviceId,
-        clientPlatform: _desktopClientPlatform,
+        browserLogin: true,
       );
       return;
     }
     if (command.type == ClientCommandType.openWebConsole) {
-      String? consoleLoginKey;
-      try {
-        final response = await _requestLocalService('consoleLoginKey');
-        final json = ClientCoreLocalService.jsonMapFromResult(response);
-        consoleLoginKey = json?['loginKey'] as String?;
-      } on Object catch (error) {
-        ClientUiDiagnostics.unawaitedLog(
-          'bridge.openConsole.loginKeyFailed',
-          state: _state.value,
-          fields: {'message': error.toString()},
-        );
-      }
-      await _openWebConsoleUrl(
-        consoleLoginKey: consoleLoginKey,
-        deviceId: state?.deviceId ?? _state.value.deviceId,
-        clientPlatform: _desktopClientPlatform,
-      );
+      await _openWebConsoleWithLoginKey(state);
     }
   }
 
+  Future<void> _openWebConsoleWithLoginKey(ClientViewState? state) async {
+    String? consoleLoginKey;
+    String? deviceId = state?.deviceId ?? _state.value.deviceId;
+    try {
+      final response = await _requestLocalService('consoleLoginKey');
+      final json = ClientCoreLocalService.jsonMapFromResult(response);
+      consoleLoginKey = json?['loginKey'] as String?;
+      deviceId = (json?['deviceId'] as String?) ?? deviceId;
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.openConsole.loginKeyFailed',
+        state: _state.value,
+        fields: {'message': error.toString()},
+      );
+    }
+    if ((consoleLoginKey ?? '').trim().isEmpty) {
+      throw StateError('failed to create Web Console login key');
+    }
+    await _openWebConsoleUrl(
+      consoleLoginKey: consoleLoginKey,
+      deviceId: deviceId,
+    );
+  }
+
   Future<void> _openWebConsoleUrl({
-    String? authCallbackId,
     String? consoleLoginKey,
     String? deviceId,
-    required String clientPlatform,
+    bool browserLogin = false,
   }) async {
     final query = <String, String>{};
-    final callbackId = authCallbackId?.trim() ?? '';
-    if (callbackId.isNotEmpty) {
+    if (browserLogin) {
       query['auth'] = 'login';
-      query['callbackId'] = callbackId;
     }
     final loginKey = consoleLoginKey?.trim() ?? '';
     if (loginKey.isNotEmpty) {
@@ -524,8 +528,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     if (safeDeviceId.isNotEmpty) {
       query['deviceId'] = safeDeviceId;
     }
-    query['clientPlatform'] = clientPlatform;
-    query['clientName'] = 'SLAN Client V2';
     final base = Uri.parse(_resolveWebConsoleUrl());
     final url = base.replace(queryParameters: {
       ...base.queryParameters,
@@ -562,38 +564,38 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     }
     final controlBaseUrl =
         Platform.environment['SLAN_CONTROL_BASE_URL']?.trim() ?? '';
-    if (controlBaseUrl.contains('api.dev.staticlss.com')) {
-      return 'http://web.dev.staticlss.com';
+    final controlUri = Uri.tryParse(controlBaseUrl);
+    final controlHost = controlUri?.host.toLowerCase() ?? '';
+    final controlScheme =
+        (controlUri?.scheme ?? '').isEmpty ? 'http' : controlUri!.scheme;
+    if (controlHost == 'api.dev.staticlss.com') {
+      return Uri(
+        scheme: controlScheme,
+        host: 'web.dev.staticlss.com',
+      ).toString();
+    }
+    if (controlHost == 'api.slan.localhost' ||
+        controlHost == 'slan.localhost') {
+      return Uri(
+        scheme: controlScheme,
+        host: 'web.slan.localhost',
+      ).toString();
+    }
+    if (controlHost == '127.0.0.1' ||
+        controlHost == 'localhost' ||
+        controlHost == '::1' ||
+        controlUri?.port == 28080) {
+      return Uri(
+        scheme: controlScheme,
+        host: controlUri?.host ?? '127.0.0.1',
+        port: 24200,
+      ).toString();
     }
     return 'http://web.dev.staticlss.com';
   }
 
   String _usableClientDeviceId(String? deviceId) {
-    final value = deviceId?.trim() ?? '';
-    if (value.isEmpty) {
-      return '';
-    }
-    final lower = value.toLowerCase();
-    if (lower == 'authcallbackid' ||
-        lower == 'windows-plugin-login' ||
-        lower == 'macos-plugin-login' ||
-        lower.startsWith('cb-')) {
-      return '';
-    }
-    return value;
-  }
-
-  String get _desktopClientPlatform {
-    if (_isMacOS) {
-      return 'macos';
-    }
-    if (_isWindows) {
-      return 'windows';
-    }
-    if (_isLinux) {
-      return 'linux';
-    }
-    return 'desktop';
+    return deviceId?.trim() ?? '';
   }
 
   Future<void> _sendClientMessageWithFallback(
@@ -699,20 +701,32 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   Object _embeddedArguments(Object? arguments) {
     final controlBaseUrl = _effectiveControlBaseUrl;
+    final deviceId = _testDeviceId.trim().isNotEmpty
+        ? _testDeviceId.trim()
+        : _state.value.deviceId?.trim();
     if (controlBaseUrl.isEmpty) {
-      return arguments ?? <String, Object?>{};
+      if (arguments is Map) {
+        return {
+          ...arguments.cast<String, Object?>(),
+          if (deviceId?.isNotEmpty == true) 'deviceId': deviceId,
+        };
+      }
+      return {
+        if (arguments != null) 'value': arguments,
+        if (deviceId?.isNotEmpty == true) 'deviceId': deviceId,
+      };
     }
     if (arguments is Map) {
       return {
         ...arguments.cast<String, Object?>(),
         'controlBaseUrl': controlBaseUrl,
-        if (_testDeviceId.trim().isNotEmpty) 'deviceId': _testDeviceId.trim(),
+        if (deviceId?.isNotEmpty == true) 'deviceId': deviceId,
       };
     }
     return {
       'value': arguments,
       'controlBaseUrl': controlBaseUrl,
-      if (_testDeviceId.trim().isNotEmpty) 'deviceId': _testDeviceId.trim(),
+      if (deviceId?.isNotEmpty == true) 'deviceId': deviceId,
     };
   }
 
@@ -1326,7 +1340,20 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
               continue;
             }
             final revision = json['revision'];
-            if (revision is! int || revision <= _lastBusinessEventRevision) {
+            if (revision is! int) {
+              if (_usesNativeMobileControlPlane) {
+                await Future<void>.delayed(const Duration(seconds: 1));
+              }
+              continue;
+            }
+            if (revision <= _lastBusinessEventRevision) {
+              if (revision < _lastBusinessEventRevision) {
+                _lastBusinessEventRevision = revision;
+              }
+              final next = await _stateAfterBusinessEvent(json);
+              if (next != null && _staleBusinessSnapshotShouldUpdate(next)) {
+                _setStateIfChanged(next);
+              }
               if (_usesNativeMobileControlPlane) {
                 await Future<void>.delayed(const Duration(seconds: 1));
               }
@@ -1348,6 +1375,32 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         }
       }),
     );
+  }
+
+  bool _staleBusinessSnapshotShouldUpdate(ClientViewState next) {
+    final current = _state.value;
+    if (next.signedIn != current.signedIn ||
+        next.networkEnabled != current.networkEnabled ||
+        next.syncing != current.syncing ||
+        next.switchEnabled != current.switchEnabled) {
+      return true;
+    }
+    if (next.userLabel != null && next.userLabel != current.userLabel) {
+      return true;
+    }
+    if (next.deviceId != null && next.deviceId != current.deviceId) {
+      return true;
+    }
+    if (next.virtualIp != null && next.virtualIp != current.virtualIp) {
+      return true;
+    }
+    if (next.notice != null && next.notice != current.notice) {
+      return true;
+    }
+    if (next.error != null && next.error != current.error) {
+      return true;
+    }
+    return false;
   }
 
   void _startAndroidNetworkEventWatchLoop() {
@@ -1698,7 +1751,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           signedIn: incoming.signedIn,
           userLabel: incoming.userLabel,
           deviceId: incoming.deviceId,
-          authCallbackId: incoming.authCallbackId,
           networkEnabled: incoming.networkEnabled,
           virtualIp: incoming.virtualIp,
           syncing: false,
@@ -1797,15 +1849,21 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   void _setStateIfChanged(ClientViewState state) {
     final next = _localLogoutRequested
         ? ClientViewState.initial()
-        : _preserveIosPlatformNetworkState(state);
+        : _preserveMobilePlatformNetworkState(state);
     if (_state.value == next) {
       return;
     }
     _state.value = next;
   }
 
-  ClientViewState _preserveIosPlatformNetworkState(ClientViewState incoming) {
-    if (!_isIos || !_state.value.networkEnabled || incoming.networkEnabled) {
+  ClientViewState _preserveMobilePlatformNetworkState(ClientViewState incoming) {
+    final nativeMobileTunnel = _isIos || _isAndroid;
+    if (!nativeMobileTunnel ||
+        !_state.value.networkEnabled ||
+        incoming.networkEnabled) {
+      return incoming;
+    }
+    if (!incoming.signedIn) {
       return incoming;
     }
     if (incoming.error != null && incoming.error!.trim().isNotEmpty) {

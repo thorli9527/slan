@@ -119,6 +119,8 @@ func (s *Store) Attach(addr *net.UDPAddr, participantID string, ticket protocol.
 			ExpiresAt:    ticket.ExpiresAt,
 		}
 		s.sessions[ticket.SessionID] = session
+	} else if session.ExpiresAt.IsZero() || session.ExpiresAt.Before(ticket.ExpiresAt) {
+		session.ExpiresAt = ticket.ExpiresAt
 	}
 	session.Participants[participantID] = cloneAddr(addr)
 	s.sources[sourceKey] = sourceBinding{
@@ -277,6 +279,34 @@ func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []
 		}
 	}
 	return nil, "", ErrPeerNotAttached
+}
+
+func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID string) error {
+	if addr == nil || sessionID == "" || participantID == "" {
+		return ErrParticipantNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if _, ok := session.Participants[participantID]; !ok {
+		return ErrParticipantNotFound
+	}
+	for sourceKey, binding := range s.sources {
+		if binding.SessionID == sessionID && binding.ParticipantID == participantID {
+			delete(s.sources, sourceKey)
+		}
+	}
+	session.Participants[participantID] = cloneAddr(addr)
+	s.sources[addr.String()] = sourceBinding{
+		SessionID:     sessionID,
+		ParticipantID: participantID,
+	}
+	return nil
 }
 
 func (s *Store) Detach(addr *net.UDPAddr, sessionID, participantID string) error {

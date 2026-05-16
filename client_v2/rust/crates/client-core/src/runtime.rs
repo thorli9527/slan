@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use anyhow::Result;
 
 use crate::{
@@ -33,17 +31,23 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         self.state.clone()
     }
 
+    pub fn request_browser_login(&mut self, device_id: Option<String>) -> ClientViewState {
+        self.state.error = None;
+        self.state.device_id = device_id;
+        self.state.notice = Some("loginBrowserRequested".to_string());
+        self.state.clone()
+    }
+
     pub fn dispatch(&mut self, command: ClientCommand) -> Result<ClientViewState> {
         self.state.error = None;
         match command {
             ClientCommand::LoginWithBrowser => {
-                self.state.auth_callback_id = Some(format!("cb-{}", current_timestamp_ms()));
                 self.state.notice = Some("loginBrowserRequested".to_string());
             }
             ClientCommand::LoginWithPassword(_) => {
                 self.state.notice = Some("passwordLoginRequested".to_string());
             }
-            ClientCommand::ApplyAuthCallback(payload) => {
+            ClientCommand::ApplyDeviceUserLogin(payload) => {
                 self.state.signed_in = true;
                 self.state.user_label = Some(payload.user_label);
                 self.state.device_id = payload.device_id;
@@ -51,7 +55,6 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                     .virtual_ip
                     .filter(|value| !value.trim().is_empty())
                     .or(self.state.virtual_ip.take());
-                self.state.auth_callback_id = None;
                 self.state.notice = Some("signedIn".to_string());
             }
             ClientCommand::EnableNetwork => {
@@ -186,11 +189,4 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         }
         result
     }
-}
-
-fn current_timestamp_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
 }

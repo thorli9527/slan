@@ -19,18 +19,20 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const String _clientPingPrefix = 'SLAN_PING:';
+  static const String _clientPongPrefix = 'SLAN_PONG:';
+
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _messageTargetController =
-      TextEditingController();
-  final TextEditingController _messageBodyController = TextEditingController();
+  final TextEditingController _pingTargetController = TextEditingController();
   final TextEditingController _serverBaseUrlController =
       TextEditingController();
   String? _lastDiagnosticsSnapshot;
   String? _lastShownError;
+  String? _lastPingResult;
   String? _serverBaseUrl;
   bool _lastSignedIn = false;
-  bool _messageSending = false;
+  bool _pinging = false;
 
   @override
   void initState() {
@@ -46,8 +48,7 @@ class _HomePageState extends State<HomePage> {
     widget.bridge.state.removeListener(_logStateChange);
     _emailController.dispose();
     _passwordController.dispose();
-    _messageTargetController.dispose();
-    _messageBodyController.dispose();
+    _pingTargetController.dispose();
     _serverBaseUrlController.dispose();
     super.dispose();
   }
@@ -73,11 +74,11 @@ class _HomePageState extends State<HomePage> {
                         _buildSignedInHeader(state: state),
                         _buildAndroidAuthorizationPanel(),
                         const SizedBox(height: 14),
-                        _ClientMessageComposer(
-                          targetController: _messageTargetController,
-                          bodyController: _messageBodyController,
-                          syncing: state.syncing || _messageSending,
-                          onSend: _sendClientMessage,
+                        _ClientPingTool(
+                          targetController: _pingTargetController,
+                          syncing: state.syncing || _pinging,
+                          resultText: _lastPingResult,
+                          onPing: _pingClient,
                         ),
                         const SizedBox(height: 14),
                         _SignedInActions(
@@ -262,48 +263,113 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _sendClientMessage() async {
-    if (_messageSending) {
+  Future<void> _pingClient() async {
+    if (_pinging) {
       return;
     }
-    final targetDeviceId = _messageTargetController.text.trim();
-    final body = _messageBodyController.text.trim();
-    if (targetDeviceId.isEmpty || body.isEmpty) {
+    final targetDeviceId = _pingTargetController.text.trim();
+    if (targetDeviceId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入目标设备和消息')),
+        const SnackBar(content: Text('请输入目标设备 ID')),
       );
       return;
     }
-    setState(() => _messageSending = true);
+    final sentAtMs = DateTime.now().millisecondsSinceEpoch;
+    final pingId = 'ping-$sentAtMs';
+    setState(() {
+      _pinging = true;
+      _lastPingResult = '等待响应...';
+    });
     try {
       await widget.bridge.dispatch(
         ClientCommand(
           ClientCommandType.sendClientMessage,
           {
             'targetDeviceId': targetDeviceId,
-            'body': body,
+            'body': '$_clientPingPrefix$pingId:$sentAtMs',
+            'metadata': {
+              'kind': 'client_ping',
+              'pingId': pingId,
+              'sentAtMs': sentAtMs,
+            },
           },
         ),
+      );
+      final rttMs = await _waitForClientPong(
+        targetDeviceId: targetDeviceId,
+        pingId: pingId,
+        sentAtMs: sentAtMs,
       );
       if (!mounted) {
         return;
       }
-      _messageBodyController.clear();
+      setState(() {
+        _lastPingResult = '来自 $targetDeviceId：${rttMs}ms';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('消息已发送')),
+        SnackBar(content: Text('Ping 成功：${rttMs}ms')),
       );
     } catch (error) {
       if (!mounted) {
         return;
       }
+      setState(() {
+        _lastPingResult = '失败：$error';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('消息发送失败：$error')),
+        SnackBar(content: Text('Ping 失败：$error')),
       );
     } finally {
       if (mounted) {
-        setState(() => _messageSending = false);
+        setState(() => _pinging = false);
       }
     }
+  }
+
+  Future<int> _waitForClientPong({
+    required String targetDeviceId,
+    required String pingId,
+    required int sentAtMs,
+  }) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (DateTime.now().isBefore(deadline)) {
+      final state = widget.bridge.state.value;
+      final body = state.lastClientMessageBody?.trim() ?? '';
+      final from = state.lastClientMessageFromDeviceId?.trim() ?? '';
+      final rtt = _pongRttMs(
+        body: body,
+        fromDeviceId: from,
+        expectedDeviceId: targetDeviceId,
+        expectedPingId: pingId,
+        sentAtMs: sentAtMs,
+      );
+      if (rtt != null) {
+        return rtt;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    throw TimeoutException('等待 Ping 响应超时');
+  }
+
+  int? _pongRttMs({
+    required String body,
+    required String fromDeviceId,
+    required String expectedDeviceId,
+    required String expectedPingId,
+    required int sentAtMs,
+  }) {
+    if (fromDeviceId != expectedDeviceId ||
+        !body.startsWith(_clientPongPrefix)) {
+      return null;
+    }
+    final parts = body.substring(_clientPongPrefix.length).split(':');
+    if (parts.length < 2 ||
+        parts[0] != expectedPingId ||
+        int.tryParse(parts[1]) != sentAtMs) {
+      return null;
+    }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    return nowMs >= sentAtMs ? nowMs - sentAtMs : 0;
   }
 
   Future<void> _startBridge() async {
@@ -542,30 +608,9 @@ class _SignedInStatusPanel extends StatelessWidget {
               value: _deviceIdText(state)!,
             ),
           ],
-          if (_lastClientMessageText(state) != null) ...[
-            const SizedBox(height: 7),
-            _CompactInfoRow(
-              valueKey: const Key('last-client-message-value'),
-              icon: Icons.chat_bubble_outline_rounded,
-              label: '消息',
-              value: _lastClientMessageText(state)!,
-            ),
-          ],
         ],
       ),
     );
-  }
-
-  String? _lastClientMessageText(ClientViewState state) {
-    final body = state.lastClientMessageBody?.trim();
-    final from = state.lastClientMessageFromDeviceId?.trim();
-    if ((body == null || body.isEmpty) && (from == null || from.isEmpty)) {
-      return null;
-    }
-    if (from != null && from.isNotEmpty && body != null && body.isNotEmpty) {
-      return '$from: $body';
-    }
-    return body?.isNotEmpty == true ? body : from;
   }
 
   String? _deviceIdText(ClientViewState state) {
@@ -975,18 +1020,18 @@ class _SignedInActions extends StatelessWidget {
   }
 }
 
-class _ClientMessageComposer extends StatelessWidget {
-  const _ClientMessageComposer({
+class _ClientPingTool extends StatelessWidget {
+  const _ClientPingTool({
     required this.targetController,
-    required this.bodyController,
     required this.syncing,
-    required this.onSend,
+    required this.resultText,
+    required this.onPing,
   });
 
   final TextEditingController targetController;
-  final TextEditingController bodyController;
   final bool syncing;
-  final Future<void> Function() onSend;
+  final String? resultText;
+  final Future<void> Function() onPing;
 
   @override
   Widget build(BuildContext context) {
@@ -1005,13 +1050,13 @@ class _ClientMessageComposer extends StatelessWidget {
           Row(
             children: [
               Icon(
-                Icons.send_to_mobile_rounded,
+                Icons.network_ping_rounded,
                 size: 18,
                 color: theme.colorScheme.primary,
               ),
               const SizedBox(width: 8),
               Text(
-                '发送消息',
+                'Ping 工具',
                 style: theme.textTheme.labelLarge?.copyWith(
                   fontWeight: FontWeight.w900,
                 ),
@@ -1020,10 +1065,15 @@ class _ClientMessageComposer extends StatelessWidget {
           ),
           const SizedBox(height: 9),
           TextField(
-            key: const Key('client-message-target'),
+            key: const Key('client-ping-target'),
             controller: targetController,
             enabled: !syncing,
-            textInputAction: TextInputAction.next,
+            textInputAction: TextInputAction.send,
+            onSubmitted: (_) {
+              if (!syncing) {
+                unawaited(onPing());
+              }
+            },
             decoration: const InputDecoration(
               labelText: '目标设备 ID',
               border: OutlineInputBorder(),
@@ -1032,25 +1082,18 @@ class _ClientMessageComposer extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: TextField(
-                  key: const Key('client-message-body'),
-                  controller: bodyController,
-                  enabled: !syncing,
-                  minLines: 1,
-                  maxLines: 2,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) {
-                    if (!syncing) {
-                      unawaited(onSend());
-                    }
-                  },
-                  decoration: const InputDecoration(
-                    labelText: '消息',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                child: Text(
+                  resultText?.trim().isNotEmpty == true
+                      ? resultText!.trim()
+                      : '输入目标设备 ID 后检测连通性',
+                  key: const Key('client-ping-result'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
@@ -1058,10 +1101,10 @@ class _ClientMessageComposer extends StatelessWidget {
               SizedBox(
                 height: 42,
                 child: FilledButton.icon(
-                  key: const Key('client-message-send'),
-                  onPressed: syncing ? null : () => unawaited(onSend()),
-                  icon: const Icon(Icons.send_rounded, size: 17),
-                  label: Text(syncing ? '发送中' : '发送'),
+                  key: const Key('client-ping-send'),
+                  onPressed: syncing ? null : () => unawaited(onPing()),
+                  icon: const Icon(Icons.network_ping_rounded, size: 17),
+                  label: Text(syncing ? '检测中' : 'Ping'),
                 ),
               ),
             ],

@@ -3,9 +3,9 @@ use std::{
     io::{ErrorKind, Read, Write},
     net::TcpStream,
     path::PathBuf,
-    process::Command,
     sync::{Mutex, OnceLock},
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context, Result};
@@ -33,7 +33,7 @@ pub fn set_control_base_url_override(value: &str) {
 #[allow(dead_code)]
 pub fn set_client_device_id_override(value: &str) {
     let value = value.trim();
-    if !is_usable_device_id(value) {
+    if !is_uuid_like(value) {
         return;
     }
     let mutex = CLIENT_DEVICE_ID_OVERRIDE.get_or_init(|| Mutex::new(None));
@@ -92,6 +92,36 @@ pub struct MqttCredential {
     pub expires_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConsoleLoginKeyResponse {
+    login_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeviceSessionResponse {
+    pub device: ControlDevice,
+    pub device_session: DeviceSessionPayload,
+    #[serde(default)]
+    pub mqtt: Option<MqttCredential>,
+    #[serde(default)]
+    pub network_configs: Option<ItemsResponse<DeviceNetworkConfig>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeviceSessionPayload {
+    pub session_id: String,
+    pub device_id: String,
+    pub user_id: Option<String>,
+    pub device_token: String,
+    pub device_token_expires_at: i64,
+    #[serde(default)]
+    pub device_refresh_token: Option<String>,
+    pub active_network_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NetworkActivationPlan {
     pub virtual_ip: String,
@@ -148,8 +178,8 @@ pub struct ControlNode {
 }
 
 #[derive(Debug, Deserialize)]
-struct ItemsResponse<T> {
-    items: Vec<T>,
+pub(crate) struct ItemsResponse<T> {
+    pub(crate) items: Vec<T>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -258,20 +288,10 @@ pub struct DeviceDnsRecord {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CallbackStatusResponse {
-    ready: bool,
-    payload: Option<CallbackPayload>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CallbackPayload {
-    access_token: String,
-    refresh_token: Option<String>,
-    user_id: String,
-    user_label: Option<String>,
-    device_id: Option<String>,
-    expires_in: Option<u64>,
+pub(crate) struct DeviceLoginPrepareResponse {
+    pub device_id: String,
+    #[serde(default)]
+    pub mqtt: Option<MqttCredential>,
 }
 
 #[derive(Debug, Serialize)]
@@ -339,6 +359,7 @@ impl ControlPlaneClient {
         user_id: &str,
         preferred_device_id: Option<&str>,
     ) -> Result<ControlDevice> {
+        let _ = user_id;
         let stable_device_id = stable_device_id(preferred_device_id)?;
         let device_id = stable_device_id.as_str();
         if let Ok(devices) = self.list_devices_for_user(access_token, user_id) {
@@ -387,27 +408,20 @@ impl ControlPlaneClient {
             .collect())
     }
 
-    pub fn callback_payload(&self, callback_id: &str) -> Result<Option<AuthPayload>> {
-        let path = format!("/api/auth/device-login-callbacks/{callback_id}");
-        let response = self.request_json_without_auth("GET", &path, None)?;
-        let payload: CallbackStatusResponse =
-            serde_json::from_value(response).context("decode callback status")?;
-        if !payload.ready {
-            return Ok(None);
-        }
-        let Some(payload) = payload.payload else {
-            return Ok(None);
-        };
-        Ok(Some(AuthPayload {
-            access_token: payload.access_token,
-            refresh_token: payload.refresh_token,
-            user_id: payload.user_id,
-            user_label: payload.user_label.unwrap_or_default(),
-            device_id: payload.device_id,
-            active_network_id: None,
-            virtual_ip: None,
-            expires_in: payload.expires_in,
-        }))
+    pub fn prepare_device_login(
+        &self,
+        device_id: &str,
+        platform: &str,
+    ) -> Result<DeviceLoginPrepareResponse> {
+        let response = self.request_json_without_auth(
+            "POST",
+            "/api/auth/device-login-devices",
+            Some(serde_json::json!({
+                "deviceId": device_id.trim(),
+                "platform": platform.trim(),
+            })),
+        )?;
+        serde_json::from_value(response).context("decode device login prepare")
     }
 
     pub fn login_with_password(&self, email: &str, password: &str) -> Result<AuthPayload> {
@@ -423,6 +437,95 @@ impl ControlPlaneClient {
         })?;
         let response = self.request_json_without_auth("POST", "/api/auth/login", Some(body))?;
         parse_login_response(&response, email, &device_id)
+    }
+
+    pub fn bootstrap_device_session(&self, session_key: &str) -> Result<DeviceSessionResponse> {
+        let session_key = session_key.trim();
+        if session_key.is_empty() {
+            bail!("SLAN_SESSION_KEY is empty");
+        }
+        let device_id = local_stable_device_id()?;
+        let mut body = register_device_body(&device_id)?;
+        if let Some(object) = body.as_object_mut() {
+            object.insert(
+                "sessionKey".to_string(),
+                Value::String(session_key.to_string()),
+            );
+        }
+        let response =
+            self.request_json_without_auth("POST", "/api/device/session/bootstrap", Some(body))?;
+        let mut payload: DeviceSessionResponse =
+            serde_json::from_value(response).context("decode device session bootstrap")?;
+        normalize_control_device(&mut payload.device);
+        Ok(payload)
+    }
+
+    pub fn renew_device_session(
+        &self,
+        device_token: &str,
+        network_enabled: bool,
+        rx_bytes_total: u64,
+        tx_bytes_total: u64,
+    ) -> Result<DeviceSessionResponse> {
+        let body = serde_json::json!({
+            "networkEnabled": network_enabled,
+            "rxBytesTotal": rx_bytes_total,
+            "txBytesTotal": tx_bytes_total,
+        });
+        let response = self.request_json(
+            "POST",
+            "/api/device/session/renew",
+            device_token,
+            Some(body),
+        )?;
+        let mut payload: DeviceSessionResponse =
+            serde_json::from_value(response).context("decode device session renew")?;
+        normalize_control_device(&mut payload.device);
+        Ok(payload)
+    }
+
+    pub fn bind_device_session(
+        &self,
+        access_token: &str,
+        device_id: &str,
+    ) -> Result<DeviceSessionResponse> {
+        let mut body = register_device_body(device_id)?;
+        if let Some(object) = body.as_object_mut() {
+            object.insert(
+                "deviceId".to_string(),
+                Value::String(device_id.trim().to_string()),
+            );
+        }
+        let response =
+            self.request_json("POST", "/api/device/session/bind", access_token, Some(body))?;
+        let mut payload: DeviceSessionResponse =
+            serde_json::from_value(response).context("decode device session bind")?;
+        normalize_control_device(&mut payload.device);
+        Ok(payload)
+    }
+
+    pub fn logout_sessions(&self, access_token: &str, device_token: Option<&str>) -> Result<()> {
+        let body = serde_json::json!({
+            "deviceToken": device_token.unwrap_or_default(),
+        });
+        let _ = self.request_json("POST", "/api/auth/logout", access_token, Some(body))?;
+        Ok(())
+    }
+
+    pub fn renew_user_session(
+        &self,
+        access_token: &str,
+        device_id: Option<&str>,
+        user_label: &str,
+    ) -> Result<AuthPayload> {
+        let response = self.request_json(
+            "POST",
+            "/api/auth/renew",
+            access_token,
+            Some(serde_json::json!({})),
+        )?;
+        let fallback_device_id = device_id.unwrap_or_default();
+        parse_login_response(&response, user_label, fallback_device_id)
     }
 
     pub fn active_network_id(&self, access_token: &str) -> Result<Option<String>> {
@@ -555,8 +658,17 @@ impl ControlPlaneClient {
         access_token: &str,
         device_id: Option<&str>,
     ) -> Result<Option<String>> {
-        let _ = (access_token, device_id);
-        Ok(None)
+        let response = self.request_json(
+            "POST",
+            "/api/auth/console-login-keys",
+            access_token,
+            Some(serde_json::json!({
+                "deviceId": device_id.unwrap_or_default(),
+            })),
+        )?;
+        let payload: ConsoleLoginKeyResponse =
+            serde_json::from_value(response).context("decode console login key")?;
+        Ok(Some(payload.login_key))
     }
 
     fn register_device_for_user(
@@ -674,7 +786,7 @@ fn parse_login_response(response: &Value, email: &str, device_id: &str) -> Resul
             refresh_token: optional_string(session, "token"),
             user_id: required_string(user, "userId")?,
             user_label: optional_string(user, "email").unwrap_or_else(|| email.to_string()),
-            device_id: Some(device_id.to_string()),
+            device_id: non_empty_string(device_id),
             active_network_id: login_active_network_id(response),
             virtual_ip: None,
             expires_in: login_expires_in(session),
@@ -685,7 +797,7 @@ fn parse_login_response(response: &Value, email: &str, device_id: &str) -> Resul
         refresh_token: optional_string(response, "refreshToken"),
         user_id: required_string(response, "userId")?,
         user_label: optional_string(response, "email").unwrap_or_else(|| email.to_string()),
-        device_id: optional_string(response, "deviceId").or_else(|| Some(device_id.to_string())),
+        device_id: optional_string(response, "deviceId").or_else(|| non_empty_string(device_id)),
         active_network_id: login_active_network_id(response),
         virtual_ip: optional_string(response, "virtualIp"),
         expires_in: response.get("expiresIn").and_then(Value::as_u64),
@@ -851,6 +963,19 @@ fn optional_string(response: &Value, field: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn non_empty_string(value: &str) -> Option<String> {
+    let normalized = value
+        .trim()
+        .trim_matches(char::from(0))
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    (!normalized.is_empty()).then_some(normalized)
+}
+
 fn extract_dns_servers(response: &Value) -> Vec<String> {
     response
         .pointer("/networkMap/dns/servers")
@@ -991,6 +1116,27 @@ impl HttpEndpoint {
         access_token: &str,
         body: &[u8],
     ) -> Result<Vec<u8>> {
+        let mut last_error = None;
+        for attempt in 1..=3 {
+            match self.request_once(method, path, access_token, body) {
+                Ok(response) => return Ok(response),
+                Err(error) if transient_control_request_error(&error) && attempt < 3 => {
+                    last_error = Some(error);
+                    thread::sleep(Duration::from_millis(120 * attempt));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("control request failed")))
+    }
+
+    fn request_once(
+        &self,
+        method: &str,
+        path: &str,
+        access_token: &str,
+        body: &[u8],
+    ) -> Result<Vec<u8>> {
         let mut stream = TcpStream::connect((self.host.as_str(), self.port))
             .with_context(|| format!("connect control plane {}:{}", self.host, self.port))?;
         stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
@@ -1024,9 +1170,22 @@ impl HttpEndpoint {
     }
 }
 
+fn transient_control_request_error(error: &anyhow::Error) -> bool {
+    let message = format!("{error:#}").to_ascii_lowercase();
+    message.contains("connect control plane")
+        || message.contains("read control response")
+        || message.contains("try again")
+        || message.contains("would block")
+        || message.contains("timed out")
+        || message.contains("connection reset")
+        || message.contains("connection refused")
+        || message.contains("software caused connection abort")
+}
+
 fn read_control_response(stream: &mut TcpStream) -> Result<Vec<u8>> {
     let mut response = Vec::new();
     let mut buffer = [0_u8; 8192];
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match stream.read(&mut buffer) {
             Ok(0) => return Ok(response),
@@ -1038,6 +1197,14 @@ fn read_control_response(stream: &mut TcpStream) -> Result<Vec<u8>> {
                     && looks_like_complete_http_response(&response) =>
             {
                 return Ok(response);
+            }
+            Err(error)
+                if error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut =>
+            {
+                if Instant::now() >= deadline {
+                    return Err(error).context("read control socket timed out");
+                }
+                thread::sleep(Duration::from_millis(25));
             }
             Err(error) => return Err(error).context("read control socket"),
         }
@@ -1132,6 +1299,13 @@ fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>> {
 
 fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
     let path = state_dir().join("client-v2-device-id.txt");
+    stable_device_id_at_path(&path, preferred_device_id)
+}
+
+fn stable_device_id_at_path(
+    path: &std::path::Path,
+    preferred_device_id: Option<&str>,
+) -> Result<String> {
     if let Some(value) = env_device_id_override() {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -1139,26 +1313,20 @@ fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
         fs::write(&path, &value).with_context(|| format!("write {}", path.display()))?;
         return Ok(value);
     }
-    let deterministic = deterministic_device_id();
     if let Ok(value) = fs::read_to_string(&path) {
         let value = value.trim();
-        if deterministic.as_deref().ok() == Some(value) && is_usable_device_id(value) {
+        if is_uuid_like(value) {
             return Ok(value.to_string());
         }
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    let created = deterministic
-        .ok()
-        .filter(|value| is_usable_device_id(value))
-        .or_else(|| {
-            preferred_device_id
-                .map(str::trim)
-                .filter(|value| is_usable_device_id(value))
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| deterministic_device_id_from_anchor(&fallback_device_anchor()));
+    let created = preferred_device_id
+        .map(str::trim)
+        .filter(|value| is_uuid_like(value))
+        .map(str::to_string)
+        .unwrap_or_else(uuid_v4_device_id);
     fs::write(&path, &created).with_context(|| format!("write {}", path.display()))?;
     Ok(created)
 }
@@ -1167,118 +1335,121 @@ pub fn local_stable_device_id() -> Result<String> {
     stable_device_id(None)
 }
 
+pub fn reset_local_device_id() -> Result<String> {
+    let path = state_dir().join("client-v2-device-id.txt");
+    reset_device_id_at_path(&path)
+}
+
+fn reset_device_id_at_path(path: &std::path::Path) -> Result<String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let created = uuid_v4_device_id();
+    fs::write(&path, &created).with_context(|| format!("write {}", path.display()))?;
+    Ok(created)
+}
+
 fn env_device_id_override() -> Option<String> {
     if let Some(value) = CLIENT_DEVICE_ID_OVERRIDE
         .get()
         .and_then(|mutex| mutex.lock().ok().and_then(|value| value.clone()))
-        .filter(|value| is_usable_device_id(value))
+        .filter(|value| is_uuid_like(value))
     {
         return Some(value);
     }
     env::var("SLAN_CLIENT_DEVICE_ID")
         .ok()
         .map(|value| value.trim().to_string())
-        .filter(|value| is_usable_device_id(value))
+        .filter(|value| is_uuid_like(value))
 }
 
-fn deterministic_device_id() -> Result<String> {
-    let anchor = machine_anchor().unwrap_or_else(fallback_device_anchor);
-    Ok(deterministic_device_id_from_anchor(&anchor))
-}
-
-fn deterministic_device_id_from_anchor(anchor: &str) -> String {
-    let normalized = anchor.trim().to_ascii_lowercase();
-    format!("{:016x}", fnv1a64(normalized.as_bytes()))
-}
-
-fn machine_anchor() -> Option<String> {
-    if cfg!(target_os = "windows") {
-        return windows_machine_guid();
+fn uuid_v4_device_id() -> String {
+    #[cfg(windows)]
+    if let Some(value) = windows_uuid_v4_string() {
+        return value;
     }
-    if cfg!(target_os = "macos") {
-        return macos_platform_uuid();
+    if let Some(bytes) = os_random_bytes() {
+        return format_uuid_v4(bytes);
     }
-    linux_machine_id()
+    fallback_uuid_v4_device_id()
 }
 
-fn windows_machine_guid() -> Option<String> {
-    let output = Command::new("reg.exe")
+fn os_random_bytes() -> Option<[u8; 16]> {
+    let mut bytes = [0_u8; 16];
+    let mut file = fs::File::open("/dev/urandom").ok()?;
+    file.read_exact(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+#[cfg(windows)]
+fn windows_uuid_v4_string() -> Option<String> {
+    let output = std::process::Command::new("powershell.exe")
         .args([
-            "query",
-            r"HKLM\SOFTWARE\Microsoft\Cryptography",
-            "/v",
-            "MachineGuid",
+            "-NoProfile",
+            "-Command",
+            "[guid]::NewGuid().ToString().ToLowerInvariant()",
         ])
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines()
-        .find_map(|line| {
-            let parts: Vec<_> = line.split_whitespace().collect();
-            if parts.len() >= 3 && parts[0].eq_ignore_ascii_case("MachineGuid") {
-                return Some(parts[2..].join(""));
-            }
-            None
-        })
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| format!("windows:{value}"))
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    is_uuid_like(&value).then_some(value)
 }
 
-fn macos_platform_uuid() -> Option<String> {
-    let output = Command::new("ioreg")
-        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+fn is_uuid_like(value: &str) -> bool {
+    let parts = value.split('-').collect::<Vec<_>>();
+    parts.iter().map(|part| part.len()).collect::<Vec<_>>() == vec![8, 4, 4, 4, 12]
+        && parts
+            .iter()
+            .all(|part| part.chars().all(|ch| ch.is_ascii_hexdigit()))
+        && parts[2].starts_with('4')
+        && matches!(
+            parts[3].chars().next(),
+            Some('8' | '9' | 'a' | 'b' | 'A' | 'B')
+        )
+}
+
+fn fallback_uuid_v4_device_id() -> String {
+    let seed = format!(
+        "{}:{}:{}:{}:{:?}",
+        platform_name(),
+        device_name(),
+        std::process::id(),
+        current_timestamp_seconds(),
+        std::time::SystemTime::now()
+    );
+    let mut bytes = [0_u8; 16];
+    for (index, byte) in seed.as_bytes().iter().enumerate() {
+        bytes[index % 16] ^= byte.wrapping_add(index as u8);
+        bytes[(index * 7) % 16] = bytes[(index * 7) % 16].wrapping_mul(31).wrapping_add(*byte);
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines()
-        .find_map(|line| {
-            let (_, value) = line.split_once("IOPlatformUUID")?;
-            value
-                .split('"')
-                .nth(1)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        })
-        .map(|value| format!("macos:{value}"))
+    format_uuid_v4(bytes)
 }
 
-fn linux_machine_id() -> Option<String> {
-    ["/etc/machine-id", "/var/lib/dbus/machine-id"]
-        .iter()
-        .find_map(|path| fs::read_to_string(path).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("linux:{value}"))
-}
-
-fn fallback_device_anchor() -> String {
-    format!("{}:{}", platform_name(), device_name())
-}
-
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
-fn is_usable_device_id(device_id: &str) -> bool {
-    let value = device_id.trim();
-    if value.is_empty() {
-        return false;
-    }
-    let lower = value.to_ascii_lowercase();
-    !matches!(lower.as_str(), "authcallbackid" | "windows-plugin-login")
-        && !lower.starts_with("cb-")
+fn format_uuid_v4(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    )
 }
 
 fn state_dir() -> PathBuf {
@@ -1347,16 +1518,23 @@ mod tests {
         io::{Read, Write},
         net::TcpListener,
         path::PathBuf,
+        sync::{Mutex, OnceLock},
         thread,
     };
 
     use serde_json::Value;
 
-    use super::{decode_control_json, ControlPlaneClient};
+    use super::{decode_control_json, stable_device_id_at_path, ControlPlaneClient};
+
+    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[test]
     fn password_login_posts_stable_device_id() {
-        let device_id = "android-login-device-1";
+        let _guard = TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("test env mutex poisoned");
+        let device_id = "11111111-1111-4111-8111-111111111111";
         let state_dir = unique_test_state_dir("password-login-device-id");
         fs::create_dir_all(&state_dir).expect("create state dir");
         env::set_var("SLAN_CLIENT_DEVICE_ID", device_id);
@@ -1411,6 +1589,54 @@ mod tests {
         )
         .expect("decode first json value");
         assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
+    }
+
+    #[test]
+    fn device_id_is_uuid_v4_and_persisted() {
+        let _guard = TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("test env mutex poisoned");
+        env::remove_var("SLAN_CLIENT_DEVICE_ID");
+
+        let first_state_dir = unique_test_state_dir("uuid-device-id-first");
+        let first_path = first_state_dir.join("client-v2-device-id.txt");
+        let first = stable_device_id_at_path(&first_path, None).expect("create first device id");
+        let first_again =
+            stable_device_id_at_path(&first_path, None).expect("reuse first device id");
+        assert_eq!(first, first_again);
+        assert_uuid_v4(&first);
+        assert_eq!(
+            fs::read_to_string(&first_path)
+                .expect("read persisted first device id")
+                .trim(),
+            first
+        );
+
+        let second_state_dir = unique_test_state_dir("uuid-device-id-second");
+        let second_path = second_state_dir.join("client-v2-device-id.txt");
+        let second = stable_device_id_at_path(&second_path, None).expect("create second device id");
+        assert_ne!(first, second);
+        assert_uuid_v4(&second);
+
+        let _ = fs::remove_dir_all(first_state_dir);
+        let _ = fs::remove_dir_all(second_state_dir);
+    }
+
+    fn assert_uuid_v4(value: &str) {
+        let parts = value.split('-').collect::<Vec<_>>();
+        assert_eq!(
+            parts.iter().map(|part| part.len()).collect::<Vec<_>>(),
+            vec![8, 4, 4, 4, 12]
+        );
+        assert!(parts
+            .iter()
+            .all(|part| part.chars().all(|ch| ch.is_ascii_hexdigit())));
+        assert!(parts[2].starts_with('4'));
+        assert!(matches!(
+            parts[3].chars().next(),
+            Some('8' | '9' | 'a' | 'b' | 'A' | 'B')
+        ));
     }
 
     fn read_http_request(stream: &mut std::net::TcpStream) -> String {

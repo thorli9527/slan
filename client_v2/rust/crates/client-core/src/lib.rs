@@ -13,7 +13,8 @@ pub use command::{
 };
 pub use error::{ClientCoreError, ClientCoreResult};
 pub use packet::{
-    ipv4_destination, ipv4_source, normalize_virtual_ip, relay_peer_index_for_packet,
+    icmp_echo_reply_for_request, ipv4_destination, ipv4_source, normalize_virtual_ip,
+    relay_peer_index_for_packet,
 };
 pub use path::{
     mark_path_ready_for_node, mark_path_ready_for_nodes, mark_peer_path_probe_success,

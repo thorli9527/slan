@@ -40,7 +40,7 @@ const RELAY_DATA_PLANE_FAILURE_THRESHOLD: u32 = 20;
 const PATH_SEND_FAILURES_BEFORE_DOWNGRADE: u32 = 3;
 const DIRECT_UDP_PROBE_PACKET: &[u8] = b"slan-direct-udp-probe-v1";
 const DIRECT_UDP_PONG_PACKET: &[u8] = b"slan-direct-udp-pong-v1";
-const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
+const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 
 type WintunAdapterHandle = *mut c_void;
 type WintunCreateAdapterFunc =

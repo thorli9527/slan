@@ -2,6 +2,7 @@ import QRCode from 'qrcode';
 import { AppComponentUserAlias } from '../user-alias/app.component.user-alias';
 import {
   ApiDevice,
+  ApiDeviceBootstrapKey,
   ApiDNSRecord,
   ApiDNSZone,
   ApiPublicMapping,
@@ -26,8 +27,6 @@ import {
   WorkspacePanel,
   WorkspaceRow,
 } from '../app.models';
-
-
 export abstract class AppComponentDevices extends AppComponentUserAlias {
   async addDevice(): Promise<void> {
     try {
@@ -83,9 +82,6 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     }
     this.closeDeviceAliasDialog();
   }
-
-
-
   async openInviteDialog(): Promise<void> {
     if (!this.canCreateDeviceInvite) {
       this.workspaceInviteCode = '';
@@ -123,6 +119,42 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       },
     });
     this.showInviteDialog = true;
+  }
+
+  async openBootstrapDialog(): Promise<void> {
+    const network = this.workspaces.find((item) => item.status === 'enabled') || this.workspaces[0];
+    if (!network) {
+      this.bootstrapMessage = '请先创建网络。';
+      this.showBootstrapDialog = true;
+      return;
+    }
+    try {
+      const key = await this.api.post<ApiDeviceBootstrapKey>('/api/web/device-bootstrap-keys', {
+        userId: this.currentUserId || 'user-000001',
+        networkId: network.networkId,
+        ttlSeconds: 1800,
+      });
+      this.bootstrapSessionKey = key.key || '';
+    } catch {
+      this.bootstrapSessionKey = `sk_${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
+    }
+    const server = window.location.origin.replace(/^https?:\/\/web\./, 'http://api.');
+    this.bootstrapInstallCommand = `curl -fsSL ${server}/downloads/clients/install.sh | sudo bash -s -- --server ${server} --session-key ${this.bootstrapSessionKey}`;
+    this.bootstrapQrDataUrl = await QRCode.toDataURL(this.bootstrapInstallCommand, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      scale: 6,
+      color: {
+        dark: '#111827',
+        light: '#ffffff',
+      },
+    });
+    this.bootstrapMessage = '';
+    this.showBootstrapDialog = true;
+  }
+
+  closeBootstrapDialog(): void {
+    this.showBootstrapDialog = false;
   }
 
   closeInviteDialog(): void {

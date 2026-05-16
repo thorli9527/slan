@@ -74,9 +74,9 @@ Control tasks and MQTT:
 Browser login:
 
 - `loginWithBrowser` is forwarded to `client-core-service` first.
-- The service creates an `authCallbackId` in `ClientViewState`.
-- The Windows plugin opens Web Console with `auth=login`, `callbackId`, and `deviceId`.
-- The service polls `/auth/callback-status/{callbackId}` and applies the callback payload itself.
+- The service prepares MQTT credentials for the local `deviceId`.
+- The Windows plugin opens Web Console with `auth=login` and `deviceId`; it does not pass a callback id.
+- Web Console completes login by asking the server to publish the auth payload to that device over MQTT.
 - After callback is ready, service registers or resolves the current device and stores the assigned IP.
 
 UI lifetime:

@@ -18,6 +18,7 @@ import {
 } from './app.seed-data';
 import {
   ApiDevice,
+  ClientDownload,
   ApiDNSRecord,
   ApiDNSZone,
   ApiPublicMapping,
@@ -51,14 +52,26 @@ export abstract class AppComponentState {
   readonly securityRuleTemplates: SecurityRuleTemplate[] = SECURITY_RULE_TEMPLATES;
   readonly navGroups = NAV_GROUPS;
   readonly publicMappingsEnabled = false;
+  readonly downloadPlatforms = [
+    { platform: 'macos', label: 'Mac', hint: 'macOS 13 及以上' },
+    { platform: 'windows', label: 'Windows', hint: 'Windows 10/11 x64' },
+    { platform: 'ios', label: 'iOS', hint: 'iPhone / iPad' },
+    { platform: 'linux', label: 'Linux', hint: 'x64 / arm64' },
+    { platform: 'android', label: 'Android', hint: 'Android 10 及以上' },
+  ];
 
   constructor(protected readonly api: AppApiClient) {}
+
+  protected async loadClientDownloads(): Promise<void> {}
+  protected notifyStateChanged(): void {}
 
   mode: 'login' | 'register' | 'home' = 'login';
   active = 'overview';
   currentUser = '';
   currentUserId = '';
   currentUserShortCode = '';
+  currentSessionToken = '';
+  authMessage = '';
   deviceQuota: ApiDeviceQuota | null = null;
 
   authEmail = 'alice@staticlss.com';
@@ -89,10 +102,15 @@ export abstract class AppComponentState {
   workspaceRouteMode: 'list' | 'detail' = 'list';
   showWorkspaceDialog = false;
   workspaceDialogMode: 'create' | 'edit' = 'create';
-  showInviteDialog = false;
-  workspaceInviteCode = '';
-  inviteQrDataUrl = '';
-  showJoinDialog = false;
+	  showInviteDialog = false;
+	  workspaceInviteCode = '';
+	  inviteQrDataUrl = '';
+	  showBootstrapDialog = false;
+	  bootstrapSessionKey = '';
+	  bootstrapQrDataUrl = '';
+	  bootstrapInstallCommand = '';
+	  bootstrapMessage = '';
+	  showJoinDialog = false;
   joinInviteCode = '';
   joinInviteMessage = '';
   showDeviceExposureDialog = false;
@@ -181,6 +199,7 @@ export abstract class AppComponentState {
   securityGroups: SecurityGroupRow[] = [];
   deviceExposures: DeviceExposureRow[] = INITIAL_DEVICE_EXPOSURES.map((item) => ({ ...item }));
   workspaceDeviceInvites: WorkspaceDeviceInviteRow[] = INITIAL_WORKSPACE_DEVICE_INVITES.map((item) => ({ ...item }));
+  clientDownloads: ClientDownload[] = [];
 
   get activeNav(): NavItem {
     return this.navGroups.flatMap((group) => group.items).find((item) => item.id === this.active) ?? this.navGroups[0].items[0];
@@ -247,6 +266,26 @@ export abstract class AppComponentState {
 
   get currentUserDevices(): DeviceRow[] {
     return this.devices;
+  }
+
+  latestClientDownload(platform: string): ClientDownload | null {
+    return this.clientDownloads.find((item) => item.platform === platform && item.status === 'active') ?? null;
+  }
+
+  formatDownloadSize(bytes: number): string {
+    if (!bytes) {
+      return '-';
+    }
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    }
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    }
+    if (bytes >= 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${bytes} B`;
   }
 
   get currentPlanName(): string {

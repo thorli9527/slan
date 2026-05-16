@@ -188,12 +188,7 @@ pub fn control_transport_status(session: &PersistedSession) -> ControlTransportS
     let mut missing = Vec::new();
     let mqtt_credential_ready = mqtt_credential_ready(session.mqtt.as_ref(), &mut missing);
     let control_session_ready =
-        required_field(session.device_id.as_deref(), "deviceId", &mut missing)
-            && required_field(
-                session.active_network_id.as_deref(),
-                "activeNetworkId",
-                &mut missing,
-            );
+        required_field(session.device_id.as_deref(), "deviceId", &mut missing);
     ControlTransportStatus {
         mqtt_credential_ready,
         control_session_ready,
@@ -994,11 +989,33 @@ fn transport_ack_message_id(task_id: &str) -> String {
 }
 
 const CONTROL_ACK_MESSAGE_ID_PREFIX: &str = "control-ack-";
-const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
+const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prelogin_session_is_ready_for_downstream_device_user_login_succeeded() {
+        let mut session = PersistedSession::prelogin(
+            "dev-1",
+            Some(MqttCredential {
+                broker_url: "mqtt://127.0.0.1:1883".to_string(),
+                client_id: "client-1".to_string(),
+                username: "user".to_string(),
+                password: "pass".to_string(),
+                topic_prefix: "slan/devices/dev-1".to_string(),
+                expires_at: None,
+            }),
+        );
+        session.active_network_id = None;
+
+        let status = control_transport_status(&session);
+
+        assert!(status.ready);
+        assert!(status.control_session_ready);
+        assert_eq!(status.missing, Vec::<String>::new());
+    }
 
     #[test]
     fn device_disabled_envelope_targets_self_as_disable_task() {

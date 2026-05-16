@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:slan_client_v2/app/slan_client_v2_app.dart';
+import 'package:slan_client_v2/bridge/client_commands.dart';
 import 'package:slan_client_v2/bridge/client_core_bridge.dart';
 
 void main() {
@@ -123,7 +124,7 @@ void main() {
     }
     expect(find.text(email), findsOneWidget);
     expect(find.byKey(const Key('network-switch')), findsOneWidget);
-    expect(find.byKey(const Key('client-message-target')), findsOneWidget);
+    expect(find.byKey(const Key('client-ping-target')), findsOneWidget);
     expect(find.byKey(const Key('client-device-id-value')), findsOneWidget);
     final currentDeviceId = tester
         .widget<Text>(find.byKey(const Key('client-device-id-value')))
@@ -150,6 +151,11 @@ void main() {
         await tester.pumpUntilNetworkDisabledOrFailed(
           timeout: const Duration(seconds: 20),
         );
+      }
+      final authorizationButton = find.text('授权');
+      if (tester.any(authorizationButton)) {
+        await tester.tap(authorizationButton);
+        await tester.pump(const Duration(seconds: 3));
       }
       if (tester.networkIpText() == null) {
         await tester.tap(find.byKey(const Key('network-switch')));
@@ -217,9 +223,14 @@ void main() {
         fail(
             'SLAN_TEST_SEND_TARGET_DEVICE_ID and SLAN_TEST_SEND_BODY must be set together');
       }
-      await tester.sendClientMessage(
-        targetDeviceId: sendTargetDeviceId.trim(),
-        body: sendBody.trim(),
+      await bridge.dispatch(
+        ClientCommand(
+          ClientCommandType.sendClientMessage,
+          {
+            'targetDeviceId': sendTargetDeviceId.trim(),
+            'body': sendBody.trim(),
+          },
+        ),
       );
     }
 
@@ -235,6 +246,7 @@ void main() {
         timeout: const Duration(seconds: 15),
       );
       await tester.pumpUntilClientMessage(
+        bridge,
         fromDeviceId: expectMessageFromDeviceId.trim(),
         body: expectMessageBody.trim(),
         timeout: const Duration(seconds: 45),
@@ -427,59 +439,26 @@ extension on WidgetTester {
     return ipText;
   }
 
-  Future<void> sendClientMessage({
-    required String targetDeviceId,
-    required String body,
-  }) async {
-    await enterText(
-        find.byKey(const Key('client-message-target')), targetDeviceId);
-    await enterText(find.byKey(const Key('client-message-body')), body);
-    await tap(find.byKey(const Key('client-message-send')));
-    await pumpUntilMessageSentOrFailed(timeout: const Duration(seconds: 12));
-  }
-
-  Future<void> pumpUntilMessageSentOrFailed({
-    required Duration timeout,
-  }) async {
-    final sent = find.text('消息已发送');
-    final failed = find.textContaining('消息发送失败');
-    final end = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(end)) {
-      await pump(const Duration(milliseconds: 250));
-      if (any(sent)) {
-        return;
-      }
-      if (any(failed)) {
-        final texts = widgetList<Text>(find.byType(Text))
-            .map((widget) => widget.data)
-            .whereType<String>()
-            .toList();
-        fail('message send failed UI text: ${texts.join(' | ')}');
-      }
-    }
-    fail('message send did not complete before timeout');
-  }
-
-  Future<void> pumpUntilClientMessage({
+  Future<void> pumpUntilClientMessage(
+    ClientCoreBridge bridge, {
     required String fromDeviceId,
     required String body,
     required Duration timeout,
   }) async {
-    final expectedText = '$fromDeviceId: $body';
-    final expected = find.text(expectedText);
     final end = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(end)) {
       await pump(const Duration(milliseconds: 500));
-      if (any(expected)) {
+      final state = bridge.state.value;
+      if (state.lastClientMessageFromDeviceId == fromDeviceId &&
+          state.lastClientMessageBody == body) {
         return;
       }
     }
-    final texts = widgetList<Text>(find.byType(Text))
-        .map((widget) => widget.data)
-        .whereType<String>()
-        .toList();
     fail(
-        'client message not received: expected="$expectedText" visible=${texts.join(' | ')}');
+      'client message not received: expected="$fromDeviceId: $body" '
+      'state="${bridge.state.value.lastClientMessageFromDeviceId}: '
+      '${bridge.state.value.lastClientMessageBody}"',
+    );
   }
 
   Future<void> pumpUntilMqttConnected(

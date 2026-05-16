@@ -12,7 +12,6 @@
 #include <flutter/plugin_registrar_windows.h>
 #include <flutter/standard_method_codec.h>
 
-#include <cctype>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -29,16 +28,7 @@ constexpr char kDefaultServiceHost[] = "127.0.0.1:46392";
 constexpr wchar_t kWindowsServiceName[] = L"SLANClientV2Service";
 
 bool IsUsableClientDeviceId(const std::string& device_id) {
-  if (device_id.empty()) {
-    return false;
-  }
-  std::string lower;
-  lower.reserve(device_id.size());
-  for (const unsigned char ch : device_id) {
-    lower.push_back(static_cast<char>(std::tolower(ch)));
-  }
-  return lower != "authcallbackid" && lower != "windows-plugin-login" &&
-         lower != "macos-plugin-login" && lower.rfind("cb-", 0) != 0;
+  return !device_id.empty();
 }
 
 std::string EscapeJsonString(const std::string& value) {
@@ -183,6 +173,16 @@ std::string ResolveWebConsoleUrl() {
       if (value->find("api.dev.staticlss.com") != std::string::npos) {
         return "http://web.dev.staticlss.com";
       }
+      if (value->find("api.slan.localhost") != std::string::npos ||
+          value->find("://slan.localhost") != std::string::npos) {
+        return "https://web.slan.localhost";
+      }
+      auto local_url = *value;
+      const auto port_pos = local_url.find(":28080");
+      if (port_pos != std::string::npos) {
+        local_url.replace(port_pos, 6, ":24200");
+        return local_url;
+      }
     }
   }
   return "http://web.dev.staticlss.com";
@@ -232,13 +232,12 @@ std::string AppendQueryParam(
 }
 
 void OpenWebConsole(
-    const std::string& callback_id = "",
     const std::string& device_id = "",
-    const std::string& console_login_key = "") {
+    const std::string& console_login_key = "",
+    bool browser_login = false) {
   std::string url = ResolveWebConsoleUrl();
-  if (!callback_id.empty()) {
+  if (browser_login) {
     url = AppendQueryParam(url, "auth", "login");
-    url = AppendQueryParam(url, "callbackId", callback_id);
   }
   if (!console_login_key.empty()) {
     url = AppendQueryParam(url, "consoleLoginKey", console_login_key);
@@ -248,7 +247,6 @@ void OpenWebConsole(
       url = AppendQueryParam(url, "deviceId", device_id);
     }
   }
-  url = AppendQueryParam(url, "clientPlatform", "windows");
   const std::wstring wide_url = Utf8ToWide(url);
   ShellExecuteW(nullptr, L"open", wide_url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
@@ -435,13 +433,15 @@ std::optional<std::string> ForwardToServiceWithAutoStart(
 
 void OpenAuthenticatedWebConsole() {
   if (const auto login_key_response = ForwardToServiceWithAutoStart("consoleLoginKey", nullptr)) {
+    const auto login_key = ExtractJsonStringField(*login_key_response, "loginKey");
+    if (login_key.empty()) {
+      return;
+    }
     OpenWebConsole(
-        "",
         ExtractJsonStringField(*login_key_response, "deviceId"),
-        ExtractJsonStringField(*login_key_response, "loginKey"));
+        login_key);
     return;
   }
-  OpenWebConsole();
 }
 
 std::string ReadCommandType(const flutter::EncodableValue* arguments) {
@@ -494,8 +494,9 @@ void ClientCorePlugin::HandleMethodCall(
       OpenAuthenticatedWebConsole();
     } else if (command_type == "loginWithBrowser") {
       OpenWebConsole(
-          ExtractJsonStringField(*service_response, "authCallbackId"),
-          ExtractJsonStringField(*service_response, "deviceId"));
+          ExtractJsonStringField(*service_response, "deviceId"),
+          "",
+          true);
     }
     result->Success(flutter::EncodableValue(*service_response));
     return;

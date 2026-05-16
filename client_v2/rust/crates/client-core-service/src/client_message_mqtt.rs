@@ -4,6 +4,9 @@ use serde_json::Value;
 
 use crate::{control_plane::MqttCredential, session_store::current_timestamp_ms};
 
+pub(crate) const CLIENT_PING_BODY_PREFIX: &str = "SLAN_PING:";
+pub(crate) const CLIENT_PONG_BODY_PREFIX: &str = "SLAN_PONG:";
+
 pub(crate) fn publish_client_message(
     mqtt: &MqttCredential,
     network_id: &str,
@@ -61,4 +64,20 @@ pub(crate) fn publish_client_message(
         "qos": 2,
         "topic": topic,
     }))
+}
+
+pub(crate) fn parse_client_ping_body(body: &str) -> Option<(String, u64)> {
+    let value = body.trim();
+    let rest = value.strip_prefix(CLIENT_PING_BODY_PREFIX)?;
+    let mut parts = rest.split(':');
+    let ping_id = parts.next()?.trim();
+    let sent_at_ms = parts.next()?.trim().parse::<u64>().ok()?;
+    if ping_id.is_empty() {
+        return None;
+    }
+    Some((ping_id.to_string(), sent_at_ms))
+}
+
+pub(crate) fn build_client_pong_body(ping_id: &str, sent_at_ms: u64, replied_at_ms: u64) -> String {
+    format!("{CLIENT_PONG_BODY_PREFIX}{ping_id}:{sent_at_ms}:{replied_at_ms}")
 }

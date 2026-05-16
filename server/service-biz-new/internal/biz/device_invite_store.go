@@ -15,26 +15,29 @@ import (
 )
 
 const deviceInviteRedisPrefix = "slan:device_invite:"
-const authCallbackRedisPrefix = "slan:auth_callback:"
+const deviceBootstrapKeyRedisPrefix = "slan:device_bootstrap:"
 
 type deviceInviteStore interface {
 	Save(invite DeviceInvite, ttl time.Duration) error
 	Consume(inviteCode string) (DeviceInvite, error)
 }
 
-type authCallbackStore interface {
-	SaveCallback(callback DeviceLoginCallback, ttl time.Duration, onlyIfAbsent bool) error
-	LoadCallback(callbackID string) (DeviceLoginCallback, error)
+type deviceBootstrapKeyStore interface {
+	SaveBootstrapKey(key DeviceBootstrapKey, ttl time.Duration) error
+	ConsumeBootstrapKey(keyHash string) (DeviceBootstrapKey, error)
 }
 
 type memoryDeviceInviteStore struct {
-	mu        sync.Mutex
-	invites   map[string]DeviceInvite
-	callbacks map[string]DeviceLoginCallback
+	mu            sync.Mutex
+	invites       map[string]DeviceInvite
+	bootstrapKeys map[string]DeviceBootstrapKey
 }
 
 func newMemoryDeviceInviteStore() *memoryDeviceInviteStore {
-	return &memoryDeviceInviteStore{invites: make(map[string]DeviceInvite), callbacks: make(map[string]DeviceLoginCallback)}
+	return &memoryDeviceInviteStore{
+		invites:       make(map[string]DeviceInvite),
+		bootstrapKeys: make(map[string]DeviceBootstrapKey),
+	}
 }
 
 func (s *memoryDeviceInviteStore) Save(invite DeviceInvite, ttl time.Duration) error {
@@ -56,29 +59,28 @@ func (s *memoryDeviceInviteStore) Consume(inviteCode string) (DeviceInvite, erro
 	return invite, nil
 }
 
-func (s *memoryDeviceInviteStore) SaveCallback(callback DeviceLoginCallback, ttl time.Duration, onlyIfAbsent bool) error {
+func (s *memoryDeviceInviteStore) SaveBootstrapKey(key DeviceBootstrapKey, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if onlyIfAbsent {
-		if _, ok := s.callbacks[callback.CallbackID]; ok {
-			return errConflict
-		}
+	if key.ExpiresAt <= 0 {
+		key.ExpiresAt = time.Now().Add(ttl).Unix()
 	}
-	if callback.ExpiresAt <= 0 {
-		callback.ExpiresAt = time.Now().Add(ttl).Unix()
+	if _, ok := s.bootstrapKeys[key.KeyHash]; ok {
+		return errConflict
 	}
-	s.callbacks[callback.CallbackID] = callback
+	s.bootstrapKeys[key.KeyHash] = key
 	return nil
 }
 
-func (s *memoryDeviceInviteStore) LoadCallback(callbackID string) (DeviceLoginCallback, error) {
+func (s *memoryDeviceInviteStore) ConsumeBootstrapKey(keyHash string) (DeviceBootstrapKey, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	callback, ok := s.callbacks[callbackID]
-	if !ok || callback.ExpiresAt < time.Now().Unix() {
-		return DeviceLoginCallback{}, errNotFound
+	key, ok := s.bootstrapKeys[keyHash]
+	if !ok || key.Status != "unused" || key.ExpiresAt < time.Now().Unix() || key.RevokedAt > 0 {
+		return DeviceBootstrapKey{}, errNotFound
 	}
-	return callback, nil
+	delete(s.bootstrapKeys, keyHash)
+	return key, nil
 }
 
 type redisDeviceInviteStore struct {
@@ -142,20 +144,16 @@ func (s *redisDeviceInviteStore) Consume(inviteCode string) (DeviceInvite, error
 	return invite, nil
 }
 
-func (s *redisDeviceInviteStore) SaveCallback(callback DeviceLoginCallback, ttl time.Duration, onlyIfAbsent bool) error {
-	payload, err := json.Marshal(callback)
+func (s *redisDeviceInviteStore) SaveBootstrapKey(key DeviceBootstrapKey, ttl time.Duration) error {
+	payload, err := json.Marshal(key)
 	if err != nil {
 		return err
 	}
 	ttlSeconds := int(ttl.Seconds())
 	if ttlSeconds <= 0 {
-		ttlSeconds = 600
+		ttlSeconds = 1800
 	}
-	args := []string{"SET", authCallbackRedisPrefix + callback.CallbackID, string(payload), "EX", strconv.Itoa(ttlSeconds)}
-	if onlyIfAbsent {
-		args = append(args, "NX")
-	}
-	resp, err := s.command(context.Background(), args...)
+	resp, err := s.command(context.Background(), "SET", deviceBootstrapKeyRedisPrefix+key.KeyHash, string(payload), "EX", strconv.Itoa(ttlSeconds), "NX")
 	if err != nil {
 		return err
 	}
@@ -165,22 +163,22 @@ func (s *redisDeviceInviteStore) SaveCallback(callback DeviceLoginCallback, ttl 
 	return errConflict
 }
 
-func (s *redisDeviceInviteStore) LoadCallback(callbackID string) (DeviceLoginCallback, error) {
-	resp, err := s.command(context.Background(), "GET", authCallbackRedisPrefix+callbackID)
+func (s *redisDeviceInviteStore) ConsumeBootstrapKey(keyHash string) (DeviceBootstrapKey, error) {
+	resp, err := s.command(context.Background(), "GETDEL", deviceBootstrapKeyRedisPrefix+keyHash)
 	if err != nil {
-		return DeviceLoginCallback{}, err
+		return DeviceBootstrapKey{}, err
 	}
 	if resp.nil {
-		return DeviceLoginCallback{}, errNotFound
+		return DeviceBootstrapKey{}, errNotFound
 	}
-	var callback DeviceLoginCallback
-	if err := json.Unmarshal([]byte(resp.bulk), &callback); err != nil {
-		return DeviceLoginCallback{}, err
+	var key DeviceBootstrapKey
+	if err := json.Unmarshal([]byte(resp.bulk), &key); err != nil {
+		return DeviceBootstrapKey{}, err
 	}
-	if callback.ExpiresAt < time.Now().Unix() {
-		return DeviceLoginCallback{}, errNotFound
+	if key.Status != "unused" || key.ExpiresAt < time.Now().Unix() || key.RevokedAt > 0 {
+		return DeviceBootstrapKey{}, errNotFound
 	}
-	return callback, nil
+	return key, nil
 }
 
 type redisResp struct {

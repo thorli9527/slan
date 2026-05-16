@@ -134,15 +134,40 @@ func (s *Server) notifyNetworkConfigChanged(networkID, reason, resourceType, act
 	go s.publishNetworkConfigChanged(deviceIDs, payload)
 }
 
-func (s *Server) notifyAuthCallback(deviceID string, payload AuthCallbackPayload) {
+func (s *Server) notifyDeviceNetworkConfigsChanged(configs []NetworkConfig, reason, resourceType, action, deviceID string) {
+	seen := make(map[string]struct{}, len(configs))
+	for _, config := range configs {
+		networkID := strings.TrimSpace(config.NetworkID)
+		if networkID == "" {
+			continue
+		}
+		if _, ok := seen[networkID]; ok {
+			continue
+		}
+		seen[networkID] = struct{}{}
+		s.notifyNetworkConfigChanged(networkID, reason, resourceType, action, deviceID, deviceID)
+		s.notifyNetworkMemberState(networkID, deviceID, "enabled", reason)
+	}
+}
+
+func (s *Server) notifyDeviceUserLoginSucceeded(deviceID string, payload DeviceUserLoginPayload) {
 	if !s.mqtt.Enabled || strings.TrimSpace(deviceID) == "" {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.mqtt.PublishTimeoutMilliseconds)*time.Millisecond)
-		defer cancel()
-		if err := publishControlMQTT(ctx, s.mqtt, deviceID, "auth_callback", payload); err != nil {
-			log.Printf("mqtt publish auth_callback failed device=%s callback=%s: %v", deviceID, payload.CallbackID, err)
+		delays := []time.Duration{0, 1 * time.Second, 3 * time.Second, 6 * time.Second}
+		for attempt, delay := range delays {
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.mqtt.PublishTimeoutMilliseconds)*time.Millisecond)
+			err := publishControlMQTT(ctx, s.mqtt, deviceID, "device_user_login_succeeded", payload)
+			cancel()
+			if err != nil {
+				log.Printf("mqtt publish device_user_login_succeeded failed device=%s user=%s attempt=%d: %v", deviceID, payload.UserID, attempt+1, err)
+				continue
+			}
+			log.Printf("mqtt publish device_user_login_succeeded succeeded device=%s user=%s attempt=%d", deviceID, payload.UserID, attempt+1)
 		}
 	}()
 }

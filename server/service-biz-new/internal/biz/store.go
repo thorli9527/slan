@@ -21,6 +21,9 @@ const (
 	ipamPoolLowWatermark  = 1000
 	ipamMaxOffsetIn10CIDR = 1 << 24
 	deviceInviteTTL       = 30 * time.Minute
+	userSessionTTL        = 7 * 24 * time.Hour
+	deviceSessionTTL      = 30 * 24 * time.Hour
+	activePeerTTL         = 180 * time.Second
 )
 
 var (
@@ -33,60 +36,67 @@ var (
 type Store struct {
 	mu sync.Mutex
 
-	nextUserID          int
-	nextDeviceSeq       int
-	nextNetworkSeq      int
-	nextDeviceInviteSeq int
-	nextOwnerSeq        int
-	nextOwnerLogSeq     int
-	nextZoneSeq         int
-	nextRecordSeq       int
-	nextSecuritySeq     int
-	nextSecurityRuleSeq int
-	nextPublicMapSeq    int
-	nextConfigSeq       int
-	nextIPSubnetSeq     int
-	nextIPAddressSeq    int
-	nextIPOffset        uint32
-	nextOperatorSeq     int
-	nextRelayNodeSeq    int
-	nextProductSeq      int
-	nextOrderSeq        int
-	nextRenewalSeq      int
+	nextUserID           int
+	nextDeviceSeq        int
+	nextNetworkSeq       int
+	nextDeviceInviteSeq  int
+	nextDeviceSessionSeq int
+	nextBootstrapKeySeq  int
+	nextOwnerSeq         int
+	nextOwnerLogSeq      int
+	nextZoneSeq          int
+	nextRecordSeq        int
+	nextSecuritySeq      int
+	nextSecurityRuleSeq  int
+	nextPublicMapSeq     int
+	nextConfigSeq        int
+	nextIPSubnetSeq      int
+	nextIPAddressSeq     int
+	nextIPOffset         uint32
+	nextOperatorSeq      int
+	nextRelayNodeSeq     int
+	nextProductSeq       int
+	nextOrderSeq         int
+	nextRenewalSeq       int
+	nextDownloadSeq      int
 
-	users              map[string]User
-	userByEmail        map[string]string
-	userAliases        map[string]UserAlias
-	sessions           map[string]UserSession
-	operators          map[string]OperatorUser
-	operatorByEmail    map[string]string
-	operatorSessions   map[string]OperatorSession
-	devices            map[string]Device
-	deviceOwners       map[string]DeviceOwner
-	ownerLogs          map[string]DeviceOwnerChangeLog
-	ipamSubnets        map[string]IPAMSubnet
-	globalIPs          map[string]GlobalIPAddress
-	networks           map[string]Network
-	deviceInvites      map[string]DeviceInvite
-	deviceAccessGrants map[string]DeviceAccessGrant
-	deviceInviteStore  deviceInviteStore
-	loginCallbacks     map[string]DeviceLoginCallback
-	authCallbackStore  authCallbackStore
-	networkDevices     map[string]NetworkDevice
-	dnsZones           map[string]NetworkDNSZone
-	dnsRecords         map[string]NetworkDNSRecord
-	publicMappings     map[string]PublicDomainMapping
-	securityGroups     map[string]SecurityGroup
-	securityGroupRules map[string]SecurityGroupRule
-	runtimeStatuses    map[string]DeviceRuntimeStatus
-	configVersions     map[string]NetworkConfigVersion
-	customerPlans      map[string]CustomerPlanAssignment
-	customerProfiles   map[string]CustomerProfile
-	opsPlans           map[string]OpsPlan
-	products           map[string]Product
-	orders             map[string]Order
-	renewals           map[string]Renewal
-	relayNodes         map[string]OpsRelayNode
+	users                   map[string]User
+	userByEmail             map[string]string
+	userAliases             map[string]UserAlias
+	sessions                map[string]UserSession
+	operators               map[string]OperatorUser
+	operatorByEmail         map[string]string
+	operatorSessions        map[string]OperatorSession
+	devices                 map[string]Device
+	deviceOwners            map[string]DeviceOwner
+	ownerLogs               map[string]DeviceOwnerChangeLog
+	ipamSubnets             map[string]IPAMSubnet
+	globalIPs               map[string]GlobalIPAddress
+	networks                map[string]Network
+	deviceInvites           map[string]DeviceInvite
+	deviceAccessGrants      map[string]DeviceAccessGrant
+	deviceInviteStore       deviceInviteStore
+	deviceSessions          map[string]DeviceSession
+	deviceSessionByToken    map[string]string
+	deviceBootstrapKeys     map[string]DeviceBootstrapKey
+	deviceBootstrapKeyStore deviceBootstrapKeyStore
+	consoleLoginKeys        map[string]ConsoleLoginKey
+	networkDevices          map[string]NetworkDevice
+	dnsZones                map[string]NetworkDNSZone
+	dnsRecords              map[string]NetworkDNSRecord
+	publicMappings          map[string]PublicDomainMapping
+	securityGroups          map[string]SecurityGroup
+	securityGroupRules      map[string]SecurityGroupRule
+	runtimeStatuses         map[string]DeviceRuntimeStatus
+	configVersions          map[string]NetworkConfigVersion
+	customerPlans           map[string]CustomerPlanAssignment
+	customerProfiles        map[string]CustomerProfile
+	opsPlans                map[string]OpsPlan
+	products                map[string]Product
+	orders                  map[string]Order
+	renewals                map[string]Renewal
+	relayNodes              map[string]OpsRelayNode
+	clientDownloads         map[string]ClientDownload
 }
 
 func NewStore() *Store {
@@ -97,64 +107,71 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 	if inviteStore == nil {
 		inviteStore = newMemoryDeviceInviteStore()
 	}
-	authCallbackStore, _ := inviteStore.(authCallbackStore)
-	if authCallbackStore == nil {
-		authCallbackStore = newMemoryDeviceInviteStore()
+	bootstrapKeyStore, _ := inviteStore.(deviceBootstrapKeyStore)
+	if bootstrapKeyStore == nil {
+		bootstrapKeyStore = newMemoryDeviceInviteStore()
 	}
 	store := &Store{
-		nextUserID:          1,
-		nextDeviceSeq:       1,
-		nextNetworkSeq:      1,
-		nextDeviceInviteSeq: 1,
-		nextOwnerSeq:        1,
-		nextOwnerLogSeq:     1,
-		nextZoneSeq:         1,
-		nextRecordSeq:       1,
-		nextSecuritySeq:     1,
-		nextSecurityRuleSeq: 1,
-		nextPublicMapSeq:    1,
-		nextConfigSeq:       1,
-		nextIPSubnetSeq:     1,
-		nextIPAddressSeq:    1,
-		nextIPOffset:        0,
-		nextOperatorSeq:     1,
-		nextRelayNodeSeq:    1,
-		nextProductSeq:      1,
-		nextOrderSeq:        1,
-		nextRenewalSeq:      1,
-		users:               make(map[string]User),
-		userByEmail:         make(map[string]string),
-		userAliases:         make(map[string]UserAlias),
-		sessions:            make(map[string]UserSession),
-		operators:           make(map[string]OperatorUser),
-		operatorByEmail:     make(map[string]string),
-		operatorSessions:    make(map[string]OperatorSession),
-		devices:             make(map[string]Device),
-		deviceOwners:        make(map[string]DeviceOwner),
-		ownerLogs:           make(map[string]DeviceOwnerChangeLog),
-		ipamSubnets:         make(map[string]IPAMSubnet),
-		globalIPs:           make(map[string]GlobalIPAddress),
-		networks:            make(map[string]Network),
-		deviceInvites:       make(map[string]DeviceInvite),
-		deviceAccessGrants:  make(map[string]DeviceAccessGrant),
-		deviceInviteStore:   inviteStore,
-		loginCallbacks:      make(map[string]DeviceLoginCallback),
-		authCallbackStore:   authCallbackStore,
-		networkDevices:      make(map[string]NetworkDevice),
-		dnsZones:            make(map[string]NetworkDNSZone),
-		dnsRecords:          make(map[string]NetworkDNSRecord),
-		publicMappings:      make(map[string]PublicDomainMapping),
-		securityGroups:      make(map[string]SecurityGroup),
-		securityGroupRules:  make(map[string]SecurityGroupRule),
-		runtimeStatuses:     make(map[string]DeviceRuntimeStatus),
-		configVersions:      make(map[string]NetworkConfigVersion),
-		customerPlans:       make(map[string]CustomerPlanAssignment),
-		customerProfiles:    make(map[string]CustomerProfile),
-		opsPlans:            make(map[string]OpsPlan),
-		products:            make(map[string]Product),
-		orders:              make(map[string]Order),
-		renewals:            make(map[string]Renewal),
-		relayNodes:          make(map[string]OpsRelayNode),
+		nextUserID:              1,
+		nextDeviceSeq:           1,
+		nextNetworkSeq:          1,
+		nextDeviceInviteSeq:     1,
+		nextDeviceSessionSeq:    1,
+		nextBootstrapKeySeq:     1,
+		nextOwnerSeq:            1,
+		nextOwnerLogSeq:         1,
+		nextZoneSeq:             1,
+		nextRecordSeq:           1,
+		nextSecuritySeq:         1,
+		nextSecurityRuleSeq:     1,
+		nextPublicMapSeq:        1,
+		nextConfigSeq:           1,
+		nextIPSubnetSeq:         1,
+		nextIPAddressSeq:        1,
+		nextIPOffset:            0,
+		nextOperatorSeq:         1,
+		nextRelayNodeSeq:        1,
+		nextProductSeq:          1,
+		nextOrderSeq:            1,
+		nextRenewalSeq:          1,
+		nextDownloadSeq:         1,
+		users:                   make(map[string]User),
+		userByEmail:             make(map[string]string),
+		userAliases:             make(map[string]UserAlias),
+		sessions:                make(map[string]UserSession),
+		operators:               make(map[string]OperatorUser),
+		operatorByEmail:         make(map[string]string),
+		operatorSessions:        make(map[string]OperatorSession),
+		devices:                 make(map[string]Device),
+		deviceOwners:            make(map[string]DeviceOwner),
+		ownerLogs:               make(map[string]DeviceOwnerChangeLog),
+		ipamSubnets:             make(map[string]IPAMSubnet),
+		globalIPs:               make(map[string]GlobalIPAddress),
+		networks:                make(map[string]Network),
+		deviceInvites:           make(map[string]DeviceInvite),
+		deviceAccessGrants:      make(map[string]DeviceAccessGrant),
+		deviceInviteStore:       inviteStore,
+		deviceSessions:          make(map[string]DeviceSession),
+		deviceSessionByToken:    make(map[string]string),
+		deviceBootstrapKeys:     make(map[string]DeviceBootstrapKey),
+		deviceBootstrapKeyStore: bootstrapKeyStore,
+		consoleLoginKeys:        make(map[string]ConsoleLoginKey),
+		networkDevices:          make(map[string]NetworkDevice),
+		dnsZones:                make(map[string]NetworkDNSZone),
+		dnsRecords:              make(map[string]NetworkDNSRecord),
+		publicMappings:          make(map[string]PublicDomainMapping),
+		securityGroups:          make(map[string]SecurityGroup),
+		securityGroupRules:      make(map[string]SecurityGroupRule),
+		runtimeStatuses:         make(map[string]DeviceRuntimeStatus),
+		configVersions:          make(map[string]NetworkConfigVersion),
+		customerPlans:           make(map[string]CustomerPlanAssignment),
+		customerProfiles:        make(map[string]CustomerProfile),
+		opsPlans:                make(map[string]OpsPlan),
+		products:                make(map[string]Product),
+		orders:                  make(map[string]Order),
+		renewals:                make(map[string]Renewal),
+		relayNodes:              make(map[string]OpsRelayNode),
+		clientDownloads:         make(map[string]ClientDownload),
 	}
 	store.ensureIPPoolLocked(time.Now().Unix())
 	store.seedOpsDefaultsLocked(time.Now().Unix())
@@ -227,65 +244,396 @@ func (s *Store) AuthByToken(token string) (AuthResponse, error) {
 	return AuthResponse{}, errNotFound
 }
 
-func (s *Store) CreateDeviceLoginCallback(callbackID, deviceID, platform string, ttl time.Duration) (DeviceLoginCallback, error) {
-	callbackID = strings.TrimSpace(callbackID)
-	if callbackID == "" {
-		generated, err := secureCallbackID()
-		if err != nil {
-			return DeviceLoginCallback{}, err
-		}
-		callbackID = generated
-	}
-	if ttl <= 0 {
-		ttl = 10 * time.Minute
-	}
-	now := time.Now().Unix()
-	callback := DeviceLoginCallback{
-		CallbackID: callbackID,
-		DeviceID:   strings.TrimSpace(deviceID),
-		Platform:   strings.TrimSpace(platform),
-		Status:     "pending",
-		CreatedAt:  now,
-		ExpiresAt:  now + int64(ttl.Seconds()),
-	}
-	if err := s.authCallbackStore.SaveCallback(callback, ttl, true); err != nil {
-		return DeviceLoginCallback{}, err
+func (s *Store) RenewUserSession(token string) (AuthResponse, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return AuthResponse{}, errBadRequest
 	}
 	s.mu.Lock()
-	s.loginCallbacks[callback.CallbackID] = callback
-	s.mu.Unlock()
-	return callback, nil
+	defer s.mu.Unlock()
+	session, ok := s.sessions[token]
+	if !ok || session.ExpiresAt < time.Now().Unix() {
+		return AuthResponse{}, errNotFound
+	}
+	user, ok := s.users[session.UserID]
+	if !ok || user.Status != "active" {
+		return AuthResponse{}, errNotFound
+	}
+	session.ExpiresAt = time.Now().Add(userSessionTTL).Unix()
+	s.sessions[token] = session
+	return AuthResponse{User: user, Session: session}, nil
 }
 
-func (s *Store) CompleteDeviceLoginCallback(callbackID, accessToken, deviceID, action string) (DeviceLoginCallback, error) {
-	callbackID = strings.TrimSpace(callbackID)
-	if callbackID == "" {
-		return DeviceLoginCallback{}, errBadRequest
+func (s *Store) RestoreBrowserSession(userID, email string) (AuthResponse, error) {
+	userID = strings.TrimSpace(userID)
+	email = strings.ToLower(strings.TrimSpace(email))
+	if userID == "" && email == "" {
+		return AuthResponse{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if email != "" {
+		emailUserID, ok := s.userByEmail[email]
+		if !ok {
+			return AuthResponse{}, errNotFound
+		}
+		userID = emailUserID
+	}
+	user, ok := s.users[userID]
+	if !ok || user.Status != "active" {
+		return AuthResponse{}, errNotFound
+	}
+	return AuthResponse{User: user, Session: s.createSessionLocked(user.UserID, time.Now().Unix())}, nil
+}
+
+func (s *Store) LogoutSessions(accessToken, deviceToken string) error {
+	accessToken = strings.TrimSpace(accessToken)
+	deviceToken = strings.TrimSpace(deviceToken)
+	if accessToken == "" && deviceToken == "" {
+		return errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if accessToken != "" {
+		for sessionID, session := range s.sessions {
+			if session.Token == accessToken {
+				delete(s.sessions, sessionID)
+			}
+		}
+	}
+	if deviceToken != "" {
+		if sessionID, ok := s.deviceSessionByToken[deviceToken]; ok {
+			if session, ok := s.deviceSessions[sessionID]; ok {
+				session.State = "revoked"
+				s.deviceSessions[sessionID] = session
+			}
+			delete(s.deviceSessionByToken, deviceToken)
+		}
+	}
+	return nil
+}
+
+func (s *Store) CreateConsoleLoginKey(accessToken, deviceID string, ttl time.Duration) (ConsoleLoginKey, error) {
+	auth, err := s.AuthByToken(accessToken)
+	if err != nil {
+		return ConsoleLoginKey{}, err
+	}
+	if ttl <= 0 {
+		ttl = 2 * time.Minute
+	}
+	token, err := secureTokenHex(24)
+	if err != nil {
+		return ConsoleLoginKey{}, err
+	}
+	now := time.Now().Unix()
+	key := ConsoleLoginKey{
+		LoginKey:  "clk-" + token,
+		UserID:    auth.User.UserID,
+		DeviceID:  strings.TrimSpace(deviceID),
+		CreatedAt: now,
+		ExpiresAt: now + int64(ttl.Seconds()),
+		Status:    "unused",
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.consoleLoginKeys[key.LoginKey] = key
+	return key, nil
+}
+
+func (s *Store) ConsumeConsoleLoginKey(loginKey string) (AuthResponse, error) {
+	loginKey = strings.TrimSpace(loginKey)
+	if loginKey == "" {
+		return AuthResponse{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.consoleLoginKeys[loginKey]
+	if !ok {
+		return AuthResponse{}, errNotFound
+	}
+	now := time.Now().Unix()
+	if key.Status != "unused" || key.ExpiresAt < now {
+		return AuthResponse{}, errNotFound
+	}
+	user, ok := s.users[key.UserID]
+	if !ok || user.Status != "active" {
+		return AuthResponse{}, errNotFound
+	}
+	key.Status = "used"
+	key.ConsumedAt = now
+	s.consoleLoginKeys[loginKey] = key
+	return AuthResponse{User: user, Session: s.createSessionLocked(user.UserID, now)}, nil
+}
+
+func (s *Store) userByID(userID string) (User, error) {
+	userID = strings.TrimSpace(userID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[userID]
+	if !ok || user.Status != "active" {
+		return User{}, errNotFound
+	}
+	return user, nil
+}
+
+func (s *Store) DeviceAuthByToken(token string) (DeviceSession, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return DeviceSession{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sessionID, ok := s.deviceSessionByToken[token]
+	if !ok {
+		return DeviceSession{}, errUnauthorized
+	}
+	session, ok := s.deviceSessions[sessionID]
+	if !ok || session.State != "active" || session.DeviceTokenExpiresAt < time.Now().Unix() {
+		return DeviceSession{}, errUnauthorized
+	}
+	return session, nil
+}
+
+func (s *Store) CreateDeviceBootstrapKey(createdByUserID, networkID, deviceAlias string, ttlSeconds int64) (DeviceBootstrapKey, error) {
+	createdByUserID = strings.TrimSpace(createdByUserID)
+	networkID = strings.TrimSpace(networkID)
+	if createdByUserID == "" || networkID == "" {
+		return DeviceBootstrapKey{}, errBadRequest
+	}
+	if ttlSeconds <= 0 {
+		ttlSeconds = int64((30 * time.Minute).Seconds())
+	}
+	if ttlSeconds > int64((24 * time.Hour).Seconds()) {
+		ttlSeconds = int64((24 * time.Hour).Seconds())
+	}
+	keyValue, err := secureTokenHex(32)
+	if err != nil {
+		return DeviceBootstrapKey{}, err
+	}
+	keyValue = "sk_" + keyValue
+	now := time.Now().Unix()
+	s.mu.Lock()
+	if _, ok := s.users[createdByUserID]; !ok {
+		s.mu.Unlock()
+		return DeviceBootstrapKey{}, errNotFound
+	}
+	network, ok := s.networks[networkID]
+	if !ok || network.OwnerUserID != createdByUserID {
+		s.mu.Unlock()
+		return DeviceBootstrapKey{}, errNotFound
+	}
+	keyID := fmt.Sprintf("device-bootstrap-%06d", s.nextBootstrapKeySeq)
+	s.nextBootstrapKeySeq++
+	s.mu.Unlock()
+	key := DeviceBootstrapKey{
+		KeyID:           keyID,
+		Key:             keyValue,
+		KeyHash:         bootstrapKeyHash(keyValue),
+		CreatedByUserID: createdByUserID,
+		NetworkID:       networkID,
+		DeviceAlias:     strings.TrimSpace(deviceAlias),
+		CreatedAt:       now,
+		ExpiresAt:       now + ttlSeconds,
+		Status:          "unused",
+	}
+	ttl := time.Duration(ttlSeconds) * time.Second
+	if err := s.deviceBootstrapKeyStore.SaveBootstrapKey(key, ttl); err != nil {
+		return DeviceBootstrapKey{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deviceBootstrapKeys[key.KeyID] = key
+	return key, nil
+}
+
+func (s *Store) ListDeviceBootstrapKeys(createdByUserID string) []DeviceBootstrapKey {
+	createdByUserID = strings.TrimSpace(createdByUserID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]DeviceBootstrapKey, 0)
+	now := time.Now().Unix()
+	for _, key := range s.deviceBootstrapKeys {
+		if createdByUserID != "" && key.CreatedByUserID != createdByUserID {
+			continue
+		}
+		key.Key = ""
+		if key.Status == "unused" && key.ExpiresAt < now {
+			key.Status = "expired"
+		}
+		out = append(out, key)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
+	return out
+}
+
+func (s *Store) RevokeDeviceBootstrapKey(keyID, actorUserID string) (DeviceBootstrapKey, error) {
+	keyID = strings.TrimSpace(keyID)
+	actorUserID = strings.TrimSpace(actorUserID)
+	if keyID == "" || actorUserID == "" {
+		return DeviceBootstrapKey{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.deviceBootstrapKeys[keyID]
+	if !ok || key.CreatedByUserID != actorUserID {
+		return DeviceBootstrapKey{}, errNotFound
+	}
+	if key.Status == "used" {
+		return DeviceBootstrapKey{}, errConflict
+	}
+	key.Status = "revoked"
+	key.RevokedAt = time.Now().Unix()
+	key.Key = ""
+	s.deviceBootstrapKeys[keyID] = key
+	return key, nil
+}
+
+func (s *Store) BootstrapDeviceSession(sessionKey, deviceID, name, platform, osName, osVersion, alias, publicKey string) (Device, DeviceSession, []NetworkConfig, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	deviceID = strings.TrimSpace(deviceID)
+	if sessionKey == "" || deviceID == "" {
+		return Device{}, DeviceSession{}, nil, errBadRequest
+	}
+	bootstrapKey, err := s.deviceBootstrapKeyStore.ConsumeBootstrapKey(bootstrapKeyHash(sessionKey))
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	now := time.Now().Unix()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stored, ok := s.deviceBootstrapKeys[bootstrapKey.KeyID]; ok {
+		if stored.Status != "unused" || stored.RevokedAt > 0 || stored.ExpiresAt < now {
+			return Device{}, DeviceSession{}, nil, errNotFound
+		}
+	}
+	user, ok := s.users[bootstrapKey.CreatedByUserID]
+	if !ok || user.Status != "active" {
+		return Device{}, DeviceSession{}, nil, errNotFound
+	}
+	network, ok := s.networks[bootstrapKey.NetworkID]
+	if !ok || network.OwnerUserID != user.UserID || network.Status != "enabled" {
+		return Device{}, DeviceSession{}, nil, errNotFound
+	}
+	device := s.upsertBootstrapDeviceLocked(user.UserID, deviceID, name, platform, osName, osVersion, defaultString(alias, bootstrapKey.DeviceAlias), publicKey, now)
+	_ = s.addNetworkDeviceLocked(network.NetworkID, device.DeviceID, user.UserID, defaultString(alias, bootstrapKey.DeviceAlias), true, now)
+	configs, err := s.networkConfigsForDeviceLocked(device.DeviceID)
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	session, err := s.createDeviceSessionLocked(device.DeviceID, user.UserID, configs, now)
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	bootstrapKey.Status = "used"
+	bootstrapKey.UsedAt = now
+	bootstrapKey.UsedByDeviceID = device.DeviceID
+	bootstrapKey.Key = ""
+	s.deviceBootstrapKeys[bootstrapKey.KeyID] = bootstrapKey
+	return s.deviceWithOwnerEmailLocked(device), session, configs, nil
+}
+
+func (s *Store) BindDeviceSession(accessToken, deviceID, name, platform, osName, osVersion, alias, publicKey string) (Device, DeviceSession, []NetworkConfig, error) {
+	auth, err := s.AuthByToken(accessToken)
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return Device{}, DeviceSession{}, nil, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.devices[deviceID]
+	if ok && device.OwnerID != auth.User.UserID {
+		s.transferDeviceOwnerLocked(deviceID, device.OwnerID, auth.User.UserID, "device_session_bind", time.Now().Unix())
+		s.removeDeviceFromUserNetworksLocked(deviceID, device.OwnerID)
+		s.revokeDeviceSessionsLocked(deviceID, device.OwnerID)
+		device.OwnerID = auth.User.UserID
+		device.Status = "active"
+		device.UpdatedAt = time.Now().Unix()
+		s.devices[deviceID] = device
+	}
+	if !ok {
+		device = s.upsertBootstrapDeviceLocked(auth.User.UserID, deviceID, name, platform, osName, osVersion, alias, publicKey, time.Now().Unix())
+		defaultNetwork := s.ensureDefaultNetworkForUserLocked(auth.User.UserID, time.Now().Unix())
+		s.addNetworkDeviceLocked(defaultNetwork.NetworkID, deviceID, auth.User.UserID, alias, true, time.Now().Unix())
+	} else {
+		device.Status = "active"
+		device.UpdatedAt = time.Now().Unix()
+		s.devices[deviceID] = device
+		s.addDeviceOwnerLocked(deviceID, auth.User.UserID, time.Now().Unix())
+	}
+	configs, err := s.networkConfigsForDeviceLocked(deviceID)
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	s.revokeDeviceSessionsLocked(deviceID, auth.User.UserID)
+	session, err := s.createDeviceSessionLocked(deviceID, auth.User.UserID, configs, time.Now().Unix())
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	return s.deviceWithOwnerEmailLocked(device), session, configs, nil
+}
+
+func (s *Store) RenewDeviceSession(deviceToken string, networkEnabled bool, rxBytesTotal, txBytesTotal uint64) (Device, DeviceSession, []NetworkConfig, error) {
+	deviceToken = strings.TrimSpace(deviceToken)
+	if deviceToken == "" {
+		return Device{}, DeviceSession{}, nil, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sessionID, ok := s.deviceSessionByToken[deviceToken]
+	if !ok {
+		return Device{}, DeviceSession{}, nil, errUnauthorized
+	}
+	session, ok := s.deviceSessions[sessionID]
+	if !ok || session.State != "active" || session.DeviceTokenExpiresAt < time.Now().Unix() {
+		return Device{}, DeviceSession{}, nil, errUnauthorized
+	}
+	device, ok := s.devices[session.DeviceID]
+	if !ok {
+		return Device{}, DeviceSession{}, nil, errNotFound
+	}
+	now := time.Now().Unix()
+	device.Status = "active"
+	device.UpdatedAt = now
+	s.devices[device.DeviceID] = device
+	status := s.runtimeStatuses[device.DeviceID]
+	status.DeviceID = device.DeviceID
+	status.HeartbeatOnline = true
+	status.NetworkEnabled = networkEnabled
+	status.DeviceEnabled = true
+	status.RxBytesTotal = rxBytesTotal
+	status.TxBytesTotal = txBytesTotal
+	status.LastSeenAt = now
+	status.LastReportAt = now
+	s.runtimeStatuses[device.DeviceID] = status
+	configs, err := s.networkConfigsForDeviceLocked(device.DeviceID)
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	session.LastRenewedAt = now
+	session.DeviceTokenExpiresAt = now + int64(deviceSessionTTL.Seconds())
+	session.ActiveNetworkIDs = networkIDsFromConfigs(configs)
+	s.deviceSessions[session.SessionID] = session
+	return s.deviceWithOwnerEmailLocked(device), session, configs, nil
+}
+
+func (s *Store) CompleteDeviceLoginForDevice(deviceID, accessToken, action, userID, email string) (DeviceUserLoginPayload, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return DeviceUserLoginPayload{}, errBadRequest
 	}
 	auth, err := s.AuthByToken(accessToken)
 	if err != nil {
-		return DeviceLoginCallback{}, err
+		auth, err = s.RestoreBrowserSession(userID, email)
+		if err != nil {
+			return DeviceUserLoginPayload{}, err
+		}
 	}
-	callback, err := s.authCallbackStore.LoadCallback(callbackID)
-	if err != nil {
-		now := time.Now().Unix()
-		callback = DeviceLoginCallback{CallbackID: callbackID, Status: "pending", CreatedAt: now, ExpiresAt: now + int64((10 * time.Minute).Seconds())}
-	}
-	if callback.Status == "completed" {
-		return DeviceLoginCallback{}, errConflict
-	}
-	if callback.ExpiresAt < time.Now().Unix() {
-		return DeviceLoginCallback{}, errNotFound
-	}
-	if strings.TrimSpace(deviceID) == "" {
-		deviceID = callback.DeviceID
-	}
-	if strings.TrimSpace(deviceID) != "" {
-		s.bindExistingDeviceToUser(deviceID, auth.User.UserID)
-	}
+	s.bindExistingDeviceToUser(deviceID, auth.User.UserID)
 	refreshToken := auth.Session.Token
-	payload := AuthCallbackPayload{
-		CallbackID:   callbackID,
+	return DeviceUserLoginPayload{
 		AccessToken:  auth.Session.Token,
 		RefreshToken: &refreshToken,
 		UserID:       auth.User.UserID,
@@ -293,35 +641,7 @@ func (s *Store) CompleteDeviceLoginCallback(callbackID, accessToken, deviceID, a
 		DeviceID:     optionalStringPtr(deviceID),
 		ExpiresIn:    uint64(maxInt64(auth.Session.ExpiresAt-time.Now().Unix(), 0)),
 		Action:       defaultString(action, "login"),
-	}
-	callback.Status = "completed"
-	callback.UserID = auth.User.UserID
-	callback.DeviceID = strings.TrimSpace(deviceID)
-	callback.CompletedAt = time.Now().Unix()
-	callback.Payload = &payload
-	ttl := time.Duration(maxInt64(callback.ExpiresAt-time.Now().Unix(), 60)) * time.Second
-	if err := s.authCallbackStore.SaveCallback(callback, ttl, false); err != nil {
-		return DeviceLoginCallback{}, err
-	}
-	s.mu.Lock()
-	s.loginCallbacks[callback.CallbackID] = callback
-	s.mu.Unlock()
-	return callback, nil
-}
-
-func (s *Store) DeviceLoginCallbackStatus(callbackID string) (DeviceLoginCallback, bool, error) {
-	callbackID = strings.TrimSpace(callbackID)
-	if callbackID == "" {
-		return DeviceLoginCallback{}, false, errBadRequest
-	}
-	callback, err := s.authCallbackStore.LoadCallback(callbackID)
-	if err != nil {
-		if errors.Is(err, errNotFound) {
-			return DeviceLoginCallback{CallbackID: callbackID, Status: "pending"}, false, nil
-		}
-		return DeviceLoginCallback{}, false, err
-	}
-	return callback, callback.Status == "completed" && callback.Payload != nil, nil
+	}, nil
 }
 
 func (s *Store) ChangeUserPassword(userID, oldPassword, newPassword string) error {
@@ -362,8 +682,11 @@ func (s *Store) RegisterDevice(ownerID, deviceID, name, platform, osName, osVers
 	now := time.Now().Unix()
 	if existing, ok := s.devices[deviceID]; ok {
 		if existing.OwnerID != ownerID {
-			s.transferDeviceOwnerLocked(deviceID, existing.OwnerID, ownerID, "login_switch", now)
+			s.transferDeviceOwnerLocked(deviceID, existing.OwnerID, ownerID, "device_register", now)
+			s.removeDeviceFromUserNetworksLocked(deviceID, existing.OwnerID)
+			s.revokeDeviceSessionsLocked(deviceID, existing.OwnerID)
 			existing.OwnerID = ownerID
+			existing.Status = "active"
 			existing.UpdatedAt = now
 			s.devices[deviceID] = existing
 			defaultNetwork := s.ensureDefaultNetworkForUserLocked(ownerID, now)
@@ -393,6 +716,105 @@ func (s *Store) RegisterDevice(ownerID, deviceID, name, platform, osName, osVers
 	networkDevice := s.addNetworkDeviceLocked(defaultNetwork.NetworkID, device.DeviceID, ownerID, alias, true, now)
 	s.runtimeStatuses[device.DeviceID] = DeviceRuntimeStatus{DeviceID: device.DeviceID, DeviceEnabled: true, LastReportAt: now}
 	return device, networkDevice, nil
+}
+
+func (s *Store) upsertBootstrapDeviceLocked(ownerID, deviceID, name, platform, osName, osVersion, alias, publicKey string, now int64) Device {
+	if existing, ok := s.devices[deviceID]; ok {
+		if existing.OwnerID != ownerID {
+			s.transferDeviceOwnerLocked(deviceID, existing.OwnerID, ownerID, "bootstrap_session_key", now)
+			existing.OwnerID = ownerID
+		}
+		existing.Name = defaultString(strings.TrimSpace(name), existing.Name)
+		existing.Platform = defaultString(strings.TrimSpace(platform), existing.Platform)
+		existing.OSName = defaultString(strings.TrimSpace(osName), existing.OSName)
+		existing.OSVersion = defaultString(strings.TrimSpace(osVersion), existing.OSVersion)
+		existing.Alias = defaultString(strings.TrimSpace(alias), existing.Alias)
+		existing.PublicKey = defaultString(strings.TrimSpace(publicKey), existing.PublicKey)
+		existing.Status = "active"
+		existing.UpdatedAt = now
+		s.devices[deviceID] = existing
+		return existing
+	}
+	ip := s.allocateGlobalIPLocked(deviceID, now)
+	device := Device{
+		DeviceID:   deviceID,
+		OwnerID:    ownerID,
+		Name:       strings.TrimSpace(name),
+		Platform:   strings.TrimSpace(platform),
+		OSName:     strings.TrimSpace(osName),
+		OSVersion:  strings.TrimSpace(osVersion),
+		Alias:      strings.TrimSpace(alias),
+		PublicKey:  strings.TrimSpace(publicKey),
+		GlobalIP:   ip,
+		GlobalName: sanitizeDNSLabel(deviceID) + "." + globalDeviceDomain(),
+		Status:     "active",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	s.devices[deviceID] = device
+	s.addDeviceOwnerLocked(device.DeviceID, ownerID, now)
+	s.runtimeStatuses[device.DeviceID] = DeviceRuntimeStatus{DeviceID: device.DeviceID, DeviceEnabled: true, LastReportAt: now}
+	return device
+}
+
+func (s *Store) createDeviceSessionLocked(deviceID, userID string, configs []NetworkConfig, now int64) (DeviceSession, error) {
+	deviceToken, err := secureTokenHex(32)
+	if err != nil {
+		return DeviceSession{}, err
+	}
+	refreshToken, err := secureTokenHex(32)
+	if err != nil {
+		return DeviceSession{}, err
+	}
+	session := DeviceSession{
+		SessionID:            fmt.Sprintf("device-session-%06d", s.nextDeviceSessionSeq),
+		DeviceID:             deviceID,
+		UserID:               userID,
+		DeviceToken:          "dt_" + deviceToken,
+		DeviceTokenExpiresAt: now + int64(deviceSessionTTL.Seconds()),
+		DeviceRefreshToken:   "drt_" + refreshToken,
+		RegisteredAt:         now,
+		LastRenewedAt:        now,
+		ActiveNetworkIDs:     networkIDsFromConfigs(configs),
+		State:                "active",
+	}
+	s.nextDeviceSessionSeq++
+	s.deviceSessions[session.SessionID] = session
+	s.deviceSessionByToken[session.DeviceToken] = session.SessionID
+	return session, nil
+}
+
+func (s *Store) revokeDeviceSessionsLocked(deviceID, userID string) {
+	for sessionID, session := range s.deviceSessions {
+		if session.DeviceID != deviceID || session.UserID != userID || session.State != "active" {
+			continue
+		}
+		session.State = "revoked"
+		s.deviceSessions[sessionID] = session
+		delete(s.deviceSessionByToken, session.DeviceToken)
+	}
+}
+
+func (s *Store) removeDeviceFromUserNetworksLocked(deviceID, userID string) {
+	for key, membership := range s.networkDevices {
+		if membership.DeviceID == deviceID && membership.OwnerUserID == userID {
+			delete(s.networkDevices, key)
+		}
+	}
+}
+
+func networkIDsFromConfigs(configs []NetworkConfig) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(configs))
+	for _, config := range configs {
+		networkID := strings.TrimSpace(config.NetworkID)
+		if networkID == "" || seen[networkID] {
+			continue
+		}
+		seen[networkID] = true
+		out = append(out, networkID)
+	}
+	return out
 }
 
 func (s *Store) ListUsers() []User {
@@ -448,6 +870,30 @@ func (s *Store) RenewDevice(deviceID, userID string, networkEnabled bool, rxByte
 		return Device{}, nil, err
 	}
 	return s.deviceWithOwnerEmailLocked(device), configs, nil
+}
+
+func (s *Store) ReportDeviceRuntime(deviceID string, networkEnabled bool, rxBytesTotal, txBytesTotal uint64) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.devices[deviceID]
+	if !ok {
+		return
+	}
+	now := time.Now().Unix()
+	status := s.runtimeStatuses[deviceID]
+	status.DeviceID = deviceID
+	status.HeartbeatOnline = true
+	status.NetworkEnabled = networkEnabled
+	status.DeviceEnabled = device.Status == "active"
+	status.RxBytesTotal = rxBytesTotal
+	status.TxBytesTotal = txBytesTotal
+	status.LastSeenAt = now
+	status.LastReportAt = now
+	s.runtimeStatuses[deviceID] = status
 }
 
 func (s *Store) GetDevice(deviceID string) (Device, error) {
@@ -783,14 +1229,6 @@ func secureInviteCode() (string, error) {
 		return "", err
 	}
 	return strings.ToUpper(hex.EncodeToString(raw[:])), nil
-}
-
-func secureCallbackID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return "cb-" + hex.EncodeToString(raw[:]), nil
 }
 
 func (s *Store) AcceptDeviceInvite(inviteCode, deviceID, actorUserID string) (DeviceAccessGrant, DeviceInvite, error) {
@@ -1349,7 +1787,8 @@ func (s *Store) NetworkConfigsForDevice(deviceID string) ([]NetworkConfig, error
 }
 
 func (s *Store) networkConfigsForDeviceLocked(deviceID string) ([]NetworkConfig, error) {
-	if _, ok := s.devices[deviceID]; !ok {
+	device, ok := s.devices[deviceID]
+	if !ok {
 		return nil, errNotFound
 	}
 	networkIDs := make([]string, 0)
@@ -1362,6 +1801,13 @@ func (s *Store) networkConfigsForDeviceLocked(deviceID string) ([]NetworkConfig,
 			continue
 		}
 		networkIDs = append(networkIDs, membership.NetworkID)
+	}
+	if len(networkIDs) == 0 && strings.TrimSpace(device.OwnerID) != "" {
+		defaultNetwork := s.ensureDefaultNetworkForUserLocked(device.OwnerID, time.Now().Unix())
+		membership := s.addNetworkDeviceLocked(defaultNetwork.NetworkID, deviceID, device.OwnerID, device.Alias, true, time.Now().Unix())
+		if membership.Status == "active" && membership.Enabled {
+			networkIDs = append(networkIDs, defaultNetwork.NetworkID)
+		}
 	}
 	sort.Strings(networkIDs)
 	out := make([]NetworkConfig, 0, len(networkIDs))
@@ -1376,6 +1822,7 @@ func (s *Store) networkConfigsForDeviceLocked(deviceID string) ([]NetworkConfig,
 }
 
 func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, error) {
+	now := time.Now().Unix()
 	device, ok := s.devices[deviceID]
 	if !ok {
 		return NetworkConfig{}, errNotFound
@@ -1386,11 +1833,21 @@ func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, 
 	}
 	membership, ok := s.networkDevices[networkID+"|"+deviceID]
 	if !ok || !membership.Enabled || membership.Status != "active" {
-		return NetworkConfig{}, errNotFound
+		if network.OwnerUserID != "" && network.OwnerUserID == device.OwnerID {
+			membership = s.addNetworkDeviceLocked(networkID, deviceID, device.OwnerID, device.Alias, true, now)
+		}
+		if !membership.Enabled || membership.Status != "active" {
+			return NetworkConfig{}, errNotFound
+		}
 	}
+	s.ensureUniqueGlobalIPsLocked(now)
+	device = s.devices[deviceID]
 	peers := make([]Device, 0)
 	for _, membership := range s.networkDevices {
 		if membership.NetworkID == networkID && membership.Enabled && membership.Status == "active" && membership.DeviceID != deviceID {
+			if !s.peerRuntimeActiveLocked(membership.DeviceID, now) {
+				continue
+			}
 			peers = append(peers, s.devices[membership.DeviceID])
 		}
 	}
@@ -1429,8 +1886,20 @@ func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, 
 	}, nil
 }
 
+func (s *Store) peerRuntimeActiveLocked(deviceID string, now int64) bool {
+	status := s.runtimeStatuses[deviceID]
+	if !status.DeviceEnabled || !status.NetworkEnabled {
+		return false
+	}
+	lastSeen := status.LastSeenAt
+	if lastSeen == 0 {
+		lastSeen = status.LastReportAt
+	}
+	return lastSeen > 0 && now-lastSeen <= int64(activePeerTTL.Seconds())
+}
+
 func (s *Store) createSessionLocked(userID string, now int64) UserSession {
-	session := UserSession{SessionID: fmt.Sprintf("session-%s-%d", userID, now), UserID: userID, Token: fmt.Sprintf("token-%s-%d", userID, now), CreatedAt: now, ExpiresAt: now + 86400*30}
+	session := UserSession{SessionID: fmt.Sprintf("session-%s-%d", userID, now), UserID: userID, Token: fmt.Sprintf("token-%s-%d", userID, now), CreatedAt: now, ExpiresAt: now + int64(userSessionTTL.Seconds())}
 	s.sessions[session.Token] = session
 	return session
 }
@@ -1475,6 +1944,29 @@ func (s *Store) bindExistingDeviceToUser(deviceID, userID string) {
 	defer s.mu.Unlock()
 	device, ok := s.devices[deviceID]
 	if !ok {
+		now := time.Now().Unix()
+		if _, ok := s.users[userID]; !ok {
+			return
+		}
+		ip := s.allocateGlobalIPLocked(deviceID, now)
+		device = Device{
+			DeviceID:   deviceID,
+			OwnerID:    userID,
+			Name:       deviceID,
+			Platform:   "client",
+			OSName:     "client",
+			Alias:      deviceID,
+			PublicKey:  "client-v2-" + deviceID,
+			GlobalIP:   ip,
+			GlobalName: sanitizeDNSLabel(deviceID) + "." + globalDeviceDomain(),
+			Status:     "active",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		s.devices[deviceID] = device
+		s.addDeviceOwnerLocked(deviceID, userID, now)
+		network := s.ensureDefaultNetworkForUserLocked(userID, now)
+		s.addNetworkDeviceLocked(network.NetworkID, deviceID, userID, device.Alias, true, now)
 		return
 	}
 	if _, ok := s.users[userID]; !ok {
@@ -1554,10 +2046,17 @@ func (s *Store) deviceWithOwnerEmailLocked(device Device) Device {
 }
 
 func (s *Store) allocateGlobalIPLocked(deviceID string, now int64) string {
+	return s.allocateGlobalIPExcludingLocked(deviceID, now, nil)
+}
+
+func (s *Store) allocateGlobalIPExcludingLocked(deviceID string, now int64, reserved map[string]bool) string {
 	s.ensureIPPoolLocked(now)
 	var selected GlobalIPAddress
 	for _, address := range s.globalIPs {
 		if address.Status != "available" {
+			continue
+		}
+		if reserved != nil && reserved[address.IP] {
 			continue
 		}
 		if selected.IP == "" || address.Offset < selected.Offset {
@@ -1574,6 +2073,69 @@ func (s *Store) allocateGlobalIPLocked(deviceID string, now int64) string {
 	s.globalIPs[selected.IP] = selected
 	s.ensureIPPoolLocked(now)
 	return selected.IP
+}
+
+func (s *Store) ensureUniqueGlobalIPsLocked(now int64) {
+	deviceIDs := make([]string, 0, len(s.devices))
+	for deviceID := range s.devices {
+		deviceIDs = append(deviceIDs, deviceID)
+	}
+	sort.Strings(deviceIDs)
+
+	used := make(map[string]bool, len(deviceIDs))
+	reassign := make([]string, 0)
+	for _, deviceID := range deviceIDs {
+		device := s.devices[deviceID]
+		ip := strings.TrimSpace(device.GlobalIP)
+		if ip == "" || used[ip] {
+			reassign = append(reassign, deviceID)
+			continue
+		}
+		used[ip] = true
+		if address, ok := s.globalIPs[ip]; ok {
+			address.DeviceID = deviceID
+			address.Status = "assigned"
+			if address.AssignedAt == 0 {
+				address.AssignedAt = now
+			}
+			address.ReleasedAt = 0
+			s.globalIPs[ip] = address
+		}
+	}
+
+	for _, deviceID := range reassign {
+		device := s.devices[deviceID]
+		oldIP := strings.TrimSpace(device.GlobalIP)
+		if oldIP != "" {
+			if address, ok := s.globalIPs[oldIP]; ok && address.DeviceID == deviceID {
+				address.DeviceID = ""
+				address.Status = "available"
+				address.ReleasedAt = now
+				s.globalIPs[oldIP] = address
+			}
+		}
+		newIP := s.allocateGlobalIPExcludingLocked(deviceID, now, used)
+		device.GlobalIP = newIP
+		device.UpdatedAt = now
+		s.devices[deviceID] = device
+		if newIP != "" {
+			used[newIP] = true
+		}
+	}
+
+	for ip, address := range s.globalIPs {
+		if address.Status != "assigned" || address.DeviceID == "" {
+			continue
+		}
+		device, ok := s.devices[address.DeviceID]
+		if ok && strings.TrimSpace(device.GlobalIP) == ip {
+			continue
+		}
+		address.DeviceID = ""
+		address.Status = "available"
+		address.ReleasedAt = now
+		s.globalIPs[ip] = address
+	}
 }
 
 func (s *Store) ensureIPPoolLocked(now int64) {
@@ -1664,6 +2226,11 @@ func (s *Store) listDNSRecordsLocked(networkID string) []NetworkDNSRecord {
 
 func hashPassword(password string) string {
 	sum := sha256.Sum256([]byte("slan:" + password))
+	return hex.EncodeToString(sum[:])
+}
+
+func bootstrapKeyHash(key string) string {
+	sum := sha256.Sum256([]byte("slan:device-bootstrap:" + strings.TrimSpace(key)))
 	return hex.EncodeToString(sum[:])
 }
 

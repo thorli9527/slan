@@ -6,6 +6,7 @@ INSTALL_DIR="/Library/Application Support/SLAN"
 LOG_DIR="/Library/Logs/SLAN"
 PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 SERVICE_BIN="${INSTALL_DIR}/client-core-service"
+SERVICE_PID="${INSTALL_DIR}/client-core-service.pid"
 APP_PATH=""
 SOURCE_BIN=""
 ORIGINAL_ARGS=("$@")
@@ -74,6 +75,11 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 mkdir -p "$INSTALL_DIR" "$LOG_DIR"
+launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+launchctl disable "system/${LABEL}" >/dev/null 2>&1 || true
+pkill -x "client-core-service" >/dev/null 2>&1 || true
+rm -f "$PLIST" "$SERVICE_BIN" "$SERVICE_PID"
+
 cp "$SOURCE_BIN" "$SERVICE_BIN"
 chown root:wheel "$SERVICE_BIN"
 chmod 755 "$SERVICE_BIN"
@@ -116,9 +122,8 @@ PLIST
 chown root:wheel "$PLIST"
 chmod 644 "$PLIST"
 
-launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+launchctl enable "system/${LABEL}" >/dev/null 2>&1 || true
 launchctl bootstrap system "$PLIST"
-launchctl enable "system/${LABEL}"
 launchctl kickstart -k "system/${LABEL}"
 
 echo "installed ${LABEL}"

@@ -54,7 +54,7 @@ pub struct TrafficStatsPayload {
 pub enum ClientCommand {
     LoginWithBrowser,
     LoginWithPassword(PasswordLoginPayload),
-    ApplyAuthCallback(AuthPayload),
+    ApplyDeviceUserLogin(AuthPayload),
     EnableNetwork,
     DisableNetwork,
     SyncAssignedIp(AssignedIpPayload),

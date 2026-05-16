@@ -41,6 +41,9 @@ button.small { height: 30px; padding: 0 10px; }
 .panel-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
 .toolbar { display: flex; align-items: center; gap: 8px; }
 .search-input { width: 260px; }
+.upload-grid { margin-top: 8px; }
+.upload-actions { align-items: center; justify-content: space-between; padding-top: 12px; border-top: 1px solid #edf0f5; }
+.muted { color: #6b7280; font-size: 13px; font-weight: 700; }
 .todo-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .revenue-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .order-stat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }

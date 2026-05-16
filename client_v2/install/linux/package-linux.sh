@@ -162,12 +162,30 @@ Maintainer: SLAN
 Installed-Size: $installed_size
 Description: SLAN Client V2 desktop and console runtime
 EOF
-  cat > "$deb_root/DEBIAN/postinst" <<'EOF'
+  cat > "$deb_root/DEBIAN/preinst" <<'EOF'
 #!/usr/bin/env sh
 set -e
 if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop slan-client-v2.service || true
+  systemctl disable slan-client-v2.service || true
+  systemctl reset-failed slan-client-v2.service || true
+fi
+pkill -x slan_client_v2 >/dev/null 2>&1 || true
+pkill -x client-core-service >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/slan-client-v2.service /lib/systemd/system/slan-client-v2.service
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+fi
+exit 0
+EOF
+  cat > "$deb_root/DEBIAN/postinst" <<'EOF'
+#!/usr/bin/env sh
+set -e
+/opt/slan-client-v2/bin/client-core-service --reset-device-id >/dev/null
+if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
   systemctl enable slan-client-v2.service || true
+  systemctl restart slan-client-v2.service || true
 fi
 exit 0
 EOF
@@ -178,9 +196,11 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl stop slan-client-v2.service || true
   systemctl disable slan-client-v2.service || true
 fi
+pkill -x slan_client_v2 >/dev/null 2>&1 || true
+pkill -x client-core-service >/dev/null 2>&1 || true
 exit 0
 EOF
-  chmod 755 "$deb_root/DEBIAN/postinst" "$deb_root/DEBIAN/prerm"
+  chmod 755 "$deb_root/DEBIAN/preinst" "$deb_root/DEBIAN/postinst" "$deb_root/DEBIAN/prerm"
   dpkg-deb --build "$deb_root" "$deb_path" >/dev/null
   echo "Linux deb: $deb_path"
 else

@@ -23,8 +23,7 @@ type AuthResponse struct {
 	Session UserSession `json:"session"`
 }
 
-type AuthCallbackPayload struct {
-	CallbackID   string  `json:"callbackId,omitempty"`
+type DeviceUserLoginPayload struct {
 	AccessToken  string  `json:"accessToken"`
 	RefreshToken *string `json:"refreshToken,omitempty"`
 	UserID       string  `json:"userId"`
@@ -35,16 +34,42 @@ type AuthCallbackPayload struct {
 	Action       string  `json:"action,omitempty"`
 }
 
-type DeviceLoginCallback struct {
-	CallbackID  string               `json:"callbackId"`
-	DeviceID    string               `json:"deviceId,omitempty"`
-	Platform    string               `json:"platform,omitempty"`
-	Status      string               `json:"status"`
-	CreatedAt   int64                `json:"createdAt"`
-	ExpiresAt   int64                `json:"expiresAt"`
-	CompletedAt int64                `json:"completedAt,omitempty"`
-	UserID      string               `json:"userId,omitempty"`
-	Payload     *AuthCallbackPayload `json:"payload,omitempty"`
+type ConsoleLoginKey struct {
+	LoginKey   string `json:"loginKey"`
+	UserID     string `json:"userId"`
+	DeviceID   string `json:"deviceId,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
+	ExpiresAt  int64  `json:"expiresAt"`
+	ConsumedAt int64  `json:"consumedAt,omitempty"`
+	Status     string `json:"status"`
+}
+
+type DeviceSession struct {
+	SessionID            string   `json:"sessionId"`
+	DeviceID             string   `json:"deviceId"`
+	UserID               string   `json:"userId,omitempty"`
+	DeviceToken          string   `json:"deviceToken"`
+	DeviceTokenExpiresAt int64    `json:"deviceTokenExpiresAt"`
+	DeviceRefreshToken   string   `json:"deviceRefreshToken"`
+	RegisteredAt         int64    `json:"registeredAt"`
+	LastRenewedAt        int64    `json:"lastRenewedAt"`
+	ActiveNetworkIDs     []string `json:"activeNetworkIds"`
+	State                string   `json:"state"`
+}
+
+type DeviceBootstrapKey struct {
+	KeyID           string `json:"id"`
+	Key             string `json:"key,omitempty"`
+	KeyHash         string `json:"-"`
+	CreatedByUserID string `json:"createdByUserId"`
+	NetworkID       string `json:"networkId"`
+	DeviceAlias     string `json:"deviceAlias,omitempty"`
+	ExpiresAt       int64  `json:"expiresAt"`
+	UsedAt          int64  `json:"usedAt,omitempty"`
+	UsedByDeviceID  string `json:"usedByDeviceId,omitempty"`
+	RevokedAt       int64  `json:"revokedAt,omitempty"`
+	Status          string `json:"status"`
+	CreatedAt       int64  `json:"createdAt"`
 }
 
 type Device struct {
@@ -62,6 +87,23 @@ type Device struct {
 	Status     string `json:"status"`
 	CreatedAt  int64  `json:"createdAt"`
 	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+type ClientDownload struct {
+	DownloadID   string `json:"downloadId"`
+	Platform     string `json:"platform"`
+	PlatformName string `json:"platformName"`
+	Version      string `json:"version"`
+	Arch         string `json:"arch,omitempty"`
+	Channel      string `json:"channel"`
+	FileName     string `json:"fileName"`
+	FileSize     int64  `json:"fileSize"`
+	SHA256       string `json:"sha256,omitempty"`
+	DownloadURL  string `json:"downloadUrl"`
+	ReleaseNotes string `json:"releaseNotes,omitempty"`
+	Status       string `json:"status"`
+	CreatedAt    int64  `json:"createdAt"`
+	UpdatedAt    int64  `json:"updatedAt"`
 }
 
 type UserAlias struct {

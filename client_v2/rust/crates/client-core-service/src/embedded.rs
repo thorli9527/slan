@@ -8,22 +8,25 @@ use std::{
 
 use anyhow::{Context, Result};
 use client_core::{
-    AssignedIpPayload, ClientCommand, ClientMessageNoticePayload, ClientRuntime, ClientViewState,
-    PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig, RelayPeerSession,
+    AssignedIpPayload, AuthPayload, ClientCommand, ClientMessageNoticePayload, ClientRuntime,
+    ClientViewState, PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig,
+    RelayPeerSession,
 };
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
 use serde_json::Value;
 
 use crate::{
+    client_message_mqtt,
     control_plane::{
-        set_client_device_id_override, set_control_base_url_override, ControlPlaneClient,
+        local_stable_device_id, set_client_device_id_override, set_control_base_url_override,
+        ControlPlaneClient,
     },
     control_transport::{self, ControlTransportMessage, MqttQos},
     local_api::{
         LocalServiceMethod, SendClientMessageRequest, ServiceRequest, WatchBusinessEventRequest,
         WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
-        BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_STATE_CHANGED,
+        BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_SESSION_CHANGED, BUSINESS_STATE_CHANGED,
     },
     session_store::{
         app_data_dir, current_timestamp_ms, ensure_session_device_registered,
@@ -78,7 +81,7 @@ fn runtime() -> &'static Mutex<ClientRuntime<PlatformNetworkImpl>> {
     RUNTIME.get_or_init(|| {
         let mut runtime = ClientRuntime::new(PlatformNetworkImpl::default());
         if let Ok(session) = load_session() {
-            let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+            let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
         }
         Mutex::new(runtime)
     })
@@ -237,7 +240,7 @@ fn platform_network_config() -> Result<Value> {
     persist_session(&session)?;
     {
         let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
-        let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.clone().into()));
+        let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.clone().into()));
         let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
             virtual_ip: activation.virtual_ip.clone(),
             prefix_len: Some(activation.prefix_len),
@@ -401,7 +404,7 @@ fn ensure_device_session() -> Result<PersistedSession> {
     let session = ensure_session_device_registered(session).context("register device")?;
     {
         let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
-        let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.clone().into()));
+        let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.clone().into()));
     }
     Ok(session)
 }
@@ -795,6 +798,7 @@ fn ingest_embedded_downstream_publish(payload: &[u8]) -> Result<()> {
         .unwrap_or_default()
     {
         "network_config_changed" => ingest_embedded_network_config_changed(&value),
+        "device_user_login_succeeded" => ingest_embedded_device_user_login_succeeded(&value),
         "device_ip_reassigned" => ingest_embedded_device_ip_reassigned(&value),
         "device_network_enabled" | "device_network_disabled" => {
             ingest_embedded_device_network_presence(&value)
@@ -802,6 +806,60 @@ fn ingest_embedded_downstream_publish(payload: &[u8]) -> Result<()> {
         "client_message" => persist_embedded_client_message(&value),
         _ => Ok(()),
     }
+}
+
+fn ingest_embedded_device_user_login_succeeded(value: &Value) -> Result<()> {
+    let auth_value = value
+        .get("payload")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("device_user_login_succeeded payload is missing"))?;
+    let auth: AuthPayload =
+        serde_json::from_value(auth_value).context("decode device_user_login_succeeded payload")?;
+    {
+        let runtime = runtime().lock().expect("embedded runtime mutex poisoned");
+        validate_embedded_device_user_login_succeeded(&runtime, &auth)?;
+    }
+    let session =
+        hydrate_session_from_control_plane(auth).context("hydrate embedded device user login")?;
+    persist_session(&session)?;
+    connect_embedded_control_mqtt_with_session(&session)
+        .context("connect mqtt after embedded device user login")?;
+    let state = {
+        let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
+        runtime
+            .dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()))
+            .context("apply embedded device user login")?
+    };
+    publish_embedded_business_event(
+        BUSINESS_SESSION_CHANGED,
+        serde_json::json!({ "messageType": "device_user_login_succeeded" }),
+        &state,
+    );
+    Ok(())
+}
+
+fn validate_embedded_device_user_login_succeeded(
+    runtime: &ClientRuntime<PlatformNetworkImpl>,
+    auth: &AuthPayload,
+) -> Result<()> {
+    if let Some(expected_device_id) = runtime
+        .state()
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if auth
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            != Some(expected_device_id)
+        {
+            anyhow::bail!("登录设备不匹配");
+        }
+    }
+    Ok(())
 }
 
 fn ingest_embedded_network_config_changed(value: &Value) -> Result<()> {
@@ -945,6 +1003,9 @@ fn persist_embedded_client_message(value: &Value) -> Result<()> {
         .get("body")
         .and_then(Value::as_str)
         .map(str::to_string);
+    if maybe_reply_embedded_client_ping(from_device_id.as_deref(), body.as_deref())? {
+        return Ok(());
+    }
     let state = {
         let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
         runtime.dispatch(ClientCommand::ApplyClientMessage(
@@ -966,6 +1027,63 @@ fn persist_embedded_client_message(value: &Value) -> Result<()> {
         &state,
     );
     Ok(())
+}
+
+fn maybe_reply_embedded_client_ping(
+    from_device_id: Option<&str>,
+    body: Option<&str>,
+) -> Result<bool> {
+    let Some(from_device_id) = from_device_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(false);
+    };
+    let Some((ping_id, sent_at_ms)) = body.and_then(client_message_mqtt::parse_client_ping_body)
+    else {
+        return Ok(false);
+    };
+    let session = load_session().context("load session for client ping reply")?;
+    let Some(local_device_id) = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(true);
+    };
+    if local_device_id == from_device_id {
+        return Ok(true);
+    }
+    let Some(network_id) = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(true);
+    };
+    let Some(mqtt) = session.mqtt.as_ref() else {
+        return Ok(true);
+    };
+    let replied_at_ms = current_timestamp_ms();
+    let pong_body =
+        client_message_mqtt::build_client_pong_body(&ping_id, sent_at_ms, replied_at_ms);
+    client_message_mqtt::publish_client_message(
+        mqtt,
+        network_id,
+        local_device_id,
+        from_device_id,
+        &pong_body,
+        Some(&serde_json::json!({
+            "kind": "client_ping_pong",
+            "pingId": ping_id,
+            "sentAtMs": sent_at_ms,
+            "repliedAtMs": replied_at_ms,
+        })),
+    )
+    .context("publish embedded client ping reply")?;
+    Ok(true)
 }
 
 fn write_embedded_downstream_payload(file_name: &str, value: &Value) -> Result<()> {
@@ -1090,13 +1208,13 @@ fn embedded_control_status() -> Value {
             if !device_ready {
                 missing.push("deviceId");
             }
-            if !network_ready {
+            if !network_ready && session.session_kind != "prelogin" {
                 missing.push("activeNetworkId");
             }
             serde_json::json!({
                 "mqttCredentialReady": mqtt_credential_ready,
-                "controlSessionReady": device_ready && network_ready,
-                "ready": mqtt_credential_ready && device_ready && network_ready,
+                "controlSessionReady": device_ready,
+                "ready": mqtt_credential_ready && device_ready,
                 "missing": missing,
                 "mqttExpiresAt": session.mqtt.as_ref().and_then(|credential| credential.expires_at),
                 "mqttConnected": mqtt_connected,
@@ -1118,6 +1236,19 @@ fn embedded_control_status() -> Value {
 fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
     let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
     match command {
+        ClientCommand::LoginWithBrowser => {
+            let device_id = local_stable_device_id().context("init embedded device id")?;
+            let login = ControlPlaneClient::from_env()
+                .prepare_device_login(&device_id, std::env::consts::OS)
+                .context("prepare embedded device login")?;
+            if let Some(mqtt) = login.mqtt.clone() {
+                let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
+                persist_session(&session)?;
+                connect_embedded_control_mqtt_with_session(&session)
+                    .context("connect mqtt before browser login")?;
+            }
+            Ok(runtime.request_browser_login(Some(login.device_id)))
+        }
         ClientCommand::LoginWithPassword(payload) => {
             let auth = ControlPlaneClient::from_env()
                 .login_with_password(&payload.email, &payload.password)
@@ -1128,18 +1259,19 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
             connect_embedded_control_mqtt_with_session(&session)
                 .context("connect mqtt after login")?;
             runtime
-                .dispatch(ClientCommand::ApplyAuthCallback(session.into()))
+                .dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()))
                 .context("apply login session")
         }
-        ClientCommand::ApplyAuthCallback(payload) => {
+        ClientCommand::ApplyDeviceUserLogin(payload) => {
+            validate_embedded_device_user_login_succeeded(&runtime, &payload)?;
             let session =
-                hydrate_session_from_control_plane(payload).context("hydrate auth callback")?;
+                hydrate_session_from_control_plane(payload).context("hydrate device user login")?;
             persist_session(&session)?;
             connect_embedded_control_mqtt_with_session(&session)
-                .context("connect mqtt after auth callback")?;
+                .context("connect mqtt after device user login")?;
             runtime
-                .dispatch(ClientCommand::ApplyAuthCallback(session.into()))
-                .context("apply auth callback")
+                .dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()))
+                .context("apply device user login")
         }
         ClientCommand::Logout => {
             crate::network_module::clear_network_module();

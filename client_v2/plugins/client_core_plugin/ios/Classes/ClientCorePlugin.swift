@@ -327,13 +327,18 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
   private func stableDeviceId() -> String {
     let defaults = UserDefaults.standard
     if let existing = defaults.string(forKey: Self.deviceIdKey),
-      !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      isUuidV4(existing.trimmingCharacters(in: .whitespacesAndNewlines))
     {
-      return existing
+      return existing.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    let value = "ios-\(UUID().uuidString.lowercased())"
+    let value = UUID().uuidString.lowercased()
     defaults.set(value, forKey: Self.deviceIdKey)
     return value
+  }
+
+  private func isUuidV4(_ value: String) -> Bool {
+    let pattern = #"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"#
+    return value.range(of: pattern, options: .regularExpression) != nil
   }
 
   private func stableNodeId() -> String {

@@ -1,7 +1,93 @@
 import { AppComponentData } from './overview/app.component.data';
+import { ApiAuthResponse } from './app.models';
+import {
+  clearBrowserAuth,
+  clientLoginTarget,
+  consoleLoginTarget,
+  persistBrowserAuth,
+  readStoredBrowserAuth,
+  replaceUrl,
+  sanitizedHomeParams,
+} from './app-auth-flow';
 import { shortCodeFromEmail } from './app.utils';
 
 export class AppComponentAuth extends AppComponentData {
+  protected async initializeCustomerAuthFromUrl(): Promise<void> {
+    if (await this.completeClientLoginFromStoredBrowserAuth()) {
+      return;
+    }
+    if (await this.consumeConsoleLoginKeyFromUrl()) {
+      return;
+    }
+    await this.restoreBrowserAuth();
+    this.applyRouteFromLocation();
+  }
+
+  private async completeClientLoginFromStoredBrowserAuth(): Promise<boolean> {
+    if (!clientLoginTarget()) {
+      return false;
+    }
+    try {
+      const auth = readStoredBrowserAuth();
+      if (!auth) {
+        return false;
+      }
+      this.authMessage = '正在同步客户端登录...';
+      this.notifyStateChanged();
+      if (!(await this.syncClientLogin(auth))) {
+        clearBrowserAuth();
+        this.mode = 'login';
+        this.notifyStateChanged();
+        return false;
+      }
+      await this.applyAuth(auth);
+      this.navigateToDefaultHome();
+      return true;
+    } catch (error) {
+      this.authMessage = `浏览器登录态恢复失败：${error instanceof Error ? error.message : String(error)}`;
+      this.mode = 'login';
+      this.notifyStateChanged();
+      return false;
+    }
+  }
+
+  protected async restoreBrowserAuth(): Promise<boolean> {
+    try {
+      const auth = readStoredBrowserAuth();
+      if (!auth) {
+        return false;
+      }
+      await this.applyAuth(auth);
+      return true;
+    } catch (error) {
+      this.authMessage = `浏览器登录态恢复失败：${error instanceof Error ? error.message : String(error)}`;
+      this.mode = 'login';
+      this.notifyStateChanged();
+      return false;
+    }
+  }
+
+  async consumeConsoleLoginKeyFromUrl(): Promise<boolean> {
+    const target = consoleLoginTarget();
+    if (!target) {
+      return false;
+    }
+    this.authMessage = '正在通过客户端临时登录...';
+    try {
+      const response = await this.api.post<{ auth: ApiAuthResponse }>('/api/auth/console-login', {
+        loginKey: target.loginKey,
+      });
+      await this.applyAuth(response.auth);
+      this.navigateToDefaultHome();
+      return true;
+    } catch (error) {
+      this.authMessage = `客户端临时登录失败：${error instanceof Error ? error.message : String(error)}`;
+      replaceUrl('/', sanitizedHomeParams());
+      this.mode = 'login';
+      return false;
+    }
+  }
+
   async enter(mode: 'login' | 'register'): Promise<void> {
     if (!this.authEmail || !this.authPassword) {
       return;
@@ -11,48 +97,74 @@ export class AppComponentAuth extends AppComponentData {
       const payload = mode === 'login'
         ? { email: this.authEmail, password: this.authPassword }
         : { email: this.authEmail, password: this.authPassword, name: this.authName };
-      const response = await this.api.post<{ auth: { user: { userId: string; email: string }; session: { token: string } } }>(path, payload);
-      this.currentUser = response.auth.user.email;
-      this.currentUserId = response.auth.user.userId;
-      this.currentUserShortCode = shortCodeFromEmail(response.auth.user.email);
-      await this.completeDeviceLoginCallback(response.auth);
-      this.mode = 'home';
-      await this.loadDashboard(response.auth.user.userId);
-      this.applyRouteFromLocation();
-    } catch {
-      this.currentUser = this.authEmail;
-      this.currentUserShortCode = shortCodeFromEmail(this.authEmail);
-      this.mode = 'home';
-      if (mode === 'register' && !this.devices.some((device) => device.owner === this.authEmail)) {
-        this.devices = [
-          ...this.devices,
-          { deviceId: 'new-device', platform: 'macOS', osVersion: '15.x', alias: '新设备', ip: '10.0.0.20', owner: this.authEmail, status: 'active' },
-        ];
+      const response = await this.api.post<{ auth: ApiAuthResponse }>(path, payload);
+      const synced = await this.syncClientLogin(response.auth);
+      if (!synced) {
+        return;
       }
+      await this.applyAuth(response.auth);
+      this.navigateToDefaultHome();
+    } catch (error) {
+      this.authMessage = `${mode === 'login' ? '登录' : '注册'}失败：${error instanceof Error ? error.message : String(error)}`;
+      this.notifyStateChanged();
     }
   }
 
   logout(): void {
+    this.currentSessionToken = '';
+    this.authMessage = '';
+    clearBrowserAuth();
     this.mode = 'login';
+    this.notifyStateChanged();
   }
 
-  private async completeDeviceLoginCallback(auth: { user: { userId: string; email: string }; session: { token: string } }): Promise<void> {
-    const params = new URLSearchParams(window.location.search);
-    const callbackId = params.get('callbackId')?.trim();
-    if (!callbackId) {
+  private async applyAuth(auth: ApiAuthResponse, persist = true): Promise<void> {
+    this.currentUser = auth.user.email;
+    this.currentUserId = auth.user.userId;
+    this.currentUserShortCode = shortCodeFromEmail(auth.user.email);
+    this.currentSessionToken = auth.session.token;
+    if (persist) {
+      persistBrowserAuth(auth);
+    }
+    this.authMessage = '';
+    this.mode = 'home';
+    this.notifyStateChanged();
+    await this.loadDashboard(auth.user.userId);
+    this.notifyStateChanged();
+  }
+
+  private async completeDeviceLogin(auth: ApiAuthResponse): Promise<void> {
+    const target = clientLoginTarget();
+    if (!target) {
       return;
     }
-    await this.api.post(`/api/auth/device-login-callbacks/${encodeURIComponent(callbackId)}/complete`, {
+    await this.api.post(`/api/auth/device-login-devices/${encodeURIComponent(target.deviceId)}/complete`, {
       accessToken: auth.session.token,
-      deviceId: params.get('deviceId')?.trim() || undefined,
-      action: params.get('auth') === 'login' ? 'login' : 'callback',
+      userId: auth.user.userId,
+      email: auth.user.email,
+      action: target.authMode,
     });
-    params.delete('auth');
-    params.delete('callbackId');
-    params.delete('deviceId');
-    const query = params.toString();
-    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
-    window.history.replaceState({}, '', nextUrl);
+  }
+
+  private async syncClientLogin(auth: ApiAuthResponse): Promise<boolean> {
+    if (!clientLoginTarget()) {
+      return true;
+    }
+    try {
+      await this.completeDeviceLogin(auth);
+      this.authMessage = '';
+      this.notifyStateChanged();
+      return true;
+    } catch (error) {
+      this.authMessage = `客户端登录同步失败：${error instanceof Error ? error.message : String(error)}`;
+      this.notifyStateChanged();
+      return false;
+    }
+  }
+
+  private navigateToDefaultHome(): void {
+    replaceUrl('/overview', sanitizedHomeParams());
+    this.applyRouteFromLocation();
   }
 
   openPasswordDialog(): void {

@@ -1,31 +1,62 @@
 <section class="auth" *ngIf="mode !== 'home'">
-  <div class="auth-card">
-    <div class="brand-row">
-      <div class="brand-mark">S</div>
-      <div>
-        <strong>SLAN Client Web</strong>
-        <span>{{ rootDomain }}</span>
+  <div class="auth-layout">
+    <div class="auth-card">
+      <div class="brand-row">
+        <div class="brand-mark">S</div>
+        <div>
+          <strong>SLAN Client Web</strong>
+          <span>{{ rootDomain }}</span>
+        </div>
       </div>
+      <div class="auth-tabs">
+        <button type="button" [class.active]="mode === 'login'" (click)="mode = 'login'">登录</button>
+        <button type="button" [class.active]="mode === 'register'" (click)="mode = 'register'">注册</button>
+      </div>
+      <label *ngIf="mode === 'register'">
+        <span>名称</span>
+        <input [(ngModel)]="authName" />
+      </label>
+      <label>
+        <span>邮箱</span>
+        <input [(ngModel)]="authEmail" type="email" />
+      </label>
+      <label>
+        <span>密码</span>
+        <input [(ngModel)]="authPassword" type="password" />
+      </label>
+      <button class="primary block" type="button" (click)="enter(mode)">
+        {{ mode === 'login' ? '登录并进入主页' : '注册并进入主页' }}
+      </button>
+      <p class="form-error" *ngIf="authMessage">{{ authMessage }}</p>
     </div>
-    <div class="auth-tabs">
-      <button type="button" [class.active]="mode === 'login'" (click)="mode = 'login'">登录</button>
-      <button type="button" [class.active]="mode === 'register'" (click)="mode = 'register'">注册</button>
-    </div>
-    <label *ngIf="mode === 'register'">
-      <span>名称</span>
-      <input [(ngModel)]="authName" />
-    </label>
-    <label>
-      <span>邮箱</span>
-      <input [(ngModel)]="authEmail" type="email" />
-    </label>
-    <label>
-      <span>密码</span>
-      <input [(ngModel)]="authPassword" type="password" />
-    </label>
-    <button class="primary block" type="button" (click)="enter(mode)">
-      {{ mode === 'login' ? '登录并进入主页' : '注册并进入主页' }}
-    </button>
+
+    <section class="download-card">
+      <div class="download-hero">
+        <span>SLAN Client</span>
+        <h1>下载客户端，接入你的安全网络</h1>
+        <p>安装后登录账号或使用接入码，把 Mac、Windows、iOS、Linux、Android 设备放进同一个网络。</p>
+      </div>
+      <div class="download-list">
+        <article class="download-item" *ngFor="let platform of downloadPlatforms">
+          <div class="platform-icon">{{ platform.label.slice(0, 1) }}</div>
+          <div>
+            <strong>{{ platform.label }}</strong>
+            <span>{{ platform.hint }}</span>
+            <small *ngIf="latestClientDownload(platform.platform) as item">
+              {{ item.version }} · {{ item.channel }} · {{ formatDownloadSize(item.fileSize) }}
+            </small>
+            <small *ngIf="!latestClientDownload(platform.platform)">安装包待发布</small>
+          </div>
+          <a class="download-button"
+             [class.disabled]="!latestClientDownload(platform.platform)"
+             [href]="latestClientDownload(platform.platform)?.downloadUrl || null"
+             target="_blank"
+             rel="noopener">
+            下载
+          </a>
+        </article>
+      </div>
+    </section>
   </div>
 </section>
 

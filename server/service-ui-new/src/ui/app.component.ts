@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, ViewEncapsulation } from '@angular/core';
+import { ChangeDetectorRef, Component, ViewEncapsulation } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AppApiClient } from './app-api.service';
 import { AppComponentAuth } from './app.component.auth';
@@ -17,16 +17,21 @@ import { UserAliasPageComponent } from './user-alias/user-alias-page.component';
   encapsulation: ViewEncapsulation.None,
 })
 export class AppComponent extends AppComponentAuth {
-  constructor(api: AppApiClient) {
+  constructor(api: AppApiClient, private readonly changeDetector: ChangeDetectorRef) {
     super(api);
   }
 
   ngOnInit(): void {
-    this.applyRouteFromLocation();
+    void this.loadClientDownloads();
+    void this.initializeCustomerAuthFromUrl();
     window.addEventListener('popstate', () => this.applyRouteFromLocation());
   }
 
   get vm(): this {
     return this;
+  }
+
+  protected override notifyStateChanged(): void {
+    this.changeDetector.detectChanges();
   }
 }

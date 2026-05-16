@@ -41,6 +41,23 @@ export type ApiDevice = {
   updatedAt: number;
 };
 
+export type ClientDownload = {
+  downloadId: string;
+  platform: string;
+  platformName: string;
+  version: string;
+  arch?: string;
+  channel: string;
+  fileName: string;
+  fileSize: number;
+  sha256?: string;
+  downloadUrl: string;
+  releaseNotes?: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type ApiUserAlias = {
   ownerUserId: string;
   email: string;
@@ -79,6 +96,20 @@ export type ApiDeviceInvite = {
   acceptedDeviceId?: string;
   acceptedUserId?: string;
   acceptedAt?: number;
+};
+
+export type ApiDeviceBootstrapKey = {
+  id: string;
+  key?: string;
+  createdByUserId: string;
+  networkId: string;
+  deviceAlias?: string;
+  expiresAt: number;
+  usedAt?: number;
+  usedByDeviceId?: string;
+  revokedAt?: number;
+  status: string;
+  createdAt: number;
 };
 
 export type ApiDeviceAccessGrant = {

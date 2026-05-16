@@ -5,8 +5,7 @@ import Network
 public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private static let launchdServiceLabel = "dev.slan.client-core-service"
   private var statusItem: NSStatusItem?
-  private var statusMenuItem: NSMenuItem?
-  private var connectMenuItem: NSMenuItem?
+  private var networkMenuItem: NSMenuItem?
   private let stateWatchQueue = DispatchQueue(
     label: "dev.slan.client_core_v2.macos.stateWatch",
     qos: .utility
@@ -18,7 +17,6 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     "signedIn": false,
     "userLabel": nil,
     "deviceId": nil,
-    "authCallbackId": nil,
     "virtualIp": nil,
     "networkEnabled": false,
     "syncing": false,
@@ -50,8 +48,8 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
         openAuthenticatedConsole()
       } else if commandType == "loginWithBrowser" {
         openConsole(
-          callbackId: extractStringField(serviceResponse, "authCallbackId"),
-          deviceId: extractStringField(serviceResponse, "deviceId")
+          deviceId: extractStringField(serviceResponse, "deviceId"),
+          browserLogin: true
         )
       }
       result(serviceResponse)
@@ -62,34 +60,23 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   private func installStatusItem() {
-    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    item.button?.title = "SLAN"
+    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    applyStatusIcon(networkEnabled: false, serviceAvailable: false)
     item.button?.toolTip = "SLAN Client"
 
     let menu = NSMenu()
     menu.addItem(makeMenuItem(
-      title: "Open SLAN Client",
+      title: "Settings",
       action: #selector(openMainWindow),
       keyEquivalent: ""
     ))
-    let connectItem = makeMenuItem(
-      title: "Connect",
+    let networkItem = makeMenuItem(
+      title: "Enable Network",
       action: #selector(toggleNetwork),
       keyEquivalent: ""
     )
-    menu.addItem(connectItem)
-    let statusMenu = NSMenuItem(
-      title: "Status: Unknown",
-      action: nil,
-      keyEquivalent: ""
-    )
-    statusMenu.isEnabled = false
-    menu.addItem(statusMenu)
-    menu.addItem(makeMenuItem(
-      title: "Open Console",
-      action: #selector(openConsoleFromMenu),
-      keyEquivalent: ""
-    ))
+    networkItem.isEnabled = false
+    menu.addItem(networkItem)
     menu.addItem(NSMenuItem.separator())
     menu.addItem(makeMenuItem(
       title: "Quit",
@@ -97,10 +84,43 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       keyEquivalent: "q"
     ))
     item.menu = menu
-    connectMenuItem = connectItem
-    statusMenuItem = statusMenu
+    networkMenuItem = networkItem
     self.statusItem = item
+    applyStatusIcon(networkEnabled: false, serviceAvailable: false)
     startStateWatchLoop()
+  }
+
+  private func applyStatusIcon(networkEnabled: Bool, serviceAvailable: Bool) {
+    guard let button = statusItem?.button else {
+      return
+    }
+    let image = makeVLStatusImage(networkEnabled: networkEnabled, serviceAvailable: serviceAvailable)
+    button.image = image
+    button.imagePosition = .imageOnly
+  }
+
+  private func makeVLStatusImage(networkEnabled: Bool, serviceAvailable: Bool) -> NSImage {
+    let size = NSSize(width: 22, height: 22)
+    let image = NSImage(size: size)
+    image.lockFocus()
+    let fill = networkEnabled
+      ? NSColor(calibratedRed: 0.04, green: 0.39, blue: 0.96, alpha: 1)
+      : (serviceAvailable
+        ? NSColor(calibratedRed: 0.43, green: 0.48, blue: 0.57, alpha: 1)
+        : NSColor(calibratedRed: 0.83, green: 0.20, blue: 0.17, alpha: 1))
+    fill.setFill()
+    NSBezierPath(roundedRect: NSRect(x: 1, y: 1, width: 20, height: 20), xRadius: 5, yRadius: 5).fill()
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = .center
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.boldSystemFont(ofSize: 11),
+      .foregroundColor: NSColor.white,
+      .paragraphStyle: paragraph,
+    ]
+    NSString(string: "VL").draw(in: NSRect(x: 0, y: 4.1, width: 22, height: 14), withAttributes: attributes)
+    image.unlockFocus()
+    image.isTemplate = false
+    return image
   }
 
   private func makeMenuItem(title: String, action: Selector, keyEquivalent: String) -> NSMenuItem {
@@ -176,7 +196,8 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   @objc private func toggleNetwork() {
-    guard !boolField(latestMenuState, "syncing"),
+    guard boolField(latestMenuState, "signedIn"),
+      !boolField(latestMenuState, "syncing"),
       boolField(latestMenuState, "switchEnabled")
     else {
       return
@@ -184,10 +205,6 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     let enabled = boolField(latestMenuState, "networkEnabled")
     let method = enabled ? "localNetworkDeactivate" : "localNetworkActivate"
     _ = forwardToServiceWithAutoStart(method: method, arguments: nil)
-  }
-
-  @objc private func openConsoleFromMenu() {
-    openAuthenticatedConsole()
   }
 
   private func startStateWatchLoop() {
@@ -231,14 +248,14 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   private func applyServiceUnavailableMenuState() {
-    if latestMenuState == nil && statusMenuItem?.title == "Status: Service unavailable" {
+    if latestMenuState == nil && statusItem?.button?.toolTip == "SLAN Client - Service unavailable" {
       return
     }
     latestMenuState = nil
-    statusMenuItem?.title = "Status: Service unavailable"
-    connectMenuItem?.title = "Connect"
-    connectMenuItem?.isEnabled = false
-    statusItem?.button?.title = "SLAN: Off"
+    statusItem?.button?.toolTip = "SLAN Client - Service unavailable"
+    applyStatusIcon(networkEnabled: false, serviceAvailable: false)
+    networkMenuItem?.title = "Enable Network"
+    networkMenuItem?.isEnabled = false
   }
 
   private func applyMenuStateIfChanged(_ snapshot: [String: Any]) {
@@ -263,10 +280,10 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     } else {
       statusText = "Signed out"
     }
-    connectMenuItem?.title = networkEnabled ? "Disconnect" : "Connect"
-    connectMenuItem?.isEnabled = switchEnabled && !syncing
-    statusMenuItem?.title = error.isEmpty ? "Status: \(statusText)" : "Status: \(statusText) - \(error)"
-    statusItem?.button?.title = networkEnabled ? "SLAN: On" : "SLAN: Off"
+    networkMenuItem?.title = networkEnabled ? "Disable Network" : "Enable Network"
+    networkMenuItem?.isEnabled = signedIn && switchEnabled && !syncing
+    applyStatusIcon(networkEnabled: networkEnabled, serviceAvailable: true)
+    statusItem?.button?.toolTip = error.isEmpty ? "SLAN Client - \(statusText)" : "SLAN Client - \(statusText): \(error)"
   }
 
   private func menuStateEquals(_ left: [String: Any]?, _ right: [String: Any]) -> Bool {
@@ -280,26 +297,42 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
 
   private func openAuthenticatedConsole() {
     if let response = forwardToServiceWithAutoStart(method: "consoleLoginKey", arguments: nil) {
+      let loginKey = extractStringField(response, "loginKey")
+      if loginKey.isEmpty {
+        let error = stringField(parseJsonObject(response), "error")
+        showWebConsoleOpenError(error.isEmpty ? "failed to create console login key" : error)
+        return
+      }
       openConsole(
         deviceId: extractStringField(response, "deviceId"),
-        consoleLoginKey: extractStringField(response, "loginKey")
+        consoleLoginKey: loginKey
       )
       return
     }
-    openConsole(deviceId: stringField(latestMenuState, "deviceId"))
+    showWebConsoleOpenError("client-core-service is not available")
+  }
+
+  private func showWebConsoleOpenError(_ message: String) {
+    DispatchQueue.main.async {
+      let alert = NSAlert()
+      alert.messageText = "Web Console 打开失败"
+      alert.informativeText = message
+      alert.alertStyle = .warning
+      alert.addButton(withTitle: "确定")
+      alert.runModal()
+    }
   }
 
   private func openConsole(
-    callbackId: String = "",
     deviceId: String = "",
-    consoleLoginKey: String = ""
+    consoleLoginKey: String = "",
+    browserLogin: Bool = false
   ) {
     let target = resolveWebConsoleUrl()
     var components = URLComponents(string: target)
     var queryItems = components?.queryItems ?? []
-    if !callbackId.isEmpty {
+    if browserLogin {
       queryItems.append(URLQueryItem(name: "auth", value: "login"))
-      queryItems.append(URLQueryItem(name: "callbackId", value: callbackId))
     }
     if !consoleLoginKey.isEmpty {
       queryItems.append(URLQueryItem(name: "consoleLoginKey", value: consoleLoginKey))
@@ -308,8 +341,6 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if !safeDeviceId.isEmpty {
       queryItems.append(URLQueryItem(name: "deviceId", value: safeDeviceId))
     }
-    queryItems.append(URLQueryItem(name: "clientPlatform", value: "macos"))
-    queryItems.append(URLQueryItem(name: "clientName", value: "SLAN Client V2"))
     if !queryItems.isEmpty {
       components?.queryItems = queryItems
     }
@@ -328,26 +359,32 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if let value = environment["SLAN_CONTROL_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
       !value.isEmpty
     {
-      if value.contains("api.dev.staticlss.com") {
-        return "http://web.dev.staticlss.com"
-      }
+      return webConsoleUrl(fromControlBaseUrl: value)
+    }
+    return "http://web.dev.staticlss.com"
+  }
+
+  private func webConsoleUrl(fromControlBaseUrl value: String) -> String {
+    guard let components = URLComponents(string: value),
+      let host = components.host?.lowercased()
+    else {
+      return "http://web.dev.staticlss.com"
+    }
+    let scheme = components.scheme?.isEmpty == false ? components.scheme! : "http"
+    if host == "api.dev.staticlss.com" {
+      return "\(scheme)://web.dev.staticlss.com"
+    }
+    if host == "api.slan.localhost" || host == "slan.localhost" {
+      return "\(scheme)://web.slan.localhost"
+    }
+    if host == "127.0.0.1" || host == "localhost" || host == "::1" || components.port == 28080 {
+      return "\(scheme)://\(host):24200"
     }
     return "http://web.dev.staticlss.com"
   }
 
   private func usableClientDeviceId(_ deviceId: String) -> String {
-    let value = deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
-    if value.isEmpty {
-      return ""
-    }
-    let lower = value.lowercased()
-    if lower == "authcallbackid" || lower == "windows-plugin-login" || lower == "macos-plugin-login" {
-      return ""
-    }
-    if lower.hasPrefix("cb-") {
-      return ""
-    }
-    return value
+    return deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private func readCommandType(_ arguments: Any?) -> String {

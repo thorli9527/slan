@@ -70,6 +70,67 @@ pub fn stable_hash64(value: &str) -> u64 {
     hash
 }
 
+pub fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        out.push(TABLE[(b0 >> 2) as usize] as char);
+        out.push(TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(b2 & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    let bytes = input.trim().as_bytes();
+    if bytes.is_empty() {
+        return Some(Vec::new());
+    }
+    if !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let v0 = base64_value(chunk[0])?;
+        let v1 = base64_value(chunk[1])?;
+        let pad2 = chunk[2] == b'=';
+        let pad3 = chunk[3] == b'=';
+        let v2 = if pad2 { 0 } else { base64_value(chunk[2])? };
+        let v3 = if pad3 { 0 } else { base64_value(chunk[3])? };
+        out.push((v0 << 2) | (v1 >> 4));
+        if !pad2 {
+            out.push(((v1 & 0x0f) << 4) | (v2 >> 2));
+        }
+        if !pad3 {
+            out.push(((v2 & 0x03) << 6) | v3);
+        }
+    }
+    Some(out)
+}
+
+fn base64_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
+}
+
 pub fn relay_frame_is_replayed(last_rx_seq: u64, seq: u64) -> bool {
     last_rx_seq > 0 && seq <= last_rx_seq
 }
@@ -77,9 +138,9 @@ pub fn relay_frame_is_replayed(last_rx_seq: u64, seq: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_slan_relay_data_frame, decode_slan_relay_data_frame_full,
-        encode_slan_relay_data_frame, relay_frame_is_replayed, stable_hash64,
-        SLAN_RELAY_HEADER_LEN,
+        base64_decode, base64_encode, decode_slan_relay_data_frame,
+        decode_slan_relay_data_frame_full, encode_slan_relay_data_frame, relay_frame_is_replayed,
+        stable_hash64, SLAN_RELAY_HEADER_LEN,
     };
 
     #[test]
@@ -113,5 +174,12 @@ mod tests {
         assert!(!relay_frame_is_replayed(10, 11));
         assert!(relay_frame_is_replayed(10, 10));
         assert!(relay_frame_is_replayed(10, 9));
+    }
+
+    #[test]
+    fn base64_round_trips_payload() {
+        let payload = b"SLAN\x00\xffpayload";
+        let encoded = base64_encode(payload);
+        assert_eq!(base64_decode(&encoded).as_deref(), Some(payload.as_slice()));
     }
 }

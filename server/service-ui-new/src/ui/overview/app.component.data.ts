@@ -2,6 +2,7 @@ import { panelFromRoute } from '../app-routing';
 import { AppComponentSecurity } from '../network/app.component.security';
 import {
   ApiDevice,
+  ClientDownload,
   ApiDNSRecord,
   ApiDNSZone,
   ApiPublicMapping,
@@ -30,6 +31,15 @@ import {
 import { slug } from '../app.utils';
 
 export abstract class AppComponentData extends AppComponentSecurity {
+  protected override async loadClientDownloads(): Promise<void> {
+    try {
+      const response = await this.api.get<{ items: ClientDownload[] }>('/api/client-downloads');
+      this.clientDownloads = response.items;
+    } catch {
+      this.clientDownloads = [];
+    }
+  }
+
   protected override applyRouteFromLocation(): void {
     const path = window.location.pathname;
     if (path === '/' || path === '/overview') {

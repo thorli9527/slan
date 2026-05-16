@@ -84,7 +84,7 @@ func mqttConfigFromEnv() MQTTConfig {
 		UsernamePrefix:             "slan",
 		PasswordSecret:             "dev-mqtt-secret",
 		TopicPrefix:                "slan/v1",
-		CredentialTTLSeconds:       86400,
+		CredentialTTLSeconds:       int((30 * 24 * time.Hour).Seconds()),
 		PublishTimeoutMilliseconds: 15000,
 	}
 	if value := os.Getenv("SLAN_MQTT_ENABLED"); value != "" {

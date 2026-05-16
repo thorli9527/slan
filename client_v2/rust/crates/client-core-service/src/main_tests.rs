@@ -248,9 +248,10 @@ fn relay_ticket_renews_inside_expiration_window() {
     let now = parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
 
     assert!(relay_ticket_should_renew(now, Some("2026-05-03T10:01:30Z")));
+    assert!(relay_ticket_should_renew(now, Some("2026-05-03T10:05:00Z")));
     assert!(!relay_ticket_should_renew(
         now,
-        Some("2026-05-03T10:05:00Z")
+        Some("2026-05-03T10:05:01Z")
     ));
 }
 
@@ -645,6 +646,10 @@ fn test_relay_stats(ticket_expires_at: &str, updated_at_ms: u64) -> RelayRuntime
         oversized_tun_packets: 0,
         last_oversized_tun_packet_size: None,
         wintun_write_failures: 0,
+        started_at_ms: updated_at_ms,
+        last_tun_packet_at_ms: None,
+        last_relay_packet_at_ms: None,
+        last_relay_keepalive_at_ms: None,
         updated_at_ms,
     }
 }

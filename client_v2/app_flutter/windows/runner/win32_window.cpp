@@ -44,6 +44,19 @@ constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme"
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
+struct TrayServiceState {
+  bool reachable = false;
+  bool signed_in = false;
+  bool network_enabled = false;
+  bool syncing = false;
+  bool switch_enabled = false;
+};
+
+TrayServiceState QueryTrayServiceState();
+void ToggleNetworkFromTray();
+void UpdateTrayIconState(HWND window, const TrayServiceState& state);
+HICON CreateVLTrayIcon(bool network_enabled, bool service_available);
+
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
 // Scale helper to convert logical scaler values to physical using passed in
@@ -77,9 +90,11 @@ void AddTrayIcon(HWND window) {
   notify_icon.uID = kTrayIconId;
   notify_icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
   notify_icon.uCallbackMessage = kTrayIconMessage;
-  notify_icon.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+  notify_icon.hIcon = CreateVLTrayIcon(false, false);
   wcscpy_s(notify_icon.szTip, L"SLAN Client V2");
   Shell_NotifyIcon(NIM_ADD, &notify_icon);
+  DestroyIcon(notify_icon.hIcon);
+  UpdateTrayIconState(window, QueryTrayServiceState());
 }
 
 void RemoveTrayIcon(HWND window) {
@@ -90,9 +105,54 @@ void RemoveTrayIcon(HWND window) {
   Shell_NotifyIcon(NIM_DELETE, &notify_icon);
 }
 
+HICON CreateVLTrayIcon(bool network_enabled, bool service_available) {
+  constexpr int kSize = 32;
+  HDC screen_dc = GetDC(nullptr);
+  HDC memory_dc = CreateCompatibleDC(screen_dc);
+  HBITMAP color_bitmap = CreateCompatibleBitmap(screen_dc, kSize, kSize);
+  HBITMAP old_bitmap = static_cast<HBITMAP>(SelectObject(memory_dc, color_bitmap));
+
+  const COLORREF background = network_enabled
+      ? RGB(10, 102, 242)
+      : (service_available ? RGB(105, 116, 135) : RGB(210, 54, 48));
+  HBRUSH background_brush = CreateSolidBrush(background);
+  RECT rect{0, 0, kSize, kSize};
+  FillRect(memory_dc, &rect, background_brush);
+  DeleteObject(background_brush);
+
+  HFONT font = CreateFontW(
+      -18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_OUTLINE_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+      DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+  HFONT old_font = static_cast<HFONT>(SelectObject(memory_dc, font));
+  SetBkMode(memory_dc, TRANSPARENT);
+  SetTextColor(memory_dc, RGB(255, 255, 255));
+  DrawTextW(memory_dc, L"VL", -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+  SelectObject(memory_dc, old_font);
+  DeleteObject(font);
+  SelectObject(memory_dc, old_bitmap);
+  DeleteDC(memory_dc);
+  ReleaseDC(nullptr, screen_dc);
+
+  HBITMAP mask_bitmap = CreateBitmap(kSize, kSize, 1, 1, nullptr);
+  ICONINFO icon_info{};
+  icon_info.fIcon = TRUE;
+  icon_info.hbmMask = mask_bitmap;
+  icon_info.hbmColor = color_bitmap;
+  HICON icon = CreateIconIndirect(&icon_info);
+  DeleteObject(color_bitmap);
+  DeleteObject(mask_bitmap);
+  return icon;
+}
+
 void ShowTrayMenu(HWND window) {
+  const TrayServiceState state = QueryTrayServiceState();
+  UpdateTrayIconState(window, state);
   HMENU menu = CreatePopupMenu();
-  AppendMenu(menu, MF_STRING, ID_TRAY_OPEN, L"Open SLAN Client");
+  AppendMenu(menu, MF_STRING, ID_TRAY_SETTINGS, L"Settings");
+  const UINT network_flags = MF_STRING | (state.signed_in && state.switch_enabled && !state.syncing ? MF_ENABLED : MF_GRAYED);
+  AppendMenu(menu, network_flags, ID_TRAY_NETWORK,
+             state.network_enabled ? L"Disable Network" : L"Enable Network");
   AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenu(menu, MF_STRING, ID_TRAY_QUIT, L"Quit");
 
@@ -103,6 +163,28 @@ void ShowTrayMenu(HWND window) {
       menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_LEFTALIGN,
       cursor.x, cursor.y, 0, window, nullptr);
   DestroyMenu(menu);
+}
+
+void UpdateTrayIconState(HWND window, const TrayServiceState& state) {
+  NOTIFYICONDATA notify_icon{};
+  notify_icon.cbSize = sizeof(NOTIFYICONDATA);
+  notify_icon.hWnd = window;
+  notify_icon.uID = kTrayIconId;
+  notify_icon.uFlags = NIF_ICON | NIF_TIP;
+  notify_icon.hIcon = CreateVLTrayIcon(state.network_enabled, state.reachable);
+  const wchar_t* tip = L"SLAN Client V2 - Service unavailable";
+  if (state.reachable) {
+    if (state.network_enabled) {
+      tip = L"SLAN Client V2 - Network enabled";
+    } else if (state.signed_in) {
+      tip = L"SLAN Client V2 - Network disabled";
+    } else {
+      tip = L"SLAN Client V2 - Signed out";
+    }
+  }
+  wcscpy_s(notify_icon.szTip, tip);
+  Shell_NotifyIcon(NIM_MODIFY, &notify_icon);
+  DestroyIcon(notify_icon.hIcon);
 }
 
 void RestoreWindow(HWND window) {
@@ -158,17 +240,17 @@ bool SplitHostPort(const std::string& host_port, std::string* host, unsigned sho
   return true;
 }
 
-void ShutdownNetworkBeforeQuit() {
+bool SendServiceCommand(const char* method, std::string* response) {
   WSADATA winsock_data{};
   if (WSAStartup(MAKEWORD(2, 2), &winsock_data) != 0) {
-    return;
+    return false;
   }
 
   std::string host;
   unsigned short port = 46392;
   if (!SplitHostPort(ServiceHost(), &host, &port)) {
     WSACleanup();
-    return;
+    return false;
   }
 
   addrinfo hints{};
@@ -180,7 +262,7 @@ void ShutdownNetworkBeforeQuit() {
   const auto port_text = std::to_string(port);
   if (getaddrinfo(host.c_str(), port_text.c_str(), &hints, &resolved) != 0) {
     WSACleanup();
-    return;
+    return false;
   }
 
   SOCKET socket = INVALID_SOCKET;
@@ -199,7 +281,7 @@ void ShutdownNetworkBeforeQuit() {
 
   if (socket == INVALID_SOCKET) {
     WSACleanup();
-    return;
+    return false;
   }
 
   const DWORD timeout_ms = 2000;
@@ -208,15 +290,64 @@ void ShutdownNetworkBeforeQuit() {
   setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO,
              reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
 
-  const char request[] =
-      "{\"method\":\"localNetworkShutdown\",\"args\":{}}\n";
-  send(socket, request, static_cast<int>(strlen(request)), 0);
+  const std::string request = std::string("{\"method\":\"") + method + "\",\"args\":{}}\n";
+  send(socket, request.c_str(), static_cast<int>(request.size()), 0);
   shutdown(socket, SD_SEND);
 
-  char buffer[256];
-  recv(socket, buffer, sizeof(buffer), 0);
+  char buffer[4096];
+  while (true) {
+    const int received = recv(socket, buffer, sizeof(buffer), 0);
+    if (received <= 0) {
+      break;
+    }
+    if (response != nullptr) {
+      response->append(buffer, buffer + received);
+    }
+  }
   closesocket(socket);
   WSACleanup();
+  return true;
+}
+
+bool JsonBoolField(const std::string& json, const char* field) {
+  const std::string key = std::string("\"") + field + "\"";
+  const auto key_pos = json.find(key);
+  if (key_pos == std::string::npos) {
+    return false;
+  }
+  const auto colon_pos = json.find(':', key_pos + key.size());
+  if (colon_pos == std::string::npos) {
+    return false;
+  }
+  const auto true_pos = json.find("true", colon_pos + 1);
+  const auto false_pos = json.find("false", colon_pos + 1);
+  return true_pos != std::string::npos && (false_pos == std::string::npos || true_pos < false_pos);
+}
+
+TrayServiceState QueryTrayServiceState() {
+  std::string response;
+  TrayServiceState state{};
+  state.reachable = SendServiceCommand("localState", &response);
+  if (!state.reachable) {
+    return state;
+  }
+  state.signed_in = JsonBoolField(response, "signedIn");
+  state.network_enabled = JsonBoolField(response, "networkEnabled");
+  state.syncing = JsonBoolField(response, "syncing");
+  state.switch_enabled = JsonBoolField(response, "switchEnabled");
+  return state;
+}
+
+void ToggleNetworkFromTray() {
+  const TrayServiceState state = QueryTrayServiceState();
+  if (!state.signed_in || state.syncing || !state.switch_enabled) {
+    return;
+  }
+  SendServiceCommand(state.network_enabled ? "localNetworkDeactivate" : "localNetworkActivate", nullptr);
+}
+
+void ShutdownNetworkBeforeQuit() {
+  SendServiceCommand("localNetworkShutdown", nullptr);
 }
 
 // Manages the Win32Window's window class registration.
@@ -360,8 +491,12 @@ Win32Window::MessageHandler(HWND hwnd,
 
     case WM_COMMAND:
       switch (LOWORD(wparam)) {
-        case ID_TRAY_OPEN:
+        case ID_TRAY_SETTINGS:
           RestoreWindow(hwnd);
+          return 0;
+        case ID_TRAY_NETWORK:
+          ToggleNetworkFromTray();
+          UpdateTrayIconState(hwnd, QueryTrayServiceState());
           return 0;
         case ID_TRAY_QUIT:
           ShutdownNetworkBeforeQuit();
@@ -374,10 +509,12 @@ Win32Window::MessageHandler(HWND hwnd,
 
     case kTrayIconMessage:
       if (lparam == WM_LBUTTONUP) {
+        UpdateTrayIconState(hwnd, QueryTrayServiceState());
         RestoreWindow(hwnd);
         return 0;
       }
       if (lparam == WM_LBUTTONDBLCLK) {
+        UpdateTrayIconState(hwnd, QueryTrayServiceState());
         RestoreWindow(hwnd);
         return 0;
       }

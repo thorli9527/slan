@@ -56,13 +56,16 @@ Move behavior from the old Flutter client only when the target owner is clear:
 - Linux: tray is optional at install time; service-only installs are valid.
 
 The tray owns UI shell lifetime only. Runtime networking belongs to `client-core-service`.
+Desktop tray/menu-bar UI is intentionally icon-only and exposes only `Settings`, `Enable/Disable Network`, and `Quit`.
+`Enable/Disable Network` is disabled until the local service reports a signed-in user.
+The tray icon changes between network enabled and disabled/signed-out states.
 On Windows and macOS, explicit tray/menu-bar Quit calls `localNetworkShutdown` before exiting the shell.
 
 If a platform has no native plugin handler yet, the Dart plugin facade falls back to the same local JSON-line TCP API exposed by `client-core-service`.
 
 For macOS/iOS/Android multi-device development on one Mac, see [`../docs/client-v2-multidevice-dev.md`](../docs/client-v2-multidevice-dev.md).
 
-For device ID stability and hardware-derived ID rules, see [`../docs/client-v2-device-id.md`](../docs/client-v2-device-id.md).
+For device ID generation and install-time reset behavior, see [`../docs/client-v2-device-id.md`](../docs/client-v2-device-id.md).
 
 ## Control Transport
 

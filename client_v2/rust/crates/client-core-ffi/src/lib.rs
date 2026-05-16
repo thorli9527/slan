@@ -18,17 +18,20 @@ mod android_tun {
             Arc, Mutex, OnceLock,
         },
         thread::{self, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use client_core::relay_frame::{
-        decode_slan_relay_data_frame, encode_slan_relay_data_frame, stable_hash64,
+        base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
+        stable_hash64,
     };
-    use client_core::{AndroidVpnSessionConfig, RelayPeerSession};
+    use client_core::{icmp_echo_reply_for_request, AndroidVpnSessionConfig, RelayPeerSession};
     use jni::{
         objects::{JClass, JIntArray, JString},
         JNIEnv,
     };
+
+    const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 
     struct TunRuntime {
         stop: Arc<AtomicBool>,
@@ -154,6 +157,7 @@ mod android_tun {
 
     struct AndroidRelayPeer {
         session_id: String,
+        local_node_id: String,
         peer_virtual_ips: Vec<String>,
         socket: UdpSocket,
     }
@@ -189,6 +193,10 @@ mod android_tun {
             .and_then(|config| config.max_frame_payload)
             .unwrap_or(1200)
             .clamp(512, 1400) as usize;
+        let local_virtual_ip = parsed_config
+            .as_ref()
+            .map(|config| config.virtual_ip.clone())
+            .unwrap_or_default();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let thread_stats = Arc::clone(&stats);
@@ -200,7 +208,14 @@ mod android_tun {
             let mut seq = 0_u64;
             let mut tun_buffer = vec![0_u8; 2048];
             let mut relay_buffer = vec![0_u8; 4096];
+            let mut last_keepalive = Instant::now()
+                .checked_sub(RELAY_KEEPALIVE_INTERVAL)
+                .unwrap_or_else(Instant::now);
             while !thread_stop.load(Ordering::SeqCst) {
+                if last_keepalive.elapsed() >= RELAY_KEEPALIVE_INTERVAL {
+                    send_relay_keepalives(&relay_peers);
+                    last_keepalive = Instant::now();
+                }
                 match file.read(&mut tun_buffer) {
                     Ok(0) => thread::sleep(Duration::from_millis(20)),
                     Ok(packet_len) => {
@@ -208,6 +223,12 @@ mod android_tun {
                         thread_stats
                             .bytes_read
                             .fetch_add(packet_len as u64, Ordering::Relaxed);
+                        if packet_targets_local_virtual_ip(
+                            &tun_buffer[..packet_len],
+                            local_virtual_ip.as_str(),
+                        ) {
+                            continue;
+                        }
                         if packet_len > max_frame_payload {
                             thread_stats
                                 .packets_too_large
@@ -223,20 +244,31 @@ mod android_tun {
                                 config_hash,
                                 &tun_buffer[..packet_len],
                             ) {
-                                match peer.socket.send(&frame) {
-                                    Ok(_) => {
-                                        thread_stats
-                                            .relay_frames_sent
-                                            .fetch_add(1, Ordering::Relaxed);
+                                if let Some(payload) = encode_relay_forward(peer, &frame) {
+                                    match peer.socket.send(&payload) {
+                                        Ok(_) => {
+                                            thread_stats
+                                                .relay_frames_sent
+                                                .fetch_add(1, Ordering::Relaxed);
+                                        }
+                                        Err(_) => {
+                                            thread_stats
+                                                .relay_write_failures
+                                                .fetch_add(1, Ordering::Relaxed);
+                                        }
                                     }
-                                    Err(_) => {
-                                        thread_stats
-                                            .relay_write_failures
-                                            .fetch_add(1, Ordering::Relaxed);
-                                    }
+                                } else {
+                                    thread_stats
+                                        .relay_write_failures
+                                        .fetch_add(1, Ordering::Relaxed);
                                 }
                             }
                         } else {
+                            if let Some(destination) = ipv4_destination(&tun_buffer[..packet_len]) {
+                                if should_ignore_unroutable_destination(&destination) {
+                                    continue;
+                                }
+                            }
                             thread_stats
                                 .relay_no_peer_packets
                                 .fetch_add(1, Ordering::Relaxed);
@@ -251,12 +283,43 @@ mod android_tun {
                 for peer in &relay_peers {
                     match peer.socket.recv(&mut relay_buffer) {
                         Ok(frame_len) => {
-                            if let Some(packet) =
-                                decode_slan_relay_data_frame(&relay_buffer[..frame_len])
+                            let decoded_payload = relay_packet_payload(&relay_buffer[..frame_len]);
+                            if decoded_payload.is_none()
+                                && relay_control_kind(&relay_buffer[..frame_len]).is_some()
                             {
+                                continue;
+                            }
+                            let frame = decoded_payload
+                                .as_deref()
+                                .unwrap_or(&relay_buffer[..frame_len]);
+                            if let Some(packet) = decode_slan_relay_data_frame(frame) {
                                 thread_stats
                                     .relay_frames_received
                                     .fetch_add(1, Ordering::Relaxed);
+                                if let Some(reply) =
+                                    icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
+                                {
+                                    seq = seq.wrapping_add(1);
+                                    if let Some(frame) =
+                                        encode_slan_relay_data_frame(seq, config_hash, &reply)
+                                    {
+                                        if let Some(payload) = encode_relay_forward(peer, &frame) {
+                                            match peer.socket.send(&payload) {
+                                                Ok(_) => {
+                                                    thread_stats
+                                                        .relay_frames_sent
+                                                        .fetch_add(1, Ordering::Relaxed);
+                                                }
+                                                Err(_) => {
+                                                    thread_stats
+                                                        .relay_write_failures
+                                                        .fetch_add(1, Ordering::Relaxed);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                }
                                 if file.write_all(packet).is_err() {
                                     thread_stats
                                         .tun_write_failures
@@ -287,6 +350,48 @@ mod android_tun {
             config_json,
         });
         Ok(())
+    }
+
+    fn encode_relay_forward(peer: &AndroidRelayPeer, frame: &[u8]) -> Option<Vec<u8>> {
+        serde_json::to_vec(&serde_json::json!({
+            "kind": "forward",
+            "session_id": peer.session_id,
+            "participant_id": peer.local_node_id,
+            "payload": base64_encode(frame),
+        }))
+        .ok()
+    }
+
+    fn send_relay_keepalives(peers: &[AndroidRelayPeer]) {
+        for peer in peers {
+            let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                "kind": "ping",
+                "session_id": peer.session_id,
+                "participant_id": peer.local_node_id,
+            })) else {
+                continue;
+            };
+            let _ = peer.socket.send(&payload);
+        }
+    }
+
+    fn relay_packet_payload(frame: &[u8]) -> Option<Vec<u8>> {
+        let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
+        if value.get("kind").and_then(serde_json::Value::as_str) != Some("packet") {
+            return None;
+        }
+        base64_decode(value.get("payload")?.as_str()?)
+    }
+
+    fn relay_control_kind(frame: &[u8]) -> Option<String> {
+        let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
+        match value.get("kind").and_then(serde_json::Value::as_str)? {
+            "pong" | "attached" | "forwarded" | "detached" | "error" => value
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            _ => None,
+        }
     }
 
     fn tun_stats_json(runtime: &TunRuntime) -> String {
@@ -349,6 +454,7 @@ mod android_tun {
                     socket.set_nonblocking(true)?;
                     Ok(AndroidRelayPeer {
                         session_id: String::new(),
+                        local_node_id: String::new(),
                         peer_virtual_ips: Vec::new(),
                         socket,
                     })
@@ -380,6 +486,7 @@ mod android_tun {
             socket.set_nonblocking(true)?;
             peers.push(AndroidRelayPeer {
                 session_id: session.session_id.clone(),
+                local_node_id: relay_config.local_node_id.clone(),
                 peer_virtual_ips: session.peer_virtual_ips.clone(),
                 socket,
             });
@@ -523,12 +630,6 @@ mod android_tun {
         peers: &'a [AndroidRelayPeer],
         packet: &[u8],
     ) -> Option<&'a AndroidRelayPeer> {
-        if peers.is_empty() {
-            return None;
-        }
-        if peers.len() == 1 {
-            return Some(&peers[0]);
-        }
         let Some(destination) = ipv4_destination(packet) else {
             return None;
         };
@@ -537,6 +638,22 @@ mod android_tun {
                 .iter()
                 .any(|ip| normalize_virtual_ip(ip) == destination)
         })
+    }
+
+    fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> bool {
+        ipv4_destination(packet)
+            .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
+            .unwrap_or(false)
+    }
+
+    fn should_ignore_unroutable_destination(destination: &str) -> bool {
+        let mut parts = destination
+            .split('.')
+            .filter_map(|part| part.parse::<u8>().ok());
+        let Some(first) = parts.next() else {
+            return false;
+        };
+        first >= 224 || destination == "255.255.255.255"
     }
 
     fn ipv4_destination(packet: &[u8]) -> Option<String> {

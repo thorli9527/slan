@@ -65,6 +65,36 @@ func TestAttachRejectsExpiredTicket(t *testing.T) {
 	}
 }
 
+func TestAttachRefreshesSessionExpiry(t *testing.T) {
+	store := NewStore()
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	firstExpiry := time.Now().Add(time.Minute).UTC()
+	firstTicket := protocol.RelayTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		SessionID: "s1",
+		Path:      "relay_udp",
+		ExpiresAt: firstExpiry,
+	}
+	firstTicket.Signature = signRelayTicket(firstTicket)
+	if _, _, err := store.Attach(addr, "node-a", firstTicket, "udp"); err != nil {
+		t.Fatalf("attach first ticket: %v", err)
+	}
+
+	secondExpiry := time.Now().Add(10 * time.Minute).UTC()
+	secondTicket := firstTicket
+	secondTicket.TicketID = "t2"
+	secondTicket.ExpiresAt = secondExpiry
+	secondTicket.Signature = signRelayTicket(secondTicket)
+	session, _, err := store.Attach(addr, "node-a", secondTicket, "udp")
+	if err != nil {
+		t.Fatalf("attach renewal ticket: %v", err)
+	}
+	if !session.ExpiresAt.Equal(secondExpiry) {
+		t.Fatalf("want refreshed expiry %s, got %s", secondExpiry, session.ExpiresAt)
+	}
+}
+
 func signRelayTicket(ticket protocol.RelayTicket) string {
 	return signRelayTicketWithSecret(ticket, ticketSecret())
 }

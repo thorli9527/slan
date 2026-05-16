@@ -3,6 +3,7 @@ package biz
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,12 +27,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("GET /api/client-downloads", s.listClientDownloads)
+	mux.HandleFunc("GET /downloads/clients/{fileName}", s.downloadClientFile)
 
 	mux.HandleFunc("POST /api/auth/register", s.registerUser)
 	mux.HandleFunc("POST /api/auth/login", s.loginUser)
-	mux.HandleFunc("POST /api/auth/device-login-callbacks", s.createDeviceLoginCallback)
-	mux.HandleFunc("GET /api/auth/device-login-callbacks/{callbackId}", s.deviceLoginCallbackStatus)
-	mux.HandleFunc("POST /api/auth/device-login-callbacks/{callbackId}/complete", s.completeDeviceLoginCallback)
+	mux.HandleFunc("POST /api/auth/renew", s.renewUserSession)
+	mux.HandleFunc("POST /api/auth/logout", s.logoutUser)
+	mux.HandleFunc("POST /api/auth/console-login-keys", s.createConsoleLoginKey)
+	mux.HandleFunc("POST /api/auth/console-login", s.consoleLogin)
+	mux.HandleFunc("POST /api/auth/device-login-devices", s.prepareDeviceLoginDevice)
+	mux.HandleFunc("POST /api/auth/device-login-devices/{deviceId}/complete", s.completeDeviceLoginDevice)
+	mux.HandleFunc("POST /api/web/device-bootstrap-keys", s.createDeviceBootstrapKey)
+	mux.HandleFunc("GET /api/web/device-bootstrap-keys", s.listDeviceBootstrapKeys)
+	mux.HandleFunc("POST /api/web/device-bootstrap-keys/{keyId}/revoke", s.revokeDeviceBootstrapKey)
 	mux.HandleFunc("GET /api/users", s.listUsers)
 	mux.HandleFunc("GET /api/users/{userId}/entitlement", s.userEntitlement)
 	mux.HandleFunc("PATCH /api/users/{userId}/password", s.changeUserPassword)
@@ -42,6 +51,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/devices/visible", s.listVisibleDevices)
 	mux.HandleFunc("POST /api/devices/register", s.registerDevice)
 	mux.HandleFunc("POST /api/devices/{deviceId}/renew", s.renewDevice)
+	mux.HandleFunc("POST /api/device/session/bootstrap", s.bootstrapDeviceSession)
+	mux.HandleFunc("POST /api/device/session/bind", s.bindDeviceSession)
+	mux.HandleFunc("POST /api/device/session/renew", s.renewDeviceSession)
 	mux.HandleFunc("GET /api/devices/{deviceId}/network-configs", s.deviceNetworkConfigs)
 	mux.HandleFunc("GET /api/devices/{deviceId}/mqtt-credential", s.deviceMQTTCredential)
 	mux.HandleFunc("PATCH /api/devices/{deviceId}", s.updateDeviceAlias)
@@ -122,49 +134,79 @@ func (s *Server) loginUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"auth": auth})
 }
 
-func (s *Server) createDeviceLoginCallback(w http.ResponseWriter, r *http.Request) {
+func (s *Server) logoutUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CallbackID string `json:"callbackId"`
-		DeviceID   string `json:"deviceId"`
-		Platform   string `json:"platform"`
+		DeviceToken string `json:"deviceToken"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	callback, err := s.store.CreateDeviceLoginCallback(req.CallbackID, req.DeviceID, req.Platform, 10*time.Minute)
+	if err := s.store.LogoutSessions(bearerToken(r), req.DeviceToken); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+func (s *Server) createConsoleLoginKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceID string `json:"deviceId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	token := bearerToken(r)
+	key, err := s.store.CreateConsoleLoginKey(token, req.DeviceID, 2*time.Minute)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusCreated, key)
+}
+
+func (s *Server) consoleLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LoginKey string `json:"loginKey"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	auth, err := s.store.ConsumeConsoleLoginKey(req.LoginKey)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auth": auth})
+}
+
+func (s *Server) prepareDeviceLoginDevice(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceID string `json:"deviceId"`
+		Platform string `json:"platform"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if deviceID == "" {
+		writeError(w, errBadRequest)
+		return
+	}
+	log.Printf("device login prepared device=%s platform=%s", deviceID, strings.TrimSpace(req.Platform))
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"callbackId": callback.CallbackID,
-		"deviceId":   callback.DeviceID,
-		"expiresIn":  callback.ExpiresAt - timeNow().Unix(),
-		"loginUrl":   deviceLoginURL(callback),
+		"deviceId": deviceID,
+		"loginUrl": deviceLoginDeviceURL(deviceID),
+		"mqtt":     deviceMQTTCredential(s.mqtt, deviceID, timeNow()),
 	})
 }
 
-func (s *Server) deviceLoginCallbackStatus(w http.ResponseWriter, r *http.Request) {
-	callback, ready, err := s.store.DeviceLoginCallbackStatus(r.PathValue("callbackId"))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"callbackId": callback.CallbackID,
-		"ready":      ready,
-		"payload":    callback.Payload,
-		"status":     callback.Status,
-		"expiresAt":  callback.ExpiresAt,
-	})
-}
-
-func (s *Server) completeDeviceLoginCallback(w http.ResponseWriter, r *http.Request) {
+func (s *Server) completeDeviceLoginDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AccessToken string `json:"accessToken"`
 		Token       string `json:"token"`
-		DeviceID    string `json:"deviceId"`
 		Action      string `json:"action"`
+		UserID      string `json:"userId"`
+		Email       string `json:"email"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -173,15 +215,74 @@ func (s *Server) completeDeviceLoginCallback(w http.ResponseWriter, r *http.Requ
 	if strings.TrimSpace(token) == "" {
 		token = req.Token
 	}
-	callback, err := s.store.CompleteDeviceLoginCallback(r.PathValue("callbackId"), token, req.DeviceID, req.Action)
+	deviceID := r.PathValue("deviceId")
+	payload, err := s.store.CompleteDeviceLoginForDevice(deviceID, token, req.Action, req.UserID, req.Email)
+	if err != nil {
+		log.Printf("device login complete failed device=%s user=%s email=%s err=%v", deviceID, req.UserID, req.Email, err)
+		writeError(w, err)
+		return
+	}
+	log.Printf("device login completed device=%s user=%s email=%s", deviceID, payload.UserID, payload.UserLabel)
+	s.notifyDeviceUserLoginSucceeded(deviceID, payload)
+	if configs, err := s.store.NetworkConfigsForDevice(deviceID); err == nil {
+		s.notifyDeviceNetworkConfigsChanged(configs, "device_login_completed", "network_device", "add", deviceID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "deviceId": deviceID})
+}
+
+func (s *Server) createDeviceBootstrapKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID      string `json:"userId"`
+		NetworkID   string `json:"networkId"`
+		DeviceAlias string `json:"deviceAlias"`
+		TTLSeconds  int64  `json:"ttlSeconds"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	userID := strings.TrimSpace(req.UserID)
+	if userID == "" {
+		if auth, err := s.store.AuthByToken(bearerToken(r)); err == nil {
+			userID = auth.User.UserID
+		}
+	}
+	key, err := s.store.CreateDeviceBootstrapKey(userID, req.NetworkID, req.DeviceAlias, req.TTLSeconds)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if callback.Payload != nil && callback.Payload.DeviceID != nil {
-		s.notifyAuthCallback(*callback.Payload.DeviceID, *callback.Payload)
+	writeJSON(w, http.StatusCreated, key)
+}
+
+func (s *Server) listDeviceBootstrapKeys(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	if userID == "" {
+		if auth, err := s.store.AuthByToken(bearerToken(r)); err == nil {
+			userID = auth.User.UserID
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "callback": callback})
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListDeviceBootstrapKeys(userID)})
+}
+
+func (s *Server) revokeDeviceBootstrapKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID string `json:"userId"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	userID := strings.TrimSpace(req.UserID)
+	if userID == "" {
+		if auth, err := s.store.AuthByToken(bearerToken(r)); err == nil {
+			userID = auth.User.UserID
+		}
+	}
+	key, err := s.store.RevokeDeviceBootstrapKey(r.PathValue("keyId"), userID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, key)
 }
 
 func (s *Server) changeUserPassword(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +298,15 @@ func (s *Server) changeUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) renewUserSession(w http.ResponseWriter, r *http.Request) {
+	auth, err := s.store.RenewUserSession(bearerToken(r))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auth": auth})
 }
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +362,8 @@ func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	s.notifyNetworkConfigChanged(membership.NetworkID, "device_registered", "network_device", "add", membership.NetworkDeviceID, device.DeviceID)
+	s.notifyNetworkMemberState(membership.NetworkID, device.DeviceID, "enabled", "device_registered")
 	writeJSON(w, http.StatusCreated, map[string]any{"device": device, "defaultNetworkDevice": membership, "mqtt": deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow())})
 }
 
@@ -276,6 +388,83 @@ func (s *Server) renewDevice(w http.ResponseWriter, r *http.Request) {
 		"mqtt":           deviceMQTTCredential(s.mqtt, device.DeviceID, now),
 		"networkConfigs": map[string]any{"items": configs},
 		"leaseExpiresAt": now.Add(3 * time.Minute).Unix(),
+	})
+}
+
+func (s *Server) bootstrapDeviceSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionKey string `json:"sessionKey"`
+		DeviceID   string `json:"deviceId"`
+		Name       string `json:"name"`
+		Platform   string `json:"platform"`
+		OSName     string `json:"osName"`
+		OSVersion  string `json:"osVersion"`
+		Alias      string `json:"alias"`
+		PublicKey  string `json:"publicKey"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	device, session, configs, err := s.store.BootstrapDeviceSession(req.SessionKey, req.DeviceID, req.Name, req.Platform, req.OSName, req.OSVersion, req.Alias, req.PublicKey)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	s.notifyDeviceNetworkConfigsChanged(configs, "device_session_bootstrapped", "network_device", "add", device.DeviceID)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"device":         device,
+		"deviceSession":  session,
+		"mqtt":           deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()),
+		"networkConfigs": map[string]any{"items": configs},
+	})
+}
+
+func (s *Server) bindDeviceSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceID  string `json:"deviceId"`
+		Name      string `json:"name"`
+		Platform  string `json:"platform"`
+		OSName    string `json:"osName"`
+		OSVersion string `json:"osVersion"`
+		Alias     string `json:"alias"`
+		PublicKey string `json:"publicKey"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	device, session, configs, err := s.store.BindDeviceSession(bearerToken(r), req.DeviceID, req.Name, req.Platform, req.OSName, req.OSVersion, req.Alias, req.PublicKey)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	s.notifyDeviceNetworkConfigsChanged(configs, "device_session_bound", "network_device", "add", device.DeviceID)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"device":         device,
+		"deviceSession":  session,
+		"mqtt":           deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()),
+		"networkConfigs": map[string]any{"items": configs},
+	})
+}
+
+func (s *Server) renewDeviceSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NetworkEnabled bool   `json:"networkEnabled"`
+		RxBytesTotal   uint64 `json:"rxBytesTotal"`
+		TxBytesTotal   uint64 `json:"txBytesTotal"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	device, session, configs, err := s.store.RenewDeviceSession(bearerToken(r), req.NetworkEnabled, req.RxBytesTotal, req.TxBytesTotal)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"device":         device,
+		"deviceSession":  session,
+		"mqtt":           deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()),
+		"networkConfigs": map[string]any{"items": configs},
 	})
 }
 
@@ -842,6 +1031,14 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	return true
 }
 
+func bearerToken(r *http.Request) string {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return strings.TrimSpace(auth[7:])
+	}
+	return auth
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -864,7 +1061,7 @@ func writeError(w http.ResponseWriter, err error) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
 
-func deviceLoginURL(callback DeviceLoginCallback) string {
+func deviceLoginDeviceURL(deviceID string) string {
 	base := strings.TrimSpace(os.Getenv("SLAN_WEB_CONSOLE_URL"))
 	if base == "" {
 		base = "http://web.dev.staticlss.com/"
@@ -875,12 +1072,8 @@ func deviceLoginURL(callback DeviceLoginCallback) string {
 	}
 	query := parsed.Query()
 	query.Set("auth", "login")
-	query.Set("callbackId", callback.CallbackID)
-	if strings.TrimSpace(callback.DeviceID) != "" {
-		query.Set("deviceId", callback.DeviceID)
-	}
-	if strings.TrimSpace(callback.Platform) != "" {
-		query.Set("clientPlatform", callback.Platform)
+	if strings.TrimSpace(deviceID) != "" {
+		query.Set("deviceId", deviceID)
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String()

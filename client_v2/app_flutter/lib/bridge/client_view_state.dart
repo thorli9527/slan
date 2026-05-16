@@ -7,7 +7,6 @@ class ClientViewState {
     this.syncReason,
     this.userLabel,
     this.deviceId,
-    this.authCallbackId,
     this.virtualIp,
     this.notice,
     this.error,
@@ -25,7 +24,6 @@ class ClientViewState {
   final bool signedIn;
   final String? userLabel;
   final String? deviceId;
-  final String? authCallbackId;
   final String? virtualIp;
   final bool networkEnabled;
   final bool syncing;
@@ -58,7 +56,6 @@ class ClientViewState {
       signedIn: json['signedIn'] == true,
       userLabel: json['userLabel'] as String?,
       deviceId: json['deviceId'] as String?,
-      authCallbackId: json['authCallbackId'] as String?,
       virtualIp: networkEnabled ? json['virtualIp'] as String? : null,
       networkEnabled: networkEnabled,
       syncing: json['syncing'] == true,
@@ -83,7 +80,6 @@ class ClientViewState {
     bool? signedIn,
     String? userLabel,
     String? deviceId,
-    String? authCallbackId,
     String? virtualIp,
     bool? networkEnabled,
     bool? syncing,
@@ -107,7 +103,6 @@ class ClientViewState {
       signedIn: signedIn ?? this.signedIn,
       userLabel: userLabel ?? this.userLabel,
       deviceId: deviceId ?? this.deviceId,
-      authCallbackId: authCallbackId ?? this.authCallbackId,
       virtualIp: clearVirtualIp ? null : virtualIp ?? this.virtualIp,
       networkEnabled: networkEnabled ?? this.networkEnabled,
       syncing: syncing ?? this.syncing,
@@ -138,7 +133,6 @@ class ClientViewState {
             signedIn == other.signedIn &&
             userLabel == other.userLabel &&
             deviceId == other.deviceId &&
-            authCallbackId == other.authCallbackId &&
             virtualIp == other.virtualIp &&
             networkEnabled == other.networkEnabled &&
             syncing == other.syncing &&
@@ -164,7 +158,6 @@ class ClientViewState {
       signedIn,
       userLabel,
       deviceId,
-      authCallbackId,
       virtualIp,
       networkEnabled,
       syncing,

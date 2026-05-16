@@ -36,6 +36,17 @@ type clientMessageUpPayload struct {
 	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 
+type deviceRuntimeUpPayload struct {
+	DeviceID        string `json:"deviceId,omitempty"`
+	ActiveNetworkID string `json:"activeNetworkId,omitempty"`
+	NetworkEnabled  bool   `json:"networkEnabled,omitempty"`
+	VirtualIP       string `json:"virtualIp,omitempty"`
+	SignedIn        bool   `json:"signedIn,omitempty"`
+	RxBytesTotal    uint64 `json:"rxBytesTotal,omitempty"`
+	TxBytesTotal    uint64 `json:"txBytesTotal,omitempty"`
+	ReportedAtMs    int64  `json:"reportedAtMs,omitempty"`
+}
+
 func (s *Server) startMQTTControlSubscriber() {
 	if !s.mqtt.Enabled {
 		return
@@ -85,7 +96,7 @@ func (s *Server) runMQTTControlSubscriberOnce(ctx context.Context) error {
 	if err := mqttReadConnAck(conn); err != nil {
 		return err
 	}
-	topicFilter := mqttTopicRoot(s.mqtt) + "/devices/+/control/up"
+	topicFilter := mqttTopicRoot(s.mqtt) + "/devices/#"
 	if _, err := conn.Write(mqttSubscribePacket(1, topicFilter, mqttQoSExactlyOnce)); err != nil {
 		return err
 	}
@@ -129,8 +140,8 @@ func (s *Server) runMQTTControlSubscriberOnce(ctx context.Context) error {
 			if publish.QoS == 2 {
 				_, _ = conn.Write([]byte{0x50, 0x02, byte(publish.PacketID >> 8), byte(publish.PacketID)})
 			}
-			if err := s.handleMQTTControlUp(ctx, publish.Topic, publish.Payload); err != nil {
-				log.Printf("mqtt control up rejected topic=%s: %v", publish.Topic, err)
+			if err := s.handleMQTTDevicePublish(ctx, publish.Topic, publish.Payload); err != nil {
+				log.Printf("mqtt device publish rejected topic=%s: %v", publish.Topic, err)
 			}
 		case 0x60:
 			if len(body) >= 2 {
@@ -142,6 +153,35 @@ func (s *Server) runMQTTControlSubscriberOnce(ctx context.Context) error {
 		default:
 		}
 	}
+}
+
+func (s *Server) handleMQTTDevicePublish(ctx context.Context, topic string, body []byte) error {
+	deviceID, suffix := deviceIDAndSuffixFromDeviceTopic(s.mqtt, topic)
+	if deviceID == "" {
+		return fmt.Errorf("invalid device topic")
+	}
+	switch suffix {
+	case "control/up":
+		return s.handleMQTTControlUp(ctx, topic, body)
+	case "heartbeat", "runtime", "runtime-state":
+		return s.handleMQTTRuntimeUp(deviceID, body)
+	default:
+		return nil
+	}
+}
+
+func (s *Server) handleMQTTRuntimeUp(topicDeviceID string, body []byte) error {
+	var payload deviceRuntimeUpPayload
+	if len(bytes.TrimSpace(body)) > 0 {
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return fmt.Errorf("decode device runtime payload: %w", err)
+		}
+	}
+	if payload.DeviceID != "" && strings.TrimSpace(payload.DeviceID) != topicDeviceID {
+		return fmt.Errorf("runtime deviceId does not match mqtt topic")
+	}
+	s.store.ReportDeviceRuntime(topicDeviceID, payload.NetworkEnabled, payload.RxBytesTotal, payload.TxBytesTotal)
+	return nil
 }
 
 func (s *Server) handleMQTTControlUp(ctx context.Context, topic string, body []byte) error {
@@ -213,12 +253,20 @@ func (s *Server) handleMQTTControlUp(ctx context.Context, topic string, body []b
 }
 
 func deviceIDFromControlUpTopic(cfg MQTTConfig, topic string) string {
-	suffix := strings.TrimPrefix(trimTopic(topic), mqttTopicRoot(cfg)+"/devices/")
-	parts := strings.Split(suffix, "/")
-	if len(parts) != 3 || parts[1] != "control" || parts[2] != "up" {
+	deviceID, suffix := deviceIDAndSuffixFromDeviceTopic(cfg, topic)
+	if suffix != "control/up" {
 		return ""
 	}
-	return parts[0]
+	return deviceID
+}
+
+func deviceIDAndSuffixFromDeviceTopic(cfg MQTTConfig, topic string) (string, string) {
+	suffix := strings.TrimPrefix(trimTopic(topic), mqttTopicRoot(cfg)+"/devices/")
+	parts := strings.Split(suffix, "/")
+	if len(parts) < 2 || parts[0] == "" {
+		return "", ""
+	}
+	return parts[0], strings.Join(parts[1:], "/")
 }
 
 func mqttSubscribePacket(packetID uint16, topicFilter string, qos byte) []byte {

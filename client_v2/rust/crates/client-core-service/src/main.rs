@@ -18,7 +18,7 @@ mod time_utils;
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, ErrorKind, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, Condvar, Mutex, OnceLock},
     thread,
@@ -54,7 +54,7 @@ use windows_service::service_control_handler::{self, ServiceControlHandlerResult
 use windows_service::service_dispatcher;
 
 use crate::control_plane::{
-    local_stable_device_id, ControlPeer, ControlPlaneClient, RelayCandidate,
+    local_stable_device_id, reset_local_device_id, ControlPeer, ControlPlaneClient, RelayCandidate,
 };
 use crate::control_tasks::{
     ControlTaskAction, ControlTaskDirection, ControlTaskQueue, EnqueueControlTaskRequest,
@@ -77,7 +77,7 @@ use crate::local_api::{
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
     extract_persisted_relay_candidates_from_network_map, normalize_relay_candidate_address,
-    select_relay_candidates, sorted_persisted_relay_candidates,
+    replace_runtime_relay_candidates, runtime_relay_candidates, select_relay_candidates,
 };
 use crate::relay_models::{
     PathDiagnoseDns, PathDiagnoseHealth, PathDiagnoseHealthReason, PathDiagnoseMtu,
@@ -93,7 +93,7 @@ use crate::session_store::{
     app_data_dir, current_timestamp_ms, ensure_session_device_registered,
     ensure_session_node_and_control_session, hydrate_session_from_control_plane, load_session,
     load_valid_registered_session, persist_session, refresh_startup_session, remove_session,
-    report_runtime_state, session_auth_invalid_error, session_is_expired,
+    report_runtime_state, revoke_remote_sessions, session_auth_invalid_error, session_is_expired,
     sync_session_device_fields, PersistedSession,
 };
 use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
@@ -104,10 +104,12 @@ const WINDOWS_SERVICE_NAME: &str = "SLANClientV2Service";
 const RELAY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECT_PLAN_TTL_MS: u64 = 10 * 60 * 1000;
 const RELAY_TICKET_RENEW_INTERVAL_MS: u64 = 20 * 60 * 1000;
-const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
+const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 const RELAY_RECONFIGURE_BACKOFF_MS: u64 = 60 * 1000;
 const RELAY_STATS_STALE_MS: u64 = 45 * 1000;
+const RELAY_IDLE_RECONFIGURE_MS: u64 = 60 * 1000;
 const RELAY_FAILURE_RECONFIGURE_DELTA: u64 = 5;
+static RUNTIME_CONNECT_PLANS: OnceLock<Mutex<PersistedConnectPlanStore>> = OnceLock::new();
 const SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[cfg(target_os = "windows")]
@@ -129,6 +131,7 @@ pub(crate) struct StateChangeNotifier {
 struct LocalServiceContext {
     runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     task_queue: Arc<Mutex<ControlTaskQueue>>,
+    transport_worker_state: Arc<Mutex<ControlTransportWorkerState>>,
     sync_throttle: Arc<Mutex<ControlSyncThrottle>>,
     state_notifier: Arc<StateChangeNotifier>,
 }
@@ -161,6 +164,10 @@ fn main() -> Result<()> {
         println!("{}", local_stable_device_id()?);
         return Ok(());
     }
+    if std::env::args().any(|arg| arg == "--reset-device-id") {
+        println!("{}", reset_local_device_id()?);
+        return Ok(());
+    }
     if std::env::args()
         .any(|arg| arg == "--install-adapter" || arg == "--prepare-adapter" || arg == "--driver")
     {
@@ -191,14 +198,17 @@ fn service_info_json() -> Result<String> {
 fn run_service_server() -> Result<()> {
     log_service_error("client-core-service starting");
     ensure_elevated_runtime()?;
+    let _single_instance = acquire_single_instance_guard()?;
 
     let bind_address = std::env::var("SLAN_CLIENT_CORE_SERVICE_HOST")
         .unwrap_or_else(|_| DEFAULT_SERVICE_HOST.to_string());
     let listener = TcpListener::bind(&bind_address)
         .with_context(|| format!("bind client-core-service on {bind_address}"))?;
     let mut initial_runtime = ClientRuntime::new(PlatformNetworkImpl::default());
-    if let Some(session) = load_valid_registered_session() {
-        let _ = initial_runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+    if let Some(session) =
+        load_valid_registered_session().filter(|session| !session.access_token.trim().is_empty())
+    {
+        let _ = initial_runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
     }
     if let Err(error) = PlatformNetworkImpl::default().install_adapter() {
         log_service_error(format!(
@@ -213,10 +223,10 @@ fn run_service_server() -> Result<()> {
     let service_context = LocalServiceContext {
         runtime: Arc::clone(&runtime),
         task_queue: Arc::clone(&task_queue),
+        transport_worker_state: Arc::clone(&transport_worker_state),
         sync_throttle: Arc::clone(&sync_throttle),
         state_notifier: Arc::clone(&state_notifier),
     };
-    spawn_auth_callback_poller(Arc::clone(&runtime), Arc::clone(&state_notifier));
     spawn_session_refresh_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
     spawn_runtime_sync_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
     spawn_control_task_worker(
@@ -230,19 +240,41 @@ fn run_service_server() -> Result<()> {
         Arc::clone(&transport_worker_state),
         Arc::clone(&state_notifier),
     );
+    control_transport_worker::wake_control_transport_worker(
+        &runtime,
+        &task_queue,
+        &transport_worker_state,
+        &state_notifier,
+    );
     spawn_relay_data_plane_maintenance_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
     println!("client-core-service listening on {bind_address}");
 
-    for stream in listener.incoming() {
-        let stream = stream.context("accept client-core-service connection")?;
-        let context = service_context.clone();
-        thread::spawn(move || {
-            if let Err(error) = handle_connection(stream, context) {
-                log_service_error(format!("client-core-service connection error: {error:#}"));
+    loop {
+        match listener.accept() {
+            Ok((stream, _peer)) => {
+                let context = service_context.clone();
+                thread::spawn(move || {
+                    if let Err(error) = handle_connection(stream, context) {
+                        log_service_error(format!(
+                            "client-core-service connection error: {error:#}"
+                        ));
+                    }
+                });
             }
-        });
+            Err(error) => {
+                let delay = match error.kind() {
+                    ErrorKind::Interrupted => Duration::from_millis(10),
+                    ErrorKind::WouldBlock => Duration::from_millis(50),
+                    _ => Duration::from_millis(250),
+                };
+                log_service_error(format!(
+                    "client-core-service accept failed: {error}; retrying in {}ms",
+                    delay.as_millis()
+                ));
+                thread::sleep(delay);
+            }
+        }
     }
-    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -320,21 +352,90 @@ fn is_elevated_runtime() -> bool {
     true
 }
 
-fn handle_connection(stream: TcpStream, context: LocalServiceContext) -> Result<()> {
-    let mut writer = stream.try_clone().context("clone service stream")?;
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    while reader.read_line(&mut line)? > 0 {
-        let response = route_request(line.trim(), &context).unwrap_or_else(|error| {
-            let message = error.to_string();
-            log_service_error(format!("client-core-service request failed: {message}"));
-            error_state_json(message)
-        });
-        writer.write_all(response.as_bytes())?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
-        line.clear();
+struct SingleInstanceGuard {
+    path: std::path::PathBuf,
+    pid: u32,
+}
+
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        let current = self.pid.to_string();
+        if fs::read_to_string(&self.path)
+            .map(|value| value.trim() == current)
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_file(&self.path);
+        }
     }
+}
+
+fn acquire_single_instance_guard() -> Result<SingleInstanceGuard> {
+    let dir = app_data_dir().join("SLAN");
+    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let path = dir.join("client-core-service.pid");
+    if let Ok(existing) = fs::read_to_string(&path) {
+        if let Ok(pid) = existing.trim().parse::<u32>() {
+            if pid != std::process::id() && process_is_running(pid) {
+                anyhow::bail!("client-core-service already running with pid {pid}");
+            }
+        }
+        let _ = fs::remove_file(&path);
+    }
+    let pid = std::process::id();
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("create single-instance lock {}", path.display()))?;
+    writeln!(file, "{pid}").context("write single-instance pid")?;
+    Ok(SingleInstanceGuard { path, pid })
+}
+
+fn process_is_running(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        return std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+    }
+    #[cfg(windows)]
+    {
+        return std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}")])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
+            .unwrap_or(false);
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
+}
+
+fn handle_connection(mut stream: TcpStream, context: LocalServiceContext) -> Result<()> {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(95)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
+    let mut line = String::new();
+    {
+        let mut reader = BufReader::new(&mut stream);
+        if reader.read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+    }
+    let response = route_request(line.trim(), &context).unwrap_or_else(|error| {
+        let message = error.to_string();
+        log_service_error(format!("client-core-service request failed: {message}"));
+        error_state_json(message)
+    });
+    stream.write_all(response.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()?;
     Ok(())
 }
 
@@ -441,7 +542,20 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         _ => {}
     }
     let should_notify = method.should_notify();
+    let should_wake_control_mqtt = method == LocalServiceMethod::Dispatch
+        && matches!(
+            request.args.get("type").and_then(Value::as_str),
+            Some("loginWithBrowser" | "loginWithPassword" | "applyDeviceUserLogin")
+        );
     let response = handle_request(request, &context.runtime)?;
+    if should_wake_control_mqtt {
+        control_transport_worker::wake_control_transport_worker(
+            &context.runtime,
+            &context.task_queue,
+            &context.transport_worker_state,
+            &context.state_notifier,
+        );
+    }
     if should_notify {
         publish_method_business_event(&context.state_notifier, line, &response);
     }
@@ -512,10 +626,7 @@ fn handle_local_status(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>)
         sync_reason: state.sync_reason,
         active_path,
         peer_count,
-        relay_candidate_count: session
-            .as_ref()
-            .map(|session| session.relay_candidates.len())
-            .unwrap_or_default(),
+        relay_candidate_count: runtime_relay_candidates().len(),
         connect_plan_count: load_recent_connect_plans(current_timestamp_ms()).len(),
         error: state.error,
         runtime_error,
@@ -541,7 +652,7 @@ fn handle_local_session() -> Result<String> {
                 self_node_id: session.self_node_id,
                 active_network_id: session.active_network_id,
                 virtual_ip: session.virtual_ip,
-                relay_candidate_count: session.relay_candidates.len(),
+                relay_candidate_count: runtime_relay_candidates().len(),
                 mqtt_configured: session.mqtt.is_some(),
                 expires_in: session.expires_in,
                 authenticated_at_ms: Some(session.authenticated_at_ms),
@@ -929,21 +1040,13 @@ fn diagnostic_json_file_snapshot(path: &std::path::Path) -> serde_json::Value {
 }
 
 fn diagnostic_connect_plan_file_snapshot() -> serde_json::Value {
-    let path = connect_plan_file_path();
-    let metadata = fs::metadata(&path).ok();
-    let exists = metadata.is_some();
-    let size_bytes = metadata.as_ref().map(std::fs::Metadata::len);
-    let modified_at_ms = metadata
-        .and_then(|metadata| metadata.modified().ok())
-        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis() as u64);
     let store = load_connect_plan_store();
     let summaries = diagnostic_connect_plan_summaries(&store, current_timestamp_ms());
     serde_json::json!({
-        "path": path.display().to_string(),
-        "exists": exists,
-        "sizeBytes": size_bytes,
-        "modifiedAtMs": modified_at_ms,
+        "storage": "memory",
+        "exists": false,
+        "sizeBytes": null,
+        "modifiedAtMs": null,
         "planCount": store.plans.len(),
         "plans": summaries,
     })
@@ -1110,7 +1213,7 @@ fn relay_candidates_response(refresh: bool) -> Result<RelayCandidateListResponse
     } else {
         false
     };
-    let selections = select_relay_candidates(&session.relay_candidates);
+    let selections = select_relay_candidates(&runtime_relay_candidates());
     let best = selections.iter().find(|item| item.selected).cloned();
     Ok(RelayCandidateListResponse {
         network_id: Some(network_id),
@@ -1132,7 +1235,7 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
         .ok_or_else(|| anyhow::anyhow!("device unavailable: current device is not registered"))?;
     let activation = client.activate_network(&session.access_token, device_id, &network_id)?;
     if !activation.relay_candidates.is_empty() {
-        session.relay_candidates = sorted_persisted_relay_candidates(
+        replace_runtime_relay_candidates(
             activation
                 .relay_candidates
                 .iter()
@@ -1232,7 +1335,7 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
         }
     });
     let direct_candidates = diagnose_direct_candidates(&activation.peers);
-    let relay_candidates = select_relay_candidates(&session.relay_candidates);
+    let relay_candidates = select_relay_candidates(&runtime_relay_candidates());
     let expected_mtu = stats.as_ref().and_then(|stats| stats.relay_mtu);
     let expected_payload = stats.as_ref().and_then(|stats| stats.max_frame_payload);
     let mtu = PathDiagnoseMtu {
@@ -1921,6 +2024,47 @@ where
     P: client_core::PlatformNetwork,
 {
     let (command, side_effect) = match command {
+        ClientCommand::LoginWithBrowser => {
+            let device_id = match local_stable_device_id() {
+                Ok(device_id) => device_id,
+                Err(error) => {
+                    return state_with_error(
+                        runtime.state(),
+                        format!("初始化设备 ID 失败: {error:#}"),
+                    );
+                }
+            };
+            let login = match ControlPlaneClient::from_env()
+                .prepare_device_login(&device_id, std::env::consts::OS)
+            {
+                Ok(login) => login,
+                Err(error) => {
+                    return state_with_error(
+                        runtime.state(),
+                        format!("准备设备登录失败: {error:#}"),
+                    );
+                }
+            };
+            if let Some(mqtt) = login.mqtt.clone() {
+                let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
+                if let Err(error) = persist_session(&session) {
+                    return state_with_error(
+                        runtime.state(),
+                        format!("保存设备登录配置失败: {error:#}"),
+                    );
+                }
+                log_service_error(format!(
+                    "client-core-service prepared browser login device={} mqttReady=true",
+                    login.device_id
+                ));
+            } else {
+                log_service_error(format!(
+                    "client-core-service prepared browser login device={} mqttReady=false",
+                    login.device_id
+                ));
+            }
+            return runtime.request_browser_login(Some(login.device_id));
+        }
         ClientCommand::LoginWithPassword(payload) => {
             let auth_payload = match ControlPlaneClient::from_env()
                 .login_with_password(&payload.email, &payload.password)
@@ -1937,16 +2081,33 @@ where
                 .unwrap_or_else(|_| PersistedSession::from(auth_payload));
             let side_effect = persist_session(&session);
             (
-                ClientCommand::ApplyAuthCallback(session.into()),
+                ClientCommand::ApplyDeviceUserLogin(session.into()),
                 side_effect,
             )
         }
-        ClientCommand::ApplyAuthCallback(payload) => {
+        ClientCommand::ApplyDeviceUserLogin(payload) => {
+            if let Some(expected_device_id) = runtime
+                .state()
+                .device_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if payload
+                    .device_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    != Some(expected_device_id)
+                {
+                    return state_with_error(runtime.state(), "登录设备不匹配".to_string());
+                }
+            }
             let session = hydrate_session_from_control_plane(payload.clone())
                 .unwrap_or_else(|_| PersistedSession::from(payload.clone()));
             let side_effect = persist_session(&session);
             (
-                ClientCommand::ApplyAuthCallback(session.into()),
+                ClientCommand::ApplyDeviceUserLogin(session.into()),
                 side_effect,
             )
         }
@@ -1957,6 +2118,9 @@ where
             (ClientCommand::SyncAssignedIp(payload), side_effect)
         }
         ClientCommand::Logout => {
+            if let Ok(session) = load_session() {
+                revoke_remote_sessions(&session);
+            }
             deactivate_control_network();
             crate::network_module::clear_network_module();
             (ClientCommand::Logout, remove_session())
@@ -2056,7 +2220,7 @@ where
     P: client_core::PlatformNetwork,
 {
     let mut session = load_network_session()?;
-    let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.clone().into()));
+    let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.clone().into()));
     activate_control_network_for_session(runtime, &mut session)
 }
 
@@ -2066,7 +2230,7 @@ where
 {
     match load_network_session()
         .and_then(|mut session| {
-            let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.clone().into()));
+            let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.clone().into()));
             activate_control_network_for_session(runtime, &mut session)
         })
         .map(|_| runtime.state().clone())
@@ -2099,7 +2263,7 @@ where
     P: client_core::PlatformNetwork,
 {
     let mut session = load_network_session()?;
-    let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.clone().into()));
+    let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.clone().into()));
     let Some(device_id) = session.device_id.clone().filter(|value| !value.is_empty()) else {
         return Err(anyhow::anyhow!(
             "device unavailable: current device is not registered"
@@ -2116,7 +2280,7 @@ where
     ensure_session_node_and_control_session(&client, &mut session)
         .context("ensure node control session after network activation")?;
     if !activation.relay_candidates.is_empty() {
-        session.relay_candidates = sorted_persisted_relay_candidates(
+        replace_runtime_relay_candidates(
             activation
                 .relay_candidates
                 .iter()
@@ -2124,7 +2288,8 @@ where
                 .collect(),
         );
     }
-    let best_relay = android_data_plane_relay_candidate(&session.relay_candidates);
+    let relay_candidates = runtime_relay_candidates();
+    let best_relay = android_data_plane_relay_candidate(&relay_candidates);
     persist_session(&session)?;
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
         virtual_ip: activation.virtual_ip.clone(),
@@ -2191,7 +2356,7 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     if !activation.relay_candidates.is_empty() {
-        session.relay_candidates = sorted_persisted_relay_candidates(
+        replace_runtime_relay_candidates(
             activation
                 .relay_candidates
                 .iter()
@@ -2201,9 +2366,10 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
     }
     session.virtual_ip = Some(activation.virtual_ip);
     persist_session(&session)?;
-    let best_relay = best_relay_candidate_for_connect_plans(&session.relay_candidates)
-        .or_else(|| best_udp_relay_candidate(&session.relay_candidates))
-        .or_else(|| best_relay_candidate(&session.relay_candidates));
+    let relay_candidates = runtime_relay_candidates();
+    let best_relay = best_relay_candidate_for_connect_plans(&relay_candidates)
+        .or_else(|| best_udp_relay_candidate(&relay_candidates))
+        .or_else(|| best_relay_candidate(&relay_candidates));
     build_relay_data_plane_config(
         &client,
         &session,
@@ -2294,7 +2460,19 @@ where
     };
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(session)?;
-    let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    let activation = match client.activate_network(&session.access_token, &device_id, &network_id) {
+        Ok(activation) => activation,
+        Err(error) if error.to_string().contains("HTTP 404") => {
+            session.active_network_id = None;
+            let refreshed_network_id = ensure_active_network_id(session)?;
+            client
+                .activate_network(&session.access_token, &device_id, &refreshed_network_id)
+                .with_context(|| {
+                    format!("activate refreshed network after stale network config {network_id}")
+                })?
+        }
+        Err(error) => return Err(error),
+    };
     session.self_node_id = activation.self_node_id.clone();
     log_service_error(format!(
         "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={} relays={}",
@@ -2309,7 +2487,7 @@ where
     ensure_session_node_and_control_session(&client, session)
         .context("ensure node control session after network activation")?;
     if !activation.relay_candidates.is_empty() {
-        session.relay_candidates = sorted_persisted_relay_candidates(
+        replace_runtime_relay_candidates(
             activation
                 .relay_candidates
                 .iter()
@@ -2317,9 +2495,10 @@ where
                 .collect(),
         );
     }
-    let best_relay = best_relay_candidate_for_connect_plans(&session.relay_candidates)
-        .or_else(|| best_udp_relay_candidate(&session.relay_candidates))
-        .or_else(|| best_relay_candidate(&session.relay_candidates));
+    let relay_candidates = runtime_relay_candidates();
+    let best_relay = best_relay_candidate_for_connect_plans(&relay_candidates)
+        .or_else(|| best_udp_relay_candidate(&relay_candidates))
+        .or_else(|| best_relay_candidate(&relay_candidates));
     let relay_config = build_relay_data_plane_config(
         &client,
         session,
@@ -2393,10 +2572,7 @@ fn refresh_relay_candidates_for_session(
     if candidates.is_empty() {
         return Ok(false);
     }
-    session.relay_candidates = sorted_persisted_relay_candidates(
-        candidates.iter().map(persisted_relay_candidate).collect(),
-    );
-    persist_session(session)?;
+    replace_runtime_relay_candidates(candidates.iter().map(persisted_relay_candidate).collect());
     Ok(true)
 }
 
@@ -2479,7 +2655,7 @@ fn build_relay_data_plane_config(
             peers,
             local_node_id,
             relay,
-            &select_relay_candidates(&session.relay_candidates),
+            &select_relay_candidates(&runtime_relay_candidates()),
             &sessions,
             Some(connect_plans),
         ),
@@ -2777,7 +2953,7 @@ fn diagnostic_session_summary() -> serde_json::Value {
             "deviceId": session.device_id,
             "activeNetworkId": session.active_network_id,
             "virtualIp": session.virtual_ip,
-            "relayCandidateCount": session.relay_candidates.len(),
+            "relayCandidateCount": runtime_relay_candidates().len(),
             "mqttConfigured": session.mqtt.is_some(),
             "authenticatedAtMs": session.authenticated_at_ms,
         }),
@@ -2882,10 +3058,7 @@ pub(crate) fn persist_relay_candidates_from_network_map(map: &Value) -> Result<u
     if candidates.is_empty() {
         return Ok(0);
     }
-    let mut session = load_session()?;
-    session.relay_candidates = sorted_persisted_relay_candidates(candidates);
-    persist_session(&session)?;
-    Ok(session.relay_candidates.len())
+    Ok(replace_runtime_relay_candidates(candidates).len())
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -2910,7 +3083,7 @@ struct PersistedConnectPlanPath {
     priority: i32,
 }
 
-#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedConnectPlanStore {
     #[serde(default)]
@@ -2964,25 +3137,19 @@ fn latest_connect_plan_updated_at_ms() -> u64 {
 }
 
 fn load_connect_plan_store() -> PersistedConnectPlanStore {
-    let payload = fs::read(connect_plan_file_path()).ok();
-    payload
-        .and_then(|payload| serde_json::from_slice(&payload).ok())
-        .unwrap_or_default()
+    RUNTIME_CONNECT_PLANS
+        .get_or_init(|| Mutex::new(PersistedConnectPlanStore::default()))
+        .lock()
+        .expect("runtime connect plan store mutex poisoned")
+        .clone()
 }
 
 fn persist_connect_plan_store(store: &PersistedConnectPlanStore) -> Result<()> {
-    let path = connect_plan_file_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let payload = serde_json::to_vec_pretty(store).context("encode connect plan store")?;
-    fs::write(&path, payload).with_context(|| format!("write {}", path.display()))
-}
-
-fn connect_plan_file_path() -> std::path::PathBuf {
-    app_data_dir()
-        .join("SLAN")
-        .join("client-v2-connect-plans.json")
+    *RUNTIME_CONNECT_PLANS
+        .get_or_init(|| Mutex::new(PersistedConnectPlanStore::default()))
+        .lock()
+        .expect("runtime connect plan store mutex poisoned") = store.clone();
+    Ok(())
 }
 
 fn clear_session_virtual_ip() -> Result<()> {
@@ -3083,31 +3250,6 @@ fn error_state_json(error: String) -> String {
     serde_json::to_string(&state).unwrap_or_else(|_| "{}".to_string())
 }
 
-fn spawn_auth_callback_poller(
-    runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-    state_notifier: Arc<StateChangeNotifier>,
-) {
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(1));
-        let callback_id = {
-            let runtime = runtime.lock().expect("client runtime mutex poisoned");
-            runtime.state().auth_callback_id.clone()
-        };
-        let Some(callback_id) = callback_id.filter(|value| !value.trim().is_empty()) else {
-            continue;
-        };
-        let client = ControlPlaneClient::from_env();
-        let Ok(Some(payload)) = client.callback_payload(&callback_id) else {
-            continue;
-        };
-        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
-        let _ = dispatch_with_side_effects(&mut runtime, ClientCommand::ApplyAuthCallback(payload));
-        let business_data =
-            serde_json::to_value(runtime.state()).unwrap_or_else(|_| serde_json::json!({}));
-        publish_business_event(&state_notifier, BUSINESS_SESSION_CHANGED, business_data);
-    });
-}
-
 fn spawn_session_refresh_worker(
     runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     state_notifier: Arc<StateChangeNotifier>,
@@ -3125,7 +3267,7 @@ fn spawn_session_refresh_worker(
             Ok(Some(session)) => {
                 let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
                 let before = runtime.state().clone();
-                let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+                let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
                 let state = runtime.state().clone();
                 if state != before {
                     let business_data =
@@ -3298,7 +3440,7 @@ fn maintain_relay_data_plane(
     {
         return Ok(());
     }
-    if session.relay_candidates.is_empty() {
+    if runtime_relay_candidates().is_empty() {
         return Ok(());
     }
     let stats = load_relay_runtime_stats();
@@ -3388,6 +3530,9 @@ fn relay_maintenance_reconfigure_reason(
     if now.saturating_sub(stats.updated_at_ms) > RELAY_STATS_STALE_MS {
         return Some("stale_relay_stats");
     }
+    if relay_runtime_idle(now, stats) {
+        return Some("relay_runtime_idle");
+    }
     if relay_sessions_missing(stats) {
         return Some("relay_session_missing");
     }
@@ -3409,6 +3554,23 @@ fn relay_maintenance_reconfigure_reason(
 
 fn relay_reconfigure_backoff_applies(reason: &str) -> bool {
     reason != "ticket_expired"
+}
+
+fn relay_runtime_idle(now_ms: u64, stats: &RelayRuntimeStats) -> bool {
+    if stats.requested_relay_session_count == 0 || relay_attached_peer_session_count(stats) == 0 {
+        return false;
+    }
+    let last_activity = [
+        stats.last_tun_packet_at_ms,
+        stats.last_relay_packet_at_ms,
+        stats.last_relay_keepalive_at_ms,
+        Some(stats.updated_at_ms),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+    .unwrap_or(0);
+    last_activity > 0 && now_ms.saturating_sub(last_activity) > RELAY_IDLE_RECONFIGURE_MS
 }
 
 fn relay_sessions_missing(stats: &RelayRuntimeStats) -> bool {
@@ -3453,7 +3615,7 @@ fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl
     let Some(device_id) = session.device_id.clone().filter(|value| !value.is_empty()) else {
         if let Ok(session) = ensure_session_device_registered(session) {
             let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
-            let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+            let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
         }
         return;
     };
@@ -3464,7 +3626,7 @@ fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl
     let Some(device) = devices.into_iter().find(|item| item.device_id == device_id) else {
         if let Ok(session) = ensure_session_device_registered(session) {
             let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
-            let _ = runtime.dispatch(ClientCommand::ApplyAuthCallback(session.into()));
+            let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
         }
         return;
     };

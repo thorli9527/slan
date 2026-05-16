@@ -8,7 +8,7 @@ use crate::{
 };
 use client_core::PathPolicy;
 
-const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 2 * 60 * 1000;
+const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 
 pub(crate) fn relay_payload_policy(
     relay_address: &str,
@@ -155,6 +155,10 @@ mod tests {
             oversized_tun_packets: 0,
             last_oversized_tun_packet_size: None,
             wintun_write_failures: 0,
+            started_at_ms: 0,
+            last_tun_packet_at_ms: None,
+            last_relay_packet_at_ms: None,
+            last_relay_keepalive_at_ms: None,
             updated_at_ms: 0,
         }
     }

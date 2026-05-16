@@ -37,12 +37,13 @@ fi
 rm -rf "$STAGE_DIR"
 mkdir -p "$ROOT_STAGE/Applications" "$ROOT_STAGE/Library/Application Support/SLAN" "$SCRIPT_STAGE" "$OUTPUT_DIR"
 
-ditto --norsrc "$APP_PATH" "$ROOT_STAGE/Applications/SLAN Client V2.app"
-cp "$SERVICE_IN_APP" "$ROOT_STAGE/Library/Application Support/SLAN/client-core-service"
+ditto --norsrc --noextattr --noqtn --noacl "$APP_PATH" "$ROOT_STAGE/Applications/SLAN Client V2.app"
+ditto --norsrc --noextattr --noqtn --noacl "$SERVICE_IN_APP" "$ROOT_STAGE/Library/Application Support/SLAN/client-core-service"
 chmod 755 "$ROOT_STAGE/Library/Application Support/SLAN/client-core-service"
 find "$ROOT_STAGE" -name '._*' -delete
 if command -v xattr >/dev/null 2>&1; then
   xattr -cr "$ROOT_STAGE" >/dev/null 2>&1 || true
+  find "$ROOT_STAGE" -exec xattr -d com.apple.provenance {} \; >/dev/null 2>&1 || true
 fi
 
 cp "$ROOT_DIR/client_v2/install/macos/scripts/preinstall" "$SCRIPT_STAGE/preinstall"

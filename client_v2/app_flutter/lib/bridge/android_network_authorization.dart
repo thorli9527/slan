@@ -41,7 +41,7 @@ class AndroidNetworkAuthorizationState {
         return copyWith(
           checking: false,
           permissionState: AndroidVpnPermissionState.granted,
-          error: event.message,
+          error: null,
           clearConsentRequest: true,
         );
       case AndroidNetworkEventType.vpnStarted:
@@ -50,7 +50,7 @@ class AndroidNetworkAuthorizationState {
       case AndroidNetworkEventType.relayChanged:
         return copyWith(
           checking: false,
-          error: event.message,
+          error: null,
         );
       case AndroidNetworkEventType.vpnRevoked:
         return copyWith(

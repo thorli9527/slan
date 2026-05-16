@@ -69,7 +69,29 @@ var
   ResultCode: Integer;
 begin
   Exec(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Result := Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := True;
+end;
+
+function WindowsServiceExists(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := Exec(ExpandConstant('{sys}\sc.exe'), 'query {#ServiceName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+function WaitForWindowsServiceDeleted(): Boolean;
+var
+  Attempts: Integer;
+begin
+  Result := False;
+  for Attempts := 1 to 30 do begin
+    if not WindowsServiceExists() then begin
+      Result := True;
+      exit;
+    end;
+    Sleep(1000);
+  end;
 end;
 
 procedure StopExistingRuntime();
@@ -78,6 +100,7 @@ begin
   ExecHidden(ExpandConstant('{sys}\taskkill.exe'), '/F /IM client-core-service.exe', ewWaitUntilTerminated);
   ExecHidden(ExpandConstant('{sys}\taskkill.exe'), '/F /IM client-core-helper.exe', ewWaitUntilTerminated);
   StopAndDeleteWindowsService();
+  WaitForWindowsServiceDeleted();
 end;
 
 procedure DeleteHelperTask();
@@ -134,13 +157,13 @@ begin
   ) and (ResultCode = 0);
 end;
 
-function EnsureStableDeviceId(): Boolean;
+function ResetStableDeviceId(): Boolean;
 var
   ResultCode: Integer;
 begin
   Result := Exec(
     ExpandConstant('{app}\client-core-service.exe'),
-    '--ensure-device-id',
+    '--reset-device-id',
     '',
     SW_HIDE,
     ewWaitUntilTerminated,
@@ -153,6 +176,13 @@ var
   ResultCode: Integer;
   ServiceBinPath: string;
 begin
+  if WindowsServiceExists() then begin
+    StopAndDeleteWindowsService();
+    if not WaitForWindowsServiceDeleted() then begin
+      exit;
+    end;
+  end;
+
   ServiceBinPath := '""' + ExpandConstant('{app}\client-core-service.exe') + '"" --windows-service';
 
   Result := Exec(
@@ -225,7 +255,7 @@ begin
     ClearPreviousInstallDir();
   end;
   if CurStep = ssPostInstall then begin
-    if not EnsureStableDeviceId() then begin
+    if not ResetStableDeviceId() then begin
       RaiseException('Failed to initialize the SLAN device identity.');
     end;
     if not PrepareDedicatedAdapter() then begin
