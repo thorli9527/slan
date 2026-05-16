@@ -187,6 +187,14 @@ fn handle_request_json(request_json: &str) -> Result<String> {
 }
 
 fn apply_embedded_request_overrides(args: &Value) {
+    if let Some(state_dir) = args
+        .get("stateDir")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        std::env::set_var("SLAN_STATE_DIR", state_dir);
+    }
     if let Some(device_id) = args
         .get("deviceId")
         .and_then(|value| value.as_str())

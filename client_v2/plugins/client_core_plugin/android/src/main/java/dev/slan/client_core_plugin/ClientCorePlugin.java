@@ -121,8 +121,10 @@ public final class ClientCorePlugin
           pollNetworkEvent(result);
           return;
         case "embeddedServiceRequest":
-          result.success(SlanNativeBridge.serviceRequest(
-              call.arguments == null ? "{}" : String.valueOf(call.arguments)));
+          result.success(
+              SlanNativeBridge.serviceRequest(
+                  embeddedServiceRequestJson(
+                      call.arguments == null ? "{}" : String.valueOf(call.arguments))));
           return;
         case "mobileServerBaseUrl":
           result.success(mobileServerBaseUrl());
@@ -269,6 +271,21 @@ public final class ClientCorePlugin
     String value = UUID.randomUUID().toString().toLowerCase();
     prefs.edit().putString(DEVICE_ID_KEY, value).apply();
     return value;
+  }
+
+  private String embeddedServiceRequestJson(String requestJson) throws Exception {
+    JSONObject request = new JSONObject(requestJson == null ? "{}" : requestJson);
+    JSONObject args = request.optJSONObject("args");
+    if (args == null) {
+      args = new JSONObject();
+      request.put("args", args);
+    }
+    args.put("deviceId", stableDeviceId());
+    Context context = applicationContext;
+    if (context != null) {
+      args.put("stateDir", context.getFilesDir().getAbsolutePath());
+    }
+    return request.toString();
   }
 
   private boolean isUuidV4(String value) {

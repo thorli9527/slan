@@ -59,7 +59,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
     case "iosStopPacketTunnel":
       iosStopPacketTunnel(result: result)
     case "embeddedServiceRequest":
-      result(handleEmbeddedServiceRequest(call.arguments))
+      result(handleEmbeddedServiceRequest(embeddedServiceRequestJson(call.arguments)))
     case "mobileServerBaseUrl":
       result(mobileServerBaseUrl())
     case "setMobileServerBaseUrl":
@@ -105,6 +105,30 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
 #else
     return ["error": "ios client-core-service embedded FFI is not linked yet"]
 #endif
+  }
+
+  private func embeddedServiceRequestJson(_ arguments: Any?) -> String {
+    let requestJson = (arguments as? String) ?? "{}"
+    guard let data = requestJson.data(using: .utf8),
+      var request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    else {
+      return requestJson
+    }
+    var args = request["args"] as? [String: Any] ?? [:]
+    args["deviceId"] = stableDeviceId()
+    if let stateDir = FileManager.default.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first?.path {
+      args["stateDir"] = stateDir
+    }
+    request["args"] = args
+    guard let encoded = try? JSONSerialization.data(withJSONObject: request),
+      let output = String(data: encoded, encoding: .utf8)
+    else {
+      return requestJson
+    }
+    return output
   }
 
   private func iosStartPacketTunnel(_ arguments: Any?, result: @escaping FlutterResult) {
