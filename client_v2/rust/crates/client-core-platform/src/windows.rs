@@ -29,6 +29,7 @@ use serde::Serialize;
 
 const DEFAULT_INTERFACE_NAME: &str = "SLAN LAN Adapter";
 const WINDOWS_WINTUN_DRIVER_TYPE: &str = "Wintun";
+const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const RELAY_ATTACH_ATTEMPTS: usize = 3;
 const RELAY_ATTACH_TIMEOUT: Duration = Duration::from_secs(2);
@@ -125,11 +126,15 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         })
     }
 
-    fn configure_ip(&self, virtual_ip: &str, prefix_len: u8) -> Result<()> {
+    fn configure_ip(&self, virtual_ip: &str, _prefix_len: u8) -> Result<()> {
         ensure_installed_adapter_ready(DEFAULT_INTERFACE_NAME)
             .context("ensure installed Wintun adapter before IP")?;
-        configure_adapter_ip(DEFAULT_INTERFACE_NAME, virtual_ip, prefix_len)
-            .context("configure Wintun adapter IP")?;
+        configure_adapter_ip(
+            DEFAULT_INTERFACE_NAME,
+            virtual_ip,
+            HOST_INTERFACE_PREFIX_LEN,
+        )
+        .context("configure Wintun adapter IP")?;
         verify_adapter_ip(DEFAULT_INTERFACE_NAME, virtual_ip)
             .context("verify Wintun adapter IP")?;
         let mut state = load_cached_runtime_state().unwrap_or_default();

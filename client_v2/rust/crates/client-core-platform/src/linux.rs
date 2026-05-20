@@ -34,6 +34,7 @@ use client_core::{
 };
 use serde::Serialize;
 
+const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
 const DEFAULT_INTERFACE_NAME: &str = "slan0";
 const DEFAULT_MTU: u32 = 1280;
 const MAX_PACKET_SIZE: usize = 4096;
@@ -195,11 +196,11 @@ impl PlatformNetwork for LinuxPlatformNetwork {
         Ok(())
     }
 
-    fn configure_ip(&self, virtual_ip: &str, prefix_len: u8) -> Result<()> {
+    fn configure_ip(&self, virtual_ip: &str, _prefix_len: u8) -> Result<()> {
         let mut runtime = runtime().lock().expect("linux runtime mutex poisoned");
         let virtual_ip = normalize_ipv4(virtual_ip)?;
         runtime.virtual_ip = Some(virtual_ip.to_string());
-        runtime.prefix_len = Some(prefix_len);
+        runtime.prefix_len = Some(HOST_INTERFACE_PREFIX_LEN);
         if runtime.mock_enabled {
             return Ok(());
         }
@@ -207,11 +208,13 @@ impl PlatformNetwork for LinuxPlatformNetwork {
         run_ip(&[
             "addr",
             "replace",
-            &format!("{virtual_ip}/{prefix_len}"),
+            &format!("{virtual_ip}/{HOST_INTERFACE_PREFIX_LEN}"),
             "dev",
             &interface_name,
         ])
-        .with_context(|| format!("configure Linux TUN IP {virtual_ip}/{prefix_len}"))?;
+        .with_context(|| {
+            format!("configure Linux TUN IP {virtual_ip}/{HOST_INTERFACE_PREFIX_LEN}")
+        })?;
         Ok(())
     }
 

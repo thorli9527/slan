@@ -38,6 +38,7 @@ const MAX_PACKET_SIZE: usize = 4096;
 const UTUN_HEADER_LEN: usize = 4;
 const AF_INET_HEADER: [u8; UTUN_HEADER_LEN] = [0, 0, 0, libc::AF_INET as u8];
 const MOCK_INTERFACE_NAME: &str = "utun-mock";
+const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
 const RELAY_STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -169,7 +170,7 @@ impl PlatformNetwork for MacosPlatformNetwork {
         ensure_utun_runtime(&mut runtime)
     }
 
-    fn configure_ip(&self, virtual_ip: &str, prefix_len: u8) -> Result<()> {
+    fn configure_ip(&self, virtual_ip: &str, _prefix_len: u8) -> Result<()> {
         let virtual_ip = virtual_ip.trim();
         if virtual_ip.is_empty() {
             bail!("macos virtual IP is empty");
@@ -183,7 +184,7 @@ impl PlatformNetwork for MacosPlatformNetwork {
         if macos_network_mock_enabled() {
             ensure_mock_runtime(&mut runtime);
             runtime.virtual_ip = Some(virtual_ip);
-            runtime.prefix_len = Some(prefix_len);
+            runtime.prefix_len = Some(HOST_INTERFACE_PREFIX_LEN);
             return Ok(());
         }
         ensure_utun_runtime(&mut runtime)?;
@@ -191,9 +192,9 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .interface_name
             .clone()
             .ok_or_else(|| anyhow!("macos utun interface is not ready"))?;
-        configure_utun_ip(&interface_name, virtual_addr, prefix_len)?;
+        configure_utun_ip(&interface_name, virtual_addr, HOST_INTERFACE_PREFIX_LEN)?;
         runtime.virtual_ip = Some(virtual_ip);
-        runtime.prefix_len = Some(prefix_len);
+        runtime.prefix_len = Some(HOST_INTERFACE_PREFIX_LEN);
         Ok(())
     }
 

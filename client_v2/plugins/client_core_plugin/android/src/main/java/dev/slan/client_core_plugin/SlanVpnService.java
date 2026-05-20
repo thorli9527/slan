@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
+import android.system.OsConstants;
 import android.util.Log;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -104,7 +105,10 @@ public final class SlanVpnService extends VpnService {
 
     Builder builder = new Builder()
         .setSession(config.optString("sessionName", "SLAN"))
+        .allowFamily(OsConstants.AF_INET)
+        .allowFamily(OsConstants.AF_INET6)
         .addAddress(virtualIp, 32);
+    builder.setUnderlyingNetworks(null);
 
     int mtu = config.optInt("mtu", 1280);
     if (mtu >= 576) {

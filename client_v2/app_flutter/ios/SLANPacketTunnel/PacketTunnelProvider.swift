@@ -4,6 +4,7 @@ import os.log
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
   private static let logger = OSLog(subsystem: "dev.slan.client.v2", category: "PacketTunnel")
+  private static let hostInterfacePrefixLen = 32
 
   private var readingPackets = false
   private var routeTable: [RouteEntry] = []
@@ -21,10 +22,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
       completionHandler(PacketTunnelError("missing virtualIp"))
       return
     }
-    let prefixLen = Self.addressPrefixLen(config: config, virtualIp: &virtualIp)
+    let configuredPrefixLen = Self.addressPrefixLen(config: config, virtualIp: &virtualIp)
 
     let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "10.255.0.1")
-    let ipv4 = NEIPv4Settings(addresses: [virtualIp], subnetMasks: [Self.mask(prefixLen)])
+    let ipv4 = NEIPv4Settings(
+      addresses: [virtualIp],
+      subnetMasks: [Self.mask(Self.hostInterfacePrefixLen)]
+    )
     routeTable = Self.routeEntries(config["routes"])
     let routes = routeTable.map {
       NEIPv4Route(destinationAddress: $0.destination, subnetMask: $0.mask)
@@ -57,11 +61,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         self.relayRuntime?.start()
         self.persistStats()
         os_log(
-          "SLAN PacketTunnel started virtualIp=%{public}@/%{public}d routes=%{public}d relaySessions=%{public}d",
+          "SLAN PacketTunnel started virtualIp=%{public}@/%{public}d configuredPrefix=%{public}d routes=%{public}d relaySessions=%{public}d",
           log: Self.logger,
           type: .info,
           virtualIp,
-          prefixLen,
+          Self.hostInterfacePrefixLen,
+          configuredPrefixLen,
           self.routeTable.count,
           self.tunnelStats.relaySessionCount
         )
