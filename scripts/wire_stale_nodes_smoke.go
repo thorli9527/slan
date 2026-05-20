@@ -112,7 +112,9 @@ func runStaleSmoke() error {
 		_ = compose([]string{"up", "-d", "server-wire-relay-b", "server-wire-derp-b"}, nil)
 		_ = restartBizWithWireTTL("120", "60")
 		_ = waitHTTP(bizURL + "/healthz")
-		restoreLocalWireDataPlaneNodes(bizURL, internalToken)
+		if shouldRestoreWireDataPlaneNodes(bizURL) {
+			restoreLocalWireDataPlaneNodes(bizURL, internalToken)
+		}
 	}()
 
 	if err := waitHTTP(bizURL + "/healthz"); err != nil {
@@ -127,7 +129,9 @@ func runStaleSmoke() error {
 	if err := waitHTTP(derpBAdminURL + "/healthz"); err != nil {
 		return err
 	}
-	restoreLocalWireDataPlaneNodes(bizURL, internalToken)
+	if shouldRestoreWireDataPlaneNodes(bizURL) {
+		restoreLocalWireDataPlaneNodes(bizURL, internalToken)
+	}
 
 	nodeID, err := createAuthorizedWirePeer(bizURL, wireURL)
 	if err != nil {
@@ -360,6 +364,16 @@ func restoreLocalWireDataPlaneNodes(bizURL, internalToken string) {
 			nil,
 		)
 	}
+}
+
+func shouldRestoreWireDataPlaneNodes(bizURL string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SLAN_BIZ_E2E_RESTORE_NODES"))) {
+	case "1", "true", "yes":
+		return true
+	case "0", "false", "no":
+		return false
+	}
+	return strings.Contains(bizURL, "127.0.0.1") || strings.Contains(bizURL, "localhost")
 }
 
 func waitHTTP(url string) error {
