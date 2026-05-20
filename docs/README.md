@@ -11,6 +11,8 @@
 
 ## 子系统文档
 
+- [后端外部 HTTP 业务接口定义](./backend-external-http-api.md)
+- [service-biz OpenAPI 草案](../protocol/openapi/service-biz-external.yaml)
 - [service-biz README](../server/service-biz/README.md)
 - [service-ui](../server/service-ui)
 - [server-main](../server/server-main)

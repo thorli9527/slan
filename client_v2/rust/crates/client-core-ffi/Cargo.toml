@@ -9,6 +9,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 client-core = { path = "../client-core" }
+client-core-platform = { path = "../client-core-platform" }
 client-core-service = { path = "../client-core-service" }
 serde_json.workspace = true
 

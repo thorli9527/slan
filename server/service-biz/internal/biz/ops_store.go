@@ -41,6 +41,11 @@ func (s *Store) seedOpsDefaultsLocked(now int64) {
 	if len(s.relayNodes) == 0 {
 		s.addRelayNodeLocked(defaultOpsRelayNode())
 	}
+	if len(s.punchNodes) == 0 {
+		for _, node := range configuredPunchNodes() {
+			s.addPunchNodeLocked(node)
+		}
+	}
 }
 
 func defaultOpsRelayNode() OpsRelayNode {
@@ -308,6 +313,84 @@ func (s *Store) addRelayNodeLocked(node OpsRelayNode) OpsRelayNode {
 	node.CreatedAt = now
 	node.UpdatedAt = now
 	s.relayNodes[node.NodeID] = node
+	return node
+}
+
+func (s *Store) ListPunchNodes() []OpsPunchNode {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return sortedValues(s.punchNodes, func(a, b OpsPunchNode) bool {
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
+		}
+		return a.NodeID < b.NodeID
+	})
+}
+
+func (s *Store) ActivePunchNodes() []OpsPunchNode {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	nodes := make([]OpsPunchNode, 0, len(s.punchNodes))
+	for _, node := range s.punchNodes {
+		if strings.TrimSpace(node.PublicUDPIP) == "" || node.PublicUDPPort <= 0 {
+			continue
+		}
+		if !strings.EqualFold(defaultString(node.Status, "active"), "active") {
+			continue
+		}
+		if !strings.EqualFold(defaultString(node.Health, "healthy"), "healthy") {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+	sort.SliceStable(nodes, func(i, j int) bool {
+		if nodes[i].Priority != nodes[j].Priority {
+			return nodes[i].Priority < nodes[j].Priority
+		}
+		return nodes[i].NodeID < nodes[j].NodeID
+	})
+	return nodes
+}
+
+func (s *Store) UpsertPunchNode(node OpsPunchNode) (OpsPunchNode, error) {
+	node.Name = strings.TrimSpace(node.Name)
+	node.Region = defaultString(node.Region, "default")
+	node.PublicUDPIP = strings.TrimSpace(node.PublicUDPIP)
+	node.Status = defaultString(node.Status, "active")
+	node.Health = defaultString(node.Health, "healthy")
+	if node.Name == "" || node.PublicUDPIP == "" || node.PublicUDPPort <= 0 || node.PublicUDPPort > 65534 {
+		return OpsPunchNode{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.punchNodes {
+		if existing.PublicUDPIP == node.PublicUDPIP && existing.PublicUDPPort == node.PublicUDPPort && existing.NodeID != node.NodeID {
+			return OpsPunchNode{}, errConflict
+		}
+	}
+	now := time.Now().Unix()
+	if strings.TrimSpace(node.NodeID) == "" {
+		node.Health = defaultString(node.Health, "healthy")
+		return s.addPunchNodeLocked(node), nil
+	}
+	existing, ok := s.punchNodes[node.NodeID]
+	if !ok {
+		return OpsPunchNode{}, errNotFound
+	}
+	node.CreatedAt = existing.CreatedAt
+	node.UpdatedAt = now
+	node.ActiveSessions = existing.ActiveSessions
+	s.punchNodes[node.NodeID] = node
+	return node, nil
+}
+
+func (s *Store) addPunchNodeLocked(node OpsPunchNode) OpsPunchNode {
+	now := time.Now().Unix()
+	node.NodeID = fmt.Sprintf("punch-%06d", s.nextPunchNodeSeq)
+	s.nextPunchNodeSeq++
+	node.CreatedAt = now
+	node.UpdatedAt = now
+	s.punchNodes[node.NodeID] = node
 	return node
 }
 

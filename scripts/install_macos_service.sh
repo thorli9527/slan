@@ -7,6 +7,9 @@ LOG_DIR="/Library/Logs/SLAN"
 PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 SERVICE_BIN="${INSTALL_DIR}/client-core-service"
 SERVICE_PID="${INSTALL_DIR}/client-core-service.pid"
+SERVICE_HOST="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1:46392}"
+CONTROL_BASE_URL="${SLAN_CONTROL_BASE_URL:-}"
+MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 APP_PATH=""
 SOURCE_BIN=""
 ORIGINAL_ARGS=("$@")
@@ -113,7 +116,15 @@ cat > "$PLIST" <<PLIST
   <key>EnvironmentVariables</key>
   <dict>
     <key>SLAN_CLIENT_CORE_SERVICE_HOST</key>
-    <string>127.0.0.1:46392</string>
+    <string>${SERVICE_HOST}</string>
+    <key>SLAN_MACOS_NETWORK_MOCK</key>
+    <string>${MACOS_NETWORK_MOCK}</string>
+$(if [[ -n "$CONTROL_BASE_URL" ]]; then
+  cat <<ENV
+    <key>SLAN_CONTROL_BASE_URL</key>
+    <string>${CONTROL_BASE_URL}</string>
+ENV
+fi)
   </dict>
 </dict>
 </plist>
@@ -129,5 +140,7 @@ launchctl kickstart -k "system/${LABEL}"
 echo "installed ${LABEL}"
 echo "binary: $SERVICE_BIN"
 echo "serviceInfo: $(service_info "$SERVICE_BIN")"
+echo "host: $SERVICE_HOST"
+[[ -n "$CONTROL_BASE_URL" ]] && echo "controlBaseUrl: $CONTROL_BASE_URL"
 echo "plist: $PLIST"
 echo "logs: $LOG_DIR"

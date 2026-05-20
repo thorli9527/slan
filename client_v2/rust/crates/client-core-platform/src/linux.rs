@@ -34,6 +34,11 @@ use client_core::{
 };
 use serde::Serialize;
 
+use crate::direct_udp::{
+    direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
+    DirectUdpTransport,
+};
+
 const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
 const DEFAULT_INTERFACE_NAME: &str = "slan0";
 const DEFAULT_MTU: u32 = 1280;
@@ -460,8 +465,11 @@ fn start_udp_data_plane(
     let file = open_tun(interface_name)
         .with_context(|| format!("open Linux TUN interface {interface_name}"))?;
     let peers = attach_udp_relay_sessions(&config)?;
+    let direct_udp = DirectUdpTransport::attach(config.local_node_id.as_str(), &config.peer_paths);
     let config_hash = stable_hash64(&serde_json::to_string(&config)?);
     let max_frame_payload = usize::from(config.max_frame_payload.unwrap_or(1200).clamp(512, 1400));
+    let direct_udp_probe_interval =
+        direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms);
     let mut stats = relay_data_plane_stats_from_config(&config, &peers);
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
@@ -470,10 +478,12 @@ fn start_udp_data_plane(
         run_udp_data_plane(
             file,
             peers,
+            direct_udp,
             local_node_id,
             local_virtual_ip,
             max_frame_payload,
             config_hash,
+            direct_udp_probe_interval,
             &mut stats,
             thread_stop,
         );
@@ -685,10 +695,12 @@ fn verify_relay_attach_ack(response: &[u8], session_id: &str) -> Result<()> {
 fn run_udp_data_plane(
     mut file: File,
     peers: Vec<RelayPeer>,
+    mut direct_udp: Option<DirectUdpTransport>,
     local_node_id: String,
     local_virtual_ip: String,
     max_frame_payload: usize,
     config_hash: u64,
+    direct_udp_probe_interval: Duration,
     stats: &mut RelayDataPlaneStats,
     stop: Arc<AtomicBool>,
 ) {
@@ -699,12 +711,21 @@ fn run_udp_data_plane(
     let mut last_keepalive = Instant::now()
         .checked_sub(RELAY_KEEPALIVE_INTERVAL)
         .unwrap_or_else(Instant::now);
+    let mut last_direct_udp_probe = Instant::now()
+        .checked_sub(direct_udp_probe_interval)
+        .unwrap_or_else(Instant::now);
     persist_relay_stats(stats);
     while !stop.load(Ordering::SeqCst) {
         if last_keepalive.elapsed() >= RELAY_KEEPALIVE_INTERVAL {
             send_relay_keepalives(&peers);
             stats.last_relay_keepalive_at_ms = Some(current_timestamp_ms());
             last_keepalive = Instant::now();
+        }
+        if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
+            if let Some(direct_udp) = direct_udp.as_ref() {
+                direct_udp.send_probe_packets();
+            }
+            last_direct_udp_probe = Instant::now();
         }
         match file.read(&mut tun_buffer) {
             Ok(0) => thread::sleep(Duration::from_millis(10)),
@@ -723,7 +744,21 @@ fn run_udp_data_plane(
                         seq = seq.wrapping_add(1);
                         if let Some(frame) = encode_slan_relay_data_frame(seq, config_hash, packet)
                         {
-                            if let Some(payload) = encode_relay_forward(peer, &frame) {
+                            if let Some(direct_peer_index) = direct_udp
+                                .as_ref()
+                                .and_then(|transport| transport.ready_peer_index_for_packet(packet))
+                            {
+                                match direct_udp
+                                    .as_ref()
+                                    .expect("direct udp checked")
+                                    .send_to_peer(direct_peer_index, &frame)
+                                {
+                                    Ok(_) => record_relay_tun_packet_sent(stats, peer),
+                                    Err(error) => {
+                                        record_relay_send_failure(stats, peer, error.to_string())
+                                    }
+                                }
+                            } else if let Some(payload) = encode_relay_forward(peer, &frame) {
                                 match peer.socket.send(&payload) {
                                     Ok(_) => record_relay_tun_packet_sent(stats, peer),
                                     Err(error) => {
@@ -803,6 +838,52 @@ fn run_udp_data_plane(
                         peer_stats.receive_failures = peer_stats.receive_failures.saturating_add(1);
                     }
                     stats.last_relay_error = Some(error.to_string());
+                }
+            }
+        }
+        if let Some(direct_udp) = direct_udp.as_mut() {
+            match direct_udp.recv_from_peer(&mut relay_buffer) {
+                Ok(Some(received)) => {
+                    let frame_len = received.frame_len;
+                    let control_packet = direct_udp_control_packet(&relay_buffer[..frame_len]);
+                    if control_packet
+                        .as_ref()
+                        .is_some_and(|packet| packet.kind == DirectUdpControlKind::Probe)
+                    {
+                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                        direct_udp.send_pong_to_peer(received.peer_index);
+                    } else if control_packet
+                        .as_ref()
+                        .is_some_and(|packet| packet.kind == DirectUdpControlKind::Pong)
+                    {
+                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                    } else if let Some(packet) =
+                        decode_slan_relay_data_frame(&relay_buffer[..frame_len])
+                    {
+                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                        stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                        if write_tun_packet_with_retry(&mut file, packet).is_ok() {
+                            if let Some(peer) =
+                                direct_udp
+                                    .peers
+                                    .get(received.peer_index)
+                                    .and_then(|direct_peer| {
+                                        peers.iter().find(|peer| {
+                                            peer.peer_node_id == direct_peer.peer_node_id
+                                        })
+                                    })
+                            {
+                                record_relay_packet_received(stats, peer);
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => {
+                    stats.relay_receive_failures = stats.relay_receive_failures.saturating_add(1);
+                    stats.last_relay_error = Some(format!("direct_udp receive failed: {error}"));
                 }
             }
         }

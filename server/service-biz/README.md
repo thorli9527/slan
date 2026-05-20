@@ -35,10 +35,16 @@ SLAN_BIZ_STATE_DIR=/var/lib/slan/service-biz
 
 该目录必须由 `service-biz` 进程可读写。完整生产持久化仍应接入 Postgres Store，不能只依赖内存 Store。
 
-`server-wire`、`server-wire-relay`、`server-wire-derp` 接入 `service-biz` 时需要配置同一个内部 token：
+`server-wire`、`server-wire-relay`、`server-wire-punch`、`server-wire-derp` 接入 `service-biz` 时需要配置同一个内部 token：
 
 ```bash
 SLAN_INTERNAL_WIRE_TOKEN=change-me-wire-internal-token
+```
+
+`service-biz` 代理 punch connect-session 时从 ops 管理的 punch 节点中选择可用节点。punch 节点在 biz 上用 `publicUdpIp/publicUdpPort` 管理，不再配置 punch 域名或内网地址。可用多节点环境变量做启动种子，格式为 `name=ip:udpPort`：
+
+```bash
+SLAN_WIRE_PUNCH_NODES=local=47.245.40.231:29130,backup=47.245.40.232:29130
 ```
 
 内置运营管理员用于本地联调：

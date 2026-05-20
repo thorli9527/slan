@@ -46,6 +46,7 @@ name = "client-core-ffi"
 version = "0.1.0"
 dependencies = [
  "client-core",
+ "client-core-platform",
  "client-core-service",
  "jni",
  "libc",

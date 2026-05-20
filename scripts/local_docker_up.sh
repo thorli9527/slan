@@ -28,7 +28,7 @@ fi
 
 docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans \
   postgres redis bifromq \
-  server-biz server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-derp server-wire-derp-b \
+  server-biz server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-derp server-wire-derp-b \
   server-ui-web server-main caddy
 docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T caddy caddy reload --config /etc/caddy/Caddyfile
 docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T caddy caddy validate --config /etc/caddy/Caddyfile

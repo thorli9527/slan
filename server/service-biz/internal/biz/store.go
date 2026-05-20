@@ -71,6 +71,7 @@ type Store struct {
 	nextIPOffset         uint32
 	nextOperatorSeq      int
 	nextRelayNodeSeq     int
+	nextPunchNodeSeq     int
 	nextProductSeq       int
 	nextOrderSeq         int
 	nextRenewalSeq       int
@@ -116,6 +117,7 @@ type Store struct {
 	orders                   map[string]Order
 	renewals                 map[string]Renewal
 	relayNodes               map[string]OpsRelayNode
+	punchNodes               map[string]OpsPunchNode
 	clientDownloads          map[string]ClientDownload
 	auditEvents              map[string]AuditEvent
 }
@@ -170,6 +172,7 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 		nextIPOffset:            0,
 		nextOperatorSeq:         1,
 		nextRelayNodeSeq:        1,
+		nextPunchNodeSeq:        1,
 		nextProductSeq:          1,
 		nextOrderSeq:            1,
 		nextRenewalSeq:          1,
@@ -213,6 +216,7 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 		orders:                  make(map[string]Order),
 		renewals:                make(map[string]Renewal),
 		relayNodes:              make(map[string]OpsRelayNode),
+		punchNodes:              make(map[string]OpsPunchNode),
 		clientDownloads:         make(map[string]ClientDownload),
 		auditEvents:             make(map[string]AuditEvent),
 	}

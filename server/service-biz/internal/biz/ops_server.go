@@ -18,6 +18,9 @@ func (s *Server) registerOpsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ops/relay-nodes", s.opsListRelayNodes)
 	mux.HandleFunc("POST /api/ops/relay-nodes", s.opsCreateRelayNode)
 	mux.HandleFunc("PATCH /api/ops/relay-nodes/{nodeId}", s.opsUpdateRelayNode)
+	mux.HandleFunc("GET /api/ops/punch-nodes", s.opsListPunchNodes)
+	mux.HandleFunc("POST /api/ops/punch-nodes", s.opsCreatePunchNode)
+	mux.HandleFunc("PATCH /api/ops/punch-nodes/{nodeId}", s.opsUpdatePunchNode)
 	mux.HandleFunc("GET /api/ops/customers", s.opsListCustomers)
 	mux.HandleFunc("PATCH /api/ops/customers/{customerId}", s.opsUpdateCustomer)
 	mux.HandleFunc("POST /api/ops/customers/{customerId}/assign-plan", s.opsAssignCustomerPlan)
@@ -41,10 +44,7 @@ func (s *Server) registerOpsRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) opsLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
+	var req OpsLoginRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -62,10 +62,7 @@ func (s *Server) opsChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	var req struct {
-		OldPassword string `json:"oldPassword"`
-		NewPassword string `json:"newPassword"`
-	}
+	var req OpsChangePasswordRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -155,9 +152,7 @@ func (s *Server) opsSetOperatorPassword(w http.ResponseWriter, r *http.Request) 
 		writeError(w, err)
 		return
 	}
-	var req struct {
-		NewPassword string `json:"newPassword"`
-	}
+	var req OpsSetOperatorPasswordRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -204,6 +199,49 @@ func (s *Server) opsUpdateRelayNode(w http.ResponseWriter, r *http.Request) {
 	}
 	req.NodeID = r.PathValue("nodeId")
 	node, err := s.store.UpsertRelayNode(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, node)
+}
+
+func (s *Server) opsListPunchNodes(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListPunchNodes()})
+}
+
+func (s *Server) opsCreatePunchNode(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	var req OpsPunchNode
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	node, err := s.store.UpsertPunchNode(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, node)
+}
+
+func (s *Server) opsUpdatePunchNode(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	var req OpsPunchNode
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.NodeID = r.PathValue("nodeId")
+	node, err := s.store.UpsertPunchNode(req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -261,11 +299,7 @@ func (s *Server) opsUpdateDevice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	var req struct {
-		Alias   string `json:"alias"`
-		Status  string `json:"status"`
-		Enabled *bool  `json:"enabled"`
-	}
+	var req OpsUpdateDeviceRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -328,12 +362,7 @@ func (s *Server) opsAssignCustomerPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	var req struct {
-		PlanCode  string  `json:"planCode"`
-		ExpiresAt int64   `json:"expiresAt"`
-		Amount    float64 `json:"amount"`
-		Period    string  `json:"period"`
-	}
+	var req OpsAssignCustomerPlanRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}

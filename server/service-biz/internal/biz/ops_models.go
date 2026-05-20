@@ -99,6 +99,21 @@ type OpsRelayNode struct {
 	UpdatedAt         int64               `json:"updatedAt"`
 }
 
+type OpsPunchNode struct {
+	NodeID         string `json:"nodeId"`
+	Name           string `json:"name"`
+	Region         string `json:"region"`
+	PublicUDPIP    string `json:"publicUdpIp"`
+	PublicUDPPort  int    `json:"publicUdpPort"`
+	MaxSessions    int    `json:"maxSessions"`
+	ActiveSessions int    `json:"activeSessions"`
+	Status         string `json:"status"`
+	Health         string `json:"health"`
+	Priority       int    `json:"priority,omitempty"`
+	CreatedAt      int64  `json:"createdAt"`
+	UpdatedAt      int64  `json:"updatedAt"`
+}
+
 type CustomerPlanAssignment struct {
 	UserID    string `json:"userId"`
 	PlanCode  string `json:"planCode"`

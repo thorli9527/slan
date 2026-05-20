@@ -92,6 +92,13 @@ pub struct MqttCredential {
     pub expires_at: Option<i64>,
 }
 
+#[derive(Debug, Clone)]
+struct PunchAuthHeaders {
+    device_id: String,
+    mqtt_username: String,
+    signature: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConsoleLoginKeyResponse {
@@ -342,6 +349,45 @@ struct RelayTicketRequest<'a> {
     reason: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     relay_region_id: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PunchConnectSessionRequest<'a> {
+    requester_node_id: &'a str,
+    peer_node_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PunchEndpoint {
+    #[serde(default)]
+    pub network_id: String,
+    #[serde(default)]
+    pub node_id: String,
+    #[serde(default, rename = "type")]
+    pub endpoint_type: String,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub reflexive: String,
+    #[serde(default)]
+    pub nat_type: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PunchConnectSession {
+    pub session_id: String,
+    pub network_id: String,
+    pub requester_node_id: String,
+    pub peer_node_id: String,
+    #[serde(default)]
+    pub requester: Option<PunchEndpoint>,
+    #[serde(default)]
+    pub peer: Option<PunchEndpoint>,
 }
 
 impl ControlPlaneClient {
@@ -634,6 +680,36 @@ impl ControlPlaneClient {
         Ok(payload.items)
     }
 
+    pub fn create_punch_connect_session(
+        &self,
+        access_token: &str,
+        device_id: &str,
+        mqtt: Option<&MqttCredential>,
+        network_id: &str,
+        requester_node_id: &str,
+        peer_node_id: &str,
+    ) -> Result<PunchConnectSession> {
+        let punch_auth = punch_auth_headers(device_id, mqtt)?;
+        let body = serde_json::to_value(PunchConnectSessionRequest {
+            requester_node_id,
+            peer_node_id,
+            ttl_seconds: Some(60),
+        })?;
+        let path = format!("/api/networks/{network_id}/punch/connect-sessions");
+        let response = self.request_json_with_headers(
+            "POST",
+            &path,
+            access_token,
+            &[
+                ("X-Slan-Device-ID", punch_auth.device_id.as_str()),
+                ("X-Slan-MQTT-Username", punch_auth.mqtt_username.as_str()),
+                ("X-Slan-Punch-Signature", punch_auth.signature.as_str()),
+            ],
+            Some(body),
+        )?;
+        serde_json::from_value(response).context("decode punch connect session")
+    }
+
     pub fn deactivate_network(
         &self,
         access_token: &str,
@@ -717,13 +793,24 @@ impl ControlPlaneClient {
         access_token: &str,
         body: Option<Value>,
     ) -> Result<Value> {
+        self.request_json_with_headers(method, path, access_token, &[], body)
+    }
+
+    fn request_json_with_headers(
+        &self,
+        method: &str,
+        path: &str,
+        access_token: &str,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> Result<Value> {
         let endpoint = HttpEndpoint::parse(&self.base_url)?;
         let body = body
             .map(|value| serde_json::to_vec(&value))
             .transpose()
             .context("encode control request")?
             .unwrap_or_default();
-        let response = endpoint.request(method, path, access_token, &body)?;
+        let response = endpoint.request(method, path, access_token, headers, &body)?;
         decode_control_json(&response)
     }
 
@@ -739,9 +826,29 @@ impl ControlPlaneClient {
             .transpose()
             .context("encode control request")?
             .unwrap_or_default();
-        let response = endpoint.request(method, path, "", &body)?;
+        let response = endpoint.request(method, path, "", &[], &body)?;
         decode_control_json(&response)
     }
+}
+
+fn punch_auth_headers(device_id: &str, mqtt: Option<&MqttCredential>) -> Result<PunchAuthHeaders> {
+    let device_id = device_id.trim();
+    if device_id.is_empty() {
+        bail!("device id is required for punch auth");
+    }
+    let mqtt = mqtt.ok_or_else(|| anyhow::anyhow!("mqtt credential is required for punch auth"))?;
+    if mqtt.username.trim().is_empty() || mqtt.password.trim().is_empty() {
+        bail!("mqtt username and password are required for punch auth");
+    }
+    Ok(PunchAuthHeaders {
+        device_id: device_id.to_string(),
+        mqtt_username: mqtt.username.trim().to_string(),
+        signature: punch_mqtt_signature(device_id, &mqtt.password),
+    })
+}
+
+fn punch_mqtt_signature(device_id: &str, mqtt_password: &str) -> String {
+    md5_hex(format!("{}{}", device_id.trim(), mqtt_password.trim()).as_bytes())
 }
 
 fn decode_control_json(response: &[u8]) -> Result<Value> {
@@ -1125,11 +1232,12 @@ impl HttpEndpoint {
         method: &str,
         path: &str,
         access_token: &str,
+        headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<Vec<u8>> {
         let mut last_error = None;
         for attempt in 1..=3 {
-            match self.request_once(method, path, access_token, body) {
+            match self.request_once(method, path, access_token, headers, body) {
                 Ok(response) => return Ok(response),
                 Err(error) if transient_control_request_error(&error) && attempt < 3 => {
                     last_error = Some(error);
@@ -1146,6 +1254,7 @@ impl HttpEndpoint {
         method: &str,
         path: &str,
         access_token: &str,
+        headers: &[(&str, &str)],
         body: &[u8],
     ) -> Result<Vec<u8>> {
         let mut stream = TcpStream::connect((self.host.as_str(), self.port))
@@ -1154,8 +1263,9 @@ impl HttpEndpoint {
         stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
         let target = format!("{}{}", self.base_path, path);
+        let extra_headers = encode_extra_headers(headers)?;
         let request = format!(
-            "{method} {target} HTTP/1.1\r\nHost: {host}\r\n{auth_header}Content-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n",
+            "{method} {target} HTTP/1.1\r\nHost: {host}\r\n{auth_header}{extra_headers}Content-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n",
             method = method,
             target = target,
             host = self.host,
@@ -1164,6 +1274,7 @@ impl HttpEndpoint {
             } else {
                 format!("Authorization: Bearer {access_token}\r\n")
             },
+            extra_headers = extra_headers,
             length = body.len(),
         );
         stream
@@ -1191,6 +1302,29 @@ fn transient_control_request_error(error: &anyhow::Error) -> bool {
         || message.contains("connection reset")
         || message.contains("connection refused")
         || message.contains("software caused connection abort")
+}
+
+fn encode_extra_headers(headers: &[(&str, &str)]) -> Result<String> {
+    let mut encoded = String::new();
+    for (name, value) in headers {
+        let name = name.trim();
+        let value = value.trim();
+        if name.is_empty() || value.is_empty() {
+            continue;
+        }
+        if !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-'))
+            || value.bytes().any(|byte| matches!(byte, b'\r' | b'\n'))
+        {
+            bail!("invalid control request header");
+        }
+        encoded.push_str(name);
+        encoded.push_str(": ");
+        encoded.push_str(value);
+        encoded.push_str("\r\n");
+    }
+    Ok(encoded)
 }
 
 fn read_control_response(stream: &mut TcpStream) -> Result<Vec<u8>> {
@@ -1306,6 +1440,94 @@ fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>> {
         out.extend_from_slice(&body[offset..offset + size]);
         offset += size + 2;
     }
+}
+
+fn md5_hex(input: &[u8]) -> String {
+    const SHIFT: [u32; 64] = [
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
+        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
+        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+    ];
+    const K: [u32; 64] = [
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
+        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
+        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
+        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
+        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
+        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
+        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
+        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
+        0xeb86d391,
+    ];
+
+    let bit_len = (input.len() as u64).wrapping_mul(8);
+    let mut message = input.to_vec();
+    message.push(0x80);
+    while message.len() % 64 != 56 {
+        message.push(0);
+    }
+    message.extend_from_slice(&bit_len.to_le_bytes());
+
+    let mut a0 = 0x67452301_u32;
+    let mut b0 = 0xefcdab89_u32;
+    let mut c0 = 0x98badcfe_u32;
+    let mut d0 = 0x10325476_u32;
+
+    for chunk in message.chunks_exact(64) {
+        let mut words = [0_u32; 16];
+        for (index, word) in words.iter_mut().enumerate() {
+            let start = index * 4;
+            *word = u32::from_le_bytes([
+                chunk[start],
+                chunk[start + 1],
+                chunk[start + 2],
+                chunk[start + 3],
+            ]);
+        }
+
+        let mut a = a0;
+        let mut b = b0;
+        let mut c = c0;
+        let mut d = d0;
+        for i in 0..64 {
+            let (f, g) = if i < 16 {
+                ((b & c) | ((!b) & d), i)
+            } else if i < 32 {
+                ((d & b) | ((!d) & c), (5 * i + 1) % 16)
+            } else if i < 48 {
+                (b ^ c ^ d, (3 * i + 5) % 16)
+            } else {
+                (c ^ (b | (!d)), (7 * i) % 16)
+            };
+            let next = b.wrapping_add(
+                a.wrapping_add(f)
+                    .wrapping_add(K[i])
+                    .wrapping_add(words[g])
+                    .rotate_left(SHIFT[i]),
+            );
+            a = d;
+            d = c;
+            c = b;
+            b = next;
+        }
+
+        a0 = a0.wrapping_add(a);
+        b0 = b0.wrapping_add(b);
+        c0 = c0.wrapping_add(c);
+        d0 = d0.wrapping_add(d);
+    }
+
+    let mut digest = Vec::with_capacity(16);
+    digest.extend_from_slice(&a0.to_le_bytes());
+    digest.extend_from_slice(&b0.to_le_bytes());
+    digest.extend_from_slice(&c0.to_le_bytes());
+    digest.extend_from_slice(&d0.to_le_bytes());
+    let mut output = String::with_capacity(32);
+    for byte in digest {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
 }
 
 fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
@@ -1601,11 +1823,34 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        decode_control_json, device_public_key_at_path, is_strong_device_public_key,
-        stable_device_id_at_path, ControlPlaneClient,
+        decode_control_json, device_public_key_at_path, is_strong_device_public_key, md5_hex,
+        punch_auth_headers, punch_mqtt_signature, stable_device_id_at_path, ControlPlaneClient,
+        MqttCredential,
     };
 
     static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn punch_auth_uses_device_id_and_mqtt_password_md5() {
+        let mqtt = MqttCredential {
+            broker_url: "mqtt://127.0.0.1:1883".to_string(),
+            client_id: "slan-device-1".to_string(),
+            username: "slan-device-1-4102444800".to_string(),
+            password: "mqtt-secret".to_string(),
+            topic_prefix: "slan/device-1".to_string(),
+            expires_at: Some(4_102_444_800),
+        };
+
+        assert_eq!(md5_hex(b"abc"), "900150983cd24fb0d6963f7d28e17f72");
+        assert_eq!(
+            punch_mqtt_signature(" device-1 ", " mqtt-secret "),
+            md5_hex(b"device-1mqtt-secret")
+        );
+        let headers = punch_auth_headers("device-1", Some(&mqtt)).expect("punch auth headers");
+        assert_eq!(headers.device_id, "device-1");
+        assert_eq!(headers.mqtt_username, "slan-device-1-4102444800");
+        assert_eq!(headers.signature, md5_hex(b"device-1mqtt-secret"));
+    }
 
     #[test]
     fn password_login_posts_stable_device_id() {

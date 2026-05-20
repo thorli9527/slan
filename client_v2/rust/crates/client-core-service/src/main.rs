@@ -54,7 +54,8 @@ use windows_service::service_control_handler::{self, ServiceControlHandlerResult
 use windows_service::service_dispatcher;
 
 use crate::control_plane::{
-    local_stable_device_id, reset_local_device_id, ControlPeer, ControlPlaneClient, RelayCandidate,
+    local_stable_device_id, reset_local_device_id, ControlPeer, ControlPlaneClient,
+    PunchConnectSession, RelayCandidate,
 };
 use crate::control_tasks::{
     ControlTaskAction, ControlTaskDirection, ControlTaskQueue, EnqueueControlTaskRequest,
@@ -2652,6 +2653,8 @@ fn build_relay_data_plane_config(
         .into_iter()
         .map(|plan| (plan.peer_node_id.clone(), plan))
         .collect::<BTreeMap<_, _>>();
+    let punch_sessions =
+        create_punch_connect_sessions(client, session, network_id, local_node_id, peers);
 
     let sessions = peers
         .iter()
@@ -2714,6 +2717,7 @@ fn build_relay_data_plane_config(
             &select_relay_candidates(&runtime_relay_candidates()),
             &sessions,
             Some(connect_plans),
+            Some(punch_sessions),
         ),
         relay_mtu: Some(policy.relay_mtu),
         max_frame_payload: Some(policy.max_frame_payload),
@@ -2728,6 +2732,7 @@ fn peer_path_configs(
     relay_candidates: &[RelayCandidateSelection],
     relay_sessions: &[RelayPeerSession],
     connect_plans: Option<BTreeMap<String, PersistedConnectPlan>>,
+    punch_sessions: Option<BTreeMap<String, PunchConnectSession>>,
 ) -> Vec<PeerPathConfig> {
     let connect_plans = connect_plans.unwrap_or_else(|| {
         load_recent_connect_plans(current_timestamp_ms())
@@ -2739,11 +2744,18 @@ fn peer_path_configs(
         .iter()
         .filter(|peer| peer.node_id != local_node_id)
         .map(|peer| {
+            let punch_session = punch_sessions
+                .as_ref()
+                .and_then(|sessions| sessions.get(&peer.node_id));
             let relay_session = relay_sessions
                 .iter()
                 .find(|session| session.peer_node_id == peer.node_id);
             let mut candidates = Vec::new();
             let mut direct_addresses = Vec::new();
+            if let Some(address) = punch_session.and_then(punch_peer_direct_udp_address) {
+                direct_addresses.push(address.clone());
+                candidates.push(direct_path_candidate(PathKind::DirectUdp, &address));
+            }
             if let Some(plan) = connect_plans.get(&peer.node_id) {
                 for path in &plan.paths {
                     let address = path.endpoint.trim();
@@ -2865,6 +2877,61 @@ fn relay_ticket_matches_peer(
     parse_rfc3339_utc_ms(ticket.expires_at.as_str())
         .map(|expires_at| expires_at > current_timestamp_ms().saturating_add(30_000))
         .unwrap_or(false)
+}
+
+fn create_punch_connect_sessions(
+    client: &ControlPlaneClient,
+    session: &PersistedSession,
+    network_id: &str,
+    local_node_id: &str,
+    peers: &[ControlPeer],
+) -> BTreeMap<String, PunchConnectSession> {
+    if !punch_connect_enabled() {
+        return BTreeMap::new();
+    }
+    let device_id = session.device_id.as_deref().unwrap_or_default();
+    peers
+        .iter()
+        .filter(|peer| peer.node_id != local_node_id)
+        .filter_map(|peer| {
+            match client.create_punch_connect_session(
+                &session.access_token,
+                device_id,
+                session.mqtt.as_ref(),
+                network_id,
+                local_node_id,
+                peer.node_id.as_str(),
+            ) {
+                Ok(session) => Some((peer.node_id.clone(), session)),
+                Err(error) => {
+                    log_service_error(format!(
+                        "client-core-service punch connect session skipped: peerNodeId={} error={error:#}",
+                        peer.node_id
+                    ));
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn punch_connect_enabled() -> bool {
+    match std::env::var("SLAN_PUNCH_CONNECT_ENABLED") {
+        Ok(value) => !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off" | "disabled"
+        ),
+        Err(_) => true,
+    }
+}
+
+fn punch_peer_direct_udp_address(session: &PunchConnectSession) -> Option<String> {
+    let endpoint = session.peer.as_ref()?;
+    [endpoint.reflexive.as_str(), endpoint.address.as_str()]
+        .into_iter()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn relay_path_candidate_from_connect_plan(

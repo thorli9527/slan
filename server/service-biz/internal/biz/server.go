@@ -100,6 +100,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/networks/{networkId}/network-config", s.networkConfig)
 	mux.HandleFunc("GET /api/networks/{networkId}/relay-candidates", s.relayCandidates)
 	mux.HandleFunc("POST /api/networks/{networkId}/relay-candidates", s.relayCandidates)
+	mux.HandleFunc("POST /api/networks/{networkId}/punch/connect-sessions", s.createPunchConnectSession)
 	mux.HandleFunc("POST /api/relay/tickets", s.issueRelayTicket)
 
 	s.registerInternalWireRoutes(mux)
@@ -111,11 +112,7 @@ func (s *Server) Routes() http.Handler {
 }
 
 func (s *Server) registerUser(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Name     string `json:"name"`
-	}
+	var req RegisterUserRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -124,14 +121,11 @@ func (s *Server) registerUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"auth": auth, "defaultNetwork": network})
+	writeJSON(w, http.StatusCreated, RegisterUserResponse{Auth: auth, DefaultNetwork: network})
 }
 
 func (s *Server) loginUser(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
+	var req LoginUserRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -140,13 +134,11 @@ func (s *Server) loginUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"auth": auth})
+	writeJSON(w, http.StatusOK, AuthEnvelopeResponse{Auth: auth})
 }
 
 func (s *Server) logoutUser(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeviceToken string `json:"deviceToken"`
-	}
+	var req LogoutUserRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -173,13 +165,11 @@ func (s *Server) logoutUser(w http.ResponseWriter, r *http.Request) {
 		Status:       "succeeded",
 		Details:      map[string]string{"hasDeviceToken": boolString(strings.TrimSpace(req.DeviceToken) != "")},
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	writeJSON(w, http.StatusOK, StatusResponse{Status: "ok"})
 }
 
 func (s *Server) createConsoleLoginKey(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeviceID string `json:"deviceId"`
-	}
+	var req CreateConsoleLoginKeyRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -210,9 +200,7 @@ func (s *Server) createConsoleLoginKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) consoleLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LoginKey string `json:"loginKey"`
-	}
+	var req ConsoleLoginRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -236,20 +224,11 @@ func (s *Server) consoleLogin(w http.ResponseWriter, r *http.Request) {
 		ResourceType: "console_login_key",
 		Status:       "succeeded",
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"auth": auth})
+	writeJSON(w, http.StatusOK, AuthEnvelopeResponse{Auth: auth})
 }
 
 func (s *Server) prepareDeviceLoginDevice(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeviceID      string `json:"deviceId"`
-		Name          string `json:"name"`
-		Platform      string `json:"platform"`
-		OSName        string `json:"osName"`
-		OSVersion     string `json:"osVersion"`
-		Alias         string `json:"alias"`
-		PublicKey     string `json:"publicKey"`
-		DeviceVersion string `json:"deviceVersion"`
-	}
+	var req DeviceIdentityRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -271,19 +250,11 @@ func (s *Server) prepareDeviceLoginDevice(w http.ResponseWriter, r *http.Request
 		return
 	}
 	log.Printf("device login prepared device=%s platform=%s", device.DeviceID, strings.TrimSpace(req.Platform))
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"deviceId": device.DeviceID,
-		"loginUrl": deviceLoginDeviceURL(device.DeviceID),
-		"mqtt":     deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()),
-	})
+	writeJSON(w, http.StatusCreated, PrepareDeviceLoginResponse{DeviceID: device.DeviceID, LoginURL: deviceLoginDeviceURL(device.DeviceID), MQTT: deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow())})
 }
 
 func (s *Server) completeDeviceLoginDevice(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		AccessToken string `json:"accessToken"`
-		Token       string `json:"token"`
-		Action      string `json:"action"`
-	}
+	var req CompleteDeviceLoginRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -336,16 +307,11 @@ func (s *Server) completeDeviceLoginDevice(w http.ResponseWriter, r *http.Reques
 	if configs, err := s.store.NetworkConfigsForDevice(deviceID); err == nil {
 		s.notifyDeviceNetworkConfigsChanged(configs, "device_login_completed", "network_device", "add", deviceID)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "deviceId": deviceID, "deliveryId": deliveryID})
+	writeJSON(w, http.StatusOK, CompleteDeviceLoginResponse{Status: "ok", DeviceID: deviceID, DeliveryID: deliveryID})
 }
 
 func (s *Server) createDeviceBootstrapKey(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserID      string `json:"userId"`
-		NetworkID   string `json:"networkId"`
-		DeviceAlias string `json:"deviceAlias"`
-		TTLSeconds  int64  `json:"ttlSeconds"`
-	}
+	var req CreateDeviceBootstrapKeyRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -374,9 +340,7 @@ func (s *Server) listDeviceBootstrapKeys(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) revokeDeviceBootstrapKey(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserID string `json:"userId"`
-	}
+	var req RevokeDeviceBootstrapKeyRequest
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
@@ -395,10 +359,7 @@ func (s *Server) revokeDeviceBootstrapKey(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) changeUserPassword(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		OldPassword string `json:"oldPassword"`
-		NewPassword string `json:"newPassword"`
-	}
+	var req ChangeUserPasswordRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -436,11 +397,7 @@ func (s *Server) listUserAliases(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) upsertUserAlias(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		OwnerUserID string `json:"ownerUserId"`
-		Email       string `json:"email"`
-		Alias       string `json:"alias"`
-	}
+	var req UpsertUserAliasRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -453,16 +410,7 @@ func (s *Server) upsertUserAlias(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserID    string `json:"userId"`
-		DeviceID  string `json:"deviceId"`
-		Name      string `json:"name"`
-		Platform  string `json:"platform"`
-		OSName    string `json:"osName"`
-		OSVersion string `json:"osVersion"`
-		Alias     string `json:"alias"`
-		PublicKey string `json:"publicKey"`
-	}
+	var req RegisterDeviceRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -495,12 +443,7 @@ func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renewDevice(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserID         string `json:"userId"`
-		NetworkEnabled bool   `json:"networkEnabled"`
-		RxBytesTotal   uint64 `json:"rxBytesTotal"`
-		TxBytesTotal   uint64 `json:"txBytesTotal"`
-	}
+	var req RenewDeviceRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -519,16 +462,7 @@ func (s *Server) renewDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) bootstrapDeviceSession(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		SessionKey string `json:"sessionKey"`
-		DeviceID   string `json:"deviceId"`
-		Name       string `json:"name"`
-		Platform   string `json:"platform"`
-		OSName     string `json:"osName"`
-		OSVersion  string `json:"osVersion"`
-		Alias      string `json:"alias"`
-		PublicKey  string `json:"publicKey"`
-	}
+	var req DeviceSessionBootstrapRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -555,24 +489,11 @@ func (s *Server) bootstrapDeviceSession(w http.ResponseWriter, r *http.Request) 
 		Details:      map[string]string{"userId": session.UserID, "platform": device.Platform},
 	})
 	s.notifyDeviceNetworkConfigsChanged(configs, "device_session_bootstrapped", "network_device", "add", device.DeviceID)
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"device":         device,
-		"deviceSession":  session,
-		"mqtt":           deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()),
-		"networkConfigs": map[string]any{"items": configs},
-	})
+	writeJSON(w, http.StatusCreated, DeviceSessionResponse{Device: device, DeviceSession: session, MQTT: deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()), NetworkConfigs: ItemsResponse{Items: configs}})
 }
 
 func (s *Server) bindDeviceSession(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeviceID  string `json:"deviceId"`
-		Name      string `json:"name"`
-		Platform  string `json:"platform"`
-		OSName    string `json:"osName"`
-		OSVersion string `json:"osVersion"`
-		Alias     string `json:"alias"`
-		PublicKey string `json:"publicKey"`
-	}
+	var req DeviceSessionBindRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -599,20 +520,11 @@ func (s *Server) bindDeviceSession(w http.ResponseWriter, r *http.Request) {
 		Details:      map[string]string{"platform": device.Platform},
 	})
 	s.notifyDeviceNetworkConfigsChanged(configs, "device_session_bound", "network_device", "add", device.DeviceID)
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"device":         device,
-		"deviceSession":  session,
-		"mqtt":           deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()),
-		"networkConfigs": map[string]any{"items": configs},
-	})
+	writeJSON(w, http.StatusCreated, DeviceSessionResponse{Device: device, DeviceSession: session, MQTT: deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()), NetworkConfigs: ItemsResponse{Items: configs}})
 }
 
 func (s *Server) renewDeviceSession(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		NetworkEnabled bool   `json:"networkEnabled"`
-		RxBytesTotal   uint64 `json:"rxBytesTotal"`
-		TxBytesTotal   uint64 `json:"txBytesTotal"`
-	}
+	var req DeviceRuntimeCountersRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -637,12 +549,7 @@ func (s *Server) renewDeviceSession(w http.ResponseWriter, r *http.Request) {
 		Status:       "succeeded",
 		Details:      map[string]string{"userId": session.UserID, "networkEnabled": boolString(req.NetworkEnabled)},
 	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"device":         device,
-		"deviceSession":  session,
-		"mqtt":           deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()),
-		"networkConfigs": map[string]any{"items": configs},
-	})
+	writeJSON(w, http.StatusOK, DeviceSessionResponse{Device: device, DeviceSession: session, MQTT: deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()), NetworkConfigs: ItemsResponse{Items: configs}})
 }
 
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
@@ -654,10 +561,7 @@ func (s *Server) listVisibleDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateDeviceAlias(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ActorUserID string `json:"actorUserId"`
-		Alias       string `json:"alias"`
-	}
+	var req UpdateDeviceAliasRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -672,9 +576,7 @@ func (s *Server) updateDeviceAlias(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	actorUserID := r.URL.Query().Get("actorUserId")
 	if actorUserID == "" {
-		var req struct {
-			ActorUserID string `json:"actorUserId"`
-		}
+		var req DeleteDeviceRequest
 		if decodeJSON(w, r, &req) {
 			actorUserID = req.ActorUserID
 		} else {
@@ -705,12 +607,7 @@ func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		OwnerUserID string `json:"ownerUserId"`
-		Name        string `json:"name"`
-		Code        string `json:"code"`
-		TemplateKey string `json:"templateKey"`
-	}
+	var req CreateNetworkRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -723,11 +620,7 @@ func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateNetwork(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name   string `json:"name"`
-		Code   string `json:"code"`
-		Status string `json:"status"`
-	}
+	var req UpdateNetworkRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -747,10 +640,7 @@ func (s *Server) updateNetwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createDeviceInvite(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		InviterUserID string `json:"inviterUserId"`
-		TTLSeconds    int64  `json:"ttlSeconds"`
-	}
+	var req CreateDeviceInviteRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -767,11 +657,7 @@ func (s *Server) listDeviceInvites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) acceptDeviceInvite(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		InviteCode  string `json:"inviteCode"`
-		DeviceID    string `json:"deviceId"`
-		ActorUserID string `json:"actorUserId"`
-	}
+	var req AcceptDeviceInviteRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -788,12 +674,7 @@ func (s *Server) listNetworkDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addNetworkDevice(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeviceID    string `json:"deviceId"`
-		ActorUserID string `json:"actorUserId"`
-		Alias       string `json:"alias"`
-		Enabled     *bool  `json:"enabled"`
-	}
+	var req AddNetworkDeviceRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -819,10 +700,7 @@ func (s *Server) addNetworkDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateNetworkDevice(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Alias   string `json:"alias"`
-		Enabled *bool  `json:"enabled"`
-	}
+	var req UpdateNetworkDeviceRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -869,10 +747,7 @@ func (s *Server) listDNSZones(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addDNSZone(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ZoneName     string `json:"zoneName"`
-		ExposeGlobal bool   `json:"exposeGlobal"`
-	}
+	var req DNSZoneRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -888,10 +763,7 @@ func (s *Server) addDNSZone(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateDNSZone(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ZoneName     string `json:"zoneName"`
-		ExposeGlobal bool   `json:"exposeGlobal"`
-	}
+	var req DNSZoneRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -924,16 +796,7 @@ func (s *Server) listDNSRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addDNSRecord(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ZoneID         string `json:"zoneId"`
-		Name           string `json:"name"`
-		RecordType     string `json:"recordType"`
-		TargetDeviceID string `json:"targetDeviceId"`
-		TargetIP       string `json:"targetIp"`
-		CNAME          string `json:"cname"`
-		Port           string `json:"port"`
-		TTL            int    `json:"ttl"`
-	}
+	var req AddDNSRecordRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -949,15 +812,7 @@ func (s *Server) addDNSRecord(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateDNSRecord(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name           string `json:"name"`
-		RecordType     string `json:"recordType"`
-		TargetDeviceID string `json:"targetDeviceId"`
-		TargetIP       string `json:"targetIp"`
-		CNAME          string `json:"cname"`
-		Port           string `json:"port"`
-		TTL            int    `json:"ttl"`
-	}
+	var req DNSRecordRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -1008,16 +863,7 @@ func (s *Server) updatePublicMapping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) decodePublicMapping(w http.ResponseWriter, r *http.Request, mappingID string) (PublicDomainMapping, bool) {
-	var req struct {
-		Alias        string `json:"alias"`
-		PublicDomain string `json:"publicDomain"`
-		SourceRecord string `json:"sourceRecord"`
-		DeviceID     string `json:"deviceId"`
-		Protocol     string `json:"protocol"`
-		Port         string `json:"port"`
-		ExternalPort string `json:"externalPort"`
-		Status       string `json:"status"`
-	}
+	var req PublicMappingRequest
 	if !decodeJSON(w, r, &req) {
 		return PublicDomainMapping{}, false
 	}
@@ -1051,11 +897,7 @@ func (s *Server) listSecurityGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name          string `json:"name"`
-		Description   string `json:"description"`
-		DefaultPolicy string `json:"defaultPolicy"`
-	}
+	var req CreateSecurityGroupRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -1088,18 +930,7 @@ func (s *Server) listSecurityRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addSecurityRule(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Direction   string `json:"direction"`
-		Priority    int    `json:"priority"`
-		Action      string `json:"action"`
-		Protocol    string `json:"protocol"`
-		PortFrom    int    `json:"portFrom"`
-		PortTo      int    `json:"portTo"`
-		PeerType    string `json:"peerType"`
-		PeerValue   string `json:"peerValue"`
-		Description string `json:"description"`
-		Enabled     *bool  `json:"enabled"`
-	}
+	var req SecurityRuleRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -1122,18 +953,7 @@ func (s *Server) addSecurityRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateSecurityRule(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Direction   string `json:"direction"`
-		Priority    int    `json:"priority"`
-		Action      string `json:"action"`
-		Protocol    string `json:"protocol"`
-		PortFrom    int    `json:"portFrom"`
-		PortTo      int    `json:"portTo"`
-		PeerType    string `json:"peerType"`
-		PeerValue   string `json:"peerValue"`
-		Description string `json:"description"`
-		Enabled     *bool  `json:"enabled"`
-	}
+	var req SecurityRuleRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -1196,9 +1016,7 @@ func (s *Server) networkConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) relayCandidates(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
 	if deviceID == "" && r.Method == http.MethodPost {
-		var req struct {
-			DeviceID string `json:"deviceId"`
-		}
+		var req RelayCandidatesRequest
 		if !decodeJSON(w, r, &req) {
 			return
 		}
@@ -1217,16 +1035,7 @@ func (s *Server) relayCandidates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) issueRelayTicket(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		NetworkID                 string   `json:"networkId"`
-		SrcNodeID                 string   `json:"srcNodeId"`
-		DstNodeID                 string   `json:"dstNodeId"`
-		DERPClusterID             string   `json:"derpClusterId"`
-		PreferredDERPNodeIDs      []string `json:"preferredDerpNodeIds"`
-		PreferredRelayEndpointIDs []string `json:"preferredRelayEndpointIds"`
-		Reason                    string   `json:"reason"`
-		RelayRegionID             string   `json:"relayRegionId"`
-	}
+	var req IssueRelayTicketRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}

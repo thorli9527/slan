@@ -1637,6 +1637,35 @@ func TestRelayCandidatesAndTicketRequireNetworkMembership(t *testing.T) {
 	}
 }
 
+func TestPunchConnectRequiresNetworkMembership(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("punch-membership@example.com", "secret", "Punch")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	deviceA, _, _ := store.RegisterDevice(auth.User.UserID, "punch-mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	deviceB, _, _ := store.RegisterDevice(auth.User.UserID, "punch-ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
+	mqttCfg := MQTTConfig{Enabled: true, UsernamePrefix: "slan", PasswordSecret: "test-secret", CredentialTTLSeconds: 3600}
+	mqttCredential := deviceMQTTCredential(mqttCfg, deviceA.DeviceID, time.Now())
+	punchAuth := punchDeviceAuth{
+		DeviceID:  deviceA.DeviceID,
+		Username:  mqttCredential.Username,
+		Signature: punchMQTTSignature(deviceA.DeviceID, mqttCredential.Password),
+	}
+	if err := store.AuthorizePunchConnect(network.NetworkID, "node-"+deviceA.DeviceID, "node-"+deviceB.DeviceID, punchAuth, mqttCfg); err != nil {
+		t.Fatalf("authorize punch connect: %v", err)
+	}
+	if err := store.AuthorizePunchConnect(network.NetworkID, "", "node-"+deviceB.DeviceID, punchAuth, mqttCfg); err != errBadRequest {
+		t.Fatalf("expected bad request for missing requester, got %v", err)
+	}
+	if err := store.AuthorizePunchConnect(network.NetworkID, "node-"+deviceA.DeviceID, "node-missing", punchAuth, mqttCfg); err != errNotFound {
+		t.Fatalf("expected missing peer not found, got %v", err)
+	}
+	if err := store.AuthorizePunchConnect(network.NetworkID, "node-"+deviceB.DeviceID, "node-"+deviceA.DeviceID, punchAuth, mqttCfg); err != errUnauthorized {
+		t.Fatalf("expected requester token mismatch unauthorized, got %v", err)
+	}
+}
+
 func TestOpsLoginAssignPlanAndQuota(t *testing.T) {
 	store := NewStore()
 	operatorAuth, err := store.LoginOperator("admin@slan.local", "admin123456")

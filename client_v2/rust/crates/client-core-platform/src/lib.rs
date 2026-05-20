@@ -1,6 +1,8 @@
 use anyhow::Result;
 use client_core::{NetworkRuntimeState, PlatformNetwork, RouteSpec};
 
+pub mod direct_udp;
+
 #[cfg(target_os = "android")]
 pub mod android;
 #[cfg(target_os = "ios")]

@@ -177,11 +177,12 @@ public final class SlanVpnService extends VpnService {
       return new int[0];
     }
     int sessionCount = relaySessionCount(config);
-    if (sessionCount <= 0) {
+    int directCandidateCount = directPeerCandidateCount(config);
+    if (sessionCount <= 0 && directCandidateCount <= 0) {
       return new int[0];
     }
     closeRelaySockets();
-    int[] fds = new int[sessionCount];
+    int[] fds = new int[sessionCount + (directCandidateCount > 0 ? 1 : 0)];
     for (int index = 0; index < sessionCount; index += 1) {
       DatagramSocket socket = new DatagramSocket();
       if (!protect(socket)) {
@@ -191,6 +192,16 @@ public final class SlanVpnService extends VpnService {
       socket.connect(new InetSocketAddress(hostPort.host, hostPort.port));
       ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
       fds[index] = descriptor.detachFd();
+      protectedRelaySockets.add(socket);
+    }
+    if (directCandidateCount > 0) {
+      DatagramSocket socket = new DatagramSocket();
+      if (!protect(socket)) {
+        socket.close();
+        throw new IllegalStateException("Android VPN failed to protect direct UDP socket");
+      }
+      ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
+      fds[sessionCount] = descriptor.detachFd();
       protectedRelaySockets.add(socket);
     }
     return fds;
@@ -203,6 +214,36 @@ public final class SlanVpnService extends VpnService {
     }
     JSONArray sessions = relayDataPlane.optJSONArray("sessions");
     return sessions == null ? 0 : sessions.length();
+  }
+
+  private int directPeerCandidateCount(JSONObject config) {
+    JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
+    if (relayDataPlane == null || !relayDataPlane.optBoolean("enabled", false)) {
+      return 0;
+    }
+    JSONArray peerPaths = relayDataPlane.optJSONArray("peerPaths");
+    if (peerPaths == null) {
+      return 0;
+    }
+    int count = 0;
+    for (int peerIndex = 0; peerIndex < peerPaths.length(); peerIndex += 1) {
+      JSONObject peerPath = peerPaths.optJSONObject(peerIndex);
+      JSONArray candidates = peerPath == null ? null : peerPath.optJSONArray("candidates");
+      if (candidates == null) {
+        continue;
+      }
+      for (int candidateIndex = 0; candidateIndex < candidates.length(); candidateIndex += 1) {
+        JSONObject candidate = candidates.optJSONObject(candidateIndex);
+        String kind = candidate == null ? "" : candidate.optString("kind", "").trim();
+        String address = candidate == null ? "" : candidate.optString("address", "").trim();
+        if (!address.isEmpty()
+            && ("direct_udp".equals(kind) || "lan_udp".equals(kind) || "ipv6_udp".equals(kind))) {
+          count += 1;
+          break;
+        }
+      }
+    }
+    return count;
   }
 
   private void addDnsServers(Builder builder, JSONArray dnsServers) {

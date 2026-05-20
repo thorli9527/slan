@@ -180,6 +180,49 @@ func TestOpsMutationsWriteOperatorAuditEvents(t *testing.T) {
 	}
 }
 
+func TestOpsPunchNodesCanBeManaged(t *testing.T) {
+	server := NewServer()
+	operatorAuth, err := server.store.LoginOperator("admin@slan.local", "admin123456")
+	if err != nil {
+		t.Fatalf("login operator: %v", err)
+	}
+	handler := server.Routes()
+	authorization := "Bearer " + operatorAuth.Session.Token
+	var node OpsPunchNode
+	requestJSON(t, handler, http.MethodPost, "/api/ops/punch-nodes", authorization, map[string]any{
+		"name":          "Punch A",
+		"region":        "cn-east",
+		"publicUdpIp":   "10.10.0.21",
+		"publicUdpPort": 29130,
+		"maxSessions":   1000,
+		"status":        "active",
+		"health":        "healthy",
+		"priority":      20,
+	}, http.StatusCreated, &node)
+	if node.NodeID == "" || node.PublicUDPIP != "10.10.0.21" || node.PublicUDPPort != 29130 {
+		t.Fatalf("unexpected punch node: %+v", node)
+	}
+	requestJSON(t, handler, http.MethodPatch, "/api/ops/punch-nodes/"+node.NodeID, authorization, map[string]any{
+		"name":          "Punch A Updated",
+		"region":        "cn-east",
+		"publicUdpIp":   "10.10.0.21",
+		"publicUdpPort": 29130,
+		"status":        "disabled",
+		"health":        "healthy",
+		"priority":      30,
+	}, http.StatusOK, &node)
+	if node.Status != "disabled" || len(server.store.ActivePunchNodes()) != 0 {
+		t.Fatalf("expected disabled punch node to be inactive, node=%+v active=%+v", node, server.store.ActivePunchNodes())
+	}
+	var response struct {
+		Items []OpsPunchNode `json:"items"`
+	}
+	requestJSON(t, handler, http.MethodGet, "/api/ops/punch-nodes", authorization, map[string]any{}, http.StatusOK, &response)
+	if len(response.Items) == 0 || response.Items[0].NodeID != node.NodeID {
+		t.Fatalf("expected punch node in list: %+v", response.Items)
+	}
+}
+
 func TestOpsAuditEventsQueryFiltersResults(t *testing.T) {
 	server := NewServer()
 	operatorAuth, err := server.store.LoginOperator("admin@slan.local", "admin123456")

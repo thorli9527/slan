@@ -1,6 +1,6 @@
 use super::{
     android_data_plane_relay_candidate, diagnostic_connect_plan_summaries, parse_rfc3339_utc_ms,
-    path_diagnose_active_path_counts, path_diagnose_dns, path_diagnose_health,
+    path_diagnose_active_path_counts, path_diagnose_dns, path_diagnose_health, peer_path_configs,
     relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
     relay_session_from_connect_plan_ticket, relay_sessions_missing, relay_ticket_should_renew,
@@ -9,6 +9,7 @@ use super::{
     PersistedConnectPlanStore, RelayMaintenanceState, RELAY_NO_RX_RECONFIGURE_INTERVALS,
     RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
 };
+use crate::control_plane::{PunchConnectSession, PunchEndpoint};
 use crate::{
     relay_candidates::select_relay_candidates,
     relay_models::{
@@ -187,6 +188,56 @@ fn connect_plan_relay_ticket_must_match_peer() {
     };
 
     assert!(relay_session_from_connect_plan_ticket(&plan, "net-1", "node-local", &peer).is_none());
+}
+
+#[test]
+fn punch_connect_session_peer_endpoint_becomes_direct_udp_candidate() {
+    let mut peer = test_peer("node-peer", &["10.0.0.9"]);
+    peer.endpoints.push(crate::control_plane::ControlEndpoint {
+        endpoint_type: "lan".to_string(),
+        address: "192.168.1.20:49152".to_string(),
+        updated_at: 0,
+    });
+    let mut punch_sessions = std::collections::BTreeMap::new();
+    punch_sessions.insert(
+        peer.node_id.clone(),
+        PunchConnectSession {
+            session_id: "punch-1".to_string(),
+            network_id: "net-1".to_string(),
+            requester_node_id: "node-local".to_string(),
+            peer_node_id: peer.node_id.clone(),
+            requester: None,
+            peer: Some(PunchEndpoint {
+                network_id: "net-1".to_string(),
+                node_id: peer.node_id.clone(),
+                endpoint_type: "reflexive".to_string(),
+                address: "10.1.1.20:49152".to_string(),
+                reflexive: "203.0.113.20:49152".to_string(),
+                nat_type: "unknown".to_string(),
+            }),
+        },
+    );
+
+    let paths = peer_path_configs(
+        &[peer],
+        "node-local",
+        &test_relay_selection("relay-udp", "udp", "relay.example:3478"),
+        &[],
+        &[],
+        Some(std::collections::BTreeMap::new()),
+        Some(punch_sessions),
+    );
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0].candidates[0].kind, PathKind::DirectUdp);
+    assert_eq!(
+        paths[0].candidates[0].address.as_deref(),
+        Some("203.0.113.20:49152")
+    );
+    assert_eq!(
+        paths[0].candidates[1].address.as_deref(),
+        Some("192.168.1.20:49152")
+    );
 }
 
 #[test]

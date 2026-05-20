@@ -29,6 +29,10 @@ mod android_tun {
         icmp_echo_reply_for_request, ipv4_transport_checksum_valid,
         normalize_ipv4_transport_checksums, AndroidVpnSessionConfig, RelayPeerSession,
     };
+    use client_core_platform::direct_udp::{
+        direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
+        DirectUdpTransport,
+    };
     use jni::{
         objects::{JClass, JIntArray, JString},
         JNIEnv,
@@ -184,7 +188,7 @@ mod android_tun {
             requested_relay_session_count(parsed_config.as_ref()),
             Ordering::Relaxed,
         );
-        let relay_peers = prepare_relay_sockets(
+        let (relay_peers, direct_udp) = prepare_udp_sockets(
             relay_fds,
             parsed_config.as_ref(),
             Arc::clone(&last_attach_error),
@@ -220,10 +224,27 @@ mod android_tun {
             let mut seq = 0_u64;
             let mut tun_buffer = vec![0_u8; 2048];
             let mut relay_buffer = vec![0_u8; 4096];
+            let mut direct_udp = direct_udp;
+            let direct_udp_probe_interval = parsed_config
+                .as_ref()
+                .and_then(|config| config.relay_data_plane.as_ref())
+                .map(|config| {
+                    direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms)
+                })
+                .unwrap_or_else(|| Duration::from_secs(15));
+            let mut last_direct_udp_probe = Instant::now()
+                .checked_sub(direct_udp_probe_interval)
+                .unwrap_or_else(Instant::now);
             let mut last_keepalive = Instant::now()
                 .checked_sub(RELAY_KEEPALIVE_INTERVAL)
                 .unwrap_or_else(Instant::now);
             while !thread_stop.load(Ordering::SeqCst) {
+                if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
+                    if let Some(direct_udp) = direct_udp.as_ref() {
+                        direct_udp.send_probe_packets();
+                    }
+                    last_direct_udp_probe = Instant::now();
+                }
                 if last_keepalive.elapsed() >= RELAY_KEEPALIVE_INTERVAL {
                     send_relay_keepalives(&relay_peers);
                     last_keepalive = Instant::now();
@@ -246,6 +267,22 @@ mod android_tun {
                                 .packets_too_large
                                 .fetch_add(1, Ordering::Relaxed);
                             continue;
+                        }
+                        if let Some(direct_udp) = direct_udp.as_ref() {
+                            if let Some(peer_index) =
+                                direct_udp.ready_peer_index_for_packet(&tun_buffer[..packet_len])
+                            {
+                                seq = seq.wrapping_add(1);
+                                let packet =
+                                    normalize_ipv4_transport_checksums(&tun_buffer[..packet_len]);
+                                if let Some(frame) =
+                                    encode_slan_relay_data_frame(seq, config_hash, &packet)
+                                {
+                                    if direct_udp.send_to_peer(peer_index, &frame).is_ok() {
+                                        continue;
+                                    }
+                                }
+                            }
                         }
                         if let Some(peer) =
                             relay_peer_for_packet(&relay_peers, &tun_buffer[..packet_len])
@@ -355,6 +392,68 @@ mod android_tun {
                                 }
                             }
                         }
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                        Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                        Err(_) => {}
+                    }
+                }
+                if let Some(direct_udp) = direct_udp.as_mut() {
+                    match direct_udp.recv_from_peer(&mut relay_buffer) {
+                        Ok(Some(received)) => {
+                            let frame_len = received.frame_len;
+                            let control_packet =
+                                direct_udp_control_packet(&relay_buffer[..frame_len]);
+                            if control_packet
+                                .as_ref()
+                                .is_some_and(|packet| packet.kind == DirectUdpControlKind::Probe)
+                            {
+                                direct_udp
+                                    .mark_peer_ready(received.peer_index, received.remote_addr);
+                                direct_udp.send_pong_to_peer(received.peer_index);
+                                continue;
+                            }
+                            if control_packet
+                                .as_ref()
+                                .is_some_and(|packet| packet.kind == DirectUdpControlKind::Pong)
+                            {
+                                direct_udp
+                                    .mark_peer_ready(received.peer_index, received.remote_addr);
+                                continue;
+                            }
+                            if let Some(packet) =
+                                decode_slan_relay_data_frame(&relay_buffer[..frame_len])
+                            {
+                                direct_udp
+                                    .mark_peer_ready(received.peer_index, received.remote_addr);
+                                record_relay_tcp_packet(&thread_stats, packet);
+                                if let Some(reply) =
+                                    icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
+                                {
+                                    seq = seq.wrapping_add(1);
+                                    if let Some(frame) =
+                                        encode_slan_relay_data_frame(seq, config_hash, &reply)
+                                    {
+                                        let _ =
+                                            direct_udp.send_to_peer(received.peer_index, &frame);
+                                    }
+                                    continue;
+                                }
+                                let packet = normalize_ipv4_transport_checksums(packet);
+                                if let Err(error) = write_tun_packet_with_retry(&mut file, &packet)
+                                {
+                                    thread_stats
+                                        .tun_write_failures
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    record_tun_write_failure(&thread_stats, &packet, &error);
+                                } else {
+                                    record_tun_write_packet(&thread_stats, &packet);
+                                    thread_stats
+                                        .bytes_written
+                                        .fetch_add(packet.len() as u64, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                        Ok(None) => {}
                         Err(error) if error.kind() == ErrorKind::WouldBlock => {}
                         Err(error) if error.kind() == ErrorKind::Interrupted => {}
                         Err(_) => {}
@@ -591,38 +690,28 @@ mod android_tun {
         Ok(values.into_iter().filter(|fd| *fd >= 0).collect())
     }
 
-    fn prepare_relay_sockets(
+    fn prepare_udp_sockets(
         relay_fds: Vec<c_int>,
         config: Option<&AndroidVpnSessionConfig>,
         last_attach_error: Arc<Mutex<Option<String>>>,
-    ) -> std::io::Result<Vec<AndroidRelayPeer>> {
+    ) -> std::io::Result<(Vec<AndroidRelayPeer>, Option<DirectUdpTransport>)> {
         if relay_fds.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
         let Some(relay_config) = config.and_then(|value| value.relay_data_plane.as_ref()) else {
-            return relay_fds
-                .into_iter()
-                .map(|fd| {
-                    let socket = unsafe { UdpSocket::from_raw_fd(fd) };
-                    socket.set_nonblocking(true)?;
-                    Ok(AndroidRelayPeer {
-                        session_id: String::new(),
-                        local_node_id: String::new(),
-                        peer_virtual_ips: Vec::new(),
-                        socket,
-                    })
-                })
-                .collect();
-        };
-        if !relay_config.enabled
-            || !relay_config.transport.eq_ignore_ascii_case("udp")
-            || relay_config.sessions.is_empty()
-        {
             close_relay_fds(relay_fds);
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
+        };
+        if !relay_config.enabled || !relay_config.transport.eq_ignore_ascii_case("udp") {
+            close_relay_fds(relay_fds);
+            return Ok((Vec::new(), None));
         };
         let mut peers = Vec::new();
-        for (index, fd) in relay_fds.into_iter().enumerate() {
+        let mut relay_fds = relay_fds.into_iter();
+        for index in 0..relay_config.sessions.len() {
+            let Some(fd) = relay_fds.next() else {
+                break;
+            };
             let Some(session) = relay_config.sessions.get(index) else {
                 close_relay_fds(vec![fd]);
                 continue;
@@ -644,7 +733,16 @@ mod android_tun {
                 socket,
             });
         }
-        Ok(peers)
+        let direct_udp = relay_fds.next().and_then(|fd| {
+            let socket = unsafe { UdpSocket::from_raw_fd(fd) };
+            DirectUdpTransport::attach_with_socket(
+                relay_config.local_node_id.as_str(),
+                &relay_config.peer_paths,
+                || Ok(socket),
+            )
+        });
+        close_relay_fds(relay_fds.collect());
+        Ok((peers, direct_udp))
     }
 
     fn close_relay_fds(relay_fds: Vec<c_int>) {

@@ -57,6 +57,7 @@ services:
       SLAN_RELAY_ENDPOINTS: "${SLAN_RELAY_ENDPOINTS:-udp://relay.dev.staticlss.com:29110}"
       SLAN_RELAY_REGION_ID: "${SLAN_RELAY_REGION_ID:-dev}"
       SLAN_RELAY_TICKET_SECRET: "${SLAN_RELAY_TICKET_SECRET:-change-me-relay-ticket-secret}"
+      SLAN_WIRE_PUNCH_NODES: "${SLAN_WIRE_PUNCH_NODES:-local=47.245.40.231:29130}"
       SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
       SLAN_WIRE_NODE_HEARTBEAT_FRESHNESS_SECONDS: "${SLAN_WIRE_NODE_HEARTBEAT_FRESHNESS_SECONDS:-120}"
       SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
@@ -162,6 +163,23 @@ services:
       server-biz:
         condition: service_started
       server-wire:
+        condition: service_started
+
+  server-wire-punch:
+    build:
+      context: ./server/server-wire-punch
+      dockerfile: Dockerfile
+    environment:
+      SLAN_WIRE_PUNCH_LISTEN_ADDR: ":29130"
+      SLAN_WIRE_PUNCH_HTTP_LISTEN_ADDR: ":29131"
+      SLAN_WIRE_PUNCH_PUBLIC_HOST: "${SLAN_WIRE_PUNCH_PUBLIC_HOST:-47.245.40.231}"
+      SLAN_WIRE_PUNCH_PUBLIC_UDP_PORT: "${SLAN_WIRE_PUNCH_PORT:-29130}"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+    ports:
+      - "${SLAN_WIRE_PUNCH_PORT:-29130}:29130/udp"
+      - "${SLAN_WIRE_PUNCH_HTTP_PORT:-29131}:29131"
+    depends_on:
+      server-biz:
         condition: service_started
 
   server-wire-derp:
