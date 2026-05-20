@@ -640,8 +640,8 @@ async function exerciseOpsUI(browser) {
     await page.navigate(opsBase);
     await page.installHelpers();
     await page.waitText('运营管理登录');
-    await page.eval(`window.__uiSmoke.setInput(0, 'admin@slan.local')`);
-    await page.eval(`window.__uiSmoke.setInput(1, 'admin123456')`);
+    await page.eval(`window.__uiSmoke.setInput(0, 'admin1')`);
+    await page.eval(`window.__uiSmoke.setInput(1, 'admin1')`);
     await page.click('登录');
     await page.waitSelector('.shell');
     await page.assertHealthy('ops after login');

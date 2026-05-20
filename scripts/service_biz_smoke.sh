@@ -109,7 +109,7 @@ fi
 
 OPS_AUTH="$(curl --silent --fail -X POST "${BASE_URL}/api/ops/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@slan.local","password":"admin123456"}')"
+  -d '{"email":"admin1","password":"admin1"}')"
 OPS_TOKEN="$(printf '%s' "${OPS_AUTH}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 if [[ -z "${OPS_TOKEN}" ]]; then
   echo "missing ops token" >&2

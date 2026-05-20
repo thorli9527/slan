@@ -49,8 +49,8 @@ SLAN_WIRE_PUNCH_NODES=local=47.245.40.231:29130,backup=47.245.40.232:29130
 
 内置运营管理员用于本地联调：
 
-- 邮箱：`admin@slan.local`
-- 密码：`admin123456`
+- 邮箱：`admin1`
+- 密码：`admin1`
 
 ## Core APIs
 

@@ -8,15 +8,20 @@ import (
 	"time"
 )
 
+const (
+	defaultOpsAdminEmail    = "admin1"
+	defaultOpsAdminPassword = "admin1"
+)
+
 func (s *Store) seedOpsDefaultsLocked(now int64) {
 	if len(s.operators) == 0 {
 		operator := OperatorUser{
 			OperatorID:   "op-000001",
 			Name:         "超级管理员",
-			Email:        "admin@slan.local",
+			Email:        defaultOpsAdminEmail,
 			Role:         "super_admin",
 			Status:       "active",
-			PasswordHash: hashPassword("admin123456"),
+			PasswordHash: hashPassword(defaultOpsAdminPassword),
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
@@ -160,7 +165,7 @@ func (s *Store) UpsertOperator(operator OperatorUser) (OperatorUser, error) {
 		}
 		operator.OperatorID = fmt.Sprintf("op-%06d", s.nextOperatorSeq)
 		s.nextOperatorSeq++
-		operator.PasswordHash = hashPassword(defaultString(operator.PasswordHash, "admin123456"))
+		operator.PasswordHash = hashPassword(defaultString(operator.PasswordHash, defaultOpsAdminPassword))
 		operator.CreatedAt = now
 	} else {
 		existing, ok := s.operators[operator.OperatorID]

@@ -190,7 +190,7 @@ curl --silent --fail -X POST "${WEB_BASE}/api/auth/logout" \
 echo "==> Ops UI API through ops UI proxy"
 OPS_AUTH="$(curl --silent --fail -X POST "${OPS_BASE}/api/ops/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@slan.local","password":"admin123456"}')" || fail "ops login failed"
+  -d '{"email":"admin1","password":"admin1"}')" || fail "ops login failed"
 OPS_TOKEN="$(printf '%s' "${OPS_AUTH}" | json_value token)"
 [[ -n "${OPS_TOKEN}" ]] || fail "missing ops token"
 
@@ -268,7 +268,7 @@ auth_curl -X PATCH "${OPS_BASE}/api/ops/orders/${ORDER_ID}" \
 
 auth_curl -X PATCH "${OPS_BASE}/api/ops/renewals/${RENEWAL_ID}" \
   -H 'Content-Type: application/json' \
-  -d "{\"customerEmail\":\"${USER_EMAIL}\",\"planCode\":\"${PLAN_CODE}\",\"period\":\"yearly\",\"amount\":100,\"currency\":\"CNY\",\"paidAt\":1783267200,\"validUntil\":1821264000,\"source\":\"manual\",\"operator\":\"admin@slan.local\"}" >/dev/null || fail "renewal update failed"
+  -d "{\"customerEmail\":\"${USER_EMAIL}\",\"planCode\":\"${PLAN_CODE}\",\"period\":\"yearly\",\"amount\":100,\"currency\":\"CNY\",\"paidAt\":1783267200,\"validUntil\":1821264000,\"source\":\"manual\",\"operator\":\"admin1\"}" >/dev/null || fail "renewal update failed"
 
 printf 'remote-smoke-client\n' >"${TMP_DIR}/SLAN-Remote-Smoke.pkg"
 DOWNLOAD="$(curl --silent --fail -X POST "${OPS_BASE}/api/ops/client-downloads" \

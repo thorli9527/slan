@@ -54,7 +54,7 @@ UNAUTH_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' "${BA
 
 OPS_AUTH="$(curl --silent --fail -X POST "${BASE_URL}/api/ops/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@slan.local","password":"admin123456"}')" || fail "ops login failed"
+  -d '{"email":"admin1","password":"admin1"}')" || fail "ops login failed"
 OPS_TOKEN="$(printf '%s' "${OPS_AUTH}" | json_value token)"
 [[ -n "${OPS_TOKEN}" ]] || fail "missing ops token"
 
@@ -143,7 +143,7 @@ auth_curl "${BASE_URL}/api/ops/orders" >/dev/null || fail "orders list failed"
 
 auth_curl -X PATCH "${BASE_URL}/api/ops/renewals/${RENEWAL_ID}" \
   -H 'Content-Type: application/json' \
-  -d "{\"customerEmail\":\"ops-smoke-user@staticlss.com\",\"planCode\":\"${PLAN_CODE}\",\"period\":\"yearly\",\"amount\":100,\"currency\":\"CNY\",\"paidAt\":1783267200,\"validUntil\":1821264000,\"source\":\"manual\",\"operator\":\"admin@slan.local\"}" >/dev/null || fail "renewal update failed"
+  -d "{\"customerEmail\":\"ops-smoke-user@staticlss.com\",\"planCode\":\"${PLAN_CODE}\",\"period\":\"yearly\",\"amount\":100,\"currency\":\"CNY\",\"paidAt\":1783267200,\"validUntil\":1821264000,\"source\":\"manual\",\"operator\":\"admin1\"}" >/dev/null || fail "renewal update failed"
 auth_curl "${BASE_URL}/api/ops/renewals" >/dev/null || fail "renewals list failed"
 
 printf 'smoke-client-package\n' >"${TMP_DIR}/SLAN-Client-Smoke.pkg"

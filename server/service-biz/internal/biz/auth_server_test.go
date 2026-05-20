@@ -150,7 +150,7 @@ func TestOpsMutationsWriteOperatorAuditEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register device: %v", err)
 	}
-	operatorAuth, err := server.store.LoginOperator("admin@slan.local", "admin123456")
+	operatorAuth, err := server.store.LoginOperator("admin1", "admin1")
 	if err != nil {
 		t.Fatalf("login operator: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestOpsMutationsWriteOperatorAuditEvents(t *testing.T) {
 
 func TestOpsPunchNodesCanBeManaged(t *testing.T) {
 	server := NewServer()
-	operatorAuth, err := server.store.LoginOperator("admin@slan.local", "admin123456")
+	operatorAuth, err := server.store.LoginOperator("admin1", "admin1")
 	if err != nil {
 		t.Fatalf("login operator: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestOpsPunchNodesCanBeManaged(t *testing.T) {
 
 func TestOpsAuditEventsQueryFiltersResults(t *testing.T) {
 	server := NewServer()
-	operatorAuth, err := server.store.LoginOperator("admin@slan.local", "admin123456")
+	operatorAuth, err := server.store.LoginOperator("admin1", "admin1")
 	if err != nil {
 		t.Fatalf("login operator: %v", err)
 	}

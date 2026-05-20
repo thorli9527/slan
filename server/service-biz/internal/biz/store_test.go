@@ -1562,11 +1562,11 @@ func TestDeviceLoginPrepareRateLimitBlocksRepeatedAttempts(t *testing.T) {
 func TestOperatorLoginRateLimitBlocksRepeatedFailures(t *testing.T) {
 	store := NewStore()
 	for i := 0; i < loginRateLimitMaxFail; i++ {
-		if _, err := store.LoginOperatorWithRateLimit("admin@slan.local", "bad", "203.0.113.20"); err != errBadRequest {
+		if _, err := store.LoginOperatorWithRateLimit("admin1", "bad", "203.0.113.20"); err != errBadRequest {
 			t.Fatalf("expected bad ops password failure %d, got %v", i, err)
 		}
 	}
-	if _, err := store.LoginOperatorWithRateLimit("admin@slan.local", "admin123456", "203.0.113.20"); err != errRateLimited {
+	if _, err := store.LoginOperatorWithRateLimit("admin1", "admin1", "203.0.113.20"); err != errRateLimited {
 		t.Fatalf("expected ops login to be rate limited, got %v", err)
 	}
 	events := store.ListAuditEvents()
@@ -1704,7 +1704,7 @@ func TestPunchConnectRequiresNetworkMembership(t *testing.T) {
 
 func TestOpsLoginAssignPlanAndQuota(t *testing.T) {
 	store := NewStore()
-	operatorAuth, err := store.LoginOperator("admin@slan.local", "admin123456")
+	operatorAuth, err := store.LoginOperator("admin1", "admin1")
 	if err != nil {
 		t.Fatalf("operator login: %v", err)
 	}

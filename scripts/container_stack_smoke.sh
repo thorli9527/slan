@@ -60,7 +60,7 @@ done
 smoke_wget --header "X-Slan-Internal-Token: ${WIRE_TOKEN}" \
   "http://${BIZ_NAME}:8080/internal/wire/admin/relay-nodes" >/dev/null
 smoke_wget --header 'Content-Type: application/json' \
-  --post-data '{"email":"admin@slan.local","password":"admin123456"}' \
+  --post-data '{"email":"admin1","password":"admin1"}' \
   "http://${BIZ_NAME}:8080/api/ops/auth/login" >/dev/null
 smoke_wget "http://${WEB_NAME}/" | grep -q '<app-root'
 smoke_wget "http://${MAIN_NAME}/" | grep -q '<ops-root'
