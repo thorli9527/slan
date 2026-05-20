@@ -7,16 +7,16 @@ class AndroidVpnPermissionState {
 
 class AndroidVpnConsentRequest {
   const AndroidVpnConsentRequest({
-    required this.callbackId,
+    required this.requestId,
     this.message,
   });
 
-  final String callbackId;
+  final String requestId;
   final String? message;
 
   factory AndroidVpnConsentRequest.fromJson(Map<String, Object?> json) {
     return AndroidVpnConsentRequest(
-      callbackId: json['callbackId'] as String? ?? '',
+      requestId: json['requestId'] as String? ?? '',
       message: json['message'] as String?,
     );
   }
@@ -52,7 +52,7 @@ class AndroidVpnSessionConfig {
   factory AndroidVpnSessionConfig.fromJson(Map<String, Object?> json) {
     return AndroidVpnSessionConfig(
       sessionName: json['sessionName'] as String? ?? 'SLAN',
-      virtualIp: json['virtualIp'] as String? ?? '',
+      virtualIp: _virtualIp(json['virtualIp']),
       prefixLen: json['prefixLen'] as int? ?? 32,
       networkConfigs: _platformDeviceNetworkConfigs(json['networkConfigs']),
       dnsServers: _stringList(json['dnsServers']),
@@ -81,6 +81,14 @@ class AndroidVpnSessionConfig {
       if (relayDataPlane != null) 'relayDataPlane': relayDataPlane!.toJson(),
     };
   }
+}
+
+String _virtualIp(Object? value) {
+  final text = value is String ? value.trim() : '';
+  if (text.isEmpty) {
+    return '';
+  }
+  return text.split('/').first.trim();
 }
 
 typedef PlatformNetworkConfig = AndroidVpnSessionConfig;

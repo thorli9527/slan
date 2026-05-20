@@ -784,7 +784,7 @@ fn run_udp_data_plane(
                             }
                             continue;
                         }
-                        match file.write_all(packet) {
+                        match write_tun_packet_with_retry(&mut file, packet) {
                             Ok(_) => record_relay_packet_received(stats, peer),
                             Err(_) => record_relay_write_failure(stats, peer),
                         }
@@ -820,6 +820,34 @@ fn encode_relay_forward(peer: &RelayPeer, frame: &[u8]) -> Option<Vec<u8>> {
         "payload": base64_encode(frame),
     }))
     .ok()
+}
+
+fn write_tun_packet_with_retry(file: &mut File, packet: &[u8]) -> std::io::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut offset = 0_usize;
+    while offset < packet.len() {
+        match file.write(&packet[offset..]) {
+            Ok(0) => {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        ErrorKind::WriteZero,
+                        "linux tun write made no progress",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            Ok(written) => offset += written,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(error);
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn send_relay_keepalives(peers: &[RelayPeer]) {

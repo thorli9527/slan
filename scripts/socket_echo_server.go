@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -104,14 +103,17 @@ func runTCP(port int, stop <-chan struct{}) {
 
 func handleTCP(conn net.Conn) {
 	defer conn.Close()
-	payload, err := io.ReadAll(conn)
+	buf := make([]byte, 2048)
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	n, err := conn.Read(buf)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tcp read failed: %v\n", err)
 		return
 	}
-	body := string(payload)
+	body := string(buf[:n])
 	fmt.Printf("SOCKET_ECHO_TCP_RECEIVED=%s body=%s\n", conn.RemoteAddr().String(), body)
 	_, _ = conn.Write([]byte("echo:" + body))
+	time.Sleep(500 * time.Millisecond)
 }
 
 func deadline() time.Time {

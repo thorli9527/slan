@@ -16,7 +16,7 @@ LAN Direct -> IPv6 Direct -> Direct UDP -> Relay UDP -> DERP TCP/TLS 443
 - `server/server-wire-relay` 负责校验 `relay_udp` ticket、创建 session、转发 UDP payload。
 - `server/server-wire-derp` 负责校验 `derp_tcp_tls_443` ticket、维护 TCP/TLS 443 连接、转发最终兜底 payload。
 - `client/app_core` 负责路径探测、active path 切换、ticket 消费、数据面接入和失败回退。
-- `server/server-biz` 负责业务身份和网络授权，不直接签发联网票据、不处理数据面。
+- `server/service-biz` 负责业务身份和网络授权，不直接签发联网票据、不处理数据面。
 
 ## 当前协议面
 

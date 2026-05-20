@@ -15,8 +15,8 @@ TIMEOUT="${SLAN_ANDROID_TIMEOUT:-60s}"
 WORK_DIR="${SLAN_ANDROID_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-android.XXXXXX")}"
 MAC_LOG="$WORK_DIR/macos-service.log"
 ANDROID_LOG="$WORK_DIR/android-flutter-test.log"
-MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-mac-android-$(date +%s%N)}"
-ANDROID_TEST_DEVICE_ID="${SLAN_ANDROID_TEST_DEVICE_ID:-android-integration-$(date +%s%N)}"
+MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+ANDROID_TEST_DEVICE_ID="${SLAN_ANDROID_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 ANDROID_TO_MAC_BODY="${SLAN_ANDROID_TO_MAC_BODY:-hello-android-to-mac-$(date +%s%N)}"
 MAC_TO_ANDROID_BODY="${SLAN_MAC_TO_ANDROID_BODY:-hello-mac-to-android-$(date +%s%N)}"
 
@@ -121,7 +121,7 @@ echo "+ flutter test Android login and message send/wait"
     --dart-define="SLAN_TEST_REGISTER_USER=false" \
     --dart-define="SLAN_TEST_WAIT_MQTT=true" \
     --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID" \
-    --dart-define="SLAN_TEST_CHECK_SWITCH=${SLAN_TEST_CHECK_SWITCH:-false}" \
+    --dart-define="SLAN_TEST_CHECK_SWITCH=${SLAN_TEST_CHECK_SWITCH:-true}" \
     --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=${SLAN_TEST_EXPECT_NETWORK_MODULE:-false}" \
     --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=${SLAN_TEST_MIN_NETWORK_MODULE_PEERS:-0}" \
     --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=${SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS:-0}" \

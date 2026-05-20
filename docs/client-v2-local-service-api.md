@@ -26,13 +26,13 @@ RPC method: `localState`
 
 RPC method: `localStateWatch`
 
-用途：长轮询完整状态变化，返回 `revision` 与 `state`。
+用途：等待完整状态变化，返回 `revision` 与 `state`。
 
 ### `GET /local/events/watch`
 
 RPC method: `localBusinessEventWatch`
 
-用途：长轮询业务事件，返回 `revision`、`businessType`、`businessData`、`snapshot`。
+用途：等待业务事件，返回 `revision`、`businessType`、`businessData`、`snapshot`。
 
 ### `GET /local/status`
 

@@ -284,7 +284,7 @@ void main() {
       androidAuthorizationState: const AndroidNetworkAuthorizationState(
         checking: false,
         permissionState: AndroidVpnPermissionState.needsUserConsent,
-        consentRequest: AndroidVpnConsentRequest(callbackId: 'vpn-cb-1'),
+        consentRequest: AndroidVpnConsentRequest(requestId: 'vpn-request-1'),
       ),
       activationDelay: Duration.zero,
     );

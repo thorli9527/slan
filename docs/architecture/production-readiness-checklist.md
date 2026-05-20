@@ -1,6 +1,6 @@
-# 上线准备清单（server-biz 控制面）
+# 上线准备清单（service-biz 控制面）
 
-本文档用于评估与推进 `server/server-biz` 上生产所需的最小条件与工程化完善项。
+本文档用于评估与推进 `server/service-biz` 上生产所需的最小条件与工程化完善项。
 
 ## P0 阻塞项（未完成不建议上线）
 
@@ -13,7 +13,7 @@
 - [ ] 敏感信息禁止出现在日志（password、token、密钥）
 
 落点参考：
-- Auth 实现：[access.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/service/impl/access.go)
+- Auth 实现：[access.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/service/impl/access.go)
 
 ### Token / 会话体系可控
 
@@ -24,8 +24,8 @@
 - [ ] Redis 故障策略明确（拒绝/降级）并设置超时与重试上限
 
 落点参考：
-- token 签发与写入：[access.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/service/impl/access.go)
-- Redis token store：[redis.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/repo/redis.go)
+- token 签发与写入：[access.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/service/impl/access.go)
+- Redis token store：[redis.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/repo/redis.go)
 - 设计建议：[token-session-design.md](file:///Users/thorli/workspace/slan/docs/architecture/token-session-design.md)
 
 ### 传输安全与配置安全
@@ -36,7 +36,7 @@
 - [ ] 所有密钥/凭证从环境或密钥系统注入（而不是写在配置样例里）
 
 落点参考：
-- 配置结构与默认值：[config.go](file:///Users/thorli/workspace/slan/server/server-biz/configs/config.go)
+- 配置结构与默认值：[config.go](file:///Users/thorli/workspace/slan/server/service-biz/configs/config.go)
 
 ### 数据一致性与约束（IPAM/入网）
 
@@ -46,9 +46,9 @@
 - [ ] 为高频查询补齐索引（networkId/deviceId/nodeId/member/attachment）
 
 落点参考：
-- IP 分配与校验：[network_support.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/service/impl/network_support.go)
-- 网络编排：[network.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/service/impl/network.go)
-- 网络模型：[network_models.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/repo/network_models.go)
+- 当前新服务 IP 分配与重复修复：`server/service-biz/internal/biz/store.go`
+- 当前新服务 IPAM 测试：`server/service-biz/internal/biz/store_test.go`
+- 生产落地计划：`docs/network-stability-production-plan.md`
 
 ### 控制通道（MQTT）稳定性与防滥用
 
@@ -59,7 +59,10 @@
 - [ ] 连接数/速率限制（按 IP/用户/网络）
 
 落点参考：
-- MQTT 接入与扇出：`server/server-biz/api/http/control_mqtt*.go`
+- 服务端 MQTT 接入与扇出：`server/service-biz/internal/biz/server_mqtt.go`
+- 服务端 MQTT 订阅处理：`server/service-biz/internal/biz/mqtt_subscriber.go`
+- 客户端控制任务与 ACK：`client_v2/rust/crates/client-core-service/src/control_tasks.rs`
+- 客户端控制 MQTT worker：`client_v2/rust/crates/client-core-service/src/control_transport_worker.rs`
 
 ## P1 上线前必备（稳定上线）
 
@@ -81,11 +84,11 @@
 - [ ] DTO/MQTT 消息具备版本字段或能力协商，避免升级不兼容
 
 落点参考：
-- HTTP 错误映射：[routes.go](file:///Users/thorli/workspace/slan/server/server-biz/api/http/routes.go)
+- HTTP 错误映射：[routes.go](file:///Users/thorli/workspace/slan/server/service-biz/api/http/routes.go)
 - 控制消息定义：
-  - [messages_handshake.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/controlmsg/messages_handshake.go)
-  - [messages_topology.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/controlmsg/messages_topology.go)
-  - [messages_control.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/controlmsg/messages_control.go)
+  - [messages_handshake.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/controlmsg/messages_handshake.go)
+  - [messages_topology.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/controlmsg/messages_topology.go)
+  - [messages_control.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/controlmsg/messages_control.go)
 
 ### 配置与密钥管理
 

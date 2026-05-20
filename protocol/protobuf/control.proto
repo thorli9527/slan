@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package slan.control;
 
-option go_package = "github.com/slan/server/server-biz/api/proto/control;control";
+option go_package = "github.com/slan/protocol/protobuf/control;control";
 
 // 控制通道总封装。
 //

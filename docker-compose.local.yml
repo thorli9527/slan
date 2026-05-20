@@ -48,10 +48,10 @@ services:
   server-biz:
     image: slan-server-biz:latest
     build:
-      context: ./server/service-biz-new
+      context: ./server/service-biz
       dockerfile: Dockerfile
     environment:
-      SLAN_BIZ_NEW_ADDR: ":8080"
+      SLAN_BIZ_ADDR: ":8080"
       SLAN_WEB_CONSOLE_URL: "${SLAN_WEB_CONSOLE_URL:-http://web.dev.staticlss.com}"
       SLAN_GLOBAL_DEVICE_DOMAIN: "${SLAN_GLOBAL_DEVICE_DOMAIN:-staticlss.com}"
       SLAN_RELAY_ENDPOINTS: "${SLAN_RELAY_ENDPOINTS:-udp://relay.dev.staticlss.com:29110}"
@@ -65,9 +65,13 @@ services:
       SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-change-me-mqtt-secret}"
       SLAN_MQTT_PUBLISH_TIMEOUT_MILLISECONDS: "${SLAN_MQTT_PUBLISH_TIMEOUT_MILLISECONDS:-15000}"
       SLAN_BIZ_REDIS_ADDR: "redis:6379"
+      SLAN_BIZ_POSTGRES_DSN: "postgres://postgres:${POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/slan?sslmode=disable"
+      SLAN_BIZ_MIGRATIONS_DIR: "/app/migrations"
     ports:
       - "${SLAN_BIZ_PUBLIC_PORT:-28080}:8080"
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       bifromq:
@@ -210,7 +214,7 @@ services:
   server-ui-web:
     image: slan-server-ui-web:latest
     build:
-      context: ./server/service-ui-new
+      context: ./server/service-ui
       dockerfile: Dockerfile
     ports:
       - "${SLAN_WEB_PORT:-24200}:80"
@@ -221,7 +225,7 @@ services:
   server-main:
     image: slan-server-main:latest
     build:
-      context: ./server/server-main-new
+      context: ./server/server-main
       dockerfile: Dockerfile
     ports:
       - "${SLAN_MAIN_PORT:-24201}:80"

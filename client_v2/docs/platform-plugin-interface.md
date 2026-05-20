@@ -49,7 +49,7 @@ Platform plugins should expose only platform execution methods to Flutter.
 | `androidStopVpn` | Android | Stop VpnService. |
 | `androidProtectSocket` | Android | Protect control/relay sockets from VPN capture. |
 | `androidRuntimeState` | Android | Report VpnService runtime state. |
-| `androidPollNetworkEvent` | Android | Report permission/connectivity/VPN events. |
+| `androidWatchNetworkEvent` | Android | Report permission/connectivity/VPN events. |
 | `iosEnableNetwork` | iOS | Apply `PlatformNetworkConfig` to PacketTunnel. |
 | `iosDisableNetwork` | iOS | Stop PacketTunnel. |
 | `iosPacketTunnelStats` | iOS | Report PacketTunnel runtime stats. |

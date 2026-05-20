@@ -78,10 +78,10 @@ func main() {
 	var password string
 	var expectMQTTHost string
 	var timeout time.Duration
-	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "server-biz base URL")
+	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
 	flag.StringVar(&email, "email", "", "test user email; defaults to unique smoke user")
 	flag.StringVar(&password, "password", "Password123!", "test user password")
-	flag.StringVar(&expectMQTTHost, "expect-mqtt-host", envDefault("SLAN_EXPECT_MQTT_HOST", ""), "expected public MQTT broker host returned by server-biz")
+	flag.StringVar(&expectMQTTHost, "expect-mqtt-host", envDefault("SLAN_EXPECT_MQTT_HOST", ""), "expected public MQTT broker host returned by service-biz")
 	flag.DurationVar(&timeout, "timeout", 8*time.Second, "MQTT receive timeout")
 	flag.Parse()
 
@@ -104,6 +104,8 @@ func main() {
 	}
 	mac := registerDevice(ctx, bizURL, token, userID, "smoke-mac-"+uniqueSuffix(), "macos")
 	ios := registerDevice(ctx, bizURL, token, userID, "smoke-ios-"+uniqueSuffix(), "ios")
+	renewDevice(ctx, bizURL, token, mac.DeviceID, userID)
+	renewDevice(ctx, bizURL, token, ios.DeviceID, userID)
 	assertMQTTHost(mac.MQTT, expectMQTTHost)
 	assertMQTTHost(ios.MQTT, expectMQTTHost)
 	if ios.MQTT == nil {
@@ -185,6 +187,15 @@ func registerDevice(ctx context.Context, bizURL, token, userID, deviceID, platfo
 		fail("register device %s returned empty deviceId", deviceID)
 	}
 	return out
+}
+
+func renewDevice(ctx context.Context, bizURL, token, deviceID, userID string) {
+	postJSON(ctx, bizURL+"/api/devices/"+url.PathEscape(deviceID)+"/renew", token, map[string]any{
+		"userId":         userID,
+		"networkEnabled": true,
+		"rxBytesTotal":   1,
+		"txBytesTotal":   1,
+	}, nil)
 }
 
 func assertMQTTHost(credential *mqttCredential, expectedHost string) {

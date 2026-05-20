@@ -12,7 +12,7 @@
 
 - 客户端 Flutter：`client/app`
 - 客户端 Rust workspace：`client/app_core`
-- 服务端 Go：`server/server-biz`（以及后续可能增加的其他 `server/*` 模块）
+- 服务端 Go：`server/service-biz`（以及后续可能增加的其他 `server/*` 模块）
 - 协议与文档：`protocol/`、`docs/`
 
 因此 `.gitignore` 采用 `**/` 与 `server/**/` 的通配规则，避免未来新增模块时反复改规则。

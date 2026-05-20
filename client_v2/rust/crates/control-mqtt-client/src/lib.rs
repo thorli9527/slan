@@ -5,6 +5,7 @@ use std::time::Duration;
 
 const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 const MQTT_QOS_AT_MOST_ONCE: u8 = 0;
+const MQTT_QOS_AT_LEAST_ONCE: u8 = 1;
 const MQTT_QOS_EXACTLY_ONCE: u8 = 2;
 
 #[derive(Debug, Clone)]
@@ -258,7 +259,7 @@ fn mqtt_subscribe_packet(packet_id: u16, topic_filter: &str) -> Result<Vec<u8>, 
     variable.extend_from_slice(&packet_id.to_be_bytes());
     variable.push(0x00);
     mqtt_write_string(&mut variable, topic_filter)?;
-    variable.push(MQTT_QOS_EXACTLY_ONCE);
+    variable.push(MQTT_QOS_AT_LEAST_ONCE);
     let mut packet = vec![0x82];
     packet.extend_from_slice(&mqtt_remaining_length(variable.len())?);
     packet.extend_from_slice(&variable);

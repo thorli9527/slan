@@ -107,9 +107,9 @@ final class SlanVpnRuntime {
     }
   }
 
-  static Map<String, Object> pollEvent() {
+  static Map<String, Object> nextEvent() {
     synchronized (LOCK) {
-      return EVENTS.pollFirst();
+      return EVENTS.isEmpty() ? null : EVENTS.removeFirst();
     }
   }
 
@@ -214,7 +214,9 @@ final class SlanVpnRuntime {
     }
     EVENTS.addLast(event);
     while (EVENTS.size() > 32) {
-      EVENTS.pollFirst();
+      if (!EVENTS.isEmpty()) {
+        EVENTS.removeFirst();
+      }
     }
   }
 }

@@ -93,7 +93,7 @@ app_core
 服务端：
 
 ```text
-server-biz
+service-biz
 ├── bootstrap 中返回 derp 集群视图
 ├── 按节点/集群签发 derp ticket
 └── 控制面可返回推荐节点列表
@@ -274,7 +274,7 @@ pub trait DerpClient: Send + Sync {
     fn connect(&self, meta: &DerpNodeMeta) -> Result<(), DerpError>;
     fn attach(&self, ticket: &DerpTicket) -> Result<(), DerpError>;
     fn send(&self, packet: &[u8]) -> Result<(), DerpError>;
-    fn poll_recv(&self) -> Result<Option<Vec<u8>>, DerpError>;
+    fn recv_next(&self) -> Result<Option<Vec<u8>>, DerpError>;
     fn probe(&self) -> Result<ProbeSample, DerpError>;
     fn snapshot(&self) -> DerpLinkSnapshot;
     fn close(&self) -> Result<(), DerpError>;
@@ -563,7 +563,7 @@ client/app_core/crates/
 └── tunnel/
     └── send path 改为通过 path-manager 分发
 
-server/server-biz/
+server/service-biz/
 ├── api/dto/
 │   └── 扩展 bootstrap / relay ticket 结构
 └── internal/service/impl/

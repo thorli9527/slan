@@ -233,6 +233,9 @@ fn user_session_should_renew(session: &PersistedSession) -> bool {
 }
 
 fn device_session_should_renew(session: &PersistedSession) -> bool {
+    if mqtt_credential_should_renew(session.mqtt.as_ref()) {
+        return true;
+    }
     let Some(expires_at) = session.device_token_expires_at else {
         return session
             .device_token
@@ -243,6 +246,17 @@ fn device_session_should_renew(session: &PersistedSession) -> bool {
     };
     let now = current_timestamp_ms() / 1_000;
     now.saturating_add(SESSION_RENEW_WINDOW_MS / 1_000) >= expires_at as u64
+}
+
+fn mqtt_credential_should_renew(mqtt: Option<&MqttCredential>) -> bool {
+    let Some(mqtt) = mqtt else {
+        return false;
+    };
+    let Some(expires_at) = mqtt.expires_at else {
+        return false;
+    };
+    let now = (current_timestamp_ms() / 1_000) as i64;
+    now.saturating_add((SESSION_RENEW_WINDOW_MS / 1_000) as i64) >= expires_at
 }
 
 fn bootstrap_session_from_env() -> Result<PersistedSession> {
@@ -372,15 +386,15 @@ pub(crate) fn ensure_session_device_registered(
 pub(crate) fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result<PersistedSession> {
     let client = ControlPlaneClient::from_env();
     let mut session = PersistedSession::from(payload);
+    bind_session_device_session(&client, &mut session)?;
+    refresh_session_network_from_device_configs(&client, &mut session);
+    ensure_session_node_and_control_session(&client, &mut session)?;
     let device = client.ensure_device_for_user(
         &session.access_token,
         &session.user_id,
         session.device_id.as_deref(),
     )?;
     sync_session_device_fields(&mut session, &device);
-    bind_session_device_session(&client, &mut session)?;
-    refresh_session_network_from_device_configs(&client, &mut session);
-    ensure_session_node_and_control_session(&client, &mut session)?;
     if let Some(virtual_ip) = device
         .current_virtual_ip
         .or(device.global_ip)
@@ -478,7 +492,10 @@ fn renew_bound_device_session(
     session.device_token = Some(response.device_session.device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
-    session.mqtt = response.mqtt.or(session.mqtt.take());
+    session.mqtt = response
+        .mqtt
+        .or(response.device.mqtt.clone())
+        .or(session.mqtt.take());
     sync_session_device_fields(session, &response.device);
     if let Some(configs) = response.network_configs {
         if let Some(config) = configs.items.last() {
@@ -512,7 +529,10 @@ fn bind_session_device_session(
     session.device_token = Some(response.device_session.device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
-    session.mqtt = response.mqtt.or(session.mqtt.take());
+    session.mqtt = response
+        .mqtt
+        .or(response.device.mqtt.clone())
+        .or(session.mqtt.take());
     sync_session_device_fields(session, &response.device);
     if let Some(configs) = response.network_configs {
         if let Some(config) = configs.items.last() {
@@ -763,4 +783,46 @@ pub(crate) fn current_timestamp_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_mqtt(expires_at: Option<i64>) -> MqttCredential {
+        MqttCredential {
+            broker_url: "mqtt://127.0.0.1:1883".to_string(),
+            client_id: "client-1".to_string(),
+            username: "user".to_string(),
+            password: "pass".to_string(),
+            topic_prefix: "slan/v1/devices/device-1".to_string(),
+            expires_at,
+        }
+    }
+
+    #[test]
+    fn device_session_renews_when_mqtt_credential_is_expiring() {
+        let mut session = PersistedSession::empty();
+        session.session_kind = "user".to_string();
+        session.device_token = Some("dt-1".to_string());
+        session.device_token_expires_at = Some(((current_timestamp_ms() / 1_000) + 86_400) as i64);
+        session.mqtt = Some(test_mqtt(Some(
+            ((current_timestamp_ms() + SESSION_RENEW_WINDOW_MS - 1_000) / 1_000) as i64,
+        )));
+
+        assert!(device_session_should_renew(&session));
+    }
+
+    #[test]
+    fn device_session_does_not_renew_for_far_future_mqtt_credential() {
+        let mut session = PersistedSession::empty();
+        session.session_kind = "user".to_string();
+        session.device_token = Some("dt-1".to_string());
+        session.device_token_expires_at = Some(((current_timestamp_ms() / 1_000) + 86_400) as i64);
+        session.mqtt = Some(test_mqtt(Some(
+            ((current_timestamp_ms() + SESSION_RENEW_WINDOW_MS + 86_400_000) / 1_000) as i64,
+        )));
+
+        assert!(!device_session_should_renew(&session));
+    }
 }

@@ -116,7 +116,7 @@ done
 echo "client multi-device dev hosts:"
 echo "  service bind : $SERVICE_BIND"
 echo "  macOS host   : $MACOS_SERVICE_HOST"
-echo "  server-biz   : $BIZ_URL"
+echo "  service-biz  : $BIZ_URL"
 echo "  iOS control  : $IOS_CONTROL_BASE_URL"
 echo "  Android ctrl : $ANDROID_CONTROL_BASE_URL"
 echo "  Mac LAN IP   : $MAC_IP"

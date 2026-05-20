@@ -117,8 +117,8 @@ public final class ClientCorePlugin
         case "androidRuntimeState":
           result.success(SlanVpnRuntime.runtimeState());
           return;
-        case "androidPollNetworkEvent":
-          pollNetworkEvent(result);
+        case "androidWatchNetworkEvent":
+          watchNetworkEvent(result);
           return;
         case "embeddedServiceRequest":
           result.success(
@@ -164,7 +164,7 @@ public final class ClientCorePlugin
   }
 
   private void requestVpnPermission(MethodChannel.Result result) {
-    String callbackId = "vpn-" + UUID.randomUUID();
+    String requestId = "vpn-" + UUID.randomUUID();
     Activity currentActivity = activity;
     if (currentActivity == null) {
       result.error("activity_unavailable", "Android Activity is not attached", null);
@@ -173,17 +173,17 @@ public final class ClientCorePlugin
     Intent intent = VpnService.prepare(currentActivity);
     if (intent == null) {
       SlanVpnRuntime.pushEvent("permissionGranted", "Android VPN permission already granted", null);
-      result.success(consentRequest(callbackId, "Android VPN permission already granted"));
+      result.success(consentRequest(requestId, "Android VPN permission already granted"));
       return;
     }
     currentActivity.startActivityForResult(intent, VPN_PERMISSION_REQUEST);
     SlanVpnRuntime.pushEvent("permissionRequired", "Android VPN permission requested", null);
-    result.success(consentRequest(callbackId, "Android VPN permission requested"));
+    result.success(consentRequest(requestId, "Android VPN permission requested"));
   }
 
-  private Map<String, Object> consentRequest(String callbackId, String message) {
+  private Map<String, Object> consentRequest(String requestId, String message) {
     Map<String, Object> response = new HashMap<>();
-    response.put("callbackId", callbackId);
+    response.put("requestId", requestId);
     response.put("message", message);
     return response;
   }
@@ -249,13 +249,13 @@ public final class ClientCorePlugin
     result.success(Boolean.TRUE);
   }
 
-  private void pollNetworkEvent(MethodChannel.Result result) {
-    Map<String, Object> event = SlanVpnRuntime.pollEvent();
+  private void watchNetworkEvent(MethodChannel.Result result) {
+    Map<String, Object> event = SlanVpnRuntime.nextEvent();
     if (event != null) {
       result.success(event);
       return;
     }
-    mainHandler.postDelayed(() -> result.success(SlanVpnRuntime.pollEvent()), 1000);
+    mainHandler.postDelayed(() -> result.success(SlanVpnRuntime.nextEvent()), 1000);
   }
 
   private String stableDeviceId() {

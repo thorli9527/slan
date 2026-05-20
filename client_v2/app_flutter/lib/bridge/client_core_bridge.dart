@@ -148,6 +148,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   bool _watchingAndroidRuntimeStats = false;
   bool _watchingIosPacketTunnelStats = false;
   bool _repairingNativeMobileMqtt = false;
+  String? _lastAndroidVpnConfigFingerprint;
   bool _mobileMqttEnsureRunning = false;
   Future<void>? _mobileMqttEnsureInFlight;
   DateTime? _lastNativeMobileMqttRepairAt;
@@ -221,11 +222,21 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       if (permissionState == AndroidVpnPermissionState.granted &&
           _state.value.signedIn) {
         networkConfig = await _platformNetworkConfig();
+        final existingRelaySessions = _androidNetworkAuthorization
+                .value.networkConfig?.relayDataPlane?.sessions.length ??
+            0;
+        final nextRelaySessions =
+            networkConfig?.relayDataPlane?.sessions.length ?? 0;
+        if (existingRelaySessions > 0 && nextRelaySessions == 0) {
+          networkConfig = _androidNetworkAuthorization.value.networkConfig;
+        }
         debugPrint(
           'SLAN_ANDROID_NETWORK_CONFIG relaySessions='
           '${networkConfig?.relayDataPlane?.sessions.length ?? 0} '
           'relayEnabled=${networkConfig?.relayDataPlane?.enabled ?? false} '
-          'relayAddress=${networkConfig?.relayDataPlane?.relayAddress ?? networkConfig?.relayAddress ?? ''}',
+          'relayAddress=${networkConfig?.relayDataPlane?.relayAddress ?? networkConfig?.relayAddress ?? ''} '
+          'relayPeerIps=${networkConfig?.relayDataPlane?.sessions.map((session) => session.peerVirtualIps.join("|")).join(",") ?? ''} '
+          'routes=${networkConfig?.routes.map((route) => route['destination']).join(",") ?? ''}',
         );
       }
       _androidNetworkAuthorization.value = AndroidNetworkAuthorizationState(
@@ -390,7 +401,10 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       }
       final relayDebug = embedded['relayDebug'];
       if (relayDebug != null) {
-        debugPrint('SLAN_EMBEDDED_RELAY_DEBUG=${jsonEncode(relayDebug)}');
+        debugPrint(
+          'SLAN_EMBEDDED_RELAY_DEBUG='
+          '${jsonEncode(_relayDebugSummary(relayDebug))}',
+        );
       }
       return AndroidVpnSessionConfig.fromJson(embedded);
     }
@@ -1076,6 +1090,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
             await _plugin
                 .androidStartVpn(config)
                 .timeout(_networkToggleTimeout);
+            _lastAndroidVpnConfigFingerprint =
+                _androidVpnConfigFingerprint(config);
           } else {
             await _plugin.androidStopVpn().timeout(_networkToggleTimeout);
           }
@@ -1413,7 +1429,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         while (_watchingAndroidNetworkEvents) {
           try {
             final event = await _plugin
-                .androidPollNetworkEvent()
+                .androidWatchNetworkEvent()
                 .timeout(const Duration(seconds: 35));
             if (event != null) {
               _androidNetworkAuthorization.value =
@@ -1450,7 +1466,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           } on MissingPluginException {
             await Future<void>.delayed(const Duration(seconds: 5));
           } on TimeoutException {
-            // Polling methods may long-poll; a timeout simply starts the next cycle.
+            // Watch methods may hold the request open; a timeout simply starts the next cycle.
           } on Object catch (error) {
             ClientUiDiagnostics.unawaitedLog(
               'bridge.android.event.watchError',
@@ -1689,8 +1705,37 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       if (config == null) {
         return;
       }
+      final existingRelaySessions = _androidNetworkAuthorization
+              .value.networkConfig?.relayDataPlane?.sessions.length ??
+          0;
+      final nextRelaySessions = config.relayDataPlane?.sessions.length ?? 0;
+      if (_isAndroid && existingRelaySessions > 0 && nextRelaySessions == 0) {
+        ClientUiDiagnostics.unawaitedLog(
+          'bridge.mobile.peersRefreshSkipped',
+          state: _state.value,
+          fields: {
+            'reason': 'emptyRelaySessions',
+            'existingRelaySessions': existingRelaySessions,
+          },
+        );
+        return;
+      }
       if (_isAndroid) {
+        final fingerprint = _androidVpnConfigFingerprint(config);
+        final runtimeState = await _plugin.androidRuntimeState();
+        final runtimeRunning = runtimeState is Map &&
+            runtimeState['networkEnabled'] == true &&
+            runtimeState['adapterPresent'] == true;
+        if (runtimeRunning && _lastAndroidVpnConfigFingerprint == fingerprint) {
+          ClientUiDiagnostics.unawaitedLog(
+            'bridge.mobile.peersRefreshSkipped',
+            state: _state.value,
+            fields: {'reason': 'unchangedAndroidVpnConfig'},
+          );
+          return;
+        }
         await _plugin.androidStartVpn(config).timeout(_networkToggleTimeout);
+        _lastAndroidVpnConfigFingerprint = fingerprint;
       } else if (_isIos) {
         await _plugin
             .iosStartPacketTunnel(config)
@@ -1856,7 +1901,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     _state.value = next;
   }
 
-  ClientViewState _preserveMobilePlatformNetworkState(ClientViewState incoming) {
+  ClientViewState _preserveMobilePlatformNetworkState(
+      ClientViewState incoming) {
     final nativeMobileTunnel = _isIos || _isAndroid;
     if (!nativeMobileTunnel ||
         !_state.value.networkEnabled ||
@@ -1915,4 +1961,29 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     }
     return ClientCoreLocalService.jsonMapFromResult(result);
   }
+}
+
+Map<String, Object?> _relayDebugSummary(Object? relayDebug) {
+  if (relayDebug is! Map) {
+    return {'present': relayDebug != null};
+  }
+  final requested = relayDebug['requestedRelaySessionCount'] ??
+      relayDebug['requestedSessionCount'] ??
+      relayDebug['relaySessionCount'];
+  final attached = relayDebug['attachedRelaySessionCount'] ??
+      relayDebug['attachedSessionCount'];
+  return {
+    'present': true,
+    if (relayDebug.containsKey('enabled')) 'enabled': relayDebug['enabled'],
+    if (relayDebug.containsKey('relayAddress'))
+      'relayAddress': relayDebug['relayAddress'],
+    if (requested != null) 'requestedRelaySessionCount': requested,
+    if (attached != null) 'attachedRelaySessionCount': attached,
+    if (relayDebug.containsKey('lastRelayAttachError'))
+      'lastRelayAttachError': relayDebug['lastRelayAttachError'],
+  };
+}
+
+String _androidVpnConfigFingerprint(AndroidVpnSessionConfig config) {
+  return jsonEncode(config.toJson());
 }

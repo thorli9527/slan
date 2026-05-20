@@ -75,9 +75,9 @@ Browser login:
 
 - `loginWithBrowser` is forwarded to `client-core-service` first.
 - The service prepares MQTT credentials for the local `deviceId`.
-- The Windows plugin opens Web Console with `auth=login` and `deviceId`; it does not pass a callback id.
+- The Windows plugin opens Web Console with `auth=login` and `deviceId`; browser-to-client completion is delivered only by MQTT notification.
 - Web Console completes login by asking the server to publish the auth payload to that device over MQTT.
-- After callback is ready, service registers or resolves the current device and stores the assigned IP.
+- After MQTT login succeeds, service registers or resolves the current device and stores the assigned IP.
 
 Signed-in Web Console open:
 

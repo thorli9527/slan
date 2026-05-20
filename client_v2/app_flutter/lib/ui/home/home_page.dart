@@ -24,14 +24,19 @@ class _HomePageState extends State<HomePage> {
 
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _messageTargetController =
+      TextEditingController();
+  final TextEditingController _messageBodyController = TextEditingController();
   final TextEditingController _pingTargetController = TextEditingController();
   final TextEditingController _serverBaseUrlController =
       TextEditingController();
   String? _lastDiagnosticsSnapshot;
   String? _lastShownError;
   String? _lastPingResult;
+  String? _lastMessageSendResult;
   String? _serverBaseUrl;
   bool _lastSignedIn = false;
+  bool _sendingMessage = false;
   bool _pinging = false;
 
   @override
@@ -48,6 +53,8 @@ class _HomePageState extends State<HomePage> {
     widget.bridge.state.removeListener(_logStateChange);
     _emailController.dispose();
     _passwordController.dispose();
+    _messageTargetController.dispose();
+    _messageBodyController.dispose();
     _pingTargetController.dispose();
     _serverBaseUrlController.dispose();
     super.dispose();
@@ -73,6 +80,14 @@ class _HomePageState extends State<HomePage> {
                       if (state.signedIn) ...[
                         _buildSignedInHeader(state: state),
                         _buildAndroidAuthorizationPanel(),
+                        const SizedBox(height: 14),
+                        _ClientMessageComposer(
+                          targetController: _messageTargetController,
+                          bodyController: _messageBodyController,
+                          syncing: state.syncing || _sendingMessage,
+                          resultText: _lastMessageSendResult,
+                          onSend: _sendClientMessage,
+                        ),
                         const SizedBox(height: 14),
                         _ClientPingTool(
                           targetController: _pingTargetController,
@@ -322,6 +337,53 @@ class _HomePageState extends State<HomePage> {
     } finally {
       if (mounted) {
         setState(() => _pinging = false);
+      }
+    }
+  }
+
+  Future<void> _sendClientMessage() async {
+    if (_sendingMessage) {
+      return;
+    }
+    final targetDeviceId = _messageTargetController.text.trim();
+    final body = _messageBodyController.text.trim();
+    if (targetDeviceId.isEmpty || body.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入目标设备 ID 和消息内容')),
+      );
+      return;
+    }
+    setState(() {
+      _sendingMessage = true;
+      _lastMessageSendResult = null;
+    });
+    try {
+      await widget.bridge.dispatch(
+        ClientCommand(
+          ClientCommandType.sendClientMessage,
+          {
+            'targetDeviceId': targetDeviceId,
+            'body': body,
+          },
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      _messageBodyController.clear();
+      setState(() {
+        _lastMessageSendResult = '消息已发送';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _lastMessageSendResult = '消息发送失败：$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _sendingMessage = false);
       }
     }
   }
@@ -608,9 +670,30 @@ class _SignedInStatusPanel extends StatelessWidget {
               value: _deviceIdText(state)!,
             ),
           ],
+          if (_lastClientMessageText(state) != null) ...[
+            const SizedBox(height: 7),
+            _CompactInfoRow(
+              valueKey: const Key('last-client-message-value'),
+              icon: Icons.mark_chat_unread_rounded,
+              label: '最近消息',
+              value: _lastClientMessageText(state)!,
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  String? _lastClientMessageText(ClientViewState state) {
+    final body = state.lastClientMessageBody?.trim();
+    if (body == null || body.isEmpty) {
+      return null;
+    }
+    final from = state.lastClientMessageFromDeviceId?.trim();
+    if (from == null || from.isEmpty) {
+      return body;
+    }
+    return '$from: $body';
   }
 
   String? _deviceIdText(ClientViewState state) {
@@ -1105,6 +1188,112 @@ class _ClientPingTool extends StatelessWidget {
                   onPressed: syncing ? null : () => unawaited(onPing()),
                   icon: const Icon(Icons.network_ping_rounded, size: 17),
                   label: Text(syncing ? '检测中' : 'Ping'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClientMessageComposer extends StatelessWidget {
+  const _ClientMessageComposer({
+    required this.targetController,
+    required this.bodyController,
+    required this.syncing,
+    required this.resultText,
+    required this.onSend,
+  });
+
+  final TextEditingController targetController;
+  final TextEditingController bodyController;
+  final bool syncing;
+  final String? resultText;
+  final Future<void> Function() onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.send_to_mobile_rounded,
+                size: 18,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '设备消息',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          TextField(
+            key: const Key('client-message-target'),
+            controller: targetController,
+            enabled: !syncing,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: '目标设备 ID',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const Key('client-message-body'),
+            controller: bodyController,
+            enabled: !syncing,
+            textInputAction: TextInputAction.send,
+            onSubmitted: (_) {
+              if (!syncing) {
+                unawaited(onSend());
+              }
+            },
+            decoration: const InputDecoration(
+              labelText: '消息',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  resultText?.trim().isNotEmpty == true ? resultText! : '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 42,
+                child: FilledButton.icon(
+                  key: const Key('client-message-send'),
+                  onPressed: syncing ? null : () => unawaited(onSend()),
+                  icon: const Icon(Icons.send_rounded, size: 17),
+                  label: Text(syncing ? '发送中' : '发送'),
                 ),
               ),
             ],

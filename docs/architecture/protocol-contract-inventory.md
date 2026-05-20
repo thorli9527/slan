@@ -5,130 +5,46 @@
 This document tracks the duplicated business contracts that currently exist
 across:
 
-- `server/server-biz/api/dto` (backend source-of-truth today)
-- `server/server-ui/web/src/ui` (web API contracts)
-- `client/app/lib/infra` (Flutter request/response contracts and local models)
-- `client/app_core/crates/controller-client` (Rust controller transport DTOs)
+- `server/service-biz/internal/biz` (backend source-of-truth today)
+- `server/service-ui/src/ui` (Web Console API contracts)
+- `client_v2/app_flutter/lib/bridge` (Flutter local service contracts)
+- `client_v2/rust/crates/client-core-service/src` (Rust control-plane contracts)
 
 The goal is not to force one-step unification. The goal is to make the next
 round of protocol-source extraction concrete and low-risk.
 
 ## Drift Check
 
-The repository now includes a minimal field-level drift checker for web
-transport contracts. Targets can be passed one by one or repeated in a single
-run:
+The repository now includes a lightweight protocol-contract entry point:
 
 ```bash
-go run ./scripts/check_protocol_contracts.go --target web
-go run ./scripts/check_protocol_contracts.go --target web --target flutter --target rust-controller --target go-server --target openapi --target protobuf --target http-routes
+make protocol-contract-check
 ```
 
 Current scope:
 
+- Verifies legacy `-new` project names and old business-control paths are not
+  present in active source, docs, protocol metadata, or scripts.
 - Reads canonical slice drafts from `protocol/contracts/*.yaml`
-- Compares matching contract names against
-  `server/server-ui/web/src/ui/api-contracts.ts`
-- Verifies that every field listed in the canonical contract also exists in the
-  matching exported web transport type
+- Verifies required contract and OpenAPI files exist.
+- Runs `go test ./...` for `server/service-biz`.
+- Runs `cargo check -p client-core-service`.
+- Verifies key Web Console and Flutter bridge contract files exist.
 
-Flutter drift check is also available:
-
-```bash
-go run ./scripts/check_protocol_contracts.go --target flutter
-```
-
-Current Flutter scope:
-
-- Checks request contracts in
-  `client/app/lib/infra/api_contracts/request_models.dart`
-- Checks Flutter response DTOs that mirror backend transport shape, including
-  auth, device/node, network detail/member/assignment/join, bootstrap,
-  control-plane, relay, route, peer, and subnet attachment DTOs.
-- App-local projection models such as `NetworkModel` can remain reduced, but
-  the transport DTO layer is expected to keep the protocol fields.
-
-Rust controller-client drift check is also available:
-
-```bash
-go run ./scripts/check_protocol_contracts.go --target rust-controller
-```
-
-Current Rust scope:
-
-- Checks request/response DTOs in
-  `client/app_core/crates/controller-client/src/dto.rs`
-- Applies known DTO name aliases such as `Device -> DeviceDto`,
-  `DeviceBootstrap -> BootstrapDeviceDto`, and `DNSConfig -> DnsConfigDto`
-- Respects explicit serde field renames such as the control-plane endpoint
-  JSON field `type`
-
-Go server DTO drift check is also available:
-
-```bash
-go run ./scripts/check_protocol_contracts.go --target go-server
-```
-
-Current Go server scope:
-
-- Checks JSON tags on structs in `server/server-biz/api/dto`
-- Expands embedded DTO structs such as `NetworkDetail` embedding `Network`
-- Verifies that backend request/response DTOs still carry every canonical
-  protocol field
-
-OpenAPI drift check is also available:
-
-```bash
-go run ./scripts/check_protocol_contracts.go --target openapi
-```
-
-Current OpenAPI scope:
-
-- Checks component schema properties in `protocol/openapi/phase1.yaml`
-- Expands `allOf` schema references such as `NetworkDetail -> Network`
-- Verifies that public API documentation exposes every canonical protocol
-  field
-
-HTTP route drift check is also available:
-
-```bash
-go run ./scripts/check_protocol_contracts.go --target http-routes
-```
-
-Current HTTP route scope:
-
-- Parses public Go route files in `server/server-biz/api/http`
-- Converts Gin parameters such as `:networkId` into OpenAPI
-  `{networkId}` form
-- Verifies that OpenAPI paths and methods match the public router, including
-  health, diagnostics, and MQTT control entries
-
-Protobuf drift check is also available:
-
-```bash
-go run ./scripts/check_protocol_contracts.go --target protobuf
-```
-
-Current protobuf scope:
-
-- Checks message fields in `protocol/protobuf/control.proto`
-- Converts proto snake_case field names to canonical camelCase names
-- Only validates contracts that already exist as protobuf control-channel
-  messages, such as `NetworkMap`, `Peer`, `Route`, `RelayRegion`, and
-  `RelayTicket`
-
-See also:
-
-- [protocol-contract-checks.md](./protocol-contract-checks.md)
+Full drift checking against generated schema is still a production hardening
+item. Until that exists, full functional verification should also run
+`flutter analyze`, `flutter test`, `cargo test --workspace`, Web Console
+`npm run build`, and the service smoke scripts.
 
 ## Current Sources
 
 ### Backend
 
-- Access: `server/server-biz/api/dto/types_business_access.go`
-- Registration: `server/server-biz/api/dto/types_business_registration.go`
-- Network: `server/server-biz/api/dto/types_business_network.go`
-- Control / bootstrap / relay: `server/server-biz/api/dto/types_business_control.go`
+- Models: `server/service-biz/internal/biz/models.go`
+- Public API handlers: `server/service-biz/internal/biz/server.go`
+- MQTT API and auth: `server/service-biz/internal/biz/server_mqtt.go`
+- Wire internal API: `server/service-biz/internal/biz/wire_server.go`
+- Relay tickets: `server/service-biz/internal/biz/relay.go`
 
 ### Canonical Slice Drafts
 
@@ -139,21 +55,23 @@ See also:
 
 ### Web
 
-- API response contracts: `server/server-ui/web/src/ui/api-contracts.ts`
-- UI-local types: `server/server-ui/web/src/ui/ui-models.ts`
+- API service: `server/service-ui/src/ui/app-api.service.ts`
+- Web auth flow: `server/service-ui/src/ui/app-auth-flow.ts`
+- UI models: `server/service-ui/src/ui/app.models.ts`
 
 ### Flutter
 
-- API request contracts: `client/app/lib/infra/api_contracts/request_models.dart`
-- API response DTOs: `client/app/lib/infra/control_api_responses/response_dtos.dart`
-- DTO -> app model mappers: `client/app/lib/infra/control_api_responses/response_mappers.dart`
-- App-local runtime models: `client/app/lib/infra/app_core/models/*`
+- Local service bridge: `client_v2/app_flutter/lib/bridge/client_core_bridge.dart`
+- Local service API: `client_v2/app_flutter/lib/bridge/client_core_local_service.dart`
+- Commands: `client_v2/app_flutter/lib/bridge/client_commands.dart`
+- View state: `client_v2/app_flutter/lib/bridge/client_view_state.dart`
 
 ### Rust Controller Client
 
-- Request/response DTOs: `client/app_core/crates/controller-client/src/dto.rs`
-- HTTP endpoint calls: `client/app_core/crates/controller-client/src/client.rs`
-- Public controller API trait: `client/app_core/crates/controller-client/src/api.rs`
+- HTTP control-plane client: `client_v2/rust/crates/client-core-service/src/control_plane.rs`
+- Session persistence and renewal: `client_v2/rust/crates/client-core-service/src/session_store.rs`
+- Control transport worker: `client_v2/rust/crates/client-core-service/src/control_transport_worker.rs`
+- Embedded mobile entrypoint: `client_v2/rust/crates/client-core-service/src/embedded.rs`
 
 ## Contract Groups
 
@@ -165,7 +83,6 @@ Backend:
 - `LoginRequest`
 - `RefreshTokenRequest`
 - `AuthResponse`
-- `AuthCallbackStatusResponse`
 
 Web:
 
@@ -206,7 +123,7 @@ Rust controller:
 Status:
 
 - Public HTTP errors use the stable `code + message` shape documented in
-  `server/server-biz/docs/public-error-codes.md`.
+  `server/service-biz/docs/public-error-codes.md`.
 - A canonical slice draft now exists at `protocol/contracts/system.yaml`.
 
 ### Registration
@@ -405,7 +322,8 @@ Status:
 Make backend DTOs the canonical schema inventory without changing runtime code.
 
 - Create a generated or manually curated protocol index from
-  `server/server-biz/api/dto`
+  `server/service-biz/internal/biz/models.go` and handler request/response
+  shapes in `server/service-biz/internal/biz/server.go`
 - Keep frontend-local projections separate
 
 ### Phase 2

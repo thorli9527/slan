@@ -20,7 +20,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use client_core::{
-    icmp_echo_reply_for_request,
+    icmp_echo_reply_for_request, ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
@@ -100,7 +100,15 @@ struct RelayDataPlaneStats {
     relay_mtu: Option<u16>,
     max_frame_payload: Option<u16>,
     tun_packets_sent: u64,
+    tun_tcp_packets_sent: u64,
+    tun_tcp_syn_ack_sent: u64,
+    tun_tcp_rst_sent: u64,
+    tun_tcp_checksum_invalid: u64,
     relay_packets_received: u64,
+    relay_tcp_packets_received: u64,
+    relay_tcp_syn_received: u64,
+    relay_tcp_rst_received: u64,
+    relay_tcp_checksum_invalid: u64,
     relay_decode_failures: u64,
     relay_config_hash_mismatches: u64,
     relay_error_responses: u64,
@@ -166,15 +174,15 @@ impl PlatformNetwork for MacosPlatformNetwork {
         if virtual_ip.is_empty() {
             bail!("macos virtual IP is empty");
         }
-        let virtual_addr = virtual_ip
-            .parse::<Ipv4Addr>()
+        let virtual_addr = parse_virtual_ipv4(virtual_ip)
             .with_context(|| format!("parse macos virtual IP {virtual_ip}"))?;
+        let virtual_ip = virtual_addr.to_string();
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
         if macos_network_mock_enabled() {
             ensure_mock_runtime(&mut runtime);
-            runtime.virtual_ip = Some(virtual_ip.to_string());
+            runtime.virtual_ip = Some(virtual_ip);
             runtime.prefix_len = Some(prefix_len);
             return Ok(());
         }
@@ -184,7 +192,7 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .clone()
             .ok_or_else(|| anyhow!("macos utun interface is not ready"))?;
         configure_utun_ip(&interface_name, virtual_addr, prefix_len)?;
-        runtime.virtual_ip = Some(virtual_ip.to_string());
+        runtime.virtual_ip = Some(virtual_ip);
         runtime.prefix_len = Some(prefix_len);
         Ok(())
     }
@@ -681,6 +689,15 @@ fn parse_route_destination(destination: &str) -> Result<(Ipv4Addr, u8)> {
     Ok((network_addr(ip, prefix), prefix))
 }
 
+fn parse_virtual_ipv4(value: &str) -> Result<Ipv4Addr> {
+    let ip = value
+        .trim()
+        .split_once('/')
+        .map_or(value.trim(), |(ip, _)| ip.trim());
+    ip.parse::<Ipv4Addr>()
+        .with_context(|| format!("parse IPv4 address {ip}"))
+}
+
 fn prefix_to_netmask(prefix_len: u8) -> Result<Ipv4Addr> {
     if prefix_len > 32 {
         bail!("invalid IPv4 prefix length {prefix_len}");
@@ -974,8 +991,10 @@ fn run_udp_data_plane(
                     if packet.len() <= max_frame_payload {
                         if let Some(peer) = relay_peer_for_packet(&peers, packet) {
                             seq = seq.wrapping_add(1);
+                            let packet = normalize_ipv4_transport_checksums(packet);
+                            record_tun_tcp_packet(stats, &packet);
                             if let Some(frame) =
-                                encode_slan_relay_data_frame(seq, config_hash, packet)
+                                encode_slan_relay_data_frame(seq, config_hash, &packet)
                             {
                                 if let Some(payload) = encode_relay_forward(peer, &frame) {
                                     match peer.socket.send(&payload) {
@@ -1024,6 +1043,7 @@ fn run_udp_data_plane(
                         .unwrap_or(&relay_buffer[..frame_len]);
                     if let Some(packet) = decode_slan_relay_data_frame(frame) {
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                        record_relay_tcp_packet(stats, packet);
                         if let Some(reply) =
                             icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
                         {
@@ -1044,7 +1064,8 @@ fn run_udp_data_plane(
                             }
                             continue;
                         }
-                        match write_utun_ipv4_packet(&mut file, packet) {
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        match write_utun_ipv4_packet(&mut file, &packet) {
                             Ok(_) => record_relay_packet_received(stats, peer),
                             Err(_) => record_relay_write_failure(stats, peer),
                         }
@@ -1159,6 +1180,49 @@ fn record_relay_packet_received(stats: &mut RelayDataPlaneStats, peer: &RelayPee
     }
 }
 
+fn record_tun_tcp_packet(stats: &mut RelayDataPlaneStats, packet: &[u8]) {
+    let Some(flags) = ipv4_tcp_flags(packet) else {
+        return;
+    };
+    stats.tun_tcp_packets_sent = stats.tun_tcp_packets_sent.saturating_add(1);
+    if flags & 0x12 == 0x12 {
+        stats.tun_tcp_syn_ack_sent = stats.tun_tcp_syn_ack_sent.saturating_add(1);
+    }
+    if flags & 0x04 != 0 {
+        stats.tun_tcp_rst_sent = stats.tun_tcp_rst_sent.saturating_add(1);
+    }
+    if ipv4_transport_checksum_valid(packet) == Some(false) {
+        stats.tun_tcp_checksum_invalid = stats.tun_tcp_checksum_invalid.saturating_add(1);
+    }
+}
+
+fn record_relay_tcp_packet(stats: &mut RelayDataPlaneStats, packet: &[u8]) {
+    let Some(flags) = ipv4_tcp_flags(packet) else {
+        return;
+    };
+    stats.relay_tcp_packets_received = stats.relay_tcp_packets_received.saturating_add(1);
+    if flags & 0x02 != 0 {
+        stats.relay_tcp_syn_received = stats.relay_tcp_syn_received.saturating_add(1);
+    }
+    if flags & 0x04 != 0 {
+        stats.relay_tcp_rst_received = stats.relay_tcp_rst_received.saturating_add(1);
+    }
+    if ipv4_transport_checksum_valid(packet) == Some(false) {
+        stats.relay_tcp_checksum_invalid = stats.relay_tcp_checksum_invalid.saturating_add(1);
+    }
+}
+
+fn ipv4_tcp_flags(packet: &[u8]) -> Option<u8> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(6) {
+        return None;
+    }
+    let ihl = usize::from(packet[0] & 0x0f) * 4;
+    if ihl < 20 || packet.len() < ihl + 14 {
+        return None;
+    }
+    Some(packet[ihl + 13])
+}
+
 fn record_relay_send_failure(stats: &mut RelayDataPlaneStats, peer: &RelayPeer, error: String) {
     stats.relay_send_failures = stats.relay_send_failures.saturating_add(1);
     stats.last_relay_error = Some(error.clone());
@@ -1245,7 +1309,35 @@ fn write_utun_ipv4_packet(file: &mut File, packet: &[u8]) -> std::io::Result<()>
     let mut frame = Vec::with_capacity(UTUN_HEADER_LEN + packet.len());
     frame.extend_from_slice(&AF_INET_HEADER);
     frame.extend_from_slice(packet);
-    file.write_all(&frame)
+    write_packet_with_retry(file, &frame)
+}
+
+fn write_packet_with_retry(file: &mut File, packet: &[u8]) -> std::io::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut offset = 0_usize;
+    while offset < packet.len() {
+        match file.write(&packet[offset..]) {
+            Ok(0) => {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        ErrorKind::WriteZero,
+                        "macos utun write made no progress",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            Ok(written) => offset += written,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(error);
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn relay_peer_for_packet<'a>(peers: &'a [RelayPeer], packet: &[u8]) -> Option<&'a RelayPeer> {
@@ -1421,7 +1513,7 @@ mod tests {
 
     use client_core::RelayTicket;
 
-    use super::{parse_ifconfig_ipv4_addresses, relay_udp_address_for_session};
+    use super::{parse_ifconfig_ipv4_addresses, parse_virtual_ipv4, relay_udp_address_for_session};
 
     #[test]
     fn parses_ifconfig_ipv4_addresses() {
@@ -1434,6 +1526,18 @@ mod tests {
         assert_eq!(
             parse_ifconfig_ipv4_addresses(output),
             vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2),]
+        );
+    }
+
+    #[test]
+    fn parses_cidr_virtual_ipv4() {
+        assert_eq!(
+            parse_virtual_ipv4(" 10.0.0.1/32 ").unwrap(),
+            Ipv4Addr::new(10, 0, 0, 1)
+        );
+        assert_eq!(
+            parse_virtual_ipv4("10.0.0.2").unwrap(),
+            Ipv4Addr::new(10, 0, 0, 2)
         );
     }
 

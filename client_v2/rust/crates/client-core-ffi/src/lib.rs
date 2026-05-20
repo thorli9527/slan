@@ -25,7 +25,10 @@ mod android_tun {
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
     };
-    use client_core::{icmp_echo_reply_for_request, AndroidVpnSessionConfig, RelayPeerSession};
+    use client_core::{
+        icmp_echo_reply_for_request, ipv4_transport_checksum_valid,
+        normalize_ipv4_transport_checksums, AndroidVpnSessionConfig, RelayPeerSession,
+    };
     use jni::{
         objects::{JClass, JIntArray, JString},
         JNIEnv,
@@ -52,10 +55,19 @@ mod android_tun {
         packets_too_large: AtomicU64,
         relay_frames_sent: AtomicU64,
         relay_frames_received: AtomicU64,
+        relay_tcp_frames_received: AtomicU64,
+        relay_tcp_syn_ack_received: AtomicU64,
+        relay_tcp_psh_received: AtomicU64,
+        relay_tcp_rst_received: AtomicU64,
+        relay_tcp_checksum_invalid: AtomicU64,
         relay_detach_sent: AtomicU64,
         relay_no_peer_packets: AtomicU64,
+        last_no_peer_destination: Mutex<Option<String>>,
+        last_no_peer_packet: Mutex<Option<String>>,
         relay_write_failures: AtomicU64,
         tun_write_failures: AtomicU64,
+        last_tun_write_error: Mutex<Option<String>>,
+        last_tun_write_packet: Mutex<Option<String>>,
     }
 
     impl Drop for TunRuntime {
@@ -239,11 +251,11 @@ mod android_tun {
                             relay_peer_for_packet(&relay_peers, &tun_buffer[..packet_len])
                         {
                             seq = seq.wrapping_add(1);
-                            if let Some(frame) = encode_slan_relay_data_frame(
-                                seq,
-                                config_hash,
-                                &tun_buffer[..packet_len],
-                            ) {
+                            let packet =
+                                normalize_ipv4_transport_checksums(&tun_buffer[..packet_len]);
+                            if let Some(frame) =
+                                encode_slan_relay_data_frame(seq, config_hash, &packet)
+                            {
                                 if let Some(payload) = encode_relay_forward(peer, &frame) {
                                     match peer.socket.send(&payload) {
                                         Ok(_) => {
@@ -264,9 +276,16 @@ mod android_tun {
                                 }
                             }
                         } else {
+                            if let Ok(mut value) = thread_stats.last_no_peer_packet.lock() {
+                                *value = Some(packet_summary(&tun_buffer[..packet_len]));
+                            }
                             if let Some(destination) = ipv4_destination(&tun_buffer[..packet_len]) {
                                 if should_ignore_unroutable_destination(&destination) {
                                     continue;
+                                }
+                                if let Ok(mut value) = thread_stats.last_no_peer_destination.lock()
+                                {
+                                    *value = Some(destination);
                                 }
                             }
                             thread_stats
@@ -296,6 +315,7 @@ mod android_tun {
                                 thread_stats
                                     .relay_frames_received
                                     .fetch_add(1, Ordering::Relaxed);
+                                record_relay_tcp_packet(&thread_stats, packet);
                                 if let Some(reply) =
                                     icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
                                 {
@@ -320,11 +340,15 @@ mod android_tun {
                                     }
                                     continue;
                                 }
-                                if file.write_all(packet).is_err() {
+                                let packet = normalize_ipv4_transport_checksums(packet);
+                                if let Err(error) = write_tun_packet_with_retry(&mut file, &packet)
+                                {
                                     thread_stats
                                         .tun_write_failures
                                         .fetch_add(1, Ordering::Relaxed);
+                                    record_tun_write_failure(&thread_stats, &packet, &error);
                                 } else {
+                                    record_tun_write_packet(&thread_stats, &packet);
                                     thread_stats
                                         .bytes_written
                                         .fetch_add(packet.len() as u64, Ordering::Relaxed);
@@ -349,6 +373,34 @@ mod android_tun {
             handle: Some(handle),
             config_json,
         });
+        Ok(())
+    }
+
+    fn write_tun_packet_with_retry(file: &mut File, packet: &[u8]) -> std::io::Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut offset = 0_usize;
+        while offset < packet.len() {
+            match file.write(&packet[offset..]) {
+                Ok(0) => {
+                    if Instant::now() >= deadline {
+                        return Err(std::io::Error::new(
+                            ErrorKind::WriteZero,
+                            "android tun write made no progress",
+                        ));
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Ok(written) => offset += written,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
         Ok(())
     }
 
@@ -411,10 +463,19 @@ mod android_tun {
             "packetsTooLarge": runtime.stats.packets_too_large.load(Ordering::Relaxed),
             "relayFramesSent": runtime.stats.relay_frames_sent.load(Ordering::Relaxed),
             "relayFramesReceived": runtime.stats.relay_frames_received.load(Ordering::Relaxed),
+            "relayTcpFramesReceived": runtime.stats.relay_tcp_frames_received.load(Ordering::Relaxed),
+            "relayTcpSynAckReceived": runtime.stats.relay_tcp_syn_ack_received.load(Ordering::Relaxed),
+            "relayTcpPshReceived": runtime.stats.relay_tcp_psh_received.load(Ordering::Relaxed),
+            "relayTcpRstReceived": runtime.stats.relay_tcp_rst_received.load(Ordering::Relaxed),
+            "relayTcpChecksumInvalid": runtime.stats.relay_tcp_checksum_invalid.load(Ordering::Relaxed),
             "relayDetachSent": runtime.stats.relay_detach_sent.load(Ordering::Relaxed),
             "relayNoPeerPackets": runtime.stats.relay_no_peer_packets.load(Ordering::Relaxed),
+            "lastNoPeerDestination": runtime.stats.last_no_peer_destination.lock().ok().and_then(|value| value.clone()),
+            "lastNoPeerPacket": runtime.stats.last_no_peer_packet.lock().ok().and_then(|value| value.clone()),
             "relayWriteFailures": runtime.stats.relay_write_failures.load(Ordering::Relaxed),
             "tunWriteFailures": runtime.stats.tun_write_failures.load(Ordering::Relaxed),
+            "lastTunWriteError": runtime.stats.last_tun_write_error.lock().ok().and_then(|value| value.clone()),
+            "lastTunWritePacket": runtime.stats.last_tun_write_packet.lock().ok().and_then(|value| value.clone()),
             "configBytes": runtime.config_json.len(),
         })
         .to_string()
@@ -426,6 +487,98 @@ mod android_tun {
             .filter(|relay_config| relay_config.enabled)
             .map(|relay_config| relay_config.sessions.len() as u64)
             .unwrap_or(0)
+    }
+
+    fn record_relay_tcp_packet(stats: &TunStats, packet: &[u8]) {
+        let Some(flags) = ipv4_tcp_flags(packet) else {
+            return;
+        };
+        stats
+            .relay_tcp_frames_received
+            .fetch_add(1, Ordering::Relaxed);
+        if flags & 0x12 == 0x12 {
+            stats
+                .relay_tcp_syn_ack_received
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if flags & 0x08 != 0 {
+            stats.relay_tcp_psh_received.fetch_add(1, Ordering::Relaxed);
+        }
+        if flags & 0x04 != 0 {
+            stats.relay_tcp_rst_received.fetch_add(1, Ordering::Relaxed);
+        }
+        if ipv4_transport_checksum_valid(packet) == Some(false) {
+            stats
+                .relay_tcp_checksum_invalid
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_tun_write_failure(stats: &TunStats, packet: &[u8], error: &std::io::Error) {
+        if let Ok(mut value) = stats.last_tun_write_error.lock() {
+            *value = Some(format!("kind={:?}; error={}", error.kind(), error));
+        }
+        record_tun_write_packet(stats, packet);
+    }
+
+    fn record_tun_write_packet(stats: &TunStats, packet: &[u8]) {
+        if let Ok(mut value) = stats.last_tun_write_packet.lock() {
+            *value = Some(packet_summary(packet));
+        }
+    }
+
+    fn packet_summary(packet: &[u8]) -> String {
+        let protocol = packet.get(9).copied().unwrap_or_default();
+        let flags = ipv4_tcp_flags(packet)
+            .map(|value| format!("0x{value:02x}"))
+            .unwrap_or_else(|| "none".to_string());
+        let (source_port, destination_port) = ipv4_tcp_ports(packet)
+            .map(|(source, destination)| (source.to_string(), destination.to_string()))
+            .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
+        let checksum_valid = ipv4_transport_checksum_valid(packet)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let first_byte = packet
+            .first()
+            .map(|value| format!("0x{value:02x}"))
+            .unwrap_or_else(|| "none".to_string());
+        format!(
+            "len={}; firstByte={}; protocol={}; src={}; dst={}; srcPort={}; dstPort={}; tcpFlags={}; checksumValid={}",
+            packet.len(),
+            first_byte,
+            protocol,
+            ipv4_source(packet).unwrap_or_else(|| "unknown".to_string()),
+            ipv4_destination(packet).unwrap_or_else(|| "unknown".to_string()),
+            source_port,
+            destination_port,
+            flags,
+            checksum_valid
+        )
+    }
+
+    fn ipv4_tcp_flags(packet: &[u8]) -> Option<u8> {
+        if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(6) {
+            return None;
+        }
+        let ihl = usize::from(packet[0] & 0x0f) * 4;
+        if ihl < 20 || packet.len() < ihl + 14 {
+            return None;
+        }
+        Some(packet[ihl + 13])
+    }
+
+    fn ipv4_tcp_ports(packet: &[u8]) -> Option<(u16, u16)> {
+        if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(6) {
+            return None;
+        }
+        let ihl = usize::from(packet[0] & 0x0f) * 4;
+        if ihl < 20 || packet.len() < ihl + 4 {
+            return None;
+        }
+        Some((
+            u16::from_be_bytes([packet[ihl], packet[ihl + 1]]),
+            u16::from_be_bytes([packet[ihl + 2], packet[ihl + 3]]),
+        ))
     }
 
     fn read_relay_fds(env: &mut JNIEnv, relay_fds: JIntArray) -> jni::errors::Result<Vec<c_int>> {
@@ -663,6 +816,16 @@ mod android_tun {
         Some(format!(
             "{}.{}.{}.{}",
             packet[16], packet[17], packet[18], packet[19]
+        ))
+    }
+
+    fn ipv4_source(packet: &[u8]) -> Option<String> {
+        if packet.len() < 20 || packet[0] >> 4 != 4 {
+            return None;
+        }
+        Some(format!(
+            "{}.{}.{}.{}",
+            packet[12], packet[13], packet[14], packet[15]
         ))
     }
 

@@ -106,6 +106,75 @@ paths:
               schema:
                 $ref: '#/components/schemas/AuthResponse'
 
+  /auth/device-login-devices:
+    post:
+      tags: [Auth]
+      operationId: prepareDeviceLoginDevice
+      summary: Prepare browser login for a client device
+      description: >
+        Registers or reuses a pre-login device identity before browser login.
+        The request must include a stable deviceId and a non-derived installation
+        publicKey. The server returns MQTT credentials so the client can wait for
+        the device-scoped login success notification. This endpoint does not
+        create a user session and must not accept `client-v2-<deviceId>` as a
+        publicKey.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceLoginPrepareRequest'
+      responses:
+        '201':
+          description: Device login prepared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceLoginPrepareResponse'
+        '400':
+          description: Invalid device identity
+        '409':
+          description: Existing device identity does not match
+
+  /auth/device-login-devices/{deviceId}/complete:
+    post:
+      tags: [Auth]
+      operationId: completeDeviceLoginDevice
+      summary: Complete browser login for a client device
+      description: >
+        Called by Web Console after the browser has a valid user session.
+        The server binds a previously prepared pre-login device to the browser
+        user, or verifies an already-bound device belongs to that same user, then
+        enqueues a `device_user_login_succeeded` MQTT notification. Missing
+        devices are rejected; this endpoint must never auto-create devices.
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceLoginCompleteRequest'
+      responses:
+        '200':
+          description: Login notification queued or published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceLoginCompleteResponse'
+        '401':
+          description: Browser user session token is invalid
+        '404':
+          description: Device does not exist
+        '409':
+          description: Device belongs to another user
+        '503':
+          description: MQTT delivery queue or broker is unavailable
+
   /auth/refresh:
     post:
       tags: [Auth]
@@ -141,41 +210,6 @@ paths:
       responses:
         '200':
           description: Password changed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusOKResponse'
-
-  /auth/callback-status/{callbackId}:
-    get:
-      tags: [Auth]
-      operationId: getAuthCallbackStatus
-      summary: Get browser login callback status
-      parameters:
-        - $ref: '#/components/parameters/CallbackId'
-      responses:
-        '200':
-          description: Callback status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthCallbackStatusResponse'
-  /auth/callback-status/{callbackId}/complete:
-    post:
-      tags: [Auth]
-      operationId: completeAuthCallbackStatus
-      summary: Complete browser login callback
-      parameters:
-        - $ref: '#/components/parameters/CallbackId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CompleteAuthCallbackRequest'
-      responses:
-        '200':
-          description: Callback payload stored
           content:
             application/json:
               schema:
@@ -403,6 +437,7 @@ paths:
       responses:
         '200':
           description: Network updated
+          content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Network'
@@ -425,6 +460,7 @@ paths:
       responses:
         '200':
           description: Join key updated
+          content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkDetail'
@@ -447,6 +483,7 @@ paths:
       responses:
         '200':
           description: DNS settings updated
+          content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkDetail'
@@ -469,6 +506,7 @@ paths:
       responses:
         '200':
           description: Network switched
+          content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkJoinResult'
@@ -560,6 +598,7 @@ paths:
       responses:
         '200':
           description: Network deactivated
+          content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NetworkDeactivatedResponse'
@@ -719,6 +758,7 @@ paths:
       responses:
         '200':
           description: Virtual IP updated
+          content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubnetAttachment'
@@ -1324,12 +1364,6 @@ components:
       required: true
       schema:
         type: string
-    CallbackId:
-      name: callbackId
-      in: path
-      required: true
-      schema:
-        type: string
     MessageId:
       name: messageId
       in: path
@@ -1411,35 +1445,72 @@ components:
         expiresIn:
           type: integer
 
-    CompleteAuthCallbackRequest:
+    DeviceLoginPrepareRequest:
       type: object
-      required: [accessToken, userId, expiresIn]
+      required: [deviceId, name, platform, publicKey]
+      properties:
+        deviceId:
+          type: string
+          description: Stable UUID v4 client installation identifier.
+        name:
+          type: string
+        platform:
+          type: string
+          enum: [macos, windows, linux, android, ios, unknown]
+        osName:
+          type: string
+        osVersion:
+          type: string
+        alias:
+          type: string
+        deviceVersion:
+          type: string
+        countryCode:
+          type: string
+        publicKey:
+          type: string
+          minLength: 32
+          description: >
+            Installation-level device identity value. It must be generated
+            randomly and persisted locally. The legacy derived form
+            `client-v2-<deviceId>` is invalid.
+
+    DeviceLoginPrepareResponse:
+      type: object
+      required: [deviceId, loginUrl]
+      properties:
+        deviceId:
+          type: string
+        loginUrl:
+          type: string
+        mqtt:
+          $ref: '#/components/schemas/MQTTCredential'
+
+    DeviceLoginCompleteRequest:
+      type: object
       properties:
         accessToken:
           type: string
-        userId:
+          description: Browser user access token.
+        token:
           type: string
-        refreshToken:
-          type: string
-        expiresIn:
-          type: integer
-        deviceId:
-          type: string
-        userLabel:
-          type: string
+          description: Backward-compatible alias for accessToken.
         action:
           type: string
+          default: login
 
-    AuthCallbackStatusResponse:
+    DeviceLoginCompleteResponse:
       type: object
-      required: [callbackId, ready]
+      required: [status, deviceId]
       properties:
-        callbackId:
+        status:
           type: string
-        ready:
-          type: boolean
-        payload:
-          $ref: '#/components/schemas/CompleteAuthCallbackRequest'
+          enum: [ok]
+        deviceId:
+          type: string
+        deliveryId:
+          type: string
+          description: MQTT control delivery id for device_user_login_succeeded.
 
     MQTTCredential:
       type: object

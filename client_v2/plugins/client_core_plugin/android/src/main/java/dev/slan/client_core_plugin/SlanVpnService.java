@@ -91,6 +91,13 @@ public final class SlanVpnService extends VpnService {
   private void startVpn(JSONObject config) throws Exception {
     String virtualIp = config.optString("virtualIp", "").trim();
     int prefixLen = config.optInt("prefixLen", 32);
+    Cidr virtualAddress = Cidr.parse(virtualIp);
+    if (virtualAddress != null) {
+      virtualIp = virtualAddress.address;
+      prefixLen = virtualAddress.prefixLen;
+      config.put("virtualIp", virtualIp);
+      config.put("prefixLen", prefixLen);
+    }
     if (virtualIp.isEmpty()) {
       throw new IllegalArgumentException("Android VPN virtualIp is empty");
     }

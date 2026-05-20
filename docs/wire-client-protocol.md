@@ -5,7 +5,7 @@ networking stack.
 
 ## Services
 
-- `server-biz`: business identity, device, node, network, and IP ownership
+- `service-biz`: business identity, device, node, network, and IP ownership
 - `server-wire`: runtime control plane and path planning
 - `server-wire-relay`: UDP relay fallback for `relay_udp`
 - `server-wire-derp`: TCP/TLS 443 final fallback for `derp_tcp_tls_443`

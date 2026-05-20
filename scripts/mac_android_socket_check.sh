@@ -5,13 +5,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 GO_BIN="${SLAN_GO_BIN:-/opt/homebrew/bin/go}"
+SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$ROOT_DIR/client_v2/rust/target/debug/client-core-service}"
 BIZ_URL="${SLAN_BIZ_URL:-http://127.0.0.1:28080}"
 ANDROID_BIZ_URL="${SLAN_ANDROID_BIZ_URL:-http://10.0.2.2:28080}"
-MAC_SERVICE_HOST="${SLAN_MAC_SERVICE_HOST:-127.0.0.1:46392}"
+MAC_SERVICE_HOST="${SLAN_MAC_SERVICE_HOST:-127.0.0.1:$((46380 + RANDOM % 200))}"
+USE_EXISTING_MAC_SERVICE="${SLAN_USE_EXISTING_MAC_SERVICE:-0}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 EMAIL="${SLAN_TEST_EMAIL:-mac-android-socket-$(date +%s%N)@example.test}"
 TIMEOUT="${SLAN_MAC_ANDROID_SOCKET_TIMEOUT:-90s}"
+MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 UDP_PORT="${SLAN_TEST_UDP_ECHO_PORT:-19090}"
 TCP_PORT="${SLAN_TEST_TCP_ECHO_PORT:-19091}"
 UDP_BODY="${SLAN_TEST_UDP_SEND_BODY:-hello-android-to-mac-udp-$(date +%s%N)}"
@@ -19,12 +22,16 @@ TCP_BODY="${SLAN_TEST_TCP_SEND_BODY:-hello-android-to-mac-tcp-$(date +%s%N)}"
 WORK_DIR="${SLAN_MAC_ANDROID_SOCKET_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-android-socket.XXXXXX")}"
 ECHO_LOG="$WORK_DIR/macos-echo.log"
 ANDROID_LOG="$WORK_DIR/android-socket.log"
+MAC_SERVICE_LOG="$WORK_DIR/macos-service.log"
+MAC_CORE_LOG="$WORK_DIR/state/SLAN/client-core-service.log"
 
 PIDS=()
 
 cleanup() {
   status=$?
   if [[ $status -ne 0 ]]; then
+    [[ -f "$MAC_SERVICE_LOG" ]] && { echo "---- Mac service log ----" >&2; cat "$MAC_SERVICE_LOG" >&2; }
+    [[ -f "$MAC_CORE_LOG" ]] && { echo "---- Mac core log ----" >&2; cat "$MAC_CORE_LOG" >&2; }
     [[ -f "$ECHO_LOG" ]] && { echo "---- Mac echo log ----" >&2; cat "$ECHO_LOG" >&2; }
     [[ -f "$ANDROID_LOG" ]] && { echo "---- Android socket log ----" >&2; cat "$ANDROID_LOG" >&2; }
   fi
@@ -47,12 +54,32 @@ if [[ ! -x "$GO_BIN" ]]; then
   echo "go binary is missing or not executable: $GO_BIN" >&2
   exit 1
 fi
+if [[ "$USE_EXISTING_MAC_SERVICE" != "1" && ! -x "$SERVICE_BIN" ]]; then
+  echo "client-core-service binary is missing: $SERVICE_BIN" >&2
+  echo "run: cd client_v2/rust && cargo build -p client-core-service" >&2
+  exit 1
+fi
 
 echo "+ $ADB wait-for-device"
 "$ADB" wait-for-device
 
+if [[ "$USE_EXISTING_MAC_SERVICE" != "1" ]]; then
+  mkdir -p "$WORK_DIR/state"
+
+  echo "+ start mac client-core-service on $MAC_SERVICE_HOST"
+  SLAN_CLIENT_CORE_SERVICE_HOST="$MAC_SERVICE_HOST" \
+    SLAN_CONTROL_BASE_URL="$BIZ_URL" \
+    SLAN_CLIENT_DEVICE_ID="$MAC_TEST_DEVICE_ID" \
+    SLAN_MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}" \
+    SLAN_STATE_DIR="$WORK_DIR/state" \
+    "$SERVICE_BIN" >"$MAC_SERVICE_LOG" 2>&1 &
+  PIDS+=("$!")
+else
+  echo "+ use existing mac client-core-service at $MAC_SERVICE_HOST"
+fi
+
 echo "+ login and enable Mac service network at $MAC_SERVICE_HOST"
-MAC_OUTPUT="$(
+if ! MAC_OUTPUT="$(
   cd "$ROOT_DIR"
   "$GO_BIN" run scripts/client_core_service_login_check.go \
     -biz-url "$BIZ_URL" \
@@ -62,13 +89,23 @@ MAC_OUTPUT="$(
     -register=true \
     -enable-network=true \
     -timeout "$TIMEOUT"
-)"
+)"; then
+  echo "$MAC_OUTPUT" >&2
+  if grep -q "connect utun control socket: Operation not permitted" "$MAC_SERVICE_LOG" 2>/dev/null; then
+    echo "macOS utun creation was denied. Run this socket data-plane check from a host context that can open utun, or set SLAN_MACOS_NETWORK_MOCK=1 for a control-plane-only check." >&2
+  fi
+  if grep -q "connect utun control socket: Operation not permitted" "$MAC_CORE_LOG" 2>/dev/null; then
+    echo "macOS utun creation was denied. Run this socket data-plane check from a host context that can open utun, or set SLAN_MACOS_NETWORK_MOCK=1 for a control-plane-only check." >&2
+  fi
+  exit 1
+fi
 echo "$MAC_OUTPUT"
 MAC_IP="$(echo "$MAC_OUTPUT" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
 if [[ -z "$MAC_IP" ]]; then
   echo "failed to parse Mac virtual IP from login output" >&2
   exit 1
 fi
+MAC_IP="${MAC_IP%%/*}"
 echo "Mac network IP: $MAC_IP"
 
 echo "+ start Mac UDP/TCP echo server"

@@ -96,15 +96,13 @@ fn run_control_transport_worker(
     let Some(mqtt) = session.mqtt.clone() else {
         return Err("control transport mqtt credential is missing".to_string());
     };
-    let mut client = ThinControlMqttClient::connect(
-        &ThinMqttCredential {
-            broker_url: mqtt.broker_url,
-            client_id: mqtt.client_id,
-            username: mqtt.username,
-            password: mqtt.password,
-        },
-        &downstream_topic,
-    )?;
+    let credential = ThinMqttCredential {
+        broker_url: mqtt.broker_url,
+        client_id: mqtt.client_id,
+        username: mqtt.username,
+        password: mqtt.password,
+    };
+    let mut client = connect_control_mqtt_with_retry(&credential, &downstream_topic)?;
     if let Some(topic) = network_broadcast_topic(&session) {
         match client.subscribe(&topic) {
             Ok(()) => log_service_error(format!(
@@ -120,6 +118,7 @@ fn run_control_transport_worker(
         downstream_topic,
         session.device_id.as_deref().unwrap_or_default()
     ));
+    sync_after_control_mqtt_connected(&runtime, &task_queue, &state_notifier)?;
 
     let mut last_ack_flush_ms = None;
     let mut last_heartbeat_ms = None;
@@ -196,9 +195,8 @@ fn run_control_transport_worker(
             tick.outbox.include_control_acks,
         );
         for message in messages {
-            publish_outbox_message(&mut client, &message)?;
+            publish_outbox_message_async(session.clone(), message.clone(), Arc::clone(&task_queue));
             last_keepalive_ping_ms = Some(now_ms);
-            mark_transport_published(&message, &task_queue)?;
             match message.kind {
                 ControlTransportMessageKind::ControlAck => {
                     last_ack_flush_ms = Some(now_ms);
@@ -218,6 +216,66 @@ fn run_control_transport_worker(
             }
         }
     }
+}
+
+fn connect_control_mqtt_with_retry(
+    credential: &ThinMqttCredential,
+    downstream_topic: &str,
+) -> Result<ThinControlMqttClient, String> {
+    let mut errors = Vec::new();
+    for attempt in 1..=3 {
+        let suffix = format!("v2-worker-{}-{attempt}", current_timestamp_ms());
+        match ThinControlMqttClient::connect_with_subscription_suffix(
+            credential,
+            downstream_topic,
+            &suffix,
+        ) {
+            Ok(client) => return Ok(client),
+            Err(error) => {
+                errors.push(format!("attempt {attempt}: {error}"));
+                thread::sleep(Duration::from_millis(250 * attempt as u64));
+            }
+        }
+    }
+    Err(errors.join("; "))
+}
+
+fn sync_after_control_mqtt_connected(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<(), String> {
+    crate::sync_control_assignment(runtime);
+    let state = {
+        let runtime = runtime
+            .lock()
+            .map_err(|_| "client runtime mutex poisoned".to_string())?;
+        runtime.state().clone()
+    };
+    if !state.signed_in || !state.network_enabled {
+        publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
+        return Ok(());
+    }
+    log_service_error("client-core-service scheduling reconnect config rebuild");
+    {
+        let mut queue = task_queue
+            .lock()
+            .map_err(|_| "control task queue mutex poisoned".to_string())?;
+        queue
+            .enqueue_downstream_unacked(
+                crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                false,
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    let state = crate::drain_pending_control_tasks(runtime, task_queue);
+    let business_type = if state.error.is_some() {
+        BUSINESS_NETWORK_SWITCH_FAILED
+    } else {
+        BUSINESS_NETWORK_RUNTIME_CHANGED
+    };
+    publish_state_business_event(state_notifier, business_type, &state);
+    Ok(())
 }
 
 fn network_broadcast_topic(session: &PersistedSession) -> Option<String> {
@@ -256,7 +314,7 @@ fn ingest_downstream_publish(
         message_type,
         payload.len()
     ));
-    if try_ingest_device_user_login_succeeded(payload, runtime, state_notifier)? {
+    if try_ingest_device_user_login_succeeded(payload, runtime, task_queue, state_notifier)? {
         log_service_error(
             "client-core-service consumed downstream control message as device_user_login_succeeded",
         );
@@ -288,21 +346,31 @@ fn ingest_downstream_publish(
             runtime.state().clone()
         };
         if current_state.signed_in && current_state.network_enabled {
-            if let Some(delivery_id) = connect_plan.rebuild_delivery_id {
+            if connect_plan.should_rebuild {
                 log_service_error(format!(
-                    "client-core-service scheduling network rebuild for connect_plan deliveryId={delivery_id}"
+                    "client-core-service scheduling network rebuild for connect_plan messageId={}",
+                    connect_plan.ack_delivery_id.as_deref().unwrap_or_default()
                 ));
                 {
                     let mut queue = task_queue
                         .lock()
                         .map_err(|_| "control task queue mutex poisoned".to_string())?;
-                    queue
-                        .enqueue_downstream(
-                            crate::control_tasks::ControlTaskAction::EnableNetwork,
-                            delivery_id,
-                            false,
-                        )
-                        .map_err(|err| err.to_string())?;
+                    if let Some(delivery_id) = connect_plan.ack_delivery_id {
+                        queue
+                            .enqueue_downstream(
+                                crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                                delivery_id,
+                                false,
+                            )
+                            .map_err(|err| err.to_string())?;
+                    } else {
+                        queue
+                            .enqueue_downstream_unacked(
+                                crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                                false,
+                            )
+                            .map_err(|err| err.to_string())?;
+                    }
                 }
                 let state = crate::drain_pending_control_tasks(runtime, task_queue);
                 let business_type = if state.error.is_some() {
@@ -399,7 +467,7 @@ fn ingest_downstream_publish(
 fn try_ingest_device_network_presence(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    _task_queue: &Arc<Mutex<ControlTaskQueue>>,
     state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<bool, String> {
     let value: serde_json::Value =
@@ -429,60 +497,16 @@ fn try_ingest_device_network_presence(
         .and_then(serde_json::Value::as_array)
         .map(Vec::len)
         .unwrap_or_default();
-    let changed_at = payload_value
-        .get("changedAt")
-        .and_then(serde_json::Value::as_i64)
-        .unwrap_or_default();
     log_service_error(format!(
         "client-core-service network presence message type={message_type} networkId={network_id} deviceId={device_id} online={online} onlineDevices={online_count}"
     ));
-    if let Ok(session) = load_session() {
-        let is_self = session
-            .device_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            == Some(device_id.trim());
-        let state = {
-            let runtime = runtime
-                .lock()
-                .map_err(|_| "client runtime mutex poisoned".to_string())?;
-            runtime.state().clone()
-        };
-        if state.signed_in && state.network_enabled && !is_self {
-            let delivery_id = network_presence_delivery_id(
-                &value,
-                message_type,
-                network_id,
-                device_id,
-                changed_at,
-            );
-            log_service_error(format!(
-                "client-core-service scheduling peer rebuild for network presence deliveryId={delivery_id}"
-            ));
-            {
-                let mut queue = task_queue
-                    .lock()
-                    .map_err(|_| "control task queue mutex poisoned".to_string())?;
-                queue
-                    .enqueue_downstream(
-                        crate::control_tasks::ControlTaskAction::EnableNetwork,
-                        delivery_id,
-                        false,
-                    )
-                    .map_err(|err| err.to_string())?;
-            }
-            let state = crate::drain_pending_control_tasks(runtime, task_queue);
-            let business_type = if state.error.is_some() {
-                BUSINESS_NETWORK_SWITCH_FAILED
-            } else {
-                BUSINESS_NETWORK_RUNTIME_CHANGED
-            };
-            publish_state_business_event(state_notifier, business_type, &state);
-        } else {
-            publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
-        }
-    }
+    let state = {
+        let runtime = runtime
+            .lock()
+            .map_err(|_| "client runtime mutex poisoned".to_string())?;
+        runtime.state().clone()
+    };
+    publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
     Ok(true)
 }
 
@@ -491,25 +515,6 @@ fn is_device_network_presence_event(message_type: &str) -> bool {
         message_type,
         DEVICE_NETWORK_ENABLED_EVENT | DEVICE_NETWORK_DISABLED_EVENT
     )
-}
-
-fn network_presence_delivery_id(
-    envelope: &serde_json::Value,
-    message_type: &str,
-    network_id: &str,
-    device_id: &str,
-    changed_at: i64,
-) -> String {
-    envelope
-        .get("messageId")
-        .or_else(|| envelope.get("message_id"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            format!("network-presence-{message_type}-{network_id}-{device_id}-{changed_at}")
-        })
 }
 
 fn log_downstream_message_summary(value: &serde_json::Value) -> Option<String> {
@@ -551,6 +556,16 @@ fn log_downstream_message_summary(value: &serde_json::Value) -> Option<String> {
         message_type, message_id, network_id, device_id, virtual_ip, policy_id
     ));
     Some(message_type.to_string())
+}
+
+fn downstream_message_id(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("messageId")
+        .or_else(|| value.get("message_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn try_ingest_client_message(
@@ -677,7 +692,8 @@ fn maybe_reply_client_ping(message: &ClientMessagePayload) -> bool {
 
 #[derive(Debug)]
 struct ConnectPlanIngest {
-    rebuild_delivery_id: Option<String>,
+    should_rebuild: bool,
+    ack_delivery_id: Option<String>,
 }
 
 fn try_ingest_connect_plan(payload: &[u8]) -> Result<Option<ConnectPlanIngest>, String> {
@@ -689,39 +705,20 @@ fn try_ingest_connect_plan(payload: &[u8]) -> Result<Option<ConnectPlanIngest>, 
     let plan = value
         .get("payload")
         .ok_or_else(|| "connect_plan payload is missing".to_string())?;
-    let delivery_id = connect_plan_delivery_id(&value, plan);
     if crate::persist_connect_plan_from_value(plan)
         .map_err(|err| format!("persist connect plan: {err:#}"))?
     {
         log_service_error("client-core-service accepted connect_plan for relay data plane");
         return Ok(Some(ConnectPlanIngest {
-            rebuild_delivery_id: Some(delivery_id),
+            should_rebuild: true,
+            ack_delivery_id: downstream_message_id(&value),
         }));
     }
     log_service_error("client-core-service ignored empty connect_plan for relay data plane");
     Ok(Some(ConnectPlanIngest {
-        rebuild_delivery_id: None,
+        should_rebuild: false,
+        ack_delivery_id: None,
     }))
-}
-
-fn connect_plan_delivery_id(envelope: &serde_json::Value, plan: &serde_json::Value) -> String {
-    envelope
-        .get("messageId")
-        .or_else(|| envelope.get("message_id"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("connect-plan-{value}"))
-        .unwrap_or_else(|| {
-            let peer = plan
-                .get("peerNodeId")
-                .or_else(|| plan.get("peer_node_id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("peer");
-            format!("connect-plan-{peer}-{}", current_timestamp_ms())
-        })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -754,11 +751,34 @@ fn try_ingest_network_config_changed(
     if message_type != "network_config_changed" && message_type != "network_member_state_changed" {
         return Ok(false);
     }
+    let ack_delivery_id = if message_type == "network_config_changed" {
+        downstream_message_id(&value)
+    } else {
+        None
+    };
     let session =
         load_session().map_err(|err| format!("load session for network module: {err}"))?;
+    if !network_config_changed_targets_session(&value, &session) {
+        log_service_error(
+            "client-core-service ignored downstream network config change for stale session",
+        );
+        return Ok(true);
+    }
     let client = crate::control_plane::ControlPlaneClient::from_env();
     crate::network_module::refresh_network_module_from_session(&client, &session)
         .map_err(|err| format!("refresh client network module: {err:#}"))?;
+    if let Some((virtual_ip, prefix_len)) = network_config_changed_assignment(&value) {
+        let mut runtime = runtime
+            .lock()
+            .map_err(|_| "client runtime mutex poisoned".to_string())?;
+        crate::dispatch_with_side_effects(
+            &mut runtime,
+            ClientCommand::SyncAssignedIp(AssignedIpPayload {
+                virtual_ip,
+                prefix_len,
+            }),
+        );
+    }
     let current_state = {
         let runtime = runtime
             .lock()
@@ -770,13 +790,22 @@ fn try_ingest_network_config_changed(
             let mut queue = task_queue
                 .lock()
                 .map_err(|_| "control task queue mutex poisoned".to_string())?;
-            queue
-                .enqueue_downstream(
-                    crate::control_tasks::ControlTaskAction::EnableNetwork,
-                    format!("network-module-refresh-{}", crate::current_timestamp_ms()),
-                    false,
-                )
-                .map_err(|err| err.to_string())?;
+            if let Some(delivery_id) = ack_delivery_id {
+                queue
+                    .enqueue_downstream(
+                        crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                        delivery_id,
+                        false,
+                    )
+                    .map_err(|err| err.to_string())?;
+            } else {
+                queue
+                    .enqueue_downstream_unacked(
+                        crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                        false,
+                    )
+                    .map_err(|err| err.to_string())?;
+            }
         }
         let state = crate::drain_pending_control_tasks(runtime, task_queue);
         let business_type = if state.error.is_some() {
@@ -793,6 +822,47 @@ fn try_ingest_network_config_changed(
         );
     }
     Ok(true)
+}
+
+fn network_config_changed_targets_session(
+    value: &serde_json::Value,
+    session: &PersistedSession,
+) -> bool {
+    let payload = value.get("payload").unwrap_or(value);
+    let expected_network_id = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(network_id) = payload
+        .get("networkId")
+        .or_else(|| value.get("networkId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if expected_network_id != Some(network_id) {
+            return false;
+        }
+    }
+    true
+}
+
+fn network_config_changed_assignment(value: &serde_json::Value) -> Option<(String, Option<u8>)> {
+    let payload = value.get("payload")?;
+    let virtual_ip = payload
+        .get("virtualIp")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let prefix_len = payload
+        .get("prefixLen")
+        .or_else(|| payload.get("prefixLength"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+        .filter(|value| *value <= 32);
+    Some((virtual_ip, prefix_len))
 }
 
 fn try_ingest_network_map_response(
@@ -826,6 +896,7 @@ fn try_ingest_network_map_response(
 fn try_ingest_device_user_login_succeeded(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
     state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<bool, String> {
     let value: serde_json::Value =
@@ -834,6 +905,14 @@ fn try_ingest_device_user_login_succeeded(
     {
         return Ok(false);
     }
+    let delivery_id = value
+        .get("messageId")
+        .or_else(|| value.get("deliveryId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "device_user_login_succeeded deliveryId/messageId is missing".to_string())?
+        .to_string();
     let Some(auth_value) = value.get("payload").cloned() else {
         return Err("device_user_login_succeeded payload is missing".to_string());
     };
@@ -842,10 +921,42 @@ fn try_ingest_device_user_login_succeeded(
     let mut runtime = runtime
         .lock()
         .map_err(|_| "client runtime mutex poisoned".to_string())?;
+    if let Some(expected_device_id) = runtime
+        .state()
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if auth
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            != Some(expected_device_id)
+        {
+            return Err("device_user_login_succeeded target device mismatch".to_string());
+        }
+    }
     let state =
         crate::dispatch_with_side_effects(&mut runtime, ClientCommand::ApplyDeviceUserLogin(auth));
     if let Some(error) = state.error {
         return Err(error);
+    }
+    {
+        let mut queue = task_queue
+            .lock()
+            .map_err(|_| "control task queue mutex poisoned".to_string())?;
+        let task = queue
+            .enqueue_downstream(
+                crate::control_tasks::ControlTaskAction::DeviceUserLoginSucceeded,
+                delivery_id,
+                false,
+            )
+            .map_err(|err| err.to_string())?;
+        queue
+            .mark_succeeded(&task.id)
+            .map_err(|err| err.to_string())?;
     }
     publish_state_business_event(state_notifier, BUSINESS_SESSION_CHANGED, &state);
     Ok(true)
@@ -944,12 +1055,78 @@ fn build_outbox_messages(
 }
 
 fn publish_outbox_message(
-    client: &mut ThinControlMqttClient,
+    session: &PersistedSession,
     message: &ControlTransportMessage,
 ) -> Result<(), String> {
     let payload = serde_json::to_vec(&message.payload)
         .map_err(|err| format!("encode outbox payload {}: {err}", message.id))?;
-    client.publish(&message.topic, &payload, thin_qos(message.qos))
+    let Some(mqtt) = session.mqtt.as_ref() else {
+        return Err("mqtt credential is missing for outbox publish".to_string());
+    };
+    let credential = ThinMqttCredential {
+        broker_url: mqtt.broker_url.clone(),
+        client_id: mqtt.client_id.clone(),
+        username: mqtt.username.clone(),
+        password: mqtt.password.clone(),
+    };
+    let mut errors = Vec::new();
+    for attempt in 1..=3 {
+        let suffix = outbox_client_suffix(message, attempt);
+        match publish_outbox_message_once(&credential, &suffix, message, &payload) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                errors.push(format!("attempt {attempt}: {error}"));
+                thread::sleep(Duration::from_millis(250 * attempt as u64));
+            }
+        }
+    }
+    Err(errors.join("; "))
+}
+
+fn publish_outbox_message_once(
+    credential: &ThinMqttCredential,
+    suffix: &str,
+    message: &ControlTransportMessage,
+    payload: &[u8],
+) -> Result<(), String> {
+    let mut client = ThinControlMqttClient::connect_without_subscription(credential, suffix)?;
+    client.publish(&message.topic, payload, thin_qos(message.qos))
+}
+
+fn outbox_client_suffix(message: &ControlTransportMessage, attempt: usize) -> String {
+    let mut suffix = String::with_capacity(64);
+    suffix.push_str("v2-outbox-");
+    suffix.push_str(&current_timestamp_ms().to_string());
+    suffix.push('-');
+    suffix.push_str(&attempt.to_string());
+    for ch in message.id.chars() {
+        if suffix.len() >= 72 {
+            break;
+        }
+        if ch.is_ascii_alphanumeric() || ch == '-' {
+            suffix.push(ch);
+        } else {
+            suffix.push('-');
+        }
+    }
+    suffix
+}
+
+fn publish_outbox_message_async(
+    session: PersistedSession,
+    message: ControlTransportMessage,
+    task_queue: Arc<Mutex<ControlTaskQueue>>,
+) {
+    std::thread::spawn(move || {
+        if let Err(error) = publish_outbox_message(&session, &message)
+            .and_then(|_| mark_transport_published(&message, &task_queue))
+        {
+            log_service_error(format!(
+                "client-core-service outbox publish failed id={} topic={} error={}",
+                message.id, message.topic, error
+            ));
+        }
+    });
 }
 
 fn mark_transport_published(
@@ -1055,10 +1232,11 @@ fn reset_worker_gate(worker_state: &Arc<Mutex<ControlTransportWorkerState>>) {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use client_core::ClientRuntime;
+    use client_core::{AuthPayload, ClientCommand, ClientRuntime};
     use client_core_platform::PlatformNetworkImpl;
 
-    use super::ingest_downstream_publish;
+    use super::{ingest_downstream_publish, network_config_changed_targets_session};
+    use crate::session_store::PersistedSession;
     use crate::{
         control_tasks::ControlTaskQueue, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
     };
@@ -1114,5 +1292,94 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("hello ios")
         );
+    }
+
+    #[test]
+    fn device_user_login_downstream_rejects_mismatched_device_id() {
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(
+            PlatformNetworkImpl::default(),
+        )));
+        {
+            let mut guard = runtime.lock().expect("runtime mutex");
+            guard
+                .dispatch(ClientCommand::ApplyDeviceUserLogin(AuthPayload {
+                    access_token: "existing-token".to_string(),
+                    refresh_token: None,
+                    user_id: "user-1".to_string(),
+                    user_label: "user@example.com".to_string(),
+                    device_id: Some("dev-1".to_string()),
+                    active_network_id: None,
+                    virtual_ip: None,
+                    expires_in: None,
+                }))
+                .expect("seed runtime device id");
+        }
+        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        let state_notifier = Arc::new(StateChangeNotifier::default());
+        let payload = serde_json::json!({
+            "type": "device_user_login_succeeded",
+            "messageId": "login-msg-1",
+            "payload": {
+                "accessToken": "new-token",
+                "userId": "user-2",
+                "userLabel": "other@example.com",
+                "deviceId": "dev-other"
+            }
+        });
+        let payload = serde_json::to_vec(&payload).expect("encode payload");
+
+        let err = ingest_downstream_publish(&payload, &runtime, &task_queue, &state_notifier)
+            .expect_err("mismatched login must be rejected");
+
+        assert!(err.contains("target device mismatch"), "{err}");
+        let state = runtime.lock().expect("runtime mutex").state().clone();
+        assert_eq!(state.device_id.as_deref(), Some("dev-1"));
+        assert_eq!(state.user_label.as_deref(), Some("user@example.com"));
+    }
+
+    #[test]
+    fn network_config_changed_rejects_stale_network() {
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("dev-current".to_string());
+        session.active_network_id = Some("net-current".to_string());
+
+        let current = serde_json::json!({
+            "type": "network_config_changed",
+            "payload": {
+                "networkId": "net-current",
+                "deviceId": "dev-current",
+                "virtualIp": "10.0.0.8",
+                "prefixLen": 20
+            }
+        });
+        assert!(network_config_changed_targets_session(&current, &session));
+
+        let stale_network = serde_json::json!({
+            "type": "network_config_changed",
+            "payload": {
+                "networkId": "net-old",
+                "deviceId": "dev-current",
+                "virtualIp": "10.0.0.9",
+                "prefixLen": 20
+            }
+        });
+        assert!(!network_config_changed_targets_session(
+            &stale_network,
+            &session
+        ));
+
+        let peer_device = serde_json::json!({
+            "type": "network_config_changed",
+            "payload": {
+                "networkId": "net-current",
+                "deviceId": "dev-old",
+                "virtualIp": "10.0.0.10",
+                "prefixLen": 20
+            }
+        });
+        assert!(network_config_changed_targets_session(
+            &peer_device,
+            &session
+        ));
     }
 }

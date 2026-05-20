@@ -7,7 +7,7 @@
 - [`docs/remote-docker-only.md`](../remote-docker-only.md)
 - [`.tmp/remote-deploy/deploy_to_47.245.40.231.sh`](../../.tmp/remote-deploy/deploy_to_47.245.40.231.sh)
 - [`docker-compose.local.yml`](../../docker-compose.local.yml) 仅作为远程开发 compose 文件使用
-- [`server/server-biz/configs/config.docker.yaml`](../../server/server-biz/configs/config.docker.yaml)
+- [`server/service-biz/configs/config.docker.yaml`](../../server/service-biz/configs/config.docker.yaml)
 - [`deploy/local/Caddyfile`](../../deploy/local/Caddyfile)
 - [`deploy/local/bifromq/standalone.yml`](../../deploy/local/bifromq/standalone.yml)
 
@@ -18,7 +18,7 @@
 
 当 `SLAN_ENV=prod` 或 `SLAN_ENV=production` 时，服务会拒绝使用本地默认配置启动。
 
-`server-biz` 会强制检查：
+`service-biz` 会强制检查：
 
 - `http.public_scheme=https`
 - `http.public_host` 不能是 `localhost / 127.0.0.1 / ::1`
@@ -36,7 +36,7 @@
 
 ## 必须替换的值
 
-### `server-biz`
+### `service-biz`
 
 - `POSTGRES_PASSWORD`：本地默认值不能直接上线。
 - `SLAN_OPS_ACCESS_TOKEN`：仅作为应急运维旁路使用，生产必须换成高强度随机值。
@@ -46,8 +46,8 @@
 
 ### `server-wire`
 
-- `SLAN_WIRE_BIZ_INTERNAL_URL`：指向 `server-biz` 内部 HTTP 地址，用于读取 peer 授权和静态拓扑。
-- `SLAN_INTERNAL_WIRE_TOKEN`：`server-wire` 调用 `server-biz /internal/wire/*` 的共享内部令牌，生产必须使用独立高强度随机值。
+- `SLAN_WIRE_BIZ_INTERNAL_URL`：指向 `service-biz` 内部 HTTP 地址，用于读取 peer 授权和静态拓扑。
+- `SLAN_INTERNAL_WIRE_TOKEN`：`server-wire` 调用 `service-biz /internal/wire/*` 的共享内部令牌，生产必须使用独立高强度随机值。
 - `SLAN_WIRE_TICKET_SECRET`：用于签发 relay / DERP ticket，必须使用独立高强度随机值。
 - `SLAN_WIRE_TICKET_SECRETS`：逗号分隔的校验密钥环；轮换时新密钥放第一位，旧密钥保留到所有短票据过期。
 - `SLAN_WIRE_POSTGRES_DSN`：`server-wire` 运行态持久化 Postgres DSN，生产必须启用，避免多实例和重启丢失 peer/path 状态。
@@ -72,4 +72,4 @@
 - 为 `server-wire`、`server-wire-relay`、`server-wire-derp` 补 k8s / 多节点部署模板。
 - 将票据密钥轮换从环境变量密钥环推进到集中密钥管理；当前生命周期是“新密钥放第一位签发，旧密钥保留到所有短票据过期，过期后从 `SLAN_WIRE_TICKET_SECRETS` 删除”。
 - 为 relay / DERP 数据面补限流、连接配额、指标导出和告警。
-- 为 `server-biz -> server-wire` 授权同步补服务间认证和审计。
+- 为 `service-biz -> server-wire` 授权同步补服务间认证和审计。

@@ -12,7 +12,7 @@ system adapter directly. Keep the Android side behind the Rust
 
 - `permission_state`: check whether `VpnService.prepare(...)` is already
   granted.
-- `request_permission`: return a Flutter-visible callback id and ask Android to
+- `request_permission`: return a Flutter-visible request id and ask Android to
   launch the user consent activity.
 - `start_vpn`: create the `VpnService.Builder`, apply virtual IP, DNS, routes,
   MTU and selected relay metadata, then return the runtime state.
@@ -21,7 +21,7 @@ system adapter directly. Keep the Android side behind the Rust
   relay probes and relay transport sockets so they do not loop through the VPN.
 - `read_runtime_state`: report whether the VPN interface is present, enabled and
   which virtual IP is active.
-- `poll_event`: surface Android-side events such as permission granted, VPN
+- `watch_event`: surface Android-side events such as permission granted, VPN
   revoked, connectivity changed, relay changed and errors.
 
 The shared DTOs live in `client-core/src/platform.rs`:
@@ -40,11 +40,11 @@ Flutter MethodChannel methods:
 - `androidStopVpn`
 - `androidProtectSocket`
 - `androidRuntimeState`
-- `androidPollNetworkEvent`
+- `androidWatchNetworkEvent`
 
 Implemented native pieces:
 
-- `ClientCorePlugin`: MethodChannel bridge, VPN permission request and event polling.
+- `ClientCorePlugin`: MethodChannel bridge, VPN permission request and event watch.
 - `SlanVpnService`: Android `VpnService` lifecycle, foreground notification,
   IP/DNS/routes/MTU application, stop/revoke handling.
 - `SlanVpnRuntime`: in-process runtime state and event queue for Flutter.

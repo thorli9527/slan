@@ -1,6 +1,6 @@
 version: 1
 slice: network
-source_of_truth: server/server-biz/api/dto
+source_of_truth: server/service-biz/internal/biz
 contracts:
   CreateNetworkRequest:
     fields:

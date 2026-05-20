@@ -7,7 +7,7 @@ SLAN is a cross-platform secure networking platform for developers and teams. It
 ## Architecture
 
 - Client: Rust networking core plus Flutter UI.
-- Control plane: Go `server-biz`, responsible for users, networks, devices, membership, policy, bootstrap, and MQTT control.
+- Control plane: Go `service-biz`, responsible for users, networks, devices, membership, policy, bootstrap, and MQTT control.
 - Data plane: Rust relay and tunnel components for P2P, relay fallback, and encrypted traffic.
 - Operations: Go/Python tooling for observability and administration.
 

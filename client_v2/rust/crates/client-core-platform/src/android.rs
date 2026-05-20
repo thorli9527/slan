@@ -20,7 +20,7 @@ pub trait AndroidVpnBackend: Send + Sync + 'static {
     fn stop_vpn(&self) -> Result<NetworkRuntimeState>;
     fn protect_socket(&self, request: AndroidSocketProtectionRequest) -> Result<()>;
     fn read_runtime_state(&self) -> Result<NetworkRuntimeState>;
-    fn poll_event(&self) -> Result<Option<AndroidNetworkEvent>>;
+    fn watch_event(&self) -> Result<Option<AndroidNetworkEvent>>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -52,7 +52,10 @@ impl PlatformNetwork for AndroidPlatformNetwork {
     }
 
     fn configure_ip(&self, virtual_ip: &str, prefix_len: u8) -> Result<()> {
-        let value = virtual_ip.trim();
+        let value = virtual_ip
+            .trim()
+            .split_once('/')
+            .map_or(virtual_ip.trim(), |(ip, _)| ip.trim());
         if value.is_empty() {
             return Err(anyhow!("android virtual IP is empty"));
         }

@@ -34,9 +34,9 @@ use std::{
 
 use anyhow::{Context, Result};
 use client_core::{
-    normalize_relay_transport, relay_path_kind_for_transport, AssignedIpPayload, ClientCommand,
-    ClientRuntime, ClientViewState, PathCandidate, PathKind, PathState, PeerPathConfig,
-    PlatformDeviceNetworkConfig, PlatformNetwork, PlatformNetworkConfig,
+    normalize_relay_transport, normalize_virtual_ip, relay_path_kind_for_transport,
+    AssignedIpPayload, ClientCommand, ClientRuntime, ClientViewState, PathCandidate, PathKind,
+    PathState, PeerPathConfig, PlatformDeviceNetworkConfig, PlatformNetwork, PlatformNetworkConfig,
     PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession, RelayTicket,
     TrafficStatsPayload,
 };
@@ -914,7 +914,10 @@ fn control_transport_cadence() -> ControlTransportCadence {
 }
 
 fn console_login_key() -> Result<Value> {
-    let session = load_session()?;
+    let session = ensure_session_device_registered(load_session()?)?;
+    if session.session_kind == "device" || session.user_id.trim().is_empty() {
+        anyhow::bail!("user login is required before opening Web Console");
+    }
     let client = ControlPlaneClient::from_env();
     let login_key = client.console_login_key(
         &session.access_token,
@@ -1995,9 +1998,42 @@ fn execute_control_task(
     task_queue: &Arc<Mutex<ControlTaskQueue>>,
     task: control_tasks::ControlTask,
 ) -> ClientViewState {
+    if task.action == ControlTaskAction::RefreshNetworkConfig {
+        let state = {
+            let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+            match sync_downstream_network_assignment(&mut runtime) {
+                Ok(()) => runtime.state().clone(),
+                Err(error) => state_with_error(runtime.state(), error.to_string()),
+            }
+        };
+        let mut task_queue = task_queue
+            .lock()
+            .expect("control task queue mutex poisoned");
+        if let Some(error) = state.error.clone() {
+            let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+            let _ = runtime.set_error(error.clone());
+            let _ = task_queue.mark_failed(&task.id, error);
+        } else {
+            let _ = task_queue.mark_succeeded(&task.id);
+        }
+        return state;
+    }
+    if task.action == ControlTaskAction::DeviceUserLoginSucceeded {
+        let state = {
+            let runtime = runtime.lock().expect("client runtime mutex poisoned");
+            runtime.state().clone()
+        };
+        let mut task_queue = task_queue
+            .lock()
+            .expect("control task queue mutex poisoned");
+        let _ = task_queue.mark_succeeded(&task.id);
+        return state;
+    }
     let command = match task.action {
         ControlTaskAction::EnableNetwork => ClientCommand::EnableNetwork,
         ControlTaskAction::DisableNetwork => ClientCommand::DisableNetwork,
+        ControlTaskAction::RefreshNetworkConfig => unreachable!("handled above"),
+        ControlTaskAction::DeviceUserLoginSucceeded => unreachable!("handled above"),
     };
     let state = {
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
@@ -2289,7 +2325,8 @@ where
     let network_configs =
         crate::network_module::refresh_network_module_from_session(&client, &session)
             .unwrap_or_default();
-    let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    let mut activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
     ensure_session_node_and_control_session(&client, &mut session)
@@ -2475,19 +2512,23 @@ where
     };
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(session)?;
-    let activation = match client.activate_network(&session.access_token, &device_id, &network_id) {
-        Ok(activation) => activation,
-        Err(error) if error.to_string().contains("HTTP 404") => {
-            session.active_network_id = None;
-            let refreshed_network_id = ensure_active_network_id(session)?;
-            client
-                .activate_network(&session.access_token, &device_id, &refreshed_network_id)
-                .with_context(|| {
-                    format!("activate refreshed network after stale network config {network_id}")
-                })?
-        }
-        Err(error) => return Err(error),
-    };
+    let mut activation =
+        match client.activate_network(&session.access_token, &device_id, &network_id) {
+            Ok(activation) => activation,
+            Err(error) if error.to_string().contains("HTTP 404") => {
+                session.active_network_id = None;
+                let refreshed_network_id = ensure_active_network_id(session)?;
+                client
+                    .activate_network(&session.access_token, &device_id, &refreshed_network_id)
+                    .with_context(|| {
+                        format!(
+                            "activate refreshed network after stale network config {network_id}"
+                        )
+                    })?
+            }
+            Err(error) => return Err(error),
+        };
+    activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
     session.self_node_id = activation.self_node_id.clone();
     log_service_error(format!(
         "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={} relays={}",
@@ -3025,6 +3066,9 @@ where
         virtual_ip,
         prefix_len,
     }));
+    if runtime.state().network_enabled {
+        activate_control_network_for_session(runtime, &mut session)?;
+    }
     persist_session(&session)
 }
 
@@ -3669,7 +3713,7 @@ fn relay_ticket_timing(now_ms: u64, ticket_expires_at: Option<&str>) -> TicketTi
     ticket_timing_with_window(now_ms, ticket_expires_at, RELAY_TICKET_RENEW_WINDOW_MS)
 }
 
-fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) {
+pub(crate) fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) {
     let Ok(mut session) = load_session() else {
         return;
     };

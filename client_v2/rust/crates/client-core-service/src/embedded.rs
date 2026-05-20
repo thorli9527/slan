@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use client_core::{
     AssignedIpPayload, AuthPayload, ClientCommand, ClientMessageNoticePayload, ClientRuntime,
     ClientViewState, PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig,
-    RelayPeerSession,
+    RelayPeerSession, RouteSpec,
 };
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
@@ -278,11 +278,15 @@ fn platform_network_config() -> Result<Value> {
         .unwrap_or_default();
     let config = PlatformNetworkConfig {
         session_name: "SLAN".to_string(),
-        virtual_ip: activation.virtual_ip,
+        virtual_ip: activation.virtual_ip.clone(),
         prefix_len: activation.prefix_len,
         network_configs: platform_network_configs(&network_configs),
         dns_servers: activation.dns_servers,
-        routes: activation.routes,
+        routes: embedded_routes_with_peer_virtual_ips(
+            activation.routes,
+            &activation.peers,
+            activation.virtual_ip.as_str(),
+        ),
         mtu: Some(1280),
         relay_endpoint_id: best_relay.map(|relay| relay.endpoint_id.clone()),
         relay_transport: best_relay.map(|relay| relay.transport.clone()),
@@ -341,6 +345,31 @@ fn embedded_eligible_relay_peer_count(
         .filter(|peer| peer.relay_allowed)
         .filter(|peer| peer.node_id != local_node_id)
         .count()
+}
+
+fn embedded_routes_with_peer_virtual_ips(
+    mut routes: Vec<RouteSpec>,
+    peers: &[crate::control_plane::ControlPeer],
+    self_ip: &str,
+) -> Vec<RouteSpec> {
+    let self_ip = client_core::normalize_virtual_ip(self_ip);
+    for peer in peers {
+        for ip in &peer.virtual_ips {
+            let peer_ip = client_core::normalize_virtual_ip(ip);
+            if peer_ip.is_empty() || peer_ip == self_ip {
+                continue;
+            }
+            let destination = format!("{peer_ip}/32");
+            if routes.iter().any(|route| route.destination == destination) {
+                continue;
+            }
+            routes.push(RouteSpec {
+                destination,
+                gateway: None,
+            });
+        }
+    }
+    routes
 }
 
 fn build_embedded_relay_data_plane_config(
@@ -442,20 +471,18 @@ fn connect_embedded_control_mqtt_with_session(session: &PersistedSession) -> Res
         .ok_or_else(|| anyhow::anyhow!("mqtt credential is missing after device registration"))?;
     let downstream_topic = format!("{}/control/down", mqtt.topic_prefix.trim_end_matches('/'));
     let device_id = session.device_id.clone();
-    let mut client = ThinControlMqttClient::connect(
-        &ThinMqttCredential {
-            broker_url: embedded_mqtt_broker_url(&mqtt.broker_url),
-            client_id: mqtt.client_id,
-            username: mqtt.username,
-            password: mqtt.password,
-        },
-        &downstream_topic,
-    )
-    .map_err(|error| {
-        let message = format!("connect control mqtt: {error}");
-        set_embedded_mqtt_last_error(Some(message.clone()));
-        anyhow::anyhow!(message)
-    })?;
+    let credential = ThinMqttCredential {
+        broker_url: embedded_mqtt_broker_url(&mqtt.broker_url),
+        client_id: mqtt.client_id,
+        username: mqtt.username,
+        password: mqtt.password,
+    };
+    let mut client = connect_embedded_control_mqtt_with_retry(&credential, &downstream_topic)
+        .map_err(|error| {
+            let message = format!("connect control mqtt: {error}");
+            set_embedded_mqtt_last_error(Some(message.clone()));
+            anyhow::anyhow!(message)
+        })?;
     let network_broadcast_topic = embedded_network_broadcast_topic(&session);
     if let Some(topic) = network_broadcast_topic.as_deref() {
         if let Err(error) = client.subscribe(topic) {
@@ -484,9 +511,31 @@ fn connect_embedded_control_mqtt_with_session(session: &PersistedSession) -> Res
         "deviceId": device_id,
         "downstreamTopic": downstream_topic,
         "networkBroadcastTopic": network_broadcast_topic,
-        "brokerUrl": embedded_mqtt_broker_url(&mqtt.broker_url),
+        "brokerUrl": credential.broker_url,
         "controlStatus": embedded_control_status(),
     }))
+}
+
+fn connect_embedded_control_mqtt_with_retry(
+    credential: &ThinMqttCredential,
+    downstream_topic: &str,
+) -> std::result::Result<ThinControlMqttClient, String> {
+    let mut errors = Vec::new();
+    for attempt in 1..=3 {
+        let suffix = format!("v2-embedded-{}-{attempt}", current_timestamp_ms());
+        match ThinControlMqttClient::connect_with_subscription_suffix(
+            credential,
+            downstream_topic,
+            &suffix,
+        ) {
+            Ok(client) => return Ok(client),
+            Err(error) => {
+                errors.push(format!("attempt {attempt}: {error}"));
+                thread::sleep(Duration::from_millis(250 * attempt as u64));
+            }
+        }
+    }
+    Err(errors.join("; "))
 }
 
 fn set_embedded_mqtt_last_error(error: Option<String>) {
@@ -609,9 +658,20 @@ fn spawn_embedded_mqtt_consumer(
                     let message_type = embedded_downstream_message_type(&publish.payload);
                     let consume_result = ingest_embedded_downstream_publish(&publish.payload);
                     let ack_result = client.ack_publish(&publish);
+                    let business_ack_result = if ack_result.is_ok() {
+                        publish_embedded_downstream_business_ack(
+                            &mut client,
+                            &publish.payload,
+                            consume_result.as_ref().err().map(|error| error.to_string()),
+                        )
+                    } else {
+                        Ok(())
+                    };
+                    let business_ack_failed = business_ack_result.is_err();
                     let last_error = consume_result
                         .err()
                         .map(|error| error.to_string())
+                        .or_else(|| business_ack_result.err())
                         .or_else(|| ack_result.clone().err());
                     update_embedded_mqtt_status(
                         &device_id,
@@ -621,6 +681,9 @@ fn spawn_embedded_mqtt_consumer(
                         last_error.clone(),
                     );
                     if ack_result.is_err() {
+                        break;
+                    }
+                    if business_ack_failed {
                         break;
                     }
                 }
@@ -796,6 +859,59 @@ fn embedded_downstream_message_type(payload: &[u8]) -> Option<String> {
                 .and_then(Value::as_str)
                 .map(str::to_string)
         })
+}
+
+fn publish_embedded_downstream_business_ack(
+    client: &mut ThinControlMqttClient,
+    payload: &[u8],
+    error: Option<String>,
+) -> std::result::Result<(), String> {
+    let value: Value = serde_json::from_slice(payload).map_err(|err| format!("{err}"))?;
+    let Some((delivery_id, action)) = embedded_downstream_ack_identity(&value) else {
+        return Ok(());
+    };
+    let session = load_session().map_err(|err| err.to_string())?;
+    let mqtt = session
+        .mqtt
+        .as_ref()
+        .ok_or_else(|| "embedded mqtt ack missing mqtt credential".to_string())?;
+    let topic = format!("{}/control/ack", mqtt.topic_prefix.trim_end_matches('/'));
+    let status = if error.is_some() {
+        "failed"
+    } else {
+        "succeeded"
+    };
+    let ack = serde_json::json!({
+        "taskId": format!("embedded-{action}-{delivery_id}"),
+        "deliveryId": delivery_id,
+        "action": action,
+        "status": status,
+        "error": error,
+        "processedAtMs": current_timestamp_ms(),
+    });
+    let payload = serde_json::to_vec(&ack).map_err(|err| format!("encode embedded ack: {err}"))?;
+    client.publish(&topic, &payload, ThinMqttQoS::ExactlyOnce)
+}
+
+fn embedded_downstream_ack_identity(value: &Value) -> Option<(String, &'static str)> {
+    let message_type = value.get("type").and_then(Value::as_str)?;
+    let delivery_id = value
+        .get("messageId")
+        .or_else(|| value.get("deliveryId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let action = match message_type {
+        "device_user_login_succeeded" => "deviceUserLoginSucceeded",
+        "network_config_changed" => "refreshNetworkConfig",
+        "device_ip_reassigned" => "refreshNetworkConfig",
+        "device_network_enabled" => "refreshNetworkConfig",
+        "device_network_disabled" => "refreshNetworkConfig",
+        "client_message" => "clientMessage",
+        _ => return None,
+    };
+    Some((delivery_id, action))
 }
 
 fn ingest_embedded_downstream_publish(payload: &[u8]) -> Result<()> {
@@ -1242,6 +1358,15 @@ fn embedded_control_status() -> Value {
 }
 
 fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
+    if matches!(command, ClientCommand::EnableNetwork) {
+        let _ = platform_network_config().context("activate embedded network")?;
+        let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
+        let state = runtime
+            .dispatch(ClientCommand::EnableNetwork)
+            .context("enable embedded network")?;
+        report_runtime_state(&state);
+        return Ok(state);
+    }
     let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
     match command {
         ClientCommand::LoginWithBrowser => {
@@ -1439,6 +1564,32 @@ mod tests {
             .is_some());
         assert!(response.get("ready").and_then(Value::as_bool).is_some());
         assert!(response.get("missing").and_then(Value::as_array).is_some());
+    }
+
+    #[test]
+    fn embedded_login_downstream_ack_identity_uses_message_id() {
+        let value = serde_json::json!({
+            "type": "device_user_login_succeeded",
+            "messageId": "login-msg-1",
+            "payload": {
+                "deviceId": "dev-1"
+            }
+        });
+
+        let identity = super::embedded_downstream_ack_identity(&value).expect("ack identity");
+
+        assert_eq!(identity.0, "login-msg-1");
+        assert_eq!(identity.1, "deviceUserLoginSucceeded");
+    }
+
+    #[test]
+    fn embedded_unknown_downstream_has_no_business_ack() {
+        let value = serde_json::json!({
+            "type": "unknown_message",
+            "messageId": "msg-1"
+        });
+
+        assert!(super::embedded_downstream_ack_identity(&value).is_none());
     }
 
     #[test]

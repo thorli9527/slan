@@ -17,13 +17,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     let config = SLANIosSharedStore.readNetworkConfig()
       ?? (protocolConfiguration as? NETunnelProviderProtocol)?
       .providerConfiguration ?? [:]
-    guard let virtualIp = config["virtualIp"] as? String, !virtualIp.isEmpty else {
+    guard var virtualIp = config["virtualIp"] as? String, !virtualIp.isEmpty else {
       completionHandler(PacketTunnelError("missing virtualIp"))
       return
     }
+    let prefixLen = Self.addressPrefixLen(config: config, virtualIp: &virtualIp)
 
     let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "10.255.0.1")
-    let ipv4 = NEIPv4Settings(addresses: [virtualIp], subnetMasks: ["255.255.255.255"])
+    let ipv4 = NEIPv4Settings(addresses: [virtualIp], subnetMasks: [Self.mask(prefixLen)])
     routeTable = Self.routeEntries(config["routes"])
     let routes = routeTable.map {
       NEIPv4Route(destinationAddress: $0.destination, subnetMask: $0.mask)
@@ -56,10 +57,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         self.relayRuntime?.start()
         self.persistStats()
         os_log(
-          "SLAN PacketTunnel started virtualIp=%{public}@ routes=%{public}d relaySessions=%{public}d",
+          "SLAN PacketTunnel started virtualIp=%{public}@/%{public}d routes=%{public}d relaySessions=%{public}d",
           log: Self.logger,
           type: .info,
           virtualIp,
+          prefixLen,
           self.routeTable.count,
           self.tunnelStats.relaySessionCount
         )
@@ -179,6 +181,32 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         network: parsed.network,
         prefix: parsed.prefix
       )
+    }
+  }
+
+  private static func addressPrefixLen(config: [String: Any], virtualIp: inout String) -> Int {
+    if let parsed = parseCidr(virtualIp) {
+      virtualIp = parsed.address
+      return parsed.prefix
+    }
+    for key in ["prefixLen", "prefixLength", "subnetPrefixLen", "subnetPrefixLength"] {
+      if let prefix = intValue(config[key]), (0...32).contains(prefix) {
+        return prefix
+      }
+    }
+    return 32
+  }
+
+  private static func intValue(_ value: Any?) -> Int? {
+    switch value {
+    case let value as Int:
+      return value
+    case let value as NSNumber:
+      return value.intValue
+    case let value as String:
+      return Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+    default:
+      return nil
     }
   }
 
@@ -623,13 +651,25 @@ private final class RelayPeerRuntime {
         }
         if let packet = RelayRuntime.decodeFrame(data) {
           self.framesReceived += 1
-          self.packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)])
-          self.packetsWritten += 1
+          self.writePacketToFlow(packet)
         }
       }
       if self.ready {
         self.receive()
       }
+    }
+  }
+
+  private func writePacketToFlow(_ packet: Data, attempt: Int = 0) {
+    if packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)]) {
+      packetsWritten += 1
+      return
+    }
+    guard attempt < 50 else {
+      return
+    }
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.002) { [weak self] in
+      self?.writePacketToFlow(packet, attempt: attempt + 1)
     }
   }
 

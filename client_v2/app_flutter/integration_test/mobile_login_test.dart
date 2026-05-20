@@ -23,6 +23,10 @@ void main() {
       'SLAN_TEST_CHECK_SWITCH',
       defaultValue: false,
     );
+    const requireTunnelState = bool.fromEnvironment(
+      'SLAN_TEST_REQUIRE_TUNNEL_STATE',
+      defaultValue: false,
+    );
     const reenableNetwork = bool.fromEnvironment(
       'SLAN_TEST_REENABLE_NETWORK',
       defaultValue: false,
@@ -174,9 +178,11 @@ void main() {
       expect(ipText, isNotEmpty);
       expect(ipText, isNot('未启用'));
       debugPrint('SLAN_TEST_NETWORK_IP=$ipText');
-      await tester.logPlatformTunnelState();
+      if (requireTunnelState) {
+        await tester.logPlatformTunnelState();
+      }
       if (postEnableWaitSeconds > 0) {
-        await tester.pump(Duration(seconds: postEnableWaitSeconds));
+        await Future<void>.delayed(Duration(seconds: postEnableWaitSeconds));
       }
     }
 
@@ -561,9 +567,8 @@ extension on WidgetTester {
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     try {
       debugPrint('SLAN_TEST_UDP_SEND_TARGET=$host:$port body=$body');
-      socket.send(utf8.encode(body), InternetAddress(host), port);
       final expected = 'echo:$body';
-      final received = await socket
+      final receiveFuture = socket
           .where((event) => event == RawSocketEvent.read)
           .map((_) => socket.receive())
           .where((datagram) => datagram != null)
@@ -575,6 +580,8 @@ extension on WidgetTester {
         await logPlatformTunnelState(prefix: 'SLAN_TEST_UDP_TIMEOUT_STATE');
         throw error;
       });
+      socket.send(utf8.encode(body), InternetAddress(host), port);
+      final received = await receiveFuture;
       if (received != expected) {
         fail('unexpected UDP echo response: got="$received" want="$expected"');
       }
@@ -588,12 +595,14 @@ extension on WidgetTester {
     final server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
     server.listen((socket) {
       socket.listen(
-        (data) {
+        (data) async {
           final body = utf8.decode(data);
           debugPrint(
             'SLAN_TEST_TCP_ECHO_RECEIVED=${socket.remoteAddress.address}:${socket.remotePort} body=$body',
           );
           socket.write('echo:$body');
+          await socket.flush();
+          await socket.close();
         },
         onDone: () => socket.destroy(),
         onError: (_) => socket.destroy(),
@@ -620,7 +629,14 @@ extension on WidgetTester {
     Socket? socket;
     try {
       debugPrint('SLAN_TEST_TCP_SEND_TARGET=$host:$port body=$body');
-      socket = await Socket.connect(host, port, timeout: timeout);
+      try {
+        socket = await Socket.connect(host, port, timeout: timeout);
+      } on Object catch (error) {
+        debugPrint('SLAN_TEST_TCP_CONNECT_ERROR=$error');
+        await logPlatformTunnelState(
+            prefix: 'SLAN_TEST_TCP_CONNECT_ERROR_STATE');
+        rethrow;
+      }
       socket.write(body);
       await socket.flush();
       final expected = 'echo:$body';
@@ -635,6 +651,10 @@ extension on WidgetTester {
         fail('unexpected TCP echo response: got="$received" want="$expected"');
       }
       debugPrint('SLAN_TEST_TCP_ECHO_OK=$target');
+    } on Object catch (error) {
+      debugPrint('SLAN_TEST_TCP_ERROR=$error');
+      await logPlatformTunnelState(prefix: 'SLAN_TEST_TCP_ERROR_STATE');
+      rethrow;
     } finally {
       socket?.destroy();
     }

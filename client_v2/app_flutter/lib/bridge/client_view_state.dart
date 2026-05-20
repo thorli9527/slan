@@ -56,7 +56,7 @@ class ClientViewState {
       signedIn: json['signedIn'] == true,
       userLabel: json['userLabel'] as String?,
       deviceId: json['deviceId'] as String?,
-      virtualIp: networkEnabled ? json['virtualIp'] as String? : null,
+      virtualIp: networkEnabled ? _virtualIp(json['virtualIp']) : null,
       networkEnabled: networkEnabled,
       syncing: json['syncing'] == true,
       syncReason: json['syncReason'] as String?,
@@ -103,7 +103,9 @@ class ClientViewState {
       signedIn: signedIn ?? this.signedIn,
       userLabel: userLabel ?? this.userLabel,
       deviceId: deviceId ?? this.deviceId,
-      virtualIp: clearVirtualIp ? null : virtualIp ?? this.virtualIp,
+      virtualIp: clearVirtualIp
+          ? null
+          : _virtualIp(virtualIp) ?? _virtualIp(this.virtualIp),
       networkEnabled: networkEnabled ?? this.networkEnabled,
       syncing: syncing ?? this.syncing,
       syncReason: clearSyncReason ? null : syncReason ?? this.syncReason,
@@ -189,6 +191,14 @@ class ClientViewState {
     }
     return null;
   }
+}
+
+String? _virtualIp(Object? value) {
+  final text = value is String ? value.trim() : '';
+  if (text.isEmpty) {
+    return null;
+  }
+  return text.split('/').first.trim();
 }
 
 abstract final class ClientErrorSource {

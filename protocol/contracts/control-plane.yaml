@@ -1,6 +1,6 @@
 version: 1
 slice: control-plane
-source_of_truth: server/server-biz/api/dto
+source_of_truth: server/service-biz/internal/biz
 contracts:
   BootstrapRequest:
     fields:

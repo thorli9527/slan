@@ -34,6 +34,8 @@ impl ControlTaskDirection {
 pub enum ControlTaskAction {
     EnableNetwork,
     DisableNetwork,
+    RefreshNetworkConfig,
+    DeviceUserLoginSucceeded,
 }
 
 impl ControlTaskAction {
@@ -41,6 +43,8 @@ impl ControlTaskAction {
         match self {
             Self::EnableNetwork => "enableNetwork",
             Self::DisableNetwork => "disableNetwork",
+            Self::RefreshNetworkConfig => "refreshNetworkConfig",
+            Self::DeviceUserLoginSucceeded => "deviceUserLoginSucceeded",
         }
     }
 
@@ -48,6 +52,8 @@ impl ControlTaskAction {
         match value {
             "enableNetwork" => Some(Self::EnableNetwork),
             "disableNetwork" => Some(Self::DisableNetwork),
+            "refreshNetworkConfig" => Some(Self::RefreshNetworkConfig),
+            "deviceUserLoginSucceeded" => Some(Self::DeviceUserLoginSucceeded),
             _ => None,
         }
     }
@@ -189,6 +195,19 @@ impl ControlTaskQueue {
             action: action.as_str().to_string(),
             direction: ControlTaskDirection::Downstream.as_str().to_string(),
             delivery_id: Some(delivery_id.into()),
+            require_ui_refresh,
+        })
+    }
+
+    pub fn enqueue_downstream_unacked(
+        &mut self,
+        action: ControlTaskAction,
+        require_ui_refresh: bool,
+    ) -> Result<ControlTask> {
+        self.enqueue(EnqueueControlTaskRequest {
+            action: action.as_str().to_string(),
+            direction: ControlTaskDirection::Downstream.as_str().to_string(),
+            delivery_id: None,
             require_ui_refresh,
         })
     }
@@ -428,4 +447,133 @@ fn current_timestamp_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn queue_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "slan-control-tasks-{name}-{}-{}.xml",
+            std::process::id(),
+            current_timestamp_ms()
+        ));
+        let _ = fs::remove_file(&path);
+        path
+    }
+
+    fn queue(name: &str) -> ControlTaskQueue {
+        ControlTaskQueue {
+            path: queue_path(name),
+            tasks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn downstream_delivery_id_is_idempotent() {
+        let mut queue = queue("idempotent");
+
+        let first = queue
+            .enqueue_downstream(ControlTaskAction::EnableNetwork, "delivery-1", true)
+            .expect("enqueue first downstream task");
+        let second = queue
+            .enqueue_downstream(ControlTaskAction::EnableNetwork, "delivery-1", false)
+            .expect("enqueue duplicate downstream task");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(queue.tasks.len(), 1);
+        assert_eq!(queue.tasks[0].delivery_id.as_deref(), Some("delivery-1"));
+        assert!(!queue.tasks[0].require_ui_refresh);
+    }
+
+    #[test]
+    fn refresh_network_config_action_round_trips() {
+        assert_eq!(
+            ControlTaskAction::from_str("refreshNetworkConfig"),
+            Some(ControlTaskAction::RefreshNetworkConfig)
+        );
+        assert_eq!(
+            ControlTaskAction::RefreshNetworkConfig.as_str(),
+            "refreshNetworkConfig"
+        );
+    }
+
+    #[test]
+    fn device_user_login_succeeded_action_round_trips() {
+        assert_eq!(
+            ControlTaskAction::from_str("deviceUserLoginSucceeded"),
+            Some(ControlTaskAction::DeviceUserLoginSucceeded)
+        );
+        assert_eq!(
+            ControlTaskAction::DeviceUserLoginSucceeded.as_str(),
+            "deviceUserLoginSucceeded"
+        );
+    }
+
+    #[test]
+    fn downstream_ack_lifecycle_only_reports_unacknowledged_terminal_tasks() {
+        let mut queue = queue("ack-lifecycle");
+        let succeeded = queue
+            .enqueue_downstream(ControlTaskAction::EnableNetwork, "delivery-ok", false)
+            .expect("enqueue succeeded task");
+        let failed = queue
+            .enqueue_downstream(ControlTaskAction::DisableNetwork, "delivery-failed", false)
+            .expect("enqueue failed task");
+
+        assert!(queue.pending_downstream_acks().is_empty());
+
+        queue
+            .mark_succeeded(&succeeded.id)
+            .expect("mark task succeeded");
+        queue
+            .mark_failed(&failed.id, "configure failed".to_string())
+            .expect("mark task failed");
+
+        let acks = queue.pending_downstream_acks();
+        assert_eq!(acks.len(), 2);
+        assert!(acks.iter().any(|task| {
+            task.delivery_id.as_deref() == Some("delivery-ok")
+                && task.status == ControlTaskStatus::Succeeded
+        }));
+        assert!(acks.iter().any(|task| {
+            task.delivery_id.as_deref() == Some("delivery-failed")
+                && task.status == ControlTaskStatus::Failed
+                && task.error.as_deref() == Some("configure failed")
+        }));
+
+        queue
+            .mark_acknowledged(&succeeded.id)
+            .expect("ack succeeded task");
+        let acks = queue.pending_downstream_acks();
+        assert_eq!(acks.len(), 1);
+        assert_eq!(acks[0].delivery_id.as_deref(), Some("delivery-failed"));
+    }
+
+    #[test]
+    fn downstream_tasks_restore_pending_ack_after_restart() {
+        let path = queue_path("restore");
+        let mut before_restart = ControlTaskQueue {
+            path: path.clone(),
+            tasks: Vec::new(),
+        };
+        let task = before_restart
+            .enqueue_downstream(ControlTaskAction::EnableNetwork, "delivery-restore", false)
+            .expect("enqueue downstream task");
+        before_restart
+            .mark_succeeded(&task.id)
+            .expect("mark task succeeded");
+
+        let after_restart = ControlTaskQueue {
+            path,
+            tasks: parse_tasks(&fs::read_to_string(&before_restart.path).expect("read task file")),
+        };
+
+        let acks = after_restart.pending_downstream_acks();
+        assert_eq!(acks.len(), 1);
+        assert_eq!(acks[0].id, task.id);
+        assert_eq!(acks[0].delivery_id.as_deref(), Some("delivery-restore"));
+        assert_eq!(acks[0].status, ControlTaskStatus::Succeeded);
+    }
 }

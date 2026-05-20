@@ -6,7 +6,7 @@
 
 Flutter owns:
 
-- Login entry and browser callback handoff
+- Login entry and browser-to-client MQTT handoff
 - Current account, current IP, network enabled/syncing/error UI
 - Enable/disable intent from the switch
 - Web Console button
@@ -29,7 +29,7 @@ Rust `client-core-service` owns:
 - IP, DNS, and route operations
 - System network inspection
 
-Flutter must not directly generate mesh config, consume MQTT tasks, poll helper internals, or manipulate DNS/routes/adapters.
+Flutter must not directly generate mesh config, consume MQTT tasks, read helper internals, or manipulate DNS/routes/adapters.
 
 ## Layout
 
@@ -78,7 +78,7 @@ The service stores MQTT credentials in the local session after login/device regi
 - MQTT workers should feed received QoS 2 control payloads into `ingestDownstreamControlMessage`; the method only returns after the downstream XML task is durably accepted.
 - After a downstream task reaches `succeeded` or `failed`, MQTT workers read `localPendingControlAcks`, publish the app-level ACK on the QoS 2 ack topic, then call `localMarkControlAcked`.
 - MQTT workers can read `localControlOutbox` to get already-shaped publish messages: heartbeat/runtime state use QoS 0, control ACK uses QoS 2.
-- `localControlOutbox` accepts `includeHeartbeat`, `includeRuntimeState`, and `includeControlAcks` flags so workers can poll ACKs frequently without resending heartbeat/runtime state.
+- `localControlOutbox` accepts `includeHeartbeat`, `includeRuntimeState`, and `includeControlAcks` flags so workers can request ACKs frequently without resending heartbeat/runtime state.
 - After each outbox message is published, workers call `localMarkTransportPublished` with the message `id`; only `controlAck` messages update XML `acknowledgedAtMs`.
 - XML control tasks are split into `upstreamTasks` and `downstreamTasks`.
   - `upstreamTasks`: local/UI intents or client-originated requests, such as clicking the switch. These may call control-plane activate/deactivate before local network changes.
@@ -100,7 +100,7 @@ Worker loop contract:
 1. Wait until `localControlStatus.ready` is true.
 2. Subscribe to `localControlPlan.downstreamControlTopic` with QoS 2.
 3. For every received control payload, call `ingestDownstreamControlMessage`; only then complete the MQTT QoS 2 receive handshake.
-4. Call `localControlTickPlan` with the worker's last publish timestamps, then poll `localControlOutbox` with the returned flags:
+4. Call `localControlTickPlan` with the worker's last publish timestamps, then query `localControlOutbox` with the returned flags:
    - Frequent ACK flush: `includeHeartbeat=false`, `includeRuntimeState=false`, `includeControlAcks=true`.
    - Heartbeat tick: `includeHeartbeat=true`, `includeRuntimeState=false`, `includeControlAcks=true`.
    - Runtime tick: `includeHeartbeat=false`, `includeRuntimeState=true`, `includeControlAcks=true`.

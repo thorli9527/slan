@@ -1,6 +1,6 @@
 # Token / 会话设计（生产建议）
 
-本文档给出 `server-biz` 在生产环境的 token 与会话管理建议，用于落地以下目标：
+本文档给出 `service-biz` 在生产环境的 token 与会话管理建议，用于落地以下目标：
 
 - access/refresh TTL 可配置
 - refresh rotation + reuse detection
@@ -15,8 +15,8 @@
 - 认证：仅校验 `access_token:{token}` 是否存在并取回 userId
 
 落点参考：
-- token 签发与写入：[db_access.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/service/db_access.go)
-- Redis token store：[redis.go](file:///Users/thorli/workspace/slan/server/server-biz/internal/repo/redis.go)
+- token 签发与写入：[db_access.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/service/db_access.go)
+- Redis token store：[redis.go](file:///Users/thorli/workspace/slan/server/service-biz/internal/repo/redis.go)
 
 ## 1. TTL 配置化
 

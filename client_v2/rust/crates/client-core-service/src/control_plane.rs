@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use client_core::{AuthPayload, RelayTicket, RouteSpec};
+use client_core::{normalize_virtual_ip, AuthPayload, RelayTicket, RouteSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -413,14 +413,15 @@ impl ControlPlaneClient {
         device_id: &str,
         platform: &str,
     ) -> Result<DeviceLoginPrepareResponse> {
-        let response = self.request_json_without_auth(
-            "POST",
-            "/api/auth/device-login-devices",
-            Some(serde_json::json!({
-                "deviceId": device_id.trim(),
-                "platform": platform.trim(),
-            })),
-        )?;
+        let mut body = register_device_body(device_id)?;
+        if let Some(object) = body.as_object_mut() {
+            object.insert(
+                "platform".to_string(),
+                Value::String(platform.trim().to_string()),
+            );
+        }
+        let response =
+            self.request_json_without_auth("POST", "/api/auth/device-login-devices", Some(body))?;
         serde_json::from_value(response).context("decode device login prepare")
     }
 
@@ -759,6 +760,7 @@ fn decode_control_json(response: &[u8]) -> Result<Value> {
 fn register_device_body(device_id: &str) -> Result<Value> {
     let device_id = device_id.trim();
     let device_name = device_name();
+    let public_key = local_device_public_key(device_id)?;
     serde_json::to_value(RegisterDeviceRequest {
         device_id: device_id.to_string(),
         name: device_name.clone(),
@@ -768,7 +770,7 @@ fn register_device_body(device_id: &str) -> Result<Value> {
         alias: device_name,
         device_version: env!("CARGO_PKG_VERSION").to_string(),
         country_code: device_country_code(),
-        public_key: format!("client-v2-{device_id}"),
+        public_key,
     })
     .context("encode register device request")
 }
@@ -876,7 +878,7 @@ fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActiva
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
+        .map(normalize_virtual_ip)
         .ok_or_else(|| {
             anyhow::anyhow!("device unavailable: current device has no assigned global IP")
         })?;
@@ -890,7 +892,7 @@ fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActiva
         });
     Ok(NetworkActivationPlan {
         virtual_ip,
-        prefix_len: 8,
+        prefix_len: network_config_prefix_len(response).unwrap_or(32),
         dns_servers: extract_dns_servers(response),
         routes: network_config_routes(response),
         relay_candidates: extract_relay_candidates(response),
@@ -898,6 +900,15 @@ fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActiva
         peers,
         peer_count,
     })
+}
+
+fn network_config_prefix_len(response: &Value) -> Option<u8> {
+    response
+        .get("prefixLen")
+        .or_else(|| response.get("prefixLength"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+        .filter(|value| *value <= 32)
 }
 
 fn network_config_control_peers(response: &Value) -> Vec<ControlPeer> {
@@ -1335,6 +1346,27 @@ pub fn local_stable_device_id() -> Result<String> {
     stable_device_id(None)
 }
 
+fn local_device_public_key(device_id: &str) -> Result<String> {
+    let path = state_dir().join("client-v2-device-public-key.txt");
+    device_public_key_at_path(&path, device_id)
+}
+
+fn device_public_key_at_path(path: &std::path::Path, device_id: &str) -> Result<String> {
+    let legacy = format!("client-v2-{}", device_id.trim());
+    if let Ok(value) = fs::read_to_string(path) {
+        let value = value.trim();
+        if is_strong_device_public_key(value) && value != legacy {
+            return Ok(value.to_string());
+        }
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let created = random_device_public_key();
+    fs::write(path, &created).with_context(|| format!("write {}", path.display()))?;
+    Ok(created)
+}
+
 pub fn reset_local_device_id() -> Result<String> {
     let path = state_dir().join("client-v2-device-id.txt");
     reset_device_id_at_path(&path)
@@ -1379,6 +1411,50 @@ fn os_random_bytes() -> Option<[u8; 16]> {
     let mut file = fs::File::open("/dev/urandom").ok()?;
     file.read_exact(&mut bytes).ok()?;
     Some(bytes)
+}
+
+fn os_random_32_bytes() -> Option<[u8; 32]> {
+    let mut bytes = [0_u8; 32];
+    let mut file = fs::File::open("/dev/urandom").ok()?;
+    file.read_exact(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+fn random_device_public_key() -> String {
+    if let Some(bytes) = os_random_32_bytes() {
+        return "pk_".to_string() + &hex_bytes(&bytes);
+    }
+    let seed = format!(
+        "{}:{}:{}:{}:{:?}",
+        platform_name(),
+        device_name(),
+        std::process::id(),
+        current_timestamp_seconds(),
+        std::time::SystemTime::now()
+    );
+    let mut bytes = [0_u8; 32];
+    for (index, byte) in seed.as_bytes().iter().enumerate() {
+        bytes[index % 32] ^= byte.wrapping_add(index as u8);
+        bytes[(index * 11) % 32] = bytes[(index * 11) % 32]
+            .wrapping_mul(31)
+            .wrapping_add(*byte);
+    }
+    "pk_".to_string() + &hex_bytes(&bytes)
+}
+
+fn is_strong_device_public_key(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("pk_") else {
+        return false;
+    };
+    hex.len() >= 64 && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[cfg(windows)]
@@ -1524,7 +1600,10 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::{decode_control_json, stable_device_id_at_path, ControlPlaneClient};
+    use super::{
+        decode_control_json, device_public_key_at_path, is_strong_device_public_key,
+        stable_device_id_at_path, ControlPlaneClient,
+    };
 
     static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -1621,6 +1700,25 @@ mod tests {
 
         let _ = fs::remove_dir_all(first_state_dir);
         let _ = fs::remove_dir_all(second_state_dir);
+    }
+
+    #[test]
+    fn device_public_key_is_random_persisted_and_replaces_legacy_value() {
+        let state_dir = unique_test_state_dir("device-public-key");
+        let path = state_dir.join("client-v2-device-public-key.txt");
+        let device_id = "11111111-1111-4111-8111-111111111111";
+        let first = device_public_key_at_path(&path, device_id).expect("create public key");
+        let second = device_public_key_at_path(&path, device_id).expect("reuse public key");
+        assert_eq!(first, second);
+        assert!(is_strong_device_public_key(&first));
+        assert_ne!(first, format!("client-v2-{device_id}"));
+
+        fs::write(&path, format!("client-v2-{device_id}")).expect("write legacy public key");
+        let replaced = device_public_key_at_path(&path, device_id).expect("replace legacy key");
+        assert!(is_strong_device_public_key(&replaced));
+        assert_ne!(replaced, format!("client-v2-{device_id}"));
+
+        let _ = fs::remove_dir_all(state_dir);
     }
 
     fn assert_uuid_v4(value: &str) {

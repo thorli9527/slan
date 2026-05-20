@@ -15,7 +15,7 @@ Phase 1 should prove the shortest usable loop for SLAN:
 
 ## Scope
 
-### `server-biz`
+### `service-biz`
 
 - User registration and login.
 - JWT authentication.

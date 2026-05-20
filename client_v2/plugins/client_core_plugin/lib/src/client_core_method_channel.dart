@@ -38,8 +38,8 @@ class ClientCorePlugin {
     return _invokeNativeOnly('androidRuntimeState');
   }
 
-  Future<AndroidNetworkEvent?> androidPollNetworkEvent() async {
-    final result = await _invokeNativeOnly('androidPollNetworkEvent');
+  Future<AndroidNetworkEvent?> androidWatchNetworkEvent() async {
+    final result = await _invokeNativeOnly('androidWatchNetworkEvent');
     final json = _jsonMap(result);
     return json == null ? null : AndroidNetworkEvent.fromJson(json);
   }

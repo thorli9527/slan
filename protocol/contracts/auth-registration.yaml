@@ -1,6 +1,6 @@
 version: 1
 slice: auth-registration
-source_of_truth: server/server-biz/api/dto
+source_of_truth: server/service-biz/internal/biz
 contracts:
   RegisterRequest:
     fields:
@@ -43,39 +43,68 @@ contracts:
       expiresIn:
         type: int64
         required: true
-  CompleteAuthCallbackRequest:
+  DeviceLoginPrepareRequest:
+    fields:
+      deviceId:
+        type: string
+        required: true
+      name:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      osName:
+        type: string
+        required: false
+      osVersion:
+        type: string
+        required: false
+      alias:
+        type: string
+        required: false
+      deviceVersion:
+        type: string
+        required: false
+      countryCode:
+        type: string
+        required: false
+      publicKey:
+        type: string
+        required: true
+        notes: random installation-level device identity; must not be client-v2-<deviceId>
+  DeviceLoginPrepareResponse:
+    fields:
+      deviceId:
+        type: string
+        required: true
+      loginUrl:
+        type: string
+        required: true
+      mqtt:
+        type: MQTTCredential
+        required: false
+  DeviceLoginCompleteRequest:
     fields:
       accessToken:
         type: string
-        required: true
-      userId:
-        type: string
-        required: true
-      refreshToken:
-        type: string
         required: false
-      expiresIn:
-        type: int64
-        required: true
-      deviceId:
-        type: string
-        required: false
-      userLabel:
+      token:
         type: string
         required: false
       action:
         type: string
         required: false
-  AuthCallbackStatusResponse:
+  DeviceLoginCompleteResponse:
     fields:
-      callbackId:
+      status:
         type: string
         required: true
-      ready:
-        type: bool
+      deviceId:
+        type: string
         required: true
-      payload:
-        type: CompleteAuthCallbackRequest
+      deliveryId:
+        type: string
         required: false
   RegisterDeviceRequest:
     fields:

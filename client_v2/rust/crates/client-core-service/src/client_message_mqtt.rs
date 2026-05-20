@@ -1,3 +1,5 @@
+use std::{thread, time::Duration};
+
 use anyhow::{bail, Context, Result};
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
 use serde_json::Value;
@@ -43,27 +45,46 @@ pub(crate) fn publish_client_message(
     });
     let body = serde_json::to_vec(&envelope).context("encode client message mqtt envelope")?;
     let topic = format!("{}/control/up", mqtt.topic_prefix.trim_end_matches('/'));
-    let mut client = ThinControlMqttClient::connect_without_subscription(
-        &ThinMqttCredential {
-            broker_url: mqtt.broker_url.clone(),
-            client_id: mqtt.client_id.clone(),
-            username: mqtt.username.clone(),
-            password: mqtt.password.clone(),
-        },
-        "v2-publisher",
-    )
-    .map_err(|err| anyhow::anyhow!(err))
-    .context("connect mqtt publisher")?;
-    client
-        .publish(&topic, &body, ThinMqttQoS::ExactlyOnce)
+    let credential = ThinMqttCredential {
+        broker_url: mqtt.broker_url.clone(),
+        client_id: mqtt.client_id.clone(),
+        username: mqtt.username.clone(),
+        password: mqtt.password.clone(),
+    };
+    let mut errors = Vec::new();
+    for attempt in 1..=3 {
+        let suffix = format!("v2-publisher-{}-{attempt}", current_timestamp_ms());
+        match publish_once(&credential, &suffix, &topic, &body) {
+            Ok(()) => {
+                return Ok(serde_json::json!({
+                    "messageId": message_id,
+                    "transport": "mqtt",
+                    "qos": 2,
+                    "topic": topic,
+                }));
+            }
+            Err(error) => {
+                errors.push(format!("attempt {attempt}: {error:#}"));
+                thread::sleep(Duration::from_millis(250 * attempt));
+            }
+        }
+    }
+    bail!("publish client message mqtt failed: {}", errors.join("; "));
+}
+
+fn publish_once(
+    credential: &ThinMqttCredential,
+    client_suffix: &str,
+    topic: &str,
+    body: &[u8],
+) -> Result<()> {
+    let mut client = ThinControlMqttClient::connect_without_subscription(credential, client_suffix)
         .map_err(|err| anyhow::anyhow!(err))
-        .context("publish client message mqtt")?;
-    Ok(serde_json::json!({
-        "messageId": message_id,
-        "transport": "mqtt",
-        "qos": 2,
-        "topic": topic,
-    }))
+        .context("connect mqtt publisher")?;
+    client
+        .publish(topic, body, ThinMqttQoS::ExactlyOnce)
+        .map_err(|err| anyhow::anyhow!(err))
+        .context("publish client message mqtt")
 }
 
 pub(crate) fn parse_client_ping_body(body: &str) -> Option<(String, u64)> {

@@ -53,7 +53,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 self.state.device_id = payload.device_id;
                 self.state.virtual_ip = payload
                     .virtual_ip
-                    .filter(|value| !value.trim().is_empty())
+                    .and_then(|value| normalize_virtual_ip(&value))
                     .or(self.state.virtual_ip.take());
                 self.state.notice = Some("signedIn".to_string());
             }
@@ -78,15 +78,16 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 })?;
             }
             ClientCommand::SyncAssignedIp(payload) => {
-                let virtual_ip = payload.virtual_ip.trim();
-                if virtual_ip.is_empty() {
+                let virtual_ip = normalize_virtual_ip(&payload.virtual_ip);
+                if virtual_ip.is_none() {
                     self.state.error = Some("assigned virtual IP is empty".to_string());
                 } else {
+                    let virtual_ip = virtual_ip.expect("checked non-empty virtual ip");
                     if self.state.network_enabled {
                         self.platform
-                            .configure_ip(virtual_ip, payload.prefix_len.unwrap_or(32))?;
+                            .configure_ip(&virtual_ip, payload.prefix_len.unwrap_or(32))?;
                     }
-                    self.state.virtual_ip = Some(virtual_ip.to_string());
+                    self.state.virtual_ip = Some(virtual_ip);
                     self.state.notice = Some("assignedIpSynced".to_string());
                 }
             }
@@ -94,7 +95,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 self.state.network_enabled = runtime_state.network_enabled;
                 self.state.virtual_ip = runtime_state
                     .virtual_ip
-                    .filter(|value| !value.trim().is_empty())
+                    .and_then(|value| normalize_virtual_ip(&value))
                     .or_else(|| {
                         if runtime_state.network_enabled {
                             self.state.virtual_ip.take()
@@ -139,7 +140,9 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         }
         let runtime_state = self.platform.read_runtime_state()?;
         self.state.network_enabled = runtime_state.network_enabled;
-        self.state.virtual_ip = runtime_state.virtual_ip;
+        self.state.virtual_ip = runtime_state
+            .virtual_ip
+            .and_then(|value| normalize_virtual_ip(&value));
         Ok(())
     }
 
@@ -188,5 +191,37 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
             self.state.error = Some(error.to_string());
         }
         result
+    }
+}
+
+fn normalize_virtual_ip(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let ip = trimmed.split_once('/').map_or(trimmed, |(ip, _)| ip.trim());
+    ip.split_whitespace()
+        .next()
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_virtual_ip;
+
+    #[test]
+    fn normalizes_cidr_virtual_ip() {
+        assert_eq!(
+            normalize_virtual_ip(" 10.0.0.1/32 "),
+            Some("10.0.0.1".to_string())
+        );
+        assert_eq!(
+            normalize_virtual_ip("10.0.0.6/32 extra"),
+            Some("10.0.0.6".to_string())
+        );
+        assert_eq!(
+            normalize_virtual_ip("10.0.0.9"),
+            Some("10.0.0.9".to_string())
+        );
+        assert_eq!(normalize_virtual_ip(" /32 "), None);
+        assert_eq!(normalize_virtual_ip(" "), None);
     }
 }

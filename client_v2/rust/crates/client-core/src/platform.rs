@@ -67,7 +67,7 @@ pub enum AndroidVpnPermissionState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AndroidVpnConsentRequest {
-    pub callback_id: String,
+    pub request_id: String,
     pub message: Option<String>,
 }
 

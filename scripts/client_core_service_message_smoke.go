@@ -44,7 +44,7 @@ func main() {
 	var fromPlatform string
 	var targetPlatform string
 	var timeout time.Duration
-	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "server-biz base URL")
+	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
 	flag.StringVar(&serviceBin, "service-bin", envDefault("SLAN_CLIENT_CORE_SERVICE_BIN", "client_v2/rust/target/debug/client-core-service"), "client-core-service binary")
 	flag.StringVar(&password, "password", "Password123!", "test user password")
 	flag.StringVar(&fromPlatform, "from-platform", "mac", "source service platform label")

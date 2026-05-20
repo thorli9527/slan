@@ -78,10 +78,10 @@ func main() {
 	var checkMessages bool
 	var clientCount int
 	var timeout time.Duration
-	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "server-biz base URL")
+	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
 	flag.StringVar(&serviceBin, "service-bin", envDefault("SLAN_CLIENT_CORE_SERVICE_BIN", "client_v2/rust/target/debug/client-core-service"), "client-core-service binary")
 	flag.StringVar(&password, "password", "Password123!", "test user password")
-	flag.StringVar(&expectMQTTHost, "expect-mqtt-host", envDefault("SLAN_EXPECT_MQTT_HOST", ""), "expected public MQTT broker host returned by server-biz")
+	flag.StringVar(&expectMQTTHost, "expect-mqtt-host", envDefault("SLAN_EXPECT_MQTT_HOST", ""), "expected public MQTT broker host returned by service-biz")
 	flag.BoolVar(&checkMessages, "check-messages", false, "also verify MQTT client_message delivery")
 	flag.IntVar(&clientCount, "clients", 2, "number of logical iOS clients to start")
 	flag.DurationVar(&timeout, "timeout", 75*time.Second, "integration timeout")

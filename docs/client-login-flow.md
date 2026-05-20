@@ -4,11 +4,11 @@ This document is the source of truth for client login behavior.
 
 ## Browser Login From Client
 
-Client login uses device-scoped MQTT delivery. It does not use HTTP polling and does not use callback IDs.
+Client login uses device-scoped MQTT delivery. It does not wait for login completion through repeated server requests.
 
 1. Client service resolves the stable local `deviceId`.
-2. Client service calls `POST /api/auth/device-login-devices` with `deviceId`.
-3. Server returns MQTT credentials and a login URL.
+2. Client service calls `POST /api/auth/device-login-devices` with `deviceId`, platform metadata, and public key.
+3. Server registers a pre-login device if it does not exist. If the device already exists, the server reuses it. The server then returns MQTT credentials and a login URL.
 4. Client opens Web Console with only:
 
 ```text
@@ -18,14 +18,15 @@ Client login uses device-scoped MQTT delivery. It does not use HTTP polling and 
 5. If the browser already has a valid Web Console session, Web Console completes client login immediately.
 6. If the browser is not signed in, Web Console signs in first, then completes client login.
 7. Web Console calls `POST /api/auth/device-login-devices/{deviceId}/complete`.
-8. Server binds the browser user to the target device and publishes `auth_callback` to that device's MQTT topic.
-9. Client consumes `auth_callback`, persists the user session and device session, emits `session.changed`, and moves to the signed-in page.
+8. Server verifies that the target device exists. If it is still a pre-login device, the server binds it to the browser user; if it already belongs to another user, the server rejects the login. The server then publishes `device_user_login_succeeded` to that device's MQTT topic.
+9. Client consumes `device_user_login_succeeded`, persists the user session and device session, emits `session.changed`, and moves to the signed-in page.
 
-The browser login URL must not include:
+The browser login URL must only carry the login intent and target device. It must not include:
 
-- `callbackId`
 - `clientPlatform`
 - `clientName`
+
+The complete endpoint must never create a missing device. Device creation for browser login happens only during the client-initiated prepare call.
 
 ## Open Web Console From Signed-In Client
 
@@ -75,12 +76,4 @@ User session and device session are renewed independently:
 
 ## Removed Legacy Behavior
 
-These behaviors are intentionally removed from client login:
-
-- `POST /api/auth/device-login-callbacks`
-- `POST /api/auth/device-login-callbacks/{callbackId}/complete`
-- callback ID matching in the client state
-- HTTP polling for client login completion
-- passing `clientPlatform` or `clientName` in the client login URL
-
-Android VPN permission `callbackId` is unrelated to Web login and remains part of the Android network permission contract.
+Client login completion is no longer modeled as browser-side waiting or repeated HTTP requests. The only supported completion path is the Web Console complete endpoint followed by device-scoped MQTT notification.

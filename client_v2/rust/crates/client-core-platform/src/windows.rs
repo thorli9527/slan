@@ -2100,7 +2100,11 @@ fn write_wintun_packet(
     send_packet: WintunSendPacketFunc,
     payload: &[u8],
 ) -> bool {
-    if let Ok(size) = u32::try_from(payload.len()) {
+    let Ok(size) = u32::try_from(payload.len()) else {
+        return false;
+    };
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
         let send_packet_ptr = unsafe { allocate_send_packet(session, size) };
         if !send_packet_ptr.is_null() {
             unsafe {
@@ -2109,8 +2113,11 @@ fn write_wintun_packet(
             }
             return true;
         }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(1));
     }
-    false
 }
 
 fn stop_wintun_data_plane() {

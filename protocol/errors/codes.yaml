@@ -12,10 +12,6 @@ codes:
     http_status: 401
     message: Access token invalid
 
-  - code: AUTH_CALLBACK_NOT_FOUND
-    http_status: 404
-    message: Auth callback not found
-
   - code: DEVICE_ALREADY_REGISTERED
     http_status: 409
     message: Device already registered

@@ -60,7 +60,7 @@ sequenceDiagram
     participant User as 用户
     participant App as App(UI/Flutter)
     participant Core as Core(Rust)
-    participant Biz as Biz(server-biz)
+    participant Biz as Biz(service-biz)
     participant Redis as Redis(Token/Sync)
     participant PG as Postgres
 

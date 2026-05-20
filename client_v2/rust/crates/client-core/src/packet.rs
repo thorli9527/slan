@@ -74,6 +74,118 @@ pub fn icmp_echo_reply_for_request(packet: &[u8], local_virtual_ip: &str) -> Opt
     Some(reply)
 }
 
+pub fn normalize_ipv4_transport_checksums(packet: &[u8]) -> Vec<u8> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 {
+        return packet.to_vec();
+    }
+    let ihl = usize::from(packet[0] & 0x0f) * 4;
+    if ihl < 20 || packet.len() < ihl {
+        return packet.to_vec();
+    }
+    let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+    if total_len < ihl || total_len > packet.len() {
+        return packet.to_vec();
+    }
+    let mut normalized = packet[..total_len].to_vec();
+    normalized[10] = 0;
+    normalized[11] = 0;
+    let ip_sum = internet_checksum(&normalized[..ihl]);
+    normalized[10..12].copy_from_slice(&ip_sum.to_be_bytes());
+
+    let flags_fragment = u16::from_be_bytes([normalized[6], normalized[7]]);
+    if flags_fragment & 0x1fff != 0 {
+        return normalized;
+    }
+    match normalized[9] {
+        6 => normalize_tcp_checksum(&mut normalized, ihl, total_len),
+        17 => normalize_udp_checksum(&mut normalized, ihl, total_len),
+        _ => {}
+    }
+    normalized
+}
+
+pub fn ipv4_transport_checksum_valid(packet: &[u8]) -> Option<bool> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 {
+        return None;
+    }
+    let ihl = usize::from(packet[0] & 0x0f) * 4;
+    if ihl < 20 || packet.len() < ihl {
+        return None;
+    }
+    let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+    if total_len < ihl || total_len > packet.len() {
+        return None;
+    }
+    let flags_fragment = u16::from_be_bytes([packet[6], packet[7]]);
+    if flags_fragment & 0x1fff != 0 {
+        return None;
+    }
+    match packet[9] {
+        6 => {
+            let tcp_len = total_len.saturating_sub(ihl);
+            if tcp_len < 20 {
+                return None;
+            }
+            Some(transport_checksum(packet, ihl, tcp_len, 6) == 0)
+        }
+        17 => {
+            let udp_len = total_len.saturating_sub(ihl);
+            if udp_len < 8 {
+                return None;
+            }
+            let declared_len = usize::from(u16::from_be_bytes([packet[ihl + 4], packet[ihl + 5]]));
+            if declared_len < 8 || declared_len > udp_len {
+                return None;
+            }
+            let checksum = u16::from_be_bytes([packet[ihl + 6], packet[ihl + 7]]);
+            Some(checksum == 0 || transport_checksum(packet, ihl, declared_len, 17) == 0)
+        }
+        _ => None,
+    }
+}
+
+fn normalize_tcp_checksum(packet: &mut [u8], ihl: usize, total_len: usize) {
+    let tcp_len = total_len.saturating_sub(ihl);
+    if tcp_len < 20 || packet.len() < total_len {
+        return;
+    }
+    packet[ihl + 16] = 0;
+    packet[ihl + 17] = 0;
+    let sum = transport_checksum(packet, ihl, tcp_len, 6);
+    packet[ihl + 16..ihl + 18].copy_from_slice(&sum.to_be_bytes());
+}
+
+fn normalize_udp_checksum(packet: &mut [u8], ihl: usize, total_len: usize) {
+    let udp_len = total_len.saturating_sub(ihl);
+    if udp_len < 8 || packet.len() < total_len {
+        return;
+    }
+    let declared_len = usize::from(u16::from_be_bytes([packet[ihl + 4], packet[ihl + 5]]));
+    if declared_len < 8 || declared_len > udp_len {
+        return;
+    }
+    packet[ihl + 6] = 0;
+    packet[ihl + 7] = 0;
+    let sum = transport_checksum(packet, ihl, declared_len, 17);
+    let wire_sum = if sum == 0 { 0xffff } else { sum };
+    packet[ihl + 6..ihl + 8].copy_from_slice(&wire_sum.to_be_bytes());
+}
+
+fn transport_checksum(
+    packet: &[u8],
+    transport_offset: usize,
+    transport_len: usize,
+    proto: u8,
+) -> u16 {
+    let mut bytes = Vec::with_capacity(12 + transport_len);
+    bytes.extend_from_slice(&packet[12..20]);
+    bytes.push(0);
+    bytes.push(proto);
+    bytes.extend_from_slice(&(transport_len as u16).to_be_bytes());
+    bytes.extend_from_slice(&packet[transport_offset..transport_offset + transport_len]);
+    internet_checksum(&bytes)
+}
+
 fn internet_checksum(bytes: &[u8]) -> u16 {
     let mut sum = 0_u32;
     for chunk in bytes.chunks(2) {

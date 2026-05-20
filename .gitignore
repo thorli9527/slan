@@ -27,6 +27,7 @@ server/**/bin/
 server/**/*.exe
 server/**/*.test
 server/**/*.out
+server/service-biz/service-biz
 
 # Flutter / Dart generated files
 **/.dart_tool/

@@ -38,7 +38,7 @@ func main() {
 	var expectFrom string
 	var expectBody string
 	var timeout time.Duration
-	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "server-biz base URL")
+	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
 	flag.StringVar(&address, "address", envDefault("SLAN_CLIENT_CORE_SERVICE_HOST", "127.0.0.1:46392"), "client-core-service local API address")
 	flag.StringVar(&email, "email", envDefault("SLAN_TEST_EMAIL", ""), "login email")
 	flag.StringVar(&password, "password", envDefault("SLAN_TEST_PASSWORD", "Password123!"), "login password")
@@ -205,6 +205,9 @@ func sendClientMessage(ctx context.Context, address, targetDeviceID, body string
 func waitClientMessage(ctx context.Context, address, fromDeviceID, body string) {
 	var lastRevision float64
 	deadline := time.Now().Add(45 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok {
+		deadline = ctxDeadline
+	}
 	var lastSnapshot map[string]any
 	for time.Now().Before(deadline) {
 		response, err := localRequest(address, "localBusinessEventWatch", map[string]any{

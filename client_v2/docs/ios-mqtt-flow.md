@@ -16,7 +16,7 @@ This document describes the target iOS MQTT flow. Legacy native Swift MQTT/login
 3. If a valid session exists, embedded runtime applies it to `ClientRuntime`.
 4. If the session is signed in, Flutter calls embedded `localEnsureDevice`.
 5. After device registration succeeds, Flutter calls embedded `localConnectControlMqtt`.
-6. Flutter starts business-event polling through embedded `localBusinessEventWatch`.
+6. Flutter starts the business-event watch loop through embedded `localBusinessEventWatch`.
 7. Native iOS `start/localState/dispatch/localBusinessEventWatch/localControlStatus` must not be used for control-plane state.
 
 ## Login And Session
@@ -72,8 +72,8 @@ Embedded service consumes downstream MQTT publishes and ACKs them after local in
 
 Supported downstream messages:
 
-- `auth_callback`
-  - Applies login callback payload into runtime/session.
+- `device_user_login_succeeded`
+  - Applies browser login success payload into runtime/session.
 - `device_ip_reassigned`
   - Verifies target `deviceId`.
   - Applies final IP through `SyncAssignedIp`.
@@ -139,7 +139,7 @@ Cadence currently follows embedded/local control transport cadence:
    - MTU
    - relay/data-plane fields
 8. PacketTunnel writes stats back to App Group.
-9. Flutter polls PacketTunnel stats and reports them to embedded `ingestPlatformRuntimeState`.
+9. Flutter reads PacketTunnel stats and reports them to embedded `ingestPlatformRuntimeState`.
 10. Embedded service includes runtime state in upstream MQTT publishing.
 
 ## iOS Network Disable Flow
@@ -152,7 +152,7 @@ Cadence currently follows embedded/local control transport cadence:
 
 ## Business Event Flow
 
-1. Flutter polls embedded `localBusinessEventWatch`.
+1. Flutter waits on embedded `localBusinessEventWatch`.
 2. Embedded service returns current business event snapshot.
 3. Events originate from:
    - login/session changes
