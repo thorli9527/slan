@@ -8,6 +8,7 @@ REDIS_NAME="${PROJECT}-redis"
 BIFROMQ_NAME="${PROJECT}-bifromq"
 WEB_NAME="${PROJECT}-web"
 MAIN_NAME="${PROJECT}-main"
+CLIENT_IMAGE="${SLAN_CONTAINER_SMOKE_CLIENT_IMAGE:-alpine:3.20}"
 BIZ_PORT="${SLAN_BIZ_CONTAINER_SMOKE_PORT:-39081}"
 WEB_PORT="${SLAN_WEB_CONTAINER_SMOKE_PORT:-39200}"
 MAIN_PORT="${SLAN_MAIN_CONTAINER_SMOKE_PORT:-39201}"
@@ -21,6 +22,10 @@ trap cleanup EXIT
 
 cleanup
 docker network create "${NETWORK}" >/dev/null
+
+smoke_wget() {
+  docker run --rm --network "${NETWORK}" "${CLIENT_IMAGE}" wget -qO- "$@"
+}
 
 docker run -d --name "${REDIS_NAME}" --network "${NETWORK}" redis:7-alpine >/dev/null
 docker run -d --platform linux/amd64 --name "${BIFROMQ_NAME}" --network "${NETWORK}" apache/bifromq:4.0.0-incubating >/dev/null
@@ -45,20 +50,20 @@ docker run -d --name "${MAIN_NAME}" --network "${NETWORK}" \
   slan-server-main:latest >/dev/null
 
 for _ in {1..60}; do
-  if curl --silent --fail "http://127.0.0.1:${BIZ_PORT}/internal/wire/admin/relay-nodes" \
-    -H "X-Slan-Internal-Token: ${WIRE_TOKEN}" >/dev/null 2>&1; then
+  if smoke_wget --header "X-Slan-Internal-Token: ${WIRE_TOKEN}" \
+    "http://${BIZ_NAME}:8080/internal/wire/admin/relay-nodes" >/dev/null 2>&1; then
     break
   fi
   sleep 0.5
 done
 
-curl --silent --fail "http://127.0.0.1:${BIZ_PORT}/internal/wire/admin/relay-nodes" \
-  -H "X-Slan-Internal-Token: ${WIRE_TOKEN}" >/dev/null
-curl --silent --fail -X POST "http://127.0.0.1:${BIZ_PORT}/api/ops/auth/login" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@slan.local","password":"admin123456"}' >/dev/null
-curl --silent --fail "http://127.0.0.1:${WEB_PORT}/" | grep -q '<app-root'
-curl --silent --fail "http://127.0.0.1:${MAIN_PORT}/" | grep -q '<ops-root'
-curl --silent --fail "http://127.0.0.1:${WEB_PORT}/api/devices/visible" >/dev/null
+smoke_wget --header "X-Slan-Internal-Token: ${WIRE_TOKEN}" \
+  "http://${BIZ_NAME}:8080/internal/wire/admin/relay-nodes" >/dev/null
+smoke_wget --header 'Content-Type: application/json' \
+  --post-data '{"email":"admin@slan.local","password":"admin123456"}' \
+  "http://${BIZ_NAME}:8080/api/ops/auth/login" >/dev/null
+smoke_wget "http://${WEB_NAME}/" | grep -q '<app-root'
+smoke_wget "http://${MAIN_NAME}/" | grep -q '<ops-root'
+smoke_wget "http://${WEB_NAME}/api/devices/visible" >/dev/null
 
 echo "container new stack smoke passed: biz=${BIZ_PORT} web=${WEB_PORT} main=${MAIN_PORT}"
