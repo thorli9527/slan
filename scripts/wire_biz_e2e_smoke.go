@@ -195,7 +195,9 @@ func main() {
 		"derp":    derpAdminURL + "/v1/ticket-key-status",
 		"derp-b":  derpBAdminURL + "/v1/ticket-key-status",
 	})
-	restoreLocalWireDataPlaneNodes(bizURL, internalToken)
+	if shouldRestoreWireDataPlaneNodes(bizURL) {
+		restoreLocalWireDataPlaneNodes(bizURL, internalToken)
+	}
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	email := "wire-e2e-" + suffix + "@local.slan"
@@ -532,6 +534,16 @@ func restoreLocalWireDataPlaneNodes(bizURL, internalToken string) {
 			nil,
 		)
 	}
+}
+
+func shouldRestoreWireDataPlaneNodes(bizURL string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SLAN_BIZ_E2E_RESTORE_NODES"))) {
+	case "1", "true", "yes":
+		return true
+	case "0", "false", "no":
+		return false
+	}
+	return strings.Contains(bizURL, "127.0.0.1") || strings.Contains(bizURL, "localhost")
 }
 
 func expectConsistentTicketKeyStatus(endpoints map[string]string) {
