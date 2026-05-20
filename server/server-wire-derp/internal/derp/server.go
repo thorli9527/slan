@@ -111,6 +111,17 @@ func (s *Server) registerAndHeartbeat() {
 			if !wasFailing {
 				log.Printf("wire derp node heartbeat failed region=%s node=%s err=%v", s.cfg.RegionID, s.cfg.NodeID, err)
 			}
+			node.TicketKeyRotation = derpTicketKeyStatus()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			registerErr := client.UpsertDerpNode(ctx, node)
+			cancel()
+			if registerErr == nil {
+				log.Printf("wire derp node re-registered after heartbeat failure region=%s node=%s", s.cfg.RegionID, s.cfg.NodeID)
+				wasFailing = false
+				backoff = 2 * time.Second
+				continue
+			}
+			log.Printf("wire derp node re-registration failed region=%s node=%s err=%v", s.cfg.RegionID, s.cfg.NodeID, registerErr)
 			wasFailing = true
 			time.Sleep(backoff)
 			if backoff < time.Minute {
