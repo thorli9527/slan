@@ -104,7 +104,7 @@ public final class SlanVpnService extends VpnService {
 
     Builder builder = new Builder()
         .setSession(config.optString("sessionName", "SLAN"))
-        .addAddress(virtualIp, prefixLen);
+        .addAddress(virtualIp, 32);
 
     int mtu = config.optInt("mtu", 1280);
     if (mtu >= 576) {
