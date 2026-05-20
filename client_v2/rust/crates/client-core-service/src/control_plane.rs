@@ -1041,7 +1041,37 @@ fn network_config_control_peers(response: &Value) -> Vec<ControlPeer> {
                 node_id: format!("node-{device_id}"),
                 relay_allowed: true,
                 virtual_ips: global_ip.into_iter().collect(),
-                endpoints: Vec::new(),
+                endpoints: network_config_control_endpoints(peer),
+            })
+        })
+        .collect()
+}
+
+fn network_config_control_endpoints(peer: &Value) -> Vec<ControlEndpoint> {
+    peer.get("endpoints")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|endpoint| {
+            let address = endpoint
+                .get("address")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            Some(ControlEndpoint {
+                endpoint_type: endpoint
+                    .get("type")
+                    .or_else(|| endpoint.get("kind"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("direct_udp")
+                    .to_string(),
+                address,
+                updated_at: endpoint
+                    .get("updatedAt")
+                    .or_else(|| endpoint.get("observedAt"))
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default(),
             })
         })
         .collect()

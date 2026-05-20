@@ -106,6 +106,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
       tunnelStats.relayFramesReceived = relayRuntime.framesReceived
       tunnelStats.relayPacketsWritten = relayRuntime.packetsWritten
       tunnelStats.relayDetachSent = relayRuntime.detachSentCount
+      tunnelStats.directUdpAttachedPeerCount = relayRuntime.directUdpAttachedPeerCount
+      tunnelStats.directUdpReadyPeerCount = relayRuntime.directUdpReadyPeerCount
+      tunnelStats.directUdpProbesSent = relayRuntime.directUdpProbesSent
+      tunnelStats.directUdpProbesReceived = relayRuntime.directUdpProbesReceived
+      tunnelStats.directUdpPongsSent = relayRuntime.directUdpPongsSent
+      tunnelStats.directUdpPongsReceived = relayRuntime.directUdpPongsReceived
+      tunnelStats.directUdpFramesSent = relayRuntime.directUdpFramesSent
+      tunnelStats.directUdpFramesReceived = relayRuntime.directUdpFramesReceived
     }
     let data = try? JSONSerialization.data(withJSONObject: tunnelStats.dictionary)
     completionHandler?(data)
@@ -144,7 +152,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         if let relayRuntime = relayRuntime,
           relayRuntime.send(packet: packet, destination: destination.address)
         {
-          tunnelStats.relayFramesSent += 1
+          if relayRuntime.lastSendPath == "direct_udp" {
+            tunnelStats.directUdpFramesSent = relayRuntime.directUdpFramesSent
+          } else {
+            tunnelStats.relayFramesSent += 1
+          }
         } else if relayRuntime != nil {
           tunnelStats.relayNoPeerPackets += 1
         }
@@ -328,6 +340,14 @@ private struct PacketTunnelStats {
   var relayPacketsWritten = 0
   var relayDetachSent = 0
   var relayNoPeerPackets = 0
+  var directUdpAttachedPeerCount = 0
+  var directUdpReadyPeerCount = 0
+  var directUdpProbesSent = 0
+  var directUdpProbesReceived = 0
+  var directUdpPongsSent = 0
+  var directUdpPongsReceived = 0
+  var directUdpFramesSent = 0
+  var directUdpFramesReceived = 0
   var lastDestination = ""
   var lastRoute = ""
   var lastRoutedAtMs: Int64 = 0
@@ -354,6 +374,14 @@ private struct PacketTunnelStats {
       "relayPacketsWritten": relayPacketsWritten,
       "relayDetachSent": relayDetachSent,
       "relayNoPeerPackets": relayNoPeerPackets,
+      "directUdpAttachedPeerCount": directUdpAttachedPeerCount,
+      "directUdpReadyPeerCount": directUdpReadyPeerCount,
+      "directUdpProbesSent": directUdpProbesSent,
+      "directUdpProbesReceived": directUdpProbesReceived,
+      "directUdpPongsSent": directUdpPongsSent,
+      "directUdpPongsReceived": directUdpPongsReceived,
+      "directUdpFramesSent": directUdpFramesSent,
+      "directUdpFramesReceived": directUdpFramesReceived,
       "lastDestination": lastDestination,
       "lastRoute": lastRoute,
       "lastRoutedAtMs": lastRoutedAtMs,
@@ -369,8 +397,10 @@ private final class RelayRuntime {
   private let maxFramePayload: Int
   private let packetFlow: NEPacketTunnelFlow
   private var peers: [RelayPeerRuntime] = []
+  private var directUdpRuntime: DirectUdpRuntime?
   private var seq: UInt64 = 0
   private var configHash: UInt64 = 0
+  private(set) var lastSendPath = ""
 
   var sessionCount: Int {
     peers.count
@@ -398,6 +428,38 @@ private final class RelayRuntime {
 
   var detachSentCount: Int {
     peers.filter { $0.detachSent }.count
+  }
+
+  var directUdpAttachedPeerCount: Int {
+    directUdpRuntime?.attachedPeerCount ?? 0
+  }
+
+  var directUdpReadyPeerCount: Int {
+    directUdpRuntime?.readyPeerCount ?? 0
+  }
+
+  var directUdpProbesSent: Int {
+    directUdpRuntime?.probesSent ?? 0
+  }
+
+  var directUdpProbesReceived: Int {
+    directUdpRuntime?.probesReceived ?? 0
+  }
+
+  var directUdpPongsSent: Int {
+    directUdpRuntime?.pongsSent ?? 0
+  }
+
+  var directUdpPongsReceived: Int {
+    directUdpRuntime?.pongsReceived ?? 0
+  }
+
+  var directUdpFramesSent: Int {
+    directUdpRuntime?.framesSent ?? 0
+  }
+
+  var directUdpFramesReceived: Int {
+    directUdpRuntime?.framesReceived ?? 0
   }
 
   init?(config: Any?, packetFlow: NEPacketTunnelFlow) {
@@ -437,13 +499,23 @@ private final class RelayRuntime {
     if peers.isEmpty {
       return nil
     }
+    self.directUdpRuntime = DirectUdpRuntime(
+      config: config,
+      localNodeId: localNodeId,
+      maxFramePayload: maxFramePayload,
+      configHash: configHash,
+      packetFlow: packetFlow
+    )
   }
 
   func start() {
     peers.forEach { $0.start() }
+    directUdpRuntime?.start()
   }
 
   func stop() {
+    directUdpRuntime?.stop()
+    directUdpRuntime = nil
     peers.forEach { $0.stop() }
     peers.removeAll()
   }
@@ -458,11 +530,16 @@ private final class RelayRuntime {
     guard let frame = Self.encodeFrame(seq: seq, configHash: configHash, payload: packet) else {
       return false
     }
+    if directUdpRuntime?.send(frame: frame, destination: destination) == true {
+      lastSendPath = "direct_udp"
+      return true
+    }
     peer.send(frame)
+    lastSendPath = "relay_udp"
     return true
   }
 
-  private static func encodeFrame(seq: UInt64, configHash: UInt64, payload: Data) -> Data? {
+  fileprivate static func encodeFrame(seq: UInt64, configHash: UInt64, payload: Data) -> Data? {
     guard payload.count <= UInt32.max else {
       return nil
     }
@@ -479,7 +556,7 @@ private final class RelayRuntime {
     return frame
   }
 
-  static func decodeFrame(_ frame: Data) -> Data? {
+  fileprivate static func decodeFrame(_ frame: Data) -> Data? {
     guard frame.count >= 32,
       frame[0] == 0x53,
       frame[1] == 0x4c,
@@ -506,6 +583,308 @@ private final class RelayRuntime {
       hash = hash &* 0x100000001b3
     }
     return hash
+  }
+}
+
+private final class DirectUdpRuntime {
+  private let localNodeId: String
+  private let maxFramePayload: Int
+  private let configHash: UInt64
+  private let packetFlow: NEPacketTunnelFlow
+  private var peers: [DirectUdpPeerRuntime]
+
+  var attachedPeerCount: Int {
+    peers.count
+  }
+
+  var readyPeerCount: Int {
+    peers.filter { $0.ready }.count
+  }
+
+  var probesSent: Int {
+    peers.reduce(0) { $0 + $1.probesSent }
+  }
+
+  var probesReceived: Int {
+    peers.reduce(0) { $0 + $1.probesReceived }
+  }
+
+  var pongsSent: Int {
+    peers.reduce(0) { $0 + $1.pongsSent }
+  }
+
+  var pongsReceived: Int {
+    peers.reduce(0) { $0 + $1.pongsReceived }
+  }
+
+  var framesSent: Int {
+    peers.reduce(0) { $0 + $1.framesSent }
+  }
+
+  var framesReceived: Int {
+    peers.reduce(0) { $0 + $1.framesReceived }
+  }
+
+  init?(
+    config: [String: Any],
+    localNodeId: String,
+    maxFramePayload: Int,
+    configHash: UInt64,
+    packetFlow: NEPacketTunnelFlow
+  ) {
+    let peerPaths = config["peerPaths"] as? [[String: Any]] ?? []
+    let peers = peerPaths.compactMap {
+      DirectUdpPeerRuntime(
+        peerPath: $0,
+        localNodeId: localNodeId,
+        packetFlow: packetFlow
+      )
+    }
+    if peers.isEmpty {
+      return nil
+    }
+    self.localNodeId = localNodeId
+    self.maxFramePayload = maxFramePayload
+    self.configHash = configHash
+    self.packetFlow = packetFlow
+    self.peers = peers
+  }
+
+  func start() {
+    peers.forEach { $0.start() }
+  }
+
+  func stop() {
+    peers.forEach { $0.stop() }
+    peers.removeAll()
+  }
+
+  func send(frame: Data, destination: String) -> Bool {
+    guard frame.count <= maxFramePayload + 32,
+      let peer = peers.first(where: { $0.matches(destination) && $0.ready })
+    else {
+      return false
+    }
+    return peer.send(frame)
+  }
+}
+
+private final class DirectUdpPeerRuntime {
+  private let peerNodeId: String
+  private let peerVirtualIps: Set<String>
+  private let localNodeId: String
+  private let endpoint: (host: Network.NWEndpoint.Host, port: Network.NWEndpoint.Port)
+  private let packetFlow: NEPacketTunnelFlow
+  private var connection: NWConnection?
+  private var running = false
+  private(set) var ready = false
+  private(set) var probesSent = 0
+  private(set) var probesReceived = 0
+  private(set) var pongsSent = 0
+  private(set) var pongsReceived = 0
+  private(set) var framesSent = 0
+  private(set) var framesReceived = 0
+
+  init?(
+    peerPath: [String: Any],
+    localNodeId: String,
+    packetFlow: NEPacketTunnelFlow
+  ) {
+    let peerNodeId = (peerPath["peerNodeId"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let peerVirtualIps = (peerPath["peerVirtualIps"] as? [String] ?? [])
+      .map(RelayPeerRuntime.normalizeVirtualIp)
+      .filter { !$0.isEmpty }
+    let candidates = peerPath["candidates"] as? [[String: Any]] ?? []
+    guard let address = candidates.compactMap(Self.directUdpAddress).first,
+      let endpoint = Self.endpoint(address),
+      !peerNodeId.isEmpty,
+      !peerVirtualIps.isEmpty
+    else {
+      return nil
+    }
+    self.peerNodeId = peerNodeId
+    self.peerVirtualIps = Set(peerVirtualIps)
+    self.localNodeId = localNodeId
+    self.endpoint = endpoint
+    self.packetFlow = packetFlow
+  }
+
+  func start() {
+    guard connection == nil else {
+      return
+    }
+    running = true
+    let connection = NWConnection(host: endpoint.host, port: endpoint.port, using: .udp)
+    connection.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
+      guard let self = self else {
+        return
+      }
+      if case .ready = state {
+        self.receive()
+        self.sendProbe()
+        self.scheduleProbe()
+      }
+      if case .failed = state {
+        self.ready = false
+      }
+      if case .cancelled = state {
+        self.ready = false
+      }
+    }
+    self.connection = connection
+    connection.start(queue: DispatchQueue.global(qos: .utility))
+  }
+
+  func stop() {
+    running = false
+    ready = false
+    connection?.cancel()
+    connection = nil
+  }
+
+  func matches(_ destination: String) -> Bool {
+    peerVirtualIps.contains(RelayPeerRuntime.normalizeVirtualIp(destination))
+  }
+
+  func send(_ frame: Data) -> Bool {
+    guard running && ready else {
+      return false
+    }
+    framesSent += 1
+    connection?.send(content: frame, completion: .contentProcessed { _ in })
+    return true
+  }
+
+  private func sendProbe() {
+    sendControl(type: "probe")
+    probesSent += 1
+  }
+
+  private func sendPong() {
+    sendControl(type: "pong")
+    pongsSent += 1
+  }
+
+  private func sendControl(type: String) {
+    let payload: [String: Any] = [
+      "kind": "direct_udp",
+      "type": type,
+      "nodeId": localNodeId
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload) else {
+      return
+    }
+    connection?.send(content: data, completion: .contentProcessed { _ in })
+  }
+
+  private func scheduleProbe() {
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15) { [weak self] in
+      guard let self = self, self.running else {
+        return
+      }
+      self.sendProbe()
+      self.scheduleProbe()
+    }
+  }
+
+  private func receive() {
+    connection?.receiveMessage { [weak self] data, _, _, _ in
+      guard let self = self else {
+        return
+      }
+      if let data = data {
+        if self.consumeControl(data) {
+          if self.running {
+            self.receive()
+          }
+          return
+        }
+        if let packet = RelayRuntime.decodeFrame(data) {
+          self.ready = true
+          self.framesReceived += 1
+          self.writePacketToFlow(packet)
+        }
+      }
+      if self.running {
+        self.receive()
+      }
+    }
+  }
+
+  private func consumeControl(_ data: Data) -> Bool {
+    guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      value["kind"] as? String == "direct_udp",
+      let type = value["type"] as? String
+    else {
+      return false
+    }
+    if let nodeId = value["nodeId"] as? String, !nodeId.isEmpty, nodeId != peerNodeId {
+      return true
+    }
+    ready = true
+    if type == "probe" {
+      probesReceived += 1
+      sendPong()
+    } else if type == "pong" {
+      pongsReceived += 1
+    }
+    return true
+  }
+
+  private func writePacketToFlow(_ packet: Data, attempt: Int = 0) {
+    if packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)]) {
+      return
+    }
+    guard attempt < 50 else {
+      return
+    }
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.002) { [weak self] in
+      self?.writePacketToFlow(packet, attempt: attempt + 1)
+    }
+  }
+
+  private static func directUdpAddress(_ candidate: [String: Any]) -> String? {
+    let kind = (candidate["kind"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+    guard kind == "direct_udp" || kind == "lan_udp" || kind == "ipv6_udp" else {
+      return nil
+    }
+    let address = (candidate["address"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return address.isEmpty ? nil : address
+  }
+
+  private static func endpoint(_ address: String) -> (
+    host: Network.NWEndpoint.Host,
+    port: Network.NWEndpoint.Port
+  )? {
+    let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized: String
+    if trimmed.hasPrefix("udp://") {
+      normalized = String(trimmed.dropFirst("udp://".count))
+    } else if trimmed.hasPrefix("direct+udp://") {
+      normalized = String(trimmed.dropFirst("direct+udp://".count))
+    } else if trimmed.hasPrefix("relay+udp://") {
+      normalized = String(trimmed.dropFirst("relay+udp://".count))
+    } else if trimmed.contains("://") {
+      return nil
+    } else {
+      normalized = trimmed
+    }
+    guard let separator = normalized.lastIndex(of: ":") else {
+      return nil
+    }
+    let host = String(normalized[..<separator])
+    let port = String(normalized[normalized.index(after: separator)...])
+    guard !host.isEmpty,
+      let portValue = UInt16(port),
+      let endpointPort = Network.NWEndpoint.Port(rawValue: portValue)
+    else {
+      return nil
+    }
+    return (Network.NWEndpoint.Host(host), endpointPort)
   }
 }
 
@@ -745,7 +1124,7 @@ private final class RelayPeerRuntime {
     return (Network.NWEndpoint.Host(host), endpointPort)
   }
 
-  private static func normalizeVirtualIp(_ value: String) -> String {
+  fileprivate static func normalizeVirtualIp(_ value: String) -> String {
     value
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .split(separator: "/", maxSplits: 1)

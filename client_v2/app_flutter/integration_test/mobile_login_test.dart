@@ -269,12 +269,23 @@ void main() {
       );
     }
 
+    await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD');
     if (holdSeconds > 0) {
       await tester.pump(Duration(seconds: holdSeconds));
+      await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_AFTER_HOLD');
     }
     udpEchoSocket?.close();
     await tcpEchoServer?.close();
   });
+}
+
+Future<void> _logAndroidRuntimeStats(String label) async {
+  try {
+    final stats = await ClientCorePlugin().androidRuntimeState();
+    debugPrint('$label=${jsonEncode(stats)}');
+  } on Object catch (error) {
+    debugPrint('${label}_ERROR=$error');
+  }
 }
 
 Future<void> _registerTestUser(

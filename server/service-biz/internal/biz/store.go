@@ -109,6 +109,7 @@ type Store struct {
 	securityGroups           map[string]SecurityGroup
 	securityGroupRules       map[string]SecurityGroupRule
 	runtimeStatuses          map[string]DeviceRuntimeStatus
+	deviceEndpoints          map[string][]DeviceEndpoint
 	configVersions           map[string]NetworkConfigVersion
 	customerPlans            map[string]CustomerPlanAssignment
 	customerProfiles         map[string]CustomerProfile
@@ -208,6 +209,7 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 		securityGroups:          make(map[string]SecurityGroup),
 		securityGroupRules:      make(map[string]SecurityGroupRule),
 		runtimeStatuses:         make(map[string]DeviceRuntimeStatus),
+		deviceEndpoints:         make(map[string][]DeviceEndpoint),
 		configVersions:          make(map[string]NetworkConfigVersion),
 		customerPlans:           make(map[string]CustomerPlanAssignment),
 		customerProfiles:        make(map[string]CustomerProfile),
@@ -1274,6 +1276,61 @@ func (s *Store) ReportDeviceRuntime(deviceID string, networkEnabled bool, rxByte
 		NetworkIDs:            networkIDs,
 		ChangedAt:             now,
 	}
+}
+
+func (s *Store) ReportDeviceEndpoint(networkID, deviceID string, endpoints []DeviceEndpoint) (bool, error) {
+	networkID = strings.TrimSpace(networkID)
+	deviceID = strings.TrimSpace(deviceID)
+	if networkID == "" || deviceID == "" {
+		return false, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.networkDevices[networkID+"|"+deviceID]; !ok {
+		return false, errNotFound
+	}
+	now := time.Now().Unix()
+	cleaned := make([]DeviceEndpoint, 0, len(endpoints))
+	seen := make(map[string]bool)
+	for _, endpoint := range endpoints {
+		endpoint.Type = strings.TrimSpace(endpoint.Type)
+		endpoint.Address = strings.TrimSpace(endpoint.Address)
+		if endpoint.Type == "" {
+			endpoint.Type = "direct_udp"
+		}
+		if endpoint.Address == "" || strings.Contains(endpoint.Address, "://") {
+			continue
+		}
+		if endpoint.UpdatedAt == 0 {
+			endpoint.UpdatedAt = now
+		}
+		key := endpoint.Type + "|" + endpoint.Address
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		cleaned = append(cleaned, endpoint)
+	}
+	key := networkID + "|" + deviceID
+	previous := s.deviceEndpoints[key]
+	if len(cleaned) == 0 {
+		delete(s.deviceEndpoints, key)
+		return len(previous) > 0, nil
+	}
+	s.deviceEndpoints[key] = cleaned
+	return deviceEndpointsChanged(previous, cleaned), nil
+}
+
+func deviceEndpointsChanged(previous, next []DeviceEndpoint) bool {
+	if len(previous) != len(next) {
+		return true
+	}
+	for index := range previous {
+		if previous[index].Type != next[index].Type || previous[index].Address != next[index].Address {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) GetDevice(deviceID string) (Device, error) {
@@ -3072,7 +3129,7 @@ func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, 
 		SubnetCIDR:      subnet.CIDRBlock,
 		SubnetPrefixLen: subnet.PrefixLength,
 		GlobalName:      device.GlobalName,
-		Peers:           s.devicesWithSubnetLocked(peers),
+		Peers:           s.devicesWithSubnetLocked(networkID, peers),
 		SecurityGroups:  groups,
 		Rules:           rules,
 		DNSZones:        s.listDNSZonesLocked(networkID),
@@ -3094,11 +3151,31 @@ func (s *Store) globalIPSubnetLocked(ip string) (IPAMSubnet, bool) {
 	return subnet, ok
 }
 
-func (s *Store) devicesWithSubnetLocked(devices []Device) []Device {
+func (s *Store) devicesWithSubnetLocked(networkID string, devices []Device) []Device {
 	out := make([]Device, 0, len(devices))
 	for _, device := range devices {
-		out = append(out, s.deviceWithSubnetLocked(device))
+		withSubnet := s.deviceWithSubnetLocked(device)
+		withSubnet.Endpoints = s.deviceEndpointsForNetworkDeviceLocked(networkID, device.DeviceID, time.Now().Unix())
+		out = append(out, withSubnet)
 	}
+	return out
+}
+
+func (s *Store) deviceEndpointsForNetworkDeviceLocked(networkID, deviceID string, now int64) []DeviceEndpoint {
+	const endpointTTLSeconds = 5 * 60
+	out := make([]DeviceEndpoint, 0)
+	for _, endpoint := range s.deviceEndpoints[networkID+"|"+deviceID] {
+		if endpoint.UpdatedAt > 0 && now-endpoint.UpdatedAt > endpointTTLSeconds {
+			continue
+		}
+		out = append(out, endpoint)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Type == out[j].Type {
+			return out[i].Address < out[j].Address
+		}
+		return out[i].Type < out[j].Type
+	})
 	return out
 }
 

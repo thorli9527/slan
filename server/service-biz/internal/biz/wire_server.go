@@ -585,6 +585,16 @@ func (s *Store) WireNetworkTopology(networkID string) (map[string]any, error) {
 		if !ok || device.Status != "active" {
 			continue
 		}
+		peerEndpoints := s.deviceEndpointsForNetworkDeviceLocked(networkID, device.DeviceID, time.Now().Unix())
+		wireEndpoints := make([]wireEndpoint, 0, len(peerEndpoints))
+		for _, endpoint := range peerEndpoints {
+			wireEndpoints = append(wireEndpoints, wireEndpoint{
+				Kind:       endpoint.Type,
+				Address:    endpoint.Address,
+				Reachable:  true,
+				ObservedAt: endpoint.UpdatedAt,
+			})
+		}
 		peers = append(peers, wirePeerRecord{
 			PeerID:                  wirePeerID(networkDevice.NetworkID, device.DeviceID),
 			NetworkID:               networkDevice.NetworkID,
@@ -603,7 +613,7 @@ func (s *Store) WireNetworkTopology(networkID string) (map[string]any, error) {
 			AllowFastReselection:    true,
 			AllowRelayTicketRenewal: true,
 			KeepaliveIntervalSecs:   30,
-			Endpoints:               []wireEndpoint{},
+			Endpoints:               wireEndpoints,
 			ActivePath:              "direct_udp",
 			RequireMtuRefresh:       false,
 			EndpointChanged:         false,

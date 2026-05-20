@@ -158,6 +158,7 @@ echo "+ run Android UDP/TCP sender target=$MAC_IP udp=$UDP_PORT tcp=$TCP_PORT"
     --dart-define="SLAN_TEST_WAIT_MQTT=true" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
     --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=${SLAN_ANDROID_SEND_POST_ENABLE_WAIT_SECONDS:-8}" \
+    --dart-define="SLAN_TEST_HOLD_SECONDS=${SLAN_ANDROID_TEST_HOLD_SECONDS:-0}" \
     --dart-define="SLAN_TEST_UDP_SEND_TARGET=$MAC_IP:$UDP_PORT" \
     --dart-define="SLAN_TEST_UDP_SEND_BODY=$UDP_BODY" \
     --dart-define="SLAN_TEST_TCP_SEND_TARGET=$MAC_IP:$TCP_PORT" \

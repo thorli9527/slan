@@ -10,7 +10,7 @@ use client_core::{
     ipv4_source, normalize_virtual_ip, relay_frame::decode_slan_relay_data_frame_full,
     relay_peer_index_for_packet, PathKind, PeerPathConfig,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const DIRECT_UDP_PROBE_PACKET: &[u8] = b"slan-direct-udp-probe-v1";
 pub const DIRECT_UDP_PONG_PACKET: &[u8] = b"slan-direct-udp-pong-v1";
@@ -59,7 +59,7 @@ pub struct DirectUdpReceive {
     pub endpoint_changed: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DirectUdpEndpointReport {
     endpoint: String,
@@ -72,7 +72,7 @@ struct DirectUdpEndpointReport {
 impl DirectUdpTransport {
     pub fn attach(local_node_id: &str, configured_paths: &[PeerPathConfig]) -> Option<Self> {
         Self::attach_with_socket(local_node_id, configured_paths, || {
-            UdpSocket::bind("0.0.0.0:0")
+            attach_direct_udp_socket()
         })
     }
 
@@ -92,6 +92,15 @@ impl DirectUdpTransport {
         let mut peers = Vec::new();
         for path in configured_paths {
             let Some((path_kind, address)) = udp_address_for_peer(path) else {
+                peers.push(DirectUdpPeer {
+                    peer_node_id: path.peer_node_id.clone(),
+                    peer_virtual_ips: path.peer_virtual_ips.clone(),
+                    path_kind: PathKind::DirectUdp,
+                    address: String::new(),
+                    socket_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+                    last_rx_seq: 0,
+                    ready: false,
+                });
                 continue;
             };
             match resolve_direct_udp_peer_address(address.as_str()) {
@@ -109,12 +118,17 @@ impl DirectUdpTransport {
                         "client-core-platform direct udp attach skipped peer={} error={error:#}",
                         path.peer_node_id
                     );
+                    peers.push(DirectUdpPeer {
+                        peer_node_id: path.peer_node_id.clone(),
+                        peer_virtual_ips: path.peer_virtual_ips.clone(),
+                        path_kind: PathKind::DirectUdp,
+                        address: String::new(),
+                        socket_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+                        last_rx_seq: 0,
+                        ready: false,
+                    });
                 }
             }
-        }
-        if peers.is_empty() {
-            clear_direct_udp_endpoint_report();
-            return None;
         }
         if socket.set_nonblocking(true).is_err() {
             clear_direct_udp_endpoint_report();
@@ -152,6 +166,12 @@ impl DirectUdpTransport {
                 "direct udp peer not found",
             ));
         };
+        if peer.socket_addr.port() == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "direct udp peer endpoint is not learned",
+            ));
+        }
         self.socket.send_to(frame, peer.socket_addr)
     }
 
@@ -182,19 +202,41 @@ impl DirectUdpTransport {
             }))
     }
 
-    pub fn send_probe_packets(&self) {
+    pub fn send_probe_packets(&self) -> usize {
         let payload = direct_udp_control_payload(DirectUdpControlKind::Probe, &self.local_node_id);
+        let mut sent = 0_usize;
         for peer in &self.peers {
-            let _ = self.socket.send_to(payload.as_bytes(), peer.socket_addr);
+            if peer.socket_addr.port() == 0 {
+                continue;
+            }
+            if self
+                .socket
+                .send_to(payload.as_bytes(), peer.socket_addr)
+                .is_ok()
+            {
+                sent = sent.saturating_add(1);
+            }
         }
+        sent
     }
 
-    pub fn send_pong_to_peer(&self, peer_index: usize) {
+    pub fn send_pong_to_peer(&self, peer_index: usize) -> bool {
         if let Some(peer) = self.peers.get(peer_index) {
+            if peer.socket_addr.port() == 0 {
+                return false;
+            }
             let payload =
                 direct_udp_control_payload(DirectUdpControlKind::Pong, &self.local_node_id);
-            let _ = self.socket.send_to(payload.as_bytes(), peer.socket_addr);
+            return self
+                .socket
+                .send_to(payload.as_bytes(), peer.socket_addr)
+                .is_ok();
         }
+        false
+    }
+
+    pub fn ready_peer_count(&self) -> usize {
+        self.peers.iter().filter(|peer| peer.ready).count()
     }
 
     pub fn mark_peer_ready(
@@ -232,6 +274,15 @@ impl DirectUdpTransport {
                 .any(|ip| normalize_virtual_ip(ip) == source)
         })
     }
+}
+
+fn attach_direct_udp_socket() -> std::io::Result<UdpSocket> {
+    if let Some(bind_address) = existing_direct_udp_bind_address() {
+        if let Ok(socket) = UdpSocket::bind(bind_address.as_str()) {
+            return Ok(socket);
+        }
+    }
+    UdpSocket::bind("0.0.0.0:0")
 }
 
 pub fn direct_udp_control_payload(kind: DirectUdpControlKind, node_id: &str) -> String {
@@ -317,7 +368,8 @@ fn normalize_direct_udp_address(address: &str) -> Option<String> {
     }
     let stripped = trimmed
         .strip_prefix("udp://")
-        .or_else(|| trimmed.strip_prefix("direct+udp://"));
+        .or_else(|| trimmed.strip_prefix("direct+udp://"))
+        .or_else(|| trimmed.strip_prefix("relay+udp://"));
     if stripped.is_none() && trimmed.contains("://") {
         return None;
     }
@@ -326,9 +378,27 @@ fn normalize_direct_udp_address(address: &str) -> Option<String> {
 }
 
 fn direct_udp_endpoint_file_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ProgramData") {
+        return PathBuf::from(dir)
+            .join("SLAN")
+            .join("client-v2-direct-udp-endpoint.json");
+    }
+    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
+        return PathBuf::from(dir).join("client-v2-direct-udp-endpoint.json");
+    }
     app_data_dir()
         .join("SLAN")
         .join("client-v2-direct-udp-endpoint.json")
+}
+
+fn existing_direct_udp_bind_address() -> Option<String> {
+    let payload = fs::read(direct_udp_endpoint_file_path()).ok()?;
+    let report = serde_json::from_slice::<DirectUdpEndpointReport>(&payload).ok()?;
+    let bind_address = report.bind_address.trim();
+    if bind_address.is_empty() || bind_address.ends_with(":0") {
+        return None;
+    }
+    Some(bind_address.to_string())
 }
 
 pub fn persist_direct_udp_endpoint_report(socket: &UdpSocket) {
@@ -387,6 +457,9 @@ fn direct_udp_lan_host() -> Option<String> {
 fn app_data_dir() -> PathBuf {
     std::env::var_os("SLAN_STATE_DIR")
         .map(PathBuf::from)
+        .or_else(|| {
+            cfg!(target_os = "macos").then(|| PathBuf::from("/Library/Application Support"))
+        })
         .or_else(|| std::env::var_os("ProgramData").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("/var/lib"))
 }
@@ -417,6 +490,27 @@ mod tests {
         let parsed = direct_udp_control_packet(packet.as_bytes()).unwrap();
         assert_eq!(parsed.kind, DirectUdpControlKind::Probe);
         assert_eq!(parsed.peer_node_id(), Some("node-a"));
+    }
+
+    #[test]
+    fn direct_udp_address_normalization_accepts_udp_schemes() {
+        assert_eq!(
+            normalize_direct_udp_address("127.0.0.1:3478").as_deref(),
+            Some("127.0.0.1:3478")
+        );
+        assert_eq!(
+            normalize_direct_udp_address("udp://127.0.0.1:3478").as_deref(),
+            Some("127.0.0.1:3478")
+        );
+        assert_eq!(
+            normalize_direct_udp_address("direct+udp://127.0.0.1:3478").as_deref(),
+            Some("127.0.0.1:3478")
+        );
+        assert_eq!(
+            normalize_direct_udp_address("relay+udp://127.0.0.1:3478").as_deref(),
+            Some("127.0.0.1:3478")
+        );
+        assert_eq!(normalize_direct_udp_address("https://127.0.0.1:3478"), None);
     }
 
     #[test]
@@ -489,5 +583,35 @@ mod tests {
         })
         .unwrap();
         assert_eq!(transport.peers.len(), 1);
+    }
+
+    #[test]
+    fn direct_udp_attach_keeps_socket_without_candidates_for_endpoint_report() {
+        let transport = DirectUdpTransport::attach_with_socket("node-local", &[], || {
+            UdpSocket::bind("127.0.0.1:0")
+        })
+        .unwrap();
+        assert!(transport.peers.is_empty());
+    }
+
+    #[test]
+    fn direct_udp_attach_keeps_peer_without_candidate_for_roaming_probe() {
+        let paths = vec![PeerPathConfig {
+            peer_node_id: "node-a".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9".to_string()],
+            candidates: Vec::new(),
+        }];
+        let mut transport = DirectUdpTransport::attach_with_socket("node-local", &paths, || {
+            UdpSocket::bind("127.0.0.1:0")
+        })
+        .unwrap();
+        assert_eq!(transport.peers.len(), 1);
+        assert_eq!(transport.peers[0].socket_addr.port(), 0);
+        assert_eq!(
+            transport.mark_peer_ready(0, "127.0.0.1:32123".parse().unwrap()),
+            Some("node-a".to_string())
+        );
+        assert_eq!(transport.peers[0].address, "127.0.0.1:32123");
+        assert!(transport.peers[0].ready);
     }
 }

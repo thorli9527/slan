@@ -288,6 +288,9 @@ func (s *Server) handleMQTTControlUp(ctx context.Context, topic string, body []b
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return fmt.Errorf("decode control envelope: %w", err)
 	}
+	if envelope.Type == "endpoint_report" {
+		return s.handleMQTTEndpointReport(fromTopicDeviceID, envelope.Payload)
+	}
 	if envelope.Type != "client_message" {
 		return nil
 	}
@@ -353,6 +356,35 @@ func (s *Server) handleMQTTControlUp(ctx context.Context, topic string, body []b
 		return err
 	}
 	log.Printf("mqtt client_message forwarded network=%s from=%s target=%s messageId=%s", payload.NetworkID, payload.FromDeviceID, payload.TargetDeviceID, messageID)
+	return nil
+}
+
+func (s *Server) handleMQTTEndpointReport(fromTopicDeviceID string, raw json.RawMessage) error {
+	var payload struct {
+		NetworkID string           `json:"networkId"`
+		NodeID    string           `json:"nodeId"`
+		NATType   string           `json:"natType"`
+		Endpoints []DeviceEndpoint `json:"endpoints"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return fmt.Errorf("decode endpoint report payload: %w", err)
+	}
+	networkID := strings.TrimSpace(payload.NetworkID)
+	nodeID := strings.TrimSpace(payload.NodeID)
+	if nodeID != "" && nodeID != "node-"+fromTopicDeviceID {
+		return fmt.Errorf("endpoint report nodeId does not match mqtt topic")
+	}
+	if networkID == "" {
+		return fmt.Errorf("endpoint report networkId is required")
+	}
+	changed, err := s.store.ReportDeviceEndpoint(networkID, fromTopicDeviceID, payload.Endpoints)
+	if err != nil {
+		return err
+	}
+	log.Printf("mqtt endpoint_report recorded network=%s device=%s endpoints=%d", networkID, fromTopicDeviceID, len(payload.Endpoints))
+	if changed {
+		s.notifyNetworkConfigChanged(networkID, "device_endpoint_reported", "device_endpoint", "update", fromTopicDeviceID, fromTopicDeviceID)
+	}
 	return nil
 }
 

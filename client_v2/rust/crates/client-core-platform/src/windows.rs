@@ -25,7 +25,7 @@ use client_core::{
     RelayPeerSession, RouteSpec,
 };
 use libloading::Library;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const DEFAULT_INTERFACE_NAME: &str = "SLAN LAN Adapter";
 const WINDOWS_WINTUN_DRIVER_TYPE: &str = "Wintun";
@@ -1789,6 +1789,7 @@ fn attach_direct_udp_socket() -> Result<UdpSocket> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+        .or_else(existing_direct_udp_bind_address)
         .unwrap_or_else(|| "0.0.0.0:0".to_string());
     let socket = UdpSocket::bind(&bind_address)
         .with_context(|| format!("bind direct UDP socket to {bind_address}"))?;
@@ -1799,11 +1800,27 @@ fn attach_direct_udp_socket() -> Result<UdpSocket> {
 }
 
 fn resolve_direct_udp_peer_address(address: &str) -> Result<SocketAddr> {
+    let address = normalize_direct_udp_address(address)
+        .ok_or_else(|| anyhow::anyhow!("missing direct UDP peer address"))?;
     address
         .to_socket_addrs()
         .with_context(|| format!("resolve direct UDP peer address {address}"))?
         .next()
         .ok_or_else(|| anyhow::anyhow!("direct UDP peer address has no socket address: {address}"))
+}
+
+fn normalize_direct_udp_address(address: &str) -> Option<String> {
+    let trimmed = address.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed
+        .strip_prefix("udp://")
+        .or_else(|| trimmed.strip_prefix("direct+udp://"))
+        .or_else(|| trimmed.strip_prefix("relay+udp://"))
+        .or_else(|| (!trimmed.contains("://")).then_some(trimmed))?
+        .trim();
+    (!normalized.is_empty()).then(|| normalized.to_string())
 }
 
 fn relay_udp_address_for_session(
@@ -2073,6 +2090,24 @@ fn direct_udp_control_packet(payload: &[u8]) -> Option<DirectUdpControlPacket> {
             peer_node_id: None,
         });
     }
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) {
+        if value.get("kind").and_then(serde_json::Value::as_str) != Some("direct_udp") {
+            return None;
+        }
+        let kind = match value.get("type").and_then(serde_json::Value::as_str)? {
+            "probe" => DirectUdpControlKind::Probe,
+            "pong" => DirectUdpControlKind::Pong,
+            _ => return None,
+        };
+        let peer_node_id = value
+            .get("nodeId")
+            .or_else(|| value.get("node_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        return Some(DirectUdpControlPacket { kind, peer_node_id });
+    }
     let value = std::str::from_utf8(payload).ok()?;
     let (kind, peer_node_id) = value.split_once(':')?;
     if peer_node_id.trim().is_empty() {
@@ -2092,11 +2127,16 @@ fn direct_udp_control_packet(payload: &[u8]) -> Option<DirectUdpControlPacket> {
 }
 
 fn direct_udp_control_payload(kind: DirectUdpControlKind, local_node_id: &str) -> String {
-    let prefix = match kind {
-        DirectUdpControlKind::Probe => std::str::from_utf8(DIRECT_UDP_PROBE_PACKET).unwrap(),
-        DirectUdpControlKind::Pong => std::str::from_utf8(DIRECT_UDP_PONG_PACKET).unwrap(),
+    let kind = match kind {
+        DirectUdpControlKind::Probe => "probe",
+        DirectUdpControlKind::Pong => "pong",
     };
-    format!("{prefix}:{}", local_node_id.trim())
+    serde_json::json!({
+        "kind": "direct_udp",
+        "type": kind,
+        "nodeId": local_node_id.trim(),
+    })
+    .to_string()
 }
 
 fn write_wintun_packet(
@@ -2173,7 +2213,7 @@ fn relay_stats_file_path() -> PathBuf {
         .join("client-v2-relay-stats.json")
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DirectUdpEndpointReport {
     endpoint: String,
@@ -2187,6 +2227,13 @@ fn direct_udp_endpoint_file_path() -> PathBuf {
     app_data_dir()
         .join("SLAN")
         .join("client-v2-direct-udp-endpoint.json")
+}
+
+fn existing_direct_udp_bind_address() -> Option<String> {
+    let payload = fs::read(direct_udp_endpoint_file_path()).ok()?;
+    let report = serde_json::from_slice::<DirectUdpEndpointReport>(&payload).ok()?;
+    let bind_address = report.bind_address.trim();
+    (!bind_address.is_empty()).then(|| bind_address.to_string())
 }
 
 fn persist_direct_udp_endpoint_report(socket: &UdpSocket) {
@@ -2676,12 +2723,12 @@ mod tests {
         detach_udp_relay_sessions, direct_udp_control_packet, direct_udp_control_payload,
         direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at,
         is_usable_dns_server, is_usable_virtual_ip, mark_ready_transports,
-        refresh_relay_ticket_timing, relay_error_message, relay_runtime_paths_from_config,
-        relay_udp_address_for_session, send_frame_to_peer, validate_relay_peer_session,
-        validate_relay_peer_session_for_path, AttachedRelayPeer, DirectUdpControlKind,
-        DirectUdpPeer, DirectUdpTransport, PathSendResult, RelayUdpTransport, WindowsPathManager,
-        WindowsRelayDataPlaneStats, DIRECT_UDP_PONG_PACKET, DIRECT_UDP_PROBE_PACKET,
-        MAX_DIRECT_UDP_PROBE_INTERVAL, MIN_DIRECT_UDP_PROBE_INTERVAL,
+        normalize_direct_udp_address, refresh_relay_ticket_timing, relay_error_message,
+        relay_runtime_paths_from_config, relay_udp_address_for_session, send_frame_to_peer,
+        validate_relay_peer_session, validate_relay_peer_session_for_path, AttachedRelayPeer,
+        DirectUdpControlKind, DirectUdpPeer, DirectUdpTransport, PathSendResult, RelayUdpTransport,
+        WindowsPathManager, WindowsRelayDataPlaneStats, DIRECT_UDP_PONG_PACKET,
+        DIRECT_UDP_PROBE_PACKET, MAX_DIRECT_UDP_PROBE_INTERVAL, MIN_DIRECT_UDP_PROBE_INTERVAL,
     };
     use crate::windows::parse_rfc3339_utc_ms;
     use client_core::{
@@ -2875,11 +2922,7 @@ mod tests {
 
         let paths = selected_runtime_paths(
             &PathPolicy::default(),
-            mark_ready_transports(
-                configured_runtime_paths(configured),
-                Some(&direct_udp),
-                None,
-            ),
+            mark_ready_transports(configured_runtime_paths(configured), Some(&direct_udp)),
         );
 
         assert_eq!(paths[0].active_path, Some(PathKind::DirectUdp));
@@ -3334,7 +3377,34 @@ mod tests {
         let parsed = direct_udp_control_packet(probe.as_bytes()).unwrap();
         assert_eq!(parsed.kind, DirectUdpControlKind::Probe);
         assert_eq!(parsed.peer_node_id(), Some("node-local"));
+        assert!(probe.contains("\"kind\":\"direct_udp\""));
+        let pong = br#"{"kind":"direct_udp","type":"pong","node_id":"node-peer"}"#;
+        let parsed = direct_udp_control_packet(pong).unwrap();
+        assert_eq!(parsed.kind, DirectUdpControlKind::Pong);
+        assert_eq!(parsed.peer_node_id(), Some("node-peer"));
+        let legacy_probe = b"slan-direct-udp-probe-v1:node-legacy";
+        let parsed = direct_udp_control_packet(legacy_probe).unwrap();
+        assert_eq!(parsed.kind, DirectUdpControlKind::Probe);
+        assert_eq!(parsed.peer_node_id(), Some("node-legacy"));
         assert_eq!(direct_udp_control_packet(b"not-control"), None);
+    }
+
+    #[test]
+    fn direct_udp_address_normalization_accepts_udp_scheme() {
+        assert_eq!(
+            normalize_direct_udp_address("udp://127.0.0.1:3478").as_deref(),
+            Some("127.0.0.1:3478")
+        );
+        assert_eq!(
+            normalize_direct_udp_address("relay+udp://127.0.0.1:3478").as_deref(),
+            Some("127.0.0.1:3478")
+        );
+        assert_eq!(
+            normalize_direct_udp_address("direct+udp://127.0.0.1:3478").as_deref(),
+            Some("127.0.0.1:3478")
+        );
+        assert_eq!(normalize_direct_udp_address("https://127.0.0.1:3478"), None);
+        assert_eq!(normalize_direct_udp_address("   "), None);
     }
 
     #[test]

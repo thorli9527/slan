@@ -9,8 +9,9 @@ use std::{
 use anyhow::{Context, Result};
 use client_core::{
     AssignedIpPayload, AuthPayload, ClientCommand, ClientMessageNoticePayload, ClientRuntime,
-    ClientViewState, PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig,
-    RelayPeerSession, RouteSpec,
+    ClientViewState, PathCandidate, PathKind, PathState, PeerPathConfig,
+    PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig, RelayPeerSession,
+    RouteSpec,
 };
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
@@ -429,11 +430,69 @@ fn build_embedded_relay_data_plane_config(
         local_node_id: local_node_id.to_string(),
         network_id: network_id.to_string(),
         path_policy: Default::default(),
-        peer_paths: Vec::new(),
+        peer_paths: embedded_peer_path_configs(peers, local_node_id, relay, sessions.as_slice()),
         relay_mtu: Some(1280),
         max_frame_payload: Some(1200),
         sessions,
     })
+}
+
+fn embedded_peer_path_configs(
+    peers: &[crate::control_plane::ControlPeer],
+    local_node_id: &str,
+    relay: &crate::control_plane::RelayCandidate,
+    relay_sessions: &[RelayPeerSession],
+) -> Vec<PeerPathConfig> {
+    peers
+        .iter()
+        .filter(|peer| peer.node_id != local_node_id)
+        .map(|peer| {
+            let relay_session = relay_sessions
+                .iter()
+                .find(|session| session.peer_node_id == peer.node_id);
+            let mut candidates = Vec::new();
+            let mut direct_addresses = Vec::new();
+            for endpoint in &peer.endpoints {
+                let address = endpoint.address.trim();
+                if address.is_empty() || direct_addresses.iter().any(|value| value == address) {
+                    continue;
+                }
+                direct_addresses.push(address.to_string());
+                candidates.push(PathCandidate {
+                    kind: PathKind::DirectUdp,
+                    state: PathState::Probing,
+                    endpoint_id: None,
+                    address: Some(address.to_string()),
+                    session_id: None,
+                    transport: Some("udp".to_string()),
+                    rtt_ms: None,
+                    path_score: Some(900),
+                    last_ok_at_ms: None,
+                    last_error: None,
+                });
+            }
+            if let Some(session) = relay_session {
+                let relay_transport = relay.transport.trim().to_ascii_lowercase();
+                candidates.push(PathCandidate {
+                    kind: PathKind::RelayUdp,
+                    state: PathState::Standby,
+                    endpoint_id: Some(relay.endpoint_id.clone()),
+                    address: Some(relay.address.clone()),
+                    session_id: Some(session.session_id.clone()),
+                    transport: Some(relay_transport),
+                    rtt_ms: None,
+                    path_score: Some(700),
+                    last_ok_at_ms: None,
+                    last_error: None,
+                });
+            }
+            PeerPathConfig {
+                peer_node_id: peer.node_id.clone(),
+                peer_virtual_ips: peer.virtual_ips.clone(),
+                candidates,
+            }
+        })
+        .collect()
 }
 
 fn ensure_device_session() -> Result<PersistedSession> {

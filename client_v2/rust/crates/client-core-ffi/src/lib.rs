@@ -66,6 +66,14 @@ mod android_tun {
         relay_tcp_checksum_invalid: AtomicU64,
         relay_detach_sent: AtomicU64,
         relay_no_peer_packets: AtomicU64,
+        direct_udp_attached_peer_count: AtomicU64,
+        direct_udp_ready_peer_count: AtomicU64,
+        direct_udp_probes_sent: AtomicU64,
+        direct_udp_probes_received: AtomicU64,
+        direct_udp_pongs_sent: AtomicU64,
+        direct_udp_pongs_received: AtomicU64,
+        direct_udp_frames_sent: AtomicU64,
+        direct_udp_frames_received: AtomicU64,
         last_no_peer_destination: Mutex<Option<String>>,
         last_no_peer_packet: Mutex<Option<String>>,
         relay_write_failures: AtomicU64,
@@ -193,6 +201,13 @@ mod android_tun {
             parsed_config.as_ref(),
             Arc::clone(&last_attach_error),
         )?;
+        stats.direct_udp_attached_peer_count.store(
+            direct_udp
+                .as_ref()
+                .map(|transport| transport.peers.len() as u64)
+                .unwrap_or(0),
+            Ordering::Relaxed,
+        );
         stats
             .attached_relay_session_count
             .store(relay_peers.len() as u64, Ordering::Relaxed);
@@ -241,7 +256,9 @@ mod android_tun {
             while !thread_stop.load(Ordering::SeqCst) {
                 if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
                     if let Some(direct_udp) = direct_udp.as_ref() {
-                        direct_udp.send_probe_packets();
+                        thread_stats
+                            .direct_udp_probes_sent
+                            .fetch_add(direct_udp.send_probe_packets() as u64, Ordering::Relaxed);
                     }
                     last_direct_udp_probe = Instant::now();
                 }
@@ -279,6 +296,9 @@ mod android_tun {
                                     encode_slan_relay_data_frame(seq, config_hash, &packet)
                                 {
                                     if direct_udp.send_to_peer(peer_index, &frame).is_ok() {
+                                        thread_stats
+                                            .direct_udp_frames_sent
+                                            .fetch_add(1, Ordering::Relaxed);
                                         continue;
                                     }
                                 }
@@ -409,7 +429,17 @@ mod android_tun {
                             {
                                 direct_udp
                                     .mark_peer_ready(received.peer_index, received.remote_addr);
-                                direct_udp.send_pong_to_peer(received.peer_index);
+                                thread_stats
+                                    .direct_udp_ready_peer_count
+                                    .store(direct_udp.ready_peer_count() as u64, Ordering::Relaxed);
+                                thread_stats
+                                    .direct_udp_probes_received
+                                    .fetch_add(1, Ordering::Relaxed);
+                                if direct_udp.send_pong_to_peer(received.peer_index) {
+                                    thread_stats
+                                        .direct_udp_pongs_sent
+                                        .fetch_add(1, Ordering::Relaxed);
+                                }
                                 continue;
                             }
                             if control_packet
@@ -418,6 +448,12 @@ mod android_tun {
                             {
                                 direct_udp
                                     .mark_peer_ready(received.peer_index, received.remote_addr);
+                                thread_stats
+                                    .direct_udp_ready_peer_count
+                                    .store(direct_udp.ready_peer_count() as u64, Ordering::Relaxed);
+                                thread_stats
+                                    .direct_udp_pongs_received
+                                    .fetch_add(1, Ordering::Relaxed);
                                 continue;
                             }
                             if let Some(packet) =
@@ -425,6 +461,12 @@ mod android_tun {
                             {
                                 direct_udp
                                     .mark_peer_ready(received.peer_index, received.remote_addr);
+                                thread_stats
+                                    .direct_udp_ready_peer_count
+                                    .store(direct_udp.ready_peer_count() as u64, Ordering::Relaxed);
+                                thread_stats
+                                    .direct_udp_frames_received
+                                    .fetch_add(1, Ordering::Relaxed);
                                 record_relay_tcp_packet(&thread_stats, packet);
                                 if let Some(reply) =
                                     icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
@@ -569,6 +611,14 @@ mod android_tun {
             "relayTcpChecksumInvalid": runtime.stats.relay_tcp_checksum_invalid.load(Ordering::Relaxed),
             "relayDetachSent": runtime.stats.relay_detach_sent.load(Ordering::Relaxed),
             "relayNoPeerPackets": runtime.stats.relay_no_peer_packets.load(Ordering::Relaxed),
+            "directUdpAttachedPeerCount": runtime.stats.direct_udp_attached_peer_count.load(Ordering::Relaxed),
+            "directUdpReadyPeerCount": runtime.stats.direct_udp_ready_peer_count.load(Ordering::Relaxed),
+            "directUdpProbesSent": runtime.stats.direct_udp_probes_sent.load(Ordering::Relaxed),
+            "directUdpProbesReceived": runtime.stats.direct_udp_probes_received.load(Ordering::Relaxed),
+            "directUdpPongsSent": runtime.stats.direct_udp_pongs_sent.load(Ordering::Relaxed),
+            "directUdpPongsReceived": runtime.stats.direct_udp_pongs_received.load(Ordering::Relaxed),
+            "directUdpFramesSent": runtime.stats.direct_udp_frames_sent.load(Ordering::Relaxed),
+            "directUdpFramesReceived": runtime.stats.direct_udp_frames_received.load(Ordering::Relaxed),
             "lastNoPeerDestination": runtime.stats.last_no_peer_destination.lock().ok().and_then(|value| value.clone()),
             "lastNoPeerPacket": runtime.stats.last_no_peer_packet.lock().ok().and_then(|value| value.clone()),
             "relayWriteFailures": runtime.stats.relay_write_failures.load(Ordering::Relaxed),

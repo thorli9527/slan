@@ -350,6 +350,42 @@ func TestNetworkConfigIncludesEnabledPeerBeforeRuntimeReport(t *testing.T) {
 	}
 }
 
+func TestNetworkConfigIncludesPeerEndpointReport(t *testing.T) {
+	store := NewStore()
+	auth, network, _ := store.RegisterUser("endpoint@example.com", "secret", "Endpoint")
+	deviceA, _, _ := store.RegisterDevice(auth.User.UserID, "mac-endpoint", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	deviceB, _, _ := store.RegisterDevice(auth.User.UserID, "android-endpoint", "Android", "android", "Android", "15", "", "pub-b")
+	otherNetwork, _, _, err := store.CreateNetwork(auth.User.UserID, "Other", "other", "default")
+	if err != nil {
+		t.Fatalf("create other network: %v", err)
+	}
+	if _, err := store.AddNetworkDevice(otherNetwork.NetworkID, deviceB.DeviceID, auth.User.UserID, "", true); err != nil {
+		t.Fatalf("add other network device: %v", err)
+	}
+	if changed, err := store.ReportDeviceEndpoint(otherNetwork.NetworkID, deviceB.DeviceID, []DeviceEndpoint{{
+		Type:      "direct_udp",
+		Address:   "198.51.100.20:40123",
+		UpdatedAt: time.Now().Unix(),
+	}}); err != nil || !changed {
+		t.Fatalf("report endpoint in other network: %v", err)
+	}
+
+	if changed, err := store.ReportDeviceEndpoint(network.NetworkID, deviceB.DeviceID, []DeviceEndpoint{{
+		Type:      "direct_udp",
+		Address:   "192.0.2.10:40123",
+		UpdatedAt: time.Now().Unix(),
+	}}); err != nil || !changed {
+		t.Fatalf("report endpoint: %v", err)
+	}
+	config, err := store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config: %v", err)
+	}
+	if len(config.Peers) != 1 || len(config.Peers[0].Endpoints) != 1 || config.Peers[0].Endpoints[0].Address != "192.0.2.10:40123" {
+		t.Fatalf("expected peer endpoint in config, got %+v", config.Peers)
+	}
+}
+
 func TestNetworkConfigNormalizesCIDRGlobalIPs(t *testing.T) {
 	store := NewStore()
 	auth, network, _ := store.RegisterUser("alice@example.com", "secret", "Alice")

@@ -236,6 +236,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           'relayEnabled=${networkConfig?.relayDataPlane?.enabled ?? false} '
           'relayAddress=${networkConfig?.relayDataPlane?.relayAddress ?? networkConfig?.relayAddress ?? ''} '
           'relayPeerIps=${networkConfig?.relayDataPlane?.sessions.map((session) => session.peerVirtualIps.join("|")).join(",") ?? ''} '
+          'peerPaths=${networkConfig?.relayDataPlane?.peerPaths.length ?? 0} '
+          'directCandidates=${_androidDirectCandidateSummary(networkConfig)} '
           'routes=${networkConfig?.routes.map((route) => route['destination']).join(",") ?? ''}',
         );
       }
@@ -267,6 +269,21 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         fields: {'message': error.toString()},
       );
     }
+  }
+
+  String _androidDirectCandidateSummary(AndroidVpnSessionConfig? config) {
+    final peerPaths = config?.relayDataPlane?.peerPaths;
+    if (peerPaths == null || peerPaths.isEmpty) {
+      return '';
+    }
+    return peerPaths.map((path) {
+      final candidates = path.candidates
+          .where((candidate) => candidate.kind == PathKind.directUdp)
+          .map((candidate) => candidate.address ?? '')
+          .where((address) => address.isNotEmpty)
+          .join('|');
+      return '${path.peerNodeId}:${candidates.isEmpty ? '-' : candidates}';
+    }).join(',');
   }
 
   @override

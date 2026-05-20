@@ -125,25 +125,32 @@ type DeviceBootstrapKey struct {
 }
 
 type Device struct {
-	DeviceID        string `json:"deviceId"`
-	OwnerID         string `json:"ownerId"`
-	OwnerEmail      string `json:"ownerEmail,omitempty"`
-	Name            string `json:"name"`
-	Platform        string `json:"platform"`
-	OSName          string `json:"osName,omitempty"`
-	OSVersion       string `json:"osVersion,omitempty"`
-	Alias           string `json:"alias,omitempty"`
-	PublicKey       string `json:"publicKey,omitempty"`
-	GlobalIP        string `json:"globalIp"`
-	PrefixLen       int    `json:"prefixLen,omitempty"`
-	GlobalCIDR      string `json:"globalCidr,omitempty"`
-	SubnetID        string `json:"subnetId,omitempty"`
-	SubnetCIDR      string `json:"subnetCidr,omitempty"`
-	SubnetPrefixLen int    `json:"subnetPrefixLen,omitempty"`
-	GlobalName      string `json:"globalName"`
-	Status          string `json:"status"`
-	CreatedAt       int64  `json:"createdAt"`
-	UpdatedAt       int64  `json:"updatedAt"`
+	DeviceID        string           `json:"deviceId"`
+	OwnerID         string           `json:"ownerId"`
+	OwnerEmail      string           `json:"ownerEmail,omitempty"`
+	Name            string           `json:"name"`
+	Platform        string           `json:"platform"`
+	OSName          string           `json:"osName,omitempty"`
+	OSVersion       string           `json:"osVersion,omitempty"`
+	Alias           string           `json:"alias,omitempty"`
+	PublicKey       string           `json:"publicKey,omitempty"`
+	GlobalIP        string           `json:"globalIp"`
+	PrefixLen       int              `json:"prefixLen,omitempty"`
+	GlobalCIDR      string           `json:"globalCidr,omitempty"`
+	SubnetID        string           `json:"subnetId,omitempty"`
+	SubnetCIDR      string           `json:"subnetCidr,omitempty"`
+	SubnetPrefixLen int              `json:"subnetPrefixLen,omitempty"`
+	GlobalName      string           `json:"globalName"`
+	Status          string           `json:"status"`
+	CreatedAt       int64            `json:"createdAt"`
+	UpdatedAt       int64            `json:"updatedAt"`
+	Endpoints       []DeviceEndpoint `json:"endpoints,omitempty"`
+}
+
+type DeviceEndpoint struct {
+	Type      string `json:"type"`
+	Address   string `json:"address"`
+	UpdatedAt int64  `json:"updatedAt,omitempty"`
 }
 
 type ClientDownload struct {

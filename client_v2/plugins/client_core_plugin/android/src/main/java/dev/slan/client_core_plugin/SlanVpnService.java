@@ -178,11 +178,12 @@ public final class SlanVpnService extends VpnService {
     }
     int sessionCount = relaySessionCount(config);
     int directCandidateCount = directPeerCandidateCount(config);
-    if (sessionCount <= 0 && directCandidateCount <= 0) {
+    boolean needsDirectSocket = directCandidateCount > 0 || hasPeerPaths(config);
+    if (sessionCount <= 0 && !needsDirectSocket) {
       return new int[0];
     }
     closeRelaySockets();
-    int[] fds = new int[sessionCount + (directCandidateCount > 0 ? 1 : 0)];
+    int[] fds = new int[sessionCount + (needsDirectSocket ? 1 : 0)];
     for (int index = 0; index < sessionCount; index += 1) {
       DatagramSocket socket = new DatagramSocket();
       if (!protect(socket)) {
@@ -194,7 +195,7 @@ public final class SlanVpnService extends VpnService {
       fds[index] = descriptor.detachFd();
       protectedRelaySockets.add(socket);
     }
-    if (directCandidateCount > 0) {
+    if (needsDirectSocket) {
       DatagramSocket socket = new DatagramSocket();
       if (!protect(socket)) {
         socket.close();
@@ -205,6 +206,15 @@ public final class SlanVpnService extends VpnService {
       protectedRelaySockets.add(socket);
     }
     return fds;
+  }
+
+  private boolean hasPeerPaths(JSONObject config) {
+    JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
+    if (relayDataPlane == null || !relayDataPlane.optBoolean("enabled", false)) {
+      return false;
+    }
+    JSONArray peerPaths = relayDataPlane.optJSONArray("peerPaths");
+    return peerPaths != null && peerPaths.length() > 0;
   }
 
   private int relaySessionCount(JSONObject config) {
