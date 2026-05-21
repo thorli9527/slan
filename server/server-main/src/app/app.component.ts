@@ -8,10 +8,11 @@ import { OperatorsPageComponent } from './features/operators/operators-page.comp
 import { OrdersPageComponent } from './features/orders/orders-page.component';
 import { OverviewPageComponent } from './features/overview/overview-page.component';
 import { ProductsPageComponent } from './features/products/products-page.component';
+import { PunchNodesPageComponent } from './features/punch-nodes/punch-nodes-page.component';
 import { RelayNodesPageComponent } from './features/relay-nodes/relay-nodes-page.component';
 import { RenewalsPageComponent } from './features/renewals/renewals-page.component';
 
-type NavId = 'overview' | 'operators' | 'relayNodes' | 'customers' | 'devices' | 'clientDownloads' | 'products' | 'orders' | 'renewals';
+type NavId = 'overview' | 'operators' | 'relayNodes' | 'punchNodes' | 'customers' | 'devices' | 'clientDownloads' | 'products' | 'orders' | 'renewals';
 
 type OperatorUser = {
   operatorId: string;
@@ -35,6 +36,21 @@ type RelayNode = {
   activeSessions: number;
   status: 'active' | 'maintenance' | 'disabled';
   health: 'healthy' | 'warning' | 'down';
+};
+
+type PunchNode = {
+  nodeId: string;
+  name: string;
+  region: string;
+  publicUdpIp: string;
+  publicUdpPort: number;
+  maxSessions: number;
+  activeSessions: number;
+  status: 'active' | 'maintenance' | 'disabled';
+  health: 'healthy' | 'warning' | 'down';
+  priority?: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type CustomerPlan = {
@@ -170,6 +186,7 @@ type Order = {
     OverviewPageComponent,
     OperatorsPageComponent,
     RelayNodesPageComponent,
+    PunchNodesPageComponent,
     CustomersPageComponent,
     DevicesPageComponent,
     ClientDownloadsPageComponent,
@@ -188,6 +205,7 @@ export class AppComponent implements OnInit {
     { id: 'overview', label: '运营管理', desc: '平台指标与待处理事项' },
     { id: 'operators', label: '运营用户', desc: '后台账号与角色' },
     { id: 'relayNodes', label: '中继节点', desc: 'Relay/DERP 容量管理' },
+    { id: 'punchNodes', label: '打洞节点', desc: 'P2P Punch 节点管理' },
     { id: 'customers', label: '客户管理', desc: '客户资源与限流状态' },
     { id: 'devices', label: '设备管理', desc: '全局设备、在线与启用状态' },
     { id: 'clientDownloads', label: '客户端发布', desc: '安装包上传与下载' },
@@ -210,6 +228,7 @@ export class AppComponent implements OnInit {
   showOperatorPasswordDialog = false;
   showOperatorDialog = false;
   showRelayNodeDialog = false;
+  showPunchNodeDialog = false;
   showPlanDialog = false;
   showProductDialog = false;
   showOrderDialog = false;
@@ -219,6 +238,7 @@ export class AppComponent implements OnInit {
   selectedCustomer: Customer | null = null;
   selectedOperator: OperatorUser | null = null;
   selectedRelayNode: RelayNode | null = null;
+  selectedPunchNode: PunchNode | null = null;
   selectedPlan: CustomerPlan | null = null;
   selectedProduct: Product | null = null;
   selectedOrder: Order | null = null;
@@ -235,6 +255,7 @@ export class AppComponent implements OnInit {
   passwordMessage = '';
   operatorForm: Partial<OperatorUser> = {};
   relayNodeForm: Partial<RelayNode> = {};
+  punchNodeForm: Partial<PunchNode> = {};
   planForm: Partial<CustomerPlan> = {};
   productForm: Partial<Product> = {};
   orderForm: Partial<Order> = {};
@@ -277,6 +298,10 @@ export class AppComponent implements OnInit {
     { nodeId: 'relay-hk-001', name: '香港 Relay 1', region: 'ap-east-1', transport: 'relay_udp', publicAddr: 'udp://hk1.relay.slan.com:3478', maxBandwidthMbps: 1000, monthlyTrafficGb: 20480, usedTrafficGb: 6830, maxSessions: 8000, activeSessions: 2310, status: 'active', health: 'healthy' },
     { nodeId: 'derp-tokyo-001', name: '东京 DERP 1', region: 'ap-northeast-1', transport: 'derp_tcp_tls_443', publicAddr: 'https://tyo1.derp.slan.com', maxBandwidthMbps: 500, monthlyTrafficGb: 10240, usedTrafficGb: 9120, maxSessions: 4000, activeSessions: 3380, status: 'maintenance', health: 'warning' },
     { nodeId: 'relay-sg-001', name: '新加坡 Relay 1', region: 'ap-southeast-1', transport: 'relay_udp', publicAddr: 'udp://sg1.relay.slan.com:3478', maxBandwidthMbps: 800, monthlyTrafficGb: 15360, usedTrafficGb: 4210, maxSessions: 6000, activeSessions: 1740, status: 'active', health: 'healthy' },
+  ];
+
+  punchNodes: PunchNode[] = [
+    { nodeId: 'punch-hk-001', name: '香港 Punch 1', region: 'ap-east-1', publicUdpIp: '47.245.40.231', publicUdpPort: 29130, maxSessions: 10000, activeSessions: 1280, status: 'active', health: 'healthy', priority: 10, createdAt: '2026-05-09 09:00', updatedAt: '2026-05-09 09:20' },
   ];
 
   plans: CustomerPlan[] = [
@@ -354,9 +379,10 @@ export class AppComponent implements OnInit {
     this.loading = true;
     this.apiMessage = '';
     try {
-      const [operators, relayNodes, customers, devices, downloads, plans, products, orders, renewals] = await Promise.all([
+      const [operators, relayNodes, punchNodes, customers, devices, downloads, plans, products, orders, renewals] = await Promise.all([
         this.request<{ items: OperatorUser[] }>('GET', '/api/ops/operators'),
         this.request<{ items: RelayNode[] }>('GET', '/api/ops/relay-nodes'),
+        this.request<{ items: PunchNode[] }>('GET', '/api/ops/punch-nodes'),
         this.request<{ items: Customer[] }>('GET', '/api/ops/customers'),
         this.request<{ items: OpsDevice[] }>('GET', '/api/ops/devices'),
         this.request<{ items: ClientDownload[] }>('GET', '/api/ops/client-downloads'),
@@ -367,6 +393,11 @@ export class AppComponent implements OnInit {
       ]);
       this.operators = operators.items.map((item) => ({ ...item, lastLoginAt: this.formatDateTime(item.lastLoginAt) }));
       this.relayNodes = relayNodes.items;
+      this.punchNodes = punchNodes.items.map((item) => ({
+        ...item,
+        createdAt: this.formatDateTime(item.createdAt),
+        updatedAt: this.formatDateTime(item.updatedAt),
+      }));
       this.customers = customers.items.map((item) => ({ ...item, planExpiresAt: this.formatDate(item.planExpiresAt) }));
       this.devices = devices.items.map((item) => this.formatDevice(item));
       this.clientDownloads = downloads.items.map((item) => ({
@@ -508,6 +539,18 @@ export class AppComponent implements OnInit {
     return this.relayNodes.filter((node) => node.status === 'active').length;
   }
 
+  get activePunchNodes(): number {
+    return this.punchNodes.filter((node) => node.status === 'active').length;
+  }
+
+  get healthyPunchNodes(): number {
+    return this.punchNodes.filter((node) => node.health === 'healthy').length;
+  }
+
+  get totalPunchSessions(): number {
+    return this.punchNodes.reduce((sum, node) => sum + node.activeSessions, 0);
+  }
+
   get paidOrders(): Order[] {
     return this.orders.filter((order) => order.payStatus === 'paid');
   }
@@ -594,6 +637,10 @@ export class AppComponent implements OnInit {
 
   relayNodePercent(node: RelayNode): number {
     return Math.min(100, Math.round((node.usedTrafficGb / node.monthlyTrafficGb) * 100));
+  }
+
+  punchNodePercent(node: PunchNode): number {
+    return Math.min(100, Math.round((node.activeSessions / Math.max(1, node.maxSessions)) * 100));
   }
 
   formatBytes(value: number | undefined): string {
@@ -703,6 +750,76 @@ export class AppComponent implements OnInit {
       });
       this.relayNodes = [node, ...this.relayNodes.filter((item) => item.nodeId !== node.nodeId)];
       this.closeRelayNodeDialog();
+      this.notifyStateChanged();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+      this.notifyStateChanged();
+    }
+  }
+
+  openPunchNodeDialog(node?: PunchNode): void {
+    this.selectedPunchNode = node ?? null;
+    this.punchNodeForm = node ? { ...node } : {
+      name: '',
+      region: 'default',
+      publicUdpIp: '',
+      publicUdpPort: 29130,
+      maxSessions: 10000,
+      activeSessions: 0,
+      status: 'active',
+      health: 'healthy',
+      priority: this.punchNodes.length + 1,
+    };
+    this.showPunchNodeDialog = true;
+  }
+
+  closePunchNodeDialog(): void {
+    this.showPunchNodeDialog = false;
+    this.selectedPunchNode = null;
+  }
+
+  async savePunchNodeDialog(): Promise<void> {
+    if (!this.punchNodeForm.name?.trim() || !this.punchNodeForm.publicUdpIp?.trim()) {
+      this.apiMessage = '请输入打洞节点名称和公网 UDP IP';
+      return;
+    }
+    const publicUdpIp = this.punchNodeForm.publicUdpIp.trim();
+    const publicUdpPort = Number(this.punchNodeForm.publicUdpPort ?? 0);
+    if (publicUdpPort <= 0 || publicUdpPort > 65534) {
+      this.apiMessage = '公网 UDP 端口必须在 1-65534 范围内';
+      return;
+    }
+    const duplicated = this.punchNodes.some((node) =>
+      node.publicUdpIp === publicUdpIp &&
+      node.publicUdpPort === publicUdpPort &&
+      node.nodeId !== this.selectedPunchNode?.nodeId
+    );
+    if (duplicated) {
+      this.apiMessage = '公网 UDP IP 和端口已存在，不能重复配置到多个打洞节点';
+      return;
+    }
+    try {
+      const isEdit = Boolean(this.selectedPunchNode);
+      const path = isEdit ? `/api/ops/punch-nodes/${encodeURIComponent(this.selectedPunchNode!.nodeId)}` : '/api/ops/punch-nodes';
+      const node = await this.request<PunchNode>(isEdit ? 'PATCH' : 'POST', path, {
+        nodeId: this.selectedPunchNode?.nodeId,
+        name: this.punchNodeForm.name,
+        region: this.punchNodeForm.region,
+        publicUdpIp,
+        publicUdpPort,
+        maxSessions: Number(this.punchNodeForm.maxSessions ?? 0),
+        status: this.punchNodeForm.status,
+        health: this.punchNodeForm.health,
+        priority: Number(this.punchNodeForm.priority ?? 0),
+      });
+      const formatted = {
+        ...node,
+        createdAt: this.formatDateTime(node.createdAt),
+        updatedAt: this.formatDateTime(node.updatedAt),
+      };
+      this.punchNodes = [formatted, ...this.punchNodes.filter((item) => item.nodeId !== node.nodeId)]
+        .sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0));
+      this.closePunchNodeDialog();
       this.notifyStateChanged();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
@@ -1158,6 +1275,26 @@ export class AppComponent implements OnInit {
         health: nextStatus === 'active' ? 'healthy' : 'down',
       });
       Object.assign(node, updated);
+      this.notifyStateChanged();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+      this.notifyStateChanged();
+    }
+  }
+
+  async togglePunchNode(node: PunchNode): Promise<void> {
+    const nextStatus = node.status === 'active' ? 'disabled' : 'active';
+    try {
+      const updated = await this.request<PunchNode>('PATCH', `/api/ops/punch-nodes/${encodeURIComponent(node.nodeId)}`, {
+        ...node,
+        status: nextStatus,
+        health: nextStatus === 'active' ? 'healthy' : 'down',
+      });
+      Object.assign(node, {
+        ...updated,
+        createdAt: this.formatDateTime(updated.createdAt),
+        updatedAt: this.formatDateTime(updated.updatedAt),
+      });
       this.notifyStateChanged();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);

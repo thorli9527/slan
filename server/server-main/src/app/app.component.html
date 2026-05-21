@@ -60,12 +60,14 @@
       <article><span>客户</span><strong>{{ totalCustomers }}</strong><small>{{ limitedCustomers }} 个客户已限流</small></article>
       <article><span>设备</span><strong>{{ onlineDeviceCount }}/{{ devices.length }}</strong><small>在线设备 / 总设备</small></article>
       <article><span>中继节点</span><strong>{{ activeRelayNodes }}/{{ relayNodes.length }}</strong><small>健康节点 / 总节点</small></article>
+      <article><span>打洞节点</span><strong>{{ healthyPunchNodes }}/{{ punchNodes.length }}</strong><small>{{ totalPunchSessions }} 个活跃打洞会话</small></article>
       <article><span>Relay 月流量</span><strong>{{ totalRelayUsedGb }}GB</strong><small>只统计 relay_udp 与 DERP</small></article>
     </section>
 
     <ops-overview-page *ngIf="active === 'overview'" [vm]="vm"></ops-overview-page>
     <ops-operators-page *ngIf="active === 'operators'" [vm]="vm"></ops-operators-page>
     <ops-relay-nodes-page *ngIf="active === 'relayNodes'" [vm]="vm"></ops-relay-nodes-page>
+    <ops-punch-nodes-page *ngIf="active === 'punchNodes'" [vm]="vm"></ops-punch-nodes-page>
     <ops-customers-page *ngIf="active === 'customers'" [vm]="vm"></ops-customers-page>
     <ops-devices-page *ngIf="active === 'devices'" [vm]="vm"></ops-devices-page>
     <ops-client-downloads-page *ngIf="active === 'clientDownloads'" [vm]="vm"></ops-client-downloads-page>
@@ -211,6 +213,52 @@
     <div class="modal-footer">
       <button class="ghost" type="button" (click)="closeRelayNodeDialog()">取消</button>
       <button class="primary" type="button" (click)="saveRelayNodeDialog()">保存</button>
+    </div>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="showPunchNodeDialog">
+  <section class="modal">
+    <div class="modal-header">
+      <div>
+        <h2>{{ selectedPunchNode ? '修改打洞节点' : '新增打洞节点' }}</h2>
+        <p>P2P 打洞服务由 biz 直接按公网 UDP IP 和端口调度，HTTP 管理端口默认为 UDP 端口 + 1。</p>
+      </div>
+      <button class="icon-close" type="button" (click)="closePunchNodeDialog()">x</button>
+    </div>
+    <div class="form-grid two-col">
+      <label><span>节点名称</span><input [(ngModel)]="punchNodeForm.name"></label>
+      <label><span>区域</span><input [(ngModel)]="punchNodeForm.region"></label>
+      <label><span>公网 UDP IP</span><input [(ngModel)]="punchNodeForm.publicUdpIp" placeholder="47.245.40.231"></label>
+      <label><span>公网 UDP 端口</span><input [(ngModel)]="punchNodeForm.publicUdpPort" type="number"></label>
+      <label><span>最大会话</span><input [(ngModel)]="punchNodeForm.maxSessions" type="number"></label>
+      <label><span>优先级</span><input [(ngModel)]="punchNodeForm.priority" type="number"></label>
+      <label>
+        <span>状态</span>
+        <select [(ngModel)]="punchNodeForm.status">
+          <option value="active">active</option>
+          <option value="maintenance">maintenance</option>
+          <option value="disabled">disabled</option>
+        </select>
+      </label>
+      <label>
+        <span>健康</span>
+        <select [(ngModel)]="punchNodeForm.health">
+          <option value="healthy">healthy</option>
+          <option value="warning">warning</option>
+          <option value="down">down</option>
+        </select>
+      </label>
+    </div>
+    <div class="detail-grid" *ngIf="selectedPunchNode">
+      <div><span>节点 ID</span><strong>{{ selectedPunchNode.nodeId }}</strong></div>
+      <div><span>HTTP 管理端口</span><strong>{{ selectedPunchNode.publicUdpPort + 1 }}</strong></div>
+      <div><span>当前会话</span><strong>{{ selectedPunchNode.activeSessions }} / {{ selectedPunchNode.maxSessions }}</strong></div>
+      <div><span>会话占比</span><strong>{{ punchNodePercent(selectedPunchNode) }}%</strong></div>
+    </div>
+    <div class="modal-footer">
+      <button class="ghost" type="button" (click)="closePunchNodeDialog()">取消</button>
+      <button class="primary" type="button" (click)="savePunchNodeDialog()">保存</button>
     </div>
   </section>
 </div>

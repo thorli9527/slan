@@ -1,0 +1,56 @@
+<section class="page">
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>P2P 打洞节点管理</h2>
+        <p>管理 punch-service 公网 UDP 入口，biz 会按启用、健康和优先级选择打洞节点。</p>
+      </div>
+      <button class="primary" type="button" (click)="vm.openPunchNodeDialog()">新增打洞节点</button>
+    </div>
+
+    <div class="summary-grid compact">
+      <article><span>启用节点</span><strong>{{ vm.activePunchNodes }}/{{ vm.punchNodes.length }}</strong><small>status=active</small></article>
+      <article><span>健康节点</span><strong>{{ vm.healthyPunchNodes }}</strong><small>health=healthy</small></article>
+      <article><span>活跃会话</span><strong>{{ vm.totalPunchSessions }}</strong><small>正在服务的打洞会话</small></article>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>节点</th>
+          <th>区域</th>
+          <th>公网 UDP</th>
+          <th>HTTP 管理</th>
+          <th>会话</th>
+          <th>优先级</th>
+          <th>状态</th>
+          <th>健康</th>
+          <th>更新时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let node of vm.punchNodes">
+          <td><strong>{{ node.name }}</strong><br><code>{{ node.nodeId }}</code></td>
+          <td>{{ node.region }}</td>
+          <td><code>{{ node.publicUdpIp }}:{{ node.publicUdpPort }}</code></td>
+          <td><code>{{ node.publicUdpIp }}:{{ node.publicUdpPort + 1 }}</code></td>
+          <td>
+            {{ node.activeSessions }} / {{ node.maxSessions }}
+            <div class="meter"><span [style.width.%]="vm.punchNodePercent(node)"></span></div>
+          </td>
+          <td>{{ node.priority || 0 }}</td>
+          <td><span class="status" [class.online]="node.status === 'active'">{{ node.status }}</span></td>
+          <td><span class="status" [class.online]="node.health === 'healthy'">{{ node.health }}</span></td>
+          <td>{{ node.updatedAt }}</td>
+          <td>
+            <div class="row-actions">
+              <button class="ghost small" type="button" (click)="vm.openPunchNodeDialog(node)">查看/修改</button>
+              <button class="ghost small" type="button" (click)="vm.togglePunchNode(node)">{{ node.status === 'active' ? '停用' : '启用' }}</button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>
