@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.json.JSONObject;
 
+/** Flutter MethodChannel entrypoint for Android client-core integration. */
 public final class ClientCorePlugin
     implements FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
         PluginRegistry.ActivityResultListener {
@@ -28,6 +29,7 @@ public final class ClientCorePlugin
   private static final String NODE_ID_KEY = "dev.slan.client.v2.android.nodeId";
   private static final String SERVER_BASE_URL_KEY = "dev.slan.client.v2.mobile.serverBaseUrl";
 
+  /** Guards the lightweight state map returned to Flutter. */
   private final Object stateLock = new Object();
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private final Map<String, Object> state = new HashMap<>();
@@ -40,6 +42,7 @@ public final class ClientCorePlugin
     resetState(false);
   }
 
+  /** Attach plugin to Flutter engine and prepare stable Android device/node identity. */
   @Override
   public void onAttachedToEngine(FlutterPluginBinding binding) {
     applicationContext = binding.getApplicationContext();
@@ -95,6 +98,7 @@ public final class ClientCorePlugin
     return true;
   }
 
+  /** Dispatch Flutter MethodChannel calls to Android VPN, embedded service, and settings APIs. */
   @Override
   public void onMethodCall(MethodCall call, MethodChannel.Result result) {
     try {
@@ -141,6 +145,7 @@ public final class ClientCorePlugin
     }
   }
 
+  /** Reset cached UI state after startup or explicit sign-out. */
   private void resetState(boolean signedOut) {
     synchronized (stateLock) {
       state.clear();
@@ -158,11 +163,13 @@ public final class ClientCorePlugin
     }
   }
 
+  /** Return whether Android VpnService already has user consent. */
   private boolean vpnPermissionGranted() {
     Context context = applicationContext;
     return context != null && VpnService.prepare(context) == null;
   }
 
+  /** Start Android system consent flow for VpnService. */
   private void requestVpnPermission(MethodChannel.Result result) {
     String requestId = "vpn-" + UUID.randomUUID();
     Activity currentActivity = activity;
@@ -188,6 +195,7 @@ public final class ClientCorePlugin
     return response;
   }
 
+  /** Start foreground VpnService with the JSON config produced by Flutter/Rust. */
   private void startVpn(MethodCall call, MethodChannel.Result result) throws Exception {
     Context context = applicationContext;
     if (context == null) {
@@ -211,6 +219,7 @@ public final class ClientCorePlugin
     result.success(SlanVpnRuntime.runtimeState());
   }
 
+  /** Stop foreground VpnService and clear cached network state. */
   private void stopVpn(MethodChannel.Result result) {
     Context context = applicationContext;
     if (context == null) {
@@ -235,6 +244,7 @@ public final class ClientCorePlugin
     }
   }
 
+  /** Protect a socket fd from being routed back into Android VPN. */
   private void protectSocket(MethodCall call, MethodChannel.Result result) {
     Object value = call.argument("socketFd");
     int socketFd = value instanceof Number ? ((Number) value).intValue() : -1;

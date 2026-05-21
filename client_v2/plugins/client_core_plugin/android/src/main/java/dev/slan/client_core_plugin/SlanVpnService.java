@@ -19,6 +19,7 @@ import java.net.InetSocketAddress;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+/** Android VpnService that owns the TUN fd and hands it to the Rust data plane. */
 public final class SlanVpnService extends VpnService {
   private static final String TAG = "SlanVpnService";
   static final String ACTION_START = "dev.slan.client_core_plugin.START_VPN";
@@ -29,9 +30,12 @@ public final class SlanVpnService extends VpnService {
   private static final int NOTIFICATION_ID = 24018;
   private static SlanVpnService activeService;
 
+  /** Current Android VPN interface descriptor before ownership is detached to Rust. */
   private ParcelFileDescriptor vpnInterface;
+  /** Protected UDP sockets whose fds are detached into Rust for relay/direct UDP traffic. */
   private final List<DatagramSocket> protectedRelaySockets = new ArrayList<>();
 
+  /** Protect an externally created socket fd from VPN routing. */
   static boolean protectSocketFd(int socketFd) {
     SlanVpnService service = activeService;
     return service != null && service.protect(socketFd);
@@ -89,6 +93,7 @@ public final class SlanVpnService extends VpnService {
     super.onDestroy();
   }
 
+  /** Build Android VPN interface, protect relay/direct sockets, and start Rust TUN runtime. */
   private void startVpn(JSONObject config) throws Exception {
     String virtualIp = config.optString("virtualIp", "").trim();
     int prefixLen = config.optInt("prefixLen", 32);
@@ -161,6 +166,7 @@ public final class SlanVpnService extends VpnService {
     return relayDataPlane == null ? "" : relayDataPlane.optString("relayAddress", "").trim();
   }
 
+  /** Create protected relay sockets and an optional direct UDP socket for Rust data plane use. */
   private int[] detachProtectedRelaySockets(JSONObject config) throws Exception {
     String relayAddress = config.optString("relayAddress", "").trim();
     if (relayAddress.isEmpty()) {
@@ -208,6 +214,7 @@ public final class SlanVpnService extends VpnService {
     return fds;
   }
 
+  /** Return whether config contains peer path entries that need a direct UDP socket. */
   private boolean hasPeerPaths(JSONObject config) {
     JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
     if (relayDataPlane == null || !relayDataPlane.optBoolean("enabled", false)) {
@@ -217,6 +224,7 @@ public final class SlanVpnService extends VpnService {
     return peerPaths != null && peerPaths.length() > 0;
   }
 
+  /** Count relay sessions requiring protected UDP sockets. */
   private int relaySessionCount(JSONObject config) {
     JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
     if (relayDataPlane == null || !relayDataPlane.optBoolean("enabled", false)) {
@@ -226,6 +234,7 @@ public final class SlanVpnService extends VpnService {
     return sessions == null ? 0 : sessions.length();
   }
 
+  /** Count peers that have LAN/IPv6/direct UDP candidates. */
   private int directPeerCandidateCount(JSONObject config) {
     JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
     if (relayDataPlane == null || !relayDataPlane.optBoolean("enabled", false)) {

@@ -13,22 +13,36 @@ import (
 	"github.com/slan/server/server-wire-punch/internal/config"
 )
 
+// Server 同时承载 punch UDP 探测入口和 HTTP 管理/协商入口。
 type Server struct {
 	conn  *net.UDPConn
-	store *Store
+	store Repository
 	cfg   config.Config
 }
 
+// UDPMessage 是 punch UDP 数据面使用的轻量消息格式。
 type UDPMessage struct {
-	Kind      string `json:"kind"`
+	// Kind 表示消息类型，例如 ping、endpoint_probe、endpoint_report。
+	Kind string `json:"kind"`
+	// NetworkID 是节点所属虚拟网络。
 	NetworkID string `json:"networkId"`
-	NodeID    string `json:"nodeId"`
-	Type      string `json:"type,omitempty"`
-	Address   string `json:"address,omitempty"`
-	NATType   string `json:"natType,omitempty"`
+	// NodeID 是上报端点的节点 ID。
+	NodeID string `json:"nodeId"`
+	// Type 是端点类别。
+	Type string `json:"type,omitempty"`
+	// Address 是客户端主动上报的候选地址。
+	Address string `json:"address,omitempty"`
+	// NATType 是客户端识别到的 NAT 类型。
+	NATType string `json:"natType,omitempty"`
 }
 
+// NewServer 使用默认内存仓储创建 punch 服务。
 func NewServer(cfg config.Config) (*Server, error) {
+	return NewServerWithRepository(cfg, NewStore())
+}
+
+// NewServerWithRepository 使用调用方提供的仓储创建 punch 服务，便于测试或替换实现。
+func NewServerWithRepository(cfg config.Config, store Repository) (*Server, error) {
 	addr, err := net.ResolveUDPAddr("udp", cfg.ListenAddr)
 	if err != nil {
 		return nil, err
@@ -37,13 +51,17 @@ func NewServer(cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if store == nil {
+		store = NewStore()
+	}
 	return &Server{
 		conn:  conn,
-		store: NewStore(),
+		store: store,
 		cfg:   cfg,
 	}, nil
 }
 
+// Serve 启动 HTTP 协商入口，并在当前 goroutine 中处理 UDP 探测包。
 func (s *Server) Serve() error {
 	defer s.conn.Close()
 	go func() {
@@ -71,6 +89,7 @@ func (s *Server) Serve() error {
 	}
 }
 
+// Handler 返回 punch 服务 HTTP 路由，包含健康检查、端点和协商会话接口。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

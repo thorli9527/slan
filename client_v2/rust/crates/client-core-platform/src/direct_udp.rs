@@ -12,18 +12,26 @@ use client_core::{
 };
 use serde::{Deserialize, Serialize};
 
+/// 兼容旧版直连 UDP 探测包。
 pub const DIRECT_UDP_PROBE_PACKET: &[u8] = b"slan-direct-udp-probe-v1";
+/// 兼容旧版直连 UDP 探测响应包。
 pub const DIRECT_UDP_PONG_PACKET: &[u8] = b"slan-direct-udp-pong-v1";
 
+/// DirectUdpControlKind 表示 direct UDP 控制包类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectUdpControlKind {
+    /// 主动探测对端是否可达。
     Probe,
+    /// 对 probe 的响应，表示本端可收可发。
     Pong,
 }
 
+/// DirectUdpControlPacket 是 direct UDP probe/pong 的解析结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectUdpControlPacket {
+    /// 控制包类型。
     pub kind: DirectUdpControlKind,
+    /// 发送方节点 ID；旧版固定字节包可能没有该字段。
     pub node_id: Option<String>,
 }
 
@@ -33,32 +41,50 @@ impl DirectUdpControlPacket {
     }
 }
 
+/// DirectUdpPeer 是 direct UDP runtime 中单个对端的直连状态。
 #[derive(Debug)]
 pub struct DirectUdpPeer {
+    /// 对端节点 ID。
     pub peer_node_id: String,
+    /// 对端虚拟 IP 列表，用于从 TUN 包匹配 peer。
     pub peer_virtual_ips: Vec<String>,
+    /// 当前使用的直连路径类型：lan_udp/ipv6_udp/direct_udp。
     pub path_kind: PathKind,
+    /// 当前记录的对端 UDP 地址。
     pub address: String,
+    /// 已解析的对端 socket 地址。
     pub socket_addr: SocketAddr,
+    /// 最近接收的序列号，预留给重放或乱序检测。
     pub last_rx_seq: u64,
+    /// 是否已经通过 probe/pong 或有效数据包确认可用。
     pub ready: bool,
 }
 
+/// DirectUdpTransport 管理本机 direct UDP socket 以及所有 peer 的直连状态。
 #[derive(Debug)]
 pub struct DirectUdpTransport {
+    /// 本机 UDP socket。
     pub socket: UdpSocket,
+    /// 本机节点 ID，用于 probe/pong 标识发送方。
     pub local_node_id: String,
+    /// 当前配置的 peer 直连表。
     pub peers: Vec<DirectUdpPeer>,
 }
 
+/// DirectUdpReceive 是 direct UDP socket 收到一帧后的匹配结果。
 #[derive(Debug, Clone, Copy)]
 pub struct DirectUdpReceive {
+    /// 命中的 peer 下标。
     pub peer_index: usize,
+    /// 收到的帧长度。
     pub frame_len: usize,
+    /// 实际远端地址。
     pub remote_addr: SocketAddr,
+    /// 是否发现对端地址漂移，需要更新 peer endpoint。
     pub endpoint_changed: bool,
 }
 
+/// DirectUdpEndpointReport 是本机 direct UDP 端点上报文件内容。
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DirectUdpEndpointReport {
@@ -70,12 +96,14 @@ struct DirectUdpEndpointReport {
 }
 
 impl DirectUdpTransport {
+    /// 使用系统 UDP socket 附加 direct UDP runtime。
     pub fn attach(local_node_id: &str, configured_paths: &[PeerPathConfig]) -> Option<Self> {
         Self::attach_with_socket(local_node_id, configured_paths, || {
             attach_direct_udp_socket()
         })
     }
 
+    /// 使用调用方提供的 socket factory 附加 direct UDP runtime，主要用于测试。
     pub fn attach_with_socket(
         local_node_id: &str,
         configured_paths: &[PeerPathConfig],
@@ -142,6 +170,7 @@ impl DirectUdpTransport {
         })
     }
 
+    /// 根据 TUN 包目标虚拟 IP 推断应该发送给哪个 peer。
     pub fn peer_index_for_packet(&self, payload: &[u8]) -> Option<usize> {
         relay_peer_index_for_packet(
             &self
@@ -154,11 +183,13 @@ impl DirectUdpTransport {
         .or_else(|| (self.peers.len() == 1).then_some(0))
     }
 
+    /// 只在 peer 已经探测 ready 时返回发送目标。
     pub fn ready_peer_index_for_packet(&self, payload: &[u8]) -> Option<usize> {
         self.peer_index_for_packet(payload)
             .filter(|index| self.peers.get(*index).is_some_and(|peer| peer.ready))
     }
 
+    /// 通过 direct UDP socket 发送一帧数据到指定 peer。
     pub fn send_to_peer(&self, peer_index: usize, frame: &[u8]) -> std::io::Result<usize> {
         let Some(peer) = self.peers.get(peer_index) else {
             return Err(std::io::Error::new(
@@ -175,6 +206,7 @@ impl DirectUdpTransport {
         self.socket.send_to(frame, peer.socket_addr)
     }
 
+    /// 从 direct UDP socket 接收一帧，并把未知来源按控制包或内层源 IP 匹配到 peer。
     pub fn recv_from_peer(
         &mut self,
         buffer: &mut [u8],
@@ -202,6 +234,7 @@ impl DirectUdpTransport {
             }))
     }
 
+    /// 向所有已有 UDP 地址的 peer 发送 probe。
     pub fn send_probe_packets(&self) -> usize {
         let payload = direct_udp_control_payload(DirectUdpControlKind::Probe, &self.local_node_id);
         let mut sent = 0_usize;
@@ -220,6 +253,7 @@ impl DirectUdpTransport {
         sent
     }
 
+    /// 回复指定 peer 的 probe。
     pub fn send_pong_to_peer(&self, peer_index: usize) -> bool {
         if let Some(peer) = self.peers.get(peer_index) {
             if peer.socket_addr.port() == 0 {
@@ -235,10 +269,12 @@ impl DirectUdpTransport {
         false
     }
 
+    /// 返回已确认 direct UDP 可用的 peer 数量。
     pub fn ready_peer_count(&self) -> usize {
         self.peers.iter().filter(|peer| peer.ready).count()
     }
 
+    /// 标记 peer 已就绪，并在观察到地址变化时更新远端地址。
     pub fn mark_peer_ready(
         &mut self,
         peer_index: usize,

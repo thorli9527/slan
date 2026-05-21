@@ -12,8 +12,10 @@ import { PunchNodesPageComponent } from './features/punch-nodes/punch-nodes-page
 import { RelayNodesPageComponent } from './features/relay-nodes/relay-nodes-page.component';
 import { RenewalsPageComponent } from './features/renewals/renewals-page.component';
 
+// 运营后台左侧导航的页面标识，必须和模板中的条件渲染保持一致。
 type NavId = 'overview' | 'operators' | 'relayNodes' | 'punchNodes' | 'customers' | 'devices' | 'clientDownloads' | 'products' | 'orders' | 'renewals';
 
+// 后台操作员账号模型，用于登录后权限展示和账号维护。
 type OperatorUser = {
   operatorId: string;
   name: string;
@@ -23,6 +25,7 @@ type OperatorUser = {
   lastLoginAt: string;
 };
 
+// Relay/DERP 中继节点模型，描述中继容量、协议入口和健康状态。
 type RelayNode = {
   nodeId: string;
   name: string;
@@ -38,6 +41,7 @@ type RelayNode = {
   health: 'healthy' | 'warning' | 'down';
 };
 
+// P2P 打洞节点模型，biz 以公网 UDP IP 和端口直接管理 punch-service。
 type PunchNode = {
   nodeId: string;
   name: string;
@@ -53,6 +57,7 @@ type PunchNode = {
   updatedAt: string;
 };
 
+// 客户套餐模型，定义设备数、Relay 配额、P2P 能力和高级功能开关。
 type CustomerPlan = {
   code: string;
   name: string;
@@ -73,6 +78,7 @@ type CustomerPlan = {
   status?: 'active' | 'offline';
 };
 
+// 可售商品模型，覆盖套餐、流量包和企业合同包。
 type Product = {
   productId: string;
   name: string;
@@ -90,6 +96,7 @@ type Product = {
   description: string;
 };
 
+// 客户资源模型，聚合地域、套餐、设备数量和限流状态。
 type Customer = {
   customerId: string;
   email: string;
@@ -106,6 +113,7 @@ type Customer = {
   status: 'active' | 'limited' | 'expired' | 'disabled';
 };
 
+// 运营视角设备模型，展示全局虚拟地址、在线状态和累计流量。
 type OpsDevice = {
   deviceId: string;
   ownerId: string;
@@ -130,6 +138,7 @@ type OpsDevice = {
   updatedAt: string;
 };
 
+// 客户端发布包模型，用于维护各平台安装包、渠道和校验信息。
 type ClientDownload = {
   downloadId: string;
   platform: 'macos' | 'windows' | 'ios' | 'linux' | 'android';
@@ -147,6 +156,7 @@ type ClientDownload = {
   updatedAt: string;
 };
 
+// 续费记录模型，记录人工或支付渠道完成的有效期延长操作。
 type Renewal = {
   renewalId: string;
   customerId?: string;
@@ -160,6 +170,7 @@ type Renewal = {
   operator: string;
 };
 
+// 订单模型，跟踪购买、支付和权益开通状态。
 type Order = {
   orderId: string;
   customerId?: string;
@@ -198,9 +209,11 @@ type Order = {
   styleUrl: './app.component.css',
   encapsulation: ViewEncapsulation.None,
 })
+// 运营后台根组件，集中持有页面状态、表单状态和对后端 ops API 的访问逻辑。
 export class AppComponent implements OnInit {
   constructor(private readonly changeDetector: ChangeDetectorRef) {}
 
+  // 导航配置同时驱动侧边栏文案和当前页面标题说明。
   readonly navItems: Array<{ id: NavId; label: string; desc: string }> = [
     { id: 'overview', label: '运营管理', desc: '平台指标与待处理事项' },
     { id: 'operators', label: '运营用户', desc: '后台账号与角色' },
@@ -274,6 +287,7 @@ export class AppComponent implements OnInit {
   selectedDownloadFileName = '';
   deviceKeyword = '';
 
+  // 传给 feature 子页面的视图模型，保持子页面只负责模板渲染。
   get vm(): this {
     return this;
   }
@@ -375,6 +389,7 @@ export class AppComponent implements OnInit {
     this.notifyStateChanged();
   }
 
+  // 登录后批量拉取所有运营页面数据，确保概览和各管理页使用同一份状态。
   async loadOpsData(): Promise<void> {
     this.loading = true;
     this.apiMessage = '';
@@ -430,6 +445,7 @@ export class AppComponent implements OnInit {
     this.changeDetector.detectChanges();
   }
 
+  // 统一封装 ops HTTP 请求，附加 Bearer token 并集中处理 401 过期登录。
   private async request<T>(method: string, path: string, body?: unknown, requireAuth = true): Promise<T> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = localStorage.getItem(this.opsTokenKey);

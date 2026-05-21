@@ -1,3 +1,4 @@
+/// ClientViewState 是 Flutter UI 渲染首页、网络开关、消息和流量统计的状态快照。
 class ClientViewState {
   const ClientViewState({
     required this.signedIn,
@@ -21,24 +22,61 @@ class ClientViewState {
     this.trafficUpdatedAtMs,
   });
 
+  /// 是否已登录。
   final bool signedIn;
+
+  /// 当前用户展示名或邮箱。
   final String? userLabel;
+
+  /// 当前设备 ID。
   final String? deviceId;
+
+  /// 当前虚拟 IP。
   final String? virtualIp;
+
+  /// 虚拟网络是否启用。
   final bool networkEnabled;
+
+  /// 是否正在同步或切换网络。
   final bool syncing;
+
+  /// 当前同步原因。
   final String? syncReason;
+
+  /// UI 网络开关是否可操作。
   final bool switchEnabled;
+
+  /// 最近一次提示消息。
   final String? notice;
+
+  /// 最近一次错误消息。
   final String? error;
+
+  /// 错误来源，用于 UI 区分网络切换、登录等场景。
   final String? errorSource;
+
+  /// 最近收到的客户端消息 ID。
   final String? lastClientMessageId;
+
+  /// 最近收到消息的发送设备 ID。
   final String? lastClientMessageFromDeviceId;
+
+  /// 最近收到的消息正文。
   final String? lastClientMessageBody;
+
+  /// 累计发送字节数。
   final int? trafficTxBytes;
+
+  /// 累计接收字节数。
   final int? trafficRxBytes;
+
+  /// 每分钟发送字节速率。
   final int? trafficTxBytesPerMinute;
+
+  /// 每分钟接收字节速率。
   final int? trafficRxBytesPerMinute;
+
+  /// 流量统计更新时间，Unix 毫秒。
   final int? trafficUpdatedAtMs;
 
   factory ClientViewState.initial() {

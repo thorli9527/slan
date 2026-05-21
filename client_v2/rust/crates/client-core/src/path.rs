@@ -2,22 +2,29 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// PathKind 表示客户端数据面可选的链路类型，顺序通常从低成本直连到保底转发。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathKind {
+    /// 局域网 UDP 直连，优先级最高，依赖同网段可达地址。
     #[serde(rename = "lan_udp")]
     LanUdp,
+    /// 公网 IPv6 UDP 直连。
     #[serde(rename = "ipv6_udp")]
     Ipv6Udp,
+    /// 通过 punch 或端点上报得到的公网 UDP 直连。
     #[serde(rename = "direct_udp")]
     DirectUdp,
+    /// UDP relay 转发。
     #[serde(rename = "relay_udp")]
     RelayUdp,
+    /// DERP TCP/TLS 443 保底转发。
     #[serde(rename = "derp_tcp_tls_443")]
     DerpTcpTls443,
 }
 
 impl PathKind {
+    /// 返回与控制面 JSON 协议一致的路径字符串。
     pub fn as_str(self) -> &'static str {
         match self {
             Self::LanUdp => "lan_udp",
@@ -28,11 +35,13 @@ impl PathKind {
         }
     }
 
+    /// 判断该路径是否属于服务端转发类路径。
     pub fn is_relay(self) -> bool {
         matches!(self, Self::RelayUdp | Self::DerpTcpTls443)
     }
 }
 
+/// 将控制面下发的 relay transport 归一化为客户端支持的 transport。
 pub fn normalize_relay_transport(value: &str) -> Option<&'static str> {
     match value.trim().to_ascii_lowercase().as_str() {
         "udp" => Some("udp"),
@@ -40,6 +49,7 @@ pub fn normalize_relay_transport(value: &str) -> Option<&'static str> {
     }
 }
 
+/// 将 relay transport 映射为客户端路径类型。
 pub fn relay_path_kind_for_transport(value: &str) -> Option<PathKind> {
     match normalize_relay_transport(value)? {
         "udp" => Some(PathKind::RelayUdp),
@@ -47,29 +57,43 @@ pub fn relay_path_kind_for_transport(value: &str) -> Option<PathKind> {
     }
 }
 
+/// PathState 表示某条候选路径在客户端当前探测周期中的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathState {
+    /// 路径被禁用，不参与选择。
     Disabled,
+    /// 路径正在探测，尚未确认可用。
     Probing,
+    /// 路径已探测成功，可以承载流量。
     Ready,
+    /// 路径可作为备用，但当前不主动使用。
     Standby,
+    /// 路径降级可用或质量较差。
     Degraded,
+    /// 路径失败，需要等待冷却或重新探测。
     Failed,
 }
 
+/// PathPolicy 是客户端路径选择和故障切换策略。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathPolicy {
+    /// 路径偏好顺序，默认 LAN/IPv6/Direct/Relay/DERP。
     pub preferred: Vec<PathKind>,
+    /// 是否允许故障时自动切换到后备路径。
     #[serde(default = "default_fallback_enabled")]
     pub fallback_enabled: bool,
+    /// 主动探测间隔，单位毫秒。
     #[serde(default = "default_probe_interval_ms")]
     pub probe_interval_ms: u64,
+    /// 发送失败持续多久后触发 failover，单位毫秒。
     #[serde(default = "default_failover_after_ms")]
     pub failover_after_ms: u64,
+    /// 从 relay 升级到更优路径前需要连续成功探测次数。
     #[serde(default = "default_upgrade_successes")]
     pub upgrade_successes: u32,
+    /// 失败路径重新参与升级探测前需要等待的探测轮数。
     #[serde(default = "default_failed_path_cooldown_probes")]
     pub failed_path_cooldown_probes: u32,
 }
@@ -93,40 +117,56 @@ impl Default for PathPolicy {
     }
 }
 
+/// PeerPathConfig 是控制面下发给数据面的单个 peer 路径候选配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerPathConfig {
+    /// 对端节点 ID。
     pub peer_node_id: String,
+    /// 对端在虚拟网络中的 IP 列表，用于把 TUN 包路由到 peer。
     #[serde(default)]
     pub peer_virtual_ips: Vec<String>,
+    /// 该 peer 的可用路径候选。
     #[serde(default)]
     pub candidates: Vec<PathCandidate>,
 }
 
+/// PathCandidate 是单条候选链路及其探测/调度元数据。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathCandidate {
+    /// 路径类型。
     pub kind: PathKind,
+    /// 当前路径状态。
     #[serde(default = "default_candidate_state")]
     pub state: PathState,
+    /// relay endpoint 或其它控制面端点 ID。
     #[serde(default)]
     pub endpoint_id: Option<String>,
+    /// 直连地址或 relay 地址。
     #[serde(default)]
     pub address: Option<String>,
+    /// relay/DERP 会话 ID。
     #[serde(default)]
     pub session_id: Option<String>,
+    /// 传输协议，例如 udp。
     #[serde(default)]
     pub transport: Option<String>,
+    /// 最近探测 RTT，单位毫秒。
     #[serde(default)]
     pub rtt_ms: Option<u32>,
+    /// 控制面或客户端计算的路径评分。
     #[serde(default)]
     pub path_score: Option<u32>,
+    /// 最近一次成功时间，Unix 毫秒。
     #[serde(default)]
     pub last_ok_at_ms: Option<u64>,
+    /// 最近一次错误说明。
     #[serde(default)]
     pub last_error: Option<String>,
 }
 
+/// PeerPathRuntime 是平台数据面上报给 UI/核心的 peer 路径运行状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerPathRuntime {
@@ -138,6 +178,7 @@ pub struct PeerPathRuntime {
     pub candidates: Vec<PathCandidate>,
 }
 
+/// PathTracker 在本地跟踪每个 peer 的活跃路径、发送失败和升级探测状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathTracker {
     policy: PathPolicy,
@@ -149,6 +190,7 @@ pub struct PathTracker {
 }
 
 impl PathTracker {
+    /// 创建路径 tracker，并可传入已有 peer 活跃路径作为初始状态。
     pub fn new(
         policy: PathPolicy,
         active_paths: impl IntoIterator<Item = (String, PathKind)>,
@@ -163,10 +205,12 @@ impl PathTracker {
         }
     }
 
+    /// 返回是否允许自动 fallback。
     pub fn fallback_enabled(&self) -> bool {
         self.policy.fallback_enabled
     }
 
+    /// 应用平台层上报的 peer 路径运行状态。
     pub fn apply_runtime_paths(&mut self, peer_paths: &[PeerPathRuntime]) {
         for path in peer_paths {
             if let Some(active_path) = path.active_path {
@@ -176,10 +220,12 @@ impl PathTracker {
         }
     }
 
+    /// 设置某个 peer 当前活跃路径。
     pub fn set_active_path(&mut self, peer_node_id: impl Into<String>, active_path: PathKind) {
         self.active_paths.insert(peer_node_id.into(), active_path);
     }
 
+    /// 查询某个 peer 当前活跃路径，未知时返回调用方提供的默认路径。
     pub fn active_path_for_node(&self, peer_node_id: &str, default: PathKind) -> PathKind {
         self.active_paths
             .get(peer_node_id)
@@ -187,10 +233,12 @@ impl PathTracker {
             .unwrap_or(default)
     }
 
+    /// 记录某个 peer 发送成功，并清理该 peer 的失败计数。
     pub fn record_send_success(&mut self, peer_node_id: &str) {
         self.clear_peer_send_failures(peer_node_id);
     }
 
+    /// 记录一次发送失败，达到阈值时返回 true 表示应触发降级。
     pub fn record_send_failure(
         &mut self,
         peer_node_id: &str,
@@ -200,6 +248,7 @@ impl PathTracker {
         self.record_send_failure_at(peer_node_id, path_kind, failure_threshold, None)
     }
 
+    /// 带时间戳的发送失败记录，用于按 failover_after_ms 判断持续失败。
     pub fn record_send_failure_at(
         &mut self,
         peer_node_id: &str,
@@ -237,10 +286,12 @@ impl PathTracker {
         true
     }
 
+    /// 记录一次路径探测成功，达到升级阈值时返回 true。
     pub fn record_probe_success(&mut self, peer_node_id: &str, path_kind: PathKind) -> bool {
         self.record_probe_success_after(peer_node_id, path_kind, self.policy.upgrade_successes)
     }
 
+    /// 按指定连续成功阈值记录探测成功。
     pub fn record_probe_success_after(
         &mut self,
         peer_node_id: &str,
@@ -277,6 +328,7 @@ impl PathTracker {
         true
     }
 
+    /// 返回当前所有 peer 活跃路径的摘要，用于诊断展示。
     pub fn active_path_summary(&self) -> String {
         let mut paths = self
             .active_paths
@@ -292,6 +344,7 @@ impl PathTracker {
         }
     }
 
+    /// 返回策略配置中的路径偏好顺序。
     pub fn preferred_paths(&self) -> Vec<PathKind> {
         preferred_path_order(&self.policy)
     }
@@ -304,6 +357,7 @@ impl PathTracker {
     }
 }
 
+/// 从候选路径里选择当前应使用的活跃路径。
 pub fn select_active_path(
     policy: &PathPolicy,
     current: Option<PathKind>,

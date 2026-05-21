@@ -40,6 +40,7 @@ mod android_tun {
 
     const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 
+    /// TunRuntime 持有 Android TUN fd 数据面线程、运行统计和原始配置。
     struct TunRuntime {
         stop: Arc<AtomicBool>,
         stats: Arc<TunStats>,
@@ -48,6 +49,7 @@ mod android_tun {
         config_json: String,
     }
 
+    /// TunStats 是 Android 原生层返回给 Flutter 的 TUN/relay/direct UDP 统计。
     #[derive(Default)]
     struct TunStats {
         requested_relay_session_count: AtomicU64,
@@ -179,6 +181,7 @@ mod android_tun {
         })
     }
 
+    /// AndroidRelayPeer 是 Rust 数据面中一个 relay peer 会话及其受保护 socket。
     struct AndroidRelayPeer {
         session_id: String,
         local_node_id: String,
@@ -186,6 +189,7 @@ mod android_tun {
         socket: UdpSocket,
     }
 
+    /// 启动 Android TUN 数据面，接管 Java 层 detach 出来的 TUN fd 和 UDP socket fd。
     fn start_tun(tun_fd: c_int, relay_fds: Vec<c_int>, config_json: String) -> std::io::Result<()> {
         stop_tun();
         set_nonblocking(tun_fd);

@@ -17,14 +17,21 @@ import (
 	"github.com/slan/server/server-wire-relay/internal/state"
 )
 
+// UDPServer 承载 relay_udp 数据面，并同时启动本节点的管理 HTTP 服务。
 type UDPServer struct {
 	conn      *net.UDPConn
-	store     *state.Store
+	store     state.StoreAPI
 	adminAddr string
 	cfg       config.Config
 }
 
+// NewUDPServer 使用默认内存状态创建 UDP 中继服务。
 func NewUDPServer(cfg config.Config) (*UDPServer, error) {
+	return NewUDPServerWithStore(cfg, state.NewStore())
+}
+
+// NewUDPServerWithStore 使用调用方提供的状态实现创建 UDP 中继服务。
+func NewUDPServerWithStore(cfg config.Config, store state.StoreAPI) (*UDPServer, error) {
 	addr, err := net.ResolveUDPAddr("udp", cfg.ListenAddr)
 	if err != nil {
 		return nil, err
@@ -33,14 +40,18 @@ func NewUDPServer(cfg config.Config) (*UDPServer, error) {
 	if err != nil {
 		return nil, err
 	}
+	if store == nil {
+		store = state.NewStore()
+	}
 	return &UDPServer{
 		conn:      conn,
-		store:     state.NewStore(),
+		store:     store,
 		adminAddr: cfg.AdminListenAddr,
 		cfg:       cfg,
 	}, nil
 }
 
+// Serve 启动管理 HTTP、注册/心跳协程，并在当前 goroutine 中处理 UDP 数据包。
 func (s *UDPServer) Serve() error {
 	defer s.conn.Close()
 	go func() {

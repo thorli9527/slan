@@ -12,6 +12,10 @@ private func clientCoreV2ServiceRequestJson(
 private func clientCoreV2FreeString(_ value: UnsafeMutablePointer<CChar>?)
 #endif
 
+/// ClientCorePlugin 是 iOS Flutter 插件入口。
+///
+/// 它桥接 Flutter MethodChannel、内嵌 Rust client-core-service FFI、iOS
+/// PacketTunnel 启停和 App Group 共享存储。
 public class ClientCorePlugin: NSObject, FlutterPlugin {
   private static let deviceIdKey = "dev.slan.client.v2.ios.deviceId"
   private static let nodeIdKey = "dev.slan.client.v2.ios.nodeId"
@@ -20,11 +24,13 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
   private static let packetTunnelDescription = "SLAN Packet Tunnel"
 
   private var packetTunnelManager: NETunnelProviderManager?
+  /// state 是返回给 Flutter UI 的轻量运行状态缓存。
   private var state: [String: Any?] = [
     "signedIn": false,
     "userLabel": nil,
     "deviceId": nil,
     "nodeId": nil,
+    "adapterPresent": false,
     "virtualIp": nil,
     "networkEnabled": false,
     "syncing": false,
@@ -37,6 +43,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
     "lastClientMessageBody": nil
   ]
 
+  /// 注册 Flutter MethodChannel，并初始化稳定 device/node ID。
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
       name: "dev.slan/client_core_v2",
@@ -48,12 +55,15 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
     registrar.addMethodCallDelegate(plugin, channel: channel)
   }
 
+  /// 分发 Flutter 侧调用到 iOS 原生能力。
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "iosPacketTunnelStats":
       iosPacketTunnelStats(result: result)
     case "iosSharedStoreDiagnostics":
       result(SLANIosSharedStore.diagnostics())
+    case "iosRuntimeState":
+      result(iosRuntimeState())
     case "iosStartPacketTunnel":
       iosStartPacketTunnel(call.arguments, result: result)
     case "iosStopPacketTunnel":
@@ -157,6 +167,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
           self.state["error"] = error.localizedDescription
         case .success:
           self.state["virtualIp"] = self.stringField(config, "virtualIp")
+          self.state["adapterPresent"] = true
           self.state["networkEnabled"] = true
           self.state["syncing"] = false
           self.state["switchEnabled"] = true
@@ -173,6 +184,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       guard let self = self else { return }
       DispatchQueue.main.async {
         self.state["networkEnabled"] = false
+        self.state["adapterPresent"] = self.packetTunnelManager != nil
         self.state["virtualIp"] = nil
         self.state["syncing"] = false
         self.state["switchEnabled"] = true
@@ -282,6 +294,22 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       }
     }
 #endif
+  }
+
+  private func iosRuntimeState() -> [String: Any] {
+    var runtime = compactState()
+    runtime["adapterPresent"] = (state["adapterPresent"] as? Bool) == true
+      || SLANIosSharedStore.readNetworkConfig() != nil
+      || packetTunnelManager != nil
+    runtime["networkEnabled"] = (state["networkEnabled"] as? Bool) == true
+    if runtime["virtualIp"] == nil,
+      let config = SLANIosSharedStore.readNetworkConfig(),
+      let virtualIp = config["virtualIp"] as? String,
+      !virtualIp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      runtime["virtualIp"] = virtualIp.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return runtime
   }
 
   private func loadPacketTunnelManager(

@@ -23,7 +23,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use client_core::{
-    icmp_echo_reply_for_request,
+    icmp_echo_reply_for_request, ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
@@ -49,9 +49,12 @@ const IFF_NO_PI: libc::c_short = 0x1000;
 const RELAY_STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// LinuxPlatformNetwork 是 Linux 的 PlatformNetwork 实现，负责 TUN、路由、
+/// DNS、relay 数据面和 direct UDP runtime 的平台适配。
 #[derive(Debug, Clone, Default)]
 pub struct LinuxPlatformNetwork;
 
+/// LinuxRuntime 保存 Linux 平台层的当前网络配置和 TUN runtime。
 #[derive(Debug, Default)]
 struct LinuxRuntime {
     interface_name: String,
@@ -75,6 +78,7 @@ impl LinuxRuntime {
     }
 }
 
+/// TunRuntime 持有 Linux TUN 数据面线程生命周期。
 #[derive(Debug)]
 struct TunRuntime {
     stop: Arc<AtomicBool>,
@@ -90,6 +94,7 @@ impl Drop for TunRuntime {
     }
 }
 
+/// RelayPeer 是 Linux relay 数据面中单个 peer 的 UDP relay 会话。
 #[derive(Debug)]
 struct RelayPeer {
     session_id: String,
@@ -99,6 +104,7 @@ struct RelayPeer {
     socket: UdpSocket,
 }
 
+/// RelayDataPlaneStats 是 Linux relay/direct UDP 数据面写入状态文件的统计快照。
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RelayDataPlaneStats {
@@ -118,7 +124,15 @@ struct RelayDataPlaneStats {
     relay_mtu: Option<u16>,
     max_frame_payload: Option<u16>,
     tun_packets_sent: u64,
+    tun_tcp_packets_sent: u64,
+    tun_tcp_syn_ack_sent: u64,
+    tun_tcp_rst_sent: u64,
+    tun_tcp_checksum_invalid: u64,
     relay_packets_received: u64,
+    relay_tcp_packets_received: u64,
+    relay_tcp_syn_received: u64,
+    relay_tcp_rst_received: u64,
+    relay_tcp_checksum_invalid: u64,
     relay_decode_failures: u64,
     relay_config_hash_mismatches: u64,
     relay_error_responses: u64,
@@ -145,6 +159,7 @@ struct RelayDataPlaneStats {
     updated_at_ms: u64,
 }
 
+/// RelayPeerStats 是单个 peer 的 relay/direct UDP 发送、接收和路径切换统计。
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RelayPeerStats {
@@ -759,11 +774,14 @@ fn run_udp_data_plane(
                 {
                     if let Some(peer) = relay_peer_for_packet(&peers, packet) {
                         seq = seq.wrapping_add(1);
-                        if let Some(frame) = encode_slan_relay_data_frame(seq, config_hash, packet)
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        record_tun_tcp_packet(stats, &packet);
+                        if let Some(frame) = encode_slan_relay_data_frame(seq, config_hash, &packet)
                         {
-                            if let Some(direct_peer_index) = direct_udp
-                                .as_ref()
-                                .and_then(|transport| transport.ready_peer_index_for_packet(packet))
+                            if let Some(direct_peer_index) =
+                                direct_udp.as_ref().and_then(|transport| {
+                                    transport.ready_peer_index_for_packet(&packet)
+                                })
                             {
                                 match direct_udp
                                     .as_ref()
@@ -819,6 +837,7 @@ fn run_udp_data_plane(
                         .unwrap_or(&relay_buffer[..frame_len]);
                     if let Some(packet) = decode_slan_relay_data_frame(frame) {
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                        record_relay_tcp_packet(stats, packet);
                         if let Some(reply) =
                             icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
                         {
@@ -839,7 +858,8 @@ fn run_udp_data_plane(
                             }
                             continue;
                         }
-                        match write_tun_packet_with_retry(&mut file, packet) {
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        match write_tun_packet_with_retry(&mut file, &packet) {
                             Ok(_) => record_relay_packet_received(stats, peer),
                             Err(_) => record_relay_write_failure(stats, peer),
                         }
@@ -894,7 +914,9 @@ fn run_udp_data_plane(
                             stats.direct_udp_frames_received.saturating_add(1);
                         mark_direct_peer_ready(stats, direct_udp, received.peer_index);
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
-                        if write_tun_packet_with_retry(&mut file, packet).is_ok() {
+                        record_relay_tcp_packet(stats, packet);
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        if write_tun_packet_with_retry(&mut file, &packet).is_ok() {
                             if let Some(peer) =
                                 direct_udp
                                     .peers
@@ -1086,6 +1108,49 @@ fn record_relay_packet_received(stats: &mut RelayDataPlaneStats, peer: &RelayPee
     if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
         peer_stats.relay_packets_received = peer_stats.relay_packets_received.saturating_add(1);
     }
+}
+
+fn record_tun_tcp_packet(stats: &mut RelayDataPlaneStats, packet: &[u8]) {
+    let Some(flags) = ipv4_tcp_flags(packet) else {
+        return;
+    };
+    stats.tun_tcp_packets_sent = stats.tun_tcp_packets_sent.saturating_add(1);
+    if flags & 0x12 == 0x12 {
+        stats.tun_tcp_syn_ack_sent = stats.tun_tcp_syn_ack_sent.saturating_add(1);
+    }
+    if flags & 0x04 != 0 {
+        stats.tun_tcp_rst_sent = stats.tun_tcp_rst_sent.saturating_add(1);
+    }
+    if ipv4_transport_checksum_valid(packet) == Some(false) {
+        stats.tun_tcp_checksum_invalid = stats.tun_tcp_checksum_invalid.saturating_add(1);
+    }
+}
+
+fn record_relay_tcp_packet(stats: &mut RelayDataPlaneStats, packet: &[u8]) {
+    let Some(flags) = ipv4_tcp_flags(packet) else {
+        return;
+    };
+    stats.relay_tcp_packets_received = stats.relay_tcp_packets_received.saturating_add(1);
+    if flags & 0x02 != 0 {
+        stats.relay_tcp_syn_received = stats.relay_tcp_syn_received.saturating_add(1);
+    }
+    if flags & 0x04 != 0 {
+        stats.relay_tcp_rst_received = stats.relay_tcp_rst_received.saturating_add(1);
+    }
+    if ipv4_transport_checksum_valid(packet) == Some(false) {
+        stats.relay_tcp_checksum_invalid = stats.relay_tcp_checksum_invalid.saturating_add(1);
+    }
+}
+
+fn ipv4_tcp_flags(packet: &[u8]) -> Option<u8> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(6) {
+        return None;
+    }
+    let ihl = usize::from(packet[0] & 0x0f) * 4;
+    if ihl < 20 || packet.len() < ihl + 14 {
+        return None;
+    }
+    Some(packet[ihl + 13])
 }
 
 fn record_relay_send_failure(stats: &mut RelayDataPlaneStats, peer: &RelayPeer, error: String) {

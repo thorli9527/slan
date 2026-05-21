@@ -47,9 +47,12 @@ const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
 const RELAY_STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// MacosPlatformNetwork 是 macOS 的 PlatformNetwork 实现，负责 utun、路由、
+/// DNS、relay 数据面和 direct UDP runtime 的平台适配。
 #[derive(Debug, Clone, Default)]
 pub struct MacosPlatformNetwork;
 
+/// MacosRuntime 保存 macOS 平台层当前配置缓存和后台 utun runtime。
 #[derive(Debug, Default)]
 struct MacosRuntime {
     interface_name: Option<String>,
@@ -61,6 +64,7 @@ struct MacosRuntime {
     utun: Option<UtunRuntime>,
 }
 
+/// UtunRuntime 持有 utun 文件句柄和数据面线程生命周期。
 #[derive(Debug)]
 struct UtunRuntime {
     interface_name: String,
@@ -78,6 +82,7 @@ impl Drop for UtunRuntime {
     }
 }
 
+/// RelayPeer 是 macOS relay 数据面中单个 peer 的 UDP relay 会话。
 #[derive(Debug)]
 struct RelayPeer {
     session_id: String,
@@ -87,6 +92,7 @@ struct RelayPeer {
     socket: UdpSocket,
 }
 
+/// RelayDataPlaneStats 是 macOS relay/direct UDP 数据面写入状态文件的统计快照。
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RelayDataPlaneStats {
@@ -141,6 +147,7 @@ struct RelayDataPlaneStats {
     updated_at_ms: u64,
 }
 
+/// RelayPeerStats 是单个 peer 的 relay/direct UDP 发送、接收和路径切换统计。
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RelayPeerStats {

@@ -24,6 +24,8 @@ abstract final class ClientBusinessEventType {
   static const stateChanged = 'state.changed';
 }
 
+/// _NetworkToggleOperation 记录一次网络开关操作的上下文，用于异步回调回来时
+/// 判断结果是否仍属于当前最新操作。
 class _NetworkToggleOperation {
   const _NetworkToggleOperation({
     required this.epoch,
@@ -40,6 +42,10 @@ class _NetworkToggleOperation {
   final ClientViewState previousState;
 }
 
+/// ClientCoreBridge 是 UI 层使用的客户端核心门面。
+///
+/// host 平台通过本地 client-core-service HTTP API 工作；移动端通过原生插件内嵌
+/// service 和平台 VPN/PacketTunnel 能力工作。
 abstract interface class ClientCoreBridge {
   ValueListenable<ClientViewState> get state;
   ValueListenable<AndroidNetworkAuthorizationState>
@@ -54,6 +60,8 @@ abstract interface class ClientCoreBridge {
 }
 
 @visibleForTesting
+
+/// ClientBridgeRuntimePlatform 用于测试时显式指定 bridge 走 host/android/ios 分支。
 enum ClientBridgeRuntimePlatform {
   host,
   android,
@@ -115,6 +123,8 @@ Map<String, Object?> androidRuntimeDiagnosticsFields(
   };
 }
 
+/// MethodChannelClientCoreBridge 负责协调 Flutter UI、本地服务、移动端原生插件
+/// 以及业务事件 watch loop。
 class MethodChannelClientCoreBridge implements ClientCoreBridge {
   MethodChannelClientCoreBridge({
     String? localServiceHost,
@@ -149,6 +159,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   bool _watchingIosPacketTunnelStats = false;
   bool _repairingNativeMobileMqtt = false;
   String? _lastAndroidVpnConfigFingerprint;
+  String? _lastIosPacketTunnelConfigFingerprint;
   bool _mobileMqttEnsureRunning = false;
   Future<void>? _mobileMqttEnsureInFlight;
   DateTime? _lastNativeMobileMqttRepairAt;
@@ -1204,10 +1215,13 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
             result = await _plugin
                 .iosStartPacketTunnel(config)
                 .timeout(_networkToggleTimeout);
+            _lastIosPacketTunnelConfigFingerprint =
+                _androidVpnConfigFingerprint(config);
           } else {
             result = await _plugin
                 .iosStopPacketTunnel()
                 .timeout(_networkToggleTimeout);
+            _lastIosPacketTunnelConfigFingerprint = null;
           }
           if (!_isCurrentNetworkToggle(operation)) {
             return;
@@ -1754,9 +1768,24 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         await _plugin.androidStartVpn(config).timeout(_networkToggleTimeout);
         _lastAndroidVpnConfigFingerprint = fingerprint;
       } else if (_isIos) {
+        final fingerprint = _androidVpnConfigFingerprint(config);
+        final runtimeState = await _plugin.iosRuntimeState();
+        final runtimeRunning = runtimeState is Map &&
+            runtimeState['networkEnabled'] == true &&
+            runtimeState['adapterPresent'] == true;
+        if (runtimeRunning &&
+            _lastIosPacketTunnelConfigFingerprint == fingerprint) {
+          ClientUiDiagnostics.unawaitedLog(
+            'bridge.mobile.peersRefreshSkipped',
+            state: _state.value,
+            fields: {'reason': 'unchangedIosPacketTunnelConfig'},
+          );
+          return;
+        }
         await _plugin
             .iosStartPacketTunnel(config)
             .timeout(_networkToggleTimeout);
+        _lastIosPacketTunnelConfigFingerprint = fingerprint;
       } else {
         return;
       }

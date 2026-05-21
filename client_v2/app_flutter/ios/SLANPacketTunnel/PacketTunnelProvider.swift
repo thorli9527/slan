@@ -2,15 +2,22 @@ import NetworkExtension
 import Network
 import os.log
 
+// iOS NetworkExtension 的包隧道入口，负责把系统 utun 收到的 IPv4 包路由到直连 UDP 或中继通道。
 final class PacketTunnelProvider: NEPacketTunnelProvider {
   private static let logger = OSLog(subsystem: "dev.slan.client.v2", category: "PacketTunnel")
+  // iOS 虚拟网卡地址固定按主机路由下发，真实可达子网由 includedRoutes 和 routeTable 控制。
   private static let hostInterfacePrefixLen = 32
 
+  // PacketFlow 读取循环开关，stopTunnel 会置 false 终止下一轮异步读取。
   private var readingPackets = false
+  // 服务端下发的可达子网表，用于判断每个出站 IPv4 包应该走 SLAN 数据面还是丢弃统计。
   private var routeTable: [RouteEntry] = []
+  // RelayRuntime 内部同时管理 UDP 直链和中继路径，PacketTunnelProvider 只负责按目的地址投递。
   private var relayRuntime: RelayRuntime?
+  // 暴露给宿主 App 查询的运行统计，便于客户端页面诊断路由、直链和中继状态。
   private var tunnelStats = PacketTunnelStats()
 
+  // 启动 iOS utun：读取共享配置、安装虚拟地址和路由，再启动数据面读包循环。
   override func startTunnel(
     options: [String: NSObject]?,
     completionHandler: @escaping (Error?) -> Void
@@ -56,7 +63,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
           virtualIp: virtualIp,
           routeCount: self.routeTable.count
         )
-        self.relayRuntime = RelayRuntime(config: config["relayDataPlane"], packetFlow: self.packetFlow)
+        self.relayRuntime = RelayRuntime(
+          config: config["relayDataPlane"],
+          localVirtualIp: virtualIp,
+          packetFlow: self.packetFlow
+        )
         self.tunnelStats.relaySessionCount = self.relayRuntime?.sessionCount ?? 0
         self.relayRuntime?.start()
         self.persistStats()
@@ -77,6 +88,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
   }
 
+  // 停止隧道时关闭读包循环和数据面运行时，并把最后状态写回共享存储。
   override func stopTunnel(
     with reason: NEProviderStopReason,
     completionHandler: @escaping () -> Void
@@ -90,6 +102,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     completionHandler()
   }
 
+  // 宿主 App 通过 NetworkExtension 消息查询统计信息，目前只处理 stats 命令。
   override func handleAppMessage(
     _ messageData: Data,
     completionHandler: ((Data?) -> Void)?
@@ -119,6 +132,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     completionHandler?(data)
   }
 
+  // 持续从 NEPacketTunnelFlow 异步读取系统写入 utun 的 IP 包。
   private func readPackets() {
     guard readingPackets else {
       return
@@ -132,6 +146,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
   }
 
+  // 对每个出站包执行 IPv4 解析、路由匹配、校验和归一化和路径发送。
   private func handlePackets(_ packets: [Data], protocols: [NSNumber]) {
     guard !packets.isEmpty else {
       return
@@ -143,14 +158,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         tunnelStats.nonIpv4Packets += 1
         continue
       }
+      if destination.address == RelayPeerRuntime.normalizeVirtualIp(tunnelStats.virtualIp) {
+        continue
+      }
 
       tunnelStats.lastDestination = destination.address
       if let route = routeTable.first(where: { $0.contains(destination.value) }) {
         tunnelStats.routedPackets += 1
         tunnelStats.lastRoute = route.cidr
         tunnelStats.lastRoutedAtMs = Self.nowMs()
+        let outboundPacket = Ipv4Packet.normalizeTransportChecksums(packet)
         if let relayRuntime = relayRuntime,
-          relayRuntime.send(packet: packet, destination: destination.address)
+          relayRuntime.send(packet: outboundPacket, destination: destination.address)
         {
           if relayRuntime.lastSendPath == "direct_udp" {
             tunnelStats.directUdpFramesSent = relayRuntime.directUdpFramesSent
@@ -175,11 +194,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     persistStats()
   }
 
+  // 将最新运行统计写入 App Group，共宿主 App 页面和诊断入口读取。
   private func persistStats() {
     tunnelStats.updatedAtMs = Self.nowMs()
     SLANIosSharedStore.writePacketTunnelStats(tunnelStats.dictionary)
   }
 
+  // 从服务端下发的 routes 配置解析 CIDR，生成本地快速匹配表。
   private static func routeEntries(_ value: Any?) -> [RouteEntry] {
     guard let routes = value as? [[String: Any]] else {
       return []
@@ -201,6 +222,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
   }
 
+  // 兼容 virtualIp 内联 CIDR 和单独 prefix 字段，返回服务端配置的地址前缀。
   private static func addressPrefixLen(config: [String: Any], virtualIp: inout String) -> Int {
     if let parsed = parseCidr(virtualIp) {
       virtualIp = parsed.address
@@ -227,6 +249,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
   }
 
+  // 解析 CIDR 字符串，得到地址、掩码和网络号，供 includedRoutes 与 routeTable 复用。
   private static func parseCidr(_ cidr: String) -> (
     address: String,
     mask: String,
@@ -245,6 +268,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     return (address, mask(prefix), value & networkMask, prefix)
   }
 
+  // 从 IPv4 包头提取目的地址，非 IPv4 或长度不足时返回 nil。
   private static func ipv4Destination(_ packet: Data) -> (address: String, value: UInt32)? {
     guard packet.count >= 20, packet[0] >> 4 == 4 else {
       return nil
@@ -299,6 +323,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   }
 }
 
+// 本地路由表条目，保存服务端下发子网的 CIDR、掩码和网络号。
 private struct RouteEntry {
   let cidr: String
   let destination: String
@@ -306,12 +331,14 @@ private struct RouteEntry {
   let network: UInt32
   let prefix: Int
 
+  // 判断目标 IPv4 地址是否落入当前 CIDR。
   func contains(_ address: UInt32) -> Bool {
     let mask = PacketTunnelProviderMask.value(prefix)
     return (address & mask) == network
   }
 }
 
+// PacketTunnelProvider 使用的 IPv4 掩码工具，避免在路由匹配时重复解析字符串。
 private enum PacketTunnelProviderMask {
   static func value(_ prefix: Int) -> UInt32 {
     if prefix == 0 {
@@ -321,6 +348,143 @@ private enum PacketTunnelProviderMask {
   }
 }
 
+// IPv4 包处理工具，负责修正校验和以及生成本机 ICMP Echo Reply。
+private enum Ipv4Packet {
+  // iOS utun 出站包在再次封装前需要重算 IP/TCP/UDP 校验和，避免远端协议栈丢包。
+  static func normalizeTransportChecksums(_ packet: Data) -> Data {
+    guard packet.count >= 20, packet[0] >> 4 == 4 else {
+      return packet
+    }
+    let ihl = Int(packet[0] & 0x0f) * 4
+    guard ihl >= 20, packet.count >= ihl else {
+      return packet
+    }
+    let totalLen = Int(packet.readUInt16(at: 2))
+    guard totalLen >= ihl, totalLen <= packet.count else {
+      return packet
+    }
+    var normalized = packet.subdata(in: 0..<totalLen)
+    normalized[10] = 0
+    normalized[11] = 0
+    normalized.replaceSubrange(10..<12, with: checksum(normalized.subdata(in: 0..<ihl)).bytes)
+    let flagsFragment = normalized.readUInt16(at: 6)
+    if flagsFragment & 0x1fff != 0 {
+      return normalized
+    }
+    if normalized[9] == 6 {
+      normalizeTcpChecksum(&normalized, ihl: ihl, totalLen: totalLen)
+    } else if normalized[9] == 17 {
+      normalizeUdpChecksum(&normalized, ihl: ihl, totalLen: totalLen)
+    }
+    return normalized
+  }
+
+  // 对发往本机虚拟 IP 的 ICMP Echo Request 生成本地响应，用于基础连通性探测。
+  static func icmpEchoReply(for packet: Data, localVirtualIp: String) -> Data? {
+    guard packet.count >= 28, packet[0] >> 4 == 4 else {
+      return nil
+    }
+    let ihl = Int(packet[0] & 0x0f) * 4
+    guard ihl >= 20, packet.count >= ihl + 8, packet[9] == 1 else {
+      return nil
+    }
+    let totalLen = Int(packet.readUInt16(at: 2))
+    guard totalLen >= ihl + 8, totalLen <= packet.count else {
+      return nil
+    }
+    let flagsFragment = packet.readUInt16(at: 6)
+    guard flagsFragment & 0x1fff == 0,
+      ipv4String(packet, offset: 16) == RelayPeerRuntime.normalizeVirtualIp(localVirtualIp),
+      packet[ihl] == 8,
+      packet[ihl + 1] == 0
+    else {
+      return nil
+    }
+    var reply = packet.subdata(in: 0..<totalLen)
+    let source = reply.subdata(in: 12..<16)
+    let destination = reply.subdata(in: 16..<20)
+    reply.replaceSubrange(12..<16, with: destination)
+    reply.replaceSubrange(16..<20, with: source)
+    reply[8] = 64
+    reply[10] = 0
+    reply[11] = 0
+    reply[ihl] = 0
+    reply[ihl + 2] = 0
+    reply[ihl + 3] = 0
+    reply.replaceSubrange(ihl + 2..<ihl + 4, with: checksum(reply.subdata(in: ihl..<totalLen)).bytes)
+    reply.replaceSubrange(10..<12, with: checksum(reply.subdata(in: 0..<ihl)).bytes)
+    return reply
+  }
+
+  private static func normalizeTcpChecksum(_ packet: inout Data, ihl: Int, totalLen: Int) {
+    let tcpLen = totalLen - ihl
+    guard tcpLen >= 20 else {
+      return
+    }
+    packet[ihl + 16] = 0
+    packet[ihl + 17] = 0
+    let sum = transportChecksum(packet, offset: ihl, length: tcpLen, proto: 6)
+    packet.replaceSubrange(ihl + 16..<ihl + 18, with: sum.bytes)
+  }
+
+  private static func normalizeUdpChecksum(_ packet: inout Data, ihl: Int, totalLen: Int) {
+    let udpLen = totalLen - ihl
+    guard udpLen >= 8 else {
+      return
+    }
+    let declaredLen = Int(packet.readUInt16(at: ihl + 4))
+    guard declaredLen >= 8, declaredLen <= udpLen else {
+      return
+    }
+    packet[ihl + 6] = 0
+    packet[ihl + 7] = 0
+    let sum = transportChecksum(packet, offset: ihl, length: declaredLen, proto: 17)
+    packet.replaceSubrange(ihl + 6..<ihl + 8, with: (sum == 0 ? UInt16.max : sum).bytes)
+  }
+
+  private static func transportChecksum(
+    _ packet: Data,
+    offset: Int,
+    length: Int,
+    proto: UInt8
+  ) -> UInt16 {
+    var bytes = Data()
+    bytes.append(packet.subdata(in: 12..<20))
+    bytes.append(0)
+    bytes.append(proto)
+    bytes.append(contentsOf: UInt16(length).bigEndianBytes)
+    bytes.append(packet.subdata(in: offset..<offset + length))
+    return checksum(bytes)
+  }
+
+  private static func checksum(_ data: Data) -> UInt16 {
+    var sum: UInt32 = 0
+    var index = 0
+    while index < data.count {
+      let high = UInt16(data[index]) << 8
+      let low = index + 1 < data.count ? UInt16(data[index + 1]) : 0
+      sum = sum &+ UInt32(high | low)
+      index += 2
+    }
+    while (sum >> 16) != 0 {
+      sum = (sum & 0xffff) + (sum >> 16)
+    }
+    return ~UInt16(sum & 0xffff)
+  }
+
+  private static func ipv4String(_ packet: Data, offset: Int) -> String {
+    [
+      packet[offset],
+      packet[offset + 1],
+      packet[offset + 2],
+      packet[offset + 3]
+    ]
+    .map(String.init)
+    .joined(separator: ".")
+  }
+}
+
+// PacketTunnel 运行统计快照，会序列化到共享存储并通过 handleAppMessage 返回给宿主 App。
 private struct PacketTunnelStats {
   var networkId = ""
   var deviceId = ""
@@ -338,6 +502,7 @@ private struct PacketTunnelStats {
   var relayFramesSent = 0
   var relayFramesReceived = 0
   var relayPacketsWritten = 0
+  var bytesWritten = 0
   var relayDetachSent = 0
   var relayNoPeerPackets = 0
   var directUdpAttachedPeerCount = 0
@@ -372,6 +537,7 @@ private struct PacketTunnelStats {
       "relayFramesSent": relayFramesSent,
       "relayFramesReceived": relayFramesReceived,
       "relayPacketsWritten": relayPacketsWritten,
+      "bytesWritten": bytesWritten,
       "relayDetachSent": relayDetachSent,
       "relayNoPeerPackets": relayNoPeerPackets,
       "directUdpAttachedPeerCount": directUdpAttachedPeerCount,
@@ -391,8 +557,10 @@ private struct PacketTunnelStats {
   }
 }
 
+// 中继数据面调度器：优先尝试 Direct UDP，失败时回落到 Relay UDP 会话。
 private final class RelayRuntime {
   private let localNodeId: String
+  private let localVirtualIp: String
   private let relayAddress: String
   private let maxFramePayload: Int
   private let packetFlow: NEPacketTunnelFlow
@@ -402,6 +570,7 @@ private final class RelayRuntime {
   private var configHash: UInt64 = 0
   private(set) var lastSendPath = ""
 
+  // 服务端下发的可用中继会话数量。
   var sessionCount: Int {
     peers.count
   }
@@ -462,7 +631,8 @@ private final class RelayRuntime {
     directUdpRuntime?.framesReceived ?? 0
   }
 
-  init?(config: Any?, packetFlow: NEPacketTunnelFlow) {
+  // 从 relayDataPlane 配置构建中继会话和直连候选，配置缺失时返回 nil。
+  init?(config: Any?, localVirtualIp: String, packetFlow: NEPacketTunnelFlow) {
     guard let config = config as? [String: Any],
       config["enabled"] as? Bool == true
     else {
@@ -479,6 +649,7 @@ private final class RelayRuntime {
       return nil
     }
     self.localNodeId = localNodeId
+    self.localVirtualIp = RelayPeerRuntime.normalizeVirtualIp(localVirtualIp)
     self.relayAddress = relayAddress
     self.maxFramePayload = max(512, min(1400, config["maxFramePayload"] as? Int ?? 1200))
     self.packetFlow = packetFlow
@@ -493,6 +664,8 @@ private final class RelayRuntime {
         session: session,
         relayAddress: relayAddress,
         localNodeId: localNodeId,
+        localVirtualIp: self.localVirtualIp,
+        configHash: configHash,
         packetFlow: packetFlow
       )
     }
@@ -502,17 +675,20 @@ private final class RelayRuntime {
     self.directUdpRuntime = DirectUdpRuntime(
       config: config,
       localNodeId: localNodeId,
+      localVirtualIp: self.localVirtualIp,
       maxFramePayload: maxFramePayload,
       configHash: configHash,
       packetFlow: packetFlow
     )
   }
 
+  // 启动所有 Relay UDP 会话和 Direct UDP 探测。
   func start() {
     peers.forEach { $0.start() }
     directUdpRuntime?.start()
   }
 
+  // 停止所有底层 UDP 连接，并清理会话状态。
   func stop() {
     directUdpRuntime?.stop()
     directUdpRuntime = nil
@@ -520,6 +696,7 @@ private final class RelayRuntime {
     peers.removeAll()
   }
 
+  // 按目的虚拟 IP 选择 peer，优先直链发送，直链不可用时发送到中继节点。
   func send(packet: Data, destination: String) -> Bool {
     guard packet.count <= maxFramePayload,
       let peer = peers.first(where: { $0.matches(destination) })
@@ -539,6 +716,7 @@ private final class RelayRuntime {
     return true
   }
 
+  // 封装 SLAN 数据帧头，承载 utun 读取到的原始 IPv4 包。
   fileprivate static func encodeFrame(seq: UInt64, configHash: UInt64, payload: Data) -> Data? {
     guard payload.count <= UInt32.max else {
       return nil
@@ -556,6 +734,7 @@ private final class RelayRuntime {
     return frame
   }
 
+  // 解出 SLAN 数据帧中的 IPv4 载荷，帧头非法或长度越界时丢弃。
   fileprivate static func decodeFrame(_ frame: Data) -> Data? {
     guard frame.count >= 32,
       frame[0] == 0x53,
@@ -576,7 +755,7 @@ private final class RelayRuntime {
     return frame.subdata(in: headerLen..<end)
   }
 
-  private static func stableHash64(_ value: String) -> UInt64 {
+  fileprivate static func stableHash64(_ value: String) -> UInt64 {
     var hash: UInt64 = 0xcbf29ce484222325
     for byte in value.utf8 {
       hash ^= UInt64(byte)
@@ -586,6 +765,7 @@ private final class RelayRuntime {
   }
 }
 
+// Direct UDP 运行时，聚合多个点对点候选路径并统计探测与数据帧状态。
 private final class DirectUdpRuntime {
   private let localNodeId: String
   private let maxFramePayload: Int
@@ -625,9 +805,11 @@ private final class DirectUdpRuntime {
     peers.reduce(0) { $0 + $1.framesReceived }
   }
 
+  // 从 peerPaths 构建可用直链 peer，没有可用候选时不启用直链。
   init?(
     config: [String: Any],
     localNodeId: String,
+    localVirtualIp: String,
     maxFramePayload: Int,
     configHash: UInt64,
     packetFlow: NEPacketTunnelFlow
@@ -637,6 +819,8 @@ private final class DirectUdpRuntime {
       DirectUdpPeerRuntime(
         peerPath: $0,
         localNodeId: localNodeId,
+        localVirtualIp: localVirtualIp,
+        configHash: configHash,
         packetFlow: packetFlow
       )
     }
@@ -650,15 +834,18 @@ private final class DirectUdpRuntime {
     self.peers = peers
   }
 
+  // 启动所有直链候选的 UDP 探测。
   func start() {
     peers.forEach { $0.start() }
   }
 
+  // 停止直链 UDP 连接，避免 NetworkExtension 退出后仍持有 socket。
   func stop() {
     peers.forEach { $0.stop() }
     peers.removeAll()
   }
 
+  // 只在目标 peer 已完成探测握手并 ready 后才走直链发送。
   func send(frame: Data, destination: String) -> Bool {
     guard frame.count <= maxFramePayload + 32,
       let peer = peers.first(where: { $0.matches(destination) && $0.ready })
@@ -669,10 +856,13 @@ private final class DirectUdpRuntime {
   }
 }
 
+// 单个 Direct UDP peer，会对一个远端公网候选地址进行 probe/pong 打洞和数据收发。
 private final class DirectUdpPeerRuntime {
   private let peerNodeId: String
   private let peerVirtualIps: Set<String>
   private let localNodeId: String
+  private let localVirtualIp: String
+  private let configHash: UInt64
   private let endpoint: (host: Network.NWEndpoint.Host, port: Network.NWEndpoint.Port)
   private let packetFlow: NEPacketTunnelFlow
   private var connection: NWConnection?
@@ -684,10 +874,14 @@ private final class DirectUdpPeerRuntime {
   private(set) var pongsReceived = 0
   private(set) var framesSent = 0
   private(set) var framesReceived = 0
+  private var seq: UInt64 = 0
 
+  // 解析服务端 peerPath，选择第一个 Direct UDP/LAN UDP/IPv6 UDP 候选作为远端端点。
   init?(
     peerPath: [String: Any],
     localNodeId: String,
+    localVirtualIp: String,
+    configHash: UInt64,
     packetFlow: NEPacketTunnelFlow
   ) {
     let peerNodeId = (peerPath["peerNodeId"] as? String ?? "")
@@ -706,10 +900,13 @@ private final class DirectUdpPeerRuntime {
     self.peerNodeId = peerNodeId
     self.peerVirtualIps = Set(peerVirtualIps)
     self.localNodeId = localNodeId
+    self.localVirtualIp = RelayPeerRuntime.normalizeVirtualIp(localVirtualIp)
+    self.configHash = configHash
     self.endpoint = endpoint
     self.packetFlow = packetFlow
   }
 
+  // 建立 UDP NWConnection，ready 后立即开始接收和周期性探测。
   func start() {
     guard connection == nil else {
       return
@@ -736,6 +933,7 @@ private final class DirectUdpPeerRuntime {
     connection.start(queue: DispatchQueue.global(qos: .utility))
   }
 
+  // 关闭 peer 直链连接并重置 ready 状态。
   func stop() {
     running = false
     ready = false
@@ -743,10 +941,12 @@ private final class DirectUdpPeerRuntime {
     connection = nil
   }
 
+  // 判断目的虚拟 IP 是否属于当前 peer。
   func matches(_ destination: String) -> Bool {
     peerVirtualIps.contains(RelayPeerRuntime.normalizeVirtualIp(destination))
   }
 
+  // 向已 ready 的直链 peer 发送封装后的 SLAN 数据帧。
   func send(_ frame: Data) -> Bool {
     guard running && ready else {
       return false
@@ -803,7 +1003,19 @@ private final class DirectUdpPeerRuntime {
         if let packet = RelayRuntime.decodeFrame(data) {
           self.ready = true
           self.framesReceived += 1
-          self.writePacketToFlow(packet)
+          if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: self.localVirtualIp)
+          {
+            self.seq &+= 1
+            if let frame = RelayRuntime.encodeFrame(
+              seq: self.seq,
+              configHash: self.configHash,
+              payload: reply
+            ) {
+              _ = self.send(frame)
+            }
+          } else {
+            self.writePacketToFlow(Ipv4Packet.normalizeTransportChecksums(packet))
+          }
         }
       }
       if self.running {
@@ -812,6 +1024,7 @@ private final class DirectUdpPeerRuntime {
     }
   }
 
+  // 处理直链控制消息，probe 会回 pong，pong/probe 都会把 peer 标记为 ready。
   private func consumeControl(_ data: Data) -> Bool {
     guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       value["kind"] as? String == "direct_udp",
@@ -832,6 +1045,7 @@ private final class DirectUdpPeerRuntime {
     return true
   }
 
+  // 将远端回包写回 iOS utun；短暂拥塞时做有限次微延迟重试。
   private func writePacketToFlow(_ packet: Data, attempt: Int = 0) {
     if packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)]) {
       return
@@ -844,6 +1058,7 @@ private final class DirectUdpPeerRuntime {
     }
   }
 
+  // 从路径候选中筛选可以用于点对点直链的 UDP 地址。
   private static func directUdpAddress(_ candidate: [String: Any]) -> String? {
     let kind = (candidate["kind"] as? String ?? "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -888,6 +1103,7 @@ private final class DirectUdpPeerRuntime {
   }
 }
 
+// 单个 Relay UDP 会话，负责 attach/detach 票据握手和中继数据帧收发。
 private final class RelayPeerRuntime {
   private static let maxAttachAttempts = 3
 
@@ -895,6 +1111,8 @@ private final class RelayPeerRuntime {
   private let peerVirtualIps: Set<String>
   private let relayAddress: String
   private let localNodeId: String
+  private let localVirtualIp: String
+  private let configHash: UInt64
   private let ticket: [String: Any]
   private let packetFlow: NEPacketTunnelFlow
   private var connection: NWConnection?
@@ -905,11 +1123,15 @@ private final class RelayPeerRuntime {
   private(set) var packetsWritten = 0
   private(set) var detachSent = false
   private var attachAttempts = 0
+  private var seq: UInt64 = 0
 
+  // 从服务端 session 配置解析 relay ticket 与远端虚拟 IP 集合。
   init?(
     session: [String: Any],
     relayAddress: String,
     localNodeId: String,
+    localVirtualIp: String,
+    configHash: UInt64,
     packetFlow: NEPacketTunnelFlow
   ) {
     let sessionId = (session["sessionId"] as? String ?? "")
@@ -925,10 +1147,13 @@ private final class RelayPeerRuntime {
     self.peerVirtualIps = Set(peerVirtualIps)
     self.relayAddress = relayAddress
     self.localNodeId = localNodeId
+    self.localVirtualIp = RelayPeerRuntime.normalizeVirtualIp(localVirtualIp)
+    self.configHash = configHash
     self.ticket = ticket
     self.packetFlow = packetFlow
   }
 
+  // 建立到 relay 节点的 UDP 连接，ready 后发送 attach 并进入接收循环。
   func start() {
     guard connection == nil,
       let endpoint = Self.endpoint(relayAddress)
@@ -956,6 +1181,7 @@ private final class RelayPeerRuntime {
     connection.start(queue: DispatchQueue.global(qos: .utility))
   }
 
+  // 退出 relay 会话，尽量发送 detach 后再关闭 UDP 连接。
   func stop() {
     detach()
     ready = false
@@ -963,10 +1189,12 @@ private final class RelayPeerRuntime {
     connection = nil
   }
 
+  // 判断目的虚拟 IP 是否应由当前 relay session 承载。
   func matches(_ destination: String) -> Bool {
     peerVirtualIps.contains(Self.normalizeVirtualIp(destination))
   }
 
+  // Relay attach 成功后发送封装数据帧。
   func send(_ frame: Data) {
     guard ready && attached else {
       return
@@ -974,6 +1202,7 @@ private final class RelayPeerRuntime {
     connection?.send(content: frame, completion: .contentProcessed { _ in })
   }
 
+  // 使用服务端下发 ticket 向 relay 节点注册当前参与方。
   private func attach() {
     guard ready && !attached && attachAttempts < Self.maxAttachAttempts else {
       return
@@ -991,6 +1220,7 @@ private final class RelayPeerRuntime {
     scheduleAttachTimeout(attempt: attachAttempts)
   }
 
+  // 主动通知 relay 节点释放当前 session 参与方。
   private func detach() {
     guard ready && attached else {
       return
@@ -1008,6 +1238,7 @@ private final class RelayPeerRuntime {
     attached = false
   }
 
+  // attach 未确认时按固定次数重试，最终暴露错误给统计页面。
   private func scheduleAttachTimeout(attempt: Int) {
     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [weak self] in
       guard let self = self, self.ready, !self.attached, self.attachAttempts == attempt else {
@@ -1021,6 +1252,7 @@ private final class RelayPeerRuntime {
     }
   }
 
+  // 接收 relay 控制响应和数据帧，数据帧会写回 utun 或本地响应 ICMP。
   private func receive() {
     connection?.receiveMessage { [weak self] data, _, _, _ in
       guard let self = self else {
@@ -1035,7 +1267,19 @@ private final class RelayPeerRuntime {
         }
         if let packet = RelayRuntime.decodeFrame(data) {
           self.framesReceived += 1
-          self.writePacketToFlow(packet)
+          if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: self.localVirtualIp)
+          {
+            self.seq &+= 1
+            if let frame = RelayRuntime.encodeFrame(
+              seq: self.seq,
+              configHash: self.configHash,
+              payload: reply
+            ) {
+              self.send(frame)
+            }
+          } else {
+            self.writePacketToFlow(Ipv4Packet.normalizeTransportChecksums(packet))
+          }
         }
       }
       if self.ready {
@@ -1044,6 +1288,7 @@ private final class RelayPeerRuntime {
     }
   }
 
+  // 将 relay 收到的远端 IP 包写回系统协议栈，写入失败时短暂重试。
   private func writePacketToFlow(_ packet: Data, attempt: Int = 0) {
     if packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)]) {
       packetsWritten += 1
@@ -1057,6 +1302,7 @@ private final class RelayPeerRuntime {
     }
   }
 
+  // 解析 relay attach 的 attached/error 响应并更新会话状态。
   private func consumeAttachResponse(_ data: Data) -> Bool {
     guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let kind = value["kind"] as? String
@@ -1084,6 +1330,7 @@ private final class RelayPeerRuntime {
     return false
   }
 
+  // 将客户端内部 ticket 字段映射为 relay 服务期望的下划线 JSON 字段。
   private func relayTicketWire(_ ticket: [String: Any]) -> [String: Any] {
     [
       "ticket_id": stringField(ticket, "ticketId"),
@@ -1133,6 +1380,7 @@ private final class RelayPeerRuntime {
   }
 }
 
+// 数据帧编解码辅助方法，统一按网络字节序读写整数。
 private extension Data {
   mutating func appendUInt16(_ value: UInt16) {
     append(contentsOf: value.bigEndianBytes)
@@ -1164,6 +1412,7 @@ private extension FixedWidthInteger {
   }
 }
 
+// PacketTunnel 启动阶段返回给系统的轻量错误类型。
 private struct PacketTunnelError: LocalizedError {
   let message: String
 

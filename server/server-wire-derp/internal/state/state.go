@@ -22,24 +22,39 @@ var (
 	ErrPeerNotFound    = errors.New("peer connection not found")
 )
 
+// Connection 表示一个已接入 DERP TCP 节点的 peer 连接。
 type Connection struct {
-	PeerID      string
-	NodeID      string
-	RegionID    string
-	RemoteAddr  string
+	// PeerID 是客户端节点 ID。
+	PeerID string
+	// NodeID 是 DERP 节点 ID。
+	NodeID string
+	// RegionID 是 DERP 区域 ID。
+	RegionID string
+	// RemoteAddr 是 TCP 连接的远端地址。
+	RemoteAddr string
+	// ConnectedAt 是连接建立时间。
 	ConnectedAt time.Time
-	LastSeenAt  time.Time
+	// LastSeenAt 是最近一次收到该 peer 消息的时间。
+	LastSeenAt time.Time
 }
 
+// Session 表示 DERP 中继的一次逻辑转发会话。
 type Session struct {
+	// SessionID 是服务端生成的 DERP 会话 ID。
 	SessionID string
-	PeerA     string
-	PeerB     string
-	RegionID  string
-	NodeID    string
+	// PeerA 是先连接到 DERP 的 peer。
+	PeerA string
+	// PeerB 是后续绑定的目标 peer，可能为空。
+	PeerB string
+	// RegionID 是会话所在区域。
+	RegionID string
+	// NodeID 是承载会话的 DERP 节点。
+	NodeID string
+	// ExpiresAt 是 ticket 控制的会话过期时间。
 	ExpiresAt time.Time
 }
 
+// ConnectionView 是管理 HTTP 接口返回的连接视图。
 type ConnectionView struct {
 	PeerID      string    `json:"peerId"`
 	NodeID      string    `json:"nodeId"`
@@ -49,6 +64,7 @@ type ConnectionView struct {
 	LastSeenAt  time.Time `json:"lastSeenAt"`
 }
 
+// SessionView 是管理 HTTP 接口返回的 DERP 会话视图。
 type SessionView struct {
 	SessionID string    `json:"sessionId"`
 	PeerA     string    `json:"peerA"`
@@ -58,13 +74,19 @@ type SessionView struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
+// Metrics 汇总 DERP 服务运行状态。
 type Metrics struct {
-	ConnectionCount    int `json:"connectionCount"`
-	SessionCount       int `json:"sessionCount"`
+	// ConnectionCount 是当前 TCP peer 连接数量。
+	ConnectionCount int `json:"connectionCount"`
+	// SessionCount 是当前 DERP 会话数量。
+	SessionCount int `json:"sessionCount"`
+	// RegionHealthyCount 是当前有活跃连接的 region 数量。
 	RegionHealthyCount int `json:"regionHealthyCount"`
-	NodeHealthyCount   int `json:"nodeHealthyCount"`
+	// NodeHealthyCount 是当前有活跃连接的 DERP 节点数量。
+	NodeHealthyCount int `json:"nodeHealthyCount"`
 }
 
+// TicketKeyStatus 描述 DERP ticket 签名密钥配置和轮转状态。
 type TicketKeyStatus struct {
 	Source             string `json:"source"`
 	KeyRingID          string `json:"keyRingId"`
@@ -75,13 +97,19 @@ type TicketKeyStatus struct {
 	AcceptsDevFallback bool   `json:"acceptsDevFallback"`
 }
 
+// RegionView 是按 region 聚合后的 DERP 管理视图。
 type RegionView struct {
-	RegionID        string   `json:"regionId"`
-	NodeIDs         []string `json:"nodeIds"`
-	Healthy         bool     `json:"healthy"`
-	ConnectionCount int      `json:"connectionCount"`
+	// RegionID 是区域 ID。
+	RegionID string `json:"regionId"`
+	// NodeIDs 是该区域内当前活跃的节点 ID 列表。
+	NodeIDs []string `json:"nodeIds"`
+	// Healthy 表示该区域是否存在活跃连接。
+	Healthy bool `json:"healthy"`
+	// ConnectionCount 是该区域当前连接数。
+	ConnectionCount int `json:"connectionCount"`
 }
 
+// Store 是 DERP 节点默认内存状态实现。
 type Store struct {
 	mu          sync.RWMutex
 	connections map[string]Connection

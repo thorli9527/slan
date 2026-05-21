@@ -2915,6 +2915,7 @@ fn create_punch_connect_sessions(
         .collect()
 }
 
+/// 判断是否启用 punch 协商。默认启用，可通过 SLAN_PUNCH_CONNECT_ENABLED=0/false 关闭。
 fn punch_connect_enabled() -> bool {
     match std::env::var("SLAN_PUNCH_CONNECT_ENABLED") {
         Ok(value) => !matches!(
@@ -2925,6 +2926,7 @@ fn punch_connect_enabled() -> bool {
     }
 }
 
+/// 从 punch 会话中选择对端 direct UDP 地址，优先使用服务端观测到的 reflexive 地址。
 fn punch_peer_direct_udp_address(session: &PunchConnectSession) -> Option<String> {
     let endpoint = session.peer.as_ref()?;
     [endpoint.reflexive.as_str(), endpoint.address.as_str()]

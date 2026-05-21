@@ -3,25 +3,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::{PathPolicy, PeerPathConfig, PeerPathRuntime};
 
+/// 平台路由配置，描述需要写入系统路由表或 VPN 配置的目标网段。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteSpec {
+    /// 目标网段或特殊目标，例如 mesh。
     pub destination: String,
+    /// 可选网关地址。
     pub gateway: Option<String>,
 }
 
+/// 平台网络运行状态，是 UI 与核心状态同步的输入。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkRuntimeState {
+    /// 虚拟网卡或 VPN adapter 是否存在。
     pub adapter_present: bool,
+    /// 虚拟网络是否处于启用状态。
     pub network_enabled: bool,
+    /// 当前平台读到的虚拟 IP。
     pub virtual_ip: Option<String>,
+    /// 当前数据面活跃路径。
     #[serde(default)]
     pub active_path: Option<crate::PathKind>,
+    /// 各 peer 的路径运行状态。
     #[serde(default)]
     pub peer_paths: Vec<PeerPathRuntime>,
 }
 
+/// 平台网络诊断结果，用于 UI 或日志展示网络配置状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformNetworkDiagnostics {
@@ -49,6 +59,7 @@ pub struct PlatformNetworkDiagnostics {
     pub checks: Vec<PlatformDiagnosticCheck>,
 }
 
+/// 单项平台诊断检查结果。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformDiagnosticCheck {
@@ -57,13 +68,17 @@ pub struct PlatformDiagnosticCheck {
     pub message: Option<String>,
 }
 
+/// Android VPN 权限状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AndroidVpnPermissionState {
+    /// 已获得 VpnService 授权。
     Granted,
+    /// 需要用户在系统弹窗中确认授权。
     NeedsUserConsent,
 }
 
+/// Android VPN 授权请求信息。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AndroidVpnConsentRequest {
@@ -71,11 +86,15 @@ pub struct AndroidVpnConsentRequest {
     pub message: Option<String>,
 }
 
+/// Android VPN 会话配置，同时作为跨平台 PlatformNetworkConfig 的当前别名。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AndroidVpnSessionConfig {
+    /// 系统 VPN 会话名称。
     pub session_name: String,
+    /// 本机虚拟 IP。
     pub virtual_ip: String,
+    /// 虚拟 IP 前缀长度。
     pub prefix_len: u8,
     #[serde(default)]
     pub network_configs: Vec<PlatformDeviceNetworkConfig>,
@@ -89,8 +108,10 @@ pub struct AndroidVpnSessionConfig {
     pub relay_data_plane: Option<RelayDataPlaneConfig>,
 }
 
+/// 当前平台网络配置类型；后续各平台分化时可替换为枚举或专用结构。
 pub type PlatformNetworkConfig = AndroidVpnSessionConfig;
 
+/// 单个网络配置摘要，用于平台层了解本设备在各网络内的配置规模。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformDeviceNetworkConfig {
@@ -116,13 +137,19 @@ pub struct PlatformDeviceNetworkConfig {
     pub relay_candidate_count: usize,
 }
 
+/// Relay 数据面配置，描述本机如何通过 relay/DERP 与 peer 建立转发会话。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayDataPlaneConfig {
+    /// 是否启用 relay 数据面。
     pub enabled: bool,
+    /// relay 传输类型，例如 udp。
     pub transport: String,
+    /// relay 服务端地址。
     pub relay_address: String,
+    /// 本机节点 ID。
     pub local_node_id: String,
+    /// 所属虚拟网络 ID。
     pub network_id: String,
     #[serde(default)]
     pub path_policy: PathPolicy,
@@ -135,6 +162,7 @@ pub struct RelayDataPlaneConfig {
     pub sessions: Vec<RelayPeerSession>,
 }
 
+/// 本机到单个 peer 的 relay 会话配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayPeerSession {
@@ -145,6 +173,7 @@ pub struct RelayPeerSession {
     pub ticket: RelayTicket,
 }
 
+/// 服务端签发的 relay/DERP 授权票据。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayTicket {
@@ -168,6 +197,7 @@ pub struct RelayTicket {
     pub signature: String,
 }
 
+/// Android socket protect 请求，要求平台把指定 fd 排除在 VPN 路由之外。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AndroidSocketProtectionRequest {
@@ -175,6 +205,7 @@ pub struct AndroidSocketProtectionRequest {
     pub reason: AndroidSocketProtectionReason,
 }
 
+/// Android socket protect 的业务原因。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AndroidSocketProtectionReason {
@@ -184,6 +215,7 @@ pub enum AndroidSocketProtectionReason {
     RelayTransport,
 }
 
+/// Android 平台层推给核心/UI 的网络事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AndroidNetworkEvent {
@@ -192,6 +224,7 @@ pub struct AndroidNetworkEvent {
     pub runtime_state: Option<NetworkRuntimeState>,
 }
 
+/// Android 网络事件类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AndroidNetworkEventType {
@@ -205,17 +238,26 @@ pub enum AndroidNetworkEventType {
     Error,
 }
 
+/// PlatformNetwork 抽象各操作系统的虚拟网卡/VPN/TUN 数据面操作。
 pub trait PlatformNetwork {
+    /// 安装或准备虚拟网卡。
     fn install_adapter(&self) -> Result<()>;
+    /// 配置本机虚拟 IP。
     fn configure_ip(&self, virtual_ip: &str, prefix_len: u8) -> Result<()>;
+    /// 配置系统或 VPN 路由。
     fn configure_routes(&self, routes: &[RouteSpec]) -> Result<()>;
+    /// 配置 DNS。
     fn configure_dns(&self, dns_servers: &[String]) -> Result<()>;
+    /// 配置 relay 数据面；不支持的平台可使用默认空实现。
     fn configure_relay(&self, _config: Option<&RelayDataPlaneConfig>) -> Result<()> {
         Ok(())
     }
+    /// 读取平台诊断信息；不支持的平台返回默认空诊断。
     fn diagnostics(&self) -> Result<PlatformNetworkDiagnostics> {
         Ok(PlatformNetworkDiagnostics::default())
     }
+    /// 禁用虚拟网络并清理平台配置。
     fn disable_network(&self) -> Result<()>;
+    /// 读取平台当前网络运行状态。
     fn read_runtime_state(&self) -> Result<NetworkRuntimeState>;
 }

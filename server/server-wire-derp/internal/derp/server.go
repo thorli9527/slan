@@ -18,9 +18,10 @@ import (
 	"github.com/slan/server/server-wire-derp/internal/state"
 )
 
+// Server 承载 DERP TCP 数据面，并同时启动本节点的管理 HTTP 服务。
 type Server struct {
 	listener  net.Listener
-	store     *state.Store
+	store     state.StoreAPI
 	adminAddr string
 	cfg       config.Config
 
@@ -28,20 +29,30 @@ type Server struct {
 	writers map[string]*json.Encoder
 }
 
+// NewServer 使用默认内存状态创建 DERP 服务。
 func NewServer(cfg config.Config) (*Server, error) {
+	return NewServerWithStore(cfg, state.NewStore())
+}
+
+// NewServerWithStore 使用调用方提供的状态实现创建 DERP 服务。
+func NewServerWithStore(cfg config.Config, store state.StoreAPI) (*Server, error) {
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return nil, err
 	}
+	if store == nil {
+		store = state.NewStore()
+	}
 	return &Server{
 		listener:  listener,
-		store:     state.NewStore(),
+		store:     store,
 		adminAddr: cfg.AdminListenAddr,
 		cfg:       cfg,
 		writers:   make(map[string]*json.Encoder),
 	}, nil
 }
 
+// Serve 启动管理 HTTP、注册/心跳协程，并循环接受客户端 TCP 连接。
 func (s *Server) Serve() error {
 	defer s.listener.Close()
 	go func() {

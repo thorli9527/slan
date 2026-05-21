@@ -9,10 +9,10 @@ import (
 )
 
 type Server struct {
-	store *state.Store
+	store state.AdminViewStore
 }
 
-func New(store *state.Store) *Server {
+func New(store state.AdminViewStore) *Server {
 	return &Server{store: store}
 }
 

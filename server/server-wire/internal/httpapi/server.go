@@ -16,6 +16,7 @@ import (
 	"github.com/slan/server/server-wire/internal/store"
 )
 
+// ListenAndServe 初始化存储、biz 客户端和 HTTP 路由，然后启动 server-wire。
 func ListenAndServe(cfg config.Config) error {
 	st := openStore(cfg)
 	svc := service.NewWithBiz(st, bizclient.New(cfg.BizInternalURL, cfg.BizInternalToken))
@@ -26,6 +27,7 @@ func ListenAndServe(cfg config.Config) error {
 	return server.ListenAndServe()
 }
 
+// openStore 根据配置选择 Postgres 或内存 Store。Postgres 不可用时降级到内存。
 func openStore(cfg config.Config) store.Store {
 	if strings.TrimSpace(cfg.PostgresDSN) == "" {
 		return store.NewMemoryStore()
@@ -41,6 +43,7 @@ func openStore(cfg config.Config) store.Store {
 	return st
 }
 
+// newMux 注册 server-wire 对外和内部 HTTP API。
 func newMux(svc *service.Service, _ ...string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)

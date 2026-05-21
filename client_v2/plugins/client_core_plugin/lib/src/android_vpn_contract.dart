@@ -1,3 +1,4 @@
+/// AndroidVpnPermissionState 是 Flutter 侧识别 Android VpnService 授权状态的字符串常量。
 class AndroidVpnPermissionState {
   const AndroidVpnPermissionState._();
 
@@ -5,6 +6,7 @@ class AndroidVpnPermissionState {
   static const needsUserConsent = 'needsUserConsent';
 }
 
+/// AndroidVpnConsentRequest 表示一次 Android VPN 授权请求。
 class AndroidVpnConsentRequest {
   const AndroidVpnConsentRequest({
     required this.requestId,
@@ -22,6 +24,7 @@ class AndroidVpnConsentRequest {
   }
 }
 
+/// AndroidVpnSessionConfig 是启动 Android VpnService 所需的完整网络配置。
 class AndroidVpnSessionConfig {
   const AndroidVpnSessionConfig({
     required this.sessionName,
@@ -93,6 +96,7 @@ String _virtualIp(Object? value) {
 
 typedef PlatformNetworkConfig = AndroidVpnSessionConfig;
 
+/// PlatformDeviceNetworkConfig 是单个虚拟网络配置摘要。
 class PlatformDeviceNetworkConfig {
   const PlatformDeviceNetworkConfig({
     required this.networkId,
@@ -153,6 +157,7 @@ class PlatformDeviceNetworkConfig {
   }
 }
 
+/// RelayDataPlaneConfig 是 Android 原生 TUN runtime 使用的 relay/direct UDP 数据面配置。
 class RelayDataPlaneConfig {
   const RelayDataPlaneConfig({
     required this.enabled,
@@ -209,6 +214,7 @@ class RelayDataPlaneConfig {
   }
 }
 
+/// PathKind 是 Android/Dart 侧与 Rust 控制面一致的路径类型常量。
 class PathKind {
   const PathKind._();
 
@@ -219,6 +225,7 @@ class PathKind {
   static const derpTcpTls443 = 'derp_tcp_tls_443';
 }
 
+/// PathState 是 Android/Dart 侧与 Rust 控制面一致的路径状态常量。
 class PathState {
   const PathState._();
 
@@ -230,6 +237,7 @@ class PathState {
   static const failed = 'failed';
 }
 
+/// PathPolicy 是 Android 数据面本地路径切换策略。
 class PathPolicy {
   const PathPolicy({
     this.preferred = const <String>[
@@ -268,6 +276,7 @@ class PathPolicy {
   }
 }
 
+/// PeerPathConfig 是单个 peer 的路径候选配置。
 class PeerPathConfig {
   const PeerPathConfig({
     required this.peerNodeId,
@@ -296,6 +305,7 @@ class PeerPathConfig {
   }
 }
 
+/// PathCandidate 是一条直连或转发路径候选。
 class PathCandidate {
   const PathCandidate({
     required this.kind,
@@ -352,6 +362,7 @@ class PathCandidate {
   }
 }
 
+/// RelayPeerSession 是本机到某个 peer 的 relay 会话。
 class RelayPeerSession {
   const RelayPeerSession({
     required this.sessionId,
@@ -387,6 +398,7 @@ class RelayPeerSession {
   }
 }
 
+/// RelayTicket 是 Android 原生 relay 数据面 attach 时使用的授权票据。
 class RelayTicket {
   const RelayTicket({
     required this.ticketId,

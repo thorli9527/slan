@@ -1,5 +1,6 @@
 package biz
 
+// OperatorUser 是运营后台管理员账号。
 type OperatorUser struct {
 	OperatorID   string `json:"operatorId"`
 	Name         string `json:"name"`
@@ -12,6 +13,7 @@ type OperatorUser struct {
 	UpdatedAt    int64  `json:"updatedAt"`
 }
 
+// OperatorSession 是运营后台登录会话。
 type OperatorSession struct {
 	SessionID  string `json:"sessionId"`
 	OperatorID string `json:"operatorId"`
@@ -20,11 +22,13 @@ type OperatorSession struct {
 	ExpiresAt  int64  `json:"expiresAt"`
 }
 
+// OperatorAuthResponse 是运营后台登录成功返回的认证信息。
 type OperatorAuthResponse struct {
 	Operator OperatorUser    `json:"operator"`
 	Session  OperatorSession `json:"session"`
 }
 
+// DeviceQuota 是按用户套餐计算后的设备额度视图。
 type DeviceQuota struct {
 	UserID             string `json:"userId"`
 	PlanCode           string `json:"planCode"`
@@ -40,6 +44,7 @@ type DeviceQuota struct {
 	Status             string `json:"status"`
 }
 
+// OpsPlan 是运营后台维护的套餐能力定义。
 type OpsPlan struct {
 	Code               string  `json:"code"`
 	Name               string  `json:"name"`
@@ -60,6 +65,7 @@ type OpsPlan struct {
 	Status             string  `json:"status"`
 }
 
+// Product 是可售卖的套餐商品或增值服务。
 type Product struct {
 	ProductID          string  `json:"productId"`
 	Name               string  `json:"name"`
@@ -79,11 +85,17 @@ type Product struct {
 	UpdatedAt          int64   `json:"updatedAt"`
 }
 
+// OpsRelayNode 是运营后台管理的 UDP relay/DERP 中继节点。
 type OpsRelayNode struct {
-	NodeID            string              `json:"nodeId"`
-	Name              string              `json:"name"`
-	Region            string              `json:"region"`
-	Transport         string              `json:"transport"`
+	// NodeID 是节点唯一 ID。
+	NodeID string `json:"nodeId"`
+	// Name 是后台显示名称。
+	Name string `json:"name"`
+	// Region 是节点所在区域。
+	Region string `json:"region"`
+	// Transport 表示节点类型，例如 relay_udp 或 derp_tcp_tls_443。
+	Transport string `json:"transport"`
+	// PublicAddr 是客户端可访问的公网地址。
 	PublicAddr        string              `json:"publicAddr"`
 	InternalAddr      string              `json:"internalAddr,omitempty"`
 	MaxBandwidthMbps  int                 `json:"maxBandwidthMbps"`
@@ -99,11 +111,17 @@ type OpsRelayNode struct {
 	UpdatedAt         int64               `json:"updatedAt"`
 }
 
+// OpsPunchNode 是运营后台管理的 P2P 打洞节点。
 type OpsPunchNode struct {
-	NodeID         string `json:"nodeId"`
-	Name           string `json:"name"`
-	Region         string `json:"region"`
-	PublicUDPIP    string `json:"publicUdpIp"`
+	// NodeID 是打洞节点唯一 ID。
+	NodeID string `json:"nodeId"`
+	// Name 是后台显示名称。
+	Name string `json:"name"`
+	// Region 是节点所在区域。
+	Region string `json:"region"`
+	// PublicUDPIP 是客户端和 biz 访问 punch UDP 服务的公网 IP。
+	PublicUDPIP string `json:"publicUdpIp"`
+	// PublicUDPPort 是 punch UDP 服务端口，HTTP 管理端口约定为该端口 + 1。
 	PublicUDPPort  int    `json:"publicUdpPort"`
 	MaxSessions    int    `json:"maxSessions"`
 	ActiveSessions int    `json:"activeSessions"`
@@ -114,6 +132,7 @@ type OpsPunchNode struct {
 	UpdatedAt      int64  `json:"updatedAt"`
 }
 
+// CustomerPlanAssignment 是客户当前套餐分配记录。
 type CustomerPlanAssignment struct {
 	UserID    string `json:"userId"`
 	PlanCode  string `json:"planCode"`
@@ -121,6 +140,7 @@ type CustomerPlanAssignment struct {
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
+// CustomerProfile 是运营后台客户列表使用的聚合视图。
 type CustomerProfile struct {
 	CustomerID     string  `json:"customerId"`
 	Email          string  `json:"email"`
@@ -137,6 +157,7 @@ type CustomerProfile struct {
 	Status         string  `json:"status"`
 }
 
+// OpsDeviceView 是运营后台设备列表使用的聚合视图。
 type OpsDeviceView struct {
 	DeviceID        string `json:"deviceId"`
 	OwnerID         string `json:"ownerId"`
@@ -161,6 +182,7 @@ type OpsDeviceView struct {
 	UpdatedAt       int64  `json:"updatedAt"`
 }
 
+// Order 是订单记录，描述客户购买商品及开通状态。
 type Order struct {
 	OrderID         string  `json:"orderId"`
 	CustomerID      string  `json:"customerId"`
@@ -178,6 +200,7 @@ type Order struct {
 	ValidUntil      int64   `json:"validUntil,omitempty"`
 }
 
+// Renewal 是套餐续费记录。
 type Renewal struct {
 	RenewalID     string  `json:"renewalId"`
 	CustomerID    string  `json:"customerId"`

@@ -49,11 +49,13 @@ fn control_base_url_override() -> Option<String> {
         .and_then(|mutex| mutex.lock().ok().and_then(|value| value.clone()))
 }
 
+/// ControlPlaneClient 封装客户端访问 service-biz 控制面的 HTTP 调用。
 #[derive(Debug, Clone)]
 pub struct ControlPlaneClient {
     base_url: String,
 }
 
+/// ControlDevice 是控制面返回的设备视图。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlDevice {
@@ -80,6 +82,7 @@ pub struct ControlDevice {
     pub mqtt: Option<MqttCredential>,
 }
 
+/// MqttCredential 是服务端下发给设备的 MQTT 连接凭据。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MqttCredential {
@@ -92,6 +95,7 @@ pub struct MqttCredential {
     pub expires_at: Option<i64>,
 }
 
+/// PunchAuthHeaders 是访问 punch connect-session 接口所需的设备签名头。
 #[derive(Debug, Clone)]
 struct PunchAuthHeaders {
     device_id: String,
@@ -129,6 +133,7 @@ pub(crate) struct DeviceSessionPayload {
     pub active_network_ids: Vec<String>,
 }
 
+/// NetworkActivationPlan 是启用虚拟网络前由控制面配置转换出的本地执行计划。
 #[derive(Debug, Clone, Default)]
 pub struct NetworkActivationPlan {
     pub virtual_ip: String,
@@ -141,6 +146,7 @@ pub struct NetworkActivationPlan {
     pub peer_count: usize,
 }
 
+/// RelayCandidate 是服务端下发的 relay 候选节点。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayCandidate {
@@ -155,6 +161,7 @@ pub struct RelayCandidate {
     pub cluster_id: Option<String>,
 }
 
+/// ControlPeer 是网络配置中可与本机通信的 peer 摘要。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlPeer {
@@ -167,6 +174,7 @@ pub struct ControlPeer {
     pub endpoints: Vec<ControlEndpoint>,
 }
 
+/// ControlEndpoint 是 peer 的直连候选端点。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlEndpoint {
@@ -189,6 +197,7 @@ pub(crate) struct ItemsResponse<T> {
     pub(crate) items: Vec<T>,
 }
 
+/// DeviceNetworkConfig 是 service-biz 下发给设备的数据面配置。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceNetworkConfig {
@@ -218,6 +227,7 @@ pub struct DeviceNetworkConfig {
     pub relay_candidates: Vec<RelayCandidate>,
 }
 
+/// DeviceNetworkPeer 是同一虚拟网络内的对端设备摘要。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceNetworkPeer {
@@ -236,6 +246,7 @@ pub struct DeviceNetworkPeer {
     pub status: Option<String>,
 }
 
+/// DeviceSecurityGroup 是下发给设备的安全组摘要。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceSecurityGroup {
@@ -246,6 +257,7 @@ pub struct DeviceSecurityGroup {
     pub default_policy: Option<String>,
 }
 
+/// DeviceSecurityRule 是下发给设备的数据面访问控制规则。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceSecurityRule {
@@ -263,6 +275,7 @@ pub struct DeviceSecurityRule {
     pub enabled: bool,
 }
 
+/// DeviceDnsZone 是下发给设备的 DNS Zone。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceDnsZone {
@@ -271,6 +284,7 @@ pub struct DeviceDnsZone {
     pub zone_name: String,
 }
 
+/// DeviceDnsRecord 是下发给设备的 DNS 解析记录。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceDnsRecord {
@@ -334,6 +348,7 @@ struct PasswordLoginRequest<'a> {
     device_id: Option<&'a str>,
 }
 
+/// RelayTicketRequest 是客户端向 biz 申请 relay/DERP 票据的请求体。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RelayTicketRequest<'a> {
@@ -351,6 +366,7 @@ struct RelayTicketRequest<'a> {
     relay_region_id: Option<&'a str>,
 }
 
+/// PunchConnectSessionRequest 是客户端向 biz 申请 punch 协商会话的请求体。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PunchConnectSessionRequest<'a> {
@@ -360,6 +376,7 @@ struct PunchConnectSessionRequest<'a> {
     ttl_seconds: Option<u32>,
 }
 
+/// PunchEndpoint 是 punch-service 返回的单端端点快照。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PunchEndpoint {
@@ -377,6 +394,7 @@ pub struct PunchEndpoint {
     pub nat_type: String,
 }
 
+/// PunchConnectSession 是 punch-service 返回的一次 P2P 直连协商会话。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PunchConnectSession {
@@ -680,6 +698,8 @@ impl ControlPlaneClient {
         Ok(payload.items)
     }
 
+    /// 创建 P2P punch 协商会话。请求会携带设备 ID、MQTT username 和
+    /// deviceId+mqttPassword 的 MD5 签名，biz 校验后再代理到 punch-service。
     pub fn create_punch_connect_session(
         &self,
         access_token: &str,
@@ -831,6 +851,7 @@ impl ControlPlaneClient {
     }
 }
 
+/// 根据设备 ID 和 MQTT 凭据生成 punch 鉴权头。
 fn punch_auth_headers(device_id: &str, mqtt: Option<&MqttCredential>) -> Result<PunchAuthHeaders> {
     let device_id = device_id.trim();
     if device_id.is_empty() {
@@ -847,6 +868,7 @@ fn punch_auth_headers(device_id: &str, mqtt: Option<&MqttCredential>) -> Result<
     })
 }
 
+/// punch 签名算法：md5(trim(deviceId) + trim(mqttPassword))。
 fn punch_mqtt_signature(device_id: &str, mqtt_password: &str) -> String {
     md5_hex(format!("{}{}", device_id.trim(), mqtt_password.trim()).as_bytes())
 }

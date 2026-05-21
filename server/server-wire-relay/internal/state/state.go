@@ -25,42 +25,71 @@ var (
 )
 
 type Session struct {
-	ID           string
-	PeerID       string
-	Path         string
+	// ID 是 relay ticket 下发的中继会话 ID。
+	ID string
+	// PeerID 是当前参与方预期连接的对端节点 ID。
+	PeerID string
+	// Path 标记当前会话使用的中继路径，现阶段为 relay_udp。
+	Path string
+	// Participants 保存参与方 ID 到 UDP 源地址的绑定。
 	Participants map[string]*net.UDPAddr
-	ExpiresAt    time.Time
+	// ExpiresAt 是 ticket 控制的会话失效时间。
+	ExpiresAt time.Time
 }
 
+// SessionView 是管理 HTTP 接口返回的中继会话只读视图。
 type SessionView struct {
-	ID               string            `json:"id"`
-	PeerID           string            `json:"peerId"`
-	Path             string            `json:"path"`
-	Participants     map[string]string `json:"participants"`
-	ParticipantCount int               `json:"participantCount"`
-	ExpiresAt        time.Time         `json:"expiresAt,omitempty"`
+	// ID 是中继会话 ID。
+	ID string `json:"id"`
+	// PeerID 是会话对端节点 ID。
+	PeerID string `json:"peerId"`
+	// Path 是转发路径类型。
+	Path string `json:"path"`
+	// Participants 是参与方 ID 到远端地址字符串的映射。
+	Participants map[string]string `json:"participants"`
+	// ParticipantCount 是当前已绑定参与方数量。
+	ParticipantCount int `json:"participantCount"`
+	// ExpiresAt 是会话过期时间。
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
 }
 
+// Metrics 汇总 UDP 中继运行时计数器，供管理接口和巡检使用。
 type Metrics struct {
-	SessionCount                  int    `json:"sessionCount"`
-	SourceBindingCount            int    `json:"sourceBindingCount"`
-	AttachCount                   uint64 `json:"attachCount"`
-	ParticipantRefreshCount       uint64 `json:"participantRefreshCount"`
+	// SessionCount 是当前会话数量。
+	SessionCount int `json:"sessionCount"`
+	// SourceBindingCount 是 UDP 源地址绑定数量。
+	SourceBindingCount int `json:"sourceBindingCount"`
+	// AttachCount 是累计成功 attach 次数。
+	AttachCount uint64 `json:"attachCount"`
+	// ParticipantRefreshCount 是参与方地址刷新次数。
+	ParticipantRefreshCount uint64 `json:"participantRefreshCount"`
+	// ParticipantAddressChangeCount 是参与方地址发生变化的次数。
 	ParticipantAddressChangeCount uint64 `json:"participantAddressChangeCount"`
-	ForwardCount                  uint64 `json:"forwardCount"`
-	ForwardPeerNotAttachedCount   uint64 `json:"forwardPeerNotAttachedCount"`
+	// ForwardCount 是成功找到对端并转发的次数。
+	ForwardCount uint64 `json:"forwardCount"`
+	// ForwardPeerNotAttachedCount 是转发时对端尚未 attach 的次数。
+	ForwardPeerNotAttachedCount uint64 `json:"forwardPeerNotAttachedCount"`
 }
 
+// TicketKeyStatus 描述当前 relay ticket 签名密钥配置和轮转状态。
 type TicketKeyStatus struct {
-	Source             string `json:"source"`
-	KeyRingID          string `json:"keyRingId"`
-	SigningConfigured  bool   `json:"signingConfigured"`
-	KeyRingConfigured  bool   `json:"keyRingConfigured"`
-	EffectiveKeyCount  int    `json:"effectiveKeyCount"`
-	RotationReady      bool   `json:"rotationReady"`
-	AcceptsDevFallback bool   `json:"acceptsDevFallback"`
+	// Source 标记密钥来源，例如 dev_default/signing_secret/key_ring。
+	Source string `json:"source"`
+	// KeyRingID 是当前有效密钥集合的短哈希标识。
+	KeyRingID string `json:"keyRingId"`
+	// SigningConfigured 表示是否配置了显式签名密钥。
+	SigningConfigured bool `json:"signingConfigured"`
+	// KeyRingConfigured 表示是否配置了多密钥 key ring。
+	KeyRingConfigured bool `json:"keyRingConfigured"`
+	// EffectiveKeyCount 是当前参与验签的密钥数量。
+	EffectiveKeyCount int `json:"effectiveKeyCount"`
+	// RotationReady 表示当前配置是否满足无缝轮转的基本条件。
+	RotationReady bool `json:"rotationReady"`
+	// AcceptsDevFallback 表示是否仍接受开发默认密钥。
+	AcceptsDevFallback bool `json:"acceptsDevFallback"`
 }
 
+// Store 是 UDP 中继节点的默认内存状态实现。
 type Store struct {
 	mu                            sync.RWMutex
 	sessions                      map[string]*Session
