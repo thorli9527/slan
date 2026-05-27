@@ -276,11 +276,47 @@ void main() {
 
 Future<void> _logAndroidRuntimeStats(String label) async {
   try {
-    final stats = await ClientCorePlugin().androidRuntimeState();
+    var stats = await ClientCorePlugin().androidRuntimeState();
+    var bestScore = _androidRuntimeStatsScore(stats);
+    for (var attempt = 0; attempt < 4; attempt += 1) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final next = await ClientCorePlugin().androidRuntimeState();
+      final nextScore = _androidRuntimeStatsScore(next);
+      if (nextScore >= bestScore) {
+        stats = next;
+        bestScore = nextScore;
+      }
+    }
     debugPrint('$label=${jsonEncode(stats)}');
   } on Object catch (error) {
     debugPrint('${label}_ERROR=$error');
   }
+}
+
+int _androidRuntimeStatsScore(Object? stats) {
+  if (stats is! Map) {
+    return 0;
+  }
+  const keys = <String>[
+    'directUdpFramesSent',
+    'directUdpFramesReceived',
+    'relayFramesSent',
+    'relayFramesReceived',
+    'relayTcpFramesReceived',
+    'relayTcpSynAckReceived',
+    'relayTcpPshReceived',
+    'packetsRead',
+    'bytesRead',
+    'bytesWritten',
+  ];
+  var score = 0;
+  for (final key in keys) {
+    final value = stats[key];
+    if (value is num) {
+      score += value.toInt();
+    }
+  }
+  return score;
 }
 
 Future<void> _registerTestUser(
