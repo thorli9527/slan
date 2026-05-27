@@ -352,6 +352,20 @@ func (s *Store) UpdateRelayNodeStatus(nodeID string, req OpsNodeStatusRequest) (
 	return node, nil
 }
 
+func (s *Store) DeleteRelayNode(nodeID string) error {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.relayNodes[nodeID]; !ok {
+		return errNotFound
+	}
+	delete(s.relayNodes, nodeID)
+	return nil
+}
+
 func (s *Store) ListPunchNodes() []OpsPunchNode {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -461,6 +475,20 @@ func (s *Store) UpdatePunchNodeStatus(nodeID string, req OpsNodeStatusRequest) (
 	node.UpdatedAt = time.Now().Unix()
 	s.punchNodes[nodeID] = node
 	return node, nil
+}
+
+func (s *Store) DeletePunchNode(nodeID string) error {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.punchNodes[nodeID]; !ok {
+		return errNotFound
+	}
+	delete(s.punchNodes, nodeID)
+	return nil
 }
 
 func (s *Store) ListCustomers() []CustomerProfile {

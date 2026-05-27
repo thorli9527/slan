@@ -243,6 +243,7 @@ RELAY_NODE_ID="$(printf '%s' "${RELAY_NODE}" | json_value nodeId)"
 auth_curl -X PATCH "${OPS_BASE}/api/ops/relay-nodes/${RELAY_NODE_ID}" \
   -H 'Content-Type: application/json' \
   -d "{\"name\":\"Remote Smoke Relay Updated\",\"region\":\"remote-${RUN_ID}\",\"transport\":\"relay_udp\",\"publicAddr\":\"udp://127.0.0.1:${RUN_ID: -4}\",\"maxBandwidthMbps\":900,\"monthlyTrafficGb\":2048,\"maxSessions\":120,\"status\":\"disabled\"}" >/dev/null || fail "relay node update failed"
+auth_curl -X DELETE "${OPS_BASE}/api/ops/relay-nodes/${RELAY_NODE_ID}" >/dev/null || fail "relay node delete failed"
 
 auth_curl -X PATCH "${OPS_BASE}/api/ops/customers/${USER_ID}" \
   -H 'Content-Type: application/json' \

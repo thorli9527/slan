@@ -100,6 +100,7 @@ auth_curl -X PATCH "${BASE_URL}/api/ops/relay-nodes/${RELAY_NODE_ID}" \
   -H 'Content-Type: application/json' \
   -d '{"name":"Smoke Relay Updated","region":"smoke","transport":"relay_udp","publicAddr":"udp://127.0.0.1:39210","maxBandwidthMbps":900,"monthlyTrafficGb":2048,"maxSessions":120,"status":"disabled"}' >/dev/null || fail "relay node update failed"
 auth_curl "${BASE_URL}/api/ops/relay-nodes" >/dev/null || fail "relay nodes list failed"
+auth_curl -X DELETE "${BASE_URL}/api/ops/relay-nodes/${RELAY_NODE_ID}" >/dev/null || fail "relay node delete failed"
 
 USER_AUTH="$(curl --silent --fail -X POST "${BASE_URL}/api/auth/register" \
   -H 'Content-Type: application/json' \

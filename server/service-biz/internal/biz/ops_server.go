@@ -19,10 +19,12 @@ func (s *Server) registerOpsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/ops/relay-nodes", s.opsCreateRelayNode)
 	mux.HandleFunc("PATCH /api/ops/relay-nodes/{nodeId}", s.opsUpdateRelayNode)
 	mux.HandleFunc("PATCH /api/ops/relay-nodes/{nodeId}/status", s.opsUpdateRelayNodeStatus)
+	mux.HandleFunc("DELETE /api/ops/relay-nodes/{nodeId}", s.opsDeleteRelayNode)
 	mux.HandleFunc("GET /api/ops/punch-nodes", s.opsListPunchNodes)
 	mux.HandleFunc("POST /api/ops/punch-nodes", s.opsCreatePunchNode)
 	mux.HandleFunc("PATCH /api/ops/punch-nodes/{nodeId}", s.opsUpdatePunchNode)
 	mux.HandleFunc("PATCH /api/ops/punch-nodes/{nodeId}/status", s.opsUpdatePunchNodeStatus)
+	mux.HandleFunc("DELETE /api/ops/punch-nodes/{nodeId}", s.opsDeletePunchNode)
 	mux.HandleFunc("GET /api/ops/customers", s.opsListCustomers)
 	mux.HandleFunc("PATCH /api/ops/customers/{customerId}", s.opsUpdateCustomer)
 	mux.HandleFunc("POST /api/ops/customers/{customerId}/assign-plan", s.opsAssignCustomerPlan)
@@ -225,6 +227,18 @@ func (s *Server) opsUpdateRelayNodeStatus(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, node)
 }
 
+func (s *Server) opsDeleteRelayNode(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.store.DeleteRelayNode(r.PathValue("nodeId")); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) opsListPunchNodes(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.requireOperator(r); err != nil {
 		writeError(w, err)
@@ -283,6 +297,18 @@ func (s *Server) opsUpdatePunchNodeStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, node)
+}
+
+func (s *Server) opsDeletePunchNode(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.store.DeletePunchNode(r.PathValue("nodeId")); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) opsListCustomers(w http.ResponseWriter, r *http.Request) {

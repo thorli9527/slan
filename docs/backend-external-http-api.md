@@ -197,9 +197,11 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 | GET | `/api/ops/relay-nodes` | - | `{items}` | relay 节点列表 |
 | POST | `/api/ops/relay-nodes` | `OpsRelayNode` | `OpsRelayNode` | 创建 relay 节点 |
 | PATCH | `/api/ops/relay-nodes/{nodeId}` | `OpsRelayNode` | `OpsRelayNode` | 更新 relay 节点 |
+| DELETE | `/api/ops/relay-nodes/{nodeId}` | - | `204 No Content` | 删除 relay/DERP 节点 |
 | GET | `/api/ops/punch-nodes` | - | `{items}` | punch 节点列表 |
 | POST | `/api/ops/punch-nodes` | `{name,region,publicUdpIp,publicUdpPort,maxSessions,status,health,priority}` | `OpsPunchNode` | 创建 punch 节点 |
 | PATCH | `/api/ops/punch-nodes/{nodeId}` | same as create | `OpsPunchNode` | 更新 punch 节点 |
+| DELETE | `/api/ops/punch-nodes/{nodeId}` | - | `204 No Content` | 删除 punch 节点 |
 
 ## Ops Billing And Downloads
 

@@ -107,10 +107,12 @@ type OpsStore interface {
 	ListRelayNodes() []OpsRelayNode
 	UpsertRelayNode(node OpsRelayNode) (OpsRelayNode, error)
 	UpdateRelayNodeStatus(nodeID string, req OpsNodeStatusRequest) (OpsRelayNode, error)
+	DeleteRelayNode(nodeID string) error
 	ListPunchNodes() []OpsPunchNode
 	ActivePunchNodes() []OpsPunchNode
 	UpsertPunchNode(node OpsPunchNode) (OpsPunchNode, error)
 	UpdatePunchNodeStatus(nodeID string, req OpsNodeStatusRequest) (OpsPunchNode, error)
+	DeletePunchNode(nodeID string) error
 	ListCustomers() []CustomerProfile
 	UpdateCustomerProfile(profile CustomerProfile) (CustomerProfile, error)
 	AssignCustomerPlan(customerID, planCode string, expiresAt int64, amount float64, period, operatorEmail string) (CustomerProfile, Renewal, error)

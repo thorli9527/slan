@@ -1317,6 +1317,18 @@ export class AppComponent implements OnInit {
     }
   }
 
+  async deleteRelayNode(node: RelayNode): Promise<void> {
+    try {
+      await this.request('DELETE', `/api/ops/relay-nodes/${encodeURIComponent(node.nodeId)}`);
+      this.relayNodes = this.relayNodes.filter((item) => item.nodeId !== node.nodeId);
+      this.apiMessage = `${this.relayTransportLabel(node.transport)} ${node.name} 已删除`;
+      this.notifyStateChanged();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+      this.notifyStateChanged();
+    }
+  }
+
   async togglePunchNode(node: PunchNode): Promise<void> {
     const enabled = node.status !== 'active';
     try {
@@ -1329,6 +1341,18 @@ export class AppComponent implements OnInit {
         updatedAt: this.formatDateTime(updated.updatedAt),
       });
       this.apiMessage = `UDP 打洞 ${node.name} 已${enabled ? '启用' : '停用'}`;
+      this.notifyStateChanged();
+    } catch (error) {
+      this.apiMessage = this.errorMessage(error);
+      this.notifyStateChanged();
+    }
+  }
+
+  async deletePunchNode(node: PunchNode): Promise<void> {
+    try {
+      await this.request('DELETE', `/api/ops/punch-nodes/${encodeURIComponent(node.nodeId)}`);
+      this.punchNodes = this.punchNodes.filter((item) => item.nodeId !== node.nodeId);
+      this.apiMessage = `UDP 打洞 ${node.name} 已删除`;
       this.notifyStateChanged();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);

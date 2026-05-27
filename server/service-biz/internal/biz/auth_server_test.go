@@ -221,6 +221,8 @@ func TestOpsPunchNodesCanBeManaged(t *testing.T) {
 	if len(response.Items) == 0 || response.Items[0].NodeID != node.NodeID {
 		t.Fatalf("expected punch node in list: %+v", response.Items)
 	}
+	requestJSON(t, handler, http.MethodDelete, "/api/ops/punch-nodes/"+node.NodeID, authorization, nil, http.StatusNoContent, nil)
+	requestJSON(t, handler, http.MethodDelete, "/api/ops/punch-nodes/"+node.NodeID, authorization, nil, http.StatusNotFound, nil)
 }
 
 func TestOpsNodeStatusEndpointsToggleRelayDerpAndPunchNodes(t *testing.T) {
@@ -259,6 +261,10 @@ func TestOpsNodeStatusEndpointsToggleRelayDerpAndPunchNodes(t *testing.T) {
 	if relay.Status != "active" || relay.Health != "healthy" || countHealthyActiveRelayNodes(store.ListRelayNodes()) != baseActiveRelayNodes+1 {
 		t.Fatalf("expected enabled relay node to be active, node=%+v relays=%+v", relay, store.ListRelayNodes())
 	}
+	requestJSON(t, handler, http.MethodDelete, "/api/ops/relay-nodes/"+relay.NodeID, authorization, nil, http.StatusNoContent, nil)
+	if countHealthyActiveRelayNodes(store.ListRelayNodes()) != baseActiveRelayNodes {
+		t.Fatalf("expected relay node delete to remove node, relays=%+v", store.ListRelayNodes())
+	}
 
 	var derp OpsRelayNode
 	requestJSON(t, handler, http.MethodPost, "/api/ops/relay-nodes", authorization, map[string]any{
@@ -278,6 +284,7 @@ func TestOpsNodeStatusEndpointsToggleRelayDerpAndPunchNodes(t *testing.T) {
 	if derp.Status != "disabled" || derp.Health != "down" {
 		t.Fatalf("expected disabled DERP node, got %+v", derp)
 	}
+	requestJSON(t, handler, http.MethodDelete, "/api/ops/relay-nodes/"+derp.NodeID, authorization, nil, http.StatusNoContent, nil)
 
 	var punch OpsPunchNode
 	requestJSON(t, handler, http.MethodPost, "/api/ops/punch-nodes", authorization, map[string]any{

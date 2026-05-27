@@ -48,6 +48,7 @@
             <div class="row-actions">
               <button class="ghost small" type="button" (click)="vm.openPunchNodeDialog(node)">查看/修改</button>
               <button class="ghost small" type="button" (click)="vm.togglePunchNode(node)">{{ node.status === 'active' ? '停用' : '启用' }}</button>
+              <button class="danger small" type="button" (click)="vm.deletePunchNode(node)">删除</button>
             </div>
           </td>
         </tr>
