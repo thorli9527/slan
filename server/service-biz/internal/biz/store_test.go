@@ -1700,6 +1700,21 @@ func TestRelayTicketCandidateIsStablePerSession(t *testing.T) {
 	}
 }
 
+func TestRelayTicketCandidateHonorsPreferredTransport(t *testing.T) {
+	candidates := []RelayCandidate{
+		{EndpointID: "derp-a", Transport: "derp_tcp_tls_443", Address: "derp-a.example.com:29120"},
+		{EndpointID: "relay-a", Transport: "udp", Address: "relay-a.example.com:29112"},
+		{EndpointID: "relay-b", Transport: "udp", Address: "relay-b.example.com:29114"},
+	}
+	sessionID := relaySessionID("net-1", "node-a", "node-b")
+	fromA := chooseRelayCandidate(candidates, []string{"relay-a"}, sessionID)
+	fromB := chooseRelayCandidate(candidates, []string{"relay-b"}, sessionID)
+
+	if fromA.Transport != "udp" || fromB.Transport != "udp" || fromA.EndpointID != fromB.EndpointID {
+		t.Fatalf("expected stable UDP candidate for both peers, fromA=%+v fromB=%+v", fromA, fromB)
+	}
+}
+
 func TestPunchConnectRequiresNetworkMembership(t *testing.T) {
 	store := NewStore()
 	auth, network, err := store.RegisterUser("punch-membership@example.com", "secret", "Punch")

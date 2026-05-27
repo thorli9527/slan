@@ -133,6 +133,12 @@ func configuredRelayCandidates() []RelayCandidate {
 }
 
 func chooseRelayCandidate(candidates []RelayCandidate, preferredEndpointIDs []string, sessionID string) RelayCandidate {
+	if filtered := relayCandidatesForPreferredTransport(candidates, preferredEndpointIDs); len(filtered) > 0 {
+		if candidate, ok := stableRelayCandidate(filtered, sessionID); ok {
+			return candidate
+		}
+		return filtered[0]
+	}
 	if candidate, ok := stableRelayCandidate(candidates, sessionID); ok {
 		return candidate
 	}
@@ -148,6 +154,35 @@ func chooseRelayCandidate(candidates []RelayCandidate, preferredEndpointIDs []st
 		}
 	}
 	return candidates[0]
+}
+
+func relayCandidatesForPreferredTransport(candidates []RelayCandidate, preferredEndpointIDs []string) []RelayCandidate {
+	preferredTransport := ""
+	for _, preferred := range preferredEndpointIDs {
+		preferred = strings.TrimSpace(preferred)
+		if preferred == "" {
+			continue
+		}
+		for _, candidate := range candidates {
+			if candidate.EndpointID == preferred {
+				preferredTransport = strings.TrimSpace(candidate.Transport)
+				break
+			}
+		}
+		if preferredTransport != "" {
+			break
+		}
+	}
+	if preferredTransport == "" {
+		return nil
+	}
+	filtered := make([]RelayCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.Transport) == preferredTransport {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
 }
 
 func stableRelayCandidate(candidates []RelayCandidate, sessionID string) (RelayCandidate, bool) {
