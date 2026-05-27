@@ -244,10 +244,13 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         debugPrint(
           'SLAN_ANDROID_NETWORK_CONFIG relaySessions='
           '${networkConfig?.relayDataPlane?.sessions.length ?? 0} '
+          'virtualIp=${networkConfig?.virtualIp ?? ''} '
           'relayEnabled=${networkConfig?.relayDataPlane?.enabled ?? false} '
           'relayAddress=${networkConfig?.relayDataPlane?.relayAddress ?? networkConfig?.relayAddress ?? ''} '
+          'relayUrls=${networkConfig?.relayDataPlane?.sessions.map((session) => session.ticket.relayUrl).where((url) => url.isNotEmpty).join(",") ?? ''} '
           'relayPeerIps=${networkConfig?.relayDataPlane?.sessions.map((session) => session.peerVirtualIps.join("|")).join(",") ?? ''} '
           'peerPaths=${networkConfig?.relayDataPlane?.peerPaths.length ?? 0} '
+          'pathKinds=${_androidPathKindSummary(networkConfig)} '
           'directCandidates=${_androidDirectCandidateSummary(networkConfig)} '
           'routes=${networkConfig?.routes.map((route) => route['destination']).join(",") ?? ''}',
         );
@@ -294,6 +297,20 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           .where((address) => address.isNotEmpty)
           .join('|');
       return '${path.peerNodeId}:${candidates.isEmpty ? '-' : candidates}';
+    }).join(',');
+  }
+
+  String _androidPathKindSummary(AndroidVpnSessionConfig? config) {
+    final peerPaths = config?.relayDataPlane?.peerPaths;
+    if (peerPaths == null || peerPaths.isEmpty) {
+      return '';
+    }
+    return peerPaths.map((path) {
+      final kinds = path.candidates
+          .map((candidate) => '${candidate.kind}:${candidate.state}')
+          .where((value) => value.isNotEmpty)
+          .join('|');
+      return '${path.peerNodeId}:${kinds.isEmpty ? '-' : kinds}';
     }).join(',');
   }
 
@@ -1879,8 +1896,34 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       case ClientBusinessEventType.controlSyncChanged:
       case ClientBusinessEventType.stateChanged:
       default:
-        return incoming;
+        return _mergeBusinessState(incoming);
     }
+  }
+
+  ClientViewState _mergeBusinessState(ClientViewState incoming) {
+    return _state.value.copyWith(
+      signedIn: incoming.signedIn,
+      userLabel: incoming.userLabel,
+      deviceId: incoming.deviceId,
+      networkEnabled: incoming.networkEnabled,
+      virtualIp: incoming.virtualIp,
+      syncing: incoming.syncing,
+      syncReason: incoming.syncReason,
+      switchEnabled: incoming.switchEnabled,
+      notice: incoming.notice,
+      error: incoming.error,
+      errorSource: incoming.errorSource,
+      lastClientMessageId: incoming.lastClientMessageId,
+      lastClientMessageFromDeviceId: incoming.lastClientMessageFromDeviceId,
+      lastClientMessageBody: incoming.lastClientMessageBody,
+      trafficTxBytes: incoming.trafficTxBytes,
+      trafficRxBytes: incoming.trafficRxBytes,
+      trafficTxBytesPerMinute: incoming.trafficTxBytesPerMinute,
+      trafficRxBytesPerMinute: incoming.trafficRxBytesPerMinute,
+      trafficUpdatedAtMs: incoming.trafficUpdatedAtMs,
+      clearSyncReason: incoming.syncReason == null,
+      clearVirtualIp: !incoming.networkEnabled,
+    );
   }
 
   String? _businessEventType(Map<String, Object?> event) {

@@ -1,4 +1,6 @@
 use std::{
+    collections::HashMap,
+    sync::OnceLock,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -27,6 +29,9 @@ const DEVICE_NETWORK_ENABLED_EVENT: &str = "device_network_enabled";
 const DEVICE_NETWORK_DISABLED_EVENT: &str = "device_network_disabled";
 const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
 const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
+const REMOTE_NETWORK_CONFIG_REBUILD_COOLDOWN_MS: u64 = 120_000;
+
+static REMOTE_NETWORK_CONFIG_REBUILDS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
 
 #[derive(Debug, Default)]
 pub struct ControlTransportWorkerState {
@@ -242,7 +247,7 @@ fn connect_control_mqtt_with_retry(
 
 fn sync_after_control_mqtt_connected(
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    _task_queue: &Arc<Mutex<ControlTaskQueue>>,
     state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<(), String> {
     crate::sync_control_assignment(runtime);
@@ -256,24 +261,8 @@ fn sync_after_control_mqtt_connected(
         publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
         return Ok(());
     }
-    log_service_error("client-core-service scheduling reconnect config rebuild");
-    {
-        let mut queue = task_queue
-            .lock()
-            .map_err(|_| "control task queue mutex poisoned".to_string())?;
-        queue
-            .enqueue_downstream_unacked(
-                crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
-                false,
-            )
-            .map_err(|err| err.to_string())?;
-    }
-    let state = crate::drain_pending_control_tasks(runtime, task_queue);
-    let business_type = if state.error.is_some() {
-        BUSINESS_NETWORK_SWITCH_FAILED
-    } else {
-        BUSINESS_NETWORK_RUNTIME_CHANGED
-    };
+    log_service_error("client-core-service skipped reconnect config rebuild for active data plane");
+    let business_type = BUSINESS_CONTROL_SYNC_CHANGED;
     publish_state_business_event(state_notifier, business_type, &state);
     Ok(())
 }
@@ -764,10 +753,16 @@ fn try_ingest_network_config_changed(
         );
         return Ok(true);
     }
+    let remote_member_state_change = message_type == "network_member_state_changed"
+        && !network_message_targets_self_device(&value, &session);
+    let remote_network_config_change = message_type == "network_config_changed"
+        && !network_message_targets_self_device(&value, &session);
+    let suppress_remote_network_rebuild = remote_network_config_change
+        && !claim_remote_network_config_rebuild(&value, current_timestamp_ms());
     let client = crate::control_plane::ControlPlaneClient::from_env();
     crate::network_module::refresh_network_module_from_session(&client, &session)
         .map_err(|err| format!("refresh client network module: {err:#}"))?;
-    if let Some((virtual_ip, prefix_len)) = network_config_changed_assignment(&value) {
+    if let Some((virtual_ip, prefix_len)) = network_config_changed_assignment(&value, &session) {
         let mut runtime = runtime
             .lock()
             .map_err(|_| "client runtime mutex poisoned".to_string())?;
@@ -785,7 +780,16 @@ fn try_ingest_network_config_changed(
             .map_err(|_| "client runtime mutex poisoned".to_string())?;
         runtime.state().clone()
     };
-    if current_state.signed_in && current_state.network_enabled {
+    if remote_member_state_change || suppress_remote_network_rebuild {
+        log_service_error(
+            "client-core-service ignored remote network change for data plane refresh",
+        );
+        publish_state_business_event(
+            state_notifier,
+            BUSINESS_CONTROL_SYNC_CHANGED,
+            &current_state,
+        );
+    } else if current_state.signed_in && current_state.network_enabled {
         {
             let mut queue = task_queue
                 .lock()
@@ -848,8 +852,82 @@ fn network_config_changed_targets_session(
     true
 }
 
-fn network_config_changed_assignment(value: &serde_json::Value) -> Option<(String, Option<u8>)> {
+fn network_message_targets_self_device(
+    value: &serde_json::Value,
+    session: &PersistedSession,
+) -> bool {
+    let payload = value.get("payload").unwrap_or(value);
+    let Some(self_device_id) = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    payload
+        .get("deviceId")
+        .or_else(|| value.get("deviceId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .is_some_and(|device_id| device_id == self_device_id)
+}
+
+fn claim_remote_network_config_rebuild(value: &serde_json::Value, now_ms: u64) -> bool {
+    let payload = value.get("payload").unwrap_or(value);
+    let network_id = payload
+        .get("networkId")
+        .or_else(|| payload.get("network_id"))
+        .or_else(|| value.get("networkId"))
+        .or_else(|| value.get("network_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-");
+    let device_id = payload
+        .get("deviceId")
+        .or_else(|| payload.get("device_id"))
+        .or_else(|| value.get("deviceId"))
+        .or_else(|| value.get("device_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-");
+    let key = format!("{network_id}/{device_id}");
+    let mut guard = REMOTE_NETWORK_CONFIG_REBUILDS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("remote network config rebuild mutex poisoned");
+    if let Some(previous_ms) = guard.get(&key).copied() {
+        if now_ms.saturating_sub(previous_ms) < REMOTE_NETWORK_CONFIG_REBUILD_COOLDOWN_MS {
+            return false;
+        }
+    }
+    guard.insert(key, now_ms);
+    true
+}
+
+fn network_config_changed_assignment(
+    value: &serde_json::Value,
+    session: &PersistedSession,
+) -> Option<(String, Option<u8>)> {
     let payload = value.get("payload")?;
+    let target_device_id = payload
+        .get("deviceId")
+        .or_else(|| payload.get("device_id"))
+        .or_else(|| value.get("deviceId"))
+        .or_else(|| value.get("device_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let self_device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if target_device_id != self_device_id {
+        return None;
+    }
     let virtual_ip = payload
         .get("virtualIp")
         .and_then(serde_json::Value::as_str)
@@ -1235,7 +1313,10 @@ mod tests {
     use client_core::{AuthPayload, ClientCommand, ClientRuntime};
     use client_core_platform::PlatformNetworkImpl;
 
-    use super::{ingest_downstream_publish, network_config_changed_targets_session};
+    use super::{
+        ingest_downstream_publish, network_config_changed_assignment,
+        network_config_changed_targets_session,
+    };
     use crate::session_store::PersistedSession;
     use crate::{
         control_tasks::ControlTaskQueue, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
@@ -1381,5 +1462,53 @@ mod tests {
             &peer_device,
             &session
         ));
+    }
+
+    #[test]
+    fn network_config_changed_assignment_requires_current_device() {
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("dev-current".to_string());
+        session.active_network_id = Some("net-current".to_string());
+
+        let current = serde_json::json!({
+            "type": "network_config_changed",
+            "payload": {
+                "networkId": "net-current",
+                "deviceId": "dev-current",
+                "virtualIp": "10.0.0.8",
+                "prefixLen": 20
+            }
+        });
+        assert_eq!(
+            network_config_changed_assignment(&current, &session),
+            Some(("10.0.0.8".to_string(), Some(20)))
+        );
+
+        let peer_device = serde_json::json!({
+            "type": "network_config_changed",
+            "payload": {
+                "networkId": "net-current",
+                "deviceId": "dev-peer",
+                "virtualIp": "10.0.0.1",
+                "prefixLen": 20
+            }
+        });
+        assert_eq!(
+            network_config_changed_assignment(&peer_device, &session),
+            None
+        );
+
+        let missing_device = serde_json::json!({
+            "type": "network_config_changed",
+            "payload": {
+                "networkId": "net-current",
+                "virtualIp": "10.0.0.2",
+                "prefixLen": 20
+            }
+        });
+        assert_eq!(
+            network_config_changed_assignment(&missing_device, &session),
+            None
+        );
     }
 }

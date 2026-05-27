@@ -555,6 +555,22 @@ export class AppComponent implements OnInit {
     return this.relayNodes.filter((node) => node.status === 'active').length;
   }
 
+  get udpRelayNodes(): RelayNode[] {
+    return this.relayNodes.filter((node) => node.transport === 'relay_udp');
+  }
+
+  get tcpRelayNodes(): RelayNode[] {
+    return this.relayNodes.filter((node) => node.transport === 'derp_tcp_tls_443');
+  }
+
+  get activeUdpRelayNodes(): number {
+    return this.udpRelayNodes.filter((node) => node.status === 'active').length;
+  }
+
+  get activeTcpRelayNodes(): number {
+    return this.tcpRelayNodes.filter((node) => node.status === 'active').length;
+  }
+
   get activePunchNodes(): number {
     return this.punchNodes.filter((node) => node.status === 'active').length;
   }
@@ -653,6 +669,10 @@ export class AppComponent implements OnInit {
 
   relayNodePercent(node: RelayNode): number {
     return Math.min(100, Math.round((node.usedTrafficGb / node.monthlyTrafficGb) * 100));
+  }
+
+  relayTransportLabel(transport: RelayNode['transport']): string {
+    return transport === 'derp_tcp_tls_443' ? 'TCP 中继' : 'UDP 中继';
   }
 
   punchNodePercent(node: PunchNode): number {
@@ -1283,14 +1303,13 @@ export class AppComponent implements OnInit {
   }
 
   async toggleRelayNode(node: RelayNode): Promise<void> {
-    const nextStatus = node.status === 'active' ? 'disabled' : 'active';
+    const enabled = node.status !== 'active';
     try {
-      const updated = await this.request<RelayNode>('PATCH', `/api/ops/relay-nodes/${encodeURIComponent(node.nodeId)}`, {
-        ...node,
-        status: nextStatus,
-        health: nextStatus === 'active' ? 'healthy' : 'down',
+      const updated = await this.request<RelayNode>('PATCH', `/api/ops/relay-nodes/${encodeURIComponent(node.nodeId)}/status`, {
+        enabled,
       });
       Object.assign(node, updated);
+      this.apiMessage = `${this.relayTransportLabel(node.transport)} ${node.name} 已${enabled ? '启用' : '停用'}`;
       this.notifyStateChanged();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);
@@ -1299,18 +1318,17 @@ export class AppComponent implements OnInit {
   }
 
   async togglePunchNode(node: PunchNode): Promise<void> {
-    const nextStatus = node.status === 'active' ? 'disabled' : 'active';
+    const enabled = node.status !== 'active';
     try {
-      const updated = await this.request<PunchNode>('PATCH', `/api/ops/punch-nodes/${encodeURIComponent(node.nodeId)}`, {
-        ...node,
-        status: nextStatus,
-        health: nextStatus === 'active' ? 'healthy' : 'down',
+      const updated = await this.request<PunchNode>('PATCH', `/api/ops/punch-nodes/${encodeURIComponent(node.nodeId)}/status`, {
+        enabled,
       });
       Object.assign(node, {
         ...updated,
         createdAt: this.formatDateTime(updated.createdAt),
         updatedAt: this.formatDateTime(updated.updatedAt),
       });
+      this.apiMessage = `UDP 打洞 ${node.name} 已${enabled ? '启用' : '停用'}`;
       this.notifyStateChanged();
     } catch (error) {
       this.apiMessage = this.errorMessage(error);

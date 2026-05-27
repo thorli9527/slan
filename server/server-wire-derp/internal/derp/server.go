@@ -26,7 +26,22 @@ type Server struct {
 	cfg       config.Config
 
 	mu      sync.RWMutex
-	writers map[string]*json.Encoder
+	writers map[string]*peerWriter
+}
+
+type peerWriter struct {
+	mu      sync.Mutex
+	encoder *json.Encoder
+}
+
+func newPeerWriter(conn net.Conn) *peerWriter {
+	return &peerWriter{encoder: json.NewEncoder(conn)}
+}
+
+func (w *peerWriter) Encode(msg protocol.ServerMessage) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.encoder.Encode(msg)
 }
 
 // NewServer 使用默认内存状态创建 DERP 服务。
@@ -48,7 +63,7 @@ func NewServerWithStore(cfg config.Config, store state.StoreAPI) (*Server, error
 		store:     store,
 		adminAddr: cfg.AdminListenAddr,
 		cfg:       cfg,
-		writers:   make(map[string]*json.Encoder),
+		writers:   make(map[string]*peerWriter),
 	}, nil
 }
 
@@ -166,29 +181,31 @@ func derpTicketKeyStatus() bizclient.TicketKeyStatus {
 
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
+	configureTCPConn(conn)
 	reader := bufio.NewScanner(conn)
-	encoder := json.NewEncoder(conn)
+	reader.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	writer := newPeerWriter(conn)
 	var currentPeerID string
 	for reader.Scan() {
 		var msg protocol.ClientMessage
 		if err := json.Unmarshal(reader.Bytes(), &msg); err != nil {
-			_ = encoder.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "invalid_json", Message: err.Error()}})
+			_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "invalid_json", Message: err.Error()}})
 			return
 		}
 		switch msg.Kind {
 		case "connect":
 			if msg.Ticket == nil {
-				_ = encoder.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "ticket_required", Message: "connect ticket is required"}})
+				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "ticket_required", Message: "connect ticket is required"}})
 				return
 			}
 			session, renewAfter, err := s.store.Connect(conn, msg.PeerID, msg.NodeID, msg.RegionID, *msg.Ticket)
 			if err != nil {
-				_ = encoder.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "connect_failed", Message: err.Error()}})
+				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "connect_failed", Message: err.Error()}})
 				return
 			}
 			currentPeerID = msg.PeerID
-			s.setWriter(currentPeerID, encoder)
-			_ = encoder.Encode(protocol.ServerMessage{
+			s.setWriter(currentPeerID, writer)
+			_ = writer.Encode(protocol.ServerMessage{
 				Kind:         "connected",
 				SessionID:    session.SessionID,
 				PeerID:       currentPeerID,
@@ -200,7 +217,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			s.store.TouchPeer(currentPeerID)
 			session, err := s.store.BindSessionPeer(msg.SessionID, msg.TargetPeerID)
 			if err != nil {
-				_ = encoder.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "session_not_found", Message: err.Error()}})
+				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "session_not_found", Message: err.Error()}})
 				continue
 			}
 			if msg.TargetPeerID != "" {
@@ -213,7 +230,7 @@ func (s *Server) handleConn(conn net.Conn) {
 					})
 				}
 			}
-			_ = encoder.Encode(protocol.ServerMessage{
+			_ = writer.Encode(protocol.ServerMessage{
 				Kind:           "sent",
 				SessionID:      session.SessionID,
 				BytesForwarded: len(msg.Payload),
@@ -222,40 +239,55 @@ func (s *Server) handleConn(conn net.Conn) {
 			if msg.SessionID != "" {
 				s.store.TouchPeer(currentPeerID)
 			}
-			_ = encoder.Encode(protocol.ServerMessage{Kind: "disconnected", SessionID: msg.SessionID})
-			s.clearWriter(currentPeerID)
+			_ = writer.Encode(protocol.ServerMessage{Kind: "disconnected", SessionID: msg.SessionID})
+			s.clearWriter(currentPeerID, writer)
 			if currentPeerID != "" {
 				s.store.Disconnect(currentPeerID)
 			}
 			return
 		default:
-			_ = encoder.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "unsupported_kind", Message: fmt.Sprintf("unsupported kind %q", msg.Kind)}})
+			_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "unsupported_kind", Message: fmt.Sprintf("unsupported kind %q", msg.Kind)}})
 		}
 	}
-	s.clearWriter(currentPeerID)
+	s.clearWriter(currentPeerID, writer)
 	if currentPeerID != "" {
 		s.store.Disconnect(currentPeerID)
 	}
 }
 
-func (s *Server) setWriter(peerID string, encoder *json.Encoder) {
+func configureTCPConn(conn net.Conn) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	_ = tcpConn.SetNoDelay(true)
+	_ = tcpConn.SetKeepAlive(true)
+	_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	_ = tcpConn.SetReadBuffer(1024 * 1024)
+	_ = tcpConn.SetWriteBuffer(1024 * 1024)
+}
+
+func (s *Server) setWriter(peerID string, writer *peerWriter) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.writers[peerID] = encoder
+	s.writers[peerID] = writer
 }
 
-func (s *Server) writer(peerID string) (*json.Encoder, bool) {
+func (s *Server) writer(peerID string) (*peerWriter, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	encoder, ok := s.writers[peerID]
-	return encoder, ok
+	writer, ok := s.writers[peerID]
+	return writer, ok
 }
 
-func (s *Server) clearWriter(peerID string) {
+func (s *Server) clearWriter(peerID string, writer *peerWriter) {
 	if peerID == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if current := s.writers[peerID]; current != writer {
+		return
+	}
 	delete(s.writers, peerID)
 }

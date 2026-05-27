@@ -147,25 +147,27 @@ type Device struct {
 	// DeviceID 是设备在服务端的稳定 ID。
 	DeviceID string `json:"deviceId"`
 	// OwnerID 是设备归属用户 ID。
-	OwnerID         string           `json:"ownerId"`
-	OwnerEmail      string           `json:"ownerEmail,omitempty"`
-	Name            string           `json:"name"`
-	Platform        string           `json:"platform"`
-	OSName          string           `json:"osName,omitempty"`
-	OSVersion       string           `json:"osVersion,omitempty"`
-	Alias           string           `json:"alias,omitempty"`
-	PublicKey       string           `json:"publicKey,omitempty"`
-	GlobalIP        string           `json:"globalIp"`
-	PrefixLen       int              `json:"prefixLen,omitempty"`
-	GlobalCIDR      string           `json:"globalCidr,omitempty"`
-	SubnetID        string           `json:"subnetId,omitempty"`
-	SubnetCIDR      string           `json:"subnetCidr,omitempty"`
-	SubnetPrefixLen int              `json:"subnetPrefixLen,omitempty"`
-	GlobalName      string           `json:"globalName"`
-	Status          string           `json:"status"`
-	CreatedAt       int64            `json:"createdAt"`
-	UpdatedAt       int64            `json:"updatedAt"`
-	Endpoints       []DeviceEndpoint `json:"endpoints,omitempty"`
+	OwnerID         string `json:"ownerId"`
+	OwnerEmail      string `json:"ownerEmail,omitempty"`
+	Name            string `json:"name"`
+	Platform        string `json:"platform"`
+	OSName          string `json:"osName,omitempty"`
+	OSVersion       string `json:"osVersion,omitempty"`
+	Alias           string `json:"alias,omitempty"`
+	PublicKey       string `json:"publicKey,omitempty"`
+	GlobalIP        string `json:"globalIp"`
+	PrefixLen       int    `json:"prefixLen,omitempty"`
+	GlobalCIDR      string `json:"globalCidr,omitempty"`
+	SubnetID        string `json:"subnetId,omitempty"`
+	SubnetCIDR      string `json:"subnetCidr,omitempty"`
+	SubnetPrefixLen int    `json:"subnetPrefixLen,omitempty"`
+	// RelayAllowed 标识当前接收端是否可以为该 peer 创建中继会话。
+	RelayAllowed bool             `json:"relayAllowed,omitempty"`
+	GlobalName   string           `json:"globalName"`
+	Status       string           `json:"status"`
+	CreatedAt    int64            `json:"createdAt"`
+	UpdatedAt    int64            `json:"updatedAt"`
+	Endpoints    []DeviceEndpoint `json:"endpoints,omitempty"`
 }
 
 // DeviceEndpoint 是设备上报的网络端点候选地址。

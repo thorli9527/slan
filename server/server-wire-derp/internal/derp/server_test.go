@@ -2,6 +2,7 @@ package derp
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,7 +19,7 @@ import (
 func TestHandleConnectAndDisconnect(t *testing.T) {
 	server := &Server{
 		store:   state.NewStore(),
-		writers: make(map[string]*json.Encoder),
+		writers: make(map[string]*peerWriter),
 	}
 	serverConn, clientConn := net.Pipe()
 	defer clientConn.Close()
@@ -67,6 +68,28 @@ func TestHandleConnectAndDisconnect(t *testing.T) {
 		t.Fatal("expected disconnected response")
 	}
 	<-done
+}
+
+func TestClearWriterKeepsNewerPeerConnection(t *testing.T) {
+	server := &Server{
+		writers: make(map[string]*peerWriter),
+	}
+	oldWriter := &peerWriter{encoder: json.NewEncoder(&bytes.Buffer{})}
+	newWriter := &peerWriter{encoder: json.NewEncoder(&bytes.Buffer{})}
+
+	server.setWriter("peer-a", oldWriter)
+	server.setWriter("peer-a", newWriter)
+	server.clearWriter("peer-a", oldWriter)
+
+	current, ok := server.writer("peer-a")
+	if !ok || current != newWriter {
+		t.Fatalf("expected newer writer to remain registered")
+	}
+
+	server.clearWriter("peer-a", newWriter)
+	if _, ok := server.writer("peer-a"); ok {
+		t.Fatalf("expected current writer to be cleared")
+	}
 }
 
 func signDerpTestTicket(ticket protocol.DerpTicket) string {

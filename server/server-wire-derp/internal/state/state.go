@@ -130,7 +130,11 @@ func (s *Store) Connect(conn net.Conn, peerID, nodeID, regionID string, ticket p
 	if peerID != ticket.PeerID {
 		return Session{}, 0, ErrTicketInvalid
 	}
-	if !validDerpTicketSignature(ticket) {
+	if !validDerpTicketSignature(ticket) && !validRelayTicketSignature(ticket) {
+		return Session{}, 0, ErrTicketInvalid
+	}
+	if ticket.SessionID != "" && ticket.SrcNodeID != "" && ticket.DstNodeID != "" &&
+		ticket.SrcNodeID != peerID && ticket.DstNodeID != peerID {
 		return Session{}, 0, ErrTicketInvalid
 	}
 	if !ticket.ExpiresAt.IsZero() && time.Now().After(ticket.ExpiresAt) {
@@ -191,6 +195,50 @@ func validDerpTicketSignature(ticket protocol.DerpTicket) bool {
 		}
 	}
 	return false
+}
+
+func validRelayTicketSignature(ticket protocol.DerpTicket) bool {
+	if ticket.Signature == "" || ticket.SessionID == "" || ticket.SrcNodeID == "" || ticket.DstNodeID == "" {
+		return false
+	}
+	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		ticket.TicketID,
+		ticket.NetworkID,
+		ticket.SessionID,
+		ticket.SrcNodeID,
+		ticket.DstNodeID,
+		ticket.ExpiresAt.UTC().Format(time.RFC3339),
+	)
+	for _, secret := range relayTicketSecrets() {
+		mac := hmac.New(sha256.New, []byte(secret))
+		_, _ = mac.Write([]byte(payload))
+		want := hex.EncodeToString(mac.Sum(nil))
+		if hmac.Equal([]byte(want), []byte(ticket.Signature)) {
+			return true
+		}
+	}
+	return false
+}
+
+func relayTicketSecrets() []string {
+	if value := os.Getenv("SLAN_RELAY_TICKET_SECRETS"); value != "" {
+		var out []string
+		for _, item := range strings.Split(value, ",") {
+			if secret := strings.TrimSpace(item); secret != "" {
+				out = append(out, secret)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if value := os.Getenv("SLAN_RELAY_TICKET_SECRET"); value != "" {
+		return []string{value}
+	}
+	if value := os.Getenv("SLAN_MQTT_PASSWORD_SECRET"); value != "" {
+		return []string{value}
+	}
+	return []string{"dev-relay-ticket-secret"}
 }
 
 func ticketSecret() string {
@@ -292,8 +340,13 @@ func (s *Store) Disconnect(peerID string) {
 	defer s.mu.Unlock()
 	delete(s.connections, peerID)
 	for id, session := range s.sessions {
-		if session.PeerA == peerID || session.PeerB == peerID {
+		if session.PeerA == peerID {
 			delete(s.sessions, id)
+			continue
+		}
+		if session.PeerB == peerID {
+			session.PeerB = ""
+			s.sessions[id] = session
 		}
 	}
 }

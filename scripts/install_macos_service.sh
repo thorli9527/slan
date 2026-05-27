@@ -11,6 +11,7 @@ SERVICE_HOST="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1:46392}"
 CONTROL_BASE_URL="${SLAN_CONTROL_BASE_URL:-}"
 MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 DIRECT_UDP_PUBLIC_HOST="${SLAN_DIRECT_UDP_PUBLIC_HOST:-}"
+DIRECT_UDP_ENDPOINT="${SLAN_DIRECT_UDP_ENDPOINT:-}"
 APP_PATH=""
 SOURCE_BIN=""
 ORIGINAL_ARGS=("$@")
@@ -132,6 +133,12 @@ $(if [[ -n "$DIRECT_UDP_PUBLIC_HOST" ]]; then
     <string>${DIRECT_UDP_PUBLIC_HOST}</string>
 ENV
 fi)
+$(if [[ -n "$DIRECT_UDP_ENDPOINT" ]]; then
+  cat <<ENV
+    <key>SLAN_DIRECT_UDP_ENDPOINT</key>
+    <string>${DIRECT_UDP_ENDPOINT}</string>
+ENV
+fi)
   </dict>
 </dict>
 </plist>
@@ -150,5 +157,6 @@ echo "serviceInfo: $(service_info "$SERVICE_BIN")"
 echo "host: $SERVICE_HOST"
 [[ -n "$CONTROL_BASE_URL" ]] && echo "controlBaseUrl: $CONTROL_BASE_URL"
 [[ -n "$DIRECT_UDP_PUBLIC_HOST" ]] && echo "directUdpPublicHost: $DIRECT_UDP_PUBLIC_HOST"
+[[ -n "$DIRECT_UDP_ENDPOINT" ]] && echo "directUdpEndpoint: $DIRECT_UDP_ENDPOINT"
 echo "plist: $PLIST"
 echo "logs: $LOG_DIR"

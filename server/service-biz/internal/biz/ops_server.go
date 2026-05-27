@@ -18,9 +18,11 @@ func (s *Server) registerOpsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ops/relay-nodes", s.opsListRelayNodes)
 	mux.HandleFunc("POST /api/ops/relay-nodes", s.opsCreateRelayNode)
 	mux.HandleFunc("PATCH /api/ops/relay-nodes/{nodeId}", s.opsUpdateRelayNode)
+	mux.HandleFunc("PATCH /api/ops/relay-nodes/{nodeId}/status", s.opsUpdateRelayNodeStatus)
 	mux.HandleFunc("GET /api/ops/punch-nodes", s.opsListPunchNodes)
 	mux.HandleFunc("POST /api/ops/punch-nodes", s.opsCreatePunchNode)
 	mux.HandleFunc("PATCH /api/ops/punch-nodes/{nodeId}", s.opsUpdatePunchNode)
+	mux.HandleFunc("PATCH /api/ops/punch-nodes/{nodeId}/status", s.opsUpdatePunchNodeStatus)
 	mux.HandleFunc("GET /api/ops/customers", s.opsListCustomers)
 	mux.HandleFunc("PATCH /api/ops/customers/{customerId}", s.opsUpdateCustomer)
 	mux.HandleFunc("POST /api/ops/customers/{customerId}/assign-plan", s.opsAssignCustomerPlan)
@@ -206,6 +208,23 @@ func (s *Server) opsUpdateRelayNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, node)
 }
 
+func (s *Server) opsUpdateRelayNodeStatus(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	var req OpsNodeStatusRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	node, err := s.store.UpdateRelayNodeStatus(r.PathValue("nodeId"), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, node)
+}
+
 func (s *Server) opsListPunchNodes(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.requireOperator(r); err != nil {
 		writeError(w, err)
@@ -242,6 +261,23 @@ func (s *Server) opsUpdatePunchNode(w http.ResponseWriter, r *http.Request) {
 	}
 	req.NodeID = r.PathValue("nodeId")
 	node, err := s.store.UpsertPunchNode(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, node)
+}
+
+func (s *Server) opsUpdatePunchNodeStatus(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.requireOperator(r); err != nil {
+		writeError(w, err)
+		return
+	}
+	var req OpsNodeStatusRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	node, err := s.store.UpdatePunchNodeStatus(r.PathValue("nodeId"), req)
 	if err != nil {
 		writeError(w, err)
 		return

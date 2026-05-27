@@ -1,12 +1,12 @@
 use std::{
-    net::{ToSocketAddrs, UdpSocket},
+    net::{TcpStream, ToSocketAddrs, UdpSocket},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
 use serde_json::Value;
 
-use client_core::normalize_relay_transport;
+use client_core::{normalize_relay_transport, relay_path_kind_for_transport};
 
 use crate::{
     control_plane::{ControlEndpoint, ControlPeer},
@@ -60,6 +60,22 @@ pub(crate) fn best_relay_candidate(
     select_relay_candidates(candidates)
         .into_iter()
         .find(|candidate| candidate.selected)
+}
+
+pub(crate) fn relay_candidate_probe_fallback(
+    candidates: &[PersistedRelayCandidate],
+) -> Option<RelayCandidateSelection> {
+    select_relay_candidates(candidates)
+        .into_iter()
+        .find(|candidate| {
+            normalize_relay_transport(candidate.transport.as_str())
+                .and_then(relay_path_kind_for_transport)
+                .is_some()
+        })
+        .map(|mut candidate| {
+            candidate.selected = true;
+            candidate
+        })
 }
 
 pub(crate) fn best_udp_relay_candidate(
@@ -185,6 +201,16 @@ fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateS
                 10_000
             }
         },
+        "derp_tcp_tls_443" => match probe_relay_tcp_rtt_ms(&address) {
+            Some(rtt) => {
+                rtt_ms = Some(rtt);
+                rtt.saturating_add(100)
+            }
+            None => {
+                reachable = false;
+                10_500
+            }
+        },
         _ => {
             reachable = false;
             11_000
@@ -214,6 +240,10 @@ pub(crate) fn normalize_relay_candidate_address(address: &str, transport: &str) 
         "udp" => trimmed
             .strip_prefix("udp://")
             .or_else(|| trimmed.strip_prefix("relay+udp://")),
+        "derp_tcp_tls_443" => trimmed
+            .strip_prefix("derp://")
+            .or_else(|| trimmed.strip_prefix("derp+tcp+tls://"))
+            .or_else(|| trimmed.strip_prefix("derp_tcp_tls_443://")),
         _ => None,
     };
     if stripped.is_none() && trimmed.contains("://") {
@@ -252,6 +282,16 @@ fn probe_relay_udp_rtt_ms(address: &str) -> Option<u32> {
     if value.get("kind").and_then(Value::as_str) != Some("pong") {
         return None;
     }
+    Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
+}
+
+fn probe_relay_tcp_rtt_ms(address: &str) -> Option<u32> {
+    let socket = address
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut values| values.next())?;
+    let started = Instant::now();
+    TcpStream::connect_timeout(&socket, Duration::from_millis(750)).ok()?;
     Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
 }
 

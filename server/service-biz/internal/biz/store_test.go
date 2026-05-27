@@ -26,7 +26,7 @@ func TestRegisterUserAndDeviceJoinDefaultNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register device: %v", err)
 	}
-	if device.GlobalIP != "10.0.0.1" || device.GlobalName != "mac-1.staticlss.com" {
+	if device.GlobalIP != "10.0.0.2" || device.GlobalName != "mac-1.staticlss.com" {
 		t.Fatalf("unexpected global device identity: %+v", device)
 	}
 	if device.PrefixLen != ipamSubnetPrefix || device.GlobalCIDR != ipamGlobalCIDR || device.SubnetCIDR != "10.0.0.0/20" || device.SubnetPrefixLen != ipamSubnetPrefix {
@@ -327,6 +327,9 @@ func TestNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	if config.Peers[0].SubnetID == "" || config.Peers[0].SubnetCIDR != "10.0.0.0/20" || config.Peers[0].SubnetPrefixLen != ipamSubnetPrefix {
 		t.Fatalf("expected peer device to include subnet data, got %+v", config.Peers[0])
 	}
+	if !config.Peers[0].RelayAllowed {
+		t.Fatalf("expected peer device to allow relay sessions, got %+v", config.Peers[0])
+	}
 	if len(config.Rules) != 1 || config.Rules[0].RuleID != rule.RuleID {
 		t.Fatalf("unexpected acl: %+v", config.Rules)
 	}
@@ -505,7 +508,7 @@ func TestMQTTTopicAccessSeparatesQoS0UpstreamFromQoS2DownstreamTopics(t *testing
 func TestGlobalIPPoolPreGeneratesAndRefills(t *testing.T) {
 	store := NewStore()
 	subnets := store.ListIPAMSubnets()
-	if len(subnets) != 1 || subnets[0].CIDRBlock != "10.0.0.0/20" || subnets[0].GeneratedCapacity != 4094 {
+	if len(subnets) != 1 || subnets[0].CIDRBlock != "10.0.0.0/20" || subnets[0].GeneratedCapacity != 4093 {
 		t.Fatalf("unexpected initial ip pool: %+v", subnets)
 	}
 
@@ -518,8 +521,8 @@ func TestGlobalIPPoolPreGeneratesAndRefills(t *testing.T) {
 		if err != nil {
 			t.Fatalf("register device %d: %v", i, err)
 		}
-		if i == 0 && device.GlobalIP != "10.0.0.1" {
-			t.Fatalf("expected first assigned ip 10.0.0.1, got %s", device.GlobalIP)
+		if i == 0 && device.GlobalIP != "10.0.0.2" {
+			t.Fatalf("expected first assigned ip 10.0.0.2, got %s", device.GlobalIP)
 		}
 	}
 	subnets = store.ListIPAMSubnets()
@@ -1670,6 +1673,30 @@ func TestRelayCandidatesAndTicketRequireNetworkMembership(t *testing.T) {
 	}
 	if _, err := store.IssueRelayTicket(network.NetworkID, "node-"+deviceA.DeviceID, "node-missing", "", nil); err != errNotFound {
 		t.Fatalf("expected missing peer not found, got %v", err)
+	}
+}
+
+func TestRelayURLUsesDERPSchemeForDERPCandidates(t *testing.T) {
+	candidate := RelayCandidate{
+		Transport: "derp_tcp_tls_443",
+		Address:   "derp.example.com:29120",
+	}
+	if got := relayURL(candidate); got != "derp://derp.example.com:29120" {
+		t.Fatalf("unexpected derp relay url: %s", got)
+	}
+}
+
+func TestRelayTicketCandidateIsStablePerSession(t *testing.T) {
+	candidates := []RelayCandidate{
+		{EndpointID: "derp-a", Transport: "derp_tcp_tls_443", Address: "derp-a.example.com:29120"},
+		{EndpointID: "derp-b", Transport: "derp_tcp_tls_443", Address: "derp-b.example.com:29122"},
+	}
+	sessionID := relaySessionID("net-1", "node-a", "node-b")
+	fromA := chooseRelayCandidate(candidates, []string{"derp-a"}, sessionID)
+	fromB := chooseRelayCandidate(candidates, []string{"derp-b"}, sessionID)
+
+	if fromA.EndpointID == "" || fromA.EndpointID != fromB.EndpointID {
+		t.Fatalf("expected stable candidate for both peers, fromA=%+v fromB=%+v", fromA, fromB)
 	}
 }
 

@@ -19,7 +19,7 @@
 
 ## 核心职责
 
-- 通过 TCP/TLS 443 接收客户端长连接
+- 通过 TCP 长连接接收客户端数据面连接；生产 443/TLS 由外部终止层或后续统一 TLS transport 提供
 - 基于 `server-wire` 签发的 DERP ticket 建立会话
 - 使用 `SLAN_WIRE_TICKET_SECRET` 校验 DERP ticket 签名
 - 维护 peer 到 DERP 节点的连接绑定
@@ -70,7 +70,7 @@
 
 ## 非功能要求
 
-- 监听必须可稳定运行在 TCP/TLS 443
+- 裸 TCP 监听必须稳定；如生产需要 443/TLS，必须由外部四层/TLS 终止层转发到裸 TCP listener，或后续统一实现内置 TLS transport
 - 长连接断开与重连必须可恢复
 - 节点健康与 region 可用性必须可观测
 - 不允许与 `server-wire-relay` 共用 UDP relay 会话模型

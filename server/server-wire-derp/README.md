@@ -3,8 +3,10 @@
 `server-wire-derp` is the isolated DERP-style final fallback data plane for the
 WireGuard-shaped stack.
 
-It provides a long-lived TCP control/data channel today and is intended to sit
-behind TLS on port 443 in production.
+It provides a long-lived TCP control/data channel today. The current client and
+server protocol is raw TCP with JSON-lines frames; production TLS on port 443
+must be provided by an external L4/TLS terminator that forwards raw TCP to this
+service, or by a future in-process TLS transport change across all clients.
 
 ## Run
 

@@ -78,7 +78,8 @@ use crate::local_api::{
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
     extract_persisted_relay_candidates_from_network_map, normalize_relay_candidate_address,
-    replace_runtime_relay_candidates, runtime_relay_candidates, select_relay_candidates,
+    relay_candidate_probe_fallback, replace_runtime_relay_candidates, runtime_relay_candidates,
+    select_relay_candidates,
 };
 use crate::relay_models::{
     PathDiagnoseDns, PathDiagnoseHealth, PathDiagnoseHealthReason, PathDiagnoseMtu,
@@ -2420,9 +2421,7 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
     session.virtual_ip = Some(activation.virtual_ip);
     persist_session(&session)?;
     let relay_candidates = runtime_relay_candidates();
-    let best_relay = best_relay_candidate_for_connect_plans(&relay_candidates)
-        .or_else(|| best_udp_relay_candidate(&relay_candidates))
-        .or_else(|| best_relay_candidate(&relay_candidates));
+    let best_relay = data_plane_relay_candidate(&relay_candidates);
     build_relay_data_plane_config(
         &client,
         &session,
@@ -2436,11 +2435,19 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
 fn android_data_plane_relay_candidate(
     candidates: &[PersistedRelayCandidate],
 ) -> Option<RelayCandidateSelection> {
-    // Android's current native TUN runtime supports relay UDP sockets passed
-    // through VpnService.protect. Keep TCP/TLS/HTTP3 candidates visible to the
-    // control model, but do not hand them to the Android data plane until their
-    // transports have native implementations.
-    best_udp_relay_candidate(candidates)
+    // Android now protects both UDP relay sockets and DERP TCP sockets through
+    // VpnService before handing fds to Rust. Prefer UDP when available, and
+    // fall back to DERP/TCP for TCP-only relay tests.
+    best_udp_relay_candidate(candidates).or_else(|| best_relay_candidate(candidates))
+}
+
+fn data_plane_relay_candidate(
+    candidates: &[PersistedRelayCandidate],
+) -> Option<RelayCandidateSelection> {
+    best_relay_candidate_for_connect_plans(candidates)
+        .or_else(|| best_udp_relay_candidate(candidates))
+        .or_else(|| best_relay_candidate(candidates))
+        .or_else(|| relay_candidate_probe_fallback(candidates))
 }
 
 fn best_relay_candidate_for_connect_plans(
@@ -2553,9 +2560,7 @@ where
         );
     }
     let relay_candidates = runtime_relay_candidates();
-    let best_relay = best_relay_candidate_for_connect_plans(&relay_candidates)
-        .or_else(|| best_udp_relay_candidate(&relay_candidates))
-        .or_else(|| best_relay_candidate(&relay_candidates));
+    let best_relay = data_plane_relay_candidate(&relay_candidates);
     let relay_config = build_relay_data_plane_config(
         &client,
         session,
@@ -2703,10 +2708,16 @@ fn build_relay_data_plane_config(
         Some(relay_path_kind.as_str()),
     );
 
+    let relay_address = sessions
+        .first()
+        .map(|session| session.ticket.relay_url.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| relay.address.clone());
     Ok(RelayDataPlaneConfig {
         enabled: !sessions.is_empty(),
         transport: relay.transport.clone(),
-        relay_address: relay.address.clone(),
+        relay_address,
         local_node_id: local_node_id.to_string(),
         network_id: network_id.to_string(),
         path_policy,
@@ -2966,6 +2977,7 @@ fn relay_path_candidate_from_connect_plan(
 fn relay_transport_for_path_type(path_type: &str) -> Option<&'static str> {
     match path_type.trim() {
         "relay_udp" => Some("udp"),
+        "derp_tcp_tls_443" => Some("derp_tcp_tls_443"),
         _ => None,
     }
 }

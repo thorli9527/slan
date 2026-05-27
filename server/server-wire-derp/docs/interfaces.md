@@ -4,7 +4,10 @@
 
 ## 协议形态
 
-`server-wire-derp` 使用 TCP/TLS 443 长连接协议。
+`server-wire-derp` 当前实现使用裸 TCP 长连接和 JSON-lines 帧协议。
+`derp_tcp_tls_443` 是控制面路径名称；如生产环境需要 443/TLS，应由外部
+L4/TLS 终止层转发裸 TCP 到本服务，或后续在所有客户端和服务端统一引入
+端到端 TLS transport。
 
 它承担的是最终兜底路径：
 
@@ -16,7 +19,8 @@
 
 客户端连接：
 
-- `tcp+tls://<derp-host>:443`
+- `derp://<derp-host>:<derp-port>`
+- `derp+tcp+tls://<derp-host>:443` 仅在部署层已提供 TLS 终止并转发裸 TCP 时使用
 
 建立连接后，客户端必须先发送 `connect` 帧。
 

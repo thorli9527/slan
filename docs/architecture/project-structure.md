@@ -18,7 +18,7 @@ slan/
 │  ├─ server-main/                  # 运营管理控制台
 │  ├─ server-wire/                      # 联网控制面
 │  ├─ server-wire-relay/                # UDP relay 数据面
-│  └─ server-wire-derp/                 # TCP/TLS 443 兜底数据面
+│  └─ server-wire-derp/                 # DERP TCP 兜底数据面
 │
 ├─ protocol/                            # 共享协议定义
 ├─ deploy/                              # 部署资源
@@ -69,7 +69,7 @@ slan/
 
 ### `server/server-wire-derp`
 
-- 负责 TCP/TLS 443 最终兜底数据面。
+- 负责 DERP 最终兜底数据面；当前实现为裸 TCP JSON-lines，生产 443/TLS 需要外部终止层或后续内置 TLS transport。
 - 消费 `server-wire` 签发的 `derp_tcp_tls_443` ticket，维护连接和 session，提供 region/connection/session 观测接口。
 - 不负责路径规划、票据签发和业务域管理。
 

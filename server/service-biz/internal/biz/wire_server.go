@@ -462,7 +462,9 @@ func (s *Store) UpdateWireNodeHeartbeat(nodeID, transport string, req wireNodeHe
 	if node.Transport != transport {
 		return OpsRelayNode{}, errNotFound
 	}
-	if req.Healthy {
+	if node.Status == "disabled" {
+		node.Health = "down"
+	} else if req.Healthy {
 		node.Health = "healthy"
 	} else {
 		node.Health = "down"
@@ -492,9 +494,10 @@ func (s *Store) UpdateWireNodeStatus(nodeID, transport string, req wireNodeStatu
 			node.Status = "active"
 		} else {
 			node.Status = "disabled"
+			node.Health = "down"
 		}
 	}
-	if req.Healthy != nil {
+	if req.Healthy != nil && node.Status != "disabled" {
 		if *req.Healthy {
 			node.Health = "healthy"
 		} else {

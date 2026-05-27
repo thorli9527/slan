@@ -86,8 +86,6 @@ pub(crate) fn relay_runtime_failure_total(stats: &RelayRuntimeStats) -> u64 {
         .saturating_add(stats.relay_decode_failures)
         .saturating_add(stats.relay_error_responses)
         .saturating_add(stats.relay_config_hash_mismatches)
-        .saturating_add(stats.unroutable_tun_packets)
-        .saturating_add(stats.oversized_tun_packets)
         .saturating_add(stats.wintun_write_failures)
 }
 

@@ -12,7 +12,7 @@
 | `server/server-main` | 运营管理控制台，负责运营用户、客户、商品、订单、续费和中继节点运营界面 | 客户端控制面、数据面转发 |
 | `server/server-wire` | 联网控制面，负责 peer 注册、runtime config、路径规划、relay/DERP ticket 签发 | 用户、组织、计费、审计等业务域 |
 | `server/server-wire-relay` | UDP relay 数据面，负责 `relay_udp` ticket 消费、session 和 UDP 转发 | 业务域管理、路径评分、票据签发 |
-| `server/server-wire-derp` | TCP/TLS 443 兜底数据面，负责 `derp_tcp_tls_443` ticket 消费、连接和转发 | 业务域管理、路径评分、票据签发 |
+| `server/server-wire-derp` | DERP 兜底数据面，负责 `derp_tcp_tls_443` ticket 消费、连接和转发；当前实现为裸 TCP JSON-lines | 业务域管理、路径评分、票据签发 |
 
 ## 职责矩阵
 
@@ -24,7 +24,7 @@
 | Runtime config | 消费与装配 | 提供业务配置 | 负责联网配置 | 不负责 | 不负责 |
 | 路径规划 | 执行与上报 | 不负责 | 负责探测、评分、重选路 | 不负责 | 不负责 |
 | Relay / DERP ticket | 消费 | 不签发联网票据 | 负责签发 | 负责校验 relay ticket | 负责校验 DERP ticket |
-| Relay / DERP attach | 负责发起 | 不处理数据流 | 不处理数据流 | 负责 UDP relay 接入 | 负责 TCP/TLS 443 接入 |
+| Relay / DERP attach | 负责发起 | 不处理数据流 | 不处理数据流 | 负责 UDP relay 接入 | 负责 DERP TCP 接入 |
 | 数据转发 | 不负责服务端转发 | 不负责 | 不负责 | 负责 UDP 转发 | 负责 DERP 兜底转发 |
 
 ## 协议边界
@@ -40,7 +40,7 @@
 ## 主路径
 
 ```text
-LAN Direct -> IPv6 Direct -> Direct UDP -> Relay UDP -> DERP TCP/TLS 443
+LAN Direct -> IPv6 Direct -> Direct UDP -> Relay UDP -> DERP TCP fallback
 ```
 
 `server-wire` 负责路径探测与评分、快速重选路、MTU 探测、IPv6 优先但可回退、LAN 优先直连、endpoint roaming、票据续期和 per-peer keepalive 策略。数据面服务只消费已签发票据，不反向侵入业务控制面。

@@ -450,6 +450,12 @@ fn load_direct_udp_endpoint_report(now_ms: u64) -> Option<DirectUdpEndpointRepor
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     {
+        if matches!(
+            endpoint.to_ascii_lowercase().as_str(),
+            "disabled" | "off" | "none"
+        ) {
+            return None;
+        }
         return DirectUdpEndpointReport {
             endpoint,
             endpoint_type: env::var("SLAN_DIRECT_UDP_ENDPOINT_TYPE").unwrap_or_default(),

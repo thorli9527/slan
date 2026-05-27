@@ -14,7 +14,14 @@ json_value() {
 }
 
 curl_json() {
-  curl --silent --fail "$@"
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8; do
+    if curl --silent --show-error --fail --connect-timeout 5 --max-time 20 "$@"; then
+      return 0
+    fi
+    sleep 2
+  done
+  curl --silent --show-error --fail --connect-timeout 5 --max-time 20 "$@"
 }
 
 md5_hex() {

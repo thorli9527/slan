@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -50,7 +51,8 @@ func (s *Store) IssueRelayTicket(networkID, srcNodeID, dstNodeID, derpClusterID 
 	if len(candidates) == 0 {
 		return RelayTicket{}, errNotFound
 	}
-	candidate := chooseRelayCandidate(candidates, preferredEndpointIDs)
+	sessionID := relaySessionID(networkID, srcNodeID, dstNodeID)
+	candidate := chooseRelayCandidate(candidates, preferredEndpointIDs, sessionID)
 	now := time.Now().UTC()
 	expiresAt := now.Add(relayTicketTTL).Format(time.RFC3339)
 	sessionKey, err := secureTokenHex(32)
@@ -64,7 +66,7 @@ func (s *Store) IssueRelayTicket(networkID, srcNodeID, dstNodeID, derpClusterID 
 	ticket := RelayTicket{
 		TicketID:           "rt-" + ticketID,
 		NetworkID:          networkID,
-		SessionID:          relaySessionID(networkID, srcNodeID, dstNodeID),
+		SessionID:          sessionID,
 		SrcNodeID:          srcNodeID,
 		DstNodeID:          dstNodeID,
 		DERPClusterID:      derpClusterID,
@@ -112,13 +114,16 @@ func configuredRelayCandidates() []RelayCandidate {
 		if strings.HasPrefix(address, "udp://") {
 			transport = "udp"
 		}
-		if transport != "udp" {
+		if strings.HasPrefix(address, "derp://") || strings.HasPrefix(address, "derp+tcp+tls://") {
+			transport = "derp_tcp_tls_443"
+		}
+		if transport != "udp" && transport != "derp_tcp_tls_443" {
 			continue
 		}
-		endpointID := fmt.Sprintf("relay-udp-%d", idx+1)
+		endpointID := fmt.Sprintf("relay-%s-%d", strings.ReplaceAll(transport, "_", "-"), idx+1)
 		out = append(out, RelayCandidate{
 			EndpointID: endpointID,
-			Transport:  "udp",
+			Transport:  transport,
 			Address:    address,
 			RegionID:   strings.TrimSpace(os.Getenv("SLAN_RELAY_REGION_ID")),
 			ClusterID:  strings.TrimSpace(os.Getenv("SLAN_RELAY_CLUSTER_ID")),
@@ -127,7 +132,10 @@ func configuredRelayCandidates() []RelayCandidate {
 	return out
 }
 
-func chooseRelayCandidate(candidates []RelayCandidate, preferredEndpointIDs []string) RelayCandidate {
+func chooseRelayCandidate(candidates []RelayCandidate, preferredEndpointIDs []string, sessionID string) RelayCandidate {
+	if candidate, ok := stableRelayCandidate(candidates, sessionID); ok {
+		return candidate
+	}
 	for _, preferred := range preferredEndpointIDs {
 		preferred = strings.TrimSpace(preferred)
 		if preferred == "" {
@@ -142,10 +150,29 @@ func chooseRelayCandidate(candidates []RelayCandidate, preferredEndpointIDs []st
 	return candidates[0]
 }
 
+func stableRelayCandidate(candidates []RelayCandidate, sessionID string) (RelayCandidate, bool) {
+	if len(candidates) == 0 {
+		return RelayCandidate{}, false
+	}
+	if len(candidates) == 1 {
+		return candidates[0], true
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return RelayCandidate{}, false
+	}
+	sum := sha256.Sum256([]byte(sessionID))
+	index := int(binary.BigEndian.Uint64(sum[:8]) % uint64(len(candidates)))
+	return candidates[index], true
+}
+
 func relayURL(candidate RelayCandidate) string {
 	address := strings.TrimSpace(candidate.Address)
 	if strings.Contains(address, "://") {
 		return address
+	}
+	if strings.TrimSpace(candidate.Transport) == "derp_tcp_tls_443" {
+		return "derp://" + address
 	}
 	return "udp://" + address
 }

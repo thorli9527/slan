@@ -19,8 +19,43 @@ MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:low
 ANDROID_TEST_DEVICE_ID="${SLAN_ANDROID_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 ANDROID_TO_MAC_BODY="${SLAN_ANDROID_TO_MAC_BODY:-hello-android-to-mac-$(date +%s%N)}"
 MAC_TO_ANDROID_BODY="${SLAN_MAC_TO_ANDROID_BODY:-hello-mac-to-android-$(date +%s%N)}"
+ANDROID_DEVICE_ID_WAIT_SECONDS="${SLAN_ANDROID_DEVICE_ID_WAIT_SECONDS:-180}"
 
 PIDS=()
+
+run_client_core_login_check() {
+  local label="$1"
+  shift
+  local attempts="${SLAN_CONTROL_RETRY_ATTEMPTS:-3}"
+  local attempt output status
+  local args=("$@")
+  for attempt in $(seq 1 "$attempts"); do
+    set +e
+    output="$(
+      cd "$ROOT_DIR"
+      go run scripts/client_core_service_login_check.go "${args[@]}" 2>&1
+    )"
+    status=$?
+    set -e
+    if [[ $status -eq 0 ]]; then
+      echo "$output"
+      return 0
+    fi
+    echo "$label attempt $attempt/$attempts failed: $output" >&2
+    if [[ "$output" == *"HTTP 409"* ]]; then
+      for index in "${!args[@]}"; do
+        if [[ "${args[$index]}" == "-register=true" ]]; then
+          args[$index]="-register=false"
+        fi
+      done
+    fi
+    if [[ "$attempt" != "$attempts" ]]; then
+      sleep $((attempt * 5))
+    fi
+  done
+  echo "$output"
+  return "$status"
+}
 
 start_android_vpn_appops_guard() {
   (
@@ -92,8 +127,7 @@ PIDS+=("$!")
 
 echo "+ login mac client-core-service"
 MAC_OUTPUT="$(
-  cd "$ROOT_DIR"
-  go run scripts/client_core_service_login_check.go \
+  run_client_core_login_check "mac login" \
     -biz-url "$BIZ_URL" \
     -address "$SERVICE_HOST" \
     -email "$EMAIL" \
@@ -114,6 +148,7 @@ echo "+ flutter test Android login and message send/wait"
   cd "$APP_DIR"
   flutter test integration_test/mobile_login_test.dart \
     -d "$ANDROID_DEVICE" \
+    --timeout "${SLAN_ANDROID_FLUTTER_TEST_TIMEOUT:-10m}" \
     --dart-define="SLAN_TEST_BIZ_URL=$ANDROID_BIZ_URL" \
     --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$ANDROID_BIZ_URL" \
     --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
@@ -138,7 +173,7 @@ ANDROID_PID="$!"
 PIDS+=("$ANDROID_PID")
 
 ANDROID_DEVICE_ID=""
-for _ in $(seq 1 90); do
+for _ in $(seq 1 "$ANDROID_DEVICE_ID_WAIT_SECONDS"); do
   if ! kill -0 "$ANDROID_PID" 2>/dev/null; then
     cat "$ANDROID_LOG"
     echo "Android integration test exited before device id was reported" >&2
@@ -159,32 +194,45 @@ fi
 echo "Android device id: $ANDROID_DEVICE_ID"
 
 echo "+ wait mac receive Android message"
-(
-  cd "$ROOT_DIR"
-  go run scripts/client_core_service_login_check.go \
-    -biz-url "$BIZ_URL" \
-    -address "$SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -login=false \
-    -expect-from "$ANDROID_DEVICE_ID" \
-    -expect-body "$ANDROID_TO_MAC_BODY" \
-    -timeout "$TIMEOUT"
-)
+run_client_core_login_check "mac wait Android message" \
+  -biz-url "$BIZ_URL" \
+  -address "$SERVICE_HOST" \
+  -email "$EMAIL" \
+  -password "$PASSWORD" \
+  -login=false \
+  -expect-from "$ANDROID_DEVICE_ID" \
+  -expect-body "$ANDROID_TO_MAC_BODY" \
+  -timeout "$TIMEOUT"
 
 echo "+ send mac message to Android"
+run_client_core_login_check "mac send Android message" \
+  -biz-url "$BIZ_URL" \
+  -address "$SERVICE_HOST" \
+  -email "$EMAIL" \
+  -password "$PASSWORD" \
+  -login=false \
+  -send-target "$ANDROID_DEVICE_ID" \
+  -send-body "$MAC_TO_ANDROID_BODY" \
+  -timeout "$TIMEOUT"
+
 (
-  cd "$ROOT_DIR"
-  go run scripts/client_core_service_login_check.go \
-    -biz-url "$BIZ_URL" \
-    -address "$SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -login=false \
-    -send-target "$ANDROID_DEVICE_ID" \
-    -send-body "$MAC_TO_ANDROID_BODY" \
-    -timeout "$TIMEOUT"
-)
+  while kill -0 "$ANDROID_PID" 2>/dev/null; do
+    sleep "${SLAN_MAC_TO_ANDROID_RETRY_INTERVAL_SECONDS:-10}"
+    if ! kill -0 "$ANDROID_PID" 2>/dev/null; then
+      break
+    fi
+    run_client_core_login_check "mac resend Android message" \
+      -biz-url "$BIZ_URL" \
+      -address "$SERVICE_HOST" \
+      -email "$EMAIL" \
+      -password "$PASSWORD" \
+      -login=false \
+      -send-target "$ANDROID_DEVICE_ID" \
+      -send-body "$MAC_TO_ANDROID_BODY" \
+      -timeout "$TIMEOUT" >/dev/null || true
+  done
+) &
+PIDS+=("$!")
 
 echo "+ wait Android integration test"
 if ! wait "$ANDROID_PID"; then

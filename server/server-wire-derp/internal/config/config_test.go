@@ -9,6 +9,15 @@ func TestValidateAllowsDevelopmentDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsPublicPortToListenPort(t *testing.T) {
+	t.Setenv("SLAN_WIRE_DERP_LISTEN_ADDR", ":29120")
+	cfg := Load()
+
+	if cfg.PublicPort != 29120 {
+		t.Fatalf("PublicPort = %d, want 29120", cfg.PublicPort)
+	}
+}
+
 func TestValidateProductionRejectsDevFallbacks(t *testing.T) {
 	t.Setenv("SLAN_ENV", "production")
 	t.Setenv("SLAN_WIRE_TICKET_SECRET", "dev-wire-ticket-secret")

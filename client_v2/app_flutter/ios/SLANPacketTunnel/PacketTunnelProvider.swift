@@ -366,7 +366,7 @@ private enum Ipv4Packet {
     var normalized = packet.subdata(in: 0..<totalLen)
     normalized[10] = 0
     normalized[11] = 0
-    normalized.replaceSubrange(10..<12, with: checksum(normalized.subdata(in: 0..<ihl)).bytes)
+    normalized.replaceSubrange(10..<12, with: checksum(normalized.subdata(in: 0..<ihl)).bigEndianBytes)
     let flagsFragment = normalized.readUInt16(at: 6)
     if flagsFragment & 0x1fff != 0 {
       return normalized
@@ -411,9 +411,79 @@ private enum Ipv4Packet {
     reply[ihl] = 0
     reply[ihl + 2] = 0
     reply[ihl + 3] = 0
-    reply.replaceSubrange(ihl + 2..<ihl + 4, with: checksum(reply.subdata(in: ihl..<totalLen)).bytes)
-    reply.replaceSubrange(10..<12, with: checksum(reply.subdata(in: 0..<ihl)).bytes)
+    reply.replaceSubrange(ihl + 2..<ihl + 4, with: checksum(reply.subdata(in: ihl..<totalLen)).bigEndianBytes)
+    reply.replaceSubrange(10..<12, with: checksum(reply.subdata(in: 0..<ihl)).bigEndianBytes)
     return reply
+  }
+
+  static func relaySendAttemptCount(_ packet: Data) -> Int {
+    if ipv4Protocol(packet) == 17 {
+      return 3
+    }
+    guard let flags = tcpFlags(packet) else {
+      return 1
+    }
+    if flags & 0x12 == 0x02 {
+      return 4
+    }
+    if flags & 0x0b != 0 || (tcpPayloadLength(packet) ?? 0) > 0 {
+      return 2
+    }
+    return 1
+  }
+
+  static func shouldHedgeDirectPacketToRelay(_ packet: Data) -> Bool {
+    if ipv4Protocol(packet) == 17 {
+      return true
+    }
+    guard let flags = tcpFlags(packet) else {
+      return false
+    }
+    return flags & 0x12 == 0x02 || flags & 0x0b != 0 || (tcpPayloadLength(packet) ?? 0) > 0
+  }
+
+  static func relaySendAttemptDelay(_ packet: Data) -> TimeInterval {
+    guard let flags = tcpFlags(packet) else {
+      return 0.002
+    }
+    return flags & 0x12 == 0x02 ? 0.03 : 0.002
+  }
+
+  private static func ipv4Protocol(_ packet: Data) -> UInt8? {
+    guard packet.count >= 20, packet[0] >> 4 == 4 else {
+      return nil
+    }
+    return packet[9]
+  }
+
+  private static func tcpFlags(_ packet: Data) -> UInt8? {
+    guard packet.count >= 20, packet[0] >> 4 == 4, packet[9] == 6 else {
+      return nil
+    }
+    let ihl = Int(packet[0] & 0x0f) * 4
+    guard ihl >= 20, packet.count >= ihl + 14 else {
+      return nil
+    }
+    return packet[ihl + 13]
+  }
+
+  private static func tcpPayloadLength(_ packet: Data) -> Int? {
+    guard packet.count >= 20, packet[0] >> 4 == 4, packet[9] == 6 else {
+      return nil
+    }
+    let ihl = Int(packet[0] & 0x0f) * 4
+    guard ihl >= 20, packet.count >= ihl + 20 else {
+      return nil
+    }
+    let totalLen = Int(packet.readUInt16(at: 2))
+    guard totalLen >= ihl + 20, totalLen <= packet.count else {
+      return nil
+    }
+    let dataOffset = Int(packet[ihl + 12] >> 4) * 4
+    guard dataOffset >= 20, totalLen >= ihl + dataOffset else {
+      return nil
+    }
+    return totalLen - ihl - dataOffset
   }
 
   private static func normalizeTcpChecksum(_ packet: inout Data, ihl: Int, totalLen: Int) {
@@ -424,7 +494,7 @@ private enum Ipv4Packet {
     packet[ihl + 16] = 0
     packet[ihl + 17] = 0
     let sum = transportChecksum(packet, offset: ihl, length: tcpLen, proto: 6)
-    packet.replaceSubrange(ihl + 16..<ihl + 18, with: sum.bytes)
+    packet.replaceSubrange(ihl + 16..<ihl + 18, with: sum.bigEndianBytes)
   }
 
   private static func normalizeUdpChecksum(_ packet: inout Data, ihl: Int, totalLen: Int) {
@@ -439,7 +509,7 @@ private enum Ipv4Packet {
     packet[ihl + 6] = 0
     packet[ihl + 7] = 0
     let sum = transportChecksum(packet, offset: ihl, length: declaredLen, proto: 17)
-    packet.replaceSubrange(ihl + 6..<ihl + 8, with: (sum == 0 ? UInt16.max : sum).bytes)
+    packet.replaceSubrange(ihl + 6..<ihl + 8, with: (sum == 0 ? UInt16.max : sum).bigEndianBytes)
   }
 
   private static func transportChecksum(
@@ -565,6 +635,7 @@ private final class RelayRuntime {
   private let maxFramePayload: Int
   private let packetFlow: NEPacketTunnelFlow
   private var peers: [RelayPeerRuntime] = []
+  private var derpPeers: [DerpPeerRuntime] = []
   private var directUdpRuntime: DirectUdpRuntime?
   private var seq: UInt64 = 0
   private var configHash: UInt64 = 0
@@ -572,31 +643,33 @@ private final class RelayRuntime {
 
   // 服务端下发的可用中继会话数量。
   var sessionCount: Int {
-    peers.count
+    peers.count + derpPeers.count
   }
 
   var attachedSessionCount: Int {
-    peers.filter { $0.attached }.count
+    peers.filter { $0.attached }.count + derpPeers.filter { $0.attached }.count
   }
 
   var attachFailureCount: Int {
     peers.filter { !$0.attachError.isEmpty }.count
+      + derpPeers.filter { !$0.attachError.isEmpty }.count
   }
 
   var lastAttachError: String {
-    peers.reversed().first { !$0.attachError.isEmpty }?.attachError ?? ""
+    derpPeers.reversed().first { !$0.attachError.isEmpty }?.attachError
+      ?? peers.reversed().first { !$0.attachError.isEmpty }?.attachError ?? ""
   }
 
   var framesReceived: Int {
-    peers.reduce(0) { $0 + $1.framesReceived }
+    peers.reduce(0) { $0 + $1.framesReceived } + derpPeers.reduce(0) { $0 + $1.framesReceived }
   }
 
   var packetsWritten: Int {
-    peers.reduce(0) { $0 + $1.packetsWritten }
+    peers.reduce(0) { $0 + $1.packetsWritten } + derpPeers.reduce(0) { $0 + $1.packetsWritten }
   }
 
   var detachSentCount: Int {
-    peers.filter { $0.detachSent }.count
+    peers.filter { $0.detachSent }.count + derpPeers.filter { $0.detachSent }.count
   }
 
   var directUdpAttachedPeerCount: Int {
@@ -645,7 +718,9 @@ private final class RelayRuntime {
     let transport = (config["transport"] as? String ?? "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased()
-    guard !localNodeId.isEmpty, !relayAddress.isEmpty, transport == "udp" else {
+    guard !localNodeId.isEmpty,
+      transport == "udp" || transport == "relay_udp" || transport == "derp_tcp_tls_443"
+    else {
       return nil
     }
     self.localNodeId = localNodeId
@@ -660,7 +735,10 @@ private final class RelayRuntime {
     }
     let sessions = config["sessions"] as? [[String: Any]] ?? []
     self.peers = sessions.compactMap { session in
-      RelayPeerRuntime(
+      guard Self.relayPathKind(session, fallbackRelayAddress: relayAddress) == "udp" else {
+        return nil
+      }
+      return RelayPeerRuntime(
         session: session,
         relayAddress: relayAddress,
         localNodeId: localNodeId,
@@ -669,7 +747,20 @@ private final class RelayRuntime {
         packetFlow: packetFlow
       )
     }
-    if peers.isEmpty {
+    self.derpPeers = sessions.compactMap { session in
+      guard Self.relayPathKind(session, fallbackRelayAddress: relayAddress) == "derp" else {
+        return nil
+      }
+      return DerpPeerRuntime(
+        session: session,
+        relayAddress: relayAddress,
+        localNodeId: localNodeId,
+        localVirtualIp: self.localVirtualIp,
+        configHash: configHash,
+        packetFlow: packetFlow
+      )
+    }
+    if peers.isEmpty && derpPeers.isEmpty {
       return nil
     }
     self.directUdpRuntime = DirectUdpRuntime(
@@ -685,6 +776,7 @@ private final class RelayRuntime {
   // 启动所有 Relay UDP 会话和 Direct UDP 探测。
   func start() {
     peers.forEach { $0.start() }
+    derpPeers.forEach { $0.start() }
     directUdpRuntime?.start()
   }
 
@@ -693,14 +785,19 @@ private final class RelayRuntime {
     directUdpRuntime?.stop()
     directUdpRuntime = nil
     peers.forEach { $0.stop() }
+    derpPeers.forEach { $0.stop() }
     peers.removeAll()
+    derpPeers.removeAll()
   }
 
   // 按目的虚拟 IP 选择 peer，优先直链发送，直链不可用时发送到中继节点。
   func send(packet: Data, destination: String) -> Bool {
-    guard packet.count <= maxFramePayload,
-      let peer = peers.first(where: { $0.matches(destination) })
-    else {
+    guard packet.count <= maxFramePayload else {
+      return false
+    }
+    let relayPeer = peers.first(where: { $0.matches(destination) })
+    let derpPeer = derpPeers.first(where: { $0.matches(destination) })
+    guard relayPeer != nil || derpPeer != nil else {
       return false
     }
     seq &+= 1
@@ -709,11 +806,69 @@ private final class RelayRuntime {
     }
     if directUdpRuntime?.send(frame: frame, destination: destination) == true {
       lastSendPath = "direct_udp"
+      if let peer = relayPeer, Ipv4Packet.shouldHedgeDirectPacketToRelay(packet) {
+        sendRelayFrame(peer, frame: frame, packet: packet)
+      }
       return true
     }
-    peer.send(frame)
-    lastSendPath = "relay_udp"
-    return true
+    if let peer = relayPeer {
+      sendRelayFrame(peer, frame: frame, packet: packet)
+      lastSendPath = "relay_udp"
+      return true
+    }
+    if let peer = derpPeer {
+      sendDerpFrame(peer, frame: frame, packet: packet)
+      lastSendPath = "derp_tcp_tls_443"
+      return true
+    }
+    return false
+  }
+
+  private static func relayPathKind(_ session: [String: Any], fallbackRelayAddress: String) -> String? {
+    let ticket = session["ticket"] as? [String: Any] ?? [:]
+    let ticketRelayUrl = (ticket["relayUrl"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let relayUrl = (ticketRelayUrl.isEmpty ? fallbackRelayAddress : ticketRelayUrl)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+    if relayUrl.hasPrefix("udp://") || relayUrl.hasPrefix("relay+udp://") {
+      return "udp"
+    }
+    if relayUrl.hasPrefix("derp://")
+      || relayUrl.hasPrefix("derp+tcp+tls://")
+      || relayUrl.hasPrefix("derp_tcp_tls_443://")
+    {
+      return "derp"
+    }
+    return nil
+  }
+
+  private func sendDerpFrame(_ peer: DerpPeerRuntime, frame: Data, packet: Data) {
+    let attempts = Ipv4Packet.relaySendAttemptCount(packet)
+    let delay = Ipv4Packet.relaySendAttemptDelay(packet)
+    for attempt in 0..<attempts {
+      if attempt == 0 {
+        _ = peer.send(frame)
+      } else {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay * Double(attempt)) {
+          _ = peer.send(frame)
+        }
+      }
+    }
+  }
+
+  private func sendRelayFrame(_ peer: RelayPeerRuntime, frame: Data, packet: Data) {
+    let attempts = Ipv4Packet.relaySendAttemptCount(packet)
+    let delay = Ipv4Packet.relaySendAttemptDelay(packet)
+    for attempt in 0..<attempts {
+      if attempt == 0 {
+        _ = peer.send(frame)
+      } else {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay * Double(attempt)) {
+          _ = peer.send(frame)
+        }
+      }
+    }
   }
 
   // 封装 SLAN 数据帧头，承载 utun 读取到的原始 IPv4 包。
@@ -1103,6 +1258,291 @@ private final class DirectUdpPeerRuntime {
   }
 }
 
+// 单个 DERP/TCP 会话，负责 connect/disconnect 票据握手和 TCP relay 数据帧收发。
+private final class DerpPeerRuntime {
+  private let sessionId: String
+  private let peerNodeId: String
+  private let peerVirtualIps: Set<String>
+  private let localNodeId: String
+  private let localVirtualIp: String
+  private let configHash: UInt64
+  private let ticket: [String: Any]
+  private let endpoint: (host: Network.NWEndpoint.Host, port: Network.NWEndpoint.Port)
+  private let packetFlow: NEPacketTunnelFlow
+  private var connection: NWConnection?
+  private var readBuffer = Data()
+  private var ready = false
+  private var serverSessionId = ""
+  private(set) var attached = false
+  private(set) var attachError = ""
+  private(set) var framesReceived = 0
+  private(set) var packetsWritten = 0
+  private(set) var detachSent = false
+  private var seq: UInt64 = 0
+
+  init?(
+    session: [String: Any],
+    relayAddress: String,
+    localNodeId: String,
+    localVirtualIp: String,
+    configHash: UInt64,
+    packetFlow: NEPacketTunnelFlow
+  ) {
+    let sessionId = (session["sessionId"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let peerNodeId = (session["peerNodeId"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let ticket = session["ticket"] as? [String: Any] ?? [:]
+    let peerVirtualIps = (session["peerVirtualIps"] as? [String] ?? [])
+      .map(RelayPeerRuntime.normalizeVirtualIp)
+      .filter { !$0.isEmpty }
+    let ticketRelayUrl = (ticket["relayUrl"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let relayUrl = ticketRelayUrl.isEmpty ? relayAddress : ticketRelayUrl
+    guard !sessionId.isEmpty,
+      !peerNodeId.isEmpty,
+      !peerVirtualIps.isEmpty,
+      !ticket.isEmpty,
+      let endpoint = Self.endpoint(relayUrl)
+    else {
+      return nil
+    }
+    self.sessionId = sessionId
+    self.peerNodeId = peerNodeId
+    self.peerVirtualIps = Set(peerVirtualIps)
+    self.localNodeId = localNodeId
+    self.localVirtualIp = RelayPeerRuntime.normalizeVirtualIp(localVirtualIp)
+    self.configHash = configHash
+    self.ticket = ticket
+    self.endpoint = endpoint
+    self.packetFlow = packetFlow
+  }
+
+  func start() {
+    guard connection == nil else {
+      return
+    }
+    let connection = NWConnection(host: endpoint.host, port: endpoint.port, using: .tcp)
+    connection.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
+      guard let self = self else {
+        return
+      }
+      if case .ready = state {
+        self.ready = true
+        self.connect()
+        self.receive()
+      }
+      if case .failed = state {
+        self.ready = false
+      }
+      if case .cancelled = state {
+        self.ready = false
+      }
+    }
+    self.connection = connection
+    connection.start(queue: DispatchQueue.global(qos: .utility))
+  }
+
+  func stop() {
+    disconnect()
+    ready = false
+    connection?.cancel()
+    connection = nil
+  }
+
+  func matches(_ destination: String) -> Bool {
+    peerVirtualIps.contains(RelayPeerRuntime.normalizeVirtualIp(destination))
+  }
+
+  @discardableResult
+  func send(_ frame: Data) -> Bool {
+    guard ready && attached else {
+      return false
+    }
+    let payload: [String: Any] = [
+      "kind": "send",
+      "sessionId": serverSessionId.isEmpty ? sessionId : serverSessionId,
+      "targetPeerId": peerNodeId,
+      "payload": frame.base64EncodedString()
+    ]
+    sendJsonLine(payload)
+    return true
+  }
+
+  private func connect() {
+    let payload: [String: Any] = [
+      "kind": "connect",
+      "peerId": localNodeId,
+      "nodeId": derpTicketNodeId(),
+      "regionId": derpTicketRegionId(),
+      "ticket": derpTicketWire(ticket)
+    ]
+    sendJsonLine(payload)
+  }
+
+  private func disconnect() {
+    guard ready && attached else {
+      return
+    }
+    let payload: [String: Any] = [
+      "kind": "disconnect",
+      "sessionId": serverSessionId.isEmpty ? sessionId : serverSessionId,
+      "peerId": localNodeId
+    ]
+    sendJsonLine(payload)
+    detachSent = true
+    attached = false
+  }
+
+  private func sendJsonLine(_ payload: [String: Any]) {
+    guard var data = try? JSONSerialization.data(withJSONObject: payload) else {
+      return
+    }
+    data.append(0x0a)
+    connection?.send(content: data, completion: .contentProcessed { _ in })
+  }
+
+  private func receive() {
+    connection?.receive(minimumIncompleteLength: 1, maximumLength: 4096) {
+      [weak self] data, _, isComplete, error in
+      guard let self = self else {
+        return
+      }
+      if let data = data, !data.isEmpty {
+        self.readBuffer.append(data)
+        self.consumeBufferedLines()
+      }
+      if isComplete || error != nil {
+        self.ready = false
+        return
+      }
+      if self.ready {
+        self.receive()
+      }
+    }
+  }
+
+  private func consumeBufferedLines() {
+    while let newline = readBuffer.firstIndex(of: 0x0a) {
+      let line = readBuffer.subdata(in: 0..<newline)
+      readBuffer.removeSubrange(0...newline)
+      consumeLine(line)
+    }
+  }
+
+  private func consumeLine(_ line: Data) {
+    guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+      let kind = value["kind"] as? String
+    else {
+      return
+    }
+    if kind == "connected" {
+      attached = true
+      serverSessionId = (value["sessionId"] as? String) ?? sessionId
+      attachError = ""
+      return
+    }
+    if kind == "error" {
+      attachError = ((value["error"] as? [String: Any])?["message"] as? String) ?? "DERP error"
+      return
+    }
+    guard kind == "recv",
+      let payload = value["payload"] as? String,
+      let frame = Data(base64Encoded: payload),
+      let packet = RelayRuntime.decodeFrame(frame)
+    else {
+      return
+    }
+    framesReceived += 1
+    if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: localVirtualIp) {
+      seq &+= 1
+      if let frame = RelayRuntime.encodeFrame(seq: seq, configHash: configHash, payload: reply) {
+        _ = send(frame)
+      }
+    } else {
+      writePacketToFlow(Ipv4Packet.normalizeTransportChecksums(packet))
+    }
+  }
+
+  private func writePacketToFlow(_ packet: Data, attempt: Int = 0) {
+    if packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)]) {
+      packetsWritten += 1
+      return
+    }
+    guard attempt < 50 else {
+      return
+    }
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.002) { [weak self] in
+      self?.writePacketToFlow(packet, attempt: attempt + 1)
+    }
+  }
+
+  private func derpTicketNodeId() -> String {
+    let allowed = ticket["allowedDerpNodeIds"] as? [String] ?? []
+    return allowed
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .first { !$0.isEmpty } ?? "derp"
+  }
+
+  private func derpTicketRegionId() -> String {
+    let value = (ticket["derpClusterId"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return value.isEmpty ? "default" : value
+  }
+
+  private func derpTicketWire(_ ticket: [String: Any]) -> [String: Any] {
+    [
+      "ticketId": stringField(ticket, "ticketId"),
+      "peerId": localNodeId,
+      "networkId": stringField(ticket, "networkId"),
+      "path": "derp_tcp_tls_443",
+      "regionId": derpTicketRegionId(),
+      "nodeId": derpTicketNodeId(),
+      "sessionId": stringField(ticket, "sessionId"),
+      "srcNodeId": stringField(ticket, "srcNodeId"),
+      "dstNodeId": stringField(ticket, "dstNodeId"),
+      "relayUrl": stringField(ticket, "relayUrl"),
+      "sessionKey": stringField(ticket, "sessionKey"),
+      "allowedDerpNodeIds": ticket["allowedDerpNodeIds"] as? [String] ?? [],
+      "expiresAt": stringField(ticket, "expiresAt"),
+      "signature": stringField(ticket, "signature")
+    ]
+  }
+
+  private func stringField(_ object: [String: Any], _ field: String) -> String {
+    (object[field] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  }
+
+  private static func endpoint(_ address: String) -> (
+    host: Network.NWEndpoint.Host,
+    port: Network.NWEndpoint.Port
+  )? {
+    let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized: String
+    if trimmed.hasPrefix("derp://") {
+      normalized = String(trimmed.dropFirst("derp://".count))
+    } else if trimmed.hasPrefix("derp+tcp+tls://") {
+      normalized = String(trimmed.dropFirst("derp+tcp+tls://".count))
+    } else if trimmed.hasPrefix("derp_tcp_tls_443://") {
+      normalized = String(trimmed.dropFirst("derp_tcp_tls_443://".count))
+    } else {
+      return nil
+    }
+    guard let separator = normalized.lastIndex(of: ":") else {
+      return nil
+    }
+    let host = String(normalized[..<separator])
+    let port = String(normalized[normalized.index(after: separator)...])
+    guard !host.isEmpty,
+      let portValue = UInt16(port),
+      let endpointPort = Network.NWEndpoint.Port(rawValue: portValue)
+    else {
+      return nil
+    }
+    return (Network.NWEndpoint.Host(host), endpointPort)
+  }
+}
+
 // 单个 Relay UDP 会话，负责 attach/detach 票据握手和中继数据帧收发。
 private final class RelayPeerRuntime {
   private static let maxAttachAttempts = 3
@@ -1137,15 +1577,23 @@ private final class RelayPeerRuntime {
     let sessionId = (session["sessionId"] as? String ?? "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
     let ticket = session["ticket"] as? [String: Any] ?? [:]
+    let sessionRelayAddress = (ticket["relayUrl"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolvedRelayAddress = Self.udpRelayAddress(sessionRelayAddress)
+      ?? Self.udpRelayAddress(relayAddress)
     let peerVirtualIps = (session["peerVirtualIps"] as? [String] ?? [])
       .map(Self.normalizeVirtualIp)
       .filter { !$0.isEmpty }
-    guard !sessionId.isEmpty, !peerVirtualIps.isEmpty, !ticket.isEmpty else {
+    guard !sessionId.isEmpty,
+      !peerVirtualIps.isEmpty,
+      !ticket.isEmpty,
+      resolvedRelayAddress != nil
+    else {
       return nil
     }
     self.sessionId = sessionId
     self.peerVirtualIps = Set(peerVirtualIps)
-    self.relayAddress = relayAddress
+    self.relayAddress = resolvedRelayAddress ?? relayAddress
     self.localNodeId = localNodeId
     self.localVirtualIp = RelayPeerRuntime.normalizeVirtualIp(localVirtualIp)
     self.configHash = configHash
@@ -1195,11 +1643,13 @@ private final class RelayPeerRuntime {
   }
 
   // Relay attach 成功后发送封装数据帧。
-  func send(_ frame: Data) {
+  @discardableResult
+  func send(_ frame: Data) -> Bool {
     guard ready && attached else {
-      return
+      return false
     }
     connection?.send(content: frame, completion: .contentProcessed { _ in })
+    return true
   }
 
   // 使用服务端下发 ticket 向 relay 节点注册当前参与方。
@@ -1369,6 +1819,23 @@ private final class RelayPeerRuntime {
       return nil
     }
     return (Network.NWEndpoint.Host(host), endpointPort)
+  }
+
+  private static func udpRelayAddress(_ address: String) -> String? {
+    let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      return nil
+    }
+    if trimmed.hasPrefix("udp://") {
+      return String(trimmed.dropFirst("udp://".count))
+    }
+    if trimmed.hasPrefix("relay+udp://") {
+      return String(trimmed.dropFirst("relay+udp://".count))
+    }
+    if trimmed.contains("://") {
+      return nil
+    }
+    return trimmed
   }
 
   fileprivate static func normalizeVirtualIp(_ value: String) -> String {

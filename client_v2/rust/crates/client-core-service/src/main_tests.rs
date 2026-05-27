@@ -1,6 +1,7 @@
 use super::{
-    android_data_plane_relay_candidate, diagnostic_connect_plan_summaries, parse_rfc3339_utc_ms,
-    path_diagnose_active_path_counts, path_diagnose_dns, path_diagnose_health, peer_path_configs,
+    android_data_plane_relay_candidate, data_plane_relay_candidate,
+    diagnostic_connect_plan_summaries, parse_rfc3339_utc_ms, path_diagnose_active_path_counts,
+    path_diagnose_dns, path_diagnose_health, peer_path_configs,
     relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
     relay_session_from_connect_plan_ticket, relay_sessions_missing, relay_ticket_should_renew,
@@ -19,7 +20,7 @@ use crate::{
     relay_store::relay_runtime_failure_total,
 };
 use client_core::{PathKind, PeerPathRuntime, PlatformNetworkDiagnostics, RelayTicket, RouteSpec};
-use std::net::UdpSocket;
+use std::net::{TcpListener, UdpSocket};
 
 #[test]
 fn online_presence_statuses_do_not_disable_local_network() {
@@ -82,6 +83,43 @@ fn android_data_plane_does_not_select_non_udp_relay() {
     }]);
 
     assert!(selected.is_none());
+}
+
+#[test]
+fn android_data_plane_selects_derp_when_udp_is_unavailable() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind derp probe listener");
+    let address = listener.local_addr().expect("derp listener address");
+    let selected = android_data_plane_relay_candidate(&[PersistedRelayCandidate {
+        endpoint_id: "derp-local".to_string(),
+        transport: "derp_tcp_tls_443".to_string(),
+        address: format!("derp://{address}"),
+        country_code: Some("CN".to_string()),
+        region_id: Some("dev".to_string()),
+        cluster_id: Some("dev".to_string()),
+    }]);
+
+    assert_eq!(
+        selected.map(|candidate| candidate.transport),
+        Some("derp_tcp_tls_443".to_string())
+    );
+}
+
+#[test]
+fn macos_data_plane_uses_derp_candidate_when_probe_fails() {
+    let selected = data_plane_relay_candidate(&[PersistedRelayCandidate {
+        endpoint_id: "derp-remote".to_string(),
+        transport: "derp_tcp_tls_443".to_string(),
+        address: "derp://203.0.113.10:29120".to_string(),
+        country_code: Some("CN".to_string()),
+        region_id: Some("dev".to_string()),
+        cluster_id: Some("dev".to_string()),
+    }]);
+
+    let selected = selected.expect("DERP candidate should be retained after probe failure");
+    assert_eq!(selected.endpoint_id, "derp-remote");
+    assert_eq!(selected.transport, "derp_tcp_tls_443");
+    assert!(!selected.reachable);
+    assert!(selected.selected);
 }
 
 #[test]
@@ -471,14 +509,14 @@ fn relay_maintenance_does_not_count_stall_when_replies_progress() {
 }
 
 #[test]
-fn relay_failure_total_includes_oversized_tun_packets() {
+fn relay_failure_total_excludes_local_packet_noise() {
     let now = parse_rfc3339_utc_ms("2026-05-03T10:00:00Z").unwrap();
     let mut stats = test_relay_stats("2026-05-03T10:10:00Z", now);
     stats.oversized_tun_packets = 3;
     stats.relay_decode_failures = 2;
     stats.unroutable_tun_packets = 1;
 
-    assert_eq!(relay_runtime_failure_total(&stats), 6);
+    assert_eq!(relay_runtime_failure_total(&stats), 2);
 }
 
 #[test]

@@ -223,6 +223,92 @@ func TestOpsPunchNodesCanBeManaged(t *testing.T) {
 	}
 }
 
+func TestOpsNodeStatusEndpointsToggleRelayDerpAndPunchNodes(t *testing.T) {
+	server := NewServer()
+	operatorAuth, err := server.store.LoginOperator("admin1", "admin1")
+	if err != nil {
+		t.Fatalf("login operator: %v", err)
+	}
+	handler := server.Routes()
+	authorization := "Bearer " + operatorAuth.Session.Token
+	store := server.store.(*Store)
+	baseActiveRelayNodes := countHealthyActiveRelayNodes(store.ListRelayNodes())
+	baseActivePunchNodes := len(store.ActivePunchNodes())
+
+	var relay OpsRelayNode
+	requestJSON(t, handler, http.MethodPost, "/api/ops/relay-nodes", authorization, map[string]any{
+		"name":             "Relay UDP A",
+		"region":           "cn-east",
+		"transport":        "relay_udp",
+		"publicAddr":       "udp://relay.example.com:29110",
+		"maxBandwidthMbps": 1000,
+		"monthlyTrafficGb": 100,
+		"maxSessions":      1000,
+		"status":           "active",
+		"health":           "healthy",
+	}, http.StatusCreated, &relay)
+	requestJSON(t, handler, http.MethodPatch, "/api/ops/relay-nodes/"+relay.NodeID+"/status", authorization, map[string]any{
+		"enabled": false,
+	}, http.StatusOK, &relay)
+	if relay.Status != "disabled" || relay.Health != "down" || countHealthyActiveRelayNodes(store.ListRelayNodes()) != baseActiveRelayNodes {
+		t.Fatalf("expected disabled relay node to be inactive, node=%+v relays=%+v", relay, store.ListRelayNodes())
+	}
+	requestJSON(t, handler, http.MethodPatch, "/api/ops/relay-nodes/"+relay.NodeID+"/status", authorization, map[string]any{
+		"enabled": true,
+	}, http.StatusOK, &relay)
+	if relay.Status != "active" || relay.Health != "healthy" || countHealthyActiveRelayNodes(store.ListRelayNodes()) != baseActiveRelayNodes+1 {
+		t.Fatalf("expected enabled relay node to be active, node=%+v relays=%+v", relay, store.ListRelayNodes())
+	}
+
+	var derp OpsRelayNode
+	requestJSON(t, handler, http.MethodPost, "/api/ops/relay-nodes", authorization, map[string]any{
+		"name":             "DERP TCP A",
+		"region":           "cn-east",
+		"transport":        "derp_tcp_tls_443",
+		"publicAddr":       "derp://derp.example.com:29120",
+		"maxBandwidthMbps": 1000,
+		"monthlyTrafficGb": 100,
+		"maxSessions":      1000,
+		"status":           "active",
+		"health":           "healthy",
+	}, http.StatusCreated, &derp)
+	requestJSON(t, handler, http.MethodPatch, "/api/ops/relay-nodes/"+derp.NodeID+"/status", authorization, map[string]any{
+		"enabled": false,
+	}, http.StatusOK, &derp)
+	if derp.Status != "disabled" || derp.Health != "down" {
+		t.Fatalf("expected disabled DERP node, got %+v", derp)
+	}
+
+	var punch OpsPunchNode
+	requestJSON(t, handler, http.MethodPost, "/api/ops/punch-nodes", authorization, map[string]any{
+		"name":          "Punch B",
+		"region":        "cn-east",
+		"publicUdpIp":   "10.10.0.22",
+		"publicUdpPort": 29131,
+		"maxSessions":   1000,
+		"status":        "active",
+		"health":        "healthy",
+		"priority":      20,
+	}, http.StatusCreated, &punch)
+	requestJSON(t, handler, http.MethodPatch, "/api/ops/punch-nodes/"+punch.NodeID+"/status", authorization, map[string]any{
+		"enabled": false,
+	}, http.StatusOK, &punch)
+	if punch.Status != "disabled" || punch.Health != "down" || len(store.ActivePunchNodes()) != baseActivePunchNodes {
+		t.Fatalf("expected disabled punch node to be inactive, node=%+v active=%+v", punch, store.ActivePunchNodes())
+	}
+	requestJSON(t, handler, http.MethodPatch, "/api/ops/punch-nodes/"+punch.NodeID+"/status", authorization, map[string]any{}, http.StatusBadRequest, nil)
+}
+
+func countHealthyActiveRelayNodes(nodes []OpsRelayNode) int {
+	count := 0
+	for _, node := range nodes {
+		if node.Status == "active" && node.Health == "healthy" {
+			count++
+		}
+	}
+	return count
+}
+
 func TestOpsAuditEventsQueryFiltersResults(t *testing.T) {
 	server := NewServer()
 	operatorAuth, err := server.store.LoginOperator("admin1", "admin1")

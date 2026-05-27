@@ -4,9 +4,9 @@ use std::{
     env,
     ffi::CString,
     fs::{self, File},
-    io::{ErrorKind, Read, Write},
+    io::{BufRead, BufReader, ErrorKind, Read, Write},
     mem,
-    net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket},
+    net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
     os::fd::{FromRawFd, RawFd},
     path::PathBuf,
     process::Command,
@@ -46,6 +46,8 @@ const MOCK_INTERFACE_NAME: &str = "utun-mock";
 const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
 const RELAY_STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
+const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
 
 /// MacosPlatformNetwork 是 macOS 的 PlatformNetwork 实现，负责 utun、路由、
 /// DNS、relay 数据面和 direct UDP runtime 的平台适配。
@@ -90,6 +92,19 @@ struct RelayPeer {
     local_node_id: String,
     peer_virtual_ips: Vec<String>,
     socket: UdpSocket,
+}
+
+/// DerpPeer 是 macOS TCP/DERP 保底中继的一条长连接会话。
+#[derive(Debug)]
+struct DerpPeer {
+    session_id: String,
+    peer_node_id: String,
+    local_node_id: String,
+    server_session_id: String,
+    peer_virtual_ips: Vec<String>,
+    stream: TcpStream,
+    reader: TcpStream,
+    read_buffer: Vec<u8>,
 }
 
 /// RelayDataPlaneStats 是 macOS relay/direct UDP 数据面写入状态文件的统计快照。
@@ -137,6 +152,12 @@ struct RelayDataPlaneStats {
     relay_receive_failures: u64,
     unroutable_tun_packets: u64,
     last_unroutable_destination: Option<String>,
+    last_tun_destination: Option<String>,
+    last_tun_protocol: Option<u8>,
+    last_tun_packet_size: Option<u32>,
+    last_tun_peer_node_id: Option<String>,
+    last_tun_send_path: Option<String>,
+    last_tun_drop_reason: Option<String>,
     oversized_tun_packets: u64,
     last_oversized_tun_packet_size: Option<u32>,
     wintun_write_failures: u64,
@@ -272,7 +293,21 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        if runtime.utun.is_some() && runtime.relay_config.as_ref() == relay_config {
+            eprintln!("macos configure_relay skipped unchanged config");
+            return Ok(());
+        }
         runtime.relay_config = relay_config.cloned();
+        eprintln!(
+            "macos configure_relay enabled={} sessions={} transport={}",
+            relay_config.map(|config| config.enabled).unwrap_or(false),
+            relay_config
+                .map(|config| config.sessions.len())
+                .unwrap_or(0),
+            relay_config
+                .map(|config| config.transport.as_str())
+                .unwrap_or("")
+        );
         if macos_network_mock_enabled() {
             ensure_mock_runtime(&mut runtime);
             return Ok(());
@@ -406,7 +441,9 @@ fn ensure_utun_runtime(runtime: &mut MacosRuntime) -> Result<()> {
 fn restart_data_plane(runtime: &mut MacosRuntime) -> Result<()> {
     let config = runtime.relay_config.clone().filter(|config| {
         config.enabled
-            && config.transport.eq_ignore_ascii_case("udp")
+            && (config.transport.eq_ignore_ascii_case("udp")
+                || config.transport.eq_ignore_ascii_case("relay_udp")
+                || config.transport.eq_ignore_ascii_case("derp_tcp_tls_443"))
             && !config.relay_address.trim().is_empty()
             && !config.sessions.is_empty()
     });
@@ -440,12 +477,23 @@ fn start_udp_data_plane(
         .take()
         .ok_or_else(|| anyhow!("macos utun file descriptor is not ready"))?;
     let peers = attach_udp_relay_sessions(&config)?;
+    let derp_peers = attach_derp_relay_sessions(&config)?;
+    eprintln!(
+        "macos relay data plane attached udp={} derp={} sessions={} transport={}",
+        peers.len(),
+        derp_peers.len(),
+        config.sessions.len(),
+        config.transport
+    );
+    if peers.is_empty() && derp_peers.is_empty() {
+        bail!("attach relay sessions failed: no UDP relay or DERP sessions attached");
+    }
     let direct_udp = DirectUdpTransport::attach(config.local_node_id.as_str(), &config.peer_paths);
     let config_hash = stable_hash64(&serde_json::to_string(&config)?);
     let max_frame_payload = usize::from(config.max_frame_payload.unwrap_or(1200).clamp(512, 1400));
     let direct_udp_probe_interval =
         direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms);
-    let mut stats = relay_data_plane_stats_from_config(&config, &peers);
+    let mut stats = relay_data_plane_stats_from_config(&config, &peers, &derp_peers);
     stats.direct_udp_attached_peer_count = direct_udp
         .as_ref()
         .map(|transport| transport.peers.len() as u64)
@@ -459,6 +507,7 @@ fn start_udp_data_plane(
         run_udp_data_plane(
             file,
             peers,
+            derp_peers,
             direct_udp,
             config.local_node_id,
             local_virtual_ip,
@@ -755,6 +804,9 @@ fn attach_udp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<RelayP
     let mut peers = Vec::new();
     let mut failures = Vec::new();
     for session in &config.sessions {
+        if relay_path_kind_from_session(session) != Some(PathKind::RelayUdp) {
+            continue;
+        }
         let relay_addr = relay_udp_address_for_session(config.relay_address.as_str(), session)
             .with_context(|| format!("parse relay address {}", config.relay_address))?;
         let socket = UdpSocket::bind("0.0.0.0:0").context("bind relay UDP socket")?;
@@ -776,10 +828,199 @@ fn attach_udp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<RelayP
             socket,
         });
     }
-    if peers.is_empty() {
+    if peers.is_empty() && !failures.is_empty() {
         bail!("attach relay sessions failed: {}", failures.join("; "));
     }
     Ok(peers)
+}
+
+fn attach_derp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<DerpPeer>> {
+    let mut peers = Vec::new();
+    let mut failures = Vec::new();
+    for session in &config.sessions {
+        if relay_path_kind_from_session(session) != Some(PathKind::DerpTcpTls443) {
+            continue;
+        }
+        match attach_derp_relay_session(config.local_node_id.as_str(), session) {
+            Ok(peer) => peers.push(peer),
+            Err(error) => failures.push(format!("{}: {error}", session.session_id)),
+        }
+    }
+    if peers.is_empty() && !failures.is_empty() {
+        bail!("attach DERP sessions failed: {}", failures.join("; "));
+    }
+    Ok(peers)
+}
+
+fn attach_derp_relay_session(local_node_id: &str, session: &RelayPeerSession) -> Result<DerpPeer> {
+    let address = normalize_derp_tcp_address(session.ticket.relay_url.as_str())
+        .ok_or_else(|| anyhow!("missing DERP TCP address"))?;
+    let stream = TcpStream::connect(address.as_str())
+        .with_context(|| format!("connect DERP TCP socket {address}"))?;
+    stream.set_nodelay(true)?;
+    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+    let mut writer = stream.try_clone().context("clone DERP writer stream")?;
+    let mut reader = BufReader::new(stream.try_clone().context("clone DERP reader stream")?);
+    let connect = serde_json::json!({
+        "kind": "connect",
+        "peerId": local_node_id,
+        "nodeId": derp_ticket_node_id(session),
+        "regionId": derp_ticket_region_id(session),
+        "ticket": derp_ticket_wire(local_node_id, session),
+    });
+    write_json_line(&mut writer, &connect)?;
+    let line = read_derp_connect_line_with_retry(&mut reader, Duration::from_secs(3))?;
+    let value: serde_json::Value =
+        serde_json::from_str(line.trim()).context("decode DERP connect response")?;
+    if value.get("kind").and_then(serde_json::Value::as_str) != Some("connected") {
+        bail!(
+            "{}",
+            value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("DERP connect failed")
+        );
+    }
+    let server_session_id = value
+        .get("sessionId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(session.session_id.as_str())
+        .to_string();
+    writer.set_nonblocking(true)?;
+    let reader = reader.into_inner();
+    reader.set_nonblocking(true)?;
+    Ok(DerpPeer {
+        session_id: session.session_id.clone(),
+        peer_node_id: session.peer_node_id.clone(),
+        local_node_id: local_node_id.to_string(),
+        server_session_id,
+        peer_virtual_ips: session.peer_virtual_ips.clone(),
+        stream: writer,
+        reader,
+        read_buffer: Vec::new(),
+    })
+}
+
+fn normalize_derp_tcp_address(address: &str) -> Option<String> {
+    let trimmed = address.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let stripped = trimmed
+        .strip_prefix("derp://")
+        .or_else(|| trimmed.strip_prefix("derp+tcp+tls://"))
+        .or_else(|| trimmed.strip_prefix("derp_tcp_tls_443://"))?;
+    let normalized = stripped.trim();
+    (!normalized.is_empty()).then(|| normalized.to_string())
+}
+
+fn write_json_line(stream: &mut TcpStream, value: &serde_json::Value) -> Result<()> {
+    let mut payload = serde_json::to_vec(value)?;
+    payload.push(b'\n');
+    write_all_with_would_block_retry(stream, &payload, DERP_WRITE_RETRY_TIMEOUT)?;
+    Ok(())
+}
+
+fn read_derp_connect_line_with_retry<R: BufRead>(
+    reader: &mut R,
+    timeout: Duration,
+) -> std::io::Result<String> {
+    let started = Instant::now();
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    ErrorKind::ConnectionReset,
+                    "DERP TCP connection closed before connect ack",
+                ));
+            }
+            Ok(_) => return Ok(line),
+            Err(error)
+                if error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut =>
+            {
+                if started.elapsed() >= timeout {
+                    return Err(error);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn write_all_with_would_block_retry(
+    stream: &mut TcpStream,
+    payload: &[u8],
+    timeout: Duration,
+) -> std::io::Result<()> {
+    let started = Instant::now();
+    let mut offset = 0;
+    while offset < payload.len() {
+        match stream.write(&payload[offset..]) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    ErrorKind::WriteZero,
+                    "DERP TCP write returned zero bytes",
+                ));
+            }
+            Ok(written) => offset += written,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if started.elapsed() >= timeout {
+                    return Err(error);
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn derp_ticket_node_id(session: &RelayPeerSession) -> String {
+    session
+        .ticket
+        .allowed_derp_node_ids
+        .iter()
+        .map(|value| value.trim())
+        .find(|value| !value.is_empty())
+        .unwrap_or("derp")
+        .to_string()
+}
+
+fn derp_ticket_region_id(session: &RelayPeerSession) -> String {
+    session
+        .ticket
+        .derp_cluster_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default")
+        .to_string()
+}
+
+fn derp_ticket_wire(local_node_id: &str, session: &RelayPeerSession) -> serde_json::Value {
+    let ticket = &session.ticket;
+    serde_json::json!({
+        "ticketId": &ticket.ticket_id,
+        "peerId": local_node_id,
+        "networkId": &ticket.network_id,
+        "path": PathKind::DerpTcpTls443.as_str(),
+        "regionId": derp_ticket_region_id(session),
+        "nodeId": derp_ticket_node_id(session),
+        "sessionId": &ticket.session_id,
+        "srcNodeId": &ticket.src_node_id,
+        "dstNodeId": &ticket.dst_node_id,
+        "relayUrl": &ticket.relay_url,
+        "sessionKey": &ticket.session_key,
+        "allowedDerpNodeIds": &ticket.allowed_derp_node_ids,
+        "expiresAt": &ticket.expires_at,
+        "signature": &ticket.signature,
+    })
 }
 
 fn attach_udp_relay_session(
@@ -992,6 +1233,7 @@ fn verify_relay_attach_ack(response: &[u8], session_id: &str) -> Result<()> {
 fn run_udp_data_plane(
     mut file: File,
     peers: Vec<RelayPeer>,
+    mut derp_peers: Vec<DerpPeer>,
     mut direct_udp: Option<DirectUdpTransport>,
     local_node_id: String,
     local_virtual_ip: String,
@@ -1013,6 +1255,7 @@ fn run_udp_data_plane(
         .unwrap_or_else(Instant::now);
     persist_relay_stats(stats);
     while !stop.load(Ordering::SeqCst) {
+        let mut did_work = false;
         if last_keepalive.elapsed() >= RELAY_KEEPALIVE_INTERVAL {
             send_relay_keepalives(&peers);
             stats.last_relay_keepalive_at_ms = Some(current_timestamp_ms());
@@ -1027,15 +1270,23 @@ fn run_udp_data_plane(
             last_direct_udp_probe = Instant::now();
         }
         match file.read(&mut tun_buffer) {
-            Ok(0) => thread::sleep(Duration::from_millis(10)),
+            Ok(0) => {}
             Ok(packet_len) => {
+                did_work = true;
                 if let Some(packet) = strip_utun_header(&tun_buffer[..packet_len]) {
                     if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
                         continue;
                     }
                     stats.last_tun_packet_at_ms = Some(current_timestamp_ms());
+                    stats.last_tun_destination = ipv4_destination(packet);
+                    stats.last_tun_protocol = ipv4_protocol(packet);
+                    stats.last_tun_packet_size = Some(packet.len() as u32);
+                    stats.last_tun_peer_node_id = None;
+                    stats.last_tun_send_path = None;
+                    stats.last_tun_drop_reason = None;
                     if packet.len() <= max_frame_payload {
                         if let Some(peer) = relay_peer_for_packet(&peers, packet) {
+                            stats.last_tun_peer_node_id = Some(peer.peer_node_id.clone());
                             seq = seq.wrapping_add(1);
                             let packet = normalize_ipv4_transport_checksums(packet);
                             record_tun_tcp_packet(stats, &packet);
@@ -1052,49 +1303,109 @@ fn run_udp_data_plane(
                                         .expect("direct udp checked")
                                         .send_to_peer(direct_peer_index, &frame)
                                     {
-                                        Ok(_) => record_direct_tun_packet_sent(stats, peer),
-                                        Err(error) => record_relay_send_failure(
-                                            stats,
-                                            peer,
-                                            error.to_string(),
-                                        ),
+                                        Ok(_) => {
+                                            stats.last_tun_send_path =
+                                                Some(PathKind::DirectUdp.as_str().to_string());
+                                            record_direct_tun_packet_sent(stats, peer);
+                                            if should_hedge_direct_packet_to_relay(&packet) {
+                                                hedge_udp_packet_to_relay(peer, &frame, stats);
+                                            }
+                                        }
+                                        Err(error) => {
+                                            stats.last_tun_drop_reason =
+                                                Some("direct_udp_send_failed".to_string());
+                                            record_relay_send_failure(
+                                                stats,
+                                                peer,
+                                                error.to_string(),
+                                            );
+                                        }
                                     }
                                 } else if let Some(payload) = encode_relay_forward(peer, &frame) {
-                                    match peer.socket.send(&payload) {
-                                        Ok(_) => record_relay_tun_packet_sent(stats, peer),
-                                        Err(error) => record_relay_send_failure(
+                                    for attempt in 0..relay_send_attempt_count(&packet) {
+                                        if attempt > 0 {
+                                            thread::sleep(relay_send_attempt_delay(&packet));
+                                        }
+                                        match peer.socket.send(&payload) {
+                                            Ok(_) => {
+                                                stats.last_tun_send_path =
+                                                    Some(PathKind::RelayUdp.as_str().to_string());
+                                                record_relay_tun_packet_sent(stats, peer);
+                                            }
+                                            Err(error) => record_relay_send_failure(
+                                                stats,
+                                                peer,
+                                                error.to_string(),
+                                            ),
+                                        }
+                                    }
+                                } else {
+                                    stats.last_tun_drop_reason =
+                                        Some("relay_forward_encode_failed".to_string());
+                                }
+                            } else {
+                                stats.last_tun_drop_reason =
+                                    Some("relay_frame_encode_failed".to_string());
+                            }
+                        } else if let Some(derp_peer) =
+                            derp_peer_for_packet_mut(&mut derp_peers, packet)
+                        {
+                            stats.last_tun_peer_node_id = Some(derp_peer.peer_node_id.clone());
+                            seq = seq.wrapping_add(1);
+                            let packet = normalize_ipv4_transport_checksums(packet);
+                            record_tun_tcp_packet(stats, &packet);
+                            if let Some(frame) =
+                                encode_slan_relay_data_frame(seq, config_hash, &packet)
+                            {
+                                for attempt in 0..relay_send_attempt_count(&packet) {
+                                    if attempt > 0 {
+                                        thread::sleep(relay_send_attempt_delay(&packet));
+                                    }
+                                    match send_derp_forward(derp_peer, &frame) {
+                                        Ok(_) => {
+                                            stats.last_tun_send_path =
+                                                Some(PathKind::DerpTcpTls443.as_str().to_string());
+                                            record_derp_tun_packet_sent(stats, derp_peer);
+                                        }
+                                        Err(error) => record_derp_send_failure(
                                             stats,
-                                            peer,
+                                            derp_peer,
                                             error.to_string(),
                                         ),
                                     }
                                 }
+                            } else {
+                                stats.last_tun_drop_reason =
+                                    Some("relay_frame_encode_failed".to_string());
                             }
                         } else {
                             if let Some(destination) = ipv4_destination(packet) {
                                 if should_ignore_unroutable_destination(&destination) {
+                                    stats.last_tun_drop_reason =
+                                        Some("ignored_unroutable_destination".to_string());
                                     continue;
                                 }
                                 stats.unroutable_tun_packets =
                                     stats.unroutable_tun_packets.saturating_add(1);
                                 stats.last_unroutable_destination = Some(destination);
+                                stats.last_tun_drop_reason = Some("unroutable".to_string());
                             }
                         }
                     } else {
                         stats.oversized_tun_packets = stats.oversized_tun_packets.saturating_add(1);
                         stats.last_oversized_tun_packet_size = Some(packet.len() as u32);
+                        stats.last_tun_drop_reason = Some("oversized".to_string());
                     }
                 }
             }
-            Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(10));
-            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
             Err(_) => break,
         }
         for peer in &peers {
             match peer.socket.recv(&mut relay_buffer) {
                 Ok(frame_len) => {
+                    did_work = true;
                     let decoded_payload = relay_packet_payload(&relay_buffer[..frame_len]);
                     if decoded_payload.is_none()
                         && relay_control_kind(&relay_buffer[..frame_len]).is_some()
@@ -1147,9 +1458,35 @@ fn run_udp_data_plane(
                 }
             }
         }
+        for peer in &mut derp_peers {
+            match recv_derp_packet(peer) {
+                Ok(Some(frame)) => {
+                    did_work = true;
+                    if let Some(packet) = decode_slan_relay_data_frame(&frame) {
+                        stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                        record_relay_tcp_packet(stats, packet);
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        match write_utun_ipv4_packet(&mut file, &packet) {
+                            Ok(_) => record_derp_packet_received(stats, peer),
+                            Err(_) => record_derp_write_failure(stats, peer),
+                        }
+                    } else {
+                        stats.relay_decode_failures = stats.relay_decode_failures.saturating_add(1);
+                    }
+                }
+                Ok(None) => {}
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => {
+                    stats.relay_receive_failures = stats.relay_receive_failures.saturating_add(1);
+                    stats.last_relay_error = Some(format!("DERP receive failed: {error}"));
+                }
+            }
+        }
         if let Some(direct_udp) = direct_udp.as_mut() {
             match direct_udp.recv_from_peer(&mut relay_buffer) {
                 Ok(Some(received)) => {
+                    did_work = true;
                     let frame_len = received.frame_len;
                     let control_packet = direct_udp_control_packet(&relay_buffer[..frame_len]);
                     if control_packet
@@ -1210,6 +1547,9 @@ fn run_udp_data_plane(
                 }
             }
         }
+        if !did_work {
+            thread::sleep(DATA_PLANE_IDLE_SLEEP);
+        }
         if last_stats_flush.elapsed() >= RELAY_STATS_FLUSH_INTERVAL {
             persist_relay_stats(stats);
             last_stats_flush = Instant::now();
@@ -1217,6 +1557,7 @@ fn run_udp_data_plane(
     }
     persist_relay_stats(stats);
     detach_udp_relay_sessions(&peers, local_node_id.as_str());
+    detach_derp_relay_sessions(&mut derp_peers);
 }
 
 fn encode_relay_forward(peer: &RelayPeer, frame: &[u8]) -> Option<Vec<u8>> {
@@ -1227,6 +1568,84 @@ fn encode_relay_forward(peer: &RelayPeer, frame: &[u8]) -> Option<Vec<u8>> {
         "payload": base64_encode(frame),
     }))
     .ok()
+}
+
+fn send_derp_forward(peer: &mut DerpPeer, frame: &[u8]) -> std::io::Result<()> {
+    let payload = serde_json::json!({
+        "kind": "send",
+        "sessionId": peer.server_session_id,
+        "targetPeerId": peer.peer_node_id,
+        "payload": base64_encode(frame),
+    });
+    let mut line = serde_json::to_vec(&payload).map_err(json_io_error)?;
+    line.push(b'\n');
+    write_all_with_would_block_retry(&mut peer.stream, &line, DERP_WRITE_RETRY_TIMEOUT)
+}
+
+fn recv_derp_packet(peer: &mut DerpPeer) -> std::io::Result<Option<Vec<u8>>> {
+    if let Some(line) = take_derp_line(&mut peer.read_buffer) {
+        return parse_derp_packet_line(&line);
+    }
+    let mut chunk = [0_u8; 4096];
+    loop {
+        match peer.reader.read(&mut chunk) {
+            Ok(0) => return Ok(None),
+            Ok(len) => {
+                peer.read_buffer.extend_from_slice(&chunk[..len]);
+                if let Some(line) = take_derp_line(&mut peer.read_buffer) {
+                    return parse_derp_packet_line(&line);
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn take_derp_line(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let newline = buffer.iter().position(|byte| *byte == b'\n')?;
+    let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
+    while matches!(line.last(), Some(b'\n' | b'\r')) {
+        line.pop();
+    }
+    Some(line)
+}
+
+fn parse_derp_packet_line(line: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
+    let value: serde_json::Value = serde_json::from_slice(line).map_err(json_io_error)?;
+    match value.get("kind").and_then(serde_json::Value::as_str) {
+        Some("recv") => Ok(value
+            .get("payload")
+            .and_then(serde_json::Value::as_str)
+            .and_then(base64_decode)),
+        Some("sent") | Some("connected") => Ok(None),
+        Some("error") => Err(std::io::Error::new(
+            ErrorKind::Other,
+            value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("DERP error")
+                .to_string(),
+        )),
+        _ => Ok(None),
+    }
+}
+
+fn detach_derp_relay_sessions(peers: &mut [DerpPeer]) {
+    for peer in peers {
+        let payload = serde_json::json!({
+            "kind": "disconnect",
+            "sessionId": peer.server_session_id,
+            "peerId": peer.local_node_id,
+        });
+        let _ = write_json_line(&mut peer.stream, &payload);
+    }
+}
+
+fn json_io_error(error: serde_json::Error) -> std::io::Error {
+    std::io::Error::new(ErrorKind::InvalidData, error)
 }
 
 fn send_relay_keepalives(peers: &[RelayPeer]) {
@@ -1264,15 +1683,17 @@ fn relay_control_kind(frame: &[u8]) -> Option<String> {
 fn relay_data_plane_stats_from_config(
     config: &RelayDataPlaneConfig,
     peers: &[RelayPeer],
+    derp_peers: &[DerpPeer],
 ) -> RelayDataPlaneStats {
+    let attached_count = peers.len() + derp_peers.len();
     RelayDataPlaneStats {
         relay_address: config.relay_address.clone(),
         relay_transport: Some(config.transport.clone()),
-        active_path: Some(PathKind::RelayUdp.as_str().to_string()),
-        requested_relay_session_count: peers.len() as u32,
-        relay_session_count: peers.len() as u32,
-        attached_peer_session_count: peers.len() as u32,
-        attached_transport_count: peers.len() as u32,
+        active_path: Some(config.transport.clone()),
+        requested_relay_session_count: config.sessions.len() as u32,
+        relay_session_count: attached_count as u32,
+        attached_peer_session_count: attached_count as u32,
+        attached_transport_count: attached_count as u32,
         ticket_expires_at: earliest_relay_ticket_expires_at(&config.sessions),
         peers: peers
             .iter()
@@ -1283,6 +1704,14 @@ fn relay_data_plane_stats_from_config(
                 attached: true,
                 ..RelayPeerStats::default()
             })
+            .chain(derp_peers.iter().map(|peer| RelayPeerStats {
+                peer_node_id: peer.peer_node_id.clone(),
+                session_id: peer.session_id.clone(),
+                peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                attached: true,
+                last_send_path: Some(PathKind::DerpTcpTls443.as_str().to_string()),
+                ..RelayPeerStats::default()
+            }))
             .collect(),
         relay_mtu: config.relay_mtu,
         max_frame_payload: config.max_frame_payload,
@@ -1351,6 +1780,22 @@ fn record_relay_packet_received(stats: &mut RelayDataPlaneStats, peer: &RelayPee
     }
 }
 
+fn record_derp_tun_packet_sent(stats: &mut RelayDataPlaneStats, peer: &DerpPeer) {
+    stats.tun_packets_sent = stats.tun_packets_sent.saturating_add(1);
+    stats.active_path = Some(PathKind::DerpTcpTls443.as_str().to_string());
+    if let Some(peer_stats) = relay_peer_stats_mut_by_session_id(stats, peer.session_id.as_str()) {
+        peer_stats.tun_packets_sent = peer_stats.tun_packets_sent.saturating_add(1);
+        peer_stats.last_send_path = Some(PathKind::DerpTcpTls443.as_str().to_string());
+    }
+}
+
+fn record_derp_packet_received(stats: &mut RelayDataPlaneStats, peer: &DerpPeer) {
+    stats.relay_packets_received = stats.relay_packets_received.saturating_add(1);
+    if let Some(peer_stats) = relay_peer_stats_mut_by_session_id(stats, peer.session_id.as_str()) {
+        peer_stats.relay_packets_received = peer_stats.relay_packets_received.saturating_add(1);
+    }
+}
+
 fn record_tun_tcp_packet(stats: &mut RelayDataPlaneStats, packet: &[u8]) {
     let Some(flags) = ipv4_tcp_flags(packet) else {
         return;
@@ -1365,6 +1810,45 @@ fn record_tun_tcp_packet(stats: &mut RelayDataPlaneStats, packet: &[u8]) {
     if ipv4_transport_checksum_valid(packet) == Some(false) {
         stats.tun_tcp_checksum_invalid = stats.tun_tcp_checksum_invalid.saturating_add(1);
     }
+}
+
+fn relay_send_attempt_count(packet: &[u8]) -> usize {
+    if is_ipv4_udp_packet(packet) {
+        return 3;
+    }
+    ipv4_tcp_flags(packet)
+        .map(|flags| {
+            if flags & 0x12 == 0x02 {
+                4
+            } else if flags & 0x0b != 0 || ipv4_tcp_payload_len(packet).unwrap_or(0) > 0 {
+                2
+            } else {
+                1
+            }
+        })
+        .unwrap_or(1)
+}
+
+fn should_hedge_direct_packet_to_relay(packet: &[u8]) -> bool {
+    if is_ipv4_udp_packet(packet) {
+        return true;
+    }
+    let Some(flags) = ipv4_tcp_flags(packet) else {
+        return false;
+    };
+    flags & 0x12 == 0x02 || flags & 0x0b != 0 || ipv4_tcp_payload_len(packet).unwrap_or(0) > 0
+}
+
+fn relay_send_attempt_delay(packet: &[u8]) -> Duration {
+    ipv4_tcp_flags(packet)
+        .map(|flags| {
+            if flags & 0x12 == 0x02 {
+                Duration::from_millis(30)
+            } else {
+                DATA_PLANE_IDLE_SLEEP
+            }
+        })
+        .unwrap_or(DATA_PLANE_IDLE_SLEEP)
 }
 
 fn record_relay_tcp_packet(stats: &mut RelayDataPlaneStats, packet: &[u8]) {
@@ -1394,6 +1878,25 @@ fn ipv4_tcp_flags(packet: &[u8]) -> Option<u8> {
     Some(packet[ihl + 13])
 }
 
+fn ipv4_tcp_payload_len(packet: &[u8]) -> Option<usize> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(6) {
+        return None;
+    }
+    let ihl = usize::from(packet[0] & 0x0f) * 4;
+    if ihl < 20 || packet.len() < ihl + 20 {
+        return None;
+    }
+    let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+    if total_len < ihl + 20 || total_len > packet.len() {
+        return None;
+    }
+    let data_offset = usize::from(packet[ihl + 12] >> 4) * 4;
+    if data_offset < 20 || total_len < ihl + data_offset {
+        return None;
+    }
+    Some(total_len - ihl - data_offset)
+}
+
 fn record_relay_send_failure(stats: &mut RelayDataPlaneStats, peer: &RelayPeer, error: String) {
     stats.relay_send_failures = stats.relay_send_failures.saturating_add(1);
     stats.last_relay_error = Some(error.clone());
@@ -1404,9 +1907,26 @@ fn record_relay_send_failure(stats: &mut RelayDataPlaneStats, peer: &RelayPeer, 
     }
 }
 
+fn record_derp_send_failure(stats: &mut RelayDataPlaneStats, peer: &DerpPeer, error: String) {
+    stats.relay_send_failures = stats.relay_send_failures.saturating_add(1);
+    stats.last_relay_error = Some(error.clone());
+    if let Some(peer_stats) = relay_peer_stats_mut_by_session_id(stats, peer.session_id.as_str()) {
+        peer_stats.send_failures = peer_stats.send_failures.saturating_add(1);
+        peer_stats.last_relay_error = Some(error);
+        peer_stats.last_send_path = Some(PathKind::DerpTcpTls443.as_str().to_string());
+    }
+}
+
 fn record_relay_write_failure(stats: &mut RelayDataPlaneStats, peer: &RelayPeer) {
     stats.wintun_write_failures = stats.wintun_write_failures.saturating_add(1);
     if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
+        peer_stats.wintun_write_failures = peer_stats.wintun_write_failures.saturating_add(1);
+    }
+}
+
+fn record_derp_write_failure(stats: &mut RelayDataPlaneStats, peer: &DerpPeer) {
+    stats.wintun_write_failures = stats.wintun_write_failures.saturating_add(1);
+    if let Some(peer_stats) = relay_peer_stats_mut_by_session_id(stats, peer.session_id.as_str()) {
         peer_stats.wintun_write_failures = peer_stats.wintun_write_failures.saturating_add(1);
     }
 }
@@ -1537,6 +2057,18 @@ fn relay_peer_for_packet<'a>(peers: &'a [RelayPeer], packet: &[u8]) -> Option<&'
     })
 }
 
+fn derp_peer_for_packet_mut<'a>(
+    peers: &'a mut [DerpPeer],
+    packet: &[u8],
+) -> Option<&'a mut DerpPeer> {
+    let destination = ipv4_destination(packet)?;
+    peers.iter_mut().find(|peer| {
+        peer.peer_virtual_ips
+            .iter()
+            .any(|ip| normalize_virtual_ip(ip) == destination)
+    })
+}
+
 fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> bool {
     ipv4_destination(packet)
         .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
@@ -1561,6 +2093,30 @@ fn ipv4_destination(packet: &[u8]) -> Option<String> {
         "{}.{}.{}.{}",
         packet[16], packet[17], packet[18], packet[19]
     ))
+}
+
+fn ipv4_protocol(packet: &[u8]) -> Option<u8> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 {
+        return None;
+    }
+    packet.get(9).copied()
+}
+
+fn is_ipv4_udp_packet(packet: &[u8]) -> bool {
+    ipv4_protocol(packet) == Some(17)
+}
+
+fn hedge_udp_packet_to_relay(peer: &RelayPeer, frame: &[u8], stats: &mut RelayDataPlaneStats) {
+    let Some(payload) = encode_relay_forward(peer, frame) else {
+        return;
+    };
+    match peer.socket.send(&payload) {
+        Ok(_) => {
+            stats.last_tun_send_path = Some("direct_udp+relay_udp".to_string());
+            record_relay_tun_packet_sent(stats, peer);
+        }
+        Err(error) => record_relay_send_failure(stats, peer, error.to_string()),
+    }
 }
 
 fn normalize_virtual_ip(value: &str) -> String {

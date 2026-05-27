@@ -56,6 +56,18 @@ final class SlanVpnRuntime {
     }
   }
 
+  static void markStarting(String ip, Integer nextMtu, String nextRelayAddress, Integer nextRelaySessionCount) {
+    synchronized (LOCK) {
+      adapterPresent = true;
+      networkEnabled = true;
+      virtualIp = emptyToNull(ip);
+      mtu = nextMtu;
+      relayAddress = emptyToNull(nextRelayAddress);
+      relaySessionCount = nextRelaySessionCount;
+      persistStateLocked();
+    }
+  }
+
   static void markStarted(String ip, Integer nextMtu, String nextRelayAddress, Integer nextRelaySessionCount) {
     synchronized (LOCK) {
       adapterPresent = true;
@@ -117,9 +129,14 @@ final class SlanVpnRuntime {
     Map<String, Object> state = new HashMap<>();
     state.putAll(nativeStats());
     boolean nativeRunning = Boolean.TRUE.equals(state.get("running"));
+    String nativeVirtualIp = stringValue(state.get("virtualIp"));
     if (nativeRunning && !networkEnabled) {
       adapterPresent = true;
       networkEnabled = true;
+    }
+    if (nativeRunning && nativeVirtualIp != null) {
+      virtualIp = nativeVirtualIp;
+      persistStateLocked();
     }
     state.put("adapterPresent", adapterPresent);
     state.put("networkEnabled", networkEnabled);
@@ -201,6 +218,13 @@ final class SlanVpnRuntime {
       return null;
     }
     return value.trim();
+  }
+
+  private static String stringValue(Object value) {
+    if (value == null) {
+      return null;
+    }
+    return emptyToNull(String.valueOf(value));
   }
 
   private static void pushEventLocked(String type, String message, Map<String, Object> runtimeState) {

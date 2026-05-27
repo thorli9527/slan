@@ -9,8 +9,8 @@ use client_core::ClientViewState;
 mod android_tun {
     use std::{
         fs::File,
-        io::{ErrorKind, Read, Write},
-        net::UdpSocket,
+        io::{BufRead, BufReader, ErrorKind, Read, Write},
+        net::{TcpStream, UdpSocket},
         os::fd::FromRawFd,
         os::raw::c_int,
         sync::{
@@ -39,6 +39,8 @@ mod android_tun {
     };
 
     const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+    const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
+    const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
 
     /// TunRuntime 持有 Android TUN fd 数据面线程、运行统计和原始配置。
     struct TunRuntime {
@@ -189,6 +191,16 @@ mod android_tun {
         socket: UdpSocket,
     }
 
+    struct AndroidDerpPeer {
+        peer_node_id: String,
+        local_node_id: String,
+        server_session_id: String,
+        peer_virtual_ips: Vec<String>,
+        stream: TcpStream,
+        reader: TcpStream,
+        read_buffer: Vec<u8>,
+    }
+
     /// 启动 Android TUN 数据面，接管 Java 层 detach 出来的 TUN fd 和 UDP socket fd。
     fn start_tun(tun_fd: c_int, relay_fds: Vec<c_int>, config_json: String) -> std::io::Result<()> {
         stop_tun();
@@ -200,11 +212,12 @@ mod android_tun {
             requested_relay_session_count(parsed_config.as_ref()),
             Ordering::Relaxed,
         );
-        let (relay_peers, direct_udp) = prepare_udp_sockets(
+        let (relay_peers, derp_peers, direct_udp) = prepare_relay_sockets(
             relay_fds,
             parsed_config.as_ref(),
             Arc::clone(&last_attach_error),
         )?;
+        let attached_relay_count = relay_peers.len().saturating_add(derp_peers.len());
         stats.direct_udp_attached_peer_count.store(
             direct_udp
                 .as_ref()
@@ -214,12 +227,12 @@ mod android_tun {
         );
         stats
             .attached_relay_session_count
-            .store(relay_peers.len() as u64, Ordering::Relaxed);
+            .store(attached_relay_count as u64, Ordering::Relaxed);
         stats.relay_attach_failures.store(
             stats
                 .requested_relay_session_count
                 .load(Ordering::Relaxed)
-                .saturating_sub(relay_peers.len() as u64),
+                .saturating_sub(attached_relay_count as u64),
             Ordering::Relaxed,
         );
         let max_frame_payload = parsed_config
@@ -239,6 +252,7 @@ mod android_tun {
         let handle = thread::spawn(move || {
             let mut file = unsafe { File::from_raw_fd(tun_fd) };
             let relay_peers = relay_peers;
+            let mut derp_peers = derp_peers;
             let config_hash = stable_hash64(&thread_config_json);
             let mut seq = 0_u64;
             let mut tun_buffer = vec![0_u8; 2048];
@@ -258,6 +272,7 @@ mod android_tun {
                 .checked_sub(RELAY_KEEPALIVE_INTERVAL)
                 .unwrap_or_else(Instant::now);
             while !thread_stop.load(Ordering::SeqCst) {
+                let mut did_work = false;
                 if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
                     if let Some(direct_udp) = direct_udp.as_ref() {
                         thread_stats
@@ -271,8 +286,9 @@ mod android_tun {
                     last_keepalive = Instant::now();
                 }
                 match file.read(&mut tun_buffer) {
-                    Ok(0) => thread::sleep(Duration::from_millis(20)),
+                    Ok(0) => {}
                     Ok(packet_len) => {
+                        did_work = true;
                         thread_stats.packets_read.fetch_add(1, Ordering::Relaxed);
                         thread_stats
                             .bytes_read
@@ -299,10 +315,28 @@ mod android_tun {
                                 if let Some(frame) =
                                     encode_slan_relay_data_frame(seq, config_hash, &packet)
                                 {
-                                    if direct_udp.send_to_peer(peer_index, &frame).is_ok() {
-                                        thread_stats
-                                            .direct_udp_frames_sent
-                                            .fetch_add(1, Ordering::Relaxed);
+                                    let mut sent = false;
+                                    for attempt in 0..relay_send_attempt_count(&packet) {
+                                        if attempt > 0 {
+                                            thread::sleep(relay_send_attempt_delay(&packet));
+                                        }
+                                        if direct_udp.send_to_peer(peer_index, &frame).is_ok() {
+                                            sent = true;
+                                            thread_stats
+                                                .direct_udp_frames_sent
+                                                .fetch_add(1, Ordering::Relaxed);
+                                        }
+                                    }
+                                    if should_hedge_direct_packet_to_relay(&packet) {
+                                        sent |= hedge_udp_packet_to_relay(
+                                            &relay_peers,
+                                            &mut derp_peers,
+                                            &packet,
+                                            &frame,
+                                            &thread_stats,
+                                        );
+                                    }
+                                    if sent {
                                         continue;
                                     }
                                 }
@@ -318,7 +352,43 @@ mod android_tun {
                                 encode_slan_relay_data_frame(seq, config_hash, &packet)
                             {
                                 if let Some(payload) = encode_relay_forward(peer, &frame) {
-                                    match peer.socket.send(&payload) {
+                                    for attempt in 0..relay_send_attempt_count(&packet) {
+                                        if attempt > 0 {
+                                            thread::sleep(relay_send_attempt_delay(&packet));
+                                        }
+                                        match peer.socket.send(&payload) {
+                                            Ok(_) => {
+                                                thread_stats
+                                                    .relay_frames_sent
+                                                    .fetch_add(1, Ordering::Relaxed);
+                                            }
+                                            Err(_) => {
+                                                thread_stats
+                                                    .relay_write_failures
+                                                    .fetch_add(1, Ordering::Relaxed);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    thread_stats
+                                        .relay_write_failures
+                                        .fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                        } else if let Some(peer) =
+                            derp_peer_for_packet_mut(&mut derp_peers, &tun_buffer[..packet_len])
+                        {
+                            seq = seq.wrapping_add(1);
+                            let packet =
+                                normalize_ipv4_transport_checksums(&tun_buffer[..packet_len]);
+                            if let Some(frame) =
+                                encode_slan_relay_data_frame(seq, config_hash, &packet)
+                            {
+                                for attempt in 0..relay_send_attempt_count(&packet) {
+                                    if attempt > 0 {
+                                        thread::sleep(relay_send_attempt_delay(&packet));
+                                    }
+                                    match send_derp_forward(peer, &frame) {
                                         Ok(_) => {
                                             thread_stats
                                                 .relay_frames_sent
@@ -330,10 +400,6 @@ mod android_tun {
                                                 .fetch_add(1, Ordering::Relaxed);
                                         }
                                     }
-                                } else {
-                                    thread_stats
-                                        .relay_write_failures
-                                        .fetch_add(1, Ordering::Relaxed);
                                 }
                             }
                         } else {
@@ -354,15 +420,14 @@ mod android_tun {
                                 .fetch_add(1, Ordering::Relaxed);
                         }
                     }
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(20));
-                    }
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {}
                     Err(error) if error.kind() == ErrorKind::Interrupted => {}
                     Err(_) => break,
                 }
                 for peer in &relay_peers {
                     match peer.socket.recv(&mut relay_buffer) {
                         Ok(frame_len) => {
+                            did_work = true;
                             let decoded_payload = relay_packet_payload(&relay_buffer[..frame_len]);
                             if decoded_payload.is_none()
                                 && relay_control_kind(&relay_buffer[..frame_len]).is_some()
@@ -401,21 +466,27 @@ mod android_tun {
                                     }
                                     continue;
                                 }
-                                let packet = normalize_ipv4_transport_checksums(packet);
-                                if let Err(error) = write_tun_packet_with_retry(&mut file, &packet)
-                                {
-                                    thread_stats
-                                        .tun_write_failures
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    record_tun_write_failure(&thread_stats, &packet, &error);
-                                } else {
-                                    record_tun_write_packet(&thread_stats, &packet);
-                                    thread_stats
-                                        .bytes_written
-                                        .fetch_add(packet.len() as u64, Ordering::Relaxed);
-                                }
+                                write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
                             }
                         }
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                        Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                        Err(_) => {}
+                    }
+                }
+                for peer in &mut derp_peers {
+                    match recv_derp_packet(peer) {
+                        Ok(Some(frame)) => {
+                            did_work = true;
+                            if let Some(packet) = decode_slan_relay_data_frame(&frame) {
+                                thread_stats
+                                    .relay_frames_received
+                                    .fetch_add(1, Ordering::Relaxed);
+                                record_relay_tcp_packet(&thread_stats, packet);
+                                write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
+                            }
+                        }
+                        Ok(None) => {}
                         Err(error) if error.kind() == ErrorKind::WouldBlock => {}
                         Err(error) if error.kind() == ErrorKind::Interrupted => {}
                         Err(_) => {}
@@ -424,6 +495,7 @@ mod android_tun {
                 if let Some(direct_udp) = direct_udp.as_mut() {
                     match direct_udp.recv_from_peer(&mut relay_buffer) {
                         Ok(Some(received)) => {
+                            did_work = true;
                             let frame_len = received.frame_len;
                             let control_packet =
                                 direct_udp_control_packet(&relay_buffer[..frame_len]);
@@ -484,19 +556,7 @@ mod android_tun {
                                     }
                                     continue;
                                 }
-                                let packet = normalize_ipv4_transport_checksums(packet);
-                                if let Err(error) = write_tun_packet_with_retry(&mut file, &packet)
-                                {
-                                    thread_stats
-                                        .tun_write_failures
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    record_tun_write_failure(&thread_stats, &packet, &error);
-                                } else {
-                                    record_tun_write_packet(&thread_stats, &packet);
-                                    thread_stats
-                                        .bytes_written
-                                        .fetch_add(packet.len() as u64, Ordering::Relaxed);
-                                }
+                                write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
                             }
                         }
                         Ok(None) => {}
@@ -505,8 +565,12 @@ mod android_tun {
                         Err(_) => {}
                     }
                 }
+                if !did_work {
+                    thread::sleep(DATA_PLANE_IDLE_SLEEP);
+                }
             }
             detach_udp_relay_sessions(&relay_peers, parsed_config.as_ref(), &thread_stats);
+            detach_derp_relay_sessions(&mut derp_peers);
         });
         let mut guard = runtime()
             .lock()
@@ -523,9 +587,8 @@ mod android_tun {
 
     fn write_tun_packet_with_retry(file: &mut File, packet: &[u8]) -> std::io::Result<()> {
         let deadline = Instant::now() + Duration::from_secs(1);
-        let mut offset = 0_usize;
-        while offset < packet.len() {
-            match file.write(&packet[offset..]) {
+        loop {
+            match file.write(packet) {
                 Ok(0) => {
                     if Instant::now() >= deadline {
                         return Err(std::io::Error::new(
@@ -535,7 +598,16 @@ mod android_tun {
                     }
                     thread::sleep(Duration::from_millis(2));
                 }
-                Ok(written) => offset += written,
+                Ok(written) if written == packet.len() => return Ok(()),
+                Ok(written) => {
+                    return Err(std::io::Error::new(
+                        ErrorKind::WriteZero,
+                        format!(
+                            "android tun short write: wrote {written} of {} bytes",
+                            packet.len()
+                        ),
+                    ));
+                }
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
                         return Err(error);
@@ -546,7 +618,96 @@ mod android_tun {
                 Err(error) => return Err(error),
             }
         }
-        Ok(())
+    }
+
+    fn write_android_tun_inbound_packet(file: &mut File, stats: &TunStats, packet: &[u8]) {
+        for packet in android_tun_inbound_packets(packet) {
+            let repeat_count = if is_ipv4_udp_packet(&packet) { 3 } else { 1 };
+            for attempt in 0..repeat_count {
+                if attempt > 0 {
+                    thread::sleep(DATA_PLANE_IDLE_SLEEP);
+                }
+                if let Err(error) = write_tun_packet_with_retry(file, &packet) {
+                    stats.tun_write_failures.fetch_add(1, Ordering::Relaxed);
+                    record_tun_write_failure(stats, &packet, &error);
+                } else {
+                    record_tun_write_packet(stats, &packet);
+                    stats
+                        .bytes_written
+                        .fetch_add(packet.len() as u64, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    fn android_tun_inbound_packet(packet: &[u8]) -> Vec<u8> {
+        let mut packet = normalize_ipv4_transport_checksums(packet);
+        clear_ipv4_udp_checksum(&mut packet);
+        packet
+    }
+
+    fn android_tun_inbound_packets(packet: &[u8]) -> Vec<Vec<u8>> {
+        if let Some((payload_packet, fin_packet)) = split_tcp_fin_payload_packet(packet) {
+            return vec![
+                android_tun_inbound_packet(&payload_packet),
+                android_tun_inbound_packet(&fin_packet),
+            ];
+        }
+        vec![android_tun_inbound_packet(packet)]
+    }
+
+    fn split_tcp_fin_payload_packet(packet: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+        if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(6) {
+            return None;
+        }
+        let ip_header_len = usize::from(packet[0] & 0x0f) * 4;
+        if ip_header_len < 20 || packet.len() < ip_header_len + 20 {
+            return None;
+        }
+        let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+        if total_len > packet.len() || total_len < ip_header_len + 20 {
+            return None;
+        }
+        let tcp_offset = ip_header_len;
+        let tcp_header_len = usize::from(packet[tcp_offset + 12] >> 4) * 4;
+        let tcp_payload_offset = tcp_offset.checked_add(tcp_header_len)?;
+        if tcp_header_len < 20 || tcp_payload_offset > total_len {
+            return None;
+        }
+        let payload_len = total_len.saturating_sub(tcp_payload_offset);
+        let flags = packet[tcp_offset + 13];
+        if flags & 0x01 == 0 || payload_len == 0 {
+            return None;
+        }
+
+        let mut payload_packet = packet[..total_len].to_vec();
+        payload_packet[tcp_offset + 13] = flags & !0x01;
+
+        let mut fin_packet = packet[..tcp_payload_offset].to_vec();
+        let seq = u32::from_be_bytes([
+            packet[tcp_offset + 4],
+            packet[tcp_offset + 5],
+            packet[tcp_offset + 6],
+            packet[tcp_offset + 7],
+        ]);
+        let fin_seq = seq.wrapping_add(payload_len as u32).to_be_bytes();
+        fin_packet[tcp_offset + 4..tcp_offset + 8].copy_from_slice(&fin_seq);
+        fin_packet[tcp_offset + 13] = (flags & !0x08) | 0x01;
+        let fin_total_len = fin_packet.len() as u16;
+        fin_packet[2..4].copy_from_slice(&fin_total_len.to_be_bytes());
+        Some((payload_packet, fin_packet))
+    }
+
+    fn clear_ipv4_udp_checksum(packet: &mut [u8]) {
+        if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(17) {
+            return;
+        }
+        let ihl = usize::from(packet[0] & 0x0f) * 4;
+        if ihl < 20 || packet.len() < ihl + 8 {
+            return;
+        }
+        packet[ihl + 6] = 0;
+        packet[ihl + 7] = 0;
     }
 
     fn encode_relay_forward(peer: &AndroidRelayPeer, frame: &[u8]) -> Option<Vec<u8>> {
@@ -557,6 +718,41 @@ mod android_tun {
             "payload": base64_encode(frame),
         }))
         .ok()
+    }
+
+    fn hedge_udp_packet_to_relay(
+        relay_peers: &[AndroidRelayPeer],
+        derp_peers: &mut [AndroidDerpPeer],
+        packet: &[u8],
+        frame: &[u8],
+        stats: &TunStats,
+    ) -> bool {
+        let mut sent = false;
+        if let Some(peer) = relay_peer_for_packet(relay_peers, packet) {
+            if let Some(payload) = encode_relay_forward(peer, frame) {
+                match peer.socket.send(&payload) {
+                    Ok(_) => {
+                        sent = true;
+                        stats.relay_frames_sent.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(_) => {
+                        stats.relay_write_failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+        if let Some(peer) = derp_peer_for_packet_mut(derp_peers, packet) {
+            match send_derp_forward(peer, frame) {
+                Ok(_) => {
+                    sent = true;
+                    stats.relay_frames_sent.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(_) => {
+                    stats.relay_write_failures.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+        sent
     }
 
     fn send_relay_keepalives(peers: &[AndroidRelayPeer]) {
@@ -667,6 +863,46 @@ mod android_tun {
         }
     }
 
+    fn relay_send_attempt_count(packet: &[u8]) -> usize {
+        if let Some(flags) = ipv4_tcp_flags(packet) {
+            if flags & 0x12 == 0x02 {
+                4
+            } else if flags & 0x0b != 0 || ipv4_tcp_payload_len(packet).unwrap_or(0) > 0 {
+                2
+            } else {
+                1
+            }
+        } else if is_ipv4_udp_packet(packet) {
+            3
+        } else {
+            1
+        }
+    }
+
+    fn should_hedge_direct_packet_to_relay(packet: &[u8]) -> bool {
+        if is_ipv4_udp_packet(packet) {
+            return true;
+        }
+        let Some(flags) = ipv4_tcp_flags(packet) else {
+            return false;
+        };
+        flags & 0x12 == 0x02 || flags & 0x0b != 0 || ipv4_tcp_payload_len(packet).unwrap_or(0) > 0
+    }
+
+    fn relay_send_attempt_delay(packet: &[u8]) -> Duration {
+        if is_ipv4_tcp_initial_syn(packet) {
+            Duration::from_millis(30)
+        } else {
+            DATA_PLANE_IDLE_SLEEP
+        }
+    }
+
+    fn is_ipv4_tcp_initial_syn(packet: &[u8]) -> bool {
+        ipv4_tcp_flags(packet)
+            .map(|flags| flags & 0x12 == 0x02)
+            .unwrap_or(false)
+    }
+
     fn record_tun_write_failure(stats: &TunStats, packet: &[u8], error: &std::io::Error) {
         if let Ok(mut value) = stats.last_tun_write_error.lock() {
             *value = Some(format!("kind={:?}; error={}", error.kind(), error));
@@ -685,7 +921,7 @@ mod android_tun {
         let flags = ipv4_tcp_flags(packet)
             .map(|value| format!("0x{value:02x}"))
             .unwrap_or_else(|| "none".to_string());
-        let (source_port, destination_port) = ipv4_tcp_ports(packet)
+        let (source_port, destination_port) = ipv4_transport_ports(packet)
             .map(|(source, destination)| (source.to_string(), destination.to_string()))
             .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
         let checksum_valid = ipv4_transport_checksum_valid(packet)
@@ -695,8 +931,9 @@ mod android_tun {
             .first()
             .map(|value| format!("0x{value:02x}"))
             .unwrap_or_else(|| "none".to_string());
+        let tcp = tcp_summary(packet).unwrap_or_else(|| "tcp=none".to_string());
         format!(
-            "len={}; firstByte={}; protocol={}; src={}; dst={}; srcPort={}; dstPort={}; tcpFlags={}; checksumValid={}",
+            "len={}; firstByte={}; protocol={}; src={}; dst={}; srcPort={}; dstPort={}; tcpFlags={}; checksumValid={}; {}",
             packet.len(),
             first_byte,
             protocol,
@@ -705,8 +942,43 @@ mod android_tun {
             source_port,
             destination_port,
             flags,
-            checksum_valid
+            checksum_valid,
+            tcp
         )
+    }
+
+    fn tcp_summary(packet: &[u8]) -> Option<String> {
+        if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(6) {
+            return None;
+        }
+        let ihl = usize::from(packet[0] & 0x0f) * 4;
+        if ihl < 20 || packet.len() < ihl + 20 {
+            return None;
+        }
+        let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+        if total_len < ihl + 20 || total_len > packet.len() {
+            return None;
+        }
+        let data_offset = usize::from(packet[ihl + 12] >> 4) * 4;
+        if data_offset < 20 || total_len < ihl + data_offset {
+            return None;
+        }
+        let seq = u32::from_be_bytes([
+            packet[ihl + 4],
+            packet[ihl + 5],
+            packet[ihl + 6],
+            packet[ihl + 7],
+        ]);
+        let ack = u32::from_be_bytes([
+            packet[ihl + 8],
+            packet[ihl + 9],
+            packet[ihl + 10],
+            packet[ihl + 11],
+        ]);
+        let payload_len = total_len.saturating_sub(ihl + data_offset);
+        Some(format!(
+            "tcpSeq={seq}; tcpAck={ack}; tcpDataOffset={data_offset}; tcpPayloadLen={payload_len}"
+        ))
     }
 
     fn ipv4_tcp_flags(packet: &[u8]) -> Option<u8> {
@@ -718,6 +990,25 @@ mod android_tun {
             return None;
         }
         Some(packet[ihl + 13])
+    }
+
+    fn ipv4_tcp_payload_len(packet: &[u8]) -> Option<usize> {
+        if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(6) {
+            return None;
+        }
+        let ihl = usize::from(packet[0] & 0x0f) * 4;
+        if ihl < 20 || packet.len() < ihl + 20 {
+            return None;
+        }
+        let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+        if total_len < ihl + 20 || total_len > packet.len() {
+            return None;
+        }
+        let data_offset = usize::from(packet[ihl + 12] >> 4) * 4;
+        if data_offset < 20 || total_len < ihl + data_offset {
+            return None;
+        }
+        Some(total_len - ihl - data_offset)
     }
 
     fn ipv4_tcp_ports(packet: &[u8]) -> Option<(u16, u16)> {
@@ -734,6 +1025,35 @@ mod android_tun {
         ))
     }
 
+    fn ipv4_transport_ports(packet: &[u8]) -> Option<(u16, u16)> {
+        if packet.len() < 20 || packet[0] >> 4 != 4 {
+            return None;
+        }
+        match packet.get(9).copied() {
+            Some(6) => ipv4_tcp_ports(packet),
+            Some(17) => ipv4_udp_ports(packet),
+            _ => None,
+        }
+    }
+
+    fn ipv4_udp_ports(packet: &[u8]) -> Option<(u16, u16)> {
+        if packet.len() < 20 || packet[0] >> 4 != 4 || packet.get(9).copied() != Some(17) {
+            return None;
+        }
+        let ihl = usize::from(packet[0] & 0x0f) * 4;
+        if ihl < 20 || packet.len() < ihl + 8 {
+            return None;
+        }
+        Some((
+            u16::from_be_bytes([packet[ihl], packet[ihl + 1]]),
+            u16::from_be_bytes([packet[ihl + 2], packet[ihl + 3]]),
+        ))
+    }
+
+    fn is_ipv4_udp_packet(packet: &[u8]) -> bool {
+        packet.len() >= 20 && packet[0] >> 4 == 4 && packet.get(9).copied() == Some(17)
+    }
+
     fn read_relay_fds(env: &mut JNIEnv, relay_fds: JIntArray) -> jni::errors::Result<Vec<c_int>> {
         let len = env.get_array_length(&relay_fds)?;
         if len <= 0 {
@@ -744,23 +1064,28 @@ mod android_tun {
         Ok(values.into_iter().filter(|fd| *fd >= 0).collect())
     }
 
-    fn prepare_udp_sockets(
+    fn prepare_relay_sockets(
         relay_fds: Vec<c_int>,
         config: Option<&AndroidVpnSessionConfig>,
         last_attach_error: Arc<Mutex<Option<String>>>,
-    ) -> std::io::Result<(Vec<AndroidRelayPeer>, Option<DirectUdpTransport>)> {
+    ) -> std::io::Result<(
+        Vec<AndroidRelayPeer>,
+        Vec<AndroidDerpPeer>,
+        Option<DirectUdpTransport>,
+    )> {
         if relay_fds.is_empty() {
-            return Ok((Vec::new(), None));
+            return Ok((Vec::new(), Vec::new(), None));
         }
         let Some(relay_config) = config.and_then(|value| value.relay_data_plane.as_ref()) else {
             close_relay_fds(relay_fds);
-            return Ok((Vec::new(), None));
+            return Ok((Vec::new(), Vec::new(), None));
         };
-        if !relay_config.enabled || !relay_config.transport.eq_ignore_ascii_case("udp") {
+        if !relay_config.enabled {
             close_relay_fds(relay_fds);
-            return Ok((Vec::new(), None));
+            return Ok((Vec::new(), Vec::new(), None));
         };
         let mut peers = Vec::new();
+        let mut derp_peers = Vec::new();
         let mut relay_fds = relay_fds.into_iter();
         for index in 0..relay_config.sessions.len() {
             let Some(fd) = relay_fds.next() else {
@@ -770,6 +1095,22 @@ mod android_tun {
                 close_relay_fds(vec![fd]);
                 continue;
             };
+            if is_derp_session(session) {
+                let stream = unsafe { TcpStream::from_raw_fd(fd) };
+                match attach_derp_relay_session(
+                    stream,
+                    relay_config.local_node_id.as_str(),
+                    session,
+                ) {
+                    Ok(peer) => derp_peers.push(peer),
+                    Err(error) => {
+                        if let Ok(mut guard) = last_attach_error.lock() {
+                            *guard = Some(error.to_string());
+                        }
+                    }
+                }
+                continue;
+            }
             let socket = unsafe { UdpSocket::from_raw_fd(fd) };
             if let Err(error) =
                 attach_udp_relay_session(&socket, relay_config.local_node_id.as_str(), session)
@@ -796,7 +1137,7 @@ mod android_tun {
             )
         });
         close_relay_fds(relay_fds.collect());
-        Ok((peers, direct_udp))
+        Ok((peers, derp_peers, direct_udp))
     }
 
     fn close_relay_fds(relay_fds: Vec<c_int>) {
@@ -839,6 +1180,7 @@ mod android_tun {
         local_node_id: &str,
         session: &RelayPeerSession,
     ) -> std::io::Result<()> {
+        socket.set_nonblocking(false)?;
         socket.set_read_timeout(Some(Duration::from_secs(2)))?;
         socket.set_write_timeout(Some(Duration::from_secs(2)))?;
         let attach = serde_json::json!({
@@ -877,6 +1219,248 @@ mod android_tun {
         }
         Err(last_error
             .unwrap_or_else(|| std::io::Error::new(ErrorKind::TimedOut, "relay attach timed out")))
+    }
+
+    fn attach_derp_relay_session(
+        stream: TcpStream,
+        local_node_id: &str,
+        session: &RelayPeerSession,
+    ) -> std::io::Result<AndroidDerpPeer> {
+        stream.set_nodelay(true)?;
+        stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+        let mut writer = stream.try_clone()?;
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let connect = serde_json::json!({
+            "kind": "connect",
+            "peerId": local_node_id,
+            "nodeId": derp_ticket_node_id(session),
+            "regionId": derp_ticket_region_id(session),
+            "ticket": derp_ticket_wire(local_node_id, session),
+        });
+        write_json_line(&mut writer, &connect)?;
+        let line = read_derp_connect_line_with_retry(&mut reader, Duration::from_secs(3))?;
+        let value: serde_json::Value = serde_json::from_str(line.trim()).map_err(json_error)?;
+        if value.get("kind").and_then(serde_json::Value::as_str) != Some("connected") {
+            return Err(std::io::Error::new(
+                ErrorKind::Other,
+                value
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("DERP connect failed")
+                    .to_string(),
+            ));
+        }
+        let server_session_id = value
+            .get("sessionId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(session.session_id.as_str())
+            .to_string();
+        writer.set_nonblocking(true)?;
+        let reader = reader.into_inner();
+        reader.set_nonblocking(true)?;
+        Ok(AndroidDerpPeer {
+            peer_node_id: session.peer_node_id.clone(),
+            local_node_id: local_node_id.to_string(),
+            server_session_id,
+            peer_virtual_ips: session.peer_virtual_ips.clone(),
+            stream: writer,
+            reader,
+            read_buffer: Vec::new(),
+        })
+    }
+
+    fn is_derp_session(session: &RelayPeerSession) -> bool {
+        let relay_url = session.ticket.relay_url.trim().to_ascii_lowercase();
+        relay_url.starts_with("derp://")
+            || relay_url.starts_with("derp+tcp+tls://")
+            || relay_url.starts_with("derp_tcp_tls_443://")
+    }
+
+    fn send_derp_forward(peer: &mut AndroidDerpPeer, frame: &[u8]) -> std::io::Result<()> {
+        let payload = serde_json::json!({
+            "kind": "send",
+            "sessionId": peer.server_session_id,
+            "targetPeerId": peer.peer_node_id,
+            "payload": base64_encode(frame),
+        });
+        write_json_line(&mut peer.stream, &payload)
+    }
+
+    fn recv_derp_packet(peer: &mut AndroidDerpPeer) -> std::io::Result<Option<Vec<u8>>> {
+        if let Some(line) = take_derp_line(&mut peer.read_buffer) {
+            return parse_derp_packet_line(&line);
+        }
+        let mut chunk = [0_u8; 4096];
+        loop {
+            match peer.reader.read(&mut chunk) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        ErrorKind::ConnectionReset,
+                        "DERP TCP connection closed",
+                    ));
+                }
+                Ok(len) => {
+                    peer.read_buffer.extend_from_slice(&chunk[..len]);
+                    if let Some(line) = take_derp_line(&mut peer.read_buffer) {
+                        return parse_derp_packet_line(&line);
+                    }
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn take_derp_line(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+        let newline = buffer.iter().position(|byte| *byte == b'\n')?;
+        let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
+        while matches!(line.last(), Some(b'\n' | b'\r')) {
+            line.pop();
+        }
+        Some(line)
+    }
+
+    fn parse_derp_packet_line(line: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
+        let value: serde_json::Value = serde_json::from_slice(line).map_err(json_error)?;
+        match value.get("kind").and_then(serde_json::Value::as_str) {
+            Some("recv") => Ok(value
+                .get("payload")
+                .and_then(serde_json::Value::as_str)
+                .and_then(base64_decode)),
+            Some("sent") | Some("connected") => Ok(None),
+            Some("error") => Err(std::io::Error::new(
+                ErrorKind::Other,
+                value
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("DERP error")
+                    .to_string(),
+            )),
+            _ => Ok(None),
+        }
+    }
+
+    fn detach_derp_relay_sessions(peers: &mut [AndroidDerpPeer]) {
+        for peer in peers {
+            let payload = serde_json::json!({
+                "kind": "disconnect",
+                "sessionId": peer.server_session_id,
+                "peerId": peer.local_node_id,
+            });
+            let _ = write_json_line(&mut peer.stream, &payload);
+        }
+    }
+
+    fn write_json_line(stream: &mut TcpStream, value: &serde_json::Value) -> std::io::Result<()> {
+        let mut payload = serde_json::to_vec(value).map_err(json_error)?;
+        payload.push(b'\n');
+        write_all_with_would_block_retry(stream, &payload, DERP_WRITE_RETRY_TIMEOUT)
+    }
+
+    fn read_derp_connect_line_with_retry<R: BufRead>(
+        reader: &mut R,
+        timeout: Duration,
+    ) -> std::io::Result<String> {
+        let started = Instant::now();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        ErrorKind::ConnectionReset,
+                        "DERP TCP connection closed before connect ack",
+                    ));
+                }
+                Ok(_) => return Ok(line),
+                Err(error)
+                    if error.kind() == ErrorKind::WouldBlock
+                        || error.kind() == ErrorKind::TimedOut =>
+                {
+                    if started.elapsed() >= timeout {
+                        return Err(error);
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn write_all_with_would_block_retry(
+        stream: &mut TcpStream,
+        payload: &[u8],
+        timeout: Duration,
+    ) -> std::io::Result<()> {
+        let started = Instant::now();
+        let mut offset = 0;
+        while offset < payload.len() {
+            match stream.write(&payload[offset..]) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        ErrorKind::WriteZero,
+                        "DERP TCP write returned zero bytes",
+                    ));
+                }
+                Ok(written) => offset += written,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    if started.elapsed() >= timeout {
+                        return Err(error);
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    fn derp_ticket_node_id(session: &RelayPeerSession) -> String {
+        session
+            .ticket
+            .allowed_derp_node_ids
+            .iter()
+            .map(|value| value.trim())
+            .find(|value| !value.is_empty())
+            .unwrap_or("derp")
+            .to_string()
+    }
+
+    fn derp_ticket_region_id(session: &RelayPeerSession) -> String {
+        session
+            .ticket
+            .derp_cluster_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default")
+            .to_string()
+    }
+
+    fn derp_ticket_wire(local_node_id: &str, session: &RelayPeerSession) -> serde_json::Value {
+        let ticket = &session.ticket;
+        serde_json::json!({
+            "ticketId": &ticket.ticket_id,
+            "peerId": local_node_id,
+            "networkId": &ticket.network_id,
+            "path": "derp_tcp_tls_443",
+            "regionId": derp_ticket_region_id(session),
+            "nodeId": derp_ticket_node_id(session),
+            "sessionId": &ticket.session_id,
+            "srcNodeId": &ticket.src_node_id,
+            "dstNodeId": &ticket.dst_node_id,
+            "relayUrl": &ticket.relay_url,
+            "sessionKey": &ticket.session_key,
+            "allowedDerpNodeIds": &ticket.allowed_derp_node_ids,
+            "expiresAt": &ticket.expires_at,
+            "signature": &ticket.signature,
+        })
     }
 
     fn relay_ticket_wire(session: &RelayPeerSession) -> serde_json::Value {
@@ -939,6 +1523,18 @@ mod android_tun {
             return None;
         };
         peers.iter().find(|peer| {
+            peer.peer_virtual_ips
+                .iter()
+                .any(|ip| normalize_virtual_ip(ip) == destination)
+        })
+    }
+
+    fn derp_peer_for_packet_mut<'a>(
+        peers: &'a mut [AndroidDerpPeer],
+        packet: &[u8],
+    ) -> Option<&'a mut AndroidDerpPeer> {
+        let destination = ipv4_destination(packet)?;
+        peers.iter_mut().find(|peer| {
             peer.peer_virtual_ips
                 .iter()
                 .any(|ip| normalize_virtual_ip(ip) == destination)

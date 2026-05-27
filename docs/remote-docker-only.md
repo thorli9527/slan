@@ -17,7 +17,7 @@ SLAN development and deployment now use the remote Docker host only.
 - API: `http://api.dev.staticlss.com`
 - Web Console: `http://web.dev.staticlss.com`
 - Ops Console: `http://ops.dev.staticlss.com`
-- MQTT: `mqtt.dev.staticlss.com`
+- MQTT: `47.245.40.231`
 - Wire: `wire.dev.staticlss.com`
 - Relay: `relay.dev.staticlss.com`
 - DERP: `derp.dev.staticlss.com`

@@ -36,6 +36,7 @@ button.small { height: 30px; padding: 0 10px; }
 .summary-grid article { padding: 16px; }
 .summary-grid span, .summary-grid small { display: block; color: #6b7280; font-size: 13px; }
 .summary-grid strong { display: block; margin: 8px 0 4px; font-size: 24px; font-weight: 700; }
+.summary-grid.protocol-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .page { display: grid; gap: 12px; }
 .panel { padding: 16px; min-width: 0; }
 .panel-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }

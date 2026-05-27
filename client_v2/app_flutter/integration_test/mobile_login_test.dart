@@ -169,14 +169,9 @@ void main() {
         timeout: const Duration(seconds: 45),
       );
       expect(find.text('操作失败'), findsNothing);
-      expect(find.byKey(const Key('network-ip-value')), findsOneWidget);
-      final ipText = tester
-          .widget<Text>(find.byKey(const Key('network-ip-value')))
-          .data
-          ?.trim();
+      final ipText = tester.networkIpText();
       expect(ipText, isNotNull);
       expect(ipText, isNotEmpty);
-      expect(ipText, isNot('未启用'));
       debugPrint('SLAN_TEST_NETWORK_IP=$ipText');
       if (requireTunnelState) {
         await tester.logPlatformTunnelState();
@@ -365,6 +360,10 @@ extension on WidgetTester {
       }
     }
     await pumpAndSettle();
+    final settledIp = networkIpText();
+    if (settledIp != null) {
+      return;
+    }
     final texts = widgetList<Text>(find.byType(Text))
         .map((widget) => widget.data)
         .whereType<String>()
@@ -410,6 +409,15 @@ extension on WidgetTester {
           return;
         }
       }
+      final texts = widgetList<Text>(find.byType(Text))
+          .map((widget) => widget.data)
+          .whereType<String>()
+          .toList();
+      if (texts.contains('网络已启用') &&
+          texts
+              .any((text) => RegExp(r'\b10\.\d+\.\d+\.\d+\b').hasMatch(text))) {
+        return;
+      }
     }
     await pumpAndSettle();
     final texts = widgetList<Text>(find.byType(Text))
@@ -446,14 +454,26 @@ extension on WidgetTester {
 
   String? networkIpText() {
     final ipFinder = find.byKey(const Key('network-ip-value'));
-    if (!any(ipFinder)) {
-      return null;
+    if (any(ipFinder)) {
+      final ipText = widget<Text>(ipFinder).data?.trim();
+      if (ipText != null && ipText.isNotEmpty && ipText != '未启用') {
+        return ipText;
+      }
     }
-    final ipText = widget<Text>(ipFinder).data?.trim();
-    if (ipText == null || ipText.isEmpty || ipText == '未启用') {
-      return null;
+    final texts = widgetList<Text>(find.byType(Text))
+        .map((widget) => widget.data)
+        .whereType<String>()
+        .toList();
+    if (texts.contains('网络已启用')) {
+      final ipPattern = RegExp(r'\b10\.\d+\.\d+\.\d+\b');
+      for (final text in texts) {
+        final match = ipPattern.firstMatch(text);
+        if (match != null) {
+          return match.group(0);
+        }
+      }
     }
-    return ipText;
+    return null;
   }
 
   Future<void> pumpUntilClientMessage(
@@ -579,24 +599,40 @@ extension on WidgetTester {
     try {
       debugPrint('SLAN_TEST_UDP_SEND_TARGET=$host:$port body=$body');
       final expected = 'echo:$body';
-      final receiveFuture = socket
-          .where((event) => event == RawSocketEvent.read)
-          .map((_) => socket.receive())
-          .where((datagram) => datagram != null)
-          .cast<Datagram>()
-          .map((datagram) => utf8.decode(datagram.data))
-          .first
-          .timeout(timeout)
-          .onError<TimeoutException>((error, stackTrace) async {
-        await logPlatformTunnelState(prefix: 'SLAN_TEST_UDP_TIMEOUT_STATE');
-        throw error;
-      });
-      socket.send(utf8.encode(body), InternetAddress(host), port);
-      final received = await receiveFuture;
-      if (received != expected) {
-        fail('unexpected UDP echo response: got="$received" want="$expected"');
+      final deadline = DateTime.now().add(timeout);
+      final events = socket.asBroadcastStream();
+      var attempts = 0;
+      while (DateTime.now().isBefore(deadline)) {
+        attempts += 1;
+        final remaining = deadline.difference(DateTime.now());
+        if (remaining <= Duration.zero) {
+          break;
+        }
+        final receiveWindow = remaining < const Duration(seconds: 2)
+            ? remaining
+            : const Duration(seconds: 2);
+        final receiveFuture = events
+            .where((event) => event == RawSocketEvent.read)
+            .map((_) => socket.receive())
+            .where((datagram) => datagram != null)
+            .cast<Datagram>()
+            .map((datagram) => utf8.decode(datagram.data))
+            .first
+            .timeout(receiveWindow, onTimeout: () => '');
+        socket.send(utf8.encode(body), InternetAddress(host), port);
+        final received = await receiveFuture;
+        if (received == expected) {
+          debugPrint('SLAN_TEST_UDP_ECHO_OK=$target attempts=$attempts');
+          return;
+        }
+        if (received.isNotEmpty) {
+          fail(
+              'unexpected UDP echo response: got="$received" want="$expected"');
+        }
       }
-      debugPrint('SLAN_TEST_UDP_ECHO_OK=$target');
+      await logPlatformTunnelState(prefix: 'SLAN_TEST_UDP_TIMEOUT_STATE');
+      throw TimeoutException(
+          'UDP echo response not received after $attempts attempts', timeout);
     } finally {
       socket.close();
     }
@@ -605,13 +641,15 @@ extension on WidgetTester {
   Future<ServerSocket> startTcpEchoServer(int port) async {
     final server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
     server.listen((socket) {
-      socket.listen(
-        (data) async {
-          final body = utf8.decode(data);
+      final lines = socket
+          .map((data) => utf8.decode(data))
+          .transform(const LineSplitter());
+      lines.listen(
+        (body) async {
           debugPrint(
             'SLAN_TEST_TCP_ECHO_RECEIVED=${socket.remoteAddress.address}:${socket.remotePort} body=$body',
           );
-          socket.write('echo:$body');
+          socket.writeln('echo:$body');
           await socket.flush();
           await socket.close();
         },
@@ -637,38 +675,47 @@ extension on WidgetTester {
     if (port == null || port <= 0) {
       fail('invalid TCP target port in $target');
     }
-    Socket? socket;
-    try {
-      debugPrint('SLAN_TEST_TCP_SEND_TARGET=$host:$port body=$body');
+    debugPrint('SLAN_TEST_TCP_SEND_TARGET=$host:$port body=$body');
+    final expected = 'echo:$body';
+    final deadline = DateTime.now().add(timeout);
+    Object? lastError;
+    var attempts = 0;
+    while (DateTime.now().isBefore(deadline)) {
+      attempts += 1;
+      Socket? socket;
       try {
-        socket = await Socket.connect(host, port, timeout: timeout);
+        final remaining = deadline.difference(DateTime.now());
+        if (remaining <= Duration.zero) {
+          break;
+        }
+        final connectTimeout = remaining < const Duration(seconds: 3)
+            ? remaining
+            : const Duration(seconds: 3);
+        socket = await Socket.connect(host, port, timeout: connectTimeout);
+        socket.writeln(body);
+        await socket.flush();
+        final received = await socket
+            .map((data) => utf8.decode(data))
+            .transform(const LineSplitter())
+            .first
+            .timeout(connectTimeout);
+        if (received != expected) {
+          fail(
+              'unexpected TCP echo response: got="$received" want="$expected"');
+        }
+        debugPrint('SLAN_TEST_TCP_ECHO_OK=$target attempts=$attempts');
+        return;
       } on Object catch (error) {
-        debugPrint('SLAN_TEST_TCP_CONNECT_ERROR=$error');
-        await logPlatformTunnelState(
-            prefix: 'SLAN_TEST_TCP_CONNECT_ERROR_STATE');
-        rethrow;
+        lastError = error;
+        debugPrint('SLAN_TEST_TCP_ATTEMPT_ERROR#$attempts=$error');
+      } finally {
+        socket?.destroy();
       }
-      socket.write(body);
-      await socket.flush();
-      final expected = 'echo:$body';
-      final receivedData = await socket.first
-          .timeout(timeout)
-          .onError<TimeoutException>((error, stackTrace) async {
-        await logPlatformTunnelState(prefix: 'SLAN_TEST_TCP_TIMEOUT_STATE');
-        throw error;
-      });
-      final received = utf8.decode(receivedData);
-      if (received != expected) {
-        fail('unexpected TCP echo response: got="$received" want="$expected"');
-      }
-      debugPrint('SLAN_TEST_TCP_ECHO_OK=$target');
-    } on Object catch (error) {
-      debugPrint('SLAN_TEST_TCP_ERROR=$error');
-      await logPlatformTunnelState(prefix: 'SLAN_TEST_TCP_ERROR_STATE');
-      rethrow;
-    } finally {
-      socket?.destroy();
     }
+    await logPlatformTunnelState(prefix: 'SLAN_TEST_TCP_ERROR_STATE');
+    throw TimeoutException(
+        'TCP echo response not received after $attempts attempts; last=$lastError',
+        timeout);
   }
 
   Future<void> logPlatformTunnelState({

@@ -111,6 +111,13 @@ type OpsRelayNode struct {
 	UpdatedAt         int64               `json:"updatedAt"`
 }
 
+// OpsNodeStatusRequest 是运营后台启用/停用 relay、DERP 或 punch 节点的请求。
+type OpsNodeStatusRequest struct {
+	Enabled *bool  `json:"enabled,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Health  string `json:"health,omitempty"`
+}
+
 // OpsPunchNode 是运营后台管理的 P2P 打洞节点。
 type OpsPunchNode struct {
 	// NodeID 是打洞节点唯一 ID。

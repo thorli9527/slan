@@ -7,7 +7,7 @@
 - `server-main`：运营管理控制台
 - `server-wire`：联网控制面
 - `server-wire-relay`：UDP relay 数据面
-- `server-wire-derp`：TCP/TLS 443 最终兜底数据面
+- `server-wire-derp`：DERP 最终兜底数据面；当前实现为裸 TCP JSON-lines，生产 443/TLS 需要外部四层/TLS 终止或后续内置 TLS transport
 
 ## 子系统文档
 

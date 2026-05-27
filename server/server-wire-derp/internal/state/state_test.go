@@ -45,6 +45,41 @@ func TestConnectAndBindSession(t *testing.T) {
 	}
 }
 
+func TestDisconnectTargetPeerKeepsOwnerSession(t *testing.T) {
+	store := NewStore()
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	expiresAt := time.Now().Add(time.Minute)
+	ticket := protocol.DerpTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		Path:      "derp_tcp_tls_443",
+		RegionID:  "region-a",
+		NodeID:    "node-a",
+		ExpiresAt: expiresAt,
+	}
+	ticket.Signature = signDerpTestTicket(ticket)
+	session, _, err := store.Connect(serverConn, "peer-a", "node-a", "region-a", ticket)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if _, err := store.BindSessionPeer(session.SessionID, "peer-b"); err != nil {
+		t.Fatalf("bind peer: %v", err)
+	}
+
+	store.Disconnect("peer-b")
+
+	view, ok := store.Session(session.SessionID)
+	if !ok {
+		t.Fatalf("owner session should survive target peer disconnect")
+	}
+	if view.PeerB != "" {
+		t.Fatalf("target peer binding should be cleared, got %q", view.PeerB)
+	}
+}
+
 func TestConnectUsesUniqueRandomSessionIDs(t *testing.T) {
 	store := NewStore()
 	firstServer, firstClient := net.Pipe()

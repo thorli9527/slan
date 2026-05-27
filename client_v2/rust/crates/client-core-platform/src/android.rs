@@ -191,7 +191,9 @@ fn android_diagnostic_checks(config: &AndroidCachedNetworkConfig) -> Vec<Platfor
     if let Some(relay) = &config.relay_config {
         checks.push(PlatformDiagnosticCheck {
             name: "relayDataPlane".to_string(),
-            ok: relay.enabled && relay.transport.eq_ignore_ascii_case("udp"),
+            ok: relay.enabled
+                && !relay.sessions.is_empty()
+                && client_core::relay_path_kind_for_transport(&relay.transport).is_some(),
             message: Some(format!(
                 "transport={} sessions={}",
                 relay.transport,

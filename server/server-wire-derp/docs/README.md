@@ -1,6 +1,6 @@
 # server-wire-derp docs
 
-`server-wire-derp` 是新系统的 DERP over TCP/TLS 443 最终兜底数据面。
+`server-wire-derp` 是新系统的 DERP 最终兜底数据面。当前实现为裸 TCP JSON-lines；生产 443/TLS 需要外部四层/TLS 终止或后续内置 TLS transport。
 
 - [需求文档](./requirements.md)
 - [接口文档](./interfaces.md)

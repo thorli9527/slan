@@ -1288,10 +1288,10 @@ impl HttpEndpoint {
         body: &[u8],
     ) -> Result<Vec<u8>> {
         let mut last_error = None;
-        for attempt in 1..=3 {
+        for attempt in 1..=5 {
             match self.request_once(method, path, access_token, headers, body) {
                 Ok(response) => return Ok(response),
-                Err(error) if transient_control_request_error(&error) && attempt < 3 => {
+                Err(error) if transient_control_request_error(&error) && attempt < 5 => {
                     last_error = Some(error);
                     thread::sleep(Duration::from_millis(120 * attempt));
                 }
@@ -1354,6 +1354,11 @@ fn transient_control_request_error(error: &anyhow::Error) -> bool {
         || message.contains("connection reset")
         || message.contains("connection refused")
         || message.contains("software caused connection abort")
+        || message.contains("http 502")
+        || message.contains("http 503")
+        || message.contains("http 504")
+        || (message.contains("http 404")
+            && (message.contains("document error") || message.contains("site or page not found")))
 }
 
 fn encode_extra_headers(headers: &[(&str, &str)]) -> Result<String> {

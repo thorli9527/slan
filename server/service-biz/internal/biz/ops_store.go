@@ -44,7 +44,9 @@ func (s *Store) seedOpsDefaultsLocked(now int64) {
 		s.addProductLocked(Product{Name: "企业版年付", Type: "plan", PlanCode: "enterprise", Period: "yearly", ValidDays: 365, RelayTrafficGB: 10240, RelayBandwidthMbps: 1000, ListPrice: 2999, SalePrice: 2999, Currency: "CNY", AutoRenew: false, Status: "active", Description: "企业版基础年付"})
 	}
 	if len(s.relayNodes) == 0 {
-		s.addRelayNodeLocked(defaultOpsRelayNode())
+		if node, ok := defaultOpsRelayNode(); ok {
+			s.addRelayNodeLocked(node)
+		}
 	}
 	if len(s.punchNodes) == 0 {
 		for _, node := range configuredPunchNodes() {
@@ -53,18 +55,14 @@ func (s *Store) seedOpsDefaultsLocked(now int64) {
 	}
 }
 
-func defaultOpsRelayNode() OpsRelayNode {
-	publicAddr := "udp://127.0.0.1:3478"
-	region := "local"
+func defaultOpsRelayNode() (OpsRelayNode, bool) {
 	for _, candidate := range configuredRelayCandidates() {
 		if candidate.Transport != "udp" || strings.TrimSpace(candidate.Address) == "" {
 			continue
 		}
-		publicAddr = relayURL(candidate)
-		region = defaultString(candidate.RegionID, region)
-		break
+		return OpsRelayNode{Name: "默认 UDP Relay", Region: defaultString(candidate.RegionID, "local"), Transport: "relay_udp", PublicAddr: relayURL(candidate), MaxBandwidthMbps: 1000, MonthlyTrafficGB: 10240, MaxSessions: 10000, Status: "active", Health: "healthy"}, true
 	}
-	return OpsRelayNode{Name: "默认 UDP Relay", Region: region, Transport: "relay_udp", PublicAddr: publicAddr, MaxBandwidthMbps: 1000, MonthlyTrafficGB: 10240, MaxSessions: 10000, Status: "active", Health: "healthy"}
+	return OpsRelayNode{}, false
 }
 
 func (s *Store) LoginOperator(email, password string) (OperatorAuthResponse, error) {
@@ -321,6 +319,39 @@ func (s *Store) addRelayNodeLocked(node OpsRelayNode) OpsRelayNode {
 	return node
 }
 
+func (s *Store) UpdateRelayNodeStatus(nodeID string, req OpsNodeStatusRequest) (OpsRelayNode, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" || (req.Enabled == nil && strings.TrimSpace(req.Status) == "" && strings.TrimSpace(req.Health) == "") {
+		return OpsRelayNode{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	node, ok := s.relayNodes[nodeID]
+	if !ok {
+		return OpsRelayNode{}, errNotFound
+	}
+	if req.Enabled != nil {
+		if *req.Enabled {
+			node.Status = "active"
+			if node.Health == "down" {
+				node.Health = "healthy"
+			}
+		} else {
+			node.Status = "disabled"
+			node.Health = "down"
+		}
+	}
+	if status := strings.TrimSpace(req.Status); status != "" {
+		node.Status = status
+	}
+	if health := strings.TrimSpace(req.Health); health != "" {
+		node.Health = health
+	}
+	node.UpdatedAt = time.Now().Unix()
+	s.relayNodes[nodeID] = node
+	return node, nil
+}
+
 func (s *Store) ListPunchNodes() []OpsPunchNode {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -397,6 +428,39 @@ func (s *Store) addPunchNodeLocked(node OpsPunchNode) OpsPunchNode {
 	node.UpdatedAt = now
 	s.punchNodes[node.NodeID] = node
 	return node
+}
+
+func (s *Store) UpdatePunchNodeStatus(nodeID string, req OpsNodeStatusRequest) (OpsPunchNode, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" || (req.Enabled == nil && strings.TrimSpace(req.Status) == "" && strings.TrimSpace(req.Health) == "") {
+		return OpsPunchNode{}, errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	node, ok := s.punchNodes[nodeID]
+	if !ok {
+		return OpsPunchNode{}, errNotFound
+	}
+	if req.Enabled != nil {
+		if *req.Enabled {
+			node.Status = "active"
+			if node.Health == "down" {
+				node.Health = "healthy"
+			}
+		} else {
+			node.Status = "disabled"
+			node.Health = "down"
+		}
+	}
+	if status := strings.TrimSpace(req.Status); status != "" {
+		node.Status = status
+	}
+	if health := strings.TrimSpace(req.Health); health != "" {
+		node.Health = health
+	}
+	node.UpdatedAt = time.Now().Unix()
+	s.punchNodes[nodeID] = node
+	return node, nil
 }
 
 func (s *Store) ListCustomers() []CustomerProfile {

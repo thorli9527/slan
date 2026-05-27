@@ -40,6 +40,8 @@ func NewUDPServerWithStore(cfg config.Config, store state.StoreAPI) (*UDPServer,
 	if err != nil {
 		return nil, err
 	}
+	_ = conn.SetReadBuffer(4 * 1024 * 1024)
+	_ = conn.SetWriteBuffer(4 * 1024 * 1024)
 	if store == nil {
 		store = state.NewStore()
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/slan/server/server-wire-relay/internal/protocol"
@@ -161,7 +162,7 @@ func (s *Store) Attach(addr *net.UDPAddr, participantID string, ticket protocol.
 	} else if session.ExpiresAt.IsZero() || session.ExpiresAt.Before(ticket.ExpiresAt) {
 		session.ExpiresAt = ticket.ExpiresAt
 	}
-	if previous, ok := session.Participants[participantID]; ok && previous.String() != addr.String() {
+	if previous, ok := session.Participants[participantID]; ok && !sameUDPAddr(previous, addr) {
 		s.participantAddressChangeCount++
 	}
 	session.Participants[participantID] = cloneAddr(addr)
@@ -302,8 +303,8 @@ func parseTicketSecretList(value string) []string {
 }
 
 func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []byte) (*net.UDPAddr, string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	session, ok := s.sessions[sessionID]
 	if !ok {
@@ -313,16 +314,16 @@ func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []
 	if !ok {
 		return nil, "", ErrParticipantNotFound
 	}
-	if bound.String() != addr.String() {
+	if !sameUDPAddr(bound, addr) {
 		return nil, "", ErrParticipantNotFound
 	}
 	for peerID, peerAddr := range session.Participants {
 		if peerID != participantID {
-			s.forwardCount++
-			return cloneAddr(peerAddr), peerID, nil
+			atomic.AddUint64(&s.forwardCount, 1)
+			return copyAddrForRead(peerAddr), peerID, nil
 		}
 	}
-	s.forwardPeerNotAttachedCount++
+	atomic.AddUint64(&s.forwardPeerNotAttachedCount, 1)
 	return nil, "", ErrPeerNotAttached
 }
 
@@ -341,7 +342,7 @@ func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID s
 	if _, ok := session.Participants[participantID]; !ok {
 		return ErrParticipantNotFound
 	}
-	if previous := session.Participants[participantID]; previous != nil && previous.String() != addr.String() {
+	if previous := session.Participants[participantID]; previous != nil && !sameUDPAddr(previous, addr) {
 		s.participantAddressChangeCount++
 	}
 	for sourceKey, binding := range s.sources {
@@ -367,7 +368,7 @@ func (s *Store) Detach(addr *net.UDPAddr, sessionID, participantID string) error
 		return ErrSessionNotFound
 	}
 	bound, ok := session.Participants[participantID]
-	if !ok || bound.String() != addr.String() {
+	if !ok || !sameUDPAddr(bound, addr) {
 		return ErrParticipantNotFound
 	}
 	delete(session.Participants, participantID)
@@ -407,8 +408,8 @@ func (s *Store) Metrics() Metrics {
 		AttachCount:                   s.attachCount,
 		ParticipantRefreshCount:       s.participantRefreshCount,
 		ParticipantAddressChangeCount: s.participantAddressChangeCount,
-		ForwardCount:                  s.forwardCount,
-		ForwardPeerNotAttachedCount:   s.forwardPeerNotAttachedCount,
+		ForwardCount:                  atomic.LoadUint64(&s.forwardCount),
+		ForwardPeerNotAttachedCount:   atomic.LoadUint64(&s.forwardPeerNotAttachedCount),
 	}
 }
 
@@ -436,4 +437,19 @@ func cloneAddr(addr *net.UDPAddr) *net.UDPAddr {
 		out.IP = append([]byte(nil), addr.IP...)
 	}
 	return &out
+}
+
+func copyAddrForRead(addr *net.UDPAddr) *net.UDPAddr {
+	if addr == nil {
+		return nil
+	}
+	out := *addr
+	return &out
+}
+
+func sameUDPAddr(a, b *net.UDPAddr) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Port == b.Port && a.Zone == b.Zone && a.IP.Equal(b.IP)
 }

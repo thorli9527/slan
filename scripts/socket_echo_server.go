@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -14,8 +16,10 @@ import (
 func main() {
 	var udpPort int
 	var tcpPort int
+	var listenHost string
 	flag.IntVar(&udpPort, "udp-port", 19090, "UDP echo listen port")
 	flag.IntVar(&tcpPort, "tcp-port", 19091, "TCP echo listen port")
+	flag.StringVar(&listenHost, "listen-host", "0.0.0.0", "echo listen host")
 	flag.Parse()
 
 	var wg sync.WaitGroup
@@ -24,14 +28,14 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runUDP(udpPort, stop)
+			runUDP(listenHost, udpPort, stop)
 		}()
 	}
 	if tcpPort > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runTCP(tcpPort, stop)
+			runTCP(listenHost, tcpPort, stop)
 		}()
 	}
 
@@ -42,8 +46,8 @@ func main() {
 	wg.Wait()
 }
 
-func runUDP(port int, stop <-chan struct{}) {
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: port})
+func runUDP(host string, port int, stop <-chan struct{}) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(host).To4(), Port: port})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "udp listen failed: %v\n", err)
 		os.Exit(1)
@@ -68,12 +72,17 @@ func runUDP(port int, stop <-chan struct{}) {
 		}
 		body := string(buf[:n])
 		fmt.Printf("SOCKET_ECHO_UDP_RECEIVED=%s body=%s\n", addr.String(), body)
-		_, _ = conn.WriteToUDP([]byte("echo:"+body), addr)
+		written, err := conn.WriteToUDP([]byte("echo:"+body), addr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "udp write failed: %v\n", err)
+			continue
+		}
+		fmt.Printf("SOCKET_ECHO_UDP_SENT=%s bytes=%d\n", addr.String(), written)
 	}
 }
 
-func runTCP(port int, stop <-chan struct{}) {
-	listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
+func runTCP(host string, port int, stop <-chan struct{}) {
+	listener, err := net.Listen("tcp4", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tcp listen failed: %v\n", err)
 		os.Exit(1)
@@ -103,16 +112,15 @@ func runTCP(port int, stop <-chan struct{}) {
 
 func handleTCP(conn net.Conn) {
 	defer conn.Close()
-	buf := make([]byte, 2048)
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	n, err := conn.Read(buf)
+	body, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tcp read failed: %v\n", err)
 		return
 	}
-	body := string(buf[:n])
+	body = strings.TrimSuffix(body, "\n")
 	fmt.Printf("SOCKET_ECHO_TCP_RECEIVED=%s body=%s\n", conn.RemoteAddr().String(), body)
-	_, _ = conn.Write([]byte("echo:" + body))
+	_, _ = conn.Write([]byte("echo:" + body + "\n"))
 	time.Sleep(500 * time.Millisecond)
 }
 

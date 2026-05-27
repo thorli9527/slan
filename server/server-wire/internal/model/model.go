@@ -14,7 +14,7 @@ const (
 	PathDirectUDP PathKind = "direct_udp"
 	// PathRelayUDP 表示通过 UDP relay 转发。
 	PathRelayUDP PathKind = "relay_udp"
-	// PathDerpTCP443 表示通过 DERP TCP/TLS 443 转发。
+	// PathDerpTCP443 表示通过 DERP TCP 兜底转发；生产 443/TLS 由部署入口提供。
 	PathDerpTCP443 PathKind = "derp_tcp_tls_443"
 )
 

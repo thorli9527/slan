@@ -64,7 +64,7 @@
 
 - `SLAN_WIRE_TICKET_SECRET`：必须与 `server-wire` 保持一致，用于校验 `derp_tcp_tls_443` ticket。
 - `SLAN_WIRE_TICKET_SECRETS`：必须与 `server-wire` 的校验密钥环保持一致。
-- 生产必须使用真实 TCP/TLS 443 入口，证书、SNI、反向代理和健康检查需要单独配置。
+- 当前 DERP listener 是裸 TCP JSON-lines；生产如需 443/TLS，证书、SNI、四层/TLS 终止和健康检查需要在外部入口单独配置，或后续统一实现内置 TLS transport。
 - region / node 标识要与 `server-wire` 下发的 DERP map 保持一致。
 
 ## 生产化缺口

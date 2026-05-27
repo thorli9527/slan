@@ -3,14 +3,20 @@ package protocol
 import "time"
 
 type DerpTicket struct {
-	TicketID  string    `json:"ticketId"`
-	PeerID    string    `json:"peerId"`
-	NetworkID string    `json:"networkId,omitempty"`
-	Path      string    `json:"path"`
-	RegionID  string    `json:"regionId"`
-	NodeID    string    `json:"nodeId"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	Signature string    `json:"signature"`
+	TicketID           string    `json:"ticketId"`
+	PeerID             string    `json:"peerId"`
+	NetworkID          string    `json:"networkId,omitempty"`
+	Path               string    `json:"path"`
+	RegionID           string    `json:"regionId"`
+	NodeID             string    `json:"nodeId"`
+	SessionID          string    `json:"sessionId,omitempty"`
+	SrcNodeID          string    `json:"srcNodeId,omitempty"`
+	DstNodeID          string    `json:"dstNodeId,omitempty"`
+	RelayURL           string    `json:"relayUrl,omitempty"`
+	SessionKey         string    `json:"sessionKey,omitempty"`
+	AllowedDERPNodeIDs []string  `json:"allowedDerpNodeIds,omitempty"`
+	ExpiresAt          time.Time `json:"expiresAt"`
+	Signature          string    `json:"signature"`
 }
 
 type ClientMessage struct {

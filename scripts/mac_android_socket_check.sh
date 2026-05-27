@@ -13,6 +13,7 @@ USE_EXISTING_MAC_SERVICE="${SLAN_USE_EXISTING_MAC_SERVICE:-0}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 EMAIL="${SLAN_TEST_EMAIL:-mac-android-socket-$(date +%s%N)@example.test}"
+REGISTER_USER="${SLAN_TEST_REGISTER_USER:-true}"
 TIMEOUT="${SLAN_MAC_ANDROID_SOCKET_TIMEOUT:-90s}"
 MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 UDP_PORT="${SLAN_TEST_UDP_ECHO_PORT:-19090}"
@@ -27,6 +28,74 @@ MAC_CORE_LOG="$WORK_DIR/state/SLAN/client-core-service.log"
 
 PIDS=()
 
+fail() {
+  echo "$*" >&2
+  exit 1
+}
+
+android_runtime_json() {
+  sed -n 's/.*SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=//p' "$ANDROID_LOG" | tail -n 1
+}
+
+json_number_value() {
+  local json="$1"
+  local key="$2"
+  printf '%s' "$json" | sed -n "s/.*\"${key}\":\([0-9][0-9]*\).*/\1/p"
+}
+
+assert_android_stat_min() {
+  local key="$1"
+  local min_value="$2"
+  local json value
+  json="$(android_runtime_json)"
+  [[ -n "$json" ]] || fail "missing SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD in Android log"
+  value="$(json_number_value "$json" "$key")"
+  [[ -n "$value" ]] || fail "missing Android runtime stat: $key"
+  if (( value < min_value )); then
+    fail "Android runtime stat $key=$value is below expected minimum $min_value"
+  fi
+}
+
+assert_android_config_contains() {
+  local expected="$1"
+  grep -q "SLAN_ANDROID_NETWORK_CONFIG .*${expected}" "$ANDROID_LOG" \
+    || fail "Android network config does not contain expected pattern: $expected"
+}
+
+run_client_core_login_check() {
+  local label="$1"
+  shift
+  local attempts="${SLAN_CONTROL_RETRY_ATTEMPTS:-3}"
+  local attempt output status
+  local args=("$@")
+  for attempt in $(seq 1 "$attempts"); do
+    set +e
+    output="$(
+      cd "$ROOT_DIR"
+      "$GO_BIN" run scripts/client_core_service_login_check.go "${args[@]}" 2>&1
+    )"
+    status=$?
+    set -e
+    if [[ $status -eq 0 ]]; then
+      echo "$output"
+      return 0
+    fi
+    echo "$label attempt $attempt/$attempts failed: $output" >&2
+    if [[ "$output" == *"HTTP 409"* ]]; then
+      for index in "${!args[@]}"; do
+        if [[ "${args[$index]}" == "-register=true" ]]; then
+          args[$index]="-register=false"
+        fi
+      done
+    fi
+    if [[ "$attempt" != "$attempts" ]]; then
+      sleep $((attempt * 5))
+    fi
+  done
+  echo "$output"
+  return "$status"
+}
+
 cleanup() {
   status=$?
   if [[ $status -ne 0 ]]; then
@@ -35,8 +104,17 @@ cleanup() {
     [[ -f "$ECHO_LOG" ]] && { echo "---- Mac echo log ----" >&2; cat "$ECHO_LOG" >&2; }
     [[ -f "$ANDROID_LOG" ]] && { echo "---- Android socket log ----" >&2; cat "$ANDROID_LOG" >&2; }
   fi
+  terminate_tree() {
+    local root_pid="$1"
+    local child_pid
+    while IFS= read -r child_pid; do
+      [[ -n "$child_pid" ]] || continue
+      terminate_tree "$child_pid"
+    done < <(pgrep -P "$root_pid" 2>/dev/null || true)
+    kill "$root_pid" 2>/dev/null || true
+  }
   for pid in "${PIDS[@]:-}"; do
-    kill "$pid" 2>/dev/null || true
+    terminate_tree "$pid"
   done
   if [[ "${SLAN_KEEP_MAC_ANDROID_SOCKET_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
@@ -71,6 +149,7 @@ if [[ "$USE_EXISTING_MAC_SERVICE" != "1" ]]; then
     SLAN_CONTROL_BASE_URL="$BIZ_URL" \
     SLAN_CLIENT_DEVICE_ID="$MAC_TEST_DEVICE_ID" \
     SLAN_MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}" \
+    SLAN_DIRECT_UDP_ENDPOINT="${SLAN_DIRECT_UDP_ENDPOINT:-}" \
     SLAN_STATE_DIR="$WORK_DIR/state" \
     "$SERVICE_BIN" >"$MAC_SERVICE_LOG" 2>&1 &
   PIDS+=("$!")
@@ -80,13 +159,12 @@ fi
 
 echo "+ login and enable Mac service network at $MAC_SERVICE_HOST"
 if ! MAC_OUTPUT="$(
-  cd "$ROOT_DIR"
-  "$GO_BIN" run scripts/client_core_service_login_check.go \
+  run_client_core_login_check "mac socket login" \
     -biz-url "$BIZ_URL" \
     -address "$MAC_SERVICE_HOST" \
     -email "$EMAIL" \
     -password "$PASSWORD" \
-    -register=true \
+    -register="$REGISTER_USER" \
     -enable-network=true \
     -timeout "$TIMEOUT"
 )"; then
@@ -113,7 +191,8 @@ echo "+ start Mac UDP/TCP echo server"
   cd "$ROOT_DIR"
   "$GO_BIN" run scripts/socket_echo_server.go \
     -udp-port "$UDP_PORT" \
-    -tcp-port "$TCP_PORT"
+    -tcp-port "$TCP_PORT" \
+    -listen-host "$MAC_IP"
 ) >"$ECHO_LOG" 2>&1 &
 ECHO_PID="$!"
 PIDS+=("$ECHO_PID")
@@ -136,16 +215,37 @@ if ! grep -q "SOCKET_ECHO_UDP_READY=$UDP_PORT" "$ECHO_LOG" || ! grep -q "SOCKET_
 fi
 
 echo "+ build and pre-authorize Android VPN"
-(
-  cd "$APP_DIR"
-  flutter build apk --debug >/dev/null
-)
+if [[ "${SLAN_SKIP_ANDROID_BUILD:-0}" != "1" ]]; then
+  (
+    cd "$APP_DIR"
+    flutter build apk --debug >/dev/null
+  )
+else
+  echo "+ skip Android build and reuse existing debug APK"
+fi
 "$ADB" install -r "$APP_DIR/build/app/outputs/flutter-apk/app-debug.apk" >/dev/null
-"$ADB" shell pm clear dev.slan.slan_client_v2 >/dev/null
+if [[ "${SLAN_ANDROID_CLEAR_APP:-1}" == "1" ]]; then
+  "$ADB" shell pm clear dev.slan.slan_client_v2 >/dev/null
+fi
 "$ADB" shell cmd appops set dev.slan.slan_client_v2 ACTIVATE_VPN allow
 "$ADB" shell cmd appops get dev.slan.slan_client_v2 ACTIVATE_VPN
 
 echo "+ run Android UDP/TCP sender target=$MAC_IP udp=$UDP_PORT tcp=$TCP_PORT"
+if [[ "${SLAN_SKIP_ANDROID_SOCKET_SEND:-0}" == "1" ]]; then
+  ANDROID_UDP_TARGET=""
+  ANDROID_TCP_TARGET=""
+else
+  if [[ "${SLAN_SKIP_ANDROID_UDP_SEND:-0}" == "1" ]]; then
+    ANDROID_UDP_TARGET=""
+  else
+    ANDROID_UDP_TARGET="$MAC_IP:$UDP_PORT"
+  fi
+  if [[ "${SLAN_SKIP_ANDROID_TCP_SEND:-0}" == "1" ]]; then
+    ANDROID_TCP_TARGET=""
+  else
+    ANDROID_TCP_TARGET="$MAC_IP:$TCP_PORT"
+  fi
+fi
 (
   cd "$APP_DIR"
   flutter test integration_test/mobile_login_test.dart \
@@ -154,33 +254,58 @@ echo "+ run Android UDP/TCP sender target=$MAC_IP udp=$UDP_PORT tcp=$TCP_PORT"
     --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$ANDROID_BIZ_URL" \
     --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
     --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
+    --dart-define="SLAN_TEST_DEVICE_ID=${SLAN_ANDROID_TEST_DEVICE_ID:-}" \
     --dart-define="SLAN_TEST_REGISTER_USER=false" \
     --dart-define="SLAN_TEST_WAIT_MQTT=true" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
     --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=${SLAN_ANDROID_SEND_POST_ENABLE_WAIT_SECONDS:-8}" \
     --dart-define="SLAN_TEST_HOLD_SECONDS=${SLAN_ANDROID_TEST_HOLD_SECONDS:-0}" \
-    --dart-define="SLAN_TEST_UDP_SEND_TARGET=$MAC_IP:$UDP_PORT" \
+    --dart-define="SLAN_TEST_UDP_SEND_TARGET=$ANDROID_UDP_TARGET" \
     --dart-define="SLAN_TEST_UDP_SEND_BODY=$UDP_BODY" \
-    --dart-define="SLAN_TEST_TCP_SEND_TARGET=$MAC_IP:$TCP_PORT" \
+    --dart-define="SLAN_TEST_TCP_SEND_TARGET=$ANDROID_TCP_TARGET" \
     --dart-define="SLAN_TEST_TCP_SEND_BODY=$TCP_BODY"
 ) >"$ANDROID_LOG" 2>&1
 cat "$ANDROID_LOG"
 
-if ! grep -q "SLAN_TEST_UDP_ECHO_OK=$MAC_IP:$UDP_PORT" "$ANDROID_LOG"; then
+if [[ "${SLAN_SKIP_ANDROID_UDP_SEND:-0}" != "1" ]] && ! grep -q "SLAN_TEST_UDP_ECHO_OK=$MAC_IP:$UDP_PORT" "$ANDROID_LOG"; then
   echo "Android UDP echo check did not complete" >&2
   exit 1
 fi
-if ! grep -q "SLAN_TEST_TCP_ECHO_OK=$MAC_IP:$TCP_PORT" "$ANDROID_LOG"; then
+if [[ "${SLAN_SKIP_ANDROID_TCP_SEND:-0}" != "1" ]] && ! grep -q "SLAN_TEST_TCP_ECHO_OK=$MAC_IP:$TCP_PORT" "$ANDROID_LOG"; then
   echo "Android TCP echo check did not complete" >&2
   exit 1
 fi
-if ! grep -q "SOCKET_ECHO_UDP_RECEIVED=" "$ECHO_LOG"; then
+if [[ "${SLAN_SKIP_ANDROID_UDP_SEND:-0}" != "1" ]] && ! grep -q "SOCKET_ECHO_UDP_RECEIVED=" "$ECHO_LOG"; then
   echo "Mac UDP echo server did not receive data" >&2
   exit 1
 fi
-if ! grep -q "SOCKET_ECHO_TCP_RECEIVED=" "$ECHO_LOG"; then
+if [[ "${SLAN_SKIP_ANDROID_TCP_SEND:-0}" != "1" ]] && ! grep -q "SOCKET_ECHO_TCP_RECEIVED=" "$ECHO_LOG"; then
   echo "Mac TCP echo server did not receive data" >&2
   exit 1
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_RELAY_URL_CONTAINS:-}" ]]; then
+  assert_android_config_contains "relayUrls=[^ ]*${SLAN_EXPECT_ANDROID_RELAY_URL_CONTAINS}"
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS:-}" ]]; then
+  assert_android_config_contains "pathKinds=[^ ]*${SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS}"
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_DIRECT_CANDIDATES_CONTAINS:-}" ]]; then
+  assert_android_config_contains "directCandidates=[^ ]*${SLAN_EXPECT_ANDROID_DIRECT_CANDIDATES_CONTAINS}"
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_DIRECT_READY_MIN:-}" ]]; then
+  assert_android_stat_min "directUdpReadyPeerCount" "$SLAN_EXPECT_ANDROID_DIRECT_READY_MIN"
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_DIRECT_FRAMES_SENT_MIN:-}" ]]; then
+  assert_android_stat_min "directUdpFramesSent" "$SLAN_EXPECT_ANDROID_DIRECT_FRAMES_SENT_MIN"
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_RELAY_FRAMES_SENT_MIN:-}" ]]; then
+  assert_android_stat_min "relayFramesSent" "$SLAN_EXPECT_ANDROID_RELAY_FRAMES_SENT_MIN"
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_RELAY_TCP_SYN_ACK_MIN:-}" ]]; then
+  assert_android_stat_min "relayTcpSynAckReceived" "$SLAN_EXPECT_ANDROID_RELAY_TCP_SYN_ACK_MIN"
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_RELAY_TCP_FRAMES_RECEIVED_MIN:-}" ]]; then
+  assert_android_stat_min "relayTcpFramesReceived" "$SLAN_EXPECT_ANDROID_RELAY_TCP_FRAMES_RECEIVED_MIN"
 fi
 cat "$ECHO_LOG"
 

@@ -208,6 +208,11 @@ public final class ClientCorePlugin
       return;
     }
     JSONObject config = JsonCodec.toJsonObject(call.arguments);
+    SlanVpnRuntime.markStarting(
+        config.optString("virtualIp", ""),
+        config.has("mtu") ? config.optInt("mtu") : null,
+        relayAddress(config),
+        relaySessionCount(config));
     Intent intent = new Intent(context, SlanVpnService.class);
     intent.setAction(SlanVpnService.ACTION_START);
     intent.putExtra(SlanVpnService.EXTRA_CONFIG_JSON, config.toString());
@@ -217,6 +222,25 @@ public final class ClientCorePlugin
       state.put("virtualIp", config.optString("virtualIp", ""));
     }
     result.success(SlanVpnRuntime.runtimeState());
+  }
+
+  private String relayAddress(JSONObject config) {
+    String relayAddress = config.optString("relayAddress", "").trim();
+    if (!relayAddress.isEmpty()) {
+      return relayAddress;
+    }
+    JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
+    return relayDataPlane == null ? "" : relayDataPlane.optString("relayAddress", "").trim();
+  }
+
+  private Integer relaySessionCount(JSONObject config) {
+    JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
+    if (relayDataPlane == null || !relayDataPlane.optBoolean("enabled", false)) {
+      return 0;
+    }
+    return relayDataPlane.optJSONArray("sessions") == null
+        ? 0
+        : relayDataPlane.optJSONArray("sessions").length();
   }
 
   /** Stop foreground VpnService and clear cached network state. */

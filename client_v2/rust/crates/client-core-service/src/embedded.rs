@@ -8,10 +8,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use client_core::{
-    AssignedIpPayload, AuthPayload, ClientCommand, ClientMessageNoticePayload, ClientRuntime,
-    ClientViewState, PathCandidate, PathKind, PathState, PeerPathConfig,
-    PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig, RelayPeerSession,
-    RouteSpec,
+    relay_path_kind_for_transport, AssignedIpPayload, AuthPayload, ClientCommand,
+    ClientMessageNoticePayload, ClientRuntime, ClientViewState, PathCandidate, PathKind, PathState,
+    PeerPathConfig, PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig,
+    RelayPeerSession, RouteSpec,
 };
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
@@ -277,6 +277,10 @@ fn platform_network_config() -> Result<Value> {
         .as_ref()
         .map(|config| config.sessions.len())
         .unwrap_or_default();
+    let platform_relay_address = relay_data_plane
+        .as_ref()
+        .map(|config| config.relay_address.clone())
+        .or_else(|| best_relay.map(|relay| relay.address.clone()));
     let config = PlatformNetworkConfig {
         session_name: "SLAN".to_string(),
         virtual_ip: activation.virtual_ip.clone(),
@@ -291,7 +295,7 @@ fn platform_network_config() -> Result<Value> {
         mtu: Some(1280),
         relay_endpoint_id: best_relay.map(|relay| relay.endpoint_id.clone()),
         relay_transport: best_relay.map(|relay| relay.transport.clone()),
-        relay_address: best_relay.map(|relay| relay.address.clone()),
+        relay_address: platform_relay_address,
         relay_data_plane,
     };
     let mut value = serde_json::to_value(config).context("encode platform config value")?;
@@ -383,9 +387,10 @@ fn build_embedded_relay_data_plane_config(
 ) -> Result<RelayDataPlaneConfig> {
     let relay = relay.ok_or_else(|| anyhow::anyhow!("no relay candidate is available"))?;
     let relay_transport = relay.transport.trim().to_ascii_lowercase();
-    if relay_transport != "udp" {
-        anyhow::bail!("embedded data plane only supports udp relay");
-    }
+    let relay_path_kind =
+        relay_path_kind_for_transport(relay_transport.as_str()).ok_or_else(|| {
+            anyhow::anyhow!("unsupported embedded relay transport: {relay_transport}")
+        })?;
     let local_node_id = self_node_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -423,14 +428,26 @@ fn build_embedded_relay_data_plane_config(
             ticket_errors.join("; ")
         );
     }
+    let relay_address = sessions
+        .first()
+        .map(|session| session.ticket.relay_url.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| relay.address.clone());
     Ok(RelayDataPlaneConfig {
         enabled: !sessions.is_empty(),
         transport: relay.transport.clone(),
-        relay_address: relay.address.clone(),
+        relay_address,
         local_node_id: local_node_id.to_string(),
         network_id: network_id.to_string(),
         path_policy: Default::default(),
-        peer_paths: embedded_peer_path_configs(peers, local_node_id, relay, sessions.as_slice()),
+        peer_paths: embedded_peer_path_configs(
+            peers,
+            local_node_id,
+            relay,
+            relay_path_kind,
+            sessions.as_slice(),
+        ),
         relay_mtu: Some(1280),
         max_frame_payload: Some(1200),
         sessions,
@@ -441,6 +458,7 @@ fn embedded_peer_path_configs(
     peers: &[crate::control_plane::ControlPeer],
     local_node_id: &str,
     relay: &crate::control_plane::RelayCandidate,
+    relay_path_kind: PathKind,
     relay_sessions: &[RelayPeerSession],
 ) -> Vec<PeerPathConfig> {
     peers
@@ -474,7 +492,7 @@ fn embedded_peer_path_configs(
             if let Some(session) = relay_session {
                 let relay_transport = relay.transport.trim().to_ascii_lowercase();
                 candidates.push(PathCandidate {
-                    kind: PathKind::RelayUdp,
+                    kind: relay_path_kind,
                     state: PathState::Standby,
                     endpoint_id: Some(relay.endpoint_id.clone()),
                     address: Some(relay.address.clone()),
@@ -497,11 +515,33 @@ fn embedded_peer_path_configs(
 
 fn ensure_device_session() -> Result<PersistedSession> {
     let session = load_session().context("load session")?;
+    let session = align_embedded_session_device_id(session)?;
     let session = ensure_session_device_registered(session).context("register device")?;
     {
         let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
         let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.clone().into()));
     }
+    Ok(session)
+}
+
+fn align_embedded_session_device_id(mut session: PersistedSession) -> Result<PersistedSession> {
+    let expected_device_id = local_stable_device_id().context("resolve embedded device id")?;
+    let current_device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if current_device_id == Some(expected_device_id.as_str()) {
+        return Ok(session);
+    }
+    session.device_id = Some(expected_device_id);
+    session.device_session_id = None;
+    session.device_token = None;
+    session.device_refresh_token = None;
+    session.device_token_expires_at = None;
+    session.self_node_id = None;
+    session.virtual_ip = None;
+    session.mqtt = None;
     Ok(session)
 }
 
@@ -1025,13 +1065,19 @@ fn validate_embedded_device_user_login_succeeded(
     runtime: &ClientRuntime<PlatformNetworkImpl>,
     auth: &AuthPayload,
 ) -> Result<()> {
-    if let Some(expected_device_id) = runtime
-        .state()
-        .device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    let expected_device_id = local_stable_device_id()
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            runtime
+                .state()
+                .device_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        });
+    if let Some(expected_device_id) = expected_device_id.as_deref() {
         if auth
             .device_id
             .as_deref()

@@ -3156,6 +3156,7 @@ func (s *Store) devicesWithSubnetLocked(networkID string, devices []Device) []De
 	for _, device := range devices {
 		withSubnet := s.deviceWithSubnetLocked(device)
 		withSubnet.Endpoints = s.deviceEndpointsForNetworkDeviceLocked(networkID, device.DeviceID, time.Now().Unix())
+		withSubnet.RelayAllowed = true
 		out = append(out, withSubnet)
 	}
 	return out
@@ -3521,7 +3522,7 @@ func (s *Store) generateNextIPSubnetLocked(now int64) bool {
 		CreatedAt:    now,
 	}
 	for offset := startOffset; offset <= endOffset; offset++ {
-		if offset == startOffset || offset == endOffset {
+		if offset == startOffset || offset == startOffset+1 || offset == endOffset {
 			continue
 		}
 		ip := ipFrom10Offset(offset)

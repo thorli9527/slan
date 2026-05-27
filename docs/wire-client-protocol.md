@@ -8,7 +8,7 @@ networking stack.
 - `service-biz`: business identity, device, node, network, and IP ownership
 - `server-wire`: runtime control plane and path planning
 - `server-wire-relay`: UDP relay fallback for `relay_udp`
-- `server-wire-derp`: TCP/TLS 443 final fallback for `derp_tcp_tls_443`
+- `server-wire-derp`: DERP final fallback for `derp_tcp_tls_443`; current transport is raw TCP JSON-lines, while production TLS/443 requires an external L4/TLS terminator or a future in-process TLS transport
 
 ## Path Types
 
@@ -390,9 +390,12 @@ Sender response:
 
 ## server-wire-derp TCP
 
-`server-wire-derp` uses newline-delimited JSON frames over a long-lived TCP
-connection. Production deployment should place this service behind TLS on port
-443.
+`server-wire-derp` currently uses newline-delimited JSON frames over a
+long-lived raw TCP connection. The control-plane path name remains
+`derp_tcp_tls_443` for compatibility with the fallback order, but deployments
+must only advertise port 443 when an external L4/TLS terminator forwards the
+decrypted stream to the raw TCP listener, or after the service grows native TLS
+support.
 
 ### Connect
 

@@ -44,7 +44,8 @@ impl PathKind {
 /// 将控制面下发的 relay transport 归一化为客户端支持的 transport。
 pub fn normalize_relay_transport(value: &str) -> Option<&'static str> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "udp" => Some("udp"),
+        "udp" | "relay_udp" | "relay+udp" => Some("udp"),
+        "derp" | "derp_tcp_tls_443" | "derp+tcp+tls" => Some("derp_tcp_tls_443"),
         _ => None,
     }
 }
@@ -53,6 +54,7 @@ pub fn normalize_relay_transport(value: &str) -> Option<&'static str> {
 pub fn relay_path_kind_for_transport(value: &str) -> Option<PathKind> {
     match normalize_relay_transport(value)? {
         "udp" => Some(PathKind::RelayUdp),
+        "derp_tcp_tls_443" => Some(PathKind::DerpTcpTls443),
         _ => None,
     }
 }

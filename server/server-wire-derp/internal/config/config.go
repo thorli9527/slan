@@ -39,7 +39,7 @@ func Load() Config {
 		RegionID:          env("SLAN_WIRE_DERP_REGION_ID", "local"),
 		NodeID:            env("SLAN_WIRE_DERP_NODE_ID", "derp-local"),
 		PublicHost:        env("SLAN_WIRE_DERP_PUBLIC_HOST", listenHost(addr)),
-		PublicPort:        envInt("SLAN_WIRE_DERP_PUBLIC_PORT", 443),
+		PublicPort:        envInt("SLAN_WIRE_DERP_PUBLIC_PORT", listenPort(addr, 29120)),
 		Priority:          envInt("SLAN_WIRE_DERP_PRIORITY", 100),
 		Enabled:           envBool("SLAN_WIRE_DERP_ENABLED", true),
 		HeartbeatInterval: time.Duration(envInt("SLAN_WIRE_DERP_HEARTBEAT_SECONDS", 30)) * time.Second,
@@ -139,4 +139,13 @@ func listenHost(addr string) string {
 		return "127.0.0.1"
 	}
 	return host
+}
+
+func listenPort(addr string, fallback int) int {
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		if port, err := strconv.Atoi(strings.TrimSpace(addr[idx+1:])); err == nil && port > 0 {
+			return port
+		}
+	}
+	return fallback
 }

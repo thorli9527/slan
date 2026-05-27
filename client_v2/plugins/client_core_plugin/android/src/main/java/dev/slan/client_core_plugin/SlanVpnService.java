@@ -6,16 +6,19 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.system.OsConstants;
 import android.util.Log;
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -32,8 +35,8 @@ public final class SlanVpnService extends VpnService {
 
   /** Current Android VPN interface descriptor before ownership is detached to Rust. */
   private ParcelFileDescriptor vpnInterface;
-  /** Protected UDP sockets whose fds are detached into Rust for relay/direct UDP traffic. */
-  private final List<DatagramSocket> protectedRelaySockets = new ArrayList<>();
+  /** Protected relay/direct sockets whose fds are detached into Rust. */
+  private final List<Closeable> protectedRelaySockets = new ArrayList<>();
 
   /** Protect an externally created socket fd from VPN routing. */
   static boolean protectSocketFd(int socketFd) {
@@ -121,17 +124,22 @@ public final class SlanVpnService extends VpnService {
     }
     addDnsServers(builder, config.optJSONArray("dnsServers"));
     addRoutes(builder, config.optJSONArray("routes"));
+    if (isDebugBuild()) {
+      builder.addAllowedApplication(getPackageName());
+    }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       builder.setMetered(false);
     }
 
+    int[] relayFds = detachProtectedRelaySockets(config);
     ParcelFileDescriptor nextInterface = builder.establish();
     if (nextInterface == null) {
+      closeDetachedFds(relayFds);
+      closeRelaySockets();
       throw new IllegalStateException("Android VPN establish returned null");
     }
     closeInterface();
     int tunFd = nextInterface.detachFd();
-    int[] relayFds = detachProtectedRelaySockets(config);
     vpnInterface = null;
     int nativeStart = SlanNativeBridge.start(tunFd, relayFds, config.toString());
     if (nativeStart != 0) {
@@ -168,18 +176,8 @@ public final class SlanVpnService extends VpnService {
 
   /** Create protected relay sockets and an optional direct UDP socket for Rust data plane use. */
   private int[] detachProtectedRelaySockets(JSONObject config) throws Exception {
-    String relayAddress = config.optString("relayAddress", "").trim();
-    if (relayAddress.isEmpty()) {
-      JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
-      relayAddress = relayDataPlane == null
-          ? ""
-          : relayDataPlane.optString("relayAddress", "").trim();
-    }
-    if (relayAddress.isEmpty()) {
-      return new int[0];
-    }
-    HostPort hostPort = HostPort.parse(relayAddress);
-    if (hostPort == null) {
+    JSONObject relayDataPlane = config.optJSONObject("relayDataPlane");
+    if (relayDataPlane == null || !relayDataPlane.optBoolean("enabled", false)) {
       return new int[0];
     }
     int sessionCount = relaySessionCount(config);
@@ -191,15 +189,38 @@ public final class SlanVpnService extends VpnService {
     closeRelaySockets();
     int[] fds = new int[sessionCount + (needsDirectSocket ? 1 : 0)];
     for (int index = 0; index < sessionCount; index += 1) {
-      DatagramSocket socket = new DatagramSocket();
-      if (!protect(socket)) {
-        socket.close();
-        throw new IllegalStateException("Android VPN failed to protect relay socket");
+      JSONObject session = relayDataPlane.optJSONArray("sessions").optJSONObject(index);
+      String relayUrl = sessionRelayUrl(session, relayDataPlane);
+      HostPort hostPort = HostPort.parse(relayUrl);
+      if (hostPort == null) {
+        throw new IllegalStateException("Android VPN relay address is invalid");
       }
-      socket.connect(new InetSocketAddress(hostPort.host, hostPort.port));
-      ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
-      fds[index] = descriptor.detachFd();
-      protectedRelaySockets.add(socket);
+      if (isDerpRelayUrl(relayUrl)) {
+        Socket socket = new Socket();
+        // Allocate the underlying fd before VpnService.protect(Socket). An unbound
+        // java.net.Socket can report protect=false on Android because no fd exists yet.
+        socket.bind(new InetSocketAddress(0));
+        if (!protect(socket)) {
+          socket.close();
+          throw new IllegalStateException("Android VPN failed to protect DERP socket");
+        }
+        socket.connect(new InetSocketAddress(hostPort.host, hostPort.port), 3000);
+        ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromSocket(socket);
+        ParcelFileDescriptor rustDescriptor = ParcelFileDescriptor.dup(descriptor.getFileDescriptor());
+        fds[index] = rustDescriptor.detachFd();
+        protectedRelaySockets.add(descriptor);
+        protectedRelaySockets.add(socket);
+      } else {
+        DatagramSocket socket = new DatagramSocket();
+        if (!protect(socket)) {
+          socket.close();
+          throw new IllegalStateException("Android VPN failed to protect relay socket");
+        }
+        socket.connect(new InetSocketAddress(hostPort.host, hostPort.port));
+        ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
+        fds[index] = descriptor.detachFd();
+        protectedRelaySockets.add(socket);
+      }
     }
     if (needsDirectSocket) {
       DatagramSocket socket = new DatagramSocket();
@@ -212,6 +233,22 @@ public final class SlanVpnService extends VpnService {
       protectedRelaySockets.add(socket);
     }
     return fds;
+  }
+
+  private String sessionRelayUrl(JSONObject session, JSONObject relayDataPlane) {
+    JSONObject ticket = session == null ? null : session.optJSONObject("ticket");
+    String relayUrl = ticket == null ? "" : ticket.optString("relayUrl", "").trim();
+    if (!relayUrl.isEmpty()) {
+      return relayUrl;
+    }
+    return relayDataPlane.optString("relayAddress", "").trim();
+  }
+
+  private boolean isDerpRelayUrl(String relayUrl) {
+    String lower = relayUrl == null ? "" : relayUrl.trim().toLowerCase();
+    return lower.startsWith("derp://")
+        || lower.startsWith("derp+tcp+tls://")
+        || lower.startsWith("derp_tcp_tls_443://");
   }
 
   /** Return whether config contains peer path entries that need a direct UDP socket. */
@@ -301,6 +338,10 @@ public final class SlanVpnService extends VpnService {
         && value.indexOf(':') < 0;
   }
 
+  private boolean isDebugBuild() {
+    return (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+  }
+
   private void stopVpn(String message) {
     SlanNativeBridge.stop();
     closeRelaySockets();
@@ -325,10 +366,28 @@ public final class SlanVpnService extends VpnService {
   }
 
   private void closeRelaySockets() {
-    for (DatagramSocket socket : protectedRelaySockets) {
-      socket.close();
+    for (Closeable socket : protectedRelaySockets) {
+      try {
+        socket.close();
+      } catch (IOException ignored) {
+      }
     }
     protectedRelaySockets.clear();
+  }
+
+  private void closeDetachedFds(int[] fds) {
+    if (fds == null) {
+      return;
+    }
+    for (int fd : fds) {
+      if (fd < 0) {
+        continue;
+      }
+      try {
+        ParcelFileDescriptor.adoptFd(fd).close();
+      } catch (IOException ignored) {
+      }
+    }
   }
 
   private Notification notification() {
