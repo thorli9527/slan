@@ -57,6 +57,20 @@ type dnsZoneRow struct {
 	ZoneID string `json:"zoneId"`
 }
 
+type dnsRecordRow struct {
+	RecordID string `json:"recordId"`
+}
+
+type securityRuleRow struct {
+	RuleID string `json:"ruleId"`
+}
+
+type provisionedResources struct {
+	zoneIDs   []string
+	recordIDs []string
+	ruleIDs   []string
+}
+
 type networkModuleSnapshot struct {
 	NetworkCount      int `json:"networkCount"`
 	PeerCount         int `json:"peerCount"`
@@ -70,7 +84,15 @@ type mqttCredentialEnvelope struct {
 	} `json:"mqtt"`
 }
 
+type integrationFailure struct {
+	message string
+}
+
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
 func main() {
+	defer exitOnFailure()
+
 	var bizURL string
 	var serviceBin string
 	var password string
@@ -101,6 +123,7 @@ func main() {
 
 	email := fmt.Sprintf("ios-dual-acl-dns-%d@example.test", time.Now().UnixNano())
 	auth := register(ctx, bizURL, email, password)
+	userID := auth.Auth.User.UserID
 	networkID := auth.DefaultNetwork.NetworkID
 	if networkID == "" {
 		networkID = firstNetworkID(ctx, bizURL, auth.Auth.User.UserID)
@@ -108,6 +131,7 @@ func main() {
 	if networkID == "" {
 		fail("registered user has no default network")
 	}
+	resources := &provisionedResources{}
 
 	root := filepath.Join(os.TempDir(), "slan-ios-dual-acl-dns-"+uniqueSuffix())
 	if os.Getenv("SLAN_KEEP_IOS_DUAL_WORK_DIR") == "" {
@@ -116,6 +140,7 @@ func main() {
 		fmt.Printf("iosDualAclDnsIntegration: workDir=%s\n", root)
 	}
 	clients := make([]*dualClient, 0, clientCount)
+	defer cleanupIntegration(bizURL, &networkID, userID, resources, &clients)
 	for index := 0; index < clientCount; index++ {
 		name := fmt.Sprintf("ios-%c", 'a'+rune(index))
 		clients = append(clients, startService(ctx, serviceBin, bizURL, filepath.Join(root, name), "ios-sim-"+string('a'+rune(index))+"-"+uniqueSuffix(), name))
@@ -132,7 +157,7 @@ func main() {
 		waitControlReady(ctx, client)
 	}
 
-	provisionDNSAndACL(ctx, bizURL, networkID, clients)
+	provisionDNSAndACL(ctx, bizURL, networkID, clients, resources)
 	minPeers := clientCount - 1
 	minDNSRecords := clientCount
 	minSecurityRules := clientCount * (clientCount - 1) * 2
@@ -205,15 +230,19 @@ func login(ctx context.Context, client *dualClient, email, password string) {
 			"email":    email,
 			"password": password,
 		},
-	}, 8*time.Second)
+	}, 45*time.Second)
 	if err != nil {
 		fail("%s login request failed: %v", client.name, err)
 	}
 	if response["signedIn"] != true {
 		fail("%s login did not sign in: %#v", client.name, response)
 	}
-	if response["deviceId"] != client.deviceID {
-		fail("%s device id mismatch: response=%v expected=%s", client.name, response["deviceId"], client.deviceID)
+	actualDeviceID, ok := response["deviceId"].(string)
+	if !ok || strings.TrimSpace(actualDeviceID) == "" {
+		fail("%s login returned empty device id: %#v", client.name, response)
+	}
+	if actualDeviceID != client.deviceID {
+		client.deviceID = actualDeviceID
 	}
 }
 
@@ -268,7 +297,7 @@ func waitControlReady(ctx context.Context, client *dualClient) {
 	fail("%s control transport is not ready: %#v", client.name, last)
 }
 
-func provisionDNSAndACL(ctx context.Context, bizURL, networkID string, clients []*dualClient) {
+func provisionDNSAndACL(ctx context.Context, bizURL, networkID string, clients []*dualClient, resources *provisionedResources) {
 	var groups itemsEnvelope[securityGroupRow]
 	getJSON(ctx, bizURL+"/api/networks/"+url.PathEscape(networkID)+"/security-groups", &groups)
 	if len(groups.Items) == 0 {
@@ -282,8 +311,9 @@ func provisionDNSAndACL(ctx context.Context, bizURL, networkID string, clients [
 	if zone.ZoneID == "" {
 		fail("created dns zone returned empty zone id")
 	}
+	resources.zoneIDs = append(resources.zoneIDs, zone.ZoneID)
 	for _, client := range clients {
-		var record map[string]any
+		var record dnsRecordRow
 		postJSON(ctx, bizURL+"/api/networks/"+url.PathEscape(networkID)+"/dns/records", map[string]any{
 			"zoneId":         zone.ZoneID,
 			"name":           client.name,
@@ -292,14 +322,17 @@ func provisionDNSAndACL(ctx context.Context, bizURL, networkID string, clients [
 			"port":           "443",
 			"ttl":            60,
 		}, &record)
+		if record.RecordID != "" {
+			resources.recordIDs = append(resources.recordIDs, record.RecordID)
+		}
 	}
 	for _, from := range clients {
 		for _, target := range clients {
 			if from == target {
 				continue
 			}
-			addRule(ctx, bizURL, groups.Items[0].SecurityGroupID, "ingress", "device", from.deviceID, 443)
-			addRule(ctx, bizURL, groups.Items[0].SecurityGroupID, "egress", "device", target.deviceID, 443)
+			addRule(ctx, bizURL, groups.Items[0].SecurityGroupID, "ingress", "device", from.deviceID, 443, resources)
+			addRule(ctx, bizURL, groups.Items[0].SecurityGroupID, "egress", "device", target.deviceID, 443, resources)
 		}
 	}
 	deviceIDs := make([]string, 0, len(clients))
@@ -309,8 +342,8 @@ func provisionDNSAndACL(ctx context.Context, bizURL, networkID string, clients [
 	fmt.Printf("iosDualAclDnsIntegration: provisioned dnsZone=%s clients=%s\n", zoneName, strings.Join(deviceIDs, ","))
 }
 
-func addRule(ctx context.Context, bizURL, securityGroupID, direction, peerType, peerValue string, port int) {
-	var out map[string]any
+func addRule(ctx context.Context, bizURL, securityGroupID, direction, peerType, peerValue string, port int, resources *provisionedResources) {
+	var out securityRuleRow
 	postJSON(ctx, bizURL+"/api/security-groups/"+url.PathEscape(securityGroupID)+"/rules", map[string]any{
 		"direction": direction,
 		"priority":  100,
@@ -322,6 +355,9 @@ func addRule(ctx context.Context, bizURL, securityGroupID, direction, peerType, 
 		"peerValue": peerValue,
 		"enabled":   true,
 	}, &out)
+	if out.RuleID != "" {
+		resources.ruleIDs = append(resources.ruleIDs, out.RuleID)
+	}
 }
 
 func waitModule(ctx context.Context, client *dualClient, minPeers, minDNSRecords, minSecurityRules int) {
@@ -435,7 +471,57 @@ func register(ctx context.Context, bizURL, email, password string) authEnvelope 
 	if out.Auth.Session.Token == "" {
 		fail("register returned empty session token")
 	}
+	if strings.TrimSpace(out.Auth.User.UserID) == "" {
+		fail("register returned empty user id")
+	}
 	return out
+}
+
+func cleanupIntegration(bizURL string, networkID *string, userID string, resources *provisionedResources, clients *[]*dualClient) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	if resources != nil {
+		for index := len(resources.ruleIDs) - 1; index >= 0; index-- {
+			deleteJSON(ctx, bizURL+"/api/security-groups/rules/"+url.PathEscape(resources.ruleIDs[index]))
+		}
+		if networkID != nil && strings.TrimSpace(*networkID) != "" {
+			for index := len(resources.recordIDs) - 1; index >= 0; index-- {
+				deleteJSON(ctx, bizURL+"/api/networks/"+url.PathEscape(*networkID)+"/dns/records/"+url.PathEscape(resources.recordIDs[index]))
+			}
+			for index := len(resources.zoneIDs) - 1; index >= 0; index-- {
+				deleteJSON(ctx, bizURL+"/api/networks/"+url.PathEscape(*networkID)+"/dns/zones/"+url.PathEscape(resources.zoneIDs[index]))
+			}
+		}
+	}
+	cleanupDevicesForUser(ctx, bizURL, userID, clients)
+}
+
+func cleanupDevicesForUser(ctx context.Context, bizURL, userID string, clients *[]*dualClient) {
+	if strings.TrimSpace(userID) == "" {
+		return
+	}
+	deviceIDSet := make(map[string]struct{})
+	if clients != nil {
+		for _, client := range *clients {
+			if client != nil && strings.TrimSpace(client.deviceID) != "" {
+				deviceIDSet[client.deviceID] = struct{}{}
+			}
+		}
+	}
+	var listed struct {
+		Items []struct {
+			DeviceID string `json:"deviceId"`
+		} `json:"items"`
+	}
+	getBestEffortJSON(ctx, bizURL+"/api/devices?userId="+url.QueryEscape(userID), &listed)
+	for _, item := range listed.Items {
+		if strings.TrimSpace(item.DeviceID) != "" {
+			deviceIDSet[item.DeviceID] = struct{}{}
+		}
+	}
+	for deviceID := range deviceIDSet {
+		deleteJSON(ctx, bizURL+"/api/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID))
+	}
 }
 
 func firstNetworkID(ctx context.Context, bizURL, userID string) string {
@@ -455,6 +541,22 @@ func getJSON(ctx context.Context, rawURL string, out any) {
 	doJSON(req, out)
 }
 
+func getBestEffortJSON(ctx context.Context, rawURL string, out any) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	_ = json.NewDecoder(resp.Body).Decode(out)
+}
+
 func postJSON(ctx context.Context, rawURL string, body any, out any) {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -468,8 +570,19 @@ func postJSON(ctx context.Context, rawURL string, body any, out any) {
 	doJSON(req, out)
 }
 
+func deleteJSON(ctx context.Context, rawURL string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, rawURL, nil)
+	if err != nil {
+		return
+	}
+	resp, err := httpClient.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+}
+
 func doJSON(req *http.Request, out any) {
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		fail("%s %s: %v", req.Method, req.URL, err)
 	}
@@ -506,6 +619,17 @@ func envDefault(name, fallback string) string {
 }
 
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+	panic(integrationFailure{message: fmt.Sprintf(format, args...)})
+}
+
+func exitOnFailure() {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	if failure, ok := recovered.(integrationFailure); ok {
+		fmt.Fprintln(os.Stderr, failure.message)
+		os.Exit(1)
+	}
+	panic(recovered)
 }

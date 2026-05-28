@@ -121,6 +121,7 @@ run_socket_check() {
     SLAN_BIZ_URL="$BIZ_URL" \
     SLAN_ANDROID_BIZ_URL="$ANDROID_BIZ_URL" \
     SLAN_TEST_EMAIL="$email" \
+    SLAN_CLEANUP_REMOTE_TEST_DEVICES=1 \
     "$@" \
     scripts/mac_android_socket_check.sh
 }
