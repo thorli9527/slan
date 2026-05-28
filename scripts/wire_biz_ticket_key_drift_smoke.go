@@ -45,12 +45,19 @@ type relayNode struct {
 	TicketKeyRotation ticketKeyStatus `json:"ticketKeyRotation,omitempty"`
 }
 
+type smokeFailure struct {
+	message string
+}
+
 func main() {
+	defer exitOnFailure()
+
 	bizURL := env("SLAN_BIZ_E2E_BIZ_URL", "http://127.0.0.1:28080")
 	internalToken := env("SLAN_INTERNAL_WIRE_TOKEN", "change-me-wire-internal-token")
 	relayBAdminURL := env("SLAN_BIZ_E2E_RELAY_B_ADMIN_URL", "http://127.0.0.1:29113")
 
-	disableKnownSmokeNodes(bizURL, internalToken)
+	defer cleanupKnownSmokeNodes(bizURL, internalToken)
+	cleanupKnownSmokeNodes(bizURL, internalToken)
 
 	var correct ticketKeyStatus
 	getJSON(relayBAdminURL+"/v1/ticket-key-status", "", &correct)
@@ -115,13 +122,13 @@ func upsertRelayNode(bizURL, internalToken string, node relayNode) {
 	putJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes", map[string]string{"X-Slan-Internal-Token": internalToken}, payload, nil)
 }
 
-func disableKnownSmokeNodes(bizURL, internalToken string) {
+func cleanupKnownSmokeNodes(bizURL, internalToken string) {
 	headers := map[string]string{"X-Slan-Internal-Token": internalToken}
 	payload := map[string]any{"enabled": false, "healthy": false}
-	patchJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/smoke-region/relay-smoke/status", headers, payload, nil)
-	patchJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/"+smokeRegionID+"/"+smokeRelayNodeID+"/status", headers, payload, nil)
-	patchJSONWithHeaders(bizURL+"/internal/wire/admin/derp-nodes/smoke-region/derp-smoke/status", headers, payload, nil)
-	deleteJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/"+smokeRegionID+"/"+smokeRelayNodeID, headers)
+	patchJSONWithHeadersBestEffort(bizURL+"/internal/wire/admin/relay-nodes/smoke-region/relay-smoke/status", headers, payload, nil)
+	patchJSONWithHeadersBestEffort(bizURL+"/internal/wire/admin/relay-nodes/"+smokeRegionID+"/"+smokeRelayNodeID+"/status", headers, payload, nil)
+	patchJSONWithHeadersBestEffort(bizURL+"/internal/wire/admin/derp-nodes/smoke-region/derp-smoke/status", headers, payload, nil)
+	deleteJSONWithHeadersBestEffort(bizURL+"/internal/wire/admin/relay-nodes/"+smokeRegionID+"/"+smokeRelayNodeID, headers)
 }
 
 func disableRelayNode(bizURL, internalToken, regionID, nodeID string) {
@@ -203,6 +210,13 @@ func patchJSONWithHeaders(url string, headers map[string]string, in, out any) {
 	}
 }
 
+func patchJSONWithHeadersBestEffort(url string, headers map[string]string, in, out any) {
+	defer func() {
+		_ = recover()
+	}()
+	patchJSONWithHeaders(url, headers, in, out)
+}
+
 func putJSONWithHeaders(url string, headers map[string]string, in, out any) {
 	payload, err := json.Marshal(in)
 	must(err)
@@ -222,6 +236,13 @@ func putJSONWithHeaders(url string, headers map[string]string, in, out any) {
 	if out != nil {
 		must(json.Unmarshal(body, out))
 	}
+}
+
+func deleteJSONWithHeadersBestEffort(url string, headers map[string]string) {
+	defer func() {
+		_ = recover()
+	}()
+	deleteJSONWithHeaders(url, headers)
 }
 
 func deleteJSONWithHeaders(url string, headers map[string]string) {
@@ -256,6 +277,17 @@ func must(err error) {
 }
 
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+	panic(smokeFailure{message: fmt.Sprintf(format, args...)})
+}
+
+func exitOnFailure() {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	if failure, ok := recovered.(smokeFailure); ok {
+		fmt.Fprintln(os.Stderr, failure.message)
+		os.Exit(1)
+	}
+	panic(recovered)
 }
