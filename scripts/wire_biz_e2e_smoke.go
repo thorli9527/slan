@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -168,7 +167,13 @@ type derpNodeList struct {
 	Items []derpNode `json:"items"`
 }
 
+type smokeFailure struct {
+	message string
+}
+
 func main() {
+	defer exitOnFailure()
+
 	bizURL := env("SLAN_BIZ_E2E_BIZ_URL", "http://127.0.0.1:28080")
 	wireURL := env("SLAN_BIZ_E2E_WIRE_URL", "http://127.0.0.1:29100")
 	wireBURL := env("SLAN_BIZ_E2E_WIRE_B_URL", "http://127.0.0.1:29101")
@@ -200,6 +205,12 @@ func main() {
 	}
 
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	smokeRegionID := "wire-e2e-smoke-" + suffix
+	smokeRelayNodeIDs := []string{"relay-e2e-a-" + suffix, "relay-e2e-b-" + suffix}
+	smokeDerpNodeIDs := []string{"derp-e2e-a-" + suffix, "derp-e2e-b-" + suffix}
+	defer cleanupSmokeWireNodes(bizURL, internalToken, smokeRegionID, smokeRelayNodeIDs, smokeDerpNodeIDs)
+	createSmokeWireNodes(bizURL, internalToken, relayAdminURL, derpAdminURL, relayAddr, derpAddr, smokeRegionID, smokeRelayNodeIDs, smokeDerpNodeIDs)
+
 	email := "wire-e2e-" + suffix + "@local.slan"
 	password := "Password123!"
 	deviceID := "dev-wire-e2e-" + suffix
@@ -408,8 +419,8 @@ func main() {
 		fail("wire instances returned inconsistent candidates after disable: a=%+v b=%+v", afterDisable, afterDisableB)
 	}
 
-	disabledRelayNodes := append([]relayNode(nil), afterDisable.RelayCandidates...)
-	disabledDerpNodes := append([]derpNode(nil), afterDisable.DerpCandidates...)
+	disabledRelayNodes := smokeRelayCandidates(afterDisable.RelayCandidates, smokeRegionID)
+	disabledDerpNodes := smokeDerpCandidates(afterDisable.DerpCandidates, smokeRegionID)
 	for _, node := range disabledRelayNodes {
 		patchJSONWithInternalToken(
 			bizURL+"/internal/wire/admin/relay-nodes/"+node.RegionID+"/"+node.NodeID+"/status",
@@ -442,14 +453,14 @@ func main() {
 	postJSON(wireURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &directOnly)
 	var directOnlyB pathPlan
 	postJSON(wireBURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &directOnlyB)
-	if len(directOnly.RelayCandidates) != 0 || len(directOnly.DerpCandidates) != 0 {
-		fail("expected no relay/derp candidates after disabling all nodes: %+v", directOnly)
+	if containsRelayRegion(directOnly.RelayCandidates, smokeRegionID) {
+		fail("disabled smoke relay nodes still selected: region=%s candidates=%+v", smokeRegionID, directOnly.RelayCandidates)
 	}
-	if !containsString(directOnly.DegradedReason, "relay_no_healthy_nodes") || !containsString(directOnly.DegradedReason, "derp_no_healthy_nodes") {
-		fail("expected degraded reason for disabled relay/derp nodes, got %+v", directOnly)
+	if containsDerpRegion(directOnly.DerpCandidates, smokeRegionID) {
+		fail("disabled smoke derp nodes still selected: region=%s candidates=%+v", smokeRegionID, directOnly.DerpCandidates)
 	}
-	if directOnly.DegradedReason != directOnlyB.DegradedReason {
-		fail("wire instances returned inconsistent degraded reason: a=%+v b=%+v", directOnly, directOnlyB)
+	if !sameRelayCandidates(directOnly.RelayCandidates, directOnlyB.RelayCandidates) || !sameDerpCandidates(directOnly.DerpCandidates, directOnlyB.DerpCandidates) {
+		fail("wire instances returned inconsistent candidates after disabling smoke nodes: a=%+v b=%+v", directOnly, directOnlyB)
 	}
 
 	for _, node := range disabledRelayNodes {
@@ -580,6 +591,62 @@ func expectWireAdminNodeViews(bizURL, internalToken string) {
 	}
 }
 
+func createSmokeWireNodes(bizURL, internalToken, relayAdminURL, derpAdminURL, relayAddr, derpAddr, regionID string, relayNodeIDs, derpNodeIDs []string) {
+	relayHost, relayPort := splitAddress(relayAddr)
+	derpHost, derpPort := splitAddress(derpAddr)
+	var relayTicketKey ticketKeyStatus
+	getJSONWithHeader(relayAdminURL+"/v1/ticket-key-status", nil, &relayTicketKey)
+	var derpTicketKey ticketKeyStatus
+	getJSONWithHeader(derpAdminURL+"/v1/ticket-key-status", nil, &derpTicketKey)
+	for idx, nodeID := range relayNodeIDs {
+		putJSONWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes", internalToken, map[string]any{
+			"regionId":          regionID,
+			"nodeId":            nodeID,
+			"host":              relayHost,
+			"udpPort":           relayPort,
+			"adminPort":         relayPort + 1,
+			"enabled":           true,
+			"healthy":           true,
+			"priority":          idx + 1,
+			"ticketKeyRotation": relayTicketKey,
+		}, nil)
+	}
+	for idx, nodeID := range derpNodeIDs {
+		putJSONWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes", internalToken, map[string]any{
+			"regionId":          regionID,
+			"nodeId":            nodeID,
+			"name":              "Wire E2E Smoke",
+			"host":              derpHost,
+			"port":              derpPort,
+			"enabled":           true,
+			"healthy":           true,
+			"priority":          idx + 1,
+			"ticketKeyRotation": derpTicketKey,
+		}, nil)
+	}
+}
+
+func cleanupSmokeWireNodes(bizURL, internalToken, regionID string, relayNodeIDs, derpNodeIDs []string) {
+	for _, nodeID := range relayNodeIDs {
+		patchJSONWithInternalTokenAllowNotFound(
+			bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+nodeID+"/status",
+			internalToken,
+			map[string]any{"enabled": false, "healthy": false},
+			nil,
+		)
+		deleteWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+nodeID, internalToken)
+	}
+	for _, nodeID := range derpNodeIDs {
+		patchJSONWithInternalTokenAllowNotFound(
+			bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+nodeID+"/status",
+			internalToken,
+			map[string]any{"enabled": false, "healthy": false},
+			nil,
+		)
+		deleteWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+nodeID, internalToken)
+	}
+}
+
 func hasActiveRelayNode(nodes []relayNode) bool {
 	for _, node := range nodes {
 		if node.Enabled && node.Healthy && !node.Stale && strings.TrimSpace(node.Host) != "" && node.UDPPort > 0 {
@@ -592,6 +659,44 @@ func hasActiveRelayNode(nodes []relayNode) bool {
 func hasActiveDerpNode(nodes []derpNode) bool {
 	for _, node := range nodes {
 		if node.Enabled && node.Healthy && !node.Stale && strings.TrimSpace(node.Host) != "" && node.Port > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func smokeRelayCandidates(nodes []relayNode, regionID string) []relayNode {
+	out := make([]relayNode, 0)
+	for _, node := range nodes {
+		if node.RegionID == regionID {
+			out = append(out, node)
+		}
+	}
+	return out
+}
+
+func smokeDerpCandidates(nodes []derpNode, regionID string) []derpNode {
+	out := make([]derpNode, 0)
+	for _, node := range nodes {
+		if node.RegionID == regionID {
+			out = append(out, node)
+		}
+	}
+	return out
+}
+
+func containsRelayRegion(nodes []relayNode, regionID string) bool {
+	for _, node := range nodes {
+		if node.RegionID == regionID {
+			return true
+		}
+	}
+	return false
+}
+
+func containsDerpRegion(nodes []derpNode, regionID string) bool {
+	for _, node := range nodes {
+		if node.RegionID == regionID {
 			return true
 		}
 	}
@@ -683,6 +788,25 @@ func putJSON(url, token string, in, out any) {
 	}
 }
 
+func putJSONWithInternalToken(url, token string, in, out any) {
+	payload, err := json.Marshal(in)
+	must(err)
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(payload))
+	must(err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Slan-Internal-Token", token)
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("PUT %s status=%d body=%s", url, resp.StatusCode, string(body))
+	}
+	if out != nil {
+		must(json.Unmarshal(body, out))
+	}
+}
+
 func patchJSON(url, token string, in, out any) {
 	payload, err := json.Marshal(in)
 	must(err)
@@ -720,6 +844,44 @@ func patchJSONWithInternalToken(url, token string, in, out any) {
 	}
 	if out != nil {
 		must(json.Unmarshal(body, out))
+	}
+}
+
+func patchJSONWithInternalTokenAllowNotFound(url, token string, in, out any) {
+	payload, err := json.Marshal(in)
+	must(err)
+	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(payload))
+	must(err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Slan-Internal-Token", token)
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("PATCH %s status=%d body=%s", url, resp.StatusCode, string(body))
+	}
+	if out != nil {
+		must(json.Unmarshal(body, out))
+	}
+}
+
+func deleteWithInternalToken(url, token string) {
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	must(err)
+	req.Header.Set("X-Slan-Internal-Token", token)
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("DELETE %s status=%d body=%s", url, resp.StatusCode, string(body))
 	}
 }
 
@@ -775,10 +937,6 @@ func sameDerpCandidates(a, b []derpNode) bool {
 		}
 	}
 	return true
-}
-
-func containsString(value, part string) bool {
-	return strings.Contains(value, part)
 }
 
 func expectStatus(req *http.Request, want int) {
@@ -872,6 +1030,21 @@ func udpRecv(conn *net.UDPConn) map[string]any {
 	return msg
 }
 
+func splitAddress(value string) (string, int) {
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(value))
+	if err != nil {
+		fail("invalid host:port address %q: %v", value, err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		fail("invalid port in address %q", value)
+	}
+	if strings.TrimSpace(host) == "" {
+		fail("missing host in address %q", value)
+	}
+	return host, port
+}
+
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -881,14 +1054,22 @@ func env(key, fallback string) string {
 
 func must(err error) {
 	if err != nil {
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			os.Exit(1)
-		}
 		fail("%v", err)
 	}
 }
 
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+	panic(smokeFailure{message: fmt.Sprintf(format, args...)})
+}
+
+func exitOnFailure() {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	if failure, ok := recovered.(smokeFailure); ok {
+		fmt.Fprintln(os.Stderr, failure.message)
+		os.Exit(1)
+	}
+	panic(recovered)
 }
