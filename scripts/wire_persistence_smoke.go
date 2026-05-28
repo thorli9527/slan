@@ -11,14 +11,20 @@ import (
 	"time"
 )
 
-const stateFile = "/private/tmp/slan-wire-persistence-smoke.json"
+const (
+	stateFile     = "/private/tmp/slan-wire-persistence-smoke.json"
+	smokeRegionID = "smoke-region"
+)
 
 var httpClient = &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 5 * time.Second}
 
 type persistenceState struct {
-	PeerID    string `json:"peerId"`
-	NetworkID string `json:"networkId"`
-	Token     string `json:"token"`
+	PeerID      string `json:"peerId"`
+	NetworkID   string `json:"networkId"`
+	Token       string `json:"token"`
+	RegionID    string `json:"regionId"`
+	RelayNodeID string `json:"relayNodeId"`
+	DerpNodeID  string `json:"derpNodeId"`
 }
 
 type authResponse struct {
@@ -132,15 +138,17 @@ type ticketKeyStatus struct {
 
 func main() {
 	if len(os.Args) != 2 {
-		fail("usage: wire_persistence_smoke.go seed|verify")
+		fail("usage: wire_persistence_smoke.go seed|verify|cleanup")
 	}
 	switch os.Args[1] {
 	case "seed":
 		seed()
 	case "verify":
 		verify()
+	case "cleanup":
+		cleanup()
 	default:
-		fail("usage: wire_persistence_smoke.go seed|verify")
+		fail("usage: wire_persistence_smoke.go seed|verify|cleanup")
 	}
 }
 
@@ -169,6 +177,9 @@ func seed() {
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	deviceID := "dev-wire-persist-" + suffix
 	nodeID := "node-wire-persist-" + suffix
+	regionID := smokeRegionID
+	relayNodeID := "relay-smoke-" + suffix
+	derpNodeID := "derp-smoke-" + suffix
 
 	var auth authResponse
 	postJSON(bizURL+"/auth/register", "", map[string]any{
@@ -234,8 +245,8 @@ func seed() {
 	postJSON(wireURL+"/v1/peers/active-path", "", map[string]any{"peerId": nodeID, "path": "direct_udp"}, nil)
 
 	putJSONWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes", internalToken, map[string]any{
-		"regionId":          "smoke-region",
-		"nodeId":            "derp-smoke",
+		"regionId":          regionID,
+		"nodeId":            derpNodeID,
 		"name":              "Smoke Region",
 		"host":              "derp-smoke.local",
 		"port":              443,
@@ -243,10 +254,10 @@ func seed() {
 		"priority":          1,
 		"ticketKeyRotation": derpTicketKey,
 	}, nil)
-	postJSONWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/smoke-region/derp-smoke/heartbeat", internalToken, map[string]any{"healthy": true, "ticketKeyRotation": derpTicketKey}, nil)
+	postJSONWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+derpNodeID+"/heartbeat", internalToken, map[string]any{"healthy": true, "ticketKeyRotation": derpTicketKey}, nil)
 	putJSONWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes", internalToken, map[string]any{
-		"regionId":          "smoke-region",
-		"nodeId":            "relay-smoke",
+		"regionId":          regionID,
+		"nodeId":            relayNodeID,
 		"host":              "relay-smoke.local",
 		"udpPort":           29110,
 		"adminPort":         29111,
@@ -254,28 +265,36 @@ func seed() {
 		"priority":          1,
 		"ticketKeyRotation": relayTicketKey,
 	}, nil)
-	postJSONWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes/smoke-region/relay-smoke/heartbeat", internalToken, map[string]any{"healthy": true, "ticketKeyRotation": relayTicketKey}, nil)
+	postJSONWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+relayNodeID+"/heartbeat", internalToken, map[string]any{"healthy": true, "ticketKeyRotation": relayTicketKey}, nil)
 
 	postJSON(wireURL+"/v1/peers/derp-health", "", map[string]any{
 		"peerId": nodeID,
 		"samples": []map[string]any{
-			{"regionId": "smoke-region", "nodeId": "derp-smoke", "reachable": true, "rttMs": 35},
+			{"regionId": regionID, "nodeId": derpNodeID, "reachable": true, "rttMs": 35},
 		},
 	}, nil)
 	var relayResp relayTicketResponse
 	postJSON(wireURL+"/v1/relay/tickets", "", map[string]any{"peerId": nodeID, "ttlSeconds": 300, "renewAfterMs": 60000}, &relayResp)
-	if relayResp.Ticket.NodeID != "relay-smoke" || relayResp.Ticket.SessionID == "" || relayResp.Ticket.Signature == "" {
+	if relayResp.Ticket.NodeID != relayNodeID || relayResp.Ticket.SessionID == "" || relayResp.Ticket.Signature == "" {
 		fail("unexpected relay ticket during seed: %+v", relayResp.Ticket)
 	}
 
-	writeState(persistenceState{PeerID: nodeID, NetworkID: networkID, Token: auth.AccessToken})
-	fmt.Println("wire persistence seed passed")
+	writeState(persistenceState{
+		PeerID:      nodeID,
+		NetworkID:   networkID,
+		Token:       auth.AccessToken,
+		RegionID:    regionID,
+		RelayNodeID: relayNodeID,
+		DerpNodeID:  derpNodeID,
+	})
+	fmt.Println("wire persistence seed passed; run cleanup after verify to disable smoke nodes")
 }
 
 func verify() {
 	wireURL := env("SLAN_BIZ_E2E_WIRE_URL", "http://127.0.0.1:29100")
 	waitHTTP(wireURL + "/healthz")
 	state := readState()
+	regionID, relayNodeID, derpNodeID := smokeIDs(state)
 
 	var peerResp struct {
 		Peer wirePeer `json:"peer"`
@@ -287,10 +306,10 @@ func verify() {
 	if !hasProbe(peerResp.Peer.Probes, "direct_udp") || !hasProbe(peerResp.Peer.Probes, "relay_udp") {
 		fail("persisted path probes not restored: %+v", peerResp.Peer.Probes)
 	}
-	if !hasDerpHealth(peerResp.Peer.DerpHealth, "smoke-region", "derp-smoke") {
+	if !hasDerpHealth(peerResp.Peer.DerpHealth, regionID, derpNodeID) {
 		fail("persisted derp health not restored: %+v", peerResp.Peer.DerpHealth)
 	}
-	if peerResp.Peer.RelayTicket.NodeID != "relay-smoke" || peerResp.Peer.RelayTicket.SessionID == "" || peerResp.Peer.RelayTicket.Signature == "" {
+	if peerResp.Peer.RelayTicket.NodeID != relayNodeID || peerResp.Peer.RelayTicket.SessionID == "" || peerResp.Peer.RelayTicket.Signature == "" {
 		fail("persisted relay ticket not restored: %+v", peerResp.Peer.RelayTicket)
 	}
 
@@ -305,19 +324,33 @@ func verify() {
 	if plan.PreferredPath == "" {
 		fail("path plan not restored: %+v", plan)
 	}
-	if !hasRelayCandidate(plan.RelayCandidates, "relay-smoke") {
+	if !hasRelayCandidate(plan.RelayCandidates, relayNodeID) {
 		fail("path plan did not restore biz relay candidate: %+v", plan.RelayCandidates)
 	}
-	if !hasDerpCandidate(plan.DerpCandidates, "smoke-region", "derp-smoke") {
+	if !hasDerpCandidate(plan.DerpCandidates, regionID, derpNodeID) {
 		fail("path plan did not restore biz derp candidate: %+v", plan.DerpCandidates)
 	}
 
 	var derp derpMapResponse
 	getJSON(wireURL+"/v1/derp/map", "", &derp)
-	if !hasDerpNode(derp.Map, "smoke-region", "derp-smoke") {
+	if !hasDerpNode(derp.Map, regionID, derpNodeID) {
 		fail("server-wire did not load biz derp map: %+v", derp.Map)
 	}
 	fmt.Println("wire persistence verify passed")
+}
+
+func cleanup() {
+	bizURL := env("SLAN_BIZ_E2E_BIZ_URL", "http://127.0.0.1:28080")
+	internalToken := env("SLAN_INTERNAL_WIRE_TOKEN", "change-me-wire-internal-token")
+	waitHTTP(bizURL + "/healthz")
+	if _, err := os.Stat(stateFile); err == nil {
+		state := readState()
+		regionID, relayNodeID, derpNodeID := smokeIDs(state)
+		disableSmokeNodes(bizURL, internalToken, regionID, relayNodeID, derpNodeID)
+		must(os.Remove(stateFile))
+	}
+	disableSmokeNodes(bizURL, internalToken, smokeRegionID, "relay-smoke", "derp-smoke")
+	fmt.Println("wire persistence cleanup passed")
 }
 
 func hasProbe(probes []probe, path string) bool {
@@ -368,6 +401,18 @@ func hasDerpNode(m derpMap, regionID, nodeID string) bool {
 		}
 	}
 	return false
+}
+
+func smokeIDs(state persistenceState) (string, string, string) {
+	return defaultString(state.RegionID, smokeRegionID),
+		defaultString(state.RelayNodeID, "relay-smoke"),
+		defaultString(state.DerpNodeID, "derp-smoke")
+}
+
+func disableSmokeNodes(bizURL, internalToken, regionID, relayNodeID, derpNodeID string) {
+	payload := map[string]any{"enabled": false, "healthy": false}
+	patchJSONWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+relayNodeID+"/status", internalToken, payload, nil)
+	patchJSONWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+derpNodeID+"/status", internalToken, payload, nil)
 }
 
 func waitHTTP(url string) {
@@ -426,6 +471,29 @@ func postJSONWithInternalToken(url, token string, in, out any) {
 	doJSON(req, out)
 }
 
+func patchJSONWithInternalToken(url, token string, in, out any) {
+	payload, err := json.Marshal(in)
+	must(err)
+	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(payload))
+	must(err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Slan-Internal-Token", token)
+
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("%s %s status=%d body=%s", req.Method, req.URL.String(), resp.StatusCode, string(body))
+	}
+	if out != nil {
+		must(json.Unmarshal(body, out))
+	}
+}
+
 func doJSON(req *http.Request, out any) {
 	resp, err := httpClient.Do(req)
 	must(err)
@@ -458,6 +526,13 @@ func readState() persistenceState {
 
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func defaultString(value, fallback string) string {
+	if value != "" {
 		return value
 	}
 	return fallback
