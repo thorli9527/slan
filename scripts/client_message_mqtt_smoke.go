@@ -72,7 +72,13 @@ type mqttPublish struct {
 	packetID uint16
 }
 
+type smokeFailure struct {
+	message string
+}
+
 func main() {
+	defer exitOnFailure()
+
 	var bizURL string
 	var email string
 	var password string
@@ -93,17 +99,27 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	var userID string
+	createdDevices := make([]string, 0, 2)
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cleanupCancel()
+		cleanupDevices(cleanupCtx, bizURL, userID, createdDevices)
+	}()
+
 	auth := register(ctx, bizURL, email, password)
 	token := auth.AccessToken
 	if token == "" {
 		token = auth.Auth.Session.Token
 	}
-	userID := auth.Auth.User.UserID
+	userID = auth.Auth.User.UserID
 	if token == "" || userID == "" || auth.DefaultNetwork.NetworkID == "" {
 		fail("register returned incomplete auth response: %+v", auth)
 	}
 	mac := registerDevice(ctx, bizURL, token, userID, "smoke-mac-"+uniqueSuffix(), "macos")
+	createdDevices = append(createdDevices, mac.DeviceID)
 	ios := registerDevice(ctx, bizURL, token, userID, "smoke-ios-"+uniqueSuffix(), "ios")
+	createdDevices = append(createdDevices, ios.DeviceID)
 	renewDevice(ctx, bizURL, token, mac.DeviceID, userID)
 	renewDevice(ctx, bizURL, token, ios.DeviceID, userID)
 	assertMQTTHost(mac.MQTT, expectMQTTHost)
@@ -196,6 +212,35 @@ func renewDevice(ctx context.Context, bizURL, token, deviceID, userID string) {
 		"rxBytesTotal":   1,
 		"txBytesTotal":   1,
 	}, nil)
+}
+
+func cleanupDevices(ctx context.Context, bizURL, userID string, deviceIDs []string) {
+	if strings.TrimSpace(userID) == "" {
+		return
+	}
+	for _, deviceID := range deviceIDs {
+		if strings.TrimSpace(deviceID) == "" {
+			continue
+		}
+		deleteDeviceBestEffort(ctx, bizURL, userID, deviceID)
+	}
+}
+
+func deleteDeviceBestEffort(ctx context.Context, bizURL, userID, deviceID string) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodDelete,
+		bizURL+"/api/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
+		nil,
+	)
+	if err != nil {
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 func assertMQTTHost(credential *mqttCredential, expectedHost string) {
@@ -598,6 +643,17 @@ func uniqueSuffix() string {
 }
 
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "clientMessageMqttSmoke: "+format+"\n", args...)
-	os.Exit(1)
+	panic(smokeFailure{message: fmt.Sprintf("clientMessageMqttSmoke: "+format, args...)})
+}
+
+func exitOnFailure() {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	if failure, ok := recovered.(smokeFailure); ok {
+		fmt.Fprintln(os.Stderr, failure.message)
+		os.Exit(1)
+	}
+	panic(recovered)
 }
