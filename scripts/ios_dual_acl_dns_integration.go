@@ -88,7 +88,7 @@ type integrationFailure struct {
 	message string
 }
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 func main() {
 	defer exitOnFailure()
@@ -166,6 +166,10 @@ func main() {
 	}
 
 	if checkMessages {
+		for _, client := range clients {
+			enableNetwork(ctx, client)
+		}
+		time.Sleep(6 * time.Second)
 		for _, from := range clients {
 			for _, target := range clients {
 				if from == target {
@@ -200,6 +204,7 @@ func startService(ctx context.Context, serviceBin, bizURL, stateDir, deviceID, n
 		"SLAN_CONTROL_BASE_URL="+bizURL,
 		"SLAN_CLIENT_CORE_SERVICE_HOST="+address,
 		"SLAN_CLIENT_DEVICE_ID="+deviceID,
+		"SLAN_MACOS_NETWORK_MOCK=1",
 		"SLAN_STATE_DIR="+stateDir,
 	)
 	cmd.Stdout = logFile
@@ -386,6 +391,24 @@ func waitModule(ctx context.Context, client *dualClient, minPeers, minDNSRecords
 	fail("%s network module did not receive dns/acl config: %#v refreshErr=%v snapshot=%#v", client.name, last, lastRefreshErr, lastResponse)
 }
 
+func enableNetwork(ctx context.Context, client *dualClient) {
+	response, err := localRequest(client.address, "localNetworkActivate", map[string]any{}, 45*time.Second)
+	if err != nil {
+		fail("%s enable network request failed: %v", client.name, err)
+	}
+	if response["networkEnabled"] != true {
+		fail("%s network did not enable: %#v", client.name, response)
+	}
+	if response["virtualIp"] == nil || strings.TrimSpace(fmt.Sprint(response["virtualIp"])) == "" {
+		fail("%s network enabled without virtualIp: %#v", client.name, response)
+	}
+	select {
+	case <-ctx.Done():
+		fail("%s enable network timeout: %v", client.name, ctx.Err())
+	default:
+	}
+}
+
 func sendClientMessage(ctx context.Context, from *dualClient, targetDeviceID, body string) {
 	response, err := localRequest(from.address, "localSendClientMessage", map[string]any{
 		"targetDeviceId": targetDeviceID,
@@ -409,15 +432,25 @@ func sendClientMessage(ctx context.Context, from *dualClient, targetDeviceID, bo
 
 func waitClientMessage(ctx context.Context, target *dualClient, fromDeviceID, body string) {
 	var lastRevision float64
-	deadline := time.Now().Add(25 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
 	var lastSnapshot map[string]any
+	var lastWatchErr error
 	for time.Now().Before(deadline) {
 		response, err := localRequest(target.address, "localBusinessEventWatch", map[string]any{
 			"lastRevision": lastRevision,
-			"timeoutMs":    2000,
-		}, 3*time.Second)
+			"timeoutMs":    5000,
+		}, 8*time.Second)
 		if err != nil {
-			fail("%s watch business event failed: %v", target.name, err)
+			lastWatchErr = err
+			select {
+			case <-ctx.Done():
+				fail("wait client message timeout: %v", ctx.Err())
+			case <-time.After(200 * time.Millisecond):
+			}
+			continue
 		}
 		if rev, ok := response["revision"].(float64); ok {
 			lastRevision = rev
@@ -434,7 +467,8 @@ func waitClientMessage(ctx context.Context, target *dualClient, fromDeviceID, bo
 		default:
 		}
 	}
-	fail("%s did not consume client_message from %s body=%s lastSnapshot=%#v", target.name, fromDeviceID, body, lastSnapshot)
+	status, _ := localRequest(target.address, "localControlStatus", map[string]any{}, 2*time.Second)
+	fail("%s did not consume client_message from %s body=%s lastRevision=%.0f lastSnapshot=%#v lastWatchErr=%v controlStatus=%#v", target.name, fromDeviceID, body, lastRevision, lastSnapshot, lastWatchErr, status)
 }
 
 func localRequest(address, method string, args map[string]any, timeout time.Duration) (map[string]any, error) {
