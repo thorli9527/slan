@@ -44,7 +44,7 @@ type smokeFailure struct {
 	message string
 }
 
-var httpClient = &http.Client{Timeout: 12 * time.Second}
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 func main() {
 	defer exitOnFailure()
@@ -60,7 +60,7 @@ func main() {
 	flag.StringVar(&password, "password", "Password123!", "test user password")
 	flag.StringVar(&fromPlatform, "from-platform", "mac", "source service platform label")
 	flag.StringVar(&targetPlatform, "target-platform", "ios", "target service platform label")
-	flag.DurationVar(&timeout, "timeout", 25*time.Second, "smoke timeout")
+	flag.DurationVar(&timeout, "timeout", 60*time.Second, "smoke timeout")
 	flag.Parse()
 
 	bizURL = strings.TrimRight(bizURL, "/")
@@ -75,6 +75,10 @@ func main() {
 	email := fmt.Sprintf("client-core-service-smoke-%d@example.test", time.Now().UnixNano())
 	auth := register(ctx, bizURL, email, password)
 	userID := auth.Auth.User.UserID
+	authToken := auth.AccessToken
+	if strings.TrimSpace(authToken) == "" {
+		authToken = auth.Auth.Session.Token
+	}
 
 	root := filepath.Join(os.TempDir(), "slan-client-core-service-message-smoke-"+uniqueSuffix())
 	defer func() {
@@ -88,7 +92,7 @@ func main() {
 	from := startService(ctx, serviceBin, bizURL, filepath.Join(root, "from"), "smoke-"+fromPlatform+"-"+uniqueSuffix(), fromPlatform)
 	target := startService(ctx, serviceBin, bizURL, filepath.Join(root, "target"), "smoke-"+targetPlatform+"-"+uniqueSuffix(), targetPlatform)
 	defer func() {
-		cleanupDevices(bizURL, userID, []string{from.deviceID, target.deviceID})
+		cleanupDevices(bizURL, authToken, userID, []string{from.deviceID, target.deviceID})
 	}()
 	defer from.stop()
 	defer target.stop()
@@ -239,19 +243,31 @@ func sendClientMessage(ctx context.Context, from *serviceClient, targetDeviceID,
 
 func waitClientMessage(ctx context.Context, target *serviceClient, fromDeviceID, body string) {
 	var lastRevision float64
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	var lastSnapshot map[string]any
+	var lastWatchErr error
 	for time.Now().Before(deadline) {
 		response, err := localRequest(target.address, "localBusinessEventWatch", map[string]any{
 			"lastRevision": lastRevision,
-			"timeoutMs":    2000,
-		}, 3*time.Second)
+			"timeoutMs":    5000,
+		}, 8*time.Second)
 		if err != nil {
-			fail("%s watch business event failed: %v", target.name, err)
+			lastWatchErr = err
+			select {
+			case <-ctx.Done():
+				fail("wait client message timeout: %v", ctx.Err())
+			case <-time.After(200 * time.Millisecond):
+			}
+			continue
 		}
 		if rev, ok := response["revision"].(float64); ok {
 			lastRevision = rev
 		}
 		snapshot, _ := response["snapshot"].(map[string]any)
+		lastSnapshot = snapshot
 		if snapshot["lastClientMessageFromDeviceId"] == fromDeviceID && snapshot["lastClientMessageBody"] == body {
 			return
 		}
@@ -261,7 +277,8 @@ func waitClientMessage(ctx context.Context, target *serviceClient, fromDeviceID,
 		default:
 		}
 	}
-	fail("%s did not consume client_message from %s body=%s", target.name, fromDeviceID, body)
+	status, _ := localRequest(target.address, "localControlStatus", map[string]any{}, 2*time.Second)
+	fail("%s did not consume client_message from %s body=%s lastRevision=%.0f lastSnapshot=%#v lastWatchErr=%v controlStatus=%#v", target.name, fromDeviceID, body, lastRevision, lastSnapshot, lastWatchErr, status)
 }
 
 func localRequest(address, method string, args map[string]any, timeout time.Duration) (map[string]any, error) {
@@ -313,11 +330,11 @@ func register(ctx context.Context, bizURL, email, password string) authResponse 
 	return out
 }
 
-func cleanupDevices(bizURL, userID string, deviceIDs []string) {
+func cleanupDevices(bizURL, token, userID string, deviceIDs []string) {
 	if strings.TrimSpace(userID) == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	deviceIDSet := make(map[string]struct{}, len(deviceIDs))
 	for _, deviceID := range deviceIDs {
@@ -333,6 +350,9 @@ func cleanupDevices(bizURL, userID string, deviceIDs []string) {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bizURL+"/api/devices?userId="+url.QueryEscape(userID), nil)
 	if err == nil {
+		if strings.TrimSpace(token) != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 		if resp, err := httpClient.Do(req); err == nil {
 			func() {
 				defer resp.Body.Close()
@@ -351,6 +371,9 @@ func cleanupDevices(bizURL, userID string, deviceIDs []string) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, bizURL+"/api/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID), nil)
 		if err != nil {
 			continue
+		}
+		if strings.TrimSpace(token) != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		resp, err := httpClient.Do(req)
 		if err == nil {

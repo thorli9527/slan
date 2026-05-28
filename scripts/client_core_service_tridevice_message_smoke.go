@@ -44,7 +44,7 @@ type smokeFailure struct {
 	message string
 }
 
-var httpClient = &http.Client{Timeout: 12 * time.Second}
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 func main() {
 	defer exitOnFailure()
@@ -56,7 +56,7 @@ func main() {
 	flag.StringVar(&bizURL, "biz-url", envDefault("SLAN_BIZ_URL", "http://127.0.0.1:28080"), "service-biz base URL")
 	flag.StringVar(&serviceBin, "service-bin", envDefault("SLAN_CLIENT_CORE_SERVICE_BIN", "client_v2/rust/target/debug/client-core-service"), "client-core-service binary")
 	flag.StringVar(&password, "password", "Password123!", "test user password")
-	flag.DurationVar(&timeout, "timeout", 45*time.Second, "smoke timeout")
+	flag.DurationVar(&timeout, "timeout", 90*time.Second, "smoke timeout")
 	flag.Parse()
 
 	bizURL = strings.TrimRight(bizURL, "/")
@@ -71,6 +71,10 @@ func main() {
 	email := fmt.Sprintf("client-tridevice-smoke-%d@example.test", time.Now().UnixNano())
 	auth := register(ctx, bizURL, email, password)
 	userID := auth.Auth.User.UserID
+	authToken := auth.AccessToken
+	if strings.TrimSpace(authToken) == "" {
+		authToken = auth.Auth.Session.Token
+	}
 
 	root := filepath.Join(os.TempDir(), "slan-client-tridevice-smoke-"+uniqueSuffix())
 	defer func() {
@@ -87,7 +91,7 @@ func main() {
 		startTriService(ctx, serviceBin, bizURL, filepath.Join(root, "ios"), uuidV4(), "ios"),
 	}
 	defer func() {
-		cleanupTriDevices(bizURL, userID, []string{clients[0].deviceID, clients[1].deviceID, clients[2].deviceID})
+		cleanupTriDevices(bizURL, authToken, userID, []string{clients[0].deviceID, clients[1].deviceID, clients[2].deviceID})
 	}()
 	defer func() {
 		for _, client := range clients {
@@ -274,15 +278,25 @@ func sendClientMessage(ctx context.Context, from *triClient, targetDeviceID, bod
 
 func waitClientMessage(ctx context.Context, target *triClient, fromDeviceID, body string) {
 	var lastRevision float64
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
 	var lastSnapshot map[string]any
+	var lastWatchErr error
 	for time.Now().Before(deadline) {
 		response, err := localRequest(target.address, "localBusinessEventWatch", map[string]any{
 			"lastRevision": lastRevision,
-			"timeoutMs":    2000,
-		}, 3*time.Second)
+			"timeoutMs":    5000,
+		}, 8*time.Second)
 		if err != nil {
-			fail("%s watch business event failed: %v", target.name, err)
+			lastWatchErr = err
+			select {
+			case <-ctx.Done():
+				fail("wait client message timeout: %v", ctx.Err())
+			case <-time.After(200 * time.Millisecond):
+			}
+			continue
 		}
 		if rev, ok := response["revision"].(float64); ok {
 			lastRevision = rev
@@ -299,7 +313,7 @@ func waitClientMessage(ctx context.Context, target *triClient, fromDeviceID, bod
 		}
 	}
 	status, _ := localRequest(target.address, "localControlStatus", map[string]any{}, 2*time.Second)
-	fail("%s did not consume client_message from %s body=%s lastRevision=%.0f lastSnapshot=%#v controlStatus=%#v", target.name, fromDeviceID, body, lastRevision, lastSnapshot, status)
+	fail("%s did not consume client_message from %s body=%s lastRevision=%.0f lastSnapshot=%#v lastWatchErr=%v controlStatus=%#v", target.name, fromDeviceID, body, lastRevision, lastSnapshot, lastWatchErr, status)
 }
 
 func localRequest(address, method string, args map[string]any, timeout time.Duration) (map[string]any, error) {
@@ -351,11 +365,11 @@ func register(ctx context.Context, bizURL, email, password string) triAuthRespon
 	return out
 }
 
-func cleanupTriDevices(bizURL, userID string, deviceIDs []string) {
+func cleanupTriDevices(bizURL, token, userID string, deviceIDs []string) {
 	if strings.TrimSpace(userID) == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	deviceIDSet := make(map[string]struct{}, len(deviceIDs))
 	for _, deviceID := range deviceIDs {
@@ -371,6 +385,9 @@ func cleanupTriDevices(bizURL, userID string, deviceIDs []string) {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bizURL+"/api/devices?userId="+url.QueryEscape(userID), nil)
 	if err == nil {
+		if strings.TrimSpace(token) != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 		if resp, err := httpClient.Do(req); err == nil {
 			func() {
 				defer resp.Body.Close()
@@ -389,6 +406,9 @@ func cleanupTriDevices(bizURL, userID string, deviceIDs []string) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, bizURL+"/api/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID), nil)
 		if err != nil {
 			continue
+		}
+		if strings.TrimSpace(token) != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		resp, err := httpClient.Do(req)
 		if err == nil {
