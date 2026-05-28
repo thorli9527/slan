@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$ROOT_DIR/client_v2/rust/target/debug/client-core-service}"
@@ -10,7 +11,14 @@ ANDROID_BIZ_URL="${SLAN_ANDROID_BIZ_URL:-http://10.0.2.2:28080}"
 SERVICE_HOST="${SLAN_ANDROID_SERVICE_HOST:-127.0.0.1:46396}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-EMAIL="${SLAN_TEST_EMAIL:-mac-android-integration-$(date +%s%N)@example.test}"
+GENERATED_TEST_EMAIL=0
+if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
+  EMAIL="$SLAN_TEST_EMAIL"
+else
+  EMAIL="mac-android-integration-$(date +%s%N)@example.test"
+  GENERATED_TEST_EMAIL=1
+fi
+CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 TIMEOUT="${SLAN_ANDROID_TIMEOUT:-60s}"
 WORK_DIR="${SLAN_ANDROID_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-android.XXXXXX")}"
 MAC_LOG="$WORK_DIR/macos-service.log"
@@ -76,6 +84,7 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
+  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_ANDROID_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else

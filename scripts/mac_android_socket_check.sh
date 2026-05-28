@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 GO_BIN="${SLAN_GO_BIN:-/opt/homebrew/bin/go}"
@@ -12,7 +13,14 @@ MAC_SERVICE_HOST="${SLAN_MAC_SERVICE_HOST:-127.0.0.1:$((46380 + RANDOM % 200))}"
 USE_EXISTING_MAC_SERVICE="${SLAN_USE_EXISTING_MAC_SERVICE:-0}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-EMAIL="${SLAN_TEST_EMAIL:-mac-android-socket-$(date +%s%N)@example.test}"
+GENERATED_TEST_EMAIL=0
+if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
+  EMAIL="$SLAN_TEST_EMAIL"
+else
+  EMAIL="mac-android-socket-$(date +%s%N)@example.test"
+  GENERATED_TEST_EMAIL=1
+fi
+CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 REGISTER_USER="${SLAN_TEST_REGISTER_USER:-true}"
 TIMEOUT="${SLAN_MAC_ANDROID_SOCKET_TIMEOUT:-90s}"
 MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
@@ -116,6 +124,7 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     terminate_tree "$pid"
   done
+  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_MAC_ANDROID_SOCKET_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else

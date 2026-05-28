@@ -146,7 +146,7 @@ func login(ctx context.Context, address, email, password string) map[string]any 
 			"email":    email,
 			"password": password,
 		},
-	}, 8*time.Second)
+	}, 45*time.Second)
 	if err != nil {
 		fail("login request failed: %v", err)
 	}

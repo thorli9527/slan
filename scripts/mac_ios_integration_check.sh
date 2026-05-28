@@ -2,12 +2,20 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$ROOT_DIR/client_v2/rust/target/debug/client-core-service}"
 BIZ_URL="${SLAN_BIZ_URL:-http://127.0.0.1:28080}"
 SERVICE_HOST="${SLAN_MAC_IOS_SERVICE_HOST:-127.0.0.1:46395}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-EMAIL="${SLAN_TEST_EMAIL:-mac-ios-integration-$(date +%s%N)@example.test}"
+GENERATED_TEST_EMAIL=0
+if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
+  EMAIL="$SLAN_TEST_EMAIL"
+else
+  EMAIL="mac-ios-integration-$(date +%s%N)@example.test"
+  GENERATED_TEST_EMAIL=1
+fi
+CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 TIMEOUT="${SLAN_MAC_IOS_TIMEOUT:-60s}"
 WORK_DIR="${SLAN_MAC_IOS_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-ios.XXXXXX")}"
 MAC_LOG="$WORK_DIR/macos-service.log"
@@ -28,6 +36,7 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
+  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_MAC_IOS_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else

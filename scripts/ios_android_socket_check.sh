@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 BIZ_URL="${SLAN_BIZ_URL:-http://127.0.0.1:28080}"
@@ -9,7 +10,14 @@ ANDROID_BIZ_URL="${SLAN_ANDROID_BIZ_URL:-http://10.0.2.2:28080}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
 IOS_DEVICE="${SLAN_IOS_FLUTTER_DEVICE:-$(xcrun simctl list devices booted | awk -F'[()]' '/Booted/ && /iPhone|iPad/ { print $2; exit }')}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-EMAIL="${SLAN_TEST_EMAIL:-ios-android-socket-$(date +%s%N)@example.test}"
+GENERATED_TEST_EMAIL=0
+if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
+  EMAIL="$SLAN_TEST_EMAIL"
+else
+  EMAIL="ios-android-socket-$(date +%s%N)@example.test"
+  GENERATED_TEST_EMAIL=1
+fi
+CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 UDP_PORT="${SLAN_TEST_UDP_ECHO_PORT:-19090}"
 UDP_BODY="${SLAN_TEST_UDP_SEND_BODY:-hello-ios-to-android-socket-$(date +%s%N)}"
 TCP_PORT="${SLAN_TEST_TCP_ECHO_PORT:-19091}"
@@ -128,6 +136,7 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
+  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_IOS_ANDROID_SOCKET_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else
