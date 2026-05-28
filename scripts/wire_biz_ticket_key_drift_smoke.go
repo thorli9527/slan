@@ -13,6 +13,11 @@ import (
 
 var httpClient = &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 5 * time.Second}
 
+const (
+	smokeRegionID    = "smoke-region"
+	smokeRelayNodeID = "relay-ticket-key-smoke"
+)
+
 type ticketKeyStatus struct {
 	Source             string `json:"source,omitempty"`
 	KeyRingID          string `json:"keyRingId,omitempty"`
@@ -53,8 +58,18 @@ func main() {
 		fail("relay-b returned empty keyRingId: %+v", correct)
 	}
 
-	node := chooseRelayNode(bizURL, internalToken)
-	node.TicketKeyRotation = correct
+	template := chooseRelayNode(bizURL, internalToken)
+	node := relayNode{
+		RegionID:          smokeRegionID,
+		NodeID:            smokeRelayNodeID,
+		Host:              template.Host,
+		UDPPort:           template.UDPPort,
+		AdminPort:         template.AdminPort,
+		Enabled:           false,
+		Healthy:           false,
+		Priority:          10000,
+		TicketKeyRotation: correct,
+	}
 	upsertRelayNode(bizURL, internalToken, node)
 	expectRelayTicketKeyRotation(bizURL, internalToken, node.NodeID, correct)
 
@@ -67,6 +82,7 @@ func main() {
 
 	upsertRelayNode(bizURL, internalToken, node)
 	expectRelayTicketKeyRotation(bizURL, internalToken, node.NodeID, correct)
+	disableRelayNode(bizURL, internalToken, node.RegionID, node.NodeID)
 
 	fmt.Println("wire biz ticket key metadata smoke passed")
 }
@@ -102,7 +118,14 @@ func disableKnownSmokeNodes(bizURL, internalToken string) {
 	headers := map[string]string{"X-Slan-Internal-Token": internalToken}
 	payload := map[string]any{"enabled": false, "healthy": false}
 	patchJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/smoke-region/relay-smoke/status", headers, payload, nil)
+	patchJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/"+smokeRegionID+"/"+smokeRelayNodeID+"/status", headers, payload, nil)
 	patchJSONWithHeaders(bizURL+"/internal/wire/admin/derp-nodes/smoke-region/derp-smoke/status", headers, payload, nil)
+}
+
+func disableRelayNode(bizURL, internalToken, regionID, nodeID string) {
+	headers := map[string]string{"X-Slan-Internal-Token": internalToken}
+	payload := map[string]any{"enabled": false, "healthy": false}
+	patchJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+nodeID+"/status", headers, payload, nil)
 }
 
 func expectRelayTicketKeyRotation(bizURL, internalToken, nodeID string, want ticketKeyStatus) {
