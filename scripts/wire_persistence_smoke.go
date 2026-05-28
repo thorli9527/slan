@@ -136,7 +136,13 @@ type ticketKeyStatus struct {
 	AcceptsDevFallback bool   `json:"acceptsDevFallback,omitempty"`
 }
 
+type smokeFailure struct {
+	message string
+}
+
 func main() {
+	defer exitOnFailure()
+
 	if len(os.Args) != 2 {
 		fail("usage: wire_persistence_smoke.go seed|verify|cleanup")
 	}
@@ -180,6 +186,13 @@ func seed() {
 	regionID := smokeRegionID
 	relayNodeID := "relay-smoke-" + suffix
 	derpNodeID := "derp-smoke-" + suffix
+	seedCompleted := false
+	defer func() {
+		if !seedCompleted {
+			disableSmokeNodesBestEffort(bizURL, internalToken, regionID, relayNodeID, derpNodeID)
+			_ = os.Remove(stateFile)
+		}
+	}()
 
 	var auth authResponse
 	postJSON(bizURL+"/auth/register", "", map[string]any{
@@ -287,6 +300,7 @@ func seed() {
 		RelayNodeID: relayNodeID,
 		DerpNodeID:  derpNodeID,
 	})
+	seedCompleted = true
 	fmt.Println("wire persistence seed passed; run cleanup after verify to disable smoke nodes")
 }
 
@@ -415,6 +429,13 @@ func disableSmokeNodes(bizURL, internalToken, regionID, relayNodeID, derpNodeID 
 	patchJSONWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+derpNodeID+"/status", internalToken, payload, nil)
 	deleteWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+relayNodeID, internalToken)
 	deleteWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+derpNodeID, internalToken)
+}
+
+func disableSmokeNodesBestEffort(bizURL, internalToken, regionID, relayNodeID, derpNodeID string) {
+	defer func() {
+		_ = recover()
+	}()
+	disableSmokeNodes(bizURL, internalToken, regionID, relayNodeID, derpNodeID)
 }
 
 func waitHTTP(url string) {
@@ -563,6 +584,17 @@ func must(err error) {
 }
 
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+	panic(smokeFailure{message: fmt.Sprintf(format, args...)})
+}
+
+func exitOnFailure() {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	if failure, ok := recovered.(smokeFailure); ok {
+		fmt.Fprintln(os.Stderr, failure.message)
+		os.Exit(1)
+	}
+	panic(recovered)
 }
