@@ -7,8 +7,67 @@ OPS_BASE="${SLAN_REMOTE_OPS_BASE:-http://${HOST}:24201}"
 BIZ_BASE="${SLAN_REMOTE_BIZ_BASE:-http://${HOST}:28080}"
 RUN_ID="$(date +%s)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/slan-remote-ui-smoke.XXXXXX")"
+USER_ID=""
+USER_EMAIL=""
+USER_TOKEN=""
+DEVICE_ID=""
+SECOND_USER_ID=""
+SECOND_USER_EMAIL=""
+SECOND_DEVICE_ID=""
+BOOTSTRAP_ID=""
+WORKSPACE_ID=""
+ZONE_ID=""
+RECORD_ID=""
+MAPPING_ID=""
+GROUP_ID=""
+RULE_ID=""
+OPS_TOKEN=""
+OPERATOR_ID=""
+PLAN_CODE=""
+PRODUCT_ID=""
+RELAY_NODE_ID=""
+DOWNLOAD_ID=""
+
+best_effort_curl() {
+  command curl --silent --show-error --connect-timeout 5 --max-time 20 "$@" >/dev/null 2>&1 || true
+}
+
+best_effort_ops_json() {
+  local method="$1"
+  local url="$2"
+  local payload="$3"
+  [[ -n "${OPS_TOKEN}" ]] || return 0
+  best_effort_curl -X "${method}" "${url}" \
+    -H "Authorization: Bearer ${OPS_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "${payload}"
+}
 
 cleanup() {
+  if [[ -n "${OPS_TOKEN}" ]]; then
+    [[ -n "${DOWNLOAD_ID}" ]] && best_effort_curl -X DELETE "${OPS_BASE}/api/ops/client-downloads/${DOWNLOAD_ID}" -H "Authorization: Bearer ${OPS_TOKEN}"
+    [[ -n "${RELAY_NODE_ID}" ]] && best_effort_curl -X DELETE "${OPS_BASE}/api/ops/relay-nodes/${RELAY_NODE_ID}" -H "Authorization: Bearer ${OPS_TOKEN}"
+    [[ -n "${PRODUCT_ID}" ]] && best_effort_ops_json PATCH "${OPS_BASE}/api/ops/products/${PRODUCT_ID}" "{\"name\":\"Remote Smoke Product Disabled\",\"type\":\"plan\",\"planCode\":\"${PLAN_CODE}\",\"period\":\"monthly\",\"validDays\":31,\"relayTrafficGb\":0,\"relayBandwidthMbps\":0,\"listPrice\":0,\"salePrice\":0,\"currency\":\"CNY\",\"autoRenew\":false,\"status\":\"disabled\",\"description\":\"remote smoke cleanup\"}"
+    [[ -n "${PLAN_CODE}" ]] && best_effort_ops_json PATCH "${OPS_BASE}/api/ops/plans/${PLAN_CODE}" '{"name":"Remote Smoke Plan Disabled","ownDeviceLimit":0,"invitedDeviceLimit":0,"totalDeviceLimit":0,"relayMonthlyGb":0,"relayBandwidthMbps":0,"relayThrottleMbps":0,"p2pUnlimited":false,"customDomain":false,"acl":false,"dedicatedRelay":false,"auditLog":false,"apiAccess":false,"monthlyPrice":0,"yearlyPrice":0,"status":"disabled"}'
+    [[ -n "${OPERATOR_ID}" ]] && best_effort_ops_json PATCH "${OPS_BASE}/api/ops/operators/${OPERATOR_ID}" "{\"name\":\"Remote Smoke Ops Disabled\",\"email\":\"remote-ops-${RUN_ID}@staticlss.com\",\"role\":\"ops\",\"status\":\"disabled\"}"
+    [[ -n "${USER_ID}" && -n "${USER_EMAIL}" ]] && best_effort_ops_json PATCH "${OPS_BASE}/api/ops/customers/${USER_ID}" "{\"email\":\"${USER_EMAIL}\",\"name\":\"Remote UI Smoke Disabled\",\"status\":\"disabled\"}"
+    [[ -n "${SECOND_USER_ID}" && -n "${SECOND_USER_EMAIL}" ]] && best_effort_ops_json PATCH "${OPS_BASE}/api/ops/customers/${SECOND_USER_ID}" "{\"email\":\"${SECOND_USER_EMAIL}\",\"name\":\"Remote UI Peer Disabled\",\"status\":\"disabled\"}"
+  fi
+  [[ -n "${RULE_ID}" ]] && best_effort_curl -X DELETE "${WEB_BASE}/api/security-groups/rules/${RULE_ID}"
+  [[ -n "${GROUP_ID}" && -n "${WORKSPACE_ID}" ]] && best_effort_curl -X DELETE "${WEB_BASE}/api/networks/${WORKSPACE_ID}/security-groups/${GROUP_ID}"
+  [[ -n "${MAPPING_ID}" && -n "${WORKSPACE_ID}" ]] && best_effort_curl -X DELETE "${WEB_BASE}/api/networks/${WORKSPACE_ID}/public-mappings/${MAPPING_ID}"
+  [[ -n "${RECORD_ID}" && -n "${WORKSPACE_ID}" ]] && best_effort_curl -X DELETE "${WEB_BASE}/api/networks/${WORKSPACE_ID}/dns/records/${RECORD_ID}"
+  [[ -n "${ZONE_ID}" && -n "${WORKSPACE_ID}" ]] && best_effort_curl -X DELETE "${WEB_BASE}/api/networks/${WORKSPACE_ID}/dns/zones/${ZONE_ID}"
+  [[ -n "${DEVICE_ID}" && -n "${WORKSPACE_ID}" ]] && best_effort_curl -X DELETE "${WEB_BASE}/api/networks/${WORKSPACE_ID}/devices/${DEVICE_ID}"
+  [[ -n "${WORKSPACE_ID}" ]] && best_effort_curl -X PATCH "${WEB_BASE}/api/networks/${WORKSPACE_ID}" -H 'Content-Type: application/json' -d "{\"name\":\"Remote Smoke Network Disabled\",\"code\":\"rsmoke-${RUN_ID}\",\"status\":\"disabled\"}"
+  if [[ -n "${BOOTSTRAP_ID}" && -n "${USER_TOKEN}" && -n "${USER_ID}" ]]; then
+    best_effort_curl -X POST "${WEB_BASE}/api/web/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
+      -H "Authorization: Bearer ${USER_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      -d "{\"userId\":\"${USER_ID}\"}"
+  fi
+  [[ -n "${DEVICE_ID}" && -n "${USER_ID}" ]] && best_effort_curl -X DELETE "${WEB_BASE}/api/devices/${DEVICE_ID}?actorUserId=${USER_ID}"
+  [[ -n "${SECOND_DEVICE_ID}" && -n "${SECOND_USER_ID}" ]] && best_effort_curl -X DELETE "${WEB_BASE}/api/devices/${SECOND_DEVICE_ID}?actorUserId=${SECOND_USER_ID}"
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
