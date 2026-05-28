@@ -55,6 +55,25 @@ func TestInternalWireRoutesRegisterRelayAndDerpNodes(t *testing.T) {
 	if len(derpMap.Regions) != 1 || derpMap.Regions[0].Nodes[0].NodeID != "derp-a" {
 		t.Fatalf("unexpected derp map: %+v", derpMap)
 	}
+
+	expectWireStatus(t, handler, http.MethodDelete, "/internal/wire/admin/relay-nodes/cn-east/relay-a", "wire-token", nil, http.StatusNoContent)
+	expectWireStatus(t, handler, http.MethodDelete, "/internal/wire/admin/derp-nodes/cn-east/derp-a", "wire-token", nil, http.StatusNoContent)
+
+	var relays struct {
+		Items []struct {
+			NodeID string `json:"nodeId"`
+		} `json:"items"`
+	}
+	getWireJSON(t, handler, "/internal/wire/admin/relay-nodes", "wire-token", &relays)
+	for _, relay := range relays.Items {
+		if relay.NodeID == "relay-a" {
+			t.Fatalf("relay-a should be deleted: %+v", relays.Items)
+		}
+	}
+	getWireJSON(t, handler, "/internal/wire/derp-map", "wire-token", &derpMap)
+	if len(derpMap.Regions) != 0 {
+		t.Fatalf("deleted derp node should be absent from derp map: %+v", derpMap)
+	}
 }
 
 func TestInternalWirePeerAuthzRuntimeAndTopology(t *testing.T) {

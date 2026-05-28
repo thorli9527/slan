@@ -100,10 +100,12 @@ func (s *Server) registerInternalWireRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /internal/wire/admin/relay-nodes", s.internalWireUpsertRelayNode)
 	mux.HandleFunc("POST /internal/wire/admin/relay-nodes/{regionId}/{nodeId}/heartbeat", s.internalWireRelayNodeHeartbeat)
 	mux.HandleFunc("PATCH /internal/wire/admin/relay-nodes/{regionId}/{nodeId}/status", s.internalWireRelayNodeStatus)
+	mux.HandleFunc("DELETE /internal/wire/admin/relay-nodes/{regionId}/{nodeId}", s.internalWireDeleteRelayNode)
 	mux.HandleFunc("GET /internal/wire/admin/derp-nodes", s.internalWireDerpNodes)
 	mux.HandleFunc("PUT /internal/wire/admin/derp-nodes", s.internalWireUpsertDerpNode)
 	mux.HandleFunc("POST /internal/wire/admin/derp-nodes/{regionId}/{nodeId}/heartbeat", s.internalWireDerpNodeHeartbeat)
 	mux.HandleFunc("PATCH /internal/wire/admin/derp-nodes/{regionId}/{nodeId}/status", s.internalWireDerpNodeStatus)
+	mux.HandleFunc("DELETE /internal/wire/admin/derp-nodes/{regionId}/{nodeId}", s.internalWireDeleteDerpNode)
 	mux.HandleFunc("GET /internal/wire/derp-map", s.internalWireDerpMap)
 }
 
@@ -207,6 +209,17 @@ func (s *Server) internalWireRelayNodeStatus(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, wireRelayNodeView(node))
 }
 
+func (s *Server) internalWireDeleteRelayNode(w http.ResponseWriter, r *http.Request) {
+	if !requireInternalWireToken(w, r) {
+		return
+	}
+	if err := s.store.DeleteWireNode(r.PathValue("nodeId"), "relay_udp"); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) internalWireDerpNodes(w http.ResponseWriter, r *http.Request) {
 	if !requireInternalWireToken(w, r) {
 		return
@@ -260,6 +273,17 @@ func (s *Server) internalWireDerpNodeStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, wireDerpNodeView(node))
+}
+
+func (s *Server) internalWireDeleteDerpNode(w http.ResponseWriter, r *http.Request) {
+	if !requireInternalWireToken(w, r) {
+		return
+	}
+	if err := s.store.DeleteWireNode(r.PathValue("nodeId"), "derp_tcp_tls_443"); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) internalWireDerpMap(w http.ResponseWriter, r *http.Request) {
@@ -532,6 +556,21 @@ func (s *Store) UpsertWireNode(node OpsRelayNode) (OpsRelayNode, error) {
 	}
 	s.relayNodes[node.NodeID] = node
 	return node, nil
+}
+
+func (s *Store) DeleteWireNode(nodeID, transport string) error {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return errBadRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	node, ok := s.relayNodes[nodeID]
+	if !ok || node.Transport != transport {
+		return errNotFound
+	}
+	delete(s.relayNodes, nodeID)
+	return nil
 }
 
 func (s *Store) WirePeerAuthz(peerID string) (map[string]any, error) {

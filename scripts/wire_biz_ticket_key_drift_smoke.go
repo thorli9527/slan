@@ -83,6 +83,7 @@ func main() {
 	upsertRelayNode(bizURL, internalToken, node)
 	expectRelayTicketKeyRotation(bizURL, internalToken, node.NodeID, correct)
 	disableRelayNode(bizURL, internalToken, node.RegionID, node.NodeID)
+	deleteRelayNode(bizURL, internalToken, node.RegionID, node.NodeID)
 
 	fmt.Println("wire biz ticket key metadata smoke passed")
 }
@@ -120,12 +121,18 @@ func disableKnownSmokeNodes(bizURL, internalToken string) {
 	patchJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/smoke-region/relay-smoke/status", headers, payload, nil)
 	patchJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/"+smokeRegionID+"/"+smokeRelayNodeID+"/status", headers, payload, nil)
 	patchJSONWithHeaders(bizURL+"/internal/wire/admin/derp-nodes/smoke-region/derp-smoke/status", headers, payload, nil)
+	deleteJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/"+smokeRegionID+"/"+smokeRelayNodeID, headers)
 }
 
 func disableRelayNode(bizURL, internalToken, regionID, nodeID string) {
 	headers := map[string]string{"X-Slan-Internal-Token": internalToken}
 	payload := map[string]any{"enabled": false, "healthy": false}
 	patchJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+nodeID+"/status", headers, payload, nil)
+}
+
+func deleteRelayNode(bizURL, internalToken, regionID, nodeID string) {
+	headers := map[string]string{"X-Slan-Internal-Token": internalToken}
+	deleteJSONWithHeaders(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+nodeID, headers)
 }
 
 func expectRelayTicketKeyRotation(bizURL, internalToken, nodeID string, want ticketKeyStatus) {
@@ -214,6 +221,24 @@ func putJSONWithHeaders(url string, headers map[string]string, in, out any) {
 	}
 	if out != nil {
 		must(json.Unmarshal(body, out))
+	}
+}
+
+func deleteJSONWithHeaders(url string, headers map[string]string) {
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	must(err)
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("DELETE %s status=%d body=%s", url, resp.StatusCode, string(body))
 	}
 }
 

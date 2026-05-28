@@ -141,10 +141,12 @@ SLAN_WIRE_PUNCH_NODES=local=47.245.40.231:29130,backup=47.245.40.232:29130
 - `PUT /internal/wire/admin/relay-nodes`
 - `POST /internal/wire/admin/relay-nodes/{regionId}/{nodeId}/heartbeat`
 - `PATCH /internal/wire/admin/relay-nodes/{regionId}/{nodeId}/status`
+- `DELETE /internal/wire/admin/relay-nodes/{regionId}/{nodeId}`
 - `GET /internal/wire/admin/derp-nodes`
 - `PUT /internal/wire/admin/derp-nodes`
 - `POST /internal/wire/admin/derp-nodes/{regionId}/{nodeId}/heartbeat`
 - `PATCH /internal/wire/admin/derp-nodes/{regionId}/{nodeId}/status`
+- `DELETE /internal/wire/admin/derp-nodes/{regionId}/{nodeId}`
 
 开发与部署统一使用远程 Docker context `slan-remote`，详见仓库根目录
 `docs/remote-docker-only.md`。`scripts/local_docker_*.sh` 仅保留为显式

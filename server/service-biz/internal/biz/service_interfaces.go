@@ -150,6 +150,7 @@ type WireStore interface {
 	UpsertWireNode(node OpsRelayNode) (OpsRelayNode, error)
 	UpdateWireNodeHeartbeat(nodeID, transport string, req wireNodeHeartbeatRequest) (OpsRelayNode, error)
 	UpdateWireNodeStatus(nodeID, transport string, req wireNodeStatusRequest) (OpsRelayNode, error)
+	DeleteWireNode(nodeID, transport string) error
 }
 
 // MQTTControlStore 定义通过 MQTT 下发控制任务、确认结果和失败重试的能力。

@@ -413,6 +413,8 @@ func disableSmokeNodes(bizURL, internalToken, regionID, relayNodeID, derpNodeID 
 	payload := map[string]any{"enabled": false, "healthy": false}
 	patchJSONWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+relayNodeID+"/status", internalToken, payload, nil)
 	patchJSONWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+derpNodeID+"/status", internalToken, payload, nil)
+	deleteWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+relayNodeID, internalToken)
+	deleteWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+derpNodeID, internalToken)
 }
 
 func waitHTTP(url string) {
@@ -491,6 +493,22 @@ func patchJSONWithInternalToken(url, token string, in, out any) {
 	}
 	if out != nil {
 		must(json.Unmarshal(body, out))
+	}
+}
+
+func deleteWithInternalToken(url, token string) {
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	must(err)
+	req.Header.Set("X-Slan-Internal-Token", token)
+	resp, err := httpClient.Do(req)
+	must(err)
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		fail("%s %s status=%d body=%s", req.Method, req.URL.String(), resp.StatusCode, string(body))
 	}
 }
 
