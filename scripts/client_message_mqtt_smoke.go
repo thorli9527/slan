@@ -76,6 +76,8 @@ type smokeFailure struct {
 	message string
 }
 
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 func main() {
 	defer exitOnFailure()
 
@@ -100,28 +102,29 @@ func main() {
 	defer cancel()
 
 	var userID string
+	var authToken string
 	createdDevices := make([]string, 0, 2)
 	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
-		cleanupDevices(cleanupCtx, bizURL, userID, createdDevices)
+		cleanupDevices(cleanupCtx, bizURL, authToken, userID, createdDevices)
 	}()
 
 	auth := register(ctx, bizURL, email, password)
-	token := auth.AccessToken
-	if token == "" {
-		token = auth.Auth.Session.Token
+	authToken = auth.AccessToken
+	if authToken == "" {
+		authToken = auth.Auth.Session.Token
 	}
 	userID = auth.Auth.User.UserID
-	if token == "" || userID == "" || auth.DefaultNetwork.NetworkID == "" {
+	if authToken == "" || userID == "" || auth.DefaultNetwork.NetworkID == "" {
 		fail("register returned incomplete auth response: %+v", auth)
 	}
-	mac := registerDevice(ctx, bizURL, token, userID, "smoke-mac-"+uniqueSuffix(), "macos")
+	mac := registerDevice(ctx, bizURL, authToken, userID, "smoke-mac-"+uniqueSuffix(), "macos")
 	createdDevices = append(createdDevices, mac.DeviceID)
-	ios := registerDevice(ctx, bizURL, token, userID, "smoke-ios-"+uniqueSuffix(), "ios")
+	ios := registerDevice(ctx, bizURL, authToken, userID, "smoke-ios-"+uniqueSuffix(), "ios")
 	createdDevices = append(createdDevices, ios.DeviceID)
-	renewDevice(ctx, bizURL, token, mac.DeviceID, userID)
-	renewDevice(ctx, bizURL, token, ios.DeviceID, userID)
+	renewDevice(ctx, bizURL, authToken, mac.DeviceID, userID)
+	renewDevice(ctx, bizURL, authToken, ios.DeviceID, userID)
 	assertMQTTHost(mac.MQTT, expectMQTTHost)
 	assertMQTTHost(ios.MQTT, expectMQTTHost)
 	if ios.MQTT == nil {
@@ -214,19 +217,61 @@ func renewDevice(ctx context.Context, bizURL, token, deviceID, userID string) {
 	}, nil)
 }
 
-func cleanupDevices(ctx context.Context, bizURL, userID string, deviceIDs []string) {
+func cleanupDevices(ctx context.Context, bizURL, token, userID string, deviceIDs []string) {
 	if strings.TrimSpace(userID) == "" {
 		return
 	}
+	deviceIDSet := make(map[string]struct{}, len(deviceIDs))
 	for _, deviceID := range deviceIDs {
 		if strings.TrimSpace(deviceID) == "" {
 			continue
 		}
-		deleteDeviceBestEffort(ctx, bizURL, userID, deviceID)
+		deviceIDSet[deviceID] = struct{}{}
+	}
+	for _, deviceID := range listDeviceIDsBestEffort(ctx, bizURL, token, userID) {
+		if strings.TrimSpace(deviceID) != "" {
+			deviceIDSet[deviceID] = struct{}{}
+		}
+	}
+	for deviceID := range deviceIDSet {
+		deleteDeviceBestEffort(ctx, bizURL, token, userID, deviceID)
 	}
 }
 
-func deleteDeviceBestEffort(ctx context.Context, bizURL, userID, deviceID string) {
+func listDeviceIDsBestEffort(ctx context.Context, bizURL, token, userID string) []string {
+	var listed struct {
+		Items []struct {
+			DeviceID string `json:"deviceId"`
+		} `json:"items"`
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bizURL+"/api/devices?userId="+url.QueryEscape(userID), nil)
+	if err != nil {
+		return nil
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
+		return nil
+	}
+	deviceIDs := make([]string, 0, len(listed.Items))
+	for _, item := range listed.Items {
+		if strings.TrimSpace(item.DeviceID) != "" {
+			deviceIDs = append(deviceIDs, item.DeviceID)
+		}
+	}
+	return deviceIDs
+}
+
+func deleteDeviceBestEffort(ctx context.Context, bizURL, token, userID, deviceID string) {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodDelete,
@@ -236,7 +281,10 @@ func deleteDeviceBestEffort(ctx context.Context, bizURL, userID, deviceID string
 	if err != nil {
 		return
 	}
-	resp, err := http.DefaultClient.Do(req)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return
 	}
@@ -405,7 +453,7 @@ func doJSON(req *http.Request, token string, out any) {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		fail("%s %s: %v", req.Method, req.URL, err)
 	}
