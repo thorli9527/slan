@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -231,6 +232,7 @@ func main() {
 	if userID == "" {
 		fail("missing userId from register: %+v", auth)
 	}
+	defer cleanupSmokeDevice(bizURL, userID, deviceID)
 
 	var device deviceResponse
 	postJSON(bizURL+"/api/devices/register", auth.AccessToken, map[string]any{
@@ -644,6 +646,28 @@ func cleanupSmokeWireNodes(bizURL, internalToken, regionID string, relayNodeIDs,
 			nil,
 		)
 		deleteWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes/"+regionID+"/"+nodeID, internalToken)
+	}
+}
+
+func cleanupSmokeDevice(bizURL, userID, deviceID string) {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(deviceID) == "" {
+		return
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: nil},
+		Timeout:   30 * time.Second,
+	}
+	req, err := http.NewRequest(
+		http.MethodDelete,
+		bizURL+"/api/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
+		nil,
+	)
+	if err != nil {
+		return
+	}
+	resp, err := client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
 	}
 }
 

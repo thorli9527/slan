@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -25,10 +26,20 @@ type persistenceState struct {
 	RegionID    string `json:"regionId"`
 	RelayNodeID string `json:"relayNodeId"`
 	DerpNodeID  string `json:"derpNodeId"`
+	DeviceID    string `json:"deviceId,omitempty"`
+	UserEmail   string `json:"userEmail,omitempty"`
 }
 
 type authResponse struct {
 	AccessToken string `json:"accessToken"`
+}
+
+type cleanupAuthResponse struct {
+	Auth struct {
+		User struct {
+			UserID string `json:"userId"`
+		} `json:"user"`
+	} `json:"auth"`
 }
 
 type networkHomeResponse struct {
@@ -194,14 +205,21 @@ func seed() {
 		}
 	}()
 
+	email := "wire-persist-" + suffix + "@local.slan"
+	password := "Password123!"
 	var auth authResponse
 	postJSON(bizURL+"/auth/register", "", map[string]any{
-		"email":    "wire-persist-" + suffix + "@local.slan",
-		"password": "Password123!",
+		"email":    email,
+		"password": password,
 	}, &auth)
 	if auth.AccessToken == "" {
 		fail("missing access token")
 	}
+	defer func() {
+		if !seedCompleted {
+			cleanupSmokeDeviceBestEffort(bizURL, email, password, deviceID)
+		}
+	}()
 
 	postJSON(bizURL+"/devices/register", auth.AccessToken, map[string]any{
 		"deviceId":    deviceID,
@@ -299,6 +317,8 @@ func seed() {
 		RegionID:    regionID,
 		RelayNodeID: relayNodeID,
 		DerpNodeID:  derpNodeID,
+		DeviceID:    deviceID,
+		UserEmail:   email,
 	})
 	seedCompleted = true
 	fmt.Println("wire persistence seed passed; run cleanup after verify to disable smoke nodes")
@@ -360,6 +380,7 @@ func cleanup() {
 	if _, err := os.Stat(stateFile); err == nil {
 		state := readState()
 		regionID, relayNodeID, derpNodeID := smokeIDs(state)
+		defer cleanupSmokeDeviceBestEffort(bizURL, state.UserEmail, "Password123!", state.DeviceID)
 		disableSmokeNodes(bizURL, internalToken, regionID, relayNodeID, derpNodeID)
 		must(os.Remove(stateFile))
 	}
@@ -436,6 +457,44 @@ func disableSmokeNodesBestEffort(bizURL, internalToken, regionID, relayNodeID, d
 		_ = recover()
 	}()
 	disableSmokeNodes(bizURL, internalToken, regionID, relayNodeID, derpNodeID)
+}
+
+func cleanupSmokeDeviceBestEffort(bizURL, email, password, deviceID string) {
+	if email == "" || password == "" || deviceID == "" {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second}
+	var auth cleanupAuthResponse
+	payload, err := json.Marshal(map[string]any{"email": email, "password": password})
+	must(err)
+	req, err := http.NewRequest(http.MethodPost, bizURL+"/api/auth/login", bytes.NewReader(payload))
+	must(err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	must(err)
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return
+	}
+	must(json.Unmarshal(body, &auth))
+	userID := auth.Auth.User.UserID
+	if userID == "" {
+		return
+	}
+	req, err = http.NewRequest(
+		http.MethodDelete,
+		bizURL+"/api/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
+		nil,
+	)
+	must(err)
+	resp, err = client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
 }
 
 func waitHTTP(url string) {

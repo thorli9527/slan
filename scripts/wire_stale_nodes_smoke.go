@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -20,6 +21,14 @@ var staleHTTPClient = &http.Client{
 
 type staleAuthResponse struct {
 	AccessToken string `json:"accessToken"`
+}
+
+type staleCleanupAuthResponse struct {
+	Auth struct {
+		User struct {
+			UserID string `json:"userId"`
+		} `json:"user"`
+	} `json:"auth"`
 }
 
 type staleDeviceResponse struct {
@@ -87,6 +96,13 @@ type staleDerpMap struct {
 	} `json:"regions"`
 }
 
+type staleAuthorizedPeer struct {
+	NodeID   string
+	Email    string
+	Password string
+	DeviceID string
+}
+
 func main() {
 	if err := runStaleSmoke(); err != nil {
 		fmt.Fprintf(os.Stderr, "wire stale nodes smoke failed: %v\n", err)
@@ -133,18 +149,19 @@ func runStaleSmoke() error {
 		restoreLocalWireDataPlaneNodes(bizURL, internalToken)
 	}
 
-	nodeID, err := createAuthorizedWirePeer(bizURL, wireURL)
+	peer, err := createAuthorizedWirePeer(bizURL, wireURL)
 	if err != nil {
 		return err
 	}
-	if err := waitPathPlanContainsB(wireURL, nodeID); err != nil {
+	defer cleanupStaleSmokeDeviceBestEffort(bizURL, peer.Email, peer.Password, peer.DeviceID)
+	if err := waitPathPlanContainsB(wireURL, peer.NodeID); err != nil {
 		return err
 	}
 
 	if err := compose([]string{"stop", "server-wire-relay-b", "server-wire-derp-b"}, nil); err != nil {
 		return err
 	}
-	return waitBNodesPrunedFromScheduling(bizURL, wireURL, internalToken, nodeID)
+	return waitBNodesPrunedFromScheduling(bizURL, wireURL, internalToken, peer.NodeID)
 }
 
 func restartBizWithWireTTL(freshnessSeconds, cleanupSeconds string) error {
@@ -175,16 +192,22 @@ func compose(args []string, env map[string]string) error {
 	return nil
 }
 
-func createAuthorizedWirePeer(bizURL, wireURL string) (string, error) {
+func createAuthorizedWirePeer(bizURL, wireURL string) (staleAuthorizedPeer, error) {
 	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
 	email := "wire-stale-" + suffix + "@local.slan"
 	password := "Password123!"
 	deviceID := "dev-wire-stale-" + suffix
 	nodeID := "node-wire-stale-" + suffix
+	cleanupOnFailure := true
+	defer func() {
+		if cleanupOnFailure {
+			cleanupStaleSmokeDeviceBestEffort(bizURL, email, password, deviceID)
+		}
+	}()
 
 	var auth staleAuthResponse
 	if err := postJSON(bizURL+"/auth/register", "", map[string]any{"email": email, "password": password}, &auth); err != nil {
-		return "", err
+		return staleAuthorizedPeer{}, err
 	}
 	var device staleDeviceResponse
 	if err := postJSON(bizURL+"/devices/register", auth.AccessToken, map[string]any{
@@ -194,14 +217,14 @@ func createAuthorizedWirePeer(bizURL, wireURL string) (string, error) {
 		"countryCode": "CN",
 		"publicKey":   "device-public-key-" + suffix,
 	}, &device); err != nil {
-		return "", err
+		return staleAuthorizedPeer{}, err
 	}
 	if device.DeviceID != deviceID {
-		return "", fmt.Errorf("unexpected device response: %+v", device)
+		return staleAuthorizedPeer{}, fmt.Errorf("unexpected device response: %+v", device)
 	}
 	var home staleNetworkHomeResponse
 	if err := getJSON(bizURL+"/networks/home", auth.AccessToken, &home); err != nil {
-		return "", err
+		return staleAuthorizedPeer{}, err
 	}
 	networkID := ""
 	if home.ActiveNetwork != nil {
@@ -211,11 +234,11 @@ func createAuthorizedWirePeer(bizURL, wireURL string) (string, error) {
 		networkID = home.OwnedNetwork.NetworkID
 	}
 	if networkID == "" {
-		return "", fmt.Errorf("missing network from home: %+v", home)
+		return staleAuthorizedPeer{}, fmt.Errorf("missing network from home: %+v", home)
 	}
 	var activation staleActivationResponse
 	if err := postJSON(bizURL+"/networks/"+networkID+"/activate", auth.AccessToken, map[string]any{"deviceId": deviceID}, &activation); err != nil {
-		return "", err
+		return staleAuthorizedPeer{}, err
 	}
 	var node staleNodeResponse
 	if err := postJSON(bizURL+"/nodes/register", auth.AccessToken, map[string]any{
@@ -224,10 +247,10 @@ func createAuthorizedWirePeer(bizURL, wireURL string) (string, error) {
 		"nodePublicKey": "node-public-key-" + suffix,
 		"capabilities":  []string{"wireguard", "relay_udp", "derp_tcp_tls_443"},
 	}, &node); err != nil {
-		return "", err
+		return staleAuthorizedPeer{}, err
 	}
 	if node.NodeID != nodeID {
-		return "", fmt.Errorf("unexpected node response: %+v", node)
+		return staleAuthorizedPeer{}, fmt.Errorf("unexpected node response: %+v", node)
 	}
 	var reg staleWireRegisterResponse
 	if err := postJSON(wireURL+"/v1/peers/register", "", map[string]any{
@@ -246,12 +269,58 @@ func createAuthorizedWirePeer(bizURL, wireURL string) (string, error) {
 			"allowRelayTicketRenewal": true,
 		},
 	}, &reg); err != nil {
-		return "", err
+		return staleAuthorizedPeer{}, err
 	}
 	if reg.Peer.NetworkID != networkID || reg.Peer.NodeID != nodeID {
-		return "", fmt.Errorf("wire did not apply biz authz: %+v", reg.Peer)
+		return staleAuthorizedPeer{}, fmt.Errorf("wire did not apply biz authz: %+v", reg.Peer)
 	}
-	return nodeID, nil
+	cleanupOnFailure = false
+	return staleAuthorizedPeer{NodeID: nodeID, Email: email, Password: password, DeviceID: deviceID}, nil
+}
+
+func cleanupStaleSmokeDeviceBestEffort(bizURL, email, password, deviceID string) {
+	if email == "" || password == "" || deviceID == "" {
+		return
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second}
+	var auth staleCleanupAuthResponse
+	payload, err := json.Marshal(map[string]any{"email": email, "password": password})
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, bizURL+"/api/auth/login", bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return
+	}
+	if err := json.Unmarshal(body, &auth); err != nil {
+		return
+	}
+	userID := auth.Auth.User.UserID
+	if userID == "" {
+		return
+	}
+	req, err = http.NewRequest(
+		http.MethodDelete,
+		bizURL+"/api/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID),
+		nil,
+	)
+	if err != nil {
+		return
+	}
+	resp, err = client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
 }
 
 func waitPathPlanContainsB(wireURL, nodeID string) error {
