@@ -35,6 +35,8 @@ type derpTicket struct {
 	Signature string    `json:"signature"`
 }
 
+var httpClient = &http.Client{Timeout: 10 * time.Second}
+
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -145,7 +147,7 @@ func waitHTTP(ctx context.Context, url string) {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -160,7 +162,7 @@ func waitHTTP(ctx context.Context, url string) {
 func postJSON(url string, in, out any) {
 	payload, err := json.Marshal(in)
 	must(err)
-	resp, err := http.Post(url, "application/json", bytes.NewReader(payload))
+	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(payload))
 	must(err)
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

@@ -25,6 +25,8 @@ type loginAuthResponse struct {
 	} `json:"auth,omitempty"`
 }
 
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 func main() {
 	var bizURL string
 	var address string
@@ -209,13 +211,20 @@ func waitClientMessage(ctx context.Context, address, fromDeviceID, body string) 
 		deadline = ctxDeadline
 	}
 	var lastSnapshot map[string]any
+	var lastWatchErr error
 	for time.Now().Before(deadline) {
 		response, err := localRequest(address, "localBusinessEventWatch", map[string]any{
 			"lastRevision": lastRevision,
-			"timeoutMs":    2000,
-		}, 3*time.Second)
+			"timeoutMs":    5000,
+		}, 8*time.Second)
 		if err != nil {
-			fail("watch business event failed: %v", err)
+			lastWatchErr = err
+			select {
+			case <-ctx.Done():
+				fail("wait client message timeout: %v", ctx.Err())
+			case <-time.After(200 * time.Millisecond):
+			}
+			continue
 		}
 		if rev, ok := response["revision"].(float64); ok {
 			lastRevision = rev
@@ -231,7 +240,8 @@ func waitClientMessage(ctx context.Context, address, fromDeviceID, body string) 
 		default:
 		}
 	}
-	fail("did not consume client_message from %s body=%s lastSnapshot=%#v", fromDeviceID, body, lastSnapshot)
+	status, _ := localRequest(address, "localControlStatus", map[string]any{}, 2*time.Second)
+	fail("did not consume client_message from %s body=%s lastRevision=%.0f lastSnapshot=%#v lastWatchErr=%v controlStatus=%#v", fromDeviceID, body, lastRevision, lastSnapshot, lastWatchErr, status)
 }
 
 func localRequest(address, method string, args map[string]any, timeout time.Duration) (map[string]any, error) {
@@ -289,7 +299,7 @@ func postJSON(ctx context.Context, url string, body any, out any) {
 		fail("build request %s: %v", url, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		fail("%s %s: %v", req.Method, req.URL, err)
 	}
