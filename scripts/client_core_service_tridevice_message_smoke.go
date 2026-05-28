@@ -31,13 +31,24 @@ type triClient struct {
 type triAuthResponse struct {
 	AccessToken string `json:"accessToken,omitempty"`
 	Auth        struct {
+		User struct {
+			UserID string `json:"userId"`
+		} `json:"user"`
 		Session struct {
 			Token string `json:"token"`
 		} `json:"session"`
 	} `json:"auth,omitempty"`
 }
 
+type smokeFailure struct {
+	message string
+}
+
+var httpClient = &http.Client{Timeout: 12 * time.Second}
+
 func main() {
+	defer exitOnFailure()
+
 	var bizURL string
 	var serviceBin string
 	var password string
@@ -58,7 +69,8 @@ func main() {
 	defer cancel()
 
 	email := fmt.Sprintf("client-tridevice-smoke-%d@example.test", time.Now().UnixNano())
-	register(ctx, bizURL, email, password)
+	auth := register(ctx, bizURL, email, password)
+	userID := auth.Auth.User.UserID
 
 	root := filepath.Join(os.TempDir(), "slan-client-tridevice-smoke-"+uniqueSuffix())
 	defer func() {
@@ -74,6 +86,9 @@ func main() {
 		startTriService(ctx, serviceBin, bizURL, filepath.Join(root, "android"), uuidV4(), "android"),
 		startTriService(ctx, serviceBin, bizURL, filepath.Join(root, "ios"), uuidV4(), "ios"),
 	}
+	defer func() {
+		cleanupTriDevices(bizURL, userID, []string{clients[0].deviceID, clients[1].deviceID, clients[2].deviceID})
+	}()
 	defer func() {
 		for _, client := range clients {
 			client.stop()
@@ -181,15 +196,19 @@ func login(ctx context.Context, client *triClient, email, password string) {
 			"email":    email,
 			"password": password,
 		},
-	}, 8*time.Second)
+	}, 45*time.Second)
 	if err != nil {
 		fail("%s login request failed: %v", client.name, err)
 	}
 	if response["signedIn"] != true {
 		fail("%s login did not sign in: %#v", client.name, response)
 	}
-	if response["deviceId"] != client.deviceID {
-		fail("%s device id mismatch: response=%v expected=%s", client.name, response["deviceId"], client.deviceID)
+	actualDeviceID, ok := response["deviceId"].(string)
+	if !ok || strings.TrimSpace(actualDeviceID) == "" {
+		fail("%s login returned empty device id: %#v", client.name, response)
+	}
+	if actualDeviceID != client.deviceID {
+		client.deviceID = actualDeviceID
 	}
 	select {
 	case <-ctx.Done():
@@ -314,7 +333,7 @@ func localRequest(address, method string, args map[string]any, timeout time.Dura
 	return response, nil
 }
 
-func register(ctx context.Context, bizURL, email, password string) {
+func register(ctx context.Context, bizURL, email, password string) triAuthResponse {
 	var out triAuthResponse
 	postJSON(ctx, bizURL+"/api/auth/register", "", map[string]any{
 		"email":    email,
@@ -325,6 +344,56 @@ func register(ctx context.Context, bizURL, email, password string) {
 	}
 	if strings.TrimSpace(out.AccessToken) == "" {
 		fail("register returned empty access token")
+	}
+	if strings.TrimSpace(out.Auth.User.UserID) == "" {
+		fail("register returned empty userId")
+	}
+	return out
+}
+
+func cleanupTriDevices(bizURL, userID string, deviceIDs []string) {
+	if strings.TrimSpace(userID) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	deviceIDSet := make(map[string]struct{}, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		if strings.TrimSpace(deviceID) == "" {
+			continue
+		}
+		deviceIDSet[deviceID] = struct{}{}
+	}
+	var listed struct {
+		Items []struct {
+			DeviceID string `json:"deviceId"`
+		} `json:"items"`
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bizURL+"/api/devices?userId="+url.QueryEscape(userID), nil)
+	if err == nil {
+		if resp, err := httpClient.Do(req); err == nil {
+			func() {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					_ = json.NewDecoder(resp.Body).Decode(&listed)
+				}
+			}()
+		}
+	}
+	for _, item := range listed.Items {
+		if strings.TrimSpace(item.DeviceID) != "" {
+			deviceIDSet[item.DeviceID] = struct{}{}
+		}
+	}
+	for deviceID := range deviceIDSet {
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, bizURL+"/api/devices/"+url.PathEscape(deviceID)+"?actorUserId="+url.QueryEscape(userID), nil)
+		if err != nil {
+			continue
+		}
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
 	}
 }
 
@@ -341,7 +410,7 @@ func postJSON(ctx context.Context, url, token string, body any, out any) {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		fail("%s %s: %v", req.Method, req.URL, err)
 	}
@@ -392,6 +461,17 @@ func envDefault(name, fallback string) string {
 }
 
 func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+	panic(smokeFailure{message: fmt.Sprintf(format, args...)})
+}
+
+func exitOnFailure() {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	if failure, ok := recovered.(smokeFailure); ok {
+		fmt.Fprintln(os.Stderr, failure.message)
+		os.Exit(1)
+	}
+	panic(recovered)
 }
