@@ -41,7 +41,7 @@ func clientBootstrapInstallScript() string {
 	return `#!/usr/bin/env sh
 set -eu
 
-server="http://api.dev.staticlss.com"
+server="http://47.245.40.231:28080"
 session_key=""
 package_url=""
 install_root="${SLAN_INSTALL_ROOT:-/opt/slan-client-v2}"

@@ -361,14 +361,14 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     {
       return webConsoleUrl(fromControlBaseUrl: value)
     }
-    return "http://web.dev.staticlss.com"
+    return "http://47.245.40.231:24200"
   }
 
   private func webConsoleUrl(fromControlBaseUrl value: String) -> String {
     guard let components = URLComponents(string: value),
       let host = components.host?.lowercased()
     else {
-      return "http://web.dev.staticlss.com"
+      return "http://47.245.40.231:24200"
     }
     let scheme = components.scheme?.isEmpty == false ? components.scheme! : "http"
     if host == "api.dev.staticlss.com" {
@@ -380,7 +380,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if host == "127.0.0.1" || host == "localhost" || host == "::1" || components.port == 28080 {
       return "\(scheme)://\(host):24200"
     }
-    return "http://web.dev.staticlss.com"
+    return "http://47.245.40.231:24200"
   }
 
   private func usableClientDeviceId(_ deviceId: String) -> String {

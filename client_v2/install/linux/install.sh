@@ -4,7 +4,7 @@ set -eu
 tray_mode="disabled"
 install_root="${SLAN_INSTALL_ROOT:-/opt/slan-client-v2}"
 config_dir="${SLAN_CONFIG_DIR:-/etc/slan}"
-server="${SLAN_CONTROL_BASE_URL:-http://api.dev.staticlss.com}"
+server="${SLAN_CONTROL_BASE_URL:-http://47.245.40.231:28080}"
 session_key="${SLAN_SESSION_KEY:-}"
 package_url="${SLAN_CLIENT_PACKAGE_URL:-}"
 service_name="slan-client-v2.service"
@@ -55,7 +55,7 @@ extract_package() {
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--server=http://api.dev.staticlss.com] [--session-key=sk_xxx] [--package-url=URL] [--tray=enabled|disabled] [--root=/opt/slan-client-v2] [--config-dir=/etc/slan]
+Usage: install.sh [--server=http://47.245.40.231:28080] [--session-key=sk_xxx] [--package-url=URL] [--tray=enabled|disabled] [--root=/opt/slan-client-v2] [--config-dir=/etc/slan]
 
 Options:
   --server=URL      Control-plane base URL.

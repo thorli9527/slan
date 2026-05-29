@@ -101,7 +101,7 @@
 
 ```bash
 curl -fsSL https://staticlss.com/install.sh | sudo bash -s -- \
-  --server http://api.dev.staticlss.com \
+  --server http://47.245.40.231:28080 \
   --session-key sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
@@ -242,7 +242,7 @@ client-v2-user-session.json
 
 ```bash
 curl -fsSL https://staticlss.com/install.sh | sudo bash -s -- \
-  --server http://api.dev.staticlss.com \
+  --server http://47.245.40.231:28080 \
   --session-key sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
@@ -280,7 +280,7 @@ Windows 使用独立 PowerShell 脚本：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1 `
-  -Server http://api.dev.staticlss.com `
+  -Server http://47.245.40.231:28080 `
   -SessionKey sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 

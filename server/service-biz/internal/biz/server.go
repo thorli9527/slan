@@ -1148,7 +1148,7 @@ func boolString(value bool) string {
 func deviceLoginDeviceURL(deviceID string) string {
 	base := strings.TrimSpace(os.Getenv("SLAN_WEB_CONSOLE_URL"))
 	if base == "" {
-		base = "http://web.dev.staticlss.com/"
+		base = "http://47.245.40.231:24200/"
 	}
 	parsed, err := url.Parse(base)
 	if err != nil {

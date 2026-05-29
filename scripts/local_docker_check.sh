@@ -11,10 +11,10 @@ if [ "${SLAN_ALLOW_LOCAL_DOCKER:-0}" != "1" ]; then
   cat >&2 <<'EOF'
 Local Docker checks are disabled for this project.
 
-Use the remote Docker context and public dev domains:
+Use the remote Docker context and public IP endpoints:
   sh scripts/setup_remote_docker_context.sh
   docker ps
-  curl --silent http://api.dev.staticlss.com/healthz
+  curl --silent http://47.245.40.231:28080/healthz
 EOF
   exit 2
 fi

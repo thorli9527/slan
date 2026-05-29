@@ -170,7 +170,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   static const _testDeviceId = String.fromEnvironment('SLAN_TEST_DEVICE_ID');
   static const _defaultControlBaseUrl = String.fromEnvironment(
       'SLAN_CONTROL_BASE_URL',
-      defaultValue: 'http://api.dev.staticlss.com');
+      defaultValue: 'http://47.245.40.231:28080');
 
   @override
   ValueListenable<ClientViewState> get state => _state;
@@ -650,7 +650,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         port: 24200,
       ).toString();
     }
-    return 'http://web.dev.staticlss.com';
+    return 'http://47.245.40.231:24200';
   }
 
   String _usableClientDeviceId(String? deviceId) {

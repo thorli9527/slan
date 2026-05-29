@@ -12,15 +12,15 @@ SLAN development and deployment now use the remote Docker host only.
 - Remote compose file: `/opt/slan/docker-compose.local.yml`
 - Remote environment file: `/opt/slan/.env.prod`
 
-## Dev Domains
+## Public IP Endpoints
 
-- API: `http://api.dev.staticlss.com`
-- Web Console: `http://web.dev.staticlss.com`
-- Ops Console: `http://ops.dev.staticlss.com`
+- API: `http://47.245.40.231:28080`
+- Web Console: `http://47.245.40.231:24200`
+- Ops Console: `http://47.245.40.231:24201`
 - MQTT: `47.245.40.231`
-- Wire: `wire.dev.staticlss.com`
-- Relay: `relay.dev.staticlss.com`
-- DERP: `derp.dev.staticlss.com`
+- Wire: `47.245.40.231:29100`
+- Relay: `47.245.40.231:29110`
+- DERP: `47.245.40.231:29120`
 
 ## Required Workflow
 

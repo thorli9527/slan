@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${SLAN_BIZ_URL:-http://api.dev.staticlss.com}"
+BASE_URL="${SLAN_BIZ_URL:-http://47.245.40.231:28080}"
 RUN_ID="$(date +%s%N)"
 EMAIL="${SLAN_TEST_EMAIL:-punch-smoke-${RUN_ID}@example.test}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"

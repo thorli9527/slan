@@ -6,8 +6,8 @@ info:
     Current external business HTTP surface implemented by server/service-biz.
     Internal wire callbacks and BifroMQ callbacks are intentionally excluded.
 servers:
-  - url: http://api.dev.staticlss.com
-    description: Development/production-style domain
+  - url: http://47.245.40.231:28080
+    description: Remote Docker service-biz
   - url: http://127.0.0.1:28080
     description: Local Docker service-biz
 tags:
@@ -1148,4 +1148,3 @@ components:
         alias: { type: string }
         status: { type: string }
         enabled: { type: boolean }
-

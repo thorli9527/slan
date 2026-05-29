@@ -6,7 +6,7 @@
 
 主业务入口是 `service-biz`：
 
-- 开发/生产域名示例：`http://api.dev.staticlss.com`
+- 远程 Docker 入口示例：`http://47.245.40.231:28080`
 - 本地 Docker 端口示例：`http://127.0.0.1:28080`
 - 响应格式：默认 JSON
 - 错误格式：`{"code":"...","message":"..."}`

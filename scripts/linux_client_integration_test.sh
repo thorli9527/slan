@@ -3,16 +3,16 @@ set -euo pipefail
 
 service_host="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1}"
 service_port="${SLAN_CLIENT_CORE_SERVICE_PORT:-46392}"
-api_url="${SLAN_TEST_API_URL:-http://api.dev.staticlss.com}"
-web_url="${SLAN_TEST_WEB_URL:-http://web.dev.staticlss.com}"
-ops_url="${SLAN_TEST_OPS_URL:-http://ops.dev.staticlss.com}"
+api_url="${SLAN_TEST_API_URL:-http://47.245.40.231:28080}"
+web_url="${SLAN_TEST_WEB_URL:-http://47.245.40.231:24200}"
+ops_url="${SLAN_TEST_OPS_URL:-http://47.245.40.231:24201}"
 mqtt_host="${SLAN_TEST_MQTT_HOST:-47.245.40.231}"
 mqtt_port="${SLAN_TEST_MQTT_PORT:-1883}"
-wire_host="${SLAN_TEST_WIRE_HOST:-wire.dev.staticlss.com}"
+wire_host="${SLAN_TEST_WIRE_HOST:-47.245.40.231}"
 wire_port="${SLAN_TEST_WIRE_PORT:-29100}"
-derp_host="${SLAN_TEST_DERP_HOST:-derp.dev.staticlss.com}"
+derp_host="${SLAN_TEST_DERP_HOST:-47.245.40.231}"
 derp_port="${SLAN_TEST_DERP_PORT:-29120}"
-relay_host="${SLAN_TEST_RELAY_HOST:-relay.dev.staticlss.com}"
+relay_host="${SLAN_TEST_RELAY_HOST:-47.245.40.231}"
 relay_port="${SLAN_TEST_RELAY_PORT:-29110}"
 
 need() {
@@ -73,9 +73,9 @@ fi
 test -x /opt/slan-client-v2/bin/client-core-service && pass "service binary installed" || fail "service binary installed"
 test -x /opt/slan-client-v2/gui/slan_client_v2 && pass "GUI binary installed" || fail "GUI binary installed"
 test -x /usr/bin/slan-client-v2-console && pass "console command installed" || fail "console command installed"
-grep -q 'SLAN_CONTROL_BASE_URL=http://api.dev.staticlss.com' /etc/slan/client-v2.env.example \
-  && pass "default API points to api.dev.staticlss.com" \
-  || fail "default API points to api.dev.staticlss.com"
+grep -q "SLAN_CONTROL_BASE_URL=${api_url}" /etc/slan/client-v2.env.example \
+  && pass "default API points to ${api_url}" \
+  || fail "default API points to ${api_url}"
 
 assert_tcp "$service_host" "$service_port" "local service TCP ${service_host}:${service_port}"
 

@@ -17,7 +17,7 @@ void main() {
       (tester) async {
     const bizUrl = String.fromEnvironment(
       'SLAN_TEST_BIZ_URL',
-      defaultValue: 'http://api.dev.staticlss.com',
+      defaultValue: 'http://47.245.40.231:28080',
     );
     const checkSwitch = bool.fromEnvironment(
       'SLAN_TEST_CHECK_SWITCH',
