@@ -13,7 +13,7 @@ use client_core::{normalize_virtual_ip, AuthPayload, RelayTicket, RouteSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const DEFAULT_CONTROL_BASE_URL: &str = "http://api.dev.staticlss.com";
+const DEFAULT_CONTROL_BASE_URL: &str = "http://47.245.40.231:28080";
 static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CLIENT_DEVICE_ID_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -1882,10 +1882,15 @@ mod tests {
     use super::{
         decode_control_json, device_public_key_at_path, is_strong_device_public_key, md5_hex,
         punch_auth_headers, punch_mqtt_signature, stable_device_id_at_path, ControlPlaneClient,
-        MqttCredential,
+        MqttCredential, DEFAULT_CONTROL_BASE_URL,
     };
 
     static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn default_control_base_url_points_to_remote_ip_endpoint() {
+        assert_eq!(DEFAULT_CONTROL_BASE_URL, "http://47.245.40.231:28080");
+    }
 
     #[test]
     fn punch_auth_uses_device_id_and_mqtt_password_md5() {
