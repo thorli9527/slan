@@ -1,5 +1,5 @@
 param(
-  [Parameter(Mandatory=$true)][string]$ServerUrl,
+  [string]$ServerUrl = 'http://47.245.40.231:28080',
   [string]$Email = '',
   [string]$Password = '',
   [string]$DeviceName = '',

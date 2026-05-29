@@ -13,3 +13,11 @@ Build:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\client_v2\install\windows\package-installer.ps1
 ```
+
+Console bootstrap defaults to `http://47.245.40.231:28080` and can be overridden with `-ServerUrl`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\client_v2\install\windows\slan-console.ps1 `
+  -Email user@example.test `
+  -Password password
+```
