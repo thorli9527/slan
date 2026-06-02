@@ -60,7 +60,7 @@ func defaultOpsRelayNode() (OpsRelayNode, bool) {
 		if candidate.Transport != "udp" || strings.TrimSpace(candidate.Address) == "" {
 			continue
 		}
-		return OpsRelayNode{Name: "默认 UDP Relay", Region: defaultString(candidate.RegionID, "local"), Transport: "relay_udp", PublicAddr: relayURL(candidate), MaxBandwidthMbps: 1000, MonthlyTrafficGB: 10240, MaxSessions: 10000, Status: "active", Health: "healthy"}, true
+		return OpsRelayNode{Name: "默认 UDP Relay", Region: defaultString(candidate.RegionID, "local"), Transport: "relay_udp", PublicAddr: relayCandidatePublicAddress(candidate.Address), MaxBandwidthMbps: 1000, MonthlyTrafficGB: 10240, MaxSessions: 10000, Status: "active", Health: "healthy"}, true
 	}
 	return OpsRelayNode{}, false
 }
@@ -277,7 +277,7 @@ func (s *Store) UpsertRelayNode(node OpsRelayNode) (OpsRelayNode, error) {
 	node.Name = strings.TrimSpace(node.Name)
 	node.Region = defaultString(node.Region, "default")
 	node.Transport = defaultString(node.Transport, "relay_udp")
-	node.PublicAddr = strings.TrimSpace(node.PublicAddr)
+	node.PublicAddr = relayCandidatePublicAddress(node.PublicAddr)
 	node.Status = defaultString(node.Status, "active")
 	node.Health = defaultString(node.Health, "healthy")
 	if node.Name == "" || node.PublicAddr == "" {
@@ -992,7 +992,7 @@ func (s *Store) activeRelayCandidatesLocked() []RelayCandidate {
 		out = append(out, RelayCandidate{
 			EndpointID: node.NodeID,
 			Transport:  transport,
-			Address:    node.PublicAddr,
+			Address:    relayCandidatePublicAddress(node.PublicAddr),
 			RegionID:   node.Region,
 			ClusterID:  node.Region,
 		})

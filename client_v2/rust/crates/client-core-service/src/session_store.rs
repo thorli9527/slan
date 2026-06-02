@@ -10,9 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     control_plane::{
-        set_control_base_url_override, ControlDevice, ControlPlaneClient, MqttCredential,
+        set_control_base_url_override, ControlDevice, ControlPlaneClient, DeviceSessionResponse,
+        MqttCredential, RelayCandidate,
     },
     network_module::refresh_network_module_from_session,
+    relay_candidates::replace_runtime_relay_candidates,
     relay_models::PersistedRelayCandidate,
 };
 
@@ -315,6 +317,9 @@ fn persisted_session_from_device_session(
         .or(response.device.current_virtual_ip.clone())
         .or(response.device.virtual_ip.clone());
     let device_token = response.device_session.device_token.clone();
+    let relay_candidates =
+        relay_candidates_from_device_session_response(&response, active_network_id.as_deref());
+    let mqtt = mqtt_from_device_session_response(&response);
     PersistedSession {
         access_token: device_token.clone(),
         refresh_token: None,
@@ -329,12 +334,12 @@ fn persisted_session_from_device_session(
         device_session_id: Some(response.device_session.session_id),
         device_token: Some(device_token),
         device_refresh_token: response.device_session.device_refresh_token.clone(),
-        device_id: Some(response.device_session.device_id),
+        device_id: Some(response.device_session.device_id.clone()),
         self_node_id: None,
         active_network_id,
         virtual_ip,
-        relay_candidates: Vec::new(),
-        mqtt: response.mqtt.or(response.device.mqtt),
+        relay_candidates,
+        mqtt,
         expires_in: response
             .device_session
             .device_token_expires_at
@@ -488,14 +493,20 @@ fn renew_bound_device_session(
         .filter(|value| !value.is_empty())
         .is_some();
     let response = client.renew_device_session(&device_token, network_enabled, 0, 0)?;
+    let relay_candidates = relay_candidates_from_device_session_response(
+        &response,
+        session.active_network_id.as_deref(),
+    );
+    let mqtt = mqtt_from_device_session_response(&response);
     session.device_session_id = Some(response.device_session.session_id);
     session.device_token = Some(response.device_session.device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
-    session.mqtt = response
-        .mqtt
-        .or(response.device.mqtt.clone())
-        .or(session.mqtt.take());
+    session.mqtt = mqtt.or(session.mqtt.take());
+    if !relay_candidates.is_empty() {
+        session.relay_candidates = relay_candidates.clone();
+        replace_runtime_relay_candidates(relay_candidates);
+    }
     sync_session_device_fields(session, &response.device);
     if let Some(configs) = response.network_configs {
         if let Some(config) = configs.items.last() {
@@ -525,14 +536,20 @@ fn bind_session_device_session(
         .map(str::to_string)
         .context("missing device id for device session bind")?;
     let response = client.bind_device_session(&session.access_token, &device_id)?;
+    let relay_candidates = relay_candidates_from_device_session_response(
+        &response,
+        session.active_network_id.as_deref(),
+    );
+    let mqtt = mqtt_from_device_session_response(&response);
     session.device_session_id = Some(response.device_session.session_id);
     session.device_token = Some(response.device_session.device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
-    session.mqtt = response
-        .mqtt
-        .or(response.device.mqtt.clone())
-        .or(session.mqtt.take());
+    session.mqtt = mqtt.or(session.mqtt.take());
+    if !relay_candidates.is_empty() {
+        session.relay_candidates = relay_candidates.clone();
+        replace_runtime_relay_candidates(relay_candidates);
+    }
     sync_session_device_fields(session, &response.device);
     if let Some(configs) = response.network_configs {
         if let Some(config) = configs.items.last() {
@@ -548,6 +565,79 @@ fn bind_session_device_session(
         }
     }
     Ok(())
+}
+
+fn mqtt_from_device_session_response(response: &DeviceSessionResponse) -> Option<MqttCredential> {
+    response
+        .runtime_endpoints
+        .as_ref()
+        .and_then(|runtime| runtime.mqtt.clone())
+        .or_else(|| response.mqtt.clone())
+        .or_else(|| response.device.mqtt.clone())
+}
+
+fn relay_candidates_from_device_session_response(
+    response: &DeviceSessionResponse,
+    active_network_id: Option<&str>,
+) -> Vec<PersistedRelayCandidate> {
+    let mut candidates = Vec::new();
+    if let Some(runtime) = response.runtime_endpoints.as_ref() {
+        if let Some(network_id) = active_network_id {
+            if let Some(network) = runtime
+                .networks
+                .iter()
+                .find(|network| network.network_id == network_id)
+            {
+                candidates.extend(network.relay_candidates.iter().cloned());
+            }
+        }
+        if candidates.is_empty() {
+            candidates.extend(runtime.relay_candidates.iter().cloned());
+        }
+    }
+    if candidates.is_empty() {
+        if let Some(configs) = response.network_configs.as_ref() {
+            let selected = active_network_id
+                .and_then(|network_id| {
+                    configs
+                        .items
+                        .iter()
+                        .find(|config| config.network_id == network_id)
+                })
+                .or_else(|| configs.items.last());
+            if let Some(config) = selected {
+                candidates.extend(config.relay_candidates.iter().cloned());
+            }
+        }
+    }
+    dedupe_relay_candidates(candidates)
+}
+
+fn dedupe_relay_candidates(candidates: Vec<RelayCandidate>) -> Vec<PersistedRelayCandidate> {
+    let mut seen = std::collections::BTreeSet::new();
+    candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            let endpoint_id = candidate.endpoint_id.trim().to_string();
+            let transport = candidate.transport.trim().to_string();
+            let address = candidate.address.trim().to_string();
+            if endpoint_id.is_empty() || transport.is_empty() || address.is_empty() {
+                return None;
+            }
+            let key = format!("{transport}|{address}");
+            if !seen.insert(key) {
+                return None;
+            }
+            Some(PersistedRelayCandidate {
+                endpoint_id,
+                transport,
+                address,
+                country_code: candidate.country_code,
+                region_id: candidate.region_id,
+                cluster_id: candidate.cluster_id,
+            })
+        })
+        .collect()
 }
 
 fn refresh_session_network_from_device_configs(
@@ -824,5 +914,88 @@ mod tests {
         )));
 
         assert!(!device_session_should_renew(&session));
+    }
+
+    #[test]
+    fn device_session_response_uses_runtime_endpoints() {
+        let response: DeviceSessionResponse = serde_json::from_value(serde_json::json!({
+            "device": {
+                "deviceId": "device-1",
+                "activeNetworkId": "net-1"
+            },
+            "deviceSession": {
+                "sessionId": "session-1",
+                "deviceId": "device-1",
+                "userId": "user-1",
+                "deviceToken": "token-1",
+                "deviceTokenExpiresAt": 4_102_444_800i64,
+                "activeNetworkIds": ["net-1"]
+            },
+            "mqtt": {
+                "brokerUrl": "mqtt://old.example.com:1883",
+                "clientId": "old-client",
+                "username": "old-user",
+                "password": "old-pass",
+                "topicPrefix": "slan/v1/devices/device-1",
+                "expiresAt": 4_102_444_800i64
+            },
+            "networkConfigs": {
+                "items": [{
+                    "networkId": "net-1",
+                    "deviceId": "device-1",
+                    "globalIp": "10.0.0.2",
+                    "relayCandidates": [{
+                        "endpointId": "relay-old",
+                        "transport": "udp",
+                        "address": "relay.example.com:29110"
+                    }]
+                }]
+            },
+            "runtimeEndpoints": {
+                "mqtt": {
+                    "brokerUrl": "mqtt://47.245.40.231:1883",
+                    "clientId": "client-1",
+                    "username": "user",
+                    "password": "pass",
+                    "topicPrefix": "slan/v1/devices/device-1",
+                    "expiresAt": 4_102_444_800i64
+                },
+                "punchNodes": [{
+                    "nodeId": "punch-1",
+                    "name": "Punch",
+                    "region": "ap-east",
+                    "address": "47.245.40.231:29130",
+                    "publicUdpIp": "47.245.40.231",
+                    "publicUdpPort": 29130
+                }],
+                "relayCandidates": [{
+                    "endpointId": "relay-1",
+                    "transport": "udp",
+                    "address": "47.245.40.231:29110"
+                }],
+                "networks": [{
+                    "networkId": "net-1",
+                    "relayCandidates": [{
+                        "endpointId": "derp-1",
+                        "transport": "derp_tcp_tls_443",
+                        "address": "47.245.40.231:29120"
+                    }]
+                }],
+                "refreshedAt": 1000
+            }
+        }))
+        .expect("decode device session response");
+
+        let session = persisted_session_from_device_session(response);
+
+        assert_eq!(
+            session.mqtt.as_ref().map(|item| item.broker_url.as_str()),
+            Some("mqtt://47.245.40.231:1883")
+        );
+        assert_eq!(session.active_network_id.as_deref(), Some("net-1"));
+        assert_eq!(session.virtual_ip.as_deref(), Some("10.0.0.2"));
+        assert_eq!(session.relay_candidates.len(), 1);
+        assert_eq!(session.relay_candidates[0].endpoint_id, "derp-1");
+        assert_eq!(session.relay_candidates[0].address, "47.245.40.231:29120");
     }
 }

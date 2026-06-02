@@ -111,10 +111,37 @@ type DeviceRuntimeCountersRequest struct {
 
 // DeviceSessionResponse 是设备会话接口返回的完整运行配置。
 type DeviceSessionResponse struct {
-	Device         Device          `json:"device"`
-	DeviceSession  DeviceSession   `json:"deviceSession"`
-	MQTT           *MQTTCredential `json:"mqtt,omitempty"`
-	NetworkConfigs ItemsResponse   `json:"networkConfigs"`
+	Device           Device                   `json:"device"`
+	DeviceSession    DeviceSession            `json:"deviceSession"`
+	MQTT             *MQTTCredential          `json:"mqtt,omitempty"`
+	NetworkConfigs   ItemsResponse            `json:"networkConfigs"`
+	RuntimeEndpoints RuntimeEndpointsResponse `json:"runtimeEndpoints"`
+}
+
+// RuntimeEndpointsResponse 是设备登录/续租时下发的运行端点总表。
+// 客户端应以该响应覆盖本地 MQTT、UDP 打洞、UDP relay 和 TCP/DERP relay 参数。
+type RuntimeEndpointsResponse struct {
+	MQTT            *MQTTCredential          `json:"mqtt,omitempty"`
+	PunchNodes      []RuntimePunchNode       `json:"punchNodes"`
+	RelayCandidates []RelayCandidate         `json:"relayCandidates"`
+	Networks        []RuntimeNetworkEndpoint `json:"networks"`
+	RefreshedAt     int64                    `json:"refreshedAt"`
+}
+
+// RuntimePunchNode 是客户端发起 UDP 打洞协商时可访问的 punch-service 节点。
+type RuntimePunchNode struct {
+	NodeID        string `json:"nodeId"`
+	Name          string `json:"name,omitempty"`
+	Region        string `json:"region,omitempty"`
+	Address       string `json:"address"`
+	PublicUDPIP   string `json:"publicUdpIp"`
+	PublicUDPPort int    `json:"publicUdpPort"`
+}
+
+// RuntimeNetworkEndpoint 是某个网络维度下的 relay 候选节点清单。
+type RuntimeNetworkEndpoint struct {
+	NetworkID       string           `json:"networkId"`
+	RelayCandidates []RelayCandidate `json:"relayCandidates"`
 }
 
 // ItemsResponse 是列表接口的统一响应包装。

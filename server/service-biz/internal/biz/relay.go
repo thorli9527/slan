@@ -117,6 +117,7 @@ func configuredRelayCandidates() []RelayCandidate {
 		if strings.HasPrefix(address, "derp://") || strings.HasPrefix(address, "derp+tcp+tls://") {
 			transport = "derp_tcp_tls_443"
 		}
+		address = relayCandidatePublicAddress(address)
 		if transport != "udp" && transport != "derp_tcp_tls_443" {
 			continue
 		}
@@ -130,6 +131,17 @@ func configuredRelayCandidates() []RelayCandidate {
 		})
 	}
 	return out
+}
+
+func relayCandidatePublicAddress(address string) string {
+	address = strings.TrimSpace(address)
+	lower := strings.ToLower(address)
+	for _, prefix := range []string{"udp://", "derp://", "derp+tcp+tls://"} {
+		if strings.HasPrefix(lower, prefix) {
+			return strings.TrimSpace(address[len(prefix):])
+		}
+	}
+	return address
 }
 
 func chooseRelayCandidate(candidates []RelayCandidate, preferredEndpointIDs []string, sessionID string) RelayCandidate {

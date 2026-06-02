@@ -118,6 +118,51 @@ pub(crate) struct DeviceSessionResponse {
     pub mqtt: Option<MqttCredential>,
     #[serde(default)]
     pub network_configs: Option<ItemsResponse<DeviceNetworkConfig>>,
+    #[serde(default)]
+    pub runtime_endpoints: Option<RuntimeEndpointsResponse>,
+}
+
+/// RuntimeEndpointsResponse 是登录/续租响应里的运行端点总表。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeEndpointsResponse {
+    #[serde(default)]
+    pub mqtt: Option<MqttCredential>,
+    #[serde(default)]
+    pub punch_nodes: Vec<RuntimePunchNode>,
+    #[serde(default)]
+    pub relay_candidates: Vec<RelayCandidate>,
+    #[serde(default)]
+    pub networks: Vec<RuntimeNetworkEndpoint>,
+    #[serde(default)]
+    pub refreshed_at: i64,
+}
+
+/// RuntimePunchNode 是 UDP 打洞服务的公网访问地址。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimePunchNode {
+    #[serde(default)]
+    pub node_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub public_udp_ip: String,
+    #[serde(default)]
+    pub public_udp_port: u16,
+}
+
+/// RuntimeNetworkEndpoint 是单个虚拟网络可用的 relay 候选。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeNetworkEndpoint {
+    pub network_id: String,
+    #[serde(default)]
+    pub relay_candidates: Vec<RelayCandidate>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

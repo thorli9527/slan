@@ -80,6 +80,82 @@ func TestBindDeviceSessionTransfersSamePhysicalDeviceBetweenUsers(t *testing.T) 
 	}
 }
 
+func TestDeviceSessionResponseIncludesRuntimeEndpoints(t *testing.T) {
+	store := NewStore()
+	auth, _, err := store.RegisterUser("runtime@example.com", "secret", "Runtime")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	if _, err := store.UpsertRelayNode(OpsRelayNode{
+		Name:       "UDP Relay",
+		Region:     "ap-east",
+		Transport:  "relay_udp",
+		PublicAddr: "47.245.40.231:29110",
+		Status:     "active",
+		Health:     "healthy",
+		Priority:   1,
+	}); err != nil {
+		t.Fatalf("upsert udp relay: %v", err)
+	}
+	if _, err := store.UpsertRelayNode(OpsRelayNode{
+		Name:       "TCP Relay",
+		Region:     "ap-east",
+		Transport:  "derp_tcp_tls_443",
+		PublicAddr: "47.245.40.231:29120",
+		Status:     "active",
+		Health:     "healthy",
+		Priority:   2,
+	}); err != nil {
+		t.Fatalf("upsert tcp relay: %v", err)
+	}
+	if _, err := store.UpsertPunchNode(OpsPunchNode{
+		Name:          "Punch",
+		Region:        "ap-east",
+		PublicUDPIP:   "47.245.40.231",
+		PublicUDPPort: 29130,
+		Status:        "active",
+		Health:        "healthy",
+		Priority:      1,
+	}); err != nil {
+		t.Fatalf("upsert punch: %v", err)
+	}
+	device, session, configs, err := store.BindDeviceSession(auth.Session.Token, "runtime-mac", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("bind device session: %v", err)
+	}
+	server := &Server{
+		store: store,
+		mqtt: MQTTConfig{
+			Enabled:              true,
+			PublicBrokerURL:      "mqtt://47.245.40.231:1883",
+			UsernamePrefix:       "slan",
+			PasswordSecret:       "secret",
+			TopicPrefix:          "slan/v1",
+			CredentialTTLSeconds: 3600,
+		},
+	}
+	response := server.deviceSessionResponse(device, session, configs, time.Unix(1000, 0))
+	if response.MQTT == nil || response.MQTT.BrokerURL != "mqtt://47.245.40.231:1883" {
+		t.Fatalf("expected mqtt broker in session response, got %+v", response.MQTT)
+	}
+	if response.RuntimeEndpoints.MQTT == nil || response.RuntimeEndpoints.MQTT.BrokerURL != response.MQTT.BrokerURL {
+		t.Fatalf("expected runtime mqtt to mirror top-level mqtt, got %+v", response.RuntimeEndpoints.MQTT)
+	}
+	if len(response.RuntimeEndpoints.PunchNodes) != 1 || response.RuntimeEndpoints.PunchNodes[0].Address != "47.245.40.231:29130" {
+		t.Fatalf("expected punch endpoint by ip:port, got %+v", response.RuntimeEndpoints.PunchNodes)
+	}
+	transportByAddress := map[string]string{}
+	for _, candidate := range response.RuntimeEndpoints.RelayCandidates {
+		transportByAddress[candidate.Address] = candidate.Transport
+	}
+	if transportByAddress["47.245.40.231:29110"] != "udp" || transportByAddress["47.245.40.231:29120"] != "derp_tcp_tls_443" {
+		t.Fatalf("unexpected relay runtime endpoints: %+v", response.RuntimeEndpoints.RelayCandidates)
+	}
+	if len(response.RuntimeEndpoints.Networks) != 1 || response.RuntimeEndpoints.Networks[0].NetworkID == "" || len(response.RuntimeEndpoints.Networks[0].RelayCandidates) < 2 {
+		t.Fatalf("expected per-network relay endpoints, got %+v", response.RuntimeEndpoints.Networks)
+	}
+}
+
 func TestDeviceSessionBindRejectsDuplicateDeviceIDWithDifferentPublicKey(t *testing.T) {
 	store := NewStore()
 	aliceAuth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")

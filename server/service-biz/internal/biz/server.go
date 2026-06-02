@@ -499,7 +499,7 @@ func (s *Server) bootstrapDeviceSession(w http.ResponseWriter, r *http.Request) 
 		Details:      map[string]string{"userId": session.UserID, "platform": device.Platform},
 	})
 	s.notifyDeviceNetworkConfigsChanged(configs, "device_session_bootstrapped", "network_device", "add", device.DeviceID)
-	writeJSON(w, http.StatusCreated, DeviceSessionResponse{Device: device, DeviceSession: session, MQTT: deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()), NetworkConfigs: ItemsResponse{Items: configs}})
+	writeJSON(w, http.StatusCreated, s.deviceSessionResponse(device, session, configs, timeNow()))
 }
 
 func (s *Server) bindDeviceSession(w http.ResponseWriter, r *http.Request) {
@@ -530,7 +530,7 @@ func (s *Server) bindDeviceSession(w http.ResponseWriter, r *http.Request) {
 		Details:      map[string]string{"platform": device.Platform},
 	})
 	s.notifyDeviceNetworkConfigsChanged(configs, "device_session_bound", "network_device", "add", device.DeviceID)
-	writeJSON(w, http.StatusCreated, DeviceSessionResponse{Device: device, DeviceSession: session, MQTT: deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()), NetworkConfigs: ItemsResponse{Items: configs}})
+	writeJSON(w, http.StatusCreated, s.deviceSessionResponse(device, session, configs, timeNow()))
 }
 
 func (s *Server) renewDeviceSession(w http.ResponseWriter, r *http.Request) {
@@ -559,7 +559,7 @@ func (s *Server) renewDeviceSession(w http.ResponseWriter, r *http.Request) {
 		Status:       "succeeded",
 		Details:      map[string]string{"userId": session.UserID, "networkEnabled": boolString(req.NetworkEnabled)},
 	})
-	writeJSON(w, http.StatusOK, DeviceSessionResponse{Device: device, DeviceSession: session, MQTT: deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()), NetworkConfigs: ItemsResponse{Items: configs}})
+	writeJSON(w, http.StatusOK, s.deviceSessionResponse(device, session, configs, timeNow()))
 }
 
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
