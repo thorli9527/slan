@@ -71,6 +71,13 @@ class ClientCorePlugin {
     return _invokeNativeOnly('iosRuntimeState');
   }
 
+  /// 等待 iOS 原生层 PacketTunnel 网络事件。
+  Future<AndroidNetworkEvent?> iosWatchNetworkEvent() async {
+    final result = await _invokeNativeOnly('iosWatchNetworkEvent');
+    final json = _jsonMap(result);
+    return json == null ? null : AndroidNetworkEvent.fromJson(json);
+  }
+
   /// 启动 iOS PacketTunnel 数据面。
   Future<Object?> iosStartPacketTunnel(PlatformNetworkConfig config) {
     return _invokeNativeOnly('iosStartPacketTunnel', config.toJson());

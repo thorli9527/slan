@@ -88,6 +88,14 @@ Map<String, Object?> iosPacketTunnelDiagnosticsFields(
     'relayPacketsWritten': stats['relayPacketsWritten'],
     'relayDetachSent': stats['relayDetachSent'],
     'relayNoPeerPackets': stats['relayNoPeerPackets'],
+    'directUdpAttachedPeerCount': stats['directUdpAttachedPeerCount'],
+    'directUdpReadyPeerCount': stats['directUdpReadyPeerCount'],
+    'directUdpProbesSent': stats['directUdpProbesSent'],
+    'directUdpProbesReceived': stats['directUdpProbesReceived'],
+    'directUdpPongsSent': stats['directUdpPongsSent'],
+    'directUdpPongsReceived': stats['directUdpPongsReceived'],
+    'directUdpFramesSent': stats['directUdpFramesSent'],
+    'directUdpFramesReceived': stats['directUdpFramesReceived'],
     'lastDestination': stats['lastDestination'],
     'lastRoute': stats['lastRoute'],
     'lastRoutedAtMs': stats['lastRoutedAtMs'],
@@ -155,6 +163,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   bool _localLogoutRequested = false;
   bool _watchingBusinessEvents = false;
   bool _watchingAndroidNetworkEvents = false;
+  bool _watchingIosNetworkEvents = false;
   bool _watchingAndroidRuntimeStats = false;
   bool _watchingIosPacketTunnelStats = false;
   bool _repairingNativeMobileMqtt = false;
@@ -186,6 +195,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     await _startStateWithFallback();
     _startBusinessEventWatchLoop();
     _startAndroidNetworkEventWatchLoop();
+    _startIosNetworkEventWatchLoop();
     _startAndroidRuntimeStatsLoop();
     _startIosPacketTunnelStatsLoop();
     ClientUiDiagnostics.unawaitedLog('bridge.start.end', state: _state.value);
@@ -1528,6 +1538,65 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     );
   }
 
+  void _startIosNetworkEventWatchLoop() {
+    if (!_isIos || _watchingIosNetworkEvents) {
+      return;
+    }
+    _watchingIosNetworkEvents = true;
+    unawaited(
+      Future<void>(() async {
+        while (_watchingIosNetworkEvents) {
+          try {
+            final event = await _plugin
+                .iosWatchNetworkEvent()
+                .timeout(const Duration(seconds: 35));
+            if (event != null) {
+              final runtimeState = event.runtimeState;
+              if (runtimeState != null) {
+                unawaited(_logIosRuntimeState(
+                  'bridge.ios.event.runtime',
+                  runtimeState: runtimeState,
+                ));
+                final networkEnabled = runtimeState['networkEnabled'] == true;
+                _setStateIfChanged(_state.value.copyWith(
+                  networkEnabled: networkEnabled,
+                  virtualIp: runtimeState['virtualIp'] as String?,
+                  syncing: false,
+                  clearSyncReason: true,
+                  switchEnabled: true,
+                  notice: event.eventType,
+                  error: event.eventType == AndroidNetworkEventType.error
+                      ? event.message
+                      : null,
+                  errorSource: event.eventType == AndroidNetworkEventType.error
+                      ? ClientErrorSource.networkSwitch
+                      : null,
+                  clearVirtualIp: !networkEnabled,
+                ));
+              }
+              if (event.eventType == AndroidNetworkEventType.vpnStarted ||
+                  event.eventType == AndroidNetworkEventType.vpnStopped ||
+                  event.eventType == AndroidNetworkEventType.error) {
+                _settleNetworkToggleFromEvent();
+              }
+            }
+          } on MissingPluginException {
+            await Future<void>.delayed(const Duration(seconds: 5));
+          } on TimeoutException {
+            // Watch methods may hold the request open; a timeout simply starts the next cycle.
+          } on Object catch (error) {
+            ClientUiDiagnostics.unawaitedLog(
+              'bridge.ios.event.watchError',
+              state: _state.value,
+              fields: {'message': error.toString()},
+            );
+            await Future<void>.delayed(const Duration(seconds: 2));
+          }
+        }
+      }),
+    );
+  }
+
   void _startAndroidRuntimeStatsLoop() {
     if (!_isAndroid || _watchingAndroidRuntimeStats) {
       return;
@@ -1652,6 +1721,29 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     );
     unawaited(_reportPlatformRuntimeState(
       platform: 'android',
+      runtimeState: state,
+      traffic: androidRuntimeDiagnosticsFields(state),
+    ));
+  }
+
+  Future<void> _logIosRuntimeState(
+    String event, {
+    Map<String, Object?>? runtimeState,
+  }) async {
+    if (!_isIos) {
+      return;
+    }
+    final state = runtimeState ?? _jsonMap(await _plugin.iosRuntimeState());
+    if (state == null || state.isEmpty) {
+      return;
+    }
+    ClientUiDiagnostics.unawaitedLog(
+      event,
+      state: _state.value,
+      fields: androidRuntimeDiagnosticsFields(state),
+    );
+    unawaited(_reportPlatformRuntimeState(
+      platform: 'ios',
       runtimeState: state,
       traffic: androidRuntimeDiagnosticsFields(state),
     ));

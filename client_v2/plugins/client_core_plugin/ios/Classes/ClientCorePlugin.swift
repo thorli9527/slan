@@ -24,6 +24,9 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
   private static let packetTunnelDescription = "SLAN Packet Tunnel"
 
   private var packetTunnelManager: NETunnelProviderManager?
+  private var pendingNetworkEventResult: FlutterResult?
+  private var pendingNetworkEventToken = 0
+  private var networkEvents: [[String: Any]] = []
   /// state 是返回给 Flutter UI 的轻量运行状态缓存。
   private var state: [String: Any?] = [
     "signedIn": false,
@@ -64,6 +67,8 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       result(SLANIosSharedStore.diagnostics())
     case "iosRuntimeState":
       result(iosRuntimeState())
+    case "iosWatchNetworkEvent":
+      iosWatchNetworkEvent(result: result)
     case "iosStartPacketTunnel":
       iosStartPacketTunnel(call.arguments, result: result)
     case "iosStopPacketTunnel":
@@ -165,6 +170,11 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
           self.state["switchEnabled"] = true
           self.state["notice"] = "iosPacketTunnelStartFailed"
           self.state["error"] = error.localizedDescription
+          self.pushNetworkEvent(
+            eventType: "error",
+            message: error.localizedDescription,
+            runtimeState: self.iosRuntimeState()
+          )
         case .success:
           self.state["virtualIp"] = self.stringField(config, "virtualIp")
           self.state["adapterPresent"] = true
@@ -173,6 +183,11 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
           self.state["switchEnabled"] = true
           self.state["notice"] = "networkEnabled"
           self.state["error"] = nil
+          self.pushNetworkEvent(
+            eventType: "vpnStarted",
+            message: "iOS PacketTunnel started",
+            runtimeState: self.iosRuntimeState()
+          )
         }
         result(self.compactState())
       }
@@ -190,6 +205,11 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
         self.state["switchEnabled"] = true
         self.state["notice"] = "networkDisabled"
         self.state["error"] = error?.localizedDescription
+        self.pushNetworkEvent(
+          eventType: error == nil ? "vpnStopped" : "error",
+          message: error?.localizedDescription ?? "iOS PacketTunnel stopped",
+          runtimeState: self.iosRuntimeState()
+        )
         result(self.compactState())
       }
     }
@@ -296,18 +316,118 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
 #endif
   }
 
+  private func iosWatchNetworkEvent(result: @escaping FlutterResult) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else {
+        result(nil)
+        return
+      }
+      if !self.networkEvents.isEmpty {
+        result(self.networkEvents.removeFirst())
+        return
+      }
+      if self.pendingNetworkEventResult != nil {
+        self.pendingNetworkEventResult?(nil)
+      }
+      self.pendingNetworkEventToken += 1
+      let token = self.pendingNetworkEventToken
+      self.pendingNetworkEventResult = result
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        guard let self = self,
+          self.pendingNetworkEventToken == token,
+          let pending = self.pendingNetworkEventResult
+        else {
+          return
+        }
+        self.pendingNetworkEventResult = nil
+        if self.networkEvents.isEmpty {
+          pending(nil)
+        } else {
+          pending(self.networkEvents.removeFirst())
+        }
+      }
+    }
+  }
+
+  private func pushNetworkEvent(
+    eventType: String,
+    message: String?,
+    runtimeState: [String: Any]
+  ) {
+    var event: [String: Any] = [
+      "eventType": eventType,
+      "runtimeState": runtimeState
+    ]
+    if let message = message, !message.isEmpty {
+      event["message"] = message
+    }
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else {
+        return
+      }
+      if let pending = self.pendingNetworkEventResult {
+        self.pendingNetworkEventResult = nil
+        self.pendingNetworkEventToken += 1
+        pending(event)
+        return
+      }
+      self.networkEvents.append(event)
+      while self.networkEvents.count > 32 {
+        self.networkEvents.removeFirst()
+      }
+    }
+  }
+
   private func iosRuntimeState() -> [String: Any] {
     var runtime = compactState()
+    let config = SLANIosSharedStore.readNetworkConfig()
+    let stats = SLANIosSharedStore.readPacketTunnelStats()
+    let stoppedAtMs = intField(stats, "stoppedAtMs") ?? 0
+    let updatedAtMs = intField(stats, "updatedAtMs") ?? 0
+    let statsNetworkEnabled = (stats?["networkEnabled"] as? Bool) == true
+      || (stoppedAtMs == 0
+        && updatedAtMs > 0
+        && !(stats?["virtualIp"] as? String ?? "").isEmpty)
     runtime["adapterPresent"] = (state["adapterPresent"] as? Bool) == true
-      || SLANIosSharedStore.readNetworkConfig() != nil
+      || config != nil
       || packetTunnelManager != nil
-    runtime["networkEnabled"] = (state["networkEnabled"] as? Bool) == true
+      || stats != nil
+    runtime["networkEnabled"] = (state["networkEnabled"] as? Bool) == true || statsNetworkEnabled
     if runtime["virtualIp"] == nil,
-      let config = SLANIosSharedStore.readNetworkConfig(),
-      let virtualIp = config["virtualIp"] as? String,
+      let virtualIp = (stats?["virtualIp"] as? String) ?? (config?["virtualIp"] as? String),
       !virtualIp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     {
       runtime["virtualIp"] = virtualIp.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if runtime["mtu"] == nil {
+      runtime["mtu"] = stats?["mtu"] ?? config?["mtu"]
+    }
+    if runtime["relayAddress"] == nil {
+      runtime["relayAddress"] = relayAddress(config)
+    }
+    if runtime["relaySessionCount"] == nil {
+      let relaySessionCount = intField(stats, "relaySessionCount")
+        ?? relaySessionCount(config)
+      if let relaySessionCount = relaySessionCount {
+        runtime["relaySessionCount"] = relaySessionCount
+        runtime["requestedRelaySessionCount"] = relaySessionCount
+      }
+    }
+    if runtime["attachedRelaySessionCount"] == nil,
+      let attached = intField(stats, "relayAttachedSessionCount")
+    {
+      runtime["attachedRelaySessionCount"] = attached
+    }
+    if runtime["relayAttachFailures"] == nil,
+      let failures = intField(stats, "relayAttachFailures")
+    {
+      runtime["relayAttachFailures"] = failures
+    }
+    if runtime["lastRelayAttachError"] == nil,
+      let error = stats?["lastRelayAttachError"] as? String,
+      !error.isEmpty
+    {
+      runtime["lastRelayAttachError"] = error
     }
     return runtime
   }
@@ -421,13 +541,56 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
     return (object[field] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
   }
 
+  private func intField(_ object: [String: Any]?, _ field: String) -> Int? {
+    switch object?[field] {
+    case let value as Int:
+      return value
+    case let value as Int64:
+      return Int(value)
+    case let value as NSNumber:
+      return value.intValue
+    case let value as String:
+      return Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+    default:
+      return nil
+    }
+  }
+
+  private func relayAddress(_ config: [String: Any]?) -> String? {
+    if let relayAddress = config?["relayAddress"] as? String,
+      !relayAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      return relayAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    let relayDataPlane = config?["relayDataPlane"] as? [String: Any]
+    let relayAddress = relayDataPlane?["relayAddress"] as? String ?? ""
+    let trimmed = relayAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private func relaySessionCount(_ config: [String: Any]?) -> Int? {
+    guard let relayDataPlane = config?["relayDataPlane"] as? [String: Any],
+      relayDataPlane["enabled"] as? Bool == true
+    else {
+      return 0
+    }
+    return (relayDataPlane["sessions"] as? [Any])?.count ?? 0
+  }
+
   private func writeSimulatorPacketTunnelStats(config: [String: Any], enabled: Bool) {
     let now = Int64(Date().timeIntervalSince1970 * 1000)
     let virtualIp = stringField(config, "virtualIp")
-    SLANIosSharedStore.writePacketTunnelStats([
+    let relayDataPlane = config["relayDataPlane"] as? [String: Any]
+    let relaySessions = relaySessionCount(config) ?? 0
+    let directPeers = (relayDataPlane?["peerPaths"] as? [Any])?.count ?? 0
+    var stats: [String: Any] = [
       "simulatorFallback": true,
       "networkEnabled": enabled,
       "virtualIp": enabled ? virtualIp : "",
+      "relaySessionCount": relaySessions,
+      "relayAttachedSessionCount": enabled ? relaySessions : 0,
+      "relayAttachFailures": 0,
+      "lastRelayAttachError": "",
       "packetsRead": 0,
       "bytesRead": 0,
       "bytesWritten": 0,
@@ -436,9 +599,27 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       "nonIpv4Packets": 0,
       "relayFramesSent": 0,
       "relayFramesReceived": 0,
+      "relayPacketsWritten": 0,
+      "relayDetachSent": 0,
+      "relayNoPeerPackets": 0,
+      "directUdpAttachedPeerCount": enabled ? directPeers : 0,
+      "directUdpReadyPeerCount": 0,
+      "directUdpProbesSent": 0,
+      "directUdpProbesReceived": 0,
+      "directUdpPongsSent": 0,
+      "directUdpPongsReceived": 0,
+      "directUdpFramesSent": 0,
+      "directUdpFramesReceived": 0,
       "startedAtMs": enabled ? now : 0,
       "stoppedAtMs": enabled ? 0 : now,
       "updatedAtMs": now
-    ])
+    ]
+    if let mtu = config["mtu"] {
+      stats["mtu"] = mtu
+    }
+    if let relayAddress = relayAddress(config) {
+      stats["relayAddress"] = relayAddress
+    }
+    SLANIosSharedStore.writePacketTunnelStats(stats)
   }
 }
