@@ -20,9 +20,55 @@ use crate::{
     relay_store::relay_runtime_failure_total,
 };
 use client_core::{
-    PathKind, PeerPathRuntime, PlatformNetworkDiagnostics, RelayPeerSession, RelayTicket, RouteSpec,
+    AssignedIpPayload, ClientCommand, ClientRuntime, NetworkRuntimeState, PathKind,
+    PeerPathRuntime, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
+    RelayPeerSession, RelayTicket, RouteSpec,
 };
-use std::net::{TcpListener, UdpSocket};
+use std::{
+    fs,
+    net::{TcpListener, UdpSocket},
+    sync::{Mutex, OnceLock},
+};
+
+#[derive(Debug, Clone, Default)]
+struct TestPlatformNetwork;
+
+impl PlatformNetwork for TestPlatformNetwork {
+    fn install_adapter(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn configure_ip(&self, _virtual_ip: &str, _prefix_len: u8) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn configure_routes(&self, _routes: &[RouteSpec]) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn configure_dns(&self, _dns_servers: &[String]) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn disable_network(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn configure_relay(&self, _relay_config: Option<&RelayDataPlaneConfig>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn read_runtime_state(&self) -> anyhow::Result<NetworkRuntimeState> {
+        Ok(NetworkRuntimeState::default())
+    }
+}
+
+fn state_dir_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("state dir test mutex poisoned")
+}
 
 #[test]
 fn online_presence_statuses_do_not_disable_local_network() {
@@ -49,6 +95,42 @@ fn managed_disable_statuses_disable_local_network() {
     ] {
         assert!(status_is_managed_disabled(status));
     }
+}
+
+#[test]
+fn sync_assigned_ip_does_not_create_empty_session() {
+    let _lock = state_dir_test_lock();
+    let state_dir = std::env::temp_dir().join(format!(
+        "slan-sync-assigned-ip-test-{}",
+        crate::session_store::current_timestamp_ms()
+    ));
+    let session_file = state_dir.join("SLAN").join("client-v2-session.json");
+    let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+    std::env::set_var("SLAN_STATE_DIR", &state_dir);
+    let _ = fs::remove_dir_all(&state_dir);
+
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+    let state = super::dispatch_with_side_effects(
+        &mut runtime,
+        ClientCommand::SyncAssignedIp(AssignedIpPayload {
+            virtual_ip: "10.0.0.2".to_string(),
+            prefix_len: Some(20),
+        }),
+    );
+
+    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.2"));
+    assert!(
+        !session_file.exists(),
+        "SyncAssignedIp must not create an empty persisted session at {}",
+        session_file.display()
+    );
+
+    if let Some(value) = previous_state_dir {
+        std::env::set_var("SLAN_STATE_DIR", value);
+    } else {
+        std::env::remove_var("SLAN_STATE_DIR");
+    }
+    let _ = fs::remove_dir_all(&state_dir);
 }
 
 #[test]

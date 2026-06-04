@@ -2175,9 +2175,22 @@ where
             )
         }
         ClientCommand::SyncAssignedIp(payload) => {
-            let mut session = load_session().unwrap_or_else(|_| PersistedSession::empty());
-            session.virtual_ip = Some(payload.virtual_ip.clone());
-            let side_effect = persist_session(&session);
+            let side_effect = match load_session() {
+                Ok(mut session) => {
+                    if session.access_token.trim().is_empty() && session.device_token.is_none() {
+                        Ok(())
+                    } else {
+                        session.virtual_ip = Some(payload.virtual_ip.clone());
+                        persist_session(&session)
+                    }
+                }
+                Err(error) => {
+                    log_service_error(format!(
+                        "client-core-service skipped assigned IP persistence without session: {error:#}"
+                    ));
+                    Ok(())
+                }
+            };
             (ClientCommand::SyncAssignedIp(payload), side_effect)
         }
         ClientCommand::Logout => {
