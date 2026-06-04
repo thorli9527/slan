@@ -60,11 +60,58 @@ func TestHandleAttachAndForward(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("forward: %v", err)
 	}
-	if len(sentTo) != 2 {
-		t.Fatalf("want 2 writes, got %d", len(sentTo))
+	if len(sentTo) != 1 {
+		t.Fatalf("want peer packet write only, got %d", len(sentTo))
 	}
 	if sentTo[0].String() != b.String() {
 		t.Fatalf("want first write to peer b, got %s", sentTo[0])
+	}
+}
+
+func TestHandleForwardCanEmitCompatibilityAck(t *testing.T) {
+	server := &UDPServer{store: state.NewStore()}
+	server.cfg.ForwardAckEnabled = true
+	a := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12011}
+	b := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12012}
+	ticket := protocol.RelayTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		SessionID: "s1",
+		Path:      "relay_udp",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	ticket.Signature = signRelayTestTicket(ticket)
+
+	for _, item := range []struct {
+		addr *net.UDPAddr
+		id   string
+	}{{a, "node-a"}, {b, "node-b"}} {
+		attach, _ := json.Marshal(protocol.ClientMessage{
+			Kind:          "attach",
+			ParticipantID: item.id,
+			Transport:     "udp",
+			Ticket:        &ticket,
+		})
+		if err := server.handlePacketWithWriter(item.addr, attach, func(*net.UDPAddr, protocol.ServerMessage) error { return nil }); err != nil {
+			t.Fatalf("attach %s: %v", item.id, err)
+		}
+	}
+
+	var kinds []string
+	forward, _ := json.Marshal(protocol.ClientMessage{
+		Kind:          "forward",
+		SessionID:     "s1",
+		ParticipantID: "node-a",
+		Payload:       []byte("hello"),
+	})
+	if err := server.handlePacketWithWriter(a, forward, func(_ *net.UDPAddr, msg protocol.ServerMessage) error {
+		kinds = append(kinds, msg.Kind)
+		return nil
+	}); err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if len(kinds) != 2 || kinds[0] != "packet" || kinds[1] != "forwarded" {
+		t.Fatalf("unexpected writes: %#v", kinds)
 	}
 }
 

@@ -76,7 +76,7 @@ func main() {
 	waitHTTP(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", relayAdminPort))
 	waitHTTP(ctx, fmt.Sprintf("http://127.0.0.1:%d/healthz", derpAdminPort))
 
-	postJSON(wireURL+"/v1/peers/register", map[string]any{
+	postJSON(wireURL+"/peers/register", map[string]any{
 		"peer": map[string]any{
 			"peerId":                  "peer-a",
 			"networkId":               "net-a",
@@ -93,14 +93,14 @@ func main() {
 		},
 	}, nil)
 
-	postJSON(wireURL+"/v1/peers/path-health", map[string]any{
+	postJSON(wireURL+"/peers/path-health", map[string]any{
 		"peerId": "peer-a",
 		"probes": []map[string]any{
 			{"path": "relay_udp", "reachable": true, "rttMs": 20, "mtu": 1280},
 			{"path": "derp_tcp_tls_443", "reachable": true, "rttMs": 70, "mtu": 1240},
 		},
 	}, nil)
-	postJSON(wireURL+"/v1/peers/derp-health", map[string]any{
+	postJSON(wireURL+"/peers/derp-health", map[string]any{
 		"peerId": "peer-a",
 		"samples": []map[string]any{
 			{"regionId": "cn-east", "nodeId": "derp-cn-east-1", "reachable": true, "rttMs": 60},
@@ -110,7 +110,7 @@ func main() {
 	var relayResp struct {
 		Ticket relayTicket `json:"ticket"`
 	}
-	postJSON(wireURL+"/v1/relay/tickets", map[string]any{"peerId": "peer-a", "ttlSeconds": 300}, &relayResp)
+	postJSON(wireURL+"/relay/tickets", map[string]any{"peerId": "peer-a", "ttlSeconds": 300}, &relayResp)
 	if relayResp.Ticket.SessionID == "" || relayResp.Ticket.Path != "relay_udp" {
 		fail("invalid relay ticket: %+v", relayResp.Ticket)
 	}
@@ -118,7 +118,7 @@ func main() {
 	var derpResp struct {
 		Ticket derpTicket `json:"ticket"`
 	}
-	postJSON(wireURL+"/v1/derp/tickets", map[string]any{"peerId": "peer-a", "ttlSeconds": 300}, &derpResp)
+	postJSON(wireURL+"/derp/tickets", map[string]any{"peerId": "peer-a", "ttlSeconds": 300}, &derpResp)
 	if derpResp.Ticket.NodeID == "" || derpResp.Ticket.RegionID == "" || derpResp.Ticket.Path != "derp_tcp_tls_443" {
 		fail("invalid derp ticket: %+v", derpResp.Ticket)
 	}

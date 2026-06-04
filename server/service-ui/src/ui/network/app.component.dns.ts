@@ -26,6 +26,7 @@ import {
   WorkspaceRow,
 } from '../app.models';
 import { slug } from '../app.utils';
+import { WEB_API } from '../api-paths';
 
 
 export abstract class AppComponentDns extends AppComponentDevices {
@@ -69,7 +70,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
     }
     const zoneName = this.normalizePrivateZone(this.zoneNameValue);
     try {
-      const updated = await this.api.patch<ApiDNSZone>(`/api/networks/${encodeURIComponent(this.editingZone.workspaceId)}/dns/zones/${encodeURIComponent(this.editingZone.zoneId ?? this.editingZone.zone)}`, {
+      const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(this.editingZone.workspaceId, this.editingZone.zoneId ?? this.editingZone.zone), {
         zoneName,
         exposeGlobal: this.editingZone.expose,
       });
@@ -89,7 +90,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
     const zone = this.normalizePrivateZone(this.zoneName);
     if (this.zoneDialogMode === 'edit' && this.editingZone) {
       try {
-        const updated = await this.api.patch<ApiDNSZone>(`/api/networks/${encodeURIComponent(workspace.workspaceId)}/dns/zones/${encodeURIComponent(this.editingZone.zoneId ?? this.editingZone.zone)}`, {
+        const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(workspace.workspaceId, this.editingZone.zoneId ?? this.editingZone.zone), {
           zoneName: zone,
           exposeGlobal: this.editingZone.expose,
         });
@@ -104,7 +105,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
       return;
     }
     try {
-      const created = await this.api.post<ApiDNSZone>(`/api/networks/${encodeURIComponent(workspace.workspaceId)}/dns/zones`, {
+      const created = await this.api.post<ApiDNSZone>(WEB_API.dnsZones(workspace.workspaceId), {
         zoneName: zone,
         exposeGlobal: workspace.name !== '默认网络',
       });
@@ -121,7 +122,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
 
   async removeZone(zone: DNSZoneRow): Promise<void> {
     try {
-      await this.api.delete(`/api/networks/${encodeURIComponent(zone.workspaceId)}/dns/zones/${encodeURIComponent(zone.zoneId ?? zone.zone)}`);
+      await this.api.delete(WEB_API.dnsZone(zone.workspaceId, zone.zoneId ?? zone.zone));
     } catch {
       // Local preview mode removes below.
     }
@@ -191,7 +192,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
     this.recordValue = this.buildRecordValue();
     if (this.recordDialogMode === 'edit' && this.editingRecord) {
       try {
-        const updated = await this.api.patch<ApiDNSRecord>(`/api/networks/${encodeURIComponent(workspace.workspaceId)}/dns/records/${encodeURIComponent(this.editingRecord.recordId ?? this.editingRecord.fqdn)}`, {
+        const updated = await this.api.patch<ApiDNSRecord>(WEB_API.dnsRecord(workspace.workspaceId, this.editingRecord.recordId ?? this.editingRecord.fqdn), {
           name,
           recordType: this.recordType,
           targetDeviceId: this.recordDeviceId,
@@ -212,7 +213,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
       return;
     }
     try {
-      const created = await this.api.post<ApiDNSRecord>(`/api/networks/${encodeURIComponent(workspace.workspaceId)}/dns/records`, {
+      const created = await this.api.post<ApiDNSRecord>(WEB_API.dnsRecords(workspace.workspaceId), {
         zoneId: zoneRow?.zoneId ?? zoneRow?.zone ?? '',
         name,
         recordType: this.recordType,
@@ -233,7 +234,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
 
   async removeDomainRecord(record: DNSRow): Promise<void> {
     try {
-      await this.api.delete(`/api/networks/${encodeURIComponent(record.workspaceId)}/dns/records/${encodeURIComponent(record.recordId ?? record.fqdn)}`);
+      await this.api.delete(WEB_API.dnsRecord(record.workspaceId, record.recordId ?? record.fqdn));
     } catch {
       // Local preview mode removes below.
     }
@@ -285,7 +286,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
     const publicDomain = `${alias}.${this.selectedWorkspace.code}.${this.userSlug}.pub.staticlss.com`;
     if (this.publicMappingDialogMode === 'edit' && this.editingPublicMapping) {
       try {
-        const updated = await this.api.patch<ApiPublicMapping>(`/api/networks/${encodeURIComponent(this.selectedWorkspaceId)}/public-mappings/${encodeURIComponent(this.editingPublicMapping.mappingId ?? this.editingPublicMapping.publicDomain)}`, {
+        const updated = await this.api.patch<ApiPublicMapping>(WEB_API.publicMapping(this.selectedWorkspaceId, this.editingPublicMapping.mappingId ?? this.editingPublicMapping.publicDomain), {
           alias,
           publicDomain,
           sourceRecord: device?.alias || device?.deviceId || '',
@@ -311,7 +312,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
       return;
     }
     try {
-      const created = await this.api.post<ApiPublicMapping>(`/api/networks/${encodeURIComponent(this.selectedWorkspaceId)}/public-mappings`, {
+      const created = await this.api.post<ApiPublicMapping>(WEB_API.publicMappings(this.selectedWorkspaceId), {
         alias,
         publicDomain,
         sourceRecord: device?.alias || device?.deviceId || '',
@@ -333,7 +334,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
 
   async removePublicMapping(mapping: PublicMappingRow): Promise<void> {
     try {
-      await this.api.delete(`/api/networks/${encodeURIComponent(mapping.workspaceId)}/public-mappings/${encodeURIComponent(mapping.mappingId ?? mapping.publicDomain)}`);
+      await this.api.delete(WEB_API.publicMapping(mapping.workspaceId, mapping.mappingId ?? mapping.publicDomain));
     } catch {
       // Local preview mode removes below.
     }

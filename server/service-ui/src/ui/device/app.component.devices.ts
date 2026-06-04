@@ -27,10 +27,11 @@ import {
   WorkspacePanel,
   WorkspaceRow,
 } from '../app.models';
+import { WEB_API } from '../api-paths';
 export abstract class AppComponentDevices extends AppComponentUserAlias {
   async addDevice(): Promise<void> {
     try {
-      await this.api.post('/api/devices/register', {
+      await this.api.post(WEB_API.devicesRegister, {
         userId: this.currentUserId || 'user-000001',
         deviceId: this.deviceId,
         name: this.deviceAlias,
@@ -72,7 +73,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     const alias = this.deviceAliasValue.trim();
     const deviceID = this.editingDevice.deviceId;
     try {
-      const updated = await this.api.patch<ApiDevice>(`/api/devices/${encodeURIComponent(deviceID)}`, {
+      const updated = await this.api.patch<ApiDevice>(WEB_API.device(deviceID), {
         actorUserId: this.currentUserId || this.editingDevice.owner,
         alias,
       });
@@ -92,7 +93,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       return;
     }
     try {
-      const invite = await this.api.post<WorkspaceDeviceInviteRow>('/api/device-invites', {
+      const invite = await this.api.post<WorkspaceDeviceInviteRow>(WEB_API.deviceInvites(), {
         inviterUserId: this.currentUserId || 'user-000001',
         ttlSeconds: 86400,
       });
@@ -132,7 +133,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       return;
     }
     try {
-      const key = await this.api.post<ApiDeviceBootstrapKey>('/api/web/device-bootstrap-keys', {
+      const key = await this.api.post<ApiDeviceBootstrapKey>(WEB_API.deviceBootstrapKeys(), {
         userId: this.currentUserId || 'user-000001',
         networkId: network.networkId,
         ttlSeconds: 1800,
@@ -187,7 +188,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       return;
     }
     try {
-      const result = await this.api.post<{ invite?: WorkspaceDeviceInviteRow }>('/api/device-invites/accept', {
+      const result = await this.api.post<{ invite?: WorkspaceDeviceInviteRow }>(WEB_API.deviceInviteAccept, {
         inviteCode: this.joinInviteCode,
         deviceId: this.deviceId,
         actorUserId: this.currentUserId || this.devices.find((device) => device.deviceId === this.deviceId)?.owner || 'user-000001',
@@ -228,7 +229,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
 
   async removeDevice(device: DeviceRow): Promise<void> {
     try {
-      await this.api.delete(`/api/devices/${encodeURIComponent(device.deviceId)}?actorUserId=${encodeURIComponent(this.currentUserId || device.owner)}`);
+      await this.api.delete(WEB_API.device(device.deviceId, this.currentUserId || device.owner));
       await this.loadDashboard(this.currentUserId);
       return;
     } catch {

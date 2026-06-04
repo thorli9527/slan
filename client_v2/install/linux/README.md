@@ -16,6 +16,10 @@ The installer writes:
 - `/etc/slan/client-v2-install.env`
 - `/etc/slan/client-v2-desktop.policy`
 
+Installer constants shared by packaging, direct install, and console bootstrap
+live in `lib/slan-linux-install.sh`. Keep install roots, service names, config
+file names, process names, and default network settings there first.
+
 When a downloadable package is available, `install.sh` stops and disables the
 existing `slan-client-v2.service`, kills stale `slan_client_v2` and
 `client-core-service` processes, removes the old systemd unit, clears the old
@@ -40,13 +44,13 @@ make client-linux-package
 Or package existing artifacts directly:
 
 ```sh
-client_v2/install/linux/package-linux.sh --variant=all
-client_v2/install/linux/package-linux.sh --variant=console
+scripts/package_linux.sh --variant=all --service-bin=/path/to/linux/client-core-service
+scripts/package_linux.sh --variant=console --service-bin=/path/to/linux/client-core-service
 ```
 
 Outputs are written to `client_v2/.tmp/installer/linux`:
 
-- `SLAN-Client-V2-linux-x64.tar.gz`
+- `SLAN-Client-V2-linux-amd64.tar.gz`
 - `slan-client-v2_<version>_amd64.deb` when `dpkg-deb` is available
 
 The package installs:

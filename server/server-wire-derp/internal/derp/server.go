@@ -22,6 +22,7 @@ import (
 type Server struct {
 	listener  net.Listener
 	store     state.StoreAPI
+	service   *Service
 	adminAddr string
 	cfg       config.Config
 
@@ -61,10 +62,17 @@ func NewServerWithStore(cfg config.Config, store state.StoreAPI) (*Server, error
 	return &Server{
 		listener:  listener,
 		store:     store,
+		service:   NewService(store),
 		adminAddr: cfg.AdminListenAddr,
 		cfg:       cfg,
 		writers:   make(map[string]*peerWriter),
 	}, nil
+}
+
+func (s *Server) ensureService() {
+	if s.service == nil {
+		s.service = NewService(s.store)
+	}
 }
 
 // Serve 启动管理 HTTP、注册/心跳协程，并循环接受客户端 TCP 连接。
@@ -180,8 +188,9 @@ func derpTicketKeyStatus() bizclient.TicketKeyStatus {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
+	s.ensureService()
 	defer conn.Close()
-	configureTCPConn(conn)
+	configureTCPConn(conn, s.cfg)
 	reader := bufio.NewScanner(conn)
 	reader.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	writer := newPeerWriter(conn)
@@ -198,7 +207,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "ticket_required", Message: "connect ticket is required"}})
 				return
 			}
-			session, renewAfter, err := s.store.Connect(conn, msg.PeerID, msg.NodeID, msg.RegionID, *msg.Ticket)
+			session, renewAfter, err := s.service.Connect(conn, msg.PeerID, msg.NodeID, msg.RegionID, *msg.Ticket)
 			if err != nil {
 				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "connect_failed", Message: err.Error()}})
 				return
@@ -214,48 +223,61 @@ func (s *Server) handleConn(conn net.Conn) {
 				RenewAfterMs: renewAfter,
 			})
 		case "send":
-			s.store.TouchPeer(currentPeerID)
-			session, err := s.store.BindSessionPeer(msg.SessionID, msg.TargetPeerID)
+			if currentPeerID == "" {
+				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "connect_required", Message: "connect is required before send"}})
+				continue
+			}
+			if !s.isCurrentWriter(currentPeerID, writer) {
+				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "connection_superseded", Message: "peer connection has been superseded by a newer connection"}})
+				return
+			}
+			if msg.TargetPeerID == "" {
+				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "target_required", Message: "targetPeerId is required"}})
+				continue
+			}
+			s.service.TouchPeer(currentPeerID)
+			session, err := s.service.BindSessionPeer(msg.SessionID, currentPeerID, msg.TargetPeerID)
 			if err != nil {
 				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "session_not_found", Message: err.Error()}})
 				continue
 			}
-			if msg.TargetPeerID != "" {
-				if target, ok := s.writer(msg.TargetPeerID); ok {
-					_ = target.Encode(protocol.ServerMessage{
-						Kind:         "recv",
-						SessionID:    session.SessionID,
-						SourcePeerID: currentPeerID,
-						Payload:      msg.Payload,
-					})
-				}
+			target, ok := s.writer(msg.TargetPeerID)
+			if !ok {
+				_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "target_not_connected", Message: fmt.Sprintf("target peer %s is not connected to this DERP node", msg.TargetPeerID)}})
+				continue
 			}
-			_ = writer.Encode(protocol.ServerMessage{
-				Kind:           "sent",
-				SessionID:      session.SessionID,
-				BytesForwarded: len(msg.Payload),
+			_ = target.Encode(protocol.ServerMessage{
+				Kind:         "recv",
+				SessionID:    session.SessionID,
+				SourcePeerID: currentPeerID,
+				Payload:      msg.Payload,
 			})
+			if s.cfg.SendAckEnabled {
+				_ = writer.Encode(protocol.ServerMessage{
+					Kind:           "sent",
+					SessionID:      session.SessionID,
+					BytesForwarded: len(msg.Payload),
+				})
+			}
 		case "disconnect":
 			if msg.SessionID != "" {
-				s.store.TouchPeer(currentPeerID)
+				s.service.TouchPeer(currentPeerID)
 			}
 			_ = writer.Encode(protocol.ServerMessage{Kind: "disconnected", SessionID: msg.SessionID})
-			s.clearWriter(currentPeerID, writer)
-			if currentPeerID != "" {
-				s.store.Disconnect(currentPeerID)
+			if s.clearWriter(currentPeerID, writer) {
+				s.service.Disconnect(currentPeerID)
 			}
 			return
 		default:
 			_ = writer.Encode(protocol.ServerMessage{Kind: "error", Error: &protocol.ErrorResponse{Code: "unsupported_kind", Message: fmt.Sprintf("unsupported kind %q", msg.Kind)}})
 		}
 	}
-	s.clearWriter(currentPeerID, writer)
-	if currentPeerID != "" {
-		s.store.Disconnect(currentPeerID)
+	if s.clearWriter(currentPeerID, writer) {
+		s.service.Disconnect(currentPeerID)
 	}
 }
 
-func configureTCPConn(conn net.Conn) {
+func configureTCPConn(conn net.Conn, cfg config.Config) {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
 		return
@@ -263,8 +285,8 @@ func configureTCPConn(conn net.Conn) {
 	_ = tcpConn.SetNoDelay(true)
 	_ = tcpConn.SetKeepAlive(true)
 	_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
-	_ = tcpConn.SetReadBuffer(1024 * 1024)
-	_ = tcpConn.SetWriteBuffer(1024 * 1024)
+	_ = tcpConn.SetReadBuffer(cfg.ReadBufferBytes)
+	_ = tcpConn.SetWriteBuffer(cfg.WriteBufferBytes)
 }
 
 func (s *Server) setWriter(peerID string, writer *peerWriter) {
@@ -280,14 +302,21 @@ func (s *Server) writer(peerID string) (*peerWriter, bool) {
 	return writer, ok
 }
 
-func (s *Server) clearWriter(peerID string, writer *peerWriter) {
+func (s *Server) isCurrentWriter(peerID string, writer *peerWriter) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return peerID != "" && s.writers[peerID] == writer
+}
+
+func (s *Server) clearWriter(peerID string, writer *peerWriter) bool {
 	if peerID == "" {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if current := s.writers[peerID]; current != writer {
-		return
+		return false
 	}
 	delete(s.writers, peerID)
+	return true
 }

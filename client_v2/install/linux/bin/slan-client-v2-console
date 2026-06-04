@@ -1,10 +1,19 @@
 #!/usr/bin/env sh
 set -eu
 
-service_bin="${SLAN_CLIENT_CORE_SERVICE_BIN:-/opt/slan-client-v2/bin/client-core-service}"
-config_dir="${SLAN_CONFIG_DIR:-/etc/slan}"
-env_file="$config_dir/client-v2-console.env"
-server_url="${SLAN_CONTROL_BASE_URL:-}"
+if [ -n "${SLAN_LINUX_INSTALL_LIB:-}" ] && [ -f "$SLAN_LINUX_INSTALL_LIB" ]; then
+  . "$SLAN_LINUX_INSTALL_LIB"
+elif [ -f "/opt/slan-client-v2/lib/slan-linux-install.sh" ]; then
+  . "/opt/slan-client-v2/lib/slan-linux-install.sh"
+else
+  script_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+  . "$script_dir/lib/slan-linux-install.sh"
+fi
+
+service_bin="${SLAN_CLIENT_CORE_SERVICE_BIN:-$SLAN_LINUX_SERVICE_BIN}"
+config_dir="$SLAN_LINUX_CONFIG_DIR"
+env_file="$config_dir/$SLAN_LINUX_CONSOLE_ENV_NAME"
+server_url="${SLAN_CONTROL_BASE_URL:-$SLAN_LINUX_DEFAULT_CONTROL_BASE_URL}"
 email=""
 password=""
 device_name=""
@@ -13,7 +22,7 @@ foreground="false"
 
 usage() {
   cat <<'EOF'
-Usage: slan-client-v2-console --server-url URL [options]
+Usage: slan-client-v2-console [--server-url URL] [options]
 
 Options:
   --server-url URL       Server control base URL.
@@ -91,11 +100,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$server_url" ]; then
-  echo "--server-url is required" >&2
-  exit 2
-fi
-
 umask 077
 mkdir -p "$config_dir"
 tmp_file="$env_file.tmp"
@@ -118,8 +122,8 @@ if [ "$foreground" = "true" ]; then
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl restart slan-client-v2.service
-  systemctl status --no-pager slan-client-v2.service || true
+  systemctl restart "$SLAN_LINUX_SERVICE_NAME"
+  systemctl status --no-pager "$SLAN_LINUX_SERVICE_NAME" || true
 else
   echo "Wrote $env_file. Start $service_bin manually or run with --foreground."
 fi

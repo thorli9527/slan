@@ -52,9 +52,9 @@ func TestPeerReadRoutes(t *testing.T) {
 			AllowedIPs:        []string{"10.0.0.0/24"},
 		},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/peers/register", bytes.NewReader(registerBody))
+	req := httptest.NewRequest(http.MethodPost, "/peers/register", bytes.NewReader(registerBody))
 	rec := httptest.NewRecorder()
-	handleRegisterPeer(svc)(rec, req)
+	handleRegisterPeer(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("register status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -63,9 +63,9 @@ func TestPeerReadRoutes(t *testing.T) {
 		PeerID: "peer-http",
 		Probes: []model.PathProbe{{Path: model.PathDirectUDP, Reachable: true, RTTMs: 11}},
 	})
-	req = httptest.NewRequest(http.MethodPost, "/v1/peers/path-health", bytes.NewReader(healthBody))
+	req = httptest.NewRequest(http.MethodPost, "/peers/path-health", bytes.NewReader(healthBody))
 	rec = httptest.NewRecorder()
-	handleReportPathHealth(svc)(rec, req)
+	handleReportPathHealth(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("path-health status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -74,52 +74,52 @@ func TestPeerReadRoutes(t *testing.T) {
 		PeerID:  "peer-http",
 		Samples: []model.DerpHealthSample{{RegionID: "cn-east", NodeID: "derp-cn-east-1", Reachable: true, RTTMs: 40}},
 	})
-	req = httptest.NewRequest(http.MethodPost, "/v1/peers/derp-health", bytes.NewReader(derpHealthBody))
+	req = httptest.NewRequest(http.MethodPost, "/peers/derp-health", bytes.NewReader(derpHealthBody))
 	rec = httptest.NewRecorder()
-	handleReportDerpHealth(svc)(rec, req)
+	handleReportDerpHealth(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("derp-health status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/v1/peers/peer-http", nil)
+	req = httptest.NewRequest(http.MethodGet, "/peers/peer-http", nil)
 	rec = httptest.NewRecorder()
-	handleGetPeerRoutes(svc)(rec, req)
+	handleGetPeerRoutes(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get peer status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/v1/peers/peer-http/runtime-config", nil)
+	req = httptest.NewRequest(http.MethodGet, "/peers/peer-http/runtime-config", nil)
 	rec = httptest.NewRecorder()
-	handleGetPeerRoutes(svc)(rec, req)
+	handleGetPeerRoutes(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("runtime config status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/internal/wire/peers/peer-http/authz", nil)
 	rec = httptest.NewRecorder()
-	handleInternalPeerRoutes(svc)(rec, req)
+	handleInternalPeerRoutes(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("authz status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/internal/wire/networks/net-http/topology", nil)
 	rec = httptest.NewRecorder()
-	handleInternalNetworkRoutes(svc)(rec, req)
+	handleInternalNetworkRoutes(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("topology status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/v1/derp/map", nil)
+	req = httptest.NewRequest(http.MethodGet, "/derp/map", nil)
 	rec = httptest.NewRecorder()
-	handleGetDerpMap(svc)(rec, req)
+	handleGetDerpMap(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("derp map status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	derpTicketBody := mustJSON(t, model.IssueDerpTicketRequest{PeerID: "peer-http"})
-	req = httptest.NewRequest(http.MethodPost, "/v1/derp/tickets", bytes.NewReader(derpTicketBody))
+	req = httptest.NewRequest(http.MethodPost, "/derp/tickets", bytes.NewReader(derpTicketBody))
 	rec = httptest.NewRecorder()
-	handleIssueDerpTicket(svc)(rec, req)
+	handleIssueDerpTicket(svc, rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("derp ticket status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -138,7 +138,7 @@ func TestHTTPRoutesRejectOperationsAfterBizDisable(t *testing.T) {
 	}
 	mux := newMux(service.NewWithBiz(store.NewMemoryStore(), biz))
 
-	expectStatus(t, mux, http.MethodPost, "/v1/peers/register", model.RegisterPeerRequest{
+	expectStatus(t, mux, http.MethodPost, "/peers/register", model.RegisterPeerRequest{
 		Peer: model.PeerRegistration{
 			PeerID:                "peer-disabled-http",
 			NetworkID:             "client-forged-net",
@@ -150,33 +150,33 @@ func TestHTTPRoutesRejectOperationsAfterBizDisable(t *testing.T) {
 
 	biz.authz.Enabled = false
 
-	expectStatus(t, mux, http.MethodPost, "/v1/peers/endpoints", model.UpdateEndpointsRequest{
+	expectStatus(t, mux, http.MethodPost, "/peers/endpoints", model.UpdateEndpointsRequest{
 		PeerID:    "peer-disabled-http",
 		Endpoints: []model.Endpoint{{Kind: "udp", Address: "192.0.2.20", Port: 51820}},
 	}, http.StatusBadRequest)
-	expectStatus(t, mux, http.MethodPost, "/v1/peers/path-health", model.ReportPathHealthRequest{
+	expectStatus(t, mux, http.MethodPost, "/peers/path-health", model.ReportPathHealthRequest{
 		PeerID: "peer-disabled-http",
 		Probes: []model.PathProbe{{Path: model.PathRelayUDP, Reachable: true}},
 	}, http.StatusBadRequest)
-	expectStatus(t, mux, http.MethodPost, "/v1/peers/derp-health", model.ReportDerpHealthRequest{
+	expectStatus(t, mux, http.MethodPost, "/peers/derp-health", model.ReportDerpHealthRequest{
 		PeerID:  "peer-disabled-http",
 		Samples: []model.DerpHealthSample{{RegionID: "cn-east", NodeID: "derp-cn-east-1", Reachable: true}},
 	}, http.StatusBadRequest)
-	expectStatus(t, mux, http.MethodPost, "/v1/peers/active-path", model.UpdateActivePathRequest{
+	expectStatus(t, mux, http.MethodPost, "/peers/active-path", model.UpdateActivePathRequest{
 		PeerID: "peer-disabled-http",
 		Path:   model.PathRelayUDP,
 	}, http.StatusBadRequest)
-	expectStatus(t, mux, http.MethodPost, "/v1/relay/tickets", model.IssueRelayTicketRequest{
+	expectStatus(t, mux, http.MethodPost, "/relay/tickets", model.IssueRelayTicketRequest{
 		PeerID: "peer-disabled-http",
 	}, http.StatusBadRequest)
-	expectStatus(t, mux, http.MethodPost, "/v1/derp/tickets", model.IssueDerpTicketRequest{
+	expectStatus(t, mux, http.MethodPost, "/derp/tickets", model.IssueDerpTicketRequest{
 		PeerID: "peer-disabled-http",
 	}, http.StatusBadRequest)
-	expectStatus(t, mux, http.MethodPost, "/v1/path-plan", model.PathPlanRequest{
+	expectStatus(t, mux, http.MethodPost, "/path-plan", model.PathPlanRequest{
 		PeerID: "peer-disabled-http",
 	}, http.StatusBadRequest)
-	expectStatus(t, mux, http.MethodGet, "/v1/peers/peer-disabled-http", nil, http.StatusBadRequest)
-	expectStatus(t, mux, http.MethodGet, "/v1/peers/peer-disabled-http/runtime-config", nil, http.StatusBadRequest)
+	expectStatus(t, mux, http.MethodGet, "/peers/peer-disabled-http", nil, http.StatusBadRequest)
+	expectStatus(t, mux, http.MethodGet, "/peers/peer-disabled-http/runtime-config", nil, http.StatusBadRequest)
 	expectStatus(t, mux, http.MethodGet, "/internal/wire/peers/peer-disabled-http/authz", nil, http.StatusBadRequest)
 	expectStatus(t, mux, http.MethodGet, "/internal/wire/peers/peer-disabled-http/runtime-config", nil, http.StatusBadRequest)
 }
@@ -190,7 +190,7 @@ func TestHTTPRegisterRejectsUnauthorizedBizPeer(t *testing.T) {
 	}
 	mux := newMux(service.NewWithBiz(store.NewMemoryStore(), biz))
 
-	expectStatus(t, mux, http.MethodPost, "/v1/peers/register", model.RegisterPeerRequest{
+	expectStatus(t, mux, http.MethodPost, "/peers/register", model.RegisterPeerRequest{
 		Peer: model.PeerRegistration{PeerID: "peer-client"},
 	}, http.StatusBadRequest)
 }

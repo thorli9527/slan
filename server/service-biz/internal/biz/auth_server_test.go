@@ -91,6 +91,57 @@ func TestConsoleLoginHTTPRejectsInvalidCredentials(t *testing.T) {
 	}, http.StatusNotFound, nil)
 }
 
+func TestMQTTIsReturnedAfterDeviceRegistrationNotLoginPrepare(t *testing.T) {
+	server := NewServer()
+	server.mqtt = MQTTConfig{
+		Enabled:              true,
+		PublicBrokerURL:      "mqtt://47.245.40.231:1883",
+		UsernamePrefix:       "slan",
+		PasswordSecret:       "test-secret",
+		TopicPrefix:          "slan",
+		CredentialTTLSeconds: 3600,
+	}
+	handler := server.Routes()
+
+	auth, _, err := server.store.RegisterUser("mqtt-register-http@example.com", "secret", "MQTT Register")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+
+	var prepare map[string]json.RawMessage
+	postJSON(t, handler, "/api/auth/device-login-devices", "", map[string]any{
+		"deviceId":  "mqtt-prepare-1",
+		"name":      "Mac",
+		"platform":  "macos",
+		"osName":    "macOS",
+		"osVersion": "15.0",
+		"publicKey": "pk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}, http.StatusCreated, &prepare)
+	if _, ok := prepare["mqtt"]; ok {
+		t.Fatalf("expected prepare login response to omit mqtt, got %s", string(prepare["mqtt"]))
+	}
+
+	var registered struct {
+		Device Device          `json:"device"`
+		MQTT   *MQTTCredential `json:"mqtt"`
+	}
+	postJSON(t, handler, "/api/devices/register", "Bearer "+auth.Session.Token, map[string]any{
+		"userId":    auth.User.UserID,
+		"deviceId":  "mqtt-register-1",
+		"name":      "Android",
+		"platform":  "android",
+		"osName":    "Android",
+		"osVersion": "15",
+		"publicKey": "pk_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}, http.StatusCreated, &registered)
+	if registered.Device.DeviceID != "mqtt-register-1" {
+		t.Fatalf("unexpected registered device: %+v", registered.Device)
+	}
+	if registered.MQTT == nil || registered.MQTT.BrokerURL != "mqtt://47.245.40.231:1883" {
+		t.Fatalf("expected mqtt credential after device registration, got %+v", registered.MQTT)
+	}
+}
+
 func TestNetworkConfigHTTPMutationsWriteAuditEvents(t *testing.T) {
 	server := NewServer()
 	auth, network, err := server.store.RegisterUser("audit-net@example.com", "secret", "Audit Net")

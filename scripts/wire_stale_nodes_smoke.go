@@ -253,7 +253,7 @@ func createAuthorizedWirePeer(bizURL, wireURL string) (staleAuthorizedPeer, erro
 		return staleAuthorizedPeer{}, fmt.Errorf("unexpected node response: %+v", node)
 	}
 	var reg staleWireRegisterResponse
-	if err := postJSON(wireURL+"/v1/peers/register", "", map[string]any{
+	if err := postJSON(wireURL+"/peers/register", "", map[string]any{
 		"peer": map[string]any{
 			"peerId":                  nodeID,
 			"networkId":               "client-forged-network",
@@ -412,7 +412,7 @@ func derpMap(bizURL, internalToken string) (staleDerpMap, error) {
 
 func pathPlan(wireURL, nodeID string) (stalePathPlan, error) {
 	var out stalePathPlan
-	err := postJSON(wireURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &out)
+	err := postJSON(wireURL+"/path-plan", "", map[string]any{"peerId": nodeID}, &out)
 	return out, err
 }
 

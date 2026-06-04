@@ -1,7 +1,7 @@
 param(
-  [string]$InstallDir = "$env:LOCALAPPDATA\Programs\SLAN Client V2",
-  [string]$ServiceName = "SLANClientV2Service",
-  [string]$AdapterName = "SLAN LAN Adapter",
+  [string]$InstallDir = '',
+  [string]$ServiceName = '',
+  [string]$AdapterName = '',
   [switch]$RunRelayDiagnose,
   [switch]$AllowMissingPeerSessions,
   [switch]$SkipRelayDiagnoseToolCheck,
@@ -10,6 +10,18 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'SlanWindowsInstall.psm1') -Force
+$manifest = Get-SlanWindowsInstallManifest
+
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+  $InstallDir = $manifest.InstallDir
+}
+if ([string]::IsNullOrWhiteSpace($ServiceName)) {
+  $ServiceName = $manifest.ServiceName
+}
+if ([string]::IsNullOrWhiteSpace($AdapterName)) {
+  $AdapterName = $manifest.AdapterName
+}
 
 function New-Check {
   param(
@@ -55,13 +67,13 @@ function Get-UninstallEntryCheck {
   )
   $entry = $roots |
     ForEach-Object { Get-ItemProperty $_ -ErrorAction SilentlyContinue } |
-    Where-Object { $_.DisplayName -eq 'SLAN Client V2' } |
+    Where-Object { $_.DisplayName -eq $manifest.AppName } |
     Select-Object -First 1
   New-Check 'uninstallEntry' ($null -ne $entry) ($(if ($entry) { $entry.DisplayVersion } else { 'missing' }))
 }
 
 function Get-RelayDiagnoseCheck {
-  $toolPath = Join-Path $InstallDir 'tools\test-windows-multipeer-relay.ps1'
+  $toolPath = Join-Path $InstallDir $manifest.RelayDiagnoseToolDestination
   if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
     return New-Check 'relayDiagnose' $false "missing $toolPath"
   }
@@ -75,16 +87,19 @@ function Get-RelayDiagnoseCheck {
 
 function Get-InstalledChecks {
   $checks = @(
-    (Test-FileExists 'appExe' (Join-Path $InstallDir 'slan_client_v2.exe')),
-    (Test-FileExists 'serviceExe' (Join-Path $InstallDir 'client-core-service.exe')),
+    (Test-FileExists 'appExe' (Join-Path $InstallDir $manifest.AppExeName)),
+    (Test-FileExists 'serviceExe' (Join-Path $InstallDir $manifest.ServiceExeName)),
     (Test-FileExists 'wintunDll' (Join-Path $InstallDir 'wintun.dll')),
     (Test-FileExists 'flutterDll' (Join-Path $InstallDir 'flutter_windows.dll')),
     (Get-ServiceCheck $ServiceName),
     (Get-AdapterCheck $AdapterName),
     (Get-UninstallEntryCheck)
   )
-  if (-not $SkipRelayDiagnoseToolCheck) {
-    $checks += Test-FileExists 'relayDiagnoseTool' (Join-Path $InstallDir 'tools\test-windows-multipeer-relay.ps1')
+  foreach ($tool in $manifest.PackagedTools) {
+    if ($SkipRelayDiagnoseToolCheck -and $tool.Destination -eq $manifest.RelayDiagnoseToolDestination) {
+      continue
+    }
+    $checks += Test-FileExists "tool:$($tool.Destination)" (Join-Path $InstallDir $tool.Destination)
   }
   if ($RunRelayDiagnose) {
     $checks += Get-RelayDiagnoseCheck
@@ -94,36 +109,23 @@ function Get-InstalledChecks {
 
 function Get-UninstalledChecks {
   $installExists = Test-Path -LiteralPath $InstallDir
-  $stateDir = Join-Path $env:ProgramData 'SLAN'
+  $stateDir = $manifest.ProgramDataDir
   $desktopShortcuts = @(
-    (Join-Path ([Environment]::GetFolderPath('Desktop')) 'SLAN Client V2.lnk'),
-    (Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'SLAN Client V2.lnk')
+    (Join-Path ([Environment]::GetFolderPath('Desktop')) "$($manifest.AppName).lnk"),
+    (Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) "$($manifest.AppName).lnk")
   )
   $remainingDesktopShortcuts = @($desktopShortcuts | Where-Object { Test-Path -LiteralPath $_ })
-  $appDataDirs = @(
-    (Join-Path $env:APPDATA 'slan_client_v2'),
-    (Join-Path $env:LOCALAPPDATA 'slan_client_v2'),
-    (Join-Path $env:APPDATA 'SLAN Client V2'),
-    (Join-Path $env:LOCALAPPDATA 'SLAN Client V2')
-  )
-  $remainingAppDataDirs = @($appDataDirs | Where-Object { Test-Path -LiteralPath $_ })
+  $remainingAppDataDirs = @($manifest.AppDataDirectories | Where-Object { Test-Path -LiteralPath $_ })
   $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-  schtasks.exe /Query /TN 'SLAN Client V2 Helper' 2>$null 1>$null
-  $helperTaskMissing = $LASTEXITCODE -ne 0
-  schtasks.exe /Query /TN 'SLAN Client V2 Service' 2>$null 1>$null
-  $serviceTaskMissing = $LASTEXITCODE -ne 0
-  $stateFiles = @(
-    'client-v2-session.json',
-    'client-v2-control-tasks.xml',
-    'client-v2-device-id.txt',
-    'client-v2-network-state.json',
-    'client-v2-assigned-ip.txt',
-    'client-v2-relay-stats.json',
-    'client-v2-relay-policy.json',
-    'mqtt-inbox.xml'
-  )
+  $taskChecks = @{}
+  foreach ($taskName in $manifest.LegacyTaskNames) {
+    schtasks.exe /Query /TN $taskName 2>$null 1>$null
+    $taskChecks[$taskName] = ($LASTEXITCODE -ne 0)
+  }
+  $helperTaskName = $manifest.LegacyTaskNames[0]
+  $serviceTaskName = $manifest.LegacyTaskNames[1]
   $remainingStateFiles = @(
-    $stateFiles |
+    $manifest.StateFiles |
       ForEach-Object { Join-Path $stateDir $_ } |
       Where-Object { Test-Path -LiteralPath $_ }
   )
@@ -135,8 +137,8 @@ function Get-UninstalledChecks {
     (New-Check 'adapterRemoved' ($null -eq $adapter) $AdapterName),
     (New-Check 'desktopShortcutRemoved' ($remainingDesktopShortcuts.Count -eq 0) ($remainingDesktopShortcuts -join ';')),
     (New-Check 'appDataDirsRemoved' ($remainingAppDataDirs.Count -eq 0) ($remainingAppDataDirs -join ';')),
-    (New-Check 'helperTaskRemoved' $helperTaskMissing 'SLAN Client V2 Helper'),
-    (New-Check 'serviceTaskRemoved' $serviceTaskMissing 'SLAN Client V2 Service'),
+    (New-Check 'helperTaskRemoved' $taskChecks[$helperTaskName] $helperTaskName),
+    (New-Check 'serviceTaskRemoved' $taskChecks[$serviceTaskName] $serviceTaskName),
     (New-Check 'stateFilesRemoved' ($remainingStateFiles.Count -eq 0) ($remainingStateFiles -join ';')),
     (New-Check 'diagnosticsRemoved' (-not (Test-Path -LiteralPath $diagnosticsDir)) $diagnosticsDir)
   )

@@ -2,9 +2,12 @@ package planner
 
 import (
 	"sort"
+	"time"
 
 	"github.com/slan/server/server-wire/internal/model"
 )
+
+const pathProbeFreshnessMs = int64(2 * time.Minute / time.Millisecond)
 
 func BuildPlan(req model.PathPlanRequest) model.PathPlan {
 	paths := scorePaths(req.Peer)
@@ -36,7 +39,7 @@ func BuildPlan(req model.PathPlanRequest) model.PathPlan {
 func scorePaths(peer model.PeerSnapshot) []model.ScoredPath {
 	out := make([]model.ScoredPath, 0, 5)
 	for _, probe := range peer.Probes {
-		if !supported(peer, probe.Path) || !probe.Reachable {
+		if !supported(peer, probe.Path) || !probe.Reachable || !freshPathProbe(probe) {
 			continue
 		}
 		score := basePriority(peer, probe.Path)
@@ -64,6 +67,21 @@ func scorePaths(peer model.PeerSnapshot) []model.ScoredPath {
 		return out[i].Score < out[j].Score
 	})
 	return out
+}
+
+func freshPathProbe(probe model.PathProbe) bool {
+	if probe.ObservedAt <= 0 {
+		return true
+	}
+	observedAt := probe.ObservedAt
+	if observedAt < 1_000_000_000_000 {
+		observedAt *= 1000
+	}
+	now := time.Now().UnixMilli()
+	if observedAt > now {
+		return observedAt-now <= int64(10*time.Second/time.Millisecond)
+	}
+	return now-observedAt <= pathProbeFreshnessMs
 }
 
 func supported(peer model.PeerSnapshot, path model.PathKind) bool {

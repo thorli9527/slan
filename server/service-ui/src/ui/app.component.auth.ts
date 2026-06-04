@@ -10,6 +10,7 @@ import {
   sanitizedHomeParams,
 } from './app-auth-flow';
 import { shortCodeFromEmail } from './app.utils';
+import { WEB_API } from './api-paths';
 
 export class AppComponentAuth extends AppComponentData {
   protected async initializeCustomerAuthFromUrl(): Promise<void> {
@@ -74,7 +75,7 @@ export class AppComponentAuth extends AppComponentData {
     }
     this.authMessage = '正在通过客户端临时登录...';
     try {
-      const response = await this.api.post<{ auth: ApiAuthResponse }>('/api/auth/console-login', {
+      const response = await this.api.post<{ auth: ApiAuthResponse }>(WEB_API.consoleLogin, {
         loginKey: target.loginKey,
       });
       await this.applyAuth(response.auth);
@@ -96,7 +97,7 @@ export class AppComponentAuth extends AppComponentData {
       return;
     }
     try {
-      const path = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const path = mode === 'login' ? WEB_API.authLogin : WEB_API.authRegister;
       const payload = mode === 'login'
         ? { email: this.authEmail, password: this.authPassword }
         : { email: this.authEmail, password: this.authPassword, name: this.authName };
@@ -141,7 +142,7 @@ export class AppComponentAuth extends AppComponentData {
     if (!target) {
       return;
     }
-    await this.api.post(`/api/auth/device-login-devices/${encodeURIComponent(target.deviceId)}/complete`, {
+    await this.api.post(WEB_API.completeDeviceLogin(target.deviceId), {
       accessToken: auth.session.token,
       userId: auth.user.userId,
       email: auth.user.email,
@@ -197,7 +198,7 @@ export class AppComponentAuth extends AppComponentData {
       return;
     }
     try {
-      await this.api.patch(`/api/users/${encodeURIComponent(this.currentUserId || 'user-000001')}/password`, {
+      await this.api.patch(WEB_API.userPassword(this.currentUserId || 'user-000001'), {
         oldPassword: this.oldPassword,
         newPassword: this.newPassword,
       });

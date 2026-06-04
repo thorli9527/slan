@@ -1293,6 +1293,7 @@ fn run_udp_data_plane(
                             if let Some(frame) =
                                 encode_slan_relay_data_frame(seq, config_hash, &packet)
                             {
+                                let mut direct_sent = false;
                                 if let Some(direct_peer_index) =
                                     direct_udp.as_ref().and_then(|transport| {
                                         transport.ready_peer_index_for_packet(&packet)
@@ -1304,6 +1305,7 @@ fn run_udp_data_plane(
                                         .send_to_peer(direct_peer_index, &frame)
                                     {
                                         Ok(_) => {
+                                            direct_sent = true;
                                             stats.last_tun_send_path =
                                                 Some(PathKind::DirectUdp.as_str().to_string());
                                             record_direct_tun_packet_sent(stats, peer);
@@ -1321,27 +1323,64 @@ fn run_udp_data_plane(
                                             );
                                         }
                                     }
-                                } else if let Some(payload) = encode_relay_forward(peer, &frame) {
-                                    for attempt in 0..relay_send_attempt_count(&packet) {
-                                        if attempt > 0 {
-                                            thread::sleep(relay_send_attempt_delay(&packet));
-                                        }
-                                        match peer.socket.send(&payload) {
-                                            Ok(_) => {
-                                                stats.last_tun_send_path =
-                                                    Some(PathKind::RelayUdp.as_str().to_string());
-                                                record_relay_tun_packet_sent(stats, peer);
+                                }
+                                if !direct_sent {
+                                    let mut relay_sent = false;
+                                    if let Some(payload) = encode_relay_forward(peer, &frame) {
+                                        for attempt in 0..relay_send_attempt_count(&packet) {
+                                            if attempt > 0 {
+                                                thread::sleep(relay_send_attempt_delay(&packet));
                                             }
-                                            Err(error) => record_relay_send_failure(
-                                                stats,
-                                                peer,
-                                                error.to_string(),
-                                            ),
+                                            match peer.socket.send(&payload) {
+                                                Ok(_) => {
+                                                    relay_sent = true;
+                                                    stats.last_tun_send_path = Some(
+                                                        PathKind::RelayUdp.as_str().to_string(),
+                                                    );
+                                                    record_relay_tun_packet_sent(stats, peer);
+                                                }
+                                                Err(error) => record_relay_send_failure(
+                                                    stats,
+                                                    peer,
+                                                    error.to_string(),
+                                                ),
+                                            }
+                                        }
+                                    } else {
+                                        stats.last_tun_drop_reason =
+                                            Some("relay_forward_encode_failed".to_string());
+                                    }
+                                    if !relay_sent {
+                                        if let Some(derp_peer) =
+                                            derp_peer_for_packet_mut(&mut derp_peers, &packet)
+                                        {
+                                            for attempt in 0..relay_send_attempt_count(&packet) {
+                                                if attempt > 0 {
+                                                    thread::sleep(relay_send_attempt_delay(
+                                                        &packet,
+                                                    ));
+                                                }
+                                                match send_derp_forward(derp_peer, &frame) {
+                                                    Ok(_) => {
+                                                        stats.last_tun_send_path = Some(
+                                                            PathKind::DerpTcpTls443
+                                                                .as_str()
+                                                                .to_string(),
+                                                        );
+                                                        stats.last_tun_drop_reason = None;
+                                                        record_derp_tun_packet_sent(
+                                                            stats, derp_peer,
+                                                        );
+                                                    }
+                                                    Err(error) => record_derp_send_failure(
+                                                        stats,
+                                                        derp_peer,
+                                                        error.to_string(),
+                                                    ),
+                                                }
+                                            }
                                         }
                                     }
-                                } else {
-                                    stats.last_tun_drop_reason =
-                                        Some("relay_forward_encode_failed".to_string());
                                 }
                             } else {
                                 stats.last_tun_drop_reason =
@@ -1770,6 +1809,7 @@ fn mark_direct_peer_ready(
                 PathKind::DirectUdp.as_str()
             ));
         }
+        peer_stats.last_send_path = Some(PathKind::DirectUdp.as_str().to_string());
     }
 }
 

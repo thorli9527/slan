@@ -1,11 +1,14 @@
 #define MyAppName "SLAN Client V2"
 #define MyAppPublisher "SLAN"
 #define MyAppExeName "slan_client_v2.exe"
-#define MyAppVersion "0.1.0"
 #define HelperTaskName "SLAN Client V2 Helper"
 #define ServiceTaskName "SLAN Client V2 Service"
 #define ServiceName "SLANClientV2Service"
 #define ServiceDisplayName "SLAN Client V2 Service"
+
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.0"
+#endif
 
 #ifndef SourceDir
   #define SourceDir "."

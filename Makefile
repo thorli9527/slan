@@ -60,10 +60,10 @@ client-macos-package: client-macos-build
 
 client-windows-package:
 ifeq ($(OS),Windows_NT)
-	powershell -ExecutionPolicy Bypass -File .\client_v2\install\windows\package-installer.ps1
+	powershell -ExecutionPolicy Bypass -File .\scripts\package_windows.ps1
 else
 	@echo "client-windows-package must run on Windows with the Flutter Windows release bundle present."
-	@echo "Run: powershell -ExecutionPolicy Bypass -File .\\client_v2\\install\\windows\\package-installer.ps1"
+	@echo "Run: powershell -ExecutionPolicy Bypass -File .\\scripts\\package_windows.ps1"
 endif
 
 client-linux-build:
@@ -71,7 +71,7 @@ client-linux-build:
 	cd client_v2/app_flutter && flutter build linux
 
 client-linux-package:
-	client_v2/install/linux/package-linux.sh
+	./scripts/package_linux.sh
 
 client-macos-service-smoke:
 	./scripts/macos_service_smoke.sh

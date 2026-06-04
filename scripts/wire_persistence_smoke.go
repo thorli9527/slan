@@ -181,12 +181,12 @@ func seed() {
 	waitHTTP(derpAdminURL + "/healthz")
 
 	var relayTicketKey ticketKeyStatus
-	getJSON(relayAdminURL+"/v1/ticket-key-status", "", &relayTicketKey)
+	getJSON(relayAdminURL+"/ticket-key-status", "", &relayTicketKey)
 	if relayTicketKey.KeyRingID == "" {
 		fail("relay returned empty ticket key status: %+v", relayTicketKey)
 	}
 	var derpTicketKey ticketKeyStatus
-	getJSON(derpAdminURL+"/v1/ticket-key-status", "", &derpTicketKey)
+	getJSON(derpAdminURL+"/ticket-key-status", "", &derpTicketKey)
 	if derpTicketKey.KeyRingID == "" {
 		fail("derp returned empty ticket key status: %+v", derpTicketKey)
 	}
@@ -251,7 +251,7 @@ func seed() {
 	}, nil)
 
 	var reg wireRegisterResponse
-	postJSON(wireURL+"/v1/peers/register", "", map[string]any{
+	postJSON(wireURL+"/peers/register", "", map[string]any{
 		"peer": map[string]any{
 			"peerId":                nodeID,
 			"networkId":             "client-forged-network",
@@ -266,14 +266,14 @@ func seed() {
 		fail("unexpected wire register response: %+v", reg.Peer)
 	}
 
-	postJSON(wireURL+"/v1/peers/path-health", "", map[string]any{
+	postJSON(wireURL+"/peers/path-health", "", map[string]any{
 		"peerId": nodeID,
 		"probes": []map[string]any{
 			{"path": "direct_udp", "reachable": true, "rttMs": 10, "mtu": 1420},
 			{"path": "relay_udp", "reachable": true, "rttMs": 50, "mtu": 1280},
 		},
 	}, nil)
-	postJSON(wireURL+"/v1/peers/active-path", "", map[string]any{"peerId": nodeID, "path": "direct_udp"}, nil)
+	postJSON(wireURL+"/peers/active-path", "", map[string]any{"peerId": nodeID, "path": "direct_udp"}, nil)
 
 	putJSONWithInternalToken(bizURL+"/internal/wire/admin/derp-nodes", internalToken, map[string]any{
 		"regionId":          regionID,
@@ -298,14 +298,14 @@ func seed() {
 	}, nil)
 	postJSONWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes/"+regionID+"/"+relayNodeID+"/heartbeat", internalToken, map[string]any{"healthy": true, "ticketKeyRotation": relayTicketKey}, nil)
 
-	postJSON(wireURL+"/v1/peers/derp-health", "", map[string]any{
+	postJSON(wireURL+"/peers/derp-health", "", map[string]any{
 		"peerId": nodeID,
 		"samples": []map[string]any{
 			{"regionId": regionID, "nodeId": derpNodeID, "reachable": true, "rttMs": 35},
 		},
 	}, nil)
 	var relayResp relayTicketResponse
-	postJSON(wireURL+"/v1/relay/tickets", "", map[string]any{"peerId": nodeID, "ttlSeconds": 300, "renewAfterMs": 60000}, &relayResp)
+	postJSON(wireURL+"/relay/tickets", "", map[string]any{"peerId": nodeID, "ttlSeconds": 300, "renewAfterMs": 60000}, &relayResp)
 	if relayResp.Ticket.NodeID != relayNodeID || relayResp.Ticket.SessionID == "" || relayResp.Ticket.Signature == "" {
 		fail("unexpected relay ticket during seed: %+v", relayResp.Ticket)
 	}
@@ -333,7 +333,7 @@ func verify() {
 	var peerResp struct {
 		Peer wirePeer `json:"peer"`
 	}
-	getJSON(wireURL+"/v1/peers/"+state.PeerID, "", &peerResp)
+	getJSON(wireURL+"/peers/"+state.PeerID, "", &peerResp)
 	if peerResp.Peer.PeerID != state.PeerID || peerResp.Peer.NetworkID != state.NetworkID || peerResp.Peer.ActivePath != "direct_udp" {
 		fail("persisted peer not restored: %+v want peer=%s network=%s active=direct_udp", peerResp.Peer, state.PeerID, state.NetworkID)
 	}
@@ -348,13 +348,13 @@ func verify() {
 	}
 
 	var runtime runtimeConfig
-	getJSON(wireURL+"/v1/peers/"+state.PeerID+"/runtime-config", "", &runtime)
+	getJSON(wireURL+"/peers/"+state.PeerID+"/runtime-config", "", &runtime)
 	if runtime.PeerID != state.PeerID || runtime.NetworkID != state.NetworkID || runtime.PreferredPath == "" {
 		fail("runtime config not restored: %+v", runtime)
 	}
 
 	var plan pathPlan
-	postJSON(wireURL+"/v1/path-plan", "", map[string]any{"peerId": state.PeerID}, &plan)
+	postJSON(wireURL+"/path-plan", "", map[string]any{"peerId": state.PeerID}, &plan)
 	if plan.PreferredPath == "" {
 		fail("path plan not restored: %+v", plan)
 	}
@@ -366,7 +366,7 @@ func verify() {
 	}
 
 	var derp derpMapResponse
-	getJSON(wireURL+"/v1/derp/map", "", &derp)
+	getJSON(wireURL+"/derp/map", "", &derp)
 	if !hasDerpNode(derp.Map, regionID, derpNodeID) {
 		fail("server-wire did not load biz derp map: %+v", derp.Map)
 	}

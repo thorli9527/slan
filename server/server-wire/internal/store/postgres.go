@@ -285,7 +285,7 @@ FOR UPDATE OF p
 		return model.PeerRecord{}, err
 	}
 	if currentPath.String != "" && model.PathKind(currentPath.String) != path {
-		if path == model.PathRelayUDP {
+		if pathRank(path) > pathRank(model.PathKind(currentPath.String)) {
 			downgrades++
 		} else {
 			upgrades++

@@ -22,7 +22,7 @@ func TestPunchConnectSessionHTTPProxiesAuthorizedRequest(t *testing.T) {
 	}
 	punchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawPunchRequest = true
-		if r.URL.Path != "/v1/connect-sessions" {
+		if r.URL.Path != "/connect-sessions" {
 			t.Fatalf("unexpected punch path: %s", r.URL.Path)
 		}
 		if got := r.Header.Get("X-Slan-Internal-Token"); got != "test-wire-token" {

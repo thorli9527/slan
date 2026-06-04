@@ -120,6 +120,26 @@ impl PersistedSession {
     }
 }
 
+fn normalize_mqtt_credential(mut mqtt: MqttCredential) -> MqttCredential {
+    normalize_mqtt_topic_prefix(&mut mqtt);
+    mqtt
+}
+
+fn normalize_mqtt_topic_prefix(mqtt: &mut MqttCredential) {
+    let prefix = mqtt.topic_prefix.trim().trim_matches('/');
+    mqtt.topic_prefix = match prefix.strip_prefix("slan/v1/") {
+        Some(suffix) => format!("slan/{suffix}"),
+        None if prefix == "slan/v1" => "slan".to_string(),
+        None => prefix.to_string(),
+    };
+}
+
+fn normalize_session_mqtt_topic_prefix(session: &mut PersistedSession) {
+    if let Some(mqtt) = session.mqtt.as_mut() {
+        normalize_mqtt_topic_prefix(mqtt);
+    }
+}
+
 pub(crate) fn load_valid_registered_session() -> Option<PersistedSession> {
     let Ok(session) = load_session() else {
         return bootstrap_session_from_env().ok();
@@ -364,6 +384,13 @@ pub(crate) fn ensure_session_device_registered(
         return Ok(session);
     }
     let client = ControlPlaneClient::from_env();
+    if session.session_kind == "device" {
+        ensure_bound_device_session(&client, &mut session)?;
+        refresh_session_network_from_device_configs(&client, &mut session);
+        ensure_session_node_and_control_session(&client, &mut session)?;
+        persist_session(&session)?;
+        return Ok(session);
+    }
     renew_user_session_if_needed(&client, &mut session)?;
     let device = client.ensure_device_for_user(
         &session.access_token,
@@ -574,6 +601,7 @@ fn mqtt_from_device_session_response(response: &DeviceSessionResponse) -> Option
         .and_then(|runtime| runtime.mqtt.clone())
         .or_else(|| response.mqtt.clone())
         .or_else(|| response.device.mqtt.clone())
+        .map(normalize_mqtt_credential)
 }
 
 fn relay_candidates_from_device_session_response(
@@ -764,8 +792,8 @@ pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device:
             session.active_network_id = Some(network_id.to_string());
         }
     }
-    if device.mqtt.is_some() {
-        session.mqtt = device.mqtt.clone();
+    if let Some(mqtt) = device.mqtt.clone() {
+        session.mqtt = Some(normalize_mqtt_credential(mqtt));
     }
 }
 
@@ -834,6 +862,7 @@ pub(crate) fn load_session() -> Result<PersistedSession> {
     let mut session: PersistedSession =
         serde_json::from_slice(&payload).with_context(|| format!("decode {}", path.display()))?;
     session.relay_candidates.clear();
+    normalize_session_mqtt_topic_prefix(&mut session);
     Ok(session)
 }
 
@@ -844,6 +873,7 @@ pub(crate) fn persist_session(session: &PersistedSession) -> Result<()> {
     }
     let mut session = session.clone();
     session.relay_candidates.clear();
+    normalize_session_mqtt_topic_prefix(&mut session);
     let payload = serde_json::to_vec_pretty(&session).context("encode client session")?;
     fs::write(&path, payload).with_context(|| format!("write {}", path.display()))
 }
@@ -885,7 +915,7 @@ mod tests {
             client_id: "client-1".to_string(),
             username: "user".to_string(),
             password: "pass".to_string(),
-            topic_prefix: "slan/v1/devices/device-1".to_string(),
+            topic_prefix: "slan/devices/device-1".to_string(),
             expires_at,
         }
     }
@@ -917,6 +947,18 @@ mod tests {
     }
 
     #[test]
+    fn legacy_mqtt_topic_prefix_is_normalized() {
+        let mut mqtt = test_mqtt(None);
+        mqtt.topic_prefix = "slan/v1/devices/device-1".to_string();
+        normalize_mqtt_topic_prefix(&mut mqtt);
+        assert_eq!(mqtt.topic_prefix, "slan/devices/device-1");
+
+        mqtt.topic_prefix = " /slan/v1/ ".to_string();
+        normalize_mqtt_topic_prefix(&mut mqtt);
+        assert_eq!(mqtt.topic_prefix, "slan");
+    }
+
+    #[test]
     fn device_session_response_uses_runtime_endpoints() {
         let response: DeviceSessionResponse = serde_json::from_value(serde_json::json!({
             "device": {
@@ -936,7 +978,7 @@ mod tests {
                 "clientId": "old-client",
                 "username": "old-user",
                 "password": "old-pass",
-                "topicPrefix": "slan/v1/devices/device-1",
+                "topicPrefix": "slan/devices/device-1",
                 "expiresAt": 4_102_444_800i64
             },
             "networkConfigs": {
@@ -991,6 +1033,10 @@ mod tests {
         assert_eq!(
             session.mqtt.as_ref().map(|item| item.broker_url.as_str()),
             Some("mqtt://47.245.40.231:1883")
+        );
+        assert_eq!(
+            session.mqtt.as_ref().map(|item| item.topic_prefix.as_str()),
+            Some("slan/devices/device-1")
         );
         assert_eq!(session.active_network_id.as_deref(), Some("net-1"));
         assert_eq!(session.virtual_ip.as_deref(), Some("10.0.0.2"));

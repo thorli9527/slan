@@ -403,6 +403,12 @@ fn build_embedded_relay_data_plane_config(
         .collect::<Vec<_>>();
     let mut sessions = Vec::with_capacity(eligible_peers.len());
     let mut ticket_errors = Vec::new();
+    let relay_transport =
+        client_core::normalize_relay_transport(relay.transport.as_str()).unwrap_or("udp");
+    let preferred_derp_node_id =
+        (relay_transport == "derp_tcp_tls_443").then_some(relay.endpoint_id.as_str());
+    let preferred_relay_endpoint_id =
+        (relay_transport != "derp_tcp_tls_443").then_some(relay.endpoint_id.as_str());
     for peer in eligible_peers {
         match client.issue_relay_ticket(
             access_token,
@@ -410,7 +416,8 @@ fn build_embedded_relay_data_plane_config(
             local_node_id,
             peer.node_id.as_str(),
             relay.cluster_id.as_deref(),
-            Some(relay.endpoint_id.as_str()),
+            preferred_derp_node_id,
+            preferred_relay_endpoint_id,
             relay.region_id.as_deref(),
         ) {
             Ok(ticket) => sessions.push(RelayPeerSession {
@@ -1479,12 +1486,14 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
             let login = ControlPlaneClient::from_env()
                 .prepare_device_login(&device_id, std::env::consts::OS)
                 .context("prepare embedded device login")?;
-            if let Some(mqtt) = login.mqtt.clone() {
-                let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
-                persist_session(&session)?;
-                connect_embedded_control_mqtt_with_session(&session)
-                    .context("connect mqtt before browser login")?;
-            }
+            let mqtt = ControlPlaneClient::from_env()
+                .device_mqtt_credential_without_auth(&login.device_id)
+                .context("prepare embedded device mqtt credential")?
+                .ok_or_else(|| anyhow::anyhow!("server did not return mqtt credential"))?;
+            let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
+            persist_session(&session)?;
+            connect_embedded_control_mqtt_with_session(&session)
+                .context("connect mqtt after embedded browser login prepare")?;
             Ok(runtime.request_browser_login(Some(login.device_id)))
         }
         ClientCommand::LoginWithPassword(payload) => {

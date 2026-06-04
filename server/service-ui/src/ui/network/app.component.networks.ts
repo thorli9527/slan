@@ -27,6 +27,7 @@ import {
   WorkspaceRow,
 } from '../app.models';
 import { slug } from '../app.utils';
+import { WEB_API } from '../api-paths';
 
 export abstract class AppComponentNetworks extends AppComponentOverview {
   setActive(id: string): void {
@@ -156,7 +157,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
       return;
     }
     try {
-      await this.api.post('/api/networks', {
+      await this.api.post(WEB_API.networks(), {
         ownerUserId: this.currentUserId || 'user-000001',
         name: this.workspaceName,
         code,
@@ -232,7 +233,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
       return;
     }
     try {
-      const updated = await this.api.patch<ApiWorkspace>(`/api/networks/${encodeURIComponent(this.editingWorkspace.workspaceId)}`, {
+      const updated = await this.api.patch<ApiWorkspace>(WEB_API.network(this.editingWorkspace.workspaceId), {
         name: this.workspaceNameValue.trim(),
         code,
         status: this.editingWorkspace.status,
@@ -256,7 +257,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
   async toggleWorkspace(workspace: WorkspaceRow): Promise<void> {
     const status = workspace.status === 'enabled' ? 'disabled' : 'enabled';
     try {
-      const updated = await this.api.patch<ApiWorkspace>(`/api/networks/${encodeURIComponent(workspace.workspaceId)}`, {
+      const updated = await this.api.patch<ApiWorkspace>(WEB_API.network(workspace.workspaceId), {
         name: workspace.name,
         code: workspace.code,
         status,
@@ -269,7 +270,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
 
   async removeWorkspaceDevice(device: DeviceRow): Promise<void> {
     try {
-      await this.api.delete(`/api/networks/${encodeURIComponent(this.selectedWorkspaceId)}/devices/${encodeURIComponent(device.deviceId)}`);
+      await this.api.delete(WEB_API.networkDevice(this.selectedWorkspaceId, device.deviceId));
     } catch {
       // Local preview mode removes the row below.
     }
@@ -302,7 +303,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     }
     const selected = this.devices.find((device) => device.deviceId === this.selectedWorkspaceDeviceId);
     try {
-      await this.api.post(`/api/networks/${encodeURIComponent(this.selectedWorkspaceId)}/devices`, {
+      await this.api.post(WEB_API.networkDevices(this.selectedWorkspaceId), {
         deviceId: this.selectedWorkspaceDeviceId,
         actorUserId: this.currentUserId || selected?.owner || 'user-000001',
         alias: selected?.alias ?? '',
@@ -345,7 +346,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     const device = this.editingWorkspaceDevice;
     const alias = this.workspaceDeviceAliasValue.trim();
     try {
-      await this.api.patch(`/api/networks/${encodeURIComponent(this.selectedWorkspaceId)}/devices/${encodeURIComponent(device.deviceId)}`, {
+      await this.api.patch(WEB_API.networkDevice(this.selectedWorkspaceId, device.deviceId), {
         alias,
       });
     } catch {

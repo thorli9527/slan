@@ -1,5 +1,5 @@
 param(
-  [string]$ServerUrl = 'http://47.245.40.231:28080',
+  [string]$ServerUrl = '',
   [string]$Email = '',
   [string]$Password = '',
   [string]$DeviceName = '',
@@ -8,8 +8,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'SlanWindowsInstall.psm1') -Force
+$manifest = Get-SlanWindowsInstallManifest
+if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
+  $ServerUrl = $manifest.DefaultControlBaseUrl
+}
 
-$configDir = Join-Path $env:ProgramData 'SLAN'
+$configDir = $manifest.ProgramDataDir
 $envPath = Join-Path $configDir 'client-v2-console.env'
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 
@@ -23,7 +28,7 @@ $lines = @(
 Set-Content -Path $envPath -Value $lines -Encoding UTF8
 
 if ($RestartService) {
-  Restart-Service -Name 'SLANClientV2Service' -ErrorAction Stop
+  Restart-Service -Name $manifest.ServiceName -ErrorAction Stop
 }
 
 Write-Host "Wrote console bootstrap config: $envPath"

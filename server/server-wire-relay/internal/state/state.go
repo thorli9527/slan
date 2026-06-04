@@ -115,12 +115,20 @@ func NewStore() *Store {
 }
 
 func (s *Store) Attach(addr *net.UDPAddr, participantID string, ticket protocol.RelayTicket, transport string) (*Session, string, error) {
-	if ticket.PeerID == "" {
+	if ticket.SrcNodeID != "" || ticket.DstNodeID != "" {
 		switch participantID {
 		case ticket.SrcNodeID:
+			if ticket.DstNodeID == "" || (ticket.PeerID != "" && ticket.PeerID != ticket.DstNodeID) {
+				return nil, "", ErrTicketInvalid
+			}
 			ticket.PeerID = ticket.DstNodeID
 		case ticket.DstNodeID:
+			if ticket.SrcNodeID == "" || (ticket.PeerID != "" && ticket.PeerID != ticket.SrcNodeID) {
+				return nil, "", ErrTicketInvalid
+			}
 			ticket.PeerID = ticket.SrcNodeID
+		default:
+			return nil, "", ErrTicketInvalid
 		}
 	}
 	if participantID == "" || ticket.SessionID == "" || ticket.PeerID == "" {
@@ -141,6 +149,7 @@ func (s *Store) Attach(addr *net.UDPAddr, participantID string, ticket protocol.
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 
 	sourceKey := addr.String()
 	if binding, ok := s.sources[sourceKey]; ok {
@@ -303,8 +312,9 @@ func parseTicketSecretList(value string) []string {
 }
 
 func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []byte) (*net.UDPAddr, string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 
 	session, ok := s.sessions[sessionID]
 	if !ok {
@@ -334,6 +344,7 @@ func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID s
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 
 	session, ok := s.sessions[sessionID]
 	if !ok {
@@ -362,6 +373,7 @@ func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID s
 func (s *Store) Detach(addr *net.UDPAddr, sessionID, participantID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 
 	session, ok := s.sessions[sessionID]
 	if !ok {
@@ -380,8 +392,9 @@ func (s *Store) Detach(addr *net.UDPAddr, sessionID, participantID string) error
 }
 
 func (s *Store) Session(sessionID string) (SessionView, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 	session, ok := s.sessions[sessionID]
 	if !ok {
 		return SessionView{}, false
@@ -390,8 +403,9 @@ func (s *Store) Session(sessionID string) (SessionView, bool) {
 }
 
 func (s *Store) Sessions() []SessionView {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 	out := make([]SessionView, 0, len(s.sessions))
 	for _, session := range s.sessions {
 		out = append(out, sessionView(session))
@@ -400,8 +414,9 @@ func (s *Store) Sessions() []SessionView {
 }
 
 func (s *Store) Metrics() Metrics {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 	return Metrics{
 		SessionCount:                  len(s.sessions),
 		SourceBindingCount:            len(s.sources),
@@ -410,6 +425,22 @@ func (s *Store) Metrics() Metrics {
 		ParticipantAddressChangeCount: s.participantAddressChangeCount,
 		ForwardCount:                  atomic.LoadUint64(&s.forwardCount),
 		ForwardPeerNotAttachedCount:   atomic.LoadUint64(&s.forwardPeerNotAttachedCount),
+	}
+}
+
+func (s *Store) pruneExpiredLocked(now time.Time) {
+	for sessionID, session := range s.sessions {
+		if session == nil || session.ExpiresAt.IsZero() || !now.After(session.ExpiresAt) {
+			continue
+		}
+		for participantID := range session.Participants {
+			for sourceKey, binding := range s.sources {
+				if binding.SessionID == sessionID && binding.ParticipantID == participantID {
+					delete(s.sources, sourceKey)
+				}
+			}
+		}
+		delete(s.sessions, sessionID)
 	}
 }
 

@@ -95,6 +95,86 @@ func TestAttachRefreshesSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestExpiredSessionIsPrunedBeforeForward(t *testing.T) {
+	store := NewStore()
+	a := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	b := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10002}
+	ticket := protocol.RelayTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		SessionID: "s1",
+		Path:      "relay_udp",
+		ExpiresAt: time.Now().Add(30 * time.Millisecond),
+	}
+	ticket.Signature = signRelayTicket(ticket)
+	if _, _, err := store.Attach(a, "node-a", ticket, "udp"); err != nil {
+		t.Fatalf("attach a: %v", err)
+	}
+	if _, _, err := store.Attach(b, "node-b", ticket, "udp"); err != nil {
+		t.Fatalf("attach b: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if _, _, err := store.Forward(a, "s1", "node-a", []byte("expired")); err != ErrSessionNotFound {
+		t.Fatalf("expected expired session to be pruned, got %v", err)
+	}
+	if metrics := store.Metrics(); metrics.SessionCount != 0 || metrics.SourceBindingCount != 0 {
+		t.Fatalf("expected expired state to be pruned, got %#v", metrics)
+	}
+}
+
+func TestExpiredSourceBindingDoesNotBlockNewSession(t *testing.T) {
+	store := NewStore()
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	expiredSoon := protocol.RelayTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		SessionID: "s1",
+		Path:      "relay_udp",
+		ExpiresAt: time.Now().Add(30 * time.Millisecond),
+	}
+	expiredSoon.Signature = signRelayTicket(expiredSoon)
+	if _, _, err := store.Attach(addr, "node-a", expiredSoon, "udp"); err != nil {
+		t.Fatalf("attach first session: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	next := protocol.RelayTicket{
+		TicketID:  "t2",
+		PeerID:    "peer-b",
+		SessionID: "s2",
+		Path:      "relay_udp",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	next.Signature = signRelayTicket(next)
+	if _, _, err := store.Attach(addr, "node-a", next, "udp"); err != nil {
+		t.Fatalf("expired source binding should not block new session: %v", err)
+	}
+}
+
+func TestAttachRejectsParticipantOutsideTicketEndpoints(t *testing.T) {
+	store := NewStore()
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	expiresAt := time.Now().Add(time.Minute).UTC().Truncate(time.Second)
+	ticket := relayBusinessTicket("t1", "s1", "node-a", "node-b", expiresAt)
+
+	if _, _, err := store.Attach(addr, "node-c", ticket, "udp"); err != ErrTicketInvalid {
+		t.Fatalf("expected participant outside src/dst to be rejected, got %v", err)
+	}
+}
+
+func TestAttachRejectsMismatchedPeerIDForBusinessTicket(t *testing.T) {
+	store := NewStore()
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	expiresAt := time.Now().Add(time.Minute).UTC().Truncate(time.Second)
+	ticket := relayBusinessTicket("t1", "s1", "node-a", "node-b", expiresAt)
+	ticket.PeerID = "node-c"
+
+	if _, _, err := store.Attach(addr, "node-a", ticket, "udp"); err != ErrTicketInvalid {
+		t.Fatalf("expected mismatched peerId to be rejected, got %v", err)
+	}
+}
+
 func TestMetricsTrackRefreshAddressChangesAndForwarding(t *testing.T) {
 	store := NewStore()
 	a := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
@@ -150,6 +230,35 @@ func signRelayTicketWithSecret(ticket protocol.RelayTicket, secret string) strin
 		ticket.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	)
 	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func relayBusinessTicket(ticketID, sessionID, srcNodeID, dstNodeID string, expiresAt time.Time) protocol.RelayTicket {
+	ticket := protocol.RelayTicket{
+		TicketID:  ticketID,
+		NetworkID: "net-1",
+		SessionID: sessionID,
+		Path:      "relay_udp",
+		SrcNodeID: srcNodeID,
+		DstNodeID: dstNodeID,
+		ExpiresAt: expiresAt,
+	}
+	ticket.ExpiresAtRaw = expiresAt.UTC().Format(time.RFC3339)
+	ticket.Signature = signRelayBusinessTicket(ticket)
+	return ticket
+}
+
+func signRelayBusinessTicket(ticket protocol.RelayTicket) string {
+	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		ticket.TicketID,
+		ticket.NetworkID,
+		ticket.SessionID,
+		ticket.SrcNodeID,
+		ticket.DstNodeID,
+		ticket.ExpiresAtRaw,
+	)
+	mac := hmac.New(sha256.New, []byte("dev-relay-ticket-secret"))
 	_, _ = mac.Write([]byte(payload))
 	return hex.EncodeToString(mac.Sum(nil))
 }

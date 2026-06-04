@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/slan/server/server-wire-relay/internal/admin"
@@ -21,6 +22,7 @@ import (
 type UDPServer struct {
 	conn      *net.UDPConn
 	store     state.StoreAPI
+	service   *Service
 	adminAddr string
 	cfg       config.Config
 }
@@ -40,17 +42,24 @@ func NewUDPServerWithStore(cfg config.Config, store state.StoreAPI) (*UDPServer,
 	if err != nil {
 		return nil, err
 	}
-	_ = conn.SetReadBuffer(4 * 1024 * 1024)
-	_ = conn.SetWriteBuffer(4 * 1024 * 1024)
+	_ = conn.SetReadBuffer(cfg.ReadBufferBytes)
+	_ = conn.SetWriteBuffer(cfg.WriteBufferBytes)
 	if store == nil {
 		store = state.NewStore()
 	}
 	return &UDPServer{
 		conn:      conn,
 		store:     store,
+		service:   NewService(store),
 		adminAddr: cfg.AdminListenAddr,
 		cfg:       cfg,
 	}, nil
+}
+
+func (s *UDPServer) ensureService() {
+	if s.service == nil {
+		s.service = NewService(s.store)
+	}
 }
 
 // Serve 启动管理 HTTP、注册/心跳协程，并在当前 goroutine 中处理 UDP 数据包。
@@ -64,6 +73,26 @@ func (s *UDPServer) Serve() error {
 		_ = adminServer.ListenAndServe()
 	}()
 	go s.registerAndHeartbeat()
+	workers := s.cfg.PacketWorkers
+	if workers <= 0 {
+		workers = 1
+	}
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- s.servePackets()
+		}()
+	}
+	err := <-errCh
+	_ = s.conn.Close()
+	wg.Wait()
+	return err
+}
+
+func (s *UDPServer) servePackets() error {
 	buf := make([]byte, 64*1024)
 	for {
 		n, addr, err := s.conn.ReadFromUDP(buf)
@@ -178,6 +207,7 @@ func (s *UDPServer) handlePacket(addr *net.UDPAddr, payload []byte) error {
 }
 
 func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, writer func(*net.UDPAddr, protocol.ServerMessage) error) error {
+	s.ensureService()
 	var msg protocol.ClientMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
 		return fmt.Errorf("decode client message: %w", err)
@@ -185,7 +215,7 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 	switch msg.Kind {
 	case "ping":
 		if msg.SessionID != "" && msg.ParticipantID != "" {
-			if err := s.store.RefreshParticipant(addr, msg.SessionID, msg.ParticipantID); err != nil {
+			if err := s.service.RefreshParticipant(addr, msg.SessionID, msg.ParticipantID); err != nil {
 				return err
 			}
 		}
@@ -194,7 +224,7 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 		if msg.Ticket == nil {
 			return errors.New("attach ticket is required")
 		}
-		_, peerID, err := s.store.Attach(addr, msg.ParticipantID, *msg.Ticket, msg.Transport)
+		peerID, err := s.service.Attach(addr, msg.ParticipantID, *msg.Ticket, msg.Transport)
 		if err != nil {
 			return err
 		}
@@ -205,7 +235,7 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 			PeerParticipantID: peerID,
 		})
 	case "forward":
-		peerAddr, peerID, err := s.store.Forward(addr, msg.SessionID, msg.ParticipantID, msg.Payload)
+		peerAddr, peerID, err := s.service.Forward(addr, msg.SessionID, msg.ParticipantID, msg.Payload)
 		if err != nil {
 			return err
 		}
@@ -217,6 +247,9 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 		}); err != nil {
 			return err
 		}
+		if !s.cfg.ForwardAckEnabled {
+			return nil
+		}
 		return writer(addr, protocol.ServerMessage{
 			Kind:           "forwarded",
 			SessionID:      msg.SessionID,
@@ -224,7 +257,7 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 			BytesForwarded: len(msg.Payload),
 		})
 	case "detach":
-		if err := s.store.Detach(addr, msg.SessionID, msg.ParticipantID); err != nil {
+		if err := s.service.Detach(addr, msg.SessionID, msg.ParticipantID); err != nil {
 			return err
 		}
 		return writer(addr, protocol.ServerMessage{

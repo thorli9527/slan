@@ -60,7 +60,7 @@ func main() {
 	cleanupKnownSmokeNodes(bizURL, internalToken)
 
 	var correct ticketKeyStatus
-	getJSON(relayBAdminURL+"/v1/ticket-key-status", "", &correct)
+	getJSON(relayBAdminURL+"/ticket-key-status", "", &correct)
 	if correct.KeyRingID == "" {
 		fail("relay-b returned empty keyRingId: %+v", correct)
 	}

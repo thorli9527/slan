@@ -196,10 +196,10 @@ func main() {
 	expectConsistentTicketKeyStatus(map[string]string{
 		"wire":    wireURL + "/internal/wire/ticket-key-status",
 		"wire-b":  wireBURL + "/internal/wire/ticket-key-status",
-		"relay":   relayAdminURL + "/v1/ticket-key-status",
-		"relay-b": relayBAdminURL + "/v1/ticket-key-status",
-		"derp":    derpAdminURL + "/v1/ticket-key-status",
-		"derp-b":  derpBAdminURL + "/v1/ticket-key-status",
+		"relay":   relayAdminURL + "/ticket-key-status",
+		"relay-b": relayBAdminURL + "/ticket-key-status",
+		"derp":    derpAdminURL + "/ticket-key-status",
+		"derp-b":  derpBAdminURL + "/ticket-key-status",
 	})
 	if shouldRestoreWireDataPlaneNodes(bizURL) {
 		restoreLocalWireDataPlaneNodes(bizURL, internalToken)
@@ -272,7 +272,7 @@ func main() {
 		fail("unexpected biz wire authz: %+v want network=%s node=%s", authz, networkID, nodeID)
 	}
 
-	expectPostStatus(wireURL+"/v1/peers/register", "", map[string]any{
+	expectPostStatus(wireURL+"/peers/register", "", map[string]any{
 		"peer": map[string]any{
 			"peerId":                "missing-" + nodeID,
 			"networkId":             networkID,
@@ -284,7 +284,7 @@ func main() {
 	}, http.StatusBadRequest)
 
 	var wireReg wireRegisterResponse
-	postJSON(wireURL+"/v1/peers/register", "", map[string]any{
+	postJSON(wireURL+"/peers/register", "", map[string]any{
 		"peer": map[string]any{
 			"peerId":                  nodeID,
 			"networkId":               "client-forged-network",
@@ -304,7 +304,7 @@ func main() {
 		fail("wire did not apply biz authz: %+v want network=%s node=%s", wireReg.Peer, networkID, nodeID)
 	}
 	var wireBReg wireRegisterResponse
-	postJSON(wireBURL+"/v1/peers/register", "", map[string]any{
+	postJSON(wireBURL+"/peers/register", "", map[string]any{
 		"peer": map[string]any{
 			"peerId":                  nodeID,
 			"networkId":               "client-forged-network-b",
@@ -324,14 +324,14 @@ func main() {
 		fail("wire-b did not apply biz authz: %+v want network=%s node=%s", wireBReg.Peer, networkID, nodeID)
 	}
 
-	postJSON(wireURL+"/v1/peers/path-health", "", map[string]any{
+	postJSON(wireURL+"/peers/path-health", "", map[string]any{
 		"peerId": nodeID,
 		"probes": []map[string]any{
 			{"path": "relay_udp", "reachable": true, "rttMs": 20, "mtu": 1280},
 			{"path": "derp_tcp_tls_443", "reachable": true, "rttMs": 70, "mtu": 1240},
 		},
 	}, nil)
-	postJSON(wireBURL+"/v1/peers/path-health", "", map[string]any{
+	postJSON(wireBURL+"/peers/path-health", "", map[string]any{
 		"peerId": nodeID,
 		"probes": []map[string]any{
 			{"path": "relay_udp", "reachable": true, "rttMs": 20, "mtu": 1280},
@@ -342,7 +342,7 @@ func main() {
 	var relayResp struct {
 		Ticket relayTicket `json:"ticket"`
 	}
-	postJSON(wireURL+"/v1/relay/tickets", "", map[string]any{"peerId": nodeID, "ttlSeconds": 300}, &relayResp)
+	postJSON(wireURL+"/relay/tickets", "", map[string]any{"peerId": nodeID, "ttlSeconds": 300}, &relayResp)
 	if relayResp.Ticket.PeerID != nodeID || relayResp.Ticket.Path != "relay_udp" || relayResp.Ticket.Signature == "" {
 		fail("invalid relay ticket: %+v", relayResp.Ticket)
 	}
@@ -353,7 +353,7 @@ func main() {
 	var derpResp struct {
 		Ticket derpTicket `json:"ticket"`
 	}
-	postJSON(wireURL+"/v1/derp/tickets", "", map[string]any{"peerId": nodeID, "ttlSeconds": 300}, &derpResp)
+	postJSON(wireURL+"/derp/tickets", "", map[string]any{"peerId": nodeID, "ttlSeconds": 300}, &derpResp)
 	if derpResp.Ticket.PeerID != nodeID || derpResp.Ticket.NetworkID != networkID || derpResp.Ticket.Path != "derp_tcp_tls_443" || derpResp.Ticket.Signature == "" {
 		fail("invalid derp ticket: %+v want network=%s", derpResp.Ticket, networkID)
 	}
@@ -362,7 +362,7 @@ func main() {
 	}
 
 	var plan pathPlan
-	postJSON(wireURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &plan)
+	postJSON(wireURL+"/path-plan", "", map[string]any{"peerId": nodeID}, &plan)
 	if len(plan.RelayCandidates) == 0 || plan.RelayCandidates[0].NodeID != relayResp.Ticket.NodeID {
 		fail("path plan missing biz relay candidates: plan=%+v ticket=%+v", plan, relayResp.Ticket)
 	}
@@ -376,7 +376,7 @@ func main() {
 		fail("expected at least two derp candidates for multi-instance scheduling, got %+v", plan.DerpCandidates)
 	}
 	var planB pathPlan
-	postJSON(wireBURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &planB)
+	postJSON(wireBURL+"/path-plan", "", map[string]any{"peerId": nodeID}, &planB)
 	if !sameRelayCandidates(plan.RelayCandidates, planB.RelayCandidates) || !sameDerpCandidates(plan.DerpCandidates, planB.DerpCandidates) {
 		fail("wire instances returned inconsistent candidates: a=%+v b=%+v", plan, planB)
 	}
@@ -408,9 +408,9 @@ func main() {
 	)
 
 	var afterDisable pathPlan
-	postJSON(wireURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &afterDisable)
+	postJSON(wireURL+"/path-plan", "", map[string]any{"peerId": nodeID}, &afterDisable)
 	var afterDisableB pathPlan
-	postJSON(wireBURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &afterDisableB)
+	postJSON(wireBURL+"/path-plan", "", map[string]any{"peerId": nodeID}, &afterDisableB)
 	if containsRelayNode(afterDisable.RelayCandidates, relayResp.Ticket.NodeID) {
 		fail("disabled relay node still selected: disabled=%s candidates=%+v", relayResp.Ticket.NodeID, afterDisable.RelayCandidates)
 	}
@@ -452,9 +452,9 @@ func main() {
 		)
 	}
 	var directOnly pathPlan
-	postJSON(wireURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &directOnly)
+	postJSON(wireURL+"/path-plan", "", map[string]any{"peerId": nodeID}, &directOnly)
 	var directOnlyB pathPlan
-	postJSON(wireBURL+"/v1/path-plan", "", map[string]any{"peerId": nodeID}, &directOnlyB)
+	postJSON(wireBURL+"/path-plan", "", map[string]any{"peerId": nodeID}, &directOnlyB)
 	if containsRelayRegion(directOnly.RelayCandidates, smokeRegionID) {
 		fail("disabled smoke relay nodes still selected: region=%s candidates=%+v", smokeRegionID, directOnly.RelayCandidates)
 	}
@@ -495,15 +495,15 @@ func main() {
 		fail("unexpected disabled network device response: %+v want device=%s enabled=false", disabled, deviceID)
 	}
 
-	expectPostStatus(wireURL+"/v1/relay/tickets", "", map[string]any{
+	expectPostStatus(wireURL+"/relay/tickets", "", map[string]any{
 		"peerId":     nodeID,
 		"ttlSeconds": 300,
 	}, http.StatusBadRequest)
-	expectPostStatus(wireURL+"/v1/derp/tickets", "", map[string]any{
+	expectPostStatus(wireURL+"/derp/tickets", "", map[string]any{
 		"peerId":     nodeID,
 		"ttlSeconds": 300,
 	}, http.StatusBadRequest)
-	expectPostStatus(wireURL+"/v1/path-plan", "", map[string]any{
+	expectPostStatus(wireURL+"/path-plan", "", map[string]any{
 		"peerId": nodeID,
 	}, http.StatusBadRequest)
 
@@ -597,9 +597,9 @@ func createSmokeWireNodes(bizURL, internalToken, relayAdminURL, derpAdminURL, re
 	relayHost, relayPort := splitAddress(relayAddr)
 	derpHost, derpPort := splitAddress(derpAddr)
 	var relayTicketKey ticketKeyStatus
-	getJSONWithHeader(relayAdminURL+"/v1/ticket-key-status", nil, &relayTicketKey)
+	getJSONWithHeader(relayAdminURL+"/ticket-key-status", nil, &relayTicketKey)
 	var derpTicketKey ticketKeyStatus
-	getJSONWithHeader(derpAdminURL+"/v1/ticket-key-status", nil, &derpTicketKey)
+	getJSONWithHeader(derpAdminURL+"/ticket-key-status", nil, &derpTicketKey)
 	for idx, nodeID := range relayNodeIDs {
 		putJSONWithInternalToken(bizURL+"/internal/wire/admin/relay-nodes", internalToken, map[string]any{
 			"regionId":          regionID,

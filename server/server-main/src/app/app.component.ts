@@ -11,6 +11,7 @@ import { ProductsPageComponent } from './features/products/products-page.compone
 import { PunchNodesPageComponent } from './features/punch-nodes/punch-nodes-page.component';
 import { RelayNodesPageComponent } from './features/relay-nodes/relay-nodes-page.component';
 import { RenewalsPageComponent } from './features/renewals/renewals-page.component';
+import { OPS_API } from './api-paths';
 
 // 运营后台左侧导航的页面标识，必须和模板中的条件渲染保持一致。
 type NavId = 'overview' | 'operators' | 'relayNodes' | 'punchNodes' | 'customers' | 'devices' | 'clientDownloads' | 'products' | 'orders' | 'renewals';
@@ -39,6 +40,11 @@ type RelayNode = {
   activeSessions: number;
   status: 'active' | 'maintenance' | 'disabled';
   health: 'healthy' | 'warning' | 'down';
+};
+
+type RelayNodeForm = Partial<Omit<RelayNode, 'publicAddr'>> & {
+  publicIp?: string;
+  publicPort?: number;
 };
 
 // P2P 打洞节点模型，biz 以公网 UDP IP 和端口直接管理 punch-service。
@@ -267,7 +273,7 @@ export class AppComponent implements OnInit {
   operatorConfirmPassword = '';
   passwordMessage = '';
   operatorForm: Partial<OperatorUser> = {};
-  relayNodeForm: Partial<RelayNode> = {};
+  relayNodeForm: RelayNodeForm = {};
   punchNodeForm: Partial<PunchNode> = {};
   planForm: Partial<CustomerPlan> = {};
   productForm: Partial<Product> = {};
@@ -309,9 +315,8 @@ export class AppComponent implements OnInit {
   ];
 
   relayNodes: RelayNode[] = [
-    { nodeId: 'relay-hk-001', name: '香港 Relay 1', region: 'ap-east-1', transport: 'relay_udp', publicAddr: 'udp://hk1.relay.slan.com:3478', maxBandwidthMbps: 1000, monthlyTrafficGb: 20480, usedTrafficGb: 6830, maxSessions: 8000, activeSessions: 2310, status: 'active', health: 'healthy' },
-    { nodeId: 'derp-tokyo-001', name: '东京 DERP 1', region: 'ap-northeast-1', transport: 'derp_tcp_tls_443', publicAddr: 'https://tyo1.derp.slan.com', maxBandwidthMbps: 500, monthlyTrafficGb: 10240, usedTrafficGb: 9120, maxSessions: 4000, activeSessions: 3380, status: 'maintenance', health: 'warning' },
-    { nodeId: 'relay-sg-001', name: '新加坡 Relay 1', region: 'ap-southeast-1', transport: 'relay_udp', publicAddr: 'udp://sg1.relay.slan.com:3478', maxBandwidthMbps: 800, monthlyTrafficGb: 15360, usedTrafficGb: 4210, maxSessions: 6000, activeSessions: 1740, status: 'active', health: 'healthy' },
+    { nodeId: 'relay-hk-001', name: '香港 UDP Relay 1', region: 'ap-east-1', transport: 'relay_udp', publicAddr: 'udp://47.245.40.231:29110', maxBandwidthMbps: 1000, monthlyTrafficGb: 20480, usedTrafficGb: 6830, maxSessions: 8000, activeSessions: 2310, status: 'active', health: 'healthy' },
+    { nodeId: 'derp-hk-001', name: '香港 TCP Relay 1', region: 'ap-east-1', transport: 'derp_tcp_tls_443', publicAddr: 'derp://47.245.40.231:29120', maxBandwidthMbps: 500, monthlyTrafficGb: 10240, usedTrafficGb: 9120, maxSessions: 4000, activeSessions: 3380, status: 'maintenance', health: 'warning' },
   ];
 
   punchNodes: PunchNode[] = [
@@ -361,7 +366,7 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      const response = await this.request<{ auth: { operator: OperatorUser; session: { token: string } } }>('POST', '/api/ops/auth/login', {
+      const response = await this.request<{ auth: { operator: OperatorUser; session: { token: string } } }>('POST', OPS_API.authLogin, {
         email: this.loginEmail.trim(),
         password: this.loginPassword,
       }, false);
@@ -395,16 +400,16 @@ export class AppComponent implements OnInit {
     this.apiMessage = '';
     try {
       const [operators, relayNodes, punchNodes, customers, devices, downloads, plans, products, orders, renewals] = await Promise.all([
-        this.request<{ items: OperatorUser[] }>('GET', '/api/ops/operators'),
-        this.request<{ items: RelayNode[] }>('GET', '/api/ops/relay-nodes'),
-        this.request<{ items: PunchNode[] }>('GET', '/api/ops/punch-nodes'),
-        this.request<{ items: Customer[] }>('GET', '/api/ops/customers'),
-        this.request<{ items: OpsDevice[] }>('GET', '/api/ops/devices'),
-        this.request<{ items: ClientDownload[] }>('GET', '/api/ops/client-downloads'),
-        this.request<{ items: CustomerPlan[] }>('GET', '/api/ops/plans'),
-        this.request<{ items: Product[] }>('GET', '/api/ops/products'),
-        this.request<{ items: Order[] }>('GET', '/api/ops/orders'),
-        this.request<{ items: Renewal[] }>('GET', '/api/ops/renewals'),
+        this.request<{ items: OperatorUser[] }>('GET', OPS_API.operators),
+        this.request<{ items: RelayNode[] }>('GET', OPS_API.relayNodes),
+        this.request<{ items: PunchNode[] }>('GET', OPS_API.punchNodes),
+        this.request<{ items: Customer[] }>('GET', OPS_API.customers),
+        this.request<{ items: OpsDevice[] }>('GET', OPS_API.devices),
+        this.request<{ items: ClientDownload[] }>('GET', OPS_API.clientDownloads),
+        this.request<{ items: CustomerPlan[] }>('GET', OPS_API.plans),
+        this.request<{ items: Product[] }>('GET', OPS_API.products),
+        this.request<{ items: Order[] }>('GET', OPS_API.orders),
+        this.request<{ items: Renewal[] }>('GET', OPS_API.renewals),
       ]);
       this.operators = operators.items.map((item) => ({ ...item, lastLoginAt: this.formatDateTime(item.lastLoginAt) }));
       this.relayNodes = relayNodes.items;
@@ -724,7 +729,7 @@ export class AppComponent implements OnInit {
     }
     try {
       const isEdit = Boolean(this.selectedOperator);
-      const path = isEdit ? `/api/ops/operators/${encodeURIComponent(this.selectedOperator!.operatorId)}` : '/api/ops/operators';
+      const path = isEdit ? OPS_API.operator(this.selectedOperator!.operatorId) : OPS_API.operators;
       const operator = await this.request<OperatorUser>(isEdit ? 'PATCH' : 'POST', path, this.operatorForm);
       const formatted = { ...operator, lastLoginAt: this.formatDateTime(operator.lastLoginAt) };
       this.operators = [formatted, ...this.operators.filter((item) => item.operatorId !== operator.operatorId)];
@@ -738,11 +743,15 @@ export class AppComponent implements OnInit {
 
   openRelayNodeDialog(node?: RelayNode): void {
     this.selectedRelayNode = node ?? null;
-    this.relayNodeForm = node ? { ...node } : {
+    this.relayNodeForm = node ? {
+      ...node,
+      ...this.parseRelayPublicAddress(node.publicAddr, node.transport),
+    } : {
       name: '',
       region: 'ap-east-1',
       transport: 'relay_udp',
-      publicAddr: '',
+      publicIp: '',
+      publicPort: 29110,
       maxBandwidthMbps: 1000,
       monthlyTrafficGb: 10240,
       usedTrafficGb: 0,
@@ -760,11 +769,22 @@ export class AppComponent implements OnInit {
   }
 
   async saveRelayNodeDialog(): Promise<void> {
-    if (!this.relayNodeForm.name?.trim() || !this.relayNodeForm.publicAddr?.trim()) {
-      this.apiMessage = '请输入节点名称和公网地址';
+    const transport = this.relayNodeForm.transport ?? 'relay_udp';
+    const publicIp = this.relayNodeForm.publicIp?.trim() ?? '';
+    const publicPort = Number(this.relayNodeForm.publicPort ?? 0);
+    if (!this.relayNodeForm.name?.trim() || !publicIp) {
+      this.apiMessage = '请输入节点名称和公网 IP';
       return;
     }
-    const publicAddr = this.relayNodeForm.publicAddr.trim();
+    if (!this.isIPv4Address(publicIp)) {
+      this.apiMessage = '公网 IP 必须使用 IPv4 地址，不能使用域名';
+      return;
+    }
+    if (publicPort <= 0 || publicPort > 65535) {
+      this.apiMessage = '公网端口必须在 1-65535 范围内';
+      return;
+    }
+    const publicAddr = this.relayPublicAddress(transport, publicIp, publicPort);
     const duplicated = this.relayNodes.some((node) => node.publicAddr === publicAddr && node.nodeId !== this.selectedRelayNode?.nodeId);
     if (duplicated) {
       this.apiMessage = '公网地址已存在，不能重复配置到多个中继节点';
@@ -772,12 +792,12 @@ export class AppComponent implements OnInit {
     }
     try {
       const isEdit = Boolean(this.selectedRelayNode);
-      const path = isEdit ? `/api/ops/relay-nodes/${encodeURIComponent(this.selectedRelayNode!.nodeId)}` : '/api/ops/relay-nodes';
+      const path = isEdit ? OPS_API.relayNode(this.selectedRelayNode!.nodeId) : OPS_API.relayNodes;
       const node = await this.request<RelayNode>(isEdit ? 'PATCH' : 'POST', path, {
         nodeId: this.selectedRelayNode?.nodeId,
         name: this.relayNodeForm.name,
         region: this.relayNodeForm.region,
-        transport: this.relayNodeForm.transport,
+        transport,
         publicAddr,
         maxBandwidthMbps: this.relayNodeForm.maxBandwidthMbps,
         monthlyTrafficGb: this.relayNodeForm.monthlyTrafficGb,
@@ -791,6 +811,32 @@ export class AppComponent implements OnInit {
       this.apiMessage = this.errorMessage(error);
       this.notifyStateChanged();
     }
+  }
+
+  private relayPublicAddress(transport: RelayNode['transport'], publicIp: string, publicPort: number): string {
+    const scheme = transport === 'derp_tcp_tls_443' ? 'derp' : 'udp';
+    return `${scheme}://${publicIp}:${publicPort}`;
+  }
+
+  private parseRelayPublicAddress(publicAddr: string, transport: RelayNode['transport']): Pick<RelayNodeForm, 'publicIp' | 'publicPort'> {
+    const fallbackPort = transport === 'derp_tcp_tls_443' ? 29120 : 29110;
+    const value = publicAddr.trim();
+    const match = value.match(/^(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)?([^:/]+):(\d+)$/);
+    if (!match) {
+      return { publicIp: value, publicPort: fallbackPort };
+    }
+    return { publicIp: match[1], publicPort: Number(match[2]) || fallbackPort };
+  }
+
+  private isIPv4Address(value: string): boolean {
+    const parts = value.split('.');
+    return parts.length === 4 && parts.every((part) => {
+      if (!/^\d+$/.test(part)) {
+        return false;
+      }
+      const number = Number(part);
+      return number >= 0 && number <= 255 && String(number) === part;
+    });
   }
 
   openPunchNodeDialog(node?: PunchNode): void {
@@ -836,7 +882,7 @@ export class AppComponent implements OnInit {
     }
     try {
       const isEdit = Boolean(this.selectedPunchNode);
-      const path = isEdit ? `/api/ops/punch-nodes/${encodeURIComponent(this.selectedPunchNode!.nodeId)}` : '/api/ops/punch-nodes';
+      const path = isEdit ? OPS_API.punchNode(this.selectedPunchNode!.nodeId) : OPS_API.punchNodes;
       const node = await this.request<PunchNode>(isEdit ? 'PATCH' : 'POST', path, {
         nodeId: this.selectedPunchNode?.nodeId,
         name: this.punchNodeForm.name,
@@ -898,7 +944,7 @@ export class AppComponent implements OnInit {
     }
     try {
       const isEdit = Boolean(this.selectedPlan);
-      const path = isEdit ? `/api/ops/plans/${encodeURIComponent(this.selectedPlan!.code)}` : '/api/ops/plans';
+      const path = isEdit ? OPS_API.plan(this.selectedPlan!.code) : OPS_API.plans;
       const plan = await this.request<CustomerPlan>(isEdit ? 'PATCH' : 'POST', path, this.planForm);
       this.plans = [plan, ...this.plans.filter((item) => item.code !== plan.code)];
       this.closePlanDialog();
@@ -941,7 +987,7 @@ export class AppComponent implements OnInit {
     }
     try {
       const isEdit = Boolean(this.selectedProduct);
-      const path = isEdit ? `/api/ops/products/${encodeURIComponent(this.selectedProduct!.productId)}` : '/api/ops/products';
+      const path = isEdit ? OPS_API.product(this.selectedProduct!.productId) : OPS_API.products;
       const product = await this.request<Product>(isEdit ? 'PATCH' : 'POST', path, this.productForm);
       this.products = [product, ...this.products.filter((item) => item.productId !== product.productId)];
       this.closeProductDialog();
@@ -989,7 +1035,7 @@ export class AppComponent implements OnInit {
       const product = this.products.find((item) => item.productId === this.orderForm.productId);
       const customer = this.customers.find((item) => item.customerId === this.orderForm.customerId);
       const isEdit = Boolean(this.selectedOrder);
-      const path = isEdit ? `/api/ops/orders/${encodeURIComponent(this.selectedOrder!.orderId)}` : '/api/ops/orders';
+      const path = isEdit ? OPS_API.order(this.selectedOrder!.orderId) : OPS_API.orders;
       const order = await this.request<Order>(isEdit ? 'PATCH' : 'POST', path, {
         orderId: this.selectedOrder?.orderId,
         customerId: this.orderForm.customerId,
@@ -1035,7 +1081,7 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      const customer = await this.request<Customer>('PATCH', `/api/ops/customers/${encodeURIComponent(this.selectedCustomer.customerId)}`, this.customerForm);
+      const customer = await this.request<Customer>('PATCH', OPS_API.customer(this.selectedCustomer.customerId), this.customerForm);
       const formatted = { ...customer, planExpiresAt: this.formatDate(customer.planExpiresAt) };
       this.customers = [formatted, ...this.customers.filter((item) => item.customerId !== customer.customerId)];
       this.closeCustomerDialog();
@@ -1062,7 +1108,7 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      const updated = await this.request<OpsDevice>('PATCH', `/api/ops/devices/${encodeURIComponent(this.selectedDevice.deviceId)}`, {
+      const updated = await this.request<OpsDevice>('PATCH', OPS_API.device(this.selectedDevice.deviceId), {
         alias: this.deviceForm.alias,
         status: this.deviceForm.status,
         enabled: this.deviceForm.deviceEnabled,
@@ -1100,7 +1146,7 @@ export class AppComponent implements OnInit {
     body.set('file', this.selectedDownloadFile);
     try {
       const token = localStorage.getItem(this.opsTokenKey);
-      const response = await fetch('/api/ops/client-downloads', {
+      const response = await fetch(OPS_API.clientDownloads, {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         body,
@@ -1127,7 +1173,7 @@ export class AppComponent implements OnInit {
 
   async deleteClientDownload(item: ClientDownload): Promise<void> {
     try {
-      await this.request('DELETE', `/api/ops/client-downloads/${encodeURIComponent(item.downloadId)}`);
+      await this.request('DELETE', OPS_API.clientDownload(item.downloadId));
       this.clientDownloads = this.clientDownloads.filter((download) => download.downloadId !== item.downloadId);
       this.notifyStateChanged();
     } catch (error) {
@@ -1142,7 +1188,7 @@ export class AppComponent implements OnInit {
     }
     this.apiMessage = '';
     try {
-      const response = await this.request<{ customer: Customer; renewal: Renewal }>('POST', `/api/ops/customers/${encodeURIComponent(this.selectedCustomer.customerId)}/assign-plan`, {
+      const response = await this.request<{ customer: Customer; renewal: Renewal }>('POST', OPS_API.customerAssignPlan(this.selectedCustomer.customerId), {
         planCode: this.assignPlanCode,
         expiresAt: this.dateToUnix(this.assignExpiresAt),
         amount: this.renewalAmount,
@@ -1185,7 +1231,7 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      const renewal = await this.request<Renewal>('PATCH', `/api/ops/renewals/${encodeURIComponent(this.selectedRenewal.renewalId)}`, {
+      const renewal = await this.request<Renewal>('PATCH', OPS_API.renewal(this.selectedRenewal.renewalId), {
         ...this.renewalForm,
         paidAt: this.dateToUnix(String(this.renewalForm.paidAt)),
         validUntil: this.dateToUnix(String(this.renewalForm.validUntil)),
@@ -1212,7 +1258,7 @@ export class AppComponent implements OnInit {
   async toggleOperator(operator: OperatorUser): Promise<void> {
     const nextStatus = operator.status === 'active' ? 'disabled' : 'active';
     try {
-      const updated = await this.request<OperatorUser>('PATCH', `/api/ops/operators/${encodeURIComponent(operator.operatorId)}`, {
+      const updated = await this.request<OperatorUser>('PATCH', OPS_API.operator(operator.operatorId), {
         name: operator.name,
         email: operator.email,
         role: operator.role,
@@ -1244,7 +1290,7 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      await this.request('PATCH', '/api/ops/auth/password', {
+      await this.request('PATCH', OPS_API.authPassword, {
         oldPassword: this.oldPassword,
         newPassword: this.newPassword,
       });
@@ -1275,7 +1321,7 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      await this.request('POST', `/api/ops/operators/${encodeURIComponent(this.selectedOperator.operatorId)}/password`, {
+      await this.request('POST', OPS_API.operatorPassword(this.selectedOperator.operatorId), {
         newPassword: this.operatorNewPassword,
       });
       this.closeOperatorPasswordDialog();
@@ -1305,7 +1351,7 @@ export class AppComponent implements OnInit {
   async toggleRelayNode(node: RelayNode): Promise<void> {
     const enabled = node.status !== 'active';
     try {
-      const updated = await this.request<RelayNode>('PATCH', `/api/ops/relay-nodes/${encodeURIComponent(node.nodeId)}/status`, {
+      const updated = await this.request<RelayNode>('PATCH', OPS_API.relayNodeStatus(node.nodeId), {
         enabled,
       });
       Object.assign(node, updated);
@@ -1319,7 +1365,7 @@ export class AppComponent implements OnInit {
 
   async deleteRelayNode(node: RelayNode): Promise<void> {
     try {
-      await this.request('DELETE', `/api/ops/relay-nodes/${encodeURIComponent(node.nodeId)}`);
+      await this.request('DELETE', OPS_API.relayNode(node.nodeId));
       this.relayNodes = this.relayNodes.filter((item) => item.nodeId !== node.nodeId);
       this.apiMessage = `${this.relayTransportLabel(node.transport)} ${node.name} 已删除`;
       this.notifyStateChanged();
@@ -1332,7 +1378,7 @@ export class AppComponent implements OnInit {
   async togglePunchNode(node: PunchNode): Promise<void> {
     const enabled = node.status !== 'active';
     try {
-      const updated = await this.request<PunchNode>('PATCH', `/api/ops/punch-nodes/${encodeURIComponent(node.nodeId)}/status`, {
+      const updated = await this.request<PunchNode>('PATCH', OPS_API.punchNodeStatus(node.nodeId), {
         enabled,
       });
       Object.assign(node, {
@@ -1350,7 +1396,7 @@ export class AppComponent implements OnInit {
 
   async deletePunchNode(node: PunchNode): Promise<void> {
     try {
-      await this.request('DELETE', `/api/ops/punch-nodes/${encodeURIComponent(node.nodeId)}`);
+      await this.request('DELETE', OPS_API.punchNode(node.nodeId));
       this.punchNodes = this.punchNodes.filter((item) => item.nodeId !== node.nodeId);
       this.apiMessage = `UDP 打洞 ${node.name} 已删除`;
       this.notifyStateChanged();
@@ -1363,7 +1409,7 @@ export class AppComponent implements OnInit {
   async toggleProduct(product: Product): Promise<void> {
     const nextStatus = product.status === 'active' ? 'offline' : 'active';
     try {
-      const updated = await this.request<Product>('PATCH', `/api/ops/products/${encodeURIComponent(product.productId)}`, {
+      const updated = await this.request<Product>('PATCH', OPS_API.product(product.productId), {
         ...product,
         status: nextStatus,
       });
@@ -1378,7 +1424,7 @@ export class AppComponent implements OnInit {
   async toggleDevice(device: OpsDevice): Promise<void> {
     const enabled = !device.deviceEnabled;
     try {
-      const updated = await this.request<OpsDevice>('PATCH', `/api/ops/devices/${encodeURIComponent(device.deviceId)}`, {
+      const updated = await this.request<OpsDevice>('PATCH', OPS_API.device(device.deviceId), {
         alias: device.alias,
         status: enabled ? 'active' : 'disabled',
         enabled,
@@ -1396,7 +1442,7 @@ export class AppComponent implements OnInit {
       return;
     }
     try {
-      await this.request('DELETE', `/api/ops/devices/${encodeURIComponent(device.deviceId)}`);
+      await this.request('DELETE', OPS_API.device(device.deviceId));
       this.devices = this.devices.filter((item) => item.deviceId !== device.deviceId);
       this.notifyStateChanged();
     } catch (error) {

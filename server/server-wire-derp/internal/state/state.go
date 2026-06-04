@@ -20,6 +20,7 @@ var (
 	ErrTicketInvalid   = errors.New("invalid derp ticket")
 	ErrSessionNotFound = errors.New("derp session not found")
 	ErrPeerNotFound    = errors.New("peer connection not found")
+	ErrSessionPeer     = errors.New("peer does not belong to derp session")
 )
 
 // Connection 表示一个已接入 DERP TCP 节点的 peer 连接。
@@ -143,6 +144,7 @@ func (s *Store) Connect(conn net.Conn, peerID, nodeID, regionID string, ticket p
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 
 	now := time.Now()
 	s.connections[peerID] = Connection{
@@ -154,8 +156,25 @@ func (s *Store) Connect(conn net.Conn, peerID, nodeID, regionID string, ticket p
 		LastSeenAt:  now,
 	}
 
+	sessionID := randomSessionID()
+	if ticket.SessionID != "" {
+		sessionID = ticket.SessionID
+	}
+	if current, ok := s.sessions[sessionID]; ok {
+		if current.PeerA == "" {
+			current.PeerA = peerID
+		} else if current.PeerA != peerID {
+			current.PeerB = peerID
+		}
+		current.RegionID = firstNonEmpty(regionID, ticket.RegionID, current.RegionID)
+		current.NodeID = firstNonEmpty(nodeID, ticket.NodeID, current.NodeID)
+		current.ExpiresAt = ticket.ExpiresAt
+		s.sessions[sessionID] = current
+		return current, time.Until(ticket.ExpiresAt).Milliseconds() / 2, nil
+	}
+
 	session := Session{
-		SessionID: randomSessionID(),
+		SessionID: sessionID,
 		PeerA:     peerID,
 		RegionID:  firstNonEmpty(regionID, ticket.RegionID),
 		NodeID:    firstNonEmpty(nodeID, ticket.NodeID),
@@ -321,16 +340,35 @@ func (s *Store) TouchPeer(peerID string) {
 	s.connections[peerID] = current
 }
 
-func (s *Store) BindSessionPeer(sessionID, targetPeerID string) (Session, error) {
+func (s *Store) BindSessionPeer(sessionID, currentPeerID, targetPeerID string) (Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
+	if currentPeerID == "" || targetPeerID == "" {
+		return Session{}, ErrPeerNotFound
+	}
 	session, ok := s.sessions[sessionID]
 	if !ok {
 		return Session{}, ErrSessionNotFound
 	}
-	if targetPeerID != "" && session.PeerA != targetPeerID {
+	currentIsA := session.PeerA == currentPeerID
+	currentIsB := session.PeerB == currentPeerID
+	if !currentIsA && !currentIsB {
+		return Session{}, ErrSessionPeer
+	}
+	if currentIsA {
+		if targetPeerID == session.PeerA {
+			return Session{}, ErrSessionPeer
+		}
+		if session.PeerB != "" && session.PeerB != targetPeerID {
+			return Session{}, ErrSessionPeer
+		}
 		session.PeerB = targetPeerID
 		s.sessions[sessionID] = session
+		return session, nil
+	}
+	if targetPeerID != session.PeerA {
+		return Session{}, ErrSessionPeer
 	}
 	return session, nil
 }
@@ -372,8 +410,9 @@ func (s *Store) Connections() []ConnectionView {
 }
 
 func (s *Store) Session(sessionID string) (SessionView, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 	value, ok := s.sessions[sessionID]
 	if !ok {
 		return SessionView{}, false
@@ -382,8 +421,9 @@ func (s *Store) Session(sessionID string) (SessionView, bool) {
 }
 
 func (s *Store) Sessions() []SessionView {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 	out := make([]SessionView, 0, len(s.sessions))
 	for _, value := range s.sessions {
 		out = append(out, toSessionView(value))
@@ -392,8 +432,9 @@ func (s *Store) Sessions() []SessionView {
 }
 
 func (s *Store) Metrics() Metrics {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(time.Now())
 	regions := map[string]struct{}{}
 	nodes := map[string]struct{}{}
 	for _, conn := range s.connections {
@@ -409,6 +450,15 @@ func (s *Store) Metrics() Metrics {
 		SessionCount:       len(s.sessions),
 		RegionHealthyCount: len(regions),
 		NodeHealthyCount:   len(nodes),
+	}
+}
+
+func (s *Store) pruneExpiredLocked(now time.Time) {
+	for id, session := range s.sessions {
+		if session.ExpiresAt.IsZero() || !now.After(session.ExpiresAt) {
+			continue
+		}
+		delete(s.sessions, id)
 	}
 }
 

@@ -14,6 +14,10 @@ Build:
 powershell -ExecutionPolicy Bypass -File .\client_v2\install\windows\package-installer.ps1
 ```
 
+Installer constants shared by the packaging, console bootstrap, and verification
+scripts live in `SlanWindowsInstall.psm1`. Keep service names, install paths,
+state cleanup files, packaged tools, and the default control URL there first.
+
 Console bootstrap defaults to `http://47.245.40.231:28080` and can be overridden with `-ServerUrl`:
 
 ```powershell

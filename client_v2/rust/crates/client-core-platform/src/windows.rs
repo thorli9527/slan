@@ -17,8 +17,9 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use client_core::{
-    icmp_echo_reply_for_request, ipv4_destination, ipv4_source, mark_path_ready_for_nodes,
-    mark_peer_path_probe_success, normalize_ipv4_transport_checksums, normalize_virtual_ip,
+    icmp_echo_reply_for_request, ipv4_destination, ipv4_source, ipv4_transport_checksum_valid,
+    mark_path_ready_for_nodes, mark_peer_path_probe_success, normalize_ipv4_transport_checksums,
+    normalize_virtual_ip,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
@@ -44,6 +45,7 @@ const MAX_DIRECT_UDP_PROBE_INTERVAL: Duration = Duration::from_secs(300);
 const RELAY_DATA_PLANE_FAILURE_THRESHOLD: u32 = 20;
 const PATH_SEND_FAILURES_BEFORE_DOWNGRADE: u32 = 3;
 const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
+const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
 const DIRECT_UDP_PROBE_PACKET: &[u8] = b"slan-direct-udp-probe-v1";
 const DIRECT_UDP_PONG_PACKET: &[u8] = b"slan-direct-udp-pong-v1";
 const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -554,19 +556,31 @@ impl DirectUdpTransport {
         self.peers.len()
     }
 
-    fn send_probe_packets(&self) {
+    fn send_probe_packets(&self) -> usize {
         let payload = direct_udp_control_payload(DirectUdpControlKind::Probe, &self.local_node_id);
+        let mut sent = 0_usize;
         for peer in &self.peers {
-            let _ = self.socket.send_to(payload.as_bytes(), peer.socket_addr);
+            if self
+                .socket
+                .send_to(payload.as_bytes(), peer.socket_addr)
+                .is_ok()
+            {
+                sent += 1;
+            }
         }
+        sent
     }
 
-    fn send_pong_to_peer(&self, peer_index: usize) {
+    fn send_pong_to_peer(&self, peer_index: usize) -> bool {
         if let Some(peer) = self.peers.get(peer_index) {
             let payload =
                 direct_udp_control_payload(DirectUdpControlKind::Pong, &self.local_node_id);
-            let _ = self.socket.send_to(payload.as_bytes(), peer.socket_addr);
+            return self
+                .socket
+                .send_to(payload.as_bytes(), peer.socket_addr)
+                .is_ok();
         }
+        false
     }
 
     fn update_peer_endpoint(&mut self, peer_index: usize, remote_addr: SocketAddr) -> bool {
@@ -924,19 +938,37 @@ impl WindowsPathManager {
                             path_kind,
                         }
                     }
-                    Some(result) => result,
+                    Some(result) => self.fallback_after_send_failure(
+                        &route,
+                        active_path,
+                        payload,
+                        frame,
+                        result,
+                    ),
                     None => self.fallback_or_missing(&route, active_path, payload, frame),
                 }
             }
             PathKind::RelayUdp => route
                 .relay_udp_index
                 .map(|peer_index| self.relay_udp.send_to_peer(peer_index, frame, payload))
+                .map(|result| {
+                    self.fallback_after_send_failure(
+                        &route,
+                        PathKind::RelayUdp,
+                        payload,
+                        frame,
+                        result,
+                    )
+                })
                 .unwrap_or_else(|| {
                     self.fallback_or_missing(&route, PathKind::RelayUdp, payload, frame)
                 }),
             PathKind::DerpTcpTls443 => route
                 .derp_tcp_index
                 .map(|peer_index| self.derp_tcp.send_to_peer(peer_index, frame, payload))
+                .map(|result| {
+                    self.fallback_after_send_failure(&route, active_path, payload, frame, result)
+                })
                 .unwrap_or_else(|| self.fallback_or_missing(&route, active_path, payload, frame)),
         }
     }
@@ -1075,6 +1107,36 @@ impl WindowsPathManager {
         }
     }
 
+    fn fallback_after_send_failure(
+        &self,
+        route: &PacketRoute,
+        path_kind: PathKind,
+        payload: &[u8],
+        frame: &[u8],
+        original: PathSendResult,
+    ) -> PathSendResult {
+        match original {
+            PathSendResult::SendFailed { .. } | PathSendResult::NoTransport { .. } => {
+                if self.tracker.fallback_enabled() {
+                    if let Some(fallback_path) =
+                        self.fallback_path_for_node(&route.peer_node_id, path_kind)
+                    {
+                        if let Some(result) = self.send_available_path(
+                            &route.peer_node_id,
+                            fallback_path,
+                            payload,
+                            frame,
+                        ) {
+                            return result;
+                        }
+                    }
+                }
+                original
+            }
+            _ => original,
+        }
+    }
+
     fn send_available_path(
         &self,
         peer_node_id: &str,
@@ -1137,10 +1199,26 @@ struct WindowsRelayDataPlaneStats {
     relay_mtu: Option<u32>,
     max_frame_payload: Option<u32>,
     tun_packets_sent: u64,
+    tun_tcp_packets_sent: u64,
+    tun_tcp_syn_ack_sent: u64,
+    tun_tcp_rst_sent: u64,
+    tun_tcp_checksum_invalid: u64,
     relay_packets_received: u64,
+    relay_tcp_packets_received: u64,
+    relay_tcp_syn_received: u64,
+    relay_tcp_rst_received: u64,
+    relay_tcp_checksum_invalid: u64,
     relay_decode_failures: u64,
     relay_config_hash_mismatches: u64,
     relay_error_responses: u64,
+    direct_udp_attached_peer_count: u64,
+    direct_udp_ready_peer_count: u64,
+    direct_udp_probes_sent: u64,
+    direct_udp_probes_received: u64,
+    direct_udp_pongs_sent: u64,
+    direct_udp_pongs_received: u64,
+    direct_udp_frames_sent: u64,
+    direct_udp_frames_received: u64,
     last_relay_error: Option<String>,
     relay_send_failures: u64,
     relay_receive_failures: u64,
@@ -1237,6 +1315,10 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
     let attached_peer_paths = relay_runtime_paths_from_config(&config.peer_paths, &config.sessions);
     let direct_udp_transport =
         DirectUdpTransport::attach(config.local_node_id.as_str(), &config_peer_paths);
+    let direct_udp_attached_peer_count = direct_udp_transport
+        .as_ref()
+        .map(DirectUdpTransport::peer_count)
+        .unwrap_or(0) as u64;
     let mut selected_peer_paths = selected_runtime_paths(
         &config_path_policy,
         mark_ready_transports(attached_peer_paths.clone(), direct_udp_transport.as_ref()),
@@ -1296,6 +1378,8 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             peers: peer_stats,
             relay_mtu: Some(u32::from(relay_mtu)),
             max_frame_payload: Some(max_frame_payload as u32),
+            direct_udp_attached_peer_count,
+            direct_udp_ready_peer_count: direct_udp_attached_peer_count,
             started_at_ms: current_timestamp_ms(),
             ..WindowsRelayDataPlaneStats::default()
         };
@@ -1345,6 +1429,8 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             peers: peer_stats,
             relay_mtu: Some(u32::from(relay_mtu)),
             max_frame_payload: Some(max_frame_payload as u32),
+            direct_udp_attached_peer_count,
+            direct_udp_ready_peer_count: direct_udp_attached_peer_count,
             started_at_ms: current_timestamp_ms(),
             ..WindowsRelayDataPlaneStats::default()
         };
@@ -1366,7 +1452,9 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             }
             if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
                 if let Some(direct_udp) = path_manager.direct_udp_transport_mut() {
-                    direct_udp.send_probe_packets();
+                    stats.direct_udp_probes_sent = stats
+                        .direct_udp_probes_sent
+                        .saturating_add(direct_udp.send_probe_packets() as u64);
                 }
                 last_direct_udp_probe = Instant::now();
             }
@@ -1375,6 +1463,13 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             if !packet.is_null() && packet_size > 0 {
                 let payload = unsafe { std::slice::from_raw_parts(packet, packet_size as usize) };
                 if payload.first().map(|byte| byte >> 4) == Some(4) {
+                    if packet_targets_local_virtual_ip(payload, local_virtual_ip.as_str()) {
+                        unsafe {
+                            release_receive_packet(session, packet);
+                        }
+                        thread::sleep(DATA_PLANE_IDLE_SLEEP);
+                        continue;
+                    }
                     stats.last_tun_packet_at_ms = Some(current_timestamp_ms());
                     stats.last_tun_destination = ipv4_destination(payload);
                     stats.last_tun_protocol = ipv4_protocol(payload);
@@ -1390,10 +1485,11 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                     unsafe {
                         release_receive_packet(session, packet);
                     }
-                    thread::sleep(Duration::from_millis(5));
+                    thread::sleep(DATA_PLANE_IDLE_SLEEP);
                     continue;
                 }
                 let payload = normalize_ipv4_transport_checksums(payload);
+                record_tun_tcp_packet(&mut stats, &payload);
                 if let Some(frame) =
                     encode_slan_relay_data_frame(seq.wrapping_add(1), config_hash, &payload)
                 {
@@ -1429,6 +1525,10 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 persist_active_path_state(path_kind, selected_peer_paths.clone());
                             }
                             stats.tun_packets_sent = stats.tun_packets_sent.saturating_add(1);
+                            if is_direct_udp_path(path_kind) {
+                                stats.direct_udp_frames_sent =
+                                    stats.direct_udp_frames_sent.saturating_add(1);
+                            }
                             if let Some(peer_stats) =
                                 peer_stats_mut_by_node_id(&mut stats.peers, &peer_node_id)
                             {
@@ -1439,10 +1539,19 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             consecutive_data_plane_failures = 0;
                         }
                         PathSendResult::NoRoute => {
-                            stats.unroutable_tun_packets =
-                                stats.unroutable_tun_packets.saturating_add(1);
-                            stats.last_unroutable_destination = ipv4_destination(&payload);
-                            stats.last_tun_drop_reason = Some("unroutable".to_string());
+                            if let Some(destination) = ipv4_destination(&payload) {
+                                if should_ignore_unroutable_destination(&destination) {
+                                    stats.last_tun_drop_reason =
+                                        Some("ignored_unroutable_destination".to_string());
+                                } else {
+                                    stats.unroutable_tun_packets =
+                                        stats.unroutable_tun_packets.saturating_add(1);
+                                    stats.last_unroutable_destination = Some(destination);
+                                    stats.last_tun_drop_reason = Some("unroutable".to_string());
+                                }
+                            } else {
+                                stats.last_tun_drop_reason = Some("unroutable".to_string());
+                            }
                         }
                         PathSendResult::SendFailed {
                             peer_node_id,
@@ -1591,6 +1700,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             .unwrap_or(&relay_buffer[..frame_len]);
                         if let Some(packet) = decode_slan_relay_data_frame(frame) {
                             stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                            record_relay_tcp_packet(&mut stats, packet);
                             if let Some(reply) =
                                 icmp_echo_reply_for_request(packet, &local_virtual_ip)
                             {
@@ -1667,6 +1777,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                     Ok(Some(frame)) => {
                         if let Some(packet) = decode_slan_relay_data_frame(&frame) {
                             stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                            record_relay_tcp_packet(&mut stats, packet);
                             if let Some(reply) =
                                 icmp_echo_reply_for_request(packet, &local_virtual_ip)
                             {
@@ -1750,19 +1861,28 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             .as_ref()
                             .is_some_and(|packet| packet.kind == DirectUdpControlKind::Probe)
                         {
+                            stats.direct_udp_probes_received =
+                                stats.direct_udp_probes_received.saturating_add(1);
                             if received.endpoint_changed {
                                 direct_udp.update_peer_endpoint(peer_index, received.remote_addr);
                             }
-                            direct_udp.send_pong_to_peer(peer_index);
+                            if direct_udp.send_pong_to_peer(peer_index) {
+                                stats.direct_udp_pongs_sent =
+                                    stats.direct_udp_pongs_sent.saturating_add(1);
+                            }
+                            stats.direct_udp_ready_peer_count = direct_udp.peer_count() as u64;
                             direct_udp_probe_success_peer =
                                 Some(direct_udp.peers[peer_index].peer_node_id.clone());
                         } else if control_packet
                             .as_ref()
                             .is_some_and(|packet| packet.kind == DirectUdpControlKind::Pong)
                         {
+                            stats.direct_udp_pongs_received =
+                                stats.direct_udp_pongs_received.saturating_add(1);
                             if received.endpoint_changed {
                                 direct_udp.update_peer_endpoint(peer_index, received.remote_addr);
                             }
+                            stats.direct_udp_ready_peer_count = direct_udp.peer_count() as u64;
                             direct_udp_probe_success_peer =
                                 Some(direct_udp.peers[peer_index].peer_node_id.clone());
                         } else if let Some(packet) =
@@ -1773,6 +1893,10 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 direct_udp.update_peer_endpoint(peer_index, received.remote_addr);
                             }
                             direct_udp_probe_success_peer = Some(peer_node_id.clone());
+                            stats.direct_udp_ready_peer_count = direct_udp.peer_count() as u64;
+                            stats.direct_udp_frames_received =
+                                stats.direct_udp_frames_received.saturating_add(1);
+                            record_relay_tcp_packet(&mut stats, packet);
                             if let Some(reply) =
                                 icmp_echo_reply_for_request(packet, &local_virtual_ip)
                             {
@@ -1882,7 +2006,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 persist_relay_stats(&mut stats);
                 last_stats_flush = Instant::now();
             }
-            thread::sleep(Duration::from_millis(5));
+            thread::sleep(DATA_PLANE_IDLE_SLEEP);
         }
         persist_relay_stats(&mut stats);
     });
@@ -2698,10 +2822,10 @@ fn relay_send_attempt_delay(packet: &[u8]) -> Duration {
             if flags & 0x12 == 0x02 {
                 Duration::from_millis(30)
             } else {
-                Duration::from_millis(2)
+                DATA_PLANE_IDLE_SLEEP
             }
         })
-        .unwrap_or_else(|| Duration::from_millis(2))
+        .unwrap_or(DATA_PLANE_IDLE_SLEEP)
 }
 
 fn should_hedge_direct_packet_to_relay(packet: &[u8]) -> bool {
@@ -2712,6 +2836,61 @@ fn should_hedge_direct_packet_to_relay(packet: &[u8]) -> bool {
         return false;
     };
     flags & 0x12 == 0x02 || flags & 0x0b != 0 || ipv4_tcp_payload_len(packet).unwrap_or(0) > 0
+}
+
+fn is_direct_udp_path(path_kind: PathKind) -> bool {
+    matches!(
+        path_kind,
+        PathKind::LanUdp | PathKind::Ipv6Udp | PathKind::DirectUdp
+    )
+}
+
+fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> bool {
+    ipv4_destination(packet)
+        .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
+        .unwrap_or(false)
+}
+
+fn should_ignore_unroutable_destination(destination: &str) -> bool {
+    let mut parts = destination
+        .split('.')
+        .filter_map(|part| part.parse::<u8>().ok());
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    first >= 224 || destination == "255.255.255.255"
+}
+
+fn record_tun_tcp_packet(stats: &mut WindowsRelayDataPlaneStats, packet: &[u8]) {
+    let Some(flags) = ipv4_tcp_flags(packet) else {
+        return;
+    };
+    stats.tun_tcp_packets_sent = stats.tun_tcp_packets_sent.saturating_add(1);
+    if flags & 0x12 == 0x12 {
+        stats.tun_tcp_syn_ack_sent = stats.tun_tcp_syn_ack_sent.saturating_add(1);
+    }
+    if flags & 0x04 != 0 {
+        stats.tun_tcp_rst_sent = stats.tun_tcp_rst_sent.saturating_add(1);
+    }
+    if ipv4_transport_checksum_valid(packet) == Some(false) {
+        stats.tun_tcp_checksum_invalid = stats.tun_tcp_checksum_invalid.saturating_add(1);
+    }
+}
+
+fn record_relay_tcp_packet(stats: &mut WindowsRelayDataPlaneStats, packet: &[u8]) {
+    let Some(flags) = ipv4_tcp_flags(packet) else {
+        return;
+    };
+    stats.relay_tcp_packets_received = stats.relay_tcp_packets_received.saturating_add(1);
+    if flags & 0x02 != 0 {
+        stats.relay_tcp_syn_received = stats.relay_tcp_syn_received.saturating_add(1);
+    }
+    if flags & 0x04 != 0 {
+        stats.relay_tcp_rst_received = stats.relay_tcp_rst_received.saturating_add(1);
+    }
+    if ipv4_transport_checksum_valid(packet) == Some(false) {
+        stats.relay_tcp_checksum_invalid = stats.relay_tcp_checksum_invalid.saturating_add(1);
+    }
 }
 
 fn ipv4_protocol(packet: &[u8]) -> Option<u8> {

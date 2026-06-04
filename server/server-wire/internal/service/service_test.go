@@ -365,6 +365,7 @@ func TestBizRelayNodesGateRelayTicketAndPathPlan(t *testing.T) {
 		relays: []model.RelayNode{
 			{RegionID: "biz-region", NodeID: "relay-biz", Host: "relay-biz.local", UDPPort: 29110, Enabled: true, Healthy: true, Priority: 10},
 			{RegionID: "biz-region", NodeID: "relay-disabled", Host: "relay-disabled.local", UDPPort: 29110, Enabled: false, Healthy: true},
+			{RegionID: "biz-region", NodeID: "relay-stale", Host: "relay-stale.local", UDPPort: 29110, Enabled: true, Healthy: true, Stale: true, Priority: 1},
 		},
 	}
 	svc := NewWithBiz(store.NewMemoryStore(), biz)

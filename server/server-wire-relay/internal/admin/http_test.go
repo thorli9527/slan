@@ -36,7 +36,7 @@ func TestAdminRoutes(t *testing.T) {
 	}
 
 	handler := New(store).Handler()
-	for _, path := range []string{"/healthz", "/v1/sessions", "/v1/sessions/s1", "/metrics"} {
+	for _, path := range []string{"/healthz", "/sessions", "/sessions/s1", "/metrics"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)

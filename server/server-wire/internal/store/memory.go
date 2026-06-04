@@ -139,7 +139,7 @@ func (s *MemoryStore) UpdateActivePath(peerID string, path model.PathKind) (mode
 		return model.PeerRecord{}, ErrPeerNotFound
 	}
 	if current.ActivePath != "" && current.ActivePath != path {
-		if path == model.PathRelayUDP {
+		if pathRank(path) > pathRank(current.ActivePath) {
 			current.RecentPathDowngrades++
 		} else {
 			current.RecentPathUpgrades++
@@ -151,6 +151,19 @@ func (s *MemoryStore) UpdateActivePath(peerID string, path model.PathKind) (mode
 	current.UpdatedAt = time.Now().UnixMilli()
 	s.peers[peerID] = current
 	return clonePeer(current), nil
+}
+
+func pathRank(path model.PathKind) int {
+	switch path {
+	case model.PathLANUDP, model.PathIPv6UDP, model.PathDirectUDP:
+		return 0
+	case model.PathRelayUDP:
+		return 1
+	case model.PathDerpTCP443:
+		return 2
+	default:
+		return 1
+	}
 }
 
 func (s *MemoryStore) IssueRelayTicket(peerID string, relay model.RelayNode, ttl time.Duration, renewAfter time.Duration) (model.RelayTicket, error) {

@@ -191,7 +191,8 @@
           <option value="derp_tcp_tls_443">derp_tcp_tls_443</option>
         </select>
       </label>
-      <label><span>公网地址</span><input [(ngModel)]="relayNodeForm.publicAddr"></label>
+      <label><span>公网 IP</span><input [(ngModel)]="relayNodeForm.publicIp" placeholder="47.245.40.231"></label>
+      <label><span>公网端口</span><input [(ngModel)]="relayNodeForm.publicPort" type="number"></label>
       <label><span>最大带宽 Mbps</span><input [(ngModel)]="relayNodeForm.maxBandwidthMbps" type="number"></label>
       <label><span>月流量 GB</span><input [(ngModel)]="relayNodeForm.monthlyTrafficGb" type="number"></label>
       <label><span>最大会话</span><input [(ngModel)]="relayNodeForm.maxSessions" type="number"></label>

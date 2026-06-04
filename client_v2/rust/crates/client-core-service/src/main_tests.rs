@@ -4,11 +4,11 @@ use super::{
     path_diagnose_dns, path_diagnose_health, peer_path_configs,
     relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
-    relay_session_from_connect_plan_ticket, relay_sessions_missing, relay_ticket_should_renew,
-    relay_ticket_timing, relay_transport_for_path_type, routes_with_peer_virtual_ips,
-    status_is_managed_disabled, ControlPeer, PersistedConnectPlan, PersistedConnectPlanPath,
-    PersistedConnectPlanStore, RelayMaintenanceState, RELAY_NO_RX_RECONFIGURE_INTERVALS,
-    RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
+    relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
+    relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
+    routes_with_peer_virtual_ips, status_is_managed_disabled, ControlPeer, PersistedConnectPlan,
+    PersistedConnectPlanPath, PersistedConnectPlanStore, RelayMaintenanceState,
+    RELAY_NO_RX_RECONFIGURE_INTERVALS, RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
 };
 use crate::control_plane::{PunchConnectSession, PunchEndpoint};
 use crate::{
@@ -19,7 +19,9 @@ use crate::{
     },
     relay_store::relay_runtime_failure_total,
 };
-use client_core::{PathKind, PeerPathRuntime, PlatformNetworkDiagnostics, RelayTicket, RouteSpec};
+use client_core::{
+    PathKind, PeerPathRuntime, PlatformNetworkDiagnostics, RelayPeerSession, RelayTicket, RouteSpec,
+};
 use std::net::{TcpListener, UdpSocket};
 
 #[test]
@@ -123,6 +125,41 @@ fn macos_data_plane_uses_derp_candidate_when_probe_fails() {
 }
 
 #[test]
+fn relay_session_targets_keep_selected_probe_fallback() {
+    let mut derp = test_relay_selection(
+        "derp-fallback",
+        "derp_tcp_tls_443",
+        "derp://203.0.113.10:29120",
+    );
+    derp.reachable = false;
+
+    let targets = relay_session_targets(Some(&derp), &[]);
+
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].endpoint_id, "derp-fallback");
+    assert_eq!(targets[0].transport, "derp_tcp_tls_443");
+    assert!(!targets[0].reachable);
+}
+
+#[test]
+fn relay_session_targets_include_udp_and_derp_candidates() {
+    let udp = test_relay_selection("relay-udp", "udp", "203.0.113.10:29110");
+    let derp = test_relay_selection(
+        "relay-derp",
+        "derp_tcp_tls_443",
+        "derp://203.0.113.10:29120",
+    );
+
+    let targets = relay_session_targets(Some(&udp), &[udp.clone(), derp]);
+
+    let endpoint_ids = targets
+        .iter()
+        .map(|target| target.endpoint_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(endpoint_ids, vec!["relay-udp", "relay-derp"]);
+}
+
+#[test]
 fn connect_plan_relay_path_becomes_path_candidate() {
     let candidate = relay_path_candidate_from_connect_plan(
         &PersistedConnectPlanPath {
@@ -130,15 +167,57 @@ fn connect_plan_relay_path_becomes_path_candidate() {
             endpoint: "udp://relay.example:3478".to_string(),
             priority: 42,
         },
-        None,
+        &[],
         &test_relay_selection("relay-other", "udp", "127.0.0.1:3478"),
+        "node-peer",
     )
     .expect("relay_udp connect plan path should become candidate");
 
     assert_eq!(candidate.kind, PathKind::RelayUdp);
     assert_eq!(candidate.address.as_deref(), Some("relay.example:3478"));
     assert_eq!(candidate.transport.as_deref(), Some("udp"));
+    assert_eq!(candidate.session_id, None);
     assert_eq!(candidate.path_score, Some(42));
+}
+
+#[test]
+fn connect_plan_relay_path_binds_only_matching_session() {
+    let mut ticket = test_relay_ticket("net-1", "node-local", "node-peer");
+    ticket.relay_url = "udp://relay.example:3478".to_string();
+    let sessions = vec![RelayPeerSession {
+        session_id: "session-udp".to_string(),
+        peer_node_id: "node-peer".to_string(),
+        peer_virtual_ips: vec!["10.0.0.9".to_string()],
+        ticket,
+    }];
+
+    let candidate = relay_path_candidate_from_connect_plan(
+        &PersistedConnectPlanPath {
+            path_type: "relay_udp".to_string(),
+            endpoint: "udp://relay.example:3478".to_string(),
+            priority: 42,
+        },
+        &sessions,
+        &test_relay_selection("relay-other", "udp", "127.0.0.1:3478"),
+        "node-peer",
+    )
+    .expect("relay_udp connect plan path should become candidate");
+
+    assert_eq!(candidate.session_id.as_deref(), Some("session-udp"));
+
+    let derp_candidate = relay_path_candidate_from_connect_plan(
+        &PersistedConnectPlanPath {
+            path_type: "derp_tcp_tls_443".to_string(),
+            endpoint: "derp://relay.example:443".to_string(),
+            priority: 42,
+        },
+        &sessions,
+        &test_relay_selection("derp-other", "derp_tcp_tls_443", "relay.example:443"),
+        "node-peer",
+    )
+    .expect("derp connect plan path should become candidate");
+
+    assert_eq!(derp_candidate.session_id, None);
 }
 
 #[test]
@@ -149,8 +228,9 @@ fn connect_plan_rejects_relay_protocol_aliases() {
             endpoint: "tcp://relay.example:443".to_string(),
             priority: 1,
         },
-        None,
+        &[],
         &test_relay_selection("relay-other", "udp", "127.0.0.1:3478"),
+        "node-peer",
     )
     .is_none());
     assert_eq!(relay_transport_for_path_type("relay_udp"), Some("udp"));

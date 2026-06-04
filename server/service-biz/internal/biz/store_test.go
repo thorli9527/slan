@@ -3,10 +3,22 @@ package biz
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+func mustMarshalRawMessage(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal raw message: %v", err)
+	}
+	return data
+}
 
 func TestRegisterUserAndDeviceJoinDefaultNetwork(t *testing.T) {
 	store := NewStore()
@@ -123,18 +135,18 @@ func TestDeviceSessionResponseIncludesRuntimeEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bind device session: %v", err)
 	}
-	server := &Server{
+	runtime := RuntimeService{
 		store: store,
 		mqtt: MQTTConfig{
 			Enabled:              true,
 			PublicBrokerURL:      "mqtt://47.245.40.231:1883",
 			UsernamePrefix:       "slan",
 			PasswordSecret:       "secret",
-			TopicPrefix:          "slan/v1",
+			TopicPrefix:          "slan",
 			CredentialTTLSeconds: 3600,
 		},
 	}
-	response := server.deviceSessionResponse(device, session, configs, time.Unix(1000, 0))
+	response := runtime.DeviceSessionResponse(device, session, configs, time.Unix(1000, 0))
 	if response.MQTT == nil || response.MQTT.BrokerURL != "mqtt://47.245.40.231:1883" {
 		t.Fatalf("expected mqtt broker in session response, got %+v", response.MQTT)
 	}
@@ -556,27 +568,27 @@ func TestNetworkDeviceEnableStateControlsMQTTMembership(t *testing.T) {
 }
 
 func TestMQTTTopicAccessSeparatesQoS0UpstreamFromQoS2DownstreamTopics(t *testing.T) {
-	cfg := MQTTConfig{Enabled: true, TopicPrefix: "slan/v1"}
+	cfg := MQTTConfig{Enabled: true, TopicPrefix: "slan"}
 	deviceID := "mac-1"
-	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/v1/devices/mac-1/heartbeat", false) {
+	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/devices/mac-1/heartbeat", false) {
 		t.Fatalf("device heartbeat topic should be publishable")
 	}
-	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/v1/devices/mac-1/runtime", false) {
+	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/devices/mac-1/runtime", false) {
 		t.Fatalf("device runtime topic should be publishable")
 	}
-	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/v1/devices/mac-1/control/down", true) {
+	if !mqttAllowTopicAccess(cfg, "device", deviceID, "slan/devices/mac-1/control/down", true) {
 		t.Fatalf("device control down topic should be subscribable")
 	}
-	if !mqttAllowTopicAccess(cfg, "server", "", "slan/v1/devices/mac-1/control/down", false) {
+	if !mqttAllowTopicAccess(cfg, "server", "", "slan/devices/mac-1/control/down", false) {
 		t.Fatalf("server should publish control down topics")
 	}
-	if !mqttAllowTopicAccess(cfg, "server", "", "slan/v1/networks/net-1/broadcast", false) {
+	if !mqttAllowTopicAccess(cfg, "server", "", "slan/networks/net-1/broadcast", false) {
 		t.Fatalf("server should publish network broadcast topics")
 	}
-	if !mqttAllowTopicAccess(cfg, "server", "", "slan/v1/devices/#", true) {
+	if !mqttAllowTopicAccess(cfg, "server", "", "slan/devices/#", true) {
 		t.Fatalf("server should subscribe device upstream wildcard topic")
 	}
-	if mqttAllowTopicAccess(cfg, "device", deviceID, "slan/v1/devices/ios-1/heartbeat", false) {
+	if mqttAllowTopicAccess(cfg, "device", deviceID, "slan/devices/ios-1/heartbeat", false) {
 		t.Fatalf("device must not publish another device heartbeat")
 	}
 }
@@ -700,7 +712,7 @@ func TestMQTTControlAckIsRecorded(t *testing.T) {
 	}
 	server := &Server{
 		store: store,
-		mqtt:  MQTTConfig{TopicPrefix: "slan/v1"},
+		mqtt:  MQTTConfig{TopicPrefix: "slan"},
 	}
 	body, err := json.Marshal(map[string]any{
 		"taskId":        "downstream-enableNetwork-delivery-1",
@@ -713,7 +725,7 @@ func TestMQTTControlAckIsRecorded(t *testing.T) {
 		t.Fatalf("marshal ack: %v", err)
 	}
 
-	if err := server.handleMQTTDevicePublish(context.Background(), "slan/v1/devices/"+device.DeviceID+"/control/ack", body); err != nil {
+	if err := server.handleMQTTDevicePublish(context.Background(), "slan/devices/"+device.DeviceID+"/control/ack", body); err != nil {
 		t.Fatalf("handle control ack: %v", err)
 	}
 
@@ -733,11 +745,11 @@ func TestMQTTControlAckRejectsWrongDeviceTopic(t *testing.T) {
 	store := NewStore()
 	server := &Server{
 		store: store,
-		mqtt:  MQTTConfig{TopicPrefix: "slan/v1"},
+		mqtt:  MQTTConfig{TopicPrefix: "slan"},
 	}
 	body := []byte(`{"taskId":"task-1","deliveryId":"delivery-1","action":"enableNetwork","status":"succeeded"}`)
 
-	if err := server.handleMQTTDevicePublish(context.Background(), "slan/v1/devices/missing-device/control/ack", body); err != errNotFound {
+	if err := server.handleMQTTDevicePublish(context.Background(), "slan/devices/missing-device/control/ack", body); err != errNotFound {
 		t.Fatalf("expected unknown device ack to be rejected, got %v", err)
 	}
 }
@@ -774,10 +786,10 @@ func TestMQTTControlAckHandlerIgnoresExpiredDelivery(t *testing.T) {
 	if expired := store.ExpireMQTTControlDeliveries(120); expired != 1 {
 		t.Fatalf("expected delivery to expire, got %d", expired)
 	}
-	server := &Server{store: store, mqtt: MQTTConfig{TopicPrefix: "slan/v1"}}
+	server := &Server{store: store, mqtt: MQTTConfig{TopicPrefix: "slan"}}
 	body := []byte(`{"taskId":"task-expired","deliveryId":"expired-handler","action":"enableNetwork","status":"succeeded","processedAtMs":123}`)
 
-	if err := server.handleMQTTDevicePublish(context.Background(), "slan/v1/devices/"+device.DeviceID+"/control/ack", body); err != nil {
+	if err := server.handleMQTTDevicePublish(context.Background(), "slan/devices/"+device.DeviceID+"/control/ack", body); err != nil {
 		t.Fatalf("expected expired mqtt ack to be consumed without handler error, got %v", err)
 	}
 	delivery, err := store.GetMQTTControlDeliveryForDevice(device.DeviceID, "expired-handler")
@@ -799,14 +811,166 @@ func TestMQTTRuntimeNetworkStateChangeWritesAuditEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register device: %v", err)
 	}
-	server := &Server{store: store, mqtt: MQTTConfig{TopicPrefix: "slan/v1"}}
+	server := &Server{store: store, mqtt: MQTTConfig{TopicPrefix: "slan"}}
 	body := []byte(`{"networkEnabled":true,"rxBytesTotal":10,"txBytesTotal":20}`)
 
-	if err := server.handleMQTTDevicePublish(context.Background(), "slan/v1/devices/"+device.DeviceID+"/runtime-state", body); err != nil {
+	if err := server.handleMQTTDevicePublish(context.Background(), "slan/devices/"+device.DeviceID+"/runtime-state", body); err != nil {
 		t.Fatalf("handle runtime state: %v", err)
 	}
 	if !hasAuditEvent(store.ListAuditEvents(), "client_network.runtime_state_changed", "succeeded", device.DeviceID) {
 		t.Fatalf("expected runtime state audit event, got %+v", store.ListAuditEvents())
+	}
+}
+
+func TestMQTTPathHealthReportIsAcceptedForNetworkMember(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-path-health", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	server := &Server{store: store, mqtt: MQTTConfig{TopicPrefix: "slan"}}
+	body, err := json.Marshal(controlEnvelopeRaw{
+		Type: "path_health_report",
+		Payload: mustMarshalRawMessage(t, map[string]any{
+			"networkId":       network.NetworkID,
+			"pathType":        "relay_udp",
+			"relayTransport":  "relay_udp",
+			"endpoint":        "203.0.113.10:29110",
+			"derpNodeId":      "relay-hk-1",
+			"observedRttMs":   31,
+			"packetLossPpm":   0,
+			"pathScore":       31,
+			"relayMtu":        1280,
+			"maxFramePayload": 1200,
+			"sampledAtMs":     int64(123456),
+		}),
+	})
+	if err != nil {
+		t.Fatalf("encode path health envelope: %v", err)
+	}
+
+	if err := server.handleMQTTDevicePublish(context.Background(), "slan/devices/"+device.DeviceID+"/control/up", body); err != nil {
+		t.Fatalf("handle path health report: %v", err)
+	}
+}
+
+func TestMQTTPathHealthReportForwardsToWireWhenConfigured(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-path-health-forward", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	var received wirePathHealthRequest
+	wireServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/peers/path-health" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		if got := r.Header.Get("X-Slan-Internal-Token"); got != "wire-token" {
+			t.Fatalf("expected internal token, got %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatalf("decode forwarded request: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer wireServer.Close()
+	t.Setenv("SLAN_BIZ_WIRE_INTERNAL_URL", wireServer.URL)
+	t.Setenv("SLAN_INTERNAL_WIRE_TOKEN", "wire-token")
+
+	server := &Server{store: store, mqtt: MQTTConfig{TopicPrefix: "slan"}}
+	body, err := json.Marshal(controlEnvelopeRaw{
+		Type: "path_health_report",
+		Payload: mustMarshalRawMessage(t, map[string]any{
+			"networkId":     network.NetworkID,
+			"pathType":      "derp_tcp_tls_443",
+			"observedRttMs": 42,
+			"packetLossPpm": 1000,
+			"pathScore":     1042,
+			"relayMtu":      1280,
+			"sampledAtMs":   int64(987654321000),
+		}),
+	})
+	if err != nil {
+		t.Fatalf("encode path health envelope: %v", err)
+	}
+
+	if err := server.handleMQTTDevicePublish(context.Background(), "slan/devices/"+device.DeviceID+"/control/up", body); err != nil {
+		t.Fatalf("handle path health report: %v", err)
+	}
+	if received.PeerID != wirePeerID(network.NetworkID, device.DeviceID) {
+		t.Fatalf("unexpected forwarded peer id %q", received.PeerID)
+	}
+	if len(received.Probes) != 1 {
+		t.Fatalf("expected one forwarded probe, got %+v", received.Probes)
+	}
+	probe := received.Probes[0]
+	if probe.Path != "derp_tcp_tls_443" || !probe.Reachable || probe.RTTMs != 42 || probe.LossPPM != 1000 || probe.MTU != 1280 || probe.ObservedAt != 987654321000 {
+		t.Fatalf("unexpected forwarded probe %+v", probe)
+	}
+}
+
+func TestMQTTPathHealthReportRejectsWrongNetwork(t *testing.T) {
+	store := NewStore()
+	auth, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-path-health-wrong-net", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	server := &Server{store: store, mqtt: MQTTConfig{TopicPrefix: "slan"}}
+	body, err := json.Marshal(controlEnvelopeRaw{
+		Type: "path_health_report",
+		Payload: mustMarshalRawMessage(t, map[string]any{
+			"networkId": "missing-network",
+			"pathType":  "relay_tcp",
+		}),
+	})
+	if err != nil {
+		t.Fatalf("encode path health envelope: %v", err)
+	}
+
+	if err := server.handleMQTTDevicePublish(context.Background(), "slan/devices/"+device.DeviceID+"/control/up", body); !errors.Is(err, errNotFound) {
+		t.Fatalf("expected wrong network to be rejected, got %v", err)
+	}
+}
+
+func TestMQTTPathHealthReportRequiresPath(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-path-health-no-path", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	server := &Server{store: store, mqtt: MQTTConfig{TopicPrefix: "slan"}}
+	body, err := json.Marshal(controlEnvelopeRaw{
+		Type: "path_health_report",
+		Payload: mustMarshalRawMessage(t, map[string]any{
+			"networkId": network.NetworkID,
+			"endpoint":  "203.0.113.10:29110",
+		}),
+	})
+	if err != nil {
+		t.Fatalf("encode path health envelope: %v", err)
+	}
+
+	if err := server.handleMQTTDevicePublish(context.Background(), "slan/devices/"+device.DeviceID+"/control/up", body); err == nil || !strings.Contains(err.Error(), "pathType or activePath") {
+		t.Fatalf("expected missing path to be rejected, got %v", err)
 	}
 }
 
@@ -1749,6 +1913,47 @@ func TestRelayCandidatesAndTicketRequireNetworkMembership(t *testing.T) {
 	}
 	if _, err := store.IssueRelayTicket(network.NetworkID, "node-"+deviceA.DeviceID, "node-missing", "", nil); err != errNotFound {
 		t.Fatalf("expected missing peer not found, got %v", err)
+	}
+}
+
+func TestRelayCandidatesDoNotFallbackAfterNodesDeleted(t *testing.T) {
+	store := NewStore()
+	auth, network, err := store.RegisterUser("relay-empty@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := store.RegisterDevice(auth.User.UserID, "mac-empty-relay", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	store.mu.Lock()
+	store.relayNodes = map[string]OpsRelayNode{}
+	store.mu.Unlock()
+
+	candidates, err := store.RelayCandidates(network.NetworkID, device.DeviceID)
+	if err != nil {
+		t.Fatalf("relay candidates: %v", err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("expected deleted relay nodes to stay empty, got %+v", candidates)
+	}
+}
+
+func TestActiveRelayCandidatesFollowPriorityAndHealthyOnly(t *testing.T) {
+	store := NewStore()
+	store.mu.Lock()
+	store.relayNodes = map[string]OpsRelayNode{}
+	store.addRelayNodeLocked(OpsRelayNode{Name: "slow", Region: "cn", Transport: "relay_udp", PublicAddr: "udp://slow.example.com:29110", Status: "active", Health: "healthy", Priority: 100})
+	store.addRelayNodeLocked(OpsRelayNode{Name: "fast", Region: "cn", Transport: "relay_udp", PublicAddr: "udp://fast.example.com:29110", Status: "active", Health: "healthy", Priority: 10})
+	store.addRelayNodeLocked(OpsRelayNode{Name: "warning", Region: "cn", Transport: "relay_udp", PublicAddr: "udp://warning.example.com:29110", Status: "active", Health: "warning", Priority: 1})
+	candidates := store.activeRelayCandidatesLocked()
+	store.mu.Unlock()
+
+	if len(candidates) != 2 {
+		t.Fatalf("expected only healthy candidates, got %+v", candidates)
+	}
+	if candidates[0].Address != "fast.example.com:29110" || candidates[1].Address != "slow.example.com:29110" {
+		t.Fatalf("expected priority order, got %+v", candidates)
 	}
 }
 

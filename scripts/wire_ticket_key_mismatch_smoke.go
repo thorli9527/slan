@@ -33,10 +33,10 @@ func main() {
 	endpoints := map[string]string{
 		"wire":    wireURL + "/internal/wire/ticket-key-status",
 		"wire-b":  wireBURL + "/internal/wire/ticket-key-status",
-		"relay":   relayAdminURL + "/v1/ticket-key-status",
-		"relay-b": relayBAdminURL + "/v1/ticket-key-status",
-		"derp":    derpAdminURL + "/v1/ticket-key-status",
-		"derp-b":  derpBAdminURL + "/v1/ticket-key-status",
+		"relay":   relayAdminURL + "/ticket-key-status",
+		"relay-b": relayBAdminURL + "/ticket-key-status",
+		"derp":    derpAdminURL + "/ticket-key-status",
+		"derp-b":  derpBAdminURL + "/ticket-key-status",
 	}
 	if err := expectConsistentTicketKeyStatus(endpoints); err != nil {
 		fail("expected real ticket key statuses to be consistent: %v", err)

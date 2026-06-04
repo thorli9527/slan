@@ -46,21 +46,49 @@ func openStore(cfg config.Config) store.Store {
 // newMux 注册 server-wire 对外和内部 HTTP API。
 func newMux(svc *service.Service, _ ...string) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", handleHealthz)
-	mux.HandleFunc("/v1/peers/register", handleRegisterPeer(svc))
-	mux.HandleFunc("/v1/peers/endpoints", handleUpdateEndpoints(svc))
-	mux.HandleFunc("/v1/peers/path-health", handleReportPathHealth(svc))
-	mux.HandleFunc("/v1/peers/derp-health", handleReportDerpHealth(svc))
-	mux.HandleFunc("/v1/peers/active-path", handleUpdateActivePath(svc))
-	mux.HandleFunc("/v1/peers/", handleGetPeerRoutes(svc))
-	mux.HandleFunc("/v1/relay/tickets", handleIssueRelayTicket(svc))
-	mux.HandleFunc("/v1/derp/map", handleGetDerpMap(svc))
-	mux.HandleFunc("/v1/derp/tickets", handleIssueDerpTicket(svc))
-	mux.HandleFunc("/v1/path-plan", handlePathPlan(svc))
-	mux.HandleFunc("/internal/wire/ticket-key-status", handleTicketKeyStatus)
-	mux.HandleFunc("/internal/wire/peers/", handleInternalPeerRoutes(svc))
-	mux.HandleFunc("/internal/wire/networks/", handleInternalNetworkRoutes(svc))
+	registerRoutes(mux, svc)
 	return mux
+}
+
+func registerRoutes(mux *http.ServeMux, svc *service.Service) {
+	mux.HandleFunc("/healthz", handleHealthz)
+	mux.HandleFunc("/peers/register", func(w http.ResponseWriter, r *http.Request) {
+		handleRegisterPeer(svc, w, r)
+	})
+	mux.HandleFunc("/peers/endpoints", func(w http.ResponseWriter, r *http.Request) {
+		handleUpdateEndpoints(svc, w, r)
+	})
+	mux.HandleFunc("/peers/path-health", func(w http.ResponseWriter, r *http.Request) {
+		handleReportPathHealth(svc, w, r)
+	})
+	mux.HandleFunc("/peers/derp-health", func(w http.ResponseWriter, r *http.Request) {
+		handleReportDerpHealth(svc, w, r)
+	})
+	mux.HandleFunc("/peers/active-path", func(w http.ResponseWriter, r *http.Request) {
+		handleUpdateActivePath(svc, w, r)
+	})
+	mux.HandleFunc("/peers/", func(w http.ResponseWriter, r *http.Request) {
+		handleGetPeerRoutes(svc, w, r)
+	})
+	mux.HandleFunc("/relay/tickets", func(w http.ResponseWriter, r *http.Request) {
+		handleIssueRelayTicket(svc, w, r)
+	})
+	mux.HandleFunc("/derp/map", func(w http.ResponseWriter, r *http.Request) {
+		handleGetDerpMap(svc, w, r)
+	})
+	mux.HandleFunc("/derp/tickets", func(w http.ResponseWriter, r *http.Request) {
+		handleIssueDerpTicket(svc, w, r)
+	})
+	mux.HandleFunc("/path-plan", func(w http.ResponseWriter, r *http.Request) {
+		handlePathPlan(svc, w, r)
+	})
+	mux.HandleFunc("/internal/wire/ticket-key-status", handleTicketKeyStatus)
+	mux.HandleFunc("/internal/wire/peers/", func(w http.ResponseWriter, r *http.Request) {
+		handleInternalPeerRoutes(svc, w, r)
+	})
+	mux.HandleFunc("/internal/wire/networks/", func(w http.ResponseWriter, r *http.Request) {
+		handleInternalNetworkRoutes(svc, w, r)
+	})
 }
 
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -88,265 +116,241 @@ func decodeJSON(r *http.Request, target any) error {
 	return json.NewDecoder(r.Body).Decode(target)
 }
 
-func handleRegisterPeer(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req model.RegisterPeerRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err)
-			return
-		}
-		resp, err := svc.RegisterPeer(req)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "register_failed", err)
-			return
-		}
-		writeJSON(w, http.StatusOK, resp)
+func handleRegisterPeer(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	var req model.RegisterPeerRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err)
+		return
+	}
+	resp, err := svc.RegisterPeer(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "register_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func handleUpdateEndpoints(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req model.UpdateEndpointsRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err)
-			return
-		}
-		peer, err := svc.UpdateEndpoints(req)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
+func handleUpdateEndpoints(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	var req model.UpdateEndpointsRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err)
+		return
+	}
+	peer, err := svc.UpdateEndpoints(req)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
 }
 
-func handleReportPathHealth(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req model.ReportPathHealthRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err)
-			return
-		}
-		peer, err := svc.ReportPathHealth(req)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
+func handleReportPathHealth(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	var req model.ReportPathHealthRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err)
+		return
+	}
+	peer, err := svc.ReportPathHealth(req)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
 }
 
-func handleUpdateActivePath(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req model.UpdateActivePathRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err)
-			return
-		}
-		peer, err := svc.UpdateActivePath(req)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
+func handleUpdateActivePath(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	var req model.UpdateActivePathRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err)
+		return
+	}
+	peer, err := svc.UpdateActivePath(req)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
 }
 
-func handleReportDerpHealth(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req model.ReportDerpHealthRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err)
-			return
-		}
-		peer, err := svc.ReportDerpHealth(req)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
+func handleReportDerpHealth(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	var req model.ReportDerpHealthRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err)
+		return
+	}
+	peer, err := svc.ReportDerpHealth(req)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
 }
 
-func handleIssueRelayTicket(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req model.IssueRelayTicketRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err)
-			return
-		}
-		resp, err := svc.IssueRelayTicket(req)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, resp)
+func handleIssueRelayTicket(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	var req model.IssueRelayTicketRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err)
+		return
+	}
+	resp, err := svc.IssueRelayTicket(req)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func handlePathPlan(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req model.PathPlanRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err)
-			return
-		}
-		plan, err := svc.BuildPathPlan(req)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, plan)
+func handlePathPlan(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	var req model.PathPlanRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err)
+		return
+	}
+	plan, err := svc.BuildPathPlan(req)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
 }
 
-func handleGetDerpMap(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		resp, err := svc.GetDerpMap()
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, resp)
+func handleGetDerpMap(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	resp, err := svc.GetDerpMap()
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func handleIssueDerpTicket(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req model.IssueDerpTicketRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err)
-			return
-		}
-		resp, err := svc.IssueDerpTicket(req)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, resp)
+func handleIssueDerpTicket(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
+	var req model.IssueDerpTicketRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err)
+		return
+	}
+	resp, err := svc.IssueDerpTicket(req)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func handleGetPeerRoutes(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		path := strings.TrimPrefix(r.URL.Path, "/v1/peers/")
-		if path == "" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		if strings.HasSuffix(path, "/runtime-config") {
-			peerID := strings.TrimSuffix(path, "/runtime-config")
-			peerID = strings.TrimSuffix(peerID, "/")
-			view, err := svc.GetPeerRuntimeConfig(peerID)
-			if err != nil {
-				writeStoreError(w, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, view)
-			return
-		}
-		peerID := strings.TrimSuffix(path, "/")
-		peer, err := svc.GetPeer(peerID)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
+func handleGetPeerRoutes(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
-}
-
-func handleInternalPeerRoutes(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		path := strings.TrimPrefix(r.URL.Path, "/internal/wire/peers/")
-		switch {
-		case strings.HasSuffix(path, "/authz"):
-			peerID := strings.TrimSuffix(path, "/authz")
-			peerID = strings.TrimSuffix(peerID, "/")
-			view, err := svc.GetPeerAuthz(peerID)
-			if err != nil {
-				writeStoreError(w, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, view)
-		case strings.HasSuffix(path, "/runtime-config"):
-			peerID := strings.TrimSuffix(path, "/runtime-config")
-			peerID = strings.TrimSuffix(peerID, "/")
-			view, err := svc.GetPeerRuntimeConfig(peerID)
-			if err != nil {
-				writeStoreError(w, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, view)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
+	path := strings.TrimPrefix(r.URL.Path, "/peers/")
+	if path == "" {
+		w.WriteHeader(http.StatusNotFound)
+		return
 	}
-}
-
-func handleInternalNetworkRoutes(svc *service.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		path := strings.TrimPrefix(r.URL.Path, "/internal/wire/networks/")
-		if !strings.HasSuffix(path, "/topology") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		networkID := strings.TrimSuffix(path, "/topology")
-		networkID = strings.TrimSuffix(networkID, "/")
-		view, err := svc.GetNetworkTopology(networkID)
+	if strings.HasSuffix(path, "/runtime-config") {
+		peerID := strings.TrimSuffix(path, "/runtime-config")
+		peerID = strings.TrimSuffix(peerID, "/")
+		view, err := svc.GetPeerRuntimeConfig(peerID)
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, view)
+		return
 	}
+	peerID := strings.TrimSuffix(path, "/")
+	peer, err := svc.GetPeer(peerID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
+}
+
+func handleInternalPeerRoutes(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/internal/wire/peers/")
+	switch {
+	case strings.HasSuffix(path, "/authz"):
+		peerID := strings.TrimSuffix(path, "/authz")
+		peerID = strings.TrimSuffix(peerID, "/")
+		view, err := svc.GetPeerAuthz(peerID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
+	case strings.HasSuffix(path, "/runtime-config"):
+		peerID := strings.TrimSuffix(path, "/runtime-config")
+		peerID = strings.TrimSuffix(peerID, "/")
+		view, err := svc.GetPeerRuntimeConfig(peerID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func handleInternalNetworkRoutes(svc *service.Service, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/internal/wire/networks/")
+	if !strings.HasSuffix(path, "/topology") {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	networkID := strings.TrimSuffix(path, "/topology")
+	networkID = strings.TrimSuffix(networkID, "/")
+	view, err := svc.GetNetworkTopology(networkID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func writeError(w http.ResponseWriter, status int, code string, err error) {

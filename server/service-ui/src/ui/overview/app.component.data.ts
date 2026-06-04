@@ -29,11 +29,12 @@ import {
   WorkspaceRow,
 } from '../app.models';
 import { slug } from '../app.utils';
+import { WEB_API } from '../api-paths';
 
 export abstract class AppComponentData extends AppComponentSecurity {
   protected override async loadClientDownloads(): Promise<void> {
     try {
-      const response = await this.api.get<{ items: ClientDownload[] }>('/api/client-downloads');
+      const response = await this.api.get<{ items: ClientDownload[] }>(WEB_API.clientDownloads);
       this.clientDownloads = response.items;
     } catch {
       this.clientDownloads = [];
@@ -78,11 +79,11 @@ export abstract class AppComponentData extends AppComponentSecurity {
   protected override async loadDashboard(userId = ''): Promise<void> {
     try {
       const [devices, workspaces, aliases, invites, quota] = await Promise.all([
-        this.api.get<{ items: ApiDevice[] }>(`/api/devices/visible${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`),
-        this.api.get<{ items: ApiWorkspace[] }>(`/api/networks${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`),
-        this.api.get<{ items: ApiUserAlias[] }>(`/api/user-aliases${userId ? `?ownerUserId=${encodeURIComponent(userId)}` : ''}`),
-        this.api.get<{ items: WorkspaceDeviceInviteRow[] }>(`/api/device-invites${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`),
-        userId ? this.api.get<ApiDeviceQuota>(`/api/users/${encodeURIComponent(userId)}/entitlement`) : Promise.resolve(null),
+        this.api.get<{ items: ApiDevice[] }>(WEB_API.devicesVisible(userId)),
+        this.api.get<{ items: ApiWorkspace[] }>(WEB_API.networks(userId)),
+        this.api.get<{ items: ApiUserAlias[] }>(`${WEB_API.userAliases}${userId ? `?ownerUserId=${encodeURIComponent(userId)}` : ''}`),
+        this.api.get<{ items: WorkspaceDeviceInviteRow[] }>(WEB_API.deviceInvites(userId)),
+        userId ? this.api.get<ApiDeviceQuota>(WEB_API.userEntitlement(userId)) : Promise.resolve(null),
       ]);
       this.devices = devices.items.map((device) => this.mapDevice(device));
       this.deviceQuota = quota;
@@ -107,7 +108,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
 
   protected override async loadWorkspaceDevices(workspaceId: string): Promise<void> {
     try {
-      const response = await this.api.get<{ items: ApiWorkspaceDevice[] }>(`/api/networks/${encodeURIComponent(workspaceId)}/devices`);
+      const response = await this.api.get<{ items: ApiWorkspaceDevice[] }>(WEB_API.networkDevices(workspaceId));
       const deviceIds = response.items.map((item) => item.deviceId);
       this.workspaceDeviceIdsByWorkspace = { ...this.workspaceDeviceIdsByWorkspace, [workspaceId]: deviceIds };
       this.workspaceDeviceJoinMethods = {
@@ -140,7 +141,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
 
   private async loadDNSZones(workspaceId: string): Promise<void> {
     try {
-      const response = await this.api.get<{ items: ApiDNSZone[] }>(`/api/networks/${encodeURIComponent(workspaceId)}/dns/zones`);
+      const response = await this.api.get<{ items: ApiDNSZone[] }>(WEB_API.dnsZones(workspaceId));
       this.dnsZones = [...this.dnsZones.filter((zone) => zone.workspaceId !== workspaceId), ...response.items.map((zone) => this.mapDNSZone(zone))];
     } catch {
       // Preview seed data remains available without the API.
@@ -149,7 +150,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
 
   private async loadDNSRecords(workspaceId: string): Promise<void> {
     try {
-      const response = await this.api.get<{ items: ApiDNSRecord[] }>(`/api/networks/${encodeURIComponent(workspaceId)}/dns/records`);
+      const response = await this.api.get<{ items: ApiDNSRecord[] }>(WEB_API.dnsRecords(workspaceId));
       this.dnsRecords = [...this.dnsRecords.filter((record) => record.workspaceId !== workspaceId), ...response.items.map((record) => this.mapDNSRecord(record))];
     } catch {
       // Preview seed data remains available without the API.
@@ -158,7 +159,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
 
   private async loadPublicMappings(workspaceId: string): Promise<void> {
     try {
-      const response = await this.api.get<{ items: ApiPublicMapping[] }>(`/api/networks/${encodeURIComponent(workspaceId)}/public-mappings`);
+      const response = await this.api.get<{ items: ApiPublicMapping[] }>(WEB_API.publicMappings(workspaceId));
       this.publicMappings = [...this.publicMappings.filter((mapping) => mapping.workspaceId !== workspaceId), ...response.items.map((mapping) => this.mapPublicMapping(mapping))];
     } catch {
       // Preview seed data remains available without the API.
@@ -167,7 +168,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
 
   private async loadSecurityResources(workspaceId: string): Promise<void> {
     try {
-      const groups = await this.api.get<{ items: ApiSecurityGroup[] }>(`/api/networks/${encodeURIComponent(workspaceId)}/security-groups`);
+      const groups = await this.api.get<{ items: ApiSecurityGroup[] }>(WEB_API.securityGroups(workspaceId));
       this.securityGroups = [
         ...this.securityGroups.filter((group) => group.workspaceId !== workspaceId),
         ...groups.items.map((group) => this.mapSecurityGroup(group)),
@@ -185,7 +186,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
 
   protected override async loadSecurityRules(securityGroupId: string): Promise<void> {
     try {
-      const rules = await this.api.get<{ items: ApiSecurityRule[] }>(`/api/security-groups/${encodeURIComponent(securityGroupId)}/rules`);
+      const rules = await this.api.get<{ items: ApiSecurityRule[] }>(WEB_API.securityRules(securityGroupId));
       this.securityRules = rules.items.map((rule) => this.mapSecurityRule(rule));
     } catch {
       // Preview seed data remains available without the API.

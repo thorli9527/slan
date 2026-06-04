@@ -2,6 +2,7 @@ package planner
 
 import (
 	"testing"
+	"time"
 
 	"github.com/slan/server/server-wire/internal/model"
 )
@@ -76,5 +77,22 @@ func TestBuildPlanRequestsRelayRenewalNearExpiry(t *testing.T) {
 
 	if !plan.RelayTicket.RenewRequired {
 		t.Fatal("expected relay ticket renewal to be required")
+	}
+}
+
+func TestBuildPlanIgnoresExpiredPathProbe(t *testing.T) {
+	plan := BuildPlan(model.PathPlanRequest{
+		Peer: model.PeerSnapshot{
+			SupportsDirectUDP: true,
+			SupportsRelayUDP:  true,
+			Probes: []model.PathProbe{
+				{Path: model.PathDirectUDP, Reachable: true, RTTMs: 1, ObservedAt: time.Now().Add(-10 * time.Minute).UnixMilli()},
+				{Path: model.PathRelayUDP, Reachable: true, RTTMs: 50, ObservedAt: time.Now().UnixMilli()},
+			},
+		},
+	})
+
+	if plan.PreferredPath != model.PathRelayUDP {
+		t.Fatalf("expected stale direct probe to be ignored, got %s", plan.PreferredPath)
 	}
 }

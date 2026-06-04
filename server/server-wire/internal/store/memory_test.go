@@ -68,3 +68,20 @@ func TestTicketKeyStatusIncludesStableKeyRingID(t *testing.T) {
 		t.Fatalf("keyRingId must change when key material changes: first=%#v second=%#v", first, second)
 	}
 }
+
+func TestUpdateActivePathCountsDerpAsDowngrade(t *testing.T) {
+	st := NewMemoryStore()
+	if _, err := st.RegisterPeer(model.PeerRegistration{PeerID: "peer-path"}); err != nil {
+		t.Fatalf("register peer: %v", err)
+	}
+	if _, err := st.UpdateActivePath("peer-path", model.PathDirectUDP); err != nil {
+		t.Fatalf("set direct path: %v", err)
+	}
+	record, err := st.UpdateActivePath("peer-path", model.PathDerpTCP443)
+	if err != nil {
+		t.Fatalf("set derp path: %v", err)
+	}
+	if record.RecentPathDowngrades != 1 || record.RecentPathUpgrades != 0 {
+		t.Fatalf("expected derp fallback to be a downgrade, got downgrades=%d upgrades=%d", record.RecentPathDowngrades, record.RecentPathUpgrades)
+	}
+}

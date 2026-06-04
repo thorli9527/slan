@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    net::{ToSocketAddrs, UdpSocket},
+    net::{TcpStream, ToSocketAddrs, UdpSocket},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -705,18 +705,37 @@ fn probe_relay_candidate(
             max_frame_payload: runtime_stats.and_then(|stats| stats.max_frame_payload),
         };
     }
+    if normalize_relay_transport(&transport) == Some("derp_tcp_tls_443") {
+        if let Some(rtt_ms) = probe_tcp_connect_rtt_ms(&candidate.address) {
+            return RelayPathHealthSample {
+                observed_rtt_ms: Some(rtt_ms),
+                packet_loss_ppm: Some(0),
+                path_score: Some(rtt_ms.saturating_add(100).min(10_500)),
+                relay_mtu: runtime_stats.and_then(|stats| stats.relay_mtu),
+                max_frame_payload: runtime_stats.and_then(|stats| stats.max_frame_payload),
+            };
+        }
+        return RelayPathHealthSample {
+            observed_rtt_ms: None,
+            packet_loss_ppm: Some(1_000_000),
+            path_score: Some(10_500),
+            relay_mtu: runtime_stats.and_then(|stats| stats.relay_mtu),
+            max_frame_payload: runtime_stats.and_then(|stats| stats.max_frame_payload),
+        };
+    }
     RelayPathHealthSample {
         observed_rtt_ms: None,
         packet_loss_ppm: None,
-        path_score: Some(1_000),
-        relay_mtu: None,
-        max_frame_payload: None,
+        path_score: Some(11_000),
+        relay_mtu: runtime_stats.and_then(|stats| stats.relay_mtu),
+        max_frame_payload: runtime_stats.and_then(|stats| stats.max_frame_payload),
     }
 }
 
 fn relay_path_type_for_transport(transport: &str) -> String {
     match normalize_relay_transport(transport).unwrap_or(transport.trim()) {
         "udp" => "relay_udp",
+        "derp_tcp_tls_443" => "derp_tcp_tls_443",
         _ => "relay",
     }
     .to_string()
@@ -725,6 +744,7 @@ fn relay_path_type_for_transport(transport: &str) -> String {
 fn relay_transport_from_path(path_type: &str) -> Option<&'static str> {
     match path_type.trim() {
         "relay_udp" => Some("udp"),
+        "derp_tcp_tls_443" => Some("derp_tcp_tls_443"),
         _ => None,
     }
 }
@@ -751,6 +771,20 @@ fn probe_udp_ping_rtt_ms(address: &str) -> Option<u32> {
     if value.get("kind").and_then(Value::as_str) != Some("pong") {
         return None;
     }
+    Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
+}
+
+fn probe_tcp_connect_rtt_ms(address: &str) -> Option<u32> {
+    let socket_addr = address
+        .trim()
+        .trim_start_matches("derp://")
+        .trim_start_matches("derp+tcp+tls://")
+        .trim_start_matches("derp_tcp_tls_443://")
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut values| values.next())?;
+    let started = Instant::now();
+    TcpStream::connect_timeout(&socket_addr, Duration::from_millis(750)).ok()?;
     Some(started.elapsed().as_millis().min(u32::MAX as u128) as u32)
 }
 

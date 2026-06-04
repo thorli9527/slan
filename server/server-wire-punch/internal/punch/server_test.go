@@ -35,7 +35,7 @@ func TestEndpointLifecycleAndConnectSession(t *testing.T) {
 		"address":   "203.0.113.11:40001",
 	})
 
-	body := requestJSON(t, handler, http.MethodPost, "/v1/connect-sessions", map[string]any{
+	body := requestJSON(t, handler, http.MethodPost, "/connect-sessions", map[string]any{
 		"networkId":       "net-a",
 		"requesterNodeId": "node-a",
 		"peerNodeId":      "node-b",
@@ -130,7 +130,7 @@ func TestMutatingHTTPRequiresDeviceTokenWhenInternalTokenIsSet(t *testing.T) {
 		"nodeId":    "node-a",
 		"address":   "203.0.113.10:40000",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/endpoints", bytes.NewReader(payload))
+	req := httptest.NewRequest(http.MethodPost, "/endpoints", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Slan-Internal-Token", "wire-token")
 	rec := httptest.NewRecorder()
@@ -139,7 +139,18 @@ func TestMutatingHTTPRequiresDeviceTokenWhenInternalTokenIsSet(t *testing.T) {
 		t.Fatalf("expected missing device token to be rejected, got status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/v1/endpoints", bytes.NewReader(payload))
+	req = httptest.NewRequest(http.MethodPost, "/endpoints", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Slan-Device-ID", "node-a")
+	req.Header.Set("X-Slan-MQTT-Username", "slan:node-a:4102444800")
+	req.Header.Set("X-Slan-Punch-Signature", "signature")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected missing internal token to be rejected, got status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/endpoints", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Slan-Internal-Token", "wire-token")
 	req.Header.Set("X-Slan-Device-ID", "node-a")
@@ -154,7 +165,7 @@ func TestMutatingHTTPRequiresDeviceTokenWhenInternalTokenIsSet(t *testing.T) {
 
 func postEndpoint(t *testing.T, handler http.Handler, body map[string]any) {
 	t.Helper()
-	_ = requestJSON(t, handler, http.MethodPost, "/v1/endpoints", body)
+	_ = requestJSON(t, handler, http.MethodPost, "/endpoints", body)
 }
 
 func requestJSON(t *testing.T, handler http.Handler, method string, path string, body map[string]any) []byte {

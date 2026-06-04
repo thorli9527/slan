@@ -61,9 +61,8 @@ type DeviceIdentityRequest struct {
 
 // PrepareDeviceLoginResponse 是设备登录准备阶段返回给客户端的信息。
 type PrepareDeviceLoginResponse struct {
-	DeviceID string          `json:"deviceId"`
-	LoginURL string          `json:"loginUrl"`
-	MQTT     *MQTTCredential `json:"mqtt,omitempty"`
+	DeviceID string `json:"deviceId"`
+	LoginURL string `json:"loginUrl"`
 }
 
 // CompleteDeviceLoginRequest 是设备登录确认请求。
@@ -109,7 +108,7 @@ type DeviceRuntimeCountersRequest struct {
 	TxBytesTotal   uint64 `json:"txBytesTotal"`
 }
 
-// DeviceSessionResponse 是设备会话接口返回的完整运行配置。
+// DeviceSessionResponse 是设备注册、绑定和续租接口返回的完整运行配置。
 type DeviceSessionResponse struct {
 	Device           Device                   `json:"device"`
 	DeviceSession    DeviceSession            `json:"deviceSession"`
@@ -118,7 +117,7 @@ type DeviceSessionResponse struct {
 	RuntimeEndpoints RuntimeEndpointsResponse `json:"runtimeEndpoints"`
 }
 
-// RuntimeEndpointsResponse 是设备登录/续租时下发的运行端点总表。
+// RuntimeEndpointsResponse 是设备注册、绑定和续租时下发的运行端点总表。
 // 客户端应以该响应覆盖本地 MQTT、UDP 打洞、UDP relay 和 TCP/DERP relay 参数。
 type RuntimeEndpointsResponse struct {
 	MQTT            *MQTTCredential          `json:"mqtt,omitempty"`

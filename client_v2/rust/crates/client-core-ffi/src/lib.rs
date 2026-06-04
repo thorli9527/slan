@@ -351,6 +351,7 @@ mod android_tun {
                             if let Some(frame) =
                                 encode_slan_relay_data_frame(seq, config_hash, &packet)
                             {
+                                let mut relay_sent = false;
                                 if let Some(payload) = encode_relay_forward(peer, &frame) {
                                     for attempt in 0..relay_send_attempt_count(&packet) {
                                         if attempt > 0 {
@@ -358,6 +359,7 @@ mod android_tun {
                                         }
                                         match peer.socket.send(&payload) {
                                             Ok(_) => {
+                                                relay_sent = true;
                                                 thread_stats
                                                     .relay_frames_sent
                                                     .fetch_add(1, Ordering::Relaxed);
@@ -373,6 +375,29 @@ mod android_tun {
                                     thread_stats
                                         .relay_write_failures
                                         .fetch_add(1, Ordering::Relaxed);
+                                }
+                                if !relay_sent {
+                                    if let Some(peer) =
+                                        derp_peer_for_packet_mut(&mut derp_peers, &packet)
+                                    {
+                                        for attempt in 0..relay_send_attempt_count(&packet) {
+                                            if attempt > 0 {
+                                                thread::sleep(relay_send_attempt_delay(&packet));
+                                            }
+                                            match send_derp_forward(peer, &frame) {
+                                                Ok(_) => {
+                                                    thread_stats
+                                                        .relay_frames_sent
+                                                        .fetch_add(1, Ordering::Relaxed);
+                                                }
+                                                Err(_) => {
+                                                    thread_stats
+                                                        .relay_write_failures
+                                                        .fetch_add(1, Ordering::Relaxed);
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         } else if let Some(peer) =

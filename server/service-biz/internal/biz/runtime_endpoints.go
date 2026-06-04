@@ -4,54 +4,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 )
-
-func (s *Server) deviceSessionResponse(device Device, session DeviceSession, configs []NetworkConfig, now time.Time) DeviceSessionResponse {
-	mqtt := deviceMQTTCredential(s.mqtt, device.DeviceID, now)
-	return DeviceSessionResponse{
-		Device:           device,
-		DeviceSession:    session,
-		MQTT:             mqtt,
-		NetworkConfigs:   ItemsResponse{Items: configs},
-		RuntimeEndpoints: s.runtimeEndpointsResponse(mqtt, configs, now),
-	}
-}
-
-func (s *Server) runtimeEndpointsResponse(mqtt *MQTTCredential, configs []NetworkConfig, now time.Time) RuntimeEndpointsResponse {
-	punchNodes := runtimePunchNodes(s.store.ActivePunchNodes())
-	if len(punchNodes) == 0 {
-		punchNodes = runtimePunchNodes(configuredPunchNodes())
-	}
-	networks := make([]RuntimeNetworkEndpoint, 0, len(configs))
-	relayCandidates := make([]RelayCandidate, 0)
-	seen := make(map[string]struct{})
-	for _, config := range configs {
-		networkCandidates := dedupeRuntimeRelayCandidates(config.RelayCandidates)
-		networks = append(networks, RuntimeNetworkEndpoint{
-			NetworkID:       config.NetworkID,
-			RelayCandidates: networkCandidates,
-		})
-		for _, candidate := range networkCandidates {
-			key := relayCandidateRuntimeKey(candidate)
-			if key == "" {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			relayCandidates = append(relayCandidates, candidate)
-		}
-	}
-	return RuntimeEndpointsResponse{
-		MQTT:            mqtt,
-		PunchNodes:      punchNodes,
-		RelayCandidates: relayCandidates,
-		Networks:        networks,
-		RefreshedAt:     now.Unix(),
-	}
-}
 
 func dedupeRuntimeRelayCandidates(candidates []RelayCandidate) []RelayCandidate {
 	out := make([]RelayCandidate, 0, len(candidates))

@@ -14,8 +14,55 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const DEFAULT_CONTROL_BASE_URL: &str = "http://47.245.40.231:28080";
+const API_AUTH_DEVICE_LOGIN_DEVICES: &str = "/api/auth/device-login-devices";
+const API_AUTH_LOGIN: &str = "/api/auth/login";
+const API_AUTH_LOGOUT: &str = "/api/auth/logout";
+const API_AUTH_RENEW: &str = "/api/auth/renew";
+const API_AUTH_CONSOLE_LOGIN_KEYS: &str = "/api/auth/console-login-keys";
+const API_DEVICE_SESSION_BOOTSTRAP: &str = "/api/device/session/bootstrap";
+const API_DEVICE_SESSION_BIND: &str = "/api/device/session/bind";
+const API_DEVICE_SESSION_RENEW: &str = "/api/device/session/renew";
+const API_DEVICES: &str = "/api/devices";
+const API_DEVICES_REGISTER: &str = "/api/devices/register";
+const API_RELAY_TICKETS: &str = "/api/relay/tickets";
 static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CLIENT_DEVICE_ID_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn api_devices_for_user(user_id: &str) -> String {
+    format!("{API_DEVICES}?userId={}", user_id.trim())
+}
+
+fn api_device_network_configs(device_id: &str) -> String {
+    format!("/api/devices/{}/network-configs", device_id.trim())
+}
+
+fn api_device_mqtt_credential(device_id: &str) -> String {
+    format!("/api/devices/{}/mqtt-credential", device_id.trim())
+}
+
+fn api_device_renew(device_id: &str) -> String {
+    format!("/api/devices/{}/renew", device_id.trim())
+}
+
+fn api_network_config(network_id: &str, device_id: &str) -> String {
+    format!(
+        "/api/networks/{}/network-config?deviceId={}",
+        network_id.trim(),
+        device_id.trim()
+    )
+}
+
+fn api_relay_candidates(network_id: &str, device_id: &str) -> String {
+    format!(
+        "/api/networks/{}/relay-candidates?deviceId={}",
+        network_id.trim(),
+        device_id.trim()
+    )
+}
+
+fn api_punch_connect_sessions(network_id: &str) -> String {
+    format!("/api/networks/{}/punch/connect-sessions", network_id.trim())
+}
 
 #[allow(dead_code)]
 pub fn set_control_base_url_override(value: &str) {
@@ -107,6 +154,12 @@ struct PunchAuthHeaders {
 #[serde(rename_all = "camelCase")]
 struct ConsoleLoginKeyResponse {
     login_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MqttCredentialResponse {
+    mqtt: Option<MqttCredential>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,8 +409,6 @@ pub struct DeviceDnsRecord {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DeviceLoginPrepareResponse {
     pub device_id: String,
-    #[serde(default)]
-    pub mqtt: Option<MqttCredential>,
 }
 
 #[derive(Debug, Serialize)]
@@ -481,7 +532,7 @@ impl ControlPlaneClient {
     }
 
     pub fn list_devices(&self, access_token: &str) -> Result<Vec<ControlDevice>> {
-        let response = self.request_json("GET", "/api/devices", access_token, None)?;
+        let response = self.request_json("GET", API_DEVICES, access_token, None)?;
         let payload: ItemsResponse<ControlDevice> =
             serde_json::from_value(response).context("decode device list")?;
         Ok(payload
@@ -503,7 +554,7 @@ impl ControlPlaneClient {
         if user_id.is_empty() {
             return self.list_devices(access_token);
         }
-        let path = format!("/api/devices?userId={user_id}");
+        let path = api_devices_for_user(user_id);
         let response = self.request_json("GET", &path, access_token, None)?;
         let payload: ItemsResponse<ControlDevice> =
             serde_json::from_value(response).context("decode device list")?;
@@ -530,8 +581,23 @@ impl ControlPlaneClient {
             );
         }
         let response =
-            self.request_json_without_auth("POST", "/api/auth/device-login-devices", Some(body))?;
+            self.request_json_without_auth("POST", API_AUTH_DEVICE_LOGIN_DEVICES, Some(body))?;
         serde_json::from_value(response).context("decode device login prepare")
+    }
+
+    pub fn device_mqtt_credential_without_auth(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<MqttCredential>> {
+        let device_id = device_id.trim();
+        if device_id.is_empty() {
+            bail!("device id is required");
+        }
+        let path = api_device_mqtt_credential(device_id);
+        let response = self.request_json_without_auth("GET", &path, None)?;
+        let payload: MqttCredentialResponse =
+            serde_json::from_value(response).context("decode device mqtt credential")?;
+        Ok(payload.mqtt)
     }
 
     pub fn login_with_password(&self, email: &str, password: &str) -> Result<AuthPayload> {
@@ -545,7 +611,7 @@ impl ControlPlaneClient {
             password,
             device_id: Some(device_id.as_str()),
         })?;
-        let response = self.request_json_without_auth("POST", "/api/auth/login", Some(body))?;
+        let response = self.request_json_without_auth("POST", API_AUTH_LOGIN, Some(body))?;
         parse_login_response(&response, email, &device_id)
     }
 
@@ -563,7 +629,7 @@ impl ControlPlaneClient {
             );
         }
         let response =
-            self.request_json_without_auth("POST", "/api/device/session/bootstrap", Some(body))?;
+            self.request_json_without_auth("POST", API_DEVICE_SESSION_BOOTSTRAP, Some(body))?;
         let mut payload: DeviceSessionResponse =
             serde_json::from_value(response).context("decode device session bootstrap")?;
         normalize_control_device(&mut payload.device);
@@ -582,12 +648,8 @@ impl ControlPlaneClient {
             "rxBytesTotal": rx_bytes_total,
             "txBytesTotal": tx_bytes_total,
         });
-        let response = self.request_json(
-            "POST",
-            "/api/device/session/renew",
-            device_token,
-            Some(body),
-        )?;
+        let response =
+            self.request_json("POST", API_DEVICE_SESSION_RENEW, device_token, Some(body))?;
         let mut payload: DeviceSessionResponse =
             serde_json::from_value(response).context("decode device session renew")?;
         normalize_control_device(&mut payload.device);
@@ -607,7 +669,7 @@ impl ControlPlaneClient {
             );
         }
         let response =
-            self.request_json("POST", "/api/device/session/bind", access_token, Some(body))?;
+            self.request_json("POST", API_DEVICE_SESSION_BIND, access_token, Some(body))?;
         let mut payload: DeviceSessionResponse =
             serde_json::from_value(response).context("decode device session bind")?;
         normalize_control_device(&mut payload.device);
@@ -618,7 +680,7 @@ impl ControlPlaneClient {
         let body = serde_json::json!({
             "deviceToken": device_token.unwrap_or_default(),
         });
-        let _ = self.request_json("POST", "/api/auth/logout", access_token, Some(body))?;
+        let _ = self.request_json("POST", API_AUTH_LOGOUT, access_token, Some(body))?;
         Ok(())
     }
 
@@ -630,7 +692,7 @@ impl ControlPlaneClient {
     ) -> Result<AuthPayload> {
         let response = self.request_json(
             "POST",
-            "/api/auth/renew",
+            API_AUTH_RENEW,
             access_token,
             Some(serde_json::json!({})),
         )?;
@@ -652,7 +714,7 @@ impl ControlPlaneClient {
         access_token: &str,
         device_id: &str,
     ) -> Result<Vec<DeviceNetworkConfig>> {
-        let path = format!("/api/devices/{device_id}/network-configs");
+        let path = api_device_network_configs(device_id);
         let response = self.request_json("GET", &path, access_token, None)?;
         let payload: ItemsResponse<DeviceNetworkConfig> =
             serde_json::from_value(response).context("decode device network configs")?;
@@ -671,6 +733,25 @@ impl ControlPlaneClient {
         let _ = (network_id, virtual_ip);
         self.renew_device(access_token, user_id, device_id, network_enabled, 0, 0)
             .map(|_| ())
+    }
+
+    pub(crate) fn renew_registered_device(
+        &self,
+        access_token: &str,
+        user_id: &str,
+        device_id: &str,
+        network_enabled: bool,
+        rx_bytes_total: u64,
+        tx_bytes_total: u64,
+    ) -> Result<ControlDevice> {
+        self.renew_device(
+            access_token,
+            user_id,
+            device_id,
+            network_enabled,
+            rx_bytes_total,
+            tx_bytes_total,
+        )
     }
 
     pub fn register_node(
@@ -701,7 +782,7 @@ impl ControlPlaneClient {
         device_id: &str,
         network_id: &str,
     ) -> Result<NetworkActivationPlan> {
-        let config_path = format!("/api/networks/{network_id}/network-config?deviceId={device_id}");
+        let config_path = api_network_config(network_id, device_id);
         let response = self.request_json("GET", &config_path, access_token, None)?;
         activation_plan_from_network_config(&response)
     }
@@ -714,6 +795,7 @@ impl ControlPlaneClient {
         dst_node_id: &str,
         derp_cluster_id: Option<&str>,
         preferred_derp_node_id: Option<&str>,
+        preferred_relay_endpoint_id: Option<&str>,
         relay_region_id: Option<&str>,
     ) -> Result<RelayTicket> {
         let body = serde_json::to_value(RelayTicketRequest {
@@ -722,11 +804,11 @@ impl ControlPlaneClient {
             dst_node_id,
             derp_cluster_id,
             preferred_derp_node_ids: preferred_derp_node_id.into_iter().collect(),
-            preferred_relay_endpoint_ids: preferred_derp_node_id.into_iter().collect(),
+            preferred_relay_endpoint_ids: preferred_relay_endpoint_id.into_iter().collect(),
             reason: "udp_relay_fallback",
             relay_region_id,
         })?;
-        let response = self.request_json("POST", "/api/relay/tickets", access_token, Some(body))?;
+        let response = self.request_json("POST", API_RELAY_TICKETS, access_token, Some(body))?;
         serde_json::from_value(response).context("decode relay ticket")
     }
 
@@ -736,7 +818,7 @@ impl ControlPlaneClient {
         device_id: &str,
         network_id: &str,
     ) -> Result<Vec<RelayCandidate>> {
-        let path = format!("/api/networks/{network_id}/relay-candidates?deviceId={device_id}");
+        let path = api_relay_candidates(network_id, device_id);
         let response = self.request_json("GET", &path, access_token, None)?;
         let payload: ItemsResponse<RelayCandidate> =
             serde_json::from_value(response).context("decode relay candidates")?;
@@ -760,7 +842,7 @@ impl ControlPlaneClient {
             peer_node_id,
             ttl_seconds: Some(60),
         })?;
-        let path = format!("/api/networks/{network_id}/punch/connect-sessions");
+        let path = api_punch_connect_sessions(network_id);
         let response = self.request_json_with_headers(
             "POST",
             &path,
@@ -802,7 +884,7 @@ impl ControlPlaneClient {
     ) -> Result<Option<String>> {
         let response = self.request_json(
             "POST",
-            "/api/auth/console-login-keys",
+            API_AUTH_CONSOLE_LOGIN_KEYS,
             access_token,
             Some(serde_json::json!({
                 "deviceId": device_id.unwrap_or_default(),
@@ -826,8 +908,7 @@ impl ControlPlaneClient {
                 Value::String(user_id.trim().to_string()),
             );
         }
-        let response =
-            self.request_json("POST", "/api/devices/register", access_token, Some(body))?;
+        let response = self.request_json("POST", API_DEVICES_REGISTER, access_token, Some(body))?;
         decode_control_device_response(response)
     }
 
@@ -846,7 +927,7 @@ impl ControlPlaneClient {
             rx_bytes_total,
             tx_bytes_total,
         })?;
-        let path = format!("/api/devices/{device_id}/renew");
+        let path = api_device_renew(device_id);
         let response = self.request_json("POST", &path, access_token, Some(body))?;
         decode_control_device_response(response)
     }
@@ -2009,6 +2090,42 @@ mod tests {
         env::remove_var("SLAN_CLIENT_DEVICE_ID");
         env::remove_var("SLAN_STATE_DIR");
         let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[test]
+    fn device_mqtt_credential_without_auth_reads_prelogin_credential() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let address = listener.local_addr().expect("local address");
+        let request_handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let request = read_http_request(&mut stream);
+            let response_body = br#"{"mqtt":{"brokerUrl":"mqtt://47.245.40.231:1883","clientId":"slan-device-1","username":"slan-device-1-4102444800","password":"mqtt-secret","topicPrefix":"slan/device-1","expiresAt":4102444800}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_body.len()
+            )
+            .expect("write response headers");
+            stream
+                .write_all(response_body)
+                .expect("write response body");
+            request
+        });
+
+        let client = ControlPlaneClient {
+            base_url: format!("http://{address}"),
+        };
+        let mqtt = client
+            .device_mqtt_credential_without_auth("device-1")
+            .expect("device mqtt credential")
+            .expect("mqtt credential");
+
+        let request = request_handle.join().expect("request handle");
+        assert!(request.starts_with("GET /api/devices/device-1/mqtt-credential HTTP/1.1"));
+        assert_eq!(mqtt.broker_url, "mqtt://47.245.40.231:1883");
+        assert_eq!(mqtt.client_id, "slan-device-1");
+        assert_eq!(mqtt.password, "mqtt-secret");
+        assert_eq!(mqtt.topic_prefix, "slan/device-1");
     }
 
     #[test]

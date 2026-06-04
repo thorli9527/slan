@@ -336,6 +336,10 @@ impl PlatformNetwork for LinuxPlatformNetwork {
 
     fn configure_relay(&self, relay_config: Option<&RelayDataPlaneConfig>) -> Result<()> {
         let mut runtime = runtime().lock().expect("linux runtime mutex poisoned");
+        if runtime.tun.is_some() && runtime.relay_config.as_ref() == relay_config {
+            eprintln!("linux configure_relay skipped unchanged config");
+            return Ok(());
+        }
         runtime.relay_config = relay_config.cloned();
         if runtime.mock_enabled {
             return Ok(());
@@ -600,6 +604,9 @@ fn attach_udp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<RelayP
     let mut peers = Vec::new();
     let mut failures = Vec::new();
     for session in &config.sessions {
+        if relay_path_kind_from_session(session) != Some(PathKind::RelayUdp) {
+            continue;
+        }
         let relay_addr = relay_udp_address_for_session(config.relay_address.as_str(), session)
             .with_context(|| format!("parse relay address {}", config.relay_address))?;
         let socket = UdpSocket::bind("0.0.0.0:0").context("bind Linux relay UDP socket")?;
@@ -621,7 +628,7 @@ fn attach_udp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<RelayP
             socket,
         });
     }
-    if peers.is_empty() {
+    if peers.is_empty() && !failures.is_empty() {
         bail!(
             "attach Linux relay sessions failed: {}",
             failures.join("; ")
@@ -986,7 +993,7 @@ fn run_udp_data_plane(
             last_direct_udp_probe = Instant::now();
         }
         match file.read(&mut tun_buffer) {
-            Ok(0) => thread::sleep(Duration::from_millis(10)),
+            Ok(0) => thread::sleep(DATA_PLANE_IDLE_SLEEP),
             Ok(packet_len) => {
                 let packet = &tun_buffer[..packet_len];
                 if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
@@ -1011,6 +1018,7 @@ fn run_udp_data_plane(
                         record_tun_tcp_packet(stats, &packet);
                         if let Some(frame) = encode_slan_relay_data_frame(seq, config_hash, &packet)
                         {
+                            let mut direct_sent = false;
                             if let Some(direct_peer_index) =
                                 direct_udp.as_ref().and_then(|transport| {
                                     transport.ready_peer_index_for_packet(&packet)
@@ -1022,6 +1030,7 @@ fn run_udp_data_plane(
                                     .send_to_peer(direct_peer_index, &frame)
                                 {
                                     Ok(_) => {
+                                        direct_sent = true;
                                         stats.last_tun_send_path =
                                             Some(PathKind::DirectUdp.as_str().to_string());
                                         record_direct_tun_packet_sent(stats, peer);
@@ -1035,27 +1044,59 @@ fn run_udp_data_plane(
                                         record_relay_send_failure(stats, peer, error.to_string())
                                     }
                                 }
-                            } else if let Some(payload) = encode_relay_forward(peer, &frame) {
-                                for attempt in 0..relay_send_attempt_count(&packet) {
-                                    if attempt > 0 {
-                                        thread::sleep(relay_send_attempt_delay(&packet));
-                                    }
-                                    match peer.socket.send(&payload) {
-                                        Ok(_) => {
-                                            stats.last_tun_send_path =
-                                                Some(PathKind::RelayUdp.as_str().to_string());
-                                            record_relay_tun_packet_sent(stats, peer);
+                            }
+                            if !direct_sent {
+                                let mut relay_sent = false;
+                                if let Some(payload) = encode_relay_forward(peer, &frame) {
+                                    for attempt in 0..relay_send_attempt_count(&packet) {
+                                        if attempt > 0 {
+                                            thread::sleep(relay_send_attempt_delay(&packet));
                                         }
-                                        Err(error) => record_relay_send_failure(
-                                            stats,
-                                            peer,
-                                            error.to_string(),
-                                        ),
+                                        match peer.socket.send(&payload) {
+                                            Ok(_) => {
+                                                relay_sent = true;
+                                                stats.last_tun_send_path =
+                                                    Some(PathKind::RelayUdp.as_str().to_string());
+                                                record_relay_tun_packet_sent(stats, peer);
+                                            }
+                                            Err(error) => record_relay_send_failure(
+                                                stats,
+                                                peer,
+                                                error.to_string(),
+                                            ),
+                                        }
+                                    }
+                                } else {
+                                    stats.last_tun_drop_reason =
+                                        Some("relay_forward_encode_failed".to_string());
+                                }
+                                if !relay_sent {
+                                    if let Some(derp_peer) =
+                                        derp_peer_for_packet_mut(&mut derp_peers, &packet)
+                                    {
+                                        for attempt in 0..relay_send_attempt_count(&packet) {
+                                            if attempt > 0 {
+                                                thread::sleep(relay_send_attempt_delay(&packet));
+                                            }
+                                            match send_derp_forward(derp_peer, &frame) {
+                                                Ok(_) => {
+                                                    stats.last_tun_send_path = Some(
+                                                        PathKind::DerpTcpTls443
+                                                            .as_str()
+                                                            .to_string(),
+                                                    );
+                                                    stats.last_tun_drop_reason = None;
+                                                    record_derp_tun_packet_sent(stats, derp_peer);
+                                                }
+                                                Err(error) => record_derp_send_failure(
+                                                    stats,
+                                                    derp_peer,
+                                                    error.to_string(),
+                                                ),
+                                            }
+                                        }
                                     }
                                 }
-                            } else {
-                                stats.last_tun_drop_reason =
-                                    Some("relay_forward_encode_failed".to_string());
                             }
                         } else {
                             stats.last_tun_drop_reason =
@@ -1111,7 +1152,7 @@ fn run_udp_data_plane(
                 }
             }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(10));
+                thread::sleep(DATA_PLANE_IDLE_SLEEP);
             }
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
             Err(_) => break,
@@ -1495,6 +1536,7 @@ fn mark_direct_peer_ready(
                 PathKind::DirectUdp.as_str()
             ));
         }
+        peer_stats.last_send_path = Some(PathKind::DirectUdp.as_str().to_string());
     }
 }
 
@@ -1789,7 +1831,10 @@ fn hedge_udp_packet_to_relay(peer: &RelayPeer, frame: &[u8], stats: &mut RelayDa
         return;
     };
     match peer.socket.send(&payload) {
-        Ok(_) => record_relay_tun_packet_sent(stats, peer),
+        Ok(_) => {
+            stats.last_tun_send_path = Some("direct_udp+relay_udp".to_string());
+            record_relay_tun_packet_sent(stats, peer);
+        }
         Err(error) => record_relay_send_failure(stats, peer, error.to_string()),
     }
 }

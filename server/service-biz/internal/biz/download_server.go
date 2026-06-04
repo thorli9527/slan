@@ -20,7 +20,7 @@ func clientDownloadDir() string {
 }
 
 func (s *Server) listClientDownloads(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListClientDownloads(false)})
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Download.ListClientDownloads(false)})
 }
 
 func (s *Server) downloadClientFile(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +94,7 @@ func (s *Server) opsListClientDownloads(w http.ResponseWriter, r *http.Request) 
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.store.ListClientDownloads(true)})
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Download.ListClientDownloads(true)})
 }
 
 func (s *Server) opsUploadClientDownload(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +151,7 @@ func (s *Server) opsUploadClientDownload(w http.ResponseWriter, r *http.Request)
 		writeError(w, closeErr)
 		return
 	}
-	download, err := s.store.UpsertClientDownload(ClientDownload{
+	download, err := s.services.Download.UpsertClientDownload(ClientDownload{
 		Platform:     platform,
 		Version:      version,
 		Arch:         arch,
@@ -176,12 +176,12 @@ func (s *Server) opsDeleteClientDownload(w http.ResponseWriter, r *http.Request)
 		writeError(w, err)
 		return
 	}
-	item, err := s.store.GetClientDownload(r.PathValue("downloadId"))
+	item, err := s.services.Download.GetClientDownload(r.PathValue("downloadId"))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if err := s.store.DeleteClientDownload(item.DownloadID); err != nil {
+	if err := s.services.Download.DeleteClientDownload(item.DownloadID); err != nil {
 		writeError(w, err)
 		return
 	}

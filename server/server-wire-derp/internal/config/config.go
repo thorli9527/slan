@@ -20,6 +20,9 @@ type Config struct {
 	Priority          int
 	Enabled           bool
 	HeartbeatInterval time.Duration
+	ReadBufferBytes   int
+	WriteBufferBytes  int
+	SendAckEnabled    bool
 }
 
 func Load() Config {
@@ -43,6 +46,9 @@ func Load() Config {
 		Priority:          envInt("SLAN_WIRE_DERP_PRIORITY", 100),
 		Enabled:           envBool("SLAN_WIRE_DERP_ENABLED", true),
 		HeartbeatInterval: time.Duration(envInt("SLAN_WIRE_DERP_HEARTBEAT_SECONDS", 30)) * time.Second,
+		ReadBufferBytes:   envInt("SLAN_WIRE_DERP_READ_BUFFER_BYTES", 4*1024*1024),
+		WriteBufferBytes:  envInt("SLAN_WIRE_DERP_WRITE_BUFFER_BYTES", 4*1024*1024),
+		SendAckEnabled:    envBool("SLAN_WIRE_DERP_SEND_ACK_ENABLED", false),
 	}
 }
 

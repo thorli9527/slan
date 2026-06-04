@@ -19,8 +19,8 @@ type StreamStore interface {
 	Connect(conn net.Conn, peerID, nodeID, regionID string, ticket protocol.DerpTicket) (Session, int64, error)
 	// TouchPeer 刷新 peer 最近活跃时间。
 	TouchPeer(peerID string)
-	// BindSessionPeer 把会话绑定到目标 peer，用于后续转发。
-	BindSessionPeer(sessionID, targetPeerID string) (Session, error)
+	// BindSessionPeer 校验当前 peer 属于会话，并把会话绑定到目标 peer。
+	BindSessionPeer(sessionID, currentPeerID, targetPeerID string) (Session, error)
 	// Disconnect 移除 peer 连接以及关联会话。
 	Disconnect(peerID string)
 }

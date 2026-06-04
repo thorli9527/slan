@@ -2098,24 +2098,34 @@ where
                     );
                 }
             };
-            if let Some(mqtt) = login.mqtt.clone() {
-                let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
-                if let Err(error) = persist_session(&session) {
+            let mqtt = match ControlPlaneClient::from_env()
+                .device_mqtt_credential_without_auth(&login.device_id)
+            {
+                Ok(Some(mqtt)) => mqtt,
+                Ok(None) => {
                     return state_with_error(
                         runtime.state(),
-                        format!("保存设备登录配置失败: {error:#}"),
+                        "准备设备登录失败: 服务端未下发 MQTT 凭据".to_string(),
                     );
                 }
-                log_service_error(format!(
-                    "client-core-service prepared browser login device={} mqttReady=true",
-                    login.device_id
-                ));
-            } else {
-                log_service_error(format!(
-                    "client-core-service prepared browser login device={} mqttReady=false",
-                    login.device_id
-                ));
+                Err(error) => {
+                    return state_with_error(
+                        runtime.state(),
+                        format!("准备设备 MQTT 连接失败: {error:#}"),
+                    );
+                }
+            };
+            let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
+            if let Err(error) = persist_session(&session) {
+                return state_with_error(
+                    runtime.state(),
+                    format!("保存设备登录配置失败: {error:#}"),
+                );
             }
+            log_service_error(format!(
+                "client-core-service prepared browser login device={} mqttReady=true",
+                login.device_id
+            ));
             return runtime.request_browser_login(Some(login.device_id));
         }
         ClientCommand::LoginWithPassword(payload) => {
@@ -2661,39 +2671,56 @@ fn build_relay_data_plane_config(
     let punch_sessions =
         create_punch_connect_sessions(client, session, network_id, local_node_id, peers);
 
+    let relay_candidates = select_relay_candidates(&runtime_relay_candidates());
+    let relay_targets = relay_session_targets(best_relay, &relay_candidates);
     let sessions = peers
         .iter()
         .filter(|peer| peer.relay_allowed)
         .filter(|peer| peer.node_id != local_node_id)
-        .filter_map(|peer| {
+        .flat_map(|peer| {
+            let mut sessions = Vec::new();
             if let Some(session) = connect_plans.get(&peer.node_id).and_then(|plan| {
                 relay_session_from_connect_plan_ticket(plan, network_id, local_node_id, peer)
             }) {
-                return Some(session);
+                sessions.push(session);
             }
-            match client.issue_relay_ticket(
-                &session.access_token,
-                network_id,
-                local_node_id,
-                peer.node_id.as_str(),
-                relay.cluster_id.as_deref(),
-                Some(relay.endpoint_id.as_str()),
-                relay.region_id.as_deref(),
-            ) {
-                Ok(ticket) => Some(RelayPeerSession {
-                    session_id: ticket.session_id.clone(),
-                    peer_node_id: peer.node_id.clone(),
-                    peer_virtual_ips: peer.virtual_ips.clone(),
-                    ticket,
-                }),
-                Err(error) => {
-                    log_service_error(format!(
-                        "client-core-service issue relay ticket skipped: peerNodeId={} error={error:#}",
-                        peer.node_id
-                    ));
-                    None
+            for target in &relay_targets {
+                if sessions
+                    .iter()
+                    .any(|session| relay_session_matches_candidate(session, target))
+                {
+                    continue;
+                }
+                let transport = normalize_relay_transport(target.transport.as_str()).unwrap_or("udp");
+                let preferred_derp_node_id =
+                    (transport == "derp_tcp_tls_443").then_some(target.endpoint_id.as_str());
+                let preferred_relay_endpoint_id =
+                    (transport != "derp_tcp_tls_443").then_some(target.endpoint_id.as_str());
+                match client.issue_relay_ticket(
+                    &session.access_token,
+                    network_id,
+                    local_node_id,
+                    peer.node_id.as_str(),
+                    target.cluster_id.as_deref(),
+                    preferred_derp_node_id,
+                    preferred_relay_endpoint_id,
+                    target.region_id.as_deref(),
+                ) {
+                    Ok(ticket) => sessions.push(RelayPeerSession {
+                        session_id: ticket.session_id.clone(),
+                        peer_node_id: peer.node_id.clone(),
+                        peer_virtual_ips: peer.virtual_ips.clone(),
+                        ticket,
+                    }),
+                    Err(error) => {
+                        log_service_error(format!(
+                            "client-core-service issue relay ticket skipped: peerNodeId={} endpointId={} transport={} error={error:#}",
+                            peer.node_id, target.endpoint_id, target.transport
+                        ));
+                    }
                 }
             }
+            sessions
         })
         .collect::<Vec<_>>();
     let policy = relay_payload_policy(
@@ -2725,7 +2752,7 @@ fn build_relay_data_plane_config(
             peers,
             local_node_id,
             relay,
-            &select_relay_candidates(&runtime_relay_candidates()),
+            &relay_candidates,
             &sessions,
             Some(connect_plans),
             Some(punch_sessions),
@@ -2758,9 +2785,6 @@ fn peer_path_configs(
             let punch_session = punch_sessions
                 .as_ref()
                 .and_then(|sessions| sessions.get(&peer.node_id));
-            let relay_session = relay_sessions
-                .iter()
-                .find(|session| session.peer_node_id == peer.node_id);
             let mut candidates = Vec::new();
             let mut direct_addresses = Vec::new();
             if let Some(address) = punch_session.and_then(punch_peer_direct_udp_address) {
@@ -2782,9 +2806,12 @@ fn peer_path_configs(
                         }
                         direct_addresses.push(address.to_string());
                         candidates.push(direct_path_candidate(kind, address));
-                    } else if let Some(candidate) =
-                        relay_path_candidate_from_connect_plan(path, relay_session, relay)
-                    {
+                    } else if let Some(candidate) = relay_path_candidate_from_connect_plan(
+                        path,
+                        relay_sessions,
+                        relay,
+                        &peer.node_id,
+                    ) {
                         push_unique_relay_path_candidate(&mut candidates, candidate);
                     }
                 }
@@ -2800,7 +2827,9 @@ fn peer_path_configs(
                 direct_addresses.push(address.to_string());
                 Some(direct_path_candidate(PathKind::DirectUdp, address))
             }));
-            if let Some(session) = relay_session {
+            if let Some(selected_session) =
+                relay_session_for_candidate(relay_sessions, &peer.node_id, relay)
+            {
                 let relay_transport = normalize_relay_transport(&relay.transport).unwrap_or("udp");
                 let relay_path_kind =
                     relay_path_kind_for_transport(relay_transport).unwrap_or(PathKind::RelayUdp);
@@ -2811,7 +2840,7 @@ fn peer_path_configs(
                         state: PathState::Standby,
                         endpoint_id: Some(relay.endpoint_id.clone()),
                         address: Some(relay.address.clone()),
-                        session_id: Some(session.session_id.clone()),
+                        session_id: Some(selected_session.session_id.clone()),
                         transport: Some(relay_transport.to_string()),
                         rtt_ms: relay.rtt_ms,
                         path_score: Some(relay.path_score),
@@ -2868,6 +2897,64 @@ fn relay_session_from_connect_plan_ticket(
         peer_virtual_ips: peer.virtual_ips.clone(),
         ticket: ticket.clone(),
     })
+}
+
+fn relay_session_targets(
+    best_relay: Option<&RelayCandidateSelection>,
+    relay_candidates: &[RelayCandidateSelection],
+) -> Vec<RelayCandidateSelection> {
+    let mut targets = Vec::new();
+    if let Some(relay) = best_relay {
+        push_unique_relay_target(&mut targets, relay.clone());
+    }
+    for transport in ["udp", "derp_tcp_tls_443"] {
+        if let Some(relay) = relay_candidates.iter().find(|candidate| {
+            candidate.reachable
+                && normalize_relay_transport(candidate.transport.as_str()) == Some(transport)
+        }) {
+            push_unique_relay_target(&mut targets, relay.clone());
+        }
+    }
+    targets
+}
+
+fn push_unique_relay_target(
+    targets: &mut Vec<RelayCandidateSelection>,
+    candidate: RelayCandidateSelection,
+) {
+    if targets.iter().any(|existing| {
+        normalize_relay_transport(existing.transport.as_str())
+            == normalize_relay_transport(candidate.transport.as_str())
+            && existing.address == candidate.address
+    }) {
+        return;
+    }
+    targets.push(candidate);
+}
+
+fn relay_session_for_candidate<'a>(
+    sessions: &'a [RelayPeerSession],
+    peer_node_id: &str,
+    candidate: &RelayCandidateSelection,
+) -> Option<&'a RelayPeerSession> {
+    sessions.iter().find(|session| {
+        session.peer_node_id == peer_node_id && relay_session_matches_candidate(session, candidate)
+    })
+}
+
+fn relay_session_matches_candidate(
+    session: &RelayPeerSession,
+    candidate: &RelayCandidateSelection,
+) -> bool {
+    let Some(transport) = normalize_relay_transport(candidate.transport.as_str()) else {
+        return false;
+    };
+    let Some(session_address) =
+        normalize_relay_candidate_address(session.ticket.relay_url.as_str(), transport)
+    else {
+        return false;
+    };
+    session_address == candidate.address
 }
 
 fn relay_ticket_matches_peer(
@@ -2949,8 +3036,9 @@ fn punch_peer_direct_udp_address(session: &PunchConnectSession) -> Option<String
 
 fn relay_path_candidate_from_connect_plan(
     path: &PersistedConnectPlanPath,
-    relay_session: Option<&RelayPeerSession>,
+    relay_sessions: &[RelayPeerSession],
     selected_relay: &RelayCandidateSelection,
+    peer_node_id: &str,
 ) -> Option<PathCandidate> {
     let transport = relay_transport_for_path_type(path.path_type.as_str())?;
     let address = normalize_relay_candidate_address(path.endpoint.as_str(), transport)?;
@@ -2958,14 +3046,18 @@ fn relay_path_candidate_from_connect_plan(
     let selected_transport = normalize_relay_transport(selected_relay.transport.as_str());
     let uses_selected_relay =
         selected_transport == Some(transport) && selected_relay.address == address;
+    let relay_session = relay_sessions.iter().find(|session| {
+        session.peer_node_id == peer_node_id
+            && normalize_relay_candidate_address(session.ticket.relay_url.as_str(), transport)
+                .as_deref()
+                == Some(address.as_str())
+    });
     Some(PathCandidate {
         kind,
         state: PathState::Standby,
         endpoint_id: uses_selected_relay.then(|| selected_relay.endpoint_id.clone()),
         address: Some(address),
-        session_id: relay_session
-            .filter(|_| uses_selected_relay)
-            .map(|session| session.session_id.clone()),
+        session_id: relay_session.map(|session| session.session_id.clone()),
         transport: Some(transport.to_string()),
         rtt_ms: None,
         path_score: u32::try_from(path.priority).ok(),
@@ -3112,11 +3204,58 @@ where
         ));
     };
     let client = ControlPlaneClient::from_env();
-    let devices = client.list_devices(&session.access_token)?;
-    let Some(device) = devices.into_iter().find(|item| item.device_id == device_id) else {
-        return Err(anyhow::anyhow!(
-            "device unavailable: current device is not registered"
-        ));
+    if session.session_kind == "device" {
+        session = ensure_session_device_registered(session)?;
+        let refreshed_device_id = session
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("device unavailable: current device is not registered")
+            })?;
+        if refreshed_device_id != device_id {
+            return Err(anyhow::anyhow!(
+                "device unavailable: current device is not registered"
+            ));
+        }
+        let virtual_ip = session
+            .virtual_ip
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("device unavailable: current device has no assigned virtual IP")
+            })?;
+        let prefix_len = session.active_network_id.as_deref().and_then(|network_id| {
+            client
+                .network_prefix_len(&session.access_token, network_id, None)
+                .ok()
+        });
+        let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
+            virtual_ip,
+            prefix_len,
+        }));
+        if runtime.state().network_enabled {
+            activate_control_network_for_session(runtime, &mut session)?;
+        }
+        return persist_session(&session);
+    }
+    let network_enabled = runtime.state().network_enabled;
+    let device = match client.renew_registered_device(
+        &session.access_token,
+        &session.user_id,
+        &device_id,
+        network_enabled,
+        0,
+        0,
+    ) {
+        Ok(device) => device,
+        Err(error) if error.to_string().contains("HTTP 404") => client.ensure_device_for_user(
+            &session.access_token,
+            &session.user_id,
+            Some(&device_id),
+        )?,
+        Err(error) => return Err(error),
     };
     sync_session_device_fields(&mut session, &device);
     if !control_device_network_available(&device) {

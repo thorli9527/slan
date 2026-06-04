@@ -66,11 +66,7 @@ func (s *Server) createPunchConnectSession(w http.ResponseWriter, r *http.Reques
 		Username:  r.Header.Get("X-Slan-MQTT-Username"),
 		Signature: r.Header.Get("X-Slan-Punch-Signature"),
 	}
-	if err := s.store.AuthorizePunchConnect(networkID, req.RequesterNodeID, req.PeerNodeID, auth, s.mqtt); err != nil {
-		writeError(w, err)
-		return
-	}
-	response, status, err := requestPunchConnectSession(r.Context(), s.store.ActivePunchNodes(), networkID, req.RequesterNodeID, req.PeerNodeID, req.TTLSeconds, auth)
+	response, status, err := s.services.Punch.CreateConnectSession(r.Context(), networkID, req, auth)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -81,9 +77,6 @@ func (s *Server) createPunchConnectSession(w http.ResponseWriter, r *http.Reques
 func requestPunchConnectSession(ctx context.Context, nodes []OpsPunchNode, networkID, requesterNodeID, peerNodeID string, ttlSeconds int, auth punchDeviceAuth) (map[string]any, int, error) {
 	if strings.TrimSpace(auth.DeviceID) == "" || strings.TrimSpace(auth.Username) == "" || strings.TrimSpace(auth.Signature) == "" {
 		return nil, 0, errUnauthorized
-	}
-	if len(nodes) == 0 {
-		nodes = configuredPunchNodes()
 	}
 	if len(nodes) == 0 {
 		return nil, 0, errUnavailable
@@ -134,7 +127,7 @@ func punchNodeBaseURL(node OpsPunchNode) string {
 func postPunchConnectSession(ctx context.Context, baseURL string, body []byte, auth punchDeviceAuth) (map[string]any, int, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, punchRequestTimeout)
 	defer cancel()
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL+"/v1/connect-sessions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL+"/connect-sessions", bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, err
 	}

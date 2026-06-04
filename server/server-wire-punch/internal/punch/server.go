@@ -8,16 +8,16 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/slan/server/server-wire-punch/internal/config"
 )
 
 // Server 同时承载 punch UDP 探测入口和 HTTP 管理/协商入口。
 type Server struct {
-	conn  *net.UDPConn
-	store Repository
-	cfg   config.Config
+	conn    *net.UDPConn
+	store   Repository
+	service *Service
+	cfg     config.Config
 }
 
 // UDPMessage 是 punch UDP 数据面使用的轻量消息格式。
@@ -55,10 +55,17 @@ func NewServerWithRepository(cfg config.Config, store Repository) (*Server, erro
 		store = NewStore()
 	}
 	return &Server{
-		conn:  conn,
-		store: store,
-		cfg:   cfg,
+		conn:    conn,
+		store:   store,
+		service: NewService(store, cfg),
+		cfg:     cfg,
 	}, nil
+}
+
+func (s *Server) ensureService() {
+	if s.service == nil {
+		s.service = NewService(s.store, s.cfg)
+	}
 }
 
 // Serve 启动 HTTP 协商入口，并在当前 goroutine 中处理 UDP 探测包。
@@ -91,21 +98,23 @@ func (s *Server) Serve() error {
 
 // Handler 返回 punch 服务 HTTP 路由，包含健康检查、端点和协商会话接口。
 func (s *Server) Handler() http.Handler {
+	s.ensureService()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "server-wire-punch"})
 	})
-	mux.HandleFunc("/v1/stats", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, s.store.Stats())
+	mux.HandleFunc("/stats", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, s.service.Stats())
 	})
-	mux.HandleFunc("/v1/endpoints", s.handleEndpointCollection)
-	mux.HandleFunc("/v1/endpoints/", s.handleEndpointItem)
-	mux.HandleFunc("/v1/connect-sessions", s.handleConnectSessions)
-	mux.HandleFunc("/v1/connect-sessions/", s.handleConnectSessionItem)
+	mux.HandleFunc("/endpoints", s.handleEndpointCollection)
+	mux.HandleFunc("/endpoints/", s.handleEndpointItem)
+	mux.HandleFunc("/connect-sessions", s.handleConnectSessions)
+	mux.HandleFunc("/connect-sessions/", s.handleConnectSessionItem)
 	return mux
 }
 
 func (s *Server) handlePacket(addr *net.UDPAddr, payload []byte) error {
+	s.ensureService()
 	var msg UDPMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
 		return fmt.Errorf("decode punch packet: %w", err)
@@ -114,7 +123,14 @@ func (s *Server) handlePacket(addr *net.UDPAddr, payload []byte) error {
 	case "ping":
 		return s.write(addr, map[string]any{"kind": "pong"})
 	case "endpoint_probe", "endpoint_report":
-		endpoint, err := s.upsertEndpoint(msg.NetworkID, msg.NodeID, msg.Type, msg.Address, msg.NATType, addr.String(), "")
+		endpoint, err := s.service.UpsertEndpoint(EndpointReport{
+			NetworkID:    msg.NetworkID,
+			NodeID:       msg.NodeID,
+			Type:         msg.Type,
+			Address:      msg.Address,
+			NATType:      msg.NATType,
+			ObservedFrom: addr.String(),
+		})
 		if err != nil {
 			return err
 		}
@@ -149,7 +165,15 @@ func (s *Server) handleEndpointCollection(w http.ResponseWriter, r *http.Request
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
 			return
 		}
-		endpoint, err := s.upsertEndpoint(req.NetworkID, req.NodeID, req.Type, req.Address, req.NATType, remoteAddress(r), r.UserAgent())
+		endpoint, err := s.service.UpsertEndpoint(EndpointReport{
+			NetworkID:    req.NetworkID,
+			NodeID:       req.NodeID,
+			Type:         req.Type,
+			Address:      req.Address,
+			NATType:      req.NATType,
+			ObservedFrom: remoteAddress(r),
+			UserAgent:    r.UserAgent(),
+		})
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -165,12 +189,12 @@ func (s *Server) handleEndpointItem(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/endpoints/"), "/")
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/endpoints/"), "/")
 	if len(parts) != 2 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
 	}
-	endpoint, ok := s.store.Endpoint(parts[0], parts[1])
+	endpoint, ok := s.service.Endpoint(parts[0], parts[1])
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "endpoint_not_found"})
 		return
@@ -205,11 +229,16 @@ func (s *Server) handleConnectSessions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "networkId requesterNodeId peerNodeId are required"})
 		return
 	}
-	ttl := s.cfg.SessionTTL
-	if req.TTLSeconds > 0 {
-		ttl = time.Duration(req.TTLSeconds) * time.Second
+	session, err := s.service.CreateConnectSession(ConnectSessionRequest{
+		NetworkID:       req.NetworkID,
+		RequesterNodeID: req.RequesterNodeID,
+		PeerNodeID:      req.PeerNodeID,
+		TTLSeconds:      req.TTLSeconds,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
-	session := s.store.CreateSession(req.NetworkID, req.RequesterNodeID, req.PeerNodeID, ttl)
 	s.notifyConnectSession(session)
 	writeJSON(w, http.StatusOK, session)
 }
@@ -219,42 +248,13 @@ func (s *Server) handleConnectSessionItem(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	sessionID := strings.TrimPrefix(r.URL.Path, "/v1/connect-sessions/")
-	session, ok := s.store.Session(sessionID)
+	sessionID := strings.TrimPrefix(r.URL.Path, "/connect-sessions/")
+	session, ok := s.service.Session(sessionID)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session_not_found"})
 		return
 	}
 	writeJSON(w, http.StatusOK, session)
-}
-
-func (s *Server) upsertEndpoint(networkID, nodeID, endpointType, address, natType, observedFrom, userAgent string) (Endpoint, error) {
-	networkID = strings.TrimSpace(networkID)
-	nodeID = strings.TrimSpace(nodeID)
-	if networkID == "" || nodeID == "" {
-		return Endpoint{}, errors.New("networkId and nodeId are required")
-	}
-	now := time.Now()
-	reflexive := strings.TrimSpace(observedFrom)
-	if reflexive == "" {
-		reflexive = strings.TrimSpace(address)
-	}
-	endpoint := Endpoint{
-		NetworkID:    networkID,
-		NodeID:       nodeID,
-		Type:         defaultString(endpointType, "reflexive"),
-		Address:      strings.TrimSpace(address),
-		Reflexive:    reflexive,
-		NATType:      defaultString(natType, "unknown"),
-		UpdatedAt:    now,
-		ExpiresAt:    now.Add(s.cfg.EndpointTTL),
-		UserAgent:    userAgent,
-		ObservedFrom: strings.TrimSpace(observedFrom),
-	}
-	if endpoint.Address == "" {
-		endpoint.Address = endpoint.Reflexive
-	}
-	return s.store.PutEndpoint(endpoint), nil
 }
 
 func (s *Server) write(addr *net.UDPAddr, body map[string]any) error {
@@ -321,6 +321,9 @@ func (s *Server) authorizedDevice(r *http.Request) bool {
 	token := strings.TrimSpace(s.cfg.InternalWireToken)
 	if token == "" || strings.Contains(strings.ToLower(token), "change-me") {
 		return true
+	}
+	if !s.authorized(r) {
+		return false
 	}
 	return strings.TrimSpace(r.Header.Get("X-Slan-Device-ID")) != "" &&
 		strings.TrimSpace(r.Header.Get("X-Slan-MQTT-Username")) != "" &&

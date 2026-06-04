@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,10 @@ type Config struct {
 	Priority          int
 	Enabled           bool
 	HeartbeatInterval time.Duration
+	PacketWorkers     int
+	ReadBufferBytes   int
+	WriteBufferBytes  int
+	ForwardAckEnabled bool
 }
 
 func Load() Config {
@@ -45,6 +50,10 @@ func Load() Config {
 		Priority:          envInt("SLAN_WIRE_RELAY_PRIORITY", 100),
 		Enabled:           envBool("SLAN_WIRE_RELAY_ENABLED", true),
 		HeartbeatInterval: time.Duration(envInt("SLAN_WIRE_RELAY_HEARTBEAT_SECONDS", 30)) * time.Second,
+		PacketWorkers:     envInt("SLAN_WIRE_RELAY_PACKET_WORKERS", defaultPacketWorkers()),
+		ReadBufferBytes:   envInt("SLAN_WIRE_RELAY_READ_BUFFER_BYTES", 16*1024*1024),
+		WriteBufferBytes:  envInt("SLAN_WIRE_RELAY_WRITE_BUFFER_BYTES", 16*1024*1024),
+		ForwardAckEnabled: envBool("SLAN_WIRE_RELAY_FORWARD_ACK_ENABLED", false),
 	}
 }
 
@@ -129,6 +138,17 @@ func envBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return strings.EqualFold(value, "true") || value == "1" || strings.EqualFold(value, "yes")
+}
+
+func defaultPacketWorkers() int {
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 2 {
+		return 2
+	}
+	if workers > 8 {
+		return 8
+	}
+	return workers
 }
 
 func listenHost(addr string) string {

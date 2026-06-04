@@ -25,12 +25,13 @@ import {
   WorkspacePanel,
   WorkspaceRow,
 } from '../app.models';
+import { WEB_API } from '../api-paths';
 
 
 export abstract class AppComponentSecurity extends AppComponentDns {
   async removeSecurityGroup(group: SecurityGroupRow): Promise<void> {
     try {
-      await this.api.delete(`/api/networks/${encodeURIComponent(group.workspaceId)}/security-groups/${encodeURIComponent(group.securityGroupId)}`);
+      await this.api.delete(WEB_API.securityGroup(group.workspaceId, group.securityGroupId));
     } catch {
       // Local preview mode removes below.
     }
@@ -55,7 +56,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
       return;
     }
     try {
-      const created = await this.api.post<ApiSecurityGroup>(`/api/networks/${encodeURIComponent(this.selectedWorkspaceId)}/security-groups`, {
+      const created = await this.api.post<ApiSecurityGroup>(WEB_API.securityGroups(this.selectedWorkspaceId), {
         name: this.securityGroupName.trim(),
         defaultPolicy: this.securityGroupDefaultPolicy,
       });
@@ -159,7 +160,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
     const portTo = this.rulePort === 'all' ? 0 : Number.parseInt(this.rulePort.split(',').at(-1) ?? this.rulePort, 10) || portFrom;
     if (this.ruleDialogMode === 'edit' && this.editingRule) {
       try {
-        const updated = await this.api.patch<ApiSecurityRule>(`/api/security-groups/rules/${encodeURIComponent(this.editingRule.ruleId ?? '')}`, {
+        const updated = await this.api.patch<ApiSecurityRule>(WEB_API.securityRule(this.editingRule.ruleId ?? ''), {
           direction: this.ruleDirection,
           priority: this.rulePriority,
           action: this.ruleAction,
@@ -185,7 +186,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
       return;
     }
     try {
-      const created = await this.api.post<ApiSecurityRule>(`/api/security-groups/${encodeURIComponent(this.selectedSecurityGroupId)}/rules`, {
+      const created = await this.api.post<ApiSecurityRule>(WEB_API.securityRules(this.selectedSecurityGroupId), {
         direction: this.ruleDirection,
         priority: this.rulePriority,
         action: this.ruleAction,
@@ -209,7 +210,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
 
   async removeSecurityRule(rule: SecurityRuleRow): Promise<void> {
     try {
-      await this.api.delete(`/api/security-groups/rules/${encodeURIComponent(rule.ruleId ?? '')}`);
+      await this.api.delete(WEB_API.securityRule(rule.ruleId ?? ''));
     } catch {
       // Local preview mode removes below.
     }

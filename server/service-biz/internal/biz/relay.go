@@ -21,9 +21,6 @@ func (s *Store) RelayCandidates(networkID, deviceID string) ([]RelayCandidate, e
 		return nil, err
 	}
 	candidates := s.activeRelayCandidatesLocked()
-	if len(candidates) == 0 {
-		candidates = configuredRelayCandidates()
-	}
 	return candidates, nil
 }
 
@@ -45,9 +42,6 @@ func (s *Store) IssueRelayTicket(networkID, srcNodeID, dstNodeID, derpClusterID 
 		return RelayTicket{}, err
 	}
 	candidates := s.activeRelayCandidatesLocked()
-	if len(candidates) == 0 {
-		candidates = configuredRelayCandidates()
-	}
 	if len(candidates) == 0 {
 		return RelayTicket{}, errNotFound
 	}
