@@ -141,7 +141,11 @@ func (s *Server) prepareDeviceLoginDevice(w http.ResponseWriter, r *http.Request
 		return
 	}
 	log.Printf("device login prepared device=%s platform=%s", device.DeviceID, strings.TrimSpace(req.Platform))
-	writeJSON(w, http.StatusCreated, PrepareDeviceLoginResponse{DeviceID: device.DeviceID, LoginURL: deviceLoginDeviceURL(device.DeviceID)})
+	writeJSON(w, http.StatusCreated, PrepareDeviceLoginResponse{
+		DeviceID: device.DeviceID,
+		LoginURL: deviceLoginDeviceURL(device.DeviceID),
+		MQTT:     deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow()),
+	})
 }
 
 func (s *Server) completeDeviceLoginDevice(w http.ResponseWriter, r *http.Request) {

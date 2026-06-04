@@ -1486,9 +1486,8 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
             let login = ControlPlaneClient::from_env()
                 .prepare_device_login(&device_id, std::env::consts::OS)
                 .context("prepare embedded device login")?;
-            let mqtt = ControlPlaneClient::from_env()
-                .device_mqtt_credential_without_auth(&login.device_id)
-                .context("prepare embedded device mqtt credential")?
+            let mqtt = login
+                .mqtt
                 .ok_or_else(|| anyhow::anyhow!("server did not return mqtt credential"))?;
             let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
             persist_session(&session)?;

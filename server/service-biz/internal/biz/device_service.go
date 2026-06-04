@@ -1,16 +1,32 @@
 package biz
 
+import "strings"
+
 // DeviceService 承载设备注册、会话绑定、续租和可见性相关业务实现。
 type DeviceService struct {
 	store BusinessStore
 }
 
-func (s DeviceService) RegisterDevice(req RegisterDeviceRequest) (Device, NetworkDevice, error) {
-	return s.store.RegisterDevice(req.UserID, req.DeviceID, req.Name, req.Platform, req.OSName, req.OSVersion, req.Alias, req.PublicKey)
+func (s DeviceService) RegisterDevice(accessToken string, req RegisterDeviceRequest) (Device, NetworkDevice, error) {
+	if strings.TrimSpace(accessToken) == "" {
+		return Device{}, NetworkDevice{}, errUnauthorized
+	}
+	auth, err := s.store.AuthByToken(accessToken)
+	if err != nil {
+		return Device{}, NetworkDevice{}, err
+	}
+	return s.store.RegisterDevice(auth.User.UserID, req.DeviceID, req.Name, req.Platform, req.OSName, req.OSVersion, req.Alias, req.PublicKey)
 }
 
-func (s DeviceService) RenewDevice(deviceID string, req RenewDeviceRequest) (Device, []NetworkConfig, error) {
-	return s.store.RenewDevice(deviceID, req.UserID, req.NetworkEnabled, req.RxBytesTotal, req.TxBytesTotal)
+func (s DeviceService) RenewDevice(accessToken, deviceID string, req RenewDeviceRequest) (Device, []NetworkConfig, error) {
+	if strings.TrimSpace(accessToken) == "" {
+		return Device{}, nil, errUnauthorized
+	}
+	auth, err := s.store.AuthByToken(accessToken)
+	if err != nil {
+		return Device{}, nil, err
+	}
+	return s.store.RenewDevice(deviceID, auth.User.UserID, req.NetworkEnabled, req.RxBytesTotal, req.TxBytesTotal)
 }
 
 func (s DeviceService) BootstrapDeviceSession(req DeviceSessionBootstrapRequest) (Device, DeviceSession, []NetworkConfig, error) {

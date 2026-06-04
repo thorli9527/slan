@@ -61,8 +61,9 @@ type DeviceIdentityRequest struct {
 
 // PrepareDeviceLoginResponse 是设备登录准备阶段返回给客户端的信息。
 type PrepareDeviceLoginResponse struct {
-	DeviceID string `json:"deviceId"`
-	LoginURL string `json:"loginUrl"`
+	DeviceID string          `json:"deviceId"`
+	LoginURL string          `json:"loginUrl"`
+	MQTT     *MQTTCredential `json:"mqtt,omitempty"`
 }
 
 // CompleteDeviceLoginRequest 是设备登录确认请求。

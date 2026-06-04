@@ -5,15 +5,48 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 )
 
 func (s *Server) deviceMQTTCredential(w http.ResponseWriter, r *http.Request) {
-	device, err := s.services.MQTT.Device(r.PathValue("deviceId"))
+	deviceID := r.PathValue("deviceId")
+	if err := s.authorizeMQTTCredentialRequest(r, deviceID); err != nil {
+		writeError(w, err)
+		return
+	}
+	device, err := s.services.MQTT.Device(deviceID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"mqtt": deviceMQTTCredential(s.mqtt, device.DeviceID, timeNow())})
+}
+
+func (s *Server) authorizeMQTTCredentialRequest(r *http.Request, deviceID string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return errBadRequest
+	}
+	token := bearerToken(r)
+	if token == "" {
+		return errUnauthorized
+	}
+	if session, err := s.store.DeviceAuthByToken(token); err == nil {
+		if session.DeviceID == deviceID {
+			return nil
+		}
+		return errUnauthorized
+	}
+	auth, err := s.store.AuthByToken(token)
+	if err != nil {
+		return err
+	}
+	for _, device := range s.store.ListVisibleDevices(auth.User.UserID) {
+		if device.DeviceID == deviceID {
+			return nil
+		}
+	}
+	return errNotFound
 }
 
 func (s *Server) bifroMQAuth(w http.ResponseWriter, r *http.Request) {

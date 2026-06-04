@@ -11,7 +11,7 @@ func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	device, membership, err := s.services.Devices.RegisterDevice(req)
+	device, membership, err := s.services.Devices.RegisterDevice(bearerToken(r), req)
 	if err != nil {
 		s.recordRequestAudit(r, AuditEvent{
 			ActorType:    "user",
@@ -44,7 +44,7 @@ func (s *Server) renewDevice(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	device, configs, err := s.services.Devices.RenewDevice(r.PathValue("deviceId"), req)
+	device, configs, err := s.services.Devices.RenewDevice(bearerToken(r), r.PathValue("deviceId"), req)
 	if err != nil {
 		writeError(w, err)
 		return

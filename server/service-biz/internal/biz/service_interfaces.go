@@ -21,6 +21,7 @@ type AuthStore interface {
 	RegisterUser(email, password, name string) (AuthResponse, Network, error)
 	LoginUserWithRateLimit(email, password, remoteIP string) (AuthResponse, error)
 	AuthByToken(token string) (AuthResponse, error)
+	DeviceAuthByToken(token string) (DeviceSession, error)
 	LogoutSessions(accessToken, deviceToken string) error
 	RenewUserSession(token string) (AuthResponse, error)
 	CreateConsoleLoginKey(accessToken, deviceID string, ttl time.Duration) (ConsoleLoginKey, error)

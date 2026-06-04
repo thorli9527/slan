@@ -392,25 +392,9 @@ pub(crate) fn ensure_session_device_registered(
         return Ok(session);
     }
     renew_user_session_if_needed(&client, &mut session)?;
-    let device = client.ensure_device_for_user(
-        &session.access_token,
-        &session.user_id,
-        session.device_id.as_deref(),
-    )?;
-    sync_session_device_fields(&mut session, &device);
     ensure_bound_device_session(&client, &mut session)?;
     refresh_session_network_from_device_configs(&client, &mut session);
     ensure_session_node_and_control_session(&client, &mut session)?;
-    if session.virtual_ip.is_none() {
-        if let Some(virtual_ip) = device
-            .current_virtual_ip
-            .or(device.virtual_ip)
-            .or(device.global_ip)
-            .filter(|value| !value.trim().is_empty())
-        {
-            session.virtual_ip = Some(virtual_ip);
-        }
-    }
     persist_session(&session)?;
     Ok(session)
 }
@@ -421,35 +405,6 @@ pub(crate) fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result
     bind_session_device_session(&client, &mut session)?;
     refresh_session_network_from_device_configs(&client, &mut session);
     ensure_session_node_and_control_session(&client, &mut session)?;
-    let device = client.ensure_device_for_user(
-        &session.access_token,
-        &session.user_id,
-        session.device_id.as_deref(),
-    )?;
-    sync_session_device_fields(&mut session, &device);
-    if let Some(virtual_ip) = device
-        .current_virtual_ip
-        .or(device.global_ip)
-        .filter(|value| !value.trim().is_empty())
-    {
-        session.virtual_ip = Some(virtual_ip);
-        return Ok(session);
-    }
-
-    let devices = client.list_devices_for_user(&session.access_token, &session.user_id)?;
-    if let Some(current) = devices
-        .into_iter()
-        .find(|item| Some(item.device_id.as_str()) == session.device_id.as_deref())
-    {
-        if let Some(virtual_ip) = current
-            .current_virtual_ip
-            .or(current.virtual_ip)
-            .or(current.global_ip)
-            .filter(|value| !value.trim().is_empty())
-        {
-            session.virtual_ip = Some(virtual_ip);
-        }
-    }
     Ok(session)
 }
 
@@ -770,14 +725,16 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
         return;
     };
     let client = ControlPlaneClient::from_env();
-    let _ = client.report_network_state(
-        &session.access_token,
-        &session.user_id,
-        device_id,
-        network_id,
-        state.network_enabled,
-        state.virtual_ip.as_deref(),
-    );
+    let Some(device_token) = session
+        .device_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let _ = (device_id, network_id);
+    let _ = client.renew_device_session(device_token, state.network_enabled, 0, 0);
 }
 
 pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device: &ControlDevice) {

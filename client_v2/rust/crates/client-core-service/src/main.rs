@@ -2098,20 +2098,12 @@ where
                     );
                 }
             };
-            let mqtt = match ControlPlaneClient::from_env()
-                .device_mqtt_credential_without_auth(&login.device_id)
-            {
-                Ok(Some(mqtt)) => mqtt,
-                Ok(None) => {
+            let mqtt = match login.mqtt {
+                Some(mqtt) => mqtt,
+                None => {
                     return state_with_error(
                         runtime.state(),
                         "准备设备登录失败: 服务端未下发 MQTT 凭据".to_string(),
-                    );
-                }
-                Err(error) => {
-                    return state_with_error(
-                        runtime.state(),
-                        format!("准备设备 MQTT 连接失败: {error:#}"),
                     );
                 }
             };
@@ -3217,79 +3209,25 @@ where
         ));
     };
     let client = ControlPlaneClient::from_env();
-    if session.session_kind == "device" {
-        session = ensure_session_device_registered(session)?;
-        let refreshed_device_id = session
-            .device_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                anyhow::anyhow!("device unavailable: current device is not registered")
-            })?;
-        if refreshed_device_id != device_id {
-            return Err(anyhow::anyhow!(
-                "device unavailable: current device is not registered"
-            ));
-        }
-        let virtual_ip = session
-            .virtual_ip
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                anyhow::anyhow!("device unavailable: current device has no assigned virtual IP")
-            })?;
-        let prefix_len = session.active_network_id.as_deref().and_then(|network_id| {
-            client
-                .network_prefix_len(&session.access_token, network_id, None)
-                .ok()
-        });
-        let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
-            virtual_ip,
-            prefix_len,
-        }));
-        if runtime.state().network_enabled {
-            activate_control_network_for_session(runtime, &mut session)?;
-        }
-        return persist_session(&session);
-    }
-    let network_enabled = runtime.state().network_enabled;
-    let device = match client.renew_registered_device(
-        &session.access_token,
-        &session.user_id,
-        &device_id,
-        network_enabled,
-        0,
-        0,
-    ) {
-        Ok(device) => device,
-        Err(error) if error.to_string().contains("HTTP 404") => client.ensure_device_for_user(
-            &session.access_token,
-            &session.user_id,
-            Some(&device_id),
-        )?,
-        Err(error) => return Err(error),
-    };
-    sync_session_device_fields(&mut session, &device);
-    if !control_device_network_available(&device) {
-        session.virtual_ip = None;
-        persist_session(&session)?;
-        return Err(anyhow::anyhow!(
-            "device unavailable: current device has been disabled by network admin"
-        ));
-    }
-    let Some(virtual_ip) = device
-        .current_virtual_ip
-        .or(device.virtual_ip)
+    session = ensure_session_device_registered(session)?;
+    let refreshed_device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
         .filter(|value| !value.trim().is_empty())
-    else {
-        session.virtual_ip = None;
-        persist_session(&session)?;
+        .ok_or_else(|| anyhow::anyhow!("device unavailable: current device is not registered"))?;
+    if refreshed_device_id != device_id {
         return Err(anyhow::anyhow!(
-            "device unavailable: current device has no assigned virtual IP"
+            "device unavailable: current device is not registered"
         ));
-    };
-    session.virtual_ip = Some(virtual_ip.clone());
+    }
+    let virtual_ip = session
+        .virtual_ip
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("device unavailable: current device has no assigned virtual IP")
+        })?;
     let prefix_len = session.active_network_id.as_deref().and_then(|network_id| {
         client
             .network_prefix_len(&session.access_token, network_id, None)

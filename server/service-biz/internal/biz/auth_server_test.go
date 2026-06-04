@@ -91,7 +91,7 @@ func TestConsoleLoginHTTPRejectsInvalidCredentials(t *testing.T) {
 	}, http.StatusNotFound, nil)
 }
 
-func TestMQTTIsReturnedAfterDeviceRegistrationNotLoginPrepare(t *testing.T) {
+func TestMQTTIsReturnedAfterDeviceLoginPrepareAndRegistration(t *testing.T) {
 	server := NewServer()
 	server.mqtt = MQTTConfig{
 		Enabled:              true,
@@ -117,9 +117,14 @@ func TestMQTTIsReturnedAfterDeviceRegistrationNotLoginPrepare(t *testing.T) {
 		"osVersion": "15.0",
 		"publicKey": "pk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}, http.StatusCreated, &prepare)
-	if _, ok := prepare["mqtt"]; ok {
-		t.Fatalf("expected prepare login response to omit mqtt, got %s", string(prepare["mqtt"]))
+	var preparedMQTT MQTTCredential
+	if err := json.Unmarshal(prepare["mqtt"], &preparedMQTT); err != nil {
+		t.Fatalf("expected prepare login response to include mqtt credential: %v", err)
 	}
+	if preparedMQTT.BrokerURL != "mqtt://47.245.40.231:1883" {
+		t.Fatalf("unexpected prepare mqtt credential: %+v", preparedMQTT)
+	}
+	requestJSON(t, handler, http.MethodGet, "/api/devices/mqtt-prepare-1/mqtt-credential", "", nil, http.StatusUnauthorized, nil)
 
 	var registered struct {
 		Device Device          `json:"device"`
@@ -139,6 +144,57 @@ func TestMQTTIsReturnedAfterDeviceRegistrationNotLoginPrepare(t *testing.T) {
 	}
 	if registered.MQTT == nil || registered.MQTT.BrokerURL != "mqtt://47.245.40.231:1883" {
 		t.Fatalf("expected mqtt credential after device registration, got %+v", registered.MQTT)
+	}
+}
+
+func TestLegacyDeviceRegisterAndRenewRequireBearerIdentity(t *testing.T) {
+	server := NewServer()
+	alice, _, err := server.store.RegisterUser("legacy-alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register alice: %v", err)
+	}
+	bob, _, err := server.store.RegisterUser("legacy-bob@example.com", "secret", "Bob")
+	if err != nil {
+		t.Fatalf("register bob: %v", err)
+	}
+	handler := server.Routes()
+
+	registerBody := map[string]any{
+		"userId":    alice.User.UserID,
+		"deviceId":  "legacy-secure-device",
+		"name":      "Mac",
+		"platform":  "macos",
+		"osName":    "macOS",
+		"osVersion": "15.0",
+		"publicKey": "pk_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+	}
+	requestJSON(t, handler, http.MethodPost, "/api/devices/register", "", registerBody, http.StatusUnauthorized, nil)
+
+	var registered struct {
+		Device Device `json:"device"`
+	}
+	postJSON(t, handler, "/api/devices/register", "Bearer "+bob.Session.Token, registerBody, http.StatusCreated, &registered)
+	if registered.Device.OwnerID != bob.User.UserID {
+		t.Fatalf("expected bearer user to own device, got %+v", registered.Device)
+	}
+
+	renewBody := map[string]any{
+		"userId":         alice.User.UserID,
+		"networkEnabled": true,
+		"rxBytesTotal":   7,
+		"txBytesTotal":   9,
+	}
+	requestJSON(t, handler, http.MethodPost, "/api/devices/"+registered.Device.DeviceID+"/renew", "", renewBody, http.StatusUnauthorized, nil)
+	requestJSON(t, handler, http.MethodPost, "/api/devices/"+registered.Device.DeviceID+"/renew", "Bearer "+alice.Session.Token, renewBody, http.StatusNotFound, nil)
+
+	var renewed struct {
+		Device Device `json:"device"`
+	}
+	postJSON(t, handler, "/api/devices/"+registered.Device.DeviceID+"/renew", "Bearer "+bob.Session.Token, renewBody, http.StatusOK, &renewed)
+	store := server.store.(*Store)
+	status := store.runtimeStatuses[registered.Device.DeviceID]
+	if renewed.Device.OwnerID != bob.User.UserID || !status.NetworkEnabled || status.RxBytesTotal != 7 || status.TxBytesTotal != 9 {
+		t.Fatalf("expected renew to use bearer user and refresh runtime, device=%+v status=%+v", renewed.Device, status)
 	}
 }
 
