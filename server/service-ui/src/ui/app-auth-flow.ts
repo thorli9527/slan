@@ -1,10 +1,12 @@
 import { ApiAuthResponse } from './app.models';
 
 const BROWSER_AUTH_KEY = 'slan.clientWeb.auth';
+const CLIENT_LOGIN_SOURCE = 'client';
 
 export type ClientLoginTarget = {
   authMode: string;
   deviceId: string;
+  source: string;
 };
 
 export type ConsoleLoginTarget = {
@@ -31,10 +33,11 @@ export function clearBrowserAuth(): void {
 export function clientLoginTarget(params = currentParams()): ClientLoginTarget | null {
   const authMode = params.get('auth')?.trim() ?? '';
   const deviceId = params.get('deviceId')?.trim() ?? '';
+  const source = params.get('source')?.trim() ?? '';
   if (authMode !== 'login' || !deviceId) {
     return null;
   }
-  return { authMode, deviceId };
+  return { authMode, deviceId, source: source || CLIENT_LOGIN_SOURCE };
 }
 
 export function consoleLoginTarget(params = currentParams()): ConsoleLoginTarget | null {
@@ -46,6 +49,7 @@ export function sanitizedHomeParams(params = currentParams()): URLSearchParams {
   const next = new URLSearchParams(params);
   next.delete('auth');
   next.delete('deviceId');
+  next.delete('source');
   next.delete('consoleLoginKey');
   return next;
 }

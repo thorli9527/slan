@@ -68,8 +68,8 @@ pub struct TrafficStatsPayload {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "camelCase")]
 pub enum ClientCommand {
-    /// 请求通过浏览器或系统 WebView 登录。
-    LoginWithBrowser,
+    /// 打开 Web Console 的客户端登录入口。
+    OpenClientLogin,
     /// 请求使用邮箱密码登录。
     LoginWithPassword(PasswordLoginPayload),
     /// 应用设备登录完成后的用户认证信息。

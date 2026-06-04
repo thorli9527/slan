@@ -207,6 +207,7 @@ func (s *Store) CompleteDeviceLoginForDevice(deviceID, accessToken, action strin
 	refreshToken := auth.Session.Token
 	return DeviceUserLoginPayload{
 		AccessToken:  auth.Session.Token,
+		UserToken:    auth.Session.Token,
 		RefreshToken: &refreshToken,
 		UserID:       auth.User.UserID,
 		UserLabel:    defaultString(auth.User.Email, auth.User.UserID),

@@ -7,6 +7,7 @@ import (
 // DeviceUserLoginPayload 是客户端设备登录完成后，通过控制通道下发给设备的用户授权载荷。
 type DeviceUserLoginPayload struct {
 	AccessToken  string  `json:"accessToken"`
+	UserToken    string  `json:"userToken,omitempty"`
 	RefreshToken *string `json:"refreshToken,omitempty"`
 	UserID       string  `json:"userId"`
 	UserLabel    string  `json:"userLabel"`

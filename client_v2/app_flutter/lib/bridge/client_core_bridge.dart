@@ -331,7 +331,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       state: _state.value,
       fields: {'command': command.type.name},
     );
-    if (command.type == ClientCommandType.loginWithBrowser) {
+    if (command.type == ClientCommandType.openClientLogin) {
       _localLogoutRequested = false;
     }
     if (command.type == ClientCommandType.logout) {
@@ -544,7 +544,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     if (_usesNativeMobileControlPlane) {
       return;
     }
-    if (command.type == ClientCommandType.loginWithBrowser) {
+    if (command.type == ClientCommandType.openClientLogin) {
       await _openWebConsoleUrl(
         deviceId: state?.deviceId,
         browserLogin: true,
@@ -588,6 +588,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     final query = <String, String>{};
     if (browserLogin) {
       query['auth'] = 'login';
+      query['source'] = 'client';
     }
     final loginKey = consoleLoginKey?.trim() ?? '';
     if (loginKey.isNotEmpty) {

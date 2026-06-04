@@ -220,6 +220,7 @@ void OpenWebConsole(const std::string& device_id = "",
   std::string url = ResolveWebConsoleUrl();
   if (browser_login) {
     url = AppendQueryParam(url, "auth", "login");
+    url = AppendQueryParam(url, "source", "client");
   }
   if (!console_login_key.empty()) {
     url = AppendQueryParam(url, "consoleLoginKey", console_login_key);
@@ -360,7 +361,7 @@ void client_core_plugin_handle_method_call(ClientCorePlugin* self,
   if (!response.empty()) {
     if (command_type == "openWebConsole") {
       OpenAuthenticatedWebConsole();
-    } else if (command_type == "loginWithBrowser") {
+    } else if (command_type == "openClientLogin") {
       OpenWebConsole(
           ExtractJsonStringField(response, "deviceId"),
           "",

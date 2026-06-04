@@ -73,7 +73,7 @@ Control tasks and MQTT:
 
 Browser login:
 
-- `loginWithBrowser` is forwarded to `client-core-service` first.
+- `openClientLogin` is forwarded to `client-core-service` first.
 - The service prepares MQTT credentials for the local `deviceId`.
 - The Windows plugin opens Web Console with `auth=login` and `deviceId`; browser-to-client completion is delivered only by MQTT notification.
 - Web Console completes login by asking the server to publish the auth payload to that device over MQTT.

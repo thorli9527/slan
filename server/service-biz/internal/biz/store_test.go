@@ -1524,6 +1524,9 @@ func TestDeviceLoginForDeviceRequiresValidBrowserSessionToken(t *testing.T) {
 	if payload.UserID != alice.User.UserID || payload.UserLabel != alice.User.Email {
 		t.Fatalf("expected device login to use token identity, got %+v", payload)
 	}
+	if payload.AccessToken != alice.Session.Token || payload.UserToken != alice.Session.Token {
+		t.Fatalf("expected mqtt login payload to include fresh user token, got %+v", payload)
+	}
 	if payload.DeviceID == nil || *payload.DeviceID != "mac-1" {
 		t.Fatalf("expected device id in payload, got %+v", payload)
 	}

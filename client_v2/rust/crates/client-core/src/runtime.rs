@@ -41,7 +41,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
     pub fn dispatch(&mut self, command: ClientCommand) -> Result<ClientViewState> {
         self.state.error = None;
         match command {
-            ClientCommand::LoginWithBrowser => {
+            ClientCommand::OpenClientLogin => {
                 self.state.notice = Some("loginBrowserRequested".to_string());
             }
             ClientCommand::LoginWithPassword(_) => {

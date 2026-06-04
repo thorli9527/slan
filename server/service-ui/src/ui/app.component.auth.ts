@@ -9,6 +9,7 @@ import {
   replaceUrl,
   sanitizedHomeParams,
 } from './app-auth-flow';
+import type { ClientLoginTarget } from './app-auth-flow';
 import { shortCodeFromEmail } from './app.utils';
 import { WEB_API } from './api-paths';
 
@@ -25,7 +26,8 @@ export class AppComponentAuth extends AppComponentData {
   }
 
   private async completeClientLoginFromStoredBrowserAuth(): Promise<boolean> {
-    if (!clientLoginTarget()) {
+    const target = clientLoginTarget();
+    if (!target) {
       return false;
     }
     try {
@@ -35,7 +37,7 @@ export class AppComponentAuth extends AppComponentData {
       }
       this.authMessage = '正在同步客户端登录...';
       this.notifyStateChanged();
-      if (!(await this.syncClientLogin(auth))) {
+      if (!(await this.syncClientLogin(auth, target))) {
         clearBrowserAuth();
         this.mode = 'login';
         this.notifyStateChanged();
@@ -137,11 +139,7 @@ export class AppComponentAuth extends AppComponentData {
     this.notifyStateChanged();
   }
 
-  private async completeDeviceLogin(auth: ApiAuthResponse): Promise<void> {
-    const target = clientLoginTarget();
-    if (!target) {
-      return;
-    }
+  private async completeDeviceLogin(auth: ApiAuthResponse, target: ClientLoginTarget): Promise<void> {
     await this.api.post(WEB_API.completeDeviceLogin(target.deviceId), {
       accessToken: auth.session.token,
       userId: auth.user.userId,
@@ -150,12 +148,12 @@ export class AppComponentAuth extends AppComponentData {
     });
   }
 
-  private async syncClientLogin(auth: ApiAuthResponse): Promise<boolean> {
-    if (!clientLoginTarget()) {
+  private async syncClientLogin(auth: ApiAuthResponse, target = clientLoginTarget()): Promise<boolean> {
+    if (!target) {
       return true;
     }
     try {
-      await this.completeDeviceLogin(auth);
+      await this.completeDeviceLogin(auth, target);
       this.authMessage = '';
       this.notifyStateChanged();
       return true;

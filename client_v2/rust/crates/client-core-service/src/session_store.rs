@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     control_plane::{
-        set_control_base_url_override, ControlDevice, ControlPlaneClient, DeviceSessionResponse,
-        MqttCredential, RelayCandidate,
+        local_stable_device_id, set_control_base_url_override, ControlDevice, ControlPlaneClient,
+        DeviceSessionResponse, MqttCredential, RelayCandidate,
     },
     network_module::refresh_network_module_from_session,
     relay_candidates::replace_runtime_relay_candidates,
@@ -405,6 +405,19 @@ pub(crate) fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result
     bind_session_device_session(&client, &mut session)?;
     refresh_session_network_from_device_configs(&client, &mut session);
     ensure_session_node_and_control_session(&client, &mut session)?;
+    Ok(session)
+}
+
+pub(crate) fn prepare_client_login_session(platform: &str) -> Result<PersistedSession> {
+    let device_id = local_stable_device_id().context("init client device id")?;
+    let login = ControlPlaneClient::from_env()
+        .prepare_device_login(&device_id, platform)
+        .context("prepare client device login")?;
+    let mqtt = login
+        .mqtt
+        .ok_or_else(|| anyhow::anyhow!("server did not return mqtt credential"))?;
+    let session = PersistedSession::prelogin(login.device_id, Some(mqtt));
+    persist_session(&session)?;
     Ok(session)
 }
 

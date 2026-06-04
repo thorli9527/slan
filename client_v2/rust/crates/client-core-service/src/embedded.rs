@@ -32,7 +32,8 @@ use crate::{
     session_store::{
         app_data_dir, current_timestamp_ms, ensure_session_device_registered,
         ensure_session_node_and_control_session, hydrate_session_from_control_plane, load_session,
-        persist_session, remove_session, report_runtime_state, PersistedSession,
+        persist_session, prepare_client_login_session, remove_session, report_runtime_state,
+        PersistedSession,
     },
 };
 
@@ -1481,19 +1482,12 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
     }
     let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
     match command {
-        ClientCommand::LoginWithBrowser => {
-            let device_id = local_stable_device_id().context("init embedded device id")?;
-            let login = ControlPlaneClient::from_env()
-                .prepare_device_login(&device_id, std::env::consts::OS)
-                .context("prepare embedded device login")?;
-            let mqtt = login
-                .mqtt
-                .ok_or_else(|| anyhow::anyhow!("server did not return mqtt credential"))?;
-            let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
-            persist_session(&session)?;
+        ClientCommand::OpenClientLogin => {
+            let session = prepare_client_login_session(std::env::consts::OS)
+                .context("prepare embedded client login")?;
             connect_embedded_control_mqtt_with_session(&session)
-                .context("connect mqtt after embedded browser login prepare")?;
-            Ok(runtime.request_browser_login(Some(login.device_id)))
+                .context("connect mqtt after embedded client login prepare")?;
+            Ok(runtime.request_browser_login(session.device_id))
         }
         ClientCommand::LoginWithPassword(payload) => {
             let auth = ControlPlaneClient::from_env()

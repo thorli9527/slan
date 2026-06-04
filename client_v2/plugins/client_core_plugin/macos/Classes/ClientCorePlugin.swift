@@ -46,7 +46,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     ) {
       if commandType == "openWebConsole" {
         openAuthenticatedConsole()
-      } else if commandType == "loginWithBrowser" {
+      } else if commandType == "openClientLogin" {
         openConsole(
           deviceId: extractStringField(serviceResponse, "deviceId"),
           browserLogin: true
@@ -333,6 +333,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     var queryItems = components?.queryItems ?? []
     if browserLogin {
       queryItems.append(URLQueryItem(name: "auth", value: "login"))
+      queryItems.append(URLQueryItem(name: "source", value: "client"))
     }
     if !consoleLoginKey.isEmpty {
       queryItems.append(URLQueryItem(name: "consoleLoginKey", value: consoleLoginKey))

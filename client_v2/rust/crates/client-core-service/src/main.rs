@@ -94,9 +94,9 @@ use crate::relay_store::{
 use crate::session_store::{
     app_data_dir, current_timestamp_ms, ensure_session_device_registered,
     ensure_session_node_and_control_session, hydrate_session_from_control_plane, load_session,
-    load_valid_registered_session, persist_session, refresh_startup_session, remove_session,
-    report_runtime_state, revoke_remote_sessions, session_auth_invalid_error, session_is_expired,
-    sync_session_device_fields, PersistedSession,
+    load_valid_registered_session, persist_session, prepare_client_login_session,
+    refresh_startup_session, remove_session, report_runtime_state, revoke_remote_sessions,
+    session_auth_invalid_error, session_is_expired, sync_session_device_fields, PersistedSession,
 };
 use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
 
@@ -549,7 +549,7 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
     let should_wake_control_mqtt = method == LocalServiceMethod::Dispatch
         && matches!(
             request.args.get("type").and_then(Value::as_str),
-            Some("loginWithBrowser" | "loginWithPassword" | "applyDeviceUserLogin")
+            Some("openClientLogin" | "loginWithPassword" | "applyDeviceUserLogin")
         );
     let response = handle_request(request, &context.runtime)?;
     if should_wake_control_mqtt {
@@ -730,9 +730,9 @@ fn handle_request(
         LocalServiceMethod::Dispatch => {
             let command: ClientCommand =
                 serde_json::from_value(request.args).context("decode client command")?;
-            let is_login_with_browser = matches!(command, ClientCommand::LoginWithBrowser);
+            let is_open_client_login = matches!(command, ClientCommand::OpenClientLogin);
             let mut state = dispatch_with_side_effects(&mut runtime, command);
-            if is_login_with_browser
+            if is_open_client_login
                 && state
                     .device_id
                     .as_deref()
@@ -2077,48 +2077,21 @@ where
     P: client_core::PlatformNetwork,
 {
     let (command, side_effect) = match command {
-        ClientCommand::LoginWithBrowser => {
-            let device_id = match local_stable_device_id() {
-                Ok(device_id) => device_id,
+        ClientCommand::OpenClientLogin => {
+            let session = match prepare_client_login_session(std::env::consts::OS) {
+                Ok(session) => session,
                 Err(error) => {
                     return state_with_error(
                         runtime.state(),
-                        format!("初始化设备 ID 失败: {error:#}"),
+                        format!("准备客户端登录失败: {error:#}"),
                     );
                 }
             };
-            let login = match ControlPlaneClient::from_env()
-                .prepare_device_login(&device_id, std::env::consts::OS)
-            {
-                Ok(login) => login,
-                Err(error) => {
-                    return state_with_error(
-                        runtime.state(),
-                        format!("准备设备登录失败: {error:#}"),
-                    );
-                }
-            };
-            let mqtt = match login.mqtt {
-                Some(mqtt) => mqtt,
-                None => {
-                    return state_with_error(
-                        runtime.state(),
-                        "准备设备登录失败: 服务端未下发 MQTT 凭据".to_string(),
-                    );
-                }
-            };
-            let session = PersistedSession::prelogin(login.device_id.clone(), Some(mqtt));
-            if let Err(error) = persist_session(&session) {
-                return state_with_error(
-                    runtime.state(),
-                    format!("保存设备登录配置失败: {error:#}"),
-                );
-            }
             log_service_error(format!(
                 "client-core-service prepared browser login device={} mqttReady=true",
-                login.device_id
+                session.device_id.as_deref().unwrap_or_default()
             ));
-            return runtime.request_browser_login(Some(login.device_id));
+            return runtime.request_browser_login(session.device_id);
         }
         ClientCommand::LoginWithPassword(payload) => {
             let auth_payload = match ControlPlaneClient::from_env()

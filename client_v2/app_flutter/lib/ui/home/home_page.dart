@@ -129,7 +129,7 @@ class _HomePageState extends State<HomePage> {
                                   ? null
                                   : () => widget.bridge.dispatch(
                                         const ClientCommand(
-                                          ClientCommandType.loginWithBrowser,
+                                          ClientCommandType.openClientLogin,
                                         ),
                                       ),
                               child: const Text('Login'),

@@ -10,6 +10,13 @@ import 'package:slan_client_v2/bridge/client_view_state.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('client login command uses openClientLogin type', () {
+    expect(
+      const ClientCommand(ClientCommandType.openClientLogin).toJson()['type'],
+      'openClientLogin',
+    );
+  });
+
   test('android runtime diagnostics preserve native relay counters', () {
     final fields = androidRuntimeDiagnosticsFields({
       'adapterPresent': true,

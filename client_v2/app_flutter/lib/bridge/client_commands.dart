@@ -1,5 +1,5 @@
 enum ClientCommandType {
-  loginWithBrowser,
+  openClientLogin,
   loginWithPassword,
   enableNetwork,
   disableNetwork,

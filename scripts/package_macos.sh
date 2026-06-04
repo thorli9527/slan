@@ -64,6 +64,22 @@ if [[ ! -x "$SERVICE_IN_APP" ]]; then
   exit 1
 fi
 
+STALE_SOURCE="$(find \
+  "$ROOT_DIR/client_v2/rust/crates" \
+  "$ROOT_DIR/client_v2/app_flutter/lib" \
+  "$ROOT_DIR/client_v2/plugins/client_core_plugin" \
+  "$ROOT_DIR/client_v2/app_flutter/macos" \
+  -type f \
+  \( -name '*.rs' -o -name '*.dart' -o -name '*.swift' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.yaml' -o -name '*.plist' \) \
+  -newer "$SERVICE_IN_APP" \
+  -print \
+  -quit)"
+if [[ -n "$STALE_SOURCE" ]]; then
+  echo "macOS Release app is older than source: $STALE_SOURCE" >&2
+  echo "run: make client-macos-package" >&2
+  exit 1
+fi
+
 rm -rf "$STAGE_DIR"
 mkdir -p "$ROOT_STAGE/Applications" "$ROOT_STAGE/Library/Application Support/SLAN" "$SCRIPT_STAGE" "$OUTPUT_DIR"
 
