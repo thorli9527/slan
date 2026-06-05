@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"log"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -102,20 +103,8 @@ func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, 
 			peers = append(peers, s.devices[membership.DeviceID])
 		}
 	}
-	groups := make([]SecurityGroup, 0)
-	groupIDs := make(map[string]bool)
-	for _, group := range s.securityGroups {
-		if group.NetworkID == networkID && group.Status == "active" {
-			groups = append(groups, group)
-			groupIDs[group.SecurityGroupID] = true
-		}
-	}
-	rules := make([]SecurityGroupRule, 0)
-	for _, rule := range s.securityGroupRules {
-		if rule.Enabled && groupIDs[rule.SecurityGroupID] {
-			rules = append(rules, rule)
-		}
-	}
+	groups, rules := s.activeSecurityPolicyLocked(networkID)
+	peers = s.securityPolicyFilterPeersLocked(networkID, device, peers, groups, rules)
 	relayCandidates := s.activeRelayCandidatesLocked()
 	globalIP := hostIP(device.GlobalIP)
 	subnet, _ := s.globalIPSubnetLocked(globalIP)
@@ -139,6 +128,128 @@ func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, 
 		DNSRecords:      s.listDNSRecordsLocked(networkID),
 		RelayCandidates: relayCandidates,
 	}, nil
+}
+
+func (s *Store) activeSecurityPolicyLocked(networkID string) ([]SecurityGroup, []SecurityGroupRule) {
+	groups := make([]SecurityGroup, 0)
+	groupIDs := make(map[string]bool)
+	for _, group := range s.securityGroups {
+		if group.NetworkID == networkID && group.Status == "active" {
+			groups = append(groups, group)
+			groupIDs[group.SecurityGroupID] = true
+		}
+	}
+	rules := make([]SecurityGroupRule, 0)
+	for _, rule := range s.securityGroupRules {
+		if rule.Enabled && groupIDs[rule.SecurityGroupID] {
+			rules = append(rules, rule)
+		}
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].Priority == rules[j].Priority {
+			return rules[i].RuleID < rules[j].RuleID
+		}
+		return rules[i].Priority < rules[j].Priority
+	})
+	return groups, rules
+}
+
+func (s *Store) securityPolicyFilterPeersLocked(networkID string, local Device, peers []Device, groups []SecurityGroup, rules []SecurityGroupRule) []Device {
+	if len(peers) == 0 {
+		return peers
+	}
+	out := make([]Device, 0, len(peers))
+	for _, peer := range peers {
+		if s.securityPolicyAllowsPeerLocked(networkID, local, peer, groups, rules) {
+			out = append(out, peer)
+		}
+	}
+	return out
+}
+
+func (s *Store) securityPolicyAllowsPeerLocked(networkID string, local, peer Device, groups []SecurityGroup, rules []SecurityGroupRule) bool {
+	if len(rules) == 0 {
+		return true
+	}
+	for _, rule := range rules {
+		if !securityRuleMatchesPeerAccess(networkID, rule, local, peer) {
+			continue
+		}
+		return strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
+	}
+	for _, group := range groups {
+		if strings.EqualFold(strings.TrimSpace(group.DefaultPolicy), "allow") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) networkPeerAccessAllowedLocked(networkID, localDeviceID, peerDeviceID string) bool {
+	local, ok := s.devices[localDeviceID]
+	if !ok {
+		return false
+	}
+	peer, ok := s.devices[peerDeviceID]
+	if !ok {
+		return false
+	}
+	localMembership, ok := s.networkDevices[networkID+"|"+localDeviceID]
+	if !ok || !localMembership.Enabled || localMembership.Status != "active" {
+		return false
+	}
+	peerMembership, ok := s.networkDevices[networkID+"|"+peerDeviceID]
+	if !ok || !peerMembership.Enabled || peerMembership.Status != "active" {
+		return false
+	}
+	groups, rules := s.activeSecurityPolicyLocked(networkID)
+	return s.securityPolicyAllowsPeerLocked(networkID, local, peer, groups, rules)
+}
+
+func securityRuleMatchesPeerAccess(networkID string, rule SecurityGroupRule, local, peer Device) bool {
+	switch strings.ToLower(strings.TrimSpace(rule.Direction)) {
+	case "ingress", "inbound", "in":
+		return securityRuleSubjectMatches(networkID, rule, local)
+	case "egress", "outbound", "out":
+		return securityRuleSubjectMatches(networkID, rule, peer)
+	default:
+		return securityRuleSubjectMatches(networkID, rule, local) || securityRuleSubjectMatches(networkID, rule, peer)
+	}
+}
+
+func securityRuleSubjectMatches(networkID string, rule SecurityGroupRule, target Device) bool {
+	peerType := strings.ToLower(strings.TrimSpace(rule.PeerType))
+	peerValue := strings.TrimSpace(rule.PeerValue)
+	switch peerType {
+	case "", "all", "any":
+		return peerValue == "" || strings.EqualFold(peerValue, "all") || peerValue == "*"
+	case "network", "workspace":
+		return peerValue == "" || strings.EqualFold(peerValue, "self") || strings.EqualFold(peerValue, "all") || peerValue == networkID
+	case "device":
+		return peerValue == target.DeviceID
+	case "cidr", "ip":
+		return securityRuleCIDRMatches(peerValue, target.GlobalIP)
+	case "domain":
+		return strings.EqualFold(peerValue, target.GlobalName) || strings.EqualFold(peerValue, target.Name) || strings.EqualFold(peerValue, target.Alias)
+	default:
+		return false
+	}
+}
+
+func securityRuleCIDRMatches(cidr, ipValue string) bool {
+	ipValue = hostIP(ipValue)
+	if cidr == "" || strings.EqualFold(cidr, "all") || cidr == "*" {
+		return true
+	}
+	ip := net.ParseIP(ipValue)
+	if ip == nil {
+		return false
+	}
+	if _, network, err := net.ParseCIDR(cidr); err == nil {
+		return network.Contains(ip)
+	}
+	exact := net.ParseIP(hostIP(cidr))
+	return exact != nil && exact.Equal(ip)
 }
 
 func (s *Store) globalIPSubnetLocked(ip string) (IPAMSubnet, bool) {

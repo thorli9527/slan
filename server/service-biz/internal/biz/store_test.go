@@ -426,6 +426,64 @@ func TestNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	}
 }
 
+func TestNetworkConfigSecurityDenyRemovesPeerAndRelayTicket(t *testing.T) {
+	store := NewStore()
+	auth, network, _ := store.RegisterUser("acl-deny@example.com", "secret", "ACL Deny")
+	user := auth.User
+	deviceA, _, _ := store.RegisterDevice(user.UserID, "acl-mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	deviceB, _, _ := store.RegisterDevice(user.UserID, "acl-ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
+	if _, _, err := store.RenewDevice(deviceB.DeviceID, user.UserID, true, 0, 0); err != nil {
+		t.Fatalf("mark peer active: %v", err)
+	}
+	groups := store.ListSecurityGroups(network.NetworkID)
+	if len(groups) == 0 {
+		t.Fatal("expected default security group")
+	}
+	if _, err := store.AddSecurityGroupRule(groups[0].SecurityGroupID, "egress", "deny", "all", "device", deviceB.DeviceID, "deny peer", 10, 0, 0, true); err != nil {
+		t.Fatalf("add deny acl: %v", err)
+	}
+
+	config, err := store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config: %v", err)
+	}
+	if len(config.Peers) != 0 {
+		t.Fatalf("expected denied peer to be removed, got %+v", config.Peers)
+	}
+	if _, err := store.IssueRelayTicket(network.NetworkID, "node-"+deviceA.DeviceID, "node-"+deviceB.DeviceID, "", nil); err == nil {
+		t.Fatal("expected relay ticket to be denied by ACL")
+	}
+}
+
+func TestNetworkConfigSecurityAllowPriorityOverridesDeny(t *testing.T) {
+	store := NewStore()
+	auth, network, _ := store.RegisterUser("acl-allow@example.com", "secret", "ACL Allow")
+	user := auth.User
+	deviceA, _, _ := store.RegisterDevice(user.UserID, "acl-allow-mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	deviceB, _, _ := store.RegisterDevice(user.UserID, "acl-allow-ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
+	if _, _, err := store.RenewDevice(deviceB.DeviceID, user.UserID, true, 0, 0); err != nil {
+		t.Fatalf("mark peer active: %v", err)
+	}
+	groups := store.ListSecurityGroups(network.NetworkID)
+	if len(groups) == 0 {
+		t.Fatal("expected default security group")
+	}
+	if _, err := store.AddSecurityGroupRule(groups[0].SecurityGroupID, "egress", "allow", "all", "device", deviceB.DeviceID, "allow peer", 5, 0, 0, true); err != nil {
+		t.Fatalf("add allow acl: %v", err)
+	}
+	if _, err := store.AddSecurityGroupRule(groups[0].SecurityGroupID, "egress", "deny", "all", "device", deviceB.DeviceID, "deny peer", 10, 0, 0, true); err != nil {
+		t.Fatalf("add deny acl: %v", err)
+	}
+
+	config, err := store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config: %v", err)
+	}
+	if len(config.Peers) != 1 || config.Peers[0].DeviceID != deviceB.DeviceID {
+		t.Fatalf("expected higher priority allow to keep peer, got %+v", config.Peers)
+	}
+}
+
 func TestNetworkConfigIncludesEnabledPeerBeforeRuntimeReport(t *testing.T) {
 	store := NewStore()
 	auth, network, _ := store.RegisterUser("alice@example.com", "secret", "Alice")

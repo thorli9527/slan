@@ -41,6 +41,9 @@ func (s *Store) IssueRelayTicket(networkID, srcNodeID, dstNodeID, derpClusterID 
 	if _, err := s.networkConfigLocked(networkID, dstDeviceID); err != nil {
 		return RelayTicket{}, err
 	}
+	if !s.networkPeerAccessAllowedLocked(networkID, srcDeviceID, dstDeviceID) {
+		return RelayTicket{}, errNotFound
+	}
 	candidates := s.activeRelayCandidatesLocked()
 	if len(candidates) == 0 {
 		return RelayTicket{}, errNotFound

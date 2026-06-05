@@ -52,6 +52,9 @@ func (s *Store) AuthorizePunchConnect(networkID, requesterNodeID, peerNodeID str
 	if _, err := s.networkConfigLocked(networkID, peerDeviceID); err != nil {
 		return err
 	}
+	if !s.networkPeerAccessAllowedLocked(networkID, requesterDeviceID, peerDeviceID) {
+		return errNotFound
+	}
 	return nil
 }
 
