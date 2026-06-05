@@ -23,7 +23,7 @@ func (s *Store) persistPostgresUserSessionTxLocked(ctx context.Context, tx *sql.
 	return tx.Commit()
 }
 
-func (s *Store) persistPostgresUserRegisterTxLocked(ctx context.Context, tx *sql.Tx, user User, network Network, group SecurityGroup, zone NetworkDNSZone, session UserSession) error {
+func (s *Store) persistPostgresUserRegisterTxLocked(ctx context.Context, tx *sql.Tx, user User, network Network, group SecurityGroup, session UserSession) error {
 	if tx == nil {
 		return s.persistPostgresCoreLocked(ctx)
 	}
@@ -42,12 +42,6 @@ func (s *Store) persistPostgresUserRegisterTxLocked(ctx context.Context, tx *sql
 	if _, err := tx.ExecContext(ctx, `insert into security_groups(id,network_id,name,description,default_policy,status,created_at)
 		values($1,$2,$3,$4,$5,$6,to_timestamp($7))`,
 		group.SecurityGroupID, group.NetworkID, group.Name, group.Description, group.DefaultPolicy, group.Status, group.CreatedAt); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `insert into network_dns_zones(id,network_id,zone_name,expose_global,status,created_at)
-		values($1,$2,$3,$4,$5,to_timestamp($6))`,
-		zone.ZoneID, zone.NetworkID, zone.ZoneName, zone.ExposeGlobal, zone.Status, zone.CreatedAt); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

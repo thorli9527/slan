@@ -27,7 +27,6 @@ use client_core::{
 use std::{
     fs,
     net::{TcpListener, UdpSocket},
-    sync::{Mutex, OnceLock},
 };
 
 #[derive(Debug, Clone, Default)]
@@ -63,13 +62,6 @@ impl PlatformNetwork for TestPlatformNetwork {
     }
 }
 
-fn state_dir_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("state dir test mutex poisoned")
-}
-
 #[test]
 fn online_presence_statuses_do_not_disable_local_network() {
     for status in [
@@ -99,7 +91,7 @@ fn managed_disable_statuses_disable_local_network() {
 
 #[test]
 fn sync_assigned_ip_does_not_create_empty_session() {
-    let _lock = state_dir_test_lock();
+    let _lock = crate::test_env_lock();
     let state_dir = std::env::temp_dir().join(format!(
         "slan-sync-assigned-ip-test-{}",
         crate::session_store::current_timestamp_ms()

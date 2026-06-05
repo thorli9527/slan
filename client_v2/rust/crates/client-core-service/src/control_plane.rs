@@ -672,6 +672,7 @@ impl ControlPlaneClient {
         activation_plan_from_network_config(&response)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn issue_relay_ticket(
         &self,
         access_token: &str,
@@ -1544,10 +1545,10 @@ fn stable_device_id_at_path(
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
-        fs::write(&path, &value).with_context(|| format!("write {}", path.display()))?;
+        fs::write(path, &value).with_context(|| format!("write {}", path.display()))?;
         return Ok(value);
     }
-    if let Ok(value) = fs::read_to_string(&path) {
+    if let Ok(value) = fs::read_to_string(path) {
         let value = value.trim();
         if is_uuid_like(value) {
             return Ok(value.to_string());
@@ -1561,7 +1562,7 @@ fn stable_device_id_at_path(
         .filter(|value| is_uuid_like(value))
         .map(str::to_string)
         .unwrap_or_else(uuid_v4_device_id);
-    fs::write(&path, &created).with_context(|| format!("write {}", path.display()))?;
+    fs::write(path, &created).with_context(|| format!("write {}", path.display()))?;
     Ok(created)
 }
 
@@ -1600,7 +1601,7 @@ fn reset_device_id_at_path(path: &std::path::Path) -> Result<String> {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let created = uuid_v4_device_id();
-    fs::write(&path, &created).with_context(|| format!("write {}", path.display()))?;
+    fs::write(path, &created).with_context(|| format!("write {}", path.display()))?;
     Ok(created)
 }
 
@@ -1817,7 +1818,6 @@ mod tests {
         io::{Read, Write},
         net::TcpListener,
         path::PathBuf,
-        sync::{Mutex, OnceLock},
         thread,
     };
 
@@ -1828,8 +1828,6 @@ mod tests {
         punch_auth_headers, punch_mqtt_signature, stable_device_id_at_path, ControlPlaneClient,
         MqttCredential, DEFAULT_CONTROL_BASE_URL,
     };
-
-    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[test]
     fn default_control_base_url_points_to_remote_ip_endpoint() {
@@ -1860,10 +1858,7 @@ mod tests {
 
     #[test]
     fn password_login_posts_stable_device_id() {
-        let _guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("test env mutex poisoned");
+        let _guard = crate::test_env_lock();
         let device_id = "11111111-1111-4111-8111-111111111111";
         let state_dir = unique_test_state_dir("password-login-device-id");
         fs::create_dir_all(&state_dir).expect("create state dir");
@@ -1959,10 +1954,7 @@ mod tests {
 
     #[test]
     fn device_id_is_uuid_v4_and_persisted() {
-        let _guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("test env mutex poisoned");
+        let _guard = crate::test_env_lock();
         env::remove_var("SLAN_CLIENT_DEVICE_ID");
 
         let first_state_dir = unique_test_state_dir("uuid-device-id-first");

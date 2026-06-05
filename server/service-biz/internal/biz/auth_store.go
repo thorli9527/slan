@@ -36,9 +36,9 @@ func (s *Store) RegisterUser(email, password, name string) (AuthResponse, Networ
 	s.nextUserID++
 	s.users[user.UserID] = user
 	s.userByEmail[email] = user.UserID
-	network, group, zone := s.ensureDefaultNetworkResourcesForUserLocked(user.UserID, now)
+	network, group := s.ensureDefaultNetworkResourcesForUserLocked(user.UserID, now)
 	session := s.createSessionLocked(user.UserID, now)
-	if err := s.persistPostgresUserRegisterTxLocked(ctx, postgresTx, user, network, group, zone, session); err != nil {
+	if err := s.persistPostgresUserRegisterTxLocked(ctx, postgresTx, user, network, group, session); err != nil {
 		return AuthResponse{}, Network{}, err
 	}
 	postgresTx = nil

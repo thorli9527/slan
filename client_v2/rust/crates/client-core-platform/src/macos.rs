@@ -20,14 +20,15 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use client_core::{
-    icmp_echo_reply_for_request, ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
+    acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
+    ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
     },
-    NetworkRuntimeState, PathCandidate, PathKind, PathState, PeerPathRuntime,
-    PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
-    RelayPeerSession, RouteSpec,
+    NetworkRuntimeState, PathCandidate, PathKind, PathState, PeerPathRuntime, PlatformAclPeer,
+    PlatformAclPolicy, PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkDiagnostics,
+    RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
 };
 use serde::Serialize;
 
@@ -513,6 +514,7 @@ fn start_udp_data_plane(
     let direct_udp_probe_interval =
         direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms);
     let mut stats = relay_data_plane_stats_from_config(&config, &peers, &derp_peers);
+    let acl_policies = config.acl_policies.clone();
     stats.direct_udp_attached_peer_count = direct_udp
         .as_ref()
         .map(|transport| transport.peers.len() as u64)
@@ -533,6 +535,7 @@ fn start_udp_data_plane(
             max_frame_payload,
             config_hash,
             direct_udp_probe_interval,
+            acl_policies,
             &mut stats,
             thread_stop,
         );
@@ -1249,6 +1252,7 @@ fn verify_relay_attach_ack(response: &[u8], session_id: &str) -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_udp_data_plane(
     mut file: File,
     peers: Vec<RelayPeer>,
@@ -1259,6 +1263,7 @@ fn run_udp_data_plane(
     max_frame_payload: usize,
     config_hash: u64,
     direct_udp_probe_interval: Duration,
+    acl_policies: Vec<PlatformAclPolicy>,
     stats: &mut RelayDataPlaneStats,
     stop: Arc<AtomicBool>,
 ) {
@@ -1311,6 +1316,14 @@ fn run_udp_data_plane(
                     if packet.len() <= max_frame_payload {
                         if let Some(peer) = relay_peer_for_packet(&peers, packet) {
                             stats.last_tun_peer_node_id = Some(peer.peer_node_id.clone());
+                            if !acl_allows_egress_packet(
+                                packet,
+                                &acl_policies,
+                                Some(&acl_peer_for_relay_peer(peer)),
+                            ) {
+                                stats.last_tun_drop_reason = Some("acl_egress_denied".to_string());
+                                continue;
+                            }
                             seq = seq.wrapping_add(1);
                             let packet = normalize_ipv4_transport_checksums(packet);
                             record_tun_tcp_packet(stats, &packet);
@@ -1414,6 +1427,14 @@ fn run_udp_data_plane(
                             derp_peer_for_packet_mut(&mut derp_peers, packet)
                         {
                             stats.last_tun_peer_node_id = Some(derp_peer.peer_node_id.clone());
+                            if !acl_allows_egress_packet(
+                                packet,
+                                &acl_policies,
+                                Some(&acl_peer_for_derp_peer(derp_peer)),
+                            ) {
+                                stats.last_tun_drop_reason = Some("acl_egress_denied".to_string());
+                                continue;
+                            }
                             seq = seq.wrapping_add(1);
                             let packet = normalize_ipv4_transport_checksums(packet);
                             record_tun_tcp_packet(stats, &packet);
@@ -1441,18 +1462,16 @@ fn run_udp_data_plane(
                                 stats.last_tun_drop_reason =
                                     Some("relay_frame_encode_failed".to_string());
                             }
-                        } else {
-                            if let Some(destination) = ipv4_destination(packet) {
-                                if should_ignore_unroutable_destination(&destination) {
-                                    stats.last_tun_drop_reason =
-                                        Some("ignored_unroutable_destination".to_string());
-                                    continue;
-                                }
-                                stats.unroutable_tun_packets =
-                                    stats.unroutable_tun_packets.saturating_add(1);
-                                stats.last_unroutable_destination = Some(destination);
-                                stats.last_tun_drop_reason = Some("unroutable".to_string());
+                        } else if let Some(destination) = ipv4_destination(packet) {
+                            if should_ignore_unroutable_destination(&destination) {
+                                stats.last_tun_drop_reason =
+                                    Some("ignored_unroutable_destination".to_string());
+                                continue;
                             }
+                            stats.unroutable_tun_packets =
+                                stats.unroutable_tun_packets.saturating_add(1);
+                            stats.last_unroutable_destination = Some(destination);
+                            stats.last_tun_drop_reason = Some("unroutable".to_string());
                         }
                     } else {
                         stats.oversized_tun_packets = stats.oversized_tun_packets.saturating_add(1);
@@ -1481,6 +1500,14 @@ fn run_udp_data_plane(
                     if let Some(packet) = decode_slan_relay_data_frame(frame) {
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
                         record_relay_tcp_packet(stats, packet);
+                        if !acl_allows_ingress_packet(
+                            packet,
+                            &acl_policies,
+                            Some(&acl_peer_for_relay_peer(peer)),
+                        ) {
+                            stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                            continue;
+                        }
                         if let Some(reply) =
                             icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
                         {
@@ -1502,6 +1529,14 @@ fn run_udp_data_plane(
                             continue;
                         }
                         let packet = normalize_ipv4_transport_checksums(packet);
+                        if !acl_allows_ingress_packet(
+                            &packet,
+                            &acl_policies,
+                            Some(&acl_peer_for_relay_peer(peer)),
+                        ) {
+                            stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                            continue;
+                        }
                         match write_utun_ipv4_packet(&mut file, &packet) {
                             Ok(_) => record_relay_packet_received(stats, peer),
                             Err(_) => record_relay_write_failure(stats, peer),
@@ -1528,7 +1563,23 @@ fn run_udp_data_plane(
                     if let Some(packet) = decode_slan_relay_data_frame(&frame) {
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
                         record_relay_tcp_packet(stats, packet);
+                        if !acl_allows_ingress_packet(
+                            packet,
+                            &acl_policies,
+                            Some(&acl_peer_for_derp_peer(peer)),
+                        ) {
+                            stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                            continue;
+                        }
                         let packet = normalize_ipv4_transport_checksums(packet);
+                        if !acl_allows_ingress_packet(
+                            &packet,
+                            &acl_policies,
+                            Some(&acl_peer_for_derp_peer(peer)),
+                        ) {
+                            stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                            continue;
+                        }
                         match write_utun_ipv4_packet(&mut file, &packet) {
                             Ok(_) => record_derp_packet_received(stats, peer),
                             Err(_) => record_derp_write_failure(stats, peer),
@@ -1585,6 +1636,18 @@ fn run_udp_data_plane(
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
                         record_relay_tcp_packet(stats, packet);
                         let packet = normalize_ipv4_transport_checksums(packet);
+                        let acl_peer =
+                            direct_udp
+                                .peers
+                                .get(received.peer_index)
+                                .map(|peer| PlatformAclPeer {
+                                    peer_node_id: Some(peer.peer_node_id.clone()),
+                                    peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                                });
+                        if !acl_allows_ingress_packet(&packet, &acl_policies, acl_peer.as_ref()) {
+                            stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                            continue;
+                        }
                         if write_utun_ipv4_packet(&mut file, &packet).is_ok() {
                             if let Some(peer) =
                                 direct_udp
@@ -1683,8 +1746,7 @@ fn parse_derp_packet_line(line: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
             .and_then(serde_json::Value::as_str)
             .and_then(base64_decode)),
         Some("sent") | Some("connected") => Ok(None),
-        Some("error") => Err(std::io::Error::new(
-            ErrorKind::Other,
+        Some("error") => Err(std::io::Error::other(
             value
                 .get("error")
                 .and_then(|error| error.get("message"))
@@ -2119,6 +2181,20 @@ fn relay_peer_for_packet<'a>(peers: &'a [RelayPeer], packet: &[u8]) -> Option<&'
             .iter()
             .any(|ip| normalize_virtual_ip(ip) == destination)
     })
+}
+
+fn acl_peer_for_relay_peer(peer: &RelayPeer) -> PlatformAclPeer {
+    PlatformAclPeer {
+        peer_node_id: Some(peer.peer_node_id.clone()),
+        peer_virtual_ips: peer.peer_virtual_ips.clone(),
+    }
+}
+
+fn acl_peer_for_derp_peer(peer: &DerpPeer) -> PlatformAclPeer {
+    PlatformAclPeer {
+        peer_node_id: Some(peer.peer_node_id.clone()),
+        peer_virtual_ips: peer.peer_virtual_ips.clone(),
+    }
 }
 
 fn run_local_data_plane(mut file: File, local_virtual_ip: String, stop: Arc<AtomicBool>) {

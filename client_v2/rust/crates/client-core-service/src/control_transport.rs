@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use std::{
     env, fs,
     net::{TcpStream, ToSocketAddrs, UdpSocket},
@@ -574,7 +576,7 @@ fn peer_runtime_path_health_messages(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .or_else(|| stats.active_path.as_deref())
+                .or(stats.active_path.as_deref())
                 .unwrap_or("unknown");
             ControlTransportMessage {
                 id: format!("peer-path-health-{}-{reported_at_ms}", peer.peer_node_id),

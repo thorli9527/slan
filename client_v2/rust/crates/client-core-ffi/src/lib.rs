@@ -26,8 +26,9 @@ mod android_tun {
         stable_hash64,
     };
     use client_core::{
-        icmp_echo_reply_for_request, ipv4_transport_checksum_valid,
-        normalize_ipv4_transport_checksums, AndroidVpnSessionConfig, RelayPeerSession,
+        acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
+        ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums, AndroidVpnSessionConfig,
+        PlatformAclPeer, RelayPeerSession,
     };
     use client_core_platform::direct_udp::{
         direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
@@ -186,6 +187,7 @@ mod android_tun {
     /// AndroidRelayPeer 是 Rust 数据面中一个 relay peer 会话及其受保护 socket。
     struct AndroidRelayPeer {
         session_id: String,
+        peer_node_id: String,
         local_node_id: String,
         peer_virtual_ips: Vec<String>,
         socket: UdpSocket,
@@ -271,6 +273,11 @@ mod android_tun {
             let mut last_keepalive = Instant::now()
                 .checked_sub(RELAY_KEEPALIVE_INTERVAL)
                 .unwrap_or_else(Instant::now);
+            let acl_policies = parsed_config
+                .as_ref()
+                .and_then(|config| config.relay_data_plane.as_ref())
+                .map(|config| config.acl_policies.clone())
+                .unwrap_or_default();
             while !thread_stop.load(Ordering::SeqCst) {
                 let mut did_work = false;
                 if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
@@ -309,6 +316,14 @@ mod android_tun {
                             if let Some(peer_index) =
                                 direct_udp.ready_peer_index_for_packet(&tun_buffer[..packet_len])
                             {
+                                let peer = &direct_udp.peers[peer_index];
+                                if !acl_allows_egress_packet(
+                                    &tun_buffer[..packet_len],
+                                    &acl_policies,
+                                    Some(&acl_peer_for_direct_peer(peer)),
+                                ) {
+                                    continue;
+                                }
                                 seq = seq.wrapping_add(1);
                                 let packet =
                                     normalize_ipv4_transport_checksums(&tun_buffer[..packet_len]);
@@ -345,6 +360,13 @@ mod android_tun {
                         if let Some(peer) =
                             relay_peer_for_packet(&relay_peers, &tun_buffer[..packet_len])
                         {
+                            if !acl_allows_egress_packet(
+                                &tun_buffer[..packet_len],
+                                &acl_policies,
+                                Some(&acl_peer_for_relay_peer(peer)),
+                            ) {
+                                continue;
+                            }
                             seq = seq.wrapping_add(1);
                             let packet =
                                 normalize_ipv4_transport_checksums(&tun_buffer[..packet_len]);
@@ -380,6 +402,13 @@ mod android_tun {
                                     if let Some(peer) =
                                         derp_peer_for_packet_mut(&mut derp_peers, &packet)
                                     {
+                                        if !acl_allows_egress_packet(
+                                            &packet,
+                                            &acl_policies,
+                                            Some(&acl_peer_for_derp_peer(peer)),
+                                        ) {
+                                            continue;
+                                        }
                                         for attempt in 0..relay_send_attempt_count(&packet) {
                                             if attempt > 0 {
                                                 thread::sleep(relay_send_attempt_delay(&packet));
@@ -403,6 +432,13 @@ mod android_tun {
                         } else if let Some(peer) =
                             derp_peer_for_packet_mut(&mut derp_peers, &tun_buffer[..packet_len])
                         {
+                            if !acl_allows_egress_packet(
+                                &tun_buffer[..packet_len],
+                                &acl_policies,
+                                Some(&acl_peer_for_derp_peer(peer)),
+                            ) {
+                                continue;
+                            }
                             seq = seq.wrapping_add(1);
                             let packet =
                                 normalize_ipv4_transport_checksums(&tun_buffer[..packet_len]);
@@ -467,6 +503,13 @@ mod android_tun {
                                     .relay_frames_received
                                     .fetch_add(1, Ordering::Relaxed);
                                 record_relay_tcp_packet(&thread_stats, packet);
+                                if !acl_allows_ingress_packet(
+                                    packet,
+                                    &acl_policies,
+                                    Some(&acl_peer_for_relay_peer(peer)),
+                                ) {
+                                    continue;
+                                }
                                 if let Some(reply) =
                                     icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
                                 {
@@ -491,7 +534,15 @@ mod android_tun {
                                     }
                                     continue;
                                 }
-                                write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
+                                let packet = normalize_ipv4_transport_checksums(packet);
+                                if !acl_allows_ingress_packet(
+                                    &packet,
+                                    &acl_policies,
+                                    Some(&acl_peer_for_relay_peer(peer)),
+                                ) {
+                                    continue;
+                                }
+                                write_android_tun_inbound_packet(&mut file, &thread_stats, &packet);
                             }
                         }
                         Err(error) if error.kind() == ErrorKind::WouldBlock => {}
@@ -508,7 +559,22 @@ mod android_tun {
                                     .relay_frames_received
                                     .fetch_add(1, Ordering::Relaxed);
                                 record_relay_tcp_packet(&thread_stats, packet);
-                                write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
+                                if !acl_allows_ingress_packet(
+                                    packet,
+                                    &acl_policies,
+                                    Some(&acl_peer_for_derp_peer(peer)),
+                                ) {
+                                    continue;
+                                }
+                                let packet = normalize_ipv4_transport_checksums(packet);
+                                if !acl_allows_ingress_packet(
+                                    &packet,
+                                    &acl_policies,
+                                    Some(&acl_peer_for_derp_peer(peer)),
+                                ) {
+                                    continue;
+                                }
+                                write_android_tun_inbound_packet(&mut file, &thread_stats, &packet);
                             }
                         }
                         Ok(None) => {}
@@ -569,6 +635,17 @@ mod android_tun {
                                     .direct_udp_frames_received
                                     .fetch_add(1, Ordering::Relaxed);
                                 record_relay_tcp_packet(&thread_stats, packet);
+                                let acl_peer = direct_udp
+                                    .peers
+                                    .get(received.peer_index)
+                                    .map(acl_peer_for_direct_peer);
+                                if !acl_allows_ingress_packet(
+                                    packet,
+                                    &acl_policies,
+                                    acl_peer.as_ref(),
+                                ) {
+                                    continue;
+                                }
                                 if let Some(reply) =
                                     icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
                                 {
@@ -581,7 +658,15 @@ mod android_tun {
                                     }
                                     continue;
                                 }
-                                write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
+                                let packet = normalize_ipv4_transport_checksums(packet);
+                                if !acl_allows_ingress_packet(
+                                    &packet,
+                                    &acl_policies,
+                                    acl_peer.as_ref(),
+                                ) {
+                                    continue;
+                                }
+                                write_android_tun_inbound_packet(&mut file, &thread_stats, &packet);
                             }
                         }
                         Ok(None) => {}
@@ -1148,6 +1233,7 @@ mod android_tun {
             socket.set_nonblocking(true)?;
             peers.push(AndroidRelayPeer {
                 session_id: session.session_id.clone(),
+                peer_node_id: session.peer_node_id.clone(),
                 local_node_id: relay_config.local_node_id.clone(),
                 peer_virtual_ips: session.peer_virtual_ips.clone(),
                 socket,
@@ -1554,6 +1640,29 @@ mod android_tun {
         })
     }
 
+    fn acl_peer_for_relay_peer(peer: &AndroidRelayPeer) -> PlatformAclPeer {
+        PlatformAclPeer {
+            peer_node_id: Some(peer.peer_node_id.clone()),
+            peer_virtual_ips: peer.peer_virtual_ips.clone(),
+        }
+    }
+
+    fn acl_peer_for_derp_peer(peer: &AndroidDerpPeer) -> PlatformAclPeer {
+        PlatformAclPeer {
+            peer_node_id: Some(peer.peer_node_id.clone()),
+            peer_virtual_ips: peer.peer_virtual_ips.clone(),
+        }
+    }
+
+    fn acl_peer_for_direct_peer(
+        peer: &client_core_platform::direct_udp::DirectUdpPeer,
+    ) -> PlatformAclPeer {
+        PlatformAclPeer {
+            peer_node_id: Some(peer.peer_node_id.clone()),
+            peer_virtual_ips: peer.peer_virtual_ips.clone(),
+        }
+    }
+
     fn derp_peer_for_packet_mut<'a>(
         peers: &'a mut [AndroidDerpPeer],
         packet: &[u8],
@@ -1646,6 +1755,7 @@ pub extern "C" fn client_core_v2_default_state_json() -> *mut c_char {
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn client_core_v2_service_request_json(request_json: *const c_char) -> *mut c_char {
     if request_json.is_null() {
         return string_to_ptr(
@@ -1664,6 +1774,7 @@ pub extern "C" fn client_core_v2_service_request_json(request_json: *const c_cha
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn client_core_v2_free_string(value: *mut c_char) {
     if value.is_null() {
         return;

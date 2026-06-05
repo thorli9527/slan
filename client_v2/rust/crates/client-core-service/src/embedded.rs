@@ -10,14 +10,15 @@ use anyhow::{Context, Result};
 use client_core::{
     relay_path_kind_for_transport, AssignedIpPayload, AuthPayload, ClientCommand,
     ClientMessageNoticePayload, ClientRuntime, ClientViewState, PathCandidate, PathKind, PathState,
-    PeerPathConfig, PlatformDeviceNetworkConfig, PlatformNetworkConfig, RelayDataPlaneConfig,
-    RelayPeerSession, RouteSpec,
+    PeerPathConfig, PlatformAclPolicy, PlatformDeviceNetworkConfig, PlatformNetworkConfig,
+    RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
 };
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
 use serde_json::Value;
 
 use crate::{
+    acl_policy::{acl_policies_for_network, platform_acl_policies},
     client_message_mqtt,
     control_plane::{
         local_stable_device_id, set_client_device_id_override, set_control_base_url_override,
@@ -81,7 +82,7 @@ fn business_event() -> &'static Mutex<EmbeddedBusinessEvent> {
 
 fn runtime() -> &'static Mutex<ClientRuntime<PlatformNetworkImpl>> {
     RUNTIME.get_or_init(|| {
-        let mut runtime = ClientRuntime::new(PlatformNetworkImpl::default());
+        let mut runtime = ClientRuntime::new(PlatformNetworkImpl);
         if let Ok(session) = load_session() {
             let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
         }
@@ -261,6 +262,8 @@ fn platform_network_config() -> Result<Value> {
         .iter()
         .find(|candidate| candidate.transport == "udp")
         .or_else(|| activation.relay_candidates.first());
+    let all_acl_policies = platform_acl_policies(&network_configs);
+    let active_acl_policies = acl_policies_for_network(&all_acl_policies, network_id.as_str());
     let eligible_relay_peer_count =
         embedded_eligible_relay_peer_count(activation.self_node_id.as_deref(), &activation.peers);
     let (relay_data_plane, relay_build_error) = match build_embedded_relay_data_plane_config(
@@ -270,6 +273,7 @@ fn platform_network_config() -> Result<Value> {
         activation.self_node_id.as_deref(),
         &activation.peers,
         best_relay,
+        &all_acl_policies,
     ) {
         Ok(config) => (Some(config), None),
         Err(error) => (None, Some(format!("{error:#}"))),
@@ -297,6 +301,7 @@ fn platform_network_config() -> Result<Value> {
         relay_endpoint_id: best_relay.map(|relay| relay.endpoint_id.clone()),
         relay_transport: best_relay.map(|relay| relay.transport.clone()),
         relay_address: platform_relay_address,
+        acl_policies: active_acl_policies,
         relay_data_plane,
     };
     let mut value = serde_json::to_value(config).context("encode platform config value")?;
@@ -385,6 +390,7 @@ fn build_embedded_relay_data_plane_config(
     self_node_id: Option<&str>,
     peers: &[crate::control_plane::ControlPeer],
     relay: Option<&crate::control_plane::RelayCandidate>,
+    acl_policies: &[PlatformAclPolicy],
 ) -> Result<RelayDataPlaneConfig> {
     let relay = relay.ok_or_else(|| anyhow::anyhow!("no relay candidate is available"))?;
     let relay_transport = relay.transport.trim().to_ascii_lowercase();
@@ -458,6 +464,7 @@ fn build_embedded_relay_data_plane_config(
         ),
         relay_mtu: Some(1280),
         max_frame_payload: Some(1200),
+        acl_policies: acl_policies_for_network(acl_policies, network_id),
         sessions,
     })
 }
@@ -590,7 +597,7 @@ fn connect_embedded_control_mqtt_with_session(session: &PersistedSession) -> Res
             set_embedded_mqtt_last_error(Some(message.clone()));
             anyhow::anyhow!(message)
         })?;
-    let network_broadcast_topic = embedded_network_broadcast_topic(&session);
+    let network_broadcast_topic = embedded_network_broadcast_topic(session);
     if let Some(topic) = network_broadcast_topic.as_deref() {
         if let Err(error) = client.subscribe(topic) {
             eprintln!("SLAN_EMBEDDED_MQTT_NETWORK_SUBSCRIBE_FAILED topic={topic} error={error}");
@@ -1598,6 +1605,16 @@ mod tests {
 
     #[test]
     fn ingest_platform_runtime_state_updates_state() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-embedded-runtime-state-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+
         let response = request(
             "ingestPlatformRuntimeState",
             serde_json::json!({
@@ -1623,6 +1640,13 @@ mod tests {
             state.get("virtualIp").and_then(Value::as_str),
             Some("10.0.0.99")
         );
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
     }
 
     #[test]
@@ -1701,13 +1725,13 @@ mod tests {
 
     #[test]
     fn client_message_ingest_advances_embedded_business_event() {
+        let _lock = crate::test_env_lock();
         let state_dir =
             std::env::temp_dir().join(format!("slan-embedded-event-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&state_dir);
         std::fs::create_dir_all(&state_dir).expect("create temp state dir");
-        unsafe {
-            std::env::set_var("SLAN_STATE_DIR", &state_dir);
-        }
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
         super::ingest_embedded_downstream_publish(
             serde_json::json!({
                 "type": "client_message",
@@ -1746,5 +1770,11 @@ mod tests {
                 .and_then(Value::as_str),
             Some("hello")
         );
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
     }
 }

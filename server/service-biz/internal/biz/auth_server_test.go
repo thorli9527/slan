@@ -179,14 +179,14 @@ func TestPrepareDeviceLoginTruncatesBrowserIdentityFields(t *testing.T) {
 func TestDeviceLoginHTTPAllowsSameUserMultipleDevices(t *testing.T) {
 	server := NewServer()
 	server.mqtt = MQTTConfig{
-		Enabled:                   true,
-		BrokerURL:                 "mqtt://127.0.0.1:1883",
-		PublicBrokerURL:           "mqtt://127.0.0.1:1883",
-		UsernamePrefix:            "slan",
-		PasswordSecret:            "test-secret",
-		TopicPrefix:               "slan",
-		CredentialTTLSeconds:      3600,
-		ControlMessageTTLSeconds:  3600,
+		Enabled:                    true,
+		BrokerURL:                  "mqtt://127.0.0.1:1883",
+		PublicBrokerURL:            "mqtt://127.0.0.1:1883",
+		UsernamePrefix:             "slan",
+		PasswordSecret:             "test-secret",
+		TopicPrefix:                "slan",
+		CredentialTTLSeconds:       3600,
+		ControlMessageTTLSeconds:   3600,
 		PublishTimeoutMilliseconds: 1,
 	}
 	auth, _, err := server.store.RegisterUser("multi-device-http@example.com", "secret", "Multi Device")
@@ -237,14 +237,14 @@ func TestDeviceLoginHTTPAllowsSameUserMultipleDevices(t *testing.T) {
 func TestDeviceLoginHTTPRebindsDeviceToBrowserUser(t *testing.T) {
 	server := NewServer()
 	server.mqtt = MQTTConfig{
-		Enabled:                   true,
-		BrokerURL:                 "mqtt://127.0.0.1:1883",
-		PublicBrokerURL:           "mqtt://127.0.0.1:1883",
-		UsernamePrefix:            "slan",
-		PasswordSecret:            "test-secret",
-		TopicPrefix:               "slan",
-		CredentialTTLSeconds:      3600,
-		ControlMessageTTLSeconds:  3600,
+		Enabled:                    true,
+		BrokerURL:                  "mqtt://127.0.0.1:1883",
+		PublicBrokerURL:            "mqtt://127.0.0.1:1883",
+		UsernamePrefix:             "slan",
+		PasswordSecret:             "test-secret",
+		TopicPrefix:                "slan",
+		CredentialTTLSeconds:       3600,
+		ControlMessageTTLSeconds:   3600,
 		PublishTimeoutMilliseconds: 1,
 	}
 	alice, _, err := server.store.RegisterUser("rebind-alice@example.com", "secret", "Alice")
@@ -339,13 +339,13 @@ func TestNetworkConfigHTTPMutationsWriteAuditEvents(t *testing.T) {
 		t.Fatalf("register device: %v", err)
 	}
 	handler := server.Routes()
-	zones := server.store.ListDNSZones(network.NetworkID)
-	if len(zones) == 0 {
-		t.Fatalf("expected default dns zone")
-	}
+	var zone NetworkDNSZone
+	postJSON(t, handler, "/api/networks/"+network.NetworkID+"/dns/zones", "", map[string]any{
+		"zoneName": "audit.lan",
+	}, http.StatusCreated, &zone)
 	var record NetworkDNSRecord
 	postJSON(t, handler, "/api/networks/"+network.NetworkID+"/dns/records", "", map[string]any{
-		"zoneId":         zones[0].ZoneID,
+		"zoneId":         zone.ZoneID,
 		"name":           "audit",
 		"recordType":     "A",
 		"targetDeviceId": device.DeviceID,

@@ -78,17 +78,15 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 })?;
             }
             ClientCommand::SyncAssignedIp(payload) => {
-                let virtual_ip = normalize_virtual_ip(&payload.virtual_ip);
-                if virtual_ip.is_none() {
-                    self.state.error = Some("assigned virtual IP is empty".to_string());
-                } else {
-                    let virtual_ip = virtual_ip.expect("checked non-empty virtual ip");
+                if let Some(virtual_ip) = normalize_virtual_ip(&payload.virtual_ip) {
                     if self.state.network_enabled {
                         self.platform
                             .configure_ip(&virtual_ip, payload.prefix_len.unwrap_or(32))?;
                     }
                     self.state.virtual_ip = Some(virtual_ip);
                     self.state.notice = Some("assignedIpSynced".to_string());
+                } else {
+                    self.state.error = Some("assigned virtual IP is empty".to_string());
                 }
             }
             ClientCommand::ApplyPlatformRuntimeState(runtime_state) => {

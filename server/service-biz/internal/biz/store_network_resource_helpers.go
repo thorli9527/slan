@@ -6,11 +6,11 @@ import (
 )
 
 func (s *Store) ensureDefaultNetworkForUserLocked(userID string, now int64) Network {
-	network, _, _ := s.ensureDefaultNetworkResourcesForUserLocked(userID, now)
+	network, _ := s.ensureDefaultNetworkResourcesForUserLocked(userID, now)
 	return network
 }
 
-func (s *Store) ensureDefaultNetworkResourcesForUserLocked(userID string, now int64) (Network, SecurityGroup, NetworkDNSZone) {
+func (s *Store) ensureDefaultNetworkResourcesForUserLocked(userID string, now int64) (Network, SecurityGroup) {
 	id := "default-" + userID
 	if network, ok := s.networks[id]; ok {
 		var group SecurityGroup
@@ -20,20 +20,12 @@ func (s *Store) ensureDefaultNetworkResourcesForUserLocked(userID string, now in
 				break
 			}
 		}
-		var zone NetworkDNSZone
-		for _, item := range s.dnsZones {
-			if item.NetworkID == network.NetworkID {
-				zone = item
-				break
-			}
-		}
-		return network, group, zone
+		return network, group
 	}
 	network := Network{NetworkID: id, OwnerUserID: userID, Name: "默认网络", Code: "default", TemplateKey: "default", Status: "enabled", Default: true, CreatedAt: now, UpdatedAt: now}
 	s.networks[id] = network
 	group := s.addSecurityGroupLocked(id, "默认安全组", "默认网络安全组", "deny", now)
-	zone := s.addDNSZoneLocked(id, networkZoneName(network), false, now)
-	return network, group, zone
+	return network, group
 }
 
 func (s *Store) addNetworkDeviceLocked(networkID, deviceID, ownerUserID, alias string, enabled bool, now int64) NetworkDevice {

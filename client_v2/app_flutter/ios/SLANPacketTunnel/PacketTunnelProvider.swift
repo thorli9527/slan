@@ -250,7 +250,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   }
 
   // 解析 CIDR 字符串，得到地址、掩码和网络号，供 includedRoutes 与 routeTable 复用。
-  private static func parseCidr(_ cidr: String) -> (
+  fileprivate static func parseCidr(_ cidr: String) -> (
     address: String,
     mask: String,
     network: UInt32,
@@ -281,7 +281,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     return (ipv4String(value), value)
   }
 
-  private static func ipv4Value(_ address: String) -> UInt32? {
+  fileprivate static func ipv4Value(_ address: String) -> UInt32? {
     let parts = address.split(separator: ".")
     guard parts.count == 4 else {
       return nil
@@ -345,6 +345,247 @@ private enum PacketTunnelProviderMask {
       return 0
     }
     return UInt32.max << UInt32(32 - prefix)
+  }
+}
+
+private struct AclPeer {
+  let peerNodeId: String
+  let peerVirtualIps: Set<String>
+}
+
+private enum AclDirection {
+  case ingress
+  case egress
+}
+
+private struct AclPolicy {
+  let networkId: String
+  let defaultPolicy: String
+  let rules: [AclRule]
+
+  static func parse(_ value: Any?) -> [AclPolicy] {
+    guard let policies = value as? [[String: Any]] else {
+      return []
+    }
+    return policies.map { policy in
+      let rules = (policy["rules"] as? [[String: Any]] ?? [])
+        .map(AclRule.parse)
+        .sorted {
+          if $0.priority == $1.priority {
+            return $0.ruleId < $1.ruleId
+          }
+          return $0.priority < $1.priority
+        }
+      return AclPolicy(
+        networkId: string(policy["networkId"]),
+        defaultPolicy: string(policy["defaultPolicy"]),
+        rules: rules
+      )
+    }
+  }
+
+  static func allows(
+    _ packet: Data,
+    policies: [AclPolicy],
+    direction: AclDirection,
+    peer: AclPeer?
+  ) -> Bool {
+    guard Ipv4Packet.sourceAddress(packet) != nil, Ipv4Packet.destinationAddress(packet) != nil else {
+      return true
+    }
+    var hasEnabledRule = false
+    for policy in policies {
+      for rule in policy.rules where rule.enabled {
+        hasEnabledRule = true
+        if !rule.matches(packet: packet, direction: direction, networkId: policy.networkId, peer: peer) {
+          continue
+        }
+        return rule.action.caseInsensitiveCompare("allow") == .orderedSame
+      }
+    }
+    if !hasEnabledRule {
+      return true
+    }
+    return policies.contains {
+      $0.defaultPolicy.trimmingCharacters(in: .whitespacesAndNewlines)
+        .caseInsensitiveCompare("allow") == .orderedSame
+    }
+  }
+
+  fileprivate static func string(_ value: Any?) -> String {
+    (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  }
+
+  fileprivate static func int(_ value: Any?) -> Int {
+    switch value {
+    case let value as Int:
+      return value
+    case let value as NSNumber:
+      return value.intValue
+    case let value as String:
+      return Int(value.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    default:
+      return 0
+    }
+  }
+}
+
+private struct AclRule {
+  let ruleId: String
+  let direction: String
+  let priority: Int
+  let action: String
+  let protocolName: String
+  let portFrom: Int
+  let portTo: Int
+  let peerType: String
+  let peerValue: String
+  let enabled: Bool
+  let resolvedPeerNodeId: String
+  let resolvedPeerVirtualIps: Set<String>
+
+  static func parse(_ value: [String: Any]) -> AclRule {
+    AclRule(
+      ruleId: AclPolicy.string(value["ruleId"]),
+      direction: AclPolicy.string(value["direction"]),
+      priority: AclPolicy.int(value["priority"]),
+      action: AclPolicy.string(value["action"]),
+      protocolName: AclPolicy.string(value["protocol"]),
+      portFrom: AclPolicy.int(value["portFrom"]),
+      portTo: AclPolicy.int(value["portTo"]),
+      peerType: AclPolicy.string(value["peerType"]),
+      peerValue: AclPolicy.string(value["peerValue"]),
+      enabled: (value["enabled"] as? Bool) ?? false,
+      resolvedPeerNodeId: AclPolicy.string(value["resolvedPeerNodeId"]),
+      resolvedPeerVirtualIps: Set(
+        (value["resolvedPeerVirtualIps"] as? [String] ?? [])
+          .map(RelayPeerRuntime.normalizeVirtualIp)
+          .filter { !$0.isEmpty }
+      )
+    )
+  }
+
+  func matches(
+    packet: Data,
+    direction packetDirection: AclDirection,
+    networkId: String,
+    peer: AclPeer?
+  ) -> Bool {
+    directionMatches(packetDirection)
+      && protocolMatches(packet)
+      && portMatches(packet)
+      && peerMatches(packet: packet, packetDirection: packetDirection, networkId: networkId, peer: peer)
+  }
+
+  private func directionMatches(_ packetDirection: AclDirection) -> Bool {
+    let value = direction.lowercased()
+    if value.isEmpty || value == "all" || value == "any" {
+      return true
+    }
+    if packetDirection == .egress {
+      return value == "egress" || value == "out" || value == "outbound"
+    }
+    return value == "ingress" || value == "in" || value == "inbound"
+  }
+
+  private func protocolMatches(_ packet: Data) -> Bool {
+    let value = protocolName.lowercased()
+    if value.isEmpty || value == "all" || value == "any" {
+      return true
+    }
+    guard let proto = Ipv4Packet.ipv4Protocol(packet) else {
+      return true
+    }
+    return (value == "icmp" && proto == 1)
+      || (value == "tcp" && proto == 6)
+      || (value == "udp" && proto == 17)
+      || value == String(proto)
+  }
+
+  private func portMatches(_ packet: Data) -> Bool {
+    let from = max(0, portFrom)
+    let to = max(0, portTo)
+    if from == 0 && to == 0 {
+      return true
+    }
+    guard let port = Ipv4Packet.destinationPort(packet) else {
+      return false
+    }
+    let lower = min(from == 0 ? to : from, to == 0 ? from : to)
+    let upper = max(from == 0 ? to : from, to == 0 ? from : to)
+    return Int(port) >= lower && Int(port) <= upper
+  }
+
+  private func peerMatches(packet: Data, packetDirection: AclDirection, networkId: String, peer: AclPeer?) -> Bool {
+    let type = peerType.lowercased()
+    if type.isEmpty || type == "all" || type == "any" {
+      return peerValue.isEmpty
+        || peerValue.caseInsensitiveCompare("all") == .orderedSame
+        || peerValue.caseInsensitiveCompare("any") == .orderedSame
+        || peerValue == "*"
+    }
+    if type == "network" || type == "workspace" {
+      return peerValue.isEmpty
+        || peerValue.caseInsensitiveCompare("self") == .orderedSame
+        || peerValue.caseInsensitiveCompare("all") == .orderedSame
+        || peerValue == networkId
+    }
+    let subjectIps = aclSubjectIps(ruleDirection: direction, packetDirection: packetDirection, packet: packet)
+    if ["ip", "cidr", "subnet"].contains(type) {
+      return subjectIps.contains { ipMatches(peerValue, $0) }
+    }
+    if type == "device" {
+      if let peer = peer {
+        let expectedNodeId = "node-\(peerValue)"
+        let peerIsSubject = peer.peerVirtualIps.contains { peerIp in
+          subjectIps.contains { RelayPeerRuntime.normalizeVirtualIp(peerIp) == $0 }
+        }
+        if peerIsSubject && (peer.peerNodeId == peerValue || peer.peerNodeId == expectedNodeId) {
+          return true
+        }
+        if peerIsSubject && !resolvedPeerNodeId.isEmpty && peer.peerNodeId == resolvedPeerNodeId {
+          return true
+        }
+      }
+      return subjectIps.contains { resolvedPeerVirtualIps.contains($0) }
+    }
+    if type == "domain" || type == "dns" {
+      return subjectIps.contains { resolvedPeerVirtualIps.contains($0) }
+    }
+    return false
+  }
+
+  private func aclSubjectIps(ruleDirection: String, packetDirection: AclDirection, packet: Data) -> [String] {
+    let value = ruleDirection.lowercased()
+    let source = Ipv4Packet.sourceAddress(packet)
+    let destination = Ipv4Packet.destinationAddress(packet)
+    if packetDirection == .egress && ["egress", "out", "outbound"].contains(value) {
+      return destination.map { [$0] } ?? []
+    }
+    if packetDirection == .ingress && ["ingress", "in", "inbound"].contains(value) {
+      return destination.map { [$0] } ?? []
+    }
+    if value.isEmpty || value == "all" || value == "any" {
+      return [source, destination].compactMap { $0 }
+    }
+    return destination.map { [$0] } ?? []
+  }
+
+  private func ipMatches(_ pattern: String, _ ip: String) -> Bool {
+    let value = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.isEmpty || value.caseInsensitiveCompare("all") == .orderedSame || value == "*" {
+      return true
+    }
+    if value.contains("/") {
+      guard
+        let parsed = PacketTunnelProvider.parseCidr(value),
+        let ipValue = PacketTunnelProvider.ipv4Value(ip)
+      else {
+        return false
+      }
+      return (ipValue & PacketTunnelProviderMask.value(parsed.prefix)) == parsed.network
+    }
+    return RelayPeerRuntime.normalizeVirtualIp(value) == RelayPeerRuntime.normalizeVirtualIp(ip)
   }
 }
 
@@ -449,11 +690,42 @@ private enum Ipv4Packet {
     return flags & 0x12 == 0x02 ? 0.03 : 0.002
   }
 
-  private static func ipv4Protocol(_ packet: Data) -> UInt8? {
+  static func sourceAddress(_ packet: Data) -> String? {
+    guard packet.count >= 20, packet[0] >> 4 == 4 else {
+      return nil
+    }
+    return ipv4String(packet, offset: 12)
+  }
+
+  static func destinationAddress(_ packet: Data) -> String? {
+    guard packet.count >= 20, packet[0] >> 4 == 4 else {
+      return nil
+    }
+    return ipv4String(packet, offset: 16)
+  }
+
+  static func ipv4Protocol(_ packet: Data) -> UInt8? {
     guard packet.count >= 20, packet[0] >> 4 == 4 else {
       return nil
     }
     return packet[9]
+  }
+
+  static func destinationPort(_ packet: Data) -> UInt16? {
+    guard packet.count >= 20, packet[0] >> 4 == 4 else {
+      return nil
+    }
+    let ihl = Int(packet[0] & 0x0f) * 4
+    guard ihl >= 20, packet.count >= ihl + 4 else {
+      return nil
+    }
+    if packet.readUInt16(at: 6) & 0x1fff != 0 {
+      return nil
+    }
+    guard packet[9] == 6 || packet[9] == 17 else {
+      return nil
+    }
+    return packet.readUInt16(at: ihl + 2)
   }
 
   private static func tcpFlags(_ packet: Data) -> UInt8? {
@@ -634,6 +906,7 @@ private final class RelayRuntime {
   private let relayAddress: String
   private let maxFramePayload: Int
   private let packetFlow: NEPacketTunnelFlow
+  private let aclPolicies: [AclPolicy]
   private var peers: [RelayPeerRuntime] = []
   private var derpPeers: [DerpPeerRuntime] = []
   private var directUdpRuntime: DirectUdpRuntime?
@@ -728,6 +1001,7 @@ private final class RelayRuntime {
     self.relayAddress = relayAddress
     self.maxFramePayload = max(512, min(1400, config["maxFramePayload"] as? Int ?? 1200))
     self.packetFlow = packetFlow
+    self.aclPolicies = AclPolicy.parse(config["aclPolicies"])
     if let data = try? JSONSerialization.data(withJSONObject: config),
       let json = String(data: data, encoding: .utf8)
     {
@@ -744,7 +1018,8 @@ private final class RelayRuntime {
         localNodeId: localNodeId,
         localVirtualIp: self.localVirtualIp,
         configHash: configHash,
-        packetFlow: packetFlow
+        packetFlow: packetFlow,
+        aclPolicies: aclPolicies
       )
     }
     self.derpPeers = sessions.compactMap { session in
@@ -757,7 +1032,8 @@ private final class RelayRuntime {
         localNodeId: localNodeId,
         localVirtualIp: self.localVirtualIp,
         configHash: configHash,
-        packetFlow: packetFlow
+        packetFlow: packetFlow,
+        aclPolicies: aclPolicies
       )
     }
     if peers.isEmpty && derpPeers.isEmpty {
@@ -769,7 +1045,8 @@ private final class RelayRuntime {
       localVirtualIp: self.localVirtualIp,
       maxFramePayload: maxFramePayload,
       configHash: configHash,
-      packetFlow: packetFlow
+      packetFlow: packetFlow,
+      aclPolicies: aclPolicies
     )
   }
 
@@ -798,6 +1075,11 @@ private final class RelayRuntime {
     let relayPeer = peers.first(where: { $0.matches(destination) })
     let derpPeer = derpPeers.first(where: { $0.matches(destination) })
     guard relayPeer != nil || derpPeer != nil else {
+      return false
+    }
+    let aclPeer = relayPeer?.aclPeer ?? derpPeer?.aclPeer
+    guard AclPolicy.allows(packet, policies: aclPolicies, direction: .egress, peer: aclPeer)
+    else {
       return false
     }
     seq &+= 1
@@ -926,6 +1208,7 @@ private final class DirectUdpRuntime {
   private let maxFramePayload: Int
   private let configHash: UInt64
   private let packetFlow: NEPacketTunnelFlow
+  private let aclPolicies: [AclPolicy]
   private var peers: [DirectUdpPeerRuntime]
 
   var attachedPeerCount: Int {
@@ -967,7 +1250,8 @@ private final class DirectUdpRuntime {
     localVirtualIp: String,
     maxFramePayload: Int,
     configHash: UInt64,
-    packetFlow: NEPacketTunnelFlow
+    packetFlow: NEPacketTunnelFlow,
+    aclPolicies: [AclPolicy]
   ) {
     let peerPaths = config["peerPaths"] as? [[String: Any]] ?? []
     let peers = peerPaths.compactMap {
@@ -976,7 +1260,8 @@ private final class DirectUdpRuntime {
         localNodeId: localNodeId,
         localVirtualIp: localVirtualIp,
         configHash: configHash,
-        packetFlow: packetFlow
+        packetFlow: packetFlow,
+        aclPolicies: aclPolicies
       )
     }
     if peers.isEmpty {
@@ -986,6 +1271,7 @@ private final class DirectUdpRuntime {
     self.maxFramePayload = maxFramePayload
     self.configHash = configHash
     self.packetFlow = packetFlow
+    self.aclPolicies = aclPolicies
     self.peers = peers
   }
 
@@ -1020,6 +1306,7 @@ private final class DirectUdpPeerRuntime {
   private let configHash: UInt64
   private let endpoint: (host: Network.NWEndpoint.Host, port: Network.NWEndpoint.Port)
   private let packetFlow: NEPacketTunnelFlow
+  private let aclPolicies: [AclPolicy]
   private var connection: NWConnection?
   private var running = false
   private(set) var ready = false
@@ -1030,6 +1317,9 @@ private final class DirectUdpPeerRuntime {
   private(set) var framesSent = 0
   private(set) var framesReceived = 0
   private var seq: UInt64 = 0
+  var aclPeer: AclPeer {
+    AclPeer(peerNodeId: peerNodeId, peerVirtualIps: peerVirtualIps)
+  }
 
   // 解析服务端 peerPath，选择第一个 Direct UDP/LAN UDP/IPv6 UDP 候选作为远端端点。
   init?(
@@ -1037,7 +1327,8 @@ private final class DirectUdpPeerRuntime {
     localNodeId: String,
     localVirtualIp: String,
     configHash: UInt64,
-    packetFlow: NEPacketTunnelFlow
+    packetFlow: NEPacketTunnelFlow,
+    aclPolicies: [AclPolicy]
   ) {
     let peerNodeId = (peerPath["peerNodeId"] as? String ?? "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1059,6 +1350,7 @@ private final class DirectUdpPeerRuntime {
     self.configHash = configHash
     self.endpoint = endpoint
     self.packetFlow = packetFlow
+    self.aclPolicies = aclPolicies
   }
 
   // 建立 UDP NWConnection，ready 后立即开始接收和周期性探测。
@@ -1158,6 +1450,12 @@ private final class DirectUdpPeerRuntime {
         if let packet = RelayRuntime.decodeFrame(data) {
           self.ready = true
           self.framesReceived += 1
+          guard AclPolicy.allows(packet, policies: self.aclPolicies, direction: .ingress, peer: self.aclPeer) else {
+            if self.running {
+              self.receive()
+            }
+            return
+          }
           if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: self.localVirtualIp)
           {
             self.seq &+= 1
@@ -1269,6 +1567,7 @@ private final class DerpPeerRuntime {
   private let ticket: [String: Any]
   private let endpoint: (host: Network.NWEndpoint.Host, port: Network.NWEndpoint.Port)
   private let packetFlow: NEPacketTunnelFlow
+  private let aclPolicies: [AclPolicy]
   private var connection: NWConnection?
   private var readBuffer = Data()
   private var ready = false
@@ -1279,6 +1578,9 @@ private final class DerpPeerRuntime {
   private(set) var packetsWritten = 0
   private(set) var detachSent = false
   private var seq: UInt64 = 0
+  var aclPeer: AclPeer {
+    AclPeer(peerNodeId: peerNodeId, peerVirtualIps: peerVirtualIps)
+  }
 
   init?(
     session: [String: Any],
@@ -1286,7 +1588,8 @@ private final class DerpPeerRuntime {
     localNodeId: String,
     localVirtualIp: String,
     configHash: UInt64,
-    packetFlow: NEPacketTunnelFlow
+    packetFlow: NEPacketTunnelFlow,
+    aclPolicies: [AclPolicy]
   ) {
     let sessionId = (session["sessionId"] as? String ?? "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1316,6 +1619,7 @@ private final class DerpPeerRuntime {
     self.ticket = ticket
     self.endpoint = endpoint
     self.packetFlow = packetFlow
+    self.aclPolicies = aclPolicies
   }
 
   func start() {
@@ -1454,6 +1758,9 @@ private final class DerpPeerRuntime {
       return
     }
     framesReceived += 1
+    guard AclPolicy.allows(packet, policies: aclPolicies, direction: .ingress, peer: aclPeer) else {
+      return
+    }
     if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: localVirtualIp) {
       seq &+= 1
       if let frame = RelayRuntime.encodeFrame(seq: seq, configHash: configHash, payload: reply) {
@@ -1548,6 +1855,7 @@ private final class RelayPeerRuntime {
   private static let maxAttachAttempts = 3
 
   private let sessionId: String
+  private let peerNodeId: String
   private let peerVirtualIps: Set<String>
   private let relayAddress: String
   private let localNodeId: String
@@ -1555,6 +1863,7 @@ private final class RelayPeerRuntime {
   private let configHash: UInt64
   private let ticket: [String: Any]
   private let packetFlow: NEPacketTunnelFlow
+  private let aclPolicies: [AclPolicy]
   private var connection: NWConnection?
   private var ready = false
   private(set) var attached = false
@@ -1564,6 +1873,9 @@ private final class RelayPeerRuntime {
   private(set) var detachSent = false
   private var attachAttempts = 0
   private var seq: UInt64 = 0
+  var aclPeer: AclPeer {
+    AclPeer(peerNodeId: peerNodeId, peerVirtualIps: peerVirtualIps)
+  }
 
   // 从服务端 session 配置解析 relay ticket 与远端虚拟 IP 集合。
   init?(
@@ -1572,9 +1884,12 @@ private final class RelayPeerRuntime {
     localNodeId: String,
     localVirtualIp: String,
     configHash: UInt64,
-    packetFlow: NEPacketTunnelFlow
+    packetFlow: NEPacketTunnelFlow,
+    aclPolicies: [AclPolicy]
   ) {
     let sessionId = (session["sessionId"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let peerNodeId = (session["peerNodeId"] as? String ?? "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
     let ticket = session["ticket"] as? [String: Any] ?? [:]
     let sessionRelayAddress = (ticket["relayUrl"] as? String ?? "")
@@ -1585,6 +1900,7 @@ private final class RelayPeerRuntime {
       .map(Self.normalizeVirtualIp)
       .filter { !$0.isEmpty }
     guard !sessionId.isEmpty,
+      !peerNodeId.isEmpty,
       !peerVirtualIps.isEmpty,
       !ticket.isEmpty,
       resolvedRelayAddress != nil
@@ -1592,6 +1908,7 @@ private final class RelayPeerRuntime {
       return nil
     }
     self.sessionId = sessionId
+    self.peerNodeId = peerNodeId
     self.peerVirtualIps = Set(peerVirtualIps)
     self.relayAddress = resolvedRelayAddress ?? relayAddress
     self.localNodeId = localNodeId
@@ -1599,6 +1916,7 @@ private final class RelayPeerRuntime {
     self.configHash = configHash
     self.ticket = ticket
     self.packetFlow = packetFlow
+    self.aclPolicies = aclPolicies
   }
 
   // 建立到 relay 节点的 UDP 连接，ready 后发送 attach 并进入接收循环。
@@ -1717,6 +2035,12 @@ private final class RelayPeerRuntime {
         }
         if let packet = RelayRuntime.decodeFrame(data) {
           self.framesReceived += 1
+          guard AclPolicy.allows(packet, policies: self.aclPolicies, direction: .ingress, peer: self.aclPeer) else {
+            if self.ready {
+              self.receive()
+            }
+            return
+          }
           if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: self.localVirtualIp)
           {
             self.seq &+= 1

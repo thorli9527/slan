@@ -13,7 +13,8 @@ pub use command::{
 };
 pub use error::{ClientCoreError, ClientCoreResult};
 pub use packet::{
-    icmp_echo_reply_for_request, ipv4_destination, ipv4_source, ipv4_transport_checksum_valid,
+    acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
+    ipv4_destination, ipv4_protocol, ipv4_source, ipv4_transport_checksum_valid,
     normalize_ipv4_transport_checksums, normalize_virtual_ip, relay_peer_index_for_packet,
 };
 pub use path::{
@@ -26,9 +27,10 @@ pub use path::{
 pub use platform::{
     AndroidNetworkEvent, AndroidNetworkEventType, AndroidSocketProtectionReason,
     AndroidSocketProtectionRequest, AndroidVpnConsentRequest, AndroidVpnPermissionState,
-    AndroidVpnSessionConfig, NetworkRuntimeState, PlatformDeviceNetworkConfig,
-    PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkConfig, PlatformNetworkDiagnostics,
-    RelayDataPlaneConfig, RelayPeerSession, RelayTicket, RouteSpec,
+    AndroidVpnSessionConfig, NetworkRuntimeState, PlatformAclPeer, PlatformAclPolicy,
+    PlatformAclRule, PlatformDeviceNetworkConfig, PlatformDiagnosticCheck, PlatformNetwork,
+    PlatformNetworkConfig, PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession,
+    RelayTicket, RouteSpec,
 };
 pub use relay_frame::relay_frame_is_replayed;
 pub use runtime::ClientRuntime;

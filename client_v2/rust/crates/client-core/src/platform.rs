@@ -104,6 +104,8 @@ pub struct AndroidVpnSessionConfig {
     pub relay_endpoint_id: Option<String>,
     pub relay_transport: Option<String>,
     pub relay_address: Option<String>,
+    #[serde(default)]
+    pub acl_policies: Vec<PlatformAclPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_data_plane: Option<RelayDataPlaneConfig>,
 }
@@ -137,6 +139,57 @@ pub struct PlatformDeviceNetworkConfig {
     pub relay_candidate_count: usize,
 }
 
+/// 客户端数据面 ACL 策略，来自服务端安全组与规则。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformAclPolicy {
+    pub network_id: String,
+    #[serde(default)]
+    pub default_policy: String,
+    #[serde(default)]
+    pub rules: Vec<PlatformAclRule>,
+}
+
+/// 客户端数据面 ACL 规则，保留服务端字段并补充 device 规则的解析结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformAclRule {
+    pub rule_id: String,
+    pub security_group_id: String,
+    #[serde(default)]
+    pub direction: String,
+    #[serde(default)]
+    pub priority: i64,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub protocol: String,
+    #[serde(default)]
+    pub port_from: i64,
+    #[serde(default)]
+    pub port_to: i64,
+    #[serde(default)]
+    pub peer_type: String,
+    #[serde(default)]
+    pub peer_value: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub resolved_peer_node_id: Option<String>,
+    #[serde(default)]
+    pub resolved_peer_virtual_ips: Vec<String>,
+}
+
+/// ACL 匹配时使用的 peer 上下文。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformAclPeer {
+    #[serde(default)]
+    pub peer_node_id: Option<String>,
+    #[serde(default)]
+    pub peer_virtual_ips: Vec<String>,
+}
+
 /// Relay 数据面配置，描述本机如何通过 relay/DERP 与 peer 建立转发会话。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -159,6 +212,8 @@ pub struct RelayDataPlaneConfig {
     pub relay_mtu: Option<u16>,
     #[serde(default)]
     pub max_frame_payload: Option<u16>,
+    #[serde(default)]
+    pub acl_policies: Vec<PlatformAclPolicy>,
     pub sessions: Vec<RelayPeerSession>,
 }
 
@@ -260,4 +315,125 @@ pub trait PlatformNetwork {
     fn disable_network(&self) -> Result<()>;
     /// 读取平台当前网络运行状态。
     fn read_runtime_state(&self) -> Result<NetworkRuntimeState>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_acl_policy() -> PlatformAclPolicy {
+        PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "rule-1".to_string(),
+                security_group_id: "sg-1".to_string(),
+                direction: "egress".to_string(),
+                priority: 100,
+                action: "deny".to_string(),
+                protocol: "icmp".to_string(),
+                port_from: 0,
+                port_to: 0,
+                peer_type: "device".to_string(),
+                peer_value: "device-peer".to_string(),
+                enabled: true,
+                resolved_peer_node_id: Some("node-peer".to_string()),
+                resolved_peer_virtual_ips: vec!["100.64.0.2".to_string()],
+            }],
+        }
+    }
+
+    fn test_relay_config(acl_policy: PlatformAclPolicy) -> RelayDataPlaneConfig {
+        RelayDataPlaneConfig {
+            enabled: true,
+            transport: "udp".to_string(),
+            relay_address: "47.245.40.231:39000".to_string(),
+            local_node_id: "node-local".to_string(),
+            network_id: "network-1".to_string(),
+            path_policy: PathPolicy::default(),
+            peer_paths: Vec::new(),
+            relay_mtu: Some(1280),
+            max_frame_payload: Some(1200),
+            acl_policies: vec![acl_policy],
+            sessions: vec![RelayPeerSession {
+                session_id: "session-1".to_string(),
+                peer_node_id: "node-peer".to_string(),
+                peer_virtual_ips: vec!["100.64.0.2".to_string()],
+                ticket: RelayTicket {
+                    ticket_id: "ticket-1".to_string(),
+                    network_id: "network-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    src_node_id: "node-local".to_string(),
+                    dst_node_id: "node-peer".to_string(),
+                    derp_cluster_id: None,
+                    country_code: None,
+                    city_code: None,
+                    allowed_derp_node_ids: Vec::new(),
+                    relay_url: "udp://47.245.40.231:39000".to_string(),
+                    expires_at: "2026-06-05T00:00:00Z".to_string(),
+                    session_key: "session-key".to_string(),
+                    signature: "signature".to_string(),
+                },
+            }],
+        }
+    }
+
+    #[test]
+    fn platform_network_config_round_trips_acl_policies() {
+        let acl_policy = test_acl_policy();
+        let config = AndroidVpnSessionConfig {
+            session_name: "SLAN".to_string(),
+            virtual_ip: "100.64.0.1".to_string(),
+            prefix_len: 32,
+            network_configs: Vec::new(),
+            dns_servers: vec!["100.64.0.53".to_string()],
+            routes: vec![RouteSpec {
+                destination: "mesh".to_string(),
+                gateway: None,
+            }],
+            mtu: Some(1280),
+            relay_endpoint_id: Some("relay-1".to_string()),
+            relay_transport: Some("udp".to_string()),
+            relay_address: Some("47.245.40.231:39000".to_string()),
+            acl_policies: vec![acl_policy.clone()],
+            relay_data_plane: Some(test_relay_config(acl_policy.clone())),
+        };
+
+        let value = serde_json::to_value(&config).expect("serialize platform config");
+        assert!(value.get("aclPolicies").is_some());
+        assert!(value
+            .get("relayDataPlane")
+            .and_then(|relay| relay.get("aclPolicies"))
+            .is_some());
+
+        let decoded: AndroidVpnSessionConfig =
+            serde_json::from_value(value).expect("deserialize platform config");
+        assert_eq!(decoded.acl_policies, vec![acl_policy.clone()]);
+        assert_eq!(
+            decoded
+                .relay_data_plane
+                .expect("relay data plane should decode")
+                .acl_policies,
+            vec![acl_policy]
+        );
+    }
+
+    #[test]
+    fn platform_network_config_defaults_missing_acl_policies_to_empty() {
+        let decoded: AndroidVpnSessionConfig = serde_json::from_value(serde_json::json!({
+            "sessionName": "SLAN",
+            "virtualIp": "100.64.0.1",
+            "prefixLen": 32,
+            "dnsServers": [],
+            "routes": [],
+            "mtu": null,
+            "relayEndpointId": null,
+            "relayTransport": null,
+            "relayAddress": null
+        }))
+        .expect("deserialize minimal platform config");
+
+        assert!(decoded.acl_policies.is_empty());
+        assert!(decoded.relay_data_plane.is_none());
+    }
 }

@@ -209,7 +209,7 @@ func (s *Store) networkPeerAccessAllowedLocked(networkID, localDeviceID, peerDev
 func securityRuleMatchesPeerAccess(networkID string, rule SecurityGroupRule, local, peer Device) bool {
 	switch strings.ToLower(strings.TrimSpace(rule.Direction)) {
 	case "ingress", "inbound", "in":
-		return securityRuleSubjectMatches(networkID, rule, local)
+		return securityRuleSubjectMatches(networkID, rule, peer)
 	case "egress", "outbound", "out":
 		return securityRuleSubjectMatches(networkID, rule, peer)
 	default:

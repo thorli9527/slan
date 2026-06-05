@@ -1324,9 +1324,7 @@ mod tests {
 
     #[test]
     fn client_message_downstream_updates_runtime_state_and_notifies() {
-        let runtime = Arc::new(Mutex::new(ClientRuntime::new(
-            PlatformNetworkImpl::default(),
-        )));
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
         let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
         let state_notifier = Arc::new(StateChangeNotifier::default());
         let payload = serde_json::json!({
@@ -1377,9 +1375,7 @@ mod tests {
 
     #[test]
     fn device_user_login_downstream_rejects_mismatched_device_id() {
-        let runtime = Arc::new(Mutex::new(ClientRuntime::new(
-            PlatformNetworkImpl::default(),
-        )));
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
         {
             let mut guard = runtime.lock().expect("runtime mutex");
             guard

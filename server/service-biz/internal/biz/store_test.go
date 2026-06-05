@@ -33,6 +33,9 @@ func TestRegisterUserAndDeviceJoinDefaultNetwork(t *testing.T) {
 	if network.Code != "default" {
 		t.Fatalf("expected default network code, got %+v", network)
 	}
+	if zones := store.ListDNSZones(network.NetworkID); len(zones) != 0 {
+		t.Fatalf("expected user initialization to skip default dns zones, got %+v", zones)
+	}
 
 	device, deviceMember, err := store.RegisterDevice(user.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "work mac", "pub")
 	if err != nil {
@@ -392,15 +395,15 @@ func TestNetworkConfigReturnsPeersACLAndDNS(t *testing.T) {
 	if len(groups) == 0 {
 		t.Fatal("expected default security group")
 	}
-	rule, err := store.AddSecurityGroupRule(groups[0].SecurityGroupID, "ingress", "allow", "tcp", "device", deviceA.DeviceID, "ssh", 100, 22, 22, true)
+	rule, err := store.AddSecurityGroupRule(groups[0].SecurityGroupID, "ingress", "allow", "tcp", "device", deviceB.DeviceID, "ssh", 100, 22, 22, true)
 	if err != nil {
 		t.Fatalf("add acl: %v", err)
 	}
-	zones := store.ListDNSZones(network.NetworkID)
-	if len(zones) == 0 {
-		t.Fatal("expected default dns zone")
+	zone, err := store.AddDNSZone(network.NetworkID, "smoke.lan", false)
+	if err != nil {
+		t.Fatalf("add dns zone: %v", err)
 	}
-	record, err := store.AddDNSRecord(network.NetworkID, zones[0].ZoneID, "phone", "A", deviceB.DeviceID, "", "", "443", 60)
+	record, err := store.AddDNSRecord(network.NetworkID, zone.ZoneID, "phone", "A", deviceB.DeviceID, "", "", "443", 60)
 	if err != nil {
 		t.Fatalf("add dns: %v", err)
 	}
@@ -452,6 +455,35 @@ func TestNetworkConfigSecurityDenyRemovesPeerAndRelayTicket(t *testing.T) {
 	}
 	if _, err := store.IssueRelayTicket(network.NetworkID, "node-"+deviceA.DeviceID, "node-"+deviceB.DeviceID, "", nil); err == nil {
 		t.Fatal("expected relay ticket to be denied by ACL")
+	}
+}
+
+func TestNetworkConfigSecurityIngressDenyTargetsDestinationPeer(t *testing.T) {
+	store := NewStore()
+	auth, network, _ := store.RegisterUser("acl-ingress-deny@example.com", "secret", "ACL Ingress Deny")
+	user := auth.User
+	deviceA, _, _ := store.RegisterDevice(user.UserID, "acl-ingress-mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	deviceB, _, _ := store.RegisterDevice(user.UserID, "acl-ingress-ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
+	if _, _, err := store.RenewDevice(deviceB.DeviceID, user.UserID, true, 0, 0); err != nil {
+		t.Fatalf("mark peer active: %v", err)
+	}
+	groups := store.ListSecurityGroups(network.NetworkID)
+	if len(groups) == 0 {
+		t.Fatal("expected default security group")
+	}
+	if _, err := store.AddSecurityGroupRule(groups[0].SecurityGroupID, "ingress", "deny", "all", "device", deviceB.DeviceID, "deny peer ingress", 10, 0, 0, true); err != nil {
+		t.Fatalf("add ingress deny acl: %v", err)
+	}
+
+	config, err := store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config: %v", err)
+	}
+	if len(config.Peers) != 0 {
+		t.Fatalf("expected ingress-denied destination peer to be removed, got %+v", config.Peers)
+	}
+	if _, err := store.IssueRelayTicket(network.NetworkID, "node-"+deviceA.DeviceID, "node-"+deviceB.DeviceID, "", nil); err == nil {
+		t.Fatal("expected relay ticket to be denied by ingress ACL on destination peer")
 	}
 }
 

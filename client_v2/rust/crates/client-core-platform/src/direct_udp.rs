@@ -375,7 +375,7 @@ fn udp_address_for_peer(path: &PeerPathConfig) -> Option<(PathKind, String)> {
     for path_kind in [PathKind::LanUdp, PathKind::Ipv6Udp, PathKind::DirectUdp] {
         if let Some(address) = path.candidates.iter().find_map(|candidate| {
             (candidate.kind == path_kind)
-                .then(|| candidate.address.as_deref())
+                .then_some(candidate.address.as_deref())
                 .flatten()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())

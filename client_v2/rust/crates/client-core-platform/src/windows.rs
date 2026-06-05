@@ -17,16 +17,17 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use client_core::{
-    icmp_echo_reply_for_request, ipv4_destination, ipv4_source, ipv4_transport_checksum_valid,
-    mark_path_ready_for_nodes, mark_peer_path_probe_success, normalize_ipv4_transport_checksums,
-    normalize_virtual_ip,
+    acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
+    ipv4_destination, ipv4_source, ipv4_transport_checksum_valid, mark_path_ready_for_nodes,
+    mark_peer_path_probe_success, normalize_ipv4_transport_checksums, normalize_virtual_ip,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
     },
     relay_peer_index_for_packet, selected_runtime_paths, update_peer_active_path,
     NetworkRuntimeState, PathKind, PathPolicy, PathState, PathTracker, PeerPathRuntime,
-    PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
+    PlatformAclPeer, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
+    RelayPeerSession, RouteSpec,
 };
 use libloading::Library;
 use serde::{Deserialize, Serialize};
@@ -862,6 +863,7 @@ struct WindowsPathManager {
 
 struct PacketRoute {
     peer_node_id: String,
+    peer_virtual_ips: Vec<String>,
     default_path: PathKind,
     relay_udp_index: Option<usize>,
     derp_tcp_index: Option<usize>,
@@ -978,6 +980,7 @@ impl WindowsPathManager {
             if let Some(peer) = self.relay_udp.peers().get(peer_index) {
                 return Some(PacketRoute {
                     peer_node_id: peer.peer_node_id.clone(),
+                    peer_virtual_ips: peer.peer_virtual_ips.clone(),
                     default_path: peer.path_kind,
                     relay_udp_index: Some(peer_index),
                     derp_tcp_index: self.derp_tcp.peer_index_by_node(&peer.peer_node_id),
@@ -989,6 +992,7 @@ impl WindowsPathManager {
                 if let Some(peer) = direct_udp.peers.get(peer_index) {
                     return Some(PacketRoute {
                         peer_node_id: peer.peer_node_id.clone(),
+                        peer_virtual_ips: peer.peer_virtual_ips.clone(),
                         default_path: peer.path_kind,
                         relay_udp_index: self.relay_udp_index_by_node(&peer.peer_node_id),
                         derp_tcp_index: self.derp_tcp.peer_index_by_node(&peer.peer_node_id),
@@ -1000,6 +1004,7 @@ impl WindowsPathManager {
             if let Some(peer) = self.derp_tcp.peers().get(peer_index) {
                 return Some(PacketRoute {
                     peer_node_id: peer.peer_node_id.clone(),
+                    peer_virtual_ips: peer.peer_virtual_ips.clone(),
                     default_path: PathKind::DerpTcpTls443,
                     relay_udp_index: self.relay_udp_index_by_node(&peer.peer_node_id),
                     derp_tcp_index: Some(peer_index),
@@ -1311,6 +1316,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
     let config_path_policy = config.path_policy.clone();
     let config_path_count = config.peer_paths.len() as u32;
     let config_peer_paths = config.peer_paths.clone();
+    let acl_policies = config.acl_policies.clone();
     let attached_peer_paths = relay_runtime_paths_from_config(&config.peer_paths, &config.sessions);
     let direct_udp_transport =
         DirectUdpTransport::attach(config.local_node_id.as_str(), &config_peer_paths);
@@ -1499,6 +1505,21 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 }
                 let payload = normalize_ipv4_transport_checksums(payload);
                 record_tun_tcp_packet(&mut stats, &payload);
+                if let Some(route) = path_manager.route_for_packet(&payload) {
+                    let acl_peer = PlatformAclPeer {
+                        peer_node_id: Some(route.peer_node_id.clone()),
+                        peer_virtual_ips: route.peer_virtual_ips.clone(),
+                    };
+                    if !acl_allows_egress_packet(&payload, &acl_policies, Some(&acl_peer)) {
+                        stats.last_tun_peer_node_id = Some(route.peer_node_id);
+                        stats.last_tun_drop_reason = Some("acl_egress_denied".to_string());
+                        unsafe {
+                            release_receive_packet(session, packet);
+                        }
+                        thread::sleep(DATA_PLANE_IDLE_SLEEP);
+                        continue;
+                    }
+                }
                 if let Some(frame) =
                     encode_slan_relay_data_frame(seq.wrapping_add(1), config_hash, &payload)
                 {
@@ -1710,6 +1731,14 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                         if let Some(packet) = decode_slan_relay_data_frame(frame) {
                             stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
                             record_relay_tcp_packet(&mut stats, packet);
+                            let acl_peer = PlatformAclPeer {
+                                peer_node_id: Some(peer.peer_node_id.clone()),
+                                peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                            };
+                            if !acl_allows_ingress_packet(packet, &acl_policies, Some(&acl_peer)) {
+                                stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                                continue;
+                            }
                             if let Some(reply) =
                                 icmp_echo_reply_for_request(packet, &local_virtual_ip)
                             {
@@ -1733,6 +1762,10 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 continue;
                             }
                             let packet = normalize_ipv4_transport_checksums(packet);
+                            if !acl_allows_ingress_packet(&packet, &acl_policies, Some(&acl_peer)) {
+                                stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                                continue;
+                            }
                             if write_wintun_packet(
                                 session,
                                 allocate_send_packet,
@@ -1787,6 +1820,14 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                         if let Some(packet) = decode_slan_relay_data_frame(&frame) {
                             stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
                             record_relay_tcp_packet(&mut stats, packet);
+                            let acl_peer = PlatformAclPeer {
+                                peer_node_id: Some(peer.peer_node_id.clone()),
+                                peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                            };
+                            if !acl_allows_ingress_packet(packet, &acl_policies, Some(&acl_peer)) {
+                                stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                                continue;
+                            }
                             if let Some(reply) =
                                 icmp_echo_reply_for_request(packet, &local_virtual_ip)
                             {
@@ -1810,6 +1851,10 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 continue;
                             }
                             let packet = normalize_ipv4_transport_checksums(packet);
+                            if !acl_allows_ingress_packet(&packet, &acl_policies, Some(&acl_peer)) {
+                                stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                                continue;
+                            }
                             if write_wintun_packet(
                                 session,
                                 allocate_send_packet,
@@ -1906,6 +1951,15 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             stats.direct_udp_frames_received =
                                 stats.direct_udp_frames_received.saturating_add(1);
                             record_relay_tcp_packet(&mut stats, packet);
+                            let peer = &direct_udp.peers[peer_index];
+                            let acl_peer = PlatformAclPeer {
+                                peer_node_id: Some(peer.peer_node_id.clone()),
+                                peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                            };
+                            if !acl_allows_ingress_packet(packet, &acl_policies, Some(&acl_peer)) {
+                                stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                                continue;
+                            }
                             if let Some(reply) =
                                 icmp_echo_reply_for_request(packet, &local_virtual_ip)
                             {
@@ -1927,8 +1981,11 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 }
                                 continue;
                             }
-                            let peer = &mut direct_udp.peers[peer_index];
                             let packet = normalize_ipv4_transport_checksums(packet);
+                            if !acl_allows_ingress_packet(&packet, &acl_policies, Some(&acl_peer)) {
+                                stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
+                                continue;
+                            }
                             if write_wintun_packet(
                                 session,
                                 allocate_send_packet,

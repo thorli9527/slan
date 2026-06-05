@@ -1,8 +1,198 @@
+use std::net::Ipv4Addr;
+
+use crate::platform::{PlatformAclPeer, PlatformAclPolicy, PlatformAclRule};
+
 pub fn relay_peer_index_for_packet(peer_virtual_ips: &[&[String]], packet: &[u8]) -> Option<usize> {
     let destination = ipv4_destination(packet)?;
     peer_virtual_ips
         .iter()
         .position(|ips| ips.iter().any(|ip| normalize_virtual_ip(ip) == destination))
+}
+
+pub fn acl_allows_egress_packet(
+    packet: &[u8],
+    policies: &[PlatformAclPolicy],
+    peer: Option<&PlatformAclPeer>,
+) -> bool {
+    acl_allows_packet(packet, policies, peer, "egress")
+}
+
+pub fn acl_allows_ingress_packet(
+    packet: &[u8],
+    policies: &[PlatformAclPolicy],
+    peer: Option<&PlatformAclPeer>,
+) -> bool {
+    acl_allows_packet(packet, policies, peer, "ingress")
+}
+
+fn acl_allows_packet(
+    packet: &[u8],
+    policies: &[PlatformAclPolicy],
+    peer: Option<&PlatformAclPeer>,
+    direction: &str,
+) -> bool {
+    if ipv4_source(packet).is_none() || ipv4_destination(packet).is_none() {
+        return true;
+    }
+    let mut has_enabled_rule = false;
+    for policy in policies {
+        for rule in policy.rules.iter().filter(|rule| rule.enabled) {
+            has_enabled_rule = true;
+            if !acl_rule_direction_matches(rule.direction.as_str(), direction) {
+                continue;
+            }
+            if !acl_rule_protocol_matches(rule.protocol.as_str(), packet) {
+                continue;
+            }
+            if !acl_rule_port_matches(rule, packet) {
+                continue;
+            }
+            if !acl_rule_peer_matches(policy.network_id.as_str(), rule, packet, direction, peer) {
+                continue;
+            }
+            return rule.action.eq_ignore_ascii_case("allow");
+        }
+    }
+    if !has_enabled_rule {
+        return true;
+    }
+    policies
+        .iter()
+        .any(|policy| policy.default_policy.trim().eq_ignore_ascii_case("allow"))
+}
+
+fn acl_rule_direction_matches(rule_direction: &str, packet_direction: &str) -> bool {
+    let value = rule_direction.trim().to_ascii_lowercase();
+    value.is_empty()
+        || value == "all"
+        || value == "any"
+        || value == packet_direction
+        || (packet_direction == "egress" && matches!(value.as_str(), "out" | "outbound"))
+        || (packet_direction == "ingress" && matches!(value.as_str(), "in" | "inbound"))
+}
+
+fn acl_rule_protocol_matches(rule_protocol: &str, packet: &[u8]) -> bool {
+    let value = rule_protocol.trim().to_ascii_lowercase();
+    if value.is_empty() || value == "all" || value == "any" {
+        return true;
+    }
+    let Some(protocol) = ipv4_protocol(packet) else {
+        return true;
+    };
+    matches!(
+        (value.as_str(), protocol),
+        ("icmp", 1) | ("tcp", 6) | ("udp", 17)
+    ) || value == protocol.to_string()
+}
+
+fn acl_rule_port_matches(rule: &PlatformAclRule, packet: &[u8]) -> bool {
+    let from = rule.port_from.max(0);
+    let to = rule.port_to.max(0);
+    if from == 0 && to == 0 {
+        return true;
+    }
+    let Some(protocol) = ipv4_protocol(packet) else {
+        return false;
+    };
+    if protocol != 6 && protocol != 17 {
+        return false;
+    }
+    let Some(port) = ipv4_destination_port(packet) else {
+        return false;
+    };
+    let lower = if from == 0 { to } else { from };
+    let upper = if to == 0 { from } else { to };
+    i64::from(port) >= lower.min(upper) && i64::from(port) <= lower.max(upper)
+}
+
+fn acl_rule_peer_matches(
+    network_id: &str,
+    rule: &PlatformAclRule,
+    packet: &[u8],
+    packet_direction: &str,
+    peer: Option<&PlatformAclPeer>,
+) -> bool {
+    let peer_type = rule.peer_type.trim().to_ascii_lowercase();
+    let peer_value = rule.peer_value.trim();
+    if matches!(peer_type.as_str(), "" | "all" | "any") {
+        return matches!(peer_value, "")
+            || peer_value.eq_ignore_ascii_case("all")
+            || peer_value.eq_ignore_ascii_case("any")
+            || peer_value == "*";
+    }
+    if matches!(peer_type.as_str(), "network" | "workspace") {
+        return matches!(peer_value, "")
+            || peer_value.eq_ignore_ascii_case("self")
+            || peer_value.eq_ignore_ascii_case("all")
+            || peer_value == network_id;
+    }
+    if matches!(peer_type.as_str(), "ip" | "cidr" | "subnet") {
+        return acl_subject_ips(rule.direction.as_str(), packet_direction, packet)
+            .iter()
+            .any(|ip| acl_ip_matches(peer_value, ip));
+    }
+    if peer_type == "device" {
+        let subject_ips = acl_subject_ips(rule.direction.as_str(), packet_direction, packet);
+        if let Some(peer) = peer {
+            let expected_node_id = format!("node-{peer_value}");
+            let peer_is_subject = peer.peer_virtual_ips.iter().any(|ip| {
+                subject_ips
+                    .iter()
+                    .any(|subject_ip| normalize_virtual_ip(ip) == *subject_ip)
+            });
+            if peer_is_subject
+                && peer
+                    .peer_node_id
+                    .as_deref()
+                    .is_some_and(|node_id| node_id == peer_value || node_id == expected_node_id)
+            {
+                return true;
+            }
+            if peer_is_subject
+                && rule
+                    .resolved_peer_node_id
+                    .as_deref()
+                    .is_some_and(|node_id| peer.peer_node_id.as_deref() == Some(node_id))
+            {
+                return true;
+            }
+        }
+        return subject_ips.iter().any(|subject_ip| {
+            rule.resolved_peer_virtual_ips
+                .iter()
+                .any(|ip| normalize_virtual_ip(ip) == *subject_ip)
+        });
+    }
+    if matches!(peer_type.as_str(), "domain" | "dns") {
+        return acl_subject_ips(rule.direction.as_str(), packet_direction, packet)
+            .iter()
+            .any(|subject_ip| {
+                rule.resolved_peer_virtual_ips
+                    .iter()
+                    .any(|ip| normalize_virtual_ip(ip) == *subject_ip)
+            });
+    }
+    false
+}
+
+fn acl_subject_ips(rule_direction: &str, packet_direction: &str, packet: &[u8]) -> Vec<String> {
+    let rule_direction = rule_direction.trim().to_ascii_lowercase();
+    let source = ipv4_source(packet);
+    let destination = ipv4_destination(packet);
+    if packet_direction.eq_ignore_ascii_case("egress")
+        && matches!(rule_direction.as_str(), "egress" | "out" | "outbound")
+    {
+        return destination.into_iter().collect();
+    }
+    if packet_direction.eq_ignore_ascii_case("ingress")
+        && matches!(rule_direction.as_str(), "ingress" | "in" | "inbound")
+    {
+        return destination.into_iter().collect();
+    }
+    if matches!(rule_direction.as_str(), "" | "all" | "any") {
+        return source.into_iter().chain(destination).collect();
+    }
+    destination.into_iter().collect()
 }
 
 pub fn ipv4_destination(packet: &[u8]) -> Option<String> {
@@ -32,6 +222,63 @@ pub fn normalize_virtual_ip(value: &str) -> String {
         .map(|(ip, _)| ip)
         .unwrap_or_else(|| value.trim())
         .to_string()
+}
+
+pub fn ipv4_protocol(packet: &[u8]) -> Option<u8> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 {
+        return None;
+    }
+    Some(packet[9])
+}
+
+fn ipv4_destination_port(packet: &[u8]) -> Option<u16> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 {
+        return None;
+    }
+    let ihl = usize::from(packet[0] & 0x0f) * 4;
+    if ihl < 20 || packet.len() < ihl + 4 {
+        return None;
+    }
+    let flags_fragment = u16::from_be_bytes([packet[6], packet[7]]);
+    if flags_fragment & 0x1fff != 0 {
+        return None;
+    }
+    match packet[9] {
+        6 | 17 => Some(u16::from_be_bytes([packet[ihl + 2], packet[ihl + 3]])),
+        _ => None,
+    }
+}
+
+fn acl_ip_matches(pattern: &str, ip: &str) -> bool {
+    let value = pattern.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("all") || value == "*" {
+        return true;
+    }
+    if let Some((network, prefix)) = value.split_once('/') {
+        return ipv4_cidr_contains(network.trim(), prefix.trim(), ip);
+    }
+    normalize_virtual_ip(value) == normalize_virtual_ip(ip)
+}
+
+fn ipv4_cidr_contains(network: &str, prefix: &str, ip: &str) -> bool {
+    let Ok(prefix) = prefix.parse::<u32>() else {
+        return false;
+    };
+    if prefix > 32 {
+        return false;
+    }
+    let Ok(network) = network.parse::<Ipv4Addr>() else {
+        return false;
+    };
+    let Ok(ip) = normalize_virtual_ip(ip).parse::<Ipv4Addr>() else {
+        return false;
+    };
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    };
+    (u32::from(network) & mask) == (u32::from(ip) & mask)
 }
 
 pub fn icmp_echo_reply_for_request(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u8>> {
@@ -205,9 +452,10 @@ fn internet_checksum(bytes: &[u8]) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::{
-        icmp_echo_reply_for_request, ipv4_destination, ipv4_source, normalize_virtual_ip,
-        relay_peer_index_for_packet,
+        acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
+        ipv4_destination, ipv4_source, normalize_virtual_ip, relay_peer_index_for_packet,
     };
+    use crate::{PlatformAclPeer, PlatformAclPolicy, PlatformAclRule};
 
     #[test]
     fn extracts_ipv4_source_and_destination() {
@@ -260,6 +508,285 @@ mod tests {
         assert!(icmp_echo_reply_for_request(&request, "10.0.0.9").is_none());
     }
 
+    #[test]
+    fn acl_allows_when_no_enabled_rules_exist() {
+        let packet = tcp_packet("10.0.0.2", "10.0.0.3", 443);
+
+        assert!(acl_allows_egress_packet(&packet, &[], None));
+        assert!(acl_allows_egress_packet(
+            &packet,
+            &[PlatformAclPolicy {
+                network_id: "network-1".to_string(),
+                default_policy: "deny".to_string(),
+                rules: vec![PlatformAclRule {
+                    enabled: false,
+                    action: "deny".to_string(),
+                    ..PlatformAclRule::default()
+                }],
+            }],
+            None
+        ));
+    }
+
+    #[test]
+    fn acl_denies_matching_device_and_protocol_port() {
+        let packet = tcp_packet("10.0.0.2", "10.0.0.3", 443);
+        let policy = PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "rule-1".to_string(),
+                direction: "egress".to_string(),
+                priority: 10,
+                action: "deny".to_string(),
+                protocol: "tcp".to_string(),
+                port_from: 443,
+                port_to: 443,
+                peer_type: "device".to_string(),
+                peer_value: "peer-device".to_string(),
+                enabled: true,
+                resolved_peer_node_id: Some("node-peer-device".to_string()),
+                resolved_peer_virtual_ips: vec!["10.0.0.3".to_string()],
+                ..PlatformAclRule::default()
+            }],
+        };
+        let peer = PlatformAclPeer {
+            peer_node_id: Some("node-peer-device".to_string()),
+            peer_virtual_ips: vec!["10.0.0.3".to_string()],
+        };
+
+        assert!(!acl_allows_egress_packet(&packet, &[policy], Some(&peer)));
+    }
+
+    #[test]
+    fn acl_device_rule_does_not_match_unrelated_peer_route() {
+        let packet = tcp_packet("10.0.0.2", "10.0.0.3", 443);
+        let policy = PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "rule-1".to_string(),
+                direction: "egress".to_string(),
+                priority: 10,
+                action: "deny".to_string(),
+                protocol: "tcp".to_string(),
+                port_from: 443,
+                port_to: 443,
+                peer_type: "device".to_string(),
+                peer_value: "other-device".to_string(),
+                enabled: true,
+                resolved_peer_node_id: Some("node-other-device".to_string()),
+                resolved_peer_virtual_ips: vec!["10.0.0.9".to_string()],
+                ..PlatformAclRule::default()
+            }],
+        };
+        let peer = PlatformAclPeer {
+            peer_node_id: Some("node-peer-device".to_string()),
+            peer_virtual_ips: vec!["10.0.0.3".to_string()],
+        };
+
+        assert!(acl_allows_egress_packet(&packet, &[policy], Some(&peer)));
+    }
+
+    #[test]
+    fn acl_priority_allow_overrides_later_deny() {
+        let packet = icmp_echo_request("10.0.0.2", "10.0.0.3");
+        let policy = PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            default_policy: "deny".to_string(),
+            rules: vec![
+                PlatformAclRule {
+                    rule_id: "allow".to_string(),
+                    direction: "egress".to_string(),
+                    priority: 5,
+                    action: "allow".to_string(),
+                    protocol: "icmp".to_string(),
+                    peer_type: "cidr".to_string(),
+                    peer_value: "10.0.0.0/24".to_string(),
+                    enabled: true,
+                    ..PlatformAclRule::default()
+                },
+                PlatformAclRule {
+                    rule_id: "deny".to_string(),
+                    direction: "egress".to_string(),
+                    priority: 10,
+                    action: "deny".to_string(),
+                    protocol: "all".to_string(),
+                    peer_type: "all".to_string(),
+                    enabled: true,
+                    ..PlatformAclRule::default()
+                },
+            ],
+        };
+
+        assert!(acl_allows_egress_packet(&packet, &[policy], None));
+    }
+
+    #[test]
+    fn acl_applies_ingress_direction_to_destination_ip() {
+        let packet = tcp_packet("10.0.0.3", "10.0.0.2", 22);
+        let policy = PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "deny".to_string(),
+                direction: "ingress".to_string(),
+                priority: 1,
+                action: "deny".to_string(),
+                protocol: "tcp".to_string(),
+                port_from: 22,
+                port_to: 22,
+                peer_type: "cidr".to_string(),
+                peer_value: "10.0.0.2/32".to_string(),
+                enabled: true,
+                ..PlatformAclRule::default()
+            }],
+        };
+
+        assert!(!acl_allows_ingress_packet(&packet, &[policy], None));
+    }
+
+    #[test]
+    fn acl_ingress_device_rule_does_not_match_remote_peer_node_only() {
+        let packet = icmp_echo_request("10.0.0.3", "10.0.0.2");
+        let policy = PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "deny-remote-ingress".to_string(),
+                direction: "ingress".to_string(),
+                priority: 1,
+                action: "deny".to_string(),
+                protocol: "all".to_string(),
+                peer_type: "device".to_string(),
+                peer_value: "remote-device".to_string(),
+                enabled: true,
+                resolved_peer_node_id: Some("node-remote-device".to_string()),
+                resolved_peer_virtual_ips: vec!["10.0.0.3/32".to_string()],
+                ..PlatformAclRule::default()
+            }],
+        };
+        let peer = PlatformAclPeer {
+            peer_node_id: Some("node-remote-device".to_string()),
+            peer_virtual_ips: vec!["10.0.0.3/32".to_string()],
+        };
+
+        assert!(acl_allows_ingress_packet(&packet, &[policy], Some(&peer)));
+    }
+
+    #[test]
+    fn acl_ingress_device_rule_matches_local_destination_ip() {
+        let packet = icmp_echo_request("10.0.0.3", "10.0.0.2");
+        let policy = PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "deny-local-ingress".to_string(),
+                direction: "ingress".to_string(),
+                priority: 1,
+                action: "deny".to_string(),
+                protocol: "all".to_string(),
+                peer_type: "device".to_string(),
+                peer_value: "local-device".to_string(),
+                enabled: true,
+                resolved_peer_node_id: Some("node-local-device".to_string()),
+                resolved_peer_virtual_ips: vec!["10.0.0.2/32".to_string()],
+                ..PlatformAclRule::default()
+            }],
+        };
+
+        assert!(!acl_allows_ingress_packet(&packet, &[policy], None));
+    }
+
+    #[test]
+    fn acl_all_direction_matches_source_or_destination_ip() {
+        let packet = icmp_echo_request("10.0.0.2", "10.0.0.3");
+        let policy = PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "deny-source-or-destination".to_string(),
+                direction: "all".to_string(),
+                priority: 1,
+                action: "deny".to_string(),
+                protocol: "all".to_string(),
+                peer_type: "cidr".to_string(),
+                peer_value: "10.0.0.2/32".to_string(),
+                enabled: true,
+                ..PlatformAclRule::default()
+            }],
+        };
+
+        assert!(!acl_allows_egress_packet(&packet, &[policy], None));
+    }
+
+    #[test]
+    fn acl_network_peer_value_must_match_current_policy_network() {
+        let packet = icmp_echo_request("10.0.0.2", "10.0.0.3");
+        let policy = PlatformAclPolicy {
+            network_id: "network-a".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "deny-other-network".to_string(),
+                direction: "egress".to_string(),
+                priority: 1,
+                action: "deny".to_string(),
+                protocol: "all".to_string(),
+                peer_type: "network".to_string(),
+                peer_value: "network-b".to_string(),
+                enabled: true,
+                ..PlatformAclRule::default()
+            }],
+        };
+
+        assert!(acl_allows_egress_packet(&packet, &[policy], None));
+    }
+
+    #[test]
+    fn acl_domain_rule_uses_resolved_virtual_ips() {
+        let packet = icmp_echo_request("10.0.0.2", "10.0.0.7");
+        let policy = PlatformAclPolicy {
+            network_id: "network-a".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "deny-domain".to_string(),
+                direction: "egress".to_string(),
+                priority: 1,
+                action: "deny".to_string(),
+                protocol: "icmp".to_string(),
+                peer_type: "domain".to_string(),
+                peer_value: "build.slan".to_string(),
+                enabled: true,
+                resolved_peer_virtual_ips: vec!["10.0.0.7/32".to_string()],
+                ..PlatformAclRule::default()
+            }],
+        };
+
+        assert!(!acl_allows_egress_packet(&packet, &[policy], None));
+    }
+
+    #[test]
+    fn acl_unknown_peer_type_does_not_match() {
+        let packet = icmp_echo_request("10.0.0.2", "10.0.0.3");
+        let policy = PlatformAclPolicy {
+            network_id: "network-a".to_string(),
+            default_policy: "allow".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "deny-unknown".to_string(),
+                direction: "egress".to_string(),
+                priority: 1,
+                action: "deny".to_string(),
+                protocol: "all".to_string(),
+                peer_type: "unsupported".to_string(),
+                peer_value: "10.0.0.3".to_string(),
+                enabled: true,
+                ..PlatformAclRule::default()
+            }],
+        };
+
+        assert!(acl_allows_egress_packet(&packet, &[policy], None));
+    }
+
     fn ipv4_packet(src: &str, dst: &str) -> Vec<u8> {
         let mut packet = vec![0_u8; 20];
         packet[0] = 0x45;
@@ -269,6 +796,20 @@ mod tests {
         for (index, part) in dst.split('.').enumerate().take(4) {
             packet[16 + index] = part.parse::<u8>().unwrap();
         }
+        packet
+    }
+
+    fn tcp_packet(src: &str, dst: &str, dst_port: u16) -> Vec<u8> {
+        let mut packet = ipv4_packet(src, dst);
+        packet.resize(40, 0);
+        packet[2..4].copy_from_slice(&(40_u16).to_be_bytes());
+        packet[8] = 64;
+        packet[9] = 6;
+        packet[20..22].copy_from_slice(&12345_u16.to_be_bytes());
+        packet[22..24].copy_from_slice(&dst_port.to_be_bytes());
+        packet[32] = 0x50;
+        let ip_sum = super::internet_checksum(&packet[..20]);
+        packet[10..12].copy_from_slice(&ip_sum.to_be_bytes());
         packet
     }
 

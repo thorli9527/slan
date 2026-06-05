@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod acl_policy;
 mod client_message_mqtt;
 mod control_plane;
 mod control_tasks;
@@ -36,9 +37,9 @@ use anyhow::{Context, Result};
 use client_core::{
     normalize_relay_transport, normalize_virtual_ip, relay_path_kind_for_transport,
     AssignedIpPayload, ClientCommand, ClientRuntime, ClientViewState, PathCandidate, PathKind,
-    PathState, PeerPathConfig, PlatformDeviceNetworkConfig, PlatformNetwork, PlatformNetworkConfig,
-    PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession, RelayTicket,
-    TrafficStatsPayload,
+    PathState, PeerPathConfig, PlatformAclPolicy, PlatformDeviceNetworkConfig, PlatformNetwork,
+    PlatformNetworkConfig, PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession,
+    RelayTicket, TrafficStatsPayload,
 };
 use client_core_platform::PlatformNetworkImpl;
 use serde_json::Value;
@@ -53,6 +54,7 @@ use windows_service::service_control_handler::{self, ServiceControlHandlerResult
 #[cfg(target_os = "windows")]
 use windows_service::service_dispatcher;
 
+use crate::acl_policy::{acl_policies_for_network, platform_acl_policies};
 use crate::control_plane::{
     local_stable_device_id, reset_local_device_id, ControlPeer, ControlPlaneClient,
     PunchConnectSession, RelayCandidate,
@@ -99,6 +101,14 @@ use crate::session_store::{
     session_auth_invalid_error, session_is_expired, sync_session_device_fields, PersistedSession,
 };
 use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
+
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("test env mutex poisoned")
+}
 
 const DEFAULT_SERVICE_HOST: &str = "127.0.0.1:46392";
 #[cfg(target_os = "windows")]
@@ -175,7 +185,7 @@ fn main() -> Result<()> {
     if std::env::args()
         .any(|arg| arg == "--install-adapter" || arg == "--prepare-adapter" || arg == "--driver")
     {
-        PlatformNetworkImpl::default().install_adapter()?;
+        PlatformNetworkImpl.install_adapter()?;
         return Ok(());
     }
     #[cfg(target_os = "windows")]
@@ -208,13 +218,13 @@ fn run_service_server() -> Result<()> {
         .unwrap_or_else(|_| DEFAULT_SERVICE_HOST.to_string());
     let listener = TcpListener::bind(&bind_address)
         .with_context(|| format!("bind client-core-service on {bind_address}"))?;
-    let mut initial_runtime = ClientRuntime::new(PlatformNetworkImpl::default());
+    let mut initial_runtime = ClientRuntime::new(PlatformNetworkImpl);
     if let Some(session) =
         load_valid_registered_session().filter(|session| !session.access_token.trim().is_empty())
     {
         let _ = initial_runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
     }
-    if let Err(error) = PlatformNetworkImpl::default().install_adapter() {
+    if let Err(error) = PlatformNetworkImpl.install_adapter() {
         log_service_error(format!(
             "client-core-service failed to prepare Wintun adapter: {error:#}"
         ));
@@ -401,12 +411,12 @@ fn process_is_running(pid: u32) -> bool {
     }
     #[cfg(unix)]
     {
-        return std::process::Command::new("kill")
+        std::process::Command::new("kill")
             .arg("-0")
             .arg(pid.to_string())
             .status()
             .map(|status| status.success())
-            .unwrap_or(false);
+            .unwrap_or(false)
     }
     #[cfg(windows)]
     {
@@ -601,7 +611,7 @@ fn handle_local_status(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>)
         }
     };
     let session = load_session().ok();
-    let runtime_state = PlatformNetworkImpl::default().read_runtime_state();
+    let runtime_state = PlatformNetworkImpl.read_runtime_state();
     let (active_path, peer_count, runtime_error) = match runtime_state {
         Ok(runtime_state) => (
             runtime_state
@@ -683,7 +693,7 @@ fn handle_local_session() -> Result<String> {
 }
 
 fn handle_local_peers() -> Result<String> {
-    let runtime_state = PlatformNetworkImpl::default()
+    let runtime_state = PlatformNetworkImpl
         .read_runtime_state()
         .context("read local peer runtime state")?;
     let items = runtime_state
@@ -995,7 +1005,7 @@ fn handle_export_diagnostics(
         runtime.state().clone()
     };
     let diagnose = path_diagnose_response().ok();
-    let platform = PlatformNetworkImpl::default().diagnostics().ok();
+    let platform = PlatformNetworkImpl.diagnostics().ok();
     let payload = serde_json::json!({
         "exportedAtMs": current_timestamp_ms(),
         "state": state,
@@ -1255,20 +1265,19 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
     persist_session(&session)?;
 
     let stats = load_relay_runtime_stats();
-    let platform = PlatformNetworkImpl::default()
-        .diagnostics()
-        .unwrap_or_else(|error| PlatformNetworkDiagnostics {
-            platform: std::env::consts::OS.to_string(),
-            checks: vec![client_core::PlatformDiagnosticCheck {
-                name: "platformDiagnostics".to_string(),
-                ok: false,
-                message: Some(error.to_string()),
-            }],
-            ..PlatformNetworkDiagnostics::default()
-        });
-    let runtime_state = PlatformNetworkImpl::default()
-        .read_runtime_state()
-        .unwrap_or_default();
+    let platform =
+        PlatformNetworkImpl
+            .diagnostics()
+            .unwrap_or_else(|error| PlatformNetworkDiagnostics {
+                platform: std::env::consts::OS.to_string(),
+                checks: vec![client_core::PlatformDiagnosticCheck {
+                    name: "platformDiagnostics".to_string(),
+                    ok: false,
+                    message: Some(error.to_string()),
+                }],
+                ..PlatformNetworkDiagnostics::default()
+            });
+    let runtime_state = PlatformNetworkImpl.read_runtime_state().unwrap_or_default();
     let peer_paths = runtime_state.peer_paths;
     let active_path_counts = path_diagnose_active_path_counts(&peer_paths);
     let active_path_type = stats
@@ -2330,6 +2339,8 @@ where
                 .collect(),
         );
     }
+    let all_acl_policies = platform_acl_policies(&network_configs);
+    let active_acl_policies = acl_policies_for_network(&all_acl_policies, &network_id);
     let relay_candidates = runtime_relay_candidates();
     let best_relay = android_data_plane_relay_candidate(&relay_candidates);
     persist_session(&session)?;
@@ -2353,6 +2364,7 @@ where
         relay_endpoint_id: best_relay.as_ref().map(|relay| relay.endpoint_id.clone()),
         relay_transport: best_relay.as_ref().map(|relay| relay.transport.clone()),
         relay_address: best_relay.as_ref().map(|relay| relay.address.clone()),
+        acl_policies: active_acl_policies,
         relay_data_plane: build_relay_data_plane_config(
             &client,
             &session,
@@ -2360,6 +2372,7 @@ where
             activation.self_node_id.as_deref(),
             &activation.peers,
             best_relay.as_ref(),
+            &all_acl_policies,
         )
         .ok(),
     })
@@ -2417,6 +2430,10 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
         activation.self_node_id.as_deref(),
         &activation.peers,
         best_relay.as_ref(),
+        &platform_acl_policies(
+            &crate::network_module::refresh_network_module_from_session(&client, &session)
+                .unwrap_or_default(),
+        ),
     )
 }
 
@@ -2486,11 +2503,10 @@ fn load_network_session() -> Result<PersistedSession> {
         let _ = remove_session();
         return Err(anyhow::anyhow!("session expired; please login again"));
     }
-    ensure_session_device_registered(session).map_err(|error| {
-        if session_auth_invalid_error(&error) {
+    ensure_session_device_registered(session).inspect_err(|error| {
+        if session_auth_invalid_error(error) {
             let _ = remove_session();
         }
-        error
     })
 }
 
@@ -2549,6 +2565,10 @@ where
     }
     let relay_candidates = runtime_relay_candidates();
     let best_relay = data_plane_relay_candidate(&relay_candidates);
+    let network_configs =
+        crate::network_module::refresh_network_module_from_session(&client, session)
+            .unwrap_or_default();
+    let acl_policies = platform_acl_policies(&network_configs);
     let relay_config = build_relay_data_plane_config(
         &client,
         session,
@@ -2556,6 +2576,7 @@ where
         activation.self_node_id.as_deref(),
         &activation.peers,
         best_relay.as_ref(),
+        &acl_policies,
     )
     .map_err(|error| {
         log_service_error(format!(
@@ -2633,6 +2654,7 @@ fn build_relay_data_plane_config(
     self_node_id: Option<&str>,
     peers: &[ControlPeer],
     best_relay: Option<&RelayCandidateSelection>,
+    acl_policies: &[PlatformAclPolicy],
 ) -> Result<RelayDataPlaneConfig> {
     let relay = best_relay.ok_or_else(|| anyhow::anyhow!("no reachable relay candidate"))?;
     let relay_transport = normalize_relay_transport(&relay.transport).unwrap_or("udp");
@@ -2737,6 +2759,7 @@ fn build_relay_data_plane_config(
         ),
         relay_mtu: Some(policy.relay_mtu),
         max_frame_payload: Some(policy.max_frame_payload),
+        acl_policies: acl_policies_for_network(acl_policies, network_id),
         sessions,
     })
 }
@@ -3579,10 +3602,7 @@ fn spawn_control_task_worker(
             let mut task_queue = task_queue
                 .lock()
                 .expect("control task queue mutex poisoned");
-            match task_queue.take_next_pending() {
-                Ok(task) => task,
-                Err(_) => None,
-            }
+            task_queue.take_next_pending().unwrap_or_default()
         };
         let Some(task) = task else {
             continue;

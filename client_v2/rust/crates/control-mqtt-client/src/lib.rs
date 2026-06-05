@@ -302,7 +302,7 @@ fn complete_mqtt_qos2_publish(stream: &mut TcpStream, packet_id: u16) -> Result<
 }
 
 fn mqtt_write_string(buf: &mut Vec<u8>, value: &str) -> Result<(), String> {
-    let len = value.as_bytes().len();
+    let len = value.len();
     if len > u16::MAX as usize {
         return Err("mqtt string too long".to_string());
     }
