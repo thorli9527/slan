@@ -1716,7 +1716,7 @@ func TestDeviceLoginPrepareExpiresOldPreloginDevices(t *testing.T) {
 	}
 }
 
-func TestDeviceLoginForDeviceRejectsExistingDeviceOwnedByAnotherUser(t *testing.T) {
+func TestDeviceLoginForDeviceRebindsExistingDeviceToBrowserUser(t *testing.T) {
 	store := NewStore()
 	alice, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
 	if err != nil {
@@ -1729,15 +1729,34 @@ func TestDeviceLoginForDeviceRejectsExistingDeviceOwnedByAnotherUser(t *testing.
 	if _, _, err := store.RegisterDevice(alice.User.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a"); err != nil {
 		t.Fatalf("register alice device: %v", err)
 	}
-	if _, err := store.CompleteDeviceLoginForDevice("mac-1", bob.Session.Token, "login"); err != errConflict {
-		t.Fatalf("expected existing device owned by another user to conflict, got %v", err)
+	_, aliceDeviceSession, _, err := store.BindDeviceSession(alice.Session.Token, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	if err != nil {
+		t.Fatalf("bind alice device session: %v", err)
+	}
+	payload, err := store.CompleteDeviceLoginForDevice("mac-1", bob.Session.Token, "login")
+	if err != nil {
+		t.Fatalf("complete device login as bob: %v", err)
+	}
+	if payload.UserID != bob.User.UserID {
+		t.Fatalf("expected login payload to use bob, got %+v", payload)
 	}
 	device, err := store.GetDevice("mac-1")
 	if err != nil {
 		t.Fatalf("get device: %v", err)
 	}
-	if device.OwnerID != alice.User.UserID {
-		t.Fatalf("expected owner to remain alice, got %+v", device)
+	if device.OwnerID != bob.User.UserID {
+		t.Fatalf("expected owner to transfer to bob, got %+v", device)
+	}
+	if _, _, _, err := store.RenewDeviceSession(aliceDeviceSession.DeviceToken, true, 1, 1); err != errUnauthorized {
+		t.Fatalf("expected alice device session to be revoked, got %v", err)
+	}
+	if _, err := store.NetworkConfigsForDevice("mac-1"); err != nil {
+		t.Fatalf("expected transferred device to have bob network config: %v", err)
+	}
+	for _, membership := range store.ListNetworkDevices("default-" + alice.User.UserID) {
+		if membership.DeviceID == "mac-1" {
+			t.Fatalf("expected alice network membership to be removed, got %+v", membership)
+		}
 	}
 }
 

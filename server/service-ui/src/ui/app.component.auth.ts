@@ -233,7 +233,7 @@ export class AppComponentAuth extends AppComponentData {
   private clientLoginSyncErrorMessage(error: unknown): string {
     if (error instanceof ApiHttpError) {
       if (error.status === 409 || error.code === 'CONFLICT') {
-        return '当前浏览器账号与该客户端已绑定账号不一致。请退出浏览器账号后使用客户端绑定账号登录，或先在控制台删除/解绑该设备后重新绑定。';
+        return '客户端设备身份冲突。请回到当前客户端重新点击登录，或先在控制台删除旧设备记录后重新绑定。';
       }
       if (error.status === 401 || error.code === 'UNAUTHORIZED') {
         return '浏览器登录已过期，请重新登录后再同步客户端。';

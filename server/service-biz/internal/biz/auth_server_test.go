@@ -234,6 +234,49 @@ func TestDeviceLoginHTTPAllowsSameUserMultipleDevices(t *testing.T) {
 	}
 }
 
+func TestDeviceLoginHTTPRebindsDeviceToBrowserUser(t *testing.T) {
+	server := NewServer()
+	server.mqtt = MQTTConfig{
+		Enabled:                   true,
+		BrokerURL:                 "mqtt://127.0.0.1:1883",
+		PublicBrokerURL:           "mqtt://127.0.0.1:1883",
+		UsernamePrefix:            "slan",
+		PasswordSecret:            "test-secret",
+		TopicPrefix:               "slan",
+		CredentialTTLSeconds:      3600,
+		ControlMessageTTLSeconds:  3600,
+		PublishTimeoutMilliseconds: 1,
+	}
+	alice, _, err := server.store.RegisterUser("rebind-alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register alice: %v", err)
+	}
+	bob, _, err := server.store.RegisterUser("rebind-bob@example.com", "secret", "Bob")
+	if err != nil {
+		t.Fatalf("register bob: %v", err)
+	}
+	if _, _, _, err := server.store.BindDeviceSession(alice.Session.Token, "rebind-http-mac", "Mac", "macos", "macOS", "15.0", "", "pk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
+		t.Fatalf("bind alice device: %v", err)
+	}
+	handler := server.Routes()
+
+	var complete CompleteDeviceLoginResponse
+	postJSON(t, handler, "/api/auth/device-login-devices/rebind-http-mac/complete", "", map[string]any{
+		"accessToken": bob.Session.Token,
+		"action":      "login",
+	}, http.StatusOK, &complete)
+	if complete.Status != "ok" || complete.DeviceID != "rebind-http-mac" {
+		t.Fatalf("unexpected complete response: %+v", complete)
+	}
+	device, err := server.store.GetDevice("rebind-http-mac")
+	if err != nil {
+		t.Fatalf("get device: %v", err)
+	}
+	if device.OwnerID != bob.User.UserID {
+		t.Fatalf("expected device to rebind to bob, got %+v", device)
+	}
+}
+
 func TestLegacyDeviceRegisterAndRenewRequireBearerIdentity(t *testing.T) {
 	server := NewServer()
 	alice, _, err := server.store.RegisterUser("legacy-alice@example.com", "secret", "Alice")

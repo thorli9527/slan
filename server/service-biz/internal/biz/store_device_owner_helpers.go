@@ -58,7 +58,14 @@ func (s *Store) bindExistingDeviceToUser(deviceID, userID string) error {
 		s.devices[deviceID] = device
 		s.addDeviceOwnerLocked(deviceID, userID, now)
 	} else if device.OwnerID != userID {
-		return errConflict
+		previousOwnerID = device.OwnerID
+		s.transferDeviceOwnerLocked(deviceID, device.OwnerID, userID, "device_login_complete", now)
+		s.removeDeviceFromUserNetworksLocked(deviceID, device.OwnerID)
+		s.revokeDeviceSessionsLocked(deviceID, device.OwnerID)
+		device.OwnerID = userID
+		device.Status = "active"
+		device.UpdatedAt = now
+		s.devices[deviceID] = device
 	}
 	network := s.ensureDefaultNetworkForUserLocked(userID, now)
 	membership := NetworkDevice{
