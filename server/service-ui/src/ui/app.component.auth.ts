@@ -221,10 +221,32 @@ export class AppComponentAuth extends AppComponentData {
       this.notifyStateChanged();
       return true;
     } catch (error) {
-      this.authMessage = `客户端登录同步失败：${error instanceof Error ? error.message : String(error)}`;
+      if (error instanceof ApiHttpError && error.status === 409) {
+        clearBrowserAuth();
+      }
+      this.authMessage = `客户端登录同步失败：${this.clientLoginSyncErrorMessage(error)}`;
       this.notifyStateChanged();
       return false;
     }
+  }
+
+  private clientLoginSyncErrorMessage(error: unknown): string {
+    if (error instanceof ApiHttpError) {
+      if (error.status === 409 || error.code === 'CONFLICT') {
+        return '当前浏览器账号与该客户端已绑定账号不一致。请退出浏览器账号后使用客户端绑定账号登录，或先在控制台删除/解绑该设备后重新绑定。';
+      }
+      if (error.status === 401 || error.code === 'UNAUTHORIZED') {
+        return '浏览器登录已过期，请重新登录后再同步客户端。';
+      }
+      if (error.status === 404 || error.code === 'NOT_FOUND') {
+        return '客户端设备注册信息不存在，请回到客户端重新点击登录。';
+      }
+      if (error.status === 429 || error.code === 'RATE_LIMITED') {
+        return '客户端登录请求过于频繁，请稍后再试。';
+      }
+      return error.message;
+    }
+    return error instanceof Error ? error.message : String(error);
   }
 
   private navigateToDefaultHome(): void {

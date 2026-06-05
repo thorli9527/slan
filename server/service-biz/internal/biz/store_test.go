@@ -1608,6 +1608,53 @@ func TestDeviceLoginPrepareRegistersPreloginDevice(t *testing.T) {
 	}
 }
 
+func TestDeviceLoginAllowsSameUserMultipleDevices(t *testing.T) {
+	store := NewStore()
+	alice, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")
+	if err != nil {
+		t.Fatalf("register alice: %v", err)
+	}
+	prepared := []struct {
+		deviceID  string
+		name      string
+		platform  string
+		publicKey string
+	}{
+		{deviceID: "alice-mac-prelogin", name: "Alice Mac", platform: "macos", publicKey: "pk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{deviceID: "alice-android-prelogin", name: "Alice Android", platform: "android", publicKey: "pk_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+	}
+
+	for _, item := range prepared {
+		if _, err := store.PrepareDeviceLoginDevice(item.deviceID, item.name, item.platform, item.platform, "1.0", "", item.publicKey); err != nil {
+			t.Fatalf("prepare %s: %v", item.deviceID, err)
+		}
+		payload, err := store.CompleteDeviceLoginForDevice(item.deviceID, alice.Session.Token, "login")
+		if err != nil {
+			t.Fatalf("complete %s: %v", item.deviceID, err)
+		}
+		if payload.UserID != alice.User.UserID {
+			t.Fatalf("expected %s to bind to alice, got %+v", item.deviceID, payload)
+		}
+	}
+
+	for _, item := range prepared {
+		device, err := store.GetDevice(item.deviceID)
+		if err != nil {
+			t.Fatalf("get %s: %v", item.deviceID, err)
+		}
+		if device.OwnerID != alice.User.UserID {
+			t.Fatalf("expected %s owner %s, got %+v", item.deviceID, alice.User.UserID, device)
+		}
+		configs, err := store.NetworkConfigsForDevice(item.deviceID)
+		if err != nil {
+			t.Fatalf("network configs for %s: %v", item.deviceID, err)
+		}
+		if len(configs) == 0 {
+			t.Fatalf("expected %s to join alice default network", item.deviceID)
+		}
+	}
+}
+
 func TestDeviceLoginPrepareDoesNotOverwriteBoundDevice(t *testing.T) {
 	store := NewStore()
 	alice, _, err := store.RegisterUser("alice@example.com", "secret", "Alice")

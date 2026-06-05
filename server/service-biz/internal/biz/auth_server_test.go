@@ -176,6 +176,64 @@ func TestPrepareDeviceLoginTruncatesBrowserIdentityFields(t *testing.T) {
 	}
 }
 
+func TestDeviceLoginHTTPAllowsSameUserMultipleDevices(t *testing.T) {
+	server := NewServer()
+	server.mqtt = MQTTConfig{
+		Enabled:                   true,
+		BrokerURL:                 "mqtt://127.0.0.1:1883",
+		PublicBrokerURL:           "mqtt://127.0.0.1:1883",
+		UsernamePrefix:            "slan",
+		PasswordSecret:            "test-secret",
+		TopicPrefix:               "slan",
+		CredentialTTLSeconds:      3600,
+		ControlMessageTTLSeconds:  3600,
+		PublishTimeoutMilliseconds: 1,
+	}
+	auth, _, err := server.store.RegisterUser("multi-device-http@example.com", "secret", "Multi Device")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	handler := server.Routes()
+	devices := []struct {
+		deviceID  string
+		name      string
+		platform  string
+		publicKey string
+	}{
+		{deviceID: "multi-http-mac", name: "Mac", platform: "macos", publicKey: "pk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{deviceID: "multi-http-android", name: "Android", platform: "android", publicKey: "pk_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+	}
+
+	for _, item := range devices {
+		postJSON(t, handler, "/api/auth/device-login-devices", "", map[string]any{
+			"deviceId":  item.deviceID,
+			"name":      item.name,
+			"platform":  item.platform,
+			"osName":    item.platform,
+			"osVersion": "1.0",
+			"publicKey": item.publicKey,
+		}, http.StatusCreated, nil)
+		var complete CompleteDeviceLoginResponse
+		postJSON(t, handler, "/api/auth/device-login-devices/"+item.deviceID+"/complete", "", map[string]any{
+			"accessToken": auth.Session.Token,
+			"action":      "login",
+		}, http.StatusOK, &complete)
+		if complete.DeviceID != item.deviceID || complete.Status != "ok" {
+			t.Fatalf("unexpected complete response for %s: %+v", item.deviceID, complete)
+		}
+	}
+
+	for _, item := range devices {
+		device, err := server.store.GetDevice(item.deviceID)
+		if err != nil {
+			t.Fatalf("get device %s: %v", item.deviceID, err)
+		}
+		if device.OwnerID != auth.User.UserID {
+			t.Fatalf("expected %s to bind to %s, got %+v", item.deviceID, auth.User.UserID, device)
+		}
+	}
+}
+
 func TestLegacyDeviceRegisterAndRenewRequireBearerIdentity(t *testing.T) {
 	server := NewServer()
 	alice, _, err := server.store.RegisterUser("legacy-alice@example.com", "secret", "Alice")
