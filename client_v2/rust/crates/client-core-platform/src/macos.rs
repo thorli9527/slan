@@ -459,12 +459,31 @@ fn restart_data_plane(runtime: &mut MacosRuntime) -> Result<()> {
     for route in &runtime.routes {
         let _ = add_utun_route(&interface_name, route);
     }
+    let local_virtual_ip = runtime.virtual_ip.clone().unwrap_or_default();
     runtime.utun = Some(if let Some(config) = config {
-        start_udp_data_plane(utun, config, runtime.virtual_ip.clone().unwrap_or_default())?
+        start_udp_data_plane(utun, config, local_virtual_ip)?
+    } else if !local_virtual_ip.trim().is_empty() {
+        start_local_data_plane(utun, local_virtual_ip)?
     } else {
         utun
     });
     Ok(())
+}
+
+fn start_local_data_plane(mut utun: UtunRuntime, local_virtual_ip: String) -> Result<UtunRuntime> {
+    let file = utun
+        .file
+        .take()
+        .ok_or_else(|| anyhow!("macos utun file descriptor is not ready"))?;
+    eprintln!("macos local data plane attached virtual_ip={local_virtual_ip}");
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let handle = thread::spawn(move || {
+        run_local_data_plane(file, local_virtual_ip, thread_stop);
+    });
+    utun.stop = stop;
+    utun.handle = Some(handle);
+    Ok(utun)
 }
 
 fn start_udp_data_plane(
@@ -1275,6 +1294,11 @@ fn run_udp_data_plane(
                 did_work = true;
                 if let Some(packet) = strip_utun_header(&tun_buffer[..packet_len]) {
                     if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
+                        if let Some(reply) =
+                            local_virtual_ip_reply(packet, local_virtual_ip.as_str())
+                        {
+                            let _ = write_utun_ipv4_packet(&mut file, &reply);
+                        }
                         continue;
                     }
                     stats.last_tun_packet_at_ms = Some(current_timestamp_ms());
@@ -2097,6 +2121,30 @@ fn relay_peer_for_packet<'a>(peers: &'a [RelayPeer], packet: &[u8]) -> Option<&'
     })
 }
 
+fn run_local_data_plane(mut file: File, local_virtual_ip: String, stop: Arc<AtomicBool>) {
+    let mut tun_buffer = vec![0_u8; MAX_PACKET_SIZE + UTUN_HEADER_LEN];
+    while !stop.load(Ordering::SeqCst) {
+        let mut did_work = false;
+        match file.read(&mut tun_buffer) {
+            Ok(0) => {}
+            Ok(packet_len) => {
+                did_work = true;
+                if let Some(packet) = strip_utun_header(&tun_buffer[..packet_len]) {
+                    if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
+                        let _ = write_utun_ipv4_packet(&mut file, &reply);
+                    }
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+        if !did_work {
+            thread::sleep(DATA_PLANE_IDLE_SLEEP);
+        }
+    }
+}
+
 fn derp_peer_for_packet_mut<'a>(
     peers: &'a mut [DerpPeer],
     packet: &[u8],
@@ -2113,6 +2161,14 @@ fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> boo
     ipv4_destination(packet)
         .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
         .unwrap_or(false)
+}
+
+fn local_virtual_ip_reply(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u8>> {
+    if packet_targets_local_virtual_ip(packet, local_virtual_ip) {
+        icmp_echo_reply_for_request(packet, local_virtual_ip)
+    } else {
+        None
+    }
 }
 
 fn should_ignore_unroutable_destination(destination: &str) -> bool {
@@ -2297,7 +2353,10 @@ mod tests {
 
     use client_core::RelayTicket;
 
-    use super::{parse_ifconfig_ipv4_addresses, parse_virtual_ipv4, relay_udp_address_for_session};
+    use super::{
+        local_virtual_ip_reply, parse_ifconfig_ipv4_addresses, parse_virtual_ipv4,
+        relay_udp_address_for_session,
+    };
 
     #[test]
     fn parses_ifconfig_ipv4_addresses() {
@@ -2336,6 +2395,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn macos_local_virtual_ip_replies_to_icmp_echo() {
+        let request = icmp_echo_request("10.0.0.9", "10.0.0.2");
+        let reply = local_virtual_ip_reply(&request, "10.0.0.2/32").unwrap();
+
+        assert_eq!(&reply[12..16], &[10, 0, 0, 2]);
+        assert_eq!(&reply[16..20], &[10, 0, 0, 9]);
+        assert_eq!(reply[20], 0);
+        assert!(local_virtual_ip_reply(&request, "10.0.0.3/32").is_none());
+    }
+
     fn test_session(relay_url: &str) -> client_core::RelayPeerSession {
         client_core::RelayPeerSession {
             peer_node_id: "peer-node".to_string(),
@@ -2357,5 +2427,30 @@ mod tests {
                 signature: "signature".to_string(),
             },
         }
+    }
+
+    fn ipv4_packet(src: &str, dst: &str) -> Vec<u8> {
+        let mut packet = vec![0_u8; 20];
+        packet[0] = 0x45;
+        for (index, part) in src.split('.').enumerate().take(4) {
+            packet[12 + index] = part.parse::<u8>().unwrap();
+        }
+        for (index, part) in dst.split('.').enumerate().take(4) {
+            packet[16 + index] = part.parse::<u8>().unwrap();
+        }
+        packet
+    }
+
+    fn icmp_echo_request(src: &str, dst: &str) -> Vec<u8> {
+        let mut packet = ipv4_packet(src, dst);
+        packet.resize(32, 0);
+        packet[2..4].copy_from_slice(&(32_u16).to_be_bytes());
+        packet[8] = 64;
+        packet[9] = 1;
+        packet[20] = 8;
+        packet[24..26].copy_from_slice(&7_u16.to_be_bytes());
+        packet[26..28].copy_from_slice(&9_u16.to_be_bytes());
+        packet[28..32].copy_from_slice(b"slan");
+        packet
     }
 }

@@ -498,15 +498,39 @@ fn restart_data_plane(runtime: &mut LinuxRuntime) -> Result<()> {
             && !config.relay_address.trim().is_empty()
             && !config.sessions.is_empty()
     });
+    let interface_name = runtime.interface_name().to_string();
+    let local_virtual_ip = runtime.virtual_ip.clone().unwrap_or_default();
     runtime.tun = None;
-    if let Some(config) = config {
-        runtime.tun = Some(start_udp_data_plane(
-            runtime.interface_name(),
+    runtime.tun = if let Some(config) = config {
+        Some(start_udp_data_plane(
+            interface_name.as_str(),
             config,
-            runtime.virtual_ip.clone().unwrap_or_default(),
-        )?);
-    }
+            local_virtual_ip,
+        )?)
+    } else if !local_virtual_ip.trim().is_empty() {
+        Some(start_local_data_plane(
+            interface_name.as_str(),
+            local_virtual_ip,
+        )?)
+    } else {
+        None
+    };
     Ok(())
+}
+
+fn start_local_data_plane(interface_name: &str, local_virtual_ip: String) -> Result<TunRuntime> {
+    let file = open_tun(interface_name)
+        .with_context(|| format!("open Linux TUN interface {interface_name}"))?;
+    eprintln!("linux local data plane attached virtual_ip={local_virtual_ip}");
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let handle = thread::spawn(move || {
+        run_local_data_plane(file, local_virtual_ip, thread_stop);
+    });
+    Ok(TunRuntime {
+        stop,
+        handle: Some(handle),
+    })
 }
 
 fn start_udp_data_plane(
@@ -997,6 +1021,9 @@ fn run_udp_data_plane(
             Ok(packet_len) => {
                 let packet = &tun_buffer[..packet_len];
                 if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
+                    if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
+                        let _ = write_tun_packet_with_retry(&mut file, &reply);
+                    }
                     continue;
                 }
                 if packet.first().map(|byte| byte >> 4) == Some(4) {
@@ -1777,6 +1804,26 @@ fn relay_peer_for_packet<'a>(peers: &'a [RelayPeer], packet: &[u8]) -> Option<&'
     })
 }
 
+fn run_local_data_plane(mut file: File, local_virtual_ip: String, stop: Arc<AtomicBool>) {
+    let mut tun_buffer = vec![0_u8; MAX_PACKET_SIZE];
+    while !stop.load(Ordering::SeqCst) {
+        match file.read(&mut tun_buffer) {
+            Ok(0) => thread::sleep(DATA_PLANE_IDLE_SLEEP),
+            Ok(packet_len) => {
+                let packet = &tun_buffer[..packet_len];
+                if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
+                    let _ = write_tun_packet_with_retry(&mut file, &reply);
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                thread::sleep(DATA_PLANE_IDLE_SLEEP);
+            }
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+}
+
 fn derp_peer_for_packet_mut<'a>(
     peers: &'a mut [DerpPeer],
     packet: &[u8],
@@ -1793,6 +1840,14 @@ fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> boo
     ipv4_destination(packet)
         .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
         .unwrap_or(false)
+}
+
+fn local_virtual_ip_reply(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u8>> {
+    if packet_targets_local_virtual_ip(packet, local_virtual_ip) {
+        icmp_echo_reply_for_request(packet, local_virtual_ip)
+    } else {
+        None
+    }
 }
 
 fn should_ignore_unroutable_destination(destination: &str) -> bool {
@@ -2223,6 +2278,17 @@ mod tests {
     }
 
     #[test]
+    fn linux_local_virtual_ip_replies_to_icmp_echo() {
+        let request = icmp_echo_request("10.0.0.9", "10.0.0.2");
+        let reply = local_virtual_ip_reply(&request, "10.0.0.2/32").unwrap();
+
+        assert_eq!(&reply[12..16], &[10, 0, 0, 2]);
+        assert_eq!(&reply[16..20], &[10, 0, 0, 9]);
+        assert_eq!(reply[20], 0);
+        assert!(local_virtual_ip_reply(&request, "10.0.0.3/32").is_none());
+    }
+
+    #[test]
     fn linux_mock_runtime_records_dns_acl_and_relay_config() {
         let _guard = test_lock();
         std::env::set_var("SLAN_LINUX_NETWORK_MOCK", "1");
@@ -2266,5 +2332,30 @@ mod tests {
         platform.disable_network().unwrap();
         std::env::remove_var("SLAN_LINUX_NETWORK_MOCK");
         reset_runtime();
+    }
+
+    fn ipv4_packet(src: &str, dst: &str) -> Vec<u8> {
+        let mut packet = vec![0_u8; 20];
+        packet[0] = 0x45;
+        for (index, part) in src.split('.').enumerate().take(4) {
+            packet[12 + index] = part.parse::<u8>().unwrap();
+        }
+        for (index, part) in dst.split('.').enumerate().take(4) {
+            packet[16 + index] = part.parse::<u8>().unwrap();
+        }
+        packet
+    }
+
+    fn icmp_echo_request(src: &str, dst: &str) -> Vec<u8> {
+        let mut packet = ipv4_packet(src, dst);
+        packet.resize(32, 0);
+        packet[2..4].copy_from_slice(&(32_u16).to_be_bytes());
+        packet[8] = 64;
+        packet[9] = 1;
+        packet[20] = 8;
+        packet[24..26].copy_from_slice(&7_u16.to_be_bytes());
+        packet[26..28].copy_from_slice(&9_u16.to_be_bytes());
+        packet[28..32].copy_from_slice(b"slan");
+        packet
     }
 }

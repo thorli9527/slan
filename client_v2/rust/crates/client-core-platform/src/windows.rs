@@ -1271,8 +1271,7 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             && (!value.transport.eq_ignore_ascii_case("udp")
                 || !value.relay_address.trim().is_empty())
     }) else {
-        stop_wintun_data_plane();
-        return Ok(());
+        return configure_wintun_local_data_plane();
     };
     let relay_address = config.relay_address.trim();
     let relay_mtu = config.relay_mtu.unwrap_or(1280).clamp(576, 1500);
@@ -1464,6 +1463,16 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 let payload = unsafe { std::slice::from_raw_parts(packet, packet_size as usize) };
                 if payload.first().map(|byte| byte >> 4) == Some(4) {
                     if packet_targets_local_virtual_ip(payload, local_virtual_ip.as_str()) {
+                        if let Some(reply) =
+                            local_virtual_ip_reply(payload, local_virtual_ip.as_str())
+                        {
+                            let _ = write_wintun_packet(
+                                session,
+                                allocate_send_packet,
+                                send_packet,
+                                &reply,
+                            );
+                        }
                         unsafe {
                             release_receive_packet(session, packet);
                         }
@@ -2851,6 +2860,14 @@ fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> boo
         .unwrap_or(false)
 }
 
+fn local_virtual_ip_reply(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u8>> {
+    if packet_targets_local_virtual_ip(packet, local_virtual_ip) {
+        icmp_echo_reply_for_request(packet, local_virtual_ip)
+    } else {
+        None
+    }
+}
+
 fn should_ignore_unroutable_destination(destination: &str) -> bool {
     let mut parts = destination
         .split('.')
@@ -3031,6 +3048,53 @@ fn direct_udp_control_payload(kind: DirectUdpControlKind, local_node_id: &str) -
         "nodeId": local_node_id.trim(),
     })
     .to_string()
+}
+
+fn configure_wintun_local_data_plane() -> Result<()> {
+    let local_virtual_ip = load_cached_runtime_state()
+        .ok()
+        .and_then(|state| state.virtual_ip)
+        .unwrap_or_default();
+    if local_virtual_ip.trim().is_empty() {
+        stop_wintun_data_plane();
+        return Ok(());
+    }
+    let runtime = WINTUN_RUNTIME.get_or_init(|| Mutex::new(None));
+    let mut runtime = runtime.lock().expect("wintun runtime mutex poisoned");
+    let Some(runtime) = runtime.as_mut() else {
+        bail!("Wintun runtime is not ready");
+    };
+    let _ = runtime.data_plane.take();
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let session = runtime.session as usize;
+    let receive_packet = runtime.receive_packet;
+    let release_receive_packet = runtime.release_receive_packet;
+    let allocate_send_packet = runtime.allocate_send_packet;
+    let send_packet = runtime.send_packet;
+    let handle = thread::spawn(move || {
+        let session = session as WintunSessionHandle;
+        while !thread_stop.load(Ordering::SeqCst) {
+            let mut packet_size = 0_u32;
+            let packet = unsafe { receive_packet(session, &mut packet_size as *mut u32) };
+            if packet.is_null() || packet_size == 0 {
+                thread::sleep(DATA_PLANE_IDLE_SLEEP);
+                continue;
+            }
+            let payload = unsafe { std::slice::from_raw_parts(packet, packet_size as usize) };
+            if let Some(reply) = local_virtual_ip_reply(payload, local_virtual_ip.as_str()) {
+                let _ = write_wintun_packet(session, allocate_send_packet, send_packet, &reply);
+            }
+            unsafe {
+                release_receive_packet(session, packet);
+            }
+        }
+    });
+    runtime.data_plane = Some(WindowsDataPlaneRuntime {
+        stop,
+        handle: Some(handle),
+    });
+    Ok(())
 }
 
 fn write_wintun_packet(
@@ -3616,7 +3680,7 @@ mod tests {
     use super::{
         detach_udp_relay_sessions, direct_udp_control_packet, direct_udp_control_payload,
         direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at,
-        is_usable_dns_server, is_usable_virtual_ip, mark_ready_transports,
+        is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply, mark_ready_transports,
         normalize_direct_udp_address, refresh_relay_ticket_timing, relay_error_message,
         relay_runtime_paths_from_config, relay_udp_address_for_session, send_frame_to_peer,
         validate_relay_peer_session, validate_relay_peer_session_for_path, AttachedRelayPeer,
@@ -3659,6 +3723,17 @@ mod tests {
         let packet = ipv4_packet("10.0.0.2", "10.0.0.9");
 
         assert_eq!(ipv4_destination(&packet).as_deref(), Some("10.0.0.9"));
+    }
+
+    #[test]
+    fn windows_local_virtual_ip_replies_to_icmp_echo() {
+        let request = icmp_echo_request("10.0.0.9", "10.0.0.2");
+        let reply = local_virtual_ip_reply(&request, "10.0.0.2/32").unwrap();
+
+        assert_eq!(&reply[12..16], &[10, 0, 0, 2]);
+        assert_eq!(&reply[16..20], &[10, 0, 0, 9]);
+        assert_eq!(reply[20], 0);
+        assert!(local_virtual_ip_reply(&request, "10.0.0.3/32").is_none());
     }
 
     #[test]
@@ -4660,6 +4735,18 @@ mod tests {
         packet[9] = 17;
         write_ipv4(src, &mut packet[12..16]);
         write_ipv4(dst, &mut packet[16..20]);
+        packet
+    }
+
+    fn icmp_echo_request(src: &str, dst: &str) -> Vec<u8> {
+        let mut packet = ipv4_packet(src, dst);
+        packet.resize(32, 0);
+        packet[2..4].copy_from_slice(&(32_u16).to_be_bytes());
+        packet[9] = 1;
+        packet[20] = 8;
+        packet[24..26].copy_from_slice(&7_u16.to_be_bytes());
+        packet[26..28].copy_from_slice(&9_u16.to_be_bytes());
+        packet[28..32].copy_from_slice(b"slan");
         packet
     }
 
