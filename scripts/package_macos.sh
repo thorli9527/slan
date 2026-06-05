@@ -40,6 +40,7 @@ strip_appledouble_payload() {
   rm -rf "$repack_dir"
   mkdir -p "$payload_root"
   pkgutil --expand "$pkg_path" "$expanded_pkg"
+  find "$expanded_pkg" \( -name '._*' -o -name '.DS_Store' \) -delete
   (
     cd "$payload_root"
     gzip -dc "$expanded_pkg/Payload" | cpio -idm --quiet
@@ -95,13 +96,19 @@ fi
 cp "$ROOT_DIR/client_v2/install/macos/scripts/preinstall" "$SCRIPT_STAGE/preinstall"
 cp "$ROOT_DIR/client_v2/install/macos/scripts/postinstall" "$SCRIPT_STAGE/postinstall"
 chmod 755 "$SCRIPT_STAGE/preinstall" "$SCRIPT_STAGE/postinstall"
+find "$SCRIPT_STAGE" \( -name '._*' -o -name '.DS_Store' \) -delete
+if command -v xattr >/dev/null 2>&1; then
+  xattr -cr "$SCRIPT_STAGE" >/dev/null 2>&1 || true
+fi
 
 rm -f "$PKG_PATH"
 find "$ROOT_STAGE" \( -name '._*' -o -name '.DS_Store' \) -delete
+find "$SCRIPT_STAGE" \( -name '._*' -o -name '.DS_Store' \) -delete
 pkgbuild --analyze --root "$ROOT_STAGE" "$COMPONENT_PLIST"
 plutil -replace 0.BundleIsRelocatable -bool NO "$COMPONENT_PLIST"
 plutil -replace 0.BundleOverwriteAction -string upgrade "$COMPONENT_PLIST"
 find "$ROOT_STAGE" \( -name '._*' -o -name '.DS_Store' \) -delete
+find "$SCRIPT_STAGE" \( -name '._*' -o -name '.DS_Store' \) -delete
 pkgbuild \
   --root "$ROOT_STAGE" \
   --scripts "$SCRIPT_STAGE" \
