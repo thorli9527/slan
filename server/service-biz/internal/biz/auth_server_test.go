@@ -147,6 +147,35 @@ func TestMQTTIsReturnedAfterDeviceLoginPrepareAndRegistration(t *testing.T) {
 	}
 }
 
+func TestPrepareDeviceLoginTruncatesBrowserIdentityFields(t *testing.T) {
+	server := NewServer()
+	handler := server.Routes()
+
+	postJSON(t, handler, "/api/auth/device-login-devices", "", map[string]any{
+		"deviceId":  "browser-long-identity",
+		"name":      strings.Repeat("n", 180),
+		"platform":  strings.Repeat("p", 80),
+		"osName":    strings.Repeat("o", 90),
+		"osVersion": strings.Repeat("u", 180),
+		"alias":     strings.Repeat("a", 180),
+		"publicKey": "pk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}, http.StatusCreated, nil)
+
+	var device Device
+	for _, item := range server.store.ListDevices("") {
+		if item.DeviceID == "browser-long-identity" {
+			device = item
+			break
+		}
+	}
+	if device.DeviceID == "" {
+		t.Fatal("expected prepared device to be stored")
+	}
+	if len(device.Name) != deviceNameMaxLength || len(device.Platform) != devicePlatformMaxLength || len(device.OSName) != deviceOSNameMaxLength || len(device.OSVersion) != deviceOSVersionMaxLength || len(device.Alias) != deviceAliasMaxLength {
+		t.Fatalf("expected identity fields to be truncated, got name=%d platform=%d osName=%d osVersion=%d alias=%d", len(device.Name), len(device.Platform), len(device.OSName), len(device.OSVersion), len(device.Alias))
+	}
+}
+
 func TestLegacyDeviceRegisterAndRenewRequireBearerIdentity(t *testing.T) {
 	server := NewServer()
 	alice, _, err := server.store.RegisterUser("legacy-alice@example.com", "secret", "Alice")

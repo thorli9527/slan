@@ -1,4 +1,5 @@
 import { AppComponentData } from './overview/app.component.data';
+import { ApiHttpError } from './app-api.service';
 import { ApiAuthResponse } from './app.models';
 import {
   clearBrowserAuth,
@@ -35,19 +36,23 @@ export class AppComponentAuth extends AppComponentData {
       if (!auth) {
         return false;
       }
+      this.authMessage = '正在检查浏览器登录状态...';
+      this.notifyStateChanged();
+      const renewedAuth = await this.renewBrowserAuth(auth);
       this.authMessage = '正在同步客户端登录...';
       this.notifyStateChanged();
-      if (!(await this.syncClientLogin(auth, target))) {
+      if (!(await this.syncClientLogin(renewedAuth, target))) {
         clearBrowserAuth();
         this.mode = 'login';
         this.notifyStateChanged();
         return false;
       }
-      await this.applyAuth(auth);
+      await this.applyAuth(renewedAuth);
       this.navigateToDefaultHome();
       return true;
     } catch (error) {
       this.authMessage = `浏览器登录态恢复失败：${error instanceof Error ? error.message : String(error)}`;
+      clearBrowserAuth();
       this.mode = 'login';
       this.notifyStateChanged();
       return false;
@@ -111,9 +116,38 @@ export class AppComponentAuth extends AppComponentData {
       await this.applyAuth(response.auth);
       this.navigateToDefaultHome();
     } catch (error) {
-      this.authMessage = `${mode === 'login' ? '登录' : '注册'}失败：${error instanceof Error ? error.message : String(error)}`;
+      this.authMessage = `${mode === 'login' ? '登录' : '注册'}失败：${this.authErrorMessage(mode, error)}`;
       this.notifyStateChanged();
     }
+  }
+
+  private authErrorMessage(mode: 'login' | 'register', error: unknown): string {
+    if (error instanceof ApiHttpError) {
+      if (mode === 'login') {
+        if (error.status === 404 || error.code === 'NOT_FOUND') {
+          return '账号不存在，请先切换到注册。';
+        }
+        if (error.status === 400 || error.code === 'BAD_REQUEST') {
+          return '邮箱或密码错误，请重新输入。';
+        }
+        if (error.status === 429 || error.code === 'RATE_LIMITED') {
+          return '登录尝试过多，请稍后再试。';
+        }
+      }
+      if (mode === 'register') {
+        if (error.status === 409 || error.code === 'CONFLICT') {
+          return '账号已存在，请切换到登录。';
+        }
+        if (error.status === 400 || error.code === 'BAD_REQUEST') {
+          return '请检查邮箱、名称和密码是否填写正确。';
+        }
+        if (error.status === 429 || error.code === 'RATE_LIMITED') {
+          return '请求过于频繁，请稍后再试。';
+        }
+      }
+      return error.message;
+    }
+    return error instanceof Error ? error.message : String(error);
   }
 
   logout(): void {
@@ -148,12 +182,41 @@ export class AppComponentAuth extends AppComponentData {
     });
   }
 
+  private async renewBrowserAuth(auth: ApiAuthResponse): Promise<ApiAuthResponse> {
+    const response = await this.api.postAuthorized<{ auth: ApiAuthResponse }>(
+      WEB_API.authRenew,
+      auth.session.token,
+      {},
+    );
+    return response.auth;
+  }
+
+  private async prepareDeviceLogin(target: ClientLoginTarget): Promise<void> {
+    await this.api.post(WEB_API.prepareDeviceLogin, {
+      deviceId: target.deviceId,
+      platform: 'desktop',
+      osName: 'browser',
+      osVersion: navigator.platform || 'browser',
+      name: target.deviceId,
+      alias: target.deviceId,
+      publicKey: 'pk_' + 'a'.repeat(64),
+    });
+  }
+
   private async syncClientLogin(auth: ApiAuthResponse, target = clientLoginTarget()): Promise<boolean> {
     if (!target) {
       return true;
     }
     try {
-      await this.completeDeviceLogin(auth, target);
+      try {
+        await this.completeDeviceLogin(auth, target);
+      } catch (error) {
+        if (!(error instanceof ApiHttpError) || error.status !== 404) {
+          throw error;
+        }
+        await this.prepareDeviceLogin(target);
+        await this.completeDeviceLogin(auth, target);
+      }
       this.authMessage = '';
       this.notifyStateChanged();
       return true;

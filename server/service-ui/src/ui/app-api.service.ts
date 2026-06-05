@@ -11,12 +11,24 @@ export function apiBase(): string {
   return '';
 }
 
+export class ApiHttpError extends Error {
+  constructor(
+    public readonly method: string,
+    public readonly path: string,
+    public readonly status: number,
+    public readonly code = '',
+    message = `${method} ${path} ${status}`,
+  ) {
+    super(message);
+  }
+}
+
 @Injectable({ providedIn: 'root' })
 export class AppApiClient {
   async get<T>(path: string): Promise<T> {
     const response = await fetch(`${apiBase()}${path}`);
     if (!response.ok) {
-      throw new Error(`GET ${path} ${response.status}`);
+      throw await this.httpError('GET', path, response);
     }
     return response.json() as Promise<T>;
   }
@@ -28,7 +40,22 @@ export class AppApiClient {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new Error(`POST ${path} ${response.status}`);
+      throw await this.httpError('POST', path, response);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  async postAuthorized<T>(path: string, bearerToken: string, body: unknown): Promise<T> {
+    const response = await fetch(`${apiBase()}${path}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${bearerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw await this.httpError('POST', path, response);
     }
     return response.json() as Promise<T>;
   }
@@ -40,7 +67,7 @@ export class AppApiClient {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new Error(`PATCH ${path} ${response.status}`);
+      throw await this.httpError('PATCH', path, response);
     }
     return response.json() as Promise<T>;
   }
@@ -48,8 +75,20 @@ export class AppApiClient {
   async delete<T>(path: string): Promise<T> {
     const response = await fetch(`${apiBase()}${path}`, { method: 'DELETE' });
     if (!response.ok) {
-      throw new Error(`DELETE ${path} ${response.status}`);
+      throw await this.httpError('DELETE', path, response);
     }
     return response.json() as Promise<T>;
+  }
+
+  private async httpError(method: string, path: string, response: Response): Promise<ApiHttpError> {
+    let code = '';
+    try {
+      const body = await response.json() as { error?: unknown };
+      code = typeof body.error === 'string' ? body.error : '';
+    } catch {
+      code = '';
+    }
+    const suffix = code ? ` ${code}` : '';
+    return new ApiHttpError(method, path, response.status, code, `${method} ${path} ${response.status}${suffix}`);
   }
 }

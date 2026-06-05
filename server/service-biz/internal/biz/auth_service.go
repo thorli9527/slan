@@ -60,10 +60,14 @@ func (s AuthService) ConsoleLogin(req ConsoleLoginRequest) (AuthResponse, error)
 }
 
 func (s AuthService) PrepareDeviceLogin(req DeviceIdentityRequest, remoteIP string) (Device, error) {
-	if err := s.store.CheckDeviceLoginPrepareRateLimit(req.DeviceID, remoteIP); err != nil {
+	normalized, err := normalizeDeviceIdentity(req)
+	if err != nil {
 		return Device{}, err
 	}
-	return s.store.PrepareDeviceLoginDevice(req.DeviceID, req.Name, req.Platform, req.OSName, req.OSVersion, req.Alias, req.PublicKey)
+	if err := s.store.CheckDeviceLoginPrepareRateLimit(normalized.DeviceID, remoteIP); err != nil {
+		return Device{}, err
+	}
+	return s.store.PrepareDeviceLoginDevice(normalized.DeviceID, normalized.Name, normalized.Platform, normalized.OSName, normalized.OSVersion, normalized.Alias, normalized.PublicKey)
 }
 
 func (s AuthService) CompleteDeviceLogin(deviceID string, req CompleteDeviceLoginRequest) (DeviceUserLoginPayload, error) {

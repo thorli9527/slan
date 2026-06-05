@@ -11,11 +11,15 @@ func (s DeviceService) RegisterDevice(accessToken string, req RegisterDeviceRequ
 	if strings.TrimSpace(accessToken) == "" {
 		return Device{}, NetworkDevice{}, errUnauthorized
 	}
+	normalized, err := normalizeDeviceIdentity(req.DeviceIdentityRequest)
+	if err != nil {
+		return Device{}, NetworkDevice{}, err
+	}
 	auth, err := s.store.AuthByToken(accessToken)
 	if err != nil {
 		return Device{}, NetworkDevice{}, err
 	}
-	return s.store.RegisterDevice(auth.User.UserID, req.DeviceID, req.Name, req.Platform, req.OSName, req.OSVersion, req.Alias, req.PublicKey)
+	return s.store.RegisterDevice(auth.User.UserID, normalized.DeviceID, normalized.Name, normalized.Platform, normalized.OSName, normalized.OSVersion, normalized.Alias, normalized.PublicKey)
 }
 
 func (s DeviceService) RenewDevice(accessToken, deviceID string, req RenewDeviceRequest) (Device, []NetworkConfig, error) {
@@ -30,11 +34,19 @@ func (s DeviceService) RenewDevice(accessToken, deviceID string, req RenewDevice
 }
 
 func (s DeviceService) BootstrapDeviceSession(req DeviceSessionBootstrapRequest) (Device, DeviceSession, []NetworkConfig, error) {
-	return s.store.BootstrapDeviceSession(req.SessionKey, req.DeviceID, req.Name, req.Platform, req.OSName, req.OSVersion, req.Alias, req.PublicKey)
+	normalized, err := normalizeDeviceIdentity(req.DeviceIdentityRequest)
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	return s.store.BootstrapDeviceSession(req.SessionKey, normalized.DeviceID, normalized.Name, normalized.Platform, normalized.OSName, normalized.OSVersion, normalized.Alias, normalized.PublicKey)
 }
 
 func (s DeviceService) BindDeviceSession(accessToken string, req DeviceSessionBindRequest) (Device, DeviceSession, []NetworkConfig, error) {
-	return s.store.BindDeviceSession(accessToken, req.DeviceID, req.Name, req.Platform, req.OSName, req.OSVersion, req.Alias, req.PublicKey)
+	normalized, err := normalizeDeviceIdentity(req)
+	if err != nil {
+		return Device{}, DeviceSession{}, nil, err
+	}
+	return s.store.BindDeviceSession(accessToken, normalized.DeviceID, normalized.Name, normalized.Platform, normalized.OSName, normalized.OSVersion, normalized.Alias, normalized.PublicKey)
 }
 
 func (s DeviceService) RenewDeviceSession(deviceToken string, req DeviceRuntimeCountersRequest) (Device, DeviceSession, []NetworkConfig, error) {
