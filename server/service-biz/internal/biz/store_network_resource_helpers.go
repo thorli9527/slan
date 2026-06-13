@@ -24,7 +24,7 @@ func (s *Store) ensureDefaultNetworkResourcesForUserLocked(userID string, now in
 	}
 	network := Network{NetworkID: id, OwnerUserID: userID, Name: "默认网络", Code: "default", TemplateKey: "default", Status: "enabled", Default: true, CreatedAt: now, UpdatedAt: now}
 	s.networks[id] = network
-	group := s.addSecurityGroupLocked(id, "默认安全组", "默认网络安全组", "deny", now)
+	group := s.addSecurityGroupLocked(id, "默认安全组", "默认网络安全组", now)
 	return network, group
 }
 
@@ -49,8 +49,8 @@ func (s *Store) addDNSZoneLocked(networkID, zoneName string, exposeGlobal bool, 
 	return zone
 }
 
-func (s *Store) addSecurityGroupLocked(networkID, name, description, defaultPolicy string, now int64) SecurityGroup {
-	group := SecurityGroup{SecurityGroupID: fmt.Sprintf("sg-%06d", s.nextSecuritySeq), NetworkID: networkID, Name: defaultString(name, "默认安全组"), Description: description, DefaultPolicy: defaultString(defaultPolicy, "deny"), Status: "active", CreatedAt: now}
+func (s *Store) addSecurityGroupLocked(networkID, name, description string, now int64) SecurityGroup {
+	group := SecurityGroup{SecurityGroupID: fmt.Sprintf("sg-%06d", s.nextSecuritySeq), NetworkID: networkID, Name: defaultString(name, "默认安全组"), Description: description, Status: "active", CreatedAt: now}
 	s.nextSecuritySeq++
 	s.securityGroups[group.SecurityGroupID] = group
 	return group

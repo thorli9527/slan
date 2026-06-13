@@ -81,7 +81,7 @@ type NetworkStore interface {
 	ListPublicMappings(networkID string) []PublicDomainMapping
 	UpsertPublicMapping(mappingID, networkID, alias, publicDomain, sourceRecord, deviceID, protocol, port, externalPort, status string) (PublicDomainMapping, error)
 	DeletePublicMapping(networkID, mappingID string) error
-	CreateSecurityGroup(networkID, name, description, defaultPolicy string) (SecurityGroup, error)
+	CreateSecurityGroup(networkID, name, description string) (SecurityGroup, error)
 	DeleteSecurityGroup(networkID, securityGroupID string) error
 	ListSecurityGroups(networkID string) []SecurityGroup
 	AddSecurityGroupRule(securityGroupID, direction, action, protocol, peerType, peerValue, description string, priority, portFrom, portTo int, enabled bool) (SecurityGroupRule, error)

@@ -7,7 +7,6 @@ pub(crate) fn platform_acl_policies(configs: &[DeviceNetworkConfig]) -> Vec<Plat
         .iter()
         .map(|config| PlatformAclPolicy {
             network_id: config.network_id.clone(),
-            default_policy: acl_default_policy(config),
             rules: platform_acl_rules(config),
         })
         .collect()
@@ -22,19 +21,6 @@ pub(crate) fn acl_policies_for_network(
         .filter(|policy| policy.network_id == network_id)
         .cloned()
         .collect()
-}
-
-fn acl_default_policy(config: &DeviceNetworkConfig) -> String {
-    if config.security_groups.iter().any(|group| {
-        group
-            .default_policy
-            .as_deref()
-            .is_some_and(|value| value.eq_ignore_ascii_case("allow"))
-    }) {
-        "allow".to_string()
-    } else {
-        "deny".to_string()
-    }
 }
 
 fn platform_acl_rules(config: &DeviceNetworkConfig) -> Vec<PlatformAclRule> {
@@ -142,7 +128,6 @@ mod tests {
                 security_group_id: "sg-1".to_string(),
                 network_id: "network-1".to_string(),
                 name: "default".to_string(),
-                default_policy: Some("allow".to_string()),
             }],
             peers: vec![DeviceNetworkPeer {
                 device_id: "peer-device".to_string(),
@@ -192,7 +177,6 @@ mod tests {
         }]);
 
         assert_eq!(policies.len(), 1);
-        assert_eq!(policies[0].default_policy, "allow");
         assert_eq!(policies[0].rules[0].rule_id, "rule-5");
         assert_eq!(policies[0].rules[1].rule_id, "rule-10");
         assert_eq!(policies[0].rules[2].rule_id, "rule-20");

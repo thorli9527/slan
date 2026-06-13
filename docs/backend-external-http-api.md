@@ -148,7 +148,7 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 | Method | Path | Auth | Request | Response | 用途 |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/networks/{networkId}/security-groups` | User/Web | - | `{items}` | 安全组列表 |
-| POST | `/api/networks/{networkId}/security-groups` | User/Web | `{name,description,defaultPolicy}` | `SecurityGroup` | 创建安全组 |
+| POST | `/api/networks/{networkId}/security-groups` | User/Web | `{name,description}` | `SecurityGroup` | 创建安全组 |
 | DELETE | `/api/networks/{networkId}/security-groups/{securityGroupId}` | User/Web | - | `204` | 删除安全组 |
 | GET | `/api/security-groups/{securityGroupId}/rules` | User/Web | - | `{items}` | 安全组规则列表 |
 | POST | `/api/security-groups/{securityGroupId}/rules` | User/Web | `{direction,priority,action,protocol,portFrom,portTo,peerType,peerValue,description,enabled}` | `SecurityRule` | 新增规则 |

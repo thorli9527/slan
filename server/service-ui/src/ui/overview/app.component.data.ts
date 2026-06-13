@@ -221,7 +221,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
   }
 
   protected override mapSecurityGroup(group: ApiSecurityGroup): SecurityGroupRow {
-    return { securityGroupId: group.securityGroupId, networkId: group.networkId, workspaceId: group.networkId, name: group.name, defaultPolicy: group.defaultPolicy, status: group.status };
+    return { securityGroupId: group.securityGroupId, networkId: group.networkId, workspaceId: group.networkId, name: group.name, status: group.status };
   }
 
   protected override mapSecurityRule(rule: ApiSecurityRule): SecurityRuleRow {

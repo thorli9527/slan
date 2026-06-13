@@ -1029,7 +1029,6 @@ components:
             properties:
               name: { type: string }
               description: { type: string }
-              defaultPolicy: { type: string }
     SecurityRule:
       required: true
       content:

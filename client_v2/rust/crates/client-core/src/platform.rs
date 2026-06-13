@@ -145,8 +145,6 @@ pub struct PlatformDeviceNetworkConfig {
 pub struct PlatformAclPolicy {
     pub network_id: String,
     #[serde(default)]
-    pub default_policy: String,
-    #[serde(default)]
     pub rules: Vec<PlatformAclRule>,
 }
 
@@ -324,7 +322,6 @@ mod tests {
     fn test_acl_policy() -> PlatformAclPolicy {
         PlatformAclPolicy {
             network_id: "network-1".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "rule-1".to_string(),
                 security_group_id: "sg-1".to_string(),

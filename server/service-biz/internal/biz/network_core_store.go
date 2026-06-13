@@ -40,7 +40,7 @@ func (s *Store) CreateNetwork(ownerUserID, name, code, templateKey string) (Netw
 	s.nextNetworkSeq++
 	network := Network{NetworkID: id, OwnerUserID: ownerUserID, Name: name, Code: defaultString(sanitizeDNSLabel(code), sanitizeDNSLabel(name)), TemplateKey: defaultString(templateKey, "custom"), Status: "enabled", CreatedAt: now, UpdatedAt: now}
 	s.networks[id] = network
-	group := s.addSecurityGroupLocked(id, "默认安全组", "网络默认安全组", "deny", now)
+	group := s.addSecurityGroupLocked(id, "默认安全组", "网络默认安全组", now)
 	zone := s.addDNSZoneLocked(id, networkZoneName(network), false, now)
 	if err := s.persistPostgresNetworkCreateTxLocked(ctx, postgresTx, network, group, zone); err != nil {
 		return Network{}, SecurityGroup{}, NetworkDNSZone{}, err

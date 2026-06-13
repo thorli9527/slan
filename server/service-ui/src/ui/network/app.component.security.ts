@@ -43,7 +43,6 @@ export abstract class AppComponentSecurity extends AppComponentDns {
 
   openSecurityGroupDialog(): void {
     this.securityGroupName = '默认安全组';
-    this.securityGroupDefaultPolicy = 'deny';
     this.showSecurityGroupDialog = true;
   }
 
@@ -58,7 +57,6 @@ export abstract class AppComponentSecurity extends AppComponentDns {
     try {
       const created = await this.api.post<ApiSecurityGroup>(WEB_API.securityGroups(this.selectedWorkspaceId), {
         name: this.securityGroupName.trim(),
-        defaultPolicy: this.securityGroupDefaultPolicy,
       });
       this.securityGroups = [...this.securityGroups, this.mapSecurityGroup(created)];
     } catch {
@@ -69,7 +67,6 @@ export abstract class AppComponentSecurity extends AppComponentDns {
           networkId: this.selectedWorkspaceId,
           workspaceId: this.selectedWorkspaceId,
           name: this.securityGroupName.trim(),
-          defaultPolicy: this.securityGroupDefaultPolicy,
           status: 'active',
         },
       ];

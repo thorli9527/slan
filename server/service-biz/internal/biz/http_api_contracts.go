@@ -293,9 +293,8 @@ type PublicMappingRequest struct {
 
 // CreateSecurityGroupRequest 是创建安全组的请求。
 type CreateSecurityGroupRequest struct {
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	DefaultPolicy string `json:"defaultPolicy"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 // SecurityRuleRequest 是创建或更新安全组规则的请求。

@@ -229,6 +229,14 @@ fn run_service_server() -> Result<()> {
             "client-core-service failed to prepare Wintun adapter: {error:#}"
         ));
     }
+    if initial_runtime.state().signed_in {
+        let state = activate_network_from_latest_control(&mut initial_runtime);
+        if let Some(error) = state.error.filter(|value| !value.trim().is_empty()) {
+            log_service_error(format!(
+                "client-core-service startup network activation failed: {error}"
+            ));
+        }
+    }
     let runtime = Arc::new(Mutex::new(initial_runtime));
     let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
     let sync_throttle = Arc::new(Mutex::new(ControlSyncThrottle::default()));

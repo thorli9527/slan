@@ -247,7 +247,6 @@ create table security_groups (
   network_id varchar(128) not null references networks(id),
   name varchar(128) not null,
   description text,
-  default_policy varchar(16) not null default 'deny',
   status varchar(32) not null default 'active',
   created_at timestamptz not null default now()
 );

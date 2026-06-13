@@ -179,7 +179,6 @@ export type ApiSecurityGroup = {
   networkId: string;
   name: string;
   description?: string;
-  defaultPolicy: string;
   status: string;
   createdAt: number;
 };
@@ -311,7 +310,7 @@ export type PublicMappingRow = {
 };
 export type RuleSubjectType = 'device' | 'user' | 'network' | 'workspace' | 'cidr' | 'domain' | 'all';
 export type SecurityRuleRow = { ruleId?: string; direction: string; priority: number; action: string; protocol: string; port: string; subjectType: RuleSubjectType; subjectValue: string };
-export type SecurityGroupRow = { securityGroupId: string; networkId: string; name: string; defaultPolicy: string; status: string; workspaceId: string };
+export type SecurityGroupRow = { securityGroupId: string; networkId: string; name: string; status: string; workspaceId: string };
 export type DeviceExposureRow = { deviceId: string; user: string; alias: string; status: string };
 export type NetworkDeviceInviteRow = ApiDeviceInvite & { networkId?: string; workspaceId?: string };
 export type NetworkPanel = 'devices' | 'zones' | 'records' | 'publicMappings' | 'securityGroups' | 'securityRules';

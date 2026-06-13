@@ -304,6 +304,14 @@ mod android_tun {
                             &tun_buffer[..packet_len],
                             local_virtual_ip.as_str(),
                         ) {
+                            let packet = &tun_buffer[..packet_len];
+                            if let Some(reply) =
+                                icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
+                            {
+                                write_android_tun_inbound_packet(&mut file, &thread_stats, &reply);
+                            } else {
+                                write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
+                            }
                             continue;
                         }
                         if packet_len > max_frame_payload {

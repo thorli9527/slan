@@ -177,12 +177,7 @@ func (s *Store) securityPolicyAllowsPeerLocked(networkID string, local, peer Dev
 		}
 		return strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
 	}
-	for _, group := range groups {
-		if strings.EqualFold(strings.TrimSpace(group.DefaultPolicy), "allow") {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func (s *Store) networkPeerAccessAllowedLocked(networkID, localDeviceID, peerDeviceID string) bool {

@@ -148,14 +148,13 @@ func (s *Store) persistPostgresSecurityGroupUpsertTxLocked(ctx context.Context, 
 	if tx == nil {
 		return s.persistPostgresCoreLocked(ctx)
 	}
-	if _, err := tx.ExecContext(ctx, `insert into security_groups(id,network_id,name,description,default_policy,status,created_at)
-		values($1,$2,$3,$4,$5,$6,to_timestamp($7))
+	if _, err := tx.ExecContext(ctx, `insert into security_groups(id,network_id,name,description,status,created_at)
+		values($1,$2,$3,$4,$5,to_timestamp($6))
 		on conflict(id) do update set
 			name=excluded.name,
 			description=excluded.description,
-			default_policy=excluded.default_policy,
 			status=excluded.status`,
-		group.SecurityGroupID, group.NetworkID, group.Name, group.Description, group.DefaultPolicy, group.Status, group.CreatedAt); err != nil {
+		group.SecurityGroupID, group.NetworkID, group.Name, group.Description, group.Status, group.CreatedAt); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -222,9 +221,9 @@ func (s *Store) persistPostgresNetworkCreateTxLocked(ctx context.Context, tx *sq
 		_ = tx.Rollback()
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `insert into security_groups(id,network_id,name,description,default_policy,status,created_at)
-		values($1,$2,$3,$4,$5,$6,to_timestamp($7))`,
-		group.SecurityGroupID, group.NetworkID, group.Name, group.Description, group.DefaultPolicy, group.Status, group.CreatedAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into security_groups(id,network_id,name,description,status,created_at)
+		values($1,$2,$3,$4,$5,to_timestamp($6))`,
+		group.SecurityGroupID, group.NetworkID, group.Name, group.Description, group.Status, group.CreatedAt); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

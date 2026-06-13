@@ -1478,6 +1478,14 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                                 send_packet,
                                 &reply,
                             );
+                        } else {
+                            let packet = normalize_ipv4_transport_checksums(payload);
+                            let _ = write_wintun_packet(
+                                session,
+                                allocate_send_packet,
+                                send_packet,
+                                &packet,
+                            );
                         }
                         unsafe {
                             release_receive_packet(session, packet);
@@ -3141,6 +3149,9 @@ fn configure_wintun_local_data_plane() -> Result<()> {
             let payload = unsafe { std::slice::from_raw_parts(packet, packet_size as usize) };
             if let Some(reply) = local_virtual_ip_reply(payload, local_virtual_ip.as_str()) {
                 let _ = write_wintun_packet(session, allocate_send_packet, send_packet, &reply);
+            } else if packet_targets_local_virtual_ip(payload, local_virtual_ip.as_str()) {
+                let packet = normalize_ipv4_transport_checksums(payload);
+                let _ = write_wintun_packet(session, allocate_send_packet, send_packet, &packet);
             }
             unsafe {
                 release_receive_packet(session, packet);

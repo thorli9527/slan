@@ -75,7 +75,6 @@ type SecurityGroup struct {
 	NetworkID       string `json:"networkId"`
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`
-	DefaultPolicy   string `json:"defaultPolicy"`
 	Status          string `json:"status"`
 	CreatedAt       int64  `json:"createdAt"`
 }

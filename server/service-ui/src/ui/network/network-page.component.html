@@ -220,17 +220,16 @@
           </div>
           <button class="ghost small" type="button" (click)="vm.openSecurityGroupDialog()">新增安全组</button>
         </div>
-        <p>默认规则会作用于当前网络全部设备；入方向控制谁能访问你，出方向控制你能访问哪里。</p>
+        <p>规则会作用于当前网络全部设备；入方向控制谁能访问你，出方向控制你能访问哪里。</p>
         <table class="compact-table">
-          <thead><tr><th>安全组</th><th>默认策略</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>安全组</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>
             <tr *ngFor="let group of vm.currentSecurityGroups">
               <td><button class="text-link" type="button" (click)="vm.openSecurityGroupRules(group)">{{ group.name }}</button></td>
-              <td>{{ group.defaultPolicy }}</td>
               <td><span class="status online">{{ group.status }}</span></td>
               <td class="table-actions"><button class="link-danger" type="button" (click)="vm.removeSecurityGroup(group)">删除</button></td>
             </tr>
-            <tr *ngIf="vm.currentSecurityGroups.length === 0"><td colspan="4">暂无安全组</td></tr>
+            <tr *ngIf="vm.currentSecurityGroups.length === 0"><td colspan="3">暂无安全组</td></tr>
           </tbody>
         </table>
       </section>
@@ -331,7 +330,6 @@
     </header>
     <div class="form">
       <label><span>安全组名称</span><input [(ngModel)]="vm.securityGroupName" /></label>
-      <label><span>默认策略</span><select [(ngModel)]="vm.securityGroupDefaultPolicy"><option value="deny">deny</option><option value="allow">allow</option></select></label>
     </div>
     <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeSecurityGroupDialog()">取消</button><button class="primary" type="button" (click)="vm.saveSecurityGroupDialog()">创建</button></footer>
   </section>

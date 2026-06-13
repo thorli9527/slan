@@ -70,14 +70,14 @@ func (s *Store) loadPostgresNetworkConfigResourcesLocked(ctx context.Context) er
 	if err := recordRows.Err(); err != nil {
 		return err
 	}
-	groupRows, err := s.db.QueryContext(ctx, `select id,network_id,name,coalesce(description,''),default_policy,status,extract(epoch from created_at)::bigint from security_groups`)
+	groupRows, err := s.db.QueryContext(ctx, `select id,network_id,name,coalesce(description,''),status,extract(epoch from created_at)::bigint from security_groups`)
 	if err != nil {
 		return err
 	}
 	defer groupRows.Close()
 	for groupRows.Next() {
 		var group SecurityGroup
-		if err := groupRows.Scan(&group.SecurityGroupID, &group.NetworkID, &group.Name, &group.Description, &group.DefaultPolicy, &group.Status, &group.CreatedAt); err != nil {
+		if err := groupRows.Scan(&group.SecurityGroupID, &group.NetworkID, &group.Name, &group.Description, &group.Status, &group.CreatedAt); err != nil {
 			return err
 		}
 		s.securityGroups[group.SecurityGroupID] = group

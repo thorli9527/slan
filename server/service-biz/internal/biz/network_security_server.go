@@ -15,11 +15,11 @@ func (s *Server) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	group, err := s.services.Network.CreateSecurityGroup(r.PathValue("networkId"), req)
 	if err != nil {
-		s.recordNetworkMutationAudit(r, "security_group.add", "security_group", "", r.PathValue("networkId"), "", "failed", map[string]string{"error": err.Error(), "name": req.Name, "defaultPolicy": req.DefaultPolicy})
+		s.recordNetworkMutationAudit(r, "security_group.add", "security_group", "", r.PathValue("networkId"), "", "failed", map[string]string{"error": err.Error(), "name": req.Name})
 		writeError(w, err)
 		return
 	}
-	s.recordNetworkMutationAudit(r, "security_group.add", "security_group", group.SecurityGroupID, group.NetworkID, "", "succeeded", map[string]string{"name": group.Name, "defaultPolicy": group.DefaultPolicy})
+	s.recordNetworkMutationAudit(r, "security_group.add", "security_group", group.SecurityGroupID, group.NetworkID, "", "succeeded", map[string]string{"name": group.Name})
 	s.notifyNetworkConfigChanged(group.NetworkID, "security_group_added", "security_group", "add", group.SecurityGroupID, "")
 	writeJSON(w, http.StatusCreated, group)
 }

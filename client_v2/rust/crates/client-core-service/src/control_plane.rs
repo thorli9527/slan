@@ -332,8 +332,6 @@ pub struct DeviceSecurityGroup {
     pub security_group_id: String,
     pub network_id: String,
     pub name: String,
-    #[serde(default)]
-    pub default_policy: Option<String>,
 }
 
 /// DeviceSecurityRule 是下发给设备的数据面访问控制规则。

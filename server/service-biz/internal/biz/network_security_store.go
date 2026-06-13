@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func (s *Store) CreateSecurityGroup(networkID, name, description, defaultPolicy string) (SecurityGroup, error) {
+func (s *Store) CreateSecurityGroup(networkID, name, description string) (SecurityGroup, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ctx := context.Background()
@@ -21,7 +21,7 @@ func (s *Store) CreateSecurityGroup(networkID, name, description, defaultPolicy 
 	if _, ok := s.networks[networkID]; !ok {
 		return SecurityGroup{}, errNotFound
 	}
-	group := s.addSecurityGroupLocked(networkID, name, description, defaultString(defaultPolicy, "deny"), time.Now().Unix())
+	group := s.addSecurityGroupLocked(networkID, name, description, time.Now().Unix())
 	if err := s.persistPostgresSecurityGroupUpsertTxLocked(ctx, postgresTx, group); err != nil {
 		return SecurityGroup{}, err
 	}

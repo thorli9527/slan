@@ -159,6 +159,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         continue
       }
       if destination.address == RelayPeerRuntime.normalizeVirtualIp(tunnelStats.virtualIp) {
+        if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: tunnelStats.virtualIp)
+        {
+          _ = packetFlow.writePackets([reply], withProtocols: [NSNumber(value: AF_INET)])
+        } else {
+          let packet = Ipv4Packet.normalizeTransportChecksums(packet)
+          _ = packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)])
+        }
         continue
       }
 
@@ -360,7 +367,6 @@ private enum AclDirection {
 
 private struct AclPolicy {
   let networkId: String
-  let defaultPolicy: String
   let rules: [AclRule]
 
   static func parse(_ value: Any?) -> [AclPolicy] {
@@ -378,7 +384,6 @@ private struct AclPolicy {
         }
       return AclPolicy(
         networkId: string(policy["networkId"]),
-        defaultPolicy: string(policy["defaultPolicy"]),
         rules: rules
       )
     }
@@ -406,10 +411,7 @@ private struct AclPolicy {
     if !hasEnabledRule {
       return true
     }
-    return policies.contains {
-      $0.defaultPolicy.trimmingCharacters(in: .whitespacesAndNewlines)
-        .caseInsensitiveCompare("allow") == .orderedSame
-    }
+    return true
   }
 
   fileprivate static func string(_ value: Any?) -> String {

@@ -219,7 +219,7 @@ curl --silent --fail -X PATCH "${WEB_BASE}/api/networks/${WORKSPACE_ID}/public-m
 
 GROUP="$(curl --silent --fail -X POST "${WEB_BASE}/api/networks/${WORKSPACE_ID}/security-groups" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Remote Smoke ACL","description":"remote smoke","defaultPolicy":"deny"}')" || fail "security group create failed"
+  -d '{"name":"Remote Smoke ACL","description":"remote smoke"}')" || fail "security group create failed"
 GROUP_ID="$(printf '%s' "${GROUP}" | json_value securityGroupId)"
 [[ -n "${GROUP_ID}" ]] || fail "missing security group id"
 RULE="$(curl --silent --fail -X POST "${WEB_BASE}/api/security-groups/${GROUP_ID}/rules" \

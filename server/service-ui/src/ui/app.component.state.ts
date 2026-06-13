@@ -178,7 +178,6 @@ export abstract class AppComponentState {
   selectedRuleTemplate = 'Web 服务';
   showSecurityGroupDialog = false;
   securityGroupName = '默认安全组';
-  securityGroupDefaultPolicy = 'deny';
 
   devices: DeviceRow[] = INITIAL_DEVICES.map((item) => ({ ...item }));
   workspaceDeviceIdsByWorkspace: Record<string, string[]> = Object.fromEntries(

@@ -1027,6 +1027,9 @@ fn run_udp_data_plane(
                 if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
                     if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
                         let _ = write_tun_packet_with_retry(&mut file, &reply);
+                    } else {
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        let _ = write_tun_packet_with_retry(&mut file, &packet);
                     }
                     continue;
                 }
@@ -1891,6 +1894,9 @@ fn run_local_data_plane(mut file: File, local_virtual_ip: String, stop: Arc<Atom
                 let packet = &tun_buffer[..packet_len];
                 if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
                     let _ = write_tun_packet_with_retry(&mut file, &reply);
+                } else if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
+                    let packet = normalize_ipv4_transport_checksums(packet);
+                    let _ = write_tun_packet_with_retry(&mut file, &packet);
                 }
             }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
@@ -2297,7 +2303,6 @@ mod tests {
             max_frame_payload: Some(1200),
             acl_policies: vec![PlatformAclPolicy {
                 network_id: "network-1".to_string(),
-                default_policy: "allow".to_string(),
                 rules: Vec::new(),
             }],
             sessions: vec![test_session("udp://127.0.0.1:29110")],

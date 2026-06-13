@@ -56,9 +56,7 @@ fn acl_allows_packet(
     if !has_enabled_rule {
         return true;
     }
-    policies
-        .iter()
-        .any(|policy| policy.default_policy.trim().eq_ignore_ascii_case("allow"))
+    true
 }
 
 fn acl_rule_direction_matches(rule_direction: &str, packet_direction: &str) -> bool {
@@ -517,7 +515,6 @@ mod tests {
             &packet,
             &[PlatformAclPolicy {
                 network_id: "network-1".to_string(),
-                default_policy: "deny".to_string(),
                 rules: vec![PlatformAclRule {
                     enabled: false,
                     action: "deny".to_string(),
@@ -533,7 +530,6 @@ mod tests {
         let packet = tcp_packet("10.0.0.2", "10.0.0.3", 443);
         let policy = PlatformAclPolicy {
             network_id: "network-1".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "rule-1".to_string(),
                 direction: "egress".to_string(),
@@ -563,7 +559,6 @@ mod tests {
         let packet = tcp_packet("10.0.0.2", "10.0.0.3", 443);
         let policy = PlatformAclPolicy {
             network_id: "network-1".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "rule-1".to_string(),
                 direction: "egress".to_string(),
@@ -593,7 +588,6 @@ mod tests {
         let packet = icmp_echo_request("10.0.0.2", "10.0.0.3");
         let policy = PlatformAclPolicy {
             network_id: "network-1".to_string(),
-            default_policy: "deny".to_string(),
             rules: vec![
                 PlatformAclRule {
                     rule_id: "allow".to_string(),
@@ -627,7 +621,6 @@ mod tests {
         let packet = tcp_packet("10.0.0.3", "10.0.0.2", 22);
         let policy = PlatformAclPolicy {
             network_id: "network-1".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "deny".to_string(),
                 direction: "ingress".to_string(),
@@ -651,7 +644,6 @@ mod tests {
         let packet = icmp_echo_request("10.0.0.3", "10.0.0.2");
         let policy = PlatformAclPolicy {
             network_id: "network-1".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "deny-remote-ingress".to_string(),
                 direction: "ingress".to_string(),
@@ -679,7 +671,6 @@ mod tests {
         let packet = icmp_echo_request("10.0.0.3", "10.0.0.2");
         let policy = PlatformAclPolicy {
             network_id: "network-1".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "deny-local-ingress".to_string(),
                 direction: "ingress".to_string(),
@@ -703,7 +694,6 @@ mod tests {
         let packet = icmp_echo_request("10.0.0.2", "10.0.0.3");
         let policy = PlatformAclPolicy {
             network_id: "network-1".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "deny-source-or-destination".to_string(),
                 direction: "all".to_string(),
@@ -725,7 +715,6 @@ mod tests {
         let packet = icmp_echo_request("10.0.0.2", "10.0.0.3");
         let policy = PlatformAclPolicy {
             network_id: "network-a".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "deny-other-network".to_string(),
                 direction: "egress".to_string(),
@@ -747,7 +736,6 @@ mod tests {
         let packet = icmp_echo_request("10.0.0.2", "10.0.0.7");
         let policy = PlatformAclPolicy {
             network_id: "network-a".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "deny-domain".to_string(),
                 direction: "egress".to_string(),
@@ -770,7 +758,6 @@ mod tests {
         let packet = icmp_echo_request("10.0.0.2", "10.0.0.3");
         let policy = PlatformAclPolicy {
             network_id: "network-a".to_string(),
-            default_policy: "allow".to_string(),
             rules: vec![PlatformAclRule {
                 rule_id: "deny-unknown".to_string(),
                 direction: "egress".to_string(),

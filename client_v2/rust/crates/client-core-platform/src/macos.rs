@@ -1303,6 +1303,9 @@ fn run_udp_data_plane(
                             local_virtual_ip_reply(packet, local_virtual_ip.as_str())
                         {
                             let _ = write_utun_ipv4_packet(&mut file, &reply);
+                        } else {
+                            let packet = normalize_ipv4_transport_checksums(packet);
+                            let _ = write_utun_ipv4_packet(&mut file, &packet);
                         }
                         continue;
                     }
@@ -2208,6 +2211,9 @@ fn run_local_data_plane(mut file: File, local_virtual_ip: String, stop: Arc<Atom
                 if let Some(packet) = strip_utun_header(&tun_buffer[..packet_len]) {
                     if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
                         let _ = write_utun_ipv4_packet(&mut file, &reply);
+                    } else if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        let _ = write_utun_ipv4_packet(&mut file, &packet);
                     }
                 }
             }

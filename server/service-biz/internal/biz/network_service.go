@@ -115,7 +115,7 @@ func (s NetworkService) ListSecurityGroups(networkID string) []SecurityGroup {
 }
 
 func (s NetworkService) CreateSecurityGroup(networkID string, req CreateSecurityGroupRequest) (SecurityGroup, error) {
-	return s.store.CreateSecurityGroup(networkID, req.Name, req.Description, req.DefaultPolicy)
+	return s.store.CreateSecurityGroup(networkID, req.Name, req.Description)
 }
 
 func (s NetworkService) DeleteSecurityGroup(networkID, securityGroupID string) error {
