@@ -138,6 +138,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
       tasks.push(this.loadPublicMappings(workspaceId));
     }
     await Promise.all(tasks);
+    this.notifyStateChanged();
   }
 
   private async loadDNSZones(workspaceId: string): Promise<void> {
@@ -198,6 +199,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
         ...this.securityRules.filter((rule) => rule.securityGroupId !== securityGroupId),
         ...(mappedRules.length > 0 ? mappedRules : this.defaultSecurityRules(securityGroupId)),
       ];
+      this.notifyStateChanged();
     } catch {
       // Preview seed data remains available without the API.
     }
