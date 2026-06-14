@@ -262,7 +262,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
 
   protected override mapSecurityRule(rule: ApiSecurityRule): SecurityRuleRow {
     const port = rule.portFrom === 0 && rule.portTo === 0 ? 'all' : rule.portFrom === rule.portTo ? String(rule.portFrom) : `${rule.portFrom},${rule.portTo}`;
-    return { ruleId: rule.ruleId, direction: rule.direction, priority: rule.priority, action: rule.action, protocol: rule.protocol, port, subjectType: rule.peerType, subjectValue: rule.peerValue };
+    return { ruleId: rule.ruleId, securityGroupId: rule.securityGroupId, direction: rule.direction, priority: rule.priority, action: rule.action, protocol: rule.protocol, port, subjectType: rule.peerType, subjectValue: rule.peerValue };
   }
 
   protected override upsertWorkspaceDeviceInvite(invite: WorkspaceDeviceInviteRow): void {
