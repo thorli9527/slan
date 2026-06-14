@@ -495,6 +495,34 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       }
       return;
     }
+    if (_usesDesktopBrowserPlugin(command.type)) {
+      try {
+        final result = await _plugin.dispatch(command.toJson());
+        final state = _stateFromResult(result);
+        if (state != null) {
+          _setStateIfChanged(state);
+        }
+        return;
+      } on MissingPluginException catch (error) {
+        ClientUiDiagnostics.unawaitedLog(
+          'bridge.desktopBrowserPlugin.missing',
+          state: _state.value,
+          fields: {
+            'command': command.type.name,
+            'message': error.toString(),
+          },
+        );
+      } on PlatformException catch (error) {
+        ClientUiDiagnostics.unawaitedLog(
+          'bridge.desktopBrowserPlugin.failed',
+          state: _state.value,
+          fields: {
+            'command': command.type.name,
+            'message': error.toString(),
+          },
+        );
+      }
+    }
     try {
       final result = await _requestLocalService('dispatch', command.toJson());
       final state = _stateFromResult(result);
@@ -514,6 +542,12 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       );
       rethrow;
     }
+  }
+
+  bool _usesDesktopBrowserPlugin(ClientCommandType type) {
+    return (_isMacOS || _isWindows || _isLinux) &&
+        (type == ClientCommandType.openClientLogin ||
+            type == ClientCommandType.openWebConsole);
   }
 
   Future<void> _localNetworkShutdownWithFallback() async {

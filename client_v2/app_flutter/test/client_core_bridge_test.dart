@@ -17,6 +17,42 @@ void main() {
     );
   });
 
+  test('desktop login dispatch uses native browser plugin path', () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      expect(call.method, 'dispatch');
+      final args = (call.arguments as Map).cast<String, Object?>();
+      expect(args['type'], ClientCommandType.openClientLogin.name);
+      return {
+        'signedIn': false,
+        'deviceId': 'desktop-device-1',
+        'networkEnabled': false,
+        'syncing': false,
+        'switchEnabled': true,
+        'notice': 'loginBrowserRequested',
+      };
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+    );
+
+    await bridge.dispatch(
+      const ClientCommand(ClientCommandType.openClientLogin),
+    );
+
+    expect(calls, ['dispatch']);
+    expect(bridge.state.value.deviceId, 'desktop-device-1');
+    expect(bridge.state.value.notice, 'loginBrowserRequested');
+  });
+
   test('android runtime diagnostics preserve native relay counters', () {
     final fields = androidRuntimeDiagnosticsFields({
       'adapterPresent': true,

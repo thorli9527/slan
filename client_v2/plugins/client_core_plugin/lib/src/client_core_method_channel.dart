@@ -105,6 +105,14 @@ class ClientCorePlugin {
     return _invokeNativeOnly('setMobileServerBaseUrl', serverBaseUrl);
   }
 
+  /// 派发桌面端通用控制命令。
+  ///
+  /// macOS/Windows/Linux 原生插件会负责自动启动本地 service，并在
+  /// openClientLogin/openWebConsole 这类命令中打开系统默认浏览器。
+  Future<Object?> dispatch(Map<String, Object?> command) {
+    return _invokeNativeOnly('dispatch', command);
+  }
+
   Future<Object?> _invokeNativeOnly(String method, [Object? arguments]) {
     return _channel.invokeMethod<Object?>(method, arguments);
   }
