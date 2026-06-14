@@ -87,7 +87,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 if [[ "${EUID}" -ne 0 ]]; then
-  exec sudo "$0" "${ORIGINAL_ARGS[@]}"
+  exec sudo "$0" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
 fi
 
 run_cmd() {
