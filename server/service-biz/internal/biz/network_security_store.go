@@ -2,7 +2,6 @@ package biz
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -71,7 +70,7 @@ func (s *Store) AddSecurityGroupRule(securityGroupID, direction, action, protoco
 		return SecurityGroupRule{}, errNotFound
 	}
 	rule := SecurityGroupRule{
-		RuleID:          fmt.Sprintf("sgr-%06d", s.nextSecurityRuleSeq),
+		RuleID:          newCompactUUID(),
 		SecurityGroupID: securityGroupID,
 		Direction:       direction,
 		Priority:        defaultInt(priority, 100),
@@ -188,6 +187,17 @@ func (s *Store) ListSecurityGroups(networkID string) []SecurityGroup {
 	if err := s.refreshPostgresCoreLocked(context.Background()); err != nil {
 		log.Printf("service-biz refresh postgres security groups failed: %v", err)
 	}
+	if networkID != "" {
+		if _, ok := s.networks[networkID]; ok {
+			if s.defaultSecurityGroupLocked(networkID).SecurityGroupID == "" {
+				group := s.addSecurityGroupLocked(networkID, "默认安全组", "网络默认安全组", time.Now().Unix())
+				s.addDefaultSecurityRulesLocked(group.SecurityGroupID, time.Now().Unix())
+				if err := s.persistPostgresCoreLocked(context.Background()); err != nil {
+					log.Printf("service-biz persist default security group failed: %v", err)
+				}
+			}
+		}
+	}
 	out := make([]SecurityGroup, 0)
 	for _, group := range s.securityGroups {
 		if networkID == "" || group.NetworkID == networkID {
@@ -204,6 +214,14 @@ func (s *Store) ListSecurityGroupRules(securityGroupID string) []SecurityGroupRu
 	if err := s.refreshPostgresCoreLocked(context.Background()); err != nil {
 		log.Printf("service-biz refresh postgres security rules failed: %v", err)
 	}
+	if securityGroupID != "" {
+		if group, ok := s.securityGroups[securityGroupID]; ok && group.Name == "默认安全组" && !s.hasSecurityRulesLocked(securityGroupID) {
+			s.addDefaultSecurityRulesLocked(securityGroupID, time.Now().Unix())
+			if err := s.persistPostgresCoreLocked(context.Background()); err != nil {
+				log.Printf("service-biz persist default security rules failed: %v", err)
+			}
+		}
+	}
 	out := make([]SecurityGroupRule, 0)
 	for _, rule := range s.securityGroupRules {
 		if securityGroupID == "" || rule.SecurityGroupID == securityGroupID {
@@ -212,4 +230,65 @@ func (s *Store) ListSecurityGroupRules(securityGroupID string) []SecurityGroupRu
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
 	return out
+}
+
+func (s *Store) defaultSecurityGroupLocked(networkID string) SecurityGroup {
+	for _, group := range s.securityGroups {
+		if group.NetworkID == networkID && group.Name == "默认安全组" {
+			return group
+		}
+	}
+	for _, group := range s.securityGroups {
+		if group.NetworkID == networkID {
+			return group
+		}
+	}
+	return SecurityGroup{}
+}
+
+func (s *Store) hasSecurityRulesLocked(securityGroupID string) bool {
+	for _, rule := range s.securityGroupRules {
+		if rule.SecurityGroupID == securityGroupID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) addDefaultSecurityRulesLocked(securityGroupID string, now int64) {
+	defaults := []SecurityGroupRule{
+		{
+			SecurityGroupID: securityGroupID,
+			Direction:       "ingress",
+			Priority:        100,
+			Action:          "allow",
+			Protocol:        "tcp",
+			PortFrom:        22,
+			PortTo:          22,
+			PeerType:        "network",
+			PeerValue:       "self",
+			Description:     "默认允许当前网络 SSH",
+			Enabled:         true,
+			CreatedAt:       now,
+		},
+		{
+			SecurityGroupID: securityGroupID,
+			Direction:       "egress",
+			Priority:        100,
+			Action:          "allow",
+			Protocol:        "all",
+			PortFrom:        0,
+			PortTo:          0,
+			PeerType:        "all",
+			PeerValue:       "all",
+			Description:     "默认允许全部出站",
+			Enabled:         true,
+			CreatedAt:       now,
+		},
+	}
+	for _, rule := range defaults {
+		rule.RuleID = newCompactUUID()
+		s.nextSecurityRuleSeq++
+		s.securityGroupRules[rule.RuleID] = rule
+	}
 }

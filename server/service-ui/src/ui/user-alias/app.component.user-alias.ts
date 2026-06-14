@@ -1,6 +1,7 @@
 import { AppComponentNetworks } from '../network/app.component.networks';
 import { ApiUserAlias, UserAliasRow } from '../app.models';
 import { WEB_API } from '../api-paths';
+import { DEFAULT_USER_ID } from '../app.seed-data';
 
 export abstract class AppComponentUserAlias extends AppComponentNetworks {
   openUserAliasDialog(user: UserAliasRow): void {
@@ -26,7 +27,7 @@ export abstract class AppComponentUserAlias extends AppComponentNetworks {
     const alias = this.userAliasValue.trim();
     try {
       const updated = await this.api.patch<ApiUserAlias>(WEB_API.userAliases, {
-        ownerUserId: this.currentUserId || 'user-000001',
+        ownerUserId: this.currentUserId || DEFAULT_USER_ID,
         email,
         alias,
       });

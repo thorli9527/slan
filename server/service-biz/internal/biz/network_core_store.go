@@ -2,7 +2,6 @@ package biz
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -36,7 +35,7 @@ func (s *Store) CreateNetwork(ownerUserID, name, code, templateKey string) (Netw
 		return Network{}, SecurityGroup{}, NetworkDNSZone{}, errNotFound
 	}
 	now := time.Now().Unix()
-	id := fmt.Sprintf("network-%06d", s.nextNetworkSeq)
+	id := newCompactUUID()
 	s.nextNetworkSeq++
 	network := Network{NetworkID: id, OwnerUserID: ownerUserID, Name: name, Code: defaultString(sanitizeDNSLabel(code), sanitizeDNSLabel(name)), TemplateKey: defaultString(templateKey, "custom"), Status: "enabled", CreatedAt: now, UpdatedAt: now}
 	s.networks[id] = network

@@ -26,8 +26,9 @@ import {
   WorkspacePanel,
   WorkspaceRow,
 } from '../app.models';
-import { slug } from '../app.utils';
+import { compactUuid, slug } from '../app.utils';
 import { WEB_API } from '../api-paths';
+import { DEFAULT_USER_ID } from '../app.seed-data';
 
 export abstract class AppComponentNetworks extends AppComponentOverview {
   setActive(id: string): void {
@@ -158,7 +159,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     }
     try {
       await this.api.post(WEB_API.networks(), {
-        ownerUserId: this.currentUserId || 'user-000001',
+        ownerUserId: this.currentUserId || DEFAULT_USER_ID,
         name: this.workspaceName,
         code,
         templateKey: code,
@@ -169,10 +170,10 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     } catch {
       // Keep local template behavior available for UI review.
     }
-    const id = `workspace-${String(this.workspaces.length + 1).padStart(6, '0')}`;
+    const id = compactUuid();
     this.workspaces = [
       ...this.workspaces,
-      { networkId: id, workspaceId: id, name: this.workspaceName, code, template: code || 'custom', status: 'enabled', members: 1, devices: 0, zone: `${code}.${id}.user-000001.sub.staticlss.com` },
+      { networkId: id, workspaceId: id, name: this.workspaceName, code, template: code || 'custom', status: 'enabled', members: 1, devices: 0, zone: `${code}.${id}.${DEFAULT_USER_ID}.sub.staticlss.com` },
     ];
     this.closeWorkspaceDialog();
   }
@@ -190,7 +191,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     workspace.name = this.workspaceName.trim();
     workspace.code = code;
     workspace.template = workspace.code;
-    workspace.zone = `${slug(workspace.code)}.${workspace.workspaceId}.user-000001.sub.staticlss.com`;
+    workspace.zone = `${slug(workspace.code)}.${workspace.workspaceId}.${this.currentUserId || DEFAULT_USER_ID}.sub.staticlss.com`;
     this.closeWorkspaceDialog();
   }
 
@@ -246,7 +247,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
       this.editingWorkspace.code = code;
       this.editingWorkspace.template = this.editingWorkspace.code;
     }
-    this.editingWorkspace.zone = `${slug(this.editingWorkspace.code)}.${this.editingWorkspace.workspaceId}.user-000001.sub.staticlss.com`;
+    this.editingWorkspace.zone = `${slug(this.editingWorkspace.code)}.${this.editingWorkspace.workspaceId}.${this.currentUserId || DEFAULT_USER_ID}.sub.staticlss.com`;
     this.closeWorkspaceTagDialogs();
   }
 
@@ -305,7 +306,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     try {
       await this.api.post(WEB_API.networkDevices(this.selectedWorkspaceId), {
         deviceId: this.selectedWorkspaceDeviceId,
-        actorUserId: this.currentUserId || selected?.owner || 'user-000001',
+        actorUserId: this.currentUserId || selected?.owner || DEFAULT_USER_ID,
         alias: selected?.alias ?? '',
         enabled: true,
       });

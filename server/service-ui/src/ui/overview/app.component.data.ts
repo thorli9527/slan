@@ -28,7 +28,7 @@ import {
   WorkspacePanel,
   WorkspaceRow,
 } from '../app.models';
-import { slug } from '../app.utils';
+import { compactUuid, slug } from '../app.utils';
 import { WEB_API } from '../api-paths';
 
 export abstract class AppComponentData extends AppComponentSecurity {
@@ -170,6 +170,10 @@ export abstract class AppComponentData extends AppComponentSecurity {
   private async loadSecurityResources(workspaceId: string): Promise<void> {
     try {
       const groups = await this.api.get<{ items: ApiSecurityGroup[] }>(WEB_API.securityGroups(workspaceId));
+      if (groups.items.length === 0) {
+        this.ensureDefaultSecuritySeed(workspaceId);
+        return;
+      }
       this.securityGroups = [
         ...this.securityGroups.filter((group) => group.workspaceId !== workspaceId),
         ...groups.items.map((group) => this.mapSecurityGroup(group)),
@@ -189,10 +193,40 @@ export abstract class AppComponentData extends AppComponentSecurity {
   protected override async loadSecurityRules(securityGroupId: string): Promise<void> {
     try {
       const rules = await this.api.get<{ items: ApiSecurityRule[] }>(WEB_API.securityRules(securityGroupId));
-      this.securityRules = rules.items.map((rule) => this.mapSecurityRule(rule));
+      const mappedRules = rules.items.map((rule) => this.mapSecurityRule(rule));
+      this.securityRules = [
+        ...this.securityRules.filter((rule) => rule.securityGroupId !== securityGroupId),
+        ...(mappedRules.length > 0 ? mappedRules : this.defaultSecurityRules(securityGroupId)),
+      ];
     } catch {
       // Preview seed data remains available without the API.
     }
+  }
+
+  private ensureDefaultSecuritySeed(workspaceId: string): void {
+    const existing = this.securityGroups.find((group) => group.workspaceId === workspaceId);
+    const group = existing ?? {
+      securityGroupId: compactUuid(),
+      networkId: workspaceId,
+      workspaceId,
+      name: '默认安全组',
+      status: 'active',
+    };
+    if (!existing) {
+      this.securityGroups = [...this.securityGroups, group];
+    }
+    this.selectedSecurityGroupId = group.securityGroupId;
+    this.securityRules = [
+      ...this.securityRules.filter((rule) => rule.securityGroupId !== group.securityGroupId),
+      ...this.defaultSecurityRules(group.securityGroupId),
+    ];
+  }
+
+  private defaultSecurityRules(securityGroupId: string): SecurityRuleRow[] {
+    return [
+      { ruleId: compactUuid(), securityGroupId, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self' },
+      { ruleId: compactUuid(), securityGroupId, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all' },
+    ];
   }
 
   protected override mapDevice(device: ApiDevice): DeviceRow {

@@ -2,7 +2,6 @@ package biz
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -37,7 +36,7 @@ func (s *Store) CreateDeviceBootstrapKey(createdByUserID, networkID, deviceAlias
 		s.mu.Unlock()
 		return DeviceBootstrapKey{}, errNotFound
 	}
-	keyID := fmt.Sprintf("device-bootstrap-%06d", s.nextBootstrapKeySeq)
+	keyID := newCompactUUID()
 	s.nextBootstrapKeySeq++
 	s.mu.Unlock()
 	key := DeviceBootstrapKey{

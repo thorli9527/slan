@@ -27,7 +27,7 @@ func TestRegisterUserAndDeviceJoinDefaultNetwork(t *testing.T) {
 		t.Fatalf("register user: %v", err)
 	}
 	user := auth.User
-	if network.NetworkID != "default-"+user.UserID || network.OwnerUserID != user.UserID {
+	if network.OwnerUserID != user.UserID || strings.Contains(network.NetworkID, "-") || len(network.NetworkID) != 32 {
 		t.Fatalf("expected user to own default network, got %+v", network)
 	}
 	if network.Code != "default" {

@@ -26,6 +26,7 @@ import {
   WorkspaceRow,
 } from '../app.models';
 import { WEB_API } from '../api-paths';
+import { compactUuid } from '../app.utils';
 
 
 export abstract class AppComponentSecurity extends AppComponentDns {
@@ -63,7 +64,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
       this.securityGroups = [
         ...this.securityGroups,
         {
-          securityGroupId: `sg-local-${this.securityGroups.length + 1}`,
+          securityGroupId: compactUuid(),
           networkId: this.selectedWorkspaceId,
           workspaceId: this.selectedWorkspaceId,
           name: this.securityGroupName.trim(),

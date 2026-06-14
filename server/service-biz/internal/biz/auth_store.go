@@ -2,7 +2,6 @@ package biz
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -25,7 +24,7 @@ func (s *Store) RegisterUser(email, password, name string) (AuthResponse, Networ
 	}
 	now := time.Now().Unix()
 	user := User{
-		UserID:       fmt.Sprintf("user-%06d", s.nextUserID),
+		UserID:       newCompactUUID(),
 		Email:        email,
 		Name:         strings.TrimSpace(name),
 		PasswordHash: hashPassword(password),

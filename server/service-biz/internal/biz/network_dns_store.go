@@ -2,7 +2,6 @@ package biz
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -108,7 +107,7 @@ func (s *Store) AddDNSRecord(networkID, zoneID, name, recordType, targetDeviceID
 	}
 	now := time.Now().Unix()
 	record := NetworkDNSRecord{
-		RecordID:       fmt.Sprintf("dns-%06d", s.nextRecordSeq),
+		RecordID:       newCompactUUID(),
 		ZoneID:         zoneID,
 		NetworkID:      networkID,
 		Name:           name,

@@ -2,7 +2,6 @@ package biz
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -51,7 +50,7 @@ func (s *Store) UpsertPublicMapping(mappingID, networkID, alias, publicDomain, s
 		}
 		mapping = existing
 	} else {
-		mapping.MappingID = fmt.Sprintf("pub-%06d", s.nextPublicMapSeq)
+		mapping.MappingID = newCompactUUID()
 		mapping.NetworkID = networkID
 		mapping.CreatedAt = now
 		s.nextPublicMapSeq++

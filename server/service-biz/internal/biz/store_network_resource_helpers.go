@@ -1,9 +1,6 @@
 package biz
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 func (s *Store) ensureDefaultNetworkForUserLocked(userID string, now int64) Network {
 	network, _ := s.ensureDefaultNetworkResourcesForUserLocked(userID, now)
@@ -11,8 +8,14 @@ func (s *Store) ensureDefaultNetworkForUserLocked(userID string, now int64) Netw
 }
 
 func (s *Store) ensureDefaultNetworkResourcesForUserLocked(userID string, now int64) (Network, SecurityGroup) {
-	id := "default-" + userID
-	if network, ok := s.networks[id]; ok {
+	for _, network := range s.networks {
+		if network.OwnerUserID == userID && network.Default && network.Status != "deleted" {
+			group := s.defaultSecurityGroupLocked(network.NetworkID)
+			return network, group
+		}
+	}
+	legacyID := "default-" + userID
+	if network, ok := s.networks[legacyID]; ok {
 		var group SecurityGroup
 		for _, item := range s.securityGroups {
 			if item.NetworkID == network.NetworkID {
@@ -22,6 +25,7 @@ func (s *Store) ensureDefaultNetworkResourcesForUserLocked(userID string, now in
 		}
 		return network, group
 	}
+	id := newCompactUUID()
 	network := Network{NetworkID: id, OwnerUserID: userID, Name: "默认网络", Code: "default", TemplateKey: "default", Status: "enabled", Default: true, CreatedAt: now, UpdatedAt: now}
 	s.networks[id] = network
 	group := s.addSecurityGroupLocked(id, "默认安全组", "默认网络安全组", now)
@@ -33,7 +37,7 @@ func (s *Store) addNetworkDeviceLocked(networkID, deviceID, ownerUserID, alias s
 	if !enabled {
 		status = "disabled"
 	}
-	networkDevice := NetworkDevice{NetworkDeviceID: fmt.Sprintf("network-device-%s-%s", networkID, deviceID), NetworkID: networkID, DeviceID: deviceID, OwnerUserID: ownerUserID, Alias: strings.TrimSpace(alias), Enabled: enabled, Status: status, CreatedAt: now, UpdatedAt: now}
+	networkDevice := NetworkDevice{NetworkDeviceID: newCompactUUID(), NetworkID: networkID, DeviceID: deviceID, OwnerUserID: ownerUserID, Alias: strings.TrimSpace(alias), Enabled: enabled, Status: status, CreatedAt: now, UpdatedAt: now}
 	s.networkDevices[networkID+"|"+deviceID] = networkDevice
 	return networkDevice
 }
@@ -43,14 +47,14 @@ func (s *Store) addDNSZoneLocked(networkID, zoneName string, exposeGlobal bool, 
 	if zoneName == "" {
 		zoneName = "default.lan"
 	}
-	zone := NetworkDNSZone{ZoneID: fmt.Sprintf("zone-%06d", s.nextZoneSeq), NetworkID: networkID, ZoneName: zoneName, ExposeGlobal: exposeGlobal, Status: "active", CreatedAt: now}
+	zone := NetworkDNSZone{ZoneID: newCompactUUID(), NetworkID: networkID, ZoneName: zoneName, ExposeGlobal: exposeGlobal, Status: "active", CreatedAt: now}
 	s.nextZoneSeq++
 	s.dnsZones[zone.ZoneID] = zone
 	return zone
 }
 
 func (s *Store) addSecurityGroupLocked(networkID, name, description string, now int64) SecurityGroup {
-	group := SecurityGroup{SecurityGroupID: fmt.Sprintf("sg-%06d", s.nextSecuritySeq), NetworkID: networkID, Name: defaultString(name, "默认安全组"), Description: description, Status: "active", CreatedAt: now}
+	group := SecurityGroup{SecurityGroupID: newCompactUUID(), NetworkID: networkID, Name: defaultString(name, "默认安全组"), Description: description, Status: "active", CreatedAt: now}
 	s.nextSecuritySeq++
 	s.securityGroups[group.SecurityGroupID] = group
 	return group

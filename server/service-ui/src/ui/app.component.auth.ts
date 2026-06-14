@@ -13,6 +13,7 @@ import {
 import type { ClientLoginTarget } from './app-auth-flow';
 import { shortCodeFromEmail } from './app.utils';
 import { WEB_API } from './api-paths';
+import { DEFAULT_USER_ID } from './app.seed-data';
 
 export class AppComponentAuth extends AppComponentData {
   protected async initializeCustomerAuthFromUrl(): Promise<void> {
@@ -290,7 +291,7 @@ export class AppComponentAuth extends AppComponentData {
       return;
     }
     try {
-      await this.api.patch(WEB_API.userPassword(this.currentUserId || 'user-000001'), {
+      await this.api.patch(WEB_API.userPassword(this.currentUserId || DEFAULT_USER_ID), {
         oldPassword: this.oldPassword,
         newPassword: this.newPassword,
       });

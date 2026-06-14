@@ -6,6 +6,7 @@ import {
   MemberRow,
   NavGroup,
   PublicMappingRow,
+  SecurityGroupRow,
   SecurityRuleRow,
   SecurityRuleTemplate,
   UserAliasRow,
@@ -15,6 +16,19 @@ import {
 } from './app.models';
 
 export const ROOT_DOMAIN = 'staticlss.com';
+export const DEFAULT_USER_ID = '00000000000040008000000000000001';
+export const DEFAULT_NETWORK_ID = '00000000000040008000000000000002';
+export const DEV_NETWORK_ID = '00000000000040008000000000000003';
+export const DEFAULT_MAC_DEVICE_ID = '00000000000040008000000000000004';
+export const DEFAULT_IPHONE_DEVICE_ID = '00000000000040008000000000000005';
+export const DEFAULT_BOB_DEVICE_ID = '00000000000040008000000000000006';
+export const DEFAULT_ZONE_ID = '00000000000040008000000000000007';
+export const DEV_ZONE_ID = '00000000000040008000000000000008';
+export const DEFAULT_RECORD_ID = '00000000000040008000000000000009';
+export const DEV_RECORD_ID = '0000000000004000800000000000000a';
+export const DEFAULT_MAPPING_ID = '0000000000004000800000000000000b';
+export const DEFAULT_SECURITY_GROUP_ID = '0000000000004000800000000000000c';
+export const DEV_SECURITY_GROUP_ID = '0000000000004000800000000000000d';
 
 export const WORKSPACE_PRESETS: WorkspacePreset[] = [
   { name: '默认网络', code: 'default' },
@@ -58,19 +72,19 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 export const INITIAL_DEVICES: DeviceRow[] = [
-  { deviceId: 'mac-001', platform: 'macOS', osVersion: '15.3', alias: '办公 Mac', ip: '10.0.0.1', owner: 'alice@staticlss.com', status: 'active' },
-  { deviceId: 'iphone-001', platform: 'iOS', osVersion: '18.2', alias: 'Alice iPhone', ip: '10.0.0.2', owner: 'alice@staticlss.com', status: 'active' },
-  { deviceId: 'bob-laptop-001', platform: 'Windows', osVersion: '11', alias: 'Bob Laptop', ip: '10.0.0.3', owner: 'bob@staticlss.com', status: 'active' },
+  { deviceId: DEFAULT_MAC_DEVICE_ID, platform: 'macOS', osVersion: '15.3', alias: '办公 Mac', ip: '10.0.0.1', owner: 'alice@staticlss.com', status: 'active' },
+  { deviceId: DEFAULT_IPHONE_DEVICE_ID, platform: 'iOS', osVersion: '18.2', alias: 'Alice iPhone', ip: '10.0.0.2', owner: 'alice@staticlss.com', status: 'active' },
+  { deviceId: DEFAULT_BOB_DEVICE_ID, platform: 'Windows', osVersion: '11', alias: 'Bob Laptop', ip: '10.0.0.3', owner: 'bob@staticlss.com', status: 'active' },
 ];
 
 export const INITIAL_WORKSPACE_DEVICE_IDS: Record<string, string[]> = {
-  'default-user-000001': ['mac-001', 'iphone-001'],
-  'workspace-000001': ['mac-001'],
+  [DEFAULT_NETWORK_ID]: [DEFAULT_MAC_DEVICE_ID, DEFAULT_IPHONE_DEVICE_ID],
+  [DEV_NETWORK_ID]: [DEFAULT_MAC_DEVICE_ID],
 };
 
 export const INITIAL_WORKSPACES: WorkspaceRow[] = [
-  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: '默认网络', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: 'default.default-user-000001.user-000001.sub.staticlss.com' },
-  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: '开发组', code: 'dev', template: 'dev', status: 'enabled', members: 2, devices: 1, zone: 'dev.workspace-000001.user-000001.sub.staticlss.com' },
+  { networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: '默认网络', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: `default.${DEFAULT_NETWORK_ID}.${DEFAULT_USER_ID}.sub.staticlss.com` },
+  { networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: '开发组', code: 'dev', template: 'dev', status: 'enabled', members: 2, devices: 1, zone: `dev.${DEV_NETWORK_ID}.${DEFAULT_USER_ID}.sub.staticlss.com` },
 ];
 
 export const INITIAL_MEMBERS: MemberRow[] = [
@@ -85,49 +99,56 @@ export const INITIAL_USER_ALIASES: UserAliasRow[] = [
 ];
 
 export const INITIAL_DNS_ZONES: DNSZoneRow[] = [
-  { zoneId: 'zone-000001', networkId: 'default-user-000001', workspaceId: 'default-user-000001', zone: 'default.lan', recordType: 'A', value: '10.0.0.1', expose: false, status: 'active' },
-  { zoneId: 'zone-000002', networkId: 'workspace-000001', workspaceId: 'workspace-000001', zone: 'dev.internal', recordType: 'A', value: '10.0.0.2', expose: true, status: 'active' },
+  { zoneId: DEFAULT_ZONE_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, zone: 'default.lan', recordType: 'A', value: '10.0.0.1', expose: false, status: 'active' },
+  { zoneId: DEV_ZONE_ID, networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, zone: 'dev.internal', recordType: 'A', value: '10.0.0.2', expose: true, status: 'active' },
 ];
 
 export const INITIAL_DNS_RECORDS: DNSRow[] = [
-  { recordId: 'record-000001', zoneId: 'zone-000001', networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@staticlss.com / 办公 Mac / 443', deviceId: 'mac-001', port: '443', expose: false },
-  { recordId: 'record-000002', zoneId: 'zone-000002', networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@staticlss.com / Alice iPhone / 8443', deviceId: 'iphone-001', port: '8443', expose: true },
+  { recordId: DEFAULT_RECORD_ID, zoneId: DEFAULT_ZONE_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@staticlss.com / 办公 Mac / 443', deviceId: DEFAULT_MAC_DEVICE_ID, port: '443', expose: false },
+  { recordId: DEV_RECORD_ID, zoneId: DEV_ZONE_ID, networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@staticlss.com / Alice iPhone / 8443', deviceId: DEFAULT_IPHONE_DEVICE_ID, port: '8443', expose: true },
 ];
 
 export const INITIAL_PUBLIC_MAPPINGS: PublicMappingRow[] = [
-  { mappingId: 'mapping-000001', networkId: 'default-user-000001', workspaceId: 'default-user-000001', alias: 'api', publicDomain: 'api.default.alice.pub.staticlss.com', sourceRecord: 'api', deviceId: 'iphone-001', protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
+  { mappingId: DEFAULT_MAPPING_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, alias: 'api', publicDomain: 'api.default.alice.pub.staticlss.com', sourceRecord: 'api', deviceId: DEFAULT_IPHONE_DEVICE_ID, protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
+];
+
+export const INITIAL_SECURITY_GROUPS: SecurityGroupRow[] = [
+  { securityGroupId: DEFAULT_SECURITY_GROUP_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: '默认安全组', status: 'active' },
+  { securityGroupId: DEV_SECURITY_GROUP_ID, networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: '默认安全组', status: 'active' },
 ];
 
 export const INITIAL_SECURITY_RULES: SecurityRuleRow[] = [
-  { direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'device', subjectValue: 'mac-001' },
-  { direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all' },
+  { ruleId: '0000000000004000800000000000000e', securityGroupId: DEFAULT_SECURITY_GROUP_ID, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self' },
+  { ruleId: '0000000000004000800000000000000f', securityGroupId: DEFAULT_SECURITY_GROUP_ID, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all' },
+  { ruleId: '00000000000040008000000000000010', securityGroupId: DEV_SECURITY_GROUP_ID, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self' },
+  { ruleId: '00000000000040008000000000000011', securityGroupId: DEV_SECURITY_GROUP_ID, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all' },
 ];
 
 export const INITIAL_DEVICE_EXPOSURES: DeviceExposureRow[] = [
-  { deviceId: 'mac-001', user: 'bob@staticlss.com', alias: 'Bob', status: 'active' },
-  { deviceId: 'mac-001', user: 'ops@staticlss.com', alias: 'Ops', status: 'pending' },
-  { deviceId: 'iphone-001', user: 'dev@staticlss.com', alias: 'Dev', status: 'active' },
+  { deviceId: DEFAULT_MAC_DEVICE_ID, user: 'bob@staticlss.com', alias: 'Bob', status: 'active' },
+  { deviceId: DEFAULT_MAC_DEVICE_ID, user: 'ops@staticlss.com', alias: 'Ops', status: 'pending' },
+  { deviceId: DEFAULT_IPHONE_DEVICE_ID, user: 'dev@staticlss.com', alias: 'Dev', status: 'active' },
 ];
 
 export const INITIAL_WORKSPACE_DEVICE_INVITES: WorkspaceDeviceInviteRow[] = [
   {
-    inviteId: 'device-invite-000001',
-    workspaceId: 'default-user-000001',
-    inviterUserId: 'user-000001',
+    inviteId: '00000000000040008000000000000012',
+    workspaceId: DEFAULT_NETWORK_ID,
+    inviterUserId: DEFAULT_USER_ID,
     inviteCode: 'DEFAULT-000001',
     status: 'pending',
     createdAt: 1767225600,
     expiresAt: 1767312000,
   },
   {
-    inviteId: 'device-invite-000002',
-    workspaceId: 'workspace-000001',
-    inviterUserId: 'user-000001',
+    inviteId: '00000000000040008000000000000013',
+    workspaceId: DEV_NETWORK_ID,
+    inviterUserId: DEFAULT_USER_ID,
     inviteCode: 'DEV-000002',
     status: 'accepted',
     createdAt: 1767225600,
     expiresAt: 1767312000,
-    acceptedDeviceId: 'mac-001',
+    acceptedDeviceId: DEFAULT_MAC_DEVICE_ID,
     acceptedUserId: 'alice@staticlss.com',
     acceptedAt: 1767232800,
   },

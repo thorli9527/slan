@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -36,7 +35,7 @@ func (s *Store) CreateDeviceInvite(inviterUserID string, ttlSeconds int64) (Devi
 		ttl = time.Duration(ttlSeconds) * time.Second
 	}
 	invite := DeviceInvite{
-		InviteID:      fmt.Sprintf("device-invite-%06d", s.nextDeviceInviteSeq),
+		InviteID:      newCompactUUID(),
 		InviterUserID: inviterUserID,
 		InviteCode:    code,
 		Status:        "pending",
@@ -117,7 +116,7 @@ func (s *Store) AcceptDeviceInvite(inviteCode, deviceID, actorUserID string) (De
 	}
 	now := time.Now().Unix()
 	grant := DeviceAccessGrant{
-		GrantID:    fmt.Sprintf("device-grant-%06d", s.nextDeviceInviteSeq),
+		GrantID:    newCompactUUID(),
 		DeviceID:   deviceID,
 		UserID:     invite.InviterUserID,
 		GrantedBy:  actorUserID,

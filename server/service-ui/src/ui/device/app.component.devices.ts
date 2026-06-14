@@ -28,11 +28,13 @@ import {
   WorkspaceRow,
 } from '../app.models';
 import { WEB_API } from '../api-paths';
+import { DEFAULT_USER_ID } from '../app.seed-data';
+import { compactUuid } from '../app.utils';
 export abstract class AppComponentDevices extends AppComponentUserAlias {
   async addDevice(): Promise<void> {
     try {
       await this.api.post(WEB_API.devicesRegister, {
-        userId: this.currentUserId || 'user-000001',
+        userId: this.currentUserId || DEFAULT_USER_ID,
         deviceId: this.deviceId,
         name: this.deviceAlias,
         platform: this.devicePlatform,
@@ -94,7 +96,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     }
     try {
       const invite = await this.api.post<WorkspaceDeviceInviteRow>(WEB_API.deviceInvites(), {
-        inviterUserId: this.currentUserId || 'user-000001',
+        inviterUserId: this.currentUserId || DEFAULT_USER_ID,
         ttlSeconds: 86400,
       });
       this.workspaceInviteCode = invite.inviteCode;
@@ -103,8 +105,8 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
       this.workspaceInviteCode = `JOIN-${randomPart}`;
       this.upsertWorkspaceDeviceInvite({
-        inviteId: `device-invite-${this.workspaceInviteCode}`,
-        inviterUserId: this.currentUserId || 'user-000001',
+        inviteId: compactUuid(),
+        inviterUserId: this.currentUserId || DEFAULT_USER_ID,
         inviteCode: this.workspaceInviteCode,
         status: 'pending',
         createdAt: Math.floor(Date.now() / 1000),
@@ -134,7 +136,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     }
     try {
       const key = await this.api.post<ApiDeviceBootstrapKey>(WEB_API.deviceBootstrapKeys(), {
-        userId: this.currentUserId || 'user-000001',
+        userId: this.currentUserId || DEFAULT_USER_ID,
         networkId: network.networkId,
         ttlSeconds: 1800,
       });
@@ -191,7 +193,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       const result = await this.api.post<{ invite?: WorkspaceDeviceInviteRow }>(WEB_API.deviceInviteAccept, {
         inviteCode: this.joinInviteCode,
         deviceId: this.deviceId,
-        actorUserId: this.currentUserId || this.devices.find((device) => device.deviceId === this.deviceId)?.owner || 'user-000001',
+        actorUserId: this.currentUserId || this.devices.find((device) => device.deviceId === this.deviceId)?.owner || DEFAULT_USER_ID,
       });
       if (result.invite) {
         this.upsertWorkspaceDeviceInvite(result.invite);

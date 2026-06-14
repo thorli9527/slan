@@ -2,7 +2,6 @@ package biz
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -25,7 +24,7 @@ func (s *Store) RegisterDevice(ownerID, deviceID, name, platform, osName, osVers
 	}
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		deviceID = fmt.Sprintf("device-%06d", s.nextDeviceSeq)
+		deviceID = newCompactUUID()
 		s.nextDeviceSeq++
 	}
 	now := time.Now().Unix()

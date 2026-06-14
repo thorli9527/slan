@@ -25,7 +25,7 @@ import {
   WorkspacePanel,
   WorkspaceRow,
 } from '../app.models';
-import { slug } from '../app.utils';
+import { compactUuid, slug } from '../app.utils';
 import { WEB_API } from '../api-paths';
 
 
@@ -398,7 +398,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
     return id || undefined;
   }
 
-  protected localResourceId(prefix: string): string {
-    return `local-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  protected localResourceId(_prefix: string): string {
+    return compactUuid();
   }
 }

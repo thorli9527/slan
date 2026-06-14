@@ -69,7 +69,7 @@ func (s *Store) bindExistingDeviceToUser(deviceID, userID string) error {
 	}
 	network := s.ensureDefaultNetworkForUserLocked(userID, now)
 	membership := NetworkDevice{
-		NetworkDeviceID: fmt.Sprintf("network-device-%s-%s", network.NetworkID, deviceID),
+		NetworkDeviceID: newCompactUUID(),
 		NetworkID:       network.NetworkID,
 		DeviceID:        deviceID,
 		OwnerUserID:     userID,

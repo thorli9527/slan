@@ -1,9 +1,6 @@
 package biz
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 func (s *Store) createDeviceSessionLocked(deviceID, userID string, configs []NetworkConfig, now int64) (DeviceSession, error) {
 	deviceToken, err := secureTokenHex(32)
@@ -15,7 +12,7 @@ func (s *Store) createDeviceSessionLocked(deviceID, userID string, configs []Net
 		return DeviceSession{}, err
 	}
 	session := DeviceSession{
-		SessionID:            fmt.Sprintf("device-session-%06d", s.nextDeviceSessionSeq),
+		SessionID:            newCompactUUID(),
 		DeviceID:             deviceID,
 		UserID:               userID,
 		DeviceToken:          "dt_" + deviceToken,

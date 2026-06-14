@@ -1,11 +1,14 @@
 import { AppApiClient } from './app-api.service';
 import {
+  DEFAULT_MAC_DEVICE_ID,
+  DEFAULT_NETWORK_ID,
   INITIAL_DEVICE_EXPOSURES,
   INITIAL_DEVICES,
   INITIAL_DNS_RECORDS,
   INITIAL_DNS_ZONES,
   INITIAL_MEMBERS,
   INITIAL_PUBLIC_MAPPINGS,
+  INITIAL_SECURITY_GROUPS,
   INITIAL_SECURITY_RULES,
   INITIAL_USER_ALIASES,
   INITIAL_WORKSPACE_DEVICE_INVITES,
@@ -83,7 +86,7 @@ export abstract class AppComponentState {
   confirmPassword = '';
   passwordMessage = '';
 
-  deviceId = 'mac-001';
+  deviceId = DEFAULT_MAC_DEVICE_ID;
   deviceAlias = '办公 Mac';
   devicePlatform = 'macOS';
   deviceOSVersion = '15.3';
@@ -95,7 +98,7 @@ export abstract class AppComponentState {
   inviteEmail = 'bob@staticlss.com';
   domainName = 'api';
   ruleDirection = 'ingress';
-  selectedWorkspaceId = 'default-user-000001';
+  selectedWorkspaceId = DEFAULT_NETWORK_ID;
   workspacePanel: WorkspacePanel = 'zones';
   selectedZoneId = 'default';
   selectedSecurityGroupId = 'default';
@@ -154,7 +157,7 @@ export abstract class AppComponentState {
   recordName = 'api';
   recordType = 'A';
   recordValue = '10.0.0.1';
-  recordDeviceId = 'mac-001';
+  recordDeviceId = DEFAULT_MAC_DEVICE_ID;
   recordPort = '443';
   showPublicMappingDialog = false;
   publicMappingDialogMode: 'create' | 'edit' = 'create';
@@ -174,7 +177,7 @@ export abstract class AppComponentState {
   ruleProtocol = 'tcp';
   rulePort = '443';
   ruleSubjectType: RuleSubjectType = 'device';
-  ruleSubjectValue = 'mac-001';
+  ruleSubjectValue = DEFAULT_MAC_DEVICE_ID;
   selectedRuleTemplate = 'Web 服务';
   showSecurityGroupDialog = false;
   securityGroupName = '默认安全组';
@@ -184,9 +187,7 @@ export abstract class AppComponentState {
     Object.entries(INITIAL_WORKSPACE_DEVICE_IDS).map(([workspaceId, deviceIds]) => [workspaceId, [...deviceIds]]),
   );
   workspaceDeviceJoinMethods: Record<string, string> = {
-    'default-user-000001|mac-001': '手动添加',
-    'default-user-000001|iphone-001': '手动添加',
-    'workspace-000001|mac-001': '手动添加',
+    [`${DEFAULT_NETWORK_ID}|${DEFAULT_MAC_DEVICE_ID}`]: '手动添加',
   };
   workspaces: WorkspaceRow[] = INITIAL_WORKSPACES.map((item) => ({ ...item }));
   members: MemberRow[] = INITIAL_MEMBERS.map((item) => ({ ...item }));
@@ -195,7 +196,7 @@ export abstract class AppComponentState {
   dnsRecords: DNSRow[] = INITIAL_DNS_RECORDS.map((item) => ({ ...item }));
   publicMappings: PublicMappingRow[] = INITIAL_PUBLIC_MAPPINGS.map((item) => ({ ...item }));
   securityRules: SecurityRuleRow[] = INITIAL_SECURITY_RULES.map((item) => ({ ...item }));
-  securityGroups: SecurityGroupRow[] = [];
+  securityGroups: SecurityGroupRow[] = INITIAL_SECURITY_GROUPS.map((item) => ({ ...item }));
   deviceExposures: DeviceExposureRow[] = INITIAL_DEVICE_EXPOSURES.map((item) => ({ ...item }));
   workspaceDeviceInvites: WorkspaceDeviceInviteRow[] = INITIAL_WORKSPACE_DEVICE_INVITES.map((item) => ({ ...item }));
   clientDownloads: ClientDownload[] = [];
@@ -205,11 +206,11 @@ export abstract class AppComponentState {
   }
 
   get ingressRules(): SecurityRuleRow[] {
-    return this.securityRules.filter((rule) => rule.direction === 'ingress');
+    return this.securityRules.filter((rule) => rule.securityGroupId === this.selectedSecurityGroupId && rule.direction === 'ingress');
   }
 
   get egressRules(): SecurityRuleRow[] {
-    return this.securityRules.filter((rule) => rule.direction === 'egress');
+    return this.securityRules.filter((rule) => rule.securityGroupId === this.selectedSecurityGroupId && rule.direction === 'egress');
   }
 
   get ingressRuleTemplates(): SecurityRuleTemplate[] {
