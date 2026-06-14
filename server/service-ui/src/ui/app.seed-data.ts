@@ -85,17 +85,17 @@ export const INITIAL_USER_ALIASES: UserAliasRow[] = [
 ];
 
 export const INITIAL_DNS_ZONES: DNSZoneRow[] = [
-  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', zone: 'default.lan', recordType: 'A', value: '10.0.0.1', expose: false, status: 'active' },
-  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', zone: 'dev.internal', recordType: 'A', value: '10.0.0.2', expose: true, status: 'active' },
+  { zoneId: 'zone-000001', networkId: 'default-user-000001', workspaceId: 'default-user-000001', zone: 'default.lan', recordType: 'A', value: '10.0.0.1', expose: false, status: 'active' },
+  { zoneId: 'zone-000002', networkId: 'workspace-000001', workspaceId: 'workspace-000001', zone: 'dev.internal', recordType: 'A', value: '10.0.0.2', expose: true, status: 'active' },
 ];
 
 export const INITIAL_DNS_RECORDS: DNSRow[] = [
-  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@staticlss.com / 办公 Mac / 443', deviceId: 'mac-001', port: '443', expose: false },
-  { networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@staticlss.com / Alice iPhone / 8443', deviceId: 'iphone-001', port: '8443', expose: true },
+  { recordId: 'record-000001', zoneId: 'zone-000001', networkId: 'default-user-000001', workspaceId: 'default-user-000001', name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@staticlss.com / 办公 Mac / 443', deviceId: 'mac-001', port: '443', expose: false },
+  { recordId: 'record-000002', zoneId: 'zone-000002', networkId: 'workspace-000001', workspaceId: 'workspace-000001', name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@staticlss.com / Alice iPhone / 8443', deviceId: 'iphone-001', port: '8443', expose: true },
 ];
 
 export const INITIAL_PUBLIC_MAPPINGS: PublicMappingRow[] = [
-  { networkId: 'default-user-000001', workspaceId: 'default-user-000001', alias: 'api', publicDomain: 'api.default.alice.pub.staticlss.com', sourceRecord: 'api', deviceId: 'iphone-001', protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
+  { mappingId: 'mapping-000001', networkId: 'default-user-000001', workspaceId: 'default-user-000001', alias: 'api', publicDomain: 'api.default.alice.pub.staticlss.com', sourceRecord: 'api', deviceId: 'iphone-001', protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
 ];
 
 export const INITIAL_SECURITY_RULES: SecurityRuleRow[] = [

@@ -81,7 +81,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
 
   openZoneRecords(zone?: DNSZoneRow): void {
     if (zone) {
-      this.selectedZoneId = zone.zone;
+      this.selectedZoneId = zone.zoneId ?? this.selectedZoneId;
     }
     this.workspacePanel = 'records';
     history.pushState({}, '', workspacePanelPath(this.selectedWorkspaceId, 'records', this.selectedZoneId, this.selectedSecurityGroupId));

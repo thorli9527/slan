@@ -18,7 +18,7 @@ export function workspacePanelPath(workspaceId: string, panel: WorkspacePanel, s
     case 'publicMappings':
       return `${base}/public-mappings`;
     case 'securityGroups':
-      return `${base}/security-groups`;
+      return selectedSecurityGroupId && selectedSecurityGroupId !== 'default' ? `${base}/security-groups/${encodeURIComponent(selectedSecurityGroupId)}` : `${base}/security-groups`;
     case 'securityRules':
       return `${base}/security-groups/${encodeURIComponent(selectedSecurityGroupId)}/rules`;
     default:
@@ -34,6 +34,10 @@ export function panelFromRoute(route: string): WorkspaceRoutePanel {
   if (route.startsWith('security-groups/') && route.endsWith('/rules')) {
     const parts = route.split('/');
     return { panel: 'securityRules', selectedSecurityGroupId: decodeURIComponent(parts[1] || 'default') };
+  }
+  if (route.startsWith('security-groups/')) {
+    const parts = route.split('/');
+    return { panel: 'securityGroups', selectedSecurityGroupId: decodeURIComponent(parts[1] || 'default') };
   }
   switch (route) {
     case '':

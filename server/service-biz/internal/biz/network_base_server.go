@@ -5,7 +5,11 @@ import (
 )
 
 func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Network.ListNetworks(r.URL.Query().Get("userId"))})
+	userID := r.PathValue("userId")
+	if userID == "" {
+		userID = r.URL.Query().Get("userId")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Network.ListNetworks(userID)})
 }
 
 func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +53,11 @@ func (s *Server) createDeviceInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listDeviceInvites(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Network.ListDeviceInvites(r.URL.Query().Get("userId"))})
+	userID := r.PathValue("userId")
+	if userID == "" {
+		userID = r.URL.Query().Get("userId")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Network.ListDeviceInvites(userID)})
 }
 
 func (s *Server) acceptDeviceInvite(w http.ResponseWriter, r *http.Request) {

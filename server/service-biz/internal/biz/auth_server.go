@@ -215,7 +215,11 @@ func (s *Server) createDeviceBootstrapKey(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) listDeviceBootstrapKeys(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Auth.ListDeviceBootstrapKeys(bearerToken(r), r.URL.Query().Get("userId"))})
+	userID := r.PathValue("userId")
+	if userID == "" {
+		userID = r.URL.Query().Get("userId")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Auth.ListDeviceBootstrapKeys(bearerToken(r), userID)})
 }
 
 func (s *Server) revokeDeviceBootstrapKey(w http.ResponseWriter, r *http.Request) {
@@ -266,7 +270,11 @@ func (s *Server) userEntitlement(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listUserAliases(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Auth.ListUserAliases(r.URL.Query().Get("ownerUserId"))})
+	userID := r.PathValue("userId")
+	if userID == "" {
+		userID = r.URL.Query().Get("ownerUserId")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Auth.ListUserAliases(userID)})
 }
 
 func (s *Server) upsertUserAlias(w http.ResponseWriter, r *http.Request) {

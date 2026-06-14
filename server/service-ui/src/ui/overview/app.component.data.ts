@@ -68,6 +68,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
       this.selectedSecurityGroupId = routePanel.selectedSecurityGroupId ?? this.selectedSecurityGroupId;
       this.workspaceRouteMode = 'detail';
       this.active = 'workspaces';
+      void this.loadWorkspaceResources(this.selectedWorkspaceId);
       return;
     }
     if (window.location.pathname === '/spaces') {
@@ -81,7 +82,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
       const [devices, workspaces, aliases, invites, quota] = await Promise.all([
         this.api.get<{ items: ApiDevice[] }>(WEB_API.devicesVisible(userId)),
         this.api.get<{ items: ApiWorkspace[] }>(WEB_API.networks(userId)),
-        this.api.get<{ items: ApiUserAlias[] }>(`${WEB_API.userAliases}${userId ? `?ownerUserId=${encodeURIComponent(userId)}` : ''}`),
+        this.api.get<{ items: ApiUserAlias[] }>(WEB_API.userAliasesForUser(userId)),
         this.api.get<{ items: WorkspaceDeviceInviteRow[] }>(WEB_API.deviceInvites(userId)),
         userId ? this.api.get<ApiDeviceQuota>(WEB_API.userEntitlement(userId)) : Promise.resolve(null),
       ]);
@@ -173,7 +174,8 @@ export abstract class AppComponentData extends AppComponentSecurity {
         ...this.securityGroups.filter((group) => group.workspaceId !== workspaceId),
         ...groups.items.map((group) => this.mapSecurityGroup(group)),
       ];
-      const group = groups.items[0];
+      const requestedSecurityGroupId = this.selectedSecurityGroupId;
+      const group = groups.items.find((item) => item.securityGroupId === requestedSecurityGroupId) ?? groups.items[0];
       if (!group) {
         return;
       }

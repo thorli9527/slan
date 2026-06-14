@@ -45,6 +45,11 @@ func (s *Server) registerExternalAPIRoutes(mux *http.ServeMux) {
 		route(http.MethodGet, "/api/users", s.listUsers),
 		route(http.MethodGet, "/api/users/{userId}/entitlement", s.userEntitlement),
 		route(http.MethodPatch, "/api/users/{userId}/password", s.changeUserPassword),
+		route(http.MethodGet, "/api/users/{userId}/device-bootstrap-keys", s.listDeviceBootstrapKeys),
+		route(http.MethodGet, "/api/users/{userId}/user-aliases", s.listUserAliases),
+		route(http.MethodGet, "/api/users/{userId}/devices/visible", s.listVisibleDevices),
+		route(http.MethodGet, "/api/users/{userId}/device-invites", s.listDeviceInvites),
+		route(http.MethodGet, "/api/users/{userId}/networks", s.listNetworks),
 		route(http.MethodGet, "/api/user-aliases", s.listUserAliases),
 		route(http.MethodPatch, "/api/user-aliases", s.upsertUserAlias),
 

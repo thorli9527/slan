@@ -154,7 +154,11 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listVisibleDevices(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Devices.ListVisibleDevices(r.URL.Query().Get("userId"))})
+	userID := r.PathValue("userId")
+	if userID == "" {
+		userID = r.URL.Query().Get("userId")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Devices.ListVisibleDevices(userID)})
 }
 
 func (s *Server) updateDeviceAlias(w http.ResponseWriter, r *http.Request) {

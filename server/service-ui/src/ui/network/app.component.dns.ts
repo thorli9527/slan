@@ -69,13 +69,18 @@ export abstract class AppComponentDns extends AppComponentDevices {
       return;
     }
     const zoneName = this.normalizePrivateZone(this.zoneNameValue);
-    try {
-      const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(this.editingZone.workspaceId, this.editingZone.zoneId ?? this.editingZone.zone), {
-        zoneName,
-        exposeGlobal: this.editingZone.expose,
-      });
-      Object.assign(this.editingZone, this.mapDNSZone(updated));
-    } catch {
+    const zoneId = this.resourceId(this.editingZone.zoneId);
+    if (zoneId) {
+      try {
+        const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(this.editingZone.workspaceId, zoneId), {
+          zoneName,
+          exposeGlobal: this.editingZone.expose,
+        });
+        Object.assign(this.editingZone, this.mapDNSZone(updated));
+      } catch {
+        this.editingZone.zone = zoneName;
+      }
+    } else {
       this.editingZone.zone = zoneName;
     }
     this.closeZoneTagDialog();
@@ -89,13 +94,20 @@ export abstract class AppComponentDns extends AppComponentDevices {
     const workspace = this.selectedWorkspace;
     const zone = this.normalizePrivateZone(this.zoneName);
     if (this.zoneDialogMode === 'edit' && this.editingZone) {
-      try {
-        const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(workspace.workspaceId, this.editingZone.zoneId ?? this.editingZone.zone), {
-          zoneName: zone,
-          exposeGlobal: this.editingZone.expose,
-        });
-        Object.assign(this.editingZone, this.mapDNSZone(updated));
-      } catch {
+      const zoneId = this.resourceId(this.editingZone.zoneId);
+      if (zoneId) {
+        try {
+          const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(workspace.workspaceId, zoneId), {
+            zoneName: zone,
+            exposeGlobal: this.editingZone.expose,
+          });
+          Object.assign(this.editingZone, this.mapDNSZone(updated));
+        } catch {
+          this.editingZone.zone = zone;
+          this.editingZone.recordType = this.zoneRecordType;
+          this.editingZone.value = this.zoneValue;
+        }
+      } else {
         this.editingZone.zone = zone;
         this.editingZone.recordType = this.zoneRecordType;
         this.editingZone.value = this.zoneValue;
@@ -113,7 +125,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
     } catch {
       this.dnsZones = [
         ...this.dnsZones,
-        { networkId: workspace.networkId, workspaceId: workspace.workspaceId, zone, recordType: this.zoneRecordType, value: this.zoneValue, expose: workspace.name !== '默认网络', status: 'active' },
+        { zoneId: this.localResourceId('zone'), networkId: workspace.networkId, workspaceId: workspace.workspaceId, zone, recordType: this.zoneRecordType, value: this.zoneValue, expose: workspace.name !== '默认网络', status: 'active' },
       ];
     }
     this.closeZoneDialog();
@@ -121,10 +133,13 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   async removeZone(zone: DNSZoneRow): Promise<void> {
-    try {
-      await this.api.delete(WEB_API.dnsZone(zone.workspaceId, zone.zoneId ?? zone.zone));
-    } catch {
-      // Local preview mode removes below.
+    const zoneId = this.resourceId(zone.zoneId);
+    if (zoneId) {
+      try {
+        await this.api.delete(WEB_API.dnsZone(zone.workspaceId, zoneId));
+      } catch {
+        // Local preview mode removes below.
+      }
     }
     this.dnsZones = this.dnsZones.filter((item) => item !== zone);
   }
@@ -186,21 +201,31 @@ export abstract class AppComponentDns extends AppComponentDevices {
   async saveRecordDialog(): Promise<void> {
     const workspace = this.selectedWorkspace;
     const name = slug(this.recordName);
-    const zoneRow = this.currentDNSZones.find((item) => item.zone === this.selectedZoneId) ?? this.currentDNSZones[0];
+    const zoneRow = this.currentDNSZones.find((item) => item.zoneId === this.selectedZoneId) ?? this.currentDNSZones[0];
     const zone = zoneRow?.zone ?? `${workspace.code}.internal`;
     const fqdn = `${name}.${zone}`;
     this.recordValue = this.buildRecordValue();
     if (this.recordDialogMode === 'edit' && this.editingRecord) {
-      try {
-        const updated = await this.api.patch<ApiDNSRecord>(WEB_API.dnsRecord(workspace.workspaceId, this.editingRecord.recordId ?? this.editingRecord.fqdn), {
-          name,
-          recordType: this.recordType,
-          targetDeviceId: this.recordDeviceId,
-          port: this.recordPort,
-          ttl: 60,
-        });
-        Object.assign(this.editingRecord, this.mapDNSRecord(updated));
-      } catch {
+      const recordId = this.resourceId(this.editingRecord.recordId);
+      if (recordId) {
+        try {
+          const updated = await this.api.patch<ApiDNSRecord>(WEB_API.dnsRecord(workspace.workspaceId, recordId), {
+            name,
+            recordType: this.recordType,
+            targetDeviceId: this.recordDeviceId,
+            port: this.recordPort,
+            ttl: 60,
+          });
+          Object.assign(this.editingRecord, this.mapDNSRecord(updated));
+        } catch {
+          this.editingRecord.name = name;
+          this.editingRecord.fqdn = fqdn;
+          this.editingRecord.recordType = this.recordType;
+          this.editingRecord.value = this.recordValue;
+          this.editingRecord.deviceId = this.recordDeviceId;
+          this.editingRecord.port = this.recordPort;
+        }
+      } else {
         this.editingRecord.name = name;
         this.editingRecord.fqdn = fqdn;
         this.editingRecord.recordType = this.recordType;
@@ -212,20 +237,28 @@ export abstract class AppComponentDns extends AppComponentDevices {
       this.notifyStateChanged();
       return;
     }
-    try {
-      const created = await this.api.post<ApiDNSRecord>(WEB_API.dnsRecords(workspace.workspaceId), {
-        zoneId: zoneRow?.zoneId ?? zoneRow?.zone ?? '',
-        name,
-        recordType: this.recordType,
-        targetDeviceId: this.recordDeviceId,
-        port: this.recordPort,
-        ttl: 60,
-      });
-      this.dnsRecords = [...this.dnsRecords, this.mapDNSRecord(created)];
-    } catch {
+    const zoneId = this.resourceId(zoneRow?.zoneId);
+    if (zoneId) {
+      try {
+        const created = await this.api.post<ApiDNSRecord>(WEB_API.dnsRecords(workspace.workspaceId), {
+          zoneId,
+          name,
+          recordType: this.recordType,
+          targetDeviceId: this.recordDeviceId,
+          port: this.recordPort,
+          ttl: 60,
+        });
+        this.dnsRecords = [...this.dnsRecords, this.mapDNSRecord(created)];
+      } catch {
+        this.dnsRecords = [
+          ...this.dnsRecords,
+          { recordId: this.localResourceId('record'), zoneId, networkId: workspace.networkId, workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: this.recordDeviceId, port: this.recordPort, expose: false },
+        ];
+      }
+    } else {
       this.dnsRecords = [
         ...this.dnsRecords,
-        { networkId: workspace.networkId, workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: this.recordDeviceId, port: this.recordPort, expose: false },
+        { recordId: this.localResourceId('record'), networkId: workspace.networkId, workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: this.recordDeviceId, port: this.recordPort, expose: false },
       ];
     }
     this.closeRecordDialog();
@@ -233,10 +266,13 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   async removeDomainRecord(record: DNSRow): Promise<void> {
-    try {
-      await this.api.delete(WEB_API.dnsRecord(record.workspaceId, record.recordId ?? record.fqdn));
-    } catch {
-      // Local preview mode removes below.
+    const recordId = this.resourceId(record.recordId);
+    if (recordId) {
+      try {
+        await this.api.delete(WEB_API.dnsRecord(record.workspaceId, recordId));
+      } catch {
+        // Local preview mode removes below.
+      }
     }
     this.dnsRecords = this.dnsRecords.filter((item) => item !== record);
   }
@@ -285,19 +321,32 @@ export abstract class AppComponentDns extends AppComponentDevices {
     const alias = slug(this.publicAlias);
     const publicDomain = `${alias}.${this.selectedWorkspace.code}.${this.userSlug}.pub.staticlss.com`;
     if (this.publicMappingDialogMode === 'edit' && this.editingPublicMapping) {
-      try {
-        const updated = await this.api.patch<ApiPublicMapping>(WEB_API.publicMapping(this.selectedWorkspaceId, this.editingPublicMapping.mappingId ?? this.editingPublicMapping.publicDomain), {
-          alias,
-          publicDomain,
-          sourceRecord: device?.alias || device?.deviceId || '',
-          deviceId: device?.deviceId ?? '',
-          protocol: this.publicProtocol,
-          port: this.publicExternalPort,
-          externalPort: this.publicExternalPort,
-          status: this.editingPublicMapping.status,
-        });
-        Object.assign(this.editingPublicMapping, this.mapPublicMapping(updated));
-      } catch {
+      const mappingId = this.resourceId(this.editingPublicMapping.mappingId);
+      if (mappingId) {
+        try {
+          const updated = await this.api.patch<ApiPublicMapping>(WEB_API.publicMapping(this.selectedWorkspaceId, mappingId), {
+            alias,
+            publicDomain,
+            sourceRecord: device?.alias || device?.deviceId || '',
+            deviceId: device?.deviceId ?? '',
+            protocol: this.publicProtocol,
+            port: this.publicExternalPort,
+            externalPort: this.publicExternalPort,
+            status: this.editingPublicMapping.status,
+          });
+          Object.assign(this.editingPublicMapping, this.mapPublicMapping(updated));
+        } catch {
+          this.editingPublicMapping.alias = alias;
+          this.editingPublicMapping.publicDomain = publicDomain;
+          this.editingPublicMapping.sourceRecord = device?.alias || device?.deviceId || '';
+          this.editingPublicMapping.deviceId = device?.deviceId ?? '';
+          this.editingPublicMapping.protocol = this.publicProtocol;
+          this.editingPublicMapping.port = this.publicExternalPort;
+          this.editingPublicMapping.externalPort = this.publicExternalPort;
+          this.editingPublicMapping.accessMode = this.publicAccessMode;
+          this.editingPublicMapping.tlsMode = this.publicTlsMode;
+        }
+      } else {
         this.editingPublicMapping.alias = alias;
         this.editingPublicMapping.publicDomain = publicDomain;
         this.editingPublicMapping.sourceRecord = device?.alias || device?.deviceId || '';
@@ -326,18 +375,30 @@ export abstract class AppComponentDns extends AppComponentDevices {
     } catch {
       this.publicMappings = [
         ...this.publicMappings,
-        { networkId: this.selectedWorkspaceId, workspaceId: this.selectedWorkspaceId, alias, publicDomain, sourceRecord: device?.alias || device?.deviceId || '', deviceId: device?.deviceId ?? '', protocol: this.publicProtocol, port: this.publicExternalPort, externalPort: this.publicExternalPort, accessMode: this.publicAccessMode, tlsMode: this.publicTlsMode, status: 'enabled' },
+        { mappingId: this.localResourceId('mapping'), networkId: this.selectedWorkspaceId, workspaceId: this.selectedWorkspaceId, alias, publicDomain, sourceRecord: device?.alias || device?.deviceId || '', deviceId: device?.deviceId ?? '', protocol: this.publicProtocol, port: this.publicExternalPort, externalPort: this.publicExternalPort, accessMode: this.publicAccessMode, tlsMode: this.publicTlsMode, status: 'enabled' },
       ];
     }
     this.closePublicMappingDialog();
   }
 
   async removePublicMapping(mapping: PublicMappingRow): Promise<void> {
-    try {
-      await this.api.delete(WEB_API.publicMapping(mapping.workspaceId, mapping.mappingId ?? mapping.publicDomain));
-    } catch {
-      // Local preview mode removes below.
+    const mappingId = this.resourceId(mapping.mappingId);
+    if (mappingId) {
+      try {
+        await this.api.delete(WEB_API.publicMapping(mapping.workspaceId, mappingId));
+      } catch {
+        // Local preview mode removes below.
+      }
     }
     this.publicMappings = this.publicMappings.filter((item) => item !== mapping);
+  }
+
+  protected resourceId(value: string | undefined): string | undefined {
+    const id = value?.trim() ?? '';
+    return id || undefined;
+  }
+
+  protected localResourceId(prefix: string): string {
+    return `local-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 }

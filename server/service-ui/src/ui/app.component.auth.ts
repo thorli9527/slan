@@ -170,6 +170,7 @@ export class AppComponentAuth extends AppComponentData {
     this.mode = 'home';
     this.notifyStateChanged();
     await this.loadDashboard(auth.user.userId);
+    this.applyRouteFromLocation();
     this.notifyStateChanged();
   }
 
@@ -250,8 +251,16 @@ export class AppComponentAuth extends AppComponentData {
   }
 
   private navigateToDefaultHome(): void {
-    replaceUrl('/overview', sanitizedHomeParams());
+    replaceUrl(this.homePathFromCurrentRoute(), sanitizedHomeParams());
     this.applyRouteFromLocation();
+  }
+
+  private homePathFromCurrentRoute(): string {
+    const path = window.location.pathname;
+    if (path.startsWith('/space/') || path === '/devices' || path === '/user-aliases' || path === '/spaces') {
+      return path;
+    }
+    return '/overview';
   }
 
   openPasswordDialog(): void {
