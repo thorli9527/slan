@@ -161,6 +161,61 @@ func (s *Server) listVisibleDevices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": s.services.Devices.ListVisibleDevices(userID)})
 }
 
+func (s *Server) listDeviceGroups(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userId")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":   s.services.Devices.ListDeviceGroups(userID),
+		"members": s.services.Devices.ListDeviceGroupMembers(userID),
+	})
+}
+
+func (s *Server) createDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	var req CreateDeviceGroupRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	group, err := s.services.Devices.CreateDeviceGroup(r.PathValue("userId"), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, group)
+}
+
+func (s *Server) updateDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	var req UpdateDeviceGroupRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	group, err := s.services.Devices.UpdateDeviceGroup(r.PathValue("userId"), r.PathValue("groupId"), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, group)
+}
+
+func (s *Server) deleteDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	if err := s.services.Devices.DeleteDeviceGroup(r.PathValue("userId"), r.PathValue("groupId")); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) setDeviceGroups(w http.ResponseWriter, r *http.Request) {
+	var req SetDeviceGroupsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	members, err := s.services.Devices.SetDeviceGroups(r.PathValue("userId"), r.PathValue("deviceId"), req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": members})
+}
+
 func (s *Server) updateDeviceAlias(w http.ResponseWriter, r *http.Request) {
 	var req UpdateDeviceAliasRequest
 	if !decodeJSON(w, r, &req) {

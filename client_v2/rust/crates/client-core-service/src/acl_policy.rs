@@ -3,13 +3,21 @@ use client_core::{PlatformAclPolicy, PlatformAclRule};
 use crate::control_plane::{DeviceNetworkConfig, DeviceSecurityRule};
 
 pub(crate) fn platform_acl_policies(configs: &[DeviceNetworkConfig]) -> Vec<PlatformAclPolicy> {
-    configs
+    let mut policies = configs
         .iter()
-        .map(|config| PlatformAclPolicy {
-            network_id: config.network_id.clone(),
-            rules: platform_acl_rules(config),
+        .map(|config| {
+            (
+                config.network_created_at.unwrap_or_default(),
+                config.network_id.clone(),
+                PlatformAclPolicy {
+                    network_id: config.network_id.clone(),
+                    rules: platform_acl_rules(config),
+                },
+            )
         })
-        .collect()
+        .collect::<Vec<_>>();
+    policies.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    policies.into_iter().map(|(_, _, policy)| policy).collect()
 }
 
 pub(crate) fn acl_policies_for_network(
@@ -41,6 +49,8 @@ fn platform_acl_rules(config: &DeviceNetworkConfig) -> Vec<PlatformAclRule> {
                 port_to: rule.port_to,
                 peer_type: rule.peer_type.clone(),
                 peer_value: rule.peer_value.clone(),
+                source_type: rule.peer_type.clone(),
+                source_value: rule.peer_value.clone(),
                 enabled: rule.enabled,
                 resolved_peer_node_id,
                 resolved_peer_virtual_ips,
@@ -128,6 +138,8 @@ mod tests {
                 security_group_id: "sg-1".to_string(),
                 network_id: "network-1".to_string(),
                 name: "default".to_string(),
+                status: "active".to_string(),
+                created_at: 0,
             }],
             peers: vec![DeviceNetworkPeer {
                 device_id: "peer-device".to_string(),
@@ -180,6 +192,8 @@ mod tests {
         assert_eq!(policies[0].rules[0].rule_id, "rule-5");
         assert_eq!(policies[0].rules[1].rule_id, "rule-10");
         assert_eq!(policies[0].rules[2].rule_id, "rule-20");
+        assert_eq!(policies[0].rules[0].source_type.as_str(), "device");
+        assert_eq!(policies[0].rules[0].source_value.as_str(), "local-device");
         assert_eq!(
             policies[0].rules[0].resolved_peer_node_id.as_deref(),
             Some("node-local-device")
@@ -247,5 +261,51 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].network_id, "network-b");
+    }
+
+    #[test]
+    fn orders_acl_policies_by_newer_network_first_for_override() {
+        let policies = platform_acl_policies(&[
+            DeviceNetworkConfig {
+                network_id: "old-network".to_string(),
+                network_created_at: Some(10),
+                rules: vec![DeviceSecurityRule {
+                    rule_id: "old-allow".to_string(),
+                    direction: "egress".to_string(),
+                    priority: 1,
+                    action: "allow".to_string(),
+                    protocol: "tcp".to_string(),
+                    port_from: 443,
+                    port_to: 443,
+                    peer_type: "all".to_string(),
+                    peer_value: "all".to_string(),
+                    enabled: true,
+                    ..DeviceSecurityRule::default()
+                }],
+                ..DeviceNetworkConfig::default()
+            },
+            DeviceNetworkConfig {
+                network_id: "new-network".to_string(),
+                network_created_at: Some(20),
+                rules: vec![DeviceSecurityRule {
+                    rule_id: "new-deny".to_string(),
+                    direction: "egress".to_string(),
+                    priority: 1,
+                    action: "deny".to_string(),
+                    protocol: "tcp".to_string(),
+                    port_from: 443,
+                    port_to: 443,
+                    peer_type: "all".to_string(),
+                    peer_value: "all".to_string(),
+                    enabled: true,
+                    ..DeviceSecurityRule::default()
+                }],
+                ..DeviceNetworkConfig::default()
+            },
+        ]);
+
+        assert_eq!(policies[0].network_id, "new-network");
+        assert_eq!(policies[0].rules[0].rule_id, "new-deny");
+        assert_eq!(policies[1].network_id, "old-network");
     }
 }

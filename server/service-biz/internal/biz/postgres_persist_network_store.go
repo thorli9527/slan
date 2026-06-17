@@ -215,9 +215,9 @@ func (s *Store) persistPostgresNetworkCreateTxLocked(ctx context.Context, tx *sq
 	if tx == nil {
 		return s.persistPostgresCoreLocked(ctx)
 	}
-	if _, err := tx.ExecContext(ctx, `insert into networks(id,owner_user_id,name,code,template_key,status,is_default,created_at,updated_at)
+	if _, err := tx.ExecContext(ctx, `insert into networks(id,owner_user_id,name,code,template_key,intra_group_policy,is_default,created_at,updated_at)
 		values($1,$2,$3,$4,$5,$6,$7,to_timestamp($8),to_timestamp($9))`,
-		network.NetworkID, network.OwnerUserID, network.Name, network.Code, network.TemplateKey, network.Status, network.Default, network.CreatedAt, network.UpdatedAt); err != nil {
+		network.NetworkID, network.OwnerUserID, network.Name, network.Code, network.TemplateKey, defaultSecurityGroupPolicy(network.IntraGroupPolicy), network.Default, network.CreatedAt, network.UpdatedAt); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -240,8 +240,8 @@ func (s *Store) persistPostgresNetworkUpdateTxLocked(ctx context.Context, tx *sq
 	if tx == nil {
 		return s.persistPostgresCoreLocked(ctx)
 	}
-	if _, err := tx.ExecContext(ctx, `update networks set name=$1, code=$2, template_key=$3, status=$4, updated_at=to_timestamp($5) where id=$6`,
-		network.Name, network.Code, network.TemplateKey, network.Status, network.UpdatedAt, network.NetworkID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update networks set name=$1, code=$2, template_key=$3, intra_group_policy=$4, updated_at=to_timestamp($5) where id=$6`,
+		network.Name, network.Code, network.TemplateKey, defaultSecurityGroupPolicy(network.IntraGroupPolicy), network.UpdatedAt, network.NetworkID); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

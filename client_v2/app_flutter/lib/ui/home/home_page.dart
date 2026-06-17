@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:client_core_plugin/client_core_plugin.dart';
 import 'package:flutter/material.dart';
 
 import '../../bridge/android_network_authorization.dart';
@@ -8,35 +7,79 @@ import '../../bridge/client_commands.dart';
 import '../../bridge/client_core_bridge.dart';
 import '../../bridge/client_ui_diagnostics.dart';
 import '../../bridge/client_view_state.dart';
+import 'widgets/android_authorization_panel.dart';
+import 'widgets/client_message_tools.dart';
+import 'widgets/network_status_panel.dart';
+import 'widgets/password_login_form.dart';
+import 'widgets/signed_in_actions.dart';
+import 'widgets/signed_out_status.dart';
 
+/// SLAN 桌面/移动客户端首页。
+///
+/// 页面只负责呈现状态和收集用户输入；登录、网络开关、消息发送、Ping 等
+/// 实际业务都通过 [ClientCoreBridge] 派发到本地服务或移动端原生插件。
 class HomePage extends StatefulWidget {
   const HomePage({required this.bridge, super.key});
 
+  /// 客户端核心桥接对象，屏蔽 macOS/Windows/Linux/Android/iOS 的实现差异。
   final ClientCoreBridge bridge;
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
+/// 首页内部状态。
+///
+/// 这里保存表单输入、临时操作结果和诊断快照；可持久化业务状态统一来自 bridge。
 class _HomePageState extends State<HomePage> {
+  /// 客户端 Ping 消息前缀，用于对端识别并回包。
   static const String _clientPingPrefix = 'SLAN_PING:';
+
+  /// 客户端 Pong 消息前缀，用于本端计算 RTT。
   static const String _clientPongPrefix = 'SLAN_PONG:';
 
+  /// 移动端密码登录账号输入框。
   final TextEditingController _emailController = TextEditingController();
+
+  /// 移动端密码登录密码输入框。
   final TextEditingController _passwordController = TextEditingController();
+
+  /// 设备消息目标设备 ID 输入框。
   final TextEditingController _messageTargetController =
       TextEditingController();
+
+  /// 设备消息内容输入框。
   final TextEditingController _messageBodyController = TextEditingController();
+
+  /// Ping 工具目标设备 ID 输入框。
   final TextEditingController _pingTargetController = TextEditingController();
+
+  /// 移动端控制面 API 地址输入框。
   final TextEditingController _serverBaseUrlController =
       TextEditingController();
+
+  /// 最近一次已记录的状态快照，用于避免重复写诊断日志。
   String? _lastDiagnosticsSnapshot;
+
+  /// 最近一次已弹窗展示的网络错误，避免同一错误反复弹窗。
   String? _lastShownError;
+
+  /// Ping 工具展示的最近结果。
   String? _lastPingResult;
+
+  /// 设备消息发送结果。
   String? _lastMessageSendResult;
+
+  /// 当前移动端控制面 API 地址。
   String? _serverBaseUrl;
+
+  /// 上一次登录态，用于从未登录变已登录时触发平台授权准备。
   bool _lastSignedIn = false;
+
+  /// 是否正在发送设备消息。
   bool _sendingMessage = false;
+
+  /// 是否正在执行客户端 Ping。
   bool _pinging = false;
 
   @override
@@ -81,7 +124,7 @@ class _HomePageState extends State<HomePage> {
                         _buildSignedInHeader(state: state),
                         _buildAndroidAuthorizationPanel(),
                         const SizedBox(height: 14),
-                        _ClientMessageComposer(
+                        ClientMessageComposer(
                           targetController: _messageTargetController,
                           bodyController: _messageBodyController,
                           syncing: state.syncing || _sendingMessage,
@@ -89,14 +132,14 @@ class _HomePageState extends State<HomePage> {
                           onSend: _sendClientMessage,
                         ),
                         const SizedBox(height: 14),
-                        _ClientPingTool(
+                        ClientPingTool(
                           targetController: _pingTargetController,
                           syncing: state.syncing || _pinging,
                           resultText: _lastPingResult,
                           onPing: _pingClient,
                         ),
                         const SizedBox(height: 14),
-                        _SignedInActions(
+                        SignedInActions(
                           showConsole: _showWebConsoleAction,
                           onOpenConsole: _showWebConsoleAction
                               ? () => widget.bridge.dispatch(
@@ -110,10 +153,10 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ),
                       ] else ...[
-                        const _SignedOutStatus(),
+                        const SignedOutStatus(),
                         const SizedBox(height: 14),
                         if (_usesPasswordLogin)
-                          _PasswordLoginForm(
+                          PasswordLoginForm(
                             emailController: _emailController,
                             passwordController: _passwordController,
                             serverBaseUrl: _serverBaseUrl,
@@ -147,12 +190,15 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// 移动端使用内置账号密码登录；桌面端走浏览器登录同步。
   bool get _usesPasswordLogin =>
       Theme.of(context).platform == TargetPlatform.iOS ||
       Theme.of(context).platform == TargetPlatform.android;
 
+  /// 桌面端登录后显示打开 Web Console 的入口。
   bool get _showWebConsoleAction => !_usesPasswordLogin;
 
+  /// 读取当前服务端地址并同步到设置输入框。
   Future<void> _loadServerBaseUrl() async {
     final value = await widget.bridge.serverBaseUrl();
     if (!mounted) {
@@ -164,6 +210,7 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// 弹出移动端服务器地址设置。
   Future<void> _showServerSettings() async {
     _serverBaseUrlController.text =
         _serverBaseUrl ?? await widget.bridge.serverBaseUrl();
@@ -224,6 +271,9 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// 移动端账号密码登录。
+  ///
+  /// 成功后 bridge 会完成设备注册并启动 MQTT 控制通道，页面只负责显示错误。
   Future<void> _loginWithPassword() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
@@ -262,6 +312,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// 处理用户点击网络开关。
   void _toggleNetwork(bool enabled) {
     _lastShownError = null;
     ClientUiDiagnostics.unawaitedLog(
@@ -278,6 +329,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// 发送客户端 Ping 消息并等待目标设备 Pong。
   Future<void> _pingClient() async {
     if (_pinging) {
       return;
@@ -341,6 +393,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// 向目标设备发送普通客户端消息。
   Future<void> _sendClientMessage() async {
     if (_sendingMessage) {
       return;
@@ -388,6 +441,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// 等待客户端 Pong 并返回 RTT 毫秒数。
   Future<int> _waitForClientPong({
     required String targetDeviceId,
     required String pingId,
@@ -413,6 +467,7 @@ class _HomePageState extends State<HomePage> {
     throw TimeoutException('等待 Ping 响应超时');
   }
 
+  /// 校验收到的消息是否为当前 Ping 的 Pong，并计算 RTT。
   int? _pongRttMs({
     required String body,
     required String fromDeviceId,
@@ -434,11 +489,13 @@ class _HomePageState extends State<HomePage> {
     return nowMs >= sentAtMs ? nowMs - sentAtMs : 0;
   }
 
+  /// 启动 bridge 并准备 Android 授权状态。
   Future<void> _startBridge() async {
     await widget.bridge.start();
     await widget.bridge.prepareAndroidNetworkAuthorization();
   }
 
+  /// 监听 bridge 状态变化，写入诊断日志并处理一次性 UI 副作用。
   void _logStateChange() {
     final state = widget.bridge.state.value;
     final snapshot = [
@@ -464,6 +521,7 @@ class _HomePageState extends State<HomePage> {
     _showErrorDialogIfNeeded(state);
   }
 
+  /// 网络切换失败时展示对用户友好的错误弹窗。
   void _showErrorDialogIfNeeded(ClientViewState state) {
     if (state.errorSource != ClientErrorSource.networkSwitch) {
       return;
@@ -530,6 +588,7 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// 将底层英文错误归一化为客户端用户可理解的中文提示。
   String _friendlyError(String error) {
     final normalized = error.toLowerCase();
     if (normalized.contains('disabled by network admin') ||
@@ -556,10 +615,11 @@ class _HomePageState extends State<HomePage> {
     return error;
   }
 
+  /// 构建已登录状态卡片。
   Widget _buildSignedInHeader({
     required ClientViewState state,
   }) {
-    return _SignedInStatusPanel(
+    return SignedInStatusPanel(
       userLabel: _userLabel(state),
       currentIp: _ipText(state),
       state: state,
@@ -567,6 +627,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// 构建 Android VPN 授权提示；非 Android 或无需提示时隐藏。
   Widget _buildAndroidAuthorizationPanel() {
     return ValueListenableBuilder<AndroidNetworkAuthorizationState>(
       valueListenable: widget.bridge.androidNetworkAuthorization,
@@ -576,7 +637,7 @@ class _HomePageState extends State<HomePage> {
         }
         return Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: _AndroidAuthorizationPanel(
+          child: AndroidAuthorizationPanel(
             authorization: authorization,
             onRefresh: widget.bridge.prepareAndroidNetworkAuthorization,
           ),
@@ -585,11 +646,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// 归一化用户显示名。
   String _userLabel(ClientViewState state) {
     final user = state.userLabel?.trim();
     return user == null || user.isEmpty ? '-' : user;
   }
 
+  /// 归一化当前虚拟 IP 展示文案。
   String _ipText(ClientViewState state) {
     final virtualIp = state.virtualIp?.trim();
     if (!state.signedIn ||
@@ -599,840 +662,5 @@ class _HomePageState extends State<HomePage> {
       return '未启用';
     }
     return virtualIp;
-  }
-}
-
-class _SignedInStatusPanel extends StatelessWidget {
-  const _SignedInStatusPanel({
-    required this.userLabel,
-    required this.currentIp,
-    required this.state,
-    required this.onToggle,
-  });
-
-  final String userLabel;
-  final String currentIp;
-  final ClientViewState state;
-  final ValueChanged<bool> onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(child: _CompactIdentity(userLabel: userLabel)),
-              const SizedBox(width: 12),
-              _NetworkControl(state: state, onToggle: onToggle),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Divider(height: 1, color: theme.colorScheme.outlineVariant),
-          const SizedBox(height: 9),
-          _CompactInfoRow(
-            valueKey: const Key('network-ip-value'),
-            icon: Icons.router_rounded,
-            label: '当前 IP',
-            value: currentIp,
-          ),
-          if (_hasTraffic(state)) ...[
-            const SizedBox(height: 7),
-            _CompactInfoRow(
-              valueKey: const Key('client-traffic-total-value'),
-              icon: Icons.speed_rounded,
-              label: '已用',
-              value: _trafficTotalText(state),
-            ),
-            const SizedBox(height: 7),
-            _CompactInfoRow(
-              valueKey: const Key('client-traffic-current-value'),
-              icon: Icons.swap_vert_rounded,
-              label: '当前',
-              value: _trafficCurrentText(state),
-            ),
-          ],
-          if (_deviceIdText(state) != null) ...[
-            const SizedBox(height: 7),
-            _CompactInfoRow(
-              valueKey: const Key('client-device-id-value'),
-              icon: Icons.devices_other_rounded,
-              label: '设备 ID',
-              value: _deviceIdText(state)!,
-            ),
-          ],
-          if (_lastClientMessageText(state) != null) ...[
-            const SizedBox(height: 7),
-            _CompactInfoRow(
-              valueKey: const Key('last-client-message-value'),
-              icon: Icons.mark_chat_unread_rounded,
-              label: '最近消息',
-              value: _lastClientMessageText(state)!,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  String? _lastClientMessageText(ClientViewState state) {
-    final body = state.lastClientMessageBody?.trim();
-    if (body == null || body.isEmpty) {
-      return null;
-    }
-    final from = state.lastClientMessageFromDeviceId?.trim();
-    if (from == null || from.isEmpty) {
-      return body;
-    }
-    return '$from: $body';
-  }
-
-  String? _deviceIdText(ClientViewState state) {
-    final deviceId = state.deviceId?.trim();
-    if (deviceId == null || deviceId.isEmpty) {
-      return null;
-    }
-    return deviceId;
-  }
-
-  bool _hasTraffic(ClientViewState state) {
-    return state.trafficTxBytes != null || state.trafficRxBytes != null;
-  }
-
-  String _trafficTotalText(ClientViewState state) {
-    final txTotal = _formatBytes(state.trafficTxBytes ?? 0);
-    final rxTotal = _formatBytes(state.trafficRxBytes ?? 0);
-    return '↑$txTotal ↓$rxTotal';
-  }
-
-  String _trafficCurrentText(ClientViewState state) {
-    final txRate = _formatBytes(state.trafficTxBytesPerMinute ?? 0);
-    final rxRate = _formatBytes(state.trafficRxBytesPerMinute ?? 0);
-    return '↑$txRate/分 ↓$rxRate/分';
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes >= 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)}M';
-    }
-    if (bytes >= 1024) {
-      return '${(bytes / 1024).toStringAsFixed(bytes >= 10 * 1024 ? 0 : 1)}K';
-    }
-    return '${bytes}B';
-  }
-}
-
-class _NetworkControl extends StatelessWidget {
-  const _NetworkControl({required this.state, required this.onToggle});
-
-  final ClientViewState state;
-  final ValueChanged<bool> onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final enabled = state.networkEnabled;
-    final label = state.syncing
-        ? '同步中'
-        : enabled
-            ? '网络已启用'
-            : '网络未启用';
-    return SizedBox(
-      width: 112,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _NetworkSwitch(state: state, onToggle: onToggle),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: enabled
-                  ? theme.colorScheme.primary
-                  : theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AndroidAuthorizationPanel extends StatelessWidget {
-  const _AndroidAuthorizationPanel({
-    required this.authorization,
-    required this.onRefresh,
-  });
-
-  final AndroidNetworkAuthorizationState authorization;
-  final VoidCallback onRefresh;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final config = authorization.networkConfig;
-    final error = authorization.error?.trim();
-    final status = _statusText();
-    final statusColor = error != null && error.isNotEmpty
-        ? theme.colorScheme.error
-        : authorization.granted
-            ? theme.colorScheme.primary
-            : theme.colorScheme.onSurfaceVariant;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            authorization.granted
-                ? Icons.verified_user_outlined
-                : Icons.vpn_key_outlined,
-            size: 18,
-            color: statusColor,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  status,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: statusColor,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                if (config != null || (error != null && error.isNotEmpty)) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    error != null && error.isNotEmpty
-                        ? _compactError(error)
-                        : _configText(config!),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          if (authorization.checking)
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: theme.colorScheme.primary,
-              ),
-            )
-          else if (authorization.needsUserConsent)
-            SizedBox(
-              height: 30,
-              child: FilledButton.icon(
-                onPressed: onRefresh,
-                icon: const Icon(Icons.check_circle_outline, size: 16),
-                label: const Text('授权'),
-              ),
-            )
-          else
-            IconButton(
-              tooltip: '刷新',
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-            ),
-        ],
-      ),
-    );
-  }
-
-  String _statusText() {
-    final error = authorization.error?.trim();
-    if (error != null && error.isNotEmpty) {
-      return 'Android 网络配置异常';
-    }
-    if (authorization.checking) {
-      return 'Android 网络检查中';
-    }
-    if (authorization.needsUserConsent) {
-      return 'Android 网络待授权';
-    }
-    if (authorization.granted && authorization.networkConfig != null) {
-      return 'Android 网络配置已就绪';
-    }
-    if (authorization.granted) {
-      return 'Android 网络已授权';
-    }
-    return 'Android 网络状态待确认';
-  }
-
-  String _configText(AndroidVpnSessionConfig config) {
-    final dns = config.dnsServers.isEmpty ? '-' : config.dnsServers.join(',');
-    return '${config.virtualIp}/${config.prefixLen}  DNS $dns';
-  }
-
-  String _compactError(String error) {
-    return error.replaceAll(RegExp(r'\s+'), ' ');
-  }
-}
-
-class _NetworkSwitch extends StatelessWidget {
-  const _NetworkSwitch({required this.state, required this.onToggle});
-
-  final ClientViewState state;
-  final ValueChanged<bool> onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final switchBusy = state.syncing && !state.switchEnabled;
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 20,
-            height: 16,
-            child: switchBusy
-                ? CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: theme.colorScheme.primary,
-                  )
-                : null,
-          ),
-          const SizedBox(width: 4),
-          SizedBox(
-            height: 36,
-            child: Switch(
-              key: const Key('network-switch'),
-              value: state.networkEnabled,
-              onChanged:
-                  state.switchEnabled && !state.syncing ? onToggle : null,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CompactIdentity extends StatelessWidget {
-  const _CompactIdentity({required this.userLabel});
-
-  final String userLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      children: [
-        Icon(
-          Icons.account_circle_outlined,
-          size: 24,
-          color: theme.colorScheme.primary,
-        ),
-        const SizedBox(width: 9),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '当前用户邮箱',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                userLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _CompactInfoRow extends StatelessWidget {
-  const _CompactInfoRow({
-    this.valueKey,
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final Key? valueKey;
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: theme.colorScheme.primary),
-        const SizedBox(width: 9),
-        Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.labelMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            key: valueKey,
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.right,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SignedOutStatus extends StatelessWidget {
-  const _SignedOutStatus();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xffe2d6cf)),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '登录后启用组网',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SignedInActions extends StatelessWidget {
-  const _SignedInActions({
-    required this.showConsole,
-    required this.onOpenConsole,
-    required this.onLogout,
-  });
-
-  final bool showConsole;
-  final VoidCallback? onOpenConsole;
-  final VoidCallback onLogout;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        if (showConsole) ...[
-          Expanded(
-            child: SizedBox(
-              height: 38,
-              child: OutlinedButton.icon(
-                onPressed: onOpenConsole,
-                icon: const Icon(Icons.open_in_browser_rounded, size: 17),
-                label: const Text('Web Console'),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-        ],
-        Expanded(
-          child: SizedBox(
-            height: 38,
-            child: OutlinedButton.icon(
-              onPressed: onLogout,
-              icon: const Icon(Icons.logout_rounded, size: 17),
-              label: const Text('Logout'),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ClientPingTool extends StatelessWidget {
-  const _ClientPingTool({
-    required this.targetController,
-    required this.syncing,
-    required this.resultText,
-    required this.onPing,
-  });
-
-  final TextEditingController targetController;
-  final bool syncing;
-  final String? resultText;
-  final Future<void> Function() onPing;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.network_ping_rounded,
-                size: 18,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Ping 工具',
-                style: theme.textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 9),
-          TextField(
-            key: const Key('client-ping-target'),
-            controller: targetController,
-            enabled: !syncing,
-            textInputAction: TextInputAction.send,
-            onSubmitted: (_) {
-              if (!syncing) {
-                unawaited(onPing());
-              }
-            },
-            decoration: const InputDecoration(
-              labelText: '目标设备 ID',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  resultText?.trim().isNotEmpty == true
-                      ? resultText!.trim()
-                      : '输入目标设备 ID 后检测连通性',
-                  key: const Key('client-ping-result'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                height: 42,
-                child: FilledButton.icon(
-                  key: const Key('client-ping-send'),
-                  onPressed: syncing ? null : () => unawaited(onPing()),
-                  icon: const Icon(Icons.network_ping_rounded, size: 17),
-                  label: Text(syncing ? '检测中' : 'Ping'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ClientMessageComposer extends StatelessWidget {
-  const _ClientMessageComposer({
-    required this.targetController,
-    required this.bodyController,
-    required this.syncing,
-    required this.resultText,
-    required this.onSend,
-  });
-
-  final TextEditingController targetController;
-  final TextEditingController bodyController;
-  final bool syncing;
-  final String? resultText;
-  final Future<void> Function() onSend;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.send_to_mobile_rounded,
-                size: 18,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '设备消息',
-                style: theme.textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 9),
-          TextField(
-            key: const Key('client-message-target'),
-            controller: targetController,
-            enabled: !syncing,
-            textInputAction: TextInputAction.next,
-            decoration: const InputDecoration(
-              labelText: '目标设备 ID',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            key: const Key('client-message-body'),
-            controller: bodyController,
-            enabled: !syncing,
-            textInputAction: TextInputAction.send,
-            onSubmitted: (_) {
-              if (!syncing) {
-                unawaited(onSend());
-              }
-            },
-            decoration: const InputDecoration(
-              labelText: '消息',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  resultText?.trim().isNotEmpty == true ? resultText! : '',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                height: 42,
-                child: FilledButton.icon(
-                  key: const Key('client-message-send'),
-                  onPressed: syncing ? null : () => unawaited(onSend()),
-                  icon: const Icon(Icons.send_rounded, size: 17),
-                  label: Text(syncing ? '发送中' : '发送'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PasswordLoginForm extends StatelessWidget {
-  const _PasswordLoginForm({
-    required this.emailController,
-    required this.passwordController,
-    required this.serverBaseUrl,
-    required this.syncing,
-    required this.onSettings,
-    required this.onSubmit,
-  });
-
-  final TextEditingController emailController;
-  final TextEditingController passwordController;
-  final String? serverBaseUrl;
-  final bool syncing;
-  final VoidCallback onSettings;
-  final VoidCallback onSubmit;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _ServerSettingsSummary(
-          serverBaseUrl: serverBaseUrl,
-          syncing: syncing,
-          onSettings: onSettings,
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          key: const Key('login-email'),
-          controller: emailController,
-          enabled: !syncing,
-          keyboardType: TextInputType.emailAddress,
-          textInputAction: TextInputAction.next,
-          decoration: const InputDecoration(
-            labelText: '账号',
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          key: const Key('login-password'),
-          controller: passwordController,
-          enabled: !syncing,
-          obscureText: true,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => syncing ? null : onSubmit(),
-          decoration: const InputDecoration(
-            labelText: '密码',
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 42,
-          child: FilledButton(
-            key: const Key('login-submit'),
-            onPressed: syncing ? null : onSubmit,
-            child: Text(syncing ? '登录中' : '登录'),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ServerSettingsSummary extends StatelessWidget {
-  const _ServerSettingsSummary({
-    required this.serverBaseUrl,
-    required this.syncing,
-    required this.onSettings,
-  });
-
-  final String? serverBaseUrl;
-  final bool syncing;
-  final VoidCallback onSettings;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final value = serverBaseUrl?.trim();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.dns_rounded,
-            size: 18,
-            color: theme.colorScheme.primary,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '服务器',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                Text(
-                  value == null || value.isEmpty ? '未设置' : value,
-                  key: const Key('server-base-url-value'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            key: const Key('server-settings'),
-            tooltip: '服务器设置',
-            onPressed: syncing ? null : onSettings,
-            icon: const Icon(Icons.settings_rounded),
-          ),
-        ],
-      ),
-    );
   }
 }

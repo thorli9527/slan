@@ -13,7 +13,7 @@ use crate::{
         local_stable_device_id, set_control_base_url_override, ControlDevice, ControlPlaneClient,
         DeviceSessionResponse, MqttCredential, RelayCandidate,
     },
-    network_module::refresh_network_module_from_session,
+    network_module::{refresh_network_module_from_session, replace_network_module_configs},
     relay_candidates::replace_runtime_relay_candidates,
     relay_models::PersistedRelayCandidate,
 };
@@ -504,7 +504,9 @@ fn renew_bound_device_session(
     }
     sync_session_device_fields(session, &response.device);
     if let Some(configs) = response.network_configs {
-        if let Some(config) = configs.items.last() {
+        let items = configs.items;
+        replace_network_module_configs(items.clone());
+        if let Some(config) = items.last() {
             session.active_network_id = Some(config.network_id.clone());
             if let Some(global_ip) = config
                 .global_ip
@@ -547,7 +549,9 @@ fn bind_session_device_session(
     }
     sync_session_device_fields(session, &response.device);
     if let Some(configs) = response.network_configs {
-        if let Some(config) = configs.items.last() {
+        let items = configs.items;
+        replace_network_module_configs(items.clone());
+        if let Some(config) = items.last() {
             session.active_network_id = Some(config.network_id.clone());
             if let Some(global_ip) = config
                 .global_ip

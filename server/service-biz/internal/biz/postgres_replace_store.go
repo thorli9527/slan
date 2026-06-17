@@ -17,6 +17,7 @@ func (s *Store) replacePostgresCoreLocked(ctx context.Context, tx *sql.Tx) error
 		`delete from device_access_grants`,
 		`delete from device_invites`,
 		`delete from device_bootstrap_keys`,
+		`delete from device_group_members`,
 		`delete from device_owner_change_logs`,
 		`delete from user_aliases`,
 		`delete from console_login_keys`,
@@ -26,6 +27,7 @@ func (s *Store) replacePostgresCoreLocked(ctx context.Context, tx *sql.Tx) error
 		`delete from public_domain_mappings`,
 		`delete from security_group_rules`,
 		`delete from global_ip_addresses`,
+		`delete from device_groups`,
 		`delete from devices`,
 		`delete from user_sessions`,
 		`delete from network_dns_zones`,
@@ -58,9 +60,9 @@ func (s *Store) replacePostgresCoreLocked(ctx context.Context, tx *sql.Tx) error
 		}
 	}
 	for _, network := range sortedValues(s.networks, func(a, b Network) bool { return a.NetworkID < b.NetworkID }) {
-		if _, err := tx.ExecContext(ctx, `insert into networks(id,owner_user_id,name,code,template_key,status,is_default,created_at,updated_at)
+		if _, err := tx.ExecContext(ctx, `insert into networks(id,owner_user_id,name,code,template_key,intra_group_policy,is_default,created_at,updated_at)
 			values($1,$2,$3,$4,$5,$6,$7,to_timestamp($8),to_timestamp($9))`,
-			network.NetworkID, network.OwnerUserID, network.Name, network.Code, network.TemplateKey, network.Status, network.Default, network.CreatedAt, network.UpdatedAt); err != nil {
+			network.NetworkID, network.OwnerUserID, network.Name, network.Code, network.TemplateKey, defaultSecurityGroupPolicy(network.IntraGroupPolicy), network.Default, network.CreatedAt, network.UpdatedAt); err != nil {
 			return err
 		}
 	}
@@ -128,6 +130,13 @@ func (s *Store) replacePostgresCoreLocked(ctx context.Context, tx *sql.Tx) error
 			return err
 		}
 	}
+	for _, group := range sortedValues(s.deviceGroups, func(a, b DeviceGroup) bool { return a.GroupID < b.GroupID }) {
+		if _, err := tx.ExecContext(ctx, `insert into device_groups(id,user_id,name,created_at,updated_at)
+			values($1,$2,$3,to_timestamp($4),to_timestamp($5))`,
+			group.GroupID, group.UserID, group.Name, group.CreatedAt, group.UpdatedAt); err != nil {
+			return err
+		}
+	}
 	for _, address := range sortedValues(s.globalIPs, func(a, b GlobalIPAddress) bool { return a.Offset < b.Offset }) {
 		var deviceID any
 		if strings.TrimSpace(address.DeviceID) != "" {
@@ -150,6 +159,17 @@ func (s *Store) replacePostgresCoreLocked(ctx context.Context, tx *sql.Tx) error
 		if _, err := tx.ExecContext(ctx, `insert into device_runtime_status(device_id,heartbeat_online,network_enabled,device_enabled,rx_bytes_total,tx_bytes_total,last_seen_at,last_report_at)
 			values($1,$2,$3,$4,$5,$6,to_timestamp(nullif($7,0)),to_timestamp(nullif($8,0)))`,
 			status.DeviceID, status.HeartbeatOnline, status.NetworkEnabled, status.DeviceEnabled, status.RxBytesTotal, status.TxBytesTotal, status.LastSeenAt, status.LastReportAt); err != nil {
+			return err
+		}
+	}
+	for _, member := range sortedValues(s.deviceGroupMembers, func(a, b DeviceGroupMember) bool {
+		if a.GroupID == b.GroupID {
+			return a.DeviceID < b.DeviceID
+		}
+		return a.GroupID < b.GroupID
+	}) {
+		if _, err := tx.ExecContext(ctx, `insert into device_group_members(group_id,device_id,added_at)
+			values($1,$2,to_timestamp($3))`, member.GroupID, member.DeviceID, member.AddedAt); err != nil {
 			return err
 		}
 	}
@@ -221,6 +241,7 @@ func (s *Store) resetPostgresCoreStateLocked() {
 	s.nextDeviceSeq = 1
 	s.nextNetworkSeq = 1
 	s.nextDeviceSessionSeq = 1
+	s.nextDeviceGroupSeq = 1
 	s.nextOwnerSeq = 1
 	s.nextOwnerLogSeq = 1
 	s.nextZoneSeq = 1
@@ -246,6 +267,8 @@ func (s *Store) resetPostgresCoreStateLocked() {
 	s.deviceInvites = make(map[string]DeviceInvite)
 	s.deviceAccessGrants = make(map[string]DeviceAccessGrant)
 	s.deviceBootstrapKeys = make(map[string]DeviceBootstrapKey)
+	s.deviceGroups = make(map[string]DeviceGroup)
+	s.deviceGroupMembers = make(map[string]DeviceGroupMember)
 	s.networkDevices = make(map[string]NetworkDevice)
 	s.dnsZones = make(map[string]NetworkDNSZone)
 	s.dnsRecords = make(map[string]NetworkDNSRecord)

@@ -40,7 +40,15 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     }
     if (id === 'devices') {
       this.workspaceRouteMode = 'list';
+      this.devicePanel = 'list';
       history.pushState({}, '', '/devices');
+      return;
+    }
+    if (id === 'deviceGroups') {
+      this.active = 'devices';
+      this.workspaceRouteMode = 'list';
+      this.devicePanel = 'groups';
+      history.pushState({}, '', '/devices/groups');
       return;
     }
     if (id === 'userAliases') {
@@ -127,7 +135,8 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
 
   openWorkspaceDialog(): void {
     this.workspaceName = '默认网络';
-    this.workspaceCode = 'default';
+    this.workspaceCode = '';
+    this.workspaceIntraGroupPolicy = 'allow';
     this.workspaceDialogMessage = '';
     this.workspaceDialogMode = 'create';
     this.showWorkspaceDialog = true;
@@ -137,6 +146,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     this.selectedWorkspaceId = workspace.workspaceId;
     this.workspaceName = workspace.name;
     this.workspaceCode = workspace.code;
+    this.workspaceIntraGroupPolicy = workspace.intraGroupPolicy;
     this.workspaceDialogMessage = '';
     this.workspaceDialogMode = 'edit';
     this.showWorkspaceDialog = true;
@@ -152,9 +162,9 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
       this.saveWorkspaceDialog();
       return;
     }
-    const code = slug(this.workspaceCode || this.workspaceName);
+    const code = slug(this.workspaceName);
     if (this.isWorkspaceCodeDuplicated(code)) {
-      this.workspaceDialogMessage = '当前用户下网络编码不能重复';
+      this.workspaceDialogMessage = '当前用户下网络名称不能重复';
       return;
     }
     try {
@@ -163,6 +173,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
         name: this.workspaceName,
         code,
         templateKey: code,
+        intraGroupPolicy: this.workspaceIntraGroupPolicy,
       });
       await this.loadDashboard(this.currentUserId);
       this.closeWorkspaceDialog();
@@ -173,7 +184,7 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     const id = compactUuid();
     this.workspaces = [
       ...this.workspaces,
-      { networkId: id, workspaceId: id, name: this.workspaceName, code, template: code || 'custom', status: 'enabled', members: 1, devices: 0, zone: `${code}.${id}.${DEFAULT_USER_ID}.sub.staticlss.com` },
+      { networkId: id, workspaceId: id, name: this.workspaceName, code, template: code || 'custom', intraGroupPolicy: this.workspaceIntraGroupPolicy, members: 1, devices: 0, zone: `${code}.${id}.${DEFAULT_USER_ID}.sub.staticlss.com` },
     ];
     this.closeWorkspaceDialog();
   }
@@ -183,14 +194,15 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     if (!workspace || !this.workspaceName.trim()) {
       return;
     }
-    const code = slug(this.workspaceCode || this.workspaceName);
+    const code = workspace.code || slug(this.workspaceName);
     if (this.isWorkspaceCodeDuplicated(code, workspace.workspaceId)) {
-      this.workspaceDialogMessage = '当前用户下网络编码不能重复';
+      this.workspaceDialogMessage = '当前用户下网络名称不能重复';
       return;
     }
     workspace.name = this.workspaceName.trim();
     workspace.code = code;
     workspace.template = workspace.code;
+    workspace.intraGroupPolicy = this.workspaceIntraGroupPolicy;
     workspace.zone = `${slug(workspace.code)}.${workspace.workspaceId}.${this.currentUserId || DEFAULT_USER_ID}.sub.staticlss.com`;
     this.closeWorkspaceDialog();
   }
@@ -202,52 +214,59 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     }
     this.editingWorkspace = workspace;
     this.workspaceNameValue = workspace.name;
-    this.workspaceCodeValue = workspace.code;
     this.showWorkspaceNameTagDialog = true;
-    this.showWorkspaceCodeTagDialog = false;
+    this.showWorkspacePolicyTagDialog = false;
   }
 
-  openWorkspaceCodeTagDialog(workspace: WorkspaceRow): void {
-    if (this.showWorkspaceCodeTagDialog && this.editingWorkspace?.workspaceId === workspace.workspaceId) {
+  openWorkspacePolicyTagDialog(workspace: WorkspaceRow): void {
+    if (this.showWorkspacePolicyTagDialog && this.editingWorkspace?.workspaceId === workspace.workspaceId) {
       this.closeWorkspaceTagDialogs();
       return;
     }
     this.editingWorkspace = workspace;
-    this.workspaceNameValue = workspace.name;
-    this.workspaceCodeValue = workspace.code;
-    this.showWorkspaceCodeTagDialog = true;
+    this.workspaceIntraGroupPolicyValue = workspace.intraGroupPolicy;
     this.showWorkspaceNameTagDialog = false;
+    this.showWorkspacePolicyTagDialog = true;
   }
 
   closeWorkspaceTagDialogs(): void {
     this.showWorkspaceNameTagDialog = false;
-    this.showWorkspaceCodeTagDialog = false;
+    this.showWorkspacePolicyTagDialog = false;
     this.editingWorkspace = null;
   }
 
-  async saveWorkspaceTagDialog(): Promise<void> {
-    if (!this.editingWorkspace || !this.workspaceNameValue.trim() || !this.workspaceCodeValue.trim()) {
+  async saveWorkspaceNameTagDialog(): Promise<void> {
+    if (!this.editingWorkspace || !this.workspaceNameValue.trim()) {
       return;
     }
-    const code = slug(this.workspaceCodeValue);
-    if (this.isWorkspaceCodeDuplicated(code, this.editingWorkspace.workspaceId)) {
+    const name = this.workspaceNameValue.trim();
+    try {
+      const updated = await this.api.patch<ApiWorkspace>(WEB_API.network(this.editingWorkspace.workspaceId), {
+        name,
+      });
+      this.editingWorkspace.name = updated.name;
+      this.editingWorkspace.code = updated.code ?? this.editingWorkspace.code;
+      this.editingWorkspace.template = updated.templateKey ?? this.editingWorkspace.code;
+    } catch {
+      this.editingWorkspace.name = name;
+      this.editingWorkspace.template = this.editingWorkspace.code;
+    }
+    this.editingWorkspace.zone = `${slug(this.editingWorkspace.code)}.${this.editingWorkspace.workspaceId}.${this.currentUserId || DEFAULT_USER_ID}.sub.staticlss.com`;
+    this.closeWorkspaceTagDialogs();
+  }
+
+  async saveWorkspacePolicyTagDialog(): Promise<void> {
+    if (!this.editingWorkspace) {
       return;
     }
     try {
       const updated = await this.api.patch<ApiWorkspace>(WEB_API.network(this.editingWorkspace.workspaceId), {
-        name: this.workspaceNameValue.trim(),
-        code,
-        status: this.editingWorkspace.status,
+        intraGroupPolicy: this.workspaceIntraGroupPolicyValue,
       });
-      this.editingWorkspace.name = updated.name;
-      this.editingWorkspace.code = updated.code ?? code;
-      this.editingWorkspace.template = updated.templateKey ?? this.editingWorkspace.code;
+      this.editingWorkspace.intraGroupPolicy = updated.intraGroupPolicy === 'deny' ? 'deny' : 'allow';
     } catch {
-      this.editingWorkspace.name = this.workspaceNameValue.trim();
-      this.editingWorkspace.code = code;
-      this.editingWorkspace.template = this.editingWorkspace.code;
+      this.editingWorkspace.intraGroupPolicy = this.workspaceIntraGroupPolicyValue;
     }
-    this.editingWorkspace.zone = `${slug(this.editingWorkspace.code)}.${this.editingWorkspace.workspaceId}.${this.currentUserId || DEFAULT_USER_ID}.sub.staticlss.com`;
     this.closeWorkspaceTagDialogs();
   }
 
@@ -255,18 +274,8 @@ export abstract class AppComponentNetworks extends AppComponentOverview {
     return this.workspaces.some((workspace) => workspace.workspaceId !== exceptWorkspaceId && workspace.code === code);
   }
 
-  async toggleWorkspace(workspace: WorkspaceRow): Promise<void> {
-    const status = workspace.status === 'enabled' ? 'disabled' : 'enabled';
-    try {
-      const updated = await this.api.patch<ApiWorkspace>(WEB_API.network(workspace.workspaceId), {
-        name: workspace.name,
-        code: workspace.code,
-        status,
-      });
-      workspace.status = updated.status;
-    } catch {
-      workspace.status = status;
-    }
+  intraGroupPolicyLabel(policy: string): string {
+    return policy === 'deny' ? '组内隔离' : '组内互通';
   }
 
   async removeWorkspaceDevice(device: DeviceRow): Promise<void> {

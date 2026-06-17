@@ -17,7 +17,7 @@ func (s *Store) ListIPAMSubnets() []IPAMSubnet {
 	return sortedValues(s.ipamSubnets, func(a, b IPAMSubnet) bool { return a.StartOffset < b.StartOffset })
 }
 
-func (s *Store) CreateNetwork(ownerUserID, name, code, templateKey string) (Network, SecurityGroup, NetworkDNSZone, error) {
+func (s *Store) CreateNetwork(ownerUserID, name, code, templateKey, intraGroupPolicy string) (Network, SecurityGroup, NetworkDNSZone, error) {
 	ownerUserID = strings.TrimSpace(ownerUserID)
 	name = strings.TrimSpace(name)
 	if ownerUserID == "" || name == "" {
@@ -37,9 +37,9 @@ func (s *Store) CreateNetwork(ownerUserID, name, code, templateKey string) (Netw
 	now := time.Now().Unix()
 	id := newCompactUUID()
 	s.nextNetworkSeq++
-	network := Network{NetworkID: id, OwnerUserID: ownerUserID, Name: name, Code: defaultString(sanitizeDNSLabel(code), sanitizeDNSLabel(name)), TemplateKey: defaultString(templateKey, "custom"), Status: "enabled", CreatedAt: now, UpdatedAt: now}
+	network := Network{NetworkID: id, OwnerUserID: ownerUserID, Name: name, Code: defaultString(sanitizeDNSLabel(code), sanitizeDNSLabel(name)), TemplateKey: defaultString(templateKey, "custom"), IntraGroupPolicy: defaultSecurityGroupPolicy(intraGroupPolicy), CreatedAt: now, UpdatedAt: now}
 	s.networks[id] = network
-	group := s.addSecurityGroupLocked(id, "默认安全组", "网络默认安全组", now)
+	group := s.addSecurityGroupLocked(id, "", "网络默认安全组", now)
 	zone := s.addDNSZoneLocked(id, networkZoneName(network), false, now)
 	if err := s.persistPostgresNetworkCreateTxLocked(ctx, postgresTx, network, group, zone); err != nil {
 		return Network{}, SecurityGroup{}, NetworkDNSZone{}, err
@@ -56,9 +56,6 @@ func (s *Store) ListNetworks(userID string) []Network {
 	}
 	out := make([]Network, 0)
 	for _, network := range s.networks {
-		if network.Status == "deleted" {
-			continue
-		}
 		if userID == "" || network.OwnerUserID == userID {
 			out = append(out, network)
 		}
@@ -67,7 +64,7 @@ func (s *Store) ListNetworks(userID string) []Network {
 	return out
 }
 
-func (s *Store) UpdateNetwork(networkID, name, status string) (Network, error) {
+func (s *Store) UpdateNetwork(networkID, name string) (Network, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ctx := context.Background()
@@ -83,9 +80,6 @@ func (s *Store) UpdateNetwork(networkID, name, status string) (Network, error) {
 	if name = strings.TrimSpace(name); name != "" {
 		network.Name = name
 	}
-	if status = strings.TrimSpace(status); status != "" {
-		network.Status = status
-	}
 	network.UpdatedAt = time.Now().Unix()
 	s.networks[networkID] = network
 	if err := s.persistPostgresNetworkUpdateTxLocked(ctx, postgresTx, network); err != nil {
@@ -95,7 +89,7 @@ func (s *Store) UpdateNetwork(networkID, name, status string) (Network, error) {
 	return network, nil
 }
 
-func (s *Store) UpdateNetworkFull(networkID, name, code, status string) (Network, error) {
+func (s *Store) UpdateNetworkFull(networkID, name, code, intraGroupPolicy string) (Network, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ctx := context.Background()
@@ -113,15 +107,15 @@ func (s *Store) UpdateNetworkFull(networkID, name, code, status string) (Network
 	}
 	if code = sanitizeDNSLabel(code); code != "" {
 		for _, existing := range s.networks {
-			if existing.NetworkID != networkID && existing.OwnerUserID == network.OwnerUserID && existing.Code == code && existing.Status != "deleted" {
+			if existing.NetworkID != networkID && existing.OwnerUserID == network.OwnerUserID && existing.Code == code {
 				return Network{}, errConflict
 			}
 		}
 		network.Code = code
 		network.TemplateKey = defaultString(network.TemplateKey, code)
 	}
-	if status = strings.TrimSpace(status); status != "" {
-		network.Status = status
+	if intraGroupPolicy = strings.TrimSpace(intraGroupPolicy); intraGroupPolicy != "" {
+		network.IntraGroupPolicy = defaultSecurityGroupPolicy(intraGroupPolicy)
 	}
 	network.UpdatedAt = time.Now().Unix()
 	s.networks[networkID] = network

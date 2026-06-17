@@ -31,10 +31,10 @@ services:
     image: apache/bifromq:${BIFROMQ_VERSION:-4.0.0-incubating}
     platform: linux/amd64
     hostname: bifromq
-    mem_limit: "${BIFROMQ_MEM_LIMIT:-2g}"
+    mem_limit: "${BIFROMQ_MEM_LIMIT:-1g}"
     environment:
-      MEM_LIMIT: "${BIFROMQ_MEM_LIMIT_BYTES:-2147483648}"
-      EXTRA_JVM_OPTS: "-Dplugin.authprovider.url=${BIFROMQ_AUTH_PROVIDER_URL:-http://server-biz:8080/mqtt/bifromq}"
+      MEM_LIMIT: "${BIFROMQ_MEM_LIMIT_BYTES:-1073741824}"
+      EXTRA_JVM_OPTS: "-XX:MaxRAMPercentage=${BIFROMQ_MAX_RAM_PERCENTAGE:-45} -XX:InitialRAMPercentage=${BIFROMQ_INITIAL_RAM_PERCENTAGE:-20} -Dplugin.authprovider.url=${BIFROMQ_AUTH_PROVIDER_URL:-http://server-biz:8080/mqtt/bifromq}"
     ports:
       - "${BIFROMQ_MQTT_PORT:-1883}:1883"
     volumes:

@@ -72,10 +72,18 @@
     <nav>
       <div class="nav-group" *ngFor="let group of navGroups">
         <div class="nav-title">{{ group.title }}</div>
-        <button type="button" *ngFor="let item of group.items" [class.active]="active === item.id" (click)="setActive(item.id)">
-          <strong>{{ item.label }}</strong>
-          <span>{{ item.desc }}</span>
-        </button>
+        <div class="nav-tree" *ngFor="let item of group.items" [class.has-children]="item.children?.length">
+          <button type="button" [class.active]="!item.children?.length && isNavItemActive(item)" [class.branch-active]="isNavBranchActive(item)" (click)="setActive(item.children?.[0]?.id || item.id)">
+            <strong>{{ item.label }}</strong>
+            <span>{{ item.desc }}</span>
+          </button>
+          <div class="nav-submenu" *ngIf="item.children?.length">
+            <button type="button" *ngFor="let child of item.children" [class.active]="isNavItemActive(child)" (click)="setActive(child.id)">
+              <strong>{{ child.label }}</strong>
+              <span>{{ child.desc }}</span>
+            </button>
+          </div>
+        </div>
       </div>
     </nav>
   </aside>

@@ -42,6 +42,12 @@ type AuthStore interface {
 type DeviceStore interface {
 	ListDevices(userID string) []Device
 	ListVisibleDevices(userID string) []Device
+	ListDeviceGroups(userID string) []DeviceGroup
+	CreateDeviceGroup(userID, name string) (DeviceGroup, error)
+	UpdateDeviceGroup(userID, groupID, name string) (DeviceGroup, error)
+	DeleteDeviceGroup(userID, groupID string) error
+	SetDeviceGroups(userID, deviceID string, groupIDs []string) ([]DeviceGroupMember, error)
+	ListDeviceGroupMembers(userID string) []DeviceGroupMember
 	RegisterDevice(ownerID, deviceID, name, platform, osName, osVersion, alias, publicKey string) (Device, NetworkDevice, error)
 	RenewDevice(deviceID, userID string, networkEnabled bool, rxBytesTotal, txBytesTotal uint64) (Device, []NetworkConfig, error)
 	BootstrapDeviceSession(sessionKey, deviceID, name, platform, osName, osVersion, alias, publicKey string) (Device, DeviceSession, []NetworkConfig, error)
@@ -61,9 +67,9 @@ type NetworkStore interface {
 	CreateDeviceInvite(inviterUserID string, ttlSeconds int64) (DeviceInvite, error)
 	ListDeviceInvites(inviterUserID string) []DeviceInvite
 	AcceptDeviceInvite(inviteCode, deviceID, actorUserID string) (DeviceAccessGrant, DeviceInvite, error)
-	CreateNetwork(ownerUserID, name, code, templateKey string) (Network, SecurityGroup, NetworkDNSZone, error)
+	CreateNetwork(ownerUserID, name, code, templateKey, intraGroupPolicy string) (Network, SecurityGroup, NetworkDNSZone, error)
 	ListNetworks(userID string) []Network
-	UpdateNetworkFull(networkID, name, code, status string) (Network, error)
+	UpdateNetworkFull(networkID, name, code, intraGroupPolicy string) (Network, error)
 	ListNetworkDevices(networkID string) []NetworkDevice
 	ListNetworkDevicesForDevice(deviceID string) []NetworkDevice
 	ListNetworkDevicesForUser(userID string) []NetworkDevice
@@ -82,6 +88,7 @@ type NetworkStore interface {
 	UpsertPublicMapping(mappingID, networkID, alias, publicDomain, sourceRecord, deviceID, protocol, port, externalPort, status string) (PublicDomainMapping, error)
 	DeletePublicMapping(networkID, mappingID string) error
 	CreateSecurityGroup(networkID, name, description string) (SecurityGroup, error)
+	UpdateSecurityGroup(networkID, securityGroupID, name, description string) (SecurityGroup, error)
 	DeleteSecurityGroup(networkID, securityGroupID string) error
 	ListSecurityGroups(networkID string) []SecurityGroup
 	AddSecurityGroupRule(securityGroupID, direction, action, protocol, peerType, peerValue, description string, priority, portFrom, portTo int, enabled bool) (SecurityGroupRule, error)

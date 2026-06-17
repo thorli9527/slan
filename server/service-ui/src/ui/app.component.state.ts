@@ -3,9 +3,12 @@ import {
   DEFAULT_MAC_DEVICE_ID,
   DEFAULT_NETWORK_ID,
   INITIAL_DEVICE_EXPOSURES,
+  INITIAL_DEVICE_GROUP_IDS,
+  INITIAL_DEVICE_GROUPS,
   INITIAL_DEVICES,
   INITIAL_DNS_RECORDS,
   INITIAL_DNS_ZONES,
+  DEVICE_GROUP_PRESETS,
   INITIAL_MEMBERS,
   INITIAL_PUBLIC_MAPPINGS,
   INITIAL_SECURITY_GROUPS,
@@ -32,6 +35,7 @@ import {
   ApiWorkspaceDevice,
   ApiDeviceQuota,
   DeviceExposureRow,
+  DeviceGroupRow,
   DeviceRow,
   DNSRow,
   DNSZoneRow,
@@ -90,9 +94,21 @@ export abstract class AppComponentState {
   deviceAlias = '办公 Mac';
   devicePlatform = 'macOS';
   deviceOSVersion = '15.3';
+  devicePanel: 'list' | 'groups' = 'list';
+  showDeviceGroupDialog = false;
+  showDeviceGroupBindingDialog = false;
+  deviceGroupDialogMode: 'create' | 'edit' = 'create';
+  editingDeviceGroup: DeviceGroupRow | null = null;
+  bindingDeviceGroup: DeviceGroupRow | null = null;
+  deviceGroupName = '开发部';
+  deviceGroupDescription = '';
+  deviceGroupDialogMessage = '';
+  deviceGroupBindingIds: string[] = [];
+  deviceGroupBindingMessage = '';
 
   workspaceName = '默认网络';
   workspaceCode = 'default';
+  workspaceIntraGroupPolicy: 'allow' | 'deny' = 'allow';
   workspaceDialogMessage = '';
   editingWorkspaceName = '';
   inviteEmail = 'bob@staticlss.com';
@@ -123,18 +139,21 @@ export abstract class AppComponentState {
   showWorkspaceDeviceAliasDialog = false;
   showDeviceAliasDialog = false;
   showWorkspaceNameTagDialog = false;
-  showWorkspaceCodeTagDialog = false;
+  showWorkspacePolicyTagDialog = false;
+  showSecurityGroupNameTagDialog = false;
   showUserAliasDialog = false;
   editingWorkspaceDevice: DeviceRow | null = null;
   editingDevice: DeviceRow | null = null;
   editingWorkspace: WorkspaceRow | null = null;
+  editingSecurityGroup: SecurityGroupRow | null = null;
   editingUserAlias: UserAliasRow | null = null;
   bindDeviceQuery = '';
   selectedWorkspaceDeviceId = '';
   workspaceDeviceAliasValue = '';
   deviceAliasValue = '';
   workspaceNameValue = '';
-  workspaceCodeValue = '';
+  workspaceIntraGroupPolicyValue: 'allow' | 'deny' = 'allow';
+  securityGroupNameValue = '';
   userAliasValue = '';
   workspaceDeviceId = 'android-001';
   workspaceDeviceOwner = 'alice@staticlss.com';
@@ -179,10 +198,11 @@ export abstract class AppComponentState {
   ruleSubjectType: RuleSubjectType = 'device';
   ruleSubjectValue = DEFAULT_MAC_DEVICE_ID;
   selectedRuleTemplate = 'Web 服务';
-  showSecurityGroupDialog = false;
-  securityGroupName = '默认安全组';
-
   devices: DeviceRow[] = INITIAL_DEVICES.map((item) => ({ ...item }));
+  deviceGroups: DeviceGroupRow[] = INITIAL_DEVICE_GROUPS.map((item) => ({ ...item }));
+  deviceGroupIdsByDevice: Record<string, string[]> = Object.fromEntries(
+    Object.entries(INITIAL_DEVICE_GROUP_IDS).map(([deviceId, groupId]) => [deviceId, [groupId]]),
+  );
   workspaceDeviceIdsByWorkspace: Record<string, string[]> = Object.fromEntries(
     Object.entries(INITIAL_WORKSPACE_DEVICE_IDS).map(([workspaceId, deviceIds]) => [workspaceId, [...deviceIds]]),
   );
@@ -202,7 +222,26 @@ export abstract class AppComponentState {
   clientDownloads: ClientDownload[] = [];
 
   get activeNav(): NavItem {
-    return this.navGroups.flatMap((group) => group.items).find((item) => item.id === this.active) ?? this.navGroups[0].items[0];
+    const activeId = this.active === 'devices' && this.devicePanel === 'groups' ? 'deviceGroups' : this.active;
+    return this.allNavItems().find((item) => item.id === activeId) ?? this.navGroups[0].items[0];
+  }
+
+  allNavItems(): NavItem[] {
+    return this.navGroups.flatMap((group) => group.items.flatMap((item) => [item, ...(item.children ?? [])]));
+  }
+
+  isNavItemActive(item: NavItem): boolean {
+    if (item.id === 'deviceGroups') {
+      return this.active === 'devices' && this.devicePanel === 'groups';
+    }
+    if (item.id === 'devices') {
+      return this.active === 'devices' && this.devicePanel === 'list';
+    }
+    return this.active === item.id;
+  }
+
+  isNavBranchActive(item: NavItem): boolean {
+    return !!item.children?.some((child) => this.isNavItemActive(child));
   }
 
   get ingressRules(): SecurityRuleRow[] {
@@ -266,6 +305,48 @@ export abstract class AppComponentState {
 
   get currentUserDevices(): DeviceRow[] {
     return this.devices;
+  }
+
+  get currentDeviceGroups(): DeviceGroupRow[] {
+    return [...this.deviceGroups].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  get availableDeviceGroupPresets(): Pick<DeviceGroupRow, 'name' | 'description'>[] {
+    const existingNames = new Set(this.deviceGroups.map((group) => group.name.trim()));
+    return DEVICE_GROUP_PRESETS.filter((preset) => !existingNames.has(preset.name));
+  }
+
+  deviceGroupNameForDevice(device: DeviceRow): string {
+    const names = this.deviceGroupNamesForDevice(device);
+    return names.length ? names.join('、') : '未分组';
+  }
+
+  deviceGroupNamesForDevice(device: DeviceRow): string[] {
+    const groupIds = this.deviceGroupIdsByDevice[device.deviceId] ?? [];
+    return groupIds
+      .map((groupId) => this.deviceGroups.find((group) => group.groupId === groupId)?.name ?? '')
+      .filter(Boolean);
+  }
+
+  deviceGroupCount(groupId: string): number {
+    return this.currentUserDevices.filter((device) => (this.deviceGroupIdsByDevice[device.deviceId] ?? []).includes(groupId)).length;
+  }
+
+  ungroupedDeviceCount(): number {
+    return this.currentUserDevices.filter((device) => (this.deviceGroupIdsByDevice[device.deviceId] ?? []).length === 0).length;
+  }
+
+  devicesInGroup(groupId: string): DeviceRow[] {
+    return this.currentUserDevices.filter((device) => (this.deviceGroupIdsByDevice[device.deviceId] ?? []).includes(groupId));
+  }
+
+  deviceNamesInGroup(groupId: string): string {
+    const names = this.devicesInGroup(groupId).map((device) => device.alias || device.deviceId);
+    return names.length ? names.join('、') : '-';
+  }
+
+  deviceInGroup(device: DeviceRow, groupId: string): boolean {
+    return (this.deviceGroupIdsByDevice[device.deviceId] ?? []).includes(groupId);
   }
 
   latestClientDownload(platform: string): ClientDownload | null {
@@ -520,6 +601,7 @@ export abstract class AppComponentState {
 
   protected abstract applyRouteFromLocation(): void;
   protected abstract loadDashboard(userId?: string): Promise<void>;
+  protected abstract loadDeviceGroups(userId: string): Promise<void>;
   protected abstract loadWorkspaceDevices(workspaceId: string): Promise<void>;
   protected abstract loadWorkspaceResources(workspaceId: string): Promise<void>;
   protected abstract loadSecurityRules(securityGroupId: string): Promise<void>;

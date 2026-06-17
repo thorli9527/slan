@@ -2,24 +2,33 @@
   <article class="panel">
     <div class="panel-title">
       <div>
-        <h2>设备</h2>
-        <p>我能管理或访问的设备；只有设备 owner 可以确认邀请码接入。</p>
+        <h2>{{ vm.devicePanel === 'groups' ? '设备分组' : '设备管理' }}</h2>
+        <p *ngIf="vm.devicePanel === 'list'">我能管理或访问的设备；只有设备 owner 可以确认邀请码接入。</p>
       </div>
-      <div class="table-actions">
+      <div class="table-actions" *ngIf="vm.devicePanel === 'list'">
         <button class="ghost small" type="button" (click)="vm.openBootstrapDialog()">生成安装命令</button>
         <button class="ghost small" type="button" (click)="vm.openInviteDialog()">生成接入码</button>
       </div>
     </div>
-    <div class="quota-strip">
+    <div class="quota-strip" *ngIf="vm.devicePanel === 'list'">
       <span>当前套餐 <strong>{{ vm.currentPlanName }}</strong></span>
       <span>当前设备 <strong>{{ vm.currentUserDevices.length }}</strong></span>
       <span>剩余额度 <strong>{{ vm.currentDeviceRemaining }}</strong> / {{ vm.currentDeviceTotalLimit }}</span>
     </div>
-    <table>
+    <table *ngIf="vm.devicePanel === 'list'" class="managed-devices-table">
+      <colgroup>
+        <col class="device-id-column" />
+        <col class="os-column" />
+        <col class="alias-column" />
+        <col class="ip-column" />
+        <col class="owner-column" />
+        <col class="status-column" />
+        <col class="action-column" />
+      </colgroup>
       <thead><tr><th>设备 ID</th><th>操作系统/版本</th><th>别名</th><th>IP</th><th>用户</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let device of vm.currentUserDevices">
-          <td><button class="text-link" type="button" (click)="vm.openDeviceExposureDialog(device)">{{ device.deviceId }}</button></td>
+          <td class="device-id-cell"><button class="text-link" type="button" [title]="device.deviceId" (click)="vm.openDeviceExposureDialog(device)">{{ device.deviceId }}</button></td>
           <td>{{ device.platform }} {{ device.osVersion }}</td>
           <td class="tag-cell-wrapper">
             <div class="alias-tag-cell">
@@ -54,8 +63,96 @@
         </tr>
       </tbody>
     </table>
+
+    <section *ngIf="vm.devicePanel === 'groups'" class="device-groups-section">
+      <div class="section-title">
+        <div>
+          <h3>设备分组</h3>
+        </div>
+        <button class="ghost small" type="button" (click)="vm.openDeviceGroupDialog()">新增分组</button>
+      </div>
+      <div class="group-chips" *ngIf="vm.availableDeviceGroupPresets.length">
+        <button
+          *ngFor="let preset of vm.availableDeviceGroupPresets"
+          type="button"
+          (click)="vm.openDeviceGroupDialog({ groupId: '', name: preset.name, description: '', createdAt: 0 })"
+        >
+          {{ preset.name }}
+        </button>
+      </div>
+      <table class="compact-table device-groups-table">
+        <thead><tr><th>分组名称</th><th>设备数量</th><th>设备</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let group of vm.currentDeviceGroups">
+            <td><strong>{{ group.name }}</strong></td>
+            <td>{{ vm.deviceGroupCount(group.groupId) }}</td>
+            <td>
+              {{ vm.deviceNamesInGroup(group.groupId) }}
+            </td>
+            <td class="table-actions">
+              <button class="ghost small" type="button" (click)="vm.openDeviceGroupBindingDialog(group)">绑定设备</button>
+              <button class="ghost small" type="button" (click)="vm.openDeviceGroupDialog(group)">修改</button>
+              <button class="link-danger" type="button" (click)="vm.removeDeviceGroup(group)">删除</button>
+            </td>
+          </tr>
+          <tr>
+            <td><strong>未分组</strong></td>
+            <td>{{ vm.ungroupedDeviceCount() }}</td>
+            <td>{{ vm.ungroupedDeviceCount() ? '未加入任何分组' : '-' }}</td>
+            <td>-</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </article>
 </section>
+
+<div class="modal-backdrop" *ngIf="vm.showDeviceGroupDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div>
+        <h2>{{ vm.deviceGroupDialogMode === 'create' ? '新增设备分组' : '修改设备分组' }}</h2>
+      </div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeDeviceGroupDialog()">×</button>
+    </header>
+    <div class="form">
+      <label><span>分组名称</span><input [(ngModel)]="vm.deviceGroupName" /></label>
+    </div>
+    <p class="form-error" *ngIf="vm.deviceGroupDialogMessage">{{ vm.deviceGroupDialogMessage }}</p>
+    <footer class="modal-footer">
+      <button class="ghost" type="button" (click)="vm.closeDeviceGroupDialog()">取消</button>
+      <button class="primary" type="button" (click)="vm.saveDeviceGroupDialog()">保存</button>
+    </footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showDeviceGroupBindingDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div>
+        <h2>绑定设备</h2>
+        <p>{{ vm.bindingDeviceGroup?.name || '-' }}</p>
+      </div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeDeviceGroupBindingDialog()">×</button>
+    </header>
+    <div class="group-device-picker binding-picker">
+      <button
+        *ngFor="let device of vm.currentUserDevices"
+        type="button"
+        [class.selected]="vm.deviceGroupBindingIds.includes(device.deviceId)"
+        (click)="vm.toggleBindingDevice(device)"
+      >
+        {{ device.alias || device.deviceId }}
+      </button>
+      <span *ngIf="!vm.currentUserDevices.length">暂无设备</span>
+    </div>
+    <p class="form-error" *ngIf="vm.deviceGroupBindingMessage">{{ vm.deviceGroupBindingMessage }}</p>
+    <footer class="modal-footer">
+      <button class="ghost" type="button" (click)="vm.closeDeviceGroupBindingDialog()">取消</button>
+      <button class="primary" type="button" (click)="vm.saveDeviceGroupBindingDialog()">保存</button>
+    </footer>
+  </section>
+</div>
 
 <div class="modal-backdrop" *ngIf="vm.showBootstrapDialog">
   <section class="modal">

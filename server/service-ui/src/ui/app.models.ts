@@ -1,4 +1,4 @@
-export type NavItem = { id: string; label: string; desc: string };
+export type NavItem = { id: string; label: string; desc: string; children?: NavItem[] };
 export type NavGroup = { title: string; items: NavItem[] };
 
 // Server API models. Keep these field names aligned with service-biz/internal/biz/models.go.
@@ -75,15 +75,15 @@ export type ApiDeviceOwner = {
 };
 
 export type ApiNetwork = {
-  networkId: string;
-  ownerUserId: string;
-  name: string;
-  code: string;
-  templateKey?: string;
-  status: string;
-  default: boolean;
-  createdAt: number;
-  updatedAt: number;
+	networkId: string;
+	ownerUserId: string;
+	name: string;
+	code: string;
+	templateKey?: string;
+	intraGroupPolicy?: IntraGroupPolicy;
+	default: boolean;
+	createdAt: number;
+	updatedAt: number;
 };
 
 export type ApiDeviceInvite = {
@@ -179,7 +179,6 @@ export type ApiSecurityGroup = {
   networkId: string;
   name: string;
   description?: string;
-  status: string;
   createdAt: number;
 };
 
@@ -225,10 +224,25 @@ export type ApiDeviceQuota = {
   status: string;
 };
 
+export type ApiDeviceGroup = {
+  groupId: string;
+  userId: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ApiDeviceGroupMember = {
+  groupId: string;
+  deviceId: string;
+  addedAt: number;
+};
+
 export type ApiNetworkConfig = {
   networkId: string;
   networkName?: string;
   networkCode?: string;
+  intraGroupPolicy?: IntraGroupPolicy;
   configVersion?: number;
   deviceId: string;
   globalIp: string;
@@ -276,14 +290,22 @@ export type DeviceRow = {
   status: string;
 };
 
+export type DeviceGroupRow = {
+  groupId: string;
+  name: string;
+  description: string;
+  createdAt: number;
+  updatedAt?: number;
+};
+
 export type NetworkRow = {
   networkId: string;
   name: string;
-  code: string;
-  template: string;
-  status: string;
-  devices: number;
-  zone: string;
+	code: string;
+	template: string;
+	intraGroupPolicy: IntraGroupPolicy;
+	devices: number;
+	zone: string;
   // Compatibility aliases used by existing templates while the UI is being renamed from workspace to network.
   workspaceId: string;
   members: number;
@@ -309,8 +331,9 @@ export type PublicMappingRow = {
   workspaceId: string;
 };
 export type RuleSubjectType = 'device' | 'user' | 'network' | 'workspace' | 'cidr' | 'domain' | 'all';
+export type IntraGroupPolicy = 'allow' | 'deny';
 export type SecurityRuleRow = { ruleId?: string; securityGroupId?: string; direction: string; priority: number; action: string; protocol: string; port: string; subjectType: RuleSubjectType; subjectValue: string };
-export type SecurityGroupRow = { securityGroupId: string; networkId: string; name: string; status: string; workspaceId: string };
+export type SecurityGroupRow = { securityGroupId: string; networkId: string; name: string; createdAt: number; workspaceId: string };
 export type DeviceExposureRow = { deviceId: string; user: string; alias: string; status: string };
 export type NetworkDeviceInviteRow = ApiDeviceInvite & { networkId?: string; workspaceId?: string };
 export type NetworkPanel = 'devices' | 'zones' | 'records' | 'publicMappings' | 'securityGroups' | 'securityRules';

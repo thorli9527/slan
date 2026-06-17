@@ -54,6 +54,29 @@ func (s *Store) DeleteSecurityGroup(networkID, securityGroupID string) error {
 	return nil
 }
 
+func (s *Store) UpdateSecurityGroup(networkID, securityGroupID, name, description string) (SecurityGroup, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ctx := context.Background()
+	postgresTx, err := s.beginPostgresCoreWriteLocked(ctx)
+	if err != nil {
+		return SecurityGroup{}, err
+	}
+	defer rollbackPostgresCoreTx(postgresTx)
+	group, ok := s.securityGroups[securityGroupID]
+	if !ok || group.NetworkID != networkID {
+		return SecurityGroup{}, errNotFound
+	}
+	group.Name = strings.TrimSpace(name)
+	group.Description = strings.TrimSpace(description)
+	s.securityGroups[securityGroupID] = group
+	if err := s.persistPostgresSecurityGroupUpsertTxLocked(ctx, postgresTx, group); err != nil {
+		return SecurityGroup{}, err
+	}
+	postgresTx = nil
+	return group, nil
+}
+
 func (s *Store) AddSecurityGroupRule(securityGroupID, direction, action, protocol, peerType, peerValue, description string, priority, portFrom, portTo int, enabled bool) (SecurityGroupRule, error) {
 	if securityGroupID == "" || direction == "" || action == "" {
 		return SecurityGroupRule{}, errBadRequest
@@ -190,7 +213,7 @@ func (s *Store) ListSecurityGroups(networkID string) []SecurityGroup {
 	if networkID != "" {
 		if _, ok := s.networks[networkID]; ok {
 			if s.defaultSecurityGroupLocked(networkID).SecurityGroupID == "" {
-				group := s.addSecurityGroupLocked(networkID, "默认安全组", "网络默认安全组", time.Now().Unix())
+				group := s.addSecurityGroupLocked(networkID, "", "网络默认安全组", time.Now().Unix())
 				s.addDefaultSecurityRulesLocked(group.SecurityGroupID, time.Now().Unix())
 				if err := s.persistPostgresCoreLocked(context.Background()); err != nil {
 					log.Printf("service-biz persist default security group failed: %v", err)
@@ -215,7 +238,7 @@ func (s *Store) ListSecurityGroupRules(securityGroupID string) []SecurityGroupRu
 		log.Printf("service-biz refresh postgres security rules failed: %v", err)
 	}
 	if securityGroupID != "" {
-		if group, ok := s.securityGroups[securityGroupID]; ok && group.Name == "默认安全组" && !s.hasSecurityRulesLocked(securityGroupID) {
+		if group, ok := s.securityGroups[securityGroupID]; ok && s.defaultSecurityGroupLocked(group.NetworkID).SecurityGroupID == securityGroupID && !s.hasSecurityRulesLocked(securityGroupID) {
 			s.addDefaultSecurityRulesLocked(securityGroupID, time.Now().Unix())
 			if err := s.persistPostgresCoreLocked(context.Background()); err != nil {
 				log.Printf("service-biz persist default security rules failed: %v", err)

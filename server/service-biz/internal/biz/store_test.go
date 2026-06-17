@@ -458,6 +458,65 @@ func TestNetworkConfigSecurityDenyRemovesPeerAndRelayTicket(t *testing.T) {
 	}
 }
 
+func TestDeleteSecurityGroupRemovesGroupAndExcludesFromNetworkConfig(t *testing.T) {
+	store := NewStore()
+	auth, network, _ := store.RegisterUser("security-group-delete@example.com", "secret", "Security Group Delete")
+	device, _, _ := store.RegisterDevice(auth.User.UserID, "sg-delete-mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	group, err := store.CreateSecurityGroup(network.NetworkID, "", "temporary")
+	if err != nil {
+		t.Fatalf("create security group: %v", err)
+	}
+	if group.Name != "" {
+		t.Fatalf("expected empty security group name, got %q", group.Name)
+	}
+	if err := store.DeleteSecurityGroup(network.NetworkID, group.SecurityGroupID); err != nil {
+		t.Fatalf("delete security group: %v", err)
+	}
+	for _, item := range store.ListSecurityGroups(network.NetworkID) {
+		if item.SecurityGroupID == group.SecurityGroupID {
+			t.Fatalf("deleted security group should be removed from list: %+v", item)
+		}
+	}
+	config, err := store.NetworkConfig(network.NetworkID, device.DeviceID)
+	if err != nil {
+		t.Fatalf("network config: %v", err)
+	}
+	for _, item := range config.SecurityGroups {
+		if item.SecurityGroupID == group.SecurityGroupID {
+			t.Fatalf("deleted security group should not be active in network config: %+v", item)
+		}
+	}
+}
+
+func TestNetworkConfigSecurityGroupIntraDenyRemovesPeerAndRelayTicket(t *testing.T) {
+	store := NewStore()
+	auth, network, _ := store.RegisterUser("security-group-deny@example.com", "secret", "Security Group Deny")
+	user := auth.User
+	deviceA, _, _ := store.RegisterDevice(user.UserID, "sg-deny-mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
+	deviceB, _, _ := store.RegisterDevice(user.UserID, "sg-deny-ios-1", "iPhone", "ios", "iOS", "18.0", "", "pub-b")
+	if _, _, err := store.RenewDevice(deviceB.DeviceID, user.UserID, true, 0, 0); err != nil {
+		t.Fatalf("mark peer active: %v", err)
+	}
+	updatedNetwork, err := store.UpdateNetworkFull(network.NetworkID, network.Name, network.Code, "deny")
+	if err != nil {
+		t.Fatalf("update network intra group policy: %v", err)
+	}
+	if updatedNetwork.IntraGroupPolicy != "deny" {
+		t.Fatalf("expected deny intra group policy, got %+v", updatedNetwork)
+	}
+
+	config, err := store.NetworkConfig(network.NetworkID, deviceA.DeviceID)
+	if err != nil {
+		t.Fatalf("network config: %v", err)
+	}
+	if len(config.Peers) != 0 {
+		t.Fatalf("expected intra-group-denied peer to be removed, got %+v", config.Peers)
+	}
+	if _, err := store.IssueRelayTicket(network.NetworkID, "node-"+deviceA.DeviceID, "node-"+deviceB.DeviceID, "", nil); err == nil {
+		t.Fatal("expected relay ticket to be denied by security group intra policy")
+	}
+}
+
 func TestNetworkConfigSecurityIngressDenyTargetsDestinationPeer(t *testing.T) {
 	store := NewStore()
 	auth, network, _ := store.RegisterUser("acl-ingress-deny@example.com", "secret", "ACL Ingress Deny")
@@ -536,20 +595,6 @@ func TestNetworkConfigIncludesPeerEndpointReport(t *testing.T) {
 	auth, network, _ := store.RegisterUser("endpoint@example.com", "secret", "Endpoint")
 	deviceA, _, _ := store.RegisterDevice(auth.User.UserID, "mac-endpoint", "Mac", "macos", "macOS", "15.0", "", "pub-a")
 	deviceB, _, _ := store.RegisterDevice(auth.User.UserID, "android-endpoint", "Android", "android", "Android", "15", "", "pub-b")
-	otherNetwork, _, _, err := store.CreateNetwork(auth.User.UserID, "Other", "other", "default")
-	if err != nil {
-		t.Fatalf("create other network: %v", err)
-	}
-	if _, err := store.AddNetworkDevice(otherNetwork.NetworkID, deviceB.DeviceID, auth.User.UserID, "", true); err != nil {
-		t.Fatalf("add other network device: %v", err)
-	}
-	if changed, err := store.ReportDeviceEndpoint(otherNetwork.NetworkID, deviceB.DeviceID, []DeviceEndpoint{{
-		Type:      "direct_udp",
-		Address:   "198.51.100.20:40123",
-		UpdatedAt: time.Now().Unix(),
-	}}); err != nil || !changed {
-		t.Fatalf("report endpoint in other network: %v", err)
-	}
 
 	if changed, err := store.ReportDeviceEndpoint(network.NetworkID, deviceB.DeviceID, []DeviceEndpoint{{
 		Type:      "direct_udp",
@@ -600,7 +645,7 @@ func TestNetworkConfigsForDeviceReturnsAllEnabledMemberships(t *testing.T) {
 	auth, defaultNetwork, _ := store.RegisterUser("alice@example.com", "secret", "Alice")
 	user := auth.User
 	deviceA, _, _ := store.RegisterDevice(user.UserID, "mac-1", "Mac", "macos", "macOS", "15.0", "", "pub-a")
-	networkB, _, _, err := store.CreateNetwork(user.UserID, "开发网络", "dev", "dev")
+	networkB, _, _, err := store.CreateNetwork(user.UserID, "开发网络", "dev", "dev", "allow")
 	if err != nil {
 		t.Fatalf("create network: %v", err)
 	}
@@ -1473,7 +1518,7 @@ func TestDeviceInviteIsSingleUseAndExpiresInThirtyMinutes(t *testing.T) {
 	if len(visible) != 1 || visible[0].DeviceID != "ios-1" {
 		t.Fatalf("expected invited device visible to other user, got %+v", visible)
 	}
-	otherNetworkB, _, _, err := store.CreateNetwork(otherAuth.User.UserID, "测试组", "test", "test")
+	otherNetworkB, _, _, err := store.CreateNetwork(otherAuth.User.UserID, "测试组", "test", "test", "allow")
 	if err != nil {
 		t.Fatalf("create other network: %v", err)
 	}

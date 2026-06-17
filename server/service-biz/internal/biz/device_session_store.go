@@ -35,7 +35,7 @@ func (s *Store) BootstrapDeviceSession(sessionKey, deviceID, name, platform, osN
 		return Device{}, DeviceSession{}, nil, errNotFound
 	}
 	network, ok := s.networks[bootstrapKey.NetworkID]
-	if !ok || network.OwnerUserID != user.UserID || network.Status != "enabled" {
+	if !ok || network.OwnerUserID != user.UserID {
 		return Device{}, DeviceSession{}, nil, errNotFound
 	}
 	if existing, ok := s.devices[deviceID]; ok && existing.OwnerID != user.UserID && !samePhysicalDeviceIdentity(existing, publicKey) {

@@ -37,6 +37,7 @@ class AndroidVpnSessionConfig {
     this.relayEndpointId,
     this.relayTransport,
     this.relayAddress,
+    this.aclPolicies = const <PlatformAclPolicy>[],
     this.relayDataPlane,
   });
 
@@ -50,6 +51,7 @@ class AndroidVpnSessionConfig {
   final String? relayEndpointId;
   final String? relayTransport;
   final String? relayAddress;
+  final List<PlatformAclPolicy> aclPolicies;
   final RelayDataPlaneConfig? relayDataPlane;
 
   factory AndroidVpnSessionConfig.fromJson(Map<String, Object?> json) {
@@ -64,6 +66,7 @@ class AndroidVpnSessionConfig {
       relayEndpointId: json['relayEndpointId'] as String?,
       relayTransport: json['relayTransport'] as String?,
       relayAddress: json['relayAddress'] as String?,
+      aclPolicies: _platformAclPolicies(json['aclPolicies']),
       relayDataPlane: _relayDataPlane(json['relayDataPlane']),
     );
   }
@@ -81,6 +84,7 @@ class AndroidVpnSessionConfig {
       if (relayEndpointId != null) 'relayEndpointId': relayEndpointId,
       if (relayTransport != null) 'relayTransport': relayTransport,
       if (relayAddress != null) 'relayAddress': relayAddress,
+      'aclPolicies': aclPolicies.map((policy) => policy.toJson()).toList(),
       if (relayDataPlane != null) 'relayDataPlane': relayDataPlane!.toJson(),
     };
   }
@@ -103,6 +107,7 @@ class PlatformDeviceNetworkConfig {
     required this.deviceId,
     this.networkName,
     this.networkCode,
+    this.intraGroupPolicy,
     this.configVersion,
     this.globalIp,
     this.globalName,
@@ -116,6 +121,7 @@ class PlatformDeviceNetworkConfig {
   final String deviceId;
   final String? networkName;
   final String? networkCode;
+  final String? intraGroupPolicy;
   final int? configVersion;
   final String? globalIp;
   final String? globalName;
@@ -130,6 +136,7 @@ class PlatformDeviceNetworkConfig {
       deviceId: json['deviceId'] as String? ?? '',
       networkName: json['networkName'] as String?,
       networkCode: json['networkCode'] as String?,
+      intraGroupPolicy: json['intraGroupPolicy'] as String?,
       configVersion: json['configVersion'] as int?,
       globalIp: json['globalIp'] as String?,
       globalName: json['globalName'] as String?,
@@ -146,6 +153,7 @@ class PlatformDeviceNetworkConfig {
       'deviceId': deviceId,
       if (networkName != null) 'networkName': networkName,
       if (networkCode != null) 'networkCode': networkCode,
+      if (intraGroupPolicy != null) 'intraGroupPolicy': intraGroupPolicy,
       if (configVersion != null) 'configVersion': configVersion,
       if (globalIp != null) 'globalIp': globalIp,
       if (globalName != null) 'globalName': globalName,
@@ -153,6 +161,110 @@ class PlatformDeviceNetworkConfig {
       'dnsRecordCount': dnsRecordCount,
       'securityRuleCount': securityRuleCount,
       'relayCandidateCount': relayCandidateCount,
+    };
+  }
+}
+
+/// PlatformAclPolicy 是下发到客户端数据面的安全组策略集合。
+class PlatformAclPolicy {
+  const PlatformAclPolicy({
+    required this.networkId,
+    this.rules = const <PlatformAclRule>[],
+  });
+
+  final String networkId;
+  final List<PlatformAclRule> rules;
+
+  factory PlatformAclPolicy.fromJson(Map<String, Object?> json) {
+    return PlatformAclPolicy(
+      networkId: json['networkId'] as String? ?? '',
+      rules: _platformAclRules(json['rules']),
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      'networkId': networkId,
+      'rules': rules.map((rule) => rule.toJson()).toList(),
+    };
+  }
+}
+
+/// PlatformAclRule 是客户端数据面实际执行的安全组规则。
+class PlatformAclRule {
+  const PlatformAclRule({
+    required this.ruleId,
+    required this.securityGroupId,
+    this.direction = '',
+    this.priority = 0,
+    this.action = '',
+    this.protocol = '',
+    this.portFrom = 0,
+    this.portTo = 0,
+    this.peerType = '',
+    this.peerValue = '',
+    this.sourceType = '',
+    this.sourceValue = '',
+    this.enabled = false,
+    this.resolvedPeerNodeId,
+    this.resolvedPeerVirtualIps = const <String>[],
+  });
+
+  final String ruleId;
+  final String securityGroupId;
+  final String direction;
+  final int priority;
+  final String action;
+  final String protocol;
+  final int portFrom;
+  final int portTo;
+  final String peerType;
+  final String peerValue;
+  final String sourceType;
+  final String sourceValue;
+  final bool enabled;
+  final String? resolvedPeerNodeId;
+  final List<String> resolvedPeerVirtualIps;
+
+  factory PlatformAclRule.fromJson(Map<String, Object?> json) {
+    final peerType = json['peerType'] as String? ?? '';
+    final peerValue = json['peerValue'] as String? ?? '';
+    return PlatformAclRule(
+      ruleId: json['ruleId'] as String? ?? '',
+      securityGroupId: json['securityGroupId'] as String? ?? '',
+      direction: json['direction'] as String? ?? '',
+      priority: _intValue(json['priority']),
+      action: json['action'] as String? ?? '',
+      protocol: json['protocol'] as String? ?? '',
+      portFrom: _intValue(json['portFrom']),
+      portTo: _intValue(json['portTo']),
+      peerType: peerType,
+      peerValue: peerValue,
+      sourceType: json['sourceType'] as String? ?? peerType,
+      sourceValue: json['sourceValue'] as String? ?? peerValue,
+      enabled: json['enabled'] == true,
+      resolvedPeerNodeId: json['resolvedPeerNodeId'] as String?,
+      resolvedPeerVirtualIps: _stringList(json['resolvedPeerVirtualIps']),
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      'ruleId': ruleId,
+      'securityGroupId': securityGroupId,
+      'direction': direction,
+      'priority': priority,
+      'action': action,
+      'protocol': protocol,
+      'portFrom': portFrom,
+      'portTo': portTo,
+      'peerType': peerType,
+      'peerValue': peerValue,
+      'sourceType': sourceType.isEmpty ? peerType : sourceType,
+      'sourceValue': sourceValue.isEmpty ? peerValue : sourceValue,
+      'enabled': enabled,
+      if (resolvedPeerNodeId != null) 'resolvedPeerNodeId': resolvedPeerNodeId,
+      'resolvedPeerVirtualIps': resolvedPeerVirtualIps,
     };
   }
 }
@@ -169,6 +281,7 @@ class RelayDataPlaneConfig {
     this.peerPaths = const <PeerPathConfig>[],
     this.relayMtu,
     this.maxFramePayload,
+    this.aclPolicies = const <PlatformAclPolicy>[],
     this.sessions = const <RelayPeerSession>[],
   });
 
@@ -181,6 +294,7 @@ class RelayDataPlaneConfig {
   final List<PeerPathConfig> peerPaths;
   final int? relayMtu;
   final int? maxFramePayload;
+  final List<PlatformAclPolicy> aclPolicies;
   final List<RelayPeerSession> sessions;
 
   factory RelayDataPlaneConfig.fromJson(Map<String, Object?> json) {
@@ -194,6 +308,7 @@ class RelayDataPlaneConfig {
       peerPaths: _peerPathConfigs(json['peerPaths']),
       relayMtu: json['relayMtu'] as int?,
       maxFramePayload: json['maxFramePayload'] as int?,
+      aclPolicies: _platformAclPolicies(json['aclPolicies']),
       sessions: _relayPeerSessions(json['sessions']),
     );
   }
@@ -209,6 +324,7 @@ class RelayDataPlaneConfig {
       'peerPaths': peerPaths.map((path) => path.toJson()).toList(),
       if (relayMtu != null) 'relayMtu': relayMtu,
       if (maxFramePayload != null) 'maxFramePayload': maxFramePayload,
+      'aclPolicies': aclPolicies.map((policy) => policy.toJson()).toList(),
       'sessions': sessions.map((session) => session.toJson()).toList(),
     };
   }
@@ -493,6 +609,26 @@ List<PlatformDeviceNetworkConfig> _platformDeviceNetworkConfigs(Object? value) {
       .toList();
 }
 
+List<PlatformAclPolicy> _platformAclPolicies(Object? value) {
+  if (value is! List) {
+    return const <PlatformAclPolicy>[];
+  }
+  return value
+      .whereType<Map>()
+      .map((item) => PlatformAclPolicy.fromJson(item.cast<String, Object?>()))
+      .toList(growable: false);
+}
+
+List<PlatformAclRule> _platformAclRules(Object? value) {
+  if (value is! List) {
+    return const <PlatformAclRule>[];
+  }
+  return value
+      .whereType<Map>()
+      .map((item) => PlatformAclRule.fromJson(item.cast<String, Object?>()))
+      .toList(growable: false);
+}
+
 List<PeerPathConfig> _peerPathConfigs(Object? value) {
   if (value is! List) {
     return const <PeerPathConfig>[];
@@ -528,6 +664,19 @@ List<String> _stringList(Object? value) {
     return const <String>[];
   }
   return value.whereType<String>().toList(growable: false);
+}
+
+int _intValue(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  if (value is String) {
+    return int.tryParse(value) ?? 0;
+  }
+  return 0;
 }
 
 List<Map<String, Object?>> _mapList(Object? value) {

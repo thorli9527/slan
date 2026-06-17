@@ -12,6 +12,7 @@ import {
   ApiWorkspace,
   ApiWorkspaceDevice,
   DeviceExposureRow,
+  DeviceGroupRow,
   DeviceRow,
   DNSRow,
   DNSZoneRow,
@@ -31,6 +32,10 @@ import { WEB_API } from '../api-paths';
 import { DEFAULT_USER_ID } from '../app.seed-data';
 import { compactUuid } from '../app.utils';
 export abstract class AppComponentDevices extends AppComponentUserAlias {
+  setDevicePanel(panel: 'list' | 'groups'): void {
+    this.devicePanel = panel;
+  }
+
   async addDevice(): Promise<void> {
     try {
       await this.api.post(WEB_API.devicesRegister, {
@@ -53,6 +58,170 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       { deviceId: this.deviceId, platform: this.devicePlatform, osVersion: this.deviceOSVersion, alias: this.deviceAlias, ip: nextIp, owner: this.currentUser, status: 'active' },
     ];
   }
+
+  async toggleDeviceGroup(device: DeviceRow, groupId: string): Promise<void> {
+    const current = this.deviceGroupIdsByDevice[device.deviceId] ?? [];
+    const nextGroupIds = current.includes(groupId) ? current.filter((item) => item !== groupId) : [...current, groupId];
+    const next = { ...this.deviceGroupIdsByDevice };
+    if (nextGroupIds.length) {
+      next[device.deviceId] = nextGroupIds;
+    } else {
+      delete next[device.deviceId];
+    }
+    this.deviceGroupIdsByDevice = next;
+    try {
+      await this.api.put(WEB_API.deviceGroupsForDevice(this.currentUserId || DEFAULT_USER_ID, device.deviceId), { groupIds: nextGroupIds });
+      await this.loadDeviceGroups(this.currentUserId || DEFAULT_USER_ID);
+    } catch {
+      // Preview mode keeps the local assignment.
+    }
+  }
+
+  openDeviceGroupBindingDialog(group: DeviceGroupRow): void {
+    this.bindingDeviceGroup = group;
+    this.deviceGroupBindingIds = this.currentUserDevices
+      .filter((device) => this.deviceInGroup(device, group.groupId))
+      .map((device) => device.deviceId);
+    this.deviceGroupBindingMessage = '';
+    this.showDeviceGroupBindingDialog = true;
+    this.notifyStateChanged();
+  }
+
+  closeDeviceGroupBindingDialog(): void {
+    this.showDeviceGroupBindingDialog = false;
+    this.bindingDeviceGroup = null;
+    this.deviceGroupBindingIds = [];
+    this.deviceGroupBindingMessage = '';
+    this.notifyStateChanged();
+  }
+
+  toggleBindingDevice(device: DeviceRow): void {
+    const selected = new Set(this.deviceGroupBindingIds);
+    if (selected.has(device.deviceId)) {
+      selected.delete(device.deviceId);
+    } else {
+      selected.add(device.deviceId);
+    }
+    this.deviceGroupBindingIds = [...selected];
+  }
+
+  async saveDeviceGroupBindingDialog(): Promise<void> {
+    const group = this.bindingDeviceGroup;
+    if (!group) {
+      return;
+    }
+    const selected = new Set(this.deviceGroupBindingIds);
+    const previous = this.deviceGroupIdsByDevice;
+    const next: Record<string, string[]> = { ...previous };
+    for (const device of this.currentUserDevices) {
+      const current = previous[device.deviceId] ?? [];
+      const nextGroupIds = selected.has(device.deviceId)
+        ? Array.from(new Set([...current, group.groupId]))
+        : current.filter((groupId) => groupId !== group.groupId);
+      if (nextGroupIds.length) {
+        next[device.deviceId] = nextGroupIds;
+      } else {
+        delete next[device.deviceId];
+      }
+    }
+    this.deviceGroupIdsByDevice = next;
+    try {
+      await Promise.all(this.currentUserDevices.map((device) =>
+        this.api.put(WEB_API.deviceGroupsForDevice(this.currentUserId || DEFAULT_USER_ID, device.deviceId), { groupIds: next[device.deviceId] ?? [] }),
+      ));
+      await this.loadDeviceGroups(this.currentUserId || DEFAULT_USER_ID);
+      this.closeDeviceGroupBindingDialog();
+    } catch {
+      if (!this.currentUserId) {
+        this.closeDeviceGroupBindingDialog();
+        return;
+      }
+      this.deviceGroupIdsByDevice = previous;
+      this.deviceGroupBindingMessage = '保存失败，请重试';
+      this.notifyStateChanged();
+    }
+  }
+
+  openDeviceGroupDialog(group?: DeviceGroupRow): void {
+    this.editingDeviceGroup = group?.groupId ? group : null;
+    this.deviceGroupDialogMode = group?.groupId ? 'edit' : 'create';
+    this.deviceGroupName = group?.name ?? '开发部';
+    this.deviceGroupDescription = group?.description ?? '';
+    this.deviceGroupDialogMessage = '';
+    this.showDeviceGroupDialog = true;
+  }
+
+  closeDeviceGroupDialog(): void {
+    this.showDeviceGroupDialog = false;
+    this.editingDeviceGroup = null;
+    this.deviceGroupDialogMessage = '';
+    this.notifyStateChanged();
+  }
+
+  async saveDeviceGroupDialog(): Promise<void> {
+    const name = this.deviceGroupName.trim();
+    if (!name) {
+      this.deviceGroupDialogMessage = '请输入分组名称';
+      return;
+    }
+    const duplicate = this.deviceGroups.some((group) =>
+      group.name.trim() === name && group.groupId !== this.editingDeviceGroup?.groupId
+    );
+    if (duplicate) {
+      this.deviceGroupDialogMessage = '分组名称不能重复';
+      return;
+    }
+    const description = '';
+    if (this.editingDeviceGroup) {
+      const groupId = this.editingDeviceGroup.groupId;
+      const previousGroups = this.deviceGroups;
+      this.deviceGroups = previousGroups.map((group) => group.groupId === groupId ? { ...group, name, description } : group);
+      try {
+        const group = await this.api.patch<DeviceGroupRow>(WEB_API.deviceGroup(this.currentUserId || DEFAULT_USER_ID, groupId), { name });
+        this.deviceGroups = this.deviceGroups.map((item) => item.groupId === group.groupId ? { ...item, ...group, description: '' } : item);
+        this.closeDeviceGroupDialog();
+      } catch {
+        if (!this.currentUserId) {
+          this.closeDeviceGroupDialog();
+          return;
+        }
+        this.deviceGroups = previousGroups;
+        this.deviceGroupDialogMessage = '保存失败，请重试';
+        this.notifyStateChanged();
+      }
+    } else {
+      const localGroup = { groupId: compactUuid(), name, description, createdAt: Math.floor(Date.now() / 1000) };
+      this.deviceGroups = [...this.deviceGroups, localGroup];
+      try {
+        const group = await this.api.post<DeviceGroupRow>(WEB_API.deviceGroups(this.currentUserId || DEFAULT_USER_ID), { name });
+        this.deviceGroups = [...this.deviceGroups.filter((item) => item.groupId !== localGroup.groupId), { ...group, description: '' }];
+        this.closeDeviceGroupDialog();
+      } catch {
+        if (!this.currentUserId) {
+          this.closeDeviceGroupDialog();
+          return;
+        }
+        this.deviceGroups = this.deviceGroups.filter((item) => item.groupId !== localGroup.groupId);
+        this.deviceGroupDialogMessage = '保存失败，请重试';
+        this.notifyStateChanged();
+      }
+    }
+  }
+
+  async removeDeviceGroup(group: DeviceGroupRow): Promise<void> {
+    this.deviceGroups = this.deviceGroups.filter((item) => item.groupId !== group.groupId);
+    this.deviceGroupIdsByDevice = Object.fromEntries(
+      Object.entries(this.deviceGroupIdsByDevice)
+        .map(([deviceId, groupIds]) => [deviceId, groupIds.filter((groupId) => groupId !== group.groupId)] as const)
+        .filter(([, groupIds]) => groupIds.length > 0),
+    );
+    try {
+      await this.api.delete(WEB_API.deviceGroup(this.currentUserId || DEFAULT_USER_ID, group.groupId));
+    } catch {
+      // Preview mode keeps the local delete.
+    }
+  }
+
   openDeviceAliasDialog(device: DeviceRow): void {
     if (this.showDeviceAliasDialog && this.editingDevice?.deviceId === device.deviceId) {
       this.closeDeviceAliasDialog();
@@ -127,7 +296,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   async openBootstrapDialog(): Promise<void> {
-    const network = this.workspaces.find((item) => item.status === 'enabled') || this.workspaces[0];
+    const network = this.workspaces[0];
     if (!network) {
       this.bootstrapMessage = '请先创建网络。';
       this.showBootstrapDialog = true;

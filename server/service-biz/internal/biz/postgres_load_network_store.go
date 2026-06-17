@@ -5,16 +5,17 @@ import (
 )
 
 func (s *Store) loadPostgresNetworksLocked(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `select id,owner_user_id,name,code,coalesce(template_key,''),status,is_default,extract(epoch from created_at)::bigint,extract(epoch from updated_at)::bigint from networks`)
+	rows, err := s.db.QueryContext(ctx, `select id,owner_user_id,name,code,coalesce(template_key,''),coalesce(intra_group_policy,'allow'),is_default,extract(epoch from created_at)::bigint,extract(epoch from updated_at)::bigint from networks`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var network Network
-		if err := rows.Scan(&network.NetworkID, &network.OwnerUserID, &network.Name, &network.Code, &network.TemplateKey, &network.Status, &network.Default, &network.CreatedAt, &network.UpdatedAt); err != nil {
+		if err := rows.Scan(&network.NetworkID, &network.OwnerUserID, &network.Name, &network.Code, &network.TemplateKey, &network.IntraGroupPolicy, &network.Default, &network.CreatedAt, &network.UpdatedAt); err != nil {
 			return err
 		}
+		network.IntraGroupPolicy = defaultSecurityGroupPolicy(network.IntraGroupPolicy)
 		s.networks[network.NetworkID] = network
 		s.nextNetworkSeq = maxInt(s.nextNetworkSeq, numericIDSuffix(network.NetworkID)+1)
 	}

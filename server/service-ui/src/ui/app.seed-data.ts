@@ -1,5 +1,6 @@
 import {
   DeviceExposureRow,
+  DeviceGroupRow,
   DeviceRow,
   DNSRow,
   DNSZoneRow,
@@ -59,7 +60,15 @@ export const NAV_GROUPS: NavGroup[] = [
     title: '账号与设备',
     items: [
       { id: 'overview', label: '控制台概览', desc: '账号资源与入口' },
-      { id: 'devices', label: '设备', desc: '我能管理或访问的设备' },
+      {
+        id: 'deviceManagement',
+        label: '设备管理',
+        desc: '设备与分组',
+        children: [
+          { id: 'devices', label: '设备管理', desc: '设备列表与接入' },
+          { id: 'deviceGroups', label: '分组管理', desc: '部门和团队分组' },
+        ],
+      },
       { id: 'userAliases', label: '用户别名', desc: '邮箱显示别名' },
     ],
   },
@@ -77,14 +86,33 @@ export const INITIAL_DEVICES: DeviceRow[] = [
   { deviceId: DEFAULT_BOB_DEVICE_ID, platform: 'Windows', osVersion: '11', alias: 'Bob Laptop', ip: '10.0.0.3', owner: 'bob@staticlss.com', status: 'active' },
 ];
 
+export const INITIAL_DEVICE_GROUPS: DeviceGroupRow[] = [
+  { groupId: 'device-group-dev', name: '开发部', description: '研发、测试和工程设备', createdAt: 1781579000 },
+  { groupId: 'device-group-marketing', name: '市场部', description: '市场活动和内容运营设备', createdAt: 1781579000 },
+  { groupId: 'device-group-sales', name: '销售部', description: '销售团队和客户现场设备', createdAt: 1781579000 },
+  { groupId: 'device-group-ops', name: '运营部', description: '运营支持和平台值守设备', createdAt: 1781579000 },
+];
+
+export const DEVICE_GROUP_PRESETS: Pick<DeviceGroupRow, 'name' | 'description'>[] = [
+  { name: '开发部', description: '研发、测试和工程设备' },
+  { name: '市场部', description: '市场活动和内容运营设备' },
+  { name: '销售部', description: '销售团队和客户现场设备' },
+  { name: '运营部', description: '运营支持和平台值守设备' },
+];
+
+export const INITIAL_DEVICE_GROUP_IDS: Record<string, string> = {
+  [DEFAULT_MAC_DEVICE_ID]: 'device-group-dev',
+  [DEFAULT_IPHONE_DEVICE_ID]: 'device-group-marketing',
+};
+
 export const INITIAL_WORKSPACE_DEVICE_IDS: Record<string, string[]> = {
   [DEFAULT_NETWORK_ID]: [DEFAULT_MAC_DEVICE_ID, DEFAULT_IPHONE_DEVICE_ID],
   [DEV_NETWORK_ID]: [DEFAULT_MAC_DEVICE_ID],
 };
 
 export const INITIAL_WORKSPACES: WorkspaceRow[] = [
-  { networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: '默认网络', code: 'default', template: 'default', status: 'enabled', members: 1, devices: 2, zone: `default.${DEFAULT_NETWORK_ID}.${DEFAULT_USER_ID}.sub.staticlss.com` },
-  { networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: '开发组', code: 'dev', template: 'dev', status: 'enabled', members: 2, devices: 1, zone: `dev.${DEV_NETWORK_ID}.${DEFAULT_USER_ID}.sub.staticlss.com` },
+  { networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: '默认网络', code: 'default', template: 'default', intraGroupPolicy: 'allow', members: 1, devices: 2, zone: `default.${DEFAULT_NETWORK_ID}.${DEFAULT_USER_ID}.sub.staticlss.com` },
+  { networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: '开发组', code: 'dev', template: 'dev', intraGroupPolicy: 'allow', members: 2, devices: 1, zone: `dev.${DEV_NETWORK_ID}.${DEFAULT_USER_ID}.sub.staticlss.com` },
 ];
 
 export const INITIAL_MEMBERS: MemberRow[] = [
@@ -113,8 +141,8 @@ export const INITIAL_PUBLIC_MAPPINGS: PublicMappingRow[] = [
 ];
 
 export const INITIAL_SECURITY_GROUPS: SecurityGroupRow[] = [
-  { securityGroupId: DEFAULT_SECURITY_GROUP_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: '默认安全组', status: 'active' },
-  { securityGroupId: DEV_SECURITY_GROUP_ID, networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: '默认安全组', status: 'active' },
+  { securityGroupId: DEFAULT_SECURITY_GROUP_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: '', createdAt: 1767225600 },
+  { securityGroupId: DEV_SECURITY_GROUP_ID, networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: '', createdAt: 1767225600 },
 ];
 
 export const INITIAL_SECURITY_RULES: SecurityRuleRow[] = [

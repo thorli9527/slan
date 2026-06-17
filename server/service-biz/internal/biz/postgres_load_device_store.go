@@ -110,6 +110,38 @@ func (s *Store) loadPostgresDeviceSharingLocked(ctx context.Context) error {
 	return keyRows.Err()
 }
 
+func (s *Store) loadPostgresDeviceGroupsLocked(ctx context.Context) error {
+	groupRows, err := s.db.QueryContext(ctx, `select id,user_id,name,extract(epoch from created_at)::bigint,extract(epoch from updated_at)::bigint from device_groups`)
+	if err != nil {
+		return err
+	}
+	defer groupRows.Close()
+	for groupRows.Next() {
+		var group DeviceGroup
+		if err := groupRows.Scan(&group.GroupID, &group.UserID, &group.Name, &group.CreatedAt, &group.UpdatedAt); err != nil {
+			return err
+		}
+		s.deviceGroups[group.GroupID] = group
+		s.nextDeviceGroupSeq = maxInt(s.nextDeviceGroupSeq, numericIDSuffix(group.GroupID)+1)
+	}
+	if err := groupRows.Err(); err != nil {
+		return err
+	}
+	memberRows, err := s.db.QueryContext(ctx, `select group_id,device_id,extract(epoch from added_at)::bigint from device_group_members`)
+	if err != nil {
+		return err
+	}
+	defer memberRows.Close()
+	for memberRows.Next() {
+		var member DeviceGroupMember
+		if err := memberRows.Scan(&member.GroupID, &member.DeviceID, &member.AddedAt); err != nil {
+			return err
+		}
+		s.deviceGroupMembers[member.GroupID+"|"+member.DeviceID] = member
+	}
+	return memberRows.Err()
+}
+
 func (s *Store) loadPostgresRuntimeStatusesLocked(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `select device_id,heartbeat_online,network_enabled,device_enabled,rx_bytes_total,tx_bytes_total,coalesce(extract(epoch from last_seen_at)::bigint,0),coalesce(extract(epoch from last_report_at)::bigint,0) from device_runtime_status`)
 	if err != nil {

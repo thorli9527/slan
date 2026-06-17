@@ -6,7 +6,7 @@ type NetworkService struct {
 }
 
 func (s NetworkService) CreateNetwork(req CreateNetworkRequest) (Network, SecurityGroup, NetworkDNSZone, error) {
-	return s.store.CreateNetwork(req.OwnerUserID, req.Name, req.Code, req.TemplateKey)
+	return s.store.CreateNetwork(req.OwnerUserID, req.Name, req.Code, req.TemplateKey, req.IntraGroupPolicy)
 }
 
 func (s NetworkService) ListNetworks(userID string) []Network {
@@ -14,17 +14,11 @@ func (s NetworkService) ListNetworks(userID string) []Network {
 }
 
 func (s NetworkService) UpdateNetwork(networkID string, req UpdateNetworkRequest) (Network, string, error) {
-	network, err := s.store.UpdateNetworkFull(networkID, req.Name, req.Code, req.Status)
+	network, err := s.store.UpdateNetworkFull(networkID, req.Name, req.Code, req.IntraGroupPolicy)
 	if err != nil {
 		return Network{}, "", err
 	}
-	reason := "network_updated"
-	if network.Status == "enabled" {
-		reason = "network_enabled"
-	} else if network.Status == "disabled" {
-		reason = "network_disabled"
-	}
-	return network, reason, nil
+	return network, "network_updated", nil
 }
 
 func (s NetworkService) IssueRelayTicket(req IssueRelayTicketRequest) (RelayTicket, error) {
@@ -116,6 +110,10 @@ func (s NetworkService) ListSecurityGroups(networkID string) []SecurityGroup {
 
 func (s NetworkService) CreateSecurityGroup(networkID string, req CreateSecurityGroupRequest) (SecurityGroup, error) {
 	return s.store.CreateSecurityGroup(networkID, req.Name, req.Description)
+}
+
+func (s NetworkService) UpdateSecurityGroup(networkID, securityGroupID string, req SecurityGroupRequest) (SecurityGroup, error) {
+	return s.store.UpdateSecurityGroup(networkID, securityGroupID, req.Name, req.Description)
 }
 
 func (s NetworkService) DeleteSecurityGroup(networkID, securityGroupID string) error {

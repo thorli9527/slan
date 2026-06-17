@@ -2,15 +2,15 @@ package biz
 
 // Network 是用户创建的虚拟网络。
 type Network struct {
-	NetworkID   string `json:"networkId"`
-	OwnerUserID string `json:"ownerUserId"`
-	Name        string `json:"name"`
-	Code        string `json:"code"`
-	TemplateKey string `json:"templateKey,omitempty"`
-	Status      string `json:"status"`
-	Default     bool   `json:"default"`
-	CreatedAt   int64  `json:"createdAt"`
-	UpdatedAt   int64  `json:"updatedAt"`
+	NetworkID        string `json:"networkId"`
+	OwnerUserID      string `json:"ownerUserId"`
+	Name             string `json:"name"`
+	Code             string `json:"code"`
+	TemplateKey      string `json:"templateKey,omitempty"`
+	IntraGroupPolicy string `json:"intraGroupPolicy"`
+	Default          bool   `json:"default"`
+	CreatedAt        int64  `json:"createdAt"`
+	UpdatedAt        int64  `json:"updatedAt"`
 }
 
 // NetworkDevice 是设备加入某个虚拟网络后的成员关系。
@@ -75,7 +75,7 @@ type SecurityGroup struct {
 	NetworkID       string `json:"networkId"`
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`
-	Status          string `json:"status"`
+	Status          string `json:"-"`
 	CreatedAt       int64  `json:"createdAt"`
 }
 
@@ -120,9 +120,11 @@ type NetworkConfig struct {
 	// NetworkID 是配置所属虚拟网络。
 	NetworkID string `json:"networkId"`
 	// NetworkName 是网络显示名称。
-	NetworkName   string `json:"networkName,omitempty"`
-	NetworkCode   string `json:"networkCode,omitempty"`
-	ConfigVersion int64  `json:"configVersion,omitempty"`
+	NetworkName      string `json:"networkName,omitempty"`
+	NetworkCode      string `json:"networkCode,omitempty"`
+	IntraGroupPolicy string `json:"intraGroupPolicy,omitempty"`
+	NetworkCreatedAt int64  `json:"networkCreatedAt,omitempty"`
+	ConfigVersion    int64  `json:"configVersion,omitempty"`
 	// DeviceID 是接收该配置的本机设备 ID。
 	DeviceID string `json:"deviceId"`
 	// GlobalIP 是本机在 SLAN 网络内的虚拟 IP。

@@ -67,14 +67,14 @@ pub fn set_control_base_url_override(value: &str) {
 #[allow(dead_code)]
 pub fn set_client_device_id_override(value: &str) {
     let value = value.trim();
-    if !is_uuid_like(value) {
+    let Some(value) = normalize_device_id(value) else {
         return;
-    }
+    };
     let mutex = CLIENT_DEVICE_ID_OVERRIDE.get_or_init(|| Mutex::new(None));
     let mut override_value = mutex
         .lock()
         .expect("client device id override mutex poisoned");
-    *override_value = Some(value.to_string());
+    *override_value = Some(value);
 }
 
 fn control_base_url_override() -> Option<String> {
@@ -286,6 +286,10 @@ pub struct DeviceNetworkConfig {
     #[serde(default)]
     pub network_code: Option<String>,
     #[serde(default)]
+    pub intra_group_policy: Option<String>,
+    #[serde(default)]
+    pub network_created_at: Option<i64>,
+    #[serde(default)]
     pub config_version: Option<i64>,
     pub device_id: String,
     #[serde(default)]
@@ -332,6 +336,10 @@ pub struct DeviceSecurityGroup {
     pub security_group_id: String,
     pub network_id: String,
     pub name: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub created_at: i64,
 }
 
 /// DeviceSecurityRule 是下发给设备的数据面访问控制规则。
@@ -1548,8 +1556,9 @@ fn stable_device_id_at_path(
     }
     if let Ok(value) = fs::read_to_string(path) {
         let value = value.trim();
-        if is_uuid_like(value) {
-            return Ok(value.to_string());
+        if let Some(value) = normalize_device_id(value) {
+            fs::write(path, &value).with_context(|| format!("write {}", path.display()))?;
+            return Ok(value);
         }
     }
     if let Some(parent) = path.parent() {
@@ -1557,8 +1566,7 @@ fn stable_device_id_at_path(
     }
     let created = preferred_device_id
         .map(str::trim)
-        .filter(|value| is_uuid_like(value))
-        .map(str::to_string)
+        .and_then(normalize_device_id)
         .unwrap_or_else(uuid_v4_device_id);
     fs::write(path, &created).with_context(|| format!("write {}", path.display()))?;
     Ok(created)
@@ -1607,14 +1615,13 @@ fn env_device_id_override() -> Option<String> {
     if let Some(value) = CLIENT_DEVICE_ID_OVERRIDE
         .get()
         .and_then(|mutex| mutex.lock().ok().and_then(|value| value.clone()))
-        .filter(|value| is_uuid_like(value))
+        .and_then(|value| normalize_device_id(&value))
     {
         return Some(value);
     }
     env::var("SLAN_CLIENT_DEVICE_ID")
         .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| is_uuid_like(value))
+        .and_then(|value| normalize_device_id(&value))
 }
 
 fn uuid_v4_device_id() -> String {
@@ -1693,20 +1700,22 @@ fn windows_uuid_v4_string() -> Option<String> {
         return None;
     }
     let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    is_uuid_like(&value).then_some(value)
+    normalize_device_id(&value)
 }
 
-fn is_uuid_like(value: &str) -> bool {
-    let parts = value.split('-').collect::<Vec<_>>();
-    parts.iter().map(|part| part.len()).collect::<Vec<_>>() == vec![8, 4, 4, 4, 12]
-        && parts
-            .iter()
-            .all(|part| part.chars().all(|ch| ch.is_ascii_hexdigit()))
-        && parts[2].starts_with('4')
-        && matches!(
-            parts[3].chars().next(),
-            Some('8' | '9' | 'a' | 'b' | 'A' | 'B')
-        )
+fn normalize_device_id(value: &str) -> Option<String> {
+    let compact = value.trim().replace('-', "");
+    if compact.len() != 32 || !compact.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    let compact = compact.to_ascii_lowercase();
+    if compact.as_bytes().get(12) != Some(&b'4') {
+        return None;
+    }
+    if !matches!(compact.as_bytes().get(16), Some(b'8' | b'9' | b'a' | b'b')) {
+        return None;
+    }
+    Some(compact)
 }
 
 fn fallback_uuid_v4_device_id() -> String {
@@ -1730,7 +1739,7 @@ fn format_uuid_v4(mut bytes: [u8; 16]) -> String {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         bytes[0],
         bytes[1],
         bytes[2],
@@ -1858,6 +1867,7 @@ mod tests {
     fn password_login_posts_stable_device_id() {
         let _guard = crate::test_env_lock();
         let device_id = "11111111-1111-4111-8111-111111111111";
+        let compact_device_id = "11111111111141118111111111111111";
         let state_dir = unique_test_state_dir("password-login-device-id");
         fs::create_dir_all(&state_dir).expect("create state dir");
         env::set_var("SLAN_CLIENT_DEVICE_ID", device_id);
@@ -1888,14 +1898,14 @@ mod tests {
             .login_with_password("android@example.test", "password-1")
             .expect("login with password");
 
-        assert_eq!(auth.device_id.as_deref(), Some(device_id));
+        assert_eq!(auth.device_id.as_deref(), Some(compact_device_id));
         let request = request_handle.join().expect("request handle");
         assert!(request.starts_with("POST /api/auth/login HTTP/1.1"));
         let (_, body) = request.split_once("\r\n\r\n").expect("login body");
         let body: Value = serde_json::from_str(body).expect("decode login body");
         assert_eq!(
             body.get("deviceId").and_then(Value::as_str),
-            Some(device_id)
+            Some(compact_device_id)
         );
 
         env::remove_var("SLAN_CLIENT_DEVICE_ID");
@@ -1951,7 +1961,7 @@ mod tests {
     }
 
     #[test]
-    fn device_id_is_uuid_v4_and_persisted() {
+    fn device_id_is_compact_uuid_v4_and_persisted() {
         let _guard = crate::test_env_lock();
         env::remove_var("SLAN_CLIENT_DEVICE_ID");
 
@@ -1961,7 +1971,7 @@ mod tests {
         let first_again =
             stable_device_id_at_path(&first_path, None).expect("reuse first device id");
         assert_eq!(first, first_again);
-        assert_uuid_v4(&first);
+        assert_compact_uuid_v4(&first);
         assert_eq!(
             fs::read_to_string(&first_path)
                 .expect("read persisted first device id")
@@ -1973,10 +1983,26 @@ mod tests {
         let second_path = second_state_dir.join("client-v2-device-id.txt");
         let second = stable_device_id_at_path(&second_path, None).expect("create second device id");
         assert_ne!(first, second);
-        assert_uuid_v4(&second);
+        assert_compact_uuid_v4(&second);
+
+        let legacy_state_dir = unique_test_state_dir("uuid-device-id-legacy");
+        let legacy_path = legacy_state_dir.join("client-v2-device-id.txt");
+        fs::create_dir_all(&legacy_state_dir).expect("create legacy state dir");
+        fs::write(&legacy_path, "11111111-1111-4111-8111-111111111111")
+            .expect("write legacy device id");
+        let legacy =
+            stable_device_id_at_path(&legacy_path, None).expect("normalize legacy device id");
+        assert_eq!(legacy, "11111111111141118111111111111111");
+        assert_eq!(
+            fs::read_to_string(&legacy_path)
+                .expect("read normalized legacy device id")
+                .trim(),
+            legacy
+        );
 
         let _ = fs::remove_dir_all(first_state_dir);
         let _ = fs::remove_dir_all(second_state_dir);
+        let _ = fs::remove_dir_all(legacy_state_dir);
     }
 
     #[test]
@@ -1998,19 +2024,13 @@ mod tests {
         let _ = fs::remove_dir_all(state_dir);
     }
 
-    fn assert_uuid_v4(value: &str) {
-        let parts = value.split('-').collect::<Vec<_>>();
-        assert_eq!(
-            parts.iter().map(|part| part.len()).collect::<Vec<_>>(),
-            vec![8, 4, 4, 4, 12]
-        );
-        assert!(parts
-            .iter()
-            .all(|part| part.chars().all(|ch| ch.is_ascii_hexdigit())));
-        assert!(parts[2].starts_with('4'));
+    fn assert_compact_uuid_v4(value: &str) {
+        assert_eq!(value.len(), 32);
+        assert!(value.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_eq!(value.as_bytes().get(12), Some(&b'4'));
         assert!(matches!(
-            parts[3].chars().next(),
-            Some('8' | '9' | 'a' | 'b' | 'A' | 'B')
+            value.as_bytes().get(16),
+            Some(b'8' | b'9' | b'a' | b'b')
         ));
     }
 

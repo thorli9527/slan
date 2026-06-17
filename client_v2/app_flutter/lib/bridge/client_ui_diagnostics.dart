@@ -6,15 +6,26 @@ import 'package:flutter/foundation.dart';
 
 import 'client_view_state.dart';
 
+/// Flutter UI 诊断日志工具。
+///
+/// 默认关闭，只有通过 `--dart-define=SLAN_UI_DIAGNOSTICS=true` 打开后才写日志。
+/// 诊断日志不能影响用户流程，因此写入失败会被吞掉。
 class ClientUiDiagnostics {
   const ClientUiDiagnostics._();
 
+  /// 是否启用 UI 诊断。
   static const bool enabled = bool.fromEnvironment(
     'SLAN_UI_DIAGNOSTICS',
     defaultValue: false,
   );
+
+  /// 串行写入队列，避免并发追加日志造成行交错。
   static Future<void> _writeQueue = Future<void>.value();
 
+  /// 写入一条结构化诊断事件。
+  ///
+  /// [state] 会被裁剪成不含敏感信息的摘要；[fields] 用于补充当前事件
+  /// 独有的上下文，例如命令名、错误消息或平台状态。
   static Future<void> log(
     String event, {
     ClientViewState? state,
@@ -34,6 +45,7 @@ class ClientUiDiagnostics {
     await _enqueueWrite(line);
   }
 
+  /// fire-and-forget 版本，适合 UI 事件处理里调用。
   static void unawaitedLog(
     String event, {
     ClientViewState? state,
@@ -42,6 +54,7 @@ class ClientUiDiagnostics {
     log(event, state: state, fields: fields).ignore();
   }
 
+  /// 把日志追加操作接到串行队列末尾。
   static Future<void> _enqueueWrite(String line) {
     _writeQueue = _writeQueue.then((_) async {
       try {
@@ -55,6 +68,10 @@ class ClientUiDiagnostics {
     return _writeQueue;
   }
 
+  /// 根据平台返回诊断日志路径。
+  ///
+  /// Windows 写入 ProgramData，其他平台写入系统临时目录，避免普通用户
+  /// 权限不足时影响 UI。
   static String _logPath() {
     if (Platform.isWindows) {
       final programData =
@@ -66,7 +83,12 @@ class ClientUiDiagnostics {
   }
 }
 
+/// 把 UI 状态转换成诊断 JSON 的扩展。
+///
+/// 这里只保留布尔、状态码和“是否存在”类信息，不输出用户邮箱、设备 ID
+/// 等完整敏感值。
 extension ClientViewStateDiagnostics on ClientViewState {
+  /// 生成可写入日志的状态摘要。
   Map<String, Object?> toDiagnosticsJson() {
     return {
       'signedIn': signedIn,

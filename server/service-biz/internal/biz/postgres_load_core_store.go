@@ -23,6 +23,9 @@ func (s *Store) loadPostgresCoreLocked(ctx context.Context) error {
 	if err := s.loadPostgresDeviceSharingLocked(ctx); err != nil {
 		return err
 	}
+	if err := s.loadPostgresDeviceGroupsLocked(ctx); err != nil {
+		return err
+	}
 	if err := s.loadPostgresIPAMLocked(ctx); err != nil {
 		return err
 	}

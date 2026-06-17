@@ -61,6 +61,30 @@ func (s DeviceService) ListVisibleDevices(userID string) []Device {
 	return s.store.ListVisibleDevices(userID)
 }
 
+func (s DeviceService) ListDeviceGroups(userID string) []DeviceGroup {
+	return s.store.ListDeviceGroups(userID)
+}
+
+func (s DeviceService) ListDeviceGroupMembers(userID string) []DeviceGroupMember {
+	return s.store.ListDeviceGroupMembers(userID)
+}
+
+func (s DeviceService) CreateDeviceGroup(userID string, req CreateDeviceGroupRequest) (DeviceGroup, error) {
+	return s.store.CreateDeviceGroup(userID, req.Name)
+}
+
+func (s DeviceService) UpdateDeviceGroup(userID, groupID string, req UpdateDeviceGroupRequest) (DeviceGroup, error) {
+	return s.store.UpdateDeviceGroup(userID, groupID, req.Name)
+}
+
+func (s DeviceService) DeleteDeviceGroup(userID, groupID string) error {
+	return s.store.DeleteDeviceGroup(userID, groupID)
+}
+
+func (s DeviceService) SetDeviceGroups(userID, deviceID string, req SetDeviceGroupsRequest) ([]DeviceGroupMember, error) {
+	return s.store.SetDeviceGroups(userID, deviceID, req.GroupIDs)
+}
+
 func (s DeviceService) UpdateAlias(deviceID string, req UpdateDeviceAliasRequest) (Device, error) {
 	return s.store.UpdateDeviceAlias(deviceID, req.ActorUserID, req.Alias)
 }

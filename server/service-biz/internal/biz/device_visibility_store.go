@@ -108,6 +108,11 @@ func (s *Store) removeDeviceLocked(deviceID string) error {
 			delete(s.deviceAccessGrants, key)
 		}
 	}
+	for key, member := range s.deviceGroupMembers {
+		if member.DeviceID == deviceID {
+			delete(s.deviceGroupMembers, key)
+		}
+	}
 	for ipID, ip := range s.globalIPs {
 		if ip.DeviceID == deviceID {
 			ip.DeviceID = ""

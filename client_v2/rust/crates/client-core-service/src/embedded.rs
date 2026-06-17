@@ -263,7 +263,6 @@ fn platform_network_config() -> Result<Value> {
         .find(|candidate| candidate.transport == "udp")
         .or_else(|| activation.relay_candidates.first());
     let all_acl_policies = platform_acl_policies(&network_configs);
-    let active_acl_policies = acl_policies_for_network(&all_acl_policies, network_id.as_str());
     let eligible_relay_peer_count =
         embedded_eligible_relay_peer_count(activation.self_node_id.as_deref(), &activation.peers);
     let (relay_data_plane, relay_build_error) = match build_embedded_relay_data_plane_config(
@@ -301,7 +300,7 @@ fn platform_network_config() -> Result<Value> {
         relay_endpoint_id: best_relay.map(|relay| relay.endpoint_id.clone()),
         relay_transport: best_relay.map(|relay| relay.transport.clone()),
         relay_address: platform_relay_address,
-        acl_policies: active_acl_policies,
+        acl_policies: all_acl_policies.clone(),
         relay_data_plane,
     };
     let mut value = serde_json::to_value(config).context("encode platform config value")?;
@@ -330,6 +329,8 @@ fn platform_network_configs(
             device_id: config.device_id.clone(),
             network_name: config.network_name.clone(),
             network_code: config.network_code.clone(),
+            intra_group_policy: config.intra_group_policy.clone(),
+            network_created_at: config.network_created_at,
             config_version: config.config_version,
             global_ip: config.global_ip.clone(),
             global_name: config.global_name.clone(),

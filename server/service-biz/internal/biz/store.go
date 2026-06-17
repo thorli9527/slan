@@ -46,6 +46,7 @@ type Store struct {
 	nextDeviceInviteSeq  int
 	nextDeviceSessionSeq int
 	nextBootstrapKeySeq  int
+	nextDeviceGroupSeq   int
 	nextOwnerSeq         int
 	nextOwnerLogSeq      int
 	nextZoneSeq          int
@@ -86,6 +87,8 @@ type Store struct {
 	deviceSessions           map[string]DeviceSession
 	deviceSessionByToken     map[string]string
 	deviceBootstrapKeys      map[string]DeviceBootstrapKey
+	deviceGroups             map[string]DeviceGroup
+	deviceGroupMembers       map[string]DeviceGroupMember
 	deviceBootstrapKeyStore  deviceBootstrapKeyStore
 	consoleLoginKeys         map[string]ConsoleLoginKey
 	controlDeliveries        map[string]MQTTControlDelivery
@@ -148,6 +151,7 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 		nextDeviceInviteSeq:     1,
 		nextDeviceSessionSeq:    1,
 		nextBootstrapKeySeq:     1,
+		nextDeviceGroupSeq:      1,
 		nextOwnerSeq:            1,
 		nextOwnerLogSeq:         1,
 		nextZoneSeq:             1,
@@ -187,6 +191,8 @@ func NewStoreWithDeviceInviteStore(inviteStore deviceInviteStore) *Store {
 		deviceSessions:          make(map[string]DeviceSession),
 		deviceSessionByToken:    make(map[string]string),
 		deviceBootstrapKeys:     make(map[string]DeviceBootstrapKey),
+		deviceGroups:            make(map[string]DeviceGroup),
+		deviceGroupMembers:      make(map[string]DeviceGroupMember),
 		deviceBootstrapKeyStore: bootstrapKeyStore,
 		consoleLoginKeys:        make(map[string]ConsoleLoginKey),
 		controlDeliveries:       make(map[string]MQTTControlDelivery),

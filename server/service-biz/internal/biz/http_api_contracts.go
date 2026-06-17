@@ -93,6 +93,18 @@ type RevokeDeviceBootstrapKeyRequest struct {
 	UserID string `json:"userId"`
 }
 
+type CreateDeviceGroupRequest struct {
+	Name string `json:"name"`
+}
+
+type UpdateDeviceGroupRequest struct {
+	Name string `json:"name"`
+}
+
+type SetDeviceGroupsRequest struct {
+	GroupIDs []string `json:"groupIds"`
+}
+
 // DeviceSessionBootstrapRequest 是设备使用引导密钥创建会话的请求。
 type DeviceSessionBootstrapRequest struct {
 	SessionKey string `json:"sessionKey"`
@@ -216,17 +228,18 @@ type DeleteDeviceRequest struct {
 
 // CreateNetworkRequest 是创建虚拟网络的请求。
 type CreateNetworkRequest struct {
-	OwnerUserID string `json:"ownerUserId"`
-	Name        string `json:"name"`
-	Code        string `json:"code"`
-	TemplateKey string `json:"templateKey"`
+	OwnerUserID      string `json:"ownerUserId"`
+	Name             string `json:"name"`
+	Code             string `json:"code"`
+	TemplateKey      string `json:"templateKey"`
+	IntraGroupPolicy string `json:"intraGroupPolicy"`
 }
 
 // UpdateNetworkRequest 是更新虚拟网络基础信息的请求。
 type UpdateNetworkRequest struct {
-	Name   string `json:"name"`
-	Code   string `json:"code"`
-	Status string `json:"status"`
+	Name             string `json:"name"`
+	Code             string `json:"code"`
+	IntraGroupPolicy string `json:"intraGroupPolicy"`
 }
 
 // CreateDeviceInviteRequest 是创建设备邀请的请求。
@@ -293,6 +306,12 @@ type PublicMappingRequest struct {
 
 // CreateSecurityGroupRequest 是创建安全组的请求。
 type CreateSecurityGroupRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// SecurityGroupRequest 是更新安全组可编辑字段的请求。
+type SecurityGroupRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }

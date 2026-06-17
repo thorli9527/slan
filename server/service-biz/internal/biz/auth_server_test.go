@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConsoleLoginHTTPFlowConsumesServerIssuedKeyOnce(t *testing.T) {
@@ -377,6 +378,131 @@ func TestNetworkConfigHTTPMutationsWriteAuditEvents(t *testing.T) {
 	}
 }
 
+func TestSecurityGroupMutationsPushNetworkConfigChangedToClients(t *testing.T) {
+	server := NewServer()
+	store := server.store.(*Store)
+	auth, network, err := server.store.RegisterUser("security-push@example.com", "secret", "Security Push")
+	if err != nil {
+		t.Fatalf("register user: %v", err)
+	}
+	device, _, err := server.store.RegisterDevice(auth.User.UserID, "security-push-device", "Mac", "macos", "macOS", "15.0", "", "pub")
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	server.mqtt = MQTTConfig{
+		Enabled:                    true,
+		BrokerURL:                  "mqtt://127.0.0.1:1883",
+		PublicBrokerURL:            "mqtt://127.0.0.1:1883",
+		UsernamePrefix:             "slan",
+		PasswordSecret:             "test-secret",
+		TopicPrefix:                "slan",
+		CredentialTTLSeconds:       3600,
+		ControlMessageTTLSeconds:   3600,
+		PublishTimeoutMilliseconds: 1,
+	}
+	handler := server.Routes()
+
+	var group SecurityGroup
+	postJSON(t, handler, "/api/networks/"+network.NetworkID+"/security-groups", "", map[string]any{
+		"name": "",
+	}, http.StatusCreated, &group)
+	assertNetworkConfigDeliveryCount(t, store, device.DeviceID, 0)
+
+	requestJSON(t, handler, http.MethodPatch, "/api/networks/"+network.NetworkID+"/security-groups/"+group.SecurityGroupID, "", map[string]any{
+		"name": "renamed",
+	}, http.StatusOK, &group)
+	assertNetworkConfigDeliveryCount(t, store, device.DeviceID, 0)
+
+	requestJSON(t, handler, http.MethodPatch, "/api/networks/"+network.NetworkID, "", map[string]any{
+		"name":             "Security Push Renamed",
+		"code":             "security-push-renamed",
+		"intraGroupPolicy": "deny",
+	}, http.StatusOK, &network)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 1, "network", "update", "network_updated", network.NetworkID)
+
+	var rule SecurityGroupRule
+	postJSON(t, handler, "/api/security-groups/"+group.SecurityGroupID+"/rules", "", map[string]any{
+		"direction": "ingress",
+		"action":    "allow",
+		"protocol":  "tcp",
+		"peerType":  "device",
+		"peerValue": device.DeviceID,
+		"priority":  100,
+		"portFrom":  22,
+		"portTo":    22,
+		"enabled":   true,
+	}, http.StatusCreated, &rule)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 2, "security_rule", "add", "security_rule_ingress_added", rule.RuleID)
+
+	requestJSON(t, handler, http.MethodPatch, "/api/security-groups/rules/"+rule.RuleID, "", map[string]any{
+		"direction": "ingress",
+		"action":    "deny",
+		"protocol":  "tcp",
+		"peerType":  "device",
+		"peerValue": device.DeviceID,
+		"priority":  90,
+		"portFrom":  22,
+		"portTo":    22,
+		"enabled":   true,
+	}, http.StatusOK, &rule)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 3, "security_rule", "update", "security_rule_ingress_updated", rule.RuleID)
+
+	requestJSON(t, handler, http.MethodDelete, "/api/security-groups/rules/"+rule.RuleID, "", map[string]any{}, http.StatusOK, nil)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 4, "security_rule", "remove", "security_rule_ingress_removed", rule.RuleID)
+
+	var egressRule SecurityGroupRule
+	postJSON(t, handler, "/api/security-groups/"+group.SecurityGroupID+"/rules", "", map[string]any{
+		"direction": "egress",
+		"action":    "allow",
+		"protocol":  "tcp",
+		"peerType":  "all",
+		"peerValue": "all",
+		"priority":  100,
+		"portFrom":  443,
+		"portTo":    443,
+		"enabled":   true,
+	}, http.StatusCreated, &egressRule)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 5, "security_rule", "add", "security_rule_egress_added", egressRule.RuleID)
+
+	requestJSON(t, handler, http.MethodPatch, "/api/security-groups/rules/"+egressRule.RuleID, "", map[string]any{
+		"direction": "egress",
+		"action":    "deny",
+		"protocol":  "tcp",
+		"peerType":  "all",
+		"peerValue": "all",
+		"priority":  80,
+		"portFrom":  443,
+		"portTo":    443,
+		"enabled":   true,
+	}, http.StatusOK, &egressRule)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 6, "security_rule", "update", "security_rule_egress_updated", egressRule.RuleID)
+
+	requestJSON(t, handler, http.MethodDelete, "/api/security-groups/rules/"+egressRule.RuleID, "", map[string]any{}, http.StatusOK, nil)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 7, "security_rule", "remove", "security_rule_egress_removed", egressRule.RuleID)
+
+	requestJSON(t, handler, http.MethodPatch, "/api/networks/"+network.NetworkID+"/security-groups/"+group.SecurityGroupID, "", map[string]any{
+		"name": "renamed",
+	}, http.StatusOK, &group)
+	assertNetworkConfigDeliveryCount(t, store, device.DeviceID, 7)
+
+	requestJSON(t, handler, http.MethodDelete, "/api/networks/"+network.NetworkID+"/security-groups/"+group.SecurityGroupID, "", map[string]any{}, http.StatusOK, nil)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 8, "security_group", "remove", "security_group_removed", group.SecurityGroupID)
+
+	requestJSON(t, handler, http.MethodPatch, "/api/networks/"+network.NetworkID, "", map[string]any{
+		"name":             network.Name + " A",
+		"code":             network.Code,
+		"intraGroupPolicy": network.IntraGroupPolicy,
+	}, http.StatusOK, &network)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 9, "network", "update", "network_updated", network.NetworkID)
+
+	requestJSON(t, handler, http.MethodPatch, "/api/networks/"+network.NetworkID, "", map[string]any{
+		"name":             network.Name + " B",
+		"code":             network.Code,
+		"intraGroupPolicy": network.IntraGroupPolicy,
+	}, http.StatusOK, &network)
+	assertLatestNetworkConfigDelivery(t, store, device.DeviceID, 10, "network", "update", "network_updated", network.NetworkID)
+}
+
 func TestOpsMutationsWriteOperatorAuditEvents(t *testing.T) {
 	server := NewServer()
 	auth, _, err := server.store.RegisterUser("ops-audit@example.com", "secret", "Ops Audit")
@@ -596,6 +722,73 @@ func hasAuditEvent(events []AuditEvent, action, status, resourceID string) bool 
 		}
 	}
 	return false
+}
+
+func waitForNetworkConfigDeliveryCount(t *testing.T, store *Store, deviceID string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got := networkConfigDeliveryCount(store, deviceID); got >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("network_config_changed delivery count for %s = %d, want at least %d", deviceID, networkConfigDeliveryCount(store, deviceID), want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func assertNetworkConfigDeliveryCount(t *testing.T, store *Store, deviceID string, want int) {
+	t.Helper()
+	if got := networkConfigDeliveryCount(store, deviceID); got != want {
+		t.Fatalf("network_config_changed delivery count for %s = %d, want %d", deviceID, got, want)
+	}
+}
+
+func assertLatestNetworkConfigDelivery(t *testing.T, store *Store, deviceID string, wantCount int, resourceType, action, reason, resourceID string) {
+	t.Helper()
+	waitForNetworkConfigDeliveryCount(t, store, deviceID, wantCount)
+	payload := latestNetworkConfigDeliveryPayload(t, store, deviceID)
+	if payload.ResourceType != resourceType || payload.Action != action || payload.Reason != reason || payload.ResourceID != resourceID {
+		t.Fatalf("latest network_config_changed payload = %+v, want resourceType=%s action=%s reason=%s resourceID=%s", payload, resourceType, action, reason, resourceID)
+	}
+}
+
+func networkConfigDeliveryCount(store *Store, deviceID string) int {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	count := 0
+	for _, delivery := range store.controlDeliveries {
+		if delivery.DeviceID == deviceID && delivery.MessageType == "network_config_changed" {
+			count++
+		}
+	}
+	return count
+}
+
+func latestNetworkConfigDeliveryPayload(t *testing.T, store *Store, deviceID string) networkChangePayload {
+	t.Helper()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var latest MQTTControlDelivery
+	var latestPayload networkChangePayload
+	for _, delivery := range store.controlDeliveries {
+		if delivery.DeviceID != deviceID || delivery.MessageType != "network_config_changed" {
+			continue
+		}
+		var payload networkChangePayload
+		if err := json.Unmarshal(delivery.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal network_config_changed payload: %v", err)
+		}
+		if latest.DeliveryID == "" || payload.ConfigVersion > latestPayload.ConfigVersion {
+			latest = delivery
+			latestPayload = payload
+		}
+	}
+	if latest.DeliveryID == "" {
+		t.Fatalf("no network_config_changed delivery for device %s", deviceID)
+	}
+	return latestPayload
 }
 
 func postJSON(t *testing.T, handler http.Handler, path, authorization string, body any, want int, out any) {

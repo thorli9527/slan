@@ -2,6 +2,8 @@ import { panelFromRoute } from '../app-routing';
 import { AppComponentSecurity } from '../network/app.component.security';
 import {
   ApiDevice,
+  ApiDeviceGroup,
+  ApiDeviceGroupMember,
   ClientDownload,
   ApiDNSRecord,
   ApiDNSZone,
@@ -50,6 +52,13 @@ export abstract class AppComponentData extends AppComponentSecurity {
     }
     if (path === '/devices') {
       this.active = 'devices';
+      this.devicePanel = 'list';
+      this.workspaceRouteMode = 'list';
+      return;
+    }
+    if (path === '/devices/groups') {
+      this.active = 'devices';
+      this.devicePanel = 'groups';
       this.workspaceRouteMode = 'list';
       return;
     }
@@ -90,13 +99,14 @@ export abstract class AppComponentData extends AppComponentSecurity {
       this.deviceQuota = quota;
       this.userAliases = aliases.items.map((item) => ({ email: item.email, alias: item.alias }));
       this.workspaceDeviceInvites = invites.items;
+      await this.loadDeviceGroups(userId);
       this.workspaces = workspaces.items.map((workspace) => ({
         networkId: workspace.networkId,
         workspaceId: workspace.networkId,
         name: workspace.name,
         code: workspace.code,
         template: workspace.templateKey ?? 'custom',
-        status: workspace.status,
+        intraGroupPolicy: workspace.intraGroupPolicy === 'deny' ? 'deny' : 'allow',
         members: 0,
         devices: 0,
         zone: `${workspace.code || slug(workspace.name)}.${workspace.networkId || 'network'}.${userId || 'user'}.sub.staticlss.com`,
@@ -104,6 +114,23 @@ export abstract class AppComponentData extends AppComponentSecurity {
       await Promise.all(this.workspaces.map((workspace) => this.loadWorkspaceDevices(workspace.workspaceId)));
     } catch {
       // The checked-in UI remains previewable without a running API.
+    }
+  }
+
+  protected async loadDeviceGroups(userId: string): Promise<void> {
+    if (!userId) {
+      return;
+    }
+    try {
+      const response = await this.api.get<{ items: ApiDeviceGroup[]; members: ApiDeviceGroupMember[] }>(WEB_API.deviceGroups(userId));
+      this.deviceGroups = response.items.map((group) => ({ groupId: group.groupId, name: group.name, description: '', createdAt: group.createdAt, updatedAt: group.updatedAt }));
+      const next: Record<string, string[]> = {};
+      for (const member of response.members ?? []) {
+        next[member.deviceId] = [...(next[member.deviceId] ?? []), member.groupId];
+      }
+      this.deviceGroupIdsByDevice = next;
+    } catch {
+      // Preview seed data remains available without the API.
     }
   }
 
@@ -211,8 +238,8 @@ export abstract class AppComponentData extends AppComponentSecurity {
       securityGroupId: compactUuid(),
       networkId: workspaceId,
       workspaceId,
-      name: '默认安全组',
-      status: 'active',
+      name: '',
+      createdAt: Math.floor(Date.now() / 1000),
     };
     if (!existing) {
       this.securityGroups = [...this.securityGroups, group];
@@ -259,7 +286,13 @@ export abstract class AppComponentData extends AppComponentSecurity {
   }
 
   protected override mapSecurityGroup(group: ApiSecurityGroup): SecurityGroupRow {
-    return { securityGroupId: group.securityGroupId, networkId: group.networkId, workspaceId: group.networkId, name: group.name, status: group.status };
+    return {
+      securityGroupId: group.securityGroupId,
+      networkId: group.networkId,
+      workspaceId: group.networkId,
+      name: group.name,
+      createdAt: group.createdAt,
+    };
   }
 
   protected override mapSecurityRule(rule: ApiSecurityRule): SecurityRuleRow {

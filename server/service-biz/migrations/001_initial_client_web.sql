@@ -162,13 +162,13 @@ create table networks (
   name varchar(128) not null,
   code varchar(64) not null,
   template_key varchar(64),
-  status varchar(32) not null default 'enabled',
+  intra_group_policy varchar(32) not null default 'allow',
   is_default boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
-create unique index ux_networks_owner_code on networks(owner_user_id, code) where status <> 'deleted';
+create unique index ux_networks_owner_code on networks(owner_user_id, code);
 
 create table device_bootstrap_keys (
   id varchar(128) primary key,
@@ -277,6 +277,24 @@ create table device_runtime_status (
   last_seen_at timestamptz,
   last_report_at timestamptz
 );
+
+create table device_groups (
+  id varchar(128) primary key,
+  user_id varchar(128) not null references users(id),
+  name varchar(128) not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, name)
+);
+
+create table device_group_members (
+  group_id varchar(128) not null references device_groups(id) on delete cascade,
+  device_id varchar(128) not null references devices(id) on delete cascade,
+  added_at timestamptz not null default now(),
+  primary key(group_id, device_id)
+);
+
+create index ix_device_group_members_device on device_group_members(device_id);
 
 create table device_sessions (
   id varchar(128) primary key,

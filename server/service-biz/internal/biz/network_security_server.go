@@ -20,8 +20,28 @@ func (s *Server) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordNetworkMutationAudit(r, "security_group.add", "security_group", group.SecurityGroupID, group.NetworkID, "", "succeeded", map[string]string{"name": group.Name})
-	s.notifyNetworkConfigChanged(group.NetworkID, "security_group_added", "security_group", "add", group.SecurityGroupID, "")
 	writeJSON(w, http.StatusCreated, group)
+}
+
+func (s *Server) updateSecurityGroup(w http.ResponseWriter, r *http.Request) {
+	var req SecurityGroupRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	networkID := r.PathValue("networkId")
+	securityGroupID := r.PathValue("securityGroupId")
+	before := securityGroupByID(s.services.Network.ListSecurityGroups(networkID), securityGroupID)
+	group, err := s.services.Network.UpdateSecurityGroup(networkID, securityGroupID, req)
+	if err != nil {
+		s.recordNetworkMutationAudit(r, "security_group.update", "security_group", securityGroupID, networkID, "", "failed", map[string]string{"error": err.Error()})
+		writeError(w, err)
+		return
+	}
+	s.recordNetworkMutationAudit(r, "security_group.update", "security_group", securityGroupID, networkID, "", "succeeded", map[string]string{"name": group.Name})
+	if securityGroupDataPlaneChanged(before, group) {
+		s.notifyNetworkConfigChanged(networkID, "security_group_updated", "security_group", "update", securityGroupID, "")
+	}
+	writeJSON(w, http.StatusOK, group)
 }
 
 func (s *Server) deleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +54,7 @@ func (s *Server) deleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordNetworkMutationAudit(r, "security_group.delete", "security_group", securityGroupID, networkID, "", "succeeded", nil)
 	s.notifyNetworkConfigChanged(networkID, "security_group_removed", "security_group", "remove", securityGroupID, "")
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]string{"securityGroupId": securityGroupID})
 }
 
 func (s *Server) listSecurityRules(w http.ResponseWriter, r *http.Request) {
@@ -90,4 +110,20 @@ func (s *Server) deleteSecurityRule(w http.ResponseWriter, r *http.Request) {
 	s.recordNetworkMutationAudit(r, "security_rule.delete", "security_rule", ruleID, networkID, "", "succeeded", map[string]string{"securityGroupId": rule.SecurityGroupID, "direction": rule.Direction})
 	s.notifyNetworkConfigChanged(networkID, securityRuleReason(rule.Direction, "removed"), "security_rule", "remove", ruleID, "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func securityGroupByID(groups []SecurityGroup, securityGroupID string) SecurityGroup {
+	for _, group := range groups {
+		if group.SecurityGroupID == securityGroupID {
+			return group
+		}
+	}
+	return SecurityGroup{}
+}
+
+func securityGroupDataPlaneChanged(before, after SecurityGroup) bool {
+	if before.SecurityGroupID == "" {
+		return true
+	}
+	return false
 }

@@ -23,7 +23,7 @@
       </div>
     </div>
     <table>
-      <thead><tr><th>名称</th><th>编码</th><th>设备</th><th>状态</th></tr></thead>
+      <thead><tr><th>名称</th><th>组内连通策略</th><th>设备</th></tr></thead>
       <tbody>
         <tr *ngFor="let workspace of vm.workspaces" [class.selected-row]="workspace.workspaceId === vm.selectedWorkspace.workspaceId">
           <td class="tag-cell-wrapper">
@@ -38,9 +38,8 @@
               <div class="tag-popover" *ngIf="vm.showWorkspaceNameTagDialog && vm.editingWorkspace?.workspaceId === workspace.workspaceId">
                 <div class="tag-popover-arrow"></div>
                 <div class="tag-editor-row"><span>名称</span><input [(ngModel)]="vm.workspaceNameValue" /></div>
-                <div class="tag-editor-row stacked"><span>编码</span><input [(ngModel)]="vm.workspaceCodeValue" /></div>
                 <div class="tag-popover-actions">
-                  <button class="text-link" type="button" (click)="vm.saveWorkspaceTagDialog()">保存</button>
+                  <button class="text-link" type="button" (click)="vm.saveWorkspaceNameTagDialog()">保存</button>
                   <button class="text-link muted" type="button" (click)="vm.closeWorkspaceTagDialogs()">取消</button>
                 </div>
               </div>
@@ -48,29 +47,24 @@
           </td>
           <td class="tag-cell-wrapper">
             <div class="alias-tag-cell">
-              <code>{{ workspace.code }}</code>
-              <button class="tag-icon-button" type="button" title="修改编码" (click)="vm.openWorkspaceCodeTagDialog(workspace); $event.stopPropagation()">
+              <span>{{ vm.intraGroupPolicyLabel(workspace.intraGroupPolicy) }}</span>
+              <button class="tag-icon-button" type="button" title="修改组内连通策略" (click)="vm.openWorkspacePolicyTagDialog(workspace); $event.stopPropagation()">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
                   <circle cx="8.5" cy="8.5" r="1.4"></circle>
                 </svg>
               </button>
-              <div class="tag-popover" *ngIf="vm.showWorkspaceCodeTagDialog && vm.editingWorkspace?.workspaceId === workspace.workspaceId">
+              <div class="tag-popover" *ngIf="vm.showWorkspacePolicyTagDialog && vm.editingWorkspace?.workspaceId === workspace.workspaceId">
                 <div class="tag-popover-arrow"></div>
-                <div class="tag-editor-row"><span>编码</span><input [(ngModel)]="vm.workspaceCodeValue" /></div>
+                <div class="tag-editor-row"><span>策略</span><select [(ngModel)]="vm.workspaceIntraGroupPolicyValue"><option value="allow">组内互通</option><option value="deny">组内隔离</option></select></div>
                 <div class="tag-popover-actions">
-                  <button class="text-link" type="button" (click)="vm.saveWorkspaceTagDialog()">保存</button>
+                  <button class="text-link" type="button" (click)="vm.saveWorkspacePolicyTagDialog()">保存</button>
                   <button class="text-link muted" type="button" (click)="vm.closeWorkspaceTagDialogs()">取消</button>
                 </div>
               </div>
             </div>
           </td>
           <td>{{ workspace.devices }}</td>
-          <td>
-            <button class="status-button" type="button" [class.online]="workspace.status === 'enabled'" (click)="vm.toggleWorkspace(workspace); $event.stopPropagation()">
-              {{ workspace.status === 'enabled' ? '启用' : '停用' }}
-            </button>
-          </td>
         </tr>
       </tbody>
     </table>
@@ -82,8 +76,7 @@
         <span class="eyebrow">当前网络</span>
         <h2>{{ vm.selectedWorkspace.name }}</h2>
         <div class="workspace-meta">
-          <span>编码：<code>{{ vm.selectedWorkspace.code }}</code></span>
-          <span>状态：{{ vm.selectedWorkspace.status === 'enabled' ? '启用' : '停用' }}</span>
+          <span>组内连通策略：{{ vm.intraGroupPolicyLabel(vm.selectedWorkspace.intraGroupPolicy) }}</span>
         </div>
       </div>
       <button class="ghost" type="button" (click)="vm.backToWorkspaceList()">返回网络列表</button>
@@ -92,7 +85,7 @@
     <div class="network-detail-metrics">
       <div><span>设备</span><strong>{{ vm.workspaceDevices.length }}</strong><small>当前网络可访问设备</small></div>
       <div><span>内网域名</span><strong>{{ vm.currentDNSZones.length }}</strong><small>仅网络内生效</small></div>
-      <div><span>访问规则</span><strong>{{ vm.currentSecurityGroups.length }}</strong><small>默认作用于全网络</small></div>
+      <div><span>安全组</span><strong>{{ vm.currentSecurityGroups.length }}</strong><small>默认作用于全网络</small></div>
     </div>
 
     <div class="panel-tabs">
@@ -101,7 +94,7 @@
       <button type="button" [class.active]="vm.workspacePanel === 'devices'" (click)="vm.setWorkspacePanel('devices')">设备</button>
       <button type="button" [class.active]="vm.workspacePanel === 'zones' || vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">内网域名</button>
       <button type="button" *ngIf="vm.publicMappingsEnabled" [class.active]="vm.workspacePanel === 'publicMappings'" (click)="vm.setWorkspacePanel('publicMappings')">公网访问</button>
-      <button type="button" [class.active]="vm.workspacePanel === 'securityGroups' || vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">访问规则</button>
+      <button type="button" [class.active]="vm.workspacePanel === 'securityGroups' || vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">安全组</button>
     </div>
 
     <div class="detail-grid one-column">
@@ -113,13 +106,20 @@
           </div>
           <button class="ghost small" type="button" (click)="vm.openWorkspaceDeviceDialog()">添加设备</button>
         </div>
-        <table class="compact-table">
-          <thead><tr><th>设备</th><th>归属</th><th>接入方式</th><th>别名</th><th>IP</th><th>状态</th><th>操作</th></tr></thead>
+        <table class="compact-table network-devices-table">
+          <colgroup>
+            <col class="device-id-column" />
+            <col class="owner-column" />
+            <col class="alias-column" />
+            <col class="ip-column" />
+            <col class="status-column" />
+            <col class="action-column" />
+          </colgroup>
+          <thead><tr><th>设备</th><th>归属</th><th>别名</th><th>IP</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>
             <tr *ngFor="let device of vm.workspaceDevices">
-              <td><button class="text-link" type="button" (click)="vm.openDeviceExposureDialog(device)">{{ device.deviceId }}</button></td>
+              <td class="device-id-cell"><button class="text-link" type="button" [title]="device.deviceId" (click)="vm.openDeviceExposureDialog(device)">{{ device.deviceId }}</button></td>
               <td>{{ vm.workspaceDeviceOwnerLabel(device) }}</td>
-              <td>{{ vm.workspaceDeviceJoinMethod(vm.selectedWorkspaceId, device.deviceId) }}</td>
               <td class="tag-cell-wrapper">
                 <div class="alias-tag-cell">
                   <span>{{ device.alias }}</span>
@@ -143,7 +143,7 @@
               <td><span class="status" [class.online]="device.status === 'active'">{{ device.status }}</span></td>
               <td class="table-actions"><button class="link-danger" type="button" (click)="vm.removeWorkspaceDevice(device)">移除</button></td>
             </tr>
-            <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="7">暂无设备，点击右上角“添加设备”开始。</td></tr>
+            <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="6">暂无设备，点击右上角“添加设备”开始。</td></tr>
           </tbody>
         </table>
       </section>
@@ -215,21 +215,40 @@
       <section class="detail-card" *ngIf="vm.workspacePanel === 'securityGroups'">
         <div class="section-title">
           <div>
-            <h3>访问规则</h3>
-            <p>用入方向和出方向规则控制当前网络里的设备访问。</p>
+            <h3>安全组</h3>
+            <p>安全组控制当前网络里的设备访问；规则命中时按规则处理，未命中时按当前网络的组内连通策略处理。</p>
           </div>
           <button class="ghost small" type="button" (click)="vm.openSecurityGroupDialog()">新增安全组</button>
         </div>
-        <p>规则会作用于当前网络全部设备；入方向控制谁能访问你，出方向控制你能访问哪里。</p>
+        <p>安全组默认作用于当前网络全部设备；入方向控制谁能访问你，出方向控制你能访问哪里。</p>
         <table class="compact-table">
-          <thead><tr><th>安全组</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>安全组 ID</th><th>安全组名称</th><th>创建时间</th><th>操作</th></tr></thead>
           <tbody>
             <tr *ngFor="let group of vm.currentSecurityGroups">
-              <td><button class="text-link" type="button" (click)="vm.openSecurityGroupRules(group)">{{ group.name }}</button></td>
-              <td><span class="status online">{{ group.status }}</span></td>
+              <td><button class="text-link" type="button" (click)="vm.openSecurityGroupRules(group)"><code>{{ group.securityGroupId }}</code></button></td>
+              <td class="tag-cell-wrapper">
+                <div class="alias-tag-cell">
+                  <span>{{ vm.securityGroupDisplayName(group) }}</span>
+                  <button class="tag-icon-button" type="button" title="修改名称" (click)="vm.openSecurityGroupNameTagDialog(group); $event.stopPropagation()">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                      <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                    </svg>
+                  </button>
+                  <div class="tag-popover tag-popover-up" *ngIf="vm.showSecurityGroupNameTagDialog && vm.editingSecurityGroup?.securityGroupId === group.securityGroupId">
+                    <div class="tag-popover-arrow"></div>
+                    <div class="tag-editor-row"><span>名称</span><input [(ngModel)]="vm.securityGroupNameValue" /></div>
+                    <div class="tag-popover-actions">
+                      <button class="text-link" type="button" (click)="vm.saveSecurityGroupNameTagDialog()">保存</button>
+                      <button class="text-link muted" type="button" (click)="vm.closeSecurityGroupNameTagDialog()">取消</button>
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td>{{ vm.formatTime(group.createdAt) }}</td>
               <td class="table-actions"><button class="link-danger" type="button" (click)="vm.removeSecurityGroup(group)">删除</button></td>
             </tr>
-            <tr *ngIf="vm.currentSecurityGroups.length === 0"><td colspan="3">暂无安全组</td></tr>
+            <tr *ngIf="vm.currentSecurityGroups.length === 0"><td colspan="4">暂无安全组</td></tr>
           </tbody>
         </table>
       </section>
@@ -322,19 +341,6 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="vm.showSecurityGroupDialog">
-  <section class="modal">
-    <header class="modal-header">
-      <div><h2>新增安全组</h2><p>安全组属于当前网络，默认作用于网络内全部设备。</p></div>
-      <button class="icon-button" type="button" title="关闭" (click)="vm.closeSecurityGroupDialog()">×</button>
-    </header>
-    <div class="form">
-      <label><span>安全组名称</span><input [(ngModel)]="vm.securityGroupName" /></label>
-    </div>
-    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeSecurityGroupDialog()">取消</button><button class="primary" type="button" (click)="vm.saveSecurityGroupDialog()">创建</button></footer>
-  </section>
-</div>
-
 <div class="modal-backdrop" *ngIf="vm.showIngressRuleDialog || vm.showEgressRuleDialog">
   <section class="modal rule-modal">
     <header class="modal-header">
@@ -368,16 +374,16 @@
 <div class="modal-backdrop" *ngIf="vm.showWorkspaceDialog">
   <section class="modal">
     <header class="modal-header">
-      <div><h2>{{ vm.workspaceDialogMode === 'create' ? '新增网络' : '修改网络' }}</h2><p>选择或输入网络名称，系统自动映射编码。</p></div>
+      <div><h2>{{ vm.workspaceDialogMode === 'create' ? '新增网络' : '修改网络' }}</h2><p>选择或输入网络名称。</p></div>
       <button class="icon-button" type="button" title="关闭" (click)="vm.closeWorkspaceDialog()">×</button>
     </header>
     <div class="form">
       <label>
         <span>网络名称</span>
         <input [(ngModel)]="vm.workspaceName" list="workspace-name-options" (input)="vm.onWorkspaceNameChanged()" />
-        <datalist id="workspace-name-options"><option *ngFor="let preset of vm.workspacePresets" [value]="preset.name">{{ preset.code }}</option></datalist>
+        <datalist id="workspace-name-options"><option *ngFor="let preset of vm.workspacePresets" [value]="preset.name"></option></datalist>
       </label>
-      <label><span>编码 Code</span><input [(ngModel)]="vm.workspaceCode" /></label>
+      <label><span>组内连通策略</span><select [(ngModel)]="vm.workspaceIntraGroupPolicy"><option value="allow">组内互通</option><option value="deny">组内隔离</option></select></label>
       <p class="form-error" *ngIf="vm.workspaceDialogMessage">{{ vm.workspaceDialogMessage }}</p>
     </div>
     <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeWorkspaceDialog()">取消</button><button class="primary" type="button" (click)="vm.addWorkspace()">{{ vm.workspaceDialogMode === 'create' ? '创建网络' : '保存修改' }}</button></footer>

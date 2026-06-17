@@ -77,6 +77,21 @@ export class AppApiClient {
     if (!response.ok) {
       throw await this.httpError('DELETE', path, response);
     }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    return response.json() as Promise<T>;
+  }
+
+  async put<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(`${apiBase()}${path}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw await this.httpError('PUT', path, response);
+    }
     return response.json() as Promise<T>;
   }
 

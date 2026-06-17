@@ -617,6 +617,45 @@ mod tests {
     }
 
     #[test]
+    fn acl_policy_order_allows_newer_network_to_override_same_port_rule() {
+        let packet = tcp_packet("10.0.0.2", "10.0.0.3", 443);
+        let newer = PlatformAclPolicy {
+            network_id: "new-network".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "new-deny".to_string(),
+                direction: "egress".to_string(),
+                priority: 1,
+                action: "deny".to_string(),
+                protocol: "tcp".to_string(),
+                port_from: 443,
+                port_to: 443,
+                peer_type: "all".to_string(),
+                peer_value: "all".to_string(),
+                enabled: true,
+                ..PlatformAclRule::default()
+            }],
+        };
+        let older = PlatformAclPolicy {
+            network_id: "old-network".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "old-allow".to_string(),
+                direction: "egress".to_string(),
+                priority: 1,
+                action: "allow".to_string(),
+                protocol: "tcp".to_string(),
+                port_from: 443,
+                port_to: 443,
+                peer_type: "all".to_string(),
+                peer_value: "all".to_string(),
+                enabled: true,
+                ..PlatformAclRule::default()
+            }],
+        };
+
+        assert!(!acl_allows_egress_packet(&packet, &[newer, older], None));
+    }
+
+    #[test]
     fn acl_applies_ingress_direction_to_destination_ip() {
         let packet = tcp_packet("10.0.0.3", "10.0.0.2", 22);
         let policy = PlatformAclPolicy {

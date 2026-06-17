@@ -306,6 +306,7 @@ func (s *Store) deletePostgresDeviceTxLocked(ctx context.Context, tx *sql.Tx, de
 		`delete from device_sessions where device_id=$1`,
 		`delete from network_config_versions where device_id=$1`,
 		`delete from network_devices where device_id=$1`,
+		`delete from device_group_members where device_id=$1`,
 		`delete from device_runtime_status where device_id=$1`,
 		`delete from device_access_grants where device_id=$1`,
 		`update global_ip_addresses set device_id=null,status='available',released_at=now() where device_id=$1`,

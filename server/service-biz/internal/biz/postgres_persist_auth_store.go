@@ -33,9 +33,9 @@ func (s *Store) persistPostgresUserRegisterTxLocked(ctx context.Context, tx *sql
 		_ = tx.Rollback()
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `insert into networks(id,owner_user_id,name,code,template_key,status,is_default,created_at,updated_at)
+	if _, err := tx.ExecContext(ctx, `insert into networks(id,owner_user_id,name,code,template_key,intra_group_policy,is_default,created_at,updated_at)
 		values($1,$2,$3,$4,$5,$6,$7,to_timestamp($8),to_timestamp($9))`,
-		network.NetworkID, network.OwnerUserID, network.Name, network.Code, network.TemplateKey, network.Status, network.Default, network.CreatedAt, network.UpdatedAt); err != nil {
+		network.NetworkID, network.OwnerUserID, network.Name, network.Code, network.TemplateKey, defaultSecurityGroupPolicy(network.IntraGroupPolicy), network.Default, network.CreatedAt, network.UpdatedAt); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

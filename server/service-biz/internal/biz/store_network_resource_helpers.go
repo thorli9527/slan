@@ -9,7 +9,7 @@ func (s *Store) ensureDefaultNetworkForUserLocked(userID string, now int64) Netw
 
 func (s *Store) ensureDefaultNetworkResourcesForUserLocked(userID string, now int64) (Network, SecurityGroup) {
 	for _, network := range s.networks {
-		if network.OwnerUserID == userID && network.Default && network.Status != "deleted" {
+		if network.OwnerUserID == userID && network.Default {
 			group := s.defaultSecurityGroupLocked(network.NetworkID)
 			return network, group
 		}
@@ -26,9 +26,9 @@ func (s *Store) ensureDefaultNetworkResourcesForUserLocked(userID string, now in
 		return network, group
 	}
 	id := newCompactUUID()
-	network := Network{NetworkID: id, OwnerUserID: userID, Name: "默认网络", Code: "default", TemplateKey: "default", Status: "enabled", Default: true, CreatedAt: now, UpdatedAt: now}
+	network := Network{NetworkID: id, OwnerUserID: userID, Name: "默认网络", Code: "default", TemplateKey: "default", IntraGroupPolicy: "allow", Default: true, CreatedAt: now, UpdatedAt: now}
 	s.networks[id] = network
-	group := s.addSecurityGroupLocked(id, "默认安全组", "默认网络安全组", now)
+	group := s.addSecurityGroupLocked(id, "", "默认网络安全组", now)
 	return network, group
 }
 
@@ -54,10 +54,26 @@ func (s *Store) addDNSZoneLocked(networkID, zoneName string, exposeGlobal bool, 
 }
 
 func (s *Store) addSecurityGroupLocked(networkID, name, description string, now int64) SecurityGroup {
-	group := SecurityGroup{SecurityGroupID: newCompactUUID(), NetworkID: networkID, Name: defaultString(name, "默认安全组"), Description: description, Status: "active", CreatedAt: now}
+	group := SecurityGroup{
+		SecurityGroupID: newCompactUUID(),
+		NetworkID:       networkID,
+		Name:            strings.TrimSpace(name),
+		Description:     strings.TrimSpace(description),
+		Status:          "active",
+		CreatedAt:       now,
+	}
 	s.nextSecuritySeq++
 	s.securityGroups[group.SecurityGroupID] = group
 	return group
+}
+
+func defaultSecurityGroupPolicy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "deny", "isolated":
+		return "deny"
+	default:
+		return "allow"
+	}
 }
 
 func (s *Store) listDNSZonesLocked(networkID string) []NetworkDNSZone {

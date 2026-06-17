@@ -289,6 +289,43 @@ nav button.active {
   box-shadow: inset 4px 0 0 #ff6900;
 }
 
+.nav-tree {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-tree.has-children {
+  width: 100%;
+}
+
+nav button.branch-active {
+  border-color: rgba(255, 105, 0, .16);
+  background: rgba(255, 105, 0, .045);
+  box-shadow: none;
+}
+
+.nav-submenu {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 2px 14px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(15, 23, 42, .10);
+}
+
+.nav-submenu button {
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.nav-submenu strong {
+  font-size: 13px;
+}
+
+.nav-submenu span {
+  font-size: 11px;
+}
+
 nav strong,
 nav span {
   display: block;
@@ -515,6 +552,7 @@ button.link,
 .panel {
   min-width: 0;
   padding: 14px;
+  overflow: visible;
 }
 
 .wide-panel,
@@ -844,6 +882,13 @@ code {
   overflow: visible;
 }
 
+.compact-table,
+.compact-table tbody,
+.compact-table tr,
+.compact-table td {
+  overflow: visible;
+}
+
 .alias-tag-cell {
   position: relative;
   display: inline-flex;
@@ -889,7 +934,7 @@ code {
   position: absolute;
   left: 28px;
   top: 30px;
-  z-index: 12;
+  z-index: 80;
   width: 300px;
   padding: 14px;
   border: 1px solid rgba(15, 23, 42, .12);
@@ -897,6 +942,17 @@ code {
   background: #fff;
   box-shadow: 0 16px 36px rgba(15, 23, 42, .18);
   white-space: normal;
+}
+
+.tag-popover-up {
+  top: auto;
+  bottom: 30px;
+}
+
+.tag-popover-up .tag-popover-arrow {
+  top: auto;
+  bottom: -6px;
+  transform: rotate(225deg);
 }
 
 .tag-popover-arrow {
@@ -975,6 +1031,7 @@ code {
 .detail-card {
   min-width: 0;
   padding: 12px;
+  overflow: visible;
 }
 
 .detail-card.span-2 {
@@ -1021,6 +1078,175 @@ code {
   height: 34px;
   padding: 6px 8px;
   font-size: 12px;
+}
+
+.network-devices-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.network-devices-table .device-id-column {
+  width: 300px;
+}
+
+.network-devices-table .owner-column {
+  width: 180px;
+}
+
+.network-devices-table .alias-column {
+  width: 210px;
+}
+
+.network-devices-table .ip-column {
+  width: 120px;
+}
+
+.network-devices-table .status-column {
+  width: 110px;
+}
+
+.network-devices-table .action-column {
+  width: 100px;
+}
+
+.network-devices-table th,
+.network-devices-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.network-devices-table .tag-cell-wrapper,
+.network-devices-table .table-actions {
+  overflow: visible;
+}
+
+.device-id-cell .text-link {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.managed-devices-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.managed-devices-table .device-id-column {
+  width: 300px;
+}
+
+.managed-devices-table .os-column {
+  width: 150px;
+}
+
+.managed-devices-table .alias-column {
+  width: 190px;
+}
+
+.managed-devices-table .ip-column {
+  width: 120px;
+}
+
+.managed-devices-table .owner-column {
+  width: 140px;
+}
+
+.managed-devices-table .status-column {
+  width: 100px;
+}
+
+.managed-devices-table .action-column {
+  width: 170px;
+}
+
+.managed-devices-table th,
+.managed-devices-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.managed-devices-table .tag-cell-wrapper {
+  overflow: visible;
+}
+
+.inline-select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid rgba(15, 23, 42, .12);
+  border-radius: 8px;
+  background: #fff;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.device-groups-section {
+  display: grid;
+  gap: 10px;
+}
+
+.group-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.group-chips button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(15, 23, 42, .12);
+  border-radius: 10px;
+  background: #fff;
+  color: #475569;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.group-chips button:hover {
+  border-color: rgba(255, 105, 0, .36);
+  color: #ff6900;
+  background: rgba(255, 105, 0, .06);
+}
+
+.device-groups-table {
+  table-layout: fixed;
+}
+
+.group-device-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.group-device-picker button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.group-device-picker button.selected {
+  border-color: rgba(255, 105, 0, .36);
+  background: rgba(255, 105, 0, .08);
+  color: #ff6900;
+}
+
+.binding-picker {
+  padding: 2px 0;
+}
+
+.binding-picker button {
+  min-height: 34px;
 }
 
 .table-actions {

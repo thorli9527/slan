@@ -58,6 +58,22 @@ type Device struct {
 	Endpoints    []DeviceEndpoint `json:"endpoints,omitempty"`
 }
 
+// DeviceGroup 是用户侧设备分组。一个设备可以同时归属多个分组。
+type DeviceGroup struct {
+	GroupID   string `json:"groupId"`
+	UserID    string `json:"userId"`
+	Name      string `json:"name"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+// DeviceGroupMember 是设备和分组的多对多归属关系。
+type DeviceGroupMember struct {
+	GroupID  string `json:"groupId"`
+	DeviceID string `json:"deviceId"`
+	AddedAt  int64  `json:"addedAt"`
+}
+
 // DeviceEndpoint 是设备上报的网络端点候选地址。
 type DeviceEndpoint struct {
 	Type      string `json:"type"`

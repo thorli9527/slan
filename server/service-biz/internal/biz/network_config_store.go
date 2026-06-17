@@ -51,8 +51,7 @@ func (s *Store) networkConfigsForDeviceLocked(deviceID string) ([]NetworkConfig,
 		if membership.DeviceID != deviceID || !membership.Enabled || membership.Status != "active" {
 			continue
 		}
-		network, ok := s.networks[membership.NetworkID]
-		if !ok || network.Status != "enabled" {
+		if _, ok := s.networks[membership.NetworkID]; !ok {
 			continue
 		}
 		networkIDs = append(networkIDs, membership.NetworkID)
@@ -109,24 +108,26 @@ func (s *Store) networkConfigLocked(networkID, deviceID string) (NetworkConfig, 
 	globalIP := hostIP(device.GlobalIP)
 	subnet, _ := s.globalIPSubnetLocked(globalIP)
 	return NetworkConfig{
-		NetworkID:       networkID,
-		NetworkName:     network.Name,
-		NetworkCode:     network.Code,
-		ConfigVersion:   s.currentNetworkConfigVersionLocked(networkID),
-		DeviceID:        deviceID,
-		GlobalIP:        globalIP,
-		PrefixLen:       subnet.PrefixLength,
-		GlobalCIDR:      ipamGlobalCIDR,
-		SubnetID:        subnet.SubnetID,
-		SubnetCIDR:      subnet.CIDRBlock,
-		SubnetPrefixLen: subnet.PrefixLength,
-		GlobalName:      device.GlobalName,
-		Peers:           s.devicesWithSubnetLocked(networkID, peers),
-		SecurityGroups:  groups,
-		Rules:           rules,
-		DNSZones:        s.listDNSZonesLocked(networkID),
-		DNSRecords:      s.listDNSRecordsLocked(networkID),
-		RelayCandidates: relayCandidates,
+		NetworkID:        networkID,
+		NetworkName:      network.Name,
+		NetworkCode:      network.Code,
+		IntraGroupPolicy: defaultSecurityGroupPolicy(network.IntraGroupPolicy),
+		NetworkCreatedAt: network.CreatedAt,
+		ConfigVersion:    s.currentNetworkConfigVersionLocked(networkID),
+		DeviceID:         deviceID,
+		GlobalIP:         globalIP,
+		PrefixLen:        subnet.PrefixLength,
+		GlobalCIDR:       ipamGlobalCIDR,
+		SubnetID:         subnet.SubnetID,
+		SubnetCIDR:       subnet.CIDRBlock,
+		SubnetPrefixLen:  subnet.PrefixLength,
+		GlobalName:       device.GlobalName,
+		Peers:            s.devicesWithSubnetLocked(networkID, peers),
+		SecurityGroups:   groups,
+		Rules:            rules,
+		DNSZones:         s.listDNSZonesLocked(networkID),
+		DNSRecords:       s.listDNSRecordsLocked(networkID),
+		RelayCandidates:  relayCandidates,
 	}, nil
 }
 
@@ -169,7 +170,7 @@ func (s *Store) securityPolicyFilterPeersLocked(networkID string, local Device, 
 
 func (s *Store) securityPolicyAllowsPeerLocked(networkID string, local, peer Device, groups []SecurityGroup, rules []SecurityGroupRule) bool {
 	if len(rules) == 0 {
-		return true
+		return s.networkAllowsIntraGroupTrafficLocked(networkID)
 	}
 	for _, rule := range rules {
 		if !securityRuleMatchesPeerAccess(networkID, rule, local, peer) {
@@ -177,7 +178,15 @@ func (s *Store) securityPolicyAllowsPeerLocked(networkID string, local, peer Dev
 		}
 		return strings.EqualFold(strings.TrimSpace(rule.Action), "allow")
 	}
-	return true
+	return s.networkAllowsIntraGroupTrafficLocked(networkID)
+}
+
+func (s *Store) networkAllowsIntraGroupTrafficLocked(networkID string) bool {
+	network, ok := s.networks[networkID]
+	if !ok {
+		return true
+	}
+	return !strings.EqualFold(defaultSecurityGroupPolicy(network.IntraGroupPolicy), "deny")
 }
 
 func (s *Store) networkPeerAccessAllowedLocked(networkID, localDeviceID, peerDeviceID string) bool {

@@ -33,47 +33,85 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   async removeSecurityGroup(group: SecurityGroupRow): Promise<void> {
     try {
       await this.api.delete(WEB_API.securityGroup(group.workspaceId, group.securityGroupId));
+      await this.refreshCurrentSecurityGroups();
     } catch {
-      // Local preview mode removes below.
+      this.securityGroups = this.securityGroups.filter((item) => item.securityGroupId !== group.securityGroupId);
     }
-    this.securityGroups = this.securityGroups.filter((item) => item.securityGroupId !== group.securityGroupId);
     if (this.selectedSecurityGroupId === group.securityGroupId) {
       this.selectedSecurityGroupId = this.currentSecurityGroups[0]?.securityGroupId ?? '';
     }
+    this.notifyStateChanged();
   }
 
-  openSecurityGroupDialog(): void {
-    this.securityGroupName = '默认安全组';
-    this.showSecurityGroupDialog = true;
-  }
-
-  closeSecurityGroupDialog(): void {
-    this.showSecurityGroupDialog = false;
-  }
-
-  async saveSecurityGroupDialog(): Promise<void> {
-    if (!this.securityGroupName.trim()) {
-      return;
-    }
+  async openSecurityGroupDialog(): Promise<void> {
     try {
       const created = await this.api.post<ApiSecurityGroup>(WEB_API.securityGroups(this.selectedWorkspaceId), {
-        name: this.securityGroupName.trim(),
+        name: '',
       });
-      this.securityGroups = [...this.securityGroups, this.mapSecurityGroup(created)];
+      this.selectedSecurityGroupId = created.securityGroupId;
+      await this.refreshCurrentSecurityGroups();
     } catch {
+      const now = Math.floor(Date.now() / 1000);
+      const group: SecurityGroupRow = {
+        securityGroupId: compactUuid(),
+        networkId: this.selectedWorkspaceId,
+        workspaceId: this.selectedWorkspaceId,
+        name: '',
+        createdAt: now,
+      };
       this.securityGroups = [
         ...this.securityGroups,
-        {
-          securityGroupId: compactUuid(),
-          networkId: this.selectedWorkspaceId,
-          workspaceId: this.selectedWorkspaceId,
-          name: this.securityGroupName.trim(),
-          status: 'active',
-        },
+        group,
       ];
+      this.selectedSecurityGroupId = group.securityGroupId;
     }
-    this.closeSecurityGroupDialog();
     this.notifyStateChanged();
+  }
+
+  openSecurityGroupNameTagDialog(group: SecurityGroupRow): void {
+    if (this.showSecurityGroupNameTagDialog && this.editingSecurityGroup?.securityGroupId === group.securityGroupId) {
+      this.closeSecurityGroupNameTagDialog();
+      return;
+    }
+    this.editingSecurityGroup = group;
+    this.securityGroupNameValue = group.name;
+    this.showSecurityGroupNameTagDialog = true;
+  }
+
+  closeSecurityGroupNameTagDialog(): void {
+    this.showSecurityGroupNameTagDialog = false;
+    this.editingSecurityGroup = null;
+  }
+
+  async saveSecurityGroupNameTagDialog(): Promise<void> {
+    if (!this.editingSecurityGroup) {
+      return;
+    }
+    const group = this.editingSecurityGroup;
+    const name = this.securityGroupNameValue.trim();
+    try {
+      const updated = await this.api.patch<ApiSecurityGroup>(WEB_API.securityGroup(group.workspaceId, group.securityGroupId), {
+        name,
+        description: '',
+      });
+      Object.assign(group, this.mapSecurityGroup(updated));
+    } catch {
+      group.name = name;
+    }
+    this.closeSecurityGroupNameTagDialog();
+    this.notifyStateChanged();
+  }
+
+  securityGroupDisplayName(group: SecurityGroupRow): string {
+    return group.name.trim() || '--';
+  }
+
+  private async refreshCurrentSecurityGroups(): Promise<void> {
+    const groups = await this.api.get<{ items: ApiSecurityGroup[] }>(WEB_API.securityGroups(this.selectedWorkspaceId));
+    this.securityGroups = [
+      ...this.securityGroups.filter((group) => group.workspaceId !== this.selectedWorkspaceId),
+      ...groups.items.map((group) => this.mapSecurityGroup(group)),
+    ];
   }
 
   openRuleDialog(direction: string): void {
@@ -136,7 +174,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   }
 
   subjectTypeLabel(type: RuleSubjectType): string {
-    return ({ device: '设备', user: '用户', workspace: '网络', cidr: 'CIDR', domain: '域名', all: '全部' } as Record<RuleSubjectType, string>)[type];
+    return ({ device: '设备', user: '用户', network: '网络', workspace: '网络', cidr: 'CIDR', domain: '域名', all: '全部' } as Record<RuleSubjectType, string>)[type];
   }
 
   onRuleSubjectTypeChanged(): void {

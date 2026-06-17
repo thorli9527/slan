@@ -2348,7 +2348,6 @@ where
         );
     }
     let all_acl_policies = platform_acl_policies(&network_configs);
-    let active_acl_policies = acl_policies_for_network(&all_acl_policies, &network_id);
     let relay_candidates = runtime_relay_candidates();
     let best_relay = android_data_plane_relay_candidate(&relay_candidates);
     persist_session(&session)?;
@@ -2372,7 +2371,7 @@ where
         relay_endpoint_id: best_relay.as_ref().map(|relay| relay.endpoint_id.clone()),
         relay_transport: best_relay.as_ref().map(|relay| relay.transport.clone()),
         relay_address: best_relay.as_ref().map(|relay| relay.address.clone()),
-        acl_policies: active_acl_policies,
+        acl_policies: all_acl_policies.clone(),
         relay_data_plane: build_relay_data_plane_config(
             &client,
             &session,
@@ -2396,6 +2395,8 @@ fn platform_network_configs(
             device_id: config.device_id.clone(),
             network_name: config.network_name.clone(),
             network_code: config.network_code.clone(),
+            intra_group_policy: config.intra_group_policy.clone(),
+            network_created_at: config.network_created_at,
             config_version: config.config_version,
             global_ip: config.global_ip.clone(),
             global_name: config.global_name.clone(),

@@ -124,6 +124,10 @@ pub struct PlatformDeviceNetworkConfig {
     #[serde(default)]
     pub network_code: Option<String>,
     #[serde(default)]
+    pub intra_group_policy: Option<String>,
+    #[serde(default)]
+    pub network_created_at: Option<i64>,
+    #[serde(default)]
     pub config_version: Option<i64>,
     #[serde(default)]
     pub global_ip: Option<String>,
@@ -170,6 +174,10 @@ pub struct PlatformAclRule {
     pub peer_type: String,
     #[serde(default)]
     pub peer_value: String,
+    #[serde(default)]
+    pub source_type: String,
+    #[serde(default)]
+    pub source_value: String,
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
@@ -333,6 +341,8 @@ mod tests {
                 port_to: 0,
                 peer_type: "device".to_string(),
                 peer_value: "device-peer".to_string(),
+                source_type: "device".to_string(),
+                source_value: "device-peer".to_string(),
                 enabled: true,
                 resolved_peer_node_id: Some("node-peer".to_string()),
                 resolved_peer_virtual_ips: vec!["100.64.0.2".to_string()],
@@ -398,6 +408,13 @@ mod tests {
 
         let value = serde_json::to_value(&config).expect("serialize platform config");
         assert!(value.get("aclPolicies").is_some());
+        assert!(value.pointer("/aclPolicies/0/securityGroups").is_none());
+        assert_eq!(
+            value
+                .pointer("/aclPolicies/0/rules/0/sourceType")
+                .and_then(|value| value.as_str()),
+            Some("device")
+        );
         assert!(value
             .get("relayDataPlane")
             .and_then(|relay| relay.get("aclPolicies"))

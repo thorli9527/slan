@@ -18,7 +18,7 @@
           <td>{{ plan.relayMonthlyGb }}GB</td>
           <td>{{ plan.relayBandwidthMbps }}Mbps</td>
           <td>{{ plan.relayThrottleMbps }}Mbps</td>
-          <td>{{ plan.customDomain ? '域名 ' : '' }}{{ plan.acl ? 'ACL ' : '' }}{{ plan.dedicatedRelay ? '专属Relay ' : '' }}{{ plan.auditLog ? '审计 ' : '' }}{{ plan.apiAccess ? 'API' : '' }}</td>
+          <td>{{ plan.customDomain ? '域名 ' : '' }}{{ plan.acl ? '安全组 ' : '' }}{{ plan.dedicatedRelay ? '专属Relay ' : '' }}{{ plan.auditLog ? '审计 ' : '' }}{{ plan.apiAccess ? 'API' : '' }}</td>
           <td>{{ plan.yearlyPrice ? plan.yearlyPrice + ' 元/年' : '免费' }}</td>
           <td><button class="ghost small" type="button" (click)="vm.openPlanDialog(plan)">查看/修改</button></td>
         </tr>
