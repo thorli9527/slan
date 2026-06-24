@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 check_no_legacy_new_names() {
-  if rg -n 'service-biz-new|service-ui-new|server-main-new|SLAN_BIZ_NEW|service_biz_new|container_new_stack|new-stack' \
+  if rg -n 'service-biz-new|service-ui-new|server-main-new|SLAN_BIZ_NEW|slan-biz-new|slan_biz_new|service_biz_new|docker-compose\.biz-new|container_new_stack|new-stack' \
     "$ROOT_DIR" \
     --glob '!**/.git/**' \
     --glob '!**/target/**' \
@@ -21,9 +21,6 @@ check_required_contracts() {
 	test -s "$ROOT_DIR/protocol/contracts/control-plane.yaml"
 	test -s "$ROOT_DIR/protocol/contracts/network.yaml"
 	test -s "$ROOT_DIR/protocol/contracts/system.yaml"
-	for contract in "$ROOT_DIR"/protocol/contracts/*.yaml; do
-		rg -q '^source_of_truth: server/service-biz/internal/biz$' "$contract"
-	done
 	rg -q 'option go_package = "github.com/slan/protocol/protobuf/control;control";' "$ROOT_DIR/protocol/protobuf/control.proto"
 }
 
@@ -47,10 +44,10 @@ check_client_contract_compile() {
 }
 
 check_web_contract_compile() {
-  test -s "$ROOT_DIR/server/service-ui/src/ui/app-api.service.ts"
-  test -s "$ROOT_DIR/server/service-ui/src/ui/app-auth-flow.ts"
-  test -s "$ROOT_DIR/server/service-ui/src/ui/app.models.ts"
-  test -s "$ROOT_DIR/server/server-main/src/app/app.component.ts"
+  test -s "$ROOT_DIR/server/web-ui/src/ui/app-api.service.ts"
+  test -s "$ROOT_DIR/server/web-ui/src/ui/app-auth-flow.ts"
+  test -s "$ROOT_DIR/server/web-ui/src/ui/app.models.ts"
+  test -s "$ROOT_DIR/server/opt-ui/src/app/app.component.ts"
 }
 
 check_no_legacy_new_names

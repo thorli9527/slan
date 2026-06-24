@@ -119,13 +119,14 @@ DEVICE_REGISTER="$(curl --silent --fail -X POST "${WEB_BASE}/api/devices/registe
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_ID}\",\"name\":\"Remote UI Mac\",\"platform\":\"macos\",\"osName\":\"macOS\",\"osVersion\":\"15.3\",\"alias\":\"Remote UI Mac\",\"publicKey\":\"remote-ui-public-key-${RUN_ID}\"}")" || fail "web device register failed"
 printf '%s' "${DEVICE_REGISTER}" | grep -q '"globalIp":"10\.' || fail "device register missing global IP"
-curl --silent --fail "${WEB_BASE}/api/devices/${DEVICE_ID}/mqtt-credential" >/dev/null || fail "mqtt credential failed"
-curl --silent --fail -X POST "${WEB_BASE}/api/devices/${DEVICE_ID}/renew" \
+curl --silent --fail "${BIZ_BASE}/api/devices/${DEVICE_ID}/mqtt-credential" \
+  -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null || fail "mqtt credential failed"
+curl --silent --fail -X POST "${BIZ_BASE}/api/devices/${DEVICE_ID}/renew" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"networkEnabled\":true,\"rxBytesTotal\":1024,\"txBytesTotal\":2048}" >/dev/null || fail "device renew failed"
-curl --silent --fail "${WEB_BASE}/api/devices/${DEVICE_ID}/network-configs" >/dev/null || fail "device network configs failed"
-curl --silent --fail "${WEB_BASE}/api/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" >/dev/null || fail "network config failed"
-curl --silent --fail "${WEB_BASE}/api/networks/${NETWORK_ID}/relay-candidates?deviceId=${DEVICE_ID}" >/dev/null || fail "relay candidates failed"
+curl --silent --fail "${BIZ_BASE}/api/devices/${DEVICE_ID}/network-configs" >/dev/null || fail "device network configs failed"
+curl --silent --fail "${BIZ_BASE}/api/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" >/dev/null || fail "network config failed"
+curl --silent --fail "${BIZ_BASE}/api/networks/${NETWORK_ID}/relay-candidates?deviceId=${DEVICE_ID}" >/dev/null || fail "relay candidates failed"
 curl --silent --fail "${WEB_BASE}/api/client-downloads" >/dev/null || fail "public client downloads failed"
 
 curl --silent --fail "${WEB_BASE}/api/devices/visible?userId=${USER_ID}" >/dev/null || fail "visible devices failed"
@@ -168,12 +169,12 @@ curl --silent --fail -X POST "${WEB_BASE}/api/devices/register" \
   -d "{\"userId\":\"${SECOND_USER_ID}\",\"deviceId\":\"${SECOND_DEVICE_ID}\",\"name\":\"Remote UI iOS\",\"platform\":\"ios\",\"osName\":\"iOS\",\"osVersion\":\"18.3\",\"alias\":\"Remote UI iOS\",\"publicKey\":\"remote-ui-second-public-key-${RUN_ID}\"}" >/dev/null || fail "second device register failed"
 INVITE="$(curl --silent --fail -X POST "${WEB_BASE}/api/device-invites" \
   -H 'Content-Type: application/json' \
-  -d "{\"inviterUserId\":\"${USER_ID}\",\"ttlSeconds\":600}")" || fail "device invite create failed"
+  -d "{\"networkId\":\"${NETWORK_ID}\",\"inviterUserId\":\"${USER_ID}\",\"userId\":\"${SECOND_USER_ID}\",\"ttlSeconds\":600}")" || fail "device invite create failed"
 INVITE_CODE="$(printf '%s' "${INVITE}" | json_value inviteCode)"
 [[ -n "${INVITE_CODE}" ]] || fail "missing invite code"
 curl --silent --fail -X POST "${WEB_BASE}/api/device-invites/accept" \
   -H 'Content-Type: application/json' \
-  -d "{\"inviteCode\":\"${INVITE_CODE}\",\"deviceId\":\"${SECOND_DEVICE_ID}\",\"actorUserId\":\"${SECOND_USER_ID}\"}" >/dev/null || fail "device invite accept failed"
+  -d "{\"inviteCode\":\"${INVITE_CODE}\",\"actorUserId\":\"${SECOND_USER_ID}\",\"deviceId\":\"${SECOND_DEVICE_ID}\",\"alias\":\"Remote UI iOS\"}" >/dev/null || fail "device invite accept failed"
 
 WORKSPACE="$(curl --silent --fail -X POST "${WEB_BASE}/api/networks" \
   -H 'Content-Type: application/json' \
@@ -267,7 +268,7 @@ auth_curl "${OPS_BASE}/api/ops/audit-events?limit=20" >/dev/null || fail "ops au
 
 OPERATOR="$(auth_curl -X POST "${OPS_BASE}/api/ops/operators" \
   -H 'Content-Type: application/json' \
-  -d "{\"name\":\"Remote Smoke Ops\",\"email\":\"remote-ops-${RUN_ID}@staticlss.com\",\"role\":\"ops\",\"status\":\"active\"}")" || fail "operator create failed"
+  -d "{\"name\":\"Remote Smoke Ops\",\"email\":\"remote-ops-${RUN_ID}@staticlss.com\",\"role\":\"ops\",\"password\":\"remote-smoke-password-123\",\"status\":\"active\"}")" || fail "operator create failed"
 OPERATOR_ID="$(printf '%s' "${OPERATOR}" | json_value operatorId)"
 [[ -n "${OPERATOR_ID}" ]] || fail "missing operator id"
 auth_curl -X PATCH "${OPS_BASE}/api/ops/operators/${OPERATOR_ID}" \
@@ -275,12 +276,12 @@ auth_curl -X PATCH "${OPS_BASE}/api/ops/operators/${OPERATOR_ID}" \
   -d "{\"name\":\"Remote Smoke Ops Updated\",\"email\":\"remote-ops-${RUN_ID}@staticlss.com\",\"role\":\"admin\",\"status\":\"active\"}" >/dev/null || fail "operator update failed"
 auth_curl -X POST "${OPS_BASE}/api/ops/operators/${OPERATOR_ID}/password" \
   -H 'Content-Type: application/json' \
-  -d '{"newPassword":"remote-smoke-password-123"}' >/dev/null || fail "operator password set failed"
+  -d '{"password":"remote-smoke-password-123"}' >/dev/null || fail "operator password set failed"
 
 PLAN_CODE="remote-smoke-${RUN_ID}"
 auth_curl -X POST "${OPS_BASE}/api/ops/plans" \
   -H 'Content-Type: application/json' \
-  -d "{\"code\":\"${PLAN_CODE}\",\"name\":\"Remote Smoke Plan\",\"ownDeviceLimit\":5,\"invitedDeviceLimit\":5,\"totalDeviceLimit\":10,\"relayMonthlyGb\":100,\"relayBandwidthMbps\":50,\"relayThrottleMbps\":5,\"p2pUnlimited\":true,\"customDomain\":true,\"acl\":true,\"dedicatedRelay\":false,\"auditLog\":true,\"apiAccess\":true,\"monthlyPrice\":10,\"yearlyPrice\":100,\"status\":\"active\"}" >/dev/null || fail "plan create failed"
+  -d "{\"planCode\":\"${PLAN_CODE}\",\"name\":\"Remote Smoke Plan\",\"ownDeviceLimit\":5,\"invitedDeviceLimit\":5,\"totalDeviceLimit\":10,\"relayMonthlyGb\":100,\"relayBandwidthMbps\":50,\"relayThrottleMbps\":5,\"p2pUnlimited\":true,\"customDomain\":true,\"acl\":true,\"dedicatedRelay\":false,\"auditLog\":true,\"apiAccess\":true,\"monthlyPrice\":10,\"yearlyPrice\":100,\"status\":\"active\"}" >/dev/null || fail "plan create failed"
 auth_curl -X PATCH "${OPS_BASE}/api/ops/plans/${PLAN_CODE}" \
   -H 'Content-Type: application/json' \
   -d "{\"name\":\"Remote Smoke Plan Updated\",\"ownDeviceLimit\":6,\"invitedDeviceLimit\":6,\"totalDeviceLimit\":12,\"relayMonthlyGb\":120,\"relayBandwidthMbps\":60,\"relayThrottleMbps\":6,\"p2pUnlimited\":true,\"customDomain\":true,\"acl\":true,\"dedicatedRelay\":false,\"auditLog\":true,\"apiAccess\":true,\"monthlyPrice\":12,\"yearlyPrice\":120,\"status\":\"active\"}" >/dev/null || fail "plan update failed"
@@ -319,7 +320,7 @@ auth_curl -X PATCH "${OPS_BASE}/api/ops/devices/${DEVICE_ID}" \
 
 ORDER="$(auth_curl -X POST "${OPS_BASE}/api/ops/orders" \
   -H 'Content-Type: application/json' \
-  -d "{\"customerEmail\":\"${USER_EMAIL}\",\"productId\":\"${PRODUCT_ID}\",\"amount\":10,\"currency\":\"CNY\",\"payStatus\":\"pending\",\"provisionStatus\":\"pending\",\"channel\":\"manual\"}")" || fail "order create failed"
+  -d "{\"customerId\":\"${USER_ID}\",\"customerEmail\":\"${USER_EMAIL}\",\"productId\":\"${PRODUCT_ID}\",\"amount\":10,\"currency\":\"CNY\",\"payStatus\":\"pending\",\"provisionStatus\":\"pending\",\"channel\":\"manual\"}")" || fail "order create failed"
 ORDER_ID="$(printf '%s' "${ORDER}" | json_value orderId)"
 [[ -n "${ORDER_ID}" ]] || fail "missing order id"
 auth_curl -X PATCH "${OPS_BASE}/api/ops/orders/${ORDER_ID}" \

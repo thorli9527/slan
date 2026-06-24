@@ -14,26 +14,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const DEFAULT_CONTROL_BASE_URL: &str = "http://47.245.40.231:28080";
-const API_AUTH_DEVICE_LOGIN_DEVICES: &str = "/api/auth/device-login-devices";
-const API_AUTH_LOGIN: &str = "/api/auth/login";
-const API_AUTH_LOGOUT: &str = "/api/auth/logout";
-const API_AUTH_RENEW: &str = "/api/auth/renew";
-const API_AUTH_CONSOLE_LOGIN_KEYS: &str = "/api/auth/console-login-keys";
-const API_DEVICE_SESSION_BOOTSTRAP: &str = "/api/device/session/bootstrap";
-const API_DEVICE_SESSION_BIND: &str = "/api/device/session/bind";
-const API_DEVICE_SESSION_RENEW: &str = "/api/device/session/renew";
-const API_DEVICES: &str = "/api/devices";
-const API_RELAY_TICKETS: &str = "/api/relay/tickets";
+const API_AUTH_DEVICE_LOGIN_DEVICES: &str = "/api/app/auth/device-login-devices";
+const API_AUTH_LOGIN: &str = "/api/app/auth/login";
+const API_AUTH_LOGOUT: &str = "/api/app/auth/logout";
+const API_AUTH_RENEW: &str = "/api/app/auth/renew";
+const API_AUTH_CONSOLE_LOGIN_KEYS: &str = "/api/app/auth/console-login-keys";
+const API_DEVICE_SESSION_BOOTSTRAP: &str = "/api/app/device/session/bootstrap";
+const API_DEVICE_SESSION_BIND: &str = "/api/app/device/session/bind";
+const API_DEVICE_SESSION_RENEW: &str = "/api/app/device/session/renew";
+const API_DEVICES: &str = "/api/app/devices";
+const API_RELAY_TICKETS: &str = "/api/app/relay/tickets";
 static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CLIENT_DEVICE_ID_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 fn api_device_network_configs(device_id: &str) -> String {
-    format!("/api/devices/{}/network-configs", device_id.trim())
+    format!("/api/app/devices/{}/network-configs", device_id.trim())
+}
+
+fn api_device_runtime(device_id: &str) -> String {
+    format!("/api/app/devices/{}/runtime", device_id.trim())
 }
 
 fn api_network_config(network_id: &str, device_id: &str) -> String {
     format!(
-        "/api/networks/{}/network-config?deviceId={}",
+        "/api/app/networks/{}/network-config?deviceId={}",
         network_id.trim(),
         device_id.trim()
     )
@@ -41,14 +45,14 @@ fn api_network_config(network_id: &str, device_id: &str) -> String {
 
 fn api_relay_candidates(network_id: &str, device_id: &str) -> String {
     format!(
-        "/api/networks/{}/relay-candidates?deviceId={}",
+        "/api/app/networks/{}/relay-candidates?deviceId={}",
         network_id.trim(),
         device_id.trim()
     )
 }
 
 fn api_punch_connect_sessions(network_id: &str) -> String {
-    format!("/api/networks/{}/punch/connect-sessions", network_id.trim())
+    format!("/api/app/networks/{}/punch/connect-sessions", network_id.trim())
 }
 
 #[allow(dead_code)]
@@ -238,6 +242,14 @@ pub struct RelayCandidate {
     pub region_id: Option<String>,
     #[serde(default)]
     pub cluster_id: Option<String>,
+    #[serde(default)]
+    pub reachable: bool,
+    #[serde(default)]
+    pub observed_rtt_ms: Option<u32>,
+    #[serde(default)]
+    pub path_score: Option<u32>,
+    #[serde(default)]
+    pub selected: bool,
 }
 
 /// ControlPeer 是网络配置中可与本机通信的 peer 摘要。
@@ -479,6 +491,8 @@ pub struct PunchConnectSession {
     pub requester_node_id: String,
     pub peer_node_id: String,
     #[serde(default)]
+    pub punch_node_id: String,
+    #[serde(default)]
     pub requester: Option<PunchEndpoint>,
     #[serde(default)]
     pub peer: Option<PunchEndpoint>,
@@ -651,20 +665,28 @@ impl ControlPlaneClient {
         device_id: &str,
         node_id: &str,
     ) -> Result<ControlNode> {
-        let _ = (access_token, device_id);
+        let resolved_network_id = self.active_network_id(access_token)?;
+        if let Some(network_id) = resolved_network_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let path = api_network_config(network_id, device_id);
+            let response = self.request_json("GET", &path, access_token, None)?;
+            if let Some(resolved_node_id) = optional_string(&response, "selfNodeId")
+                .or_else(|| optional_string(&response, "nodeId"))
+                .or_else(|| optional_string(&response, "self_node_id"))
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                return Ok(ControlNode {
+                    node_id: resolved_node_id,
+                });
+            }
+        }
         Ok(ControlNode {
-            node_id: node_id.to_string(),
+            node_id: node_id.trim().to_string(),
         })
-    }
-
-    pub fn create_control_session(
-        &self,
-        access_token: &str,
-        node_id: &str,
-        network_id: &str,
-    ) -> Result<()> {
-        let _ = (access_token, node_id, network_id);
-        Ok(())
     }
 
     pub fn activate_network(
@@ -755,7 +777,13 @@ impl ControlPlaneClient {
         device_id: &str,
         network_id: &str,
     ) -> Result<()> {
-        let _ = (access_token, device_id, network_id);
+        let body = serde_json::json!({
+            "deviceId": device_id.trim(),
+            "networkId": network_id.trim(),
+            "status": "inactive",
+        });
+        let path = api_device_runtime(device_id);
+        let _ = self.request_json("POST", &path, access_token, Some(body))?;
         Ok(())
     }
 
@@ -765,8 +793,12 @@ impl ControlPlaneClient {
         network_id: &str,
         subnet_id: Option<&str>,
     ) -> Result<u8> {
-        let _ = (access_token, network_id, subnet_id);
-        Ok(8)
+        let _ = subnet_id;
+        let device_id = local_stable_device_id()?;
+        let path = api_network_config(network_id, &device_id);
+        let response = self.request_json("GET", &path, access_token, None)?;
+        network_config_prefix_len(&response)
+            .ok_or_else(|| anyhow::anyhow!("network config missing prefixLen"))
     }
 
     pub fn console_login_key(
@@ -1004,19 +1036,37 @@ fn network_config_control_peers(response: &Value) -> Vec<ControlPeer> {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())?
                 .to_string();
-            let global_ip = peer
-                .get("globalIp")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
+            let virtual_ips = network_config_peer_virtual_ips(peer);
             Some(ControlPeer {
                 node_id: format!("node-{device_id}"),
                 relay_allowed: true,
-                virtual_ips: global_ip.into_iter().collect(),
+                virtual_ips,
                 endpoints: network_config_control_endpoints(peer),
             })
         })
+        .collect()
+}
+
+fn network_config_peer_virtual_ips(peer: &Value) -> Vec<String> {
+    let virtual_ips = peer
+        .get("virtualIps")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if !virtual_ips.is_empty() {
+        return virtual_ips;
+    }
+    peer.get("globalIp")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .into_iter()
         .collect()
 }
 
@@ -1056,16 +1106,14 @@ fn network_config_routes(response: &Value) -> Vec<RouteSpec> {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|peer| {
-            let destination = peer
-                .get("globalIp")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?;
-            Some(RouteSpec {
-                destination: format!("{destination}/32"),
-                gateway: None,
-            })
+        .flat_map(|peer| {
+            network_config_peer_virtual_ips(peer)
+                .into_iter()
+                .map(|destination| RouteSpec {
+                    destination: format!("{destination}/32"),
+                    gateway: None,
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -1181,6 +1229,10 @@ fn extract_relay_candidates(response: &Value) -> Vec<RelayCandidate> {
                         country_code: country_code.clone(),
                         region_id: region_id.clone(),
                         cluster_id: cluster_id.clone(),
+                        reachable: false,
+                        observed_rtt_ms: None,
+                        path_score: None,
+                        selected: false,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -1831,9 +1883,10 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        decode_control_json, device_public_key_at_path, is_strong_device_public_key, md5_hex,
-        punch_auth_headers, punch_mqtt_signature, stable_device_id_at_path, ControlPlaneClient,
-        MqttCredential, DEFAULT_CONTROL_BASE_URL,
+        activation_plan_from_network_config, decode_control_json, device_public_key_at_path,
+        is_strong_device_public_key, md5_hex, punch_auth_headers, punch_mqtt_signature,
+        stable_device_id_at_path, ControlPlaneClient, MqttCredential, PunchConnectSession,
+        DEFAULT_CONTROL_BASE_URL,
     };
 
     #[test]
@@ -1900,7 +1953,7 @@ mod tests {
 
         assert_eq!(auth.device_id.as_deref(), Some(compact_device_id));
         let request = request_handle.join().expect("request handle");
-        assert!(request.starts_with("POST /api/auth/login HTTP/1.1"));
+        assert!(request.starts_with("POST /api/app/auth/login HTTP/1.1"));
         let (_, body) = request.split_once("\r\n\r\n").expect("login body");
         let body: Value = serde_json::from_str(body).expect("decode login body");
         assert_eq!(
@@ -1942,11 +1995,82 @@ mod tests {
         let mqtt = prepared.mqtt.expect("mqtt credential");
 
         let request = request_handle.join().expect("request handle");
-        assert!(request.starts_with("POST /api/auth/device-login-devices HTTP/1.1"));
+        assert!(request.starts_with("POST /api/app/auth/device-login-devices HTTP/1.1"));
         assert_eq!(mqtt.broker_url, "mqtt://47.245.40.231:1883");
         assert_eq!(mqtt.client_id, "slan-device-1");
         assert_eq!(mqtt.password, "mqtt-secret");
         assert_eq!(mqtt.topic_prefix, "slan/device-1");
+    }
+
+    #[test]
+    fn activation_plan_prefers_peer_virtual_ips_over_legacy_global_ip() {
+        let plan = activation_plan_from_network_config(&serde_json::json!({
+            "networkId": "net-1",
+            "deviceId": "device-1",
+            "globalIp": "10.0.0.2",
+            "prefixLen": 24,
+            "dns": {
+                "servers": ["100.64.0.53"]
+            },
+            "peers": [{
+                "deviceId": "device-2",
+                "globalIp": "10.0.0.9",
+                "virtualIps": ["10.0.0.9", "100.70.0.9"],
+                "endpoints": [{
+                    "type": "direct_udp",
+                    "address": "198.51.100.8:51820",
+                    "updatedAt": 123
+                }]
+            }]
+        }))
+        .expect("activation plan");
+
+        assert_eq!(plan.virtual_ip, "10.0.0.2");
+        assert_eq!(plan.prefix_len, 24);
+        assert_eq!(plan.peers.len(), 1);
+        assert_eq!(
+            plan.peers[0].virtual_ips,
+            vec!["10.0.0.9".to_string(), "100.70.0.9".to_string()]
+        );
+        assert_eq!(
+            plan.routes
+                .iter()
+                .map(|route| route.destination.clone())
+                .collect::<Vec<_>>(),
+            vec!["10.0.0.9/32".to_string(), "100.70.0.9/32".to_string()]
+        );
+    }
+
+    #[test]
+    fn punch_connect_session_decodes_punch_node_id() {
+        let session: PunchConnectSession = serde_json::from_value(serde_json::json!({
+            "sessionId": "session-1",
+            "networkId": "net-1",
+            "requesterNodeId": "node-a",
+            "peerNodeId": "node-b",
+            "punchNodeId": "punch-1",
+            "requester": {
+                "networkId": "net-1",
+                "nodeId": "node-a",
+                "type": "direct_udp",
+                "address": "192.0.2.10:40000",
+                "reflexive": "198.51.100.10:50000",
+                "natType": "easy"
+            },
+            "peer": {
+                "networkId": "net-1",
+                "nodeId": "node-b",
+                "type": "direct_udp",
+                "address": "192.0.2.11:40001",
+                "reflexive": "198.51.100.11:50001",
+                "natType": "easy"
+            }
+        }))
+        .expect("decode punch connect session");
+
+        assert_eq!(session.punch_node_id, "punch-1");
+        assert_eq!(session.requester_node_id, "node-a");
+        assert_eq!(session.peer_node_id, "node-b");
     }
 
     #[test]

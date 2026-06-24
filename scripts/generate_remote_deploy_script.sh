@@ -52,6 +52,8 @@ BIFROMQ_MEM_LIMIT=2g
 BIFROMQ_MEM_LIMIT_BYTES=2147483648
 
 SLAN_BIZ_PUBLIC_PORT=28080
+SLAN_BIZ_CONSOLE_PUBLIC_PORT=28081
+SLAN_BIZ_OPS_PUBLIC_PORT=28082
 SLAN_WEB_PORT=24200
 SLAN_MAIN_PORT=24201
 
@@ -127,8 +129,7 @@ if [ ! -f "\$ENV_SOURCE" ]; then
   exit 1
 fi
 
-cp "\$ENV_SOURCE" "\$ROOT_DIR/.env.prod"
-"\$ROOT_DIR/scripts/remote_docker_deploy.sh" "\$REMOTE_HOST" "\$REMOTE_DIR" ".env.prod"
+ENV_SOURCE="\$ENV_SOURCE" "\$ROOT_DIR/scripts/remote_docker_deploy.sh" "\$REMOTE_HOST" "\$REMOTE_DIR" ".env.prod"
 EOF
 
 chmod +x "$DEPLOY_SCRIPT"
@@ -140,7 +141,9 @@ Generated:
 
 Next:
   1. Check public IP endpoints on ${SERVER_HOST}:
-     API:   http://${SERVER_HOST}:28080/healthz
+     App API:     http://${SERVER_HOST}:28080/healthz
+     Web Console API: http://${SERVER_HOST}:28081/healthz
+     Ops API:     http://${SERVER_HOST}:28082/healthz
      Web:   http://${SERVER_HOST}:24200/
      Ops:   http://${SERVER_HOST}:24201/
      MQTT:  ${SERVER_HOST}:1883

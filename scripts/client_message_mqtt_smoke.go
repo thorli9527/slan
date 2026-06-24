@@ -46,6 +46,10 @@ type device struct {
 	MQTT     *mqttCredential `json:"mqtt"`
 }
 
+type mqttEnvelope struct {
+	MQTT *mqttCredential `json:"mqtt"`
+}
+
 type devicePayload struct {
 	DeviceID string `json:"deviceId"`
 }
@@ -125,6 +129,8 @@ func main() {
 	createdDevices = append(createdDevices, ios.DeviceID)
 	renewDevice(ctx, bizURL, authToken, mac.DeviceID, userID)
 	renewDevice(ctx, bizURL, authToken, ios.DeviceID, userID)
+	mac.MQTT = fetchDeviceMQTT(ctx, bizURL, authToken, mac.DeviceID)
+	ios.MQTT = fetchDeviceMQTT(ctx, bizURL, authToken, ios.DeviceID)
 	assertMQTTHost(mac.MQTT, expectMQTTHost)
 	assertMQTTHost(ios.MQTT, expectMQTTHost)
 	if ios.MQTT == nil {
@@ -139,7 +145,7 @@ func main() {
 	messageCh := make(chan map[string]any, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- subscribeOne(ctx, *ios.MQTT, ios.MQTT.TopicPrefix+"/control/down", messageCh)
+		errCh <- subscribeOne(ctx, *ios.MQTT, mqttNetworkBroadcastTopic(ios.MQTT.TopicPrefix, networkID), messageCh)
 	}()
 	time.Sleep(300 * time.Millisecond)
 
@@ -215,6 +221,12 @@ func renewDevice(ctx context.Context, bizURL, token, deviceID, userID string) {
 		"rxBytesTotal":   1,
 		"txBytesTotal":   1,
 	}, nil)
+}
+
+func fetchDeviceMQTT(ctx context.Context, bizURL, token, deviceID string) *mqttCredential {
+	var out mqttEnvelope
+	getJSON(ctx, bizURL+"/api/devices/"+url.PathEscape(deviceID)+"/mqtt-credential", token, &out)
+	return out.MQTT
 }
 
 func cleanupDevices(ctx context.Context, bizURL, token, userID string, deviceIDs []string) {
@@ -324,13 +336,21 @@ func publishClientMessage(ctx context.Context, credential mqttCredential, networ
 	if err != nil {
 		fail("encode client message mqtt envelope: %v", err)
 	}
-	if err := publishQoS2(ctx, credential, credential.TopicPrefix+"/control/up", payload); err != nil {
+	if err := publishQoS1(ctx, credential, mqttNetworkBroadcastTopic(credential.TopicPrefix, networkID), payload); err != nil {
 		fail("publish client message mqtt: %v", err)
 	}
 	return clientMessageResponse{MessageID: messageID, NetworkID: networkID, FromDeviceID: fromDeviceID, TargetDeviceID: targetDeviceID}
 }
 
-func publishQoS2(ctx context.Context, credential mqttCredential, topic string, payload []byte) error {
+func mqttNetworkBroadcastTopic(topicPrefix, networkID string) string {
+	prefix := strings.Trim(strings.TrimSpace(topicPrefix), "/")
+	if parts := strings.Split(prefix, "/devices/"); len(parts) == 2 && strings.TrimSpace(parts[0]) != "" {
+		prefix = strings.TrimSpace(parts[0])
+	}
+	return prefix + "/networks/" + strings.TrimSpace(networkID) + "/broadcast"
+}
+
+func publishQoS1(ctx context.Context, credential mqttCredential, topic string, payload []byte) error {
 	address, err := brokerAddress(credential.BrokerURL)
 	if err != nil {
 		return err
@@ -350,25 +370,15 @@ func publishQoS2(ctx context.Context, credential mqttCredential, topic string, p
 	if err := readConnAck(conn); err != nil {
 		return err
 	}
-	if _, err := conn.Write(publishPacket(topic, payload, 2, 1)); err != nil {
+	if _, err := conn.Write(publishPacket(topic, payload, 1, 1)); err != nil {
 		return err
 	}
 	header, packetBody, err := readPacket(conn)
 	if err != nil {
 		return err
 	}
-	if header&0xf0 != 0x50 || len(packetBody) < 2 || binary.BigEndian.Uint16(packetBody[:2]) != 1 {
-		return fmt.Errorf("mqtt pubrec rejected")
-	}
-	if _, err := conn.Write(packetIDPacket(0x62, 1)); err != nil {
-		return err
-	}
-	header, packetBody, err = readPacket(conn)
-	if err != nil {
-		return err
-	}
-	if header&0xf0 != 0x70 || len(packetBody) < 2 || binary.BigEndian.Uint16(packetBody[:2]) != 1 {
-		return fmt.Errorf("mqtt pubcomp rejected")
+	if header&0xf0 != 0x40 || len(packetBody) < 2 || binary.BigEndian.Uint16(packetBody[:2]) != 1 {
+		return fmt.Errorf("mqtt puback rejected")
 	}
 	return nil
 }

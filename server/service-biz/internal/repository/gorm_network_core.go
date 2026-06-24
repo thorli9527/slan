@@ -1,0 +1,129 @@
+package repository
+
+import (
+	"context"
+	"strings"
+
+	"github.com/slan/service-biz/internal/model"
+	"gorm.io/gorm"
+)
+
+func (s *GormStore) ListNetworksByOwner(_ context.Context, ownerID string) ([]model.Network, error) {
+	return listModels(s.db.Where("owner_id = ?", ownerID).Order("network_id asc"), func(row gormNetworkRecord) model.Network {
+		return row.model()
+	})
+}
+
+func (s *GormStore) GetNetwork(_ context.Context, networkID string) (model.Network, bool, error) {
+	return firstModel(s.db.Where("network_id = ?", networkID), func(row gormNetworkRecord) model.Network {
+		return row.model()
+	})
+}
+
+func (s *GormStore) ListNetworksByDevice(ctx context.Context, deviceID string) ([]model.Network, error) {
+	memberships, err := listModels(
+		s.db.Where("device_id = ? AND enabled = ? AND status = ?", deviceID, true, "active").Order("network_id asc"),
+		func(row gormNetworkDeviceRecord) model.NetworkDevice { return row.model() },
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(memberships) == 0 {
+		return []model.Network{}, nil
+	}
+	networks := make([]model.Network, 0, len(memberships))
+	seen := make(map[string]struct{}, len(memberships))
+	for _, membership := range memberships {
+		if _, ok := seen[membership.NetworkID]; ok {
+			continue
+		}
+		network, ok, err := s.GetNetwork(ctx, membership.NetworkID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		seen[membership.NetworkID] = struct{}{}
+		networks = append(networks, network)
+	}
+	return networks, nil
+}
+
+func (s *GormStore) SaveNetwork(_ context.Context, network model.Network) error {
+	row := networkRecordFromModel(network)
+	return upsertByColumns(s.db, &row, []string{"network_id"}, []string{"owner_id", "name", "cidr", "code", "template_key", "intra_group_policy", "default", "status", "created_at", "updated_at"})
+}
+
+func (s *GormStore) DeleteNetwork(_ context.Context, networkID string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		securityGroupIDs := tx.Model(&gormSecurityGroupRecord{}).
+			Select("security_group_id").
+			Where("network_id = ?", networkID)
+
+		steps := []func() error{
+			func() error {
+				return tx.Delete(&gormSecurityRuleRecord{}, "security_group_id IN (?)", securityGroupIDs).Error
+			},
+			func() error { return tx.Delete(&gormSecurityGroupRecord{}, "network_id = ?", networkID).Error },
+			func() error { return tx.Delete(&gormPublicMappingRecord{}, "network_id = ?", networkID).Error },
+			func() error { return tx.Delete(&gormDNSRecordRecord{}, "network_id = ?", networkID).Error },
+			func() error { return tx.Delete(&gormDNSZoneRecord{}, "network_id = ?", networkID).Error },
+			func() error { return tx.Delete(&gormNetworkDeviceRecord{}, "network_id = ?", networkID).Error },
+			func() error { return tx.Delete(&gormDeviceInviteRecord{}, "network_id = ?", networkID).Error },
+			func() error { return tx.Delete(&gormBootstrapKeyRecord{}, "network_id = ?", networkID).Error },
+			func() error { return tx.Delete(&gormNetworkRecord{}, "network_id = ?", networkID).Error },
+		}
+		for _, step := range steps {
+			if err := step(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *GormStore) ListNetworkDevices(_ context.Context, networkID string) ([]model.NetworkDevice, error) {
+	return listModels(s.db.Where("network_id = ?", networkID).Order("device_id asc"), func(row gormNetworkDeviceRecord) model.NetworkDevice {
+		return row.model()
+	})
+}
+
+func (s *GormStore) SaveNetworkDevice(_ context.Context, item model.NetworkDevice) error {
+	row := networkDeviceRecordFromModel(item)
+	return upsertByColumns(s.db, &row, []string{"network_id", "device_id"}, []string{"enabled", "status", "endpoints", "nat_type", "active_path", "path_observed_at", "relay_transport", "relay_endpoint", "derp_node_id", "peer_node_id", "path_score", "observed_rtt_ms", "packet_loss_ppm", "relay_mtu", "max_frame_payload", "ticket_expires_at", "ticket_renew_due", "path_downgrades", "path_upgrades", "last_path_change", "created_at", "updated_at"})
+}
+
+func (s *GormStore) DeleteNetworkDevice(_ context.Context, networkID, deviceID string) error {
+	return s.db.Delete(&gormNetworkDeviceRecord{}, "network_id = ? AND device_id = ?", networkID, deviceID).Error
+}
+
+func (s *GormStore) ListDeviceInvitesByUser(_ context.Context, userID string) ([]model.DeviceInvite, error) {
+	return listModels(s.db.Where("user_id = ?", userID).Order("invite_id asc"), func(row gormDeviceInviteRecord) model.DeviceInvite {
+		return row.model()
+	})
+}
+
+func (s *GormStore) ListDeviceInvitesByNetwork(_ context.Context, networkID string) ([]model.DeviceInvite, error) {
+	return listModels(s.db.Where("network_id = ?", networkID).Order("invite_id asc"), func(row gormDeviceInviteRecord) model.DeviceInvite {
+		return row.model()
+	})
+}
+
+func (s *GormStore) GetDeviceInvite(_ context.Context, inviteID string) (model.DeviceInvite, bool, error) {
+	return firstModel(s.db.Where("invite_id = ?", inviteID), func(row gormDeviceInviteRecord) model.DeviceInvite {
+		return row.model()
+	})
+}
+
+func (s *GormStore) GetDeviceInviteByCode(_ context.Context, inviteCode string) (model.DeviceInvite, bool, error) {
+	return firstModel(s.db.Where("invite_code = ?", strings.TrimSpace(inviteCode)), func(row gormDeviceInviteRecord) model.DeviceInvite {
+		return row.model()
+	})
+}
+
+func (s *GormStore) SaveDeviceInvite(_ context.Context, invite model.DeviceInvite) error {
+	row := deviceInviteRecordFromModel(invite)
+	row.InviteCode = strings.TrimSpace(row.InviteCode)
+	return upsertByColumns(s.db, &row, []string{"invite_id"}, []string{"invite_code", "inviter_user_id", "network_id", "device_id", "user_id", "status", "created_at", "expires_at", "accepted_at"})
+}

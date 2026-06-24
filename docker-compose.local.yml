@@ -46,37 +46,84 @@ services:
       retries: 20
 
   server-biz:
-    image: slan-server-biz:latest
+    image: slan-service-biz:latest
     build:
       context: ./server/service-biz
       dockerfile: Dockerfile
     environment:
       SLAN_BIZ_ADDR: ":8080"
-      SLAN_WEB_CONSOLE_URL: "${SLAN_WEB_CONSOLE_URL:-http://47.245.40.231:24200}"
-      SLAN_GLOBAL_DEVICE_DOMAIN: "${SLAN_GLOBAL_DEVICE_DOMAIN:-staticlss.com}"
-      SLAN_RELAY_ENDPOINTS: "${SLAN_RELAY_ENDPOINTS:-udp://47.245.40.231:29110}"
-      SLAN_RELAY_REGION_ID: "${SLAN_RELAY_REGION_ID:-dev}"
-      SLAN_RELAY_TICKET_SECRET: "${SLAN_RELAY_TICKET_SECRET:-change-me-relay-ticket-secret}"
-      SLAN_WIRE_PUNCH_NODES: "${SLAN_WIRE_PUNCH_NODES:-local=47.245.40.231:29130}"
-      SLAN_BIZ_WIRE_INTERNAL_URL: "${SLAN_BIZ_WIRE_INTERNAL_URL:-http://server-wire:29100}"
+      SLAN_BIZ_ROUTE_SET: "app"
       SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
-      SLAN_WIRE_NODE_HEARTBEAT_FRESHNESS_SECONDS: "${SLAN_WIRE_NODE_HEARTBEAT_FRESHNESS_SECONDS:-120}"
       SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
       SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
-      SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://47.245.40.231:1883}"
-      SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-change-me-mqtt-secret}"
-      SLAN_MQTT_PUBLISH_TIMEOUT_MILLISECONDS: "${SLAN_MQTT_PUBLISH_TIMEOUT_MILLISECONDS:-15000}"
-      SLAN_BIZ_REDIS_ADDR: "redis:6379"
-      SLAN_BIZ_POSTGRES_DSN: "postgres://postgres:${POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/slan?sslmode=disable"
-      SLAN_BIZ_MIGRATIONS_DIR: "/app/migrations"
+      SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
+      SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
+      SLAN_WIRE_PUNCH_NODES: "${SLAN_WIRE_PUNCH_NODES:-}"
+      SLAN_SERVICE_BIZ_DB_HOST: postgres
+      SLAN_SERVICE_BIZ_DB_PORT: 5432
+      SLAN_SERVICE_BIZ_DB_USER: postgres
+      SLAN_SERVICE_BIZ_DB_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
+      SLAN_SERVICE_BIZ_DB_NAME: slan
+      SLAN_SERVICE_BIZ_DB_SSLMODE: disable
+      SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
     ports:
       - "${SLAN_BIZ_PUBLIC_PORT:-28080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+
+  server-biz-web-console:
+    image: slan-service-biz:latest
+    build:
+      context: ./server/service-biz
+      dockerfile: Dockerfile
+    environment:
+      SLAN_BIZ_ADDR: ":8080"
+      SLAN_BIZ_ROUTE_SET: "web"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
+      SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
+      SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
+      SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
+      SLAN_WIRE_PUNCH_NODES: "${SLAN_WIRE_PUNCH_NODES:-}"
+      SLAN_SERVICE_BIZ_DB_HOST: postgres
+      SLAN_SERVICE_BIZ_DB_PORT: 5432
+      SLAN_SERVICE_BIZ_DB_USER: postgres
+      SLAN_SERVICE_BIZ_DB_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
+      SLAN_SERVICE_BIZ_DB_NAME: slan
+      SLAN_SERVICE_BIZ_DB_SSLMODE: disable
+      SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
+    ports:
+      - "${SLAN_BIZ_CONSOLE_PUBLIC_PORT:-28081}:8080"
+    depends_on:
+      postgres:
         condition: service_healthy
-      bifromq:
+
+  server-biz-ops:
+    image: slan-service-biz:latest
+    build:
+      context: ./server/service-biz
+      dockerfile: Dockerfile
+    environment:
+      SLAN_BIZ_ADDR: ":8080"
+      SLAN_BIZ_ROUTE_SET: "ops"
+      SLAN_INTERNAL_WIRE_TOKEN: "${SLAN_INTERNAL_WIRE_TOKEN:-change-me-wire-internal-token}"
+      SLAN_MQTT_ENABLED: "${SLAN_MQTT_ENABLED:-true}"
+      SLAN_MQTT_BROKER_URL: "${SLAN_MQTT_BROKER_URL:-mqtt://bifromq:1883}"
+      SLAN_MQTT_PUBLIC_BROKER_URL: "${SLAN_MQTT_PUBLIC_BROKER_URL:-mqtt://127.0.0.1:1883}"
+      SLAN_MQTT_PASSWORD_SECRET: "${SLAN_MQTT_PASSWORD_SECRET:-slan-dev-secret}"
+      SLAN_WIRE_PUNCH_NODES: "${SLAN_WIRE_PUNCH_NODES:-}"
+      SLAN_SERVICE_BIZ_DB_HOST: postgres
+      SLAN_SERVICE_BIZ_DB_PORT: 5432
+      SLAN_SERVICE_BIZ_DB_USER: postgres
+      SLAN_SERVICE_BIZ_DB_PASSWORD: "${POSTGRES_PASSWORD:-change-me-postgres-password}"
+      SLAN_SERVICE_BIZ_DB_NAME: slan
+      SLAN_SERVICE_BIZ_DB_SSLMODE: disable
+      SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
+    ports:
+      - "${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}:8080"
+    depends_on:
+      postgres:
         condition: service_healthy
 
   server-wire:
@@ -237,23 +284,23 @@ services:
   server-ui-web:
     image: slan-server-ui-web:latest
     build:
-      context: ./server/service-ui
+      context: ./server/web-ui
       dockerfile: Dockerfile
     ports:
       - "${SLAN_WEB_PORT:-24200}:80"
     depends_on:
-      server-biz:
+      server-biz-web-console:
         condition: service_started
 
-  server-main:
-    image: slan-server-main:latest
+  opt-ui:
+    image: slan-opt-ui:latest
     build:
-      context: ./server/server-main
+      context: ./server/opt-ui
       dockerfile: Dockerfile
     ports:
       - "${SLAN_MAIN_PORT:-24201}:80"
     depends_on:
-      server-biz:
+      server-biz-ops:
         condition: service_started
 
   caddy:
@@ -268,9 +315,13 @@ services:
     depends_on:
       server-biz:
         condition: service_started
+      server-biz-web-console:
+        condition: service_started
+      server-biz-ops:
+        condition: service_started
       server-ui-web:
         condition: service_started
-      server-main:
+      opt-ui:
         condition: service_started
 
 volumes:

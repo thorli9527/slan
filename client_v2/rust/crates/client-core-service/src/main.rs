@@ -95,7 +95,7 @@ use crate::relay_store::{
 };
 use crate::session_store::{
     app_data_dir, current_timestamp_ms, ensure_session_device_registered,
-    ensure_session_node_and_control_session, hydrate_session_from_control_plane, load_session,
+    ensure_session_node_binding, hydrate_session_from_control_plane, load_session,
     load_valid_registered_session, persist_session, prepare_client_login_session,
     refresh_startup_session, remove_session, report_runtime_state, revoke_remote_sessions,
     session_auth_invalid_error, session_is_expired, sync_session_device_fields, PersistedSession,
@@ -2336,8 +2336,8 @@ where
     activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
-    ensure_session_node_and_control_session(&client, &mut session)
-        .context("ensure node control session after network activation")?;
+    ensure_session_node_binding(&client, &mut session)
+        .context("ensure node binding after network activation")?;
     if !activation.relay_candidates.is_empty() {
         replace_runtime_relay_candidates(
             activation
@@ -2561,8 +2561,8 @@ where
         activation.relay_candidates.len()
     ));
     session.virtual_ip = Some(activation.virtual_ip.clone());
-    ensure_session_node_and_control_session(&client, session)
-        .context("ensure node control session after network activation")?;
+    ensure_session_node_binding(&client, session)
+        .context("ensure node binding after network activation")?;
     if !activation.relay_candidates.is_empty() {
         replace_runtime_relay_candidates(
             activation
@@ -3285,6 +3285,10 @@ fn persisted_relay_candidate(candidate: &RelayCandidate) -> PersistedRelayCandid
         country_code: candidate.country_code.clone(),
         region_id: candidate.region_id.clone(),
         cluster_id: candidate.cluster_id.clone(),
+        reachable_hint: candidate.reachable,
+        observed_rtt_ms_hint: candidate.observed_rtt_ms,
+        path_score_hint: candidate.path_score,
+        selected_hint: candidate.selected,
     }
 }
 

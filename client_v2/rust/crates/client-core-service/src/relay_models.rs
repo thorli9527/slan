@@ -13,6 +13,14 @@ pub(crate) struct PersistedRelayCandidate {
     pub(crate) region_id: Option<String>,
     #[serde(default)]
     pub(crate) cluster_id: Option<String>,
+    #[serde(default)]
+    pub(crate) reachable_hint: bool,
+    #[serde(default)]
+    pub(crate) observed_rtt_ms_hint: Option<u32>,
+    #[serde(default)]
+    pub(crate) path_score_hint: Option<u32>,
+    #[serde(default)]
+    pub(crate) selected_hint: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

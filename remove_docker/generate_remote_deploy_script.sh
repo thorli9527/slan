@@ -127,8 +127,7 @@ if [ ! -f "\$ENV_SOURCE" ]; then
   exit 1
 fi
 
-cp "\$ENV_SOURCE" "\$ROOT_DIR/.env.prod"
-"\$ROOT_DIR/scripts/remote_docker_deploy.sh" "\$REMOTE_HOST" "\$REMOTE_DIR" ".env.prod"
+ENV_SOURCE="\$ENV_SOURCE" "\$ROOT_DIR/scripts/remote_docker_deploy.sh" "\$REMOTE_HOST" "\$REMOTE_DIR" ".env.prod"
 EOF
 
 chmod +x "$DEPLOY_SCRIPT"

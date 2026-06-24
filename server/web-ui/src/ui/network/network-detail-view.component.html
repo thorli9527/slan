@@ -1,0 +1,41 @@
+<article class="panel relation-panel network-detail-hero" *ngIf="vm.workspaceRouteMode === 'detail'">
+  <div class="panel-title">
+    <div>
+      <span class="eyebrow">当前网络</span>
+      <h2>{{ vm.selectedWorkspace.name }}</h2>
+      <div class="workspace-meta">
+        <span>网络编码：<code>{{ vm.selectedWorkspace.code }}</code></span>
+        <span>模板键：<code>{{ vm.selectedWorkspace.template || '-' }}</code></span>
+        <span>组内连通策略：{{ vm.intraGroupPolicyLabel(vm.selectedWorkspace.intraGroupPolicy) }}</span>
+        <span>默认网络：{{ vm.selectedWorkspace.default ? '是' : '否' }}</span>
+      </div>
+    </div>
+    <div class="table-actions">
+      <button class="ghost small" type="button" (click)="vm.openEditWorkspaceDialog(vm.selectedWorkspace)">编辑网络</button>
+      <button class="link-danger" type="button" (click)="vm.removeWorkspace(vm.selectedWorkspace)">删除网络</button>
+      <button class="ghost" type="button" (click)="vm.backToWorkspaceList()">返回网络列表</button>
+    </div>
+  </div>
+
+  <div class="network-detail-metrics">
+    <div><span>设备</span><strong>{{ vm.workspaceDevices.length }}</strong><small>当前网络可访问设备</small></div>
+    <div><span>内网域名</span><strong>{{ vm.currentDNSZones.length }}</strong><small>仅网络内生效</small></div>
+    <div><span>安全组</span><strong>{{ vm.currentSecurityGroups.length }}</strong><small>默认作用于全网络</small></div>
+  </div>
+
+  <div class="panel-tabs">
+    <button type="button" class="back-tab" *ngIf="vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">返回</button>
+    <button type="button" class="back-tab" *ngIf="vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">返回</button>
+    <button type="button" [class.active]="vm.workspacePanel === 'devices'" (click)="vm.setWorkspacePanel('devices')">设备</button>
+    <button type="button" [class.active]="vm.workspacePanel === 'zones' || vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">内网域名</button>
+    <button type="button" *ngIf="vm.publicMappingsEnabled" [class.active]="vm.workspacePanel === 'publicMappings'" (click)="vm.setWorkspacePanel('publicMappings')">公网访问</button>
+    <button type="button" [class.active]="vm.workspacePanel === 'securityGroups' || vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">安全组</button>
+  </div>
+
+  <div class="detail-grid one-column">
+    <app-network-devices-panel [vm]="vm" />
+    <app-network-dns-panel [vm]="vm" />
+    <app-network-public-mappings-panel [vm]="vm" />
+    <app-network-security-panel [vm]="vm" />
+  </div>
+</article>

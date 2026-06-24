@@ -8,7 +8,7 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const WebSocket = require(path.join(rootDir, 'server/server-main/node_modules/ws'));
+const WebSocket = require(path.join(rootDir, 'server/opt-ui/node_modules/ws'));
 
 const webBase = process.env.SLAN_UI_SMOKE_WEB_BASE || 'http://web.dev.staticlss.com';
 const opsBase = process.env.SLAN_UI_SMOKE_OPS_BASE || 'http://ops.dev.staticlss.com';

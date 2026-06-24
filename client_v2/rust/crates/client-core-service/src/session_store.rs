@@ -295,7 +295,7 @@ fn bootstrap_session_from_env() -> Result<PersistedSession> {
     let response = client.bootstrap_device_session(&session_key)?;
     let mut session = persisted_session_from_device_session(response);
     refresh_session_network_from_device_configs(&client, &mut session);
-    ensure_session_node_and_control_session(&client, &mut session)?;
+    ensure_session_node_binding(&client, &mut session)?;
     persist_session(&session)?;
     Ok(session)
 }
@@ -312,7 +312,7 @@ fn renew_device_session(session: PersistedSession) -> Result<PersistedSession> {
     let mut renewed = persisted_session_from_device_session(response);
     renewed.user_label = default_string(&session.user_label, &renewed.user_label);
     refresh_session_network_from_device_configs(&client, &mut renewed);
-    ensure_session_node_and_control_session(&client, &mut renewed)?;
+    ensure_session_node_binding(&client, &mut renewed)?;
     persist_session(&renewed)?;
     Ok(renewed)
 }
@@ -387,14 +387,14 @@ pub(crate) fn ensure_session_device_registered(
     if session.session_kind == "device" {
         ensure_bound_device_session(&client, &mut session)?;
         refresh_session_network_from_device_configs(&client, &mut session);
-        ensure_session_node_and_control_session(&client, &mut session)?;
+        ensure_session_node_binding(&client, &mut session)?;
         persist_session(&session)?;
         return Ok(session);
     }
     renew_user_session_if_needed(&client, &mut session)?;
     ensure_bound_device_session(&client, &mut session)?;
     refresh_session_network_from_device_configs(&client, &mut session);
-    ensure_session_node_and_control_session(&client, &mut session)?;
+    ensure_session_node_binding(&client, &mut session)?;
     persist_session(&session)?;
     Ok(session)
 }
@@ -404,7 +404,7 @@ pub(crate) fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result
     let mut session = PersistedSession::from(payload);
     bind_session_device_session(&client, &mut session)?;
     refresh_session_network_from_device_configs(&client, &mut session);
-    ensure_session_node_and_control_session(&client, &mut session)?;
+    ensure_session_node_binding(&client, &mut session)?;
     Ok(session)
 }
 
@@ -635,6 +635,10 @@ fn dedupe_relay_candidates(candidates: Vec<RelayCandidate>) -> Vec<PersistedRela
                 country_code: candidate.country_code,
                 region_id: candidate.region_id,
                 cluster_id: candidate.cluster_id,
+                reachable_hint: candidate.reachable,
+                observed_rtt_ms_hint: candidate.observed_rtt_ms,
+                path_score_hint: candidate.path_score,
+                selected_hint: candidate.selected,
             })
         })
         .collect()
@@ -674,7 +678,10 @@ fn refresh_session_network_from_device_configs(
     }
 }
 
-pub(crate) fn ensure_session_node_and_control_session(
+// The current app control plane does not expose an independent "create control
+// session" endpoint. The only server-side source of truth we need here is the
+// resolved self node id from network-config.
+pub(crate) fn ensure_session_node_binding(
     client: &ControlPlaneClient,
     session: &mut PersistedSession,
 ) -> Result<()> {
@@ -687,15 +694,15 @@ pub(crate) fn ensure_session_node_and_control_session(
     else {
         return Ok(());
     };
-    let Some(network_id) = session
+    if session
         .active_network_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
-    else {
+        .is_none()
+    {
         return Ok(());
-    };
+    }
     let node_id = session
         .self_node_id
         .as_deref()
@@ -712,7 +719,6 @@ pub(crate) fn ensure_session_node_and_control_session(
         return Ok(());
     }
     session.self_node_id = Some(node_id.to_string());
-    let _ = client.create_control_session(&session.access_token, node_id, &network_id);
     Ok(())
 }
 

@@ -1014,6 +1014,35 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       _runtimeControlBaseUrl ??
       _normalizeServerBaseUrl(_defaultEmbeddedControlBaseUrl);
 
+  static int? _intValue(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value);
+    }
+    return null;
+  }
+
+  static bool? _boolValue(Object? value) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized == 'true') {
+        return true;
+      }
+      if (normalized == 'false') {
+        return false;
+      }
+    }
+    return null;
+  }
+
   /// 移动端内嵌服务的默认控制面地址。
   String get _defaultEmbeddedControlBaseUrl =>
       _embeddedControlBaseUrl.isNotEmpty
@@ -2020,6 +2049,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           error: error,
         );
       }
+      await _reportRuntimeToControlPlane(
+        platform: platform,
+        runtimeState: runtimeState,
+        traffic: traffic,
+      );
     } on Object catch (reportError) {
       ClientUiDiagnostics.unawaitedLog(
         'bridge.platformRuntimeState.reportFailed',
@@ -2029,6 +2063,196 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           'message': reportError.toString(),
         },
       );
+    }
+  }
+
+  Future<void> _reportRuntimeToControlPlane({
+    required String platform,
+    required Map<String, Object?> runtimeState,
+    Map<String, Object?>? traffic,
+  }) async {
+    final fallbackDeviceId = _testDeviceId.trim().isNotEmpty
+        ? _testDeviceId.trim()
+        : _state.value.deviceId?.trim();
+    final runtimeDeviceId = runtimeState['deviceId'] is String
+        ? runtimeState['deviceId'] as String
+        : null;
+    final deviceId = (runtimeDeviceId?.trim().isNotEmpty == true
+            ? runtimeDeviceId!.trim()
+            : fallbackDeviceId)
+        ?.trim();
+    if (deviceId == null || deviceId.isEmpty) {
+      return;
+    }
+
+    final reportedAtMs =
+        _intValue(runtimeState['reportedAtMs']) ??
+        _intValue(traffic?['updatedAtMs']) ??
+        DateTime.now().millisecondsSinceEpoch;
+    final lastSeenAt =
+        _intValue(runtimeState['lastSeenAt']) ?? (reportedAtMs ~/ 1000);
+    final rxBytesTotal =
+        _intValue(runtimeState['rxBytesTotal']) ??
+        _intValue(traffic?['bytesRead']) ??
+        _state.value.trafficRxBytes;
+    final txBytesTotal =
+        _intValue(runtimeState['txBytesTotal']) ??
+        _intValue(traffic?['bytesWritten']) ??
+        _state.value.trafficTxBytes;
+    final networkEnabled =
+        _boolValue(runtimeState['networkEnabled']) ?? _state.value.networkEnabled;
+    final deviceVersion = runtimeState['deviceVersion'] is String
+        ? (runtimeState['deviceVersion'] as String).trim()
+        : '';
+    final runtimePath =
+        runtimeState['runtimePath'] is Map
+            ? (runtimeState['runtimePath'] as Map).cast<String, Object?>()
+            : const <String, Object?>{};
+    String? stringField(List<Object?> values) {
+      for (final value in values) {
+        if (value is! String) {
+          continue;
+        }
+        final text = value.trim();
+        if (text.isNotEmpty) {
+          return text;
+        }
+      }
+      return null;
+    }
+
+    final networkId = stringField([
+      runtimeState['networkId'],
+      runtimePath['networkId'],
+    ]);
+    final natType = stringField([
+      runtimeState['natType'],
+      runtimePath['natType'],
+    ]);
+    final activePath = stringField([
+      runtimeState['activePath'],
+      runtimeState['pathType'],
+      runtimePath['activePath'],
+    ]);
+    final relayTransport = stringField([
+      runtimeState['relayTransport'],
+      runtimePath['relayTransport'],
+    ]);
+    final relayEndpoint = stringField([
+      runtimeState['relayEndpoint'],
+      runtimeState['relayAddress'],
+      runtimeState['endpoint'],
+      runtimePath['relayEndpoint'],
+      runtimePath['relayAddress'],
+    ]);
+    final derpNodeId = stringField([
+      runtimeState['derpNodeId'],
+      runtimeState['relayEndpointId'],
+      runtimeState['endpointId'],
+      runtimePath['derpNodeId'],
+      runtimePath['relayEndpointId'],
+      runtimePath['endpointId'],
+    ]);
+    final peerNodeId = stringField([
+      runtimeState['peerNodeId'],
+      runtimePath['peerNodeId'],
+    ]);
+    final ticketExpiresAt = stringField([
+      runtimeState['ticketExpiresAt'],
+      runtimePath['ticketExpiresAt'],
+    ]);
+    final lastPathChange = stringField([
+      runtimeState['lastPathChange'],
+      runtimePath['lastPathChange'],
+    ]);
+    final pathObservedAt =
+        _intValue(runtimeState['pathObservedAt']) ??
+        _intValue(runtimeState['observedAt']) ??
+        _intValue(runtimePath['observedAt']) ??
+        _intValue(runtimePath['pathObservedAt']);
+    final pathScore =
+        _intValue(runtimeState['pathScore']) ??
+        _intValue(runtimePath['pathScore']);
+    final observedRttMs =
+        _intValue(runtimeState['observedRttMs']) ??
+        _intValue(runtimeState['rttMs']) ??
+        _intValue(runtimePath['observedRttMs']);
+    final packetLossPpm =
+        _intValue(runtimeState['packetLossPpm']) ??
+        _intValue(runtimePath['packetLossPpm']);
+    final relayMtu =
+        _intValue(runtimeState['relayMtu']) ?? _intValue(runtimePath['relayMtu']);
+    final maxFramePayload =
+        _intValue(runtimeState['maxFramePayload']) ??
+        _intValue(runtimePath['maxFramePayload']);
+    final ticketRenewDue =
+        _boolValue(runtimeState['ticketRenewDue']) ??
+        _boolValue(runtimePath['ticketRenewDue']);
+    final pathDowngrades =
+        _intValue(runtimeState['pathDowngrades']) ??
+        _intValue(runtimePath['pathDowngrades']);
+    final pathUpgrades =
+        _intValue(runtimeState['pathUpgrades']) ??
+        _intValue(runtimePath['pathUpgrades']);
+
+    final body = <String, Object?>{
+      'deviceId': deviceId,
+      'reportedAtMs': reportedAtMs,
+      'lastSeenAt': lastSeenAt,
+      'status': networkEnabled ? 'active' : 'inactive',
+      if (rxBytesTotal != null) 'rxBytesTotal': rxBytesTotal,
+      if (txBytesTotal != null) 'txBytesTotal': txBytesTotal,
+      if (deviceVersion.isNotEmpty) 'deviceVersion': deviceVersion,
+      'platform': platform,
+      if (networkId != null) 'networkId': networkId,
+      if (natType != null) 'natType': natType,
+      if (activePath != null) 'activePath': activePath,
+      if (pathObservedAt != null) 'pathObservedAt': pathObservedAt,
+      if (relayTransport != null) 'relayTransport': relayTransport,
+      if (relayEndpoint != null) 'relayEndpoint': relayEndpoint,
+      if (derpNodeId != null) 'derpNodeId': derpNodeId,
+      if (peerNodeId != null) 'peerNodeId': peerNodeId,
+      if (pathScore != null) 'pathScore': pathScore,
+      if (observedRttMs != null) 'observedRttMs': observedRttMs,
+      if (packetLossPpm != null) 'packetLossPpm': packetLossPpm,
+      if (relayMtu != null) 'relayMtu': relayMtu,
+      if (maxFramePayload != null) 'maxFramePayload': maxFramePayload,
+      if (ticketExpiresAt != null) 'ticketExpiresAt': ticketExpiresAt,
+      if (ticketRenewDue != null) 'ticketRenewDue': ticketRenewDue,
+      if (pathDowngrades != null) 'pathDowngrades': pathDowngrades,
+      if (pathUpgrades != null) 'pathUpgrades': pathUpgrades,
+      if (lastPathChange != null) 'lastPathChange': lastPathChange,
+    };
+
+    final uri = Uri.parse(
+      '${_effectiveControlBaseUrl}/api/app/devices/$deviceId/runtime',
+    );
+    HttpClient? client;
+    try {
+      client = HttpClient();
+      final request = await client.postUrl(uri);
+      request.headers.contentType = ContentType.json;
+      request.add(utf8.encode(jsonEncode(body)));
+      final response = await request.close();
+      if (response.statusCode >= 400) {
+        final message = await response.transform(utf8.decoder).join();
+        throw HttpException(
+          'runtime report failed: ${response.statusCode} $message',
+          uri: uri,
+        );
+      }
+    } on Object catch (error) {
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.platformRuntimeState.controlPlaneReportFailed',
+        state: _state.value,
+        fields: {
+          'platform': platform,
+          'deviceId': deviceId,
+          'message': error.toString(),
+        },
+      );
+    } finally {
+      client?.close(force: true);
     }
   }
 

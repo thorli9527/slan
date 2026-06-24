@@ -22,7 +22,7 @@ help:
 	@echo "    make wire-stale-nodes-smoke       # verify stale relay/DERP nodes leave scheduling"
 	@echo "    make wire-persistence-smoke       # verify server-wire Postgres state survives service restart"
 	@echo "    make wire-ticket-key-mismatch-smoke # verify ticket key ring drift is detected"
-	@echo "    make wire-biz-ticket-key-drift-smoke # verify service-biz reports ticket key drift"
+	@echo "    make wire-biz-ticket-key-drift-smoke # verify business service reports ticket key drift"
 	@echo "    make wire-control-plane-check     # run wire authz unit tests + Docker biz/wire e2e smoke"
 	@echo ""
 	@echo "  Devices Integration"

@@ -1,29 +1,19 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"os"
-	"time"
 
-	"github.com/slan/service-biz/internal/biz"
+	serviceapp "github.com/slan/service-biz/internal/app"
 )
 
 func main() {
-	addr := env("SLAN_BIZ_ADDR", ":38080")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	db, err := biz.InitPostgresFromEnv(ctx)
-	if err != nil {
-		log.Fatalf("init postgres: %v", err)
-	}
-	if db != nil {
-		defer db.Close()
-	}
-	server := biz.NewServerWithPostgres(db)
-	log.Printf("service-biz listening on %s", addr)
-	if err := http.ListenAndServe(addr, server.Routes()); err != nil {
+	addr := env("SLAN_BIZ_ADDR", ":39080")
+	routeSet := env("SLAN_BIZ_ROUTE_SET", serviceapp.RouteSetAll)
+	server := serviceapp.NewServer()
+	log.Printf("service-biz listening on %s routeSet=%s", addr, routeSet)
+	if err := http.ListenAndServe(addr, server.RoutesFor(routeSet)); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | `client/app_core` | 客户端运行时编排层，承接控制面配置、WireGuard、路径切换、relay / DERP 兜底与隧道编排 | UI、业务控制面存储、服务端数据面转发 |
 | `server/service-biz` | 业务控制面，负责账号、网络资产、设备归属、业务权限、套餐和运营 API | WireGuard 路径规划、真实流量转发 |
-| `server/service-ui` | 客户 Web Console，负责客户侧设备、网络、域名和安全组管理界面 | 业务数据持久化、联网控制面、数据面转发 |
-| `server/server-main` | 运营管理控制台，负责运营用户、客户、商品、订单、续费和中继节点运营界面 | 客户端控制面、数据面转发 |
+| `server/web-ui` | 客户 Web Console，负责客户侧设备、网络、域名和安全组管理界面 | 业务数据持久化、联网控制面、数据面转发 |
+| `server/opt-ui` | 运营管理控制台，负责运营用户、客户、商品、订单、续费和中继节点运营界面 | 客户端控制面、数据面转发 |
 | `server/server-wire` | 联网控制面，负责 peer 注册、runtime config、路径规划、relay/DERP ticket 签发 | 用户、组织、计费、审计等业务域 |
 | `server/server-wire-relay` | UDP relay 数据面，负责 `relay_udp` ticket 消费、session 和 UDP 转发 | 业务域管理、路径评分、票据签发 |
 | `server/server-wire-derp` | DERP 兜底数据面，负责 `derp_tcp_tls_443` ticket 消费、连接和转发；当前实现为裸 TCP JSON-lines | 业务域管理、路径评分、票据签发 |
@@ -48,8 +48,8 @@ LAN Direct -> IPv6 Direct -> Direct UDP -> Relay UDP -> DERP TCP fallback
 ## 文档入口
 
 - `server/service-biz/README.md`
-- `server/service-ui`
-- `server/server-main`
+- `server/web-ui`
+- `server/opt-ui`
 - `server/server-wire/docs`
 - `server/server-wire-relay/docs`
 - `server/server-wire-derp/docs`

@@ -1,0 +1,421 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/slan/service-biz/internal/model"
+	"github.com/slan/service-biz/internal/repository"
+)
+
+type networkRuntimeTestNetworks struct {
+	networks       map[string]model.Network
+	networkDevices map[string][]model.NetworkDevice
+	securityGroups map[string]model.SecurityGroup
+	securityRules  map[string][]model.SecurityRule
+}
+
+func (s *networkRuntimeTestNetworks) GetNetwork(_ context.Context, networkID string) (model.Network, bool, error) {
+	item, ok := s.networks[networkID]
+	return item, ok, nil
+}
+
+func (s *networkRuntimeTestNetworks) ListNetworksByOwner(context.Context, string) ([]model.Network, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestNetworks) ListNetworksByDevice(_ context.Context, deviceID string) ([]model.Network, error) {
+	out := []model.Network{}
+	for networkID, items := range s.networkDevices {
+		for _, item := range items {
+			if item.DeviceID == deviceID {
+				if network, ok := s.networks[networkID]; ok {
+					out = append(out, network)
+				}
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *networkRuntimeTestNetworks) SaveNetwork(context.Context, model.Network) error { return nil }
+func (s *networkRuntimeTestNetworks) DeleteNetwork(context.Context, string) error      { return nil }
+
+func (s *networkRuntimeTestNetworks) ListNetworkDevices(_ context.Context, networkID string) ([]model.NetworkDevice, error) {
+	items := s.networkDevices[networkID]
+	out := make([]model.NetworkDevice, len(items))
+	copy(out, items)
+	return out, nil
+}
+
+func (s *networkRuntimeTestNetworks) SaveNetworkDevice(context.Context, model.NetworkDevice) error {
+	return nil
+}
+
+func (s *networkRuntimeTestNetworks) DeleteNetworkDevice(context.Context, string, string) error {
+	return nil
+}
+
+func (s *networkRuntimeTestNetworks) ListDeviceInvitesByUser(context.Context, string) ([]model.DeviceInvite, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestNetworks) ListDeviceInvitesByNetwork(context.Context, string) ([]model.DeviceInvite, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestNetworks) GetDeviceInvite(context.Context, string) (model.DeviceInvite, bool, error) {
+	return model.DeviceInvite{}, false, nil
+}
+
+func (s *networkRuntimeTestNetworks) GetDeviceInviteByCode(context.Context, string) (model.DeviceInvite, bool, error) {
+	return model.DeviceInvite{}, false, nil
+}
+
+func (s *networkRuntimeTestNetworks) SaveDeviceInvite(context.Context, model.DeviceInvite) error { return nil }
+func (s *networkRuntimeTestNetworks) ListDNSZones(context.Context, string) ([]model.DNSZone, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestNetworks) GetDNSZone(context.Context, string) (model.DNSZone, bool, error) {
+	return model.DNSZone{}, false, nil
+}
+
+func (s *networkRuntimeTestNetworks) SaveDNSZone(context.Context, model.DNSZone) error { return nil }
+func (s *networkRuntimeTestNetworks) DeleteDNSZone(context.Context, string) error       { return nil }
+func (s *networkRuntimeTestNetworks) ListDNSRecords(context.Context, string) ([]model.DNSRecord, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestNetworks) GetDNSRecord(context.Context, string) (model.DNSRecord, bool, error) {
+	return model.DNSRecord{}, false, nil
+}
+
+func (s *networkRuntimeTestNetworks) SaveDNSRecord(context.Context, model.DNSRecord) error { return nil }
+func (s *networkRuntimeTestNetworks) DeleteDNSRecord(context.Context, string) error         { return nil }
+func (s *networkRuntimeTestNetworks) ListPublicMappings(context.Context, string) ([]model.PublicMapping, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestNetworks) GetPublicMapping(context.Context, string) (model.PublicMapping, bool, error) {
+	return model.PublicMapping{}, false, nil
+}
+
+func (s *networkRuntimeTestNetworks) SavePublicMapping(context.Context, model.PublicMapping) error {
+	return nil
+}
+
+func (s *networkRuntimeTestNetworks) DeletePublicMapping(context.Context, string) error { return nil }
+
+func (s *networkRuntimeTestNetworks) ListSecurityGroups(_ context.Context, networkID string) ([]model.SecurityGroup, error) {
+	out := []model.SecurityGroup{}
+	for _, item := range s.securityGroups {
+		if item.NetworkID == networkID {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (s *networkRuntimeTestNetworks) GetSecurityGroup(_ context.Context, securityGroupID string) (model.SecurityGroup, bool, error) {
+	item, ok := s.securityGroups[securityGroupID]
+	return item, ok, nil
+}
+
+func (s *networkRuntimeTestNetworks) SaveSecurityGroup(context.Context, model.SecurityGroup) error {
+	return nil
+}
+
+func (s *networkRuntimeTestNetworks) DeleteSecurityGroup(context.Context, string) error { return nil }
+
+func (s *networkRuntimeTestNetworks) ListSecurityRules(_ context.Context, securityGroupID string) ([]model.SecurityRule, error) {
+	items := s.securityRules[securityGroupID]
+	out := make([]model.SecurityRule, len(items))
+	copy(out, items)
+	return out, nil
+}
+
+func (s *networkRuntimeTestNetworks) GetSecurityRule(_ context.Context, ruleID string) (model.SecurityRule, bool, error) {
+	for _, items := range s.securityRules {
+		for _, item := range items {
+			if item.RuleID == ruleID {
+				return item, true, nil
+			}
+		}
+	}
+	return model.SecurityRule{}, false, nil
+}
+
+func (s *networkRuntimeTestNetworks) SaveSecurityRule(context.Context, model.SecurityRule) error {
+	return nil
+}
+
+func (s *networkRuntimeTestNetworks) DeleteSecurityRule(context.Context, string) error { return nil }
+
+type networkRuntimeTestDevices struct {
+	devices map[string]model.Device
+}
+
+func (s *networkRuntimeTestDevices) ListDevicesByOwner(_ context.Context, ownerID string) ([]model.Device, error) {
+	out := []model.Device{}
+	for _, item := range s.devices {
+		if item.OwnerID == ownerID {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (s *networkRuntimeTestDevices) GetDevice(_ context.Context, deviceID string) (model.Device, bool, error) {
+	item, ok := s.devices[deviceID]
+	return item, ok, nil
+}
+
+func (s *networkRuntimeTestDevices) SaveDevice(context.Context, model.Device) error { return nil }
+func (s *networkRuntimeTestDevices) DeleteDevice(context.Context, string) error      { return nil }
+
+func (s *networkRuntimeTestDevices) GetDeviceLoginDevice(context.Context, string) (model.DeviceLoginDevice, bool, error) {
+	return model.DeviceLoginDevice{}, false, nil
+}
+
+func (s *networkRuntimeTestDevices) SaveDeviceLoginDevice(context.Context, model.DeviceLoginDevice) error {
+	return nil
+}
+
+func (s *networkRuntimeTestDevices) GetDeviceSessionByAccessToken(context.Context, string) (model.DeviceSession, bool, error) {
+	return model.DeviceSession{}, false, nil
+}
+
+func (s *networkRuntimeTestDevices) SaveDeviceSession(context.Context, model.DeviceSession) error {
+	return nil
+}
+
+func (s *networkRuntimeTestDevices) DeleteDeviceSessionByAccessToken(context.Context, string) error {
+	return nil
+}
+
+func (s *networkRuntimeTestDevices) ListDeviceBootstrapKeys(context.Context, string) ([]model.DeviceBootstrapKey, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestDevices) GetDeviceBootstrapKey(context.Context, string) (model.DeviceBootstrapKey, bool, error) {
+	return model.DeviceBootstrapKey{}, false, nil
+}
+
+func (s *networkRuntimeTestDevices) GetDeviceBootstrapKeyByToken(context.Context, string) (model.DeviceBootstrapKey, bool, error) {
+	return model.DeviceBootstrapKey{}, false, nil
+}
+
+func (s *networkRuntimeTestDevices) SaveDeviceBootstrapKey(context.Context, model.DeviceBootstrapKey) error {
+	return nil
+}
+
+func (s *networkRuntimeTestDevices) ListDeviceGroups(context.Context, string) ([]model.DeviceGroup, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestDevices) GetDeviceGroup(context.Context, string) (model.DeviceGroup, bool, error) {
+	return model.DeviceGroup{}, false, nil
+}
+
+func (s *networkRuntimeTestDevices) SaveDeviceGroup(context.Context, model.DeviceGroup) error { return nil }
+func (s *networkRuntimeTestDevices) DeleteDeviceGroup(context.Context, string) error           { return nil }
+func (s *networkRuntimeTestDevices) SetDeviceGroups(context.Context, model.DeviceGroupAssignment) error {
+	return nil
+}
+
+func (s *networkRuntimeTestDevices) ListDeviceGroupAssignments(context.Context, string) ([]model.DeviceGroupAssignment, error) {
+	return nil, nil
+}
+
+type networkRuntimeTestOps struct {
+	relayNodes []model.RelayNode
+}
+
+func (s *networkRuntimeTestOps) ListRelayNodes(context.Context) ([]model.RelayNode, error) {
+	out := make([]model.RelayNode, len(s.relayNodes))
+	copy(out, s.relayNodes)
+	return out, nil
+}
+
+func (s *networkRuntimeTestOps) GetRelayNode(_ context.Context, nodeID string) (model.RelayNode, bool, error) {
+	for _, item := range s.relayNodes {
+		if item.NodeID == nodeID {
+			return item, true, nil
+		}
+	}
+	return model.RelayNode{}, false, nil
+}
+
+func (s *networkRuntimeTestOps) SaveRelayNode(context.Context, model.RelayNode) error { return nil }
+func (s *networkRuntimeTestOps) DeleteRelayNode(context.Context, string) error         { return nil }
+func (s *networkRuntimeTestOps) ListPunchNodes(context.Context) ([]model.PunchNode, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestOps) GetPunchNode(context.Context, string) (model.PunchNode, bool, error) {
+	return model.PunchNode{}, false, nil
+}
+
+func (s *networkRuntimeTestOps) SavePunchNode(context.Context, model.PunchNode) error { return nil }
+func (s *networkRuntimeTestOps) DeletePunchNode(context.Context, string) error         { return nil }
+func (s *networkRuntimeTestOps) GetCustomerPlan(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (s *networkRuntimeTestOps) SaveCustomerPlan(context.Context, string, string) error { return nil }
+func (s *networkRuntimeTestOps) ListClientDownloads(context.Context) ([]model.ClientDownload, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestOps) GetClientDownload(context.Context, string) (model.ClientDownload, bool, error) {
+	return model.ClientDownload{}, false, nil
+}
+
+func (s *networkRuntimeTestOps) SaveClientDownload(context.Context, model.ClientDownload) error {
+	return nil
+}
+
+func (s *networkRuntimeTestOps) DeleteClientDownload(context.Context, string) error { return nil }
+func (s *networkRuntimeTestOps) ListPlans(context.Context) ([]model.Plan, error)     { return nil, nil }
+
+func (s *networkRuntimeTestOps) GetPlan(context.Context, string) (model.Plan, bool, error) {
+	return model.Plan{}, false, nil
+}
+
+func (s *networkRuntimeTestOps) SavePlan(context.Context, model.Plan) error { return nil }
+func (s *networkRuntimeTestOps) ListProducts(context.Context) ([]model.Product, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestOps) GetProduct(context.Context, string) (model.Product, bool, error) {
+	return model.Product{}, false, nil
+}
+
+func (s *networkRuntimeTestOps) SaveProduct(context.Context, model.Product) error { return nil }
+func (s *networkRuntimeTestOps) ListOrders(context.Context) ([]model.Order, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestOps) GetOrder(context.Context, string) (model.Order, bool, error) {
+	return model.Order{}, false, nil
+}
+
+func (s *networkRuntimeTestOps) SaveOrder(context.Context, model.Order) error { return nil }
+func (s *networkRuntimeTestOps) ListRenewals(context.Context) ([]model.Renewal, error) {
+	return nil, nil
+}
+
+func (s *networkRuntimeTestOps) GetRenewal(context.Context, string) (model.Renewal, bool, error) {
+	return model.Renewal{}, false, nil
+}
+
+func (s *networkRuntimeTestOps) SaveRenewal(context.Context, model.Renewal) error { return nil }
+func (s *networkRuntimeTestOps) DeleteRenewal(context.Context, string) error       { return nil }
+
+var _ repository.NetworkRepository = (*networkRuntimeTestNetworks)(nil)
+var _ repository.DeviceRepository = (*networkRuntimeTestDevices)(nil)
+var _ repository.OpsRepository = (*networkRuntimeTestOps)(nil)
+
+func TestIssueRelayTicketRejectsBroadIngressDeny(t *testing.T) {
+	service := newNetworkRuntimeTestService([]model.SecurityRule{{
+		RuleID:          "sgr-1",
+		SecurityGroupID: "sg-1",
+		Direction:       "ingress",
+		Protocol:        "all",
+		PortRange:       "all",
+		CIDR:            "peer:device:dst",
+		Action:          "deny",
+		Priority:        5,
+		Enabled:         true,
+	}})
+
+	_, err := service.IssueRelayTicket(context.Background(), IssueRelayTicketInput{
+		NetworkID: "net-1",
+		SrcNodeID: "node-src",
+		DstNodeID: "node-dst",
+		Reason:    "test",
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestIssueRelayTicketAllowsPortScopedDeny(t *testing.T) {
+	service := newNetworkRuntimeTestService([]model.SecurityRule{{
+		RuleID:          "sgr-1",
+		SecurityGroupID: "sg-1",
+		Direction:       "egress",
+		Protocol:        "tcp",
+		PortRange:       "443",
+		CIDR:            "peer:device:dst",
+		Action:          "deny",
+		Priority:        5,
+		Enabled:         true,
+	}})
+
+	view, err := service.IssueRelayTicket(context.Background(), IssueRelayTicketInput{
+		NetworkID: "net-1",
+		SrcNodeID: "node-src",
+		DstNodeID: "node-dst",
+		Reason:    "test",
+	})
+	if err != nil {
+		t.Fatalf("IssueRelayTicket returned error: %v", err)
+	}
+	if view.TicketID == "" || view.RelayURL == "" {
+		t.Fatalf("IssueRelayTicket returned incomplete relay ticket: %+v", view)
+	}
+}
+
+func newNetworkRuntimeTestService(rules []model.SecurityRule) NetworkRuntimeService {
+	now := time.Unix(1700000000, 0)
+	return NetworkRuntimeService{
+		Devices: &networkRuntimeTestDevices{
+			devices: map[string]model.Device{
+				"src": {DeviceID: "src", Alias: "mac-src", Name: "Mac"},
+				"dst": {DeviceID: "dst", Alias: "ios-dst", Name: "iPhone"},
+			},
+		},
+		Networks: &networkRuntimeTestNetworks{
+			networks: map[string]model.Network{
+				"net-1": {
+					NetworkID: "net-1",
+					Name:      "Default",
+					CIDR:      "100.64.0.0/24",
+					Status:    "active",
+				},
+			},
+			networkDevices: map[string][]model.NetworkDevice{
+				"net-1": {
+					{NetworkID: "net-1", DeviceID: "src", Enabled: true, Status: "active"},
+					{NetworkID: "net-1", DeviceID: "dst", Enabled: true, Status: "active"},
+				},
+			},
+			securityGroups: map[string]model.SecurityGroup{
+				"sg-1": {SecurityGroupID: "sg-1", NetworkID: "net-1", Name: "Default"},
+			},
+			securityRules: map[string][]model.SecurityRule{
+				"sg-1": rules,
+			},
+		},
+		Ops: &networkRuntimeTestOps{
+			relayNodes: []model.RelayNode{{
+				NodeID:    "relay-1",
+				Name:      "Relay",
+				Region:    "dev",
+				Endpoint:  "127.0.0.1:29110",
+				Transport: "relay_udp",
+				Status:    "active",
+				Health:    "healthy",
+				Priority:  1,
+				UpdatedAt: now.Unix(),
+			}},
+		},
+		NewSessID: func(scope string) string { return scope + "-1" },
+		Now:       func() time.Time { return now },
+	}
+}

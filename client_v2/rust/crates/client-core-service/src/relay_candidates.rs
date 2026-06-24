@@ -102,11 +102,17 @@ pub(crate) fn select_relay_candidates(
         right
             .reachable
             .cmp(&left.reachable)
+            .then_with(|| right.selected.cmp(&left.selected))
             .then_with(|| left.path_score.cmp(&right.path_score))
             .then_with(|| left.endpoint_id.cmp(&right.endpoint_id))
     });
+    let has_explicit_selected = selections.iter().any(|selection| selection.selected);
     for (index, selection) in selections.iter_mut().enumerate() {
-        selection.selected = index == 0 && selection.reachable;
+        selection.selected = if has_explicit_selected {
+            index == 0
+        } else {
+            index == 0 && selection.reachable
+        };
     }
     selections
 }
@@ -163,6 +169,10 @@ pub(crate) fn extract_persisted_relay_candidates_from_network_map(
                         country_code: country_code.clone(),
                         region_id: region_id.clone(),
                         cluster_id: cluster_id.clone(),
+                        reachable_hint: false,
+                        observed_rtt_ms_hint: None,
+                        path_score_hint: None,
+                        selected_hint: false,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -182,40 +192,47 @@ fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateS
             country_code: candidate.country_code.clone(),
             region_id: candidate.region_id.clone(),
             cluster_id: candidate.cluster_id.clone(),
-            reachable: false,
-            rtt_ms: None,
-            path_score: 11_000,
-            selected: false,
+            reachable: candidate.reachable_hint,
+            rtt_ms: candidate.observed_rtt_ms_hint,
+            path_score: candidate.path_score_hint.unwrap_or(11_000),
+            selected: candidate.selected_hint,
         };
     };
-    let mut reachable = true;
-    let mut rtt_ms = None;
-    let path_score = match transport.as_str() {
+    let mut reachable = candidate.reachable_hint;
+    let mut rtt_ms = candidate.observed_rtt_ms_hint;
+    let mut path_score = candidate.path_score_hint.unwrap_or(11_000);
+    match transport.as_str() {
         "udp" => match probe_relay_udp_rtt_ms(&address) {
             Some(rtt) => {
+                reachable = true;
                 rtt_ms = Some(rtt);
-                rtt.saturating_add(30)
+                path_score = rtt.saturating_add(30);
             }
-            None => {
+            None if candidate.path_score_hint.is_none() => {
                 reachable = false;
-                10_000
+                path_score = 10_000;
             }
+            None => {}
         },
         "derp_tcp_tls_443" => match probe_relay_tcp_rtt_ms(&address) {
             Some(rtt) => {
+                reachable = true;
                 rtt_ms = Some(rtt);
-                rtt.saturating_add(100)
+                path_score = rtt.saturating_add(100);
             }
-            None => {
+            None if candidate.path_score_hint.is_none() => {
                 reachable = false;
-                10_500
+                path_score = 10_500;
             }
+            None => {}
         },
         _ => {
-            reachable = false;
-            11_000
+            if candidate.path_score_hint.is_none() {
+                reachable = false;
+                path_score = 11_000;
+            }
         }
-    };
+    }
     RelayCandidateSelection {
         endpoint_id: candidate.endpoint_id.clone(),
         transport,
@@ -226,7 +243,7 @@ fn score_relay_candidate(candidate: &PersistedRelayCandidate) -> RelayCandidateS
         reachable,
         rtt_ms,
         path_score,
-        selected: false,
+        selected: candidate.selected_hint,
     }
 }
 

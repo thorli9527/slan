@@ -598,10 +598,12 @@ PathPolicy? _pathPolicy(Object? value) {
 }
 
 List<PlatformDeviceNetworkConfig> _platformDeviceNetworkConfigs(Object? value) {
-  if (value is! List) {
-    return const <PlatformDeviceNetworkConfig>[];
-  }
-  return value
+  final items = switch (value) {
+    List() => value,
+    Map() when value['items'] is List => value['items'] as List,
+    _ => const <Object?>[],
+  };
+  return items
       .whereType<Map>()
       .map((item) => PlatformDeviceNetworkConfig.fromJson(
             item.cast<String, Object?>(),

@@ -1,0 +1,146 @@
+<div class="modal-backdrop" *ngIf="vm.showWorkspaceDeviceDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>添加设备</h2><p>可从设备列表中选择任意可见设备；同一个网络内不能重复添加同一设备。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeWorkspaceDeviceDialog()">×</button>
+    </header>
+    <div class="device-query-row">
+      <label><span>查询</span><input [(ngModel)]="vm.bindDeviceQuery" placeholder="按设备、用户、别名、IP 查询" (ngModelChange)="vm.queryWorkspaceDevices()" /></label>
+      <button class="ghost" type="button" (click)="vm.queryWorkspaceDevices()">查询</button>
+    </div>
+    <table class="compact-table">
+      <thead><tr><th>选择</th><th>设备</th><th>所属用户</th><th>别名</th><th>系统</th><th>IP</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let device of vm.queriedBindableWorkspaceDevices">
+          <td><input type="radio" name="own-workspace-device" [value]="device.deviceId" [(ngModel)]="vm.selectedWorkspaceDeviceId" /></td>
+          <td>{{ device.deviceId }}</td><td>{{ vm.userLabel(device.owner) }}</td><td>{{ device.alias }}</td><td>{{ device.platform }} {{ device.osVersion }}</td><td><code>{{ device.ip }}</code></td><td><span class="status" [class.online]="device.status === 'active'">{{ device.status }}</span></td>
+        </tr>
+        <tr *ngIf="vm.queriedBindableWorkspaceDevices.length === 0"><td colspan="7">暂无可添加设备</td></tr>
+      </tbody>
+    </table>
+    <p class="form-error" *ngIf="vm.workspaceDeviceDialogMessage">{{ vm.workspaceDeviceDialogMessage }}</p>
+    <footer class="modal-footer">
+      <button class="ghost" type="button" (click)="vm.closeWorkspaceDeviceDialog()">取消</button>
+      <button class="primary" type="button" [disabled]="!vm.selectedWorkspaceDeviceId" (click)="vm.saveWorkspaceDeviceDialog()">确认</button>
+    </footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showZoneDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>{{ vm.zoneDialogMode === 'create' ? '新增域' : '修改域' }}</h2><p>配置当前网络内网域名。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeZoneDialog()">×</button>
+    </header>
+    <div class="form">
+      <label><span>域名</span><input [(ngModel)]="vm.zoneName" /></label>
+      <label><span>公网暴露</span><input type="checkbox" [(ngModel)]="vm.zoneExpose" /></label>
+      <p class="form-error" *ngIf="vm.zoneDialogMessage">{{ vm.zoneDialogMessage }}</p>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeZoneDialog()">取消</button><button class="primary" type="button" (click)="vm.saveZoneDialog()">{{ vm.zoneDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showRecordDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>{{ vm.recordDialogMode === 'create' ? '新增解析' : '修改解析' }}</h2><p>解析记录归属于当前内网域名。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeRecordDialog()">×</button>
+    </header>
+    <div class="form">
+      <label><span>主机名</span><input [(ngModel)]="vm.recordName" /></label>
+      <label><span>解析类型</span><select [(ngModel)]="vm.recordType" (ngModelChange)="vm.syncRecordType()"><option value="A">A</option><option value="CNAME">CNAME</option></select></label>
+      <label><span>目标类型</span><select [(ngModel)]="vm.recordTargetType" (ngModelChange)="vm.syncRecordValue()"><option value="device" *ngIf="vm.recordType !== 'CNAME'">设备</option><option value="ip" *ngIf="vm.recordType !== 'CNAME'">IP</option><option value="cname">CNAME</option></select></label>
+      <div class="record-value-row">
+        <label *ngIf="vm.recordTargetType === 'device'"><span>值</span><select [(ngModel)]="vm.recordDeviceId" (ngModelChange)="vm.syncRecordValue()"><option *ngFor="let device of vm.recordDeviceOptions" [value]="device.deviceId">{{ vm.userLabel(device.owner) }} / {{ device.alias }} / {{ device.deviceId }}</option></select></label>
+        <label *ngIf="vm.recordTargetType === 'ip'"><span>目标 IP</span><input [(ngModel)]="vm.recordTargetIp" (ngModelChange)="vm.syncRecordValue()" placeholder="10.0.0.10" /></label>
+        <label *ngIf="vm.recordTargetType === 'cname'"><span>目标 CNAME</span><input [(ngModel)]="vm.recordCname" (ngModelChange)="vm.syncRecordValue()" placeholder="upstream.internal" /></label>
+        <label *ngIf="vm.recordTargetType === 'device'"><span>端口</span><input [(ngModel)]="vm.recordPort" (ngModelChange)="vm.syncRecordValue()" /></label>
+      </div>
+      <p class="form-error" *ngIf="vm.recordDialogMessage">{{ vm.recordDialogMessage }}</p>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeRecordDialog()">取消</button><button class="primary" type="button" (click)="vm.saveRecordDialog()">{{ vm.recordDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showPublicMappingDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>{{ vm.publicMappingDialogMode === 'create' ? '新增公网映射' : '修改公网映射' }}</h2><p>把网络内设备暴露为公网访问入口。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closePublicMappingDialog()">×</button>
+    </header>
+    <div class="form">
+      <label><span>别名</span><input [(ngModel)]="vm.publicAlias" /></label>
+      <label><span>目标类型</span><select [(ngModel)]="vm.publicTargetType"><option value="device">设备</option><option value="ip">内网 IP</option><option value="record">DNS 记录</option></select></label>
+      <label *ngIf="vm.publicTargetType === 'device'"><span>目标设备</span><select [(ngModel)]="vm.publicSourceRecord"><option *ngFor="let device of vm.recordDeviceOptions" [value]="device.deviceId">{{ vm.userLabel(device.owner) }} / {{ device.alias }} / {{ device.deviceId }}</option></select></label>
+      <label *ngIf="vm.publicTargetType === 'ip'"><span>内网 IP</span><input [(ngModel)]="vm.publicInternalIp" placeholder="10.0.0.10" /></label>
+      <label *ngIf="vm.publicTargetType === 'record'"><span>DNS 记录</span><select [(ngModel)]="vm.publicSourceRecord"><option *ngFor="let record of vm.publicMappableDNSRecords" [value]="record.recordId">{{ record.fqdn }} / {{ vm.dnsRecordTargetTypeLabel(record) }}</option></select></label>
+      <label><span>协议</span><select [(ngModel)]="vm.publicProtocol"><option value="HTTP">HTTP</option><option value="HTTPS">HTTPS</option><option value="TCP">TCP</option><option value="UDP">UDP</option></select></label>
+      <label><span>内网端口</span><input [(ngModel)]="vm.publicInternalPort" /></label>
+      <label><span>外网端口</span><input [(ngModel)]="vm.publicExternalPort" /></label>
+      <label><span>访问方式</span><select [(ngModel)]="vm.publicAccessMode"><option value="public">public</option><option value="allowlist">allowlist</option><option value="private">private</option></select></label>
+      <label><span>TLS 模式</span><select [(ngModel)]="vm.publicTlsMode"><option value="auto">auto</option><option value="off">off</option><option value="passthrough">passthrough</option></select></label>
+      <div class="invite-target muted">
+        <span>公网域名</span>
+        <strong>{{ vm.publicDomainPreview }}</strong>
+      </div>
+      <p class="form-error" *ngIf="vm.publicMappingDialogMessage">{{ vm.publicMappingDialogMessage }}</p>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closePublicMappingDialog()">取消</button><button class="primary" type="button" (click)="vm.savePublicMappingDialog()">{{ vm.publicMappingDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showIngressRuleDialog || vm.showEgressRuleDialog">
+  <section class="modal rule-modal">
+    <header class="modal-header">
+      <div>
+        <h2>{{ vm.ruleDialogMode === 'create' ? (vm.showIngressRuleDialog ? '新增入方向规则' : '新增出方向规则') : (vm.showIngressRuleDialog ? '修改入方向规则' : '修改出方向规则') }}</h2>
+        <p>{{ vm.showIngressRuleDialog ? '入方向规则控制外部访问当前网络设备。' : '出方向规则控制当前网络设备访问外部目标。' }}</p>
+      </div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeRuleDialog()">×</button>
+    </header>
+    <div class="form">
+      <div class="rule-template-grid" *ngIf="vm.showIngressRuleDialog && vm.ruleDialogMode === 'create'">
+        <button type="button" *ngFor="let template of vm.ingressRuleTemplates" [class.active]="vm.selectedRuleTemplate === template.name" (click)="vm.selectRuleTemplate('ingress', template.name)">
+          <strong>{{ template.name }}</strong><span>{{ template.description || (template.protocol + ' / ' + template.port) }}</span>
+        </button>
+      </div>
+      <div class="rule-fields-grid">
+        <label><span>模板</span><select [(ngModel)]="vm.selectedRuleTemplate" (change)="vm.applyRuleTemplate(vm.showIngressRuleDialog ? 'ingress' : 'egress')"><option value="自定义">自定义</option><option *ngFor="let template of (vm.showIngressRuleDialog ? vm.ingressRuleTemplates : vm.egressRuleTemplates)" [value]="template.name">{{ template.name }}</option></select></label>
+        <label><span>优先级</span><input type="number" [(ngModel)]="vm.rulePriority" /></label>
+        <label><span>动作</span><select [(ngModel)]="vm.ruleAction"><option value="allow">allow</option><option value="deny">deny</option></select></label>
+        <label><span>协议</span><select [(ngModel)]="vm.ruleProtocol"><option value="tcp">tcp</option><option value="udp">udp</option><option value="icmp">icmp</option><option value="all">all</option></select></label>
+        <label><span>{{ vm.showIngressRuleDialog ? '来源类型' : '目标类型' }}</span><select [(ngModel)]="vm.ruleSubjectType" (change)="vm.onRuleSubjectTypeChanged()"><option *ngFor="let item of (vm.showIngressRuleDialog ? vm.ingressSubjectTypes : vm.egressSubjectTypes)" [value]="item.value">{{ item.label }}</option></select></label>
+        <label class="span-2" *ngIf="vm.ruleSubjectType === 'cidr' || vm.ruleSubjectType === 'domain'"><span>{{ vm.showIngressRuleDialog ? '来源对象' : '目标对象' }}</span><input [(ngModel)]="vm.ruleSubjectValue" /></label>
+        <label class="span-2" *ngIf="vm.ruleSubjectType !== 'cidr' && vm.ruleSubjectType !== 'domain'"><span>{{ vm.showIngressRuleDialog ? '来源对象' : '目标对象' }}</span><select [(ngModel)]="vm.ruleSubjectValue"><option *ngFor="let item of vm.ruleSubjectOptions" [value]="item.value">{{ item.label }}</option></select></label>
+        <label><span>端口</span><input [(ngModel)]="vm.rulePort" /></label>
+        <label class="span-2"><span>描述</span><input [(ngModel)]="vm.ruleDescription" /></label>
+        <label><span>启用</span><input type="checkbox" [(ngModel)]="vm.ruleEnabled" /></label>
+      </div>
+      <p class="form-error" *ngIf="vm.securityRuleDialogMessage">{{ vm.securityRuleDialogMessage }}</p>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeRuleDialog()">取消</button><button class="primary" type="button" (click)="vm.saveRuleDialog()">{{ vm.ruleDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
+  </section>
+</div>
+
+<div class="modal-backdrop" *ngIf="vm.showWorkspaceDialog">
+  <section class="modal">
+    <header class="modal-header">
+      <div><h2>{{ vm.workspaceDialogMode === 'create' ? '新增网络' : '修改网络' }}</h2><p>选择或输入网络名称。</p></div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeWorkspaceDialog()">×</button>
+    </header>
+    <div class="form">
+      <label>
+        <span>网络名称</span>
+        <input [(ngModel)]="vm.workspaceName" list="workspace-name-options" (input)="vm.onWorkspaceNameChanged()" />
+        <datalist id="workspace-name-options"><option *ngFor="let preset of vm.workspacePresets" [value]="preset.name"></option></datalist>
+      </label>
+      <label><span>网络编码</span><input [(ngModel)]="vm.workspaceCode" /></label>
+      <label><span>模板键</span><input [(ngModel)]="vm.workspaceTemplateKey" /></label>
+      <label><span>组内连通策略</span><select [(ngModel)]="vm.workspaceIntraGroupPolicy"><option value="allow">组内互通</option><option value="deny">组内隔离</option></select></label>
+      <label><span>默认网络</span><input type="checkbox" [(ngModel)]="vm.workspaceDefault" /></label>
+      <p class="form-error" *ngIf="vm.workspaceDialogMessage">{{ vm.workspaceDialogMessage }}</p>
+    </div>
+    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeWorkspaceDialog()">取消</button><button class="primary" type="button" (click)="vm.addWorkspace()">{{ vm.workspaceDialogMode === 'create' ? '创建网络' : '保存修改' }}</button></footer>
+  </section>
+</div>

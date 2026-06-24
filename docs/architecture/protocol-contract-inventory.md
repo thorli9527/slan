@@ -5,8 +5,8 @@
 This document tracks the duplicated business contracts that currently exist
 across:
 
-- `server/service-biz/internal/biz` (backend source-of-truth today)
-- `server/service-ui/src/ui` (Web Console API contracts)
+- `server/service-biz` (backend source-of-truth in transition)
+- `server/web-ui/src/ui` (Web Console API contracts)
 - `client_v2/app_flutter/lib/bridge` (Flutter local service contracts)
 - `client_v2/rust/crates/client-core-service/src` (Rust control-plane contracts)
 
@@ -55,9 +55,9 @@ item. Until that exists, full functional verification should also run
 
 ### Web
 
-- API service: `server/service-ui/src/ui/app-api.service.ts`
-- Web auth flow: `server/service-ui/src/ui/app-auth-flow.ts`
-- UI models: `server/service-ui/src/ui/app.models.ts`
+- API service: `server/web-ui/src/ui/app-api.service.ts`
+- Web auth flow: `server/web-ui/src/ui/app-auth-flow.ts`
+- UI models: `server/web-ui/src/ui/app.models.ts`
 
 ### Flutter
 

@@ -1,0 +1,72 @@
+<section class="detail-card" *ngIf="vm.workspacePanel === 'zones'">
+  <div class="section-title">
+    <div>
+      <h3>内网域名</h3>
+      <p>给当前网络配置私有域名，例如 home.lan、dev.internal。</p>
+    </div>
+    <button class="ghost small" type="button" (click)="vm.openZoneDialog()">新增域</button>
+  </div>
+  <p class="form-error" *ngIf="vm.zoneDialogMessage">{{ vm.zoneDialogMessage }}</p>
+  <table class="compact-table">
+    <thead><tr><th>Zone</th><th>公网暴露</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody>
+      <tr *ngFor="let zone of vm.currentDNSZones">
+        <td class="tag-cell-wrapper">
+          <div class="alias-tag-cell">
+            <code>{{ zone.zone }}</code>
+            <button class="tag-icon-button" type="button" title="修改 Zone" (click)="vm.openZoneTagDialog(zone)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                <circle cx="8.5" cy="8.5" r="1.4"></circle>
+              </svg>
+            </button>
+            <div class="tag-popover" *ngIf="vm.showZoneTagDialog && vm.editingZone === zone">
+              <div class="tag-popover-arrow"></div>
+              <div class="tag-editor-row"><span>Zone</span><input [(ngModel)]="vm.zoneNameValue" /></div>
+              <div class="tag-editor-row"><span>公网暴露</span><input type="checkbox" [(ngModel)]="vm.zoneExposeValue" /></div>
+              <p class="form-error" *ngIf="vm.zoneDialogMessage">{{ vm.zoneDialogMessage }}</p>
+              <div class="tag-popover-actions">
+                <button class="text-link" type="button" (click)="vm.saveZoneTagDialog()">保存</button>
+                <button class="text-link muted" type="button" (click)="vm.closeZoneTagDialog()">取消</button>
+              </div>
+            </div>
+          </div>
+        </td>
+        <td>{{ zone.expose ? '是' : '否' }}</td>
+        <td><span class="status" [class.online]="zone.status === 'active'">{{ zone.status }}</span></td>
+        <td class="table-actions">
+          <button class="ghost small" type="button" (click)="vm.openEditZoneDialog(zone)">修改</button>
+          <button class="ghost small" type="button" (click)="vm.openZoneRecords(zone)">解析</button>
+          <button class="link-danger" type="button" (click)="vm.removeZone(zone)">删除</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="detail-card" *ngIf="vm.workspacePanel === 'records'">
+  <div class="section-title">
+    <div>
+      <h3>解析管理</h3>
+      <p>把一个名称解析到当前网络里的某台设备和端口。</p>
+    </div>
+    <button class="ghost small" type="button" (click)="vm.openRecordDialog()">新增解析</button>
+  </div>
+  <p class="form-error" *ngIf="vm.recordDialogMessage">{{ vm.recordDialogMessage }}</p>
+  <table class="compact-table">
+    <thead><tr><th>名称</th><th>解析类型</th><th>目标类型</th><th>TTL</th><th>值</th><th>操作</th></tr></thead>
+    <tbody>
+      <tr *ngFor="let item of vm.currentDNSRecords">
+        <td>{{ item.name }}</td>
+        <td>{{ item.recordType }}</td>
+        <td>{{ vm.dnsRecordTargetTypeLabel(item) }}</td>
+        <td>{{ item.ttl || 60 }}</td>
+        <td>{{ vm.dnsRecordValue(item) }}</td>
+        <td class="table-actions">
+          <button class="ghost small" type="button" (click)="vm.openEditRecordDialog(item)">修改</button>
+          <button class="link-danger" type="button" (click)="vm.removeDomainRecord(item)">删除</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>

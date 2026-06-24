@@ -14,8 +14,8 @@ slan/
 │
 ├─ server/
 │  ├─ service-biz/                  # 业务控制面
-│  ├─ service-ui/                   # 客户 Web Console
-│  ├─ server-main/                  # 运营管理控制台
+│  ├─ web-ui/                       # 客户 Web Console
+│  ├─ opt-ui/                       # 运营管理控制台
 │  ├─ server-wire/                      # 联网控制面
 │  ├─ server-wire-relay/                # UDP relay 数据面
 │  └─ server-wire-derp/                 # DERP TCP 兜底数据面
@@ -45,12 +45,12 @@ slan/
 - 包括用户、网络、设备、成员权限、IP 分配、ACL、业务审计和业务 bootstrap。
 - 不负责 WireGuard 路径规划、联网票据签发和业务流量中继。
 
-### `server/service-ui`
+### `server/web-ui`
 
 - 负责客户侧 Web Console。
 - 包括注册登录、设备、网络、内网域名、安全组、接入码等面向 C 端的管理界面。
 
-### `server/server-main`
+### `server/opt-ui`
 
 - 负责运营管理控制台。
 - 包括运营用户、客户、商品/订单、套餐、续费和中继节点运营配置。

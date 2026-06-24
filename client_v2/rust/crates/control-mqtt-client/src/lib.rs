@@ -19,6 +19,7 @@ pub struct ThinMqttCredential {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinMqttQoS {
     AtMostOnce,
+    AtLeastOnce,
     ExactlyOnce,
 }
 
@@ -26,6 +27,7 @@ impl ThinMqttQoS {
     fn delivery_qos(self) -> MqttDeliveryQoS {
         match self {
             Self::AtMostOnce => MqttDeliveryQoS::AtMostOnce,
+            Self::AtLeastOnce => MqttDeliveryQoS::AtLeastOnce,
             Self::ExactlyOnce => MqttDeliveryQoS::ExactlyOnce,
         }
     }
@@ -110,10 +112,10 @@ impl ThinControlMqttClient {
 
     pub fn publish(&mut self, topic: &str, payload: &[u8], qos: ThinMqttQoS) -> Result<(), String> {
         let qos = qos.delivery_qos();
-        let packet_id = if qos == MqttDeliveryQoS::ExactlyOnce {
-            Some(self.next_publish_packet_id())
-        } else {
+        let packet_id = if qos == MqttDeliveryQoS::AtMostOnce {
             None
+        } else {
+            Some(self.next_publish_packet_id())
         };
         let packet = mqtt_publish_packet(topic, payload, qos, packet_id)?;
         self.stream
@@ -123,7 +125,7 @@ impl ThinControlMqttClient {
             .flush()
             .map_err(|err| format!("flush mqtt publish: {err}"))?;
         if let Some(packet_id) = packet_id {
-            complete_mqtt_qos2_publish(&mut self.stream, packet_id)?;
+            complete_mqtt_publish(&mut self.stream, qos, packet_id)?;
         }
         Ok(())
     }
@@ -188,6 +190,7 @@ struct MqttEndpoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MqttDeliveryQoS {
     AtMostOnce,
+    AtLeastOnce,
     ExactlyOnce,
 }
 
@@ -195,6 +198,7 @@ impl MqttDeliveryQoS {
     fn packet_qos(self) -> u8 {
         match self {
             Self::AtMostOnce => MQTT_QOS_AT_MOST_ONCE,
+            Self::AtLeastOnce => MQTT_QOS_AT_LEAST_ONCE,
             Self::ExactlyOnce => MQTT_QOS_EXACTLY_ONCE,
         }
     }
@@ -241,9 +245,12 @@ fn mqtt_publish_packet(
 ) -> Result<Vec<u8>, String> {
     let mut variable = Vec::new();
     mqtt_write_string(&mut variable, topic)?;
-    if qos == MqttDeliveryQoS::ExactlyOnce {
-        let packet_id =
-            packet_id.ok_or_else(|| "mqtt qos2 publish missing packet id".to_string())?;
+    if qos != MqttDeliveryQoS::AtMostOnce {
+        let packet_id = packet_id.ok_or_else(|| match qos {
+            MqttDeliveryQoS::AtLeastOnce => "mqtt qos1 publish missing packet id".to_string(),
+            MqttDeliveryQoS::ExactlyOnce => "mqtt qos2 publish missing packet id".to_string(),
+            MqttDeliveryQoS::AtMostOnce => "mqtt publish missing packet id".to_string(),
+        })?;
         variable.extend_from_slice(&packet_id.to_be_bytes());
     }
     variable.push(0x00);
@@ -264,6 +271,36 @@ fn mqtt_subscribe_packet(packet_id: u16, topic_filter: &str) -> Result<Vec<u8>, 
     packet.extend_from_slice(&mqtt_remaining_length(variable.len())?);
     packet.extend_from_slice(&variable);
     Ok(packet)
+}
+
+fn complete_mqtt_publish(
+    stream: &mut TcpStream,
+    qos: MqttDeliveryQoS,
+    packet_id: u16,
+) -> Result<(), String> {
+    match qos {
+        MqttDeliveryQoS::AtMostOnce => Ok(()),
+        MqttDeliveryQoS::AtLeastOnce => complete_mqtt_qos1_publish(stream, packet_id),
+        MqttDeliveryQoS::ExactlyOnce => complete_mqtt_qos2_publish(stream, packet_id),
+    }
+}
+
+fn complete_mqtt_qos1_publish(stream: &mut TcpStream, packet_id: u16) -> Result<(), String> {
+    loop {
+        let packet = read_mqtt_packet(stream)?;
+        match packet.header & 0xf0 {
+            0x40 => {
+                let puback_id = read_packet_id(&packet.body, "puback")?;
+                if puback_id != packet_id {
+                    return Err("mqtt puback packet id mismatch".to_string());
+                }
+                return Ok(());
+            }
+            0xc0 => write_ping_response(stream)?,
+            0xd0 => {}
+            _ => {}
+        }
+    }
 }
 
 fn complete_mqtt_qos2_publish(stream: &mut TcpStream, packet_id: u16) -> Result<(), String> {

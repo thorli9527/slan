@@ -8,6 +8,7 @@ ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 SERVICE_BIN="${SLAN_CLIENT_CORE_SERVICE_BIN:-$ROOT_DIR/client_v2/rust/target/debug/client-core-service}"
 BIZ_URL="${SLAN_BIZ_URL:-http://127.0.0.1:28080}"
 ANDROID_BIZ_URL="${SLAN_ANDROID_BIZ_URL:-http://10.0.2.2:28080}"
+ADMIN_BIZ_URL="${SLAN_WEB_BIZ_URL:-${SLAN_NETWORK_ADMIN_BIZ_URL:-$BIZ_URL}}"
 SERVICE_HOST="${SLAN_ANDROID_SERVICE_HOST:-127.0.0.1:46396}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
@@ -28,8 +29,135 @@ ANDROID_TEST_DEVICE_ID="${SLAN_ANDROID_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]
 ANDROID_TO_MAC_BODY="${SLAN_ANDROID_TO_MAC_BODY:-hello-android-to-mac-$(date +%s%N)}"
 MAC_TO_ANDROID_BODY="${SLAN_MAC_TO_ANDROID_BODY:-hello-mac-to-android-$(date +%s%N)}"
 ANDROID_DEVICE_ID_WAIT_SECONDS="${SLAN_ANDROID_DEVICE_ID_WAIT_SECONDS:-180}"
+PROVISION_DNS_ACL="${SLAN_PROVISION_DNS_ACL:-0}"
+
+NETWORK_ID=""
+USER_ID=""
+SECURITY_GROUP_ID=""
+ZONE_ID=""
+ZONE_NAME=""
+RECORD_IDS=()
+RULE_IDS=()
 
 PIDS=()
+
+is_truthy() {
+  local value="${1:-}"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  case "$value" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+extract_json_field() {
+  local json="$1"
+  local field="$2"
+  printf '%s' "$json" | sed -n "s/.*\"${field}\":\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
+}
+
+best_effort_delete() {
+  local url="$1"
+  curl --silent --show-error --connect-timeout 5 --max-time 20 -X DELETE "$url" >/dev/null 2>&1 || true
+}
+
+create_json() {
+  local url="$1"
+  local payload="$2"
+  curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    -X POST "$url" \
+    -H 'Content-Type: application/json' \
+    -d "$payload"
+}
+
+ensure_network_context() {
+  [[ -n "$NETWORK_ID" && -n "$USER_ID" && -n "$SECURITY_GROUP_ID" ]] && return 0
+
+  local auth networks groups
+  auth="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    -X POST "${ADMIN_BIZ_URL}/api/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
+  USER_ID="$(extract_json_field "$auth" "userId")"
+  [[ -n "$USER_ID" ]] || {
+    echo "failed to parse user id from auth login response" >&2
+    return 1
+  }
+
+  networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    "${ADMIN_BIZ_URL}/api/networks?userId=${USER_ID}")"
+  NETWORK_ID="$(extract_json_field "$networks" "networkId")"
+  [[ -n "$NETWORK_ID" ]] || {
+    echo "failed to parse network id for user ${USER_ID}" >&2
+    return 1
+  }
+
+  groups="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    "${ADMIN_BIZ_URL}/api/networks/${NETWORK_ID}/security-groups")"
+  SECURITY_GROUP_ID="$(extract_json_field "$groups" "securityGroupId")"
+  [[ -n "$SECURITY_GROUP_ID" ]] || {
+    echo "failed to parse security group id for network ${NETWORK_ID}" >&2
+    return 1
+  }
+}
+
+create_security_rule() {
+  local direction="$1"
+  local peer_value="$2"
+  local priority="$3"
+  local response rule_id
+  response="$(create_json "${ADMIN_BIZ_URL}/api/security-groups/${SECURITY_GROUP_ID}/rules" \
+    "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"tcp\",\"portFrom\":443,\"portTo\":443,\"peerType\":\"device\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
+  rule_id="$(extract_json_field "$response" "ruleId")"
+  [[ -n "$rule_id" ]] || {
+    echo "failed to create security rule direction=${direction} peer=${peer_value}" >&2
+    return 1
+  }
+  RULE_IDS+=("$rule_id")
+}
+
+provision_dns_acl_resources() {
+  local mac_device_id="$1"
+  local android_device_id="$2"
+  local response record_id
+
+  is_truthy "$PROVISION_DNS_ACL" || return 0
+  ensure_network_context
+
+  ZONE_NAME="android-mac-${RANDOM}-$(date +%s).lan"
+  response="$(create_json "${ADMIN_BIZ_URL}/api/networks/${NETWORK_ID}/dns/zones" \
+    "{\"zoneName\":\"${ZONE_NAME}\"}")"
+  ZONE_ID="$(extract_json_field "$response" "zoneId")"
+  [[ -n "$ZONE_ID" ]] || {
+    echo "failed to create dns zone ${ZONE_NAME}" >&2
+    return 1
+  }
+
+  response="$(create_json "${ADMIN_BIZ_URL}/api/networks/${NETWORK_ID}/dns/records" \
+    "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"mac\",\"recordType\":\"A\",\"targetDeviceId\":\"${mac_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
+  record_id="$(extract_json_field "$response" "recordId")"
+  [[ -n "$record_id" ]] || {
+    echo "failed to create mac dns record" >&2
+    return 1
+  }
+  RECORD_IDS+=("$record_id")
+
+  response="$(create_json "${ADMIN_BIZ_URL}/api/networks/${NETWORK_ID}/dns/records" \
+    "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"android\",\"recordType\":\"A\",\"targetDeviceId\":\"${android_device_id}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"443\",\"ttl\":60}")"
+  record_id="$(extract_json_field "$response" "recordId")"
+  [[ -n "$record_id" ]] || {
+    echo "failed to create android dns record" >&2
+    return 1
+  }
+  RECORD_IDS+=("$record_id")
+
+  create_security_rule ingress "$mac_device_id" 100
+  create_security_rule egress "$android_device_id" 110
+  create_security_rule ingress "$android_device_id" 120
+  create_security_rule egress "$mac_device_id" 130
+
+  echo "androidIntegrationCheck: provisioned dnsZone=${ZONE_NAME} network=${NETWORK_ID} mac=${mac_device_id} android=${android_device_id}"
+}
 
 run_client_core_login_check() {
   local label="$1"
@@ -84,6 +212,18 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
+  if [[ -n "$NETWORK_ID" ]]; then
+    local index
+    for ((index=${#RULE_IDS[@]}-1; index>=0; index--)); do
+      best_effort_delete "${ADMIN_BIZ_URL}/api/security-groups/rules/${RULE_IDS[$index]}"
+    done
+    for ((index=${#RECORD_IDS[@]}-1; index>=0; index--)); do
+      best_effort_delete "${ADMIN_BIZ_URL}/api/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
+    done
+    if [[ -n "$ZONE_ID" ]]; then
+      best_effort_delete "${ADMIN_BIZ_URL}/api/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+    fi
+  fi
   slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_ANDROID_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
@@ -201,6 +341,8 @@ if [[ -z "$ANDROID_DEVICE_ID" ]]; then
   exit 1
 fi
 echo "Android device id: $ANDROID_DEVICE_ID"
+
+provision_dns_acl_resources "$MAC_DEVICE_ID" "$ANDROID_DEVICE_ID"
 
 echo "+ wait mac receive Android message"
 run_client_core_login_check "mac wait Android message" \

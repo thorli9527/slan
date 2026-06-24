@@ -324,7 +324,7 @@ Future<void> _registerTestUser(
   String email,
   String password,
 ) async {
-  final uri = Uri.parse(bizUrl).resolve('/api/auth/register');
+  final uri = Uri.parse(bizUrl).resolve('/api/app/auth/register');
   final client = HttpClient();
   client.connectionTimeout = const Duration(seconds: 5);
   try {

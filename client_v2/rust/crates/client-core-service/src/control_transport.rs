@@ -1175,6 +1175,10 @@ mod tests {
             country_code: Some("CN".to_string()),
             region_id: Some("sha".to_string()),
             cluster_id: Some("cn-a".to_string()),
+            reachable_hint: false,
+            observed_rtt_ms_hint: None,
+            path_score_hint: None,
+            selected_hint: false,
         }];
 
         let outbox = control_transport_outbox(

@@ -1,0 +1,22 @@
+import { CommonModule } from '@angular/common';
+import { Component, Input } from '@angular/core';
+import { NetworkDevicesPanelComponent } from './network-devices-panel.component';
+import { NetworkDnsPanelComponent } from './network-dns-panel.component';
+import { NetworkPublicMappingsPanelComponent } from './network-public-mappings-panel.component';
+import { NetworkSecurityPanelComponent } from './network-security-panel.component';
+
+@Component({
+  selector: 'app-network-detail-view',
+  standalone: true,
+  imports: [
+    CommonModule,
+    NetworkDevicesPanelComponent,
+    NetworkDnsPanelComponent,
+    NetworkPublicMappingsPanelComponent,
+    NetworkSecurityPanelComponent,
+  ],
+  templateUrl: './network-detail-view.component.html',
+})
+export class NetworkDetailViewComponent {
+  @Input({ required: true }) vm!: any;
+}

@@ -1,0 +1,81 @@
+<article class="panel wide-panel network-landing" *ngIf="vm.workspaceRouteMode === 'list'">
+  <div class="network-hero-card">
+    <div>
+      <span class="eyebrow">我的网络</span>
+      <h2>把自己的设备放进一个安全网络</h2>
+      <p>网络用来组织你的电脑、手机和服务。进入网络后，可以添加设备、配置内网域名，并设置哪些设备能访问哪些端口。</p>
+    </div>
+    <button class="primary" type="button" (click)="vm.openWorkspaceDialog()">新增网络</button>
+  </div>
+  <div class="network-tips">
+    <div><strong>1</strong><span>添加设备</span><small>把可见设备加入当前网络</small></div>
+    <div><strong>2</strong><span>设置域名</span><small>用 mac.home.lan 访问设备端口</small></div>
+    <div><strong>3</strong><span>配置访问</span><small>按入站/出站规则控制访问</small></div>
+  </div>
+</article>
+
+<article class="panel wide-panel" *ngIf="vm.workspaceRouteMode === 'list'">
+  <div class="panel-title">
+    <div>
+      <h2>网络列表</h2>
+      <p>点击网络名称进入详情。每个网络都有独立设备、内网域名和访问规则。</p>
+    </div>
+    <div class="table-actions" *ngIf="vm.workspaces.length">
+      <button class="ghost small" type="button" (click)="vm.openEditWorkspaceDialog(vm.selectedWorkspace)">编辑当前网络</button>
+      <button class="link-danger" type="button" (click)="vm.removeWorkspace(vm.selectedWorkspace)">删除当前网络</button>
+    </div>
+  </div>
+  <p class="form-error" *ngIf="vm.workspaceDialogMessage">{{ vm.workspaceDialogMessage }}</p>
+  <table>
+    <thead><tr><th>名称</th><th>编码</th><th>模板键</th><th>组内连通策略</th><th>默认网络</th><th>设备</th></tr></thead>
+    <tbody>
+      <tr *ngFor="let workspace of vm.workspaces" [class.selected-row]="workspace.workspaceId === vm.selectedWorkspace.workspaceId">
+        <td class="tag-cell-wrapper">
+          <div class="alias-tag-cell">
+            <button class="text-link" type="button" (click)="vm.openWorkspaceDetail(workspace)">{{ workspace.name }}</button>
+            <button class="tag-icon-button" type="button" title="修改名称" (click)="vm.openWorkspaceNameTagDialog(workspace); $event.stopPropagation()">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                <circle cx="8.5" cy="8.5" r="1.4"></circle>
+              </svg>
+            </button>
+            <div class="tag-popover" *ngIf="vm.showWorkspaceNameTagDialog && vm.editingWorkspace?.workspaceId === workspace.workspaceId">
+              <div class="tag-popover-arrow"></div>
+              <div class="tag-editor-row"><span>名称</span><input [(ngModel)]="vm.workspaceNameValue" /></div>
+              <p class="form-error" *ngIf="vm.workspaceDialogMessage">{{ vm.workspaceDialogMessage }}</p>
+              <div class="tag-popover-actions">
+                <button class="text-link" type="button" (click)="vm.saveWorkspaceNameTagDialog()">保存</button>
+                <button class="text-link muted" type="button" (click)="vm.closeWorkspaceTagDialogs()">取消</button>
+              </div>
+            </div>
+          </div>
+        </td>
+        <td><code>{{ workspace.code }}</code></td>
+        <td><code>{{ workspace.template || '-' }}</code></td>
+        <td class="tag-cell-wrapper">
+          <div class="alias-tag-cell">
+            <span>{{ vm.intraGroupPolicyLabel(workspace.intraGroupPolicy) }}</span>
+            <button class="tag-icon-button" type="button" title="修改组内连通策略" (click)="vm.openWorkspacePolicyTagDialog(workspace); $event.stopPropagation()">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                <circle cx="8.5" cy="8.5" r="1.4"></circle>
+              </svg>
+            </button>
+            <div class="tag-popover" *ngIf="vm.showWorkspacePolicyTagDialog && vm.editingWorkspace?.workspaceId === workspace.workspaceId">
+              <div class="tag-popover-arrow"></div>
+              <div class="tag-editor-row"><span>策略</span><select [(ngModel)]="vm.workspaceIntraGroupPolicyValue"><option value="allow">组内互通</option><option value="deny">组内隔离</option></select></div>
+              <div class="tag-editor-row"><span>默认</span><input type="checkbox" [(ngModel)]="vm.workspaceDefaultValue" /></div>
+              <p class="form-error" *ngIf="vm.workspaceDialogMessage">{{ vm.workspaceDialogMessage }}</p>
+              <div class="tag-popover-actions">
+                <button class="text-link" type="button" (click)="vm.saveWorkspacePolicyTagDialog()">保存</button>
+                <button class="text-link muted" type="button" (click)="vm.closeWorkspaceTagDialogs()">取消</button>
+              </div>
+            </div>
+          </div>
+        </td>
+        <td>{{ workspace.default ? '是' : '否' }}</td>
+        <td>{{ workspace.devices }}</td>
+      </tr>
+    </tbody>
+  </table>
+</article>

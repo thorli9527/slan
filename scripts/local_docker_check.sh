@@ -24,6 +24,12 @@ echo
 docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T server-biz /bin/sh -lc \
   "wget -qO- http://127.0.0.1:8080/healthz && echo"
 echo
+docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T server-biz-web-console /bin/sh -lc \
+  "wget -qO- http://127.0.0.1:8080/healthz && echo"
+echo
+docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T server-biz-ops /bin/sh -lc \
+  "wget -qO- http://127.0.0.1:8080/healthz && echo"
+echo
 docker --context "$LOCAL_CONTEXT" compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T caddy /bin/sh -lc \
   "grep -q ' slan.localhost' /etc/hosts || echo '127.0.0.1 slan.localhost' >> /etc/hosts; \
    grep -q ' ops.slan.localhost' /etc/hosts || echo '127.0.0.1 ops.slan.localhost' >> /etc/hosts; \

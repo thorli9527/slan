@@ -1,0 +1,104 @@
+name: slan-biz
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${SLAN_BIZ_DB_NAME:-slan}
+      POSTGRES_USER: ${SLAN_BIZ_DB_USER:-slan}
+      POSTGRES_PASSWORD: ${SLAN_BIZ_DB_PASSWORD:-slan}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SLAN_BIZ_DB_USER:-slan} -d ${SLAN_BIZ_DB_NAME:-slan}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - slan-biz-postgres:/var/lib/postgresql/data
+
+  server-biz:
+    image: slan-service-biz:latest
+    build:
+      context: ./server/service-biz
+      dockerfile: Dockerfile
+    environment:
+      SLAN_BIZ_ADDR: ":8080"
+      SLAN_BIZ_ROUTE_SET: "app"
+      SLAN_SERVICE_BIZ_DB_HOST: postgres
+      SLAN_SERVICE_BIZ_DB_PORT: 5432
+      SLAN_SERVICE_BIZ_DB_USER: ${SLAN_BIZ_DB_USER:-slan}
+      SLAN_SERVICE_BIZ_DB_PASSWORD: ${SLAN_BIZ_DB_PASSWORD:-slan}
+      SLAN_SERVICE_BIZ_DB_NAME: ${SLAN_BIZ_DB_NAME:-slan}
+      SLAN_SERVICE_BIZ_DB_SSLMODE: disable
+      SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
+    ports:
+      - "${SLAN_BIZ_APP_PORT:-39080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  server-biz-web-console:
+    image: slan-service-biz:latest
+    build:
+      context: ./server/service-biz
+      dockerfile: Dockerfile
+    environment:
+      SLAN_BIZ_ADDR: ":8080"
+      SLAN_BIZ_ROUTE_SET: "web"
+      SLAN_SERVICE_BIZ_DB_HOST: postgres
+      SLAN_SERVICE_BIZ_DB_PORT: 5432
+      SLAN_SERVICE_BIZ_DB_USER: ${SLAN_BIZ_DB_USER:-slan}
+      SLAN_SERVICE_BIZ_DB_PASSWORD: ${SLAN_BIZ_DB_PASSWORD:-slan}
+      SLAN_SERVICE_BIZ_DB_NAME: ${SLAN_BIZ_DB_NAME:-slan}
+      SLAN_SERVICE_BIZ_DB_SSLMODE: disable
+      SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
+    ports:
+      - "${SLAN_BIZ_WEB_PORT:-39081}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  server-biz-ops:
+    image: slan-service-biz:latest
+    build:
+      context: ./server/service-biz
+      dockerfile: Dockerfile
+    environment:
+      SLAN_BIZ_ADDR: ":8080"
+      SLAN_BIZ_ROUTE_SET: "ops"
+      SLAN_SERVICE_BIZ_DB_HOST: postgres
+      SLAN_SERVICE_BIZ_DB_PORT: 5432
+      SLAN_SERVICE_BIZ_DB_USER: ${SLAN_BIZ_DB_USER:-slan}
+      SLAN_SERVICE_BIZ_DB_PASSWORD: ${SLAN_BIZ_DB_PASSWORD:-slan}
+      SLAN_SERVICE_BIZ_DB_NAME: ${SLAN_BIZ_DB_NAME:-slan}
+      SLAN_SERVICE_BIZ_DB_SSLMODE: disable
+      SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
+    ports:
+      - "${SLAN_BIZ_OPS_PORT:-39082}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  server-ui-web:
+    image: slan-server-ui-web:latest
+    build:
+      context: ./server/web-ui
+      dockerfile: Dockerfile
+    ports:
+      - "${SLAN_BIZ_WEB_UI_PORT:-24300}:80"
+    depends_on:
+      server-biz-web-console:
+        condition: service_started
+
+  opt-ui:
+    image: slan-opt-ui:latest
+    build:
+      context: ./server/opt-ui
+      dockerfile: Dockerfile
+    ports:
+      - "${SLAN_BIZ_OPT_UI_PORT:-24301}:80"
+    depends_on:
+      server-biz-ops:
+        condition: service_started
+
+volumes:
+  slan-biz-postgres:

@@ -573,6 +573,22 @@ fn try_ingest_client_message(
         .ok_or_else(|| "client_message payload is missing".to_string())?;
     let message: ClientMessagePayload = serde_json::from_value(message_value)
         .map_err(|err| format!("decode client_message: {err}"))?;
+    let session = load_session().map_err(|err| format!("load session for client_message: {err}"))?;
+    let self_device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(target_device_id) = message
+        .target_device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if Some(target_device_id) != self_device_id {
+            return Ok(true);
+        }
+    }
     log_service_error(format!(
         "client-core-service accepted client_message messageId={} networkId={} fromDeviceId={} targetDeviceId={} bodyBytes={}",
         message.message_id.as_deref().unwrap_or_default(),
@@ -609,6 +625,14 @@ fn maybe_reply_client_ping(message: &ClientMessagePayload) -> bool {
     else {
         return false;
     };
+    let Some(target_device_id) = message
+        .target_device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
     let Some((ping_id, sent_at_ms)) = message
         .body
         .as_deref()
@@ -631,6 +655,9 @@ fn maybe_reply_client_ping(message: &ClientMessagePayload) -> bool {
         );
         return true;
     };
+    if local_device_id != target_device_id {
+        return true;
+    }
     if local_device_id == from_device_id {
         return true;
     }
@@ -1317,6 +1344,7 @@ mod tests {
         ingest_downstream_publish, network_config_changed_assignment,
         network_config_changed_targets_session,
     };
+    use crate::control_plane::MqttCredential;
     use crate::session_store::PersistedSession;
     use crate::{
         control_tasks::ControlTaskQueue, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
@@ -1324,6 +1352,16 @@ mod tests {
 
     #[test]
     fn client_message_downstream_updates_runtime_state_and_notifies() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir()
+            .join(format!("slan-client-message-target-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("ios-device".to_string());
+        crate::session_store::persist_session(&session).expect("persist test session");
         let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
         let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
         let state_notifier = Arc::new(StateChangeNotifier::default());
@@ -1371,6 +1409,76 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("hello ios")
         );
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn client_message_downstream_ignores_other_targets() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir()
+            .join(format!("slan-client-message-ignore-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("ios-device".to_string());
+        crate::session_store::persist_session(&session).expect("persist test session");
+
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
+        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        let state_notifier = Arc::new(StateChangeNotifier::default());
+        let payload = serde_json::json!({
+            "type": "client_message",
+            "messageId": "envelope-msg-2",
+            "payload": {
+                "messageId": "client-msg-2",
+                "networkId": "net-1",
+                "fromDeviceId": "mac-device",
+                "targetDeviceId": "android-device",
+                "body": "hello android"
+            }
+        });
+        let payload = serde_json::to_vec(&payload).expect("encode payload");
+
+        ingest_downstream_publish(&payload, &runtime, &task_queue, &state_notifier)
+            .expect("ingest client message");
+
+        let state = runtime.lock().expect("runtime mutex").state().clone();
+        assert_eq!(state.last_client_message_id, None);
+        assert_eq!(state.last_client_message_from_device_id, None);
+        assert_eq!(state.last_client_message_body, None);
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn client_message_publish_uses_network_broadcast_topic() {
+        let mqtt = MqttCredential {
+            broker_url: "mqtt://47.245.40.231:1883".to_string(),
+            client_id: "slan-device-ios-device".to_string(),
+            username: "device:ios-device:4102444800".to_string(),
+            password: "secret".to_string(),
+            topic_prefix: "slan/devices/ios-device".to_string(),
+            expires_at: Some(4_102_444_800),
+        };
+
+        let response = crate::client_message_mqtt::publish_client_message_topic_for_test(
+            &mqtt,
+            "net-42",
+        );
+
+        assert_eq!(response, "slan/networks/net-42/broadcast");
     }
 
     #[test]

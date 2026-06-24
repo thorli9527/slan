@@ -118,4 +118,34 @@ void main() {
       PathKind.derpTcpTls443,
     ]);
   });
+
+  test('android vpn config accepts network config envelope items', () {
+    final config = AndroidVpnSessionConfig.fromJson({
+      'virtualIp': '10.0.0.2',
+      'prefixLen': 32,
+      'networkConfigs': {
+        'items': [
+          {
+            'networkId': 'net-1',
+            'deviceId': 'dev-1',
+            'networkName': 'default',
+            'networkCode': 'default',
+            'intraGroupPolicy': 'allow',
+            'configVersion': 123,
+            'globalIp': '100.64.0.2',
+            'globalName': 'mac.default',
+            'peerCount': 2,
+            'dnsRecordCount': 3,
+            'securityRuleCount': 4,
+            'relayCandidateCount': 5,
+          },
+        ],
+      },
+    });
+
+    expect(config.networkConfigs, hasLength(1));
+    expect(config.networkConfigs.single.networkId, 'net-1');
+    expect(config.networkConfigs.single.deviceId, 'dev-1');
+    expect(config.networkConfigs.single.relayCandidateCount, 5);
+  });
 }

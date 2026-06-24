@@ -1,0 +1,36 @@
+package repository
+
+func (s *GormStore) migrate() error {
+	return s.db.AutoMigrate(
+		&gormCounter{},
+		&gormUserRecord{},
+		&gormUserSessionRecord{},
+		&gormConsoleLoginKeyRecord{},
+		&gormUserAliasRecord{},
+		&gormDeviceRecord{},
+		&gormDeviceLoginRecord{},
+		&gormDeviceSessionRecord{},
+		&gormBootstrapKeyRecord{},
+		&gormDeviceGroupRecord{},
+		&gormDeviceGroupAssignmentRecord{},
+		&gormNetworkRecord{},
+		&gormNetworkDeviceRecord{},
+		&gormDeviceInviteRecord{},
+		&gormDNSZoneRecord{},
+		&gormDNSRecordRecord{},
+		&gormPublicMappingRecord{},
+		&gormSecurityGroupRecord{},
+		&gormSecurityRuleRecord{},
+		&gormOperatorRecord{},
+		&gormOperatorSessionRecord{},
+		&gormAuditEventRecord{},
+		&gormRelayNodeRecord{},
+		&gormPunchNodeRecord{},
+		&gormCustomerPlanRecord{},
+		&gormClientDownloadRecord{},
+		&gormPlanRecord{},
+		&gormProductRecord{},
+		&gormOrderRecord{},
+		&gormRenewalRecord{},
+	)
+}

@@ -32,7 +32,7 @@ use crate::{
     },
     session_store::{
         app_data_dir, current_timestamp_ms, ensure_session_device_registered,
-        ensure_session_node_and_control_session, hydrate_session_from_control_plane, load_session,
+        ensure_session_node_binding, hydrate_session_from_control_plane, load_session,
         persist_session, prepare_client_login_session, remove_session, report_runtime_state,
         PersistedSession,
     },
@@ -246,8 +246,8 @@ fn platform_network_config() -> Result<Value> {
     let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
-    ensure_session_node_and_control_session(&client, &mut session)
-        .context("ensure node control session after network activation")?;
+    ensure_session_node_binding(&client, &mut session)
+        .context("ensure node binding after network activation")?;
     persist_session(&session)?;
     {
         let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
@@ -1244,11 +1244,35 @@ fn persist_embedded_client_message(value: &Value) -> Result<()> {
         .or_else(|| payload.get("from_device_id"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    let target_device_id = payload
+        .get("targetDeviceId")
+        .or_else(|| payload.get("target_device_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let body = payload
         .get("body")
         .and_then(Value::as_str)
         .map(str::to_string);
-    if maybe_reply_embedded_client_ping(from_device_id.as_deref(), body.as_deref())? {
+    let session = load_session().context("load session for embedded client message")?;
+    let local_device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(target_device_id) = target_device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if Some(target_device_id) != local_device_id {
+            return Ok(());
+        }
+    }
+    if maybe_reply_embedded_client_ping(
+        from_device_id.as_deref(),
+        target_device_id.as_deref(),
+        body.as_deref(),
+    )? {
         return Ok(());
     }
     let state = {
@@ -1276,9 +1300,16 @@ fn persist_embedded_client_message(value: &Value) -> Result<()> {
 
 fn maybe_reply_embedded_client_ping(
     from_device_id: Option<&str>,
+    target_device_id: Option<&str>,
     body: Option<&str>,
 ) -> Result<bool> {
     let Some(from_device_id) = from_device_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(false);
+    };
+    let Some(target_device_id) = target_device_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
@@ -1297,6 +1328,9 @@ fn maybe_reply_embedded_client_ping(
     else {
         return Ok(true);
     };
+    if local_device_id != target_device_id {
+        return Ok(true);
+    }
     if local_device_id == from_device_id {
         return Ok(true);
     }
@@ -1556,6 +1590,8 @@ fn local_session_json() -> Result<String> {
 mod tests {
     use serde_json::Value;
 
+    use crate::session_store::{persist_session, PersistedSession};
+
     use super::{embedded_handle_request_json, rewrite_local_mqtt_broker_host, url_host};
 
     fn request(method: &str, args: Value) -> Value {
@@ -1733,12 +1769,16 @@ mod tests {
         std::fs::create_dir_all(&state_dir).expect("create temp state dir");
         let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
         std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("device-1".to_string());
+        persist_session(&session).expect("persist embedded test session");
         super::ingest_embedded_downstream_publish(
             serde_json::json!({
                 "type": "client_message",
                 "payload": {
                     "messageId": "msg-1",
                     "fromDeviceId": "ios-peer",
+                    "targetDeviceId": "device-1",
                     "body": "hello"
                 }
             })

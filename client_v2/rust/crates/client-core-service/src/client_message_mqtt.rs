@@ -44,7 +44,11 @@ pub(crate) fn publish_client_message(
         "payload": payload,
     });
     let body = serde_json::to_vec(&envelope).context("encode client message mqtt envelope")?;
-    let topic = format!("{}/control/up", mqtt.topic_prefix.trim_end_matches('/'));
+    let topic = network_broadcast_topic(mqtt, network_id);
+    eprintln!(
+        "client-core-service publishing client_message messageId={} networkId={} fromDeviceId={} targetDeviceId={} topic={}",
+        message_id, network_id, from_device_id, target_device_id, topic
+    );
     let credential = ThinMqttCredential {
         broker_url: mqtt.broker_url.clone(),
         client_id: mqtt.client_id.clone(),
@@ -56,20 +60,61 @@ pub(crate) fn publish_client_message(
         let suffix = format!("v2-publisher-{}-{attempt}", current_timestamp_ms());
         match publish_once(&credential, &suffix, &topic, &body) {
             Ok(()) => {
+                eprintln!(
+                    "client-core-service published client_message messageId={} topic={} qos=1",
+                    message_id, topic
+                );
                 return Ok(serde_json::json!({
                     "messageId": message_id,
                     "transport": "mqtt",
-                    "qos": 2,
+                    "qos": 1,
                     "topic": topic,
                 }));
             }
             Err(error) => {
+                eprintln!(
+                    "client-core-service publish client_message retry attempt={} messageId={} topic={} error={:#}",
+                    attempt, message_id, topic, error
+                );
                 errors.push(format!("attempt {attempt}: {error:#}"));
                 thread::sleep(Duration::from_millis(250 * attempt));
             }
         }
     }
     bail!("publish client message mqtt failed: {}", errors.join("; "));
+}
+
+fn network_broadcast_topic(mqtt: &MqttCredential, network_id: &str) -> String {
+    let prefix = mqtt_root_topic_prefix(mqtt);
+    format!("{prefix}/networks/{}/broadcast", network_id.trim())
+}
+
+fn mqtt_root_topic_prefix(mqtt: &MqttCredential) -> String {
+    let prefix = mqtt.topic_prefix.trim().trim_matches('/').to_string();
+    let Some(device_id) = mqtt_device_id(mqtt) else {
+        return prefix;
+    };
+    let suffix = format!("/devices/{device_id}");
+    if prefix.ends_with(&suffix) {
+        return prefix[..prefix.len() - suffix.len()].to_string();
+    }
+    prefix
+}
+
+fn mqtt_device_id(mqtt: &MqttCredential) -> Option<&str> {
+    mqtt.topic_prefix
+        .trim()
+        .trim_matches('/')
+        .strip_prefix("slan/devices/")
+        .filter(|value| !value.is_empty() && !value.contains('/'))
+}
+
+#[cfg(test)]
+pub(crate) fn publish_client_message_topic_for_test(
+    mqtt: &MqttCredential,
+    network_id: &str,
+) -> String {
+    network_broadcast_topic(mqtt, network_id)
 }
 
 fn publish_once(
@@ -82,7 +127,7 @@ fn publish_once(
         .map_err(|err| anyhow::anyhow!(err))
         .context("connect mqtt publisher")?;
     client
-        .publish(topic, body, ThinMqttQoS::ExactlyOnce)
+        .publish(topic, body, ThinMqttQoS::AtLeastOnce)
         .map_err(|err| anyhow::anyhow!(err))
         .context("publish client message mqtt")
 }
