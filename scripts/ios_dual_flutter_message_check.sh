@@ -1,0 +1,1 @@
+tests/ios/ios_dual_flutter_message_check.sh

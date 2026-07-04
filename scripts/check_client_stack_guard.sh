@@ -1,0 +1,1 @@
+tests/guard/check_client_stack_guard.sh

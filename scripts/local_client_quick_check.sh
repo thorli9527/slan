@@ -1,0 +1,1 @@
+tests/matrix/local_client_quick_check.sh

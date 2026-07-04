@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE:-$0}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
+ROOT_DIR="$SCRIPT_DIR"
+while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
+  ROOT_DIR=$(dirname "$ROOT_DIR")
+done
+. "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+
+DEFAULT_RESULT_ROOT="${TMPDIR:-/tmp}/slan-current-regression"
+RUN_TIMESTAMP="$(date '+%Y%m%d_%H%M%S')"
+RESULT_ROOT="${SLAN_CURRENT_REGRESSION_RESULT_ROOT:-$DEFAULT_RESULT_ROOT}"
+RESULT_DIR="${SLAN_CURRENT_REGRESSION_RESULT_DIR:-$RESULT_ROOT/runs/$RUN_TIMESTAMP}"
+LATEST_LINK="${SLAN_CURRENT_REGRESSION_LATEST_LINK:-$RESULT_ROOT/latest}"
+SUMMARY_FILE="$RESULT_DIR/summary.txt"
+LOG_DIR="$RESULT_DIR/logs"
+
+RUN_ANDROID_DUAL="${SLAN_RUN_CURRENT_ANDROID_DUAL:-1}"
+RUN_IOS_DUAL="${SLAN_RUN_CURRENT_IOS_DUAL:-1}"
+RUN_LINUX_DUAL_DOCKER="${SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER:-1}"
+RUN_MAC_ANDROID="${SLAN_RUN_CURRENT_MAC_ANDROID:-1}"
+RUN_MAC_ANDROID_ACTIVE="${SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE:-1}"
+RUN_MAC_IOS_FAST="${SLAN_RUN_CURRENT_MAC_IOS_FAST:-1}"
+RUN_IOS_ANDROID_PARTIAL="${SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL:-1}"
+RUN_TRI_MESSAGE="${SLAN_RUN_CURRENT_TRI_MESSAGE:-1}"
+RUN_IOS_TRI_MATRIX="${SLAN_RUN_CURRENT_IOS_TRI_MATRIX:-1}"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage:
+  bash scripts/current_client_regression.sh
+
+Purpose:
+  Run the client regression set that is currently feasible on this machine:
+  dual Android, dual iOS simulator, dual Docker Linux, Mac + Android,
+  Mac + iOS fast, iOS + Android partial readiness, tri-device
+  control-message smoke, and the local iOS tri-client protocol matrix.
+
+This wrapper intentionally excludes checks that require a real iOS device.
+
+Optional environment variables:
+  SLAN_RUN_CURRENT_ANDROID_DUAL=1|0
+  SLAN_RUN_CURRENT_IOS_DUAL=1|0
+  SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER=1|0
+  SLAN_RUN_CURRENT_MAC_ANDROID=1|0
+  SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE=1|0
+  SLAN_RUN_CURRENT_MAC_IOS_FAST=1|0
+  SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL=1|0
+  SLAN_RUN_CURRENT_TRI_MESSAGE=1|0
+  SLAN_RUN_CURRENT_IOS_TRI_MATRIX=1|0
+  SLAN_CURRENT_REGRESSION_RESULT_ROOT
+  SLAN_CURRENT_REGRESSION_RESULT_DIR
+  SLAN_CURRENT_REGRESSION_LATEST_LINK
+  SLAN_BIZ_URL
+  SLAN_WEB_BASE_URL
+  SLAN_SUDO_PASSWORD
+  SLAN_ANDROID_FLUTTER_DEVICE
+  SLAN_IOS_FLUTTER_DEVICE
+
+Examples:
+  bash scripts/current_client_regression.sh
+  SLAN_CURRENT_REGRESSION_RESULT_ROOT=/tmp/slan-regression bash scripts/current_client_regression.sh
+  SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER=0 bash scripts/current_client_regression.sh
+  SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL=0 bash scripts/current_client_regression.sh
+  SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE=0 bash scripts/current_client_regression.sh
+EOF
+  exit 0
+fi
+
+log() {
+  printf '==> %s\n' "$*"
+}
+
+record_summary() {
+  printf '%s\n' "$*" >> "$SUMMARY_FILE"
+}
+
+run_step() {
+  local name="$1"
+  local slug="$2"
+  shift 2
+  local log_file="$LOG_DIR/${slug}.log"
+  log "$name"
+  record_summary "[RUN ] $name"
+  record_summary "       log=$log_file"
+  if (
+    "$@"
+  ) > >(tee "$log_file") 2>&1; then
+    record_summary "[PASS] $name"
+    return 0
+  fi
+  local status=$?
+  record_summary "[FAIL] $name exit=$status"
+  record_summary "       log=$log_file"
+  return "$status"
+}
+
+run_in_root() {
+  (
+    cd "$ROOT_DIR"
+    "$@"
+  )
+}
+
+export SLAN_BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+export SLAN_WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
+
+mkdir -p "$(dirname "$RESULT_DIR")"
+mkdir -p "$RESULT_DIR"
+mkdir -p "$LOG_DIR"
+{
+  printf 'slan current client regression\n'
+  printf 'run_timestamp=%s\n' "$RUN_TIMESTAMP"
+  printf 'result_root=%s\n' "$RESULT_ROOT"
+  printf 'result_dir=%s\n' "$RESULT_DIR"
+  printf 'latest_link=%s\n' "$LATEST_LINK"
+  printf 'log_dir=%s\n' "$LOG_DIR"
+  printf 'control_url=%s\n' "$SLAN_BIZ_URL"
+  printf '\n'
+} > "$SUMMARY_FILE"
+
+ln -sfn "$RESULT_DIR" "$LATEST_LINK"
+
+log "current regression toggles: android-dual=${RUN_ANDROID_DUAL} ios-dual=${RUN_IOS_DUAL} linux-dual-docker=${RUN_LINUX_DUAL_DOCKER} mac-android=${RUN_MAC_ANDROID} mac-android-active=${RUN_MAC_ANDROID_ACTIVE} mac-ios-fast=${RUN_MAC_IOS_FAST} ios-android-partial=${RUN_IOS_ANDROID_PARTIAL} tri-message=${RUN_TRI_MESSAGE} ios-tri-matrix=${RUN_IOS_TRI_MATRIX}"
+log "control url: ${SLAN_BIZ_URL}"
+log "result dir: ${RESULT_DIR}"
+log "latest link: ${LATEST_LINK}"
+
+if [[ "$RUN_ANDROID_DUAL" == "1" ]]; then
+  run_step "Run dual Android full chain" android_dual run_in_root bash scripts/android_dual_fast_check.sh
+fi
+
+if [[ "$RUN_IOS_DUAL" == "1" ]]; then
+  run_step "Run dual iOS simulator chain" ios_dual run_in_root bash scripts/ios_dual_fast_check.sh
+fi
+
+if [[ "$RUN_LINUX_DUAL_DOCKER" == "1" ]]; then
+  run_step "Run dual Docker Linux full chain" linux_dual_docker run_in_root bash scripts/linux_dual_docker_packet_smoke.sh
+fi
+
+if [[ "$RUN_MAC_ANDROID" == "1" ]]; then
+  run_step "Run Mac + Android passive-direction chain" mac_android_passive run_in_root bash scripts/mac_android_fast_check.sh
+fi
+
+if [[ "$RUN_MAC_ANDROID_ACTIVE" == "1" ]]; then
+  run_step "Run Mac -> Android active socket chain" mac_android_active run_in_root env \
+    SLAN_RUN_MAC_ANDROID_ACTIVE=1 \
+    SLAN_RUN_MAC_IOS_ACTIVE=0 \
+    SLAN_RUN_MAC_LINUX_ACTIVE=0 \
+    bash scripts/mac_active_socket_matrix.sh
+fi
+
+if [[ "$RUN_MAC_IOS_FAST" == "1" ]]; then
+  run_step "Run Mac + iOS fast chain" mac_ios_fast run_in_root bash scripts/mac_ios_fast_check.sh
+fi
+
+if [[ "$RUN_IOS_ANDROID_PARTIAL" == "1" ]]; then
+  run_step "Run iOS + Android partial readiness chain" ios_android_partial run_in_root bash scripts/ios_android_socket_check.sh
+fi
+
+if [[ "$RUN_TRI_MESSAGE" == "1" ]]; then
+  run_step "Run Mac + Android + iOS tri-device message chain" tri_message run_in_root env \
+    SLAN_CLIENT_CORE_SERVICE_BIN="$ROOT_DIR/client_v2/rust/target/debug/client-core-service" \
+    bash scripts/mac_android_ios_message_check.sh
+fi
+
+if [[ "$RUN_IOS_TRI_MATRIX" == "1" ]]; then
+  run_step "Run iOS tri-client local protocol matrix" ios_tri_matrix run_in_root bash scripts/ios_triclient_packet_matrix.sh
+fi
+
+log "current client regression complete"
+record_summary
+record_summary "current client regression complete"
+record_summary "result_dir=$RESULT_DIR"
+record_summary "latest_link=$LATEST_LINK"

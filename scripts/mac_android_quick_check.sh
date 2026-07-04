@@ -1,0 +1,1 @@
+tests/matrix/mac_android_quick_check.sh

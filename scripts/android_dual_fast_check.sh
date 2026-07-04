@@ -1,0 +1,1 @@
+tests/android/android_dual_fast_check.sh

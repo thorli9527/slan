@@ -1,0 +1,1 @@
+tests/ios/stop_ios_dual_sims.sh

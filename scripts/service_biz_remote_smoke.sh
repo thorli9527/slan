@@ -1,0 +1,1 @@
+tests/backend/service_biz_remote_smoke.sh

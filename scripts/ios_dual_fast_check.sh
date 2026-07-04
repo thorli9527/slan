@@ -1,0 +1,1 @@
+tests/ios/ios_dual_fast_check.sh

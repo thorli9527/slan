@@ -1,0 +1,1 @@
+tests/linux/linux_docker_local_install_check.sh

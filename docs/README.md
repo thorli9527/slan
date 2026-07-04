@@ -20,6 +20,9 @@
 - [server-wire-relay docs](../server/server-wire-relay/docs/README.md)
 - [server-wire-derp docs](../server/server-wire-derp/docs/README.md)
 - [Wire client protocol](./wire-client-protocol.md)
+- [client-v2 多端联调与双 iOS 最小回归](./client-v2-multidevice-dev.md)
+- [客户端多平台验证矩阵](./client-multi-platform-validation-matrix.md)
+- [测试源码布局](./test-source-layout.md)
 
 ## 说明
 

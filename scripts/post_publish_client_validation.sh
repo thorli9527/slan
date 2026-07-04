@@ -1,0 +1,1 @@
+tests/matrix/post_publish_client_validation.sh

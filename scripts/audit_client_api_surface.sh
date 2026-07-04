@@ -1,0 +1,1 @@
+tests/guard/audit_client_api_surface.sh

@@ -1,0 +1,1 @@
+tests/ios/start_ios_dual_sims.sh
