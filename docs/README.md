@@ -23,6 +23,7 @@
 - [client-v2 多端联调与双 iOS 最小回归](./client-v2-multidevice-dev.md)
 - [客户端多平台验证矩阵](./client-multi-platform-validation-matrix.md)
 - [测试源码布局](./test-source-layout.md)
+- [子项目测试工程拆分](./subproject-test-engineering-split.md)
 
 ## 说明
 
