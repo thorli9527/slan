@@ -21,7 +21,14 @@
           <td>{{ order.createdAt }}</td>
           <td>{{ order.validUntil || '-' }}</td>
           <td>{{ order.channel }}</td>
-          <td><button class="ghost small" type="button" (click)="vm.openOrderDialog(order)">查看/修改</button></td>
+          <td>
+            <button class="table-icon-button" type="button" title="查看或修改订单" aria-label="查看或修改订单" (click)="vm.openOrderDialog(order)">
+              <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.013 1.427a2 2 0 0 1 2.828 2.828l-7.28 7.28-3.3.472.471-3.3 7.281-7.28Zm1.414 1.414a1 1 0 0 0-1.414 0L4.675 9.18l-.236 1.65 1.65-.236 6.338-6.339a1 1 0 0 0 0-1.414Z"/></svg>
+            </button>
+          </td>
+        </tr>
+        <tr *ngIf="vm.orders.length === 0">
+          <td colspan="11" class="empty-cell">暂无订单。</td>
         </tr>
       </tbody>
     </table>

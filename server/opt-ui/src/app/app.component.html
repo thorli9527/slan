@@ -53,7 +53,7 @@
       </div>
     </header>
 
-    <p class="form-error" *ngIf="apiMessage">{{ apiMessage }}</p>
+    <p [class.form-error]="!apiMessageIsSuccess" [class.form-notice]="apiMessageIsSuccess" [class.success]="apiMessageIsSuccess" *ngIf="apiMessage">{{ apiMessage }}</p>
     <p class="muted" *ngIf="loading">正在加载运营数据...</p>
 
     <section class="summary-grid">
@@ -163,6 +163,14 @@
           <option value="active">active</option>
           <option value="disabled">disabled</option>
         </select>
+      </label>
+      <label *ngIf="!selectedOperator">
+        <span>初始密码</span>
+        <input [(ngModel)]="operatorForm.password" type="password">
+      </label>
+      <label *ngIf="!selectedOperator">
+        <span>确认密码</span>
+        <input [(ngModel)]="operatorForm.confirmPassword" type="password">
       </label>
     </div>
     <div class="modal-footer">

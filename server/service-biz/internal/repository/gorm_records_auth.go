@@ -40,9 +40,9 @@ type gormConsoleLoginKeyRecord struct {
 
 type gormUserAliasRecord struct {
 	ID        uint64 `gorm:"primaryKey;autoIncrement"`
-	UserID    string `gorm:"size:64;index:idx_user_alias,unique"`
+	UserID    string `gorm:"size:64;uniqueIndex:uidx_gorm_user_alias_records_user_alias"`
 	Email     string `gorm:"size:255;index"`
-	Alias     string `gorm:"size:255;index:idx_user_alias,unique"`
+	Alias     string `gorm:"size:255;uniqueIndex:uidx_gorm_user_alias_records_user_alias"`
 	CreatedAt int64  `gorm:"not null"`
 	UpdatedAt int64  `gorm:"not null"`
 }

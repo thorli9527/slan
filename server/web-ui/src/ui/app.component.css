@@ -1205,6 +1205,18 @@ code {
   white-space: nowrap;
 }
 
+.device-id-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.device-id-cell code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .managed-devices-table {
   table-layout: fixed;
   width: 100%;

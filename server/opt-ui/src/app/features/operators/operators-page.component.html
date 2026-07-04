@@ -18,11 +18,20 @@
           <td>{{ operator.lastLoginAt }}</td>
           <td>
             <div class="row-actions">
-              <button class="ghost small" type="button" (click)="vm.openOperatorDialog(operator)">查看/修改</button>
-              <button class="ghost small" type="button" (click)="vm.openOperatorPasswordDialog(operator)">改密</button>
-              <button class="ghost small" type="button" (click)="vm.toggleOperator(operator)">{{ operator.status === 'active' ? '停用' : '启用' }}</button>
+              <button class="table-icon-button" type="button" title="查看或修改运营用户" aria-label="查看或修改运营用户" (click)="vm.openOperatorDialog(operator)">
+                <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.013 1.427a2 2 0 0 1 2.828 2.828l-7.28 7.28-3.3.472.471-3.3 7.281-7.28Zm1.414 1.414a1 1 0 0 0-1.414 0L4.675 9.18l-.236 1.65 1.65-.236 6.338-6.339a1 1 0 0 0 0-1.414Z"/></svg>
+              </button>
+              <button class="table-icon-button" type="button" title="修改密码" aria-label="修改密码" (click)="vm.openOperatorPasswordDialog(operator)">
+                <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 7V5a3.5 3.5 0 1 1 7 0v2h.5A1.5 1.5 0 0 1 13.5 8.5v5A1.5 1.5 0 0 1 12 15H4A1.5 1.5 0 0 1 2.5 13.5v-5A1.5 1.5 0 0 1 4 7h.5Zm1 0h5V5a2.5 2.5 0 0 0-5 0v2Zm2.5 2a1 1 0 0 1 .5 1.866V12.5a.5.5 0 0 1-1 0v-1.634A1 1 0 0 1 8 9Z"/></svg>
+              </button>
+              <button class="table-icon-button" type="button" [title]="operator.status === 'active' ? '停用运营用户' : '启用运营用户'" [attr.aria-label]="operator.status === 'active' ? '停用运营用户' : '启用运营用户'" (click)="vm.toggleOperator(operator)">
+                <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0v-6A.5.5 0 0 1 8 1Zm3.854 1.646a.5.5 0 0 1 .707.708A5 5 0 1 1 3.439 3.354a.5.5 0 1 1 .707-.708A4 4 0 1 0 8 2a.5.5 0 0 1 0 1 3 3 0 1 1-2.121.879.5.5 0 1 1 .707.707A2 2 0 1 0 8 4a.5.5 0 0 1 0-1 4 4 0 1 1 2.854-.354Z"/></svg>
+              </button>
             </div>
           </td>
+        </tr>
+        <tr *ngIf="vm.operators.length === 0">
+          <td colspan="6" class="empty-cell">暂无运营用户。</td>
         </tr>
       </tbody>
     </table>

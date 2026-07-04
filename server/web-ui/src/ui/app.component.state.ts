@@ -60,6 +60,19 @@ import {
 import { shortCodeFromEmail, slug } from './app.utils';
 
 export abstract class AppComponentState {
+  protected readonly emptyWorkspace: WorkspaceRow = {
+    networkId: '',
+    workspaceId: '',
+    name: '',
+    code: '',
+    template: '',
+    intraGroupPolicy: 'allow',
+    default: false,
+    devices: 0,
+    members: 0,
+    zone: '',
+  };
+
   readonly rootDomain = ROOT_DOMAIN;
   readonly workspacePresets = WORKSPACE_PRESETS;
   readonly securityRuleTemplates: SecurityRuleTemplate[] = SECURITY_RULE_TEMPLATES;
@@ -623,7 +636,7 @@ export abstract class AppComponentState {
   }
 
   get selectedWorkspace(): WorkspaceRow {
-    return this.workspaces.find((workspace) => workspace.workspaceId === this.selectedWorkspaceId) ?? this.workspaces[0];
+    return this.workspaces.find((workspace) => workspace.workspaceId === this.selectedWorkspaceId) ?? this.workspaces[0] ?? this.emptyWorkspace;
   }
 
   get invitedWorkspace(): WorkspaceRow | null {

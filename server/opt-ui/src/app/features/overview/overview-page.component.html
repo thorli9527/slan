@@ -89,6 +89,9 @@
           <td>{{ order.paidAt }}</td>
           <td>{{ order.channel }}</td>
         </tr>
+        <tr *ngIf="vm.paidOrders.length === 0">
+          <td colspan="5" class="empty-cell">暂无已支付订单。</td>
+        </tr>
       </tbody>
     </table>
   </article>

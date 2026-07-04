@@ -24,8 +24,8 @@ type gormNetworkConfigVersionRecord struct {
 
 type gormNetworkDeviceRecord struct {
 	ID                 uint64              `gorm:"primaryKey;autoIncrement"`
-	NetworkID          string              `gorm:"size:64;index:idx_network_device,unique"`
-	DeviceID           string              `gorm:"size:64;index:idx_network_device,unique"`
+	NetworkID          string              `gorm:"size:64;uniqueIndex:uidx_gorm_network_device_records_network_device"`
+	DeviceID           string              `gorm:"size:64;uniqueIndex:uidx_gorm_network_device_records_network_device"`
 	Enabled            bool                `gorm:"not null"`
 	MemberStatus       string              `gorm:"size:64;index"`
 	PresenceStatus     string              `gorm:"size:64;index"`

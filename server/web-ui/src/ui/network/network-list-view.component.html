@@ -95,6 +95,9 @@
           <td>{{ workspace.default ? '是' : '否' }}</td>
           <td>{{ workspace.devices }}</td>
         </tr>
+        <tr *ngIf="vm.workspaces.length === 0">
+          <td colspan="6">暂无网络，点击上方“新增网络”开始创建。</td>
+        </tr>
       </tbody>
     </table>
   </div>

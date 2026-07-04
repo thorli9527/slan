@@ -68,6 +68,9 @@
             </button>
           </td>
         </tr>
+        <tr *ngIf="vm.currentDNSZones.length === 0">
+          <td colspan="4">暂无内网域名，点击右上角“新增域”开始创建。</td>
+        </tr>
       </tbody>
     </table>
   </div>
@@ -114,6 +117,9 @@
               </svg>
             </button>
           </td>
+        </tr>
+        <tr *ngIf="vm.currentDNSRecords.length === 0">
+          <td colspan="6">当前 Zone 下暂无解析记录，点击右上角“新增解析”开始创建。</td>
         </tr>
       </tbody>
     </table>

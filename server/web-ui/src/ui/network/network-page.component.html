@@ -1,5 +1,5 @@
-<section class="page workspace-layout network-page">
-  <app-network-list-view [vm]="vm" />
-  <app-network-detail-view [vm]="vm" />
+<section class="page network-page" [class.workspace-layout]="vm.workspaceRouteMode === 'list'">
+  <app-network-list-view *ngIf="vm.workspaceRouteMode === 'list'" [vm]="vm" />
+  <app-network-detail-view *ngIf="vm.workspaceRouteMode === 'detail'" [vm]="vm" />
 </section>
 <app-network-dialogs [vm]="vm" />

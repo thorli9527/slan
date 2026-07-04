@@ -1,4 +1,4 @@
-<article class="panel relation-panel network-detail-hero" *ngIf="vm.workspaceRouteMode === 'detail'">
+<article class="panel relation-panel network-detail-hero" *ngIf="vm.workspaceRouteMode === 'detail' && vm.selectedWorkspace.workspaceId">
   <div class="panel-title">
     <div>
       <span class="eyebrow">当前网络</span>
@@ -55,5 +55,15 @@
     <app-network-dns-panel [vm]="vm" />
     <app-network-public-mappings-panel [vm]="vm" />
     <app-network-security-panel [vm]="vm" />
+  </div>
+</article>
+
+<article class="panel relation-panel" *ngIf="vm.workspaceRouteMode === 'detail' && !vm.selectedWorkspace.workspaceId">
+  <div class="panel-title">
+    <div>
+      <h2>当前没有可查看的网络</h2>
+      <p>网络可能已被删除，或者当前账号下还没有创建网络。</p>
+    </div>
+    <button class="primary" type="button" (click)="vm.backToWorkspaceList()">返回网络列表</button>
   </div>
 </article>

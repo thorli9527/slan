@@ -104,6 +104,9 @@
                 </button>
               </td>
             </tr>
+            <tr *ngIf="vm.ingressRules.length === 0">
+              <td colspan="7">暂无入方向规则，点击左上角“新增入方向”开始创建。</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -143,6 +146,9 @@
                   </svg>
                 </button>
               </td>
+            </tr>
+            <tr *ngIf="vm.egressRules.length === 0">
+              <td colspan="7">暂无出方向规则，点击左上角“新增出方向”开始创建。</td>
             </tr>
           </tbody>
         </table>

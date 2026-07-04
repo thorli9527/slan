@@ -26,6 +26,44 @@ h3 { margin: 0; font-size: 18px; line-height: 1.4; }
 p { margin: 4px 0 0; color: #6b7280; font-size: 13px; }
 .operator { display: flex; align-items: center; gap: 10px; color: #475569; font-size: 13px; font-weight: 700; }
 .row-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.table-icon-button,
+.danger-icon-button,
+.table-link-button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid #d9dce3;
+  background: #fff;
+  color: #1f2937;
+  cursor: pointer;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+.table-icon-button:hover,
+.table-link-button:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+  background: #f4f8ff;
+}
+.danger-icon-button {
+  border-color: #ffccc7;
+  color: #cf1322;
+  background: #fff1f0;
+}
+.danger-icon-button:hover {
+  border-color: #ff7875;
+  color: #a8071a;
+  background: #fff2f0;
+}
+.icon-inline {
+  width: 16px;
+  height: 16px;
+  display: block;
+  fill: currentColor;
+}
 button.primary, button.ghost, button.danger { height: 34px; border-radius: 4px; padding: 0 14px; font-size: 13px; font-weight: 700; cursor: pointer; }
 button.primary { border: 1px solid #1677ff; background: #1677ff; color: #fff; }
 button.ghost { border: 1px solid #d9dce3; background: #fff; color: #1f2937; }
@@ -93,6 +131,8 @@ dd { margin: 0; color: #111827; font-weight: 700; }
 .detail-grid strong { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 label { display: grid; gap: 6px; color: #4b5563; font-size: 13px; font-weight: 700; }
 .form-error { margin: 0; color: #d4380d; font-size: 13px; font-weight: 700; }
+.form-notice { margin: 0; font-size: 13px; font-weight: 700; }
+.form-notice.success { color: #2f8f2f; }
 input, select { width: 100%; height: 34px; border: 1px solid #d9dce3; border-radius: 4px; padding: 0 10px; background: #fff; color: #111827; box-sizing: border-box; }
 input:focus, select:focus { border-color: #1677ff; outline: 0; box-shadow: 0 0 0 2px rgba(22, 119, 255, .12); }
 @media (max-width: 1080px) {

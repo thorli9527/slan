@@ -89,8 +89,12 @@
           <td>{{ vm.formatDateTime(item.updatedAt) }}</td>
           <td>
             <div class="row-actions">
-              <a class="text-link" [href]="item.downloadUrl" target="_blank" rel="noopener">下载</a>
-              <button class="danger small" type="button" (click)="vm.deleteClientDownload(item)">删除</button>
+              <a class="table-link-button" [href]="item.downloadUrl" target="_blank" rel="noopener" title="下载安装包" aria-label="下载安装包">
+                <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M8.5 1.5a.5.5 0 0 0-1 0V9.293L5.354 7.146a.5.5 0 1 0-.708.708l3 3 .006.006a.498.498 0 0 0 .7-.006l3-3a.5.5 0 0 0-.708-.708L8.5 9.293V1.5ZM2 11a1 1 0 0 1 1 1v1h10v-1a1 1 0 1 1 1-1v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1a1 1 0 0 1 1-1Z"/></svg>
+              </a>
+              <button class="danger-icon-button" type="button" title="删除安装包" aria-label="删除安装包" (click)="vm.deleteClientDownload(item)">
+                <svg class="icon-inline" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 1h3a1 1 0 0 1 1 1V3h3v1h-1v9a2 2 0 0 1-2 2h-5a2 2 0 0 1-2-2V4h-1V3h3V2a1 1 0 0 1 1-1Zm3 2V2h-3v1h3Zm-4 1v9a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1V4h-7Zm2 2h1v6h-1V6Zm3 0h-1v6h1V6Z"/></svg>
+              </button>
             </div>
           </td>
         </tr>

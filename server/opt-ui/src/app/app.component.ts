@@ -26,6 +26,11 @@ type OperatorUser = {
   lastLoginAt: string;
 };
 
+type OperatorForm = Partial<OperatorUser> & {
+  password?: string;
+  confirmPassword?: string;
+};
+
 // Relay/DERP 中继节点模型，描述中继容量、协议入口和健康状态。
 type RelayNode = {
   nodeId: string;
@@ -68,6 +73,26 @@ type CustomerPlan = {
   code: string;
   name: string;
   ownDeviceLimit: number;
+  invitedDeviceLimit: number;
+  totalDeviceLimit: number;
+  relayMonthlyGb: number;
+  relayBandwidthMbps: number;
+  relayThrottleMbps: number;
+  p2pUnlimited: boolean;
+  customDomain: boolean;
+  acl: boolean;
+  dedicatedRelay: boolean;
+  auditLog: boolean;
+  apiAccess: boolean;
+  monthlyPrice: number;
+  yearlyPrice: number;
+  status?: 'active' | 'offline';
+};
+
+type ApiCustomerPlan = {
+  planCode: string;
+  name: string;
+  deviceLimit: number;
   invitedDeviceLimit: number;
   totalDeviceLimit: number;
   relayMonthlyGb: number;
@@ -274,7 +299,7 @@ export class AppComponent implements OnInit {
   operatorNewPassword = '';
   operatorConfirmPassword = '';
   passwordMessage = '';
-  operatorForm: Partial<OperatorUser> = {};
+  operatorForm: OperatorForm = {};
   relayNodeForm: RelayNodeForm = {};
   punchNodeForm: Partial<PunchNode> = {};
   planForm: Partial<CustomerPlan> = {};
@@ -302,6 +327,10 @@ export class AppComponent implements OnInit {
 
   get isLoggedIn(): boolean {
     return Boolean(localStorage.getItem(this.opsTokenKey));
+  }
+
+  get apiMessageIsSuccess(): boolean {
+    return /(已保存|已启用|已停用|已删除|已下架|已创建|已更新|已指派|已续费)/.test(this.apiMessage);
   }
 
   ngOnInit(): void {
@@ -368,7 +397,7 @@ export class AppComponent implements OnInit {
         this.request<{ items: Customer[] }>('GET', OPS_API.customers),
         this.request<{ items: OpsDevice[] }>('GET', OPS_API.devices),
         this.request<{ items: ClientDownload[] }>('GET', OPS_API.clientDownloads),
-        this.request<{ items: CustomerPlan[] }>('GET', OPS_API.plans),
+        this.request<{ items: ApiCustomerPlan[] }>('GET', OPS_API.plans),
         this.request<{ items: Product[] }>('GET', OPS_API.products),
         this.request<{ items: Order[] }>('GET', OPS_API.orders),
         this.request<{ items: Renewal[] }>('GET', OPS_API.renewals),
@@ -387,7 +416,7 @@ export class AppComponent implements OnInit {
         createdAt: this.formatDateTime(item.createdAt),
         updatedAt: this.formatDateTime(item.updatedAt),
       }));
-      this.plans = plans.items;
+      this.plans = plans.items.map((item) => this.mapPlan(item));
       this.products = products.items;
       this.orders = orders.items.map((item) => ({
         ...item,
@@ -693,7 +722,9 @@ export class AppComponent implements OnInit {
 
   openOperatorDialog(operator?: OperatorUser): void {
     this.selectedOperator = operator ?? null;
-    this.operatorForm = operator ? { ...operator } : { name: '', email: '', role: 'ops', status: 'active' };
+    this.operatorForm = operator
+      ? { ...operator, password: '', confirmPassword: '' }
+      : { name: '', email: '', role: 'ops', status: 'active', password: '', confirmPassword: '' };
     this.showOperatorDialog = true;
   }
 
@@ -707,10 +738,36 @@ export class AppComponent implements OnInit {
       this.apiMessage = '请输入运营用户姓名和邮箱';
       return;
     }
+    const isEdit = Boolean(this.selectedOperator);
+    if (!isEdit) {
+      const password = this.operatorForm.password?.trim() ?? '';
+      const confirmPassword = this.operatorForm.confirmPassword?.trim() ?? '';
+      if (!password) {
+        this.apiMessage = '请输入初始密码';
+        this.notifyStateChanged();
+        return;
+      }
+      if (password !== confirmPassword) {
+        this.apiMessage = '两次输入的密码不一致';
+        this.notifyStateChanged();
+        return;
+      }
+    }
     try {
-      const isEdit = Boolean(this.selectedOperator);
       const path = isEdit ? OPS_API.operator(this.selectedOperator!.operatorId) : OPS_API.operators;
-      const operator = await this.request<OperatorUser>(isEdit ? 'PATCH' : 'POST', path, this.operatorForm);
+      const payload = isEdit
+        ? {
+            name: this.operatorForm.name,
+            role: this.operatorForm.role,
+            status: this.operatorForm.status,
+          }
+        : {
+            name: this.operatorForm.name,
+            email: this.operatorForm.email,
+            role: this.operatorForm.role,
+            password: this.operatorForm.password,
+          };
+      const operator = await this.request<OperatorUser>(isEdit ? 'PATCH' : 'POST', path, payload);
       const formatted = { ...operator, lastLoginAt: this.formatDateTime(operator.lastLoginAt) };
       this.operators = [formatted, ...this.operators.filter((item) => item.operatorId !== operator.operatorId)];
       this.closeOperatorDialog();
@@ -937,7 +994,26 @@ export class AppComponent implements OnInit {
     try {
       const isEdit = Boolean(this.selectedPlan);
       const path = isEdit ? OPS_API.plan(this.selectedPlan!.code) : OPS_API.plans;
-      const plan = await this.request<CustomerPlan>(isEdit ? 'PATCH' : 'POST', path, this.planForm);
+      const payload = {
+        planCode: this.planForm.code,
+        name: this.planForm.name,
+        ownDeviceLimit: Number(this.planForm.ownDeviceLimit ?? 0),
+        invitedDeviceLimit: Number(this.planForm.invitedDeviceLimit ?? 0),
+        totalDeviceLimit: Number(this.planForm.totalDeviceLimit ?? 0),
+        relayMonthlyGb: Number(this.planForm.relayMonthlyGb ?? 0),
+        relayBandwidthMbps: Number(this.planForm.relayBandwidthMbps ?? 0),
+        relayThrottleMbps: Number(this.planForm.relayThrottleMbps ?? 0),
+        p2pUnlimited: Boolean(this.planForm.p2pUnlimited),
+        customDomain: Boolean(this.planForm.customDomain),
+        acl: Boolean(this.planForm.acl),
+        dedicatedRelay: Boolean(this.planForm.dedicatedRelay),
+        auditLog: Boolean(this.planForm.auditLog),
+        apiAccess: Boolean(this.planForm.apiAccess),
+        monthlyPrice: Number(this.planForm.monthlyPrice ?? 0),
+        yearlyPrice: Number(this.planForm.yearlyPrice ?? 0),
+        status: this.planForm.status ?? 'active',
+      };
+      const plan = this.mapPlan(await this.request<ApiCustomerPlan>(isEdit ? 'PATCH' : 'POST', path, payload));
       this.plans = [plan, ...this.plans.filter((item) => item.code !== plan.code)];
       this.closePlanDialog();
       this.notifyStateChanged();
@@ -988,6 +1064,28 @@ export class AppComponent implements OnInit {
       this.apiMessage = this.errorMessage(error);
       this.notifyStateChanged();
     }
+  }
+
+  private mapPlan(plan: ApiCustomerPlan): CustomerPlan {
+    return {
+      code: plan.planCode,
+      name: plan.name,
+      ownDeviceLimit: plan.deviceLimit,
+      invitedDeviceLimit: plan.invitedDeviceLimit,
+      totalDeviceLimit: plan.totalDeviceLimit,
+      relayMonthlyGb: plan.relayMonthlyGb,
+      relayBandwidthMbps: plan.relayBandwidthMbps,
+      relayThrottleMbps: plan.relayThrottleMbps,
+      p2pUnlimited: plan.p2pUnlimited,
+      customDomain: plan.customDomain,
+      acl: plan.acl,
+      dedicatedRelay: plan.dedicatedRelay,
+      auditLog: plan.auditLog,
+      apiAccess: plan.apiAccess,
+      monthlyPrice: plan.monthlyPrice,
+      yearlyPrice: plan.yearlyPrice,
+      status: plan.status,
+    };
   }
 
   openOrderDialog(order?: Order): void {
@@ -1314,7 +1412,7 @@ export class AppComponent implements OnInit {
     }
     try {
       await this.request('POST', OPS_API.operatorPassword(this.selectedOperator.operatorId), {
-        newPassword: this.operatorNewPassword,
+        password: this.operatorNewPassword,
       });
       this.closeOperatorPasswordDialog();
       this.notifyStateChanged();

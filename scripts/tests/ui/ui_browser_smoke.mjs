@@ -5,13 +5,21 @@ import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+let rootDir = scriptDir;
+while (!existsSync(path.join(rootDir, '.git')) && rootDir !== path.dirname(rootDir)) {
+  rootDir = path.dirname(rootDir);
+}
+if (!existsSync(path.join(rootDir, '.git'))) {
+  throw new Error(`repo root not found from ${scriptDir}`);
+}
 const WebSocket = require(path.join(rootDir, 'server/opt-ui/node_modules/ws'));
 
-const webBase = process.env.SLAN_UI_SMOKE_WEB_BASE || 'http://web.dev.staticlss.com';
-const opsBase = process.env.SLAN_UI_SMOKE_OPS_BASE || 'http://ops.dev.staticlss.com';
+const webBase = process.env.SLAN_UI_SMOKE_WEB_BASE || 'http://47.245.40.231:24200';
+const opsBase = process.env.SLAN_UI_SMOKE_OPS_BASE || 'http://47.245.40.231:24201';
 const chromePath = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const outDir = process.env.SLAN_UI_SMOKE_OUT_DIR || path.join(rootDir, '.tmp/ui-browser-smoke');
 const runID = Date.now();
@@ -163,7 +171,14 @@ class CDPPage {
         },
         findClickable(text, selector = 'button,a,[role="button"]') {
           const exact = [...document.querySelectorAll(selector)].find((el) => this.visible(el) && this.text(el) === text);
-          return exact || [...document.querySelectorAll(selector)].find((el) => this.visible(el) && this.text(el).includes(text));
+          if (exact) return exact;
+          return [...document.querySelectorAll(selector)].find((el) => {
+            if (!this.visible(el)) return false;
+            const content = this.text(el);
+            const title = (el.getAttribute('title') || '').trim();
+            const aria = (el.getAttribute('aria-label') || '').trim();
+            return content.includes(text) || title.includes(text) || aria.includes(text);
+          });
         },
         clickText(text, selector) {
           const el = this.findClickable(text, selector);
@@ -175,11 +190,17 @@ class CDPPage {
         clickRowButton(rowText, buttonText) {
           const row = [...document.querySelectorAll('tr')].find((el) => this.visible(el) && this.text(el).includes(rowText));
           if (!row) throw new Error('row not found: ' + rowText);
-          const button = [...row.querySelectorAll('button,a,[role="button"]')].find((el) => this.visible(el) && this.text(el).includes(buttonText));
+          const button = [...row.querySelectorAll('button,a,[role="button"]')].find((el) => {
+            if (!this.visible(el)) return false;
+            const content = this.text(el);
+            const title = (el.getAttribute('title') || '').trim();
+            const aria = (el.getAttribute('aria-label') || '').trim();
+            return content.includes(buttonText) || title.includes(buttonText) || aria.includes(buttonText);
+          });
           if (!button) throw new Error('row button not found: ' + rowText + ' / ' + buttonText);
           button.scrollIntoView({ block: 'center', inline: 'center' });
           button.click();
-          return this.text(button);
+          return this.text(button) || button.getAttribute('title') || button.getAttribute('aria-label') || '';
         },
         clickModalButton(text) {
           const button = [...document.querySelectorAll('.modal-backdrop button')].find((el) => this.visible(el) && this.text(el).includes(text));
@@ -466,7 +487,7 @@ async function exerciseCustomerUI(browser) {
     console.log('[ui-smoke] web device modal: 生成安装命令');
     await page.click('生成安装命令');
     await page.waitSelector('.modal-backdrop');
-    await page.waitText('一次性 session key');
+    await page.waitText('一次性接入安装 Key');
     await page.assertHealthy('customer device bootstrap modal');
     await page.eval('window.__uiSmoke.closeOverlays()');
 
@@ -646,7 +667,7 @@ async function exerciseOpsUI(browser) {
     await page.waitSelector('.shell');
     await page.assertHealthy('ops after login');
     await page.eval(`(async () => {
-      const authResponse = await fetch('/api/web/auth/register', {
+      const authResponse = await fetch(${JSON.stringify(new URL('/api/web/auth/register', webBase).toString())}, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -661,7 +682,7 @@ async function exerciseOpsUI(browser) {
       const authPayload = authResponse.ok ? await authResponse.json() : null;
       const userId = authPayload?.auth?.user?.userId;
       if (userId) {
-        const deviceResponse = await fetch('/api/web/devices/register', {
+        const deviceResponse = await fetch(${JSON.stringify(new URL('/api/web/devices/register', webBase).toString())}, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -698,13 +719,11 @@ async function exerciseOpsUI(browser) {
     await page.eval('window.__uiSmoke.closeOverlays()');
 
     const modalMatrix = [
-      ['运营用户', ['新增运营用户', '查看/修改', '改密']],
-      ['中继节点', ['新增中继节点', '查看/修改']],
-      ['商品管理', ['新增套餐', '新增商品', '查看/修改']],
-      ['订单管理', ['创建订单', '查看/修改']],
-      ['客户管理', ['查看/修改', '指定级别']],
-      ['设备管理', ['查看/修改']],
-      ['续费管理', ['手动续费', '查看/修改']],
+      ['运营用户', ['新增运营用户']],
+      ['中继节点', ['新增中继节点']],
+      ['商品管理', ['新增套餐', '新增商品']],
+      ['订单管理', ['创建订单']],
+      ['续费管理', ['手动续费']],
     ];
     for (const [nav, buttons] of modalMatrix) {
       await page.click(nav, 'aside nav button');
@@ -727,12 +746,14 @@ async function exerciseOpsUI(browser) {
       const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
       window.__uiSmoke.setValue(inputs[0], 'Ops UI ${runID}');
       window.__uiSmoke.setValue(inputs[1], ${JSON.stringify(operatorEmail)});
+      window.__uiSmoke.setValue(inputs[2], 'ops-ui-pass-123');
+      window.__uiSmoke.setValue(inputs[3], 'ops-ui-pass-123');
     })()`);
     await page.clickModalButton('保存');
     await page.waitNoSelector('.modal-backdrop');
     await page.waitText(operatorEmail);
     await page.assertHealthy('ops operator created');
-    await page.clickRowButton(operatorEmail, '改密');
+    await page.clickRowButton(operatorEmail, '修改密码');
     await page.waitSelector('.modal-backdrop');
     await page.eval(`(() => {
       const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
@@ -742,7 +763,7 @@ async function exerciseOpsUI(browser) {
     await page.clickModalButton('确认修改');
     await page.waitNoSelector('.modal-backdrop');
     await page.assertHealthy('ops operator password updated');
-    await page.clickRowButton(operatorEmail, '停用');
+    await page.clickRowButton(operatorEmail, '停用运营用户');
     await sleep(900);
     await page.waitRowText(operatorEmail, 'disabled');
     await page.assertHealthy('ops operator toggled');
@@ -755,18 +776,19 @@ async function exerciseOpsUI(browser) {
       const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
       window.__uiSmoke.setValue(inputs[0], ${JSON.stringify(relayName)});
       window.__uiSmoke.setValue(inputs[1], 'ui-test');
-      window.__uiSmoke.setValue(inputs[2], 'udp://127.0.0.1:${29110 + (runID % 1000)}');
-      window.__uiSmoke.setValue(inputs[3], '800');
-      window.__uiSmoke.setValue(inputs[4], '1024');
-      window.__uiSmoke.setValue(inputs[5], '120');
+      window.__uiSmoke.setValue(inputs[2], '127.0.0.1');
+      window.__uiSmoke.setValue(inputs[3], ${JSON.stringify(String(29110 + (runID % 1000)))});
+      window.__uiSmoke.setValue(inputs[4], '800');
+      window.__uiSmoke.setValue(inputs[5], '1024');
+      window.__uiSmoke.setValue(inputs[6], '120');
     })()`);
     await page.clickModalButton('保存');
     await page.waitNoSelector('.modal-backdrop');
     await page.waitText(relayName);
     await page.assertHealthy('ops relay created');
-    await page.clickRowButton(relayName, '停用');
+    await page.clickRowButton(relayName, '停用中继节点');
     await sleep(900);
-    await page.waitRowText(relayName, '启用');
+    await page.waitRowText(relayName, 'disabled');
     await page.assertHealthy('ops relay toggled');
 
     const planCode = `ops-ui-plan-${runID}`;
@@ -810,7 +832,7 @@ async function exerciseOpsUI(browser) {
     await page.waitNoSelector('.modal-backdrop');
     await page.waitText(productName);
     await page.assertHealthy('ops product created');
-    await page.clickRowButton(productName, '下架');
+    await page.clickRowButton(productName, '下架商品');
     await sleep(900);
     await page.waitRowText(productName, 'offline');
     await page.assertHealthy('ops product toggled');
@@ -829,7 +851,7 @@ async function exerciseOpsUI(browser) {
 
     await page.click('客户管理', 'aside nav button');
     await page.waitText(`ops-ui-customer-${runID}@staticlss.com`);
-    await page.clickRowButton(`ops-ui-customer-${runID}@staticlss.com`, '指定级别');
+    await page.clickRowButton(`ops-ui-customer-${runID}@staticlss.com`, '指定客户级别');
     await page.waitSelector('.modal-backdrop');
     await page.eval(`(() => {
       const planSelect = [...document.querySelectorAll('.modal-backdrop select')].find((el) => [...el.options].some((option) => option.value === ${JSON.stringify(planCode)}));
@@ -844,7 +866,7 @@ async function exerciseOpsUI(browser) {
 
     await page.click('设备管理', 'aside nav button');
     await page.waitText(`ops-ui-device-${runID}`);
-    await page.clickRowButton(`ops-ui-device-${runID}`, '查看/修改');
+    await page.clickRowButton(`ops-ui-device-${runID}`, '查看或修改设备');
     await page.waitSelector('.modal-backdrop');
     await page.eval(`(() => {
       const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));
@@ -854,14 +876,14 @@ async function exerciseOpsUI(browser) {
     await page.waitNoSelector('.modal-backdrop');
     await page.waitText('Ops UI Device Updated');
     await page.assertHealthy('ops device updated');
-    await page.clickRowButton(`ops-ui-device-${runID}`, '停用');
+    await page.clickRowButton(`ops-ui-device-${runID}`, '停用设备');
     await sleep(900);
-    await page.waitRowText(`ops-ui-device-${runID}`, '启用');
+    await page.waitRowText(`ops-ui-device-${runID}`, '禁用');
     await page.assertHealthy('ops device toggled');
 
     await page.click('续费管理', 'aside nav button');
     await page.waitText(`ops-ui-customer-${runID}@staticlss.com`);
-    await page.clickRowButton(`ops-ui-customer-${runID}@staticlss.com`, '查看/修改');
+    await page.clickRowButton(`ops-ui-customer-${runID}@staticlss.com`, '查看或修改续费记录');
     await page.waitSelector('.modal-backdrop');
     await page.eval(`(() => {
       const inputs = [...document.querySelectorAll('.modal-backdrop input')].filter((el) => window.__uiSmoke.visible(el));

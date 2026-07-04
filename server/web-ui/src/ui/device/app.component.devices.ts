@@ -226,7 +226,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     this.deviceListMessage = '';
     this.editingDeviceGroup = group?.groupId ? group : null;
     this.deviceGroupDialogMode = group?.groupId ? 'edit' : 'create';
-    this.deviceGroupName = group?.name ?? '开发部';
+    this.deviceGroupName = group?.name ?? '';
     this.deviceGroupDescription = group?.description ?? '';
     this.deviceGroupDialogMessage = '';
     this.showDeviceGroupDialog = true;
@@ -297,6 +297,47 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     }
   }
 
+  async quickCreateDeviceGroup(group: Pick<DeviceGroupRow, 'name' | 'description'>): Promise<void> {
+    this.deviceListMessage = '';
+    const name = group.name.trim();
+    if (!name) {
+      return;
+    }
+    if (this.deviceGroups.some((item) => item.name.trim() === name)) {
+      this.deviceListMessage = `分组“${name}”已存在`;
+      this.notifyStateChanged();
+      return;
+    }
+    const description = group.description.trim();
+    const localGroup: DeviceGroupRow = {
+      groupId: compactUuid(),
+      name,
+      description,
+      createdAt: Math.floor(Date.now() / 1000),
+    };
+    this.deviceGroups = [...this.deviceGroups, localGroup];
+    this.notifyStateChanged();
+    try {
+      const created = await this.api.post<DeviceGroupRow>(WEB_API.deviceGroups(this.effectiveUserId), {
+        actorUserId: this.effectiveUserId,
+        name,
+        description,
+      });
+      this.deviceGroups = [
+        ...this.deviceGroups.filter((item) => item.groupId !== localGroup.groupId),
+        { ...created },
+      ];
+      this.notifyStateChanged();
+    } catch {
+      if (this.isDemoMode) {
+        return;
+      }
+      this.deviceGroups = this.deviceGroups.filter((item) => item.groupId !== localGroup.groupId);
+      this.deviceListMessage = `创建分组“${name}”失败`;
+      this.notifyStateChanged();
+    }
+  }
+
   async removeDeviceGroup(group: DeviceGroupRow): Promise<void> {
     const previousGroups = this.deviceGroups;
     const previousGroupIdsByDevice = this.deviceGroupIdsByDevice;
@@ -364,6 +405,16 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
   async openInviteDialog(): Promise<void> {
     this.deviceListMessage = '';
+    const network = this.workspaces.find((item) => item.workspaceId === this.selectedWorkspaceId) ?? this.workspaces[0];
+    if (!network) {
+      this.workspaceInviteCode = '';
+      this.inviteQrDataUrl = '';
+      this.joinInviteMessage = '请先创建网络。';
+      this.showInviteDialog = true;
+      this.notifyStateChanged();
+      return;
+    }
+    this.selectedWorkspaceId = network.workspaceId;
     if (!this.canCreateDeviceInvite) {
       this.workspaceInviteCode = '';
       this.inviteQrDataUrl = '';
@@ -374,7 +425,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     }
     try {
       const invite = await this.api.post<WorkspaceDeviceInviteRow>(WEB_API.deviceInvites(), {
-        networkId: this.selectedWorkspaceId,
+        networkId: network.workspaceId,
         inviterUserId: this.effectiveUserId,
         ttlSeconds: 86400,
       });
@@ -393,8 +444,8 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       this.workspaceInviteCode = `JOIN-${randomPart}`;
       this.upsertWorkspaceDeviceInvite({
         inviteId: compactUuid(),
-        networkId: this.selectedWorkspaceId,
-        workspaceId: this.selectedWorkspaceId,
+        networkId: network.workspaceId,
+        workspaceId: network.workspaceId,
         inviterUserId: this.effectiveUserId,
         inviteCode: this.workspaceInviteCode,
         status: 'pending',

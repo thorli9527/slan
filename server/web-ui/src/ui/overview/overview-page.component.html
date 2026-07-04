@@ -75,6 +75,9 @@
           <td><code>{{ device.ip }}</code></td>
           <td><span class="status online">{{ device.status }}</span></td>
         </tr>
+        <tr *ngIf="vm.currentUserDevices.length === 0">
+          <td colspan="5">暂无设备，注册或接入设备后会显示在这里。</td>
+        </tr>
       </tbody>
     </table>
   </article>
@@ -86,6 +89,7 @@
         <p>管理当前用户设备的设备 token；支持逐个立即失效。</p>
       </div>
     </div>
+    <p *ngIf="vm.currentUserDevices.length === 0">当前还没有设备，因此暂无可管理的设备 token。</p>
     <div *ngFor="let device of vm.currentUserDevices" class="device-token-block">
       <h3>{{ device.alias || device.deviceId }}</h3>
       <table class="compact-table">

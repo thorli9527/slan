@@ -1,8 +1,8 @@
-import { AppComponentData } from './app.component.data';
+import { AppComponentSecurity } from '../network/app.component.security';
 import { ApiManagedDeviceSession, ApiManagedUserSession, DeviceBootstrapKeyRow, DeviceRow } from '../app.models';
 import { WEB_API } from '../api-paths';
 
-export abstract class AppComponentOverview extends AppComponentData {
+export abstract class AppComponentOverview extends AppComponentSecurity {
   setActive(id: string): void {
     this.active = id;
     if (id === 'overview') {
@@ -56,6 +56,20 @@ export abstract class AppComponentOverview extends AppComponentData {
       return 'expired';
     }
     return item.status || 'active';
+  }
+
+  bootstrapStatusLabel(item: DeviceBootstrapKeyRow): string {
+    switch (this.effectiveBootstrapStatus(item)) {
+      case 'revoked':
+        return '已撤销';
+      case 'used':
+        return '已使用';
+      case 'expired':
+        return '已过期';
+      case 'active':
+      default:
+        return '有效';
+    }
   }
 
   bootstrapExpiryText(item: DeviceBootstrapKeyRow): string {

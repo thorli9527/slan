@@ -42,6 +42,9 @@
             </button>
           </td>
         </tr>
+        <tr *ngIf="vm.managedUserAliases.length === 0">
+          <td colspan="3">暂无用户别名，接入其他用户后可以在这里统一设置显示名称。</td>
+        </tr>
       </tbody>
     </table>
   </article>
