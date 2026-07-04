@@ -68,3 +68,20 @@ Current storage is in-memory TTL state:
 - connect session TTL: `SLAN_WIRE_PUNCH_SESSION_TTL_SECONDS`, default `60`
 
 Redis can be added behind the same store boundary when multi-instance punch coordination is needed.
+
+## Docker deploy helper
+
+For single-node deployment or quick remote rollout, use:
+
+```bash
+scripts/deploy_wire_punch_docker.sh
+```
+
+Required environment:
+
+- `SLAN_WIRE_PUNCH_PUBLIC_HOST`
+- `SLAN_INTERNAL_WIRE_TOKEN`
+
+The script builds `server-wire-punch`, replaces the old container, publishes
+UDP `29130` and HTTP `29131`, and prints the resulting `SLAN_WIRE_PUNCH_NODES`
+value for `service-biz`.

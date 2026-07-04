@@ -28,10 +28,12 @@ server/**/*.exe
 server/**/*.test
 server/**/*.out
 server/service-biz/service-biz
+client_core_service_login_check
 
 # Flutter / Dart generated files
 **/.dart_tool/
 **/build/
+**/build.rootcache.*/
 **/.gradle/
 **/.flutter-plugins
 **/.flutter-plugins-dependencies

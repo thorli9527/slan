@@ -30,6 +30,9 @@ and operator habits.
   reusable Go helpers and shell helpers used by the higher-level tests.
 - `guard/`
   API-surface and boundary guard checks for client architecture constraints.
+  Includes `audit_ui_template_methods.sh`, which scans `vm.*` calls used by
+  Angular/Flutter-style HTML templates and fails when a referenced view-model
+  method is missing from the matching TypeScript surface.
 
 ## Conventions
 
