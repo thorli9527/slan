@@ -57,6 +57,81 @@ func securityPeer(value string) (string, string) {
 	return "cidr", value
 }
 
+func normalizedSecurityPeer(peerType, peerValue, legacyCIDR string) (string, string) {
+	peerType = strings.ToLower(strings.TrimSpace(peerType))
+	peerValue = strings.TrimSpace(peerValue)
+	if peerType != "" {
+		if peerType == "any" {
+			peerType = "all"
+		}
+		if peerType == "network" {
+			peerType = "workspace"
+		}
+		if peerType == "device-group" {
+			peerType = "device_group"
+		}
+		if peerType == "all" && peerValue == "" {
+			peerValue = "all"
+		}
+		return peerType, peerValue
+	}
+	return securityPeer(legacyCIDR)
+}
+
+func securityRuleLegacyCIDR(peerType, peerValue string) string {
+	peerType = strings.ToLower(strings.TrimSpace(peerType))
+	peerValue = strings.TrimSpace(peerValue)
+	switch peerType {
+	case "", "cidr":
+		return peerValue
+	case "all", "any":
+		return "peer:all:all"
+	default:
+		return "peer:" + peerType + ":" + peerValue
+	}
+}
+
+func validateSecurityRulePeer(
+	ctx context.Context,
+	devices repository.DeviceRepository,
+	actorUserID string,
+	peerType string,
+	peerValue string,
+) error {
+	peerType, peerValue = normalizedSecurityPeer(peerType, peerValue, "")
+	switch peerType {
+	case "", "cidr":
+		return ErrInvalidArgument
+	case "all":
+		if peerValue == "" {
+			return nil
+		}
+		if strings.EqualFold(peerValue, "all") || strings.EqualFold(peerValue, "any") || peerValue == "*" {
+			return nil
+		}
+		return ErrInvalidArgument
+	case "device", "user", "workspace":
+		if peerValue == "" {
+			return ErrInvalidArgument
+		}
+		return nil
+	case "device_group":
+		if peerValue == "" || devices == nil {
+			return ErrInvalidArgument
+		}
+		group, ok, err := devices.GetDeviceGroup(ctx, peerValue)
+		if err != nil {
+			return err
+		}
+		if !ok || strings.TrimSpace(group.UserID) == "" || group.UserID != actorUserID {
+			return ErrInvalidArgument
+		}
+		return nil
+	default:
+		return ErrInvalidArgument
+	}
+}
+
 func requireOwnedManagedPublicMapping(
 	ctx context.Context,
 	users repository.UserRepository,

@@ -22,7 +22,7 @@ func (s *GormStore) GetDevice(_ context.Context, deviceID string) (model.Device,
 
 func (s *GormStore) SaveDevice(_ context.Context, device model.Device) error {
 	row := deviceRecordFromModel(device)
-	return upsertByColumns(s.db, &row, []string{"device_id"}, []string{"owner_id", "name", "platform", "alias", "os_name", "os_version", "public_key", "device_version", "country_code", "rx_bytes_total", "tx_bytes_total", "status", "created_at", "updated_at", "last_seen_at"})
+	return upsertByColumns(s.db, &row, []string{"device_id"}, []string{"owner_id", "virtual_ip", "name", "platform", "alias", "os_name", "os_version", "public_key", "device_version", "country_code", "rx_bytes_total", "tx_bytes_total", "status", "created_at", "updated_at", "last_seen_at"})
 }
 
 func (s *GormStore) DeleteDevice(_ context.Context, deviceID string) error {
@@ -54,9 +54,21 @@ func (s *GormStore) GetDeviceSessionByAccessToken(_ context.Context, accessToken
 	})
 }
 
+func (s *GormStore) GetDeviceSessionByRefreshToken(_ context.Context, refreshToken string) (model.DeviceSession, bool, error) {
+	return firstModel(s.db.Where("refresh_token = ?", strings.TrimSpace(refreshToken)), func(row gormDeviceSessionRecord) model.DeviceSession {
+		return row.model()
+	})
+}
+
+func (s *GormStore) ListDeviceSessionsByDeviceID(_ context.Context, deviceID string) ([]model.DeviceSession, error) {
+	return listModels(s.db.Where("device_id = ?", strings.TrimSpace(deviceID)).Order("created_at desc"), func(row gormDeviceSessionRecord) model.DeviceSession {
+		return row.model()
+	})
+}
+
 func (s *GormStore) SaveDeviceSession(_ context.Context, item model.DeviceSession) error {
 	row := deviceSessionRecordFromModel(item)
-	return upsertByColumns(s.db, &row, []string{"session_id"}, []string{"device_id", "access_token", "refresh_token", "status", "expires_at", "created_at", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"session_id"}, []string{"device_id", "access_token", "refresh_token", "status", "session_mode", "expires_at", "refresh_expiry", "created_at", "updated_at", "revoked_at"})
 }
 
 func (s *GormStore) DeleteDeviceSessionByAccessToken(_ context.Context, accessToken string) error {

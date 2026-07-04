@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Handler;
@@ -137,6 +138,10 @@ public final class ClientCorePlugin
           setMobileServerBaseUrl(call.arguments == null ? "" : String.valueOf(call.arguments));
           result.success(true);
           return;
+        case "setAndroidDebugEmulatorVpnBypass":
+          setAndroidDebugEmulatorVpnBypass(call.arguments);
+          result.success(true);
+          return;
         default:
           result.notImplemented();
       }
@@ -166,12 +171,26 @@ public final class ClientCorePlugin
   /** Return whether Android VpnService already has user consent. */
   private boolean vpnPermissionGranted() {
     Context context = applicationContext;
-    return context != null && VpnService.prepare(context) == null;
+    if (context == null) {
+      return false;
+    }
+    if (allowDebugEmulatorVpnBypass()) {
+      return true;
+    }
+    return VpnService.prepare(context) == null;
   }
 
   /** Start Android system consent flow for VpnService. */
   private void requestVpnPermission(MethodChannel.Result result) {
     String requestId = "vpn-" + UUID.randomUUID();
+    if (allowDebugEmulatorVpnBypass()) {
+      SlanVpnRuntime.pushEvent(
+          "permissionGranted",
+          "Android VPN permission bypassed for debug emulator",
+          null);
+      result.success(consentRequest(requestId, "Android VPN permission bypassed for debug emulator"));
+      return;
+    }
     Activity currentActivity = activity;
     if (currentActivity == null) {
       result.error("activity_unavailable", "Android Activity is not attached", null);
@@ -314,7 +333,8 @@ public final class ClientCorePlugin
       args = new JSONObject();
       request.put("args", args);
     }
-    args.put("deviceId", stableDeviceId());
+    String requestedDeviceId = args.optString("deviceId", "").trim();
+    args.put("deviceId", requestedDeviceId.isEmpty() ? stableDeviceId() : requestedDeviceId);
     Context context = applicationContext;
     if (context != null) {
       args.put("stateDir", context.getFilesDir().getAbsolutePath());
@@ -361,6 +381,57 @@ public final class ClientCorePlugin
       return;
     }
     prefs().edit().putString(SERVER_BASE_URL_KEY, value == null ? "" : value.trim()).apply();
+  }
+
+  private void setAndroidDebugEmulatorVpnBypass(Object value) {
+    Context context = applicationContext;
+    if (context == null) {
+      return;
+    }
+    boolean enabled = value instanceof Boolean
+        ? (Boolean) value
+        : Boolean.parseBoolean(String.valueOf(value));
+    prefs().edit()
+        .putBoolean("dev.slan.client.v2.android.debug.emulatorVpnBypass", enabled)
+        .apply();
+  }
+
+  private boolean allowDebugEmulatorVpnBypass() {
+    if (!(isDebugBuild() && isProbablyEmulator())) {
+      return false;
+    }
+    Context context = applicationContext;
+    if (context == null) {
+      return false;
+    }
+    return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean("dev.slan.client.v2.android.debug.emulatorVpnBypass", false);
+  }
+
+  private boolean isDebugBuild() {
+    Context context = applicationContext;
+    if (context == null) {
+      return false;
+    }
+    return (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+  }
+
+  private boolean isProbablyEmulator() {
+    String fingerprint = Build.FINGERPRINT == null ? "" : Build.FINGERPRINT;
+    String model = Build.MODEL == null ? "" : Build.MODEL;
+    String manufacturer = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER;
+    String hardware = Build.HARDWARE == null ? "" : Build.HARDWARE;
+    String product = Build.PRODUCT == null ? "" : Build.PRODUCT;
+    String device = Build.DEVICE == null ? "" : Build.DEVICE;
+    return fingerprint.contains("generic")
+        || fingerprint.contains("emulator")
+        || model.contains("Emulator")
+        || model.contains("Android SDK built for")
+        || manufacturer.contains("Genymotion")
+        || hardware.contains("ranchu")
+        || hardware.contains("goldfish")
+        || product.contains("sdk_gphone")
+        || device.contains("emu");
   }
 
   private SharedPreferences prefs() {

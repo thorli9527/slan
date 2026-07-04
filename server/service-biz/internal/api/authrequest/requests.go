@@ -17,14 +17,16 @@ func (r RegisterUser) ToInput() servicepkg.RegisterUserInput {
 }
 
 type LoginUser struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	SessionMode string `json:"sessionMode"`
 }
 
 func (r LoginUser) ToInput() servicepkg.LoginUserInput {
 	return servicepkg.LoginUserInput{
-		Email:    r.Email,
-		Password: r.Password,
+		Email:       r.Email,
+		Password:    r.Password,
+		SessionMode: r.SessionMode,
 	}
 }
 
@@ -35,6 +37,16 @@ type LogoutUser struct {
 func (r LogoutUser) ToInput() servicepkg.LogoutUserInput {
 	return servicepkg.LogoutUserInput{
 		DeviceToken: r.DeviceToken,
+	}
+}
+
+type RenewUserSession struct {
+	RefreshToken string `json:"refreshToken"`
+}
+
+func (r RenewUserSession) ToInput() servicepkg.RenewUserSessionInput {
+	return servicepkg.RenewUserSessionInput{
+		RefreshToken: r.RefreshToken,
 	}
 }
 

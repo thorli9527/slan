@@ -20,6 +20,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
   private static let deviceIdKey = "dev.slan.client.v2.ios.deviceId"
   private static let nodeIdKey = "dev.slan.client.v2.ios.nodeId"
   private static let serverBaseUrlKey = "dev.slan.client.v2.mobile.serverBaseUrl"
+  private static let infoControlBaseUrlKey = "SLANControlBaseURL"
   private static let packetTunnelProviderBundleId = "dev.slan.client.v2.SLANPacketTunnel"
   private static let packetTunnelDescription = "SLAN Packet Tunnel"
 
@@ -130,7 +131,14 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       return requestJson
     }
     var args = request["args"] as? [String: Any] ?? [:]
-    args["deviceId"] = stableDeviceId()
+    let requestedDeviceId = embeddedRequestedDeviceId(args)
+    let effectiveDeviceId = requestedDeviceId.isEmpty ? stableDeviceId() : requestedDeviceId
+    if !requestedDeviceId.isEmpty {
+      persistStableDeviceId(requestedDeviceId)
+      state["deviceId"] = requestedDeviceId
+    }
+    args["deviceId"] = effectiveDeviceId
+    args["deviceIdOverride"] = effectiveDeviceId
     if let stateDir = FileManager.default.urls(
       for: .applicationSupportDirectory,
       in: .userDomainMask
@@ -144,6 +152,22 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       return requestJson
     }
     return output
+  }
+
+  private func embeddedRequestedDeviceId(_ args: [String: Any]) -> String {
+    if let override = (args["deviceIdOverride"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+      !override.isEmpty
+    {
+      return override
+    }
+    if let deviceId = (args["deviceId"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+      !deviceId.isEmpty
+    {
+      return deviceId
+    }
+    return ""
   }
 
   private func iosStartPacketTunnel(_ arguments: Any?, result: @escaping FlutterResult) {
@@ -504,8 +528,16 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       return existing.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     let value = UUID().uuidString.lowercased()
-    defaults.set(value, forKey: Self.deviceIdKey)
+    persistStableDeviceId(value)
     return value
+  }
+
+  private func persistStableDeviceId(_ value: String) {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard isUuidV4(trimmed) else {
+      return
+    }
+    UserDefaults.standard.set(trimmed, forKey: Self.deviceIdKey)
   }
 
   private func isUuidV4(_ value: String) -> Bool {
@@ -526,15 +558,26 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
   }
 
   private func mobileServerBaseUrl() -> String {
-    UserDefaults.standard.string(forKey: Self.serverBaseUrlKey)?
+    let persisted = UserDefaults.standard.string(forKey: Self.serverBaseUrlKey)?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if !persisted.isEmpty {
+      return persisted
+    }
+    return infoString(forKey: Self.infoControlBaseUrlKey)
   }
 
   private func setMobileServerBaseUrl(_ value: String) {
-    UserDefaults.standard.set(
-      value.trimmingCharacters(in: .whitespacesAndNewlines),
-      forKey: Self.serverBaseUrlKey
-    )
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      UserDefaults.standard.removeObject(forKey: Self.serverBaseUrlKey)
+      return
+    }
+    UserDefaults.standard.set(trimmed, forKey: Self.serverBaseUrlKey)
+  }
+
+  private func infoString(forKey key: String) -> String {
+    let value = Bundle.main.object(forInfoDictionaryKey: key) as? String ?? ""
+    return value.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private func stringField(_ object: [String: Any], _ field: String) -> String {

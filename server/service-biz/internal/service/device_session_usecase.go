@@ -22,7 +22,7 @@ func (s DeviceSessionService) BindDeviceSession(ctx context.Context, input BindD
 			return DeviceSessionBoundView{}, err
 		}
 	}
-	session, err := newManagedDeviceSession(deviceNow(s.Now), s.NewSessID, input.DeviceID)
+	session, err := newManagedDeviceSession(deviceNow(s.Now), s.NewSessID, input.DeviceID, input.SessionMode)
 	if err != nil {
 		return DeviceSessionBoundView{}, err
 	}
@@ -66,14 +66,30 @@ func (s DeviceSessionService) resolveBindDevice(ctx context.Context, input BindD
 
 func (s DeviceSessionService) RenewDeviceSession(ctx context.Context, accessToken string, input RenewDeviceSessionInput) (DeviceSessionBoundView, error) {
 	input = normalizeRenewDeviceSessionInput(input)
-	session, ok, err := s.Devices.GetDeviceSessionByAccessToken(ctx, normalizeDeviceAccessToken(accessToken))
+	if input.RefreshToken == "" {
+		return DeviceSessionBoundView{}, ErrInvalidArgument
+	}
+	now := deviceNow(s.Now)
+	session, ok, err := s.Devices.GetDeviceSessionByRefreshToken(ctx, input.RefreshToken)
 	if err != nil {
 		return DeviceSessionBoundView{}, err
 	}
-	if !ok || session.ExpiresAt < deviceNow(s.Now).Unix() {
+	if !ok || session.Status != tokenStatusActive || session.RevokedAt > 0 || session.RefreshExpiry < now.Unix() {
 		return DeviceSessionBoundView{}, ErrUnauthorized
 	}
-	session.UpdatedAt = deviceNow(s.Now).Unix()
+	if accessToken != "" && normalizeDeviceAccessToken(accessToken) != session.AccessToken {
+		return DeviceSessionBoundView{}, ErrUnauthorized
+	}
+	session.Status = tokenStatusRevoked
+	session.RevokedAt = now.Unix()
+	session.UpdatedAt = now.Unix()
+	if err := s.Devices.SaveDeviceSession(ctx, session); err != nil {
+		return DeviceSessionBoundView{}, err
+	}
+	session, err = newManagedDeviceSession(now, s.NewSessID, session.DeviceID, session.SessionMode)
+	if err != nil {
+		return DeviceSessionBoundView{}, err
+	}
 	if err := s.Devices.SaveDeviceSession(ctx, session); err != nil {
 		return DeviceSessionBoundView{}, err
 	}
@@ -81,12 +97,12 @@ func (s DeviceSessionService) RenewDeviceSession(ctx context.Context, accessToke
 	if err != nil {
 		return DeviceSessionBoundView{}, err
 	}
-	nowUnix := deviceNow(s.Now).Unix()
+	nowUnix := now.Unix()
 	device, updated := applyRenewDeviceSessionInput(device, input, nowUnix)
 	if updated {
 		if err := s.Devices.SaveDevice(ctx, device); err != nil {
 			return DeviceSessionBoundView{}, err
 		}
 	}
-	return buildBoundDeviceSessionView(ctx, s.Users, s.Networks, s.MQTT, deviceNow(s.Now), device, session)
+	return buildBoundDeviceSessionView(ctx, s.Users, s.Networks, s.MQTT, now, device, session)
 }

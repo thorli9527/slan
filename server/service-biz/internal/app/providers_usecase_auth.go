@@ -4,6 +4,7 @@ func newAuthUseCasesFromServices(services AuthServices) AuthUseCases {
 	return AuthUseCases{
 		UserRegistration:    services.UserAuth,
 		UserSessions:        services.UserAuth,
+		UserTokens:          services.TokenManagement,
 		UserAccounts:        services.UserAuth,
 		UserEntitlements:    services.UserAuth,
 		Aliases:             services.Aliases,

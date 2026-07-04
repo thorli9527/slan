@@ -23,6 +23,16 @@ func (s NetworkDNSService) AddDNSZone(ctx context.Context, input CreateDNSZoneIn
 	if err := s.Networks.SaveDNSZone(ctx, item); err != nil {
 		return DNSZoneView{}, err
 	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, "dns_zone_created")
+	if err != nil {
+		return DNSZoneView{}, err
+	}
+	if err := publishDNSChanged(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return DNSZoneView{}, err
+	}
+	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return DNSZoneView{}, err
+	}
 	return dnsZoneView(item), nil
 }
 
@@ -39,6 +49,16 @@ func (s NetworkDNSService) UpdateDNSZone(ctx context.Context, input UpdateDNSZon
 	if err := s.Networks.SaveDNSZone(ctx, item); err != nil {
 		return DNSZoneView{}, err
 	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, "dns_zone_updated")
+	if err != nil {
+		return DNSZoneView{}, err
+	}
+	if err := publishDNSChanged(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return DNSZoneView{}, err
+	}
+	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return DNSZoneView{}, err
+	}
 	return dnsZoneView(item), nil
 }
 
@@ -50,7 +70,21 @@ func (s NetworkDNSService) DeleteDNSZone(ctx context.Context, input DeleteDNSZon
 	if _, err := requireOwnedManagedDNSZone(ctx, s.Users, s.Networks, input.ActorUserID, input.ZoneID); err != nil {
 		return err
 	}
-	return s.Networks.DeleteDNSZone(ctx, input.ZoneID)
+	zone, err := requireManagedDNSZone(ctx, s.Networks, input.ZoneID)
+	if err != nil {
+		return err
+	}
+	if err := s.Networks.DeleteDNSZone(ctx, input.ZoneID); err != nil {
+		return err
+	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, zone.NetworkID, "dns_zone_deleted")
+	if err != nil {
+		return err
+	}
+	if err := publishDNSChanged(ctx, s.Networks, s.Broadcaster, s.Now, zone.NetworkID, version.Version, version.Reason); err != nil {
+		return err
+	}
+	return publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.Broadcaster, s.Now, zone.NetworkID, version.Version, version.Reason)
 }
 
 func (s NetworkDNSService) ListDNSRecords(ctx context.Context, networkID string) ([]DNSRecordView, error) {
@@ -74,6 +108,16 @@ func (s NetworkDNSService) AddDNSRecord(ctx context.Context, input CreateDNSReco
 	if err := s.Networks.SaveDNSRecord(ctx, item); err != nil {
 		return DNSRecordView{}, err
 	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, "dns_record_created")
+	if err != nil {
+		return DNSRecordView{}, err
+	}
+	if err := publishDNSChanged(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return DNSRecordView{}, err
+	}
+	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return DNSRecordView{}, err
+	}
 	return dnsRecordView(item), nil
 }
 
@@ -90,6 +134,16 @@ func (s NetworkDNSService) UpdateDNSRecord(ctx context.Context, input UpdateDNSR
 	if err := s.Networks.SaveDNSRecord(ctx, item); err != nil {
 		return DNSRecordView{}, err
 	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, "dns_record_updated")
+	if err != nil {
+		return DNSRecordView{}, err
+	}
+	if err := publishDNSChanged(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return DNSRecordView{}, err
+	}
+	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return DNSRecordView{}, err
+	}
 	return dnsRecordView(item), nil
 }
 
@@ -98,8 +152,19 @@ func (s NetworkDNSService) DeleteDNSRecord(ctx context.Context, input DeleteDNSR
 	if input.RecordID == "" {
 		return ErrInvalidArgument
 	}
-	if _, err := requireOwnedManagedDNSRecord(ctx, s.Users, s.Networks, input.ActorUserID, input.RecordID); err != nil {
+	record, err := requireOwnedManagedDNSRecord(ctx, s.Users, s.Networks, input.ActorUserID, input.RecordID)
+	if err != nil {
 		return err
 	}
-	return s.Networks.DeleteDNSRecord(ctx, input.RecordID)
+	if err := s.Networks.DeleteDNSRecord(ctx, input.RecordID); err != nil {
+		return err
+	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, record.NetworkID, "dns_record_deleted")
+	if err != nil {
+		return err
+	}
+	if err := publishDNSChanged(ctx, s.Networks, s.Broadcaster, s.Now, record.NetworkID, version.Version, version.Reason); err != nil {
+		return err
+	}
+	return publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.Broadcaster, s.Now, record.NetworkID, version.Version, version.Reason)
 }

@@ -36,9 +36,21 @@ func (s *GormStore) GetUserSessionByAccessToken(_ context.Context, accessToken s
 	})
 }
 
+func (s *GormStore) GetUserSessionByRefreshToken(_ context.Context, refreshToken string) (model.UserSession, bool, error) {
+	return firstModel(s.db.Where("refresh_token = ?", strings.TrimSpace(refreshToken)), func(row gormUserSessionRecord) model.UserSession {
+		return row.model()
+	})
+}
+
+func (s *GormStore) ListUserSessionsByUserID(_ context.Context, userID string) ([]model.UserSession, error) {
+	return listModels(s.db.Where("user_id = ?", strings.TrimSpace(userID)).Order("created_at desc"), func(row gormUserSessionRecord) model.UserSession {
+		return row.model()
+	})
+}
+
 func (s *GormStore) SaveUserSession(_ context.Context, session model.UserSession) error {
 	row := userSessionRecordFromModel(session)
-	return upsertByColumns(s.db, &row, []string{"session_id"}, []string{"user_id", "access_token", "refresh_token", "expires_at", "refresh_expiry", "created_at"})
+	return upsertByColumns(s.db, &row, []string{"session_id"}, []string{"user_id", "access_token", "refresh_token", "status", "session_mode", "expires_at", "refresh_expiry", "created_at", "updated_at", "revoked_at"})
 }
 
 func (s *GormStore) DeleteUserSessionByAccessToken(_ context.Context, accessToken string) error {

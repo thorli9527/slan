@@ -15,14 +15,17 @@ func userView(item model.User) UserView {
 
 func userSessionView(item model.UserSession) UserSessionView {
 	return UserSessionView{
-		SessionID:    item.SessionID,
-		UserID:       item.UserID,
-		AccessToken:  item.AccessToken,
-		RefreshToken: item.RefreshToken,
-		Status:       "active",
-		ExpiresAt:    item.ExpiresAt,
-		CreatedAt:    item.CreatedAt,
-		UpdatedAt:    item.CreatedAt,
+		SessionID:     item.SessionID,
+		UserID:        item.UserID,
+		AccessToken:   item.AccessToken,
+		RefreshToken:  item.RefreshToken,
+		Status:        item.Status,
+		SessionMode:   item.SessionMode,
+		ExpiresAt:     item.ExpiresAt,
+		RefreshExpiry: item.RefreshExpiry,
+		CreatedAt:     item.CreatedAt,
+		UpdatedAt:     item.UpdatedAt,
+		RevokedAt:     item.RevokedAt,
 	}
 }
 

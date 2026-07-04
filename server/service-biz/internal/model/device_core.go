@@ -3,6 +3,7 @@ package model
 type Device struct {
 	DeviceID      string `json:"deviceId"`
 	OwnerID       string `json:"ownerId"`
+	VirtualIP     string `json:"virtualIp"`
 	Name          string `json:"name"`
 	Platform      string `json:"platform"`
 	Alias         string `json:"alias,omitempty"`

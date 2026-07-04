@@ -1,6 +1,9 @@
 package service
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/pkg/downloadkit"
 )
@@ -14,7 +17,7 @@ func resolveClientDownload(fileName string, requestPath string, items []model.Cl
 	if fileName == "install.sh" {
 		return DownloadClientFileView{
 			FileName: fileName,
-			Script:   clientBootstrapInstallScript(),
+			Script:   clientBootstrapInstallScript(items),
 			Found:    true,
 		}, nil
 	}
@@ -43,21 +46,48 @@ func resolveClientDownload(fileName string, requestPath string, items []model.Cl
 	return DownloadClientFileView{FileName: fileName, Found: false}, nil
 }
 
-func clientBootstrapInstallScript() string {
+func clientBootstrapInstallScript(items []model.ClientDownload) string {
+	packageURL := "/downloads/clients/slan-client-linux.tar.gz"
+	if latest := latestActiveClientDownload(items, "linux"); latest != nil {
+		if resolved := strings.TrimSpace(downloadTargetURL(*latest)); resolved != "" {
+			packageURL = resolved
+		}
+	}
 	return `#!/usr/bin/env sh
 set -eu
 
 server="http://127.0.0.1:28080"
-session_key=""
-package_url=""
+installation_key=""
+package_url="` + packageURL + `"
 install_root="${SLAN_INSTALL_ROOT:-/opt/slan-client-v2}"
 config_dir="${SLAN_CONFIG_DIR:-/etc/slan}"
 tray_mode="disabled"
 
+assert_safe_install_root() {
+  case "$install_root" in
+    ""|"/"|"/bin"|"/etc"|"/lib"|"/opt"|"/sbin"|"/usr"|"/var")
+      echo "Refusing to remove unsafe install root: $install_root" >&2
+      exit 2
+      ;;
+  esac
+}
+
+extract_package() {
+  package_path="$1"
+  install_root_prefix="${install_root#/}/"
+  if tar -tzf "$package_path" | sed 's#^\./##' | awk -v prefix="$install_root_prefix" 'index($0, prefix) == 1 { found = 1; exit } END { exit found ? 0 : 1 }'; then
+    tar -xzf "$package_path" -C /
+  else
+    mkdir -p "$install_root"
+    tar -xzf "$package_path" -C "$install_root"
+  fi
+}
+
 for arg in "$@"; do
   case "$arg" in
     --server=*) server="${arg#--server=}" ;;
-    --session-key=*) session_key="${arg#--session-key=}" ;;
+    --installation-key=*) installation_key="${arg#--installation-key=}" ;;
+    --session-key=*) installation_key="${arg#--session-key=}" ;;
     --package-url=*) package_url="${arg#--package-url=}" ;;
     --root=*) install_root="${arg#--root=}" ;;
     --config-dir=*) config_dir="${arg#--config-dir=}" ;;
@@ -68,13 +98,16 @@ done
 
 mkdir -p "$config_dir"
 if [ -z "$package_url" ]; then
-  package_url="${server%/}/downloads/clients/slan-client-linux.tar.gz"
+  package_url="${server%/}/` + strings.TrimPrefix(packageURL, "/") + `"
+elif [ "${package_url#/}" != "$package_url" ]; then
+  package_url="${server%/}${package_url}"
 fi
 if command -v curl >/dev/null 2>&1; then
   tmp_pkg="$(mktemp /tmp/slan-client-linux.XXXXXX.tar.gz)"
   if curl -fsSL "$package_url" -o "$tmp_pkg"; then
-    mkdir -p "$install_root"
-    tar -xzf "$tmp_pkg" -C "$install_root"
+    assert_safe_install_root
+    rm -rf "$install_root"
+    extract_package "$tmp_pkg"
   else
     echo "WARN: unable to download $package_url; only writing bootstrap config" >&2
   fi
@@ -82,7 +115,8 @@ if command -v curl >/dev/null 2>&1; then
 fi
 cat > "$config_dir/bootstrap.env" <<EOF
 SLAN_CONTROL_BASE_URL=$server
-SLAN_SESSION_KEY=$session_key
+SLAN_INSTALLATION_KEY=$installation_key
+SLAN_SESSION_KEY=$installation_key
 EOF
 cat > "$config_dir/client-v2-install.env" <<EOF
 SLAN_CLIENT_V2_INSTALL_ROOT=$install_root
@@ -93,4 +127,34 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 echo "SLAN Client V2 bootstrap config written to $config_dir"
 `
+}
+
+func latestActiveClientDownload(items []model.ClientDownload, platform string) *model.ClientDownload {
+	filtered := make([]model.ClientDownload, 0, len(items))
+	for _, item := range items {
+		if !strings.EqualFold(strings.TrimSpace(item.Platform), platform) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(item.Status), "active") {
+			continue
+		}
+		targetURL := strings.TrimSpace(downloadTargetURL(item))
+		if targetURL == "" || strings.EqualFold(targetURL, "/downloads/clients/install.sh") {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].UpdatedAt != filtered[j].UpdatedAt {
+			return filtered[i].UpdatedAt > filtered[j].UpdatedAt
+		}
+		if filtered[i].CreatedAt != filtered[j].CreatedAt {
+			return filtered[i].CreatedAt > filtered[j].CreatedAt
+		}
+		return filtered[i].DownloadID > filtered[j].DownloadID
+	})
+	return &filtered[0]
 }

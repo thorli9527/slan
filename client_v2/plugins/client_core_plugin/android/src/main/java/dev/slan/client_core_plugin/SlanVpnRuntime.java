@@ -150,9 +150,9 @@ final class SlanVpnRuntime {
       state.put("relayAddress", relayAddress);
     }
     if (relaySessionCount != null) {
-      state.put("relaySessionCount", relaySessionCount);
-      state.put("requestedRelaySessionCount", relaySessionCount);
-      state.put("attachedRelaySessionCount", relaySessionCount);
+      putIfAbsent(state, "relaySessionCount", relaySessionCount);
+      putIfAbsent(state, "requestedRelaySessionCount", relaySessionCount);
+      putIfAbsent(state, "attachedRelaySessionCount", relaySessionCount);
     }
     return state;
   }
@@ -225,6 +225,13 @@ final class SlanVpnRuntime {
       return null;
     }
     return emptyToNull(String.valueOf(value));
+  }
+
+  private static void putIfAbsent(Map<String, Object> state, String key, Object value) {
+    if (value == null || state.containsKey(key)) {
+      return;
+    }
+    state.put(key, value);
   }
 
   private static void pushEventLocked(String type, String message, Map<String, Object> runtimeState) {

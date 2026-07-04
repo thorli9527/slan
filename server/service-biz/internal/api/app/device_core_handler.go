@@ -15,11 +15,11 @@ type DeviceHandler struct {
 
 func (h DeviceHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
-		serviceapi.NewRoute(http.MethodGet, "/api/devices", h.ListDevices),
-		serviceapi.NewRoute(http.MethodPost, "/api/devices/register", h.RegisterDevice),
-		serviceapi.NewRoute(http.MethodPost, "/api/devices/{deviceId}/runtime", h.UpdateDeviceRuntime),
-		serviceapi.NewRoute(http.MethodPost, "/api/device/runtime/report", h.UpdateDeviceRuntime),
-		serviceapi.NewRoute(http.MethodPost, "/api/devices/{deviceId}/renew", h.RenewDevice),
+		serviceapi.NewRoute(http.MethodGet, "/api/app/devices", h.ListDevices),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/devices/register", h.RegisterDevice),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/devices/{deviceId}/runtime", h.UpdateDeviceRuntime),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/device/runtime/report", h.UpdateDeviceRuntime),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/devices/{deviceId}/renew", h.RenewDevice),
 	}
 }
 

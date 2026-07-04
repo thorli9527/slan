@@ -8,6 +8,7 @@ import (
 type RouteDependencies struct {
 	AuthRegistration    servicepkg.AuthUserRegistrationUseCase
 	AuthSessions        servicepkg.AuthUserSessionUseCase
+	UserTokens          servicepkg.UserTokenManagementUseCase
 	UserAccounts        servicepkg.AuthUserAccountUseCase
 	UserEntitlements    servicepkg.AuthUserEntitlementUseCase
 	AuthAlias           servicepkg.AuthAliasUseCase
@@ -16,6 +17,7 @@ type RouteDependencies struct {
 	DeviceLoginPrepare  servicepkg.AuthDeviceLoginPrepareUseCase
 	DeviceLoginComplete servicepkg.AuthDeviceLoginCompleteUseCase
 	DeviceCore          servicepkg.DeviceCoreUseCase
+	DeviceTokens        servicepkg.DeviceTokenManagementUseCase
 	DeviceBootstrap     servicepkg.DeviceBootstrapUseCase
 	DeviceGroup         servicepkg.DeviceGroupUseCase
 	NetworkCore         servicepkg.NetworkCoreUseCase
@@ -26,7 +28,7 @@ type RouteDependencies struct {
 }
 
 func Routes(deps RouteDependencies) []serviceapi.Route {
-	return serviceapi.WithAliasPrefix(serviceapi.CombineRoutes(
+	return serviceapi.WithRequiredPrefix(serviceapi.CombineRoutes(
 		authRoutes(deps),
 		userRoutes(deps),
 		deviceRoutes(deps),
@@ -56,6 +58,10 @@ func userRoutes(deps RouteDependencies) []serviceapi.Route {
 		UserHandler{
 			UserAccounts:     deps.UserAccounts,
 			UserEntitlements: deps.UserEntitlements,
+		}.Routes(),
+		TokenManagementHandler{
+			UserTokens: deps.UserTokens,
+			DeviceTokens: deps.DeviceTokens,
 		}.Routes(),
 		UserAliasHandler{AuthAlias: deps.AuthAlias}.Routes(),
 	)

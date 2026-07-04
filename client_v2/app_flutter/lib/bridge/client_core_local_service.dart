@@ -171,6 +171,34 @@ class ClientCoreLocalService {
     );
   }
 
+  /// 供集成测试使用的测试用户注册入口。
+  Future<Map<String, Object?>?> localRegisterTestUser({
+    required String email,
+    required String password,
+  }) async {
+    return requestJson(
+      'localRegisterTestUser',
+      arguments: {
+        'email': email,
+        'password': password,
+      },
+    );
+  }
+
+  /// 通过 Rust local API 统一上报设备 runtime 到控制面。
+  Future<Map<String, Object?>?> localReportDeviceRuntime({
+    required String deviceId,
+    required Map<String, Object?> body,
+  }) async {
+    return requestJson(
+      'localReportDeviceRuntime',
+      arguments: {
+        'deviceId': deviceId,
+        'body': body,
+      },
+    );
+  }
+
   /// 长轮询等待业务事件。
   ///
   /// 业务事件用于驱动 UI 增量刷新，例如登录成功、网络配置变化、消息到达。

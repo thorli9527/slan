@@ -97,9 +97,12 @@ func userSessionPayload(view servicepkg.UserSessionView) map[string]any {
 		"accessToken":  view.AccessToken,
 		"refreshToken": view.RefreshToken,
 		"status":       view.Status,
+		"sessionMode":  view.SessionMode,
 		"createdAt":    view.CreatedAt,
 		"updatedAt":    view.UpdatedAt,
 		"expiresAt":    view.ExpiresAt,
+		"refreshExpiry": view.RefreshExpiry,
+		"revokedAt":    view.RevokedAt,
 	}
 }
 

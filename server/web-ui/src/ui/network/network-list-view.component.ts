@@ -7,6 +7,9 @@ import { FormsModule } from '@angular/forms';
   standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './network-list-view.component.html',
+  host: {
+    class: 'network-view-host',
+  },
 })
 export class NetworkListViewComponent {
   @Input({ required: true }) vm!: any;

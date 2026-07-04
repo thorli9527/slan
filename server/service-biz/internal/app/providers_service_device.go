@@ -26,5 +26,10 @@ func newDeviceServices(deps UseCaseDependencies) DeviceServices {
 			MQTT:      deps.mqttConfig(),
 			NewSessID: ids.NewSessionID,
 		},
+		ClientMessages: servicepkg.ClientMessageService{
+			Devices:  repos.Devices,
+			Networks: repos.Networks,
+			MQTT:     deps.mqttConfig(),
+		},
 	}
 }

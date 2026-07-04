@@ -61,7 +61,7 @@ func validateServerCredential(cfg Config, clientID, username, givenPassword stri
 	if !ok || expiresAt < now.Unix() {
 		return false
 	}
-	baseClientID := deviceClientID(cfg, "server")
+	baseClientID := deviceClientID(cfg, ServerID)
 	if clientID != baseClientID && !strings.HasPrefix(clientID, baseClientID+"-") {
 		return false
 	}

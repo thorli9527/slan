@@ -117,7 +117,7 @@ curl -fsSL https://staticlss.com/install.sh | sudo bash -s -- \
 8. 客户端调用：
 
 ```text
-POST /api/device/session/bootstrap
+POST /api/app/device/session/bootstrap
 ```
 
 9. 服务端校验 key：
@@ -149,10 +149,10 @@ POST /api/web/device-bootstrap-keys/{id}/revoke
 Client Device Session:
 
 ```text
-POST /api/device/session/bootstrap
-POST /api/device/session/register
-POST /api/device/session/renew
-POST /api/device/session/revoke
+POST /api/app/device/session/bootstrap
+POST /api/app/device/session/register
+POST /api/app/device/session/renew
+POST /api/app/device/session/revoke
 ```
 
 Client User Session:

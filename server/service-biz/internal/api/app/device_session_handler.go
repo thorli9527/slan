@@ -17,9 +17,9 @@ type DeviceSessionHandler struct {
 
 func (h DeviceSessionHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
-		serviceapi.NewRoute(http.MethodPost, "/api/device/session/bootstrap", h.BootstrapDeviceSession),
-		serviceapi.NewRoute(http.MethodPost, "/api/device/session/bind", h.BindDeviceSession),
-		serviceapi.NewRoute(http.MethodPost, "/api/device/session/renew", h.RenewDeviceSession),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/device/session/bootstrap", h.BootstrapDeviceSession),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/device/session/bind", h.BindDeviceSession),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/device/session/renew", h.RenewDeviceSession),
 	}
 }
 

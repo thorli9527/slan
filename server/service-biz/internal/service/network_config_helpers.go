@@ -1,9 +1,14 @@
 package service
 
 import (
+	"fmt"
 	"net"
+	"strconv"
 	"sort"
 	"strings"
+
+	"github.com/slan/service-biz/internal/model"
+	"github.com/slan/service-biz/internal/pkg/wirekit"
 )
 
 func assignedNetworkIPMap(cidr string, deviceIDs []string) (map[string]string, int) {
@@ -39,6 +44,30 @@ func assignedNetworkIPMap(cidr string, deviceIDs []string) (map[string]string, i
 		ipMap[deviceID] = hostIP.String()
 	}
 	return ipMap, prefixLen
+}
+
+func deviceGlobalIP(device model.Device) string {
+	if value := strings.TrimSpace(device.VirtualIP); value != "" {
+		return value
+	}
+	return wirekit.DeviceVirtualIP(device.DeviceID)
+}
+
+func allocatedDeviceVirtualIP(sequenceID string) string {
+	trimmed := strings.TrimSpace(sequenceID)
+	if trimmed == "" {
+		return ""
+	}
+	value := strings.TrimPrefix(trimmed, "vip-")
+	index, err := strconv.Atoi(value)
+	if err != nil || index <= 0 {
+		return ""
+	}
+	index--
+	second := (index / (256 * 254)) % 256
+	third := (index / 254) % 256
+	fourth := 1 + (index % 254)
+	return fmt.Sprintf("10.%d.%d.%d", second, third, fourth)
 }
 
 func networkGlobalName(deviceID, alias, name string) string {

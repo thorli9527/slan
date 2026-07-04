@@ -4,48 +4,72 @@
       <h3>网络设备</h3>
       <p>这些设备可以加入当前网络。一个网络里不能重复添加同一台设备。</p>
     </div>
-    <button class="ghost small" type="button" (click)="vm.openWorkspaceDeviceDialog()">添加设备</button>
+    <button class="table-icon-button" type="button" title="添加设备" aria-label="添加设备" (click)="vm.openWorkspaceDeviceDialog()">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v14"></path>
+        <path d="M5 12h14"></path>
+      </svg>
+    </button>
   </div>
   <p class="form-error" *ngIf="vm.workspaceDeviceDialogMessage">{{ vm.workspaceDeviceDialogMessage }}</p>
-  <table class="compact-table network-devices-table">
-    <colgroup>
-      <col class="device-id-column" />
-      <col class="owner-column" />
-      <col class="alias-column" />
-      <col class="ip-column" />
-      <col class="status-column" />
-      <col class="action-column" />
-    </colgroup>
-    <thead><tr><th>设备</th><th>归属</th><th>别名</th><th>IP</th><th>状态</th><th>操作</th></tr></thead>
-    <tbody>
-      <tr *ngFor="let device of vm.workspaceDevices">
-        <td class="device-id-cell"><button class="text-link" type="button" [title]="device.deviceId" (click)="vm.openDeviceExposureDialog(device)">{{ device.deviceId }}</button></td>
-        <td>{{ vm.workspaceDeviceOwnerLabel(device) }}</td>
-        <td class="tag-cell-wrapper">
-          <div class="alias-tag-cell">
-            <span>{{ device.alias }}</span>
-            <button class="tag-icon-button" type="button" title="修改别名" (click)="vm.openWorkspaceDeviceAliasDialog(device)">
+  <div class="rules-table-wrap">
+    <table class="compact-table network-devices-table">
+      <colgroup>
+        <col class="device-id-column" />
+        <col class="owner-column" />
+        <col class="alias-column" />
+        <col class="ip-column" />
+        <col class="status-column" />
+        <col class="action-column" />
+      </colgroup>
+      <thead><tr><th>设备</th><th>归属</th><th>别名</th><th>IP</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let device of vm.workspaceDevices">
+          <td class="device-id-cell">
+            <button class="table-icon-button subtle" type="button" [title]="'查看设备: ' + device.deviceId" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
-                <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
               </svg>
             </button>
-            <div class="tag-popover" *ngIf="vm.showWorkspaceDeviceAliasDialog && vm.editingWorkspaceDevice?.deviceId === device.deviceId">
-              <div class="tag-popover-arrow"></div>
-              <div class="tag-editor-row"><span>别名</span><input [(ngModel)]="vm.workspaceDeviceAliasValue" /></div>
-              <p class="form-error" *ngIf="vm.workspaceDeviceAliasMessage">{{ vm.workspaceDeviceAliasMessage }}</p>
-              <div class="tag-popover-actions">
-                <button class="text-link" type="button" (click)="vm.saveWorkspaceDeviceAliasDialog()">保存</button>
-                <button class="text-link muted" type="button" (click)="vm.closeWorkspaceDeviceAliasDialog()">取消</button>
+          </td>
+          <td>{{ vm.workspaceDeviceOwnerLabel(device) }}</td>
+          <td class="tag-cell-wrapper">
+            <div class="alias-tag-cell">
+              <span>{{ device.alias }}</span>
+              <button class="tag-icon-button" type="button" title="修改别名" (click)="vm.openWorkspaceDeviceAliasDialog(device)">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                  <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                </svg>
+              </button>
+              <div class="tag-popover" *ngIf="vm.showWorkspaceDeviceAliasDialog && vm.editingWorkspaceDevice?.deviceId === device.deviceId">
+                <div class="tag-popover-arrow"></div>
+                <div class="tag-editor-row"><span>别名</span><input [(ngModel)]="vm.workspaceDeviceAliasValue" /></div>
+                <p class="form-error" *ngIf="vm.workspaceDeviceAliasMessage">{{ vm.workspaceDeviceAliasMessage }}</p>
+                <div class="tag-popover-actions">
+                  <button class="text-link" type="button" (click)="vm.saveWorkspaceDeviceAliasDialog()">保存</button>
+                  <button class="text-link muted" type="button" (click)="vm.closeWorkspaceDeviceAliasDialog()">取消</button>
+                </div>
               </div>
             </div>
-          </div>
-        </td>
-        <td><code>{{ device.ip }}</code></td>
-        <td><span class="status" [class.online]="device.status === 'active'">{{ device.status }}</span></td>
-        <td class="table-actions"><button class="link-danger" type="button" (click)="vm.removeWorkspaceDevice(device)">移除</button></td>
-      </tr>
-      <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="6">暂无设备，点击右上角“添加设备”开始。</td></tr>
-    </tbody>
-  </table>
+          </td>
+          <td><code>{{ device.ip }}</code></td>
+          <td><span class="status" [class.online]="device.status === 'active'">{{ device.status }}</span></td>
+          <td class="table-actions">
+            <button class="table-icon-button danger" type="button" title="移除设备" aria-label="移除设备" (click)="vm.removeWorkspaceDevice(device)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16"></path>
+                <path d="M9 7V5h6v2"></path>
+                <path d="M8 7l1 12h6l1-12"></path>
+                <path d="M10 11v5"></path>
+                <path d="M14 11v5"></path>
+              </svg>
+            </button>
+          </td>
+        </tr>
+        <tr *ngIf="vm.workspaceDevices.length === 0"><td colspan="6">暂无设备，点击右上角“添加设备”开始。</td></tr>
+      </tbody>
+    </table>
+  </div>
 </section>

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/slan/service-biz/internal/bootstrap"
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/repository"
 )
@@ -63,7 +64,7 @@ func defaultRelayNodes(nowFn func() time.Time) []model.RelayNode {
 		NodeID:    "relay-default",
 		Name:      "Default Relay",
 		Region:    "global",
-		Endpoint:  "relay.default.local:3478",
+		Endpoint:  bootstrap.DefaultRelayEndpoint(),
 		Transport: "relay_udp",
 		Priority:  100,
 		Status:    "active",
@@ -136,11 +137,12 @@ func buildActivePunchNodes(items []model.PunchNode) []model.PunchNode {
 
 func defaultPunchNodes(nowFn func() time.Time) []model.PunchNode {
 	now := networkNow(nowFn).Unix()
+	endpoint := bootstrap.DefaultRelayEndpoint()
 	return []model.PunchNode{{
 		NodeID:    "punch-default",
 		Name:      "Default Punch",
 		Region:    "global",
-		Endpoint:  "punch.default.local:3478",
+		Endpoint:  endpoint,
 		Status:    "active",
 		Health:    "healthy",
 		Priority:  100,

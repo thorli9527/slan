@@ -33,7 +33,7 @@ func TestOpsNodeServiceUpsertRelayNodeValidatesServerSide(t *testing.T) {
 			name: "rejects duplicate relay endpoint",
 			repo: &opsNodeTestRepo{
 				relayNodes: []model.RelayNode{{
-					NodeID:    "relay-000001",
+					NodeID:    "relay000000000000000000000000000001",
 					Name:      "relay-existing",
 					Endpoint:  "47.245.40.231:29110",
 					Transport: relayTransportUDP,
@@ -92,10 +92,10 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 			name: "rejects invalid udp port",
 			repo: &opsNodeTestRepo{},
 			input: UpsertNodeInput{
-				Name:      "punch-a",
-				Endpoint:  "47.245.40.231:65535",
-				Status:    nodeStatusActive,
-				Health:    nodeHealthHealthy,
+				Name:     "punch-a",
+				Endpoint: "47.245.40.231:65535",
+				Status:   nodeStatusActive,
+				Health:   nodeHealthHealthy,
 			},
 			wantErr: ErrInvalidArgument,
 		},
@@ -103,18 +103,18 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 			name: "rejects duplicate punch endpoint",
 			repo: &opsNodeTestRepo{
 				punchNodes: []model.PunchNode{{
-					NodeID:    "punch-000001",
-					Name:      "punch-existing",
-					Endpoint:  "47.245.40.231:29130",
-					Status:    nodeStatusActive,
-					Health:    nodeHealthHealthy,
+					NodeID:   "punch000000000000000000000000000001",
+					Name:     "punch-existing",
+					Endpoint: "47.245.40.231:29130",
+					Status:   nodeStatusActive,
+					Health:   nodeHealthHealthy,
 				}},
 			},
 			input: UpsertNodeInput{
-				Name:      "punch-b",
-				Endpoint:  "47.245.40.231:29130",
-				Status:    nodeStatusActive,
-				Health:    nodeHealthHealthy,
+				Name:     "punch-b",
+				Endpoint: "47.245.40.231:29130",
+				Status:   nodeStatusActive,
+				Health:   nodeHealthHealthy,
 			},
 			wantErr: ErrConflict,
 		},
@@ -122,11 +122,11 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 			name: "accepts valid punch endpoint",
 			repo: &opsNodeTestRepo{},
 			input: UpsertNodeInput{
-				Name:      "punch-c",
-				Endpoint:  "47.245.40.231:29130",
-				Status:    nodeStatusActive,
-				Health:    nodeHealthHealthy,
-				Priority:  1,
+				Name:     "punch-c",
+				Endpoint: "47.245.40.231:29130",
+				Status:   nodeStatusActive,
+				Health:   nodeHealthHealthy,
+				Priority: 1,
 			},
 		},
 	}
@@ -149,10 +149,10 @@ func TestOpsNodeServiceUpsertPunchNodeValidatesServerSide(t *testing.T) {
 }
 
 type opsNodeTestRepo struct {
-	relayNodes       []model.RelayNode
-	punchNodes       []model.PunchNode
-	savedRelayNodes  []model.RelayNode
-	savedPunchNodes  []model.PunchNode
+	relayNodes      []model.RelayNode
+	punchNodes      []model.PunchNode
+	savedRelayNodes []model.RelayNode
+	savedPunchNodes []model.PunchNode
 }
 
 func (r *opsNodeTestRepo) ListRelayNodes(context.Context) ([]model.RelayNode, error) {
@@ -251,6 +251,6 @@ func (r *opsNodeTestRepo) SaveRenewal(context.Context, model.Renewal) error { re
 
 func (r *opsNodeTestRepo) DeleteRenewal(context.Context, string) error { return nil }
 
-func (r *opsNodeTestRepo) NewRelayNodeID() string  { return "relay-000999" }
-func (r *opsNodeTestRepo) NewPunchNodeID() string  { return "punch-000999" }
-func (r *opsNodeTestRepo) NewClientDownloadID() string { return "download-000999" }
+func (r *opsNodeTestRepo) NewRelayNodeID() string      { return "relay000000000000000000000000000999" }
+func (r *opsNodeTestRepo) NewPunchNodeID() string      { return "punch000000000000000000000000000999" }
+func (r *opsNodeTestRepo) NewClientDownloadID() string { return "download0000000000000000000000000999" }

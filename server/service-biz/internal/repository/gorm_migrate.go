@@ -14,6 +14,7 @@ func (s *GormStore) migrate() error {
 		&gormDeviceGroupRecord{},
 		&gormDeviceGroupAssignmentRecord{},
 		&gormNetworkRecord{},
+		&gormNetworkConfigVersionRecord{},
 		&gormNetworkDeviceRecord{},
 		&gormDeviceInviteRecord{},
 		&gormDNSZoneRecord{},

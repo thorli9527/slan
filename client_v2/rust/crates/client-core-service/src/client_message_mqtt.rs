@@ -44,10 +44,15 @@ pub(crate) fn publish_client_message(
         "payload": payload,
     });
     let body = serde_json::to_vec(&envelope).context("encode client message mqtt envelope")?;
-    let topic = network_broadcast_topic(mqtt, network_id);
+    let topic = target_device_downstream_topic(mqtt, target_device_id);
     eprintln!(
-        "client-core-service publishing client_message messageId={} networkId={} fromDeviceId={} targetDeviceId={} topic={}",
-        message_id, network_id, from_device_id, target_device_id, topic
+        "client-core-service publishing client_message messageId={} networkId={} fromDeviceId={} targetDeviceId={} bodyBytes={} topic={}",
+        message_id,
+        network_id,
+        from_device_id,
+        target_device_id,
+        body.len(),
+        topic
     );
     let credential = ThinMqttCredential {
         broker_url: mqtt.broker_url.clone(),
@@ -84,9 +89,9 @@ pub(crate) fn publish_client_message(
     bail!("publish client message mqtt failed: {}", errors.join("; "));
 }
 
-fn network_broadcast_topic(mqtt: &MqttCredential, network_id: &str) -> String {
+fn target_device_downstream_topic(mqtt: &MqttCredential, target_device_id: &str) -> String {
     let prefix = mqtt_root_topic_prefix(mqtt);
-    format!("{prefix}/networks/{}/broadcast", network_id.trim())
+    format!("{prefix}/devices/{}/control/down", target_device_id.trim())
 }
 
 fn mqtt_root_topic_prefix(mqtt: &MqttCredential) -> String {
@@ -112,9 +117,9 @@ fn mqtt_device_id(mqtt: &MqttCredential) -> Option<&str> {
 #[cfg(test)]
 pub(crate) fn publish_client_message_topic_for_test(
     mqtt: &MqttCredential,
-    network_id: &str,
+    target_device_id: &str,
 ) -> String {
-    network_broadcast_topic(mqtt, network_id)
+    target_device_downstream_topic(mqtt, target_device_id)
 }
 
 fn publish_once(

@@ -15,7 +15,9 @@ type RevokeDeviceBootstrapKeyInput struct {
 }
 
 type BootstrapDeviceSessionInput struct {
-	SessionKey    string `json:"sessionKey"`
+	InstallationKey string `json:"installationKey"`
+	SessionKey      string `json:"sessionKey"`
+	SessionMode     string `json:"sessionMode"`
 	DeviceID      string `json:"deviceId"`
 	OwnerID       string `json:"ownerId"`
 	Name          string `json:"name"`

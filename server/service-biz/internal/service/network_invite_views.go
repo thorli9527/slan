@@ -46,11 +46,12 @@ func buildDeviceInviteView(ctx context.Context, users repository.UserRepository,
 }
 
 func buildNetworkDeviceView(ctx context.Context, devices repository.DeviceRepository, item model.NetworkDevice) (NetworkDeviceView, error) {
+	item = normalizeNetworkMember(item)
 	view := NetworkDeviceView{
 		NetworkID: item.NetworkID,
 		DeviceID:  item.DeviceID,
 		Enabled:   item.Enabled,
-		Status:    item.Status,
+		Status:    string(item.MemberStatus),
 		CreatedAt: item.CreatedAt,
 		UpdatedAt: item.UpdatedAt,
 	}

@@ -34,6 +34,8 @@ pub(crate) enum LocalServiceMethod {
     LocalEnsureDevice,
     LocalConnectControlMqtt,
     LocalSendClientMessage,
+    LocalRegisterTestUser,
+    LocalReportDeviceRuntime,
     LocalControlPlan,
     LocalControlCadence,
     LocalControlTickPlan,
@@ -77,6 +79,8 @@ impl LocalServiceMethod {
             "localEnsureDevice" => Self::LocalEnsureDevice,
             "localConnectControlMqtt" => Self::LocalConnectControlMqtt,
             "localSendClientMessage" => Self::LocalSendClientMessage,
+            "localRegisterTestUser" => Self::LocalRegisterTestUser,
+            "localReportDeviceRuntime" => Self::LocalReportDeviceRuntime,
             "localControlPlan" => Self::LocalControlPlan,
             "localControlCadence" => Self::LocalControlCadence,
             "localControlTickPlan" => Self::LocalControlTickPlan,
@@ -216,6 +220,20 @@ pub(crate) struct SendClientMessageRequest {
     pub(crate) body: String,
     #[serde(default)]
     pub(crate) metadata: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RegisterTestUserRequest {
+    pub(crate) email: String,
+    pub(crate) password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReportDeviceRuntimeRequest {
+    pub(crate) device_id: String,
+    pub(crate) body: Value,
 }
 
 #[derive(Debug, Deserialize)]

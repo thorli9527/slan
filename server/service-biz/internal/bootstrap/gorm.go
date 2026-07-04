@@ -84,7 +84,7 @@ func seedOpsCatalog(ctx context.Context, store *repository.GormStore, now int64)
 			return err
 		}
 	} else {
-		if err := store.DeletePunchNode(ctx, "punch-000001"); err != nil {
+		if err := store.DeletePunchNode(ctx, "punch000000000000000000000000000001"); err != nil {
 			return err
 		}
 	}
@@ -105,4 +105,3 @@ func seedOpsCatalog(ctx context.Context, store *repository.GormStore, now int64)
 	}
 	return nil
 }
-

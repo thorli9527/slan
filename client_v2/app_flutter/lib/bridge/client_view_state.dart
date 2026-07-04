@@ -15,6 +15,8 @@ class ClientViewState {
     this.lastClientMessageId,
     this.lastClientMessageFromDeviceId,
     this.lastClientMessageBody,
+    this.lastControlSyncMessageType,
+    this.lastControlSyncReconfigureRequired,
     this.trafficTxBytes,
     this.trafficRxBytes,
     this.trafficTxBytesPerMinute,
@@ -64,6 +66,12 @@ class ClientViewState {
   /// 最近收到的消息正文。
   final String? lastClientMessageBody;
 
+  /// 最近一次控制面同步事件类型，例如 dns_changed、acl_changed。
+  final String? lastControlSyncMessageType;
+
+  /// 最近一次控制面同步事件是否要求客户端重配数据面。
+  final bool? lastControlSyncReconfigureRequired;
+
   /// 累计发送字节数。
   final int? trafficTxBytes;
 
@@ -111,6 +119,9 @@ class ClientViewState {
       lastClientMessageFromDeviceId:
           json['lastClientMessageFromDeviceId'] as String?,
       lastClientMessageBody: json['lastClientMessageBody'] as String?,
+      lastControlSyncMessageType: json['lastControlSyncMessageType'] as String?,
+      lastControlSyncReconfigureRequired:
+          json['lastControlSyncReconfigureRequired'] as bool?,
       trafficTxBytes: _intValue(json['trafficTxBytes']),
       trafficRxBytes: _intValue(json['trafficRxBytes']),
       trafficTxBytesPerMinute: _intValue(json['trafficTxBytesPerMinute']),
@@ -138,6 +149,8 @@ class ClientViewState {
     String? lastClientMessageId,
     String? lastClientMessageFromDeviceId,
     String? lastClientMessageBody,
+    String? lastControlSyncMessageType,
+    bool? lastControlSyncReconfigureRequired,
     int? trafficTxBytes,
     int? trafficRxBytes,
     int? trafficTxBytesPerMinute,
@@ -165,6 +178,10 @@ class ClientViewState {
           lastClientMessageFromDeviceId ?? this.lastClientMessageFromDeviceId,
       lastClientMessageBody:
           lastClientMessageBody ?? this.lastClientMessageBody,
+      lastControlSyncMessageType:
+          lastControlSyncMessageType ?? this.lastControlSyncMessageType,
+      lastControlSyncReconfigureRequired: lastControlSyncReconfigureRequired ??
+          this.lastControlSyncReconfigureRequired,
       trafficTxBytes: trafficTxBytes ?? this.trafficTxBytes,
       trafficRxBytes: trafficRxBytes ?? this.trafficRxBytes,
       trafficTxBytesPerMinute:
@@ -195,6 +212,9 @@ class ClientViewState {
             lastClientMessageFromDeviceId ==
                 other.lastClientMessageFromDeviceId &&
             lastClientMessageBody == other.lastClientMessageBody &&
+            lastControlSyncMessageType == other.lastControlSyncMessageType &&
+            lastControlSyncReconfigureRequired ==
+                other.lastControlSyncReconfigureRequired &&
             trafficTxBytes == other.trafficTxBytes &&
             trafficRxBytes == other.trafficRxBytes &&
             trafficTxBytesPerMinute == other.trafficTxBytesPerMinute &&
@@ -220,6 +240,8 @@ class ClientViewState {
       lastClientMessageId,
       lastClientMessageFromDeviceId,
       lastClientMessageBody,
+      lastControlSyncMessageType,
+      lastControlSyncReconfigureRequired,
       trafficTxBytes,
       trafficRxBytes,
       trafficTxBytesPerMinute,

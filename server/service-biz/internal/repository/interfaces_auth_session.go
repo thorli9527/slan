@@ -8,6 +8,8 @@ import (
 
 type UserSessionRepository interface {
 	GetUserSessionByAccessToken(ctx context.Context, accessToken string) (model.UserSession, bool, error)
+	GetUserSessionByRefreshToken(ctx context.Context, refreshToken string) (model.UserSession, bool, error)
+	ListUserSessionsByUserID(ctx context.Context, userID string) ([]model.UserSession, error)
 	SaveUserSession(ctx context.Context, session model.UserSession) error
 	DeleteUserSessionByAccessToken(ctx context.Context, accessToken string) error
 	UserConsoleRepository

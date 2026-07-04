@@ -6,6 +6,7 @@ func deviceRecordFromModel(item model.Device) gormDeviceRecord {
 	return gormDeviceRecord{
 		DeviceID:      item.DeviceID,
 		OwnerID:       item.OwnerID,
+		VirtualIP:     item.VirtualIP,
 		Name:          item.Name,
 		Platform:      item.Platform,
 		Alias:         item.Alias,
@@ -27,6 +28,7 @@ func (r gormDeviceRecord) model() model.Device {
 	return model.Device{
 		DeviceID:      r.DeviceID,
 		OwnerID:       r.OwnerID,
+		VirtualIP:     r.VirtualIP,
 		Name:          r.Name,
 		Platform:      r.Platform,
 		Alias:         r.Alias,
@@ -51,9 +53,12 @@ func deviceSessionRecordFromModel(item model.DeviceSession) gormDeviceSessionRec
 		AccessToken:  item.AccessToken,
 		RefreshToken: item.RefreshToken,
 		Status:       item.Status,
+		SessionMode:  item.SessionMode,
 		ExpiresAt:    item.ExpiresAt,
+		RefreshExpiry: item.RefreshExpiry,
 		CreatedAt:    item.CreatedAt,
 		UpdatedAt:    item.UpdatedAt,
+		RevokedAt:    item.RevokedAt,
 	}
 }
 
@@ -64,9 +69,12 @@ func (r gormDeviceSessionRecord) model() model.DeviceSession {
 		AccessToken:  r.AccessToken,
 		RefreshToken: r.RefreshToken,
 		Status:       r.Status,
+		SessionMode:  r.SessionMode,
 		ExpiresAt:    r.ExpiresAt,
+		RefreshExpiry: r.RefreshExpiry,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
+		RevokedAt:    r.RevokedAt,
 	}
 }
 
@@ -123,6 +131,7 @@ func bootstrapKeyRecordFromModel(item model.DeviceBootstrapKey) gormBootstrapKey
 		UsedByDeviceID: item.UsedByDeviceID,
 		CreatedAt:      item.CreatedAt,
 		UpdatedAt:      item.UpdatedAt,
+		RevokedAt:      item.RevokedAt,
 	}
 }
 
@@ -139,6 +148,7 @@ func (r gormBootstrapKeyRecord) model() model.DeviceBootstrapKey {
 		UsedByDeviceID: r.UsedByDeviceID,
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
+		RevokedAt:      r.RevokedAt,
 	}
 }
 

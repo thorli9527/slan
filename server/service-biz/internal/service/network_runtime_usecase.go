@@ -2,6 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/slan/service-biz/internal/repository"
@@ -51,8 +56,19 @@ func (s NetworkRuntimeService) CreatePunchConnectSession(ctx context.Context, in
 	if input.NetworkID == "" || input.RequesterNodeID == "" || input.PeerNodeID == "" {
 		return PunchConnectSessionView{}, ErrInvalidArgument
 	}
-	if _, err := requireManagedNetwork(ctx, s.Networks, input.NetworkID); err != nil {
+	network, err := requireManagedNetwork(ctx, s.Networks, input.NetworkID)
+	if err != nil {
 		return PunchConnectSessionView{}, err
+	}
+	if _, ok, err := runtimePathForNode(ctx, s.Networks, network.NetworkID, input.RequesterNodeID); err != nil {
+		return PunchConnectSessionView{}, err
+	} else if !ok {
+		return PunchConnectSessionView{}, ErrNotFound
+	}
+	if _, ok, err := runtimePathForNode(ctx, s.Networks, network.NetworkID, input.PeerNodeID); err != nil {
+		return PunchConnectSessionView{}, err
+	} else if !ok {
+		return PunchConnectSessionView{}, ErrNotFound
 	}
 	punchNodes, err := listPunchNodeEntities(ctx, s.Ops, s.Now)
 	if err != nil {
@@ -94,27 +110,81 @@ func (s NetworkRuntimeService) IssueRelayTicket(ctx context.Context, input Issue
 	if err != nil {
 		return RelayTicketView{}, err
 	}
-	signature, err := randomHex(24)
-	if err != nil {
-		return RelayTicketView{}, err
-	}
 	now := networkNow(s.Now).UTC()
-	sessionID := newNetworkSessionID(s.NewSessID, "relay-session")
-	candidate, found := chooseWireRelayCandidate(candidates, input.PreferredRelayEndpointIDs, sessionID)
+	sessionSeed := stableRelaySessionSeed(input.NetworkID, input.SrcNodeID, input.DstNodeID)
+	candidate, found := chooseWireRelayCandidate(candidates, input.PreferredRelayEndpointIDs, sessionSeed)
 	if !found {
 		return RelayTicketView{}, ErrNotFound
 	}
 	if ok {
 		applyRuntimeSelection(&candidate, runtimePath)
 	}
+	sessionID := stableRelaySessionID(input.NetworkID, input.SrcNodeID, input.DstNodeID, candidate)
+	expiresAt := now.Add(10 * time.Minute).Format(time.RFC3339)
+	ticketID := newNetworkSessionID(s.NewSessID, "relay-ticket")
+	signature := signRelayBusinessTicket(
+		ticketID,
+		input.NetworkID,
+		sessionID,
+		input.SrcNodeID,
+		input.DstNodeID,
+		expiresAt,
+	)
 	item := newRelayTicket(
-		newNetworkSessionID(s.NewSessID, "relay-ticket"),
+		ticketID,
 		sessionID,
 		input,
 		candidate,
-		now.Add(10*time.Minute).Format(time.RFC3339Nano),
+		expiresAt,
 		sessionKey,
 		signature,
 	)
 	return relayTicketView(item), nil
+}
+
+func signRelayBusinessTicket(
+	ticketID string,
+	networkID string,
+	sessionID string,
+	srcNodeID string,
+	dstNodeID string,
+	expiresAt string,
+) string {
+	secret := relayTicketSigningSecret()
+	if secret == "" {
+		return ""
+	}
+	payload := strings.Join([]string{
+		strings.TrimSpace(ticketID),
+		strings.TrimSpace(networkID),
+		strings.TrimSpace(sessionID),
+		strings.TrimSpace(srcNodeID),
+		strings.TrimSpace(dstNodeID),
+		strings.TrimSpace(expiresAt),
+	}, "|")
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func relayTicketSigningSecret() string {
+	if secret := strings.TrimSpace(os.Getenv("SLAN_RELAY_TICKET_SECRET")); secret != "" {
+		return secret
+	}
+	if secrets := parseRelayTicketSecretList(os.Getenv("SLAN_WIRE_TICKET_SECRETS")); len(secrets) > 0 {
+		return secrets[0]
+	}
+	return strings.TrimSpace(os.Getenv("SLAN_WIRE_TICKET_SECRET"))
+}
+
+func parseRelayTicketSecretList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

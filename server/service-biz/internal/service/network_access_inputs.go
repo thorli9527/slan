@@ -51,7 +51,8 @@ type CreateSecurityRuleInput struct {
 	Direction       string `json:"direction"`
 	Protocol        string `json:"protocol"`
 	PortRange       string `json:"portRange"`
-	CIDR            string `json:"cidr"`
+	PeerType        string `json:"peerType"`
+	PeerValue       string `json:"peerValue"`
 	Action          string `json:"action"`
 	Priority        int    `json:"priority"`
 	Description     string `json:"description"`
@@ -64,7 +65,8 @@ type UpdateSecurityRuleInput struct {
 	Direction   string `json:"direction"`
 	Protocol    string `json:"protocol"`
 	PortRange   string `json:"portRange"`
-	CIDR        string `json:"cidr"`
+	PeerType    string `json:"peerType"`
+	PeerValue   string `json:"peerValue"`
 	Action      string `json:"action"`
 	Priority    *int   `json:"priority,omitempty"`
 	Description string `json:"description"`

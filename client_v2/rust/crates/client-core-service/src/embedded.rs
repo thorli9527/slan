@@ -10,8 +10,8 @@ use anyhow::{Context, Result};
 use client_core::{
     relay_path_kind_for_transport, AssignedIpPayload, AuthPayload, ClientCommand,
     ClientMessageNoticePayload, ClientRuntime, ClientViewState, PathCandidate, PathKind, PathState,
-    PeerPathConfig, PlatformAclPolicy, PlatformDeviceNetworkConfig, PlatformNetworkConfig,
-    RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
+    PeerPathConfig, PlatformAclPolicy, PlatformDeviceNetworkConfig, PlatformDnsRecord,
+    PlatformDnsZone, PlatformNetworkConfig, RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
 };
 use client_core_platform::PlatformNetworkImpl;
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
@@ -26,7 +26,8 @@ use crate::{
     },
     control_transport::{self, ControlTransportMessage, MqttQos},
     local_api::{
-        LocalServiceMethod, SendClientMessageRequest, ServiceRequest, WatchBusinessEventRequest,
+        LocalServiceMethod, RegisterTestUserRequest, ReportDeviceRuntimeRequest,
+        SendClientMessageRequest, ServiceRequest, WatchBusinessEventRequest,
         WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
         BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_SESSION_CHANGED, BUSINESS_STATE_CHANGED,
     },
@@ -45,13 +46,17 @@ static BUSINESS_EVENT: OnceLock<Mutex<EmbeddedBusinessEvent>> = OnceLock::new();
 static EMBEDDED_CONTROL_BASE_URL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 const EMBEDDED_MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
+const EMBEDDED_ACTIVE_NETWORK_RECONCILE_INTERVAL_MS: u64 = 10_000;
 const EMBEDDED_MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
 
 struct EmbeddedMqttConnection {
+    generation: u64,
     device_id: Option<String>,
     downstream_topic: String,
     network_broadcast_topic: Option<String>,
     connected: bool,
+    network_broadcast_subscribed: bool,
+    last_message_topic: Option<String>,
     last_message_type: Option<String>,
     last_error: Option<String>,
 }
@@ -68,6 +73,38 @@ fn mqtt_connection() -> &'static Mutex<Option<EmbeddedMqttConnection>> {
 
 fn mqtt_last_error_store() -> &'static Mutex<Option<String>> {
     MQTT_LAST_ERROR.get_or_init(|| Mutex::new(None))
+}
+
+fn next_embedded_mqtt_generation() -> u64 {
+    let guard = mqtt_connection()
+        .lock()
+        .expect("embedded mqtt mutex poisoned");
+    guard
+        .as_ref()
+        .map(|connection| connection.generation.saturating_add(1))
+        .unwrap_or(1)
+}
+
+fn embedded_mqtt_generation_active(
+    generation: u64,
+    device_id: &Option<String>,
+    downstream_topic: &str,
+) -> bool {
+    let guard = mqtt_connection()
+        .lock()
+        .expect("embedded mqtt mutex poisoned");
+    guard.as_ref().is_some_and(|connection| {
+        connection.generation == generation
+            && connection.device_id == *device_id
+            && connection.downstream_topic == downstream_topic
+    })
+}
+
+fn clear_embedded_mqtt_connection() {
+    let mut guard = mqtt_connection()
+        .lock()
+        .expect("embedded mqtt mutex poisoned");
+    *guard = None;
 }
 
 fn business_event() -> &'static Mutex<EmbeddedBusinessEvent> {
@@ -104,7 +141,7 @@ fn handle_request_json(request_json: &str) -> Result<String> {
         LocalServiceMethod::Start
         | LocalServiceMethod::LocalState
         | LocalServiceMethod::Refresh => {
-            serde_json::to_string(&refresh_state()).context("encode state")
+            serde_json::to_string(&refresh_state_json()).context("encode state")
         }
         LocalServiceMethod::LocalStateWatch => {
             let input: WatchStateRequest =
@@ -153,6 +190,18 @@ fn handle_request_json(request_json: &str) -> Result<String> {
             serde_json::to_string(&send_embedded_client_message(input)?)
                 .context("encode send client message response")
         }
+        LocalServiceMethod::LocalRegisterTestUser => {
+            let input: RegisterTestUserRequest =
+                serde_json::from_value(request.args).context("decode register test user")?;
+            serde_json::to_string(&register_embedded_test_user(input)?)
+                .context("encode register test user response")
+        }
+        LocalServiceMethod::LocalReportDeviceRuntime => {
+            let input: ReportDeviceRuntimeRequest =
+                serde_json::from_value(request.args).context("decode report device runtime")?;
+            serde_json::to_string(&report_embedded_device_runtime(input)?)
+                .context("encode report device runtime response")
+        }
         LocalServiceMethod::Dispatch => {
             let command: ClientCommand =
                 serde_json::from_value(request.args).context("decode client command")?;
@@ -189,6 +238,19 @@ fn handle_request_json(request_json: &str) -> Result<String> {
     }
 }
 
+fn refresh_state_json() -> Value {
+    let mut value = serde_json::to_value(refresh_state()).unwrap_or_else(|_| serde_json::json!({}));
+    if let Value::Object(ref mut object) = value {
+        if let Some(summary) = load_embedded_downstream_summary() {
+            object.insert("lastDownstreamSummary".to_string(), summary);
+        }
+        if let Some(summary) = load_embedded_mqtt_publish_summary() {
+            object.insert("lastMqttPublishSummary".to_string(), summary);
+        }
+    }
+    value
+}
+
 fn apply_embedded_request_overrides(args: &Value) {
     if let Some(state_dir) = args
         .get("stateDir")
@@ -199,7 +261,7 @@ fn apply_embedded_request_overrides(args: &Value) {
         std::env::set_var("SLAN_STATE_DIR", state_dir);
     }
     if let Some(device_id) = args
-        .get("deviceId")
+        .get("deviceIdOverride")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -291,6 +353,8 @@ fn platform_network_config() -> Result<Value> {
         prefix_len: activation.prefix_len,
         network_configs: platform_network_configs(&network_configs),
         dns_servers: activation.dns_servers,
+        dns_zones: platform_dns_zones(&network_configs),
+        dns_records: platform_dns_records(&network_configs),
         routes: embedded_routes_with_peer_virtual_ips(
             activation.routes,
             &activation.peers,
@@ -338,6 +402,44 @@ fn platform_network_configs(
             dns_record_count: config.dns_records.len(),
             security_rule_count: config.rules.len(),
             relay_candidate_count: config.relay_candidates.len(),
+        })
+        .collect()
+}
+
+fn platform_dns_zones(
+    configs: &[crate::control_plane::DeviceNetworkConfig],
+) -> Vec<PlatformDnsZone> {
+    configs
+        .iter()
+        .flat_map(|config| {
+            config.dns_zones.iter().map(|zone| PlatformDnsZone {
+                zone_id: zone.zone_id.clone(),
+                network_id: zone.network_id.clone(),
+                zone_name: zone.zone_name.clone(),
+            })
+        })
+        .collect()
+}
+
+fn platform_dns_records(
+    configs: &[crate::control_plane::DeviceNetworkConfig],
+) -> Vec<PlatformDnsRecord> {
+    configs
+        .iter()
+        .flat_map(|config| {
+            config.dns_records.iter().map(|record| PlatformDnsRecord {
+                record_id: record.record_id.clone(),
+                zone_id: record.zone_id.clone(),
+                network_id: record.network_id.clone(),
+                name: record.name.clone(),
+                fqdn: record.fqdn.clone(),
+                record_type: record.record_type.clone(),
+                target_device_id: record.target_device_id.clone(),
+                target_ip: record.target_ip.clone(),
+                cname: record.cname.clone(),
+                port: record.port.clone(),
+                ttl: record.ttl,
+            })
         })
         .collect()
 }
@@ -488,7 +590,10 @@ fn embedded_peer_path_configs(
             let mut direct_addresses = Vec::new();
             for endpoint in &peer.endpoints {
                 let address = endpoint.address.trim();
-                if address.is_empty() || direct_addresses.iter().any(|value| value == address) {
+                if address.is_empty()
+                    || !valid_embedded_direct_candidate_address(address)
+                    || direct_addresses.iter().any(|value| value == address)
+                {
                     continue;
                 }
                 direct_addresses.push(address.to_string());
@@ -527,6 +632,19 @@ fn embedded_peer_path_configs(
             }
         })
         .collect()
+}
+
+fn valid_embedded_direct_candidate_address(address: &str) -> bool {
+    let trimmed = address.trim();
+    let normalized = trimmed
+        .strip_prefix("udp://")
+        .or_else(|| trimmed.strip_prefix("direct+udp://"))
+        .or_else(|| trimmed.strip_prefix("relay+udp://"))
+        .unwrap_or(trimmed);
+    normalized
+        .parse::<std::net::SocketAddr>()
+        .map(|socket_addr| socket_addr.port() > 0)
+        .unwrap_or(false)
 }
 
 fn ensure_device_session() -> Result<PersistedSession> {
@@ -598,12 +716,22 @@ fn connect_embedded_control_mqtt_with_session(session: &PersistedSession) -> Res
             set_embedded_mqtt_last_error(Some(message.clone()));
             anyhow::anyhow!(message)
         })?;
+    let generation = next_embedded_mqtt_generation();
+    eprintln!(
+        "SLAN_EMBEDDED_MQTT_CONNECTED generation={} deviceId={} downstreamTopic={} brokerUrl={}",
+        generation,
+        device_id.as_deref().unwrap_or_default(),
+        downstream_topic,
+        credential.broker_url,
+    );
     let network_broadcast_topic = embedded_network_broadcast_topic(session);
+    let mut network_broadcast_subscribed = network_broadcast_topic.is_none();
     if let Some(topic) = network_broadcast_topic.as_deref() {
         if let Err(error) = client.subscribe(topic) {
             eprintln!("SLAN_EMBEDDED_MQTT_NETWORK_SUBSCRIBE_FAILED topic={topic} error={error}");
         } else {
             eprintln!("SLAN_EMBEDDED_MQTT_NETWORK_SUBSCRIBED topic={topic}");
+            network_broadcast_subscribed = true;
         }
     }
     {
@@ -611,16 +739,24 @@ fn connect_embedded_control_mqtt_with_session(session: &PersistedSession) -> Res
             .lock()
             .expect("embedded mqtt mutex poisoned");
         *guard = Some(EmbeddedMqttConnection {
+            generation,
             device_id: device_id.clone(),
             downstream_topic: downstream_topic.clone(),
             network_broadcast_topic: network_broadcast_topic.clone(),
             connected: true,
+            network_broadcast_subscribed,
+            last_message_topic: None,
             last_message_type: None,
             last_error: None,
         });
     }
     set_embedded_mqtt_last_error(None);
-    spawn_embedded_mqtt_consumer(client, device_id.clone(), downstream_topic.clone());
+    spawn_embedded_mqtt_consumer(
+        client,
+        generation,
+        device_id.clone(),
+        downstream_topic.clone(),
+    );
     Ok(serde_json::json!({
         "connected": true,
         "deviceId": device_id,
@@ -757,20 +893,56 @@ fn is_loopback_host(host: &str) -> bool {
 
 fn spawn_embedded_mqtt_consumer(
     mut client: ThinControlMqttClient,
+    generation: u64,
     device_id: Option<String>,
     downstream_topic: String,
 ) {
     thread::spawn(move || {
+        eprintln!(
+            "SLAN_EMBEDDED_MQTT_CONSUMER_START generation={} deviceId={} downstreamTopic={}",
+            generation,
+            device_id.as_deref().unwrap_or_default(),
+            downstream_topic,
+        );
         let mut last_heartbeat_ms = None;
         let mut last_runtime_state_ms = None;
         let mut last_path_health_ms = None;
         let mut last_session_key = String::new();
         let connected_at_ms = current_timestamp_ms();
         let mut last_keepalive_ping_ms = Some(connected_at_ms);
+        let mut last_active_network_reconcile_ms = Some(connected_at_ms);
         loop {
+            if !embedded_mqtt_generation_active(generation, &device_id, &downstream_topic) {
+                eprintln!(
+                    "SLAN_EMBEDDED_MQTT_CONSUMER_EXIT reason=superseded generation={} deviceId={} downstreamTopic={}",
+                    generation,
+                    device_id.as_deref().unwrap_or_default(),
+                    downstream_topic,
+                );
+                return;
+            }
             match client.read_publish(Duration::from_millis(500)) {
                 Ok(Some(publish)) => {
                     let message_type = embedded_downstream_message_type(&publish.payload);
+                    if let Err(error) = persist_embedded_mqtt_publish_summary(
+                        &publish.topic,
+                        message_type.as_deref(),
+                        &publish.payload,
+                    ) {
+                        eprintln!(
+                            "SLAN_EMBEDDED_MQTT_PUBLISH_SUMMARY_FAILED topic={} messageType={} error={:#}",
+                            publish.topic,
+                            message_type.as_deref().unwrap_or_default(),
+                            error,
+                        );
+                    }
+                    eprintln!(
+                        "SLAN_EMBEDDED_MQTT_PUBLISH_RECV topic={} qos={} payloadBytes={} messageType={}",
+                        publish.topic,
+                        publish.qos,
+                        publish.payload.len(),
+                        message_type.as_deref().unwrap_or_default(),
+                    );
                     let consume_result = ingest_embedded_downstream_publish(&publish.payload);
                     let ack_result = client.ack_publish(&publish);
                     let business_ack_result = if ack_result.is_ok() {
@@ -788,26 +960,60 @@ fn spawn_embedded_mqtt_consumer(
                         .map(|error| error.to_string())
                         .or_else(|| business_ack_result.err())
                         .or_else(|| ack_result.clone().err());
+                    if let Some(error) = last_error.as_deref() {
+                        eprintln!(
+                            "SLAN_EMBEDDED_MQTT_PUBLISH_HANDLE_FAILED topic={} messageType={} error={}",
+                            publish.topic,
+                            message_type.as_deref().unwrap_or_default(),
+                            error,
+                        );
+                    } else {
+                        eprintln!(
+                            "SLAN_EMBEDDED_MQTT_PUBLISH_HANDLED topic={} messageType={} acked=true",
+                            publish.topic,
+                            message_type.as_deref().unwrap_or_default(),
+                        );
+                    }
                     update_embedded_mqtt_status(
                         &device_id,
                         &downstream_topic,
                         ack_result.is_ok(),
+                        Some(publish.topic.clone()),
                         message_type,
                         last_error.clone(),
                     );
                     if ack_result.is_err() {
+                        eprintln!(
+                            "SLAN_EMBEDDED_MQTT_CONSUMER_EXIT reason=ack_publish_failed deviceId={} downstreamTopic={} error={}",
+                            device_id.as_deref().unwrap_or_default(),
+                            downstream_topic,
+                            ack_result.err().unwrap_or_default(),
+                        );
                         break;
                     }
                     if business_ack_failed {
+                        eprintln!(
+                            "SLAN_EMBEDDED_MQTT_CONSUMER_EXIT reason=business_ack_failed deviceId={} downstreamTopic={} error={}",
+                            device_id.as_deref().unwrap_or_default(),
+                            downstream_topic,
+                            last_error.unwrap_or_default(),
+                        );
                         break;
                     }
                 }
                 Ok(None) => {}
                 Err(error) => {
+                    eprintln!(
+                        "SLAN_EMBEDDED_MQTT_READ_FAILED deviceId={} downstreamTopic={} error={}",
+                        device_id.as_deref().unwrap_or_default(),
+                        downstream_topic,
+                        error,
+                    );
                     update_embedded_mqtt_status(
                         &device_id,
                         &downstream_topic,
                         false,
+                        None,
                         None,
                         Some(error),
                     );
@@ -829,10 +1035,18 @@ fn spawn_embedded_mqtt_consumer(
             if now_ms.saturating_sub(connected_at_ms)
                 >= EMBEDDED_MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS
             {
+                eprintln!(
+                    "SLAN_EMBEDDED_MQTT_CONSUMER_EXIT reason=proactive_reconnect_after_session_refresh deviceId={} downstreamTopic={} connectedAtMs={} nowMs={}",
+                    device_id.as_deref().unwrap_or_default(),
+                    downstream_topic,
+                    connected_at_ms,
+                    now_ms,
+                );
                 update_embedded_mqtt_status(
                     &device_id,
                     &downstream_topic,
                     false,
+                    None,
                     None,
                     Some(
                         "embedded mqtt proactive reconnect after session refresh window"
@@ -845,16 +1059,29 @@ fn spawn_embedded_mqtt_consumer(
                 >= EMBEDDED_MQTT_KEEPALIVE_PING_INTERVAL_MS
             {
                 if let Err(error) = client.ping() {
+                    eprintln!(
+                        "SLAN_EMBEDDED_MQTT_CONSUMER_EXIT reason=ping_failed deviceId={} downstreamTopic={} error={}",
+                        device_id.as_deref().unwrap_or_default(),
+                        downstream_topic,
+                        error,
+                    );
                     update_embedded_mqtt_status(
                         &device_id,
                         &downstream_topic,
                         false,
+                        None,
                         None,
                         Some(error),
                     );
                     return;
                 }
                 last_keepalive_ping_ms = Some(now_ms);
+            }
+            if now_ms.saturating_sub(last_active_network_reconcile_ms.unwrap_or(0))
+                >= EMBEDDED_ACTIVE_NETWORK_RECONCILE_INTERVAL_MS
+            {
+                reconcile_embedded_active_network_state();
+                last_active_network_reconcile_ms = Some(now_ms);
             }
             let tick = control_transport::control_transport_tick_plan(
                 control_transport::ControlTransportTickRequest {
@@ -887,10 +1114,19 @@ fn spawn_embedded_mqtt_consumer(
             );
             for message in outbox.messages {
                 if let Err(error) = publish_embedded_outbox_message(&mut client, &message) {
+                    eprintln!(
+                        "SLAN_EMBEDDED_MQTT_CONSUMER_EXIT reason=publish_outbox_failed deviceId={} downstreamTopic={} topic={} messageKind={:?} error={}",
+                        device_id.as_deref().unwrap_or_default(),
+                        downstream_topic,
+                        message.topic,
+                        message.kind,
+                        error,
+                    );
                     update_embedded_mqtt_status(
                         &device_id,
                         &downstream_topic,
                         false,
+                        None,
                         None,
                         Some(error),
                     );
@@ -913,6 +1149,47 @@ fn spawn_embedded_mqtt_consumer(
             }
         }
     });
+}
+
+fn reconcile_embedded_active_network_state() {
+    let before = {
+        let runtime = runtime().lock().expect("embedded runtime mutex poisoned");
+        runtime.state().clone()
+    };
+    if !before.signed_in || !before.network_enabled {
+        return;
+    }
+    eprintln!("SLAN_EMBEDDED_ACTIVE_NETWORK_RECONCILE start");
+    match platform_network_config() {
+        Ok(_) => {
+            let state = {
+                let runtime = runtime().lock().expect("embedded runtime mutex poisoned");
+                runtime.state().clone()
+            };
+            publish_embedded_business_event(
+                BUSINESS_CONTROL_SYNC_CHANGED,
+                serde_json::json!({
+                    "messageType": "active_network_reconcile",
+                    "reconfigureRequired": true,
+                }),
+                &state,
+            );
+        }
+        Err(error) => {
+            let state = {
+                let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
+                runtime.set_error(error.to_string())
+            };
+            publish_embedded_business_event(
+                BUSINESS_CONTROL_SYNC_CHANGED,
+                serde_json::json!({
+                    "messageType": "active_network_reconcile_failed",
+                    "error": error.to_string(),
+                }),
+                &state,
+            );
+        }
+    }
 }
 
 fn embedded_transport_session_key(session: &PersistedSession) -> String {
@@ -948,6 +1225,7 @@ fn update_embedded_mqtt_status(
     device_id: &Option<String>,
     downstream_topic: &str,
     connected: bool,
+    last_message_topic: Option<String>,
     last_message_type: Option<String>,
     last_error: Option<String>,
 ) {
@@ -957,6 +1235,9 @@ fn update_embedded_mqtt_status(
     if let Some(connection) = guard.as_mut() {
         if connection.device_id == *device_id && connection.downstream_topic == downstream_topic {
             connection.connected = connected;
+            if last_message_topic.is_some() {
+                connection.last_message_topic = last_message_topic;
+            }
             if last_message_type.is_some() {
                 connection.last_message_type = last_message_type;
             }
@@ -1012,7 +1293,6 @@ fn embedded_downstream_ack_identity(value: &Value) -> Option<(String, &'static s
     let message_type = value.get("type").and_then(Value::as_str)?;
     let delivery_id = value
         .get("messageId")
-        .or_else(|| value.get("deliveryId"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?
@@ -1020,6 +1300,10 @@ fn embedded_downstream_ack_identity(value: &Value) -> Option<(String, &'static s
     let action = match message_type {
         "device_user_login_succeeded" => "deviceUserLoginSucceeded",
         "network_config_changed" => "refreshNetworkConfig",
+        "network_snapshot" => "refreshNetworkConfig",
+        "dns_changed" => "refreshNetworkConfig",
+        "acl_changed" => "refreshNetworkConfig",
+        "network_member_changed" => "refreshNetworkConfig",
         "device_ip_reassigned" => "refreshNetworkConfig",
         "device_network_enabled" => "refreshNetworkConfig",
         "device_network_disabled" => "refreshNetworkConfig",
@@ -1031,12 +1315,48 @@ fn embedded_downstream_ack_identity(value: &Value) -> Option<(String, &'static s
 
 fn ingest_embedded_downstream_publish(payload: &[u8]) -> Result<()> {
     let value: Value = serde_json::from_slice(payload).context("decode downstream json")?;
-    match value
+    let message_type = value
         .get("type")
         .and_then(Value::as_str)
-        .unwrap_or_default()
-    {
-        "network_config_changed" => ingest_embedded_network_config_changed(&value),
+        .unwrap_or_default();
+    let downstream_payload = value.get("payload");
+    let network_id = downstream_payload
+        .and_then(|payload| payload.get("networkId"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let from_device_id = downstream_payload
+        .and_then(|payload| payload.get("fromDeviceId"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let target_device_id = downstream_payload
+        .and_then(|payload| payload.get("targetDeviceId"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let body_bytes = downstream_payload
+        .and_then(|payload| payload.get("body"))
+        .and_then(Value::as_str)
+        .map(str::len)
+        .unwrap_or(0);
+    persist_embedded_downstream_summary(&value)?;
+    eprintln!(
+        "SLAN_EMBEDDED_DOWNSTREAM_PUBLISH type={} messageId={} networkId={} fromDeviceId={} targetDeviceId={} bodyBytes={} payloadBytes={}",
+        message_type,
+        value
+            .get("messageId")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        network_id,
+        from_device_id,
+        target_device_id,
+        body_bytes,
+        payload.len(),
+    );
+    match message_type {
+        "network_config_changed"
+        | "network_snapshot"
+        | "dns_changed"
+        | "acl_changed"
+        | "network_member_changed" => ingest_embedded_network_config_changed(&value),
         "device_user_login_succeeded" => ingest_embedded_device_user_login_succeeded(&value),
         "device_ip_reassigned" => ingest_embedded_device_ip_reassigned(&value),
         "device_network_enabled" | "device_network_disabled" => {
@@ -1187,13 +1507,11 @@ fn ingest_embedded_device_ip_reassigned(value: &Value) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("device_ip_reassigned payload is missing"))?;
     let target_device_id = payload
         .get("deviceId")
-        .or_else(|| payload.get("device_id"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .trim();
     let virtual_ip = payload
         .get("virtualIp")
-        .or_else(|| payload.get("virtual_ip"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .trim();
@@ -1202,8 +1520,6 @@ fn ingest_embedded_device_ip_reassigned(value: &Value) -> Result<()> {
     }
     let prefix_len = payload
         .get("prefixLen")
-        .or_else(|| payload.get("prefixLength"))
-        .or_else(|| payload.get("prefix_len"))
         .and_then(Value::as_u64)
         .and_then(|value| u8::try_from(value).ok());
     let mut session = load_session().context("load session for device ip reassignment")?;
@@ -1232,46 +1548,52 @@ fn ingest_embedded_device_ip_reassigned(value: &Value) -> Result<()> {
 }
 
 fn persist_embedded_client_message(value: &Value) -> Result<()> {
-    write_embedded_downstream_payload("client-v2-last-client-message.json", value)?;
-    let payload = value.get("payload").unwrap_or(value);
-    let message_id = payload
-        .get("messageId")
-        .or_else(|| payload.get("message_id"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let from_device_id = payload
-        .get("fromDeviceId")
-        .or_else(|| payload.get("from_device_id"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let target_device_id = payload
-        .get("targetDeviceId")
-        .or_else(|| payload.get("target_device_id"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let body = payload
-        .get("body")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let message = EmbeddedClientMessage::from_value(value);
     let session = load_session().context("load session for embedded client message")?;
     let local_device_id = session
         .device_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if let Some(target_device_id) = target_device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    eprintln!(
+        "SLAN_EMBEDDED_CLIENT_MESSAGE_ROUTE messageId={} fromDeviceId={} targetDeviceId={} localDeviceId={} activeNetworkId={}",
+        message.message_id_str(),
+        message.from_device_id_str(),
+        message.target_device_id_str(),
+        local_device_id.unwrap_or_default(),
+        session.active_network_id.as_deref().unwrap_or_default(),
+    );
+    if let Some(target_device_id) = message.trimmed_target_device_id() {
         if Some(target_device_id) != local_device_id {
+            eprintln!(
+                "SLAN_EMBEDDED_CLIENT_MESSAGE_IGNORE messageId={} fromDeviceId={} targetDeviceId={} localDeviceId={}",
+                message.message_id_str(),
+                message.from_device_id_str(),
+                target_device_id,
+                local_device_id.unwrap_or_default(),
+            );
             return Ok(());
         }
     }
+    write_embedded_downstream_payload("client-v2-last-client-message.json", value)?;
+    eprintln!(
+        "SLAN_EMBEDDED_CLIENT_MESSAGE_RECV messageId={} fromDeviceId={} targetDeviceId={} bodyBytes={}",
+        message.message_id_str(),
+        message.from_device_id_str(),
+        message.target_device_id_str(),
+        message.body_len(),
+    );
+    eprintln!(
+        "SLAN_EMBEDDED_CLIENT_MESSAGE_PERSIST path={} hasMessageId={} hasFromDeviceId={} hasBody={}",
+        embedded_state_file("client-v2-last-client-message.json").display(),
+        message.message_id.is_some(),
+        message.from_device_id.is_some(),
+        message.body.as_deref().is_some_and(|value| !value.is_empty()),
+    );
     if maybe_reply_embedded_client_ping(
-        from_device_id.as_deref(),
-        target_device_id.as_deref(),
-        body.as_deref(),
+        message.trimmed_from_device_id(),
+        message.trimmed_target_device_id(),
+        message.body.as_deref(),
     )? {
         return Ok(());
     }
@@ -1279,19 +1601,26 @@ fn persist_embedded_client_message(value: &Value) -> Result<()> {
         let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
         runtime.dispatch(ClientCommand::ApplyClientMessage(
             ClientMessageNoticePayload {
-                message_id: message_id.clone(),
-                from_device_id: from_device_id.clone(),
-                body: body.clone(),
+                message_id: message.message_id.clone(),
+                from_device_id: message.from_device_id.clone(),
+                body: message.body.clone(),
             },
         ))?
     };
+    eprintln!(
+        "SLAN_EMBEDDED_CLIENT_MESSAGE_APPLIED messageId={} stateLastClientMessageId={} stateLastClientMessageFromDeviceId={} stateLastClientMessageBodyBytes={}",
+        message.message_id_str(),
+        state.last_client_message_id.as_deref().unwrap_or_default(),
+        state.last_client_message_from_device_id.as_deref().unwrap_or_default(),
+        state.last_client_message_body.as_deref().map(str::len).unwrap_or(0),
+    );
     publish_embedded_business_event(
         BUSINESS_CONTROL_SYNC_CHANGED,
         serde_json::json!({
             "messageType": "client_message",
-            "messageId": message_id,
-            "fromDeviceId": from_device_id,
-            "body": body,
+            "messageId": message.message_id,
+            "fromDeviceId": message.from_device_id,
+            "body": message.body,
         }),
         &state,
     );
@@ -1374,8 +1703,159 @@ fn write_embedded_downstream_payload(file_name: &str, value: &Value) -> Result<(
     fs::write(&path, payload).with_context(|| format!("write {}", path.display()))
 }
 
+fn persist_embedded_mqtt_publish_summary(
+    topic: &str,
+    message_type: Option<&str>,
+    payload: &[u8],
+) -> Result<()> {
+    let decoded = serde_json::from_slice::<Value>(payload).ok();
+    let payload_value = decoded
+        .as_ref()
+        .and_then(|value| value.get("payload"))
+        .unwrap_or(&Value::Null);
+    let summary = serde_json::json!({
+        "topic": topic,
+        "messageType": message_type,
+        "payloadBytes": payload.len(),
+        "messageId": decoded
+            .as_ref()
+            .and_then(|value| value.get("messageId"))
+            .and_then(Value::as_str),
+        "fromDeviceId": payload_value
+            .get("fromDeviceId")
+            .and_then(Value::as_str),
+        "targetDeviceId": payload_value
+            .get("targetDeviceId")
+            .and_then(Value::as_str),
+    });
+    write_embedded_downstream_payload("client-v2-last-mqtt-publish.json", &summary)
+}
+
+#[derive(Debug, Clone, Default)]
+struct EmbeddedClientMessage {
+    message_id: Option<String>,
+    from_device_id: Option<String>,
+    target_device_id: Option<String>,
+    body: Option<String>,
+}
+
+impl EmbeddedClientMessage {
+    fn from_value(value: &Value) -> Self {
+        let payload = value.get("payload").unwrap_or(value);
+        Self {
+            message_id: payload
+                .get("messageId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            from_device_id: payload
+                .get("fromDeviceId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            target_device_id: payload
+                .get("targetDeviceId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            body: payload
+                .get("body")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        }
+    }
+
+    fn message_id_str(&self) -> &str {
+        self.message_id.as_deref().unwrap_or_default()
+    }
+
+    fn from_device_id_str(&self) -> &str {
+        self.from_device_id.as_deref().unwrap_or_default()
+    }
+
+    fn target_device_id_str(&self) -> &str {
+        self.target_device_id.as_deref().unwrap_or_default()
+    }
+
+    fn body_len(&self) -> usize {
+        self.body.as_deref().map(str::len).unwrap_or(0)
+    }
+
+    fn trimmed_from_device_id(&self) -> Option<&str> {
+        self.from_device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn trimmed_target_device_id(&self) -> Option<&str> {
+        self.target_device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+}
+
+fn persist_embedded_downstream_summary(value: &Value) -> Result<()> {
+    let payload = value.get("payload").unwrap_or(value);
+    let message = EmbeddedClientMessage::from_value(value);
+    let message_id = value
+        .get("messageId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or(message.message_id.clone());
+    let summary = serde_json::json!({
+        "type": value.get("type").and_then(Value::as_str),
+        "messageId": message_id,
+        "fromDeviceId": message.from_device_id,
+        "targetDeviceId": message.target_device_id,
+        "networkId": payload
+            .get("networkId")
+            .and_then(Value::as_str),
+        "bodyLength": Some(message.body_len()),
+    });
+    write_embedded_downstream_payload("client-v2-last-downstream-summary.json", &summary)
+}
+
 fn embedded_state_file(file_name: &str) -> PathBuf {
     app_data_dir().join("SLAN").join(file_name)
+}
+
+fn merge_persisted_client_message_into_state(state: &mut ClientViewState) {
+    if state.last_client_message_id.is_some()
+        && state.last_client_message_from_device_id.is_some()
+        && state.last_client_message_body.is_some()
+    {
+        return;
+    }
+    let Ok(payload) = fs::read_to_string(embedded_state_file("client-v2-last-client-message.json"))
+    else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&payload) else {
+        return;
+    };
+    let message = EmbeddedClientMessage::from_value(&value);
+    if state.last_client_message_id.is_none() {
+        state.last_client_message_id = message.message_id;
+    }
+    if state.last_client_message_from_device_id.is_none() {
+        state.last_client_message_from_device_id = message.from_device_id;
+    }
+    if state.last_client_message_body.is_none() {
+        state.last_client_message_body = message.body;
+    }
+}
+
+fn load_embedded_downstream_summary() -> Option<Value> {
+    let payload = fs::read_to_string(embedded_state_file(
+        "client-v2-last-downstream-summary.json",
+    ))
+    .ok()?;
+    serde_json::from_str::<Value>(&payload).ok()
+}
+
+fn load_embedded_mqtt_publish_summary() -> Option<Value> {
+    let payload =
+        fs::read_to_string(embedded_state_file("client-v2-last-mqtt-publish.json")).ok()?;
+    serde_json::from_str::<Value>(&payload).ok()
 }
 
 fn publish_embedded_business_event(
@@ -1383,12 +1863,14 @@ fn publish_embedded_business_event(
     business_data: Value,
     state: &ClientViewState,
 ) {
+    let mut event_state = state.clone();
+    merge_persisted_client_message_into_state(&mut event_state);
     let mut event = business_event()
         .lock()
         .expect("embedded business event mutex poisoned");
     event.revision = event.revision.saturating_add(1);
     event.business_type = business_type.to_string();
-    event.business_data = match serde_json::to_value(state) {
+    event.business_data = match serde_json::to_value(event_state) {
         Ok(Value::Object(mut object)) => {
             if let Value::Object(extra) = business_data {
                 for (key, value) in extra {
@@ -1399,6 +1881,28 @@ fn publish_embedded_business_event(
         }
         _ => business_data,
     };
+    eprintln!(
+        "SLAN_EMBEDDED_BUSINESS_EVENT revision={} businessType={} messageType={} lastClientMessageId={} lastClientMessageFromDeviceId={} lastClientMessageBodyBytes={}",
+        event.revision,
+        event.business_type,
+        event.business_data
+            .get("messageType")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        event.business_data
+            .get("lastClientMessageId")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        event.business_data
+            .get("lastClientMessageFromDeviceId")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        event.business_data
+            .get("lastClientMessageBody")
+            .and_then(Value::as_str)
+            .map(str::len)
+            .unwrap_or(0),
+    );
 }
 
 fn watch_embedded_business_event(last_revision: u64) -> WatchBusinessEventResponse {
@@ -1433,37 +1937,131 @@ fn send_embedded_client_message(input: SendClientMessageRequest) -> Result<Value
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("device id is not available"))?;
-    let mqtt = session
-        .mqtt
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("mqtt credential is not available"))?;
-    crate::client_message_mqtt::publish_client_message(
-        mqtt,
+    eprintln!(
+        "SLAN_EMBEDDED_CLIENT_MESSAGE_SEND networkId={} fromDeviceId={} targetDeviceId={} bodyBytes={}",
+        network_id,
+        from_device_id,
+        input.target_device_id,
+        input.body.len(),
+    );
+    let client = ControlPlaneClient::from_env();
+    let response = client.send_client_message(
+        &session.access_token,
         network_id,
         from_device_id,
         &input.target_device_id,
         &input.body,
-        input.metadata.as_ref(),
-    )
+        input.metadata.clone(),
+    )?;
+    eprintln!(
+        "SLAN_EMBEDDED_CLIENT_MESSAGE_SEND_OK messageId={} topic={} transport={} qos={}",
+        response.message_id, response.topic, response.transport, response.qos,
+    );
+    Ok(serde_json::json!({
+        "messageId": response.message_id,
+        "topic": response.topic,
+        "transport": response.transport,
+        "qos": response.qos,
+    }))
+}
+
+fn register_embedded_test_user(input: RegisterTestUserRequest) -> Result<Value> {
+    let auth = ControlPlaneClient::from_env()
+        .register_user_with_password(&input.email, &input.password)
+        .context("register embedded test user")?;
+    Ok(serde_json::to_value(auth).context("encode registered auth payload")?)
+}
+
+fn report_embedded_device_runtime(input: ReportDeviceRuntimeRequest) -> Result<Value> {
+    let session = load_session().context("load session for report device runtime")?;
+    let client = ControlPlaneClient::from_env();
+    let body = input.body.clone();
+    if let Err(error) = client.report_device_runtime(&session.access_token, &input.device_id, body)
+    {
+        let message = format!("{error:#}");
+        if message.contains("HTTP 404: not found") {
+            let repaired = ensure_session_device_registered(session)
+                .context("repair embedded runtime session")?;
+            let repaired_device_id = repaired
+                .device_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(input.device_id.as_str());
+            client
+                .report_device_runtime(&repaired.access_token, repaired_device_id, input.body)
+                .context("report embedded device runtime after session repair")?;
+        } else {
+            return Err(error).context("report embedded device runtime");
+        }
+    }
+    Ok(serde_json::json!({ "accepted": true }))
 }
 
 fn embedded_control_status() -> Value {
     match load_session() {
         Ok(session) => {
-            let (mqtt_connected, mqtt_last_error, mqtt_last_message_type) = {
+            let active_network_id = session
+                .active_network_id
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+                .or_else(|| {
+                    let client = ControlPlaneClient::from_env();
+                    let mut session = session.clone();
+                    if let Ok(configs) = crate::network_module::refresh_network_module_from_session(
+                        &client, &session,
+                    ) {
+                        session.active_network_id =
+                            configs.into_iter().next().map(|config| config.network_id);
+                    }
+                    if session.active_network_id.is_none() {
+                        session.active_network_id = client
+                            .active_network_id(&session.access_token)
+                            .ok()
+                            .flatten();
+                    }
+                    session.active_network_id
+                });
+            let (
+                mqtt_connected,
+                mqtt_last_error,
+                mqtt_last_message_topic,
+                mqtt_last_message_type,
+                mqtt_network_broadcast_topic,
+                mqtt_network_broadcast_subscribed,
+            ) = {
                 let guard = mqtt_connection()
                     .lock()
                     .expect("embedded mqtt mutex poisoned");
                 guard
                     .as_ref()
-                    .map(|connection| {
-                        (
-                            connection.connected,
+                    .and_then(|connection| {
+                        let session_device_id = session
+                            .device_id
+                            .as_deref()
+                            .map(str::trim)
+                            .unwrap_or_default();
+                        let connection_device_id = connection
+                            .device_id
+                            .as_deref()
+                            .map(str::trim)
+                            .unwrap_or_default();
+                        if !session_device_id.is_empty()
+                            && session_device_id != connection_device_id
+                        {
+                            return None;
+                        }
+                        Some((
+                            connection.connected && connection.network_broadcast_subscribed,
                             connection.last_error.clone(),
+                            connection.last_message_topic.clone(),
                             connection.last_message_type.clone(),
-                        )
+                            connection.network_broadcast_topic.clone(),
+                            connection.network_broadcast_subscribed,
+                        ))
                     })
-                    .unwrap_or((false, None, None))
+                    .unwrap_or((false, None, None, None, None, false))
             };
             let mqtt_last_error = mqtt_last_error.or_else(|| {
                 mqtt_last_error_store()
@@ -1471,15 +2069,13 @@ fn embedded_control_status() -> Value {
                     .expect("embedded mqtt last error mutex poisoned")
                     .clone()
             });
+            let last_mqtt_publish_summary = load_embedded_mqtt_publish_summary();
             let mqtt_credential_ready = session.mqtt.is_some();
             let device_ready = session
                 .device_id
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty());
-            let network_ready = session
-                .active_network_id
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty());
+            let network_ready = active_network_id.is_some();
             let mut missing = Vec::new();
             if !mqtt_credential_ready {
                 missing.push("mqttCredential");
@@ -1498,8 +2094,12 @@ fn embedded_control_status() -> Value {
                 "mqttExpiresAt": session.mqtt.as_ref().and_then(|credential| credential.expires_at),
                 "mqttConnected": mqtt_connected,
                 "mqttLastError": mqtt_last_error,
+                "mqttLastMessageTopic": mqtt_last_message_topic,
                 "mqttLastMessageType": mqtt_last_message_type,
-                "activeNetworkId": session.active_network_id,
+                "lastMqttPublishSummary": last_mqtt_publish_summary,
+                "mqttNetworkBroadcastTopic": mqtt_network_broadcast_topic,
+                "mqttNetworkBroadcastSubscribed": mqtt_network_broadcast_subscribed,
+                "activeNetworkId": active_network_id,
                 "deviceId": session.device_id,
             })
         }
@@ -1558,6 +2158,13 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
         ClientCommand::Logout => {
             crate::network_module::clear_network_module();
             remove_session()?;
+            clear_embedded_mqtt_connection();
+            set_embedded_mqtt_last_error(None);
+            let _ = fs::remove_file(embedded_state_file("client-v2-last-client-message.json"));
+            let _ = fs::remove_file(embedded_state_file(
+                "client-v2-last-downstream-summary.json",
+            ));
+            let _ = fs::remove_file(embedded_state_file("client-v2-last-mqtt-publish.json"));
             runtime.dispatch(ClientCommand::Logout).context("logout")
         }
         other => runtime.dispatch(other).context("dispatch command"),
@@ -1565,11 +2172,21 @@ fn dispatch_embedded(command: ClientCommand) -> Result<ClientViewState> {
 }
 
 fn refresh_state() -> ClientViewState {
-    let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
-    match runtime.refresh() {
-        Ok(()) => runtime.state().clone(),
-        Err(error) => runtime.set_error(error.to_string()),
-    }
+    let mut state = {
+        let mut runtime = runtime().lock().expect("embedded runtime mutex poisoned");
+        match runtime.refresh() {
+            Ok(()) => runtime.state().clone(),
+            Err(error) => runtime.set_error(error.to_string()),
+        }
+    };
+    merge_persisted_client_message_into_state(&mut state);
+    eprintln!(
+        "SLAN_EMBEDDED_REFRESH_STATE lastClientMessageId={} lastClientMessageFromDeviceId={} lastClientMessageBodyBytes={}",
+        state.last_client_message_id.as_deref().unwrap_or_default(),
+        state.last_client_message_from_device_id.as_deref().unwrap_or_default(),
+        state.last_client_message_body.as_deref().map(str::len).unwrap_or(0),
+    );
+    state
 }
 
 fn local_session_json() -> Result<String> {
@@ -1588,11 +2205,15 @@ fn local_session_json() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use client_core::{AuthPayload, ClientCommand, NetworkRuntimeState};
     use serde_json::Value;
 
     use crate::session_store::{persist_session, PersistedSession};
 
-    use super::{embedded_handle_request_json, rewrite_local_mqtt_broker_host, url_host};
+    use super::{
+        embedded_handle_request_json, reconcile_embedded_active_network_state,
+        rewrite_local_mqtt_broker_host, url_host, watch_embedded_business_event,
+    };
 
     fn request(method: &str, args: Value) -> Value {
         let response = embedded_handle_request_json(
@@ -1811,6 +2432,280 @@ mod tests {
                 .and_then(Value::as_str),
             Some("hello")
         );
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn client_message_ingest_ignores_other_embedded_targets_without_persisting() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-embedded-ignore-event-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        {
+            let mut guard = super::runtime()
+                .lock()
+                .expect("embedded runtime mutex poisoned");
+            let _ = guard.dispatch(ClientCommand::Logout);
+        }
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("device-1".to_string());
+        persist_session(&session).expect("persist embedded test session");
+        super::ingest_embedded_downstream_publish(
+            serde_json::json!({
+                "type": "client_message",
+                "payload": {
+                    "messageId": "msg-2",
+                    "fromDeviceId": "ios-peer",
+                    "targetDeviceId": "device-2",
+                    "body": "ignore"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect("ingest ignored client message");
+
+        let state = request("localState", serde_json::json!({}));
+        assert_eq!(
+            state.get("lastClientMessageId").and_then(Value::as_str),
+            None
+        );
+        assert_eq!(
+            state
+                .get("lastClientMessageFromDeviceId")
+                .and_then(Value::as_str),
+            None
+        );
+        assert_eq!(
+            state.get("lastClientMessageBody").and_then(Value::as_str),
+            None
+        );
+        assert!(
+            !super::embedded_state_file("client-v2-last-client-message.json").exists(),
+            "ignored embedded client_message should not persist last message state"
+        );
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn later_embedded_business_event_keeps_last_client_message_fields() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-embedded-client-message-carry-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        {
+            let mut guard = super::runtime()
+                .lock()
+                .expect("embedded runtime mutex poisoned");
+            let _ = guard.dispatch(ClientCommand::Logout);
+        }
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("device-1".to_string());
+        persist_session(&session).expect("persist embedded test session");
+
+        super::ingest_embedded_downstream_publish(
+            serde_json::json!({
+                "type": "client_message",
+                "payload": {
+                    "messageId": "msg-1",
+                    "fromDeviceId": "ios-peer",
+                    "targetDeviceId": "device-1",
+                    "body": "hello"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect("ingest client message");
+
+        super::ingest_embedded_downstream_publish(
+            serde_json::json!({
+                "type": "network_config_changed",
+                "payload": {
+                    "networkId": "net-1",
+                    "version": 2
+                }
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect("ingest network config change");
+
+        let response = request(
+            "localBusinessEventWatch",
+            serde_json::json!({
+                "lastRevision": 1,
+                "timeoutMs": 1000
+            }),
+        );
+
+        assert_eq!(
+            response.get("businessType").and_then(Value::as_str),
+            Some("control.sync.changed")
+        );
+        assert_eq!(
+            response
+                .pointer("/businessData/messageType")
+                .and_then(Value::as_str),
+            Some("network_config_changed")
+        );
+        assert_eq!(
+            response
+                .pointer("/businessData/lastClientMessageBody")
+                .and_then(Value::as_str),
+            Some("hello")
+        );
+        assert_eq!(
+            response
+                .pointer("/snapshot/lastClientMessageBody")
+                .and_then(Value::as_str),
+            Some("hello")
+        );
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn embedded_active_network_reconcile_skips_when_network_is_disabled() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-embedded-reconcile-disabled-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        let _ = std::fs::remove_file(super::embedded_state_file(
+            "client-v2-last-client-message.json",
+        ));
+
+        {
+            let mut event = super::business_event()
+                .lock()
+                .expect("embedded business event mutex poisoned");
+            event.revision = 0;
+            event.business_type = super::BUSINESS_STATE_CHANGED.to_string();
+            event.business_data = serde_json::json!({});
+        }
+        {
+            let mut guard = super::runtime()
+                .lock()
+                .expect("embedded runtime mutex poisoned");
+            let _ = guard.dispatch(ClientCommand::Logout);
+        }
+        reconcile_embedded_active_network_state();
+        let after = watch_embedded_business_event(0).revision;
+        assert_eq!(after, 0);
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn embedded_active_network_reconcile_emits_business_event_when_network_is_enabled() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-embedded-reconcile-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+        let _ = std::fs::remove_file(super::embedded_state_file(
+            "client-v2-last-client-message.json",
+        ));
+
+        {
+            let mut event = super::business_event()
+                .lock()
+                .expect("embedded business event mutex poisoned");
+            event.revision = 0;
+            event.business_type = super::BUSINESS_STATE_CHANGED.to_string();
+            event.business_data = serde_json::json!({});
+        }
+
+        {
+            let mut guard = super::runtime()
+                .lock()
+                .expect("embedded runtime mutex poisoned");
+            let _ = guard.dispatch(ClientCommand::Logout);
+            guard
+                .dispatch(ClientCommand::ApplyDeviceUserLogin(AuthPayload {
+                    access_token: "token-1".to_string(),
+                    refresh_token: None,
+                    user_id: "user-1".to_string(),
+                    user_label: "user@example.com".to_string(),
+                    device_id: Some("device-1".to_string()),
+                    active_network_id: Some("net-1".to_string()),
+                    virtual_ip: Some("10.0.0.99".to_string()),
+                    expires_in: None,
+                }))
+                .expect("seed embedded signed-in runtime");
+            guard
+                .dispatch(ClientCommand::ApplyPlatformRuntimeState(
+                    NetworkRuntimeState {
+                        adapter_present: true,
+                        network_enabled: true,
+                        virtual_ip: Some("10.0.0.99".to_string()),
+                        active_path: None,
+                        peer_paths: Vec::new(),
+                    },
+                ))
+                .expect("seed embedded enabled runtime");
+        }
+        let mut session = PersistedSession::empty();
+        session.access_token = "token-1".to_string();
+        session.user_id = "user-1".to_string();
+        session.user_label = "user@example.com".to_string();
+        session.device_id = Some("device-1".to_string());
+        session.active_network_id = Some("net-1".to_string());
+        session.virtual_ip = Some("10.0.0.99".to_string());
+        persist_session(&session).expect("persist embedded reconcile session");
+
+        reconcile_embedded_active_network_state();
+        let event = watch_embedded_business_event(0);
+        assert!(event.revision > 0);
+        assert_eq!(event.business_type, "control.sync.changed");
+        assert_eq!(
+            event
+                .business_data
+                .get("messageType")
+                .and_then(Value::as_str),
+            Some("active_network_reconcile_failed")
+        );
+
         if let Some(value) = previous_state_dir {
             std::env::set_var("SLAN_STATE_DIR", value);
         } else {

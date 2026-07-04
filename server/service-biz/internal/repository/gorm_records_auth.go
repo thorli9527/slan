@@ -19,9 +19,13 @@ type gormUserSessionRecord struct {
 	UserID        string `gorm:"size:64;index"`
 	AccessToken   string `gorm:"size:255;index"`
 	RefreshToken  string `gorm:"size:255"`
+	Status        string `gorm:"size:64;index"`
+	SessionMode   string `gorm:"size:64;index"`
 	ExpiresAt     int64  `gorm:"not null"`
 	RefreshExpiry int64  `gorm:"not null"`
 	CreatedAt     int64  `gorm:"not null"`
+	UpdatedAt     int64  `gorm:"not null"`
+	RevokedAt     int64  `gorm:"not null"`
 }
 
 type gormConsoleLoginKeyRecord struct {

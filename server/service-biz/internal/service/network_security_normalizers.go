@@ -28,7 +28,8 @@ func normalizeCreateSecurityRuleInput(input CreateSecurityRuleInput) CreateSecur
 	input.Direction = strings.TrimSpace(input.Direction)
 	input.Protocol = strings.TrimSpace(input.Protocol)
 	input.PortRange = strings.TrimSpace(input.PortRange)
-	input.CIDR = strings.TrimSpace(input.CIDR)
+	input.PeerType = strings.TrimSpace(input.PeerType)
+	input.PeerValue = strings.TrimSpace(input.PeerValue)
 	input.Action = strings.TrimSpace(input.Action)
 	input.Description = strings.TrimSpace(input.Description)
 	return input
@@ -40,7 +41,8 @@ func normalizeUpdateSecurityRuleInput(input UpdateSecurityRuleInput) UpdateSecur
 	input.Direction = strings.TrimSpace(input.Direction)
 	input.Protocol = strings.TrimSpace(input.Protocol)
 	input.PortRange = strings.TrimSpace(input.PortRange)
-	input.CIDR = strings.TrimSpace(input.CIDR)
+	input.PeerType = strings.TrimSpace(input.PeerType)
+	input.PeerValue = strings.TrimSpace(input.PeerValue)
 	input.Action = strings.TrimSpace(input.Action)
 	input.Description = strings.TrimSpace(input.Description)
 	return input

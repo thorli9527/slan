@@ -31,6 +31,7 @@ func AllowTopicAccess(cfg Config, principal, deviceID, topic string, subscribe b
 		topic == devicePrefix+"/heartbeat" ||
 		topic == devicePrefix+"/runtime" ||
 		topic == devicePrefix+"/runtime-state" ||
+		isControlDownTopic(cfg, topic) ||
 		isNetworkBroadcastTopic(cfg, topic) ||
 		isDeviceNetworkStateTopic(cfg, deviceID, topic)
 }

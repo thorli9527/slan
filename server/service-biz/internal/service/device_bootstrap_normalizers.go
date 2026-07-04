@@ -17,7 +17,8 @@ func normalizeRevokeDeviceBootstrapKeyInput(input RevokeDeviceBootstrapKeyInput)
 }
 
 func normalizeBootstrapDeviceSessionInput(input BootstrapDeviceSessionInput) BootstrapDeviceSessionInput {
-	input.SessionKey = strings.TrimSpace(input.SessionKey)
+	input.InstallationKey = strings.TrimSpace(input.InstallationKey)
+	input.SessionMode = normalizedSessionMode(strings.TrimSpace(input.SessionMode))
 	input.DeviceID = strings.TrimSpace(input.DeviceID)
 	input.OwnerID = strings.TrimSpace(input.OwnerID)
 	input.Name = strings.TrimSpace(input.Name)

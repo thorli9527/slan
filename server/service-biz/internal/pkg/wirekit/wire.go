@@ -123,10 +123,8 @@ func NodeID(deviceID string) string {
 	return "node-" + strings.TrimSpace(deviceID)
 }
 
-func VirtualIP(networkID, deviceID string) string {
+func DeviceVirtualIP(deviceID string) string {
 	hash := fnv.New32a()
-	_, _ = hash.Write([]byte(strings.TrimSpace(networkID)))
-	_, _ = hash.Write([]byte{0})
 	_, _ = hash.Write([]byte(strings.TrimSpace(deviceID)))
 	value := hash.Sum32()
 
@@ -142,8 +140,16 @@ func VirtualIP(networkID, deviceID string) string {
 	return fmt.Sprintf("100.%d.%d.%d", second, third, fourth)
 }
 
-func AllowedIP(networkID, deviceID string) string {
-	return VirtualIP(networkID, deviceID) + "/32"
+func DeviceAllowedIP(deviceID string) string {
+	return DeviceVirtualIP(deviceID) + "/32"
+}
+
+func VirtualIP(_ string, deviceID string) string {
+	return DeviceVirtualIP(deviceID)
+}
+
+func AllowedIP(_ string, deviceID string) string {
+	return DeviceAllowedIP(deviceID)
 }
 
 func HostPort(host string, port int) string {

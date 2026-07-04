@@ -10,7 +10,7 @@ import (
 	servicepkg "github.com/slan/service-biz/internal/service"
 )
 
-const appDefaultDNSServer = "100.64.0.53"
+const appDefaultDNSServer = "10.0.0.53"
 
 func appMQTTCredentialPayload(view servicepkg.DeviceMQTTProfileView) any {
 	if view.Credential != nil {
@@ -51,6 +51,7 @@ func buildDeviceNetworkConfigPayloads(ctx context.Context, useCase servicepkg.Ne
 
 func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView) map[string]any {
 	view := resolved.Config
+	view.SecurityRules = expandedSecurityRules(view)
 	deviceIDsByIP := buildDeviceIDsByIP(view)
 	zoneNamesByID := buildZoneNamesByID(view.DNSZones)
 	orderedRelayCandidates := orderRelayCandidates(view.RuntimePath, resolved.RelayCandidates)
@@ -67,7 +68,6 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 		"selfNodeId":          view.NodeID,
 		"globalIp":            view.GlobalIP,
 		"prefixLen":           view.PrefixLen,
-		"prefixLength":        view.PrefixLen,
 		"globalName":          view.GlobalName,
 		"dns":                 networkDNSPayload(view),
 		"runtimePath":         runtimePathPayload(view.RuntimePath),
@@ -84,6 +84,55 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 		"publicMappings":      publicMappingPayloads(view.PublicMappings, deviceIDsByIP),
 		"relayCandidates":     relayCandidatePayloads(view.RuntimePath, orderedRelayCandidates),
 	}
+}
+
+func expandedSecurityRules(view servicepkg.NetworkConfigView) []servicepkg.SecurityRuleView {
+	items := make([]servicepkg.SecurityRuleView, 0, len(view.SecurityRules))
+	for _, rule := range view.SecurityRules {
+		if strings.TrimSpace(rule.PeerType) != "device_group" {
+			items = append(items, rule)
+			continue
+		}
+		groupID := strings.TrimSpace(rule.PeerValue)
+		if groupID == "" {
+			continue
+		}
+		deviceIDs := securityRuleDeviceGroupMembers(view, groupID)
+		for _, deviceID := range deviceIDs {
+			cloned := rule
+			cloned.PeerType = "device"
+			cloned.PeerValue = deviceID
+			items = append(items, cloned)
+		}
+	}
+	return items
+}
+
+func securityRuleDeviceGroupMembers(view servicepkg.NetworkConfigView, groupID string) []string {
+	deviceIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	appendIfMatch := func(deviceID string) {
+		deviceID = strings.TrimSpace(deviceID)
+		if deviceID == "" {
+			return
+		}
+		for _, current := range view.DeviceGroupsByDevice[deviceID] {
+			if !strings.EqualFold(strings.TrimSpace(current), groupID) {
+				continue
+			}
+			if _, ok := seen[deviceID]; ok {
+				return
+			}
+			seen[deviceID] = struct{}{}
+			deviceIDs = append(deviceIDs, deviceID)
+			return
+		}
+	}
+	appendIfMatch(view.DeviceID)
+	for _, peer := range view.Peers {
+		appendIfMatch(peer.DeviceID)
+	}
+	return deviceIDs
 }
 
 func networkDNSPayload(view servicepkg.NetworkConfigView) map[string]any {
@@ -421,14 +470,13 @@ func resolveSecurityRulePeer(rule servicepkg.SecurityRuleView, view servicepkg.N
 			}
 		}
 		return "node-" + peerValue, []string{}
-	case "domain":
+	case "user":
 		ips := make([]string, 0, len(view.Peers)+1)
-		if name := strings.TrimSpace(view.GlobalName); name != "" && strings.EqualFold(name, peerValue) {
+		if strings.EqualFold(strings.TrimSpace(view.Network.OwnerID), peerValue) {
 			ips = append(ips, compactStrings(view.GlobalIP)...)
 		}
 		for _, peer := range view.Peers {
-			if strings.EqualFold(strings.TrimSpace(peer.GlobalName), peerValue) ||
-				strings.EqualFold(strings.TrimSpace(peer.Alias), peerValue) {
+			if strings.EqualFold(strings.TrimSpace(peer.OwnerID), peerValue) {
 				ips = append(ips, compactStrings(peer.GlobalIP)...)
 			}
 		}

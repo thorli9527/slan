@@ -10,11 +10,21 @@ func normalizeRegisterUserInput(input RegisterUserInput) RegisterUserInput {
 
 func normalizeLoginUserInput(input LoginUserInput) LoginUserInput {
 	input.Email = normalizedEmail(input.Email)
+	input.SessionMode = normalizedSessionMode(strings.TrimSpace(input.SessionMode))
 	return input
 }
 
 func normalizeUserAccessToken(accessToken string) string {
 	return strings.TrimSpace(accessToken)
+}
+
+func normalizeUserRefreshToken(refreshToken string) string {
+	return strings.TrimSpace(refreshToken)
+}
+
+func normalizeRenewUserSessionInput(input RenewUserSessionInput) RenewUserSessionInput {
+	input.RefreshToken = normalizeUserRefreshToken(input.RefreshToken)
+	return input
 }
 
 func normalizeUserID(userID string) string {

@@ -14,6 +14,7 @@ type Services struct {
 
 type AuthServices struct {
 	UserAuth        servicepkg.AuthUserService
+	TokenManagement servicepkg.TokenManagementService
 	Aliases         servicepkg.AuthAliasService
 	ConsoleAuth     servicepkg.AuthConsoleService
 	DeviceLoginAuth servicepkg.AuthDeviceLoginService
@@ -24,6 +25,7 @@ type DeviceServices struct {
 	BootstrapAuth    servicepkg.DeviceBootstrapService
 	GroupManagement  servicepkg.DeviceGroupService
 	SessionRuntime   servicepkg.DeviceSessionService
+	ClientMessages   servicepkg.ClientMessageService
 }
 
 type NetworkServices struct {

@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/pkg/wirekit"
 )
@@ -27,13 +29,14 @@ func topologyPeer(networkID string, device model.Device, membership model.Networ
 	if (activePath == "relay_udp" || activePath == "derp_tcp_tls_443") && membership.RelayMtu > 0 && membership.MaxFramePayload <= 0 {
 		requireMtuRefresh = true
 	}
+	globalIP := deviceGlobalIP(device)
 	return wirekit.TopologyPeer{
 		PeerID:                  wirekit.PeerID(networkID, device.DeviceID),
 		NetworkID:               networkID,
 		NodeID:                  wirekit.NodeID(device.DeviceID),
 		PublicKey:               "",
-		VirtualIPs:              []string{wirekit.VirtualIP(networkID, device.DeviceID)},
-		AllowedIPs:              []string{wirekit.AllowedIP(networkID, device.DeviceID)},
+		VirtualIPs:              []string{globalIP},
+		AllowedIPs:              []string{fmt.Sprintf("%s/32", globalIP)},
 		SupportsLanDirect:       true,
 		SupportsIpv6Direct:      true,
 		SupportsDirectUdp:       true,

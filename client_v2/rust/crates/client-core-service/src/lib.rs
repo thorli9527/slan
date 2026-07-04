@@ -19,5 +19,5 @@ pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
         .lock()
-        .expect("test env mutex poisoned")
+        .unwrap_or_else(|error| error.into_inner())
 }

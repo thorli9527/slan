@@ -3,6 +3,7 @@ package repository
 type gormDeviceRecord struct {
 	DeviceID      string `gorm:"primaryKey;size:64"`
 	OwnerID       string `gorm:"size:64;index"`
+	VirtualIP     string `gorm:"size:64;index"`
 	Name          string `gorm:"size:255"`
 	Platform      string `gorm:"size:64"`
 	Alias         string `gorm:"size:255"`
@@ -43,9 +44,12 @@ type gormDeviceSessionRecord struct {
 	AccessToken  string `gorm:"size:255;index"`
 	RefreshToken string `gorm:"size:255"`
 	Status       string `gorm:"size:64;index"`
+	SessionMode  string `gorm:"size:64;index"`
 	ExpiresAt    int64  `gorm:"not null"`
+	RefreshExpiry int64 `gorm:"not null"`
 	CreatedAt    int64  `gorm:"not null"`
 	UpdatedAt    int64  `gorm:"not null"`
+	RevokedAt    int64  `gorm:"not null"`
 }
 
 type gormBootstrapKeyRecord struct {
@@ -60,6 +64,7 @@ type gormBootstrapKeyRecord struct {
 	UsedByDeviceID string `gorm:"size:64;index"`
 	CreatedAt      int64  `gorm:"not null"`
 	UpdatedAt      int64  `gorm:"not null"`
+	RevokedAt      int64  `gorm:"not null"`
 }
 
 type gormDeviceGroupRecord struct {

@@ -39,7 +39,7 @@ func (s AuthConsoleLoginService) ConsoleLogin(ctx context.Context, input Console
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	session, err := newAuthUserSession(now, s.NewSessID, user.UserID)
+	session, err := newAuthUserSession(now, s.NewSessID, user.UserID, tokenModeShort)
 	if err != nil {
 		return AuthSessionView{}, err
 	}

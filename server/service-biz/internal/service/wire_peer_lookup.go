@@ -37,7 +37,7 @@ func (s WirePeerService) lookupPeer(ctx context.Context, peerID string) (string,
 			continue
 		}
 		for _, item := range items {
-			if item.DeviceID == deviceID && item.Enabled && item.Status == "active" {
+			if item.DeviceID == deviceID && networkMemberActive(item) {
 				return network.NetworkID, deviceID, nil
 			}
 		}

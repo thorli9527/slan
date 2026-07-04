@@ -4,29 +4,49 @@
       <h3>公网访问</h3>
       <p>把网络内设备、内网 IP 或解析记录映射为公网入口，并保存访问方式与 TLS 配置。</p>
     </div>
-    <button class="ghost small" type="button" (click)="vm.openPublicMappingDialog()">新增映射</button>
+    <button class="table-icon-button" type="button" title="新增映射" aria-label="新增映射" (click)="vm.openPublicMappingDialog()">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v14"></path>
+        <path d="M5 12h14"></path>
+      </svg>
+    </button>
   </div>
   <p class="form-error" *ngIf="vm.publicMappingDialogMessage">{{ vm.publicMappingDialogMessage }}</p>
-  <table class="compact-table">
-    <thead><tr><th>别名</th><th>公网域名</th><th>目标类型</th><th>目标</th><th>协议</th><th>内网端口</th><th>外网端口</th><th>访问方式</th><th>TLS</th><th>状态</th><th>操作</th></tr></thead>
-    <tbody>
-      <tr *ngFor="let item of vm.currentPublicMappings">
-        <td><code>{{ item.alias }}</code></td>
-        <td>{{ item.publicDomain }}</td>
-        <td>{{ item.targetType === 'ip' ? '内网 IP' : item.targetType === 'record' ? 'DNS 记录' : '设备' }}</td>
-        <td>{{ vm.publicMappingTargetLabel(item) }}</td>
-        <td>{{ item.protocol }}</td>
-        <td>{{ item.port }}</td>
-        <td>{{ item.externalPort }}</td>
-        <td>{{ item.accessMode }}</td>
-        <td>{{ item.tlsMode }}</td>
-        <td><span class="status" [class.online]="item.status === 'enabled'">{{ item.status }}</span></td>
-        <td class="table-actions">
-          <button class="ghost small" type="button" (click)="vm.openEditPublicMappingDialog(item)">修改</button>
-          <button class="link-danger" type="button" (click)="vm.removePublicMapping(item)">删除</button>
-        </td>
-      </tr>
-      <tr *ngIf="vm.currentPublicMappings.length === 0"><td colspan="11">暂无公网映射</td></tr>
-    </tbody>
-  </table>
+  <div class="rules-table-wrap">
+    <table class="compact-table">
+      <thead><tr><th>别名</th><th>公网域名</th><th>目标类型</th><th>目标</th><th>协议</th><th>内网端口</th><th>外网端口</th><th>访问方式</th><th>TLS</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let item of vm.currentPublicMappings">
+          <td><code>{{ item.alias }}</code></td>
+          <td>{{ item.publicDomain }}</td>
+          <td>{{ item.targetType === 'ip' ? '内网 IP' : item.targetType === 'record' ? 'DNS 记录' : '设备' }}</td>
+          <td>{{ vm.publicMappingTargetLabel(item) }}</td>
+          <td>{{ item.protocol }}</td>
+          <td>{{ item.port }}</td>
+          <td>{{ item.externalPort }}</td>
+          <td>{{ item.accessMode }}</td>
+          <td>{{ item.tlsMode }}</td>
+          <td><span class="status" [class.online]="item.status === 'enabled'">{{ item.status }}</span></td>
+          <td class="table-actions">
+            <button class="table-icon-button" type="button" title="编辑映射" aria-label="编辑映射" (click)="vm.openEditPublicMappingDialog(item)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 20h4l10-10-4-4L4 16v4"></path>
+                <path d="M13 7l4 4"></path>
+              </svg>
+            </button>
+            <button class="table-icon-button danger" type="button" title="删除映射" aria-label="删除映射" (click)="vm.removePublicMapping(item)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16"></path>
+                <path d="M9 7V5h6v2"></path>
+                <path d="M8 7l1 12h6l1-12"></path>
+                <path d="M10 11v5"></path>
+                <path d="M14 11v5"></path>
+              </svg>
+            </button>
+          </td>
+        </tr>
+        <tr *ngIf="vm.currentPublicMappings.length === 0"><td colspan="11">暂无公网映射</td></tr>
+      </tbody>
+    </table>
+  </div>
 </section>

@@ -13,7 +13,7 @@ func peerEndpoints(ctx context.Context, networks repository.NetworkRepository, n
 		return []string{}, model.NetworkDevice{}, false
 	}
 	for _, item := range items {
-		if item.DeviceID != deviceID || !item.Enabled || item.Status != "active" {
+		if item.DeviceID != deviceID || !networkMemberActive(item) {
 			continue
 		}
 		return networkDeviceEndpoints(item), item, true

@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	serviceapi "github.com/slan/service-biz/internal/api"
-	authpayload "github.com/slan/service-biz/internal/api/authpayload"
 	authrequest "github.com/slan/service-biz/internal/api/authrequest"
 	servicepkg "github.com/slan/service-biz/internal/service"
 )
@@ -15,7 +14,7 @@ type AuthConsoleHandler struct {
 
 func (h AuthConsoleHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
-		serviceapi.NewRoute(http.MethodPost, "/api/auth/console-login-keys", h.CreateConsoleLoginKey),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/auth/console-login-keys", h.CreateConsoleLoginKey),
 	}
 }
 
@@ -31,5 +30,5 @@ func (h AuthConsoleHandler) CreateConsoleLoginKey(w http.ResponseWriter, r *http
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteJSON(w, http.StatusCreated, authpayload.ConsoleLoginKey(item))
+	serviceapi.WriteJSON(w, http.StatusCreated, appConsoleLoginKeyPayload(item))
 }

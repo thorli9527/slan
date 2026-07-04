@@ -13,7 +13,7 @@ import (
 )
 
 type userSessionResolver interface {
-	RenewUserSession(ctx context.Context, accessToken string) (servicepkg.AuthSessionView, error)
+	GetUserSession(ctx context.Context, accessToken string) (servicepkg.AuthSessionView, error)
 }
 
 func DecodeJSON(r *http.Request, target any) error {
@@ -177,7 +177,7 @@ func ResolveUserIDFromRequest(r *http.Request, useCase userSessionResolver, targ
 	if strings.TrimSpace(*target) != "" {
 		return
 	}
-	session, err := useCase.RenewUserSession(r.Context(), AccessTokenFromRequest(r))
+	session, err := useCase.GetUserSession(r.Context(), AccessTokenFromRequest(r))
 	if err != nil {
 		return
 	}

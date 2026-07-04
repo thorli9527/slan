@@ -9,6 +9,7 @@ type RegisterUserInput struct {
 type LoginUserInput struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	SessionMode string `json:"sessionMode"`
 }
 
 type ChangeUserPasswordInput struct {
@@ -20,4 +21,8 @@ type ChangeUserPasswordInput struct {
 
 type LogoutUserInput struct {
 	DeviceToken string `json:"deviceToken"`
+}
+
+type RenewUserSessionInput struct {
+	RefreshToken string `json:"refreshToken"`
 }

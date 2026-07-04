@@ -63,19 +63,20 @@ type NetworkRuntimePathView struct {
 }
 
 type NetworkConfigView struct {
-	Network        NetworkView             `json:"network"`
-	DeviceID       string                  `json:"deviceId"`
-	NodeID         string                  `json:"nodeId"`
-	GlobalIP       string                  `json:"globalIp"`
-	PrefixLen      int                     `json:"prefixLen"`
-	GlobalName     string                  `json:"globalName"`
-	RuntimePath    NetworkRuntimePathView  `json:"runtimePath"`
-	Peers          []NetworkConfigPeerView `json:"peers"`
-	DNSZones       []DNSZoneView           `json:"dnsZones"`
-	DNSRecords     []DNSRecordView         `json:"dnsRecords"`
-	PublicMappings []PublicMappingView     `json:"publicMappings"`
-	SecurityGroups []SecurityGroupView     `json:"securityGroups"`
-	SecurityRules  []SecurityRuleView      `json:"securityRules"`
+	Network              NetworkView             `json:"network"`
+	DeviceID             string                  `json:"deviceId"`
+	NodeID               string                  `json:"nodeId"`
+	GlobalIP             string                  `json:"globalIp"`
+	PrefixLen            int                     `json:"prefixLen"`
+	GlobalName           string                  `json:"globalName"`
+	DeviceGroupsByDevice map[string][]string     `json:"deviceGroupsByDevice"`
+	RuntimePath          NetworkRuntimePathView  `json:"runtimePath"`
+	Peers                []NetworkConfigPeerView `json:"peers"`
+	DNSZones             []DNSZoneView           `json:"dnsZones"`
+	DNSRecords           []DNSRecordView         `json:"dnsRecords"`
+	PublicMappings       []PublicMappingView     `json:"publicMappings"`
+	SecurityGroups       []SecurityGroupView     `json:"securityGroups"`
+	SecurityRules        []SecurityRuleView      `json:"securityRules"`
 }
 
 type NetworkResolvedConfigView struct {

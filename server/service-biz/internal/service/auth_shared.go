@@ -167,8 +167,12 @@ func (s AuthUserService) LoginUser(ctx context.Context, input LoginUserInput) (A
 	return s.Sessions.LoginUser(ctx, input)
 }
 
-func (s AuthUserService) RenewUserSession(ctx context.Context, accessToken string) (AuthSessionView, error) {
-	return s.Sessions.RenewUserSession(ctx, accessToken)
+func (s AuthUserService) GetUserSession(ctx context.Context, accessToken string) (AuthSessionView, error) {
+	return s.Sessions.GetUserSession(ctx, accessToken)
+}
+
+func (s AuthUserService) RenewUserSession(ctx context.Context, accessToken string, input RenewUserSessionInput) (AuthSessionView, error) {
+	return s.Sessions.RenewUserSession(ctx, accessToken, input)
 }
 
 func (s AuthUserService) LogoutUser(ctx context.Context, accessToken string, input LogoutUserInput) error {
@@ -229,7 +233,7 @@ func newAuthDeviceID(devices repository.DeviceRepository) string {
 	})
 }
 
-func newAuthUserSession(now time.Time, next func(string) string, userID string) (model.UserSession, error) {
+func newAuthUserSession(now time.Time, next func(string) string, userID string, sessionMode string) (model.UserSession, error) {
 	access, err := randomHex(24)
 	if err != nil {
 		return model.UserSession{}, err
@@ -243,9 +247,12 @@ func newAuthUserSession(now time.Time, next func(string) string, userID string) 
 		UserID:        userID,
 		AccessToken:   access,
 		RefreshToken:  refresh,
-		ExpiresAt:     now.Add(24 * time.Hour).Unix(),
-		RefreshExpiry: now.Add(7 * 24 * time.Hour).Unix(),
+		Status:        tokenStatusActive,
+		SessionMode:   normalizedSessionMode(sessionMode),
+		ExpiresAt:     now.Add(defaultUserAccessTTL).Unix(),
+		RefreshExpiry: now.Add(userRefreshTTL(sessionMode)).Unix(),
 		CreatedAt:     now.Unix(),
+		UpdatedAt:     now.Unix(),
 	}, nil
 }
 

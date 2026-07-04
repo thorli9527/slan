@@ -57,7 +57,7 @@ The package installs:
 
 - `/opt/slan-client-v2/bin/client-core-service`
 - `/opt/slan-client-v2/gui/slan_client_v2` for GUI builds
-- `/lib/systemd/system/slan-client-v2.service`
+- `/usr/lib/systemd/system/slan-client-v2.service`
 - `/usr/bin/slan-client-v2-console`
 
 The `.deb` lifecycle scripts perform the same reinstall boundary: `preinst`
@@ -71,6 +71,24 @@ with `resolvectl`. For local development without privileged networking, set:
 
 ```sh
 SLAN_LINUX_NETWORK_MOCK=1
+```
+
+For the stable dual-container real packet-path regression we use:
+
+```sh
+scripts/linux_dual_docker_packet_smoke.sh
+```
+
+That wrapper enables:
+
+- real packet path: `SLAN_LINUX_DUAL_PACKET_TESTS=1`
+- real Linux network mode: `SLAN_LINUX_NETWORK_MOCK=0`
+- privileged containers for `/dev/net/tun` and route changes
+
+If you also want the package rebuilt first:
+
+```sh
+SLAN_LINUX_DUAL_BUILD_PACKAGE=1 scripts/linux_dual_docker_packet_smoke.sh
 ```
 
 ## Console bootstrap
@@ -87,3 +105,6 @@ sudo slan-client-v2-console \
 ```
 
 For the first installer pass, the script writes `/etc/slan/client-v2-console.env` and restarts `slan-client-v2.service`. Device access-code generation and confirmation should be completed from Web Console before the client logs in.
+
+For bootstrap installs, prefer `SLAN_INSTALLATION_KEY` / `--installation-key`.
+`SLAN_SESSION_KEY` / `--session-key` remains as a compatibility alias for older scripts.

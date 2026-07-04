@@ -16,10 +16,10 @@ type AuthHandler struct {
 
 func (h AuthHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
-		serviceapi.NewRoute(http.MethodPost, "/api/auth/register", h.RegisterUser),
-		serviceapi.NewRoute(http.MethodPost, "/api/auth/login", h.LoginUser),
-		serviceapi.NewRoute(http.MethodPost, "/api/auth/renew", h.RenewUserSession),
-		serviceapi.NewRoute(http.MethodPost, "/api/auth/logout", h.LogoutUser),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/auth/register", h.RegisterUser),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/auth/login", h.LoginUser),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/auth/renew", h.RenewUserSession),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/auth/logout", h.LogoutUser),
 	}
 }
 
@@ -33,7 +33,7 @@ func (h AuthHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteJSON(w, http.StatusCreated, serviceapi.AuthSessionPayload(r.Context(), h.NetworkCore, view))
+	serviceapi.WriteJSON(w, http.StatusCreated, appAuthSessionPayload(r.Context(), h.NetworkCore, view))
 }
 
 func (h AuthHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
@@ -46,16 +46,20 @@ func (h AuthHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteJSON(w, http.StatusOK, serviceapi.AuthSessionPayload(r.Context(), h.NetworkCore, view))
+	serviceapi.WriteJSON(w, http.StatusOK, appAuthSessionPayload(r.Context(), h.NetworkCore, view))
 }
 
 func (h AuthHandler) RenewUserSession(w http.ResponseWriter, r *http.Request) {
-	view, err := h.AuthSessions.RenewUserSession(r.Context(), serviceapi.AccessTokenFromRequest(r))
+	var req authrequest.RenewUserSession
+	if !serviceapi.DecodeJSONIfPresentOrError(w, r, &req) {
+		return
+	}
+	view, err := h.AuthSessions.RenewUserSession(r.Context(), serviceapi.AccessTokenFromRequest(r), req.ToInput())
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteJSON(w, http.StatusOK, serviceapi.AuthSessionPayload(r.Context(), h.NetworkCore, view))
+	serviceapi.WriteJSON(w, http.StatusOK, appAuthSessionPayload(r.Context(), h.NetworkCore, view))
 }
 
 func (h AuthHandler) LogoutUser(w http.ResponseWriter, r *http.Request) {

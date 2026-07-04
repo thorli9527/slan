@@ -215,6 +215,68 @@ func TestMetricsTrackRefreshAddressChangesAndForwarding(t *testing.T) {
 	if metrics.ForwardCount != 1 {
 		t.Fatalf("want forward count 1, got %#v", metrics)
 	}
+	if metrics.LastRefreshSessionID != "s1" || metrics.LastRefreshParticipantID != "node-a" {
+		t.Fatalf("unexpected refresh identity in metrics: %#v", metrics)
+	}
+	if metrics.LastRefreshAddr != a2.String() {
+		t.Fatalf("want refresh addr %s, got %#v", a2.String(), metrics)
+	}
+	if metrics.LastForwardSessionID != "s1" || metrics.LastForwardParticipantID != "node-a" {
+		t.Fatalf("unexpected forward identity in metrics: %#v", metrics)
+	}
+	if metrics.LastForwardSourceAddr != a2.String() {
+		t.Fatalf("want forward source addr %s, got %#v", a2.String(), metrics)
+	}
+	if metrics.LastForwardPeerID != "node-b" || metrics.LastForwardPeerAddr != b.String() {
+		t.Fatalf("unexpected forward peer in metrics: %#v", metrics)
+	}
+}
+
+func TestForwardRefreshesParticipantAddressOnRoam(t *testing.T) {
+	store := NewStore()
+	a := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10001}
+	a2 := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 11001}
+	b := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 10002}
+	ticket := protocol.RelayTicket{
+		TicketID:  "t1",
+		PeerID:    "peer-a",
+		SessionID: "s1",
+		Path:      "relay_udp",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}
+	ticket.Signature = signRelayTicket(ticket)
+
+	if _, _, err := store.Attach(a, "node-a", ticket, "udp"); err != nil {
+		t.Fatalf("attach a: %v", err)
+	}
+	if _, _, err := store.Attach(b, "node-b", ticket, "udp"); err != nil {
+		t.Fatalf("attach b: %v", err)
+	}
+
+	peerAddr, peerID, err := store.Forward(a2, "s1", "node-a", []byte("hello"))
+	if err != nil {
+		t.Fatalf("forward after roam: %v", err)
+	}
+	if peerID != "node-b" {
+		t.Fatalf("want node-b, got %q", peerID)
+	}
+	if peerAddr.String() != b.String() {
+		t.Fatalf("want %s, got %s", b.String(), peerAddr.String())
+	}
+
+	metrics := store.Metrics()
+	if metrics.ParticipantRefreshCount != 1 {
+		t.Fatalf("want refresh count 1, got %#v", metrics)
+	}
+	if metrics.ParticipantAddressChangeCount != 1 {
+		t.Fatalf("want address change count 1, got %#v", metrics)
+	}
+	if metrics.LastRefreshAddr != a2.String() {
+		t.Fatalf("want refresh addr %s, got %#v", a2.String(), metrics)
+	}
+	if metrics.LastForwardSourceAddr != a2.String() {
+		t.Fatalf("want forward source addr %s, got %#v", a2.String(), metrics)
+	}
 }
 
 func signRelayTicket(ticket protocol.RelayTicket) string {

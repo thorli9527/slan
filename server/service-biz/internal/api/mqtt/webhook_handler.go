@@ -66,16 +66,25 @@ func (h WebhookHandler) Check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := req.input(r)
+	if input.ClientID == "" && input.Username == "" && !input.Connect {
+		log.Printf(
+			"mqtt webhook check unresolved fields raw=%#v headers=%#v",
+			req.Values,
+			r.Header,
+		)
+	}
 	allowed, err := h.MQTT.CheckACL(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
 	}
 	log.Printf(
-		"mqtt webhook check principal=%s deviceId=%s userId=%s topic=%s subscribe=%t connect=%t allowed=%t",
+		"mqtt webhook check principal=%s deviceId=%s userId=%s clientId=%s username=%s topic=%s subscribe=%t connect=%t allowed=%t",
 		input.Principal,
 		input.DeviceID,
 		input.UserID,
+		input.ClientID,
+		input.Username,
 		input.Topic,
 		input.Subscribe,
 		input.Connect,
@@ -91,11 +100,34 @@ func (h WebhookHandler) EndpointReport(w http.ResponseWriter, r *http.Request) {
 		serviceapi.WriteError(w, servicepkg.ErrInvalidArgument)
 		return
 	}
-	changed, err := h.MQTT.ReportEndpoint(r.Context(), req.input())
+	input := req.input()
+	log.Printf(
+		"mqtt endpoint report request networkId=%s deviceId=%s nodeId=%s natType=%s endpoints=%#v",
+		input.NetworkID,
+		input.DeviceID,
+		input.NodeID,
+		input.NATType,
+		input.Endpoints,
+	)
+	changed, err := h.MQTT.ReportEndpoint(r.Context(), input)
 	if err != nil {
+		log.Printf(
+			"mqtt endpoint report failed networkId=%s deviceId=%s nodeId=%s err=%v",
+			input.NetworkID,
+			input.DeviceID,
+			input.NodeID,
+			err,
+		)
 		serviceapi.WriteError(w, err)
 		return
 	}
+	log.Printf(
+		"mqtt endpoint report applied networkId=%s deviceId=%s nodeId=%s changed=%t",
+		input.NetworkID,
+		input.DeviceID,
+		input.NodeID,
+		changed,
+	)
 	serviceapi.WriteJSON(w, http.StatusOK, reportEndpointPayload(changed))
 }
 

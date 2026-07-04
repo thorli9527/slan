@@ -50,6 +50,26 @@ func WithAliasPrefix(routes []Route, prefix string) []Route {
 	return CombineRoutes(aliased)
 }
 
+func WithRequiredPrefix(routes []Route, prefix string) []Route {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return CombineRoutes(routes)
+	}
+	prefixed := make([]Route, 0, len(routes))
+	for _, route := range routes {
+		if route.Path == prefix || strings.HasPrefix(route.Path, prefix+"/") {
+			prefixed = append(prefixed, route)
+			continue
+		}
+		if strings.HasPrefix(route.Path, "/api/") {
+			prefixed = append(prefixed, NewRoute(route.Method, prefix+strings.TrimPrefix(route.Path, "/api"), route.Handler))
+			continue
+		}
+		prefixed = append(prefixed, route)
+	}
+	return CombineRoutes(prefixed)
+}
+
 func aliasPrefixedRoute(route Route, prefix string) (Route, bool) {
 	if !strings.HasPrefix(route.Path, "/api/") {
 		return Route{}, false

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
@@ -27,6 +28,8 @@ type MQTTCheckInput struct {
 	Principal string
 	DeviceID  string
 	UserID    string
+	ClientID  string
+	Username  string
 	Topic     string
 	Subscribe bool
 	Connect   bool
@@ -74,4 +77,12 @@ type MQTTWebhookService struct {
 	Networks repository.NetworkRepository
 	Config   mqttkit.Config
 	Now      func() time.Time
+}
+
+type MQTTControlUpEnvelope struct {
+	Type      string          `json:"type"`
+	MessageID string          `json:"messageId"`
+	RequestID string          `json:"requestId"`
+	NetworkID string          `json:"networkId"`
+	Payload   json.RawMessage `json:"payload"`
 }

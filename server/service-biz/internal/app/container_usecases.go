@@ -15,6 +15,7 @@ type UseCases struct {
 type AuthUseCases struct {
 	UserRegistration    servicepkg.AuthUserRegistrationUseCase
 	UserSessions        servicepkg.AuthUserSessionUseCase
+	UserTokens          servicepkg.UserTokenManagementUseCase
 	UserAccounts        servicepkg.AuthUserAccountUseCase
 	UserEntitlements    servicepkg.AuthUserEntitlementUseCase
 	Aliases             servicepkg.AuthAliasUseCase
@@ -26,9 +27,11 @@ type AuthUseCases struct {
 
 type DeviceUseCases struct {
 	DeviceManagement servicepkg.DeviceCoreUseCase
+	TokenManagement  servicepkg.DeviceTokenManagementUseCase
 	BootstrapAuth    servicepkg.DeviceBootstrapUseCase
 	GroupManagement  servicepkg.DeviceGroupUseCase
 	SessionRuntime   servicepkg.DeviceSessionUseCase
+	ClientMessages   servicepkg.ClientMessageUseCase
 }
 
 type NetworkUseCases struct {

@@ -224,17 +224,6 @@ export abstract class AppComponentDns extends AppComponentDevices {
     return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${this.recordPort}`;
   }
 
-  dnsRecordValue(record: DNSRow): string {
-    if (record.targetType === 'ip' || record.targetType === 'cname') {
-      return this.displayUserText(record.value || '-');
-    }
-    const device = this.devices.find((item) => item.deviceId === record.deviceId);
-    if (!device) {
-      return this.displayUserText(record.value || '-');
-    }
-    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${record.port || '-'}`;
-  }
-
   publicMappingDeviceLabel(mapping: PublicMappingRow): string {
     const device = this.devices.find((item) => item.deviceId === mapping.deviceId);
     if (!device) {

@@ -2,7 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,7 +55,24 @@ func (s *networkRuntimeTestNetworks) ListNetworkDevices(_ context.Context, netwo
 	return out, nil
 }
 
+func (s *networkRuntimeTestNetworks) GetNetworkDevice(_ context.Context, networkID, deviceID string) (model.NetworkDevice, bool, error) {
+	for _, item := range s.networkDevices[networkID] {
+		if item.DeviceID == deviceID {
+			return item, true, nil
+		}
+	}
+	return model.NetworkDevice{}, false, nil
+}
+
 func (s *networkRuntimeTestNetworks) SaveNetworkDevice(context.Context, model.NetworkDevice) error {
+	return nil
+}
+
+func (s *networkRuntimeTestNetworks) GetNetworkVersion(_ context.Context, networkID string) (model.NetworkConfigVersion, bool, error) {
+	return model.NetworkConfigVersion{}, false, nil
+}
+
+func (s *networkRuntimeTestNetworks) SaveNetworkVersion(context.Context, model.NetworkConfigVersion) error {
 	return nil
 }
 
@@ -75,7 +96,9 @@ func (s *networkRuntimeTestNetworks) GetDeviceInviteByCode(context.Context, stri
 	return model.DeviceInvite{}, false, nil
 }
 
-func (s *networkRuntimeTestNetworks) SaveDeviceInvite(context.Context, model.DeviceInvite) error { return nil }
+func (s *networkRuntimeTestNetworks) SaveDeviceInvite(context.Context, model.DeviceInvite) error {
+	return nil
+}
 func (s *networkRuntimeTestNetworks) ListDNSZones(context.Context, string) ([]model.DNSZone, error) {
 	return nil, nil
 }
@@ -85,7 +108,7 @@ func (s *networkRuntimeTestNetworks) GetDNSZone(context.Context, string) (model.
 }
 
 func (s *networkRuntimeTestNetworks) SaveDNSZone(context.Context, model.DNSZone) error { return nil }
-func (s *networkRuntimeTestNetworks) DeleteDNSZone(context.Context, string) error       { return nil }
+func (s *networkRuntimeTestNetworks) DeleteDNSZone(context.Context, string) error      { return nil }
 func (s *networkRuntimeTestNetworks) ListDNSRecords(context.Context, string) ([]model.DNSRecord, error) {
 	return nil, nil
 }
@@ -94,8 +117,10 @@ func (s *networkRuntimeTestNetworks) GetDNSRecord(context.Context, string) (mode
 	return model.DNSRecord{}, false, nil
 }
 
-func (s *networkRuntimeTestNetworks) SaveDNSRecord(context.Context, model.DNSRecord) error { return nil }
-func (s *networkRuntimeTestNetworks) DeleteDNSRecord(context.Context, string) error         { return nil }
+func (s *networkRuntimeTestNetworks) SaveDNSRecord(context.Context, model.DNSRecord) error {
+	return nil
+}
+func (s *networkRuntimeTestNetworks) DeleteDNSRecord(context.Context, string) error { return nil }
 func (s *networkRuntimeTestNetworks) ListPublicMappings(context.Context, string) ([]model.PublicMapping, error) {
 	return nil, nil
 }
@@ -175,7 +200,10 @@ func (s *networkRuntimeTestDevices) GetDevice(_ context.Context, deviceID string
 }
 
 func (s *networkRuntimeTestDevices) SaveDevice(context.Context, model.Device) error { return nil }
-func (s *networkRuntimeTestDevices) DeleteDevice(context.Context, string) error      { return nil }
+func (s *networkRuntimeTestDevices) DeleteDevice(context.Context, string) error     { return nil }
+func (s *networkRuntimeTestDevices) NewDeviceVirtualIPID() string {
+	return "vip00000000000000000000000000000001"
+}
 
 func (s *networkRuntimeTestDevices) GetDeviceLoginDevice(context.Context, string) (model.DeviceLoginDevice, bool, error) {
 	return model.DeviceLoginDevice{}, false, nil
@@ -187,6 +215,14 @@ func (s *networkRuntimeTestDevices) SaveDeviceLoginDevice(context.Context, model
 
 func (s *networkRuntimeTestDevices) GetDeviceSessionByAccessToken(context.Context, string) (model.DeviceSession, bool, error) {
 	return model.DeviceSession{}, false, nil
+}
+
+func (s *networkRuntimeTestDevices) GetDeviceSessionByRefreshToken(context.Context, string) (model.DeviceSession, bool, error) {
+	return model.DeviceSession{}, false, nil
+}
+
+func (s *networkRuntimeTestDevices) ListDeviceSessionsByDeviceID(context.Context, string) ([]model.DeviceSession, error) {
+	return nil, nil
 }
 
 func (s *networkRuntimeTestDevices) SaveDeviceSession(context.Context, model.DeviceSession) error {
@@ -221,8 +257,10 @@ func (s *networkRuntimeTestDevices) GetDeviceGroup(context.Context, string) (mod
 	return model.DeviceGroup{}, false, nil
 }
 
-func (s *networkRuntimeTestDevices) SaveDeviceGroup(context.Context, model.DeviceGroup) error { return nil }
-func (s *networkRuntimeTestDevices) DeleteDeviceGroup(context.Context, string) error           { return nil }
+func (s *networkRuntimeTestDevices) SaveDeviceGroup(context.Context, model.DeviceGroup) error {
+	return nil
+}
+func (s *networkRuntimeTestDevices) DeleteDeviceGroup(context.Context, string) error { return nil }
 func (s *networkRuntimeTestDevices) SetDeviceGroups(context.Context, model.DeviceGroupAssignment) error {
 	return nil
 }
@@ -251,7 +289,7 @@ func (s *networkRuntimeTestOps) GetRelayNode(_ context.Context, nodeID string) (
 }
 
 func (s *networkRuntimeTestOps) SaveRelayNode(context.Context, model.RelayNode) error { return nil }
-func (s *networkRuntimeTestOps) DeleteRelayNode(context.Context, string) error         { return nil }
+func (s *networkRuntimeTestOps) DeleteRelayNode(context.Context, string) error        { return nil }
 func (s *networkRuntimeTestOps) ListPunchNodes(context.Context) ([]model.PunchNode, error) {
 	return nil, nil
 }
@@ -261,7 +299,7 @@ func (s *networkRuntimeTestOps) GetPunchNode(context.Context, string) (model.Pun
 }
 
 func (s *networkRuntimeTestOps) SavePunchNode(context.Context, model.PunchNode) error { return nil }
-func (s *networkRuntimeTestOps) DeletePunchNode(context.Context, string) error         { return nil }
+func (s *networkRuntimeTestOps) DeletePunchNode(context.Context, string) error        { return nil }
 func (s *networkRuntimeTestOps) GetCustomerPlan(context.Context, string) (string, bool, error) {
 	return "", false, nil
 }
@@ -280,7 +318,7 @@ func (s *networkRuntimeTestOps) SaveClientDownload(context.Context, model.Client
 }
 
 func (s *networkRuntimeTestOps) DeleteClientDownload(context.Context, string) error { return nil }
-func (s *networkRuntimeTestOps) ListPlans(context.Context) ([]model.Plan, error)     { return nil, nil }
+func (s *networkRuntimeTestOps) ListPlans(context.Context) ([]model.Plan, error)    { return nil, nil }
 
 func (s *networkRuntimeTestOps) GetPlan(context.Context, string) (model.Plan, bool, error) {
 	return model.Plan{}, false, nil
@@ -314,7 +352,7 @@ func (s *networkRuntimeTestOps) GetRenewal(context.Context, string) (model.Renew
 }
 
 func (s *networkRuntimeTestOps) SaveRenewal(context.Context, model.Renewal) error { return nil }
-func (s *networkRuntimeTestOps) DeleteRenewal(context.Context, string) error       { return nil }
+func (s *networkRuntimeTestOps) DeleteRenewal(context.Context, string) error      { return nil }
 
 var _ repository.NetworkRepository = (*networkRuntimeTestNetworks)(nil)
 var _ repository.DeviceRepository = (*networkRuntimeTestDevices)(nil)
@@ -345,6 +383,9 @@ func TestIssueRelayTicketRejectsBroadIngressDeny(t *testing.T) {
 }
 
 func TestIssueRelayTicketAllowsPortScopedDeny(t *testing.T) {
+	t.Setenv("SLAN_RELAY_TICKET_SECRET", "relay-secret-current")
+	t.Setenv("SLAN_WIRE_TICKET_SECRET", "relay-secret-legacy")
+	t.Setenv("SLAN_WIRE_TICKET_SECRETS", "relay-secret-ring,relay-secret-old")
 	service := newNetworkRuntimeTestService([]model.SecurityRule{{
 		RuleID:          "sgr-1",
 		SecurityGroupID: "sg-1",
@@ -369,6 +410,80 @@ func TestIssueRelayTicketAllowsPortScopedDeny(t *testing.T) {
 	if view.TicketID == "" || view.RelayURL == "" {
 		t.Fatalf("IssueRelayTicket returned incomplete relay ticket: %+v", view)
 	}
+	payload := strings.Join([]string{
+		view.TicketID,
+		view.NetworkID,
+		view.SessionID,
+		view.SrcNodeID,
+		view.DstNodeID,
+		view.ExpiresAt,
+	}, "|")
+	mac := hmac.New(sha256.New, []byte("relay-secret-current"))
+	_, _ = mac.Write([]byte(payload))
+	want := hex.EncodeToString(mac.Sum(nil))
+	if view.Signature != want {
+		t.Fatalf("IssueRelayTicket returned wrong signature: got=%q want=%q", view.Signature, want)
+	}
+}
+
+func TestIssueRelayTicketReusesStableSessionForSameNodePair(t *testing.T) {
+	service := newNetworkRuntimeTestService(nil)
+
+	forward, err := service.IssueRelayTicket(context.Background(), IssueRelayTicketInput{
+		NetworkID: "net-1",
+		SrcNodeID: "node-src",
+		DstNodeID: "node-dst",
+		Reason:    "forward",
+	})
+	if err != nil {
+		t.Fatalf("forward IssueRelayTicket returned error: %v", err)
+	}
+
+	reverse, err := service.IssueRelayTicket(context.Background(), IssueRelayTicketInput{
+		NetworkID: "net-1",
+		SrcNodeID: "node-dst",
+		DstNodeID: "node-src",
+		Reason:    "reverse",
+	})
+	if err != nil {
+		t.Fatalf("reverse IssueRelayTicket returned error: %v", err)
+	}
+
+	if forward.SessionID == "" || reverse.SessionID == "" {
+		t.Fatalf("expected non-empty session IDs, got forward=%q reverse=%q", forward.SessionID, reverse.SessionID)
+	}
+	if forward.SessionID != reverse.SessionID {
+		t.Fatalf("expected same relay session for same node pair, got forward=%q reverse=%q", forward.SessionID, reverse.SessionID)
+	}
+	if forward.RelayURL != reverse.RelayURL {
+		t.Fatalf("expected stable relay target, got forward=%q reverse=%q", forward.RelayURL, reverse.RelayURL)
+	}
+}
+
+func TestCreatePunchConnectSessionRejectsMissingPeerMembership(t *testing.T) {
+	service := newNetworkRuntimeTestService(nil)
+	_, err := service.CreatePunchConnectSession(context.Background(), CreatePunchConnectSessionInput{
+		NetworkID:       "net-1",
+		RequesterNodeID: "node-src",
+		PeerNodeID:      "node-missing",
+		TTLSeconds:      30,
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestCreatePunchConnectSessionRejectsMissingRequesterMembership(t *testing.T) {
+	service := newNetworkRuntimeTestService(nil)
+	_, err := service.CreatePunchConnectSession(context.Background(), CreatePunchConnectSessionInput{
+		NetworkID:       "net-1",
+		RequesterNodeID: "node-missing",
+		PeerNodeID:      "node-dst",
+		TTLSeconds:      30,
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
 }
 
 func newNetworkRuntimeTestService(rules []model.SecurityRule) NetworkRuntimeService {
@@ -385,14 +500,14 @@ func newNetworkRuntimeTestService(rules []model.SecurityRule) NetworkRuntimeServ
 				"net-1": {
 					NetworkID: "net-1",
 					Name:      "Default",
-					CIDR:      "100.64.0.0/24",
+					CIDR:      "10.0.0.0/24",
 					Status:    "active",
 				},
 			},
 			networkDevices: map[string][]model.NetworkDevice{
 				"net-1": {
-					{NetworkID: "net-1", DeviceID: "src", Enabled: true, Status: "active"},
-					{NetworkID: "net-1", DeviceID: "dst", Enabled: true, Status: "active"},
+					{NetworkID: "net-1", DeviceID: "src", Enabled: true, MemberStatus: model.NetworkMemberStatusActive, PresenceStatus: model.DevicePresenceStatusOffline},
+					{NetworkID: "net-1", DeviceID: "dst", Enabled: true, MemberStatus: model.NetworkMemberStatusActive, PresenceStatus: model.DevicePresenceStatusOffline},
 				},
 			},
 			securityGroups: map[string]model.SecurityGroup{

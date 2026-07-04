@@ -49,6 +49,15 @@ pub(crate) struct PersistedSession {
     pub(crate) authenticated_at_ms: u64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PendingConsoleLogin {
+    pub(crate) base_url: Option<String>,
+    pub(crate) email: String,
+    pub(crate) password: String,
+    pub(crate) device_name: Option<String>,
+    pub(crate) enable_network: bool,
+}
+
 impl From<PersistedSession> for AuthPayload {
     fn from(session: PersistedSession) -> Self {
         Self {
@@ -285,15 +294,23 @@ fn bootstrap_session_from_env() -> Result<PersistedSession> {
     if let Some(base_url) = read_bootstrap_env_value("SLAN_CONTROL_BASE_URL") {
         set_control_base_url_override(&base_url);
     }
-    let session_key = std::env::var("SLAN_SESSION_KEY")
+    let installation_key = std::env::var("SLAN_INSTALLATION_KEY")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("SLAN_SESSION_KEY")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| read_bootstrap_env_value("SLAN_INSTALLATION_KEY"))
         .or_else(|| read_bootstrap_env_value("SLAN_SESSION_KEY"))
-        .context("missing SLAN_SESSION_KEY")?;
+        .context("missing SLAN_INSTALLATION_KEY")?;
     let client = ControlPlaneClient::from_env();
-    let response = client.bootstrap_device_session(&session_key)?;
+    let response = client.bootstrap_device_session(&installation_key)?;
     let mut session = persisted_session_from_device_session(response);
+    backfill_desktop_session_mqtt(&client, &mut session);
     refresh_session_network_from_device_configs(&client, &mut session);
     ensure_session_node_binding(&client, &mut session)?;
     persist_session(&session)?;
@@ -308,9 +325,16 @@ fn renew_device_session(session: PersistedSession) -> Result<PersistedSession> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .is_some();
-    let response = client.renew_device_session(&session.access_token, network_enabled, 0, 0)?;
+    let response = client.renew_device_session(
+        &session.access_token,
+        session.device_refresh_token.as_deref(),
+        network_enabled,
+        0,
+        0,
+    )?;
     let mut renewed = persisted_session_from_device_session(response);
     renewed.user_label = default_string(&session.user_label, &renewed.user_label);
+    backfill_desktop_session_mqtt(&client, &mut renewed);
     refresh_session_network_from_device_configs(&client, &mut renewed);
     ensure_session_node_binding(&client, &mut renewed)?;
     persist_session(&renewed)?;
@@ -386,6 +410,7 @@ pub(crate) fn ensure_session_device_registered(
     let client = ControlPlaneClient::from_env();
     if session.session_kind == "device" {
         ensure_bound_device_session(&client, &mut session)?;
+        backfill_desktop_session_mqtt(&client, &mut session);
         refresh_session_network_from_device_configs(&client, &mut session);
         ensure_session_node_binding(&client, &mut session)?;
         persist_session(&session)?;
@@ -393,6 +418,7 @@ pub(crate) fn ensure_session_device_registered(
     }
     renew_user_session_if_needed(&client, &mut session)?;
     ensure_bound_device_session(&client, &mut session)?;
+    backfill_desktop_session_mqtt(&client, &mut session);
     refresh_session_network_from_device_configs(&client, &mut session);
     ensure_session_node_binding(&client, &mut session)?;
     persist_session(&session)?;
@@ -403,6 +429,7 @@ pub(crate) fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result
     let client = ControlPlaneClient::from_env();
     let mut session = PersistedSession::from(payload);
     bind_session_device_session(&client, &mut session)?;
+    backfill_desktop_session_mqtt(&client, &mut session);
     refresh_session_network_from_device_configs(&client, &mut session);
     ensure_session_node_binding(&client, &mut session)?;
     Ok(session)
@@ -430,6 +457,7 @@ fn renew_user_session_if_needed(
     }
     let payload = client.renew_user_session(
         &session.access_token,
+        session.refresh_token.as_deref(),
         session.device_id.as_deref(),
         &session.user_label,
     )?;
@@ -487,7 +515,13 @@ fn renew_bound_device_session(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .is_some();
-    let response = client.renew_device_session(&device_token, network_enabled, 0, 0)?;
+    let response = client.renew_device_session(
+        &device_token,
+        session.device_refresh_token.as_deref(),
+        network_enabled,
+        0,
+        0,
+    )?;
     let relay_candidates = relay_candidates_from_device_session_response(
         &response,
         session.active_network_id.as_deref(),
@@ -574,6 +608,47 @@ fn mqtt_from_device_session_response(response: &DeviceSessionResponse) -> Option
         .or_else(|| response.mqtt.clone())
         .or_else(|| response.device.mqtt.clone())
         .map(normalize_mqtt_credential)
+}
+
+fn should_backfill_desktop_session_mqtt(session: &PersistedSession) -> bool {
+    cfg!(any(
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "linux"
+    )) && session.mqtt.is_none()
+        && session
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+}
+
+fn backfill_desktop_session_mqtt(client: &ControlPlaneClient, session: &mut PersistedSession) {
+    if !should_backfill_desktop_session_mqtt(session) {
+        return;
+    }
+    let Some(device_id) = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    match client.prepare_device_login(device_id, std::env::consts::OS) {
+        Ok(prepared) => {
+            if let Some(mqtt) = prepared.mqtt.map(normalize_mqtt_credential) {
+                session.mqtt = Some(mqtt);
+            }
+        }
+        Err(error) => {
+            eprintln!(
+                "client-core-service desktop mqtt backfill skipped device={} error={error:#}",
+                device_id
+            );
+        }
+    }
 }
 
 fn relay_candidates_from_device_session_response(
@@ -757,11 +832,34 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
         return;
     };
     let _ = (device_id, network_id);
-    let _ = client.renew_device_session(device_token, state.network_enabled, 0, 0);
+    let _ = client.renew_device_session(
+        device_token,
+        session.device_refresh_token.as_deref(),
+        state.network_enabled,
+        0,
+        0,
+    );
 }
 
 pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device: &ControlDevice) {
-    session.device_id = Some(device.device_id.clone());
+    let device_id = device.device_id.trim();
+    if !device_id.is_empty() {
+        if session.device_id.as_deref().map(str::trim) != Some(device_id)
+            && session
+                .device_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some()
+        {
+            eprintln!(
+                "client-core-service updating session device identity local={} remote={}",
+                session.device_id.as_deref().unwrap_or_default(),
+                device_id,
+            );
+        }
+        session.device_id = Some(device_id.to_string());
+    }
     if session.active_network_id.is_none() {
         if let Some(network_id) = device
             .active_network_id
@@ -782,23 +880,106 @@ fn session_file_path() -> PathBuf {
     base.join("SLAN").join("client-v2-session.json")
 }
 
-fn bootstrap_env_path() -> PathBuf {
+fn bootstrap_env_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if cfg!(any(target_os = "macos", target_os = "linux")) {
+        paths.push(PathBuf::from("/etc/slan/bootstrap.env"));
+    }
     let base = app_data_dir();
-    base.join("SLAN").join("bootstrap.env")
+    paths.push(base.join("SLAN").join("bootstrap.env"));
+    paths
+}
+
+fn console_env_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if cfg!(any(target_os = "macos", target_os = "linux")) {
+        paths.push(PathBuf::from("/etc/slan/client-v2-console.env"));
+    }
+    let base = app_data_dir();
+    if cfg!(target_os = "windows") {
+        paths.push(base.join("SLAN").join("client-v2-console.env"));
+    } else {
+        paths.push(base.join("SLAN").join("client-v2-console.env"));
+    }
+    paths
+}
+
+fn read_env_value_from_paths(paths: &[PathBuf], key: &str) -> Option<String> {
+    for path in paths {
+        let Ok(payload) = fs::read_to_string(path) else {
+            continue;
+        };
+        if let Some(value) = payload.lines().find_map(|line| {
+            let (name, value) = line.split_once('=')?;
+            if name.trim() == key {
+                let value = value.trim().trim_matches('"').trim_matches('\'');
+                return Some(value.to_string());
+            }
+            None
+        }) {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn read_bootstrap_env_value(key: &str) -> Option<String> {
-    let payload = fs::read_to_string(bootstrap_env_path()).ok()?;
-    payload.lines().find_map(|line| {
-        let (name, value) = line.split_once('=')?;
-        if name.trim() == key {
-            let value = value.trim().trim_matches('"').trim_matches('\'');
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
+    read_env_value_from_paths(&bootstrap_env_paths(), key).and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
         }
-        None
     })
+}
+
+fn read_console_env_value(key: &str) -> Option<String> {
+    read_env_value_from_paths(&console_env_paths(), key)
+}
+
+fn parse_env_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+pub(crate) fn load_pending_console_login() -> Option<PendingConsoleLogin> {
+    let email = read_console_env_value("SLAN_PENDING_EMAIL")?
+        .trim()
+        .to_string();
+    let password = read_console_env_value("SLAN_PENDING_PASSWORD")?
+        .trim()
+        .to_string();
+    if email.is_empty() || password.is_empty() {
+        return None;
+    }
+    let base_url = read_console_env_value("SLAN_CONTROL_BASE_URL")
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty());
+    let device_name = read_console_env_value("SLAN_PENDING_DEVICE_NAME")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let enable_network = read_console_env_value("SLAN_PENDING_ENABLE_NETWORK")
+        .map(|value| parse_env_bool(&value))
+        .unwrap_or(false);
+    Some(PendingConsoleLogin {
+        base_url,
+        email,
+        password,
+        device_name,
+        enable_network,
+    })
+}
+
+pub(crate) fn clear_pending_console_login() -> Result<()> {
+    for path in console_env_paths() {
+        if path.exists() {
+            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn default_string(value: &str, fallback: &str) -> String {
@@ -855,7 +1036,30 @@ pub(crate) fn persist_session(session: &PersistedSession) -> Result<()> {
     session.relay_candidates.clear();
     normalize_session_mqtt_topic_prefix(&mut session);
     let payload = serde_json::to_vec_pretty(&session).context("encode client session")?;
-    fs::write(&path, payload).with_context(|| format!("write {}", path.display()))
+    write_file_atomically(&path, &payload)
+}
+
+fn write_file_atomically(path: &std::path::Path, payload: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("atomic write path missing parent directory")?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .context("atomic write path missing file name")?;
+    let temp_path = parent.join(format!(
+        ".{}.tmp-{}-{}",
+        file_name,
+        std::process::id(),
+        current_timestamp_ms()
+    ));
+    fs::write(&temp_path, payload).with_context(|| format!("write {}", temp_path.display()))?;
+    #[cfg(windows)]
+    if path.exists() {
+        fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+    }
+    fs::rename(&temp_path, path)
+        .with_context(|| format!("rename {} -> {}", temp_path.display(), path.display()))
 }
 
 pub(crate) fn revoke_remote_sessions(session: &PersistedSession) {
@@ -1023,5 +1227,31 @@ mod tests {
         assert_eq!(session.relay_candidates.len(), 1);
         assert_eq!(session.relay_candidates[0].endpoint_id, "derp-1");
         assert_eq!(session.relay_candidates[0].address, "47.245.40.231:29120");
+    }
+
+    #[test]
+    fn sync_session_device_fields_updates_existing_local_device_identity() {
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("local-device".to_string());
+
+        sync_session_device_fields(
+            &mut session,
+            &ControlDevice {
+                device_id: "remote-device".to_string(),
+                active_network_id: Some("net-1".to_string()),
+                owner_id: None,
+                owner_email: None,
+                status: None,
+                membership_status: None,
+                current_virtual_ip: None,
+                virtual_ip: None,
+                global_ip: None,
+                global_name: None,
+                mqtt: None,
+            },
+        );
+
+        assert_eq!(session.device_id.as_deref(), Some("remote-device"));
+        assert_eq!(session.active_network_id.as_deref(), Some("net-1"));
     }
 }

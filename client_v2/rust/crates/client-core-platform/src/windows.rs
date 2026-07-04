@@ -3772,7 +3772,7 @@ mod tests {
         assert!(!is_usable_virtual_ip(""));
         assert!(!is_usable_virtual_ip("0.0.0.0"));
         assert!(!is_usable_virtual_ip("169.254.92.148"));
-        assert!(is_usable_virtual_ip("100.64.0.10"));
+        assert!(is_usable_virtual_ip("10.0.0.10"));
     }
 
     #[test]

@@ -10,7 +10,7 @@ import (
 func TestRoutesForSetAppIncludesWireRoutes(t *testing.T) {
 	catalog := routeCatalog{
 		app: []serviceapi.Route{
-			serviceapi.NewRoute(http.MethodGet, "/api/auth/register", nil),
+			serviceapi.NewRoute(http.MethodGet, "/api/app/auth/register", nil),
 		},
 		wire: []serviceapi.Route{
 			serviceapi.NewRoute(http.MethodGet, "/internal/wire/admin/relay-nodes", nil),
@@ -30,7 +30,7 @@ func TestRoutesForSetAppIncludesWireRoutes(t *testing.T) {
 	}
 
 	expect := []string{
-		http.MethodGet + " /api/auth/register",
+		http.MethodGet + " /api/app/auth/register",
 		http.MethodGet + " /internal/wire/admin/relay-nodes",
 		http.MethodPost + " /mqtt/bifromq/auth",
 		http.MethodGet + " /downloads/clients/sample.pkg",
@@ -38,6 +38,24 @@ func TestRoutesForSetAppIncludesWireRoutes(t *testing.T) {
 	for _, key := range expect {
 		if _, ok := keys[key]; !ok {
 			t.Fatalf("missing route %s in app route set", key)
+		}
+	}
+}
+
+func TestRoutesForSetAppSkipsLegacyUnprefixedAppRoutes(t *testing.T) {
+	routes := routesForSet(newRouteCatalog(RouteUseCases{}), RouteSetApp)
+	for _, route := range routes {
+		if route.Path == "/api/auth/register" {
+			t.Fatalf("legacy unprefixed app route leaked into app route set: %s %s", route.Method, route.Path)
+		}
+	}
+}
+
+func TestRoutesForSetWebSkipsLegacyUnprefixedWebRoutes(t *testing.T) {
+	routes := routesForSet(newRouteCatalog(RouteUseCases{}), RouteSetWeb)
+	for _, route := range routes {
+		if route.Path == "/api/auth/login" {
+			t.Fatalf("legacy unprefixed web route leaked into web route set: %s %s", route.Method, route.Path)
 		}
 	}
 }

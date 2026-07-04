@@ -27,7 +27,7 @@ Service host:
 
 Web Console URL:
 
-- Default: `http://127.0.0.1:24200`
+- Default: `http://47.245.40.231:24200`
 - Override: `SLAN_WEB_CONSOLE_URL`
 - Fallback derive source: `SLAN_CONTROL_BASE_URL`
 

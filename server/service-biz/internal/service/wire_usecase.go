@@ -168,7 +168,11 @@ func (s WirePeerService) PeerAuthz(ctx context.Context, peerID string) (WirePeer
 	if err != nil {
 		return WirePeerAuthzView{}, err
 	}
-	return wirePeerAuthzView(peerID, networkID, deviceID), nil
+	device, err := getManagedDevice(ctx, s.Devices, deviceID)
+	if err != nil {
+		return WirePeerAuthzView{}, err
+	}
+	return wirePeerAuthzView(peerID, networkID, device), nil
 }
 
 func (s WirePeerService) PeerRuntimeConfig(ctx context.Context, peerID string) (WirePeerRuntimeConfigView, error) {
@@ -176,8 +180,12 @@ func (s WirePeerService) PeerRuntimeConfig(ctx context.Context, peerID string) (
 	if err != nil {
 		return WirePeerRuntimeConfigView{}, err
 	}
+	device, err := getManagedDevice(ctx, s.Devices, deviceID)
+	if err != nil {
+		return WirePeerRuntimeConfigView{}, err
+	}
 	endpoints, membership, _ := peerEndpoints(ctx, s.Networks, networkID, deviceID)
-	return wirePeerRuntimeConfigView(peerID, networkID, deviceID, endpoints, membership), nil
+	return wirePeerRuntimeConfigView(peerID, networkID, device, endpoints, membership), nil
 }
 
 func (s WirePeerService) NetworkTopology(ctx context.Context, networkID string) (WireTopologyView, error) {
@@ -211,7 +219,7 @@ func (s WirePeerService) ReportPeerPathHealth(ctx context.Context, input WirePee
 	}
 	probe := preferredWirePathProbe(input.Probes)
 	for _, item := range items {
-		if item.DeviceID != deviceID || !item.Enabled || item.Status != "active" {
+		if item.DeviceID != deviceID || !networkMemberActive(item) {
 			continue
 		}
 		updated := applyWirePeerPathHealth(item, probe, currentTime(s.Now))

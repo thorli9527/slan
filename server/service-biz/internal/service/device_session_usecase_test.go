@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ func (s *deviceSessionTestUsers) SaveUser(_ context.Context, user model.User) er
 type deviceSessionTestDevices struct {
 	networkRuntimeTestDevices
 	savedSessions []model.DeviceSession
+	nextVirtualIP int
 }
 
 func (s *deviceSessionTestDevices) SaveDevice(_ context.Context, device model.Device) error {
@@ -53,6 +55,11 @@ func (s *deviceSessionTestDevices) SaveDevice(_ context.Context, device model.De
 func (s *deviceSessionTestDevices) SaveDeviceSession(_ context.Context, session model.DeviceSession) error {
 	s.savedSessions = append(s.savedSessions, session)
 	return nil
+}
+
+func (s *deviceSessionTestDevices) NewDeviceVirtualIPID() string {
+	s.nextVirtualIP += 1
+	return fmt.Sprintf("vip-%06d", s.nextVirtualIP)
 }
 
 type deviceSessionTestNetworks struct {
@@ -96,7 +103,7 @@ func TestBindDeviceSessionAutoRegistersMissingDevice(t *testing.T) {
 					NetworkID: "net-1",
 					OwnerID:   "user-1",
 					Name:      "Default",
-					CIDR:      "100.64.0.0/24",
+					CIDR:      "10.0.0.0/24",
 					Default:   true,
 					Status:    "active",
 				},

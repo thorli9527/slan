@@ -25,12 +25,13 @@ func attachDeviceToDefaultNetwork(ctx context.Context, networks repository.Netwo
 		}
 	}
 	return networks.SaveNetworkDevice(ctx, model.NetworkDevice{
-		NetworkID: target.NetworkID,
-		DeviceID:  deviceID,
-		Enabled:   true,
-		Status:    "active",
-		CreatedAt: now,
-		UpdatedAt: now,
+		NetworkID:      target.NetworkID,
+		DeviceID:       deviceID,
+		Enabled:        true,
+		MemberStatus:   model.NetworkMemberStatusActive,
+		PresenceStatus: model.DevicePresenceStatusOffline,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	})
 }
 
@@ -56,9 +57,18 @@ func registerManagedDevice(ctx context.Context, users repository.UserRepository,
 	if deviceID == "" {
 		deviceID = newManagedDeviceID(newID)
 	}
+	existing, exists, err := devices.GetDevice(ctx, deviceID)
+	if err != nil {
+		return model.Device{}, err
+	}
+	virtualIP := strings.TrimSpace(existing.VirtualIP)
+	if virtualIP == "" {
+		virtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(devices))
+	}
 	device := model.Device{
 		DeviceID:      deviceID,
 		OwnerID:       input.OwnerID,
+		VirtualIP:     virtualIP,
 		Name:          input.Name,
 		Platform:      input.Platform,
 		Alias:         input.Alias,
@@ -70,6 +80,15 @@ func registerManagedDevice(ctx context.Context, users repository.UserRepository,
 		Status:        "active",
 		CreatedAt:     now,
 		UpdatedAt:     now,
+	}
+	if exists {
+		device.CreatedAt = existing.CreatedAt
+		if device.CreatedAt == 0 {
+			device.CreatedAt = now
+		}
+		device.RXBytesTotal = existing.RXBytesTotal
+		device.TXBytesTotal = existing.TXBytesTotal
+		device.LastSeenAt = existing.LastSeenAt
 	}
 	if err := devices.SaveDevice(ctx, device); err != nil {
 		return model.Device{}, err

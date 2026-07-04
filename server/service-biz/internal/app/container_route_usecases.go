@@ -21,6 +21,7 @@ type AppRouteUseCases struct {
 	Devices             servicepkg.DeviceCoreUseCase
 	DeviceBootstrap     servicepkg.DeviceBootstrapUseCase
 	DeviceSessions      servicepkg.DeviceSessionUseCase
+	ClientMessages      servicepkg.ClientMessageUseCase
 	NetworkCore         servicepkg.NetworkCoreUseCase
 	NetworkRuntime      servicepkg.NetworkRuntimeUseCase
 }
@@ -28,6 +29,7 @@ type AppRouteUseCases struct {
 type WebRouteUseCases struct {
 	AuthRegistration    servicepkg.AuthUserRegistrationUseCase
 	AuthSessions        servicepkg.AuthUserSessionUseCase
+	UserTokens          servicepkg.UserTokenManagementUseCase
 	UserAccounts        servicepkg.AuthUserAccountUseCase
 	UserEntitlements    servicepkg.AuthUserEntitlementUseCase
 	AuthAlias           servicepkg.AuthAliasUseCase
@@ -36,6 +38,7 @@ type WebRouteUseCases struct {
 	DeviceLoginPrepare  servicepkg.AuthDeviceLoginPrepareUseCase
 	DeviceLoginComplete servicepkg.AuthDeviceLoginCompleteUseCase
 	Devices             servicepkg.DeviceCoreUseCase
+	DeviceTokens        servicepkg.DeviceTokenManagementUseCase
 	DeviceBootstrap     servicepkg.DeviceBootstrapUseCase
 	DeviceGroups        servicepkg.DeviceGroupUseCase
 	NetworkCore         servicepkg.NetworkCoreUseCase
@@ -72,12 +75,14 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			Devices:             useCases.Devices.DeviceManagement,
 			DeviceBootstrap:     useCases.Devices.BootstrapAuth,
 			DeviceSessions:      useCases.Devices.SessionRuntime,
+			ClientMessages:      useCases.Devices.ClientMessages,
 			NetworkCore:         useCases.Network.CoreAccess,
 			NetworkRuntime:      useCases.Network.RuntimeControl,
 		},
 		Web: WebRouteUseCases{
 			AuthRegistration:    useCases.Auth.UserRegistration,
 			AuthSessions:        useCases.Auth.UserSessions,
+			UserTokens:          useCases.Auth.UserTokens,
 			UserAccounts:        useCases.Auth.UserAccounts,
 			UserEntitlements:    useCases.Auth.UserEntitlements,
 			AuthAlias:           useCases.Auth.Aliases,
@@ -86,6 +91,7 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			DeviceLoginPrepare:  useCases.Auth.DeviceLoginPrepare,
 			DeviceLoginComplete: useCases.Auth.DeviceLoginComplete,
 			Devices:             useCases.Devices.DeviceManagement,
+			DeviceTokens:        useCases.Devices.TokenManagement,
 			DeviceBootstrap:     useCases.Devices.BootstrapAuth,
 			DeviceGroups:        useCases.Devices.GroupManagement,
 			NetworkCore:         useCases.Network.CoreAccess,

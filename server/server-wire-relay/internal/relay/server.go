@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,7 +100,14 @@ func (s *UDPServer) servePackets() error {
 		if err != nil {
 			return err
 		}
+		log.Printf(
+			"wire relay datagram remote=%s bytes=%d head=%s",
+			addr.String(),
+			n,
+			datagramHead(buf[:n]),
+		)
 		if err := s.handlePacket(addr, buf[:n]); err != nil {
+			log.Printf("wire relay request failed remote=%s err=%v", addr.String(), err)
 			_ = s.write(addr, protocol.ServerMessage{
 				Kind: "error",
 				Error: &protocol.ErrorResponse{
@@ -202,6 +210,17 @@ func relayTicketKeyStatus() bizclient.TicketKeyStatus {
 	}
 }
 
+func datagramHead(payload []byte) string {
+	if len(payload) == 0 {
+		return "empty"
+	}
+	limit := len(payload)
+	if limit > 24 {
+		limit = 24
+	}
+	return hex.EncodeToString(payload[:limit])
+}
+
 func (s *UDPServer) handlePacket(addr *net.UDPAddr, payload []byte) error {
 	return s.handlePacketWithWriter(addr, payload, s.write)
 }
@@ -216,7 +235,13 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 	case "ping":
 		if msg.SessionID != "" && msg.ParticipantID != "" {
 			if err := s.service.RefreshParticipant(addr, msg.SessionID, msg.ParticipantID); err != nil {
-				return err
+				return fmt.Errorf(
+					"refresh remote=%s session=%s participant=%s: %w",
+					addr.String(),
+					msg.SessionID,
+					msg.ParticipantID,
+					err,
+				)
 			}
 		}
 		return writer(addr, protocol.ServerMessage{Kind: "pong"})
@@ -226,7 +251,14 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 		}
 		peerID, err := s.service.Attach(addr, msg.ParticipantID, *msg.Ticket, msg.Transport)
 		if err != nil {
-			return err
+			return fmt.Errorf(
+				"attach remote=%s participant=%s session=%s transport=%s: %w",
+				addr.String(),
+				msg.ParticipantID,
+				msg.Ticket.SessionID,
+				msg.Transport,
+				err,
+			)
 		}
 		return writer(addr, protocol.ServerMessage{
 			Kind:              "attached",
@@ -237,7 +269,14 @@ func (s *UDPServer) handlePacketWithWriter(addr *net.UDPAddr, payload []byte, wr
 	case "forward":
 		peerAddr, peerID, err := s.service.Forward(addr, msg.SessionID, msg.ParticipantID, msg.Payload)
 		if err != nil {
-			return err
+			return fmt.Errorf(
+				"forward remote=%s session=%s participant=%s payloadBytes=%d: %w",
+				addr.String(),
+				msg.SessionID,
+				msg.ParticipantID,
+				len(msg.Payload),
+				err,
+			)
 		}
 		if err := writer(peerAddr, protocol.ServerMessage{
 			Kind:          "packet",
@@ -275,6 +314,16 @@ func (s *UDPServer) write(addr *net.UDPAddr, body protocol.ServerMessage) error 
 	if err != nil {
 		return err
 	}
+	log.Printf(
+		"wire relay write remote=%s kind=%s session=%s participant=%s payloadBytes=%d bytes=%d head=%s",
+		addr.String(),
+		body.Kind,
+		body.SessionID,
+		body.ParticipantID,
+		len(body.Payload),
+		len(payload),
+		datagramHead(payload),
+	)
 	_, err = s.conn.WriteToUDP(payload, addr)
 	return err
 }

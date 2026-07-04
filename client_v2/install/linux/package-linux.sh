@@ -108,7 +108,7 @@ rm -f "$tar_path" "$deb_path"
 mkdir -p "$root_dir$SLAN_LINUX_INSTALL_ROOT/bin"
 mkdir -p "$root_dir$SLAN_LINUX_LIB_DIR"
 mkdir -p "$root_dir$SLAN_LINUX_CONFIG_DIR"
-mkdir -p "$root_dir/lib/systemd/system"
+mkdir -p "$root_dir/usr/lib/systemd/system"
 mkdir -p "$root_dir/usr/bin"
 mkdir -p "$output_dir"
 

@@ -425,7 +425,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       return;
     }
     this.bootstrapNetworkId = network.workspaceId;
-    this.bootstrapSessionKey = '';
+    this.bootstrapInstallationKey = '';
     this.bootstrapQrDataUrl = '';
     this.bootstrapInstallCommand = '';
     this.bootstrapMessage = '';
@@ -436,7 +436,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
         networkId: network.networkId,
         ttlSeconds: this.bootstrapTTLSeconds,
       });
-      this.bootstrapSessionKey = key.key || '';
+      this.bootstrapInstallationKey = key.installationKey || key.token || key.key || '';
       this.deviceBootstrapKeys = [
         key,
         ...this.deviceBootstrapKeys.filter((item) => item.id !== key.id),
@@ -449,11 +449,12 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
         return;
       }
       const now = Math.floor(Date.now() / 1000);
-      this.bootstrapSessionKey = `sk_${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
+      this.bootstrapInstallationKey = `ik_${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
       this.deviceBootstrapKeys = [
         {
           id: compactUuid(),
-          key: this.bootstrapSessionKey,
+          key: this.bootstrapInstallationKey,
+          installationKey: this.bootstrapInstallationKey,
           createdByUserId: this.effectiveUserId,
           networkId: network.networkId,
           expiresAt: now + this.bootstrapTTLSeconds,
@@ -464,7 +465,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       ];
     }
     const server = window.location.origin.replace(/^https?:\/\/web\./, 'http://api.');
-    this.bootstrapInstallCommand = `curl -fsSL ${server}/downloads/clients/install.sh | sudo bash -s -- --server ${server} --session-key ${this.bootstrapSessionKey}`;
+    this.bootstrapInstallCommand = `curl -fsSL ${server}/downloads/clients/install.sh | sudo bash -s -- --server ${server} --installation-key ${this.bootstrapInstallationKey}`;
     this.bootstrapQrDataUrl = await QRCode.toDataURL(this.bootstrapInstallCommand, {
       errorCorrectionLevel: 'M',
       margin: 2,

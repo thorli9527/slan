@@ -15,8 +15,8 @@ type AuthDeviceLoginHandler struct {
 
 func (h AuthDeviceLoginHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
-		serviceapi.NewRoute(http.MethodPost, "/api/auth/device-login-devices", h.PrepareDeviceLoginDevice),
-		serviceapi.NewRoute(http.MethodPost, "/api/auth/device-login-devices/{deviceId}/complete", h.CompleteDeviceLoginDevice),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/auth/device-login-devices", h.PrepareDeviceLoginDevice),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/auth/device-login-devices/{deviceId}/complete", h.CompleteDeviceLoginDevice),
 	}
 }
 

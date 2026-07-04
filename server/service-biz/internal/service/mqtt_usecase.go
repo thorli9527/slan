@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -37,7 +38,19 @@ func (s MQTTWebhookService) CheckACL(ctx context.Context, input MQTTCheckInput) 
 	deviceID := input.DeviceID
 	userID := input.UserID
 	if principal == "" {
-		if userID == mqttkit.ServerID {
+		if inferredDeviceID, inferredPrincipal := inferMQTTACLIdentity(s.Config, input.ClientID, input.Username, currentTime(s.Now)); inferredPrincipal != "" {
+			principal = inferredPrincipal
+			if deviceID == "" {
+				deviceID = inferredDeviceID
+			}
+			if userID == "" {
+				if inferredPrincipal == "server" {
+					userID = mqttkit.ServerID
+				} else {
+					userID = inferredDeviceID
+				}
+			}
+		} else if userID == mqttkit.ServerID {
 			principal = "server"
 		} else if userID != "" {
 			principal = "device"
@@ -52,32 +65,101 @@ func (s MQTTWebhookService) CheckACL(ctx context.Context, input MQTTCheckInput) 
 		}
 		allowed = false
 		for _, item := range items {
-			if item.DeviceID == deviceID && item.Enabled && item.Status == "active" {
+			if item.DeviceID == deviceID && networkMemberActive(item) {
 				allowed = true
 				break
 			}
 		}
 	}
+	if principal == "device" &&
+		mqttkit.IsNetworkTopic(s.Config, input.Topic) &&
+		!input.Subscribe &&
+		!input.Connect {
+		fmt.Printf(
+			"mqtt device publish network topic deviceId=%s userId=%s topic=%s allowed=%t\n",
+			deviceID,
+			userID,
+			input.Topic,
+			allowed,
+		)
+	}
+	if mqttkit.IsNetworkTopic(s.Config, input.Topic) {
+		fmt.Printf(
+			"mqtt network acl principal=%s deviceId=%s userId=%s topic=%s subscribe=%t connect=%t allowed=%t\n",
+			principal,
+			deviceID,
+			userID,
+			input.Topic,
+			input.Subscribe,
+			input.Connect,
+			allowed,
+		)
+	}
 	return allowed, nil
+}
+
+func inferMQTTACLIdentity(cfg mqttkit.Config, clientID, username string, now time.Time) (string, string) {
+	clientID = strings.TrimSpace(clientID)
+	username = strings.TrimSpace(username)
+	if deviceID, expiresAt, ok := mqttkit.ParseDeviceUsername(cfg, username); ok && expiresAt >= now.Unix() {
+		baseClientID := mqttkit.DeviceClientID(cfg, deviceID)
+		if clientID == baseClientID || strings.HasPrefix(clientID, baseClientID+"-") {
+			return deviceID, "device"
+		}
+	}
+	if expiresAt, ok := mqttkit.ParseSystemUsername(cfg, username, mqttkit.ServerID); ok && expiresAt >= now.Unix() {
+		baseClientID := mqttkit.DeviceClientID(cfg, mqttkit.ServerID)
+		if clientID == baseClientID || strings.HasPrefix(clientID, baseClientID+"-") {
+			return "", "server"
+		}
+	}
+	return "", ""
 }
 
 func (s MQTTWebhookService) ReportEndpoint(ctx context.Context, input MQTTEndpointReportInput) (bool, error) {
 	input = normalizeMQTTEndpointReportInput(input)
 	if input.NetworkID == "" || input.DeviceID == "" {
+		log.Printf(
+			"mqtt endpoint report rejected invalid argument networkId=%q deviceId=%q nodeId=%q endpoints=%#v",
+			input.NetworkID,
+			input.DeviceID,
+			input.NodeID,
+			input.Endpoints,
+		)
 		return false, ErrInvalidArgument
 	}
 	if input.NodeID != "" && input.NodeID != "node-"+input.DeviceID {
+		log.Printf(
+			"mqtt endpoint report rejected node mismatch networkId=%s deviceId=%s nodeId=%s",
+			input.NetworkID,
+			input.DeviceID,
+			input.NodeID,
+		)
 		return false, ErrInvalidArgument
 	}
 	items, err := s.Networks.ListNetworkDevices(ctx, input.NetworkID)
 	if err != nil {
+		log.Printf(
+			"mqtt endpoint report list memberships failed networkId=%s deviceId=%s err=%v",
+			input.NetworkID,
+			input.DeviceID,
+			err,
+		)
 		return false, err
 	}
 	for _, item := range items {
 		if item.DeviceID != input.DeviceID {
 			continue
 		}
-		if !item.Enabled || item.Status != "active" {
+		if !networkMemberActive(item) {
+			log.Printf(
+				"mqtt endpoint report ignored inactive member networkId=%s deviceId=%s enabled=%t memberStatus=%s endpoints=%#v",
+				input.NetworkID,
+				input.DeviceID,
+				item.Enabled,
+				item.MemberStatus,
+				item.Endpoints,
+			)
 			return false, ErrNotFound
 		}
 		updated := item
@@ -85,10 +167,32 @@ func (s MQTTWebhookService) ReportEndpoint(ctx context.Context, input MQTTEndpoi
 		updated.NATType = input.NATType
 		updated.UpdatedAt = currentTime(s.Now).Unix()
 		if err := s.Networks.SaveNetworkDevice(ctx, updated); err != nil {
+			log.Printf(
+				"mqtt endpoint report save failed networkId=%s deviceId=%s endpoints=%#v err=%v",
+				input.NetworkID,
+				input.DeviceID,
+				input.Endpoints,
+				err,
+			)
 			return false, err
 		}
-		return deviceEndpointsChanged(item.Endpoints, updated.Endpoints), nil
+		changed := deviceEndpointsChanged(item.Endpoints, updated.Endpoints)
+		log.Printf(
+			"mqtt endpoint report saved networkId=%s deviceId=%s changed=%t previous=%#v next=%#v",
+			input.NetworkID,
+			input.DeviceID,
+			changed,
+			item.Endpoints,
+			updated.Endpoints,
+		)
+		return changed, nil
 	}
+	log.Printf(
+		"mqtt endpoint report membership not found networkId=%s deviceId=%s nodeId=%s",
+		input.NetworkID,
+		input.DeviceID,
+		input.NodeID,
+	)
 	return false, ErrNotFound
 }
 
@@ -155,7 +259,7 @@ func (s MQTTWebhookService) ReportPathHealth(ctx context.Context, input MQTTPath
 	}
 	member := false
 	for _, item := range items {
-		if item.DeviceID == input.DeviceID && item.Enabled && item.Status == "active" {
+		if item.DeviceID == input.DeviceID && networkMemberActive(item) {
 			updated := item
 			updated.ActivePath = pathType
 			updated.PathObservedAt = input.SampledAtMs

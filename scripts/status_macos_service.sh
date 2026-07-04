@@ -4,7 +4,8 @@ set -euo pipefail
 LABEL="dev.slan.client-core-service"
 INSTALL_DIR="/Library/Application Support/SLAN"
 LOG_DIR="/Library/Logs/SLAN"
-PLIST="/Library/LaunchDaemons/${LABEL}.plist"
+PLIST_SYSTEM="/Library/LaunchDaemons/${LABEL}.plist"
+PLIST_AGENT="/Library/LaunchAgents/${LABEL}.plist"
 SERVICE_BIN="${INSTALL_DIR}/client-core-service"
 
 service_info() {
@@ -35,11 +36,17 @@ service_info() {
 }
 
 echo "label: $LABEL"
-echo "plist: $PLIST"
-if [[ -f "$PLIST" ]]; then
-  echo "plistExists: true"
+echo "systemPlist: $PLIST_SYSTEM"
+echo "agentPlist: $PLIST_AGENT"
+if [[ -f "$PLIST_SYSTEM" ]]; then
+  echo "systemPlistExists: true"
 else
-  echo "plistExists: false"
+  echo "systemPlistExists: false"
+fi
+if [[ -f "$PLIST_AGENT" ]]; then
+  echo "agentPlistExists: true"
+else
+  echo "agentPlistExists: false"
 fi
 
 echo "binary: $SERVICE_BIN"
@@ -54,19 +61,26 @@ fi
 echo "stateDir: $INSTALL_DIR"
 echo "logDir: $LOG_DIR"
 
-if launchctl print "system/${LABEL}" >/tmp/slan-launchd-status.$$ 2>&1; then
-  echo "launchdLoaded: true"
-  sed -n '1,80p' /tmp/slan-launchd-status.$$
-  if awk '/^[[:space:]]*pid = / { found=1; print "launchdPid: "$3 } END { exit found ? 0 : 1 }' /tmp/slan-launchd-status.$$; then
-    :
-  else
-    echo "launchdPid:"
-  fi
+if launchctl print "system/${LABEL}" >/tmp/slan-launchd-system-status.$$ 2>&1; then
+  echo "systemLaunchdLoaded: true"
+  sed -n '1,80p' /tmp/slan-launchd-system-status.$$
 else
-  echo "launchdLoaded: false"
-  cat /tmp/slan-launchd-status.$$ >&2 || true
+  echo "systemLaunchdLoaded: false"
 fi
-rm -f /tmp/slan-launchd-status.$$
+rm -f /tmp/slan-launchd-system-status.$$
+
+CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo "")"
+if [[ -n "$CONSOLE_UID" && "$CONSOLE_UID" != "0" ]]; then
+  if launchctl print "gui/${CONSOLE_UID}/${LABEL}" >/tmp/slan-launchd-agent-status.$$ 2>&1; then
+    echo "agentLaunchdLoaded: true"
+    sed -n '1,80p' /tmp/slan-launchd-agent-status.$$
+  else
+    echo "agentLaunchdLoaded: false"
+  fi
+  rm -f /tmp/slan-launchd-agent-status.$$
+else
+  echo "agentLaunchdLoaded: skippedNoGuiUser"
+fi
 
 echo "processes:"
 pgrep -fl "client-core-service" 2>/dev/null || echo "processListUnavailableOrEmpty: true"

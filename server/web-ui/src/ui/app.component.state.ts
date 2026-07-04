@@ -27,6 +27,8 @@ import {
 import {
   ApiDevice,
   ApiDeviceBootstrapKey,
+  ApiManagedDeviceSession,
+  ApiManagedUserSession,
   ClientDownload,
   ApiDNSRecord,
   ApiDNSZone,
@@ -84,6 +86,8 @@ export abstract class AppComponentState {
   currentUserId = '';
   currentUserShortCode = '';
   currentSessionToken = '';
+  userSessions: ApiManagedUserSession[] = [];
+  deviceSessionsByDeviceId: Record<string, ApiManagedDeviceSession[]> = {};
   authMessage = '';
   deviceQuota: ApiDeviceQuota | null = null;
 
@@ -134,17 +138,18 @@ export abstract class AppComponentState {
   workspaceRouteMode: 'list' | 'detail' = 'list';
   showWorkspaceDialog = false;
   workspaceDialogMode: 'create' | 'edit' = 'create';
-	  showInviteDialog = false;
-	  workspaceInviteCode = '';
-	  inviteQrDataUrl = '';
-	  showBootstrapDialog = false;
-	  bootstrapSessionKey = '';
-	  bootstrapQrDataUrl = '';
-	  bootstrapInstallCommand = '';
-	  bootstrapMessage = '';
-    bootstrapNetworkId = DEFAULT_NETWORK_ID;
-    bootstrapTTLSeconds = 1800;
-	  showJoinDialog = false;
+  showInviteDialog = false;
+  workspaceInviteCode = '';
+  inviteQrDataUrl = '';
+  showBootstrapDialog = false;
+  bootstrapInstallationKey = '';
+  bootstrapQrDataUrl = '';
+  bootstrapInstallCommand = '';
+  bootstrapMessage = '';
+  currentRefreshToken = '';
+  bootstrapNetworkId = DEFAULT_NETWORK_ID;
+  bootstrapTTLSeconds = 1800;
+  showJoinDialog = false;
   joinInviteCode = '';
   joinInviteMessage = '';
   showDeviceExposureDialog = false;
@@ -302,20 +307,20 @@ export abstract class AppComponentState {
   get ingressSubjectTypes(): Array<{ value: RuleSubjectType; label: string }> {
     return [
       { value: 'device', label: '设备' },
-      { value: 'user', label: '用户' },
+      { value: 'device_group', label: '设备分组' },
+      { value: 'user', label: '指定用户' },
       { value: 'workspace', label: '网络' },
-      { value: 'cidr', label: 'CIDR' },
-      { value: 'all', label: '全部' },
+      { value: 'all', label: '全部设备' },
     ];
   }
 
   get egressSubjectTypes(): Array<{ value: RuleSubjectType; label: string }> {
     return [
       { value: 'device', label: '设备' },
+      { value: 'device_group', label: '设备分组' },
       { value: 'workspace', label: '网络' },
-      { value: 'cidr', label: 'CIDR' },
-      { value: 'domain', label: '域名' },
-      { value: 'all', label: '全部' },
+      { value: 'user', label: '指定用户' },
+      { value: 'all', label: '全部设备' },
     ];
   }
 
@@ -323,6 +328,8 @@ export abstract class AppComponentState {
     switch (this.ruleSubjectType) {
       case 'device':
         return this.visibleDeviceOptions.map((device) => ({ value: device.deviceId, label: `${this.userLabel(device.owner)} / ${device.alias} / ${device.deviceId}` }));
+      case 'device_group':
+        return this.currentDeviceGroups.map((group) => ({ value: group.groupId, label: `${group.name} / ${group.groupId}` }));
       case 'user':
         return this.members.map((member) => ({ value: member.user, label: `${member.alias} / ${this.userLabel(member.user)}` }));
       case 'workspace':
@@ -331,7 +338,7 @@ export abstract class AppComponentState {
           ...this.workspaces.filter((workspace) => workspace.workspaceId !== this.selectedWorkspace.workspaceId).map((workspace) => ({ value: workspace.workspaceId, label: `${workspace.name} / ${workspace.code}` })),
         ];
       case 'all':
-        return [{ value: 'all', label: '全部' }];
+        return [{ value: this.effectiveUserId, label: '全部设备' }];
       default:
         return [];
     }
@@ -344,6 +351,10 @@ export abstract class AppComponentState {
 
   get currentUserDevices(): DeviceRow[] {
     return this.devices;
+  }
+
+  enabledDeviceCount(): number {
+    return this.currentUserDevices.filter((device) => (device.status || '').toLowerCase() === 'active').length;
   }
 
   get currentDeviceGroups(): DeviceGroupRow[] {
@@ -650,8 +661,29 @@ export abstract class AppComponentState {
     return this.joinInviteMessage;
   }
 
+  effectiveInviteStatus(invite: WorkspaceDeviceInviteRow): string {
+    if (invite.status === 'accepted' || invite.status === 'revoked') {
+      return invite.status;
+    }
+    if (invite.expiresAt && invite.expiresAt < Math.floor(Date.now() / 1000)) {
+      return 'expired';
+    }
+    return invite.status || 'pending';
+  }
+
   currentWorkspaceDeviceIds(): string[] {
     return this.workspaceDeviceIdsByWorkspace[this.selectedWorkspaceId] ?? [];
+  }
+
+  dnsRecordValue(record: DNSRow): string {
+    if (record.targetType === 'ip' || record.targetType === 'cname') {
+      return this.displayUserText(record.value || '-');
+    }
+    const device = this.devices.find((item) => item.deviceId === record.deviceId);
+    if (!device) {
+      return this.displayUserText(record.value || '-');
+    }
+    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${record.port || '-'}`;
   }
 
   currentOwnerKeys(): Set<string> {
@@ -714,5 +746,4 @@ export abstract class AppComponentState {
   protected abstract mapSecurityGroup(group: ApiSecurityGroup): SecurityGroupRow;
   protected abstract mapSecurityRule(rule: ApiSecurityRule): SecurityRuleRow;
   abstract isWorkspaceCodeDuplicated(code: string, exceptWorkspaceId?: string): boolean;
-  abstract effectiveInviteStatus(invite: WorkspaceDeviceInviteRow): string;
 }

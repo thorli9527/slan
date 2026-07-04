@@ -15,12 +15,13 @@ type RouteDependencies struct {
 	DeviceCore          servicepkg.DeviceCoreUseCase
 	DeviceBootstrap     servicepkg.DeviceBootstrapUseCase
 	DeviceSession       servicepkg.DeviceSessionUseCase
+	ClientMessages      servicepkg.ClientMessageUseCase
 	NetworkCore         servicepkg.NetworkCoreUseCase
 	NetworkRuntime      servicepkg.NetworkRuntimeUseCase
 }
 
 func Routes(deps RouteDependencies) []serviceapi.Route {
-	return serviceapi.WithAliasPrefix(serviceapi.CombineRoutes(
+	return serviceapi.WithRequiredPrefix(serviceapi.CombineRoutes(
 		authRoutes(deps),
 		deviceRoutes(deps),
 		networkRoutes(deps),
@@ -54,6 +55,7 @@ func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
 			NetworkConfigView: deps.NetworkCore,
 		}.Routes(),
 		DeviceConfigHandler{Devices: deps.DeviceCore, NetworkCore: deps.NetworkCore}.Routes(),
+		ClientMessageHandler{Messages: deps.ClientMessages}.Routes(),
 	)
 }
 

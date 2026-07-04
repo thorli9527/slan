@@ -27,7 +27,7 @@ func newDeviceBootstrapKey(
 		NetworkID: input.NetworkID,
 		Name:      input.Name,
 		Token:     token,
-		Status:    "active",
+		Status:    tokenStatusActive,
 		ExpiresAt: expiresAt,
 		CreatedAt: nowUnix,
 		UpdatedAt: nowUnix,
@@ -39,34 +39,31 @@ func bootstrapKeyExpiresAt(now time.Time, input CreateDeviceBootstrapKeyInput) i
 		return input.ExpiresAt
 	}
 	ttl := 30 * time.Minute
-	if input.TTLSeconds > 0 {
-		ttl = time.Duration(input.TTLSeconds) * time.Second
-	}
-	if ttl > 24*time.Hour {
-		ttl = 24 * time.Hour
-	}
+	ttl = installationKeyTTL(input.TTLSeconds)
 	return now.Add(ttl).Unix()
 }
 
 func revokeDeviceBootstrapKey(key model.DeviceBootstrapKey, now int64) model.DeviceBootstrapKey {
-	key.Status = "revoked"
+	key.Status = tokenStatusRevoked
 	key.UpdatedAt = now
+	key.RevokedAt = now
 	return key
 }
 
 func newBootstrapNetworkDevice(networkID, deviceID string, now int64) model.NetworkDevice {
 	return model.NetworkDevice{
-		NetworkID: networkID,
-		DeviceID:  deviceID,
-		Enabled:   true,
-		Status:    "active",
-		CreatedAt: now,
-		UpdatedAt: now,
+		NetworkID:      networkID,
+		DeviceID:       deviceID,
+		Enabled:        true,
+		MemberStatus:   model.NetworkMemberStatusActive,
+		PresenceStatus: model.DevicePresenceStatusOffline,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }
 
 func markBootstrapKeyUsed(key model.DeviceBootstrapKey, deviceID string, now int64) model.DeviceBootstrapKey {
-	key.Status = "used"
+	key.Status = installationKeyStatusUsed
 	key.UsedAt = now
 	key.UsedByDeviceID = deviceID
 	key.UpdatedAt = now

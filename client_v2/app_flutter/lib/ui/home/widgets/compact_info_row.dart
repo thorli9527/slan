@@ -34,6 +34,7 @@ class CompactIdentity extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
+                key: const Key('current-user-email-value'),
                 userLabel,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

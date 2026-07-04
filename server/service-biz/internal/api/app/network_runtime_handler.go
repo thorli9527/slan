@@ -13,10 +13,10 @@ type NetworkRuntimeHandler struct {
 
 func (h NetworkRuntimeHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
-		serviceapi.NewRoute(http.MethodGet, "/api/networks/{networkId}/relay-candidates", h.RelayCandidates),
-		serviceapi.NewRoute(http.MethodPost, "/api/networks/{networkId}/relay-candidates", h.RelayCandidates),
-		serviceapi.NewRoute(http.MethodPost, "/api/networks/{networkId}/punch/connect-sessions", h.CreatePunchConnectSession),
-		serviceapi.NewRoute(http.MethodPost, "/api/relay/tickets", h.IssueRelayTicket),
+		serviceapi.NewRoute(http.MethodGet, "/api/app/networks/{networkId}/relay-candidates", h.RelayCandidates),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/networks/{networkId}/relay-candidates", h.RelayCandidates),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/networks/{networkId}/punch/connect-sessions", h.CreatePunchConnectSession),
+		serviceapi.NewRoute(http.MethodPost, "/api/app/relay/tickets", h.IssueRelayTicket),
 	}
 }
 

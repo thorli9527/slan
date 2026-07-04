@@ -88,17 +88,17 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 
 | Method | Path | Auth | Request | Response | 用途 |
 | --- | --- | --- | --- | --- | --- |
-| POST | `/api/device/session/bootstrap` | Session key | `{sessionKey,deviceId,name,platform,osName,osVersion,alias,publicKey}` | `{device,deviceSession,mqtt,networkConfigs}` | 设备用 bootstrap key 换设备 session |
-| POST | `/api/device/session/bind` | User Bearer | `{deviceId,name,platform,osName,osVersion,alias,publicKey}` | `{device,deviceSession,mqtt,networkConfigs}` | 用户登录态绑定本机设备 |
-| POST | `/api/device/session/renew` | Device Bearer | `{networkEnabled,rxBytesTotal,txBytesTotal}` | `{device,deviceSession,mqtt,networkConfigs}` | 设备 session 续期和运行态上报 |
-| GET | `/api/devices?userId=...` | User/Web | - | `{items: Device[]}` | 查询用户设备 |
-| GET | `/api/devices/visible?userId=...` | User/Web | - | `{items: Device[]}` | 查询用户可见设备 |
-| POST | `/api/devices/register` | User/Web | `{userId,deviceId,name,platform,osName,osVersion,alias,publicKey}` | `{device,defaultNetworkDevice,mqtt}` | 旧版设备注册 |
-| POST | `/api/devices/{deviceId}/renew` | Device/User legacy | `{userId,networkEnabled,rxBytesTotal,txBytesTotal}` | `{device,mqtt,networkConfigs,leaseExpiresAt}` | 旧版设备续约 |
-| GET | `/api/devices/{deviceId}/network-configs` | Device/User | - | `{deviceId,items}` | 设备网络配置列表 |
-| GET | `/api/devices/{deviceId}/mqtt-credential` | Device/User | - | `{mqtt}` | 获取 MQTT 凭据 |
-| PATCH | `/api/devices/{deviceId}` | User/Web | `{actorUserId,alias}` | `Device` | 修改设备别名 |
-| DELETE | `/api/devices/{deviceId}` | User/Web | query/body `{actorUserId}` | `204` | 删除/解绑可见设备 |
+| POST | `/api/app/device/session/bootstrap` | Session key | `{sessionKey,deviceId,name,platform,osName,osVersion,alias,publicKey}` | `{device,deviceSession,mqtt,networkConfigs}` | 设备用 bootstrap key 换设备 session |
+| POST | `/api/app/device/session/bind` | User Bearer | `{deviceId,name,platform,osName,osVersion,alias,publicKey}` | `{device,deviceSession,mqtt,networkConfigs}` | 用户登录态绑定本机设备 |
+| POST | `/api/app/device/session/renew` | Device Bearer | `{networkEnabled,rxBytesTotal,txBytesTotal}` | `{device,deviceSession,mqtt,networkConfigs}` | 设备 session 续期和运行态上报 |
+| GET | `/api/app/devices?userId=...` | User/Web | - | `{items: Device[]}` | 查询用户设备 |
+| GET | `/api/app/devices/visible?userId=...` | User/Web | - | `{items: Device[]}` | 查询用户可见设备 |
+| POST | `/api/app/devices/register` | User/Web | `{userId,deviceId,name,platform,osName,osVersion,alias,publicKey}` | `{device,defaultNetworkDevice,mqtt}` | App 设备注册兼容入口 |
+| POST | `/api/app/devices/{deviceId}/renew` | Device/User legacy | `{userId,networkEnabled,rxBytesTotal,txBytesTotal}` | `{device,mqtt,networkConfigs,leaseExpiresAt}` | App 设备续期兼容入口 |
+| GET | `/api/app/devices/{deviceId}/network-configs` | Device/User | - | `{deviceId,items}` | 设备网络配置列表 |
+| GET | `/api/app/devices/{deviceId}/mqtt-credential` | Device/User | - | `{mqtt}` | 获取 MQTT 凭据 |
+| PATCH | `/api/app/devices/{deviceId}` | User/Web | `{actorUserId,alias}` | `Device` | 修改设备别名 |
+| DELETE | `/api/app/devices/{deviceId}` | User/Web | query/body `{actorUserId}` | `204` | 删除/解绑可见设备 |
 
 ## Device Invites
 
@@ -119,7 +119,7 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 | POST | `/api/networks/{networkId}/devices` | User/Web | `{deviceId,ownerUserId,alias,role,enabled}` | `NetworkDevice` | 添加设备到网络 |
 | PATCH | `/api/networks/{networkId}/devices/{deviceId}` | User/Web | `{alias,role,enabled}` | `NetworkDevice` | 更新网络成员 |
 | DELETE | `/api/networks/{networkId}/devices/{deviceId}` | User/Web | - | `{status}` | 移除网络成员 |
-| GET | `/api/networks/{networkId}/network-config?deviceId=...` | Device/User | - | `NetworkConfig` | 单网络设备配置 |
+| GET | `/api/app/networks/{networkId}/network-config?deviceId=...` | Device/User | - | `NetworkConfig` | 单网络设备配置 |
 
 ## DNS
 
@@ -159,10 +159,10 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 
 | Method | Path | Auth | Request | Response | 用途 |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/api/networks/{networkId}/relay-candidates?deviceId=...` | Device/User | - | `{items: RelayCandidate[]}` | 获取 relay 候选 |
-| POST | `/api/networks/{networkId}/relay-candidates` | Device/User | `{deviceId}` | `{items: RelayCandidate[]}` | 获取 relay 候选 |
-| POST | `/api/relay/tickets` | Device/User | `{networkId,srcNodeId,dstNodeId,derpClusterId?,preferredDerpNodeIds?,preferredRelayEndpointIds?,reason?,relayRegionId?}` | `RelayTicket` | 申请 relay ticket |
-| POST | `/api/networks/{networkId}/punch/connect-sessions` | Punch MQTT Signature | `{requesterNodeId,peerNodeId,ttlSeconds?}` | `PunchConnectSession` | 申请 P2P 打洞会话，biz 代理到 punch-service |
+| GET | `/api/app/networks/{networkId}/relay-candidates?deviceId=...` | Device/User | - | `{items: RelayCandidate[]}` | 获取 relay 候选 |
+| POST | `/api/app/networks/{networkId}/relay-candidates` | Device/User | `{deviceId}` | `{items: RelayCandidate[]}` | 获取 relay 候选 |
+| POST | `/api/app/relay/tickets` | Device/User | `{networkId,srcNodeId,dstNodeId,derpClusterId?,preferredDerpNodeIds?,preferredRelayEndpointIds?,reason?,relayRegionId?}` | `RelayTicket` | 申请 relay ticket |
+| POST | `/api/app/networks/{networkId}/punch/connect-sessions` | Punch MQTT Signature | `{requesterNodeId,peerNodeId,ttlSeconds?}` | `PunchConnectSession` | 申请 P2P 打洞会话，biz 代理到 punch-service |
 
 ## Ops Auth
 

@@ -55,7 +55,7 @@ func securityGroupView(item model.SecurityGroup) SecurityGroupView {
 
 func securityRuleView(item model.SecurityRule) SecurityRuleView {
 	portFrom, portTo := parsePortRange(item.PortRange)
-	peerType, peerValue := securityPeer(item.CIDR)
+	peerType, peerValue := normalizedSecurityPeer(item.PeerType, item.PeerValue, item.CIDR)
 	return SecurityRuleView{
 		RuleID:          item.RuleID,
 		SecurityGroupID: item.SecurityGroupID,

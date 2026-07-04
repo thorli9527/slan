@@ -26,5 +26,5 @@ func (s *GormStore) GetDeviceBootstrapKeyByToken(_ context.Context, token string
 
 func (s *GormStore) SaveDeviceBootstrapKey(_ context.Context, key model.DeviceBootstrapKey) error {
 	row := bootstrapKeyRecordFromModel(key)
-	return upsertByColumns(s.db, &row, []string{"key_id"}, []string{"user_id", "name", "token", "status", "expires_at", "used_at", "used_by_device_id", "created_at", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"key_id"}, []string{"user_id", "name", "token", "status", "expires_at", "used_at", "used_by_device_id", "created_at", "updated_at", "revoked_at"})
 }

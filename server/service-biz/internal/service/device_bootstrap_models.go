@@ -4,10 +4,12 @@ import "github.com/slan/service-biz/internal/pkg/mqttkit"
 
 type DeviceBootstrapKeyView struct {
 	KeyID          string `json:"keyId"`
+	InstallationKeyID string `json:"installationKeyId"`
 	UserID         string `json:"userId"`
 	Name           string `json:"name"`
 	DeviceAlias    string `json:"deviceAlias"`
 	Token          string `json:"token"`
+	InstallationKey string `json:"installationKey"`
 	Status         string `json:"status"`
 	ExpiresAt      int64  `json:"expiresAt"`
 	CreatedAt      int64  `json:"createdAt"`

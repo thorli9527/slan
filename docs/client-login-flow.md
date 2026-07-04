@@ -71,7 +71,7 @@ Logout clears both sides of local identity:
 User session and device session are renewed independently:
 
 - User session: `POST /api/auth/renew`.
-- Device session: `POST /api/device/session/renew`.
+- Device session: `POST /api/app/device/session/renew`.
 - MQTT credentials are refreshed through the device/session responses.
 
 ## Removed Legacy Behavior

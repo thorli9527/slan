@@ -1,6 +1,10 @@
 package app
 
-import "github.com/slan/service-biz/internal/pkg/mqttkit"
+import (
+	"time"
+
+	"github.com/slan/service-biz/internal/pkg/mqttkit"
+)
 
 func (d UseCaseDependencies) authRepositories() AuthRepositories {
 	return d.Repositories.Auth
@@ -48,4 +52,8 @@ func (d UseCaseDependencies) downloadRepositories() DownloadRepositories {
 
 func (d UseCaseDependencies) mqttConfig() mqttkit.Config {
 	return d.Runtime.MQTTConfig
+}
+
+func (d UseCaseDependencies) now() func() time.Time {
+	return nil
 }

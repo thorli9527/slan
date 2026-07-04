@@ -1,37 +1,54 @@
 package repository
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 func (s *GormStore) nextID(name, prefix string) string {
-	var result string
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	_ = s
+	_ = name
+	value, err := randomIDHex()
+	if err != nil {
+		return fmt.Sprintf("%s%x", prefix, time.Now().UnixNano())
+	}
+	return prefix + value
+}
+
+func randomIDHex() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw[:]), nil
+}
+
+func (s *GormStore) nextCounterValue(name string) int64 {
+	if s == nil || s.db == nil || name == "" {
+		return 0
+	}
+	var value int64
+	err := s.db.Transaction(func(db *gorm.DB) error {
 		var counter gormCounter
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&counter, "name = ?", name).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		result := db.Where("name = ?", name).First(&counter)
+		if result.Error != nil {
+			if result.Error == gorm.ErrRecordNotFound {
 				counter = gormCounter{Name: name, Value: 1}
-				if err := tx.Create(&counter).Error; err != nil {
-					return err
-				}
-			} else {
-				return err
+				value = counter.Value
+				return db.Create(&counter).Error
 			}
-		} else {
-			counter.Value++
-			if err := tx.Save(&counter).Error; err != nil {
-				return err
-			}
+			return result.Error
 		}
-		result = fmt.Sprintf("%s-%06d", prefix, counter.Value)
-		return nil
+		counter.Value += 1
+		value = counter.Value
+		return db.Save(&counter).Error
 	})
 	if err != nil {
-		return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+		return 0
 	}
-	return result
+	return value
 }

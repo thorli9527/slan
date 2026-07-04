@@ -20,21 +20,21 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use client_core::{
-    acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
-    ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
+    acl_allows_egress_packet, acl_allows_ingress_packet, dns_response_for_query,
+    icmp_echo_reply_for_request, ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
     },
     NetworkRuntimeState, PathCandidate, PathKind, PathState, PeerPathRuntime, PlatformAclPeer,
-    PlatformAclPolicy, PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkDiagnostics,
-    RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
+    PlatformAclPolicy, PlatformDiagnosticCheck, PlatformDnsRecord, PlatformNetwork,
+    PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
 };
 use serde::Serialize;
 
 use crate::direct_udp::{
-    direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
-    DirectUdpTransport,
+    clear_direct_udp_endpoint_report, direct_udp_control_packet,
+    direct_udp_probe_interval_from_ms, DirectUdpControlKind, DirectUdpTransport,
 };
 
 const UTUN_CONTROL_NAME: &str = "com.apple.net.utun_control";
@@ -50,6 +50,21 @@ const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
 
+fn macos_verbose_trace_enabled() -> bool {
+    matches!(
+        env::var("SLAN_MACOS_VERBOSE_TRACE").ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "yes" | "YES")
+    )
+}
+
+macro_rules! macos_trace {
+    ($($arg:tt)*) => {
+        if macos_verbose_trace_enabled() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 /// MacosPlatformNetwork 是 macOS 的 PlatformNetwork 实现，负责 utun、路由、
 /// DNS、relay 数据面和 direct UDP runtime 的平台适配。
 #[derive(Debug, Clone, Default)]
@@ -62,6 +77,7 @@ struct MacosRuntime {
     virtual_ip: Option<String>,
     prefix_len: Option<u8>,
     dns_servers: Vec<String>,
+    dns_records: Vec<PlatformDnsRecord>,
     routes: Vec<RouteSpec>,
     relay_config: Option<RelayDataPlaneConfig>,
     utun: Option<UtunRuntime>,
@@ -135,6 +151,8 @@ struct RelayDataPlaneStats {
     relay_packets_received: u64,
     relay_tcp_packets_received: u64,
     relay_tcp_syn_received: u64,
+    relay_tcp_syn_ack_received: u64,
+    relay_tcp_psh_received: u64,
     relay_tcp_rst_received: u64,
     relay_tcp_checksum_invalid: u64,
     relay_decode_failures: u64,
@@ -165,7 +183,13 @@ struct RelayDataPlaneStats {
     started_at_ms: u64,
     last_tun_packet_at_ms: Option<u64>,
     last_relay_packet_at_ms: Option<u64>,
+    last_relay_peer_node_id: Option<String>,
+    last_relay_destination: Option<String>,
+    last_relay_protocol: Option<u8>,
+    last_relay_packet_size: Option<u32>,
+    last_relay_tcp_flags: Option<String>,
     last_relay_keepalive_at_ms: Option<u64>,
+    last_utun_write_error: Option<String>,
     updated_at_ms: u64,
 }
 
@@ -234,9 +258,20 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .interface_name
             .clone()
             .ok_or_else(|| anyhow!("macos utun interface is not ready"))?;
+        macos_trace!(
+            "SLAN_MACOS_CONFIGURE_IP_START interface={} virtual_ip={}/{}",
+            interface_name,
+            virtual_ip,
+            HOST_INTERFACE_PREFIX_LEN
+        );
         configure_utun_ip(&interface_name, virtual_addr, HOST_INTERFACE_PREFIX_LEN)?;
         runtime.virtual_ip = Some(virtual_ip);
         runtime.prefix_len = Some(HOST_INTERFACE_PREFIX_LEN);
+        macos_trace!(
+            "SLAN_MACOS_CONFIGURE_IP_OK interface={} virtual_ip={}",
+            interface_name,
+            runtime.virtual_ip.as_deref().unwrap_or("")
+        );
         Ok(())
     }
 
@@ -254,10 +289,26 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .interface_name
             .clone()
             .ok_or_else(|| anyhow!("macos utun interface is not ready"))?;
+        macos_trace!(
+            "SLAN_MACOS_CONFIGURE_ROUTES_START interface={} routes={}",
+            interface_name,
+            routes.len()
+        );
         for route in routes {
+            eprintln!(
+                "SLAN_MACOS_ROUTE_APPLY interface={} destination={} gateway={}",
+                interface_name,
+                route.destination,
+                route.gateway.as_deref().unwrap_or("")
+            );
             add_utun_route(&interface_name, route)?;
         }
         runtime.routes = routes.to_vec();
+        macos_trace!(
+            "SLAN_MACOS_CONFIGURE_ROUTES_OK interface={} routes={}",
+            interface_name,
+            runtime.routes.len()
+        );
         Ok(())
     }
 
@@ -286,7 +337,29 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .collect();
+        macos_trace!(
+            "SLAN_MACOS_CONFIGURE_DNS_START interface={} dns_servers={}",
+            interface_name,
+            runtime.dns_servers.join(",")
+        );
         configure_utun_dns(&interface_name, &runtime.dns_servers)?;
+        macos_trace!(
+            "SLAN_MACOS_CONFIGURE_DNS_OK interface={} dns_count={}",
+            interface_name,
+            runtime.dns_servers.len()
+        );
+        Ok(())
+    }
+
+    fn configure_dns_map(
+        &self,
+        _dns_zones: &[client_core::PlatformDnsZone],
+        dns_records: &[PlatformDnsRecord],
+    ) -> Result<()> {
+        let mut runtime = runtime()
+            .lock()
+            .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        runtime.dns_records = dns_records.to_vec();
         Ok(())
     }
 
@@ -313,7 +386,26 @@ impl PlatformNetwork for MacosPlatformNetwork {
             ensure_mock_runtime(&mut runtime);
             return Ok(());
         }
-        restart_data_plane(&mut runtime)
+        match restart_data_plane(&mut runtime) {
+            Ok(()) => {
+                macos_trace!(
+                    "SLAN_MACOS_CONFIGURE_RELAY_OK interface={} runtime_attached={} virtual_ip={} relay_enabled={}",
+                    runtime.interface_name.as_deref().unwrap_or(""),
+                    runtime.utun.is_some(),
+                    runtime.virtual_ip.as_deref().unwrap_or(""),
+                    runtime
+                        .relay_config
+                        .as_ref()
+                        .map(|config| config.enabled)
+                        .unwrap_or(false)
+                );
+                Ok(())
+            }
+            Err(error) => {
+                eprintln!("SLAN_MACOS_CONFIGURE_RELAY_ERROR error={error:#}");
+                Err(error)
+            }
+        }
     }
 
     fn disable_network(&self) -> Result<()> {
@@ -452,6 +544,15 @@ fn restart_data_plane(runtime: &mut MacosRuntime) -> Result<()> {
     drop(old_utun);
     let utun = open_utun().context("reopen macos utun interface for data plane")?;
     let interface_name = utun.interface_name.clone();
+    macos_trace!(
+        "SLAN_MACOS_RESTART_DATA_PLANE_START interface={} relay_enabled={} relay_sessions={} has_virtual_ip={} routes={} dns={}",
+        interface_name,
+        config.as_ref().map(|value| value.enabled).unwrap_or(false),
+        config.as_ref().map(|value| value.sessions.len()).unwrap_or(0),
+        runtime.virtual_ip.is_some(),
+        runtime.routes.len(),
+        runtime.dns_servers.len()
+    );
     runtime.interface_name = Some(interface_name.clone());
     if let (Some(ip), Some(prefix_len)) = (&runtime.virtual_ip, runtime.prefix_len) {
         configure_utun_ip(&interface_name, ip.parse()?, prefix_len)?;
@@ -461,29 +562,102 @@ fn restart_data_plane(runtime: &mut MacosRuntime) -> Result<()> {
         let _ = add_utun_route(&interface_name, route);
     }
     let local_virtual_ip = runtime.virtual_ip.clone().unwrap_or_default();
+    let dns_servers = runtime.dns_servers.clone();
+    let dns_records = runtime.dns_records.clone();
     runtime.utun = Some(if let Some(config) = config {
-        start_udp_data_plane(utun, config, local_virtual_ip)?
+        start_udp_data_plane(utun, config, local_virtual_ip, dns_servers, dns_records)?
     } else if !local_virtual_ip.trim().is_empty() {
-        start_local_data_plane(utun, local_virtual_ip)?
+        start_local_data_plane(
+            utun,
+            local_virtual_ip,
+            dns_servers,
+            dns_records,
+            runtime.relay_config.clone(),
+        )?
     } else {
         utun
     });
+    macos_trace!(
+        "SLAN_MACOS_RESTART_DATA_PLANE_OK interface={} runtime_attached={}",
+        interface_name,
+        runtime.utun.is_some()
+    );
     Ok(())
 }
 
-fn start_local_data_plane(mut utun: UtunRuntime, local_virtual_ip: String) -> Result<UtunRuntime> {
+fn start_local_data_plane(
+    mut utun: UtunRuntime,
+    local_virtual_ip: String,
+    dns_servers: Vec<String>,
+    dns_records: Vec<PlatformDnsRecord>,
+    direct_config: Option<RelayDataPlaneConfig>,
+) -> Result<UtunRuntime> {
+    macos_trace!(
+        "SLAN_MACOS_LOCAL_DP_START virtual_ip={} interface={}",
+        local_virtual_ip,
+        utun.interface_name
+    );
     let file = utun
         .file
         .take()
         .ok_or_else(|| anyhow!("macos utun file descriptor is not ready"))?;
+    macos_trace!(
+        "SLAN_MACOS_LOCAL_DP_FILE_READY interface={}",
+        utun.interface_name
+    );
+    macos_trace!(
+        "SLAN_MACOS_LOCAL_DP_RUNTIME_CLONED interface={} dns={} records={}",
+        utun.interface_name,
+        dns_servers.len(),
+        dns_records.len()
+    );
+    let (direct_udp, direct_udp_probe_interval, config_hash, acl_policies) =
+        if let Some(config) = direct_config.as_ref() {
+            (
+                DirectUdpTransport::attach(config.local_node_id.as_str(), &config.peer_paths),
+                direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms),
+                stable_hash64(&serde_json::to_string(config)?),
+                config.acl_policies.clone(),
+            )
+        } else {
+            clear_direct_udp_endpoint_report();
+            (
+                None,
+                direct_udp_probe_interval_from_ms(0),
+                0,
+                Vec::new(),
+            )
+        };
     eprintln!("macos local data plane attached virtual_ip={local_virtual_ip}");
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
+    macos_trace!(
+        "SLAN_MACOS_LOCAL_DP_SPAWN_BEGIN interface={}",
+        utun.interface_name
+    );
     let handle = thread::spawn(move || {
-        run_local_data_plane(file, local_virtual_ip, thread_stop);
+        run_local_data_plane(
+            file,
+            local_virtual_ip,
+            dns_servers,
+            dns_records,
+            direct_udp,
+            direct_udp_probe_interval,
+            config_hash,
+            acl_policies,
+            thread_stop,
+        );
     });
+    macos_trace!(
+        "SLAN_MACOS_LOCAL_DP_SPAWN_OK interface={}",
+        utun.interface_name
+    );
     utun.stop = stop;
     utun.handle = Some(handle);
+    macos_trace!(
+        "SLAN_MACOS_LOCAL_DP_RETURN interface={}",
+        utun.interface_name
+    );
     Ok(utun)
 }
 
@@ -491,11 +665,25 @@ fn start_udp_data_plane(
     mut utun: UtunRuntime,
     config: RelayDataPlaneConfig,
     local_virtual_ip: String,
+    dns_servers: Vec<String>,
+    dns_records: Vec<PlatformDnsRecord>,
 ) -> Result<UtunRuntime> {
+    macos_trace!(
+        "SLAN_MACOS_UDP_DP_START interface={} virtual_ip={} relay={} sessions={} transport={}",
+        utun.interface_name,
+        local_virtual_ip,
+        config.relay_address,
+        config.sessions.len(),
+        config.transport
+    );
     let file = utun
         .file
         .take()
         .ok_or_else(|| anyhow!("macos utun file descriptor is not ready"))?;
+    macos_trace!(
+        "SLAN_MACOS_UDP_DP_FILE_READY interface={}",
+        utun.interface_name
+    );
     let peers = attach_udp_relay_sessions(&config)?;
     let derp_peers = attach_derp_relay_sessions(&config)?;
     eprintln!(
@@ -522,6 +710,9 @@ fn start_udp_data_plane(
     stats.attached_transport_count = stats
         .attached_peer_session_count
         .saturating_add(stats.direct_udp_attached_peer_count as u32);
+    let udp_peer_count = peers.len();
+    let derp_peer_count = derp_peers.len();
+    let direct_udp_attached_peer_count = stats.direct_udp_attached_peer_count;
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
     let handle = thread::spawn(move || {
@@ -532,16 +723,26 @@ fn start_udp_data_plane(
             direct_udp,
             config.local_node_id,
             local_virtual_ip,
+            dns_servers,
             max_frame_payload,
             config_hash,
             direct_udp_probe_interval,
             acl_policies,
+            dns_records,
             &mut stats,
             thread_stop,
         );
     });
+    macos_trace!(
+        "SLAN_MACOS_UDP_DP_SPAWN_OK interface={} udp_peers={} derp_peers={} direct_udp_peers={}",
+        utun.interface_name,
+        udp_peer_count,
+        derp_peer_count,
+        direct_udp_attached_peer_count
+    );
     utun.stop = stop;
     utun.handle = Some(handle);
+    macos_trace!("SLAN_MACOS_UDP_DP_RETURN interface={}", utun.interface_name);
     Ok(utun)
 }
 
@@ -561,7 +762,15 @@ fn open_utun() -> Result<UtunRuntime> {
 fn create_utun_socket() -> Result<RawFd> {
     let fd = unsafe { libc::socket(libc::PF_SYSTEM, libc::SOCK_DGRAM, libc::SYSPROTO_CONTROL) };
     if fd < 0 {
-        return Err(std::io::Error::last_os_error()).context("socket PF_SYSTEM/SYSPROTO_CONTROL");
+        let error = std::io::Error::last_os_error();
+        eprintln!(
+            "SLAN_MACOS_UTUN_SOCKET_ERROR control={} error={error}",
+            UTUN_CONTROL_NAME
+        );
+        return Err(error).context(format!(
+            "socket PF_SYSTEM/SOCK_DGRAM/SYSPROTO_CONTROL failed \
+             (control={UTUN_CONTROL_NAME})"
+        ));
     }
     match connect_utun_socket(fd) {
         Ok(()) => Ok(fd),
@@ -583,7 +792,15 @@ fn connect_utun_socket(fd: RawFd) -> Result<()> {
     }
     let ioctl_result = unsafe { libc::ioctl(fd, libc::CTLIOCGINFO, &mut info) };
     if ioctl_result < 0 {
-        return Err(std::io::Error::last_os_error()).context("ioctl CTLIOCGINFO utun");
+        let error = std::io::Error::last_os_error();
+        eprintln!(
+            "SLAN_MACOS_UTUN_IOCTL_ERROR fd={} control={} error={error}",
+            fd, UTUN_CONTROL_NAME
+        );
+        return Err(error).context(format!(
+            "ioctl CTLIOCGINFO failed for macos utun \
+             (fd={fd} control={UTUN_CONTROL_NAME})"
+        ));
     }
     let addr = libc::sockaddr_ctl {
         sc_len: mem::size_of::<libc::sockaddr_ctl>() as u8,
@@ -601,7 +818,16 @@ fn connect_utun_socket(fd: RawFd) -> Result<()> {
         )
     };
     if result < 0 {
-        return Err(std::io::Error::last_os_error()).context("connect utun control socket");
+        let error = std::io::Error::last_os_error();
+        eprintln!(
+            "SLAN_MACOS_UTUN_CONNECT_ERROR fd={} ctl_id={} sc_unit={} control={} error={error}",
+            fd, info.ctl_id, addr.sc_unit, UTUN_CONTROL_NAME
+        );
+        return Err(error).context(format!(
+            "connect utun control socket failed \
+             (fd={fd} ctl_id={} sc_unit={} control={UTUN_CONTROL_NAME})",
+            info.ctl_id, addr.sc_unit
+        ));
     }
     Ok(())
 }
@@ -690,6 +916,59 @@ fn add_utun_route(interface_name: &str, route: &RouteSpec) -> Result<()> {
     }
     let (target, prefix_len) = parse_route_destination(destination)?;
     let route_kind = if prefix_len == 32 { "-host" } else { "-net" };
+    eprintln!(
+        "SLAN_MACOS_ROUTE_ADD interface={} destination={} target={} prefix_len={}",
+        interface_name, destination, target, prefix_len
+    );
+    match run_command(
+        "/sbin/route",
+        &[
+            "-n",
+            "add",
+            route_kind,
+            &target.to_string(),
+            "-interface",
+            interface_name,
+        ],
+    ) {
+        Ok(()) => Ok(()),
+        Err(error) if error.to_string().contains("File exists") => {
+            eprintln!(
+                "SLAN_MACOS_ROUTE_EXISTS interface={} destination={} target={}",
+                interface_name, destination, target
+            );
+            replace_utun_route(interface_name, route_kind, target)
+                .with_context(|| format!("replace route {destination} via {interface_name}"))
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("add route {destination} via {interface_name}"))
+        }
+    }
+}
+
+fn delete_utun_route(interface_name: &str, route: &RouteSpec) -> Result<()> {
+    let destination = route.destination.trim();
+    if destination.is_empty() {
+        return Ok(());
+    }
+    let (target, prefix_len) = parse_route_destination(destination)?;
+    let route_kind = if prefix_len == 32 { "-host" } else { "-net" };
+    delete_route_target(route_kind, target).or_else(|error| {
+        let message = error.to_string();
+        if message.contains("not in table") {
+            Ok(())
+        } else {
+            Err(error).with_context(|| format!("delete route {destination} via {interface_name}"))
+        }
+    })
+}
+
+fn replace_utun_route(interface_name: &str, route_kind: &str, target: Ipv4Addr) -> Result<()> {
+    eprintln!(
+        "SLAN_MACOS_ROUTE_REPLACE interface={} target={} kind={}",
+        interface_name, target, route_kind
+    );
+    let _ = delete_route_target(route_kind, target);
     run_command(
         "/sbin/route",
         &[
@@ -701,33 +980,17 @@ fn add_utun_route(interface_name: &str, route: &RouteSpec) -> Result<()> {
             interface_name,
         ],
     )
-    .or_else(|error| {
-        if error.to_string().contains("File exists") {
-            Ok(())
-        } else {
-            Err(error)
-        }
-    })
-    .with_context(|| format!("add route {destination} via {interface_name}"))
 }
 
-fn delete_utun_route(interface_name: &str, route: &RouteSpec) -> Result<()> {
-    let destination = route.destination.trim();
-    if destination.is_empty() {
-        return Ok(());
-    }
-    let (target, prefix_len) = parse_route_destination(destination)?;
-    let route_kind = if prefix_len == 32 { "-host" } else { "-net" };
+fn delete_route_target(route_kind: &str, target: Ipv4Addr) -> Result<()> {
+    let target = target.to_string();
+    eprintln!(
+        "SLAN_MACOS_ROUTE_DELETE target={} kind={}",
+        target, route_kind
+    );
     run_command(
         "/sbin/route",
-        &[
-            "-n",
-            "delete",
-            route_kind,
-            &target.to_string(),
-            "-interface",
-            interface_name,
-        ],
+        &["-n", "delete", route_kind, target.as_str()],
     )
 }
 
@@ -859,6 +1122,10 @@ fn attach_udp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<RelayP
 fn attach_derp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<DerpPeer>> {
     let mut peers = Vec::new();
     let mut failures = Vec::new();
+    let has_udp_sessions = config
+        .sessions
+        .iter()
+        .any(|session| relay_path_kind_from_session(session) == Some(PathKind::RelayUdp));
     for session in &config.sessions {
         if relay_path_kind_from_session(session) != Some(PathKind::DerpTcpTls443) {
             continue;
@@ -868,7 +1135,19 @@ fn attach_derp_relay_sessions(config: &RelayDataPlaneConfig) -> Result<Vec<DerpP
             Err(error) => failures.push(format!("{}: {error}", session.session_id)),
         }
     }
+    if !failures.is_empty() {
+        eprintln!(
+            "SLAN_MACOS_DERP_ATTACH_WARN failures={} attached={} has_udp_sessions={}",
+            failures.join("; "),
+            peers.len(),
+            has_udp_sessions
+        );
+    }
     if peers.is_empty() && !failures.is_empty() {
+        if has_udp_sessions {
+            eprintln!("SLAN_MACOS_DERP_ATTACH_FALLBACK udp_only=true");
+            return Ok(peers);
+        }
         bail!("attach DERP sessions failed: {}", failures.join("; "));
     }
     Ok(peers)
@@ -1260,14 +1539,19 @@ fn run_udp_data_plane(
     mut direct_udp: Option<DirectUdpTransport>,
     local_node_id: String,
     local_virtual_ip: String,
+    dns_servers: Vec<String>,
     max_frame_payload: usize,
     config_hash: u64,
     direct_udp_probe_interval: Duration,
     acl_policies: Vec<PlatformAclPolicy>,
+    dns_records: Vec<PlatformDnsRecord>,
     stats: &mut RelayDataPlaneStats,
     stop: Arc<AtomicBool>,
 ) {
     let mut seq = 0_u64;
+    let mut logged_first_tun_send = false;
+    let mut logged_first_relay_recv = false;
+    let mut logged_first_utun_write = false;
     let mut tun_buffer = vec![0_u8; MAX_PACKET_SIZE + UTUN_HEADER_LEN];
     let mut relay_buffer = vec![0_u8; MAX_PACKET_SIZE + 512];
     let mut last_stats_flush = Instant::now();
@@ -1299,9 +1583,12 @@ fn run_udp_data_plane(
                 did_work = true;
                 if let Some(packet) = strip_utun_header(&tun_buffer[..packet_len]) {
                     if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
-                        if let Some(reply) =
-                            local_virtual_ip_reply(packet, local_virtual_ip.as_str())
-                        {
+                        if let Some(reply) = local_virtual_ip_reply(
+                            packet,
+                            local_virtual_ip.as_str(),
+                            &dns_servers,
+                            &dns_records,
+                        ) {
                             let _ = write_utun_ipv4_packet(&mut file, &reply);
                         } else {
                             let packet = normalize_ipv4_transport_checksums(packet);
@@ -1319,11 +1606,29 @@ fn run_udp_data_plane(
                     if packet.len() <= max_frame_payload {
                         if let Some(peer) = relay_peer_for_packet(&peers, packet) {
                             stats.last_tun_peer_node_id = Some(peer.peer_node_id.clone());
+                            eprintln!(
+                                "SLAN_MACOS_TUN_PACKET peer={} dst={:?} proto={:?} size={} direct_ready={}",
+                                peer.peer_node_id,
+                                ipv4_destination(packet),
+                                ipv4_protocol(packet),
+                                packet.len(),
+                                direct_udp
+                                    .as_ref()
+                                    .and_then(|transport| {
+                                        transport.ready_peer_index_for_packet(packet)
+                                    })
+                                    .is_some()
+                            );
                             if !acl_allows_egress_packet(
                                 packet,
                                 &acl_policies,
                                 Some(&acl_peer_for_relay_peer(peer)),
                             ) {
+                                eprintln!(
+                                    "SLAN_MACOS_TUN_DROP reason=acl_egress_denied peer={} dst={:?}",
+                                    peer.peer_node_id,
+                                    ipv4_destination(packet)
+                                );
                                 stats.last_tun_drop_reason = Some("acl_egress_denied".to_string());
                                 continue;
                             }
@@ -1346,6 +1651,12 @@ fn run_udp_data_plane(
                                     {
                                         Ok(_) => {
                                             direct_sent = true;
+                                            eprintln!(
+                                                "SLAN_MACOS_DIRECT_SEND_OK peer={} dst={:?} size={}",
+                                                peer.peer_node_id,
+                                                ipv4_destination(&packet),
+                                                packet.len()
+                                            );
                                             stats.last_tun_send_path =
                                                 Some(PathKind::DirectUdp.as_str().to_string());
                                             record_direct_tun_packet_sent(stats, peer);
@@ -1354,6 +1665,12 @@ fn run_udp_data_plane(
                                             }
                                         }
                                         Err(error) => {
+                                            eprintln!(
+                                                "SLAN_MACOS_DIRECT_SEND_ERROR peer={} dst={:?} error={}",
+                                                peer.peer_node_id,
+                                                ipv4_destination(&packet),
+                                                error
+                                            );
                                             stats.last_tun_drop_reason =
                                                 Some("direct_udp_send_failed".to_string());
                                             record_relay_send_failure(
@@ -1374,19 +1691,47 @@ fn run_udp_data_plane(
                                             match peer.socket.send(&payload) {
                                                 Ok(_) => {
                                                     relay_sent = true;
+                                                    eprintln!(
+                                                        "SLAN_MACOS_RELAY_SEND_OK peer={} dst={:?} size={} attempt={}",
+                                                        peer.peer_node_id,
+                                                        ipv4_destination(&packet),
+                                                        packet.len(),
+                                                        attempt + 1
+                                                    );
+                                                    if !logged_first_tun_send {
+                                                        macos_trace!(
+                                                            "SLAN_MACOS_UDP_DP_TUN_TO_RELAY_OK peer={} dst={:?} size={}",
+                                                            peer.peer_node_id,
+                                                            ipv4_destination(&packet),
+                                                            packet.len()
+                                                        );
+                                                        logged_first_tun_send = true;
+                                                    }
                                                     stats.last_tun_send_path = Some(
                                                         PathKind::RelayUdp.as_str().to_string(),
                                                     );
                                                     record_relay_tun_packet_sent(stats, peer);
                                                 }
-                                                Err(error) => record_relay_send_failure(
-                                                    stats,
-                                                    peer,
-                                                    error.to_string(),
-                                                ),
+                                                Err(error) => {
+                                                    record_relay_send_failure(stats, peer, {
+                                                        eprintln!(
+                                                            "SLAN_MACOS_RELAY_SEND_ERROR peer={} dst={:?} attempt={} error={}",
+                                                            peer.peer_node_id,
+                                                            ipv4_destination(&packet),
+                                                            attempt + 1,
+                                                            error
+                                                        );
+                                                        error.to_string()
+                                                    })
+                                                }
                                             }
                                         }
                                     } else {
+                                        eprintln!(
+                                            "SLAN_MACOS_TUN_DROP reason=relay_forward_encode_failed peer={} dst={:?}",
+                                            peer.peer_node_id,
+                                            ipv4_destination(&packet)
+                                        );
                                         stats.last_tun_drop_reason =
                                             Some("relay_forward_encode_failed".to_string());
                                     }
@@ -1402,6 +1747,13 @@ fn run_udp_data_plane(
                                                 }
                                                 match send_derp_forward(derp_peer, &frame) {
                                                     Ok(_) => {
+                                                        eprintln!(
+                                                            "SLAN_MACOS_DERP_SEND_OK peer={} dst={:?} size={} attempt={}",
+                                                            derp_peer.peer_node_id,
+                                                            ipv4_destination(&packet),
+                                                            packet.len(),
+                                                            attempt + 1
+                                                        );
                                                         stats.last_tun_send_path = Some(
                                                             PathKind::DerpTcpTls443
                                                                 .as_str()
@@ -1415,7 +1767,16 @@ fn run_udp_data_plane(
                                                     Err(error) => record_derp_send_failure(
                                                         stats,
                                                         derp_peer,
-                                                        error.to_string(),
+                                                        {
+                                                            eprintln!(
+                                                                "SLAN_MACOS_DERP_SEND_ERROR peer={} dst={:?} attempt={} error={}",
+                                                                derp_peer.peer_node_id,
+                                                                ipv4_destination(&packet),
+                                                                attempt + 1,
+                                                                error
+                                                            );
+                                                            error.to_string()
+                                                        },
                                                     ),
                                                 }
                                             }
@@ -1423,6 +1784,11 @@ fn run_udp_data_plane(
                                     }
                                 }
                             } else {
+                                eprintln!(
+                                    "SLAN_MACOS_TUN_DROP reason=relay_frame_encode_failed peer={} dst={:?}",
+                                    peer.peer_node_id,
+                                    ipv4_destination(&packet)
+                                );
                                 stats.last_tun_drop_reason =
                                     Some("relay_frame_encode_failed".to_string());
                             }
@@ -1430,11 +1796,23 @@ fn run_udp_data_plane(
                             derp_peer_for_packet_mut(&mut derp_peers, packet)
                         {
                             stats.last_tun_peer_node_id = Some(derp_peer.peer_node_id.clone());
+                            eprintln!(
+                                "SLAN_MACOS_TUN_PACKET_DERP peer={} dst={:?} proto={:?} size={}",
+                                derp_peer.peer_node_id,
+                                ipv4_destination(packet),
+                                ipv4_protocol(packet),
+                                packet.len()
+                            );
                             if !acl_allows_egress_packet(
                                 packet,
                                 &acl_policies,
                                 Some(&acl_peer_for_derp_peer(derp_peer)),
                             ) {
+                                eprintln!(
+                                    "SLAN_MACOS_TUN_DROP reason=acl_egress_denied_derp peer={} dst={:?}",
+                                    derp_peer.peer_node_id,
+                                    ipv4_destination(packet)
+                                );
                                 stats.last_tun_drop_reason = Some("acl_egress_denied".to_string());
                                 continue;
                             }
@@ -1450,33 +1828,66 @@ fn run_udp_data_plane(
                                     }
                                     match send_derp_forward(derp_peer, &frame) {
                                         Ok(_) => {
+                                            eprintln!(
+                                                "SLAN_MACOS_DERP_SEND_OK peer={} dst={:?} size={} attempt={}",
+                                                derp_peer.peer_node_id,
+                                                ipv4_destination(&packet),
+                                                packet.len(),
+                                                attempt + 1
+                                            );
                                             stats.last_tun_send_path =
                                                 Some(PathKind::DerpTcpTls443.as_str().to_string());
                                             record_derp_tun_packet_sent(stats, derp_peer);
                                         }
-                                        Err(error) => record_derp_send_failure(
-                                            stats,
-                                            derp_peer,
-                                            error.to_string(),
-                                        ),
+                                        Err(error) => record_derp_send_failure(stats, derp_peer, {
+                                            eprintln!(
+                                                    "SLAN_MACOS_DERP_SEND_ERROR peer={} dst={:?} attempt={} error={}",
+                                                    derp_peer.peer_node_id,
+                                                    ipv4_destination(&packet),
+                                                    attempt + 1,
+                                                    error
+                                                );
+                                            error.to_string()
+                                        }),
                                     }
                                 }
                             } else {
+                                eprintln!(
+                                    "SLAN_MACOS_TUN_DROP reason=relay_frame_encode_failed_derp peer={} dst={:?}",
+                                    derp_peer.peer_node_id,
+                                    ipv4_destination(&packet)
+                                );
                                 stats.last_tun_drop_reason =
                                     Some("relay_frame_encode_failed".to_string());
                             }
                         } else if let Some(destination) = ipv4_destination(packet) {
                             if should_ignore_unroutable_destination(&destination) {
+                                eprintln!(
+                                    "SLAN_MACOS_TUN_DROP reason=ignored_unroutable dst={}",
+                                    destination
+                                );
                                 stats.last_tun_drop_reason =
                                     Some("ignored_unroutable_destination".to_string());
                                 continue;
                             }
+                            eprintln!(
+                                "SLAN_MACOS_TUN_DROP reason=unroutable dst={} proto={:?} size={}",
+                                destination,
+                                ipv4_protocol(packet),
+                                packet.len()
+                            );
                             stats.unroutable_tun_packets =
                                 stats.unroutable_tun_packets.saturating_add(1);
                             stats.last_unroutable_destination = Some(destination);
                             stats.last_tun_drop_reason = Some("unroutable".to_string());
                         }
                     } else {
+                        eprintln!(
+                            "SLAN_MACOS_TUN_DROP reason=oversized dst={:?} size={} max={}",
+                            ipv4_destination(packet),
+                            packet.len(),
+                            max_frame_payload
+                        );
                         stats.oversized_tun_packets = stats.oversized_tun_packets.saturating_add(1);
                         stats.last_oversized_tun_packet_size = Some(packet.len() as u32);
                         stats.last_tun_drop_reason = Some("oversized".to_string());
@@ -1501,8 +1912,32 @@ fn run_udp_data_plane(
                         .as_deref()
                         .unwrap_or(&relay_buffer[..frame_len]);
                     if let Some(packet) = decode_slan_relay_data_frame(frame) {
+                        if !logged_first_relay_recv {
+                            macos_trace!(
+                                "SLAN_MACOS_UDP_DP_RELAY_TO_TUN_RX peer={} dst={:?} size={}",
+                                peer.peer_node_id,
+                                ipv4_destination(packet),
+                                packet.len()
+                            );
+                            logged_first_relay_recv = true;
+                        }
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                        stats.last_relay_peer_node_id = Some(peer.peer_node_id.clone());
+                        stats.last_relay_destination = ipv4_destination(packet);
+                        stats.last_relay_protocol = ipv4_protocol(packet);
+                        stats.last_relay_packet_size = Some(packet.len() as u32);
+                        stats.last_relay_tcp_flags = ipv4_tcp_flags(packet).map(tcp_flags_summary);
                         record_relay_tcp_packet(stats, packet);
+                        if stats.last_relay_protocol == Some(6) {
+                            macos_trace!(
+                                "SLAN_MACOS_RELAY_TCP_RX peer={} dst={:?} flags={} bytes={} checksum_valid={:?}",
+                                peer.peer_node_id,
+                                stats.last_relay_destination,
+                                stats.last_relay_tcp_flags.as_deref().unwrap_or("NONE"),
+                                packet.len(),
+                                ipv4_transport_checksum_valid(packet)
+                            );
+                        }
                         if !acl_allows_ingress_packet(
                             packet,
                             &acl_policies,
@@ -1541,8 +1976,27 @@ fn run_udp_data_plane(
                             continue;
                         }
                         match write_utun_ipv4_packet(&mut file, &packet) {
-                            Ok(_) => record_relay_packet_received(stats, peer),
-                            Err(_) => record_relay_write_failure(stats, peer),
+                            Ok(_) => {
+                                if !logged_first_utun_write {
+                                    macos_trace!(
+                                        "SLAN_MACOS_UDP_DP_TUN_WRITE_OK peer={} dst={:?} size={}",
+                                        peer.peer_node_id,
+                                        ipv4_destination(&packet),
+                                        packet.len()
+                                    );
+                                    logged_first_utun_write = true;
+                                }
+                                stats.last_utun_write_error = None;
+                                record_relay_packet_received(stats, peer)
+                            }
+                            Err(error) => {
+                                eprintln!(
+                                    "SLAN_MACOS_UDP_DP_TUN_WRITE_ERROR peer={} error={}",
+                                    peer.peer_node_id, error
+                                );
+                                stats.last_utun_write_error = Some(error.to_string());
+                                record_relay_write_failure(stats, peer)
+                            }
                         }
                     } else {
                         stats.relay_decode_failures = stats.relay_decode_failures.saturating_add(1);
@@ -1565,7 +2019,22 @@ fn run_udp_data_plane(
                     did_work = true;
                     if let Some(packet) = decode_slan_relay_data_frame(&frame) {
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                        stats.last_relay_peer_node_id = Some(peer.peer_node_id.clone());
+                        stats.last_relay_destination = ipv4_destination(packet);
+                        stats.last_relay_protocol = ipv4_protocol(packet);
+                        stats.last_relay_packet_size = Some(packet.len() as u32);
+                        stats.last_relay_tcp_flags = ipv4_tcp_flags(packet).map(tcp_flags_summary);
                         record_relay_tcp_packet(stats, packet);
+                        if stats.last_relay_protocol == Some(6) {
+                            macos_trace!(
+                                "SLAN_MACOS_DERP_TCP_RX peer={} dst={:?} flags={} bytes={} checksum_valid={:?}",
+                                peer.peer_node_id,
+                                stats.last_relay_destination,
+                                stats.last_relay_tcp_flags.as_deref().unwrap_or("NONE"),
+                                packet.len(),
+                                ipv4_transport_checksum_valid(packet)
+                            );
+                        }
                         if !acl_allows_ingress_packet(
                             packet,
                             &acl_policies,
@@ -1584,8 +2053,14 @@ fn run_udp_data_plane(
                             continue;
                         }
                         match write_utun_ipv4_packet(&mut file, &packet) {
-                            Ok(_) => record_derp_packet_received(stats, peer),
-                            Err(_) => record_derp_write_failure(stats, peer),
+                            Ok(_) => {
+                                stats.last_utun_write_error = None;
+                                record_derp_packet_received(stats, peer)
+                            }
+                            Err(error) => {
+                                stats.last_utun_write_error = Some(error.to_string());
+                                record_derp_write_failure(stats, peer)
+                            }
                         }
                     } else {
                         stats.relay_decode_failures = stats.relay_decode_failures.saturating_add(1);
@@ -1637,6 +2112,14 @@ fn run_udp_data_plane(
                             stats.direct_udp_frames_received.saturating_add(1);
                         mark_direct_peer_ready(stats, direct_udp, received.peer_index);
                         stats.last_relay_packet_at_ms = Some(current_timestamp_ms());
+                        stats.last_relay_peer_node_id = direct_udp
+                            .peers
+                            .get(received.peer_index)
+                            .map(|peer| peer.peer_node_id.clone());
+                        stats.last_relay_destination = ipv4_destination(packet);
+                        stats.last_relay_protocol = ipv4_protocol(packet);
+                        stats.last_relay_packet_size = Some(packet.len() as u32);
+                        stats.last_relay_tcp_flags = ipv4_tcp_flags(packet).map(tcp_flags_summary);
                         record_relay_tcp_packet(stats, packet);
                         let packet = normalize_ipv4_transport_checksums(packet);
                         let acl_peer =
@@ -1652,6 +2135,7 @@ fn run_udp_data_plane(
                             continue;
                         }
                         if write_utun_ipv4_packet(&mut file, &packet).is_ok() {
+                            stats.last_utun_write_error = None;
                             if let Some(peer) =
                                 direct_udp
                                     .peers
@@ -1664,6 +2148,9 @@ fn run_udp_data_plane(
                             {
                                 record_relay_packet_received(stats, peer);
                             }
+                        } else {
+                            stats.last_utun_write_error =
+                                Some("direct_udp utun write failed".to_string());
                         }
                     }
                 }
@@ -1988,6 +2475,12 @@ fn record_relay_tcp_packet(stats: &mut RelayDataPlaneStats, packet: &[u8]) {
     if flags & 0x02 != 0 {
         stats.relay_tcp_syn_received = stats.relay_tcp_syn_received.saturating_add(1);
     }
+    if flags & 0x12 == 0x12 {
+        stats.relay_tcp_syn_ack_received = stats.relay_tcp_syn_ack_received.saturating_add(1);
+    }
+    if flags & 0x08 != 0 {
+        stats.relay_tcp_psh_received = stats.relay_tcp_psh_received.saturating_add(1);
+    }
     if flags & 0x04 != 0 {
         stats.relay_tcp_rst_received = stats.relay_tcp_rst_received.saturating_add(1);
     }
@@ -2024,6 +2517,33 @@ fn ipv4_tcp_payload_len(packet: &[u8]) -> Option<usize> {
         return None;
     }
     Some(total_len - ihl - data_offset)
+}
+
+fn tcp_flags_summary(flags: u8) -> String {
+    let mut parts = Vec::new();
+    if flags & 0x01 != 0 {
+        parts.push("FIN");
+    }
+    if flags & 0x02 != 0 {
+        parts.push("SYN");
+    }
+    if flags & 0x04 != 0 {
+        parts.push("RST");
+    }
+    if flags & 0x08 != 0 {
+        parts.push("PSH");
+    }
+    if flags & 0x10 != 0 {
+        parts.push("ACK");
+    }
+    if flags & 0x20 != 0 {
+        parts.push("URG");
+    }
+    if parts.is_empty() {
+        "NONE".to_string()
+    } else {
+        parts.join("|")
+    }
 }
 
 fn record_relay_send_failure(stats: &mut RelayDataPlaneStats, peer: &RelayPeer, error: String) {
@@ -2200,26 +2720,114 @@ fn acl_peer_for_derp_peer(peer: &DerpPeer) -> PlatformAclPeer {
     }
 }
 
-fn run_local_data_plane(mut file: File, local_virtual_ip: String, stop: Arc<AtomicBool>) {
+fn run_local_data_plane(
+    mut file: File,
+    local_virtual_ip: String,
+    dns_servers: Vec<String>,
+    dns_records: Vec<PlatformDnsRecord>,
+    mut direct_udp: Option<DirectUdpTransport>,
+    direct_udp_probe_interval: Duration,
+    config_hash: u64,
+    acl_policies: Vec<PlatformAclPolicy>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut seq = 0_u64;
     let mut tun_buffer = vec![0_u8; MAX_PACKET_SIZE + UTUN_HEADER_LEN];
+    let mut relay_buffer = vec![0_u8; MAX_PACKET_SIZE + 512];
+    let mut last_direct_udp_probe = Instant::now()
+        .checked_sub(direct_udp_probe_interval)
+        .unwrap_or_else(Instant::now);
     while !stop.load(Ordering::SeqCst) {
         let mut did_work = false;
+        if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
+            if let Some(direct_udp) = direct_udp.as_ref() {
+                let _ = direct_udp.send_probe_packets();
+            }
+            last_direct_udp_probe = Instant::now();
+        }
         match file.read(&mut tun_buffer) {
             Ok(0) => {}
             Ok(packet_len) => {
                 did_work = true;
                 if let Some(packet) = strip_utun_header(&tun_buffer[..packet_len]) {
-                    if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
+                    if let Some(reply) = local_virtual_ip_reply(
+                        packet,
+                        local_virtual_ip.as_str(),
+                        &dns_servers,
+                        &dns_records,
+                    ) {
                         let _ = write_utun_ipv4_packet(&mut file, &reply);
                     } else if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
                         let packet = normalize_ipv4_transport_checksums(packet);
                         let _ = write_utun_ipv4_packet(&mut file, &packet);
+                    } else if let Some(direct_peer_index) = direct_udp
+                        .as_ref()
+                        .and_then(|transport| transport.ready_peer_index_for_packet(packet))
+                    {
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        let acl_peer = direct_udp
+                            .as_ref()
+                            .and_then(|transport| transport.peers.get(direct_peer_index))
+                            .map(|peer| PlatformAclPeer {
+                                peer_node_id: Some(peer.peer_node_id.clone()),
+                                peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                            });
+                        if !acl_allows_egress_packet(&packet, &acl_policies, acl_peer.as_ref()) {
+                            continue;
+                        }
+                        seq = seq.wrapping_add(1);
+                        if let Some(frame) = encode_slan_relay_data_frame(seq, config_hash, &packet)
+                        {
+                            if let Some(transport) = direct_udp.as_ref() {
+                                let _ = transport.send_to_peer(direct_peer_index, &frame);
+                            }
+                        }
                     }
                 }
             }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {}
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
             Err(_) => break,
+        }
+        if let Some(direct_udp) = direct_udp.as_mut() {
+            match direct_udp.recv_from_peer(&mut relay_buffer) {
+                Ok(Some(received)) => {
+                    did_work = true;
+                    let frame_len = received.frame_len;
+                    let control_packet = direct_udp_control_packet(&relay_buffer[..frame_len]);
+                    if control_packet
+                        .as_ref()
+                        .is_some_and(|packet| packet.kind == DirectUdpControlKind::Probe)
+                    {
+                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                        let _ = direct_udp.send_pong_to_peer(received.peer_index);
+                    } else if control_packet
+                        .as_ref()
+                        .is_some_and(|packet| packet.kind == DirectUdpControlKind::Pong)
+                    {
+                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                    } else if let Some(packet) =
+                        decode_slan_relay_data_frame(&relay_buffer[..frame_len])
+                    {
+                        direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
+                        let packet = normalize_ipv4_transport_checksums(packet);
+                        let acl_peer = direct_udp.peers.get(received.peer_index).map(|peer| {
+                            PlatformAclPeer {
+                                peer_node_id: Some(peer.peer_node_id.clone()),
+                                peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                            }
+                        });
+                        if !acl_allows_ingress_packet(&packet, &acl_policies, acl_peer.as_ref()) {
+                            continue;
+                        }
+                        let _ = write_utun_ipv4_packet(&mut file, &packet);
+                    }
+                }
+                Ok(None) => {}
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(_) => {}
+            }
         }
         if !did_work {
             thread::sleep(DATA_PLANE_IDLE_SLEEP);
@@ -2245,12 +2853,20 @@ fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> boo
         .unwrap_or(false)
 }
 
-fn local_virtual_ip_reply(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u8>> {
-    if packet_targets_local_virtual_ip(packet, local_virtual_ip) {
-        icmp_echo_reply_for_request(packet, local_virtual_ip)
-    } else {
-        None
+fn local_virtual_ip_reply(
+    packet: &[u8],
+    local_virtual_ip: &str,
+    dns_servers: &[String],
+    dns_records: &[PlatformDnsRecord],
+) -> Option<Vec<u8>> {
+    for dns_server in dns_servers {
+        if let Some(reply) = dns_response_for_query(packet, dns_server, dns_records) {
+            return Some(reply);
+        }
     }
+    packet_targets_local_virtual_ip(packet, local_virtual_ip)
+        .then(|| icmp_echo_reply_for_request(packet, local_virtual_ip))
+        .flatten()
 }
 
 fn should_ignore_unroutable_destination(destination: &str) -> bool {
@@ -2480,12 +3096,12 @@ mod tests {
     #[test]
     fn macos_local_virtual_ip_replies_to_icmp_echo() {
         let request = icmp_echo_request("10.0.0.9", "10.0.0.2");
-        let reply = local_virtual_ip_reply(&request, "10.0.0.2/32").unwrap();
+        let reply = local_virtual_ip_reply(&request, "10.0.0.2/32", &[], &[]).unwrap();
 
         assert_eq!(&reply[12..16], &[10, 0, 0, 2]);
         assert_eq!(&reply[16..20], &[10, 0, 0, 9]);
         assert_eq!(reply[20], 0);
-        assert!(local_virtual_ip_reply(&request, "10.0.0.3/32").is_none());
+        assert!(local_virtual_ip_reply(&request, "10.0.0.3/32", &[], &[]).is_none());
     }
 
     fn test_session(relay_url: &str) -> client_core::RelayPeerSession {

@@ -99,6 +99,10 @@ pub struct AndroidVpnSessionConfig {
     #[serde(default)]
     pub network_configs: Vec<PlatformDeviceNetworkConfig>,
     pub dns_servers: Vec<String>,
+    #[serde(default)]
+    pub dns_zones: Vec<PlatformDnsZone>,
+    #[serde(default)]
+    pub dns_records: Vec<PlatformDnsRecord>,
     pub routes: Vec<RouteSpec>,
     pub mtu: Option<u16>,
     pub relay_endpoint_id: Option<String>,
@@ -141,6 +145,39 @@ pub struct PlatformDeviceNetworkConfig {
     pub security_rule_count: usize,
     #[serde(default)]
     pub relay_candidate_count: usize,
+}
+
+/// 客户端本地 DNS Zone 配置。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformDnsZone {
+    pub zone_id: String,
+    pub network_id: String,
+    pub zone_name: String,
+}
+
+/// 客户端本地 DNS 记录配置，目前供隧道内 DNS responder 使用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformDnsRecord {
+    pub record_id: String,
+    pub zone_id: String,
+    pub network_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub fqdn: Option<String>,
+    #[serde(default)]
+    pub record_type: String,
+    #[serde(default)]
+    pub target_device_id: Option<String>,
+    #[serde(default)]
+    pub target_ip: Option<String>,
+    #[serde(default)]
+    pub cname: Option<String>,
+    #[serde(default)]
+    pub port: Option<String>,
+    #[serde(default)]
+    pub ttl: Option<i64>,
 }
 
 /// 客户端数据面 ACL 策略，来自服务端安全组与规则。
@@ -309,6 +346,14 @@ pub trait PlatformNetwork {
     fn configure_routes(&self, routes: &[RouteSpec]) -> Result<()>;
     /// 配置 DNS。
     fn configure_dns(&self, dns_servers: &[String]) -> Result<()>;
+    /// 配置本地 DNS zone/record 映射。
+    fn configure_dns_map(
+        &self,
+        _dns_zones: &[PlatformDnsZone],
+        _dns_records: &[PlatformDnsRecord],
+    ) -> Result<()> {
+        Ok(())
+    }
     /// 配置 relay 数据面；不支持的平台可使用默认空实现。
     fn configure_relay(&self, _config: Option<&RelayDataPlaneConfig>) -> Result<()> {
         Ok(())
@@ -345,7 +390,7 @@ mod tests {
                 source_value: "device-peer".to_string(),
                 enabled: true,
                 resolved_peer_node_id: Some("node-peer".to_string()),
-                resolved_peer_virtual_ips: vec!["100.64.0.2".to_string()],
+                resolved_peer_virtual_ips: vec!["10.0.0.2".to_string()],
             }],
         }
     }
@@ -365,7 +410,7 @@ mod tests {
             sessions: vec![RelayPeerSession {
                 session_id: "session-1".to_string(),
                 peer_node_id: "node-peer".to_string(),
-                peer_virtual_ips: vec!["100.64.0.2".to_string()],
+                peer_virtual_ips: vec!["10.0.0.2".to_string()],
                 ticket: RelayTicket {
                     ticket_id: "ticket-1".to_string(),
                     network_id: "network-1".to_string(),
@@ -390,10 +435,26 @@ mod tests {
         let acl_policy = test_acl_policy();
         let config = AndroidVpnSessionConfig {
             session_name: "SLAN".to_string(),
-            virtual_ip: "100.64.0.1".to_string(),
+            virtual_ip: "10.0.0.1".to_string(),
             prefix_len: 32,
             network_configs: Vec::new(),
-            dns_servers: vec!["100.64.0.53".to_string()],
+            dns_servers: vec!["10.0.0.53".to_string()],
+            dns_zones: vec![PlatformDnsZone {
+                zone_id: "zone-1".to_string(),
+                network_id: "network-1".to_string(),
+                zone_name: "test.lan".to_string(),
+            }],
+            dns_records: vec![PlatformDnsRecord {
+                record_id: "record-1".to_string(),
+                zone_id: "zone-1".to_string(),
+                network_id: "network-1".to_string(),
+                name: "mac".to_string(),
+                fqdn: Some("mac.test.lan".to_string()),
+                record_type: "A".to_string(),
+                target_ip: Some("10.0.0.2".to_string()),
+                ttl: Some(60),
+                ..PlatformDnsRecord::default()
+            }],
             routes: vec![RouteSpec {
                 destination: "mesh".to_string(),
                 gateway: None,
@@ -408,6 +469,18 @@ mod tests {
 
         let value = serde_json::to_value(&config).expect("serialize platform config");
         assert!(value.get("aclPolicies").is_some());
+        assert_eq!(
+            value
+                .pointer("/dnsZones/0/zoneName")
+                .and_then(|value| value.as_str()),
+            Some("test.lan")
+        );
+        assert_eq!(
+            value
+                .pointer("/dnsRecords/0/fqdn")
+                .and_then(|value| value.as_str()),
+            Some("mac.test.lan")
+        );
         assert!(value.pointer("/aclPolicies/0/securityGroups").is_none());
         assert_eq!(
             value
@@ -423,6 +496,8 @@ mod tests {
         let decoded: AndroidVpnSessionConfig =
             serde_json::from_value(value).expect("deserialize platform config");
         assert_eq!(decoded.acl_policies, vec![acl_policy.clone()]);
+        assert_eq!(decoded.dns_zones.len(), 1);
+        assert_eq!(decoded.dns_records.len(), 1);
         assert_eq!(
             decoded
                 .relay_data_plane
@@ -436,9 +511,11 @@ mod tests {
     fn platform_network_config_defaults_missing_acl_policies_to_empty() {
         let decoded: AndroidVpnSessionConfig = serde_json::from_value(serde_json::json!({
             "sessionName": "SLAN",
-            "virtualIp": "100.64.0.1",
+            "virtualIp": "10.0.0.1",
             "prefixLen": 32,
             "dnsServers": [],
+            "dnsZones": [],
+            "dnsRecords": [],
             "routes": [],
             "mtu": null,
             "relayEndpointId": null,
@@ -448,6 +525,8 @@ mod tests {
         .expect("deserialize minimal platform config");
 
         assert!(decoded.acl_policies.is_empty());
+        assert!(decoded.dns_zones.is_empty());
+        assert!(decoded.dns_records.is_empty());
         assert!(decoded.relay_data_plane.is_none());
     }
 }

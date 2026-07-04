@@ -17,6 +17,11 @@ func newAuthServices(deps UseCaseDependencies) AuthServices {
 			nil,
 			nil,
 		),
+		TokenManagement: servicepkg.TokenManagementService{
+			Users:    repos.Users,
+			Sessions: repos.Sessions,
+			Devices:  repos.Devices,
+		},
 		Aliases: servicepkg.AuthAliasService{
 			Users:   repos.Users,
 			Aliases: repos.UserAliases,

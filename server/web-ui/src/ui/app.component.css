@@ -543,6 +543,10 @@ button.link,
   gap: 12px;
 }
 
+.network-view-host {
+  display: contents;
+}
+
 .page.two,
 .workspace-layout {
   grid-template-columns: minmax(0, 1fr) 360px;
@@ -696,6 +700,10 @@ button.link,
 .network-detail-hero > .panel-title {
   margin: -14px -14px 0;
   padding: 16px 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
   color: #fff;
   background:
     linear-gradient(135deg, rgba(17, 24, 39, .96), rgba(39, 39, 42, .90)),
@@ -725,11 +733,17 @@ button.link,
   color: #fff;
 }
 
+.network-detail-hero > .panel-title .table-actions {
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+
 .network-detail-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin: 12px 0;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 16px 0 14px;
 }
 
 .network-detail-metrics div {
@@ -928,6 +942,67 @@ code {
   color: #ff6900;
   background: rgba(255, 105, 0, .08);
   border-radius: 7px;
+}
+
+.danger-icon-button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #d14343;
+  cursor: pointer;
+}
+
+.danger-icon-button svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  fill: none;
+}
+
+.danger-icon-button:hover {
+  color: #ff6900;
+  background: rgba(255, 105, 0, .08);
+  border-radius: 7px;
+}
+
+.table-icon-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(15, 23, 42, .12);
+  border-radius: 8px;
+  background: #fff;
+  color: #0f62fe;
+  cursor: pointer;
+}
+
+.table-icon-button svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  fill: none;
+}
+
+.table-icon-button:hover {
+  border-color: rgba(255, 105, 0, .36);
+  color: #ff6900;
+  background: rgba(255, 105, 0, .06);
+}
+
+.table-icon-button.danger {
+  color: #d14343;
+}
+
+.table-icon-button.subtle {
+  color: #4b5563;
 }
 
 .tag-popover {
@@ -1361,12 +1436,37 @@ code {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .rules-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 14px;
+}
+
+.security-rules-card {
+  width: 100%;
+  overflow: hidden;
+}
+
+.rules-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.security-rules-card .compact-table {
+  min-width: 840px;
+}
+
+.security-rules-card code {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .form {
@@ -1666,6 +1766,14 @@ select:focus {
   .rule-template-grid,
   .rule-fields-grid {
     grid-template-columns: 1fr;
+  }
+
+  .network-detail-hero > .panel-title {
+    grid-template-columns: 1fr;
+  }
+
+  .network-detail-hero > .panel-title .table-actions {
+    justify-content: flex-start;
   }
 
   .wide-panel,

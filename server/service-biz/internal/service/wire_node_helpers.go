@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
@@ -136,6 +137,34 @@ func wireStableRelayCandidate(candidates []RelayCandidateView, sessionID string)
 	sum := sha256.Sum256([]byte(sessionID))
 	index := int(binary.BigEndian.Uint64(sum[:8]) % uint64(len(candidates)))
 	return candidates[index], true
+}
+
+func stableRelaySessionSeed(networkID, srcNodeID, dstNodeID string) string {
+	left, right := canonicalRelayNodePair(srcNodeID, dstNodeID)
+	return strings.Join([]string{
+		strings.TrimSpace(networkID),
+		left,
+		right,
+	}, "|")
+}
+
+func stableRelaySessionID(networkID, srcNodeID, dstNodeID string, candidate RelayCandidateView) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		stableRelaySessionSeed(networkID, srcNodeID, dstNodeID),
+		strings.TrimSpace(candidate.EndpointID),
+		strings.TrimSpace(candidate.Transport),
+		strings.TrimSpace(candidate.Address),
+	}, "|")))
+	return "relay-session-" + hex.EncodeToString(sum[:12])
+}
+
+func canonicalRelayNodePair(srcNodeID, dstNodeID string) (string, string) {
+	left := strings.TrimSpace(srcNodeID)
+	right := strings.TrimSpace(dstNodeID)
+	if right < left {
+		return right, left
+	}
+	return left, right
 }
 
 func chooseWireRelayCandidate(candidates []RelayCandidateView, preferredEndpointIDs []string, sessionID string) (RelayCandidateView, bool) {

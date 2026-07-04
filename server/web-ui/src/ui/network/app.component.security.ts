@@ -161,7 +161,10 @@ export abstract class AppComponentSecurity extends AppComponentDns {
     this.rulePort = rule.port;
     this.ruleDescription = rule.description || '';
     this.ruleEnabled = rule.enabled ?? true;
-    this.ruleSubjectType = rule.subjectType;
+    this.ruleSubjectType =
+      rule.subjectType === 'user' && rule.subjectValue === this.effectiveUserId
+        ? 'all'
+        : rule.subjectType;
     this.ruleSubjectValue = rule.subjectValue;
     this.selectedRuleTemplate = '自定义';
     this.editingRule = rule;
@@ -193,20 +196,30 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   }
 
   ruleSubjectLabel(rule: SecurityRuleRow): string {
-    const prefix = this.subjectTypeLabel(rule.subjectType);
+    if (this.isCurrentUserAllDevicesRule(rule)) {
+      return '全部设备';
+    }
     if (rule.subjectType === 'device') {
       const device = this.devices.find((item) => item.deviceId === rule.subjectValue);
-      return `${prefix}:${device ? `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${device.deviceId}` : rule.subjectValue}`;
+      return device ? `${device.alias || device.deviceId} / ${device.deviceId}` : rule.subjectValue;
+    }
+    if (rule.subjectType === 'device_group') {
+      const group = this.deviceGroups.find((item) => item.groupId === rule.subjectValue);
+      return group ? `${group.name} / ${group.groupId}` : rule.subjectValue;
+    }
+    if (rule.subjectType === 'user') {
+      const member = this.members.find((item) => item.user === rule.subjectValue);
+      return member ? `${member.alias} / ${this.userLabel(member.user)}` : rule.subjectValue;
     }
     if (rule.subjectType === 'workspace') {
       const workspace = rule.subjectValue === 'self' ? this.selectedWorkspace : this.workspaces.find((item) => item.workspaceId === rule.subjectValue);
-      return `${prefix}:${workspace?.name ?? rule.subjectValue}`;
+      return workspace?.name ?? rule.subjectValue;
     }
-    return `${prefix}:${rule.subjectValue}`;
+    return rule.subjectValue;
   }
 
   subjectTypeLabel(type: RuleSubjectType): string {
-    return ({ device: '设备', user: '用户', network: '网络', workspace: '网络', cidr: 'CIDR', domain: '域名', all: '全部' } as Record<RuleSubjectType, string>)[type];
+    return ({ device: '设备', device_group: '设备分组', user: '指定用户', network: '网络', workspace: '网络', all: '全部设备' } as Record<RuleSubjectType, string>)[type];
   }
 
   onRuleSubjectTypeChanged(): void {
@@ -215,7 +228,24 @@ export abstract class AppComponentSecurity extends AppComponentDns {
       this.ruleSubjectValue = first;
       return;
     }
-    this.ruleSubjectValue = this.ruleSubjectType === 'cidr' ? '0.0.0.0/0' : 'example.com';
+    this.ruleSubjectValue = '';
+  }
+
+  private normalizedRulePeer(): { peerType: RuleSubjectType; peerValue: string } {
+    if (this.ruleSubjectType === 'all') {
+      return {
+        peerType: 'user',
+        peerValue: this.effectiveUserId,
+      };
+    }
+    return {
+      peerType: this.ruleSubjectType,
+      peerValue: this.ruleSubjectValue,
+    };
+  }
+
+  private isCurrentUserAllDevicesRule(rule: SecurityRuleRow): boolean {
+    return rule.subjectType === 'user' && rule.subjectValue === this.effectiveUserId;
   }
 
   closeRuleDialog(): void {
@@ -228,6 +258,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
     this.securityRuleDialogMessage = '';
     const portFrom = this.rulePort === 'all' ? 0 : Number.parseInt(this.rulePort.split(',')[0], 10) || 0;
     const portTo = this.rulePort === 'all' ? 0 : Number.parseInt(this.rulePort.split(',').at(-1) ?? this.rulePort, 10) || portFrom;
+    const peer = this.normalizedRulePeer();
     if (this.ruleDialogMode === 'edit' && this.editingRule) {
       try {
         const updated = await this.api.patch<ApiSecurityRule>(WEB_API.securityRule(this.editingRule.ruleId ?? '', this.effectiveUserId), {
@@ -238,8 +269,8 @@ export abstract class AppComponentSecurity extends AppComponentDns {
           protocol: this.ruleProtocol,
           portFrom,
           portTo,
-          peerType: this.ruleSubjectType,
-          peerValue: this.ruleSubjectValue,
+          peerType: peer.peerType,
+          peerValue: peer.peerValue,
           description: this.ruleDescription,
           enabled: this.ruleEnabled,
         });
@@ -257,8 +288,8 @@ export abstract class AppComponentSecurity extends AppComponentDns {
         this.editingRule.port = this.rulePort;
         this.editingRule.description = this.ruleDescription;
         this.editingRule.enabled = this.ruleEnabled;
-        this.editingRule.subjectType = this.ruleSubjectType;
-        this.editingRule.subjectValue = this.ruleSubjectValue;
+        this.editingRule.subjectType = peer.peerType;
+        this.editingRule.subjectValue = peer.peerValue;
       }
       this.closeRuleDialog();
       this.notifyStateChanged();
@@ -273,8 +304,8 @@ export abstract class AppComponentSecurity extends AppComponentDns {
         protocol: this.ruleProtocol,
         portFrom,
         portTo,
-        peerType: this.ruleSubjectType,
-        peerValue: this.ruleSubjectValue,
+        peerType: peer.peerType,
+        peerValue: peer.peerValue,
         description: this.ruleDescription,
         enabled: this.ruleEnabled,
       });
@@ -287,7 +318,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
       }
       this.securityRules = [
         ...this.securityRules,
-        { direction: this.ruleDirection, priority: this.rulePriority, action: this.ruleAction, protocol: this.ruleProtocol, port: this.rulePort, description: this.ruleDescription, subjectType: this.ruleSubjectType, subjectValue: this.ruleSubjectValue, enabled: this.ruleEnabled },
+        { direction: this.ruleDirection, priority: this.rulePriority, action: this.ruleAction, protocol: this.ruleProtocol, port: this.rulePort, description: this.ruleDescription, subjectType: peer.peerType, subjectValue: peer.peerValue, enabled: this.ruleEnabled },
       ];
     }
     this.closeRuleDialog();

@@ -9,19 +9,24 @@ func deviceSessionView(item model.DeviceSession) DeviceSessionView {
 		AccessToken:  item.AccessToken,
 		RefreshToken: item.RefreshToken,
 		Status:       item.Status,
+		SessionMode:  item.SessionMode,
 		ExpiresAt:    item.ExpiresAt,
+		RefreshExpiry: item.RefreshExpiry,
 		CreatedAt:    item.CreatedAt,
 		UpdatedAt:    item.UpdatedAt,
+		RevokedAt:    item.RevokedAt,
 	}
 }
 
 func bootstrapKeyView(item model.DeviceBootstrapKey) DeviceBootstrapKeyView {
 	return DeviceBootstrapKeyView{
 		KeyID:          item.KeyID,
+		InstallationKeyID: item.KeyID,
 		UserID:         item.UserID,
 		Name:           item.Name,
 		DeviceAlias:    item.Name,
 		Token:          item.Token,
+		InstallationKey: item.Token,
 		Status:         item.Status,
 		ExpiresAt:      item.ExpiresAt,
 		CreatedAt:      item.CreatedAt,

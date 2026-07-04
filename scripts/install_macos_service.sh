@@ -10,12 +10,12 @@ SERVICE_PID="${INSTALL_DIR}/client-core-service.pid"
 SERVICE_HOST="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1:46392}"
 CONTROL_BASE_URL="${SLAN_CONTROL_BASE_URL:-}"
 MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
+RESET_IDENTITY="${SLAN_RESET_MACOS_IDENTITY:-0}"
 DIRECT_UDP_PUBLIC_HOST="${SLAN_DIRECT_UDP_PUBLIC_HOST:-}"
 DIRECT_UDP_ENDPOINT="${SLAN_DIRECT_UDP_ENDPOINT:-}"
 APP_PATH=""
 SOURCE_BIN=""
 ORIGINAL_ARGS=("$@")
-
 service_info() {
   local binary="$1"
   local output
@@ -41,6 +41,47 @@ service_info() {
   wait "$pid" >/dev/null 2>&1 || true
   rm -f "$output"
   echo "unsupported"
+}
+
+sha256_file() {
+  local path="$1"
+  shasum -a 256 "$path" | awk '{print $1}'
+}
+
+wait_service_ready() {
+  local address="$1"
+  local deadline=$((SECONDS + 20))
+  while (( SECONDS < deadline )); do
+    if SLAN_INSTALL_CHECK_HOST="$address" python3 - <<'PY' >/dev/null 2>&1
+import json
+import os
+import socket
+import sys
+
+address = os.environ["SLAN_INSTALL_CHECK_HOST"].strip()
+host, port = address.rsplit(":", 1)
+payload = json.dumps({
+    "method": "localStateWatch",
+    "args": {"lastRevision": 0, "timeoutMs": 1000},
+}) + "\n"
+
+with socket.create_connection((host, int(port)), timeout=2) as sock:
+    sock.sendall(payload.encode())
+    line = sock.makefile("r", encoding="utf-8").readline()
+
+if not line:
+    raise SystemExit(1)
+
+data = json.loads(line)
+if "revision" not in data or "state" not in data:
+    raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -74,6 +115,7 @@ if [[ ! -x "$SOURCE_BIN" ]]; then
   exit 1
 fi
 echo "sourceServiceInfo: $(service_info "$SOURCE_BIN")"
+echo "sourceServiceSha256: $(sha256_file "$SOURCE_BIN")"
 
 if [[ "${EUID}" -ne 0 ]]; then
   exec sudo "$0" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
@@ -84,6 +126,12 @@ launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
 launchctl disable "system/${LABEL}" >/dev/null 2>&1 || true
 pkill -x "client-core-service" >/dev/null 2>&1 || true
 rm -f "$PLIST" "$SERVICE_BIN" "$SERVICE_PID"
+if [[ "$RESET_IDENTITY" == "1" ]]; then
+  rm -f \
+    "${INSTALL_DIR}/client-v2-session.json" \
+    "${INSTALL_DIR}/client-v2-device-id.txt" \
+    "${INSTALL_DIR}/client-v2-device-public-key.txt"
+fi
 
 cp "$SOURCE_BIN" "$SERVICE_BIN"
 chown root:wheel "$SERVICE_BIN"
@@ -153,6 +201,7 @@ launchctl kickstart -k "system/${LABEL}"
 
 echo "installed ${LABEL}"
 echo "binary: $SERVICE_BIN"
+echo "installedServiceSha256: $(sha256_file "$SERVICE_BIN")"
 echo "serviceInfo: $(service_info "$SERVICE_BIN")"
 echo "host: $SERVICE_HOST"
 [[ -n "$CONTROL_BASE_URL" ]] && echo "controlBaseUrl: $CONTROL_BASE_URL"
@@ -160,3 +209,8 @@ echo "host: $SERVICE_HOST"
 [[ -n "$DIRECT_UDP_ENDPOINT" ]] && echo "directUdpEndpoint: $DIRECT_UDP_ENDPOINT"
 echo "plist: $PLIST"
 echo "logs: $LOG_DIR"
+if ! wait_service_ready "$SERVICE_HOST"; then
+  echo "client-core-service local API did not become ready at $SERVICE_HOST" >&2
+  exit 1
+fi
+echo "localApiReady: true"

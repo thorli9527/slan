@@ -13,3 +13,11 @@ type Network struct {
 	CreatedAt        int64  `json:"createdAt"`
 	UpdatedAt        int64  `json:"updatedAt"`
 }
+
+type NetworkConfigVersion struct {
+	NetworkID string `json:"networkId"`
+	Version   int64  `json:"version"`
+	Reason    string `json:"reason"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+}

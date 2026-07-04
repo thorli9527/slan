@@ -25,7 +25,7 @@ Implementation boundary:
 - Flutter UI only sends `ClientCommand`.
 - Network enable/disable still goes through `client-core-service`.
 - `Settings` opens the main Flutter window. `Enable/Disable Network` sends the local service command only when signed in.
-- Web Console URL resolution matches Windows: `SLAN_WEB_CONSOLE_URL`, then `SLAN_CONTROL_BASE_URL`, then `http://127.0.0.1:24200`.
+- Web Console URL resolution matches Windows/Linux: `SLAN_WEB_CONSOLE_URL`, then `SLAN_CONTROL_BASE_URL`, then `http://47.245.40.231:24200`.
 - No mesh, DNS, route, or adapter logic belongs in Swift UI code.
 
 Native pieces:

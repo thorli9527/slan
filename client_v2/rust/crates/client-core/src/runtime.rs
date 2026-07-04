@@ -2,7 +2,9 @@ use anyhow::Result;
 
 use crate::{
     command::ClientCommand,
-    platform::{PlatformNetwork, RelayDataPlaneConfig, RouteSpec},
+    platform::{
+        PlatformDnsRecord, PlatformDnsZone, PlatformNetwork, RelayDataPlaneConfig, RouteSpec,
+    },
     state::ClientViewState,
 };
 
@@ -60,6 +62,8 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
             ClientCommand::EnableNetwork => {
                 self.enable_network_with_config(
                     32,
+                    &[],
+                    &[],
                     &[],
                     &[RouteSpec {
                         destination: "mesh".to_string(),
@@ -148,6 +152,8 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         &mut self,
         prefix_len: u8,
         dns_servers: &[String],
+        dns_zones: &[PlatformDnsZone],
+        dns_records: &[PlatformDnsRecord],
         routes: &[RouteSpec],
         relay_config: Option<&RelayDataPlaneConfig>,
     ) -> Result<ClientViewState> {
@@ -163,6 +169,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
             runtime.platform.install_adapter()?;
             runtime.platform.configure_ip(&virtual_ip, prefix_len)?;
             runtime.platform.configure_dns(dns_servers)?;
+            runtime.platform.configure_dns_map(dns_zones, dns_records)?;
             runtime.platform.configure_routes(routes)?;
             runtime.platform.configure_relay(relay_config)?;
             runtime.state.network_enabled = true;

@@ -170,7 +170,6 @@ func securityRulePayload(view servicepkg.SecurityRuleView) map[string]any {
 		"action":          view.Action,
 		"protocol":        view.Protocol,
 		"portRange":       view.PortRange,
-		"cidr":            view.CIDR,
 		"portFrom":        view.PortFrom,
 		"portTo":          view.PortTo,
 		"peerType":        view.PeerType,

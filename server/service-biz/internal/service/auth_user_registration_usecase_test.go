@@ -52,6 +52,14 @@ func (s *authUserRegistrationTestSessions) GetUserSessionByAccessToken(context.C
 	return model.UserSession{}, false, nil
 }
 
+func (s *authUserRegistrationTestSessions) GetUserSessionByRefreshToken(context.Context, string) (model.UserSession, bool, error) {
+	return model.UserSession{}, false, nil
+}
+
+func (s *authUserRegistrationTestSessions) ListUserSessionsByUserID(context.Context, string) ([]model.UserSession, error) {
+	return nil, nil
+}
+
 func (s *authUserRegistrationTestSessions) SaveUserSession(_ context.Context, item model.UserSession) error {
 	s.items = append(s.items, item)
 	return nil
@@ -72,6 +80,7 @@ func (s *authUserRegistrationTestSessions) SaveConsoleLoginKey(context.Context, 
 type authUserRegistrationTestNetworks struct {
 	networks       map[string]model.Network
 	securityGroups map[string]model.SecurityGroup
+	versions       map[string]model.NetworkConfigVersion
 	nextSecurityID int
 }
 
@@ -110,7 +119,24 @@ func (s *authUserRegistrationTestNetworks) ListNetworkDevices(context.Context, s
 	return nil, nil
 }
 
+func (s *authUserRegistrationTestNetworks) GetNetworkDevice(_ context.Context, networkID, deviceID string) (model.NetworkDevice, bool, error) {
+	return model.NetworkDevice{}, false, nil
+}
+
 func (s *authUserRegistrationTestNetworks) SaveNetworkDevice(context.Context, model.NetworkDevice) error {
+	return nil
+}
+
+func (s *authUserRegistrationTestNetworks) GetNetworkVersion(_ context.Context, networkID string) (model.NetworkConfigVersion, bool, error) {
+	item, ok := s.versions[networkID]
+	return item, ok, nil
+}
+
+func (s *authUserRegistrationTestNetworks) SaveNetworkVersion(_ context.Context, item model.NetworkConfigVersion) error {
+	if s.versions == nil {
+		s.versions = make(map[string]model.NetworkConfigVersion)
+	}
+	s.versions[item.NetworkID] = item
 	return nil
 }
 
@@ -276,5 +302,18 @@ func TestRegisterUserCreatesDefaultSecurityGroup(t *testing.T) {
 	}
 	if groups[0].Name != "Default Security Group" {
 		t.Fatalf("unexpected default security group: %+v", groups[0])
+	}
+	version, ok, err := networks.GetNetworkVersion(context.Background(), "net-test-1")
+	if err != nil {
+		t.Fatalf("GetNetworkVersion returned error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected default network version to be created")
+	}
+	if version.Version != 1 {
+		t.Fatalf("expected default network version 1, got %+v", version)
+	}
+	if version.Reason != "user_default_network_created" {
+		t.Fatalf("unexpected default network version reason: %+v", version)
 	}
 }

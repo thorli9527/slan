@@ -1,7 +1,16 @@
 package repository
 
-func (s *GormStore) NewUserID() string    { return s.nextID("user", "user") }
-func (s *GormStore) NewDeviceID() string  { return s.nextID("device", "dev") }
+import "fmt"
+
+func (s *GormStore) NewUserID() string   { return s.nextID("user", "user") }
+func (s *GormStore) NewDeviceID() string { return s.nextID("device", "dev") }
+func (s *GormStore) NewDeviceVirtualIPID() string {
+	value := s.nextCounterValue("device_virtual_ip")
+	if value <= 0 {
+		return "vip-000001"
+	}
+	return fmt.Sprintf("vip-%06d", value)
+}
 func (s *GormStore) NewNetworkID() string { return s.nextID("network", "net") }
 func (s *GormStore) NewInviteID() string  { return s.nextID("invite", "invite") }
 func (s *GormStore) NewSessionID(prefix string) string {

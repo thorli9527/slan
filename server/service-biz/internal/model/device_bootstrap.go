@@ -12,4 +12,5 @@ type DeviceBootstrapKey struct {
 	UsedByDeviceID string `json:"usedByDeviceId"`
 	CreatedAt      int64  `json:"createdAt"`
 	UpdatedAt      int64  `json:"updatedAt"`
+	RevokedAt      int64  `json:"revokedAt"`
 }

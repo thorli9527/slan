@@ -25,6 +25,14 @@ type pathHealthReportRequest struct {
 	Values map[string]any
 }
 
+type valueReader struct {
+	values map[string]any
+}
+
+func newValueReader(values map[string]any) valueReader {
+	return valueReader{values: values}
+}
+
 func stringValue(values map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := values[key]; ok {
@@ -48,13 +56,29 @@ func mapValue(values map[string]any, keys ...string) map[string]any {
 	return nil
 }
 
+func (r valueReader) string(keys ...string) string {
+	return stringValue(r.values, keys...)
+}
+
+func (r valueReader) nestedString(directKey string, nestedKeys ...string) string {
+	return nestedStringValue(r.values, []string{directKey}, nestedKeys...)
+}
+
+func (r valueReader) int64(keys ...string) int64 {
+	return int64Value(r.values, keys...)
+}
+
+func (r valueReader) bool(keys ...string) bool {
+	return boolValue(r.values, keys...)
+}
+
 func nestedStringValue(values map[string]any, directKeys []string, nestedKeys ...string) string {
 	if value := stringValue(values, directKeys...); value != "" {
 		return value
 	}
 	for _, parent := range []map[string]any{
 		mapValue(values, "attrs", "attributes", "metadata"),
-		mapValue(values, "client", "clientInfo", "client_info", "conn"),
+		mapValue(values, "client", "clientInfo", "conn"),
 		mapValue(values, "info", "packet"),
 	} {
 		if parent == nil {
@@ -70,6 +94,13 @@ func nestedStringValue(values map[string]any, directKeys []string, nestedKeys ..
 		}
 	}
 	return ""
+}
+
+func payloadValues(values map[string]any) map[string]any {
+	if payload := mapValue(values, "payload"); payload != nil {
+		return payload
+	}
+	return values
 }
 
 func bytesString(value any) (string, bool) {
@@ -113,7 +144,7 @@ func authRequestIsV5(values map[string]any) bool {
 	if _, ok := values["userProps"]; ok {
 		return true
 	}
-	version := stringValue(values, "version", "ver", "protocolVersion")
+	version := stringValue(values, "version")
 	return version == "5" || strings.EqualFold(version, "MQTT5")
 }
 
@@ -135,7 +166,7 @@ func checkTopic(req map[string]any) (string, bool, bool) {
 	if topic := topicFromValues(req); topic != "" {
 		return topic, subscribe, false
 	}
-	for _, key := range []string{"topics", "topicFilters", "topic_filters"} {
+	for _, key := range []string{"topics", "topicFilters"} {
 		if values, ok := req[key].([]any); ok && len(values) > 0 {
 			return strings.TrimSpace(fmt.Sprint(values[0])), true, false
 		}
@@ -144,7 +175,14 @@ func checkTopic(req map[string]any) (string, bool, bool) {
 }
 
 func topicFromValues(values map[string]any) string {
-	return nestedStringValue(values, []string{"topic", "topicFilter", "topic_filter"}, "topic", "topicFilter", "topic_filter")
+	reader := newValueReader(values)
+	if topic := reader.string("topic", "topicFilter"); topic != "" {
+		return topic
+	}
+	if topic := reader.nestedString("topic", "topic", "topicFilter"); topic != "" {
+		return topic
+	}
+	return reader.nestedString("topicFilter", "topic", "topicFilter")
 }
 
 func decodeAuthRequest(r *http.Request) (authRequest, error) {
@@ -180,29 +218,41 @@ func decodePathHealthReportRequest(r *http.Request) (pathHealthReportRequest, er
 }
 
 func (r authRequest) input() servicepkg.MQTTAuthInput {
+	reader := newValueReader(r.Values)
 	return servicepkg.MQTTAuthInput{
-		ClientID: nestedStringValue(r.Values, []string{"clientId", "client_id"}, "clientId", "client_id"),
-		Username: nestedStringValue(r.Values, []string{"username", "userName"}, "username", "userName"),
-		Password: nestedStringValue(r.Values, []string{"password"}, "password"),
+		ClientID: reader.nestedString("clientId", "clientId"),
+		Username: reader.nestedString("username", "username"),
+		Password: reader.nestedString("password", "password"),
 		IsV5:     authRequestIsV5(r.Values),
 	}
 }
 
 func (r checkRequest) input(httpReq *http.Request) servicepkg.MQTTCheckInput {
-	principal := nestedStringValue(r.Values, []string{"principal"}, "principal")
-	deviceID := nestedStringValue(r.Values, []string{"deviceId", "device_id"}, "deviceId", "device_id")
-	userID := nestedStringValue(r.Values, []string{"userId", "user_id"}, "userId", "user_id")
+	reader := newValueReader(r.Values)
+	principal := reader.nestedString("principal", "principal")
+	deviceID := reader.nestedString("deviceId", "deviceId", "deviceID")
+	userID := reader.nestedString("userId", "userId", "userID")
+	clientID := reader.nestedString("clientId", "clientId", "clientID")
+	username := reader.nestedString("username", "username", "userName")
 	if userID == "" {
-		userID = headerValue(httpReq, "user_id", "user-id", "userid", "userId")
+		userID = headerValue(httpReq, "userId", "userID", "user_id", "User_id")
 	}
 	if deviceID == "" {
-		deviceID = headerValue(httpReq, "device_id", "device-id", "deviceId")
+		deviceID = headerValue(httpReq, "deviceId", "deviceID", "device_id", "Device_id")
+	}
+	if clientID == "" {
+		clientID = headerValue(httpReq, "clientId", "clientID", "client_id", "Client_id")
+	}
+	if username == "" {
+		username = headerValue(httpReq, "username", "userName", "user_name", "User_name")
 	}
 	topic, subscribe, connect := checkTopic(r.Values)
 	return servicepkg.MQTTCheckInput{
 		Principal: principal,
 		DeviceID:  deviceID,
 		UserID:    userID,
+		ClientID:  clientID,
+		Username:  username,
 		Topic:     topic,
 		Subscribe: subscribe,
 		Connect:   connect,
@@ -210,65 +260,60 @@ func (r checkRequest) input(httpReq *http.Request) servicepkg.MQTTCheckInput {
 }
 
 func (r endpointReportRequest) input() servicepkg.MQTTEndpointReportInput {
-	payload := mapValue(r.Values, "payload")
-	if payload == nil {
-		payload = r.Values
-	}
-	deviceID := nestedStringValue(payload, []string{"deviceId", "device_id"}, "deviceId", "device_id")
-	nodeID := nestedStringValue(payload, []string{"nodeId", "node_id"}, "nodeId", "node_id")
+	reader := newValueReader(payloadValues(r.Values))
+	deviceID := reader.nestedString("deviceId", "deviceId")
+	nodeID := reader.nestedString("nodeId", "nodeId")
 	if deviceID == "" && strings.HasPrefix(nodeID, "node-") {
 		deviceID = strings.TrimPrefix(nodeID, "node-")
 	}
 	endpoints := make([]servicepkg.DeviceEndpointView, 0)
-	if values, ok := payload["endpoints"].([]any); ok {
+	if values, ok := reader.values["endpoints"].([]any); ok {
 		for _, item := range values {
 			entry, ok := item.(map[string]any)
 			if !ok {
 				continue
 			}
+			entryReader := newValueReader(entry)
 			endpoints = append(endpoints, servicepkg.DeviceEndpointView{
-				Type:      stringValue(entry, "type", "kind"),
-				Address:   stringValue(entry, "address", "endpoint"),
-				UpdatedAt: int64Value(entry, "updatedAt", "updated_at"),
+				Type:      entryReader.string("type", "kind"),
+				Address:   entryReader.string("address", "endpoint"),
+				UpdatedAt: entryReader.int64("updatedAt"),
 			})
 		}
 	}
 	return servicepkg.MQTTEndpointReportInput{
-		NetworkID: stringValue(payload, "networkId", "network_id"),
+		NetworkID: reader.string("networkId"),
 		DeviceID:  deviceID,
 		NodeID:    nodeID,
-		NATType:   stringValue(payload, "natType", "nat_type"),
+		NATType:   reader.string("natType"),
 		Endpoints: endpoints,
 	}
 }
 
 func (r pathHealthReportRequest) input() servicepkg.MQTTPathHealthReportInput {
-	payload := mapValue(r.Values, "payload")
-	if payload == nil {
-		payload = r.Values
-	}
-	deviceID := nestedStringValue(payload, []string{"deviceId", "device_id"}, "deviceId", "device_id")
+	reader := newValueReader(payloadValues(r.Values))
+	deviceID := reader.nestedString("deviceId", "deviceId")
 	return servicepkg.MQTTPathHealthReportInput{
-		NetworkID:         stringValue(payload, "networkId", "network_id"),
+		NetworkID:         reader.string("networkId"),
 		DeviceID:          deviceID,
-		PeerNodeID:        stringValue(payload, "peerNodeId", "peer_node_id"),
-		PathType:          stringValue(payload, "pathType", "path_type"),
-		ActivePath:        stringValue(payload, "activePath", "active_path"),
-		RelayTransport:    stringValue(payload, "relayTransport", "relay_transport"),
-		Endpoint:          stringValue(payload, "endpoint"),
-		DerpNodeID:        stringValue(payload, "derpNodeId", "derp_node_id"),
-		ObservedRttMs:     int64Value(payload, "observedRttMs", "observed_rtt_ms"),
-		PacketLossPpm:     int64Value(payload, "packetLossPpm", "packet_loss_ppm"),
-		PathScore:         int64Value(payload, "pathScore", "path_score"),
-		RelayMtu:          int(int64Value(payload, "relayMtu", "relay_mtu")),
-		MaxFramePayload:   int(int64Value(payload, "maxFramePayload", "max_frame_payload")),
-		TicketExpiresAt:   stringValue(payload, "ticketExpiresAt", "ticket_expires_at"),
-		TicketExpiresInMs: int64Value(payload, "ticketExpiresInMs", "ticket_expires_in_ms"),
-		TicketRenewDue:    boolValue(payload, "ticketRenewDue", "ticket_renew_due"),
-		PathDowngrades:    int64Value(payload, "pathDowngrades", "path_downgrades"),
-		PathUpgrades:      int64Value(payload, "pathUpgrades", "path_upgrades"),
-		LastPathChange:    stringValue(payload, "lastPathChange", "last_path_change"),
-		SampledAtMs:       int64Value(payload, "sampledAtMs", "sampled_at_ms"),
+		PeerNodeID:        reader.string("peerNodeId"),
+		PathType:          reader.string("pathType"),
+		ActivePath:        reader.string("activePath"),
+		RelayTransport:    reader.string("relayTransport"),
+		Endpoint:          reader.string("endpoint"),
+		DerpNodeID:        reader.string("derpNodeId"),
+		ObservedRttMs:     reader.int64("observedRttMs"),
+		PacketLossPpm:     reader.int64("packetLossPpm"),
+		PathScore:         reader.int64("pathScore"),
+		RelayMtu:          int(reader.int64("relayMtu")),
+		MaxFramePayload:   int(reader.int64("maxFramePayload")),
+		TicketExpiresAt:   reader.string("ticketExpiresAt"),
+		TicketExpiresInMs: reader.int64("ticketExpiresInMs"),
+		TicketRenewDue:    reader.bool("ticketRenewDue"),
+		PathDowngrades:    reader.int64("pathDowngrades"),
+		PathUpgrades:      reader.int64("pathUpgrades"),
+		LastPathChange:    reader.string("lastPathChange"),
+		SampledAtMs:       reader.int64("sampledAtMs"),
 	}
 }
 

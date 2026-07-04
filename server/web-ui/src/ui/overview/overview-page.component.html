@@ -15,10 +15,55 @@
   <article class="panel">
     <div class="panel-title">
       <div>
+        <h2>用户 Token</h2>
+        <p>管理当前账户的登录 token；可区分短期、长期、已撤销状态。</p>
+      </div>
+    </div>
+    <table class="compact-table">
+      <thead><tr><th>模式</th><th>状态</th><th>过期时间</th><th>刷新过期</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let item of vm.userSessions">
+          <td>{{ item.sessionMode || '-' }}</td>
+          <td>{{ item.status }}</td>
+          <td>{{ vm.formatTime(item.expiresAt) }}</td>
+          <td>{{ vm.formatTime(item.refreshExpiry) }}</td>
+          <td>{{ vm.formatTime(item.createdAt) }}</td>
+          <td class="table-actions">
+            <button class="table-icon-button danger" type="button" *ngIf="item.status === 'active'" title="立即失效" aria-label="立即失效" (click)="vm.revokeUserManagedSession(item)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16"></path>
+                <path d="M9 7V5h6v2"></path>
+                <path d="M8 7l1 12h6l1-12"></path>
+                <path d="M10 11v5"></path>
+                <path d="M14 11v5"></path>
+              </svg>
+            </button>
+            <span *ngIf="item.status !== 'active'">-</span>
+          </td>
+        </tr>
+        <tr *ngIf="vm.userSessions.length === 0">
+          <td colspan="6">暂无用户 token</td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+
+  <article class="panel">
+    <div class="panel-title">
+      <div>
         <h2>最近设备</h2>
         <p>设备注册后直接分配全局 IP，IP 不在界面单独管理。</p>
       </div>
-      <button class="ghost small" type="button" (click)="vm.setActive('devices')">管理设备</button>
+      <button class="table-icon-button" type="button" title="管理设备" aria-label="管理设备" (click)="vm.setActive('devices')">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 7h8"></path>
+          <path d="M8 12h8"></path>
+          <path d="M8 17h5"></path>
+          <path d="M4 7h.01"></path>
+          <path d="M4 12h.01"></path>
+          <path d="M4 17h.01"></path>
+        </svg>
+      </button>
     </div>
     <table>
       <thead><tr><th>设备 ID</th><th>别名</th><th>系统</th><th>IP</th><th>状态</th></tr></thead>
@@ -32,5 +77,44 @@
         </tr>
       </tbody>
     </table>
+  </article>
+
+  <article class="panel">
+    <div class="panel-title">
+      <div>
+        <h2>设备 Token</h2>
+        <p>管理当前用户设备的设备 token；支持逐个立即失效。</p>
+      </div>
+    </div>
+    <div *ngFor="let device of vm.currentUserDevices" class="device-token-block">
+      <h3>{{ device.alias || device.deviceId }}</h3>
+      <table class="compact-table">
+        <thead><tr><th>模式</th><th>状态</th><th>过期时间</th><th>刷新过期</th><th>创建时间</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let item of vm.deviceManagedSessions(device)">
+            <td>{{ item.sessionMode || '-' }}</td>
+            <td>{{ item.status }}</td>
+            <td>{{ vm.formatTime(item.expiresAt) }}</td>
+            <td>{{ vm.formatTime(item.refreshExpiry) }}</td>
+            <td>{{ vm.formatTime(item.createdAt) }}</td>
+            <td class="table-actions">
+              <button class="table-icon-button danger" type="button" *ngIf="item.status === 'active'" title="立即失效" aria-label="立即失效" (click)="vm.revokeDeviceManagedSession(device, item)">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 7h16"></path>
+                  <path d="M9 7V5h6v2"></path>
+                  <path d="M8 7l1 12h6l1-12"></path>
+                  <path d="M10 11v5"></path>
+                  <path d="M14 11v5"></path>
+                </svg>
+              </button>
+              <span *ngIf="item.status !== 'active'">-</span>
+            </td>
+          </tr>
+          <tr *ngIf="vm.deviceManagedSessions(device).length === 0">
+            <td colspan="6">暂无设备 token</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </article>
 </section>

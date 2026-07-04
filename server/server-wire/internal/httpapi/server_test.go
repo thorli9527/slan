@@ -48,7 +48,7 @@ func TestPeerReadRoutes(t *testing.T) {
 			NodeID:            "node-http",
 			SupportsDirectUDP: true,
 			SupportsRelayUDP:  true,
-			VirtualIPs:        []string{"100.64.0.2"},
+			VirtualIPs:        []string{"10.0.0.2"},
 			AllowedIPs:        []string{"10.0.0.0/24"},
 		},
 	})
@@ -132,8 +132,8 @@ func TestHTTPRoutesRejectOperationsAfterBizDisable(t *testing.T) {
 			NetworkID:  "net-disabled-http",
 			NodeID:     "node-disabled-http",
 			Enabled:    true,
-			VirtualIPs: []string{"100.64.10.40"},
-			AllowedIPs: []string{"100.64.10.40/32"},
+			VirtualIPs: []string{"10.10.0.40"},
+			AllowedIPs: []string{"10.10.0.40/32"},
 		},
 	}
 	mux := newMux(service.NewWithBiz(store.NewMemoryStore(), biz))

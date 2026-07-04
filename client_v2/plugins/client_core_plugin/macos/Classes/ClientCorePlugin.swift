@@ -4,8 +4,12 @@ import Network
 
 public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private static let launchdServiceLabel = "dev.slan.client-core-service"
+  private static let bundledServiceHost = "127.0.0.1:46394"
   private var statusItem: NSStatusItem?
   private var networkMenuItem: NSMenuItem?
+  private let bundledServiceLock = NSLock()
+  private var bundledServiceProcess: Process?
+  private var bundledServicePreferredHost: String?
   private let stateWatchQueue = DispatchQueue(
     label: "dev.slan.client_core_v2.macos.stateWatch",
     qos: .utility
@@ -437,6 +441,14 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if let response = forwardToService(method: method, arguments: arguments) {
       return response
     }
+    if tryStartBundledService() {
+      for _ in 0..<15 {
+        if let response = forwardToService(method: method, arguments: arguments) {
+          return response
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+      }
+    }
     if tryStartLaunchdService() {
       for _ in 0..<15 {
         if let response = forwardToService(method: method, arguments: arguments) {
@@ -445,16 +457,9 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
         Thread.sleep(forTimeInterval: 0.1)
       }
     }
-    guard tryStartBundledService() else {
-      return nil
-    }
-    for _ in 0..<15 {
-      if let response = forwardToService(method: method, arguments: arguments) {
-        return response
-      }
-      Thread.sleep(forTimeInterval: 0.1)
-    }
-    return nil
+    return tryStartBundledService(forceRestart: true)
+      ? waitForServiceResponse(method: method, arguments: arguments)
+      : nil
   }
 
   private func tryStartLaunchdService() -> Bool {
@@ -496,6 +501,23 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   private func tryStartBundledService() -> Bool {
+    return tryStartBundledService(forceRestart: false)
+  }
+
+  private func tryStartBundledService(forceRestart: Bool) -> Bool {
+    bundledServiceLock.lock()
+    defer { bundledServiceLock.unlock() }
+
+    if let process = bundledServiceProcess, process.isRunning {
+      bundledServicePreferredHost = Self.bundledServiceHost
+      return true
+    }
+    if forceRestart {
+      bundledServiceProcess?.terminate()
+      bundledServiceProcess = nil
+      bundledServicePreferredHost = nil
+    }
+
     guard let executableDir = Bundle.main.executableURL?.deletingLastPathComponent() else {
       return false
     }
@@ -503,15 +525,58 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     guard FileManager.default.isExecutableFile(atPath: serviceURL.path) else {
       return false
     }
+
+    let stateRoot = FileManager.default.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first
+    if let stateRoot {
+      try? FileManager.default.createDirectory(
+        at: stateRoot,
+        withIntermediateDirectories: true
+      )
+    }
+
     let process = Process()
     process.executableURL = serviceURL
+    var environment = ProcessInfo.processInfo.environment
+    environment["SLAN_CLIENT_CORE_SERVICE_HOST"] = Self.bundledServiceHost
+    if let stateRoot {
+      environment["SLAN_STATE_DIR"] = stateRoot.path
+    }
+    process.environment = environment
+    process.terminationHandler = { [weak self] terminated in
+      guard let self else { return }
+      self.bundledServiceLock.lock()
+      defer { self.bundledServiceLock.unlock() }
+      if self.bundledServiceProcess === terminated {
+        self.bundledServiceProcess = nil
+        if self.bundledServicePreferredHost == Self.bundledServiceHost {
+          self.bundledServicePreferredHost = nil
+        }
+      }
+    }
     do {
       try process.run()
+      bundledServiceProcess = process
+      bundledServicePreferredHost = Self.bundledServiceHost
       Thread.sleep(forTimeInterval: 0.3)
       return true
     } catch {
+      bundledServiceProcess = nil
+      bundledServicePreferredHost = nil
       return false
     }
+  }
+
+  private func waitForServiceResponse(method: String, arguments: Any?) -> String? {
+    for _ in 0..<15 {
+      if let response = forwardToService(method: method, arguments: arguments) {
+        return response
+      }
+      Thread.sleep(forTimeInterval: 0.1)
+    }
+    return nil
   }
 
   private func forwardToService(method: String, arguments: Any?) -> String? {
@@ -529,8 +594,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     }
     request.append("\n")
 
-    let serviceHost = ProcessInfo.processInfo.environment["SLAN_CLIENT_CORE_SERVICE_HOST"]
-      ?? "127.0.0.1:46392"
+    let serviceHost = resolvedServiceHost()
     let parts = serviceHost.split(separator: ":", maxSplits: 1).map(String.init)
     let host = parts.first?.isEmpty == false ? parts[0] : "127.0.0.1"
     let portValue: UInt16 = parts.count > 1 ? (UInt16(parts[1]) ?? 46392) : 46392
@@ -587,8 +651,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   private func shutdownNetworkBeforeQuit() {
-    let serviceHost = ProcessInfo.processInfo.environment["SLAN_CLIENT_CORE_SERVICE_HOST"]
-      ?? "127.0.0.1:46392"
+    let serviceHost = resolvedServiceHost()
     let parts = serviceHost.split(separator: ":", maxSplits: 1).map(String.init)
     let host = parts.first?.isEmpty == false ? parts[0] : "127.0.0.1"
     let portValue: UInt16 = parts.count > 1 ? (UInt16(parts[1]) ?? 46392) : 46392
@@ -616,6 +679,18 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     }
     connection.start(queue: DispatchQueue.global(qos: .utility))
     _ = semaphore.wait(timeout: .now() + 2)
+  }
+
+  private func resolvedServiceHost() -> String {
+    bundledServiceLock.lock()
+    let preferredHost = bundledServicePreferredHost
+    let bundledRunning = bundledServiceProcess?.isRunning == true
+    bundledServiceLock.unlock()
+    if bundledRunning, let preferredHost, !preferredHost.isEmpty {
+      return preferredHost
+    }
+    return ProcessInfo.processInfo.environment["SLAN_CLIENT_CORE_SERVICE_HOST"]
+      ?? "127.0.0.1:46392"
   }
 
   private func compactState() -> [String: Any] {

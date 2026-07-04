@@ -50,7 +50,11 @@ func (h AuthHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h AuthHandler) RenewUserSession(w http.ResponseWriter, r *http.Request) {
-	view, err := h.AuthSessions.RenewUserSession(r.Context(), serviceapi.AccessTokenFromRequest(r))
+	var req authrequest.RenewUserSession
+	if !serviceapi.DecodeJSONIfPresentOrError(w, r, &req) {
+		return
+	}
+	view, err := h.AuthSessions.RenewUserSession(r.Context(), serviceapi.AccessTokenFromRequest(r), req.ToInput())
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return

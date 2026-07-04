@@ -39,12 +39,13 @@ func acceptNetworkInvite(invite model.DeviceInvite, userID string, networkDevice
 
 func newNetworkDeviceMembership(networkID, deviceID string, enabled bool, now int64) model.NetworkDevice {
 	return model.NetworkDevice{
-		NetworkID: networkID,
-		DeviceID:  deviceID,
-		Enabled:   enabled,
-		Status:    "active",
-		CreatedAt: now,
-		UpdatedAt: now,
+		NetworkID:      networkID,
+		DeviceID:       deviceID,
+		Enabled:        enabled,
+		MemberStatus:   model.NetworkMemberStatusActive,
+		PresenceStatus: model.DevicePresenceStatusOffline,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }
 
@@ -53,7 +54,7 @@ func applyUpdateNetworkDeviceInput(item model.NetworkDevice, input UpdateNetwork
 		item.Enabled = *input.Enabled
 	}
 	if input.Status != "" {
-		item.Status = input.Status
+		item.MemberStatus = model.NetworkMemberStatus(input.Status)
 	}
 	item.UpdatedAt = now
 	return item

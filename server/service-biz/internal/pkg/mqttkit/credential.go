@@ -35,6 +35,29 @@ func CredentialForDevice(cfg Config, deviceID string, now time.Time) *Credential
 	}
 }
 
+func CredentialForSystem(cfg Config, id string, now time.Time) *Credential {
+	id = strings.TrimSpace(id)
+	if !cfg.Enabled || id == "" {
+		return nil
+	}
+	expiresAt := now.Add(cfg.CredentialTTL).Unix()
+	clientID := fmt.Sprintf("%s-%s", defaultString(cfg.ClientIDPrefix, "slan-device"), strings.ReplaceAll(id, "/", "-"))
+	username := SystemUsername(cfg, id, expiresAt)
+	password := sign(cfg.Secret, clientID, username, id)
+	return &Credential{
+		BrokerURL:   cfg.BrokerURL,
+		ClientID:    clientID,
+		Username:    username,
+		Password:    password,
+		TopicPrefix: topicRoot(cfg),
+		ExpiresAt:   expiresAt,
+	}
+}
+
+func CredentialForServer(cfg Config, now time.Time) *Credential {
+	return CredentialForSystem(cfg, ServerID, now)
+}
+
 func sign(secret string, parts ...string) string {
 	payload := strings.Join(parts, "|") + "|" + secret
 	sum := sha256.Sum256([]byte(payload))

@@ -8,7 +8,8 @@ type AuthUserRegistrationUseCase interface {
 
 type AuthUserSessionUseCase interface {
 	LoginUser(ctx context.Context, input LoginUserInput) (AuthSessionView, error)
-	RenewUserSession(ctx context.Context, accessToken string) (AuthSessionView, error)
+	GetUserSession(ctx context.Context, accessToken string) (AuthSessionView, error)
+	RenewUserSession(ctx context.Context, accessToken string, input RenewUserSessionInput) (AuthSessionView, error)
 	LogoutUser(ctx context.Context, accessToken string, input LogoutUserInput) error
 }
 

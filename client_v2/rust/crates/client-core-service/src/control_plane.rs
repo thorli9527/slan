@@ -16,12 +16,14 @@ use serde_json::Value;
 const DEFAULT_CONTROL_BASE_URL: &str = "http://47.245.40.231:28080";
 const API_AUTH_DEVICE_LOGIN_DEVICES: &str = "/api/app/auth/device-login-devices";
 const API_AUTH_LOGIN: &str = "/api/app/auth/login";
+const API_AUTH_REGISTER: &str = "/api/app/auth/register";
 const API_AUTH_LOGOUT: &str = "/api/app/auth/logout";
 const API_AUTH_RENEW: &str = "/api/app/auth/renew";
 const API_AUTH_CONSOLE_LOGIN_KEYS: &str = "/api/app/auth/console-login-keys";
 const API_DEVICE_SESSION_BOOTSTRAP: &str = "/api/app/device/session/bootstrap";
 const API_DEVICE_SESSION_BIND: &str = "/api/app/device/session/bind";
 const API_DEVICE_SESSION_RENEW: &str = "/api/app/device/session/renew";
+const API_CLIENT_MESSAGES: &str = "/api/app/client/messages";
 const API_DEVICES: &str = "/api/app/devices";
 const API_RELAY_TICKETS: &str = "/api/app/relay/tickets";
 static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
@@ -52,7 +54,10 @@ fn api_relay_candidates(network_id: &str, device_id: &str) -> String {
 }
 
 fn api_punch_connect_sessions(network_id: &str) -> String {
-    format!("/api/app/networks/{}/punch/connect-sessions", network_id.trim())
+    format!(
+        "/api/app/networks/{}/punch/connect-sessions",
+        network_id.trim()
+    )
 }
 
 #[allow(dead_code)]
@@ -214,6 +219,15 @@ pub(crate) struct DeviceSessionPayload {
     #[serde(default)]
     pub device_refresh_token: Option<String>,
     pub active_network_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SendClientMessageResponse {
+    pub message_id: String,
+    pub transport: String,
+    pub qos: i64,
+    pub topic: String,
 }
 
 /// NetworkActivationPlan 是启用虚拟网络前由控制面配置转换出的本地执行计划。
@@ -553,17 +567,45 @@ impl ControlPlaneClient {
         parse_login_response(&response, email, &device_id)
     }
 
-    pub fn bootstrap_device_session(&self, session_key: &str) -> Result<DeviceSessionResponse> {
-        let session_key = session_key.trim();
-        if session_key.is_empty() {
-            bail!("SLAN_SESSION_KEY is empty");
+    pub fn register_user_with_password(&self, email: &str, password: &str) -> Result<AuthPayload> {
+        let email = email.trim();
+        if email.is_empty() || password.is_empty() {
+            bail!("账号和密码不能为空");
+        }
+        let body = serde_json::json!({
+            "email": email,
+            "password": password,
+        });
+        let response = self
+            .request_json_without_auth("POST", API_AUTH_REGISTER, Some(body.clone()))
+            .or_else(|error| {
+                if error.to_string().contains("409") {
+                    self.request_json_without_auth("POST", API_AUTH_LOGIN, Some(body))
+                } else {
+                    Err(error)
+                }
+            })?;
+        parse_login_response(&response, email, "")
+    }
+
+    pub fn bootstrap_device_session(
+        &self,
+        installation_key: &str,
+    ) -> Result<DeviceSessionResponse> {
+        let installation_key = installation_key.trim();
+        if installation_key.is_empty() {
+            bail!("SLAN_INSTALLATION_KEY is empty");
         }
         let device_id = local_stable_device_id()?;
         let mut body = register_device_body(&device_id)?;
         if let Some(object) = body.as_object_mut() {
             object.insert(
+                "installationKey".to_string(),
+                Value::String(installation_key.to_string()),
+            );
+            object.insert(
                 "sessionKey".to_string(),
-                Value::String(session_key.to_string()),
+                Value::String(installation_key.to_string()),
             );
         }
         let response =
@@ -577,11 +619,16 @@ impl ControlPlaneClient {
     pub fn renew_device_session(
         &self,
         device_token: &str,
+        device_refresh_token: Option<&str>,
         network_enabled: bool,
         rx_bytes_total: u64,
         tx_bytes_total: u64,
     ) -> Result<DeviceSessionResponse> {
         let body = serde_json::json!({
+            "refreshToken": device_refresh_token
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_default(),
             "networkEnabled": network_enabled,
             "rxBytesTotal": rx_bytes_total,
             "txBytesTotal": tx_bytes_total,
@@ -625,6 +672,7 @@ impl ControlPlaneClient {
     pub fn renew_user_session(
         &self,
         access_token: &str,
+        refresh_token: Option<&str>,
         device_id: Option<&str>,
         user_label: &str,
     ) -> Result<AuthPayload> {
@@ -632,7 +680,12 @@ impl ControlPlaneClient {
             "POST",
             API_AUTH_RENEW,
             access_token,
-            Some(serde_json::json!({})),
+            Some(serde_json::json!({
+                "refreshToken": refresh_token
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_default(),
+            })),
         )?;
         let fallback_device_id = device_id.unwrap_or_default();
         parse_login_response(&response, user_label, fallback_device_id)
@@ -675,7 +728,6 @@ impl ControlPlaneClient {
             let response = self.request_json("GET", &path, access_token, None)?;
             if let Some(resolved_node_id) = optional_string(&response, "selfNodeId")
                 .or_else(|| optional_string(&response, "nodeId"))
-                .or_else(|| optional_string(&response, "self_node_id"))
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
             {
@@ -782,8 +834,19 @@ impl ControlPlaneClient {
             "networkId": network_id.trim(),
             "status": "inactive",
         });
-        let path = api_device_runtime(device_id);
-        let _ = self.request_json("POST", &path, access_token, Some(body))?;
+        let paths = [api_device_runtime(device_id)];
+        let _ = self.request_json_with_fallbacks("POST", &paths, access_token, Some(body))?;
+        Ok(())
+    }
+
+    pub fn report_device_runtime(
+        &self,
+        access_token: &str,
+        device_id: &str,
+        body: Value,
+    ) -> Result<()> {
+        let paths = [api_device_runtime(device_id)];
+        let _ = self.request_json_with_fallbacks("POST", &paths, access_token, Some(body))?;
         Ok(())
     }
 
@@ -819,6 +882,35 @@ impl ControlPlaneClient {
         Ok(Some(payload.login_key))
     }
 
+    pub fn send_client_message(
+        &self,
+        access_token: &str,
+        network_id: &str,
+        from_device_id: &str,
+        target_device_id: &str,
+        body: &str,
+        metadata: Option<Value>,
+    ) -> Result<SendClientMessageResponse> {
+        let response = self.request_json(
+            "POST",
+            API_CLIENT_MESSAGES,
+            access_token,
+            Some(serde_json::json!({
+                "networkId": network_id.trim(),
+                "fromDeviceId": from_device_id.trim(),
+                "targetDeviceId": target_device_id.trim(),
+                "body": body,
+                "metadata": metadata.unwrap_or_else(|| serde_json::json!({})),
+            })),
+        )?;
+        Ok(SendClientMessageResponse {
+            message_id: required_string(&response, "messageId")?,
+            transport: required_string(&response, "transport")?,
+            qos: response.get("qos").and_then(Value::as_i64).unwrap_or(1),
+            topic: required_string(&response, "topic")?,
+        })
+    }
+
     fn request_json(
         &self,
         method: &str,
@@ -827,6 +919,30 @@ impl ControlPlaneClient {
         body: Option<Value>,
     ) -> Result<Value> {
         self.request_json_with_headers(method, path, access_token, &[], body)
+    }
+
+    fn request_json_with_fallbacks(
+        &self,
+        method: &str,
+        paths: &[String],
+        access_token: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        let mut last_error = None;
+        for (index, path) in paths.iter().enumerate() {
+            match self.request_json(method, path, access_token, body.clone()) {
+                Ok(value) => return Ok(value),
+                Err(error) => {
+                    let is_last = index + 1 == paths.len();
+                    let not_found = error.to_string().contains("404");
+                    if !not_found || is_last {
+                        return Err(error);
+                    }
+                    last_error = Some(error);
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("request fallback failed")))
     }
 
     fn request_json_with_headers(
@@ -927,7 +1043,8 @@ fn parse_login_response(response: &Value, email: &str, device_id: &str) -> Resul
             .ok_or_else(|| anyhow::anyhow!("login response missing auth.session"))?;
         return Ok(AuthPayload {
             access_token: required_string(session, "token")?,
-            refresh_token: optional_string(session, "token"),
+            refresh_token: optional_string(session, "refreshToken")
+                .or_else(|| optional_string(session, "token")),
             user_id: required_string(user, "userId")?,
             user_label: optional_string(user, "email").unwrap_or_else(|| email.to_string()),
             device_id: non_empty_string(device_id),
@@ -952,18 +1069,7 @@ fn login_active_network_id(response: &Value) -> Option<String> {
     response
         .get("defaultNetwork")
         .and_then(|value| optional_string(value, "networkId"))
-        .or_else(|| {
-            response
-                .get("defaultNetworkDevice")
-                .and_then(|value| optional_string(value, "networkId"))
-        })
-        .or_else(|| {
-            response
-                .get("networkDevice")
-                .and_then(|value| optional_string(value, "networkId"))
-        })
         .or_else(|| optional_string(response, "activeNetworkId"))
-        .or_else(|| optional_string(response, "networkId"))
 }
 
 fn login_expires_in(session: &Value) -> Option<u64> {
@@ -998,7 +1104,6 @@ fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActiva
     let peer_count = peers.len();
     let self_node_id = optional_string(response, "selfNodeId")
         .or_else(|| optional_string(response, "nodeId"))
-        .or_else(|| optional_string(response, "self_node_id"))
         .or_else(|| {
             optional_string(response, "deviceId").map(|device_id| format!("node-{device_id}"))
         });
@@ -1017,7 +1122,6 @@ fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActiva
 fn network_config_prefix_len(response: &Value) -> Option<u8> {
     response
         .get("prefixLen")
-        .or_else(|| response.get("prefixLength"))
         .and_then(Value::as_u64)
         .and_then(|value| u8::try_from(value).ok())
         .filter(|value| *value <= 32)
@@ -1082,6 +1186,9 @@ fn network_config_control_endpoints(peer: &Value) -> Vec<ControlEndpoint> {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())?
                 .to_string();
+            if !valid_direct_udp_endpoint_address(&address) {
+                return None;
+            }
             Some(ControlEndpoint {
                 endpoint_type: endpoint
                     .get("type")
@@ -1098,6 +1205,19 @@ fn network_config_control_endpoints(peer: &Value) -> Vec<ControlEndpoint> {
             })
         })
         .collect()
+}
+
+fn valid_direct_udp_endpoint_address(address: &str) -> bool {
+    let trimmed = address.trim();
+    let normalized = trimmed
+        .strip_prefix("udp://")
+        .or_else(|| trimmed.strip_prefix("direct+udp://"))
+        .or_else(|| trimmed.strip_prefix("relay+udp://"))
+        .unwrap_or(trimmed);
+    normalized
+        .parse::<std::net::SocketAddr>()
+        .map(|socket_addr| socket_addr.port() > 0)
+        .unwrap_or(false)
 }
 
 fn network_config_routes(response: &Value) -> Vec<RouteSpec> {
@@ -1147,8 +1267,7 @@ fn non_empty_string(value: &str) -> Option<String> {
 
 fn extract_dns_servers(response: &Value) -> Vec<String> {
     response
-        .pointer("/networkMap/dns/servers")
-        .or_else(|| response.pointer("/dns/servers"))
+        .pointer("/dns/servers")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -1160,83 +1279,12 @@ fn extract_dns_servers(response: &Value) -> Vec<String> {
 }
 
 fn extract_relay_candidates(response: &Value) -> Vec<RelayCandidate> {
-    if let Some(items) = response
-        .get("relayCandidates")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| serde_json::from_value(item.clone()).ok())
-                .collect::<Vec<RelayCandidate>>()
-        })
-        .filter(|items| !items.is_empty())
-    {
-        return items;
-    }
     response
-        .pointer("/networkMap/relayRegions")
-        .or_else(|| response.pointer("/relayRegions"))
+        .get("relayCandidates")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .flat_map(|region| {
-            let country_code = region
-                .get("countryCode")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-            let region_id = region
-                .get("regionId")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-            let cluster_id = region
-                .get("clusterId")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-            region
-                .get("endpoints")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(move |endpoint| {
-                    let endpoint_id = endpoint
-                        .get("endpointId")
-                        .and_then(Value::as_str)?
-                        .trim()
-                        .to_string();
-                    let transport = endpoint
-                        .get("transport")
-                        .and_then(Value::as_str)?
-                        .trim()
-                        .to_string();
-                    let address = endpoint
-                        .get("address")
-                        .and_then(Value::as_str)?
-                        .trim()
-                        .to_string();
-                    if endpoint_id.is_empty() || transport.is_empty() || address.is_empty() {
-                        return None;
-                    }
-                    Some(RelayCandidate {
-                        endpoint_id,
-                        transport,
-                        address,
-                        country_code: country_code.clone(),
-                        region_id: region_id.clone(),
-                        cluster_id: cluster_id.clone(),
-                        reachable: false,
-                        observed_rtt_ms: None,
-                        path_score: None,
-                        selected: false,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
+        .filter_map(|item| serde_json::from_value(item.clone()).ok())
         .collect()
 }
 
@@ -2010,12 +2058,18 @@ mod tests {
             "globalIp": "10.0.0.2",
             "prefixLen": 24,
             "dns": {
-                "servers": ["100.64.0.53"]
+                "servers": ["10.0.0.53"]
             },
+            "relayCandidates": [{
+                "endpointId": "relay-1",
+                "transport": "udp",
+                "address": "203.0.113.10:3478",
+                "selected": true
+            }],
             "peers": [{
                 "deviceId": "device-2",
                 "globalIp": "10.0.0.9",
-                "virtualIps": ["10.0.0.9", "100.70.0.9"],
+                "virtualIps": ["10.0.0.9", "10.0.0.10"],
                 "endpoints": [{
                     "type": "direct_udp",
                     "address": "198.51.100.8:51820",
@@ -2027,18 +2081,47 @@ mod tests {
 
         assert_eq!(plan.virtual_ip, "10.0.0.2");
         assert_eq!(plan.prefix_len, 24);
+        assert_eq!(plan.dns_servers, vec!["10.0.0.53".to_string()]);
+        assert_eq!(plan.relay_candidates.len(), 1);
+        assert_eq!(plan.relay_candidates[0].endpoint_id, "relay-1");
         assert_eq!(plan.peers.len(), 1);
         assert_eq!(
             plan.peers[0].virtual_ips,
-            vec!["10.0.0.9".to_string(), "100.70.0.9".to_string()]
+            vec!["10.0.0.9".to_string(), "10.0.0.10".to_string()]
         );
         assert_eq!(
             plan.routes
                 .iter()
                 .map(|route| route.destination.clone())
                 .collect::<Vec<_>>(),
-            vec!["10.0.0.9/32".to_string(), "100.70.0.9/32".to_string()]
+            vec!["10.0.0.9/32".to_string(), "10.0.0.10/32".to_string()]
         );
+    }
+
+    #[test]
+    fn activation_plan_ignores_legacy_web_network_map_fields() {
+        let plan = activation_plan_from_network_config(&serde_json::json!({
+            "networkId": "net-1",
+            "deviceId": "device-1",
+            "globalIp": "10.0.0.2",
+            "networkMap": {
+                "dns": {
+                    "servers": ["10.0.0.53"]
+                },
+                "relayRegions": [{
+                    "regionId": "legacy-region",
+                    "endpoints": [{
+                        "endpointId": "legacy-relay",
+                        "transport": "udp",
+                        "address": "203.0.113.11:3478"
+                    }]
+                }]
+            }
+        }))
+        .expect("activation plan");
+
+        assert!(plan.dns_servers.is_empty());
+        assert!(plan.relay_candidates.is_empty());
     }
 
     #[test]

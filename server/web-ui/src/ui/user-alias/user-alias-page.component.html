@@ -33,7 +33,14 @@
               </div>
             </div>
           </td>
-          <td><button class="ghost small" type="button" (click)="vm.openUserAliasDialog(user)">修改</button></td>
+          <td>
+            <button class="table-icon-button" type="button" title="编辑别名" aria-label="编辑别名" (click)="vm.openUserAliasDialog(user)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 20h4l10-10-4-4L4 16v4"></path>
+                <path d="M13 7l4 4"></path>
+              </svg>
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>

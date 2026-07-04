@@ -1,10 +1,12 @@
 import { panelFromRoute } from '../app-routing';
-import { AppComponentSecurity } from '../network/app.component.security';
+import { AppComponentState } from '../app.component.state';
 import {
   ApiDevice,
   ApiDeviceBootstrapKey,
   ApiDeviceGroup,
   ApiDeviceGroupMember,
+  ApiManagedDeviceSession,
+  ApiManagedUserSession,
   ClientDownload,
   ApiDNSRecord,
   ApiDNSZone,
@@ -34,7 +36,7 @@ import {
 import { compactUuid, slug } from '../app.utils';
 import { WEB_API } from '../api-paths';
 
-export abstract class AppComponentData extends AppComponentSecurity {
+export abstract class AppComponentData extends AppComponentState {
   protected override async loadClientDownloads(): Promise<void> {
     try {
       const response = await this.api.get<{ items: ClientDownload[] }>(WEB_API.clientDownloads);
@@ -89,12 +91,13 @@ export abstract class AppComponentData extends AppComponentSecurity {
 
   protected override async loadDashboard(userId = ''): Promise<void> {
     try {
-      const [devices, workspaces, aliases, invites, bootstrap, quota] = await Promise.all([
+      const [devices, workspaces, aliases, invites, bootstrap, sessions, quota] = await Promise.all([
         this.api.get<{ items: ApiDevice[] }>(WEB_API.devicesVisible(userId)),
         this.api.get<{ items: ApiWorkspace[] }>(WEB_API.networks(userId)),
         this.api.get<{ items: ApiUserAlias[] }>(WEB_API.userAliasesForUser(userId)),
         this.api.get<{ items: WorkspaceDeviceInviteRow[] }>(WEB_API.deviceInvites(userId)),
         this.api.get<{ items: ApiDeviceBootstrapKey[] }>(WEB_API.deviceBootstrapKeys(userId)),
+        userId ? this.api.get<{ items: ApiManagedUserSession[] }>(WEB_API.userSessions(userId)) : Promise.resolve({ items: [] }),
         userId ? this.api.get<ApiDeviceQuota>(WEB_API.userEntitlement(userId)) : Promise.resolve(null),
       ]);
       this.devices = (devices.items ?? []).map((device) => this.mapDevice(device));
@@ -102,6 +105,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
       this.userAliases = (aliases.items ?? []).map((item) => ({ email: item.email, alias: item.alias }));
       this.workspaceDeviceInvites = invites.items ?? [];
       this.deviceBootstrapKeys = bootstrap.items ?? [];
+      this.userSessions = sessions.items ?? [];
       await this.loadDeviceGroups(userId);
       this.workspaces = (workspaces.items ?? []).map((workspace) => ({
         networkId: workspace.networkId,
@@ -116,6 +120,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
         zone: workspace.zone || `${workspace.code || slug(workspace.name)}.${workspace.networkId || 'network'}.${userId || 'user'}.sub.staticlss.com`,
       }));
       await Promise.all(this.workspaces.map((workspace) => this.loadWorkspaceDevices(workspace.workspaceId)));
+      await this.loadCurrentUserDeviceSessions();
     } catch {
       if (!this.isDemoMode) {
         this.devices = [];
@@ -123,6 +128,8 @@ export abstract class AppComponentData extends AppComponentSecurity {
         this.userAliases = [];
         this.workspaceDeviceInvites = [];
         this.deviceBootstrapKeys = [];
+        this.userSessions = [];
+        this.deviceSessionsByDeviceId = {};
         this.deviceGroups = [];
         this.deviceGroupIdsByDevice = {};
         this.workspaceDeviceIdsByWorkspace = {};
@@ -156,6 +163,23 @@ export abstract class AppComponentData extends AppComponentSecurity {
         this.deviceGroupIdsByDevice = {};
       }
     }
+  }
+
+  protected async loadCurrentUserDeviceSessions(): Promise<void> {
+    const devices = this.currentUserDevices;
+    if (!devices.length) {
+      this.deviceSessionsByDeviceId = {};
+      return;
+    }
+    const entries = await Promise.all(devices.map(async (device) => {
+      try {
+        const response = await this.api.get<{ items: ApiManagedDeviceSession[] }>(WEB_API.deviceSessions(device.deviceId));
+        return [device.deviceId, response.items ?? []] as const;
+      } catch {
+        return [device.deviceId, []] as const;
+      }
+    }));
+    this.deviceSessionsByDeviceId = Object.fromEntries(entries);
   }
 
   protected override async loadWorkspaceDevices(workspaceId: string): Promise<void> {
@@ -299,7 +323,7 @@ export abstract class AppComponentData extends AppComponentSecurity {
   private defaultSecurityRules(securityGroupId: string): SecurityRuleRow[] {
     return [
       { ruleId: compactUuid(), securityGroupId, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self', enabled: true },
-      { ruleId: compactUuid(), securityGroupId, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all', enabled: true },
+      { ruleId: compactUuid(), securityGroupId, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'user', subjectValue: this.effectiveUserId, enabled: true },
     ];
   }
 

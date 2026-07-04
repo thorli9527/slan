@@ -22,6 +22,7 @@ type deviceCoreDependencies struct {
 	Devices     repository.DeviceRepository
 	Networks    repository.NetworkRepository
 	MQTT        mqttkit.Config
+	Broadcaster networkBroadcastPublisher
 	NewDeviceID func() string
 	Now         func() time.Time
 }
@@ -95,6 +96,7 @@ func NewDeviceCoreService(
 		Devices:     devices,
 		Networks:    networks,
 		MQTT:        mqtt,
+		Broadcaster: newNetworkBroadcastPublisher(mqtt),
 		NewDeviceID: newDeviceID,
 		Now:         now,
 	}
@@ -212,6 +214,12 @@ func newDeviceGroupID(devices repository.DeviceRepository) string {
 	})
 }
 
+func newDeviceVirtualIPID(devices repository.DeviceRepository) string {
+	return repositoryID[deviceVirtualIPIDProvider](devices, "vip00000000000000000000000000000000", func(provider deviceVirtualIPIDProvider) string {
+		return provider.NewDeviceVirtualIPID()
+	})
+}
+
 func newDeviceSessionID(next func(string) string) string {
 	return scopedID(next, "dsess")
 }
@@ -287,7 +295,7 @@ func newDeviceMQTTProfile(cfg mqttkit.Config, now time.Time, deviceID string, ne
 	return view
 }
 
-func newManagedDeviceSession(now time.Time, next func(string) string, deviceID string) (model.DeviceSession, error) {
+func newManagedDeviceSession(now time.Time, next func(string) string, deviceID string, sessionMode string) (model.DeviceSession, error) {
 	access, err := randomHex(24)
 	if err != nil {
 		return model.DeviceSession{}, err
@@ -301,8 +309,10 @@ func newManagedDeviceSession(now time.Time, next func(string) string, deviceID s
 		DeviceID:     deviceID,
 		AccessToken:  access,
 		RefreshToken: refresh,
-		Status:       "active",
-		ExpiresAt:    now.Add(24 * time.Hour).Unix(),
+		Status:       tokenStatusActive,
+		SessionMode:  normalizedSessionMode(sessionMode),
+		ExpiresAt:    now.Add(defaultDeviceAccessTTL).Unix(),
+		RefreshExpiry: now.Add(deviceRefreshTTL(sessionMode)).Unix(),
 		CreatedAt:    now.Unix(),
 		UpdatedAt:    now.Unix(),
 	}, nil

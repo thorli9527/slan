@@ -45,6 +45,16 @@ func renewManagedDevice(device model.Device, now int64) model.Device {
 }
 
 func applyUpdateDeviceRuntimeMembership(item model.NetworkDevice, input UpdateDeviceRuntimeInput, now int64) model.NetworkDevice {
+	item = normalizeNetworkMember(item)
+	item.LastRuntimeStateAt = now
+	if input.LastSeenAt > 0 {
+		item.LastSeenAt = input.LastSeenAt
+	} else if input.ReportedAtMS > 0 {
+		item.LastSeenAt = input.ReportedAtMS / 1000
+	} else if item.LastSeenAt <= 0 {
+		item.LastSeenAt = now
+	}
+	item.PresenceStatus = model.DevicePresenceStatusActive
 	if input.NATType != "" {
 		item.NATType = input.NATType
 	}

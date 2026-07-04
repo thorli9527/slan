@@ -111,8 +111,7 @@
         <label><span>动作</span><select [(ngModel)]="vm.ruleAction"><option value="allow">allow</option><option value="deny">deny</option></select></label>
         <label><span>协议</span><select [(ngModel)]="vm.ruleProtocol"><option value="tcp">tcp</option><option value="udp">udp</option><option value="icmp">icmp</option><option value="all">all</option></select></label>
         <label><span>{{ vm.showIngressRuleDialog ? '来源类型' : '目标类型' }}</span><select [(ngModel)]="vm.ruleSubjectType" (change)="vm.onRuleSubjectTypeChanged()"><option *ngFor="let item of (vm.showIngressRuleDialog ? vm.ingressSubjectTypes : vm.egressSubjectTypes)" [value]="item.value">{{ item.label }}</option></select></label>
-        <label class="span-2" *ngIf="vm.ruleSubjectType === 'cidr' || vm.ruleSubjectType === 'domain'"><span>{{ vm.showIngressRuleDialog ? '来源对象' : '目标对象' }}</span><input [(ngModel)]="vm.ruleSubjectValue" /></label>
-        <label class="span-2" *ngIf="vm.ruleSubjectType !== 'cidr' && vm.ruleSubjectType !== 'domain'"><span>{{ vm.showIngressRuleDialog ? '来源对象' : '目标对象' }}</span><select [(ngModel)]="vm.ruleSubjectValue"><option *ngFor="let item of vm.ruleSubjectOptions" [value]="item.value">{{ item.label }}</option></select></label>
+        <label class="span-2"><span>{{ vm.showIngressRuleDialog ? '来源对象' : '目标对象' }}</span><select [(ngModel)]="vm.ruleSubjectValue"><option *ngFor="let item of vm.ruleSubjectOptions" [value]="item.value">{{ item.label }}</option></select></label>
         <label><span>端口</span><input [(ngModel)]="vm.rulePort" /></label>
         <label class="span-2"><span>描述</span><input [(ngModel)]="vm.ruleDescription" /></label>
         <label><span>启用</span><input type="checkbox" [(ngModel)]="vm.ruleEnabled" /></label>

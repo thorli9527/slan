@@ -15,8 +15,10 @@ import android.util.Log;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import org.json.JSONArray;
@@ -98,6 +100,11 @@ public final class SlanVpnService extends VpnService {
 
   /** Build Android VPN interface, protect relay/direct sockets, and start Rust TUN runtime. */
   private void startVpn(JSONObject config) throws Exception {
+    Log.i(TAG, "Android VPN start requested with fresh config");
+    // Peer/relay refresh can re-enter ACTION_START while a previous Android VPN
+    // runtime is still active. Always tear down the previous native/TUN/socket
+    // state first so socket protection and fd ownership restart from a clean slate.
+    stopVpn("Android VPN reconfiguring");
     String virtualIp = config.optString("virtualIp", "").trim();
     int prefixLen = config.optInt("prefixLen", 32);
     Cidr virtualAddress = Cidr.parse(virtualIp);
@@ -132,6 +139,15 @@ public final class SlanVpnService extends VpnService {
     }
 
     int[] relayFds = detachProtectedRelaySockets(config);
+    Log.i(
+        TAG,
+        "Starting Rust Android VPN tunFd(detach pending)"
+            + " relayFds="
+            + Arrays.toString(relayFds)
+            + " relaySessionCount="
+            + relaySessionCount(config)
+            + " relayAddress="
+            + relayAddress(config));
     ParcelFileDescriptor nextInterface = builder.establish();
     if (nextInterface == null) {
       closeDetachedFds(relayFds);
@@ -195,6 +211,20 @@ public final class SlanVpnService extends VpnService {
       if (hostPort == null) {
         throw new IllegalStateException("Android VPN relay address is invalid");
       }
+      Log.i(
+          TAG,
+          "Preparing Android VPN relay socket index="
+              + index
+              + " sessionId="
+              + (session == null ? "" : session.optString("sessionId", "").trim())
+              + " peerNodeId="
+              + (session == null ? "" : session.optString("peerNodeId", "").trim())
+              + " url="
+              + relayUrl
+              + " host="
+              + hostPort.host
+              + " port="
+              + hostPort.port);
       if (isDerpRelayUrl(relayUrl)) {
         Socket socket = new Socket();
         // Allocate the underlying fd before VpnService.protect(Socket). An unbound
@@ -208,28 +238,88 @@ public final class SlanVpnService extends VpnService {
         ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromSocket(socket);
         ParcelFileDescriptor rustDescriptor = ParcelFileDescriptor.dup(descriptor.getFileDescriptor());
         fds[index] = rustDescriptor.detachFd();
+        Log.i(
+            TAG,
+            "Prepared Android VPN DERP relay fd index="
+                + index
+                + " fd="
+                + fds[index]
+                + " local="
+                + socket.getLocalSocketAddress()
+                + " remote="
+                + socket.getRemoteSocketAddress());
         protectedRelaySockets.add(descriptor);
         protectedRelaySockets.add(socket);
       } else {
-        DatagramSocket socket = new DatagramSocket();
-        if (!protect(socket)) {
+        DatagramSocket socket = new DatagramSocket(null);
+        // Ensure the UDP fd is allocated before protect(). Some Android emulator
+        // builds can report protect=false for an unbound DatagramSocket.
+        socket.bind(ipv4WildcardEphemeral());
+        ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
+        ParcelFileDescriptor rustDescriptor =
+            ParcelFileDescriptor.dup(descriptor.getFileDescriptor());
+        int relayFd = rustDescriptor.detachFd();
+        if (!protect(relayFd)) {
+          Log.e(
+              TAG,
+              "Android VPN protect(relay UDP) failed index="
+                  + index
+                  + " url="
+                  + relayUrl
+                  + " local="
+                  + socket.getLocalSocketAddress()
+                  + " fd="
+                  + relayFd);
+          closeDetachedFds(new int[] {relayFd});
+          descriptor.close();
           socket.close();
           throw new IllegalStateException("Android VPN failed to protect relay socket");
         }
         socket.connect(new InetSocketAddress(hostPort.host, hostPort.port));
-        ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
-        fds[index] = descriptor.detachFd();
+        fds[index] = relayFd;
+        Log.i(
+            TAG,
+            "Prepared Android VPN UDP relay fd index="
+                + index
+                + " fd="
+                + relayFd
+                + " local="
+                + socket.getLocalSocketAddress()
+                + " remote="
+                + socket.getRemoteSocketAddress());
+        protectedRelaySockets.add(descriptor);
         protectedRelaySockets.add(socket);
       }
     }
     if (needsDirectSocket) {
-      DatagramSocket socket = new DatagramSocket();
-      if (!protect(socket)) {
+      DatagramSocket socket = new DatagramSocket(null);
+      socket.bind(ipv4WildcardEphemeral());
+      ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
+      ParcelFileDescriptor rustDescriptor =
+          ParcelFileDescriptor.dup(descriptor.getFileDescriptor());
+      int directFd = rustDescriptor.detachFd();
+      if (!protect(directFd)) {
+        Log.e(
+            TAG,
+            "Android VPN protect(direct UDP) failed local="
+                + socket.getLocalSocketAddress()
+                + " fd="
+                + directFd);
+        closeDetachedFds(new int[] {directFd});
+        descriptor.close();
         socket.close();
         throw new IllegalStateException("Android VPN failed to protect direct UDP socket");
       }
-      ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
-      fds[sessionCount] = descriptor.detachFd();
+      fds[sessionCount] = directFd;
+      Log.i(
+          TAG,
+          "Prepared Android VPN direct UDP fd index="
+              + sessionCount
+              + " fd="
+              + directFd
+              + " local="
+              + socket.getLocalSocketAddress());
+      protectedRelaySockets.add(descriptor);
       protectedRelaySockets.add(socket);
     }
     return fds;
@@ -388,6 +478,10 @@ public final class SlanVpnService extends VpnService {
       } catch (IOException ignored) {
       }
     }
+  }
+
+  private InetSocketAddress ipv4WildcardEphemeral() throws IOException {
+    return new InetSocketAddress(InetAddress.getByName("0.0.0.0"), 0);
   }
 
   private Notification notification() {

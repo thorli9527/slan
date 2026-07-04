@@ -70,6 +70,22 @@ type Metrics struct {
 	ForwardCount uint64 `json:"forwardCount"`
 	// ForwardPeerNotAttachedCount 是转发时对端尚未 attach 的次数。
 	ForwardPeerNotAttachedCount uint64 `json:"forwardPeerNotAttachedCount"`
+	// LastRefreshSessionID 是最近一次 refresh 命中的 session。
+	LastRefreshSessionID string `json:"lastRefreshSessionId,omitempty"`
+	// LastRefreshParticipantID 是最近一次 refresh 命中的 participant。
+	LastRefreshParticipantID string `json:"lastRefreshParticipantId,omitempty"`
+	// LastRefreshAddr 是最近一次 refresh 后记录的源地址。
+	LastRefreshAddr string `json:"lastRefreshAddr,omitempty"`
+	// LastForwardSessionID 是最近一次 forward 命中的 session。
+	LastForwardSessionID string `json:"lastForwardSessionId,omitempty"`
+	// LastForwardParticipantID 是最近一次发起 forward 的 participant。
+	LastForwardParticipantID string `json:"lastForwardParticipantId,omitempty"`
+	// LastForwardSourceAddr 是最近一次 forward 的请求源地址。
+	LastForwardSourceAddr string `json:"lastForwardSourceAddr,omitempty"`
+	// LastForwardPeerID 是最近一次 forward 选中的对端 participant。
+	LastForwardPeerID string `json:"lastForwardPeerId,omitempty"`
+	// LastForwardPeerAddr 是最近一次 forward 返回的对端地址。
+	LastForwardPeerAddr string `json:"lastForwardPeerAddr,omitempty"`
 }
 
 // TicketKeyStatus 描述当前 relay ticket 签名密钥配置和轮转状态。
@@ -100,6 +116,14 @@ type Store struct {
 	participantAddressChangeCount uint64
 	forwardCount                  uint64
 	forwardPeerNotAttachedCount   uint64
+	lastRefreshSessionID          string
+	lastRefreshParticipantID      string
+	lastRefreshAddr               string
+	lastForwardSessionID          string
+	lastForwardParticipantID      string
+	lastForwardSourceAddr         string
+	lastForwardPeerID             string
+	lastForwardPeerAddr           string
 }
 
 type sourceBinding struct {
@@ -325,11 +349,30 @@ func (s *Store) Forward(addr *net.UDPAddr, sessionID, participantID string, _ []
 		return nil, "", ErrParticipantNotFound
 	}
 	if !sameUDPAddr(bound, addr) {
-		return nil, "", ErrParticipantNotFound
+		for sourceKey, binding := range s.sources {
+			if binding.SessionID == sessionID && binding.ParticipantID == participantID {
+				delete(s.sources, sourceKey)
+			}
+		}
+		session.Participants[participantID] = cloneAddr(addr)
+		s.sources[addr.String()] = sourceBinding{
+			SessionID:     sessionID,
+			ParticipantID: participantID,
+		}
+		s.participantRefreshCount++
+		s.participantAddressChangeCount++
+		s.lastRefreshSessionID = sessionID
+		s.lastRefreshParticipantID = participantID
+		s.lastRefreshAddr = addr.String()
 	}
 	for peerID, peerAddr := range session.Participants {
 		if peerID != participantID {
 			atomic.AddUint64(&s.forwardCount, 1)
+			s.lastForwardSessionID = sessionID
+			s.lastForwardParticipantID = participantID
+			s.lastForwardSourceAddr = addr.String()
+			s.lastForwardPeerID = peerID
+			s.lastForwardPeerAddr = peerAddr.String()
 			return copyAddrForRead(peerAddr), peerID, nil
 		}
 	}
@@ -367,6 +410,9 @@ func (s *Store) RefreshParticipant(addr *net.UDPAddr, sessionID, participantID s
 		ParticipantID: participantID,
 	}
 	s.participantRefreshCount++
+	s.lastRefreshSessionID = sessionID
+	s.lastRefreshParticipantID = participantID
+	s.lastRefreshAddr = addr.String()
 	return nil
 }
 
@@ -425,6 +471,14 @@ func (s *Store) Metrics() Metrics {
 		ParticipantAddressChangeCount: s.participantAddressChangeCount,
 		ForwardCount:                  atomic.LoadUint64(&s.forwardCount),
 		ForwardPeerNotAttachedCount:   atomic.LoadUint64(&s.forwardPeerNotAttachedCount),
+		LastRefreshSessionID:          s.lastRefreshSessionID,
+		LastRefreshParticipantID:      s.lastRefreshParticipantID,
+		LastRefreshAddr:               s.lastRefreshAddr,
+		LastForwardSessionID:          s.lastForwardSessionID,
+		LastForwardParticipantID:      s.lastForwardParticipantID,
+		LastForwardSourceAddr:         s.lastForwardSourceAddr,
+		LastForwardPeerID:             s.lastForwardPeerID,
+		LastForwardPeerAddr:           s.lastForwardPeerAddr,
 	}
 }
 

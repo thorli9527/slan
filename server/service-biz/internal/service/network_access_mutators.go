@@ -75,7 +75,9 @@ func newManagedSecurityRule(id string, now int64, input CreateSecurityRuleInput)
 		Direction:       input.Direction,
 		Protocol:        input.Protocol,
 		PortRange:       input.PortRange,
-		CIDR:            input.CIDR,
+		CIDR:            securityRuleLegacyCIDR(input.PeerType, input.PeerValue),
+		PeerType:        input.PeerType,
+		PeerValue:       input.PeerValue,
 		Action:          input.Action,
 		Priority:        input.Priority,
 		Description:     input.Description,
@@ -95,8 +97,10 @@ func applyUpdateSecurityRuleInput(item model.SecurityRule, input UpdateSecurityR
 	if input.PortRange != "" {
 		item.PortRange = input.PortRange
 	}
-	if input.CIDR != "" {
-		item.CIDR = input.CIDR
+	if input.PeerType != "" {
+		item.PeerType = input.PeerType
+		item.PeerValue = input.PeerValue
+		item.CIDR = securityRuleLegacyCIDR(input.PeerType, input.PeerValue)
 	}
 	if input.Action != "" {
 		item.Action = input.Action

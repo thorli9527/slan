@@ -62,7 +62,7 @@ func (s *GormStore) GetSecurityRule(_ context.Context, ruleID string) (model.Sec
 
 func (s *GormStore) SaveSecurityRule(_ context.Context, rule model.SecurityRule) error {
 	row := securityRuleRecordFromModel(rule)
-	return upsertByColumns(s.db, &row, []string{"rule_id"}, []string{"security_group_id", "direction", "priority", "protocol", "port_range", "cidr", "action", "description", "enabled", "created_at", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"rule_id"}, []string{"security_group_id", "direction", "priority", "protocol", "port_range", "cidr", "peer_type", "peer_value", "action", "description", "enabled", "created_at", "updated_at"})
 }
 
 func (s *GormStore) DeleteSecurityRule(_ context.Context, ruleID string) error {

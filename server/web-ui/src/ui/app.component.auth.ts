@@ -1,4 +1,4 @@
-import { AppComponentData } from './overview/app.component.data';
+import { AppComponentOverview } from './overview/app.component.overview';
 import { ApiHttpError } from './app-api.service';
 import { ApiAuthResponse } from './app.models';
 import {
@@ -14,7 +14,7 @@ import type { ClientLoginTarget } from './app-auth-flow';
 import { shortCodeFromEmail } from './app.utils';
 import { WEB_API } from './api-paths';
 
-export class AppComponentAuth extends AppComponentData {
+export class AppComponentAuth extends AppComponentOverview {
   protected async initializeCustomerAuthFromUrl(): Promise<void> {
     if (await this.completeClientLoginFromStoredBrowserAuth()) {
       return;
@@ -152,6 +152,7 @@ export class AppComponentAuth extends AppComponentData {
 
   logout(): void {
     this.currentSessionToken = '';
+    this.currentRefreshToken = '';
     this.authMessage = '';
     clearBrowserAuth();
     this.mode = 'login';
@@ -163,6 +164,7 @@ export class AppComponentAuth extends AppComponentData {
     this.currentUserId = auth.user.userId;
     this.currentUserShortCode = shortCodeFromEmail(auth.user.email);
     this.currentSessionToken = auth.session.token;
+    this.currentRefreshToken = auth.session.refreshToken || '';
     if (persist) {
       persistBrowserAuth(auth);
     }
@@ -187,7 +189,9 @@ export class AppComponentAuth extends AppComponentData {
     const response = await this.api.postAuthorized<{ auth: ApiAuthResponse }>(
       WEB_API.authRenew,
       auth.session.token,
-      {},
+      {
+        refreshToken: auth.session.refreshToken || '',
+      },
     );
     return response.auth;
   }

@@ -20,14 +20,16 @@ use crate::{
         self, ControlTransportMessage, ControlTransportMessageKind, ControlTransportTickRequest,
         MqttQos,
     },
-    current_timestamp_ms, load_session, log_service_error, publish_state_business_event,
-    PersistedSession, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
-    BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
+    current_timestamp_ms, load_session, log_service_error, persist_last_client_message_payload,
+    publish_state_business_event, PersistedSession, StateChangeNotifier,
+    BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
+    BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
 };
 
 const DEVICE_NETWORK_ENABLED_EVENT: &str = "device_network_enabled";
 const DEVICE_NETWORK_DISABLED_EVENT: &str = "device_network_disabled";
 const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
+const ACTIVE_NETWORK_RECONCILE_INTERVAL_MS: u64 = 10_000;
 const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
 const REMOTE_NETWORK_CONFIG_REBUILD_COOLDOWN_MS: u64 = 120_000;
 
@@ -130,6 +132,7 @@ fn run_control_transport_worker(
     let mut last_runtime_state_ms = None;
     let mut last_path_health_ms = None;
     let mut last_keepalive_ping_ms = Some(current_timestamp_ms());
+    let mut last_active_network_reconcile_ms = Some(current_timestamp_ms());
     let connected_at_ms = current_timestamp_ms();
     loop {
         if reconnect_key(&load_session().map_err(|err| err.to_string())?) != reconnect_key(&session)
@@ -172,6 +175,12 @@ fn run_control_transport_worker(
             client.ping()?;
             last_keepalive_ping_ms = Some(now_ms);
             log_service_error("client-core-service sent mqtt keepalive ping");
+        }
+        if now_ms.saturating_sub(last_active_network_reconcile_ms.unwrap_or(0))
+            >= ACTIVE_NETWORK_RECONCILE_INTERVAL_MS
+        {
+            reconcile_active_network_state(&runtime, &task_queue, &state_notifier)?;
+            last_active_network_reconcile_ms = Some(now_ms);
         }
         let tick = control_transport::control_transport_tick_plan(
             ControlTransportTickRequest {
@@ -221,6 +230,42 @@ fn run_control_transport_worker(
             }
         }
     }
+}
+
+fn reconcile_active_network_state(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<(), String> {
+    let current_state = {
+        let runtime = runtime
+            .lock()
+            .map_err(|_| "client runtime mutex poisoned".to_string())?;
+        runtime.state().clone()
+    };
+    if !current_state.signed_in || !current_state.network_enabled {
+        return Ok(());
+    }
+    log_service_error("client-core-service reconciling active network state");
+    {
+        let mut queue = task_queue
+            .lock()
+            .map_err(|_| "control task queue mutex poisoned".to_string())?;
+        queue
+            .enqueue_downstream_unacked(
+                crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                false,
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    let state = crate::drain_pending_control_tasks(runtime, task_queue);
+    let business_type = if state.error.is_some() {
+        BUSINESS_NETWORK_SWITCH_FAILED
+    } else {
+        BUSINESS_NETWORK_RUNTIME_CHANGED
+    };
+    publish_state_business_event(state_notifier, business_type, &state);
+    Ok(())
 }
 
 fn connect_control_mqtt_with_retry(
@@ -456,7 +501,7 @@ fn ingest_downstream_publish(
 fn try_ingest_device_network_presence(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-    _task_queue: &Arc<Mutex<ControlTaskQueue>>,
+    task_queue: &Arc<Mutex<ControlTaskQueue>>,
     state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<bool, String> {
     let value: serde_json::Value =
@@ -489,13 +534,46 @@ fn try_ingest_device_network_presence(
     log_service_error(format!(
         "client-core-service network presence message type={message_type} networkId={network_id} deviceId={device_id} online={online} onlineDevices={online_count}"
     ));
-    let state = {
+    let session =
+        load_session().map_err(|err| format!("load session for network presence: {err}"))?;
+    if !network_config_changed_targets_session(&value, &session) {
+        return Ok(true);
+    }
+    let client = crate::control_plane::ControlPlaneClient::from_env();
+    crate::network_module::refresh_network_module_from_session(&client, &session)
+        .map_err(|err| format!("refresh client network module from presence: {err:#}"))?;
+    let current_state = {
         let runtime = runtime
             .lock()
             .map_err(|_| "client runtime mutex poisoned".to_string())?;
         runtime.state().clone()
     };
-    publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
+    if current_state.signed_in && current_state.network_enabled {
+        {
+            let mut queue = task_queue
+                .lock()
+                .map_err(|_| "control task queue mutex poisoned".to_string())?;
+            queue
+                .enqueue_downstream_unacked(
+                    crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                    false,
+                )
+                .map_err(|err| err.to_string())?;
+        }
+        let state = crate::drain_pending_control_tasks(runtime, task_queue);
+        let business_type = if state.error.is_some() {
+            BUSINESS_NETWORK_SWITCH_FAILED
+        } else {
+            BUSINESS_NETWORK_RUNTIME_CHANGED
+        };
+        publish_state_business_event(state_notifier, business_type, &state);
+    } else {
+        publish_state_business_event(
+            state_notifier,
+            BUSINESS_CONTROL_SYNC_CHANGED,
+            &current_state,
+        );
+    }
     Ok(true)
 }
 
@@ -517,27 +595,22 @@ fn log_downstream_message_summary(value: &serde_json::Value) -> Option<String> {
     let payload = value.get("payload");
     let message_id = value
         .get("messageId")
-        .or_else(|| value.get("message_id"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let device_id = payload
         .and_then(|payload| payload.get("deviceId"))
-        .or_else(|| payload.and_then(|payload| payload.get("device_id")))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let virtual_ip = payload
         .and_then(|payload| payload.get("virtualIp"))
-        .or_else(|| payload.and_then(|payload| payload.get("virtual_ip")))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let policy_id = payload
         .and_then(|payload| payload.get("policyId"))
-        .or_else(|| payload.and_then(|payload| payload.get("policy_id")))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let network_id = payload
         .and_then(|payload| payload.get("networkId"))
-        .or_else(|| payload.and_then(|payload| payload.get("network_id")))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     log_service_error(format!(
@@ -550,7 +623,6 @@ fn log_downstream_message_summary(value: &serde_json::Value) -> Option<String> {
 fn downstream_message_id(value: &serde_json::Value) -> Option<String> {
     value
         .get("messageId")
-        .or_else(|| value.get("message_id"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -573,33 +645,37 @@ fn try_ingest_client_message(
         .ok_or_else(|| "client_message payload is missing".to_string())?;
     let message: ClientMessagePayload = serde_json::from_value(message_value)
         .map_err(|err| format!("decode client_message: {err}"))?;
-    let session = load_session().map_err(|err| format!("load session for client_message: {err}"))?;
+    let session =
+        load_session().map_err(|err| format!("load session for client_message: {err}"))?;
     let self_device_id = session
         .device_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if let Some(target_device_id) = message
-        .target_device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(target_device_id) = message.trimmed_target_device_id() {
         if Some(target_device_id) != self_device_id {
+            log_service_error(format!(
+                "client-core-service ignored client_message messageId={} fromDeviceId={} targetDeviceId={} selfDeviceId={}",
+                message.message_id_str(),
+                message.from_device_id_str(),
+                target_device_id,
+                self_device_id.unwrap_or_default(),
+            ));
             return Ok(true);
         }
     }
     log_service_error(format!(
         "client-core-service accepted client_message messageId={} networkId={} fromDeviceId={} targetDeviceId={} bodyBytes={}",
-        message.message_id.as_deref().unwrap_or_default(),
-        message.network_id.as_deref().unwrap_or_default(),
-        message.from_device_id.as_deref().unwrap_or_default(),
-        message.target_device_id.as_deref().unwrap_or_default(),
-        message.body.as_deref().unwrap_or_default().len()
+        message.message_id_str(),
+        message.network_id_str(),
+        message.from_device_id_str(),
+        message.target_device_id_str(),
+        message.body_len()
     ));
     if maybe_reply_client_ping(&message) {
         return Ok(true);
     }
+    let _ = persist_last_client_message_payload(&value);
     let state = {
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
         runtime
@@ -617,20 +693,10 @@ fn try_ingest_client_message(
 }
 
 fn maybe_reply_client_ping(message: &ClientMessagePayload) -> bool {
-    let Some(from_device_id) = message
-        .from_device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(from_device_id) = message.trimmed_from_device_id() else {
         return false;
     };
-    let Some(target_device_id) = message
-        .target_device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(target_device_id) = message.trimmed_target_device_id() else {
         return false;
     };
     let Some((ping_id, sent_at_ms)) = message
@@ -752,6 +818,42 @@ struct ClientMessagePayload {
     body: Option<String>,
 }
 
+impl ClientMessagePayload {
+    fn message_id_str(&self) -> &str {
+        self.message_id.as_deref().unwrap_or_default()
+    }
+
+    fn network_id_str(&self) -> &str {
+        self.network_id.as_deref().unwrap_or_default()
+    }
+
+    fn from_device_id_str(&self) -> &str {
+        self.from_device_id.as_deref().unwrap_or_default()
+    }
+
+    fn target_device_id_str(&self) -> &str {
+        self.target_device_id.as_deref().unwrap_or_default()
+    }
+
+    fn body_len(&self) -> usize {
+        self.body.as_deref().unwrap_or_default().len()
+    }
+
+    fn trimmed_from_device_id(&self) -> Option<&str> {
+        self.from_device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn trimmed_target_device_id(&self) -> Option<&str> {
+        self.target_device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+}
+
 fn try_ingest_network_config_changed(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
@@ -764,7 +866,7 @@ fn try_ingest_network_config_changed(
         .get("type")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    if message_type != "network_config_changed" && message_type != "network_member_state_changed" {
+    if !is_network_reconfigure_event(message_type) {
         return Ok(false);
     }
     let ack_delivery_id = if message_type == "network_config_changed" {
@@ -780,8 +882,6 @@ fn try_ingest_network_config_changed(
         );
         return Ok(true);
     }
-    let remote_member_state_change = message_type == "network_member_state_changed"
-        && !network_message_targets_self_device(&value, &session);
     let remote_network_config_change = message_type == "network_config_changed"
         && !network_message_targets_self_device(&value, &session);
     let suppress_remote_network_rebuild = remote_network_config_change
@@ -807,7 +907,7 @@ fn try_ingest_network_config_changed(
             .map_err(|_| "client runtime mutex poisoned".to_string())?;
         runtime.state().clone()
     };
-    if remote_member_state_change || suppress_remote_network_rebuild {
+    if suppress_remote_network_rebuild {
         log_service_error(
             "client-core-service ignored remote network change for data plane refresh",
         );
@@ -855,6 +955,17 @@ fn try_ingest_network_config_changed(
     Ok(true)
 }
 
+fn is_network_reconfigure_event(message_type: &str) -> bool {
+    matches!(
+        message_type,
+        "network_config_changed"
+            | "network_snapshot"
+            | "dns_changed"
+            | "acl_changed"
+            | "network_member_changed"
+    )
+}
+
 fn network_config_changed_targets_session(
     value: &serde_json::Value,
     session: &PersistedSession,
@@ -867,7 +978,6 @@ fn network_config_changed_targets_session(
         .filter(|value| !value.is_empty());
     if let Some(network_id) = payload
         .get("networkId")
-        .or_else(|| value.get("networkId"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -894,7 +1004,6 @@ fn network_message_targets_self_device(
     };
     payload
         .get("deviceId")
-        .or_else(|| value.get("deviceId"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .is_some_and(|device_id| device_id == self_device_id)
@@ -904,18 +1013,12 @@ fn claim_remote_network_config_rebuild(value: &serde_json::Value, now_ms: u64) -
     let payload = value.get("payload").unwrap_or(value);
     let network_id = payload
         .get("networkId")
-        .or_else(|| payload.get("network_id"))
-        .or_else(|| value.get("networkId"))
-        .or_else(|| value.get("network_id"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("-");
     let device_id = payload
         .get("deviceId")
-        .or_else(|| payload.get("device_id"))
-        .or_else(|| value.get("deviceId"))
-        .or_else(|| value.get("device_id"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -941,9 +1044,6 @@ fn network_config_changed_assignment(
     let payload = value.get("payload")?;
     let target_device_id = payload
         .get("deviceId")
-        .or_else(|| payload.get("device_id"))
-        .or_else(|| value.get("deviceId"))
-        .or_else(|| value.get("device_id"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
@@ -963,7 +1063,6 @@ fn network_config_changed_assignment(
         .to_string();
     let prefix_len = payload
         .get("prefixLen")
-        .or_else(|| payload.get("prefixLength"))
         .and_then(serde_json::Value::as_u64)
         .and_then(|value| u8::try_from(value).ok())
         .filter(|value| *value <= 32);
@@ -1012,11 +1111,10 @@ fn try_ingest_device_user_login_succeeded(
     }
     let delivery_id = value
         .get("messageId")
-        .or_else(|| value.get("deliveryId"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "device_user_login_succeeded deliveryId/messageId is missing".to_string())?
+        .ok_or_else(|| "device_user_login_succeeded messageId is missing".to_string())?
         .to_string();
     let Some(auth_value) = value.get("payload").cloned() else {
         return Err("device_user_login_succeeded payload is missing".to_string());
@@ -1102,7 +1200,6 @@ fn try_ingest_device_ip_reassigned(
     }
     let prefix_len = ip_payload
         .get("prefixLen")
-        .or_else(|| ip_payload.get("prefixLength"))
         .and_then(serde_json::Value::as_u64)
         .and_then(|value| u8::try_from(value).ok());
     let mut runtime = runtime
@@ -1335,26 +1432,30 @@ fn reset_worker_gate(worker_state: &Arc<Mutex<ControlTransportWorkerState>>) {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::{Arc, Mutex};
 
-    use client_core::{AuthPayload, ClientCommand, ClientRuntime};
+    use client_core::{AuthPayload, ClientCommand, ClientRuntime, NetworkRuntimeState};
     use client_core_platform::PlatformNetworkImpl;
 
     use super::{
         ingest_downstream_publish, network_config_changed_assignment,
-        network_config_changed_targets_session,
+        network_config_changed_targets_session, reconcile_active_network_state,
     };
     use crate::control_plane::MqttCredential;
     use crate::session_store::PersistedSession;
     use crate::{
         control_tasks::ControlTaskQueue, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
+        BUSINESS_NETWORK_SWITCH_FAILED,
     };
 
     #[test]
     fn client_message_downstream_updates_runtime_state_and_notifies() {
         let _lock = crate::test_env_lock();
-        let state_dir = std::env::temp_dir()
-            .join(format!("slan-client-message-target-test-{}", std::process::id()));
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-client-message-target-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&state_dir);
         std::fs::create_dir_all(&state_dir).expect("create temp state dir");
         let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
@@ -1420,8 +1521,10 @@ mod tests {
     #[test]
     fn client_message_downstream_ignores_other_targets() {
         let _lock = crate::test_env_lock();
-        let state_dir = std::env::temp_dir()
-            .join(format!("slan-client-message-ignore-test-{}", std::process::id()));
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-client-message-ignore-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&state_dir);
         std::fs::create_dir_all(&state_dir).expect("create temp state dir");
         let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
@@ -1463,7 +1566,7 @@ mod tests {
     }
 
     #[test]
-    fn client_message_publish_uses_network_broadcast_topic() {
+    fn client_message_publish_uses_target_device_downstream_topic() {
         let mqtt = MqttCredential {
             broker_url: "mqtt://47.245.40.231:1883".to_string(),
             client_id: "slan-device-ios-device".to_string(),
@@ -1475,10 +1578,10 @@ mod tests {
 
         let response = crate::client_message_mqtt::publish_client_message_topic_for_test(
             &mqtt,
-            "net-42",
+            "android-device",
         );
 
-        assert_eq!(response, "slan/networks/net-42/broadcast");
+        assert_eq!(response, "slan/devices/android-device/control/down");
     }
 
     #[test]
@@ -1614,5 +1717,81 @@ mod tests {
             network_config_changed_assignment(&missing_device, &session),
             None
         );
+    }
+
+    #[test]
+    fn active_network_reconcile_enqueues_refresh_task_when_network_is_enabled() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-active-network-reconcile-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&state_dir);
+        fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
+        {
+            let mut guard = runtime.lock().expect("runtime mutex");
+            guard
+                .dispatch(ClientCommand::ApplyDeviceUserLogin(AuthPayload {
+                    access_token: "token-1".to_string(),
+                    refresh_token: None,
+                    user_id: "user-1".to_string(),
+                    user_label: "user@example.com".to_string(),
+                    device_id: Some("device-1".to_string()),
+                    active_network_id: Some("net-1".to_string()),
+                    virtual_ip: Some("10.0.0.2".to_string()),
+                    expires_in: None,
+                }))
+                .expect("seed signed-in runtime");
+            guard
+                .dispatch(ClientCommand::ApplyPlatformRuntimeState(
+                    NetworkRuntimeState {
+                        adapter_present: true,
+                        network_enabled: true,
+                        virtual_ip: Some("10.0.0.2".to_string()),
+                        active_path: None,
+                        peer_paths: Vec::new(),
+                    },
+                ))
+                .expect("seed enabled network state");
+        }
+        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        let state_notifier = Arc::new(StateChangeNotifier::default());
+
+        let _ = reconcile_active_network_state(&runtime, &task_queue, &state_notifier);
+
+        let revision = *state_notifier.revision.lock().expect("revision mutex");
+        assert_eq!(revision, 1);
+        let event = state_notifier
+            .event
+            .lock()
+            .expect("event mutex")
+            .clone()
+            .expect("business event");
+        assert_eq!(event.business_type, BUSINESS_NETWORK_SWITCH_FAILED);
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn active_network_reconcile_skips_when_network_is_disabled() {
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
+        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        let state_notifier = Arc::new(StateChangeNotifier::default());
+
+        reconcile_active_network_state(&runtime, &task_queue, &state_notifier)
+            .expect("disabled network should not reconcile");
+
+        let mut queue = task_queue.lock().expect("task queue mutex");
+        let task = queue.take_next_pending().expect("read pending task");
+        assert!(task.is_none(), "disabled network must not enqueue refresh");
     }
 }

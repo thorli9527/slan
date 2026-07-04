@@ -139,7 +139,7 @@ fi
 
 tar -tzf "$TAR_PATH" | grep -q 'opt/slan-client-v2/bin/client-core-service'
 tar -tzf "$TAR_PATH" | grep -q 'usr/bin/slan-client-v2-console'
-tar -tzf "$TAR_PATH" | grep -q 'lib/systemd/system/slan-client-v2.service'
+tar -tzf "$TAR_PATH" | grep -q 'usr/lib/systemd/system/slan-client-v2.service'
 if [ "$VARIANT" != "console" ]; then
   tar -tzf "$TAR_PATH" | grep -q 'opt/slan-client-v2/gui/'
 fi
@@ -147,7 +147,7 @@ fi
 if [ -f "$DEB_PATH" ]; then
   if command -v dpkg-deb >/dev/null 2>&1; then
     dpkg-deb -c "$DEB_PATH" | grep -q 'opt/slan-client-v2/bin/client-core-service'
-    dpkg-deb -c "$DEB_PATH" | grep -q 'lib/systemd/system/slan-client-v2.service'
+    dpkg-deb -c "$DEB_PATH" | grep -q 'usr/lib/systemd/system/slan-client-v2.service'
   fi
   echo "linuxDeb: $DEB_PATH"
 fi

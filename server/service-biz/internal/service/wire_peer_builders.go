@@ -2,31 +2,34 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/slan/service-biz/internal/model"
-	"github.com/slan/service-biz/internal/pkg/wirekit"
 	"github.com/slan/service-biz/internal/repository"
+	"github.com/slan/service-biz/internal/pkg/wirekit"
 )
 
-func wirePeerAuthzView(peerID, networkID, deviceID string) WirePeerAuthzView {
+func wirePeerAuthzView(peerID, networkID string, device model.Device) WirePeerAuthzView {
+	globalIP := deviceGlobalIP(device)
 	return WirePeerAuthzView{
 		PeerID:      peerID,
 		NetworkID:   networkID,
-		NodeID:      wirekit.NodeID(deviceID),
+		NodeID:      wirekit.NodeID(device.DeviceID),
 		Enabled:     true,
-		VirtualIPs:  []string{wirekit.VirtualIP(networkID, deviceID)},
-		AllowedIPs:  []string{wirekit.AllowedIP(networkID, deviceID)},
+		VirtualIPs:  []string{globalIP},
+		AllowedIPs:  []string{fmt.Sprintf("%s/32", globalIP)},
 		QuotaPolicy: "default",
 	}
 }
 
-func wirePeerRuntimeConfigView(peerID, networkID, deviceID string, endpoints []string, membership model.NetworkDevice) WirePeerRuntimeConfigView {
+func wirePeerRuntimeConfigView(peerID, networkID string, device model.Device, endpoints []string, membership model.NetworkDevice) WirePeerRuntimeConfigView {
+	globalIP := deviceGlobalIP(device)
 	return WirePeerRuntimeConfigView{
 		PeerID:                peerID,
 		NetworkID:             networkID,
-		NodeID:                wirekit.NodeID(deviceID),
-		VirtualIPs:            []string{wirekit.VirtualIP(networkID, deviceID)},
-		AllowedIPs:            []string{wirekit.AllowedIP(networkID, deviceID)},
+		NodeID:                wirekit.NodeID(device.DeviceID),
+		VirtualIPs:            []string{globalIP},
+		AllowedIPs:            []string{fmt.Sprintf("%s/32", globalIP)},
 		KeepaliveIntervalSecs: 30,
 		NetworkEnabled:        true,
 		PreferredPath:         firstNonEmpty(membership.ActivePath, "direct_udp"),
@@ -42,7 +45,7 @@ func wireTopologyPeers(
 ) ([]wirekit.TopologyPeer, error) {
 	peers := make([]wirekit.TopologyPeer, 0)
 	for _, item := range items {
-		if !item.Enabled || item.Status != "active" {
+		if !networkMemberActive(item) {
 			continue
 		}
 		device, ok, err := devices.GetDevice(ctx, item.DeviceID)

@@ -11,11 +11,13 @@ import (
 )
 
 type relayTicketACLContext struct {
-	networkID       string
-	localDeviceID   string
-	localGlobalIP   string
-	localGlobalName string
-	peers           map[string]relayTicketACLPeer
+	networkID            string
+	networkOwnerID       string
+	localDeviceID        string
+	localGlobalIP        string
+	localGlobalName      string
+	deviceGroupsByDevice map[string][]string
+	peers                map[string]relayTicketACLPeer
 }
 
 type relayTicketACLPeer struct {
@@ -67,14 +69,28 @@ func ensureRelayTicketAllowed(
 	if err != nil {
 		return err
 	}
-	globalIPs, _ := assignedNetworkIPMap(network.CIDR, deviceIDs)
+	deviceGroupsByDevice, err := relayTicketDeviceGroupsByDevice(ctx, devices, deviceMap, deviceIDs)
+	if err != nil {
+		return err
+	}
+	globalIPs := make(map[string]string, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		if deviceID == "" {
+			continue
+		}
+		item, ok := deviceMap[deviceID]
+		if !ok {
+			item = model.Device{DeviceID: deviceID}
+		}
+		globalIPs[deviceID] = deviceGlobalIP(item)
+	}
 	dstIP := strings.TrimSpace(globalIPs[dstDeviceID])
 
-	srcACL := newRelayTicketACLContext(network.NetworkID, srcDeviceID, deviceMap, globalIPs)
+	srcACL := newRelayTicketACLContext(network.NetworkID, network.OwnerID, srcDeviceID, deviceMap, globalIPs, deviceGroupsByDevice)
 	if relayTicketBroadDeny(rules, srcACL, "egress", dstIP) {
 		return ErrForbidden
 	}
-	dstACL := newRelayTicketACLContext(network.NetworkID, dstDeviceID, deviceMap, globalIPs)
+	dstACL := newRelayTicketACLContext(network.NetworkID, network.OwnerID, dstDeviceID, deviceMap, globalIPs, deviceGroupsByDevice)
 	if relayTicketBroadDeny(rules, dstACL, "ingress", dstIP) {
 		return ErrForbidden
 	}
@@ -92,7 +108,7 @@ func relayTicketDeviceID(nodeID string) string {
 func relayTicketActiveMemberships(items []model.NetworkDevice) map[string]model.NetworkDevice {
 	out := make(map[string]model.NetworkDevice, len(items))
 	for _, item := range items {
-		if item.DeviceID == "" || !item.Enabled || item.Status != "active" {
+		if item.DeviceID == "" || !networkMemberActive(item) {
 			continue
 		}
 		out[item.DeviceID] = item
@@ -128,14 +144,63 @@ func relayTicketDevices(ctx context.Context, devices repository.DeviceRepository
 	return out, nil
 }
 
-func newRelayTicketACLContext(networkID, localDeviceID string, devices map[string]model.Device, globalIPs map[string]string) relayTicketACLContext {
+func relayTicketDeviceGroupsByDevice(
+	ctx context.Context,
+	devices repository.DeviceRepository,
+	deviceMap map[string]model.Device,
+	deviceIDs []string,
+) (map[string][]string, error) {
+	out := make(map[string][]string)
+	if devices == nil {
+		return out, nil
+	}
+	userIDs := make(map[string]struct{})
+	allowed := make(map[string]struct{}, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		deviceID = strings.TrimSpace(deviceID)
+		if deviceID == "" {
+			continue
+		}
+		allowed[deviceID] = struct{}{}
+		if item, ok := deviceMap[deviceID]; ok && strings.TrimSpace(item.OwnerID) != "" {
+			userIDs[strings.TrimSpace(item.OwnerID)] = struct{}{}
+		}
+	}
+	for userID := range userIDs {
+		assignments, err := devices.ListDeviceGroupAssignments(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		for _, assignment := range assignments {
+			deviceID := strings.TrimSpace(assignment.DeviceID)
+			if deviceID == "" {
+				continue
+			}
+			if _, ok := allowed[deviceID]; !ok {
+				continue
+			}
+			for _, groupID := range assignment.GroupIDs {
+				groupID = strings.TrimSpace(groupID)
+				if groupID == "" {
+					continue
+				}
+				out[deviceID] = append(out[deviceID], groupID)
+			}
+		}
+	}
+	return out, nil
+}
+
+func newRelayTicketACLContext(networkID, networkOwnerID, localDeviceID string, devices map[string]model.Device, globalIPs map[string]string, deviceGroupsByDevice map[string][]string) relayTicketACLContext {
 	local := devices[localDeviceID]
 	ctx := relayTicketACLContext{
-		networkID:       networkID,
-		localDeviceID:   localDeviceID,
-		localGlobalIP:   strings.TrimSpace(globalIPs[localDeviceID]),
-		localGlobalName: networkGlobalName(localDeviceID, local.Alias, local.Name),
-		peers:           make(map[string]relayTicketACLPeer, len(globalIPs)),
+		networkID:            networkID,
+		networkOwnerID:       strings.TrimSpace(networkOwnerID),
+		localDeviceID:        localDeviceID,
+		localGlobalIP:        strings.TrimSpace(globalIPs[localDeviceID]),
+		localGlobalName:      networkGlobalName(localDeviceID, local.Alias, local.Name),
+		deviceGroupsByDevice: deviceGroupsByDevice,
+		peers:                make(map[string]relayTicketACLPeer, len(globalIPs)),
 	}
 	for deviceID, globalIP := range globalIPs {
 		if deviceID == localDeviceID {
@@ -228,15 +293,30 @@ func relayTicketPeerMatches(rule SecurityRuleView, ctx relayTicketACLContext, su
 		}
 		peer, ok := ctx.peers[peerValue]
 		return ok && relayTicketSameIP(subjectIP, peer.globalIP)
-	case "domain", "dns":
+	case "user":
 		if subjectIP == "" || peerValue == "" {
 			return false
 		}
-		if strings.EqualFold(ctx.localGlobalName, peerValue) {
+		if strings.EqualFold(strings.TrimSpace(ctx.networkOwnerID), peerValue) {
+			if relayTicketSameIP(subjectIP, ctx.localGlobalIP) {
+				return true
+			}
+			for _, peer := range ctx.peers {
+				if relayTicketSameIP(subjectIP, peer.globalIP) {
+					return true
+				}
+			}
+		}
+		return false
+	case "device_group":
+		if subjectIP == "" || peerValue == "" {
+			return false
+		}
+		if relayTicketDeviceInGroup(ctx.localDeviceID, peerValue, ctx.deviceGroupsByDevice) {
 			return relayTicketSameIP(subjectIP, ctx.localGlobalIP)
 		}
-		for _, peer := range ctx.peers {
-			if strings.EqualFold(peer.globalName, peerValue) || strings.EqualFold(peer.alias, peerValue) {
+		for deviceID, peer := range ctx.peers {
+			if relayTicketDeviceInGroup(deviceID, peerValue, ctx.deviceGroupsByDevice) {
 				return relayTicketSameIP(subjectIP, peer.globalIP)
 			}
 		}
@@ -244,6 +324,15 @@ func relayTicketPeerMatches(rule SecurityRuleView, ctx relayTicketACLContext, su
 	default:
 		return false
 	}
+}
+
+func relayTicketDeviceInGroup(deviceID, groupID string, groupsByDevice map[string][]string) bool {
+	for _, current := range groupsByDevice[deviceID] {
+		if strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(groupID)) {
+			return true
+		}
+	}
+	return false
 }
 
 func relayTicketSameIP(left, right string) bool {

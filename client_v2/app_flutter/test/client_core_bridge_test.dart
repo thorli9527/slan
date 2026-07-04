@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_client_v2/bridge/client_commands.dart';
 import 'package:slan_client_v2/bridge/client_core_bridge.dart';
+import 'package:slan_client_v2/bridge/client_core_bridge_support.dart';
 import 'package:slan_client_v2/bridge/client_view_state.dart';
 
 void main() {
@@ -43,6 +44,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: await _unusedLoopbackHost(),
     );
+    _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(
       const ClientCommand(ClientCommandType.openClientLogin),
@@ -166,6 +168,7 @@ void main() {
       localServiceHost: await _unusedLoopbackHost(),
       useMobileControlPlane: true,
     );
+    _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(const ClientCommand(
       ClientCommandType.loginWithPassword,
@@ -255,6 +258,7 @@ void main() {
       localServiceHost: await _unusedLoopbackHost(),
       useMobileControlPlane: true,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     expect(calls.first, 'mobileServerBaseUrl');
@@ -299,6 +303,7 @@ void main() {
       localServiceHost: await _unusedLoopbackHost(),
       useMobileControlPlane: true,
     );
+    _closeBridgeOnTearDown(bridge);
 
     await expectLater(
       bridge.dispatch(const ClientCommand(
@@ -330,22 +335,22 @@ void main() {
         expect(request['method'], 'localPlatformNetworkConfig');
         return {
           'sessionName': 'SLAN',
-          'virtualIp': '100.64.0.44',
+          'virtualIp': '10.0.0.44',
           'prefixLen': 32,
-          'dnsServers': ['100.64.0.1'],
+          'dnsServers': ['10.0.0.1'],
           'routes': [
-            {'destination': '100.64.0.0/10'}
+            {'destination': '10.0.0.0/8'}
           ],
           'mtu': 1280,
         };
       }
       if (call.method == 'iosStartPacketTunnel') {
         final config = (call.arguments as Map).cast<String, Object?>();
-        expect(config['virtualIp'], '100.64.0.44');
+        expect(config['virtualIp'], '10.0.0.44');
         return {
           'signedIn': true,
           'networkEnabled': true,
-          'virtualIp': '100.64.0.44',
+          'virtualIp': '10.0.0.44',
           'syncing': false,
           'switchEnabled': true,
           'notice': 'networkEnabled',
@@ -365,13 +370,14 @@ void main() {
       localServiceHost: await _unusedLoopbackHost(),
       runtimePlatform: ClientBridgeRuntimePlatform.ios,
     );
+    _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(
       const ClientCommand(ClientCommandType.enableNetwork),
     );
 
     await _waitFor(
-      () => bridge.state.value.virtualIp == '100.64.0.44',
+      () => bridge.state.value.virtualIp == '10.0.0.44',
       reason: 'iOS switch should start packet tunnel with embedded config',
     );
     expect(calls.take(2), ['embeddedServiceRequest', 'iosStartPacketTunnel']);
@@ -442,6 +448,7 @@ void main() {
       localServiceHost: await _unusedLoopbackHost(),
       useMobileControlPlane: true,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     await _waitFor(
@@ -526,6 +533,7 @@ void main() {
       localServiceHost: await _unusedLoopbackHost(),
       useMobileControlPlane: true,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     await _waitFor(
@@ -535,6 +543,313 @@ void main() {
     expect(bridge.state.value.lastClientMessageId, 'msg-1');
     expect(bridge.state.value.lastClientMessageFromDeviceId, 'ios-peer');
     expect(embeddedMethods, contains('localBusinessEventWatch'));
+  });
+
+  test(
+      'mobile control sync business event uses embedded payload for latest client message',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final embeddedMethods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'embeddedServiceRequest') {
+        return <String, Object?>{};
+      }
+      final request =
+          jsonDecode(call.arguments as String) as Map<String, Object?>;
+      final method = request['method'] as String;
+      embeddedMethods.add(method);
+      if (method == 'start') {
+        return {
+          'signedIn': true,
+          'networkEnabled': false,
+          'syncing': false,
+          'switchEnabled': true,
+        };
+      }
+      if (method == 'localEnsureDevice') {
+        return {
+          'registered': true,
+          'deviceId': 'embedded-device-1',
+          'mqttCredentialReady': true,
+        };
+      }
+      if (method == 'localConnectControlMqtt') {
+        return {
+          'connected': true,
+          'deviceId': 'embedded-device-1',
+          'downstreamTopic': 'slan/devices/embedded-device-1/control/down',
+        };
+      }
+      if (method == 'localBusinessEventWatch') {
+        return {
+          'revision': 1,
+          'businessType': ClientBusinessEventType.controlSyncChanged,
+          'businessData': {
+            'signedIn': true,
+            'networkEnabled': false,
+            'syncing': false,
+            'switchEnabled': true,
+            'messageType': 'network_member_changed',
+            'lastClientMessageId': 'msg-2',
+            'lastClientMessageFromDeviceId': 'android-peer',
+            'lastClientMessageBody': 'hello from embedded payload',
+          },
+          'snapshot': {
+            'signedIn': true,
+            'networkEnabled': false,
+            'syncing': false,
+            'switchEnabled': true,
+          },
+        };
+      }
+      fail('unexpected embedded method $method');
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+    _closeBridgeOnTearDown(bridge);
+    await bridge.start();
+
+    await _waitFor(
+      () =>
+          bridge.state.value.lastClientMessageBody ==
+          'hello from embedded payload',
+      reason:
+          'control sync event should use latest client message from payload',
+    );
+    expect(bridge.state.value.lastClientMessageId, 'msg-2');
+    expect(bridge.state.value.lastClientMessageFromDeviceId, 'android-peer');
+    expect(
+      bridge.state.value.lastControlSyncMessageType,
+      'network_member_changed',
+    );
+    expect(bridge.state.value.lastControlSyncReconfigureRequired, false);
+    expect(embeddedMethods, isNot(contains('localState')));
+  });
+
+  test('mobile control sync business event stores control sync metadata',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'embeddedServiceRequest') {
+        return <String, Object?>{};
+      }
+      final request =
+          jsonDecode(call.arguments as String) as Map<String, Object?>;
+      final method = request['method'] as String;
+      if (method == 'start') {
+        return {
+          'signedIn': true,
+          'networkEnabled': true,
+          'syncing': false,
+          'switchEnabled': true,
+        };
+      }
+      if (method == 'localEnsureDevice') {
+        return {
+          'registered': true,
+          'deviceId': 'embedded-device-1',
+          'mqttCredentialReady': true,
+        };
+      }
+      if (method == 'localConnectControlMqtt') {
+        return {
+          'connected': true,
+          'deviceId': 'embedded-device-1',
+          'downstreamTopic': 'slan/devices/embedded-device-1/control/down',
+        };
+      }
+      if (method == 'localBusinessEventWatch') {
+        return {
+          'revision': 1,
+          'businessType': ClientBusinessEventType.controlSyncChanged,
+          'businessData': {
+            'signedIn': true,
+            'networkEnabled': true,
+            'syncing': false,
+            'switchEnabled': true,
+            'messageType': 'dns_changed',
+            'reconfigureRequired': true,
+          },
+          'snapshot': {
+            'signedIn': true,
+            'networkEnabled': true,
+            'syncing': false,
+            'switchEnabled': true,
+          },
+        };
+      }
+      if (method == 'localState') {
+        return {
+          'signedIn': true,
+          'networkEnabled': true,
+          'syncing': false,
+          'switchEnabled': true,
+        };
+      }
+      fail('unexpected embedded method $method');
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+    _closeBridgeOnTearDown(bridge);
+    await bridge.start();
+
+    await _waitFor(
+      () => bridge.state.value.lastControlSyncMessageType == 'dns_changed',
+      reason: 'control sync metadata should be stored in bridge state',
+    );
+    expect(bridge.state.value.lastControlSyncReconfigureRequired, true);
+  });
+
+  test('mobile control sync uses rust reconfigure flag for dns change',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final calls = <String>[];
+    final embeddedMethods = <String>[];
+    var emittedBusinessEvent = false;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        final method = request['method'] as String;
+        embeddedMethods.add(method);
+        if (method == 'start') {
+          return {
+            'signedIn': true,
+            'networkEnabled': true,
+            'syncing': false,
+            'switchEnabled': true,
+            'virtualIp': '10.0.0.44',
+          };
+        }
+        if (method == 'localEnsureDevice') {
+          return {
+            'registered': true,
+            'deviceId': 'embedded-device-1',
+            'mqttCredentialReady': true,
+          };
+        }
+        if (method == 'localConnectControlMqtt') {
+          return {
+            'connected': true,
+            'deviceId': 'embedded-device-1',
+            'downstreamTopic': 'slan/devices/embedded-device-1/control/down',
+          };
+        }
+        if (method == 'localPlatformNetworkConfig') {
+          return {
+            'sessionName': 'SLAN',
+            'virtualIp': '10.0.0.44',
+            'prefixLen': 32,
+            'dnsServers': ['10.0.0.1'],
+            'routes': [
+              {'destination': '10.0.0.0/8'}
+            ],
+            'mtu': 1280,
+          };
+        }
+        if (method == 'localBusinessEventWatch') {
+          if (emittedBusinessEvent) {
+            return {
+              'revision': 1,
+              'businessType': ClientBusinessEventType.stateChanged,
+              'businessData': <String, Object?>{},
+              'snapshot': {
+                'signedIn': true,
+                'networkEnabled': true,
+                'syncing': false,
+                'switchEnabled': true,
+                'virtualIp': '10.0.0.44',
+              },
+            };
+          }
+          emittedBusinessEvent = true;
+          return {
+            'revision': 1,
+            'businessType': ClientBusinessEventType.controlSyncChanged,
+            'businessData': {
+              'signedIn': true,
+              'networkEnabled': true,
+              'syncing': false,
+              'switchEnabled': true,
+              'virtualIp': '10.0.0.44',
+              'messageType': 'dns_changed',
+              'reconfigureRequired': true,
+            },
+            'snapshot': {
+              'signedIn': true,
+              'networkEnabled': true,
+              'syncing': false,
+              'switchEnabled': true,
+              'virtualIp': '10.0.0.44',
+            },
+          };
+        }
+        if (method == 'localState') {
+          return {
+            'signedIn': true,
+            'networkEnabled': true,
+            'syncing': false,
+            'switchEnabled': true,
+            'virtualIp': '10.0.0.44',
+          };
+        }
+        fail('unexpected embedded method $method');
+      }
+      if (call.method == 'androidStartVpn') {
+        final config = (call.arguments as Map).cast<String, Object?>();
+        expect(config['virtualIp'], '10.0.0.44');
+        return {
+          'signedIn': true,
+          'networkEnabled': true,
+          'virtualIp': '10.0.0.44',
+          'syncing': false,
+          'switchEnabled': true,
+        };
+      }
+      if (call.method == 'androidWatchNetworkEvent') {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        return null;
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      runtimePlatform: ClientBridgeRuntimePlatform.android,
+      useMobileControlPlane: true,
+    );
+    _closeBridgeOnTearDown(bridge);
+    await bridge.start();
+
+    await _waitFor(
+      () => calls.contains('androidStartVpn'),
+      reason:
+          'dns change with rust reconfigure flag should refresh mobile config',
+    );
+    expect(embeddedMethods, contains('localPlatformNetworkConfig'));
+    await bridge.close();
   });
 
   test('mobile send client message uses embedded service request', () async {
@@ -550,6 +865,7 @@ void main() {
         final args = request['args'] as Map<Object?, Object?>;
         expect(args['targetDeviceId'], 'ios-target');
         expect(args['body'], 'hello');
+        expect(args.containsKey('deviceId'), isFalse);
         return {
           'messageId': 'client-msg-1',
           'networkId': 'net-a',
@@ -572,6 +888,7 @@ void main() {
       localServiceHost: await _unusedLoopbackHost(),
       useMobileControlPlane: true,
     );
+    _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(const ClientCommand(
       ClientCommandType.sendClientMessage,
@@ -582,6 +899,38 @@ void main() {
     ));
 
     expect(embeddedMethods, ['localSendClientMessage']);
+  });
+
+  test('mobile local control status request does not inject device id', () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'embeddedServiceRequest') {
+        final request =
+            jsonDecode(call.arguments as String) as Map<String, Object?>;
+        expect(request['method'], 'localControlStatus');
+        final args = request['args'] as Map<Object?, Object?>;
+        expect(args.containsKey('deviceId'), isFalse);
+        expect(args.containsKey('deviceIdOverride'), isFalse);
+        return <String, Object?>{
+          'ready': true,
+          'mqttConnected': true,
+        };
+      }
+      return <String, Object?>{};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      useMobileControlPlane: true,
+    );
+    _closeBridgeOnTearDown(bridge);
+
+    await bridge.localControlStatus();
   });
 
   test('enable switch updates asynchronously after service result', () async {
@@ -596,7 +945,7 @@ void main() {
             'networkEnabled': true,
             'syncing': false,
             'switchEnabled': true,
-            'virtualIp': '100.64.0.10',
+            'virtualIp': '10.0.0.10',
           },
         ),
       ),
@@ -607,7 +956,7 @@ void main() {
           'networkEnabled': true,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': '100.64.0.10',
+          'virtualIp': '10.0.0.10',
         },
       ),
       _ServiceReply(
@@ -617,7 +966,7 @@ void main() {
           'networkEnabled': true,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': '100.64.0.10',
+          'virtualIp': '10.0.0.10',
         },
       ),
     ]);
@@ -626,6 +975,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     final stopwatch = Stopwatch()..start();
@@ -640,12 +990,12 @@ void main() {
     expect(bridge.state.value.networkEnabled, isTrue);
 
     await _waitFor(
-      () => bridge.state.value.virtualIp == '100.64.0.10',
+      () => bridge.state.value.virtualIp == '10.0.0.10',
       reason: 'enable result should update state asynchronously',
     );
     expect(bridge.state.value.syncing, isFalse);
     expect(bridge.state.value.switchEnabled, isTrue);
-    expect(bridge.state.value.virtualIp, '100.64.0.10');
+    expect(bridge.state.value.virtualIp, '10.0.0.10');
   });
 
   test('in-flight toggle ignores repeated clicks', () async {
@@ -660,7 +1010,7 @@ void main() {
             'networkEnabled': true,
             'syncing': false,
             'switchEnabled': true,
-            'virtualIp': '100.64.0.10',
+            'virtualIp': '10.0.0.10',
           },
         ),
       ),
@@ -671,7 +1021,7 @@ void main() {
           'networkEnabled': true,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': '100.64.0.10',
+          'virtualIp': '10.0.0.10',
         },
       ),
       _ServiceReply(
@@ -681,7 +1031,7 @@ void main() {
           'networkEnabled': true,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': '100.64.0.10',
+          'virtualIp': '10.0.0.10',
         },
       ),
     ]);
@@ -690,6 +1040,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     await bridge.dispatch(
@@ -703,7 +1054,7 @@ void main() {
     );
 
     await _waitFor(
-      () => bridge.state.value.virtualIp == '100.64.0.10',
+      () => bridge.state.value.virtualIp == '10.0.0.10',
       reason: 'first toggle should settle without repeated clicks racing it',
     );
     expect(service.seenMethods, isNot(contains('localNetworkDeactivate')));
@@ -713,7 +1064,7 @@ void main() {
     );
     expect(bridge.state.value.networkEnabled, isTrue);
     expect(bridge.state.value.switchEnabled, isTrue);
-    expect(bridge.state.value.virtualIp, '100.64.0.10');
+    expect(bridge.state.value.virtualIp, '10.0.0.10');
   });
 
   test('disable switch updates asynchronously after service result', () async {
@@ -758,6 +1109,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     final stopwatch = Stopwatch()..start();
@@ -823,6 +1175,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     await bridge.dispatch(
@@ -858,6 +1211,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(
       const ClientCommand(ClientCommandType.enableNetwork),
@@ -917,6 +1271,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     await bridge.dispatch(
@@ -948,6 +1303,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(
       const ClientCommand(ClientCommandType.enableNetwork),
@@ -966,6 +1322,66 @@ void main() {
     expect(bridge.state.value.virtualIp, isNull);
   });
 
+  test('desktop transport error rolls back optimistic switch state', () async {
+    final service = await _FakeClientService.start([
+      const _ServiceReply(
+        expectedMethod: 'localNetworkActivate',
+        closeWithoutResponse: true,
+        body: {},
+      ),
+    ]);
+    addTearDown(service.close);
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: service.host,
+    );
+    _closeBridgeOnTearDown(bridge);
+
+    await bridge.dispatch(
+      const ClientCommand(ClientCommandType.enableNetwork),
+    );
+
+    await _waitFor(
+      () => bridge.state.value.errorSource == ClientErrorSource.networkSwitch,
+      reason: 'transport error should settle switch as network switch failure',
+    );
+    expect(bridge.state.value.error, contains('No element'));
+    expect(bridge.state.value.networkEnabled, isFalse);
+    expect(bridge.state.value.switchEnabled, isTrue);
+  });
+
+  test('desktop switch preserves service error text without Bad state prefix',
+      () async {
+    final service = await _FakeClientService.start([
+      _ServiceReply(
+        expectedMethod: 'localNetworkActivate',
+        body: {
+          'signedIn': true,
+          'networkEnabled': false,
+          'syncing': false,
+          'switchEnabled': true,
+          'error': 'vpn adapter unavailable',
+        },
+      ),
+    ]);
+    addTearDown(service.close);
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: service.host,
+    );
+    _closeBridgeOnTearDown(bridge);
+
+    await bridge.dispatch(
+      const ClientCommand(ClientCommandType.enableNetwork),
+    );
+
+    await _waitFor(
+      () => bridge.state.value.errorSource == ClientErrorSource.networkSwitch,
+      reason: 'desktop switch service error should settle immediately',
+    );
+    expect(bridge.state.value.error, 'vpn adapter unavailable');
+  });
+
   test('disable exception restores previous enabled state and ip', () async {
     final service = await _FakeClientService.start([
       _ServiceReply(
@@ -978,7 +1394,7 @@ void main() {
             'networkEnabled': true,
             'syncing': false,
             'switchEnabled': true,
-            'virtualIp': '100.64.0.10',
+            'virtualIp': '10.0.0.10',
           },
         ),
       ),
@@ -989,7 +1405,7 @@ void main() {
           'networkEnabled': true,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': '100.64.0.10',
+          'virtualIp': '10.0.0.10',
         },
       ),
       _ServiceReply(
@@ -999,7 +1415,7 @@ void main() {
           'networkEnabled': true,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': '100.64.0.10',
+          'virtualIp': '10.0.0.10',
         },
       ),
       const _ServiceReply(
@@ -1013,13 +1429,14 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     await bridge.dispatch(
       const ClientCommand(ClientCommandType.enableNetwork),
     );
     await _waitFor(
-      () => bridge.state.value.virtualIp == '100.64.0.10',
+      () => bridge.state.value.virtualIp == '10.0.0.10',
       reason: 'precondition enable should settle',
     );
 
@@ -1038,7 +1455,7 @@ void main() {
     expect(bridge.state.value.networkEnabled, isTrue);
     expect(bridge.state.value.syncing, isFalse);
     expect(bridge.state.value.switchEnabled, isTrue);
-    expect(bridge.state.value.virtualIp, '100.64.0.10');
+    expect(bridge.state.value.virtualIp, '10.0.0.10');
   });
 
   test('successful switch does not issue extra refresh', () async {
@@ -1053,7 +1470,7 @@ void main() {
             'networkEnabled': true,
             'syncing': false,
             'switchEnabled': true,
-            'virtualIp': '100.64.0.10',
+            'virtualIp': '10.0.0.10',
           },
         ),
       ),
@@ -1064,7 +1481,7 @@ void main() {
           'networkEnabled': true,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': '100.64.0.10',
+          'virtualIp': '10.0.0.10',
         },
       ),
       _ServiceReply(
@@ -1074,7 +1491,7 @@ void main() {
           'networkEnabled': true,
           'syncing': false,
           'switchEnabled': true,
-          'virtualIp': '100.64.0.10',
+          'virtualIp': '10.0.0.10',
         },
       ),
     ]);
@@ -1083,6 +1500,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
     await bridge.start();
 
     await bridge.dispatch(
@@ -1090,7 +1508,7 @@ void main() {
     );
 
     await _waitFor(
-      () => bridge.state.value.virtualIp == '100.64.0.10',
+      () => bridge.state.value.virtualIp == '10.0.0.10',
       reason: 'enable result should settle',
     );
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -1119,6 +1537,7 @@ void main() {
     final bridge = MethodChannelClientCoreBridge(
       localServiceHost: service.host,
     );
+    _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(
       const ClientCommand(ClientCommandType.logout),
@@ -1142,6 +1561,10 @@ void main() {
     expect(state.networkEnabled, isFalse);
     expect(state.virtualIp, isNull);
   });
+}
+
+void _closeBridgeOnTearDown(MethodChannelClientCoreBridge bridge) {
+  addTearDown(bridge.close);
 }
 
 class _ServiceReply {

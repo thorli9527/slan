@@ -13,7 +13,7 @@ type NetworkConfigHandler struct {
 
 func (h NetworkConfigHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
-		serviceapi.NewRoute(http.MethodGet, "/api/networks/{networkId}/network-config", h.NetworkConfig),
+		serviceapi.NewRoute(http.MethodGet, "/api/app/networks/{networkId}/network-config", h.NetworkConfig),
 	}
 }
 

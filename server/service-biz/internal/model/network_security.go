@@ -16,6 +16,8 @@ type SecurityRule struct {
 	Protocol        string `json:"protocol"`
 	PortRange       string `json:"portRange"`
 	CIDR            string `json:"cidr"`
+	PeerType        string `json:"peerType"`
+	PeerValue       string `json:"peerValue"`
 	Action          string `json:"action"`
 	Priority        int    `json:"priority"`
 	Description     string `json:"description,omitempty"`

@@ -14,32 +14,48 @@ type gormNetworkRecord struct {
 	UpdatedAt        int64  `gorm:"not null"`
 }
 
+type gormNetworkConfigVersionRecord struct {
+	NetworkID string `gorm:"primaryKey;size:64"`
+	Version   int64  `gorm:"not null"`
+	Reason    string `gorm:"size:128"`
+	CreatedAt int64  `gorm:"not null"`
+	UpdatedAt int64  `gorm:"not null"`
+}
+
 type gormNetworkDeviceRecord struct {
-	ID              uint64              `gorm:"primaryKey;autoIncrement"`
-	NetworkID       string              `gorm:"size:64;index:idx_network_device,unique"`
-	DeviceID        string              `gorm:"size:64;index:idx_network_device,unique"`
-	Enabled         bool                `gorm:"not null"`
-	Status          string              `gorm:"size:64;index"`
-	Endpoints       jsonDeviceEndpoints `gorm:"type:json"`
-	NATType         string              `gorm:"size:64"`
-	ActivePath      string              `gorm:"size:64"`
-	PathObservedAt  int64               `gorm:"not null"`
-	RelayTransport  string              `gorm:"size:64"`
-	RelayEndpoint   string              `gorm:"size:255"`
-	DerpNodeID      string              `gorm:"size:64"`
-	PeerNodeID      string              `gorm:"size:64"`
-	PathScore       int64               `gorm:"not null"`
-	ObservedRttMs   int64               `gorm:"not null"`
-	PacketLossPpm   int64               `gorm:"not null"`
-	RelayMtu        int                 `gorm:"not null"`
-	MaxFramePayload int                 `gorm:"not null"`
-	TicketExpiresAt string              `gorm:"size:128"`
-	TicketRenewDue  bool                `gorm:"not null"`
-	PathDowngrades  int64               `gorm:"not null"`
-	PathUpgrades    int64               `gorm:"not null"`
-	LastPathChange  string              `gorm:"size:128"`
-	CreatedAt       int64               `gorm:"not null"`
-	UpdatedAt       int64               `gorm:"not null"`
+	ID                 uint64              `gorm:"primaryKey;autoIncrement"`
+	NetworkID          string              `gorm:"size:64;index:idx_network_device,unique"`
+	DeviceID           string              `gorm:"size:64;index:idx_network_device,unique"`
+	Enabled            bool                `gorm:"not null"`
+	MemberStatus       string              `gorm:"size:64;index"`
+	PresenceStatus     string              `gorm:"size:64;index"`
+	MQTTConnected      bool                `gorm:"not null"`
+	VirtualIP          string              `gorm:"size:128"`
+	LastSeenAt         int64               `gorm:"not null"`
+	LastHeartbeatAt    int64               `gorm:"not null"`
+	LastRuntimeStateAt int64               `gorm:"not null"`
+	LastEndpointAt     int64               `gorm:"not null"`
+	LastPathHealthAt   int64               `gorm:"not null"`
+	Endpoints          jsonDeviceEndpoints `gorm:"type:json"`
+	NATType            string              `gorm:"size:64"`
+	ActivePath         string              `gorm:"size:64"`
+	PathObservedAt     int64               `gorm:"not null"`
+	RelayTransport     string              `gorm:"size:64"`
+	RelayEndpoint      string              `gorm:"size:255"`
+	DerpNodeID         string              `gorm:"size:64"`
+	PeerNodeID         string              `gorm:"size:64"`
+	PathScore          int64               `gorm:"not null"`
+	ObservedRttMs      int64               `gorm:"not null"`
+	PacketLossPpm      int64               `gorm:"not null"`
+	RelayMtu           int                 `gorm:"not null"`
+	MaxFramePayload    int                 `gorm:"not null"`
+	TicketExpiresAt    string              `gorm:"size:128"`
+	TicketRenewDue     bool                `gorm:"not null"`
+	PathDowngrades     int64               `gorm:"not null"`
+	PathUpgrades       int64               `gorm:"not null"`
+	LastPathChange     string              `gorm:"size:128"`
+	CreatedAt          int64               `gorm:"not null"`
+	UpdatedAt          int64               `gorm:"not null"`
 }
 
 type gormDeviceInviteRecord struct {
@@ -112,6 +128,8 @@ type gormSecurityRuleRecord struct {
 	Protocol        string `gorm:"size:32;index"`
 	PortRange       string `gorm:"size:64"`
 	CIDR            string `gorm:"column:cidr;size:128"`
+	PeerType        string `gorm:"column:peer_type;size:64"`
+	PeerValue       string `gorm:"column:peer_value;size:255"`
 	Action          string `gorm:"size:32;index"`
 	Priority        int    `gorm:"not null"`
 	Description     string `gorm:"size:255"`

@@ -28,7 +28,7 @@ func requireActiveUserSession(
 	if err != nil {
 		return model.UserSession{}, err
 	}
-	if !ok || session.ExpiresAt < now {
+	if !ok || session.Status != tokenStatusActive || session.RevokedAt > 0 || session.ExpiresAt < now {
 		return model.UserSession{}, ErrUnauthorized
 	}
 	return session, nil

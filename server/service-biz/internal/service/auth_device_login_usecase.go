@@ -103,6 +103,7 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 	device := model.Device{
 		DeviceID:      item.DeviceID,
 		OwnerID:       item.UserID,
+		VirtualIP:     allocatedDeviceVirtualIP(newDeviceVirtualIPID(s.Devices)),
 		Name:          item.Name,
 		Platform:      item.Platform,
 		Alias:         item.Alias,

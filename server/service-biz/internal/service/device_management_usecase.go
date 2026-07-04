@@ -72,7 +72,8 @@ func (s DeviceRuntimeAccessService) updateDeviceRuntimeEntity(ctx context.Contex
 	if input.DeviceID == "" {
 		return model.Device{}, ErrInvalidArgument
 	}
-	now := deviceNow(s.Now).Unix()
+	nowTime := deviceNow(s.Now)
+	now := nowTime.Unix()
 	device, err := getManagedDevice(ctx, s.Devices, input.DeviceID)
 	if err != nil {
 		return model.Device{}, err
@@ -81,23 +82,33 @@ func (s DeviceRuntimeAccessService) updateDeviceRuntimeEntity(ctx context.Contex
 	if err := s.Devices.SaveDevice(ctx, device); err != nil {
 		return model.Device{}, err
 	}
-	if err := s.updateDeviceRuntimeMembership(ctx, input, now); err != nil {
+	networkID, membership, updated, err := s.updateDeviceRuntimeMembership(ctx, input, now)
+	if err != nil {
 		return model.Device{}, err
+	}
+	if updated {
+		if err := s.publishRuntimeMembershipUpdate(ctx, device, networkID, membership, nowTime); err != nil {
+			return model.Device{}, err
+		}
 	}
 	return device, nil
 }
 
-func (s DeviceRuntimeAccessService) updateDeviceRuntimeMembership(ctx context.Context, input UpdateDeviceRuntimeInput, now int64) error {
+func (s DeviceRuntimeAccessService) updateDeviceRuntimeMembership(ctx context.Context, input UpdateDeviceRuntimeInput, now int64) (string, model.NetworkDevice, bool, error) {
 	if !hasDeviceRuntimeMembershipUpdate(input) {
-		return nil
+		return "", model.NetworkDevice{}, false, nil
 	}
 	networkID, membership, ok, err := resolveDeviceRuntimeMembership(ctx, s.Networks, input.NetworkID, input.DeviceID)
 	if err != nil || !ok {
-		return err
+		return "", model.NetworkDevice{}, false, err
 	}
 	membership.NetworkID = networkID
 	membership.DeviceID = input.DeviceID
-	return s.Networks.SaveNetworkDevice(ctx, applyUpdateDeviceRuntimeMembership(membership, input, now))
+	updated := applyUpdateDeviceRuntimeMembership(membership, input, now)
+	if err := s.Networks.SaveNetworkDevice(ctx, updated); err != nil {
+		return "", model.NetworkDevice{}, false, err
+	}
+	return networkID, updated, true, nil
 }
 
 func (s DeviceProvisioningService) DeleteDevice(ctx context.Context, input DeleteDeviceInput) error {

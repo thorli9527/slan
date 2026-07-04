@@ -1,6 +1,10 @@
 package service
 
-import "context"
+import (
+	"context"
+
+	"github.com/slan/service-biz/internal/model"
+)
 
 func (s NetworkInviteService) ListNetworkDevices(ctx context.Context, networkID string) ([]NetworkDeviceView, error) {
 	networkID = normalizeNetworkID(networkID)
@@ -40,6 +44,16 @@ func (s NetworkInviteService) AddNetworkDevice(ctx context.Context, input AddNet
 	if err := s.Networks.SaveNetworkDevice(ctx, item); err != nil {
 		return NetworkDeviceView{}, err
 	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, "network_member_added")
+	if err != nil {
+		return NetworkDeviceView{}, err
+	}
+	if err := publishNetworkMemberChanged(ctx, s.Broadcaster, s.Now, item.NetworkID, item.DeviceID, "added", item, version.Version, version.Reason); err != nil {
+		return NetworkDeviceView{}, err
+	}
+	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, nil, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return NetworkDeviceView{}, err
+	}
 	return buildNetworkDeviceView(ctx, s.Devices, item)
 }
 
@@ -66,6 +80,16 @@ func (s NetworkInviteService) UpdateNetworkDevice(ctx context.Context, input Upd
 	if err := s.Networks.SaveNetworkDevice(ctx, item); err != nil {
 		return NetworkDeviceView{}, err
 	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, "network_member_updated")
+	if err != nil {
+		return NetworkDeviceView{}, err
+	}
+	if err := publishNetworkMemberChanged(ctx, s.Broadcaster, s.Now, item.NetworkID, item.DeviceID, "updated", item, version.Version, version.Reason); err != nil {
+		return NetworkDeviceView{}, err
+	}
+	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, nil, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+		return NetworkDeviceView{}, err
+	}
 	return buildNetworkDeviceView(ctx, s.Devices, item)
 }
 
@@ -77,5 +101,18 @@ func (s NetworkInviteService) RemoveNetworkDevice(ctx context.Context, input Rem
 	if _, err := requireOwnedManagedNetwork(ctx, s.Users, s.Networks, input.ActorUserID, input.NetworkID); err != nil {
 		return err
 	}
-	return s.Networks.DeleteNetworkDevice(ctx, input.NetworkID, input.DeviceID)
+	if err := s.Networks.DeleteNetworkDevice(ctx, input.NetworkID, input.DeviceID); err != nil {
+		return err
+	}
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, input.NetworkID, "network_member_removed")
+	if err != nil {
+		return err
+	}
+	if err := publishNetworkMemberChanged(ctx, s.Broadcaster, s.Now, input.NetworkID, input.DeviceID, "removed", model.NetworkDevice{
+		NetworkID: input.NetworkID,
+		DeviceID:  input.DeviceID,
+	}, version.Version, version.Reason); err != nil {
+		return err
+	}
+	return publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, nil, s.Broadcaster, s.Now, input.NetworkID, version.Version, version.Reason)
 }

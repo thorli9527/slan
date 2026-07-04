@@ -16,6 +16,9 @@ import { NetworkSecurityPanelComponent } from './network-security-panel.componen
     NetworkSecurityPanelComponent,
   ],
   templateUrl: './network-detail-view.component.html',
+  host: {
+    class: 'network-view-host',
+  },
 })
 export class NetworkDetailViewComponent {
   @Input({ required: true }) vm!: any;

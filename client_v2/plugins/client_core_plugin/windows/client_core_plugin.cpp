@@ -25,6 +25,7 @@ namespace {
 
 constexpr char kChannelName[] = "dev.slan/client_core_v2";
 constexpr char kDefaultServiceHost[] = "127.0.0.1:46392";
+constexpr char kDefaultWebConsoleUrl[] = "http://47.245.40.231:24200";
 constexpr wchar_t kWindowsServiceName[] = L"SLANClientV2Service";
 
 bool IsUsableClientDeviceId(const std::string& device_id) {
@@ -162,6 +163,38 @@ std::string ResolveServiceHost() {
   return env_host.has_value() && !env_host->empty() ? *env_host : kDefaultServiceHost;
 }
 
+std::string UrlScheme(const std::string& url) {
+  const auto pos = url.find("://");
+  if (pos == std::string::npos || pos == 0) {
+    return "http";
+  }
+  return url.substr(0, pos);
+}
+
+std::string UrlHost(const std::string& url) {
+  const auto scheme_pos = url.find("://");
+  const auto start = scheme_pos == std::string::npos ? 0 : scheme_pos + 3;
+  if (start >= url.size()) {
+    return "";
+  }
+  if (url[start] == '[') {
+    const auto end = url.find(']', start + 1);
+    if (end == std::string::npos || end <= start + 1) {
+      return "";
+    }
+    return url.substr(start + 1, end - start - 1);
+  }
+  const auto end = url.find_first_of(":/?", start);
+  if (end == std::string::npos) {
+    return url.substr(start);
+  }
+  return url.substr(start, end - start);
+}
+
+bool UrlHasPort(const std::string& url, const std::string& port_suffix) {
+  return url.find(port_suffix) != std::string::npos;
+}
+
 std::string ResolveWebConsoleUrl() {
   if (const auto value = ReadEnvironmentString(L"SLAN_WEB_CONSOLE_URL")) {
     if (!value->empty()) {
@@ -170,22 +203,29 @@ std::string ResolveWebConsoleUrl() {
   }
   if (const auto value = ReadEnvironmentString(L"SLAN_CONTROL_BASE_URL")) {
     if (!value->empty()) {
-      if (value->find("api.dev.staticlss.com") != std::string::npos) {
-        return "http://web.dev.staticlss.com";
+      const auto scheme = UrlScheme(*value);
+      const auto host = UrlHost(*value);
+      if (host == "api.dev.staticlss.com") {
+        return scheme + "://web.dev.staticlss.com";
       }
-      if (value->find("api.slan.localhost") != std::string::npos ||
-          value->find("://slan.localhost") != std::string::npos) {
-        return "https://web.slan.localhost";
+      if (host == "api.slan.localhost" || host == "slan.localhost") {
+        return scheme + "://web.slan.localhost";
       }
-      auto local_url = *value;
-      const auto port_pos = local_url.find(":28080");
-      if (port_pos != std::string::npos) {
-        local_url.replace(port_pos, 6, ":24200");
-        return local_url;
+      if (host == "127.0.0.1" || host == "localhost" || host == "::1" ||
+          UrlHasPort(*value, ":28080")) {
+        auto local_url = *value;
+        const auto port_pos = local_url.find(":28080");
+        if (port_pos != std::string::npos) {
+          local_url.replace(port_pos, 6, ":24200");
+          return local_url;
+        }
+        if (!host.empty()) {
+          return scheme + "://" + host + ":24200";
+        }
       }
     }
   }
-  return "http://web.dev.staticlss.com";
+  return kDefaultWebConsoleUrl;
 }
 
 std::string ExtractJsonStringField(const std::string& json, const std::string& field_name) {

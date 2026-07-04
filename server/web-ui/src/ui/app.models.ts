@@ -13,15 +13,46 @@ export type ApiUser = {
 
 export type ApiUserSession = {
   sessionId: string;
+  accessToken?: string;
   userId: string;
   token: string;
+  refreshToken?: string;
+  status?: string;
+  sessionMode?: string;
   createdAt: number;
   expiresAt: number;
+  updatedAt?: number;
+  refreshExpiry?: number;
+  revokedAt?: number;
 };
 
 export type ApiAuthResponse = {
   user: ApiUser;
   session: ApiUserSession;
+};
+
+export type ApiManagedUserSession = {
+  sessionId: string;
+  userId: string;
+  status: string;
+  sessionMode?: string;
+  expiresAt: number;
+  refreshExpiry?: number;
+  createdAt: number;
+  updatedAt?: number;
+  revokedAt?: number;
+};
+
+export type ApiManagedDeviceSession = {
+  sessionId: string;
+  deviceId: string;
+  status: string;
+  sessionMode?: string;
+  expiresAt: number;
+  refreshExpiry?: number;
+  createdAt: number;
+  updatedAt?: number;
+  revokedAt?: number;
 };
 
 export type ApiDevice = {
@@ -104,7 +135,10 @@ export type ApiDeviceInvite = {
 export type ApiDeviceBootstrapKey = {
   id: string;
   keyId?: string;
+  installationKeyId?: string;
   key?: string;
+  token?: string;
+  installationKey?: string;
   createdByUserId: string;
   networkId: string;
   deviceAlias?: string;
@@ -363,7 +397,7 @@ export type PublicMappingRow = {
   status: string;
   workspaceId: string;
 };
-export type RuleSubjectType = 'device' | 'user' | 'network' | 'workspace' | 'cidr' | 'domain' | 'all';
+export type RuleSubjectType = 'device' | 'device_group' | 'user' | 'network' | 'workspace' | 'all';
 export type IntraGroupPolicy = 'allow' | 'deny';
 export type SecurityRuleRow = {
   ruleId?: string;

@@ -195,8 +195,8 @@ func TestRegisterPeerUsesBizAuthorization(t *testing.T) {
 			NetworkID:  "net-from-biz",
 			NodeID:     "node-from-biz",
 			Enabled:    true,
-			VirtualIPs: []string{"100.64.10.20"},
-			AllowedIPs: []string{"100.64.10.20/32"},
+			VirtualIPs: []string{"10.10.0.20"},
+			AllowedIPs: []string{"10.10.0.20/32"},
 		},
 	})
 	resp, err := svc.RegisterPeer(model.RegisterPeerRequest{
@@ -212,7 +212,7 @@ func TestRegisterPeerUsesBizAuthorization(t *testing.T) {
 	if resp.Peer.NetworkID != "net-from-biz" || resp.Peer.NodeID != "node-from-biz" {
 		t.Fatalf("expected biz identity override, got %#v", resp.Peer)
 	}
-	if got := resp.Peer.VirtualIPs; len(got) != 1 || got[0] != "100.64.10.20" {
+	if got := resp.Peer.VirtualIPs; len(got) != 1 || got[0] != "10.10.0.20" {
 		t.Fatalf("expected biz virtual IPs, got %#v", got)
 	}
 }
@@ -224,8 +224,8 @@ func TestCriticalOperationsRecheckBizAuthorization(t *testing.T) {
 			NetworkID:  "net-recheck",
 			NodeID:     "node-recheck",
 			Enabled:    true,
-			VirtualIPs: []string{"100.64.10.21"},
-			AllowedIPs: []string{"100.64.10.21/32"},
+			VirtualIPs: []string{"10.10.0.21"},
+			AllowedIPs: []string{"10.10.0.21/32"},
 		},
 	}
 	svc := NewWithBiz(store.NewMemoryStore(), biz)
@@ -294,14 +294,14 @@ func TestRuntimeConfigUsesBizRuntimePolicy(t *testing.T) {
 			NetworkID:  "net-runtime",
 			NodeID:     "node-runtime",
 			Enabled:    true,
-			VirtualIPs: []string{"100.64.10.30"},
-			AllowedIPs: []string{"100.64.10.30/32"},
+			VirtualIPs: []string{"10.10.0.30"},
+			AllowedIPs: []string{"10.10.0.30/32"},
 		},
 		runtime: model.PeerRuntimeConfigView{
 			PeerID:         "peer-runtime",
 			NetworkEnabled: true,
-			VirtualIPs:     []string{"100.64.10.31"},
-			AllowedIPs:     []string{"100.64.10.31/32"},
+			VirtualIPs:     []string{"10.10.0.31"},
+			AllowedIPs:     []string{"10.10.0.31/32"},
 		},
 	})
 	if _, err := svc.RegisterPeer(model.RegisterPeerRequest{Peer: model.PeerRegistration{PeerID: "peer-runtime", SupportsDirectUDP: true}}); err != nil {
@@ -311,7 +311,7 @@ func TestRuntimeConfigUsesBizRuntimePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runtime config: %v", err)
 	}
-	if len(cfg.VirtualIPs) != 1 || cfg.VirtualIPs[0] != "100.64.10.31" {
+	if len(cfg.VirtualIPs) != 1 || cfg.VirtualIPs[0] != "10.10.0.31" {
 		t.Fatalf("expected runtime virtual IP override, got %#v", cfg.VirtualIPs)
 	}
 }
@@ -486,7 +486,7 @@ func TestGetInternalViews(t *testing.T) {
 			PeerID:                "peer-c",
 			NetworkID:             "net-c",
 			NodeID:                "node-c",
-			VirtualIPs:            []string{"100.64.0.10"},
+			VirtualIPs:            []string{"10.0.0.10"},
 			AllowedIPs:            []string{"10.0.0.0/24"},
 			SupportsDirectUDP:     true,
 			SupportsRelayUDP:      true,

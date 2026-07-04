@@ -148,7 +148,7 @@ paths:
         $ref: '#/components/requestBodies/UserIdOptional'
       responses:
         '200': { $ref: '#/components/responses/JSON' }
-  /api/device/session/bootstrap:
+  /api/app/device/session/bootstrap:
     post:
       tags: [DeviceSession]
       security: []
@@ -157,7 +157,7 @@ paths:
         $ref: '#/components/requestBodies/DeviceSessionBootstrap'
       responses:
         '201': { $ref: '#/components/responses/JSON' }
-  /api/device/session/bind:
+  /api/app/device/session/bind:
     post:
       tags: [DeviceSession]
       summary: Bind local device to current user
@@ -165,7 +165,7 @@ paths:
         $ref: '#/components/requestBodies/DeviceIdentity'
       responses:
         '201': { $ref: '#/components/responses/JSON' }
-  /api/device/session/renew:
+  /api/app/device/session/renew:
     post:
       tags: [DeviceSession]
       security:
@@ -218,7 +218,7 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/JSON' }
 
-  /api/devices:
+  /api/app/devices:
     get:
       tags: [Devices]
       summary: List devices for user
@@ -226,7 +226,7 @@ paths:
         - $ref: '#/components/parameters/userIdQuery'
       responses:
         '200': { $ref: '#/components/responses/Items' }
-  /api/devices/visible:
+  /api/app/devices/visible:
     get:
       tags: [Devices]
       summary: List visible devices for user
@@ -234,7 +234,7 @@ paths:
         - $ref: '#/components/parameters/userIdQuery'
       responses:
         '200': { $ref: '#/components/responses/Items' }
-  /api/devices/register:
+  /api/app/devices/register:
     post:
       tags: [Devices]
       summary: Legacy register device
@@ -242,7 +242,7 @@ paths:
         $ref: '#/components/requestBodies/RegisterDevice'
       responses:
         '201': { $ref: '#/components/responses/JSON' }
-  /api/devices/{deviceId}:
+  /api/app/devices/{deviceId}:
     patch:
       tags: [Devices]
       summary: Update device alias
@@ -260,7 +260,7 @@ paths:
       responses:
         '204':
           description: Deleted.
-  /api/devices/{deviceId}/renew:
+  /api/app/devices/{deviceId}/renew:
     post:
       tags: [Devices]
       summary: Legacy renew device lease
@@ -270,7 +270,7 @@ paths:
         $ref: '#/components/requestBodies/LegacyDeviceRenew'
       responses:
         '200': { $ref: '#/components/responses/JSON' }
-  /api/devices/{deviceId}/network-configs:
+  /api/app/devices/{deviceId}/network-configs:
     get:
       tags: [Devices]
       summary: List device network configs
@@ -278,7 +278,7 @@ paths:
         - $ref: '#/components/parameters/deviceId'
       responses:
         '200': { $ref: '#/components/responses/Items' }
-  /api/devices/{deviceId}/mqtt-credential:
+  /api/app/devices/{deviceId}/mqtt-credential:
     get:
       tags: [Devices]
       summary: Get device MQTT credential
@@ -372,7 +372,7 @@ paths:
         - $ref: '#/components/parameters/deviceId'
       responses:
         '200': { $ref: '#/components/responses/Status' }
-  /api/networks/{networkId}/network-config:
+  /api/app/networks/{networkId}/network-config:
     get:
       tags: [Networks]
       summary: Get device network config
@@ -564,7 +564,7 @@ paths:
         $ref: '#/components/requestBodies/DeviceId'
       responses:
         '200': { $ref: '#/components/responses/Items' }
-  /api/relay/tickets:
+  /api/app/relay/tickets:
     post:
       tags: [Relay]
       summary: Issue relay ticket

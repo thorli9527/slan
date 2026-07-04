@@ -14,7 +14,7 @@ type counterSeed struct {
 
 func defaultOperator(now int64) model.Operator {
 	return model.Operator{
-		OperatorID:   "op-000001",
+		OperatorID:   "op00000000000000000000000000000001",
 		Email:        "admin1",
 		Name:         "超级管理员",
 		PasswordHash: "plain:admin1",
@@ -35,26 +35,26 @@ func defaultPlans(now int64) []model.Plan {
 
 func defaultProducts(now int64) []model.Product {
 	return []model.Product{
-		{ProductID: "product-000001", Name: "专业版月付", PlanCode: "pro", Price: 39, Status: "active", CreatedAt: now, UpdatedAt: now},
-		{ProductID: "product-000002", Name: "专业版年付", PlanCode: "pro", Price: 299, Status: "active", CreatedAt: now, UpdatedAt: now},
-		{ProductID: "product-000003", Name: "企业版年付", PlanCode: "enterprise", Price: 2999, Status: "active", CreatedAt: now, UpdatedAt: now},
+		{ProductID: "product000000000000000000000000000001", Name: "专业版月付", PlanCode: "pro", Price: 39, Status: "active", CreatedAt: now, UpdatedAt: now},
+		{ProductID: "product000000000000000000000000000002", Name: "专业版年付", PlanCode: "pro", Price: 299, Status: "active", CreatedAt: now, UpdatedAt: now},
+		{ProductID: "product000000000000000000000000000003", Name: "企业版年付", PlanCode: "enterprise", Price: 2999, Status: "active", CreatedAt: now, UpdatedAt: now},
 	}
 }
 
 func defaultDownloads(now int64) []model.ClientDownload {
 	return []model.ClientDownload{
-		{DownloadID: "download-000001", Name: "slan-client-linux.tar.gz", Platform: "linux", Version: "0.1.0", URL: "/downloads/clients/slan-client-linux.tar.gz", Status: "active", CreatedAt: now, UpdatedAt: now},
-		{DownloadID: "download-000002", Name: "slan-client-macos.tar.gz", Platform: "macos", Version: "0.1.0", URL: "/downloads/clients/slan-client-macos.tar.gz", Status: "active", CreatedAt: now, UpdatedAt: now},
-		{DownloadID: "download-000003", Name: "slan-client-windows.zip", Platform: "windows", Version: "0.1.0", URL: "/downloads/clients/slan-client-windows.zip", Status: "active", CreatedAt: now, UpdatedAt: now},
+		{DownloadID: "download0000000000000000000000000001", Name: "slan-client-linux.tar.gz", Platform: "linux", Version: "0.1.0", URL: "/downloads/clients/slan-client-linux.tar.gz", Status: "active", CreatedAt: now, UpdatedAt: now},
+		{DownloadID: "download0000000000000000000000000002", Name: "slan-client-macos.tar.gz", Platform: "macos", Version: "0.1.0", URL: "/downloads/clients/slan-client-macos.tar.gz", Status: "active", CreatedAt: now, UpdatedAt: now},
+		{DownloadID: "download0000000000000000000000000003", Name: "slan-client-windows.zip", Platform: "windows", Version: "0.1.0", URL: "/downloads/clients/slan-client-windows.zip", Status: "active", CreatedAt: now, UpdatedAt: now},
 	}
 }
 
 func defaultRelayNode(now int64) model.RelayNode {
 	return model.RelayNode{
-		NodeID:    "relay-000001",
+		NodeID:    "relay000000000000000000000000000001",
 		Name:      "默认 UDP Relay",
 		Region:    defaultOpsRegion("SLAN_RELAY_REGION_ID", "local"),
-		Endpoint:  defaultRelayEndpoint(),
+		Endpoint:  DefaultRelayEndpoint(),
 		Status:    "active",
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -79,7 +79,7 @@ func defaultPunchNode(now int64) (model.PunchNode, bool) {
 		}
 	}
 	return model.PunchNode{
-		NodeID:    "punch-000001",
+		NodeID:    "punch000000000000000000000000000001",
 		Name:      "Punch 1",
 		Region:    defaultOpsRegion("SLAN_WIRE_PUNCH_REGION_ID", "default"),
 		Endpoint:  addr,
@@ -107,7 +107,7 @@ func defaultSeedCounters() []counterSeed {
 	return counters
 }
 
-func defaultRelayEndpoint() string {
+func DefaultRelayEndpoint() string {
 	if raw := strings.TrimSpace(os.Getenv("SLAN_RELAY_ENDPOINTS")); raw != "" {
 		parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || r == '\n' })
 		if len(parts) > 0 {
@@ -143,4 +143,3 @@ func defaultOpsRegion(key, fallback string) string {
 	}
 	return fallback
 }
-

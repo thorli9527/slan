@@ -18,6 +18,7 @@ func appRouteDependencies(useCases RouteUseCases) appapi.RouteDependencies {
 		DeviceCore:          useCases.App.Devices,
 		DeviceBootstrap:     useCases.App.DeviceBootstrap,
 		DeviceSession:       useCases.App.DeviceSessions,
+		ClientMessages:      useCases.App.ClientMessages,
 		NetworkCore:         useCases.App.NetworkCore,
 		NetworkRuntime:      useCases.App.NetworkRuntime,
 	}
@@ -27,6 +28,7 @@ func webRouteDependencies(useCases RouteUseCases) webapi.RouteDependencies {
 	return webapi.RouteDependencies{
 		AuthRegistration:    useCases.Web.AuthRegistration,
 		AuthSessions:        useCases.Web.AuthSessions,
+		UserTokens:          useCases.Web.UserTokens,
 		UserAccounts:        useCases.Web.UserAccounts,
 		UserEntitlements:    useCases.Web.UserEntitlements,
 		AuthAlias:           useCases.Web.AuthAlias,
@@ -35,6 +37,7 @@ func webRouteDependencies(useCases RouteUseCases) webapi.RouteDependencies {
 		DeviceLoginPrepare:  useCases.Web.DeviceLoginPrepare,
 		DeviceLoginComplete: useCases.Web.DeviceLoginComplete,
 		DeviceCore:          useCases.Web.Devices,
+		DeviceTokens:        useCases.Web.DeviceTokens,
 		DeviceBootstrap:     useCases.Web.DeviceBootstrap,
 		DeviceGroup:         useCases.Web.DeviceGroups,
 		NetworkCore:         useCases.Web.NetworkCore,

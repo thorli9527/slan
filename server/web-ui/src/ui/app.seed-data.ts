@@ -52,8 +52,8 @@ export const SECURITY_RULE_TEMPLATES: SecurityRuleTemplate[] = [
   { name: 'Redis', description: '缓存访问，TCP 6379', direction: 'ingress', priority: 120, action: 'allow', protocol: 'tcp', port: '6379', subjectType: 'workspace', subjectValue: 'self' },
   { name: 'ICMP Ping', description: '允许网络探测', direction: 'ingress', priority: 110, action: 'allow', protocol: 'icmp', port: 'all', subjectType: 'workspace', subjectValue: 'self' },
   { name: '内网互通', description: '当前网络内全部协议互通', direction: 'ingress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'workspace', subjectValue: 'self' },
-  { name: '全部出站', direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all' },
-  { name: '拒绝全部入站', description: '兜底拒绝所有来源', direction: 'ingress', priority: 900, action: 'deny', protocol: 'all', port: 'all', subjectType: 'cidr', subjectValue: '0.0.0.0/0' },
+  { name: '全部出站', direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'user', subjectValue: DEFAULT_USER_ID },
+  { name: '拒绝全部入站', description: '兜底拒绝所有来源', direction: 'ingress', priority: 900, action: 'deny', protocol: 'all', port: 'all', subjectType: 'user', subjectValue: DEFAULT_USER_ID },
 ];
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -148,9 +148,9 @@ export const INITIAL_SECURITY_GROUPS: SecurityGroupRow[] = [
 
 export const INITIAL_SECURITY_RULES: SecurityRuleRow[] = [
   { ruleId: '0000000000004000800000000000000e', securityGroupId: DEFAULT_SECURITY_GROUP_ID, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self', enabled: true },
-  { ruleId: '0000000000004000800000000000000f', securityGroupId: DEFAULT_SECURITY_GROUP_ID, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all', enabled: true },
+  { ruleId: '0000000000004000800000000000000f', securityGroupId: DEFAULT_SECURITY_GROUP_ID, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'user', subjectValue: DEFAULT_USER_ID, enabled: true },
   { ruleId: '00000000000040008000000000000010', securityGroupId: DEV_SECURITY_GROUP_ID, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self', enabled: true },
-  { ruleId: '00000000000040008000000000000011', securityGroupId: DEV_SECURITY_GROUP_ID, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'all', subjectValue: 'all', enabled: true },
+  { ruleId: '00000000000040008000000000000011', securityGroupId: DEV_SECURITY_GROUP_ID, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'user', subjectValue: DEFAULT_USER_ID, enabled: true },
 ];
 
 export const INITIAL_DEVICE_EXPOSURES: DeviceExposureRow[] = [
@@ -185,7 +185,7 @@ export const INITIAL_WORKSPACE_DEVICE_INVITES: WorkspaceDeviceInviteRow[] = [
 
 export const INITIAL_DEVICE_BOOTSTRAP_KEYS: DeviceBootstrapKeyRow[] = [
   {
-    id: 'dbk-default-0001',
+    id: 'dbkdefault000000000000000000000001',
     key: 'sk_default_preview_0001',
     createdByUserId: DEFAULT_USER_ID,
     networkId: DEFAULT_NETWORK_ID,
@@ -195,7 +195,7 @@ export const INITIAL_DEVICE_BOOTSTRAP_KEYS: DeviceBootstrapKeyRow[] = [
     createdAt: 1767225600,
   },
   {
-    id: 'dbk-dev-0002',
+    id: 'dbkdev0000000000000000000000000002',
     key: 'sk_dev_preview_0002',
     createdByUserId: DEFAULT_USER_ID,
     networkId: DEV_NETWORK_ID,

@@ -23,7 +23,10 @@ func (s AuthUserRegistrationService) RegisterUser(ctx context.Context, input Reg
 	if err := s.Networks.SaveSecurityGroup(ctx, securityGroup); err != nil {
 		return AuthSessionView{}, err
 	}
-	session, err := newAuthUserSession(now, s.NewSessID, user.UserID)
+	if _, err := bumpNetworkConfigVersion(ctx, s.Networks, nil, s.Now, network.NetworkID, "user_default_network_created"); err != nil {
+		return AuthSessionView{}, err
+	}
+	session, err := newAuthUserSession(now, s.NewSessID, user.UserID, tokenModeShort)
 	if err != nil {
 		return AuthSessionView{}, err
 	}

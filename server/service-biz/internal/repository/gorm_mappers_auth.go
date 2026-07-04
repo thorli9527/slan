@@ -40,9 +40,13 @@ func userSessionRecordFromModel(item model.UserSession) gormUserSessionRecord {
 		UserID:        item.UserID,
 		AccessToken:   item.AccessToken,
 		RefreshToken:  item.RefreshToken,
+		Status:        item.Status,
+		SessionMode:   item.SessionMode,
 		ExpiresAt:     item.ExpiresAt,
 		RefreshExpiry: item.RefreshExpiry,
 		CreatedAt:     item.CreatedAt,
+		UpdatedAt:     item.UpdatedAt,
+		RevokedAt:     item.RevokedAt,
 	}
 }
 
@@ -52,9 +56,13 @@ func (r gormUserSessionRecord) model() model.UserSession {
 		UserID:        r.UserID,
 		AccessToken:   r.AccessToken,
 		RefreshToken:  r.RefreshToken,
+		Status:        r.Status,
+		SessionMode:   r.SessionMode,
 		ExpiresAt:     r.ExpiresAt,
 		RefreshExpiry: r.RefreshExpiry,
 		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+		RevokedAt:     r.RevokedAt,
 	}
 }
 

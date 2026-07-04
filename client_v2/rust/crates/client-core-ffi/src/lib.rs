@@ -8,6 +8,7 @@ use client_core::ClientViewState;
 #[cfg(target_os = "android")]
 mod android_tun {
     use std::{
+        ffi::CString,
         fs::File,
         io::{BufRead, BufReader, ErrorKind, Read, Write},
         net::{TcpStream, UdpSocket},
@@ -26,9 +27,10 @@ mod android_tun {
         stable_hash64,
     };
     use client_core::{
-        acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
-        ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums, AndroidVpnSessionConfig,
-        PlatformAclPeer, RelayPeerSession,
+        acl_allows_egress_packet, acl_allows_ingress_packet, dns_response_for_query,
+        icmp_echo_reply_for_request, ipv4_transport_checksum_valid,
+        normalize_ipv4_transport_checksums, AndroidVpnSessionConfig, PlatformAclPeer,
+        PlatformDnsRecord, RelayPeerSession,
     };
     use client_core_platform::direct_udp::{
         direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
@@ -38,16 +40,52 @@ mod android_tun {
         objects::{JClass, JIntArray, JString},
         JNIEnv,
     };
+    use libc::c_char;
 
-    const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+    // Android relay UDP mappings on some networks/emulators appear to expire
+    // within ~10-15s, which can drop server->client packet delivery while
+    // control traffic still looks healthy. Keep the relay pinhole warm more
+    // aggressively.
+    const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
     const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
     const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
+    const ANDROID_LOG_TAG: &[u8] = b"client-core-ffi\0";
+    const ANDROID_LOG_INFO: i32 = 4;
+    const ANDROID_LOG_ERROR: i32 = 6;
+
+    unsafe extern "C" {
+        fn __android_log_write(prio: i32, tag: *const c_char, text: *const c_char) -> i32;
+    }
+
+    fn android_log(priority: i32, message: &str) {
+        let sanitized = message.replace('\0', "\\0");
+        if let Ok(text) = CString::new(sanitized) {
+            unsafe {
+                __android_log_write(
+                    priority,
+                    ANDROID_LOG_TAG.as_ptr().cast::<c_char>(),
+                    text.as_ptr(),
+                );
+            }
+        }
+    }
+
+    fn android_log_info(message: &str) {
+        android_log(ANDROID_LOG_INFO, message);
+    }
+
+    fn android_log_error(message: &str) {
+        android_log(ANDROID_LOG_ERROR, message);
+    }
 
     /// TunRuntime 持有 Android TUN fd 数据面线程、运行统计和原始配置。
     struct TunRuntime {
         stop: Arc<AtomicBool>,
         stats: Arc<TunStats>,
         last_attach_error: Arc<Mutex<Option<String>>>,
+        relay_peer_virtual_ips: Arc<Mutex<Vec<String>>>,
+        derp_peer_virtual_ips: Arc<Mutex<Vec<String>>>,
+        relay_session_ids: Arc<Mutex<Vec<String>>>,
         handle: Option<JoinHandle<()>>,
         config_json: String,
     }
@@ -64,6 +102,8 @@ mod android_tun {
         packets_too_large: AtomicU64,
         relay_frames_sent: AtomicU64,
         relay_frames_received: AtomicU64,
+        relay_control_packets_received: AtomicU64,
+        relay_decode_failures: AtomicU64,
         relay_tcp_frames_received: AtomicU64,
         relay_tcp_syn_ack_received: AtomicU64,
         relay_tcp_psh_received: AtomicU64,
@@ -83,6 +123,8 @@ mod android_tun {
         last_no_peer_packet: Mutex<Option<String>>,
         relay_write_failures: AtomicU64,
         tun_write_failures: AtomicU64,
+        last_relay_control_kind: Mutex<Option<String>>,
+        last_relay_raw_frame: Mutex<Option<String>>,
         last_tun_write_error: Mutex<Option<String>>,
         last_tun_write_packet: Mutex<Option<String>>,
     }
@@ -220,6 +262,25 @@ mod android_tun {
             Arc::clone(&last_attach_error),
         )?;
         let attached_relay_count = relay_peers.len().saturating_add(derp_peers.len());
+        let relay_peer_virtual_ips = Arc::new(Mutex::new(
+            relay_peers
+                .iter()
+                .map(|peer| format!("{}:{}", peer.peer_node_id, peer.peer_virtual_ips.join("|")))
+                .collect::<Vec<_>>(),
+        ));
+        let derp_peer_virtual_ips = Arc::new(Mutex::new(
+            derp_peers
+                .iter()
+                .map(|peer| format!("{}:{}", peer.peer_node_id, peer.peer_virtual_ips.join("|")))
+                .collect::<Vec<_>>(),
+        ));
+        let relay_session_ids = Arc::new(Mutex::new(
+            relay_peers
+                .iter()
+                .map(|peer| peer.session_id.clone())
+                .chain(derp_peers.iter().map(|peer| peer.server_session_id.clone()))
+                .collect::<Vec<_>>(),
+        ));
         stats.direct_udp_attached_peer_count.store(
             direct_udp
                 .as_ref()
@@ -278,6 +339,14 @@ mod android_tun {
                 .and_then(|config| config.relay_data_plane.as_ref())
                 .map(|config| config.acl_policies.clone())
                 .unwrap_or_default();
+            let dns_records = parsed_config
+                .as_ref()
+                .map(|config| config.dns_records.clone())
+                .unwrap_or_else(Vec::<PlatformDnsRecord>::new);
+            let dns_servers = parsed_config
+                .as_ref()
+                .map(|config| config.dns_servers.clone())
+                .unwrap_or_default();
             while !thread_stop.load(Ordering::SeqCst) {
                 let mut did_work = false;
                 if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
@@ -305,9 +374,12 @@ mod android_tun {
                             local_virtual_ip.as_str(),
                         ) {
                             let packet = &tun_buffer[..packet_len];
-                            if let Some(reply) =
-                                icmp_echo_reply_for_request(packet, local_virtual_ip.as_str())
-                            {
+                            if let Some(reply) = local_dns_reply(
+                                packet,
+                                local_virtual_ip.as_str(),
+                                &dns_servers,
+                                &dns_records,
+                            ) {
                                 write_android_tun_inbound_packet(&mut file, &thread_stats, &reply);
                             } else {
                                 write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
@@ -387,14 +459,38 @@ mod android_tun {
                                         if attempt > 0 {
                                             thread::sleep(relay_send_attempt_delay(&packet));
                                         }
+                                        android_log_info(&format!(
+                                            "SLAN_ANDROID_FFI_RELAY_SEND sessionId={} peerNodeId={} attempt={} payloadBytes={} frameBytes={} packet={}",
+                                            peer.session_id,
+                                            peer.peer_node_id,
+                                            attempt + 1,
+                                            payload.len(),
+                                            frame.len(),
+                                            packet_summary(&packet),
+                                        ));
                                         match peer.socket.send(&payload) {
                                             Ok(_) => {
                                                 relay_sent = true;
+                                                android_log_info(&format!(
+                                                    "SLAN_ANDROID_FFI_RELAY_SEND_OK sessionId={} peerNodeId={} attempt={} payloadBytes={}",
+                                                    peer.session_id,
+                                                    peer.peer_node_id,
+                                                    attempt + 1,
+                                                    payload.len(),
+                                                ));
                                                 thread_stats
                                                     .relay_frames_sent
                                                     .fetch_add(1, Ordering::Relaxed);
                                             }
-                                            Err(_) => {
+                                            Err(error) => {
+                                                android_log_error(&format!(
+                                                    "SLAN_ANDROID_FFI_RELAY_SEND_ERROR sessionId={} peerNodeId={} attempt={} payloadBytes={} error={}",
+                                                    peer.session_id,
+                                                    peer.peer_node_id,
+                                                    attempt + 1,
+                                                    payload.len(),
+                                                    error,
+                                                ));
                                                 thread_stats
                                                     .relay_write_failures
                                                     .fetch_add(1, Ordering::Relaxed);
@@ -472,6 +568,44 @@ mod android_tun {
                                 }
                             }
                         } else {
+                            let destination = ipv4_destination(&tun_buffer[..packet_len]);
+                            let relay_targets = relay_peers
+                                .iter()
+                                .map(|peer| {
+                                    format!(
+                                        "{}:{}",
+                                        peer.peer_node_id,
+                                        peer.peer_virtual_ips.join("|")
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            let derp_targets = derp_peers
+                                .iter()
+                                .map(|peer| {
+                                    format!(
+                                        "{}:{}",
+                                        peer.peer_node_id,
+                                        peer.peer_virtual_ips.join("|")
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            android_log_error(&format!(
+                                "SLAN_ANDROID_FFI_NO_PEER destination={:?} relayTargets=[{}] derpTargets=[{}] directReady={} directAttached={} packet={}",
+                                destination,
+                                relay_targets,
+                                derp_targets,
+                                direct_udp
+                                    .as_ref()
+                                    .map(|transport| transport.ready_peer_count())
+                                    .unwrap_or(0),
+                                direct_udp
+                                    .as_ref()
+                                    .map(|transport| transport.peers.len())
+                                    .unwrap_or(0),
+                                packet_summary(&tun_buffer[..packet_len]),
+                            ));
                             if let Ok(mut value) = thread_stats.last_no_peer_packet.lock() {
                                 *value = Some(packet_summary(&tun_buffer[..packet_len]));
                             }
@@ -497,25 +631,87 @@ mod android_tun {
                     match peer.socket.recv(&mut relay_buffer) {
                         Ok(frame_len) => {
                             did_work = true;
+                            android_log_info(&format!(
+                                "SLAN_ANDROID_FFI_RELAY_RECV_RAW sessionId={} peerNodeId={} len={} prefix={}",
+                                peer.session_id,
+                                peer.peer_node_id,
+                                frame_len,
+                                String::from_utf8_lossy(
+                                    &relay_buffer[..frame_len.min(200)]
+                                ),
+                            ));
                             let decoded_payload = relay_packet_payload(&relay_buffer[..frame_len]);
-                            if decoded_payload.is_none()
-                                && relay_control_kind(&relay_buffer[..frame_len]).is_some()
-                            {
+                            if decoded_payload.is_none() {
+                                if let Some(kind) = relay_control_kind(&relay_buffer[..frame_len]) {
+                                    android_log_info(&format!(
+                                        "SLAN_ANDROID_FFI_RELAY_FRAME_CONTROL sessionId={} peerNodeId={} len={} kind={} frame={}",
+                                        peer.session_id,
+                                        peer.peer_node_id,
+                                        frame_len,
+                                        kind,
+                                        String::from_utf8_lossy(&relay_buffer[..frame_len]),
+                                    ));
+                                    thread_stats
+                                        .relay_control_packets_received
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    if let Ok(mut value) =
+                                        thread_stats.last_relay_control_kind.lock()
+                                    {
+                                        *value = Some(kind);
+                                    }
+                                    continue;
+                                }
+                                android_log_error(&format!(
+                                    "SLAN_ANDROID_FFI_RELAY_FRAME_DECODE_FAIL sessionId={} peerNodeId={} len={} kind={:?} frame={}",
+                                    peer.session_id,
+                                    peer.peer_node_id,
+                                    frame_len,
+                                    relay_frame_kind(&relay_buffer[..frame_len]),
+                                    String::from_utf8_lossy(&relay_buffer[..frame_len]),
+                                ));
+                                thread_stats
+                                    .relay_decode_failures
+                                    .fetch_add(1, Ordering::Relaxed);
+                                if let Ok(mut value) = thread_stats.last_relay_raw_frame.lock() {
+                                    *value = Some(
+                                        String::from_utf8_lossy(&relay_buffer[..frame_len])
+                                            .into_owned(),
+                                    );
+                                }
                                 continue;
                             }
                             let frame = decoded_payload
                                 .as_deref()
                                 .unwrap_or(&relay_buffer[..frame_len]);
+                            android_log_info(&format!(
+                                "SLAN_ANDROID_FFI_RELAY_FRAME_PACKET sessionId={} peerNodeId={} outerLen={} innerLen={}",
+                                peer.session_id,
+                                peer.peer_node_id,
+                                frame_len,
+                                frame.len(),
+                            ));
                             if let Some(packet) = decode_slan_relay_data_frame(frame) {
                                 thread_stats
                                     .relay_frames_received
                                     .fetch_add(1, Ordering::Relaxed);
+                                android_log_info(&format!(
+                                    "SLAN_ANDROID_FFI_RELAY_FRAME_DATA_OK sessionId={} peerNodeId={} packet={}",
+                                    peer.session_id,
+                                    peer.peer_node_id,
+                                    packet_summary(packet),
+                                ));
                                 record_relay_tcp_packet(&thread_stats, packet);
                                 if !acl_allows_ingress_packet(
                                     packet,
                                     &acl_policies,
                                     Some(&acl_peer_for_relay_peer(peer)),
                                 ) {
+                                    android_log_info(&format!(
+                                        "SLAN_ANDROID_FFI_RELAY_FRAME_ACL_DROP sessionId={} peerNodeId={} packet={}",
+                                        peer.session_id,
+                                        peer.peer_node_id,
+                                        packet_summary(packet),
+                                    ));
                                     continue;
                                 }
                                 if let Some(reply) =
@@ -548,9 +744,29 @@ mod android_tun {
                                     &acl_policies,
                                     Some(&acl_peer_for_relay_peer(peer)),
                                 ) {
+                                    android_log_info(&format!(
+                                        "SLAN_ANDROID_FFI_RELAY_FRAME_ACL_DROP_NORMALIZED sessionId={} peerNodeId={} packet={}",
+                                        peer.session_id,
+                                        peer.peer_node_id,
+                                        packet_summary(&packet),
+                                    ));
                                     continue;
                                 }
+                                android_log_info(&format!(
+                                    "SLAN_ANDROID_FFI_RELAY_FRAME_TUN_WRITE sessionId={} peerNodeId={} packet={}",
+                                    peer.session_id,
+                                    peer.peer_node_id,
+                                    packet_summary(&packet),
+                                ));
                                 write_android_tun_inbound_packet(&mut file, &thread_stats, &packet);
+                            } else {
+                                android_log_error(&format!(
+                                    "SLAN_ANDROID_FFI_RELAY_FRAME_DATA_DECODE_NONE sessionId={} peerNodeId={} frameLen={} framePrefix={}",
+                                    peer.session_id,
+                                    peer.peer_node_id,
+                                    frame.len(),
+                                    String::from_utf8_lossy(&frame[..frame.len().min(160)]),
+                                ));
                             }
                         }
                         Err(error) if error.kind() == ErrorKind::WouldBlock => {}
@@ -697,6 +913,9 @@ mod android_tun {
             stop,
             stats,
             last_attach_error,
+            relay_peer_virtual_ips,
+            derp_peer_virtual_ips,
+            relay_session_ids,
             handle: Some(handle),
             config_json,
         });
@@ -848,12 +1067,33 @@ mod android_tun {
         let mut sent = false;
         if let Some(peer) = relay_peer_for_packet(relay_peers, packet) {
             if let Some(payload) = encode_relay_forward(peer, frame) {
+                android_log_info(&format!(
+                    "SLAN_ANDROID_FFI_RELAY_HEDGE_SEND sessionId={} peerNodeId={} payloadBytes={} frameBytes={} packet={}",
+                    peer.session_id,
+                    peer.peer_node_id,
+                    payload.len(),
+                    frame.len(),
+                    packet_summary(packet),
+                ));
                 match peer.socket.send(&payload) {
                     Ok(_) => {
                         sent = true;
+                        android_log_info(&format!(
+                            "SLAN_ANDROID_FFI_RELAY_HEDGE_SEND_OK sessionId={} peerNodeId={} payloadBytes={}",
+                            peer.session_id,
+                            peer.peer_node_id,
+                            payload.len(),
+                        ));
                         stats.relay_frames_sent.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        android_log_error(&format!(
+                            "SLAN_ANDROID_FFI_RELAY_HEDGE_SEND_ERROR sessionId={} peerNodeId={} payloadBytes={} error={}",
+                            peer.session_id,
+                            peer.peer_node_id,
+                            payload.len(),
+                            error,
+                        ));
                         stats.relay_write_failures.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -894,6 +1134,14 @@ mod android_tun {
         base64_decode(value.get("payload")?.as_str()?)
     }
 
+    fn relay_frame_kind(frame: &[u8]) -> Option<String> {
+        let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
+        value
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    }
+
     fn relay_control_kind(frame: &[u8]) -> Option<String> {
         let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
         match value.get("kind").and_then(serde_json::Value::as_str)? {
@@ -922,6 +1170,8 @@ mod android_tun {
             "packetsTooLarge": runtime.stats.packets_too_large.load(Ordering::Relaxed),
             "relayFramesSent": runtime.stats.relay_frames_sent.load(Ordering::Relaxed),
             "relayFramesReceived": runtime.stats.relay_frames_received.load(Ordering::Relaxed),
+            "relayControlPacketsReceived": runtime.stats.relay_control_packets_received.load(Ordering::Relaxed),
+            "relayDecodeFailures": runtime.stats.relay_decode_failures.load(Ordering::Relaxed),
             "relayTcpFramesReceived": runtime.stats.relay_tcp_frames_received.load(Ordering::Relaxed),
             "relayTcpSynAckReceived": runtime.stats.relay_tcp_syn_ack_received.load(Ordering::Relaxed),
             "relayTcpPshReceived": runtime.stats.relay_tcp_psh_received.load(Ordering::Relaxed),
@@ -937,10 +1187,30 @@ mod android_tun {
             "directUdpPongsReceived": runtime.stats.direct_udp_pongs_received.load(Ordering::Relaxed),
             "directUdpFramesSent": runtime.stats.direct_udp_frames_sent.load(Ordering::Relaxed),
             "directUdpFramesReceived": runtime.stats.direct_udp_frames_received.load(Ordering::Relaxed),
+            "relayPeerVirtualIps": runtime
+                .relay_peer_virtual_ips
+                .lock()
+                .ok()
+                .map(|value| value.clone())
+                .unwrap_or_default(),
+            "derpPeerVirtualIps": runtime
+                .derp_peer_virtual_ips
+                .lock()
+                .ok()
+                .map(|value| value.clone())
+                .unwrap_or_default(),
+            "relaySessionIds": runtime
+                .relay_session_ids
+                .lock()
+                .ok()
+                .map(|value| value.clone())
+                .unwrap_or_default(),
             "lastNoPeerDestination": runtime.stats.last_no_peer_destination.lock().ok().and_then(|value| value.clone()),
             "lastNoPeerPacket": runtime.stats.last_no_peer_packet.lock().ok().and_then(|value| value.clone()),
             "relayWriteFailures": runtime.stats.relay_write_failures.load(Ordering::Relaxed),
             "tunWriteFailures": runtime.stats.tun_write_failures.load(Ordering::Relaxed),
+            "lastRelayControlKind": runtime.stats.last_relay_control_kind.lock().ok().and_then(|value| value.clone()),
+            "lastRelayRawFrame": runtime.stats.last_relay_raw_frame.lock().ok().and_then(|value| value.clone()),
             "lastTunWriteError": runtime.stats.last_tun_write_error.lock().ok().and_then(|value| value.clone()),
             "lastTunWritePacket": runtime.stats.last_tun_write_packet.lock().ok().and_then(|value| value.clone()),
             "configBytes": runtime.config_json.len(),
@@ -1213,6 +1483,16 @@ mod android_tun {
                 close_relay_fds(vec![fd]);
                 continue;
             };
+            android_log_info(&format!(
+                "SLAN_ANDROID_FFI_PREPARE_RELAY_FD index={} fd={} sessionId={} peerNodeId={} relayUrl={} localNodeId={} peerVirtualIps={:?}",
+                index,
+                fd,
+                session.session_id,
+                session.peer_node_id,
+                session.ticket.relay_url,
+                relay_config.local_node_id,
+                session.peer_virtual_ips,
+            ));
             if is_derp_session(session) {
                 let stream = unsafe { TcpStream::from_raw_fd(fd) };
                 match attach_derp_relay_session(
@@ -1220,8 +1500,26 @@ mod android_tun {
                     relay_config.local_node_id.as_str(),
                     session,
                 ) {
-                    Ok(peer) => derp_peers.push(peer),
+                    Ok(peer) => {
+                        android_log_info(&format!(
+                            "SLAN_ANDROID_FFI_ATTACHED_DERP index={} fd={} sessionId={} peerNodeId={} serverSessionId={}",
+                            index,
+                            fd,
+                            session.session_id,
+                            session.peer_node_id,
+                            peer.server_session_id,
+                        ));
+                        derp_peers.push(peer)
+                    }
                     Err(error) => {
+                        android_log_error(&format!(
+                            "SLAN_ANDROID_FFI_ATTACH_DERP_ERROR index={} fd={} sessionId={} peerNodeId={} error={}",
+                            index,
+                            fd,
+                            session.session_id,
+                            session.peer_node_id,
+                            error,
+                        ));
                         if let Ok(mut guard) = last_attach_error.lock() {
                             *guard = Some(error.to_string());
                         }
@@ -1233,12 +1531,34 @@ mod android_tun {
             if let Err(error) =
                 attach_udp_relay_session(&socket, relay_config.local_node_id.as_str(), session)
             {
+                android_log_error(&format!(
+                    "SLAN_ANDROID_FFI_ATTACH_UDP_ERROR index={} fd={} sessionId={} peerNodeId={} relayUrl={} error={}",
+                    index,
+                    fd,
+                    session.session_id,
+                    session.peer_node_id,
+                    session.ticket.relay_url,
+                    error,
+                ));
                 if let Ok(mut guard) = last_attach_error.lock() {
                     *guard = Some(error.to_string());
                 }
                 continue;
             }
             socket.set_nonblocking(true)?;
+            let local_addr = socket.local_addr().ok();
+            let peer_addr = socket.peer_addr().ok();
+            android_log_info(&format!(
+                "SLAN_ANDROID_FFI_ATTACHED_UDP index={} fd={} sessionId={} peerNodeId={} relayUrl={} localAddr={:?} peerAddr={:?} peerVirtualIps={:?}",
+                index,
+                fd,
+                session.session_id,
+                session.peer_node_id,
+                session.ticket.relay_url,
+                local_addr,
+                peer_addr,
+                session.peer_virtual_ips,
+            ));
             peers.push(AndroidRelayPeer {
                 session_id: session.session_id.clone(),
                 peer_node_id: session.peer_node_id.clone(),
@@ -1249,12 +1569,25 @@ mod android_tun {
         }
         let direct_udp = relay_fds.next().and_then(|fd| {
             let socket = unsafe { UdpSocket::from_raw_fd(fd) };
+            let local_addr = socket.local_addr().ok();
+            android_log_info(&format!(
+                "SLAN_ANDROID_FFI_PREPARE_DIRECT_UDP fd={} localAddr={:?} localNodeId={} peerPathCount={}",
+                fd,
+                local_addr,
+                relay_config.local_node_id,
+                relay_config.peer_paths.len(),
+            ));
             DirectUdpTransport::attach_with_socket(
                 relay_config.local_node_id.as_str(),
                 &relay_config.peer_paths,
                 || Ok(socket),
             )
         });
+        if direct_udp.is_some() {
+            android_log_info("SLAN_ANDROID_FFI_ATTACHED_DIRECT_UDP ready");
+        } else {
+            android_log_error("SLAN_ANDROID_FFI_ATTACHED_DIRECT_UDP missing");
+        }
         close_relay_fds(relay_fds.collect());
         Ok((peers, derp_peers, direct_udp))
     }
@@ -1318,7 +1651,19 @@ mod android_tun {
             }
             match socket.recv(&mut response) {
                 Ok(len) => {
-                    verify_relay_attach_ack(&response[..len], &session.session_id)?;
+                    verify_relay_attach_ack(&response[..len], &session.session_id).map_err(|error| {
+                        std::io::Error::new(
+                            error.kind(),
+                            format!(
+                                "relay attach ack rejected sessionId={} relayUrl={} localNodeId={} peerNodeId={} response={}",
+                                session.session_id,
+                                session.ticket.relay_url,
+                                local_node_id,
+                                session.peer_node_id,
+                                String::from_utf8_lossy(&response[..len])
+                            ),
+                        )
+                    })?;
                     socket.set_read_timeout(None)?;
                     socket.set_write_timeout(None)?;
                     return Ok(());
@@ -1687,6 +2032,22 @@ mod android_tun {
         ipv4_destination(packet)
             .map(|destination| destination == normalize_virtual_ip(local_virtual_ip))
             .unwrap_or(false)
+    }
+
+    fn local_dns_reply(
+        packet: &[u8],
+        local_virtual_ip: &str,
+        dns_servers: &[String],
+        dns_records: &[PlatformDnsRecord],
+    ) -> Option<Vec<u8>> {
+        for dns_server in dns_servers {
+            if let Some(reply) = dns_response_for_query(packet, dns_server, dns_records) {
+                return Some(reply);
+            }
+        }
+        packet_targets_local_virtual_ip(packet, local_virtual_ip)
+            .then(|| icmp_echo_reply_for_request(packet, local_virtual_ip))
+            .flatten()
     }
 
     fn should_ignore_unroutable_destination(destination: &str) -> bool {

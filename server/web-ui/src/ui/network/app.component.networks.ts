@@ -1,5 +1,5 @@
 import { workspacePanelPath } from '../app-routing';
-import { AppComponentOverview } from '../overview/app.component.overview';
+import { AppComponentData } from '../overview/app.component.data';
 import {
   ApiDevice,
   ApiDNSRecord,
@@ -30,38 +30,7 @@ import { compactUuid, slug } from '../app.utils';
 import { WEB_API } from '../api-paths';
 import { DEFAULT_USER_ID } from '../app.seed-data';
 
-export abstract class AppComponentNetworks extends AppComponentOverview {
-  setActive(id: string): void {
-    this.active = id;
-    if (id === 'overview') {
-      this.workspaceRouteMode = 'list';
-      history.pushState({}, '', '/overview');
-      return;
-    }
-    if (id === 'devices') {
-      this.workspaceRouteMode = 'list';
-      this.devicePanel = 'list';
-      history.pushState({}, '', '/devices');
-      return;
-    }
-    if (id === 'deviceGroups') {
-      this.active = 'devices';
-      this.workspaceRouteMode = 'list';
-      this.devicePanel = 'groups';
-      history.pushState({}, '', '/devices/groups');
-      return;
-    }
-    if (id === 'userAliases') {
-      this.workspaceRouteMode = 'list';
-      history.pushState({}, '', '/user-aliases');
-      return;
-    }
-    if (id === 'workspaces') {
-      this.workspaceRouteMode = 'list';
-      history.pushState({}, '', '/spaces');
-    }
-  }
-
+export abstract class AppComponentNetworks extends AppComponentData {
   selectWorkspace(workspace: WorkspaceRow): void {
     this.selectedWorkspaceId = workspace.workspaceId;
     this.editingWorkspaceName = workspace.name;

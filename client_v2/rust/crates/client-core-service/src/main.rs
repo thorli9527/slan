@@ -37,9 +37,9 @@ use anyhow::{Context, Result};
 use client_core::{
     normalize_relay_transport, normalize_virtual_ip, relay_path_kind_for_transport,
     AssignedIpPayload, ClientCommand, ClientRuntime, ClientViewState, PathCandidate, PathKind,
-    PathState, PeerPathConfig, PlatformAclPolicy, PlatformDeviceNetworkConfig, PlatformNetwork,
-    PlatformNetworkConfig, PlatformNetworkDiagnostics, RelayDataPlaneConfig, RelayPeerSession,
-    RelayTicket, TrafficStatsPayload,
+    PathState, PeerPathConfig, PlatformAclPolicy, PlatformDeviceNetworkConfig, PlatformDnsRecord,
+    PlatformDnsZone, PlatformNetwork, PlatformNetworkConfig, PlatformNetworkDiagnostics,
+    RelayDataPlaneConfig, RelayPeerSession, RelayTicket, TrafficStatsPayload,
 };
 use client_core_platform::PlatformNetworkImpl;
 use serde_json::Value;
@@ -71,11 +71,11 @@ use crate::control_transport_worker::ControlTransportWorkerState;
 use crate::local_api::{
     LocalPathPlanResponse, LocalPeerView, LocalPeersResponse, LocalServiceMethod,
     LocalSessionResponse, LocalStatusResponse, MarkControlAckedRequest,
-    PlatformRuntimeStateReportRequest, ServiceRequest, StoredBusinessEvent,
-    WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
-    BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
-    BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED,
-    BUSINESS_STATE_CHANGED,
+    PlatformRuntimeStateReportRequest, RegisterTestUserRequest, ReportDeviceRuntimeRequest,
+    ServiceRequest, StoredBusinessEvent, WatchBusinessEventRequest, WatchBusinessEventResponse,
+    WatchStateRequest, WatchStateResponse, BUSINESS_CONTROL_SYNC_CHANGED,
+    BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED,
+    BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED, BUSINESS_STATE_CHANGED,
 };
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
@@ -94,8 +94,9 @@ use crate::relay_store::{
     relay_payload_policy, relay_runtime_failure_total, relay_stats_file_path,
 };
 use crate::session_store::{
-    app_data_dir, current_timestamp_ms, ensure_session_device_registered,
-    ensure_session_node_binding, hydrate_session_from_control_plane, load_session,
+    app_data_dir, clear_pending_console_login, current_timestamp_ms,
+    ensure_session_device_registered, ensure_session_node_binding,
+    hydrate_session_from_control_plane, load_pending_console_login, load_session,
     load_valid_registered_session, persist_session, prepare_client_login_session,
     refresh_startup_session, remove_session, report_runtime_state, revoke_remote_sessions,
     session_auth_invalid_error, session_is_expired, sync_session_device_fields, PersistedSession,
@@ -223,19 +224,21 @@ fn run_service_server() -> Result<()> {
         load_valid_registered_session().filter(|session| !session.access_token.trim().is_empty())
     {
         let _ = initial_runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
+    } else if let Some(state) = apply_pending_console_login(&mut initial_runtime) {
+        if let Some(error) = state
+            .error
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            log_service_error(format!(
+                "client-core-service pending console login failed: {error}"
+            ));
+        }
     }
     if let Err(error) = PlatformNetworkImpl.install_adapter() {
         log_service_error(format!(
             "client-core-service failed to prepare Wintun adapter: {error:#}"
         ));
-    }
-    if initial_runtime.state().signed_in {
-        let state = activate_network_from_latest_control(&mut initial_runtime);
-        if let Some(error) = state.error.filter(|value| !value.trim().is_empty()) {
-            log_service_error(format!(
-                "client-core-service startup network activation failed: {error}"
-            ));
-        }
     }
     let runtime = Arc::new(Mutex::new(initial_runtime));
     let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
@@ -269,6 +272,7 @@ fn run_service_server() -> Result<()> {
         &state_notifier,
     );
     spawn_relay_data_plane_maintenance_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
+    spawn_startup_network_activation(Arc::clone(&runtime), Arc::clone(&state_notifier));
     println!("client-core-service listening on {bind_address}");
 
     loop {
@@ -297,6 +301,44 @@ fn run_service_server() -> Result<()> {
             }
         }
     }
+}
+
+fn apply_pending_console_login<P>(runtime: &mut ClientRuntime<P>) -> Option<ClientViewState>
+where
+    P: client_core::PlatformNetwork,
+{
+    let pending = load_pending_console_login()?;
+    if let Some(base_url) = pending.base_url.as_deref() {
+        crate::control_plane::set_control_base_url_override(base_url);
+    }
+    if let Some(device_name) = pending.device_name.as_deref() {
+        log_service_error(format!(
+            "client-core-service console bootstrap deviceName={device_name}"
+        ));
+    }
+    let login_state = dispatch_with_side_effects(
+        runtime,
+        ClientCommand::LoginWithPassword(client_core::PasswordLoginPayload {
+            email: pending.email,
+            password: pending.password,
+        }),
+    );
+    if login_state.error.is_some() {
+        return Some(login_state);
+    }
+    let final_state = if pending.enable_network {
+        dispatch_with_side_effects(runtime, ClientCommand::EnableNetwork)
+    } else {
+        login_state
+    };
+    if final_state.error.is_none() {
+        if let Err(error) = clear_pending_console_login() {
+            log_service_error(format!(
+                "client-core-service clear pending console login failed: {error:#}"
+            ));
+        }
+    }
+    Some(final_state)
 }
 
 #[cfg(target_os = "windows")]
@@ -461,6 +503,39 @@ fn handle_connection(mut stream: TcpStream, context: LocalServiceContext) -> Res
     Ok(())
 }
 
+fn spawn_startup_network_activation(
+    runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: Arc<StateChangeNotifier>,
+) {
+    let should_activate = {
+        let runtime = runtime.lock().expect("client runtime mutex poisoned");
+        runtime.state().signed_in
+    };
+    if !should_activate {
+        return;
+    }
+    thread::spawn(move || {
+        let state = {
+            let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+            activate_network_from_latest_control(&mut runtime)
+        };
+        let business_type = state
+            .error
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+            .map(|_| BUSINESS_NETWORK_SWITCH_FAILED)
+            .unwrap_or(BUSINESS_NETWORK_RUNTIME_CHANGED);
+        publish_state_business_event(&state_notifier, business_type, &state);
+        publish_state_business_event(&state_notifier, BUSINESS_NETWORK_RUNTIME_CHANGED, &state);
+        notify_state_changed(&state_notifier);
+        if let Some(error) = state.error.filter(|value| !value.trim().is_empty()) {
+            log_service_error(format!(
+                "client-core-service startup network activation failed: {error}"
+            ));
+        }
+    });
+}
+
 fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
     let request: ServiceRequest = serde_json::from_str(line).context("decode service request")?;
     let method = LocalServiceMethod::parse(&request.method);
@@ -475,6 +550,7 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalStatus => return handle_local_status(&context.runtime),
         LocalServiceMethod::LocalSession => return handle_local_session(),
         LocalServiceMethod::LocalPeers => return handle_local_peers(),
+        LocalServiceMethod::LocalNetworkActivate => {}
         LocalServiceMethod::LocalNetworkModule => {
             match load_session() {
                 Ok(session) => {
@@ -498,6 +574,10 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalControlStatus => {
             return serde_json::to_string(&control_transport_status()?)
                 .context("encode local control status")
+        }
+        LocalServiceMethod::LocalEnsureDevice => {
+            return serde_json::to_string(&handle_local_ensure_device(&context.runtime)?)
+                .context("encode local ensure device")
         }
         LocalServiceMethod::LocalControlPlan => {
             return serde_json::to_string(&control_transport_plan()?)
@@ -532,6 +612,10 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
                 &context.runtime,
                 &context.state_notifier,
             )
+        }
+        LocalServiceMethod::LocalRegisterTestUser => return handle_register_test_user(request),
+        LocalServiceMethod::LocalReportDeviceRuntime => {
+            return handle_report_device_runtime(request)
         }
         LocalServiceMethod::LocalSendClientMessage => return handle_send_client_message(request),
         LocalServiceMethod::LocalDiagnosticsExport => {
@@ -600,24 +684,26 @@ fn publish_control_sync_event(
 fn handle_state_snapshot(
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
 ) -> Result<String> {
-    let state = {
+    let mut state = {
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
         match runtime.refresh() {
             Ok(()) => runtime.state().clone(),
             Err(error) => state_with_error(runtime.state(), error.to_string()),
         }
     };
+    merge_persisted_client_message_into_state(&mut state);
     serde_json::to_string(&state).context("encode client state")
 }
 
 fn handle_local_status(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) -> Result<String> {
-    let state = {
+    let mut state = {
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
         match runtime.refresh() {
             Ok(()) => runtime.state().clone(),
             Err(error) => state_with_error(runtime.state(), error.to_string()),
         }
     };
+    merge_persisted_client_message_into_state(&mut state);
     let session = load_session().ok();
     let runtime_state = PlatformNetworkImpl.read_runtime_state();
     let (active_path, peer_count, runtime_error) = match runtime_state {
@@ -654,6 +740,58 @@ fn handle_local_status(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>)
         runtime_error,
     };
     serde_json::to_string(&response).context("encode local status")
+}
+
+fn last_client_message_file_path() -> std::path::PathBuf {
+    app_data_dir()
+        .join("SLAN")
+        .join("client-v2-last-client-message.json")
+}
+
+pub(crate) fn persist_last_client_message_payload(value: &Value) -> Result<()> {
+    let path = last_client_message_file_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let payload = serde_json::to_vec_pretty(value).context("encode last client message")?;
+    fs::write(&path, payload).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+pub(crate) fn merge_persisted_client_message_into_state(state: &mut ClientViewState) {
+    if state.last_client_message_id.is_some()
+        && state.last_client_message_from_device_id.is_some()
+        && state.last_client_message_body.is_some()
+    {
+        return;
+    }
+    let Ok(payload) = fs::read_to_string(last_client_message_file_path()) else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&payload) else {
+        return;
+    };
+    let payload = value.get("payload").unwrap_or(&value);
+    if state.last_client_message_id.is_none() {
+        state.last_client_message_id = payload
+            .get("messageId")
+            .or_else(|| payload.get("message_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    if state.last_client_message_from_device_id.is_none() {
+        state.last_client_message_from_device_id = payload
+            .get("fromDeviceId")
+            .or_else(|| payload.get("from_device_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    if state.last_client_message_body.is_none() {
+        state.last_client_message_body = payload
+            .get("body")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
 }
 
 fn handle_local_session() -> Result<String> {
@@ -843,6 +981,44 @@ fn handle_ingest_platform_runtime_state(
     .context("encode platform runtime state ingest response")
 }
 
+fn handle_register_test_user(request: ServiceRequest) -> Result<String> {
+    let input: RegisterTestUserRequest =
+        serde_json::from_value(request.args).context("decode register test user request")?;
+    let auth = ControlPlaneClient::from_env()
+        .register_user_with_password(&input.email, &input.password)
+        .context("register test user")?;
+    serde_json::to_string(&auth).context("encode register test user response")
+}
+
+fn handle_report_device_runtime(request: ServiceRequest) -> Result<String> {
+    let input: ReportDeviceRuntimeRequest =
+        serde_json::from_value(request.args).context("decode report device runtime request")?;
+    let session = load_session().context("load session for report device runtime")?;
+    let client = ControlPlaneClient::from_env();
+    let body = input.body.clone();
+    if let Err(error) = client.report_device_runtime(&session.access_token, &input.device_id, body)
+    {
+        let message = format!("{error:#}");
+        if message.contains("HTTP 404: not found") {
+            let repaired = ensure_session_device_registered(session)
+                .context("repair device runtime session")?;
+            let repaired_device_id = repaired
+                .device_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(input.device_id.as_str());
+            client
+                .report_device_runtime(&repaired.access_token, repaired_device_id, input.body)
+                .context("report device runtime after session repair")?;
+        } else {
+            return Err(error).context("report device runtime");
+        }
+    }
+    serde_json::to_string(&serde_json::json!({ "accepted": true }))
+        .context("encode report device runtime response")
+}
+
 fn traffic_stats_payload(
     traffic: Option<&Value>,
     reported_at_ms: Option<u64>,
@@ -920,17 +1096,36 @@ fn value_u64(value: &Value, keys: &[&str]) -> Option<u64> {
 }
 
 fn control_transport_status() -> Result<ControlTransportStatus> {
-    let session = load_session()?;
+    let session = ensure_session_device_registered(load_session()?)?;
     Ok(control_transport::control_transport_status(&session))
 }
 
 fn control_transport_plan() -> Result<ControlTransportPlan> {
-    let session = load_session()?;
+    let session = ensure_session_device_registered(load_session()?)?;
     Ok(control_transport::control_transport_plan(&session))
 }
 
 fn control_transport_cadence() -> ControlTransportCadence {
     control_transport::control_transport_cadence()
+}
+
+fn handle_local_ensure_device(
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+) -> Result<Value> {
+    let session = ensure_session_device_registered(load_session()?)?;
+    {
+        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+        let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.clone().into()));
+    }
+    Ok(serde_json::json!({
+        "registered": session.device_id.as_deref().is_some_and(|value| !value.trim().is_empty()),
+        "deviceId": session.device_id,
+        "activeNetworkId": session.active_network_id,
+        "virtualIp": session.virtual_ip,
+        "mqttCredentialReady": session.mqtt.is_some(),
+        "mqttExpiresAt": session.mqtt.as_ref().and_then(|credential| credential.expires_at),
+        "controlStatus": control_transport::control_transport_status(&session),
+    }))
 }
 
 fn console_login_key() -> Result<Value> {
@@ -955,30 +1150,29 @@ fn console_login_key() -> Result<Value> {
 fn handle_send_client_message(request: ServiceRequest) -> Result<String> {
     let input: crate::local_api::SendClientMessageRequest =
         serde_json::from_value(request.args).context("decode send client message request")?;
-    let session = load_session().context("load session")?;
-    let network_id = session
-        .active_network_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("active network is not available"))?;
+    let mut session = load_session().context("load session")?;
+    let network_id = ensure_active_network_id(&mut session)?;
     let from_device_id = session
         .device_id
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("device id is not available"))?;
-    let mqtt = session
-        .mqtt
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("mqtt credential is not available"))?;
-    let response = client_message_mqtt::publish_client_message(
-        mqtt,
-        network_id,
+    let client = ControlPlaneClient::from_env();
+    let response = client.send_client_message(
+        &session.access_token,
+        &network_id,
         from_device_id,
         &input.target_device_id,
         &input.body,
-        input.metadata.as_ref(),
+        input.metadata.clone(),
     )?;
-    serde_json::to_string(&response).context("encode send client message response")
+    serde_json::to_string(&serde_json::json!({
+        "messageId": response.message_id,
+        "topic": response.topic,
+        "transport": response.transport,
+        "qos": response.qos,
+    }))
+    .context("encode send client message response")
 }
 
 fn control_transport_tick_plan(args: Value) -> Result<ControlTransportTickPlan> {
@@ -2122,8 +2316,24 @@ where
                     return state_with_error(runtime.state(), format!("登录失败: {error:#}"));
                 }
             };
-            let session = hydrate_session_from_control_plane(auth_payload.clone())
-                .unwrap_or_else(|_| PersistedSession::from(auth_payload));
+            let session = match hydrate_session_from_control_plane(auth_payload.clone()) {
+                Ok(session) => session,
+                Err(hydrate_error) => {
+                    log_service_error(format!(
+                        "client-core-service password login hydrate failed; retry register device: {hydrate_error:#}"
+                    ));
+                    let fallback = PersistedSession::from(auth_payload.clone());
+                    match ensure_session_device_registered(fallback.clone()) {
+                        Ok(session) => session,
+                        Err(register_error) => {
+                            log_service_error(format!(
+                                "client-core-service password login device registration fallback failed: {register_error:#}"
+                            ));
+                            fallback
+                        }
+                    }
+                }
+            };
             let side_effect = persist_session(&session);
             (
                 ClientCommand::ApplyDeviceUserLogin(session.into()),
@@ -2148,8 +2358,24 @@ where
                     return state_with_error(runtime.state(), "登录设备不匹配".to_string());
                 }
             }
-            let session = hydrate_session_from_control_plane(payload.clone())
-                .unwrap_or_else(|_| PersistedSession::from(payload.clone()));
+            let session = match hydrate_session_from_control_plane(payload.clone()) {
+                Ok(session) => session,
+                Err(hydrate_error) => {
+                    log_service_error(format!(
+                        "client-core-service apply device user login hydrate failed; retry register device: {hydrate_error:#}"
+                    ));
+                    let fallback = PersistedSession::from(payload.clone());
+                    match ensure_session_device_registered(fallback.clone()) {
+                        Ok(session) => session,
+                        Err(register_error) => {
+                            log_service_error(format!(
+                                "client-core-service apply device user login fallback failed: {register_error:#}"
+                            ));
+                            fallback
+                        }
+                    }
+                }
+            };
             let side_effect = persist_session(&session);
             (
                 ClientCommand::ApplyDeviceUserLogin(session.into()),
@@ -2366,6 +2592,8 @@ where
         prefix_len: activation.prefix_len,
         network_configs: platform_network_configs(&network_configs),
         dns_servers: activation.dns_servers,
+        dns_zones: platform_dns_zones(&network_configs),
+        dns_records: platform_dns_records(&network_configs),
         routes,
         mtu: Some(1280),
         relay_endpoint_id: best_relay.as_ref().map(|relay| relay.endpoint_id.clone()),
@@ -2380,6 +2608,7 @@ where
             &activation.peers,
             best_relay.as_ref(),
             &all_acl_policies,
+            true,
         )
         .ok(),
     })
@@ -2404,6 +2633,44 @@ fn platform_network_configs(
             dns_record_count: config.dns_records.len(),
             security_rule_count: config.rules.len(),
             relay_candidate_count: config.relay_candidates.len(),
+        })
+        .collect()
+}
+
+fn platform_dns_zones(
+    configs: &[crate::control_plane::DeviceNetworkConfig],
+) -> Vec<PlatformDnsZone> {
+    configs
+        .iter()
+        .flat_map(|config| {
+            config.dns_zones.iter().map(|zone| PlatformDnsZone {
+                zone_id: zone.zone_id.clone(),
+                network_id: zone.network_id.clone(),
+                zone_name: zone.zone_name.clone(),
+            })
+        })
+        .collect()
+}
+
+fn platform_dns_records(
+    configs: &[crate::control_plane::DeviceNetworkConfig],
+) -> Vec<PlatformDnsRecord> {
+    configs
+        .iter()
+        .flat_map(|config| {
+            config.dns_records.iter().map(|record| PlatformDnsRecord {
+                record_id: record.record_id.clone(),
+                zone_id: record.zone_id.clone(),
+                network_id: record.network_id.clone(),
+                name: record.name.clone(),
+                fqdn: record.fqdn.clone(),
+                record_type: record.record_type.clone(),
+                target_device_id: record.target_device_id.clone(),
+                target_ip: record.target_ip.clone(),
+                cname: record.cname.clone(),
+                port: record.port.clone(),
+                ttl: record.ttl,
+            })
         })
         .collect()
 }
@@ -2443,6 +2710,7 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
             &crate::network_module::refresh_network_module_from_session(&client, &session)
                 .unwrap_or_default(),
         ),
+        false,
     )
 }
 
@@ -2586,6 +2854,7 @@ where
         &activation.peers,
         best_relay.as_ref(),
         &acl_policies,
+        false,
     )
     .map_err(|error| {
         log_service_error(format!(
@@ -2603,9 +2872,23 @@ where
         "client-core-service applying latest assigned IP locally: ip={}",
         activation.virtual_ip
     ));
+    log_service_error(format!(
+        "client-core-service enable apply start: prefix={} dns={} routes={} relay={}",
+        activation.prefix_len,
+        activation.dns_servers.len(),
+        routes_with_peer_virtual_ips(
+            activation.routes.clone(),
+            &activation.peers,
+            activation.virtual_ip.as_str(),
+        )
+        .len(),
+        relay_config.is_some()
+    ));
     runtime.enable_network_with_config(
         activation.prefix_len,
         &activation.dns_servers,
+        &platform_dns_zones(&network_configs),
+        &platform_dns_records(&network_configs),
         &routes_with_peer_virtual_ips(
             activation.routes.clone(),
             &activation.peers,
@@ -2613,6 +2896,7 @@ where
         ),
         relay_config.as_ref(),
     )?;
+    log_service_error("client-core-service enable apply ok".to_string());
     Ok(())
 }
 
@@ -2664,6 +2948,7 @@ fn build_relay_data_plane_config(
     peers: &[ControlPeer],
     best_relay: Option<&RelayCandidateSelection>,
     acl_policies: &[PlatformAclPolicy],
+    single_target_only: bool,
 ) -> Result<RelayDataPlaneConfig> {
     let relay = best_relay.ok_or_else(|| anyhow::anyhow!("no reachable relay candidate"))?;
     let relay_transport = normalize_relay_transport(&relay.transport).unwrap_or("udp");
@@ -2681,7 +2966,7 @@ fn build_relay_data_plane_config(
         create_punch_connect_sessions(client, session, network_id, local_node_id, peers);
 
     let relay_candidates = select_relay_candidates(&runtime_relay_candidates());
-    let relay_targets = relay_session_targets(best_relay, &relay_candidates);
+    let relay_targets = relay_session_targets(best_relay, &relay_candidates, single_target_only);
     let sessions = peers
         .iter()
         .filter(|peer| peer.relay_allowed)
@@ -2808,6 +3093,9 @@ fn peer_path_configs(
                         continue;
                     }
                     if let Some(kind) = direct_path_kind_for_path_type(&path.path_type) {
+                        if !valid_direct_candidate_address(address) {
+                            continue;
+                        }
                         if direct_addresses
                             .iter()
                             .any(|value: &String| value == address)
@@ -2829,6 +3117,9 @@ fn peer_path_configs(
             candidates.extend(peer.endpoints.iter().filter_map(|endpoint| {
                 let address = endpoint.address.trim();
                 if address.is_empty() {
+                    return None;
+                }
+                if !valid_direct_candidate_address(address) {
                     return None;
                 }
                 if direct_addresses.iter().any(|value| value == address) {
@@ -2912,10 +3203,14 @@ fn relay_session_from_connect_plan_ticket(
 fn relay_session_targets(
     best_relay: Option<&RelayCandidateSelection>,
     relay_candidates: &[RelayCandidateSelection],
+    single_target_only: bool,
 ) -> Vec<RelayCandidateSelection> {
     let mut targets = Vec::new();
     if let Some(relay) = best_relay {
         push_unique_relay_target(&mut targets, relay.clone());
+    }
+    if single_target_only {
+        return targets;
     }
     for transport in ["udp", "derp_tcp_tls_443"] {
         if let Some(relay) = relay_candidates.iter().find(|candidate| {
@@ -3122,6 +3417,19 @@ fn direct_path_candidate(kind: PathKind, address: &str) -> PathCandidate {
     }
 }
 
+fn valid_direct_candidate_address(address: &str) -> bool {
+    let trimmed = address.trim();
+    let normalized = trimmed
+        .strip_prefix("udp://")
+        .or_else(|| trimmed.strip_prefix("direct+udp://"))
+        .or_else(|| trimmed.strip_prefix("relay+udp://"))
+        .unwrap_or(trimmed);
+    normalized
+        .parse::<std::net::SocketAddr>()
+        .map(|socket_addr| socket_addr.port() > 0)
+        .unwrap_or(false)
+}
+
 fn routes_with_peer_virtual_ips(
     mut routes: Vec<client_core::RouteSpec>,
     peers: &[ControlPeer],
@@ -3133,8 +3441,8 @@ fn routes_with_peer_virtual_ips(
         .collect::<std::collections::HashSet<_>>();
     let self_ip = normalize_virtual_ip_for_route(self_virtual_ip);
     for peer in peers {
-        for ip in &peer.virtual_ips {
-            let Some(peer_ip) = usable_peer_virtual_ip(ip) else {
+        for ip in peer_route_ips(peer) {
+            let Some(peer_ip) = usable_peer_virtual_ip(ip.as_str()) else {
                 continue;
             };
             if peer_ip == self_ip {
@@ -3150,6 +3458,23 @@ fn routes_with_peer_virtual_ips(
         }
     }
     routes
+}
+
+fn peer_route_ips(peer: &ControlPeer) -> Vec<String> {
+    if !peer.virtual_ips.is_empty() {
+        return peer.virtual_ips.clone();
+    }
+    let device_id = peer
+        .node_id
+        .strip_prefix("node-")
+        .unwrap_or(peer.node_id.as_str());
+    crate::network_module::network_module_snapshot()
+        .configs
+        .into_iter()
+        .flat_map(|config| config.peers.into_iter())
+        .filter(|candidate| candidate.device_id.trim() == device_id.trim())
+        .filter_map(|candidate| candidate.global_ip)
+        .collect()
 }
 
 fn normalize_route_destination(value: &str) -> String {
@@ -3910,6 +4235,14 @@ pub(crate) fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<Platform
         }
     }
 
+    let persist_registered_session = |session: PersistedSession| {
+        if let Ok(registered) = ensure_session_device_registered(session.clone()) {
+            let _ = persist_session(&registered);
+        } else {
+            let _ = persist_session(&session);
+        }
+    };
+
     let Some(device_id) = session.device_id.clone().filter(|value| !value.is_empty()) else {
         if let Ok(session) = ensure_session_device_registered(session) {
             let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
@@ -3918,7 +4251,7 @@ pub(crate) fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<Platform
         return;
     };
     let Ok(devices) = client.list_devices(&session.access_token) else {
-        let _ = persist_session(&session);
+        persist_registered_session(session);
         return;
     };
     let Some(device) = devices.into_iter().find(|item| item.device_id == device_id) else {
@@ -3935,7 +4268,7 @@ pub(crate) fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<Platform
             device.status, device.membership_status
         ));
         session.virtual_ip = None;
-        let _ = persist_session(&session);
+        persist_registered_session(session);
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
         let _ = dispatch_with_origin(
             &mut runtime,
@@ -3953,7 +4286,7 @@ pub(crate) fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<Platform
             "client-core-service downstream disabled local network: device list has no assigned virtual IP",
         );
         session.virtual_ip = None;
-        let _ = persist_session(&session);
+        persist_registered_session(session);
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
         let _ = dispatch_with_origin(
             &mut runtime,
@@ -3963,18 +4296,20 @@ pub(crate) fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<Platform
         return;
     };
     if session.virtual_ip.as_deref() == Some(assigned_ip.as_str()) {
-        let _ = persist_session(&session);
+        persist_registered_session(session);
         return;
     }
     session.virtual_ip = Some(assigned_ip.clone());
-    let _ = persist_session(&session);
+    let prefix_len_access_token = session.access_token.clone();
+    let prefix_len_network_id = session.active_network_id.clone();
+    persist_registered_session(session);
     let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
     log_service_error(format!(
         "client-core-service syncing latest assigned IP locally: ip={assigned_ip}"
     ));
-    let prefix_len = session.active_network_id.as_deref().and_then(|network_id| {
+    let prefix_len = prefix_len_network_id.as_deref().and_then(|network_id| {
         client
-            .network_prefix_len(&session.access_token, network_id, None)
+            .network_prefix_len(&prefix_len_access_token, network_id, None)
             .ok()
     });
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {

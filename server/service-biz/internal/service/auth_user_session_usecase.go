@@ -8,7 +8,7 @@ func (s AuthUserSessionService) LoginUser(ctx context.Context, input LoginUserIn
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	session, err := newAuthUserSession(authNow(s.Now), s.NewSessID, user.UserID)
+	session, err := newAuthUserSession(authNow(s.Now), s.NewSessID, user.UserID, input.SessionMode)
 	if err != nil {
 		return AuthSessionView{}, err
 	}
@@ -18,8 +18,9 @@ func (s AuthUserSessionService) LoginUser(ctx context.Context, input LoginUserIn
 	return authSessionView(user, session), nil
 }
 
-func (s AuthUserSessionService) RenewUserSession(ctx context.Context, accessToken string) (AuthSessionView, error) {
-	session, err := requireActiveUserSession(ctx, s.Sessions, normalizeUserAccessToken(accessToken), authNow(s.Now).Unix())
+func (s AuthUserSessionService) GetUserSession(ctx context.Context, accessToken string) (AuthSessionView, error) {
+	now := authNow(s.Now)
+	session, err := requireActiveUserSession(ctx, s.Sessions, normalizeUserAccessToken(accessToken), now.Unix())
 	if err != nil {
 		return AuthSessionView{}, err
 	}
@@ -28,6 +29,42 @@ func (s AuthUserSessionService) RenewUserSession(ctx context.Context, accessToke
 		return AuthSessionView{}, err
 	}
 	return authSessionView(user, session), nil
+}
+
+func (s AuthUserSessionService) RenewUserSession(ctx context.Context, accessToken string, input RenewUserSessionInput) (AuthSessionView, error) {
+	input = normalizeRenewUserSessionInput(input)
+	if input.RefreshToken == "" {
+		return AuthSessionView{}, ErrInvalidArgument
+	}
+	now := authNow(s.Now)
+	session, ok, err := s.Sessions.GetUserSessionByRefreshToken(ctx, input.RefreshToken)
+	if err != nil {
+		return AuthSessionView{}, err
+	}
+	if !ok || session.Status != tokenStatusActive || session.RevokedAt > 0 || session.RefreshExpiry < now.Unix() {
+		return AuthSessionView{}, ErrUnauthorized
+	}
+	user, err := requireAuthUser(ctx, s.Users, session.UserID)
+	if err != nil {
+		return AuthSessionView{}, err
+	}
+	if accessToken != "" && normalizeUserAccessToken(accessToken) != session.AccessToken {
+		return AuthSessionView{}, ErrUnauthorized
+	}
+	session.Status = tokenStatusRevoked
+	session.RevokedAt = now.Unix()
+	session.UpdatedAt = now.Unix()
+	if err := s.Sessions.SaveUserSession(ctx, session); err != nil {
+		return AuthSessionView{}, err
+	}
+	nextSession, err := newAuthUserSession(now, s.NewSessID, session.UserID, session.SessionMode)
+	if err != nil {
+		return AuthSessionView{}, err
+	}
+	if err := s.Sessions.SaveUserSession(ctx, nextSession); err != nil {
+		return AuthSessionView{}, err
+	}
+	return authSessionView(user, nextSession), nil
 }
 
 func (s AuthUserSessionService) LogoutUser(ctx context.Context, accessToken string, input LogoutUserInput) error {

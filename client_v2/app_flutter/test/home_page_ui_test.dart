@@ -60,7 +60,7 @@ void main() {
         switchEnabled: true,
       ),
       activationDelay: const Duration(milliseconds: 250),
-      assignedIp: '100.64.0.10',
+      assignedIp: '10.0.0.10',
     );
 
     await tester.pumpWidget(SlanClientV2App(bridge: bridge));
@@ -83,7 +83,7 @@ void main() {
     expect(_networkSwitch(tester).value, isTrue);
     expect(_networkSwitch(tester).onChanged, isNotNull);
     expect(find.byKey(const Key('network-ip-value')), findsOneWidget);
-    expect(find.text('100.64.0.10'), findsOneWidget);
+    expect(find.text('10.0.0.10'), findsOneWidget);
   });
 
   testWidgets('switch reverts and ip stays disabled when activation fails',
@@ -159,7 +159,7 @@ void main() {
         networkEnabled: true,
         syncing: false,
         switchEnabled: true,
-        virtualIp: '100.64.0.10',
+        virtualIp: '10.0.0.10',
       ),
       activationDelay: const Duration(milliseconds: 100),
       disableError: 'network command failed',
@@ -185,7 +185,7 @@ void main() {
 
     expect(_networkSwitch(tester).value, isTrue);
     expect(_networkSwitch(tester).onChanged, isNotNull);
-    expect(find.text('100.64.0.10'), findsOneWidget);
+    expect(find.text('10.0.0.10'), findsOneWidget);
   });
 
   testWidgets('non-network errors do not show switch error dialog',
@@ -254,9 +254,9 @@ void main() {
         permissionState: AndroidVpnPermissionState.granted,
         networkConfig: AndroidVpnSessionConfig(
           sessionName: 'SLAN',
-          virtualIp: '100.64.0.10',
+          virtualIp: '10.0.0.10',
           prefixLen: 32,
-          dnsServers: ['100.64.0.1'],
+          dnsServers: ['10.0.0.1'],
           relayEndpointId: 'relay-cn',
         ),
       ),
@@ -267,7 +267,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Android 网络配置已就绪'), findsOneWidget);
-    expect(find.textContaining('100.64.0.10/32'), findsOneWidget);
+    expect(find.textContaining('10.0.0.10/32'), findsOneWidget);
     expect(find.textContaining('relay-cn'), findsNothing);
   });
 
@@ -310,7 +310,7 @@ void main() {
         networkEnabled: true,
         syncing: false,
         switchEnabled: true,
-        virtualIp: '100.64.0.10',
+        virtualIp: '10.0.0.10',
         lastClientMessageFromDeviceId: 'ios-peer',
         lastClientMessageBody: 'hello',
       ),
@@ -335,7 +335,7 @@ void main() {
         networkEnabled: true,
         syncing: false,
         switchEnabled: true,
-        virtualIp: '100.64.0.10',
+        virtualIp: '10.0.0.10',
       ),
       activationDelay: Duration.zero,
       messageDelay: const Duration(milliseconds: 150),
@@ -381,7 +381,7 @@ void main() {
         networkEnabled: true,
         syncing: false,
         switchEnabled: true,
-        virtualIp: '100.64.0.10',
+        virtualIp: '10.0.0.10',
       ),
       activationDelay: Duration.zero,
       messageError: 'mqtt publish failed',
@@ -563,4 +563,7 @@ class _UiTestBridge implements ClientCoreBridge {
 
   @override
   Future<ControlTransportStatus?> localControlStatus() async => null;
+
+  @override
+  Future<void> close() async {}
 }

@@ -370,19 +370,25 @@ type securityRuleFieldsRequest struct {
 	Enabled      bool   `json:"enabled"`
 }
 
-func (f securityRuleFieldsRequest) fields() (string, string) {
-	return securityRuleFields(f.PortFrom, f.PortTo, firstNonEmpty(f.PeerType, f.SubjectType), firstNonEmpty(f.PeerValue, f.SubjectValue))
+func (f securityRuleFieldsRequest) fields() (string, string, string) {
+	return securityRuleFields(
+		f.PortFrom,
+		f.PortTo,
+		firstNonEmpty(f.PeerType, f.SubjectType),
+		firstNonEmpty(f.PeerValue, f.SubjectValue),
+	)
 }
 
 func (f securityRuleFieldsRequest) createInput() servicepkg.CreateSecurityRuleInput {
-	portRange, cidr := f.fields()
+	portRange, peerType, peerValue := f.fields()
 	return servicepkg.CreateSecurityRuleInput{
 		ActorUserID: f.ActorUserID,
 		Direction:   f.Direction,
 		Action:      f.Action,
 		Protocol:    f.Protocol,
 		PortRange:   portRange,
-		CIDR:        cidr,
+		PeerType:    peerType,
+		PeerValue:   peerValue,
 		Priority:    f.Priority,
 		Description: f.Description,
 		Enabled:     f.Enabled,
@@ -405,19 +411,25 @@ type updateSecurityRuleFieldsRequest struct {
 	Enabled      *bool  `json:"enabled,omitempty"`
 }
 
-func (f updateSecurityRuleFieldsRequest) fields() (string, string) {
-	return securityRuleFields(f.PortFrom, f.PortTo, firstNonEmpty(f.PeerType, f.SubjectType), firstNonEmpty(f.PeerValue, f.SubjectValue))
+func (f updateSecurityRuleFieldsRequest) fields() (string, string, string) {
+	return securityRuleFields(
+		f.PortFrom,
+		f.PortTo,
+		firstNonEmpty(f.PeerType, f.SubjectType),
+		firstNonEmpty(f.PeerValue, f.SubjectValue),
+	)
 }
 
 func (f updateSecurityRuleFieldsRequest) updateInput() servicepkg.UpdateSecurityRuleInput {
-	portRange, cidr := f.fields()
+	portRange, peerType, peerValue := f.fields()
 	return servicepkg.UpdateSecurityRuleInput{
 		ActorUserID: f.ActorUserID,
 		Direction:   f.Direction,
 		Action:      f.Action,
 		Protocol:    f.Protocol,
 		PortRange:   portRange,
-		CIDR:        cidr,
+		PeerType:    peerType,
+		PeerValue:   peerValue,
 		Priority:    f.Priority,
 		Description: f.Description,
 		Enabled:     f.Enabled,
@@ -451,8 +463,10 @@ func publicMappingFields(alias, publicDomain, sourceRecord string, internalPort 
 	return firstNonEmpty(alias, publicDomain, sourceRecord), internalPort, atoi(externalPort)
 }
 
-func securityRuleFields(portFrom, portTo int, peerType, peerValue string) (string, string) {
-	return formatPortRange(portFrom, portTo), peerCIDR(peerType, peerValue)
+func securityRuleFields(portFrom, portTo int, peerType, peerValue string) (string, string, string) {
+	peerType = strings.TrimSpace(peerType)
+	peerValue = strings.TrimSpace(peerValue)
+	return formatPortRange(portFrom, portTo), peerType, peerValue
 }
 
 func formatPortRange(portFrom, portTo int) string {
@@ -463,19 +477,4 @@ func formatPortRange(portFrom, portTo int) string {
 		return strconv.Itoa(portFrom)
 	}
 	return strconv.Itoa(portFrom) + "," + strconv.Itoa(portTo)
-}
-
-func peerCIDR(peerType, peerValue string) string {
-	peerType = strings.TrimSpace(peerType)
-	peerValue = strings.TrimSpace(peerValue)
-	if peerType == "" {
-		return peerValue
-	}
-	if peerType == "cidr" {
-		return peerValue
-	}
-	if peerType == "all" {
-		return "peer:all:all"
-	}
-	return "peer:" + peerType + ":" + peerValue
 }

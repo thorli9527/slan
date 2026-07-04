@@ -33,27 +33,27 @@ App API 服务桌面端和移动端控制面。它同时注册 `/internal/wire/*
 | `POST` | `/api/auth/register` | 无 | 移动端集成测试和首次账号注册入口；创建用户会初始化默认资源 |
 | `POST` | `/api/auth/login` | 无 | 桌面/移动端账号密码登录；可携带本机 `deviceId` 绑定登录上下文 |
 | `POST` | `/api/auth/renew` | 用户 token | 刷新用户会话；客户端重新拉取登录态时使用 |
-| `POST` | `/api/auth/logout` | 用户 token | 用户退出登录；可同时传入 device token 清理设备会话 |
-| `POST` | `/api/auth/console-login-keys` | 用户 token | App 生成 Web Console 快捷登录 key；不要放到 Ops 实例 |
-| `POST` | `/api/auth/device-login-devices` | 无 | App 发起设备登录准备流程；Web Console 也需要该接口来配合确认 |
-| `GET` | `/api/devices` | 可选用户 token/query | App 侧列出可见设备；历史客户端仍使用该入口 |
-| `POST` | `/api/devices/register` | 用户 token | 用户登录态下注册设备；普通 Web Console 也支持手动注册 |
-| `POST` | `/api/devices/{deviceId}/renew` | 用户 token | 老设备注册续期接口；保留给兼容客户端 |
-| `POST` | `/api/device/session/bootstrap` | session key | 通过安装/接入码创建设备 session |
-| `POST` | `/api/device/session/bind` | 用户 token | 将本机设备 session 绑定到当前用户 |
-| `POST` | `/api/device/session/renew` | 设备 token | 设备心跳续期，同时上报网络启用状态和流量统计 |
+| `POST` | `/api/app/auth/logout` | 用户 token | 用户退出登录；可同时传入 device token 清理设备会话 |
+| `POST` | `/api/app/auth/console-login-keys` | 用户 token | App 生成 Web Console 快捷登录 key；不要放到 Ops 实例 |
+| `POST` | `/api/app/auth/device-login-devices` | 无 | App 发起设备登录准备流程；Web Console 也需要该接口来配合确认 |
+| `GET` | `/api/app/devices` | 可选用户 token/query | App 客户端查询当前用户可见设备列表 |
+| `POST` | `/api/app/devices/register` | 用户 token | App 设备注册兼容入口；当前客户端仍可通过该入口补注册设备 |
+| `POST` | `/api/app/devices/{deviceId}/renew` | 用户 token | App 设备续期兼容入口；用于兼容仍未切到 device session 的注册流程 |
+| `POST` | `/api/app/device/session/bootstrap` | session key | 通过安装/接入码创建设备 session |
+| `POST` | `/api/app/device/session/bind` | 用户 token | 将本机设备 session 绑定到当前用户 |
+| `POST` | `/api/app/device/session/renew` | 设备 token | 设备心跳续期，同时上报网络启用状态和流量统计 |
 
 ### Network Runtime
 
 | Method | Path | Auth | 备注 |
 | --- | --- | --- | --- |
-| `GET` | `/api/devices/{deviceId}/network-configs` | 用户/设备 token | 返回设备参与的网络配置集合；客户端合并/覆盖规则从这里开始 |
-| `GET` | `/api/devices/{deviceId}/mqtt-credential` | 用户/设备 token | 获取设备 MQTT 凭据；客户端用它订阅控制消息 |
-| `GET` | `/api/networks/{networkId}/network-config?deviceId=...` | 用户/设备 token | 获取某网络对某设备的最终运行配置 |
-| `GET` | `/api/networks/{networkId}/relay-candidates?deviceId=...` | 用户/设备 token | 获取当前网络的 relay 候选节点 |
-| `POST` | `/api/networks/{networkId}/relay-candidates` | 设备签名/token | 设备上报或请求 relay 候选；主要用于路径选择 |
-| `POST` | `/api/networks/{networkId}/punch/connect-sessions` | 设备签名 header | 创建 P2P punch 协商会话；请求头包含设备/MQTT 签名 |
-| `POST` | `/api/relay/tickets` | 用户/设备 token | 获取 relay ticket；wire/relay 数据面鉴权使用 |
+| `GET` | `/api/app/devices/{deviceId}/network-configs` | 用户/设备 token | 返回设备参与的网络配置集合；客户端合并/覆盖规则从这里开始 |
+| `GET` | `/api/app/devices/{deviceId}/mqtt-credential` | 用户/设备 token | 获取设备 MQTT 凭据；客户端用它订阅控制消息 |
+| `GET` | `/api/app/networks/{networkId}/network-config?deviceId=...` | 用户/设备 token | 获取某网络对某设备的最终运行配置 |
+| `GET` | `/api/app/networks/{networkId}/relay-candidates?deviceId=...` | 用户/设备 token | 获取当前网络的 relay 候选节点 |
+| `POST` | `/api/app/networks/{networkId}/relay-candidates` | 设备签名/token | 设备上报或请求 relay 候选；主要用于路径选择 |
+| `POST` | `/api/app/networks/{networkId}/punch/connect-sessions` | 设备签名 header | 创建 P2P punch 协商会话；请求头包含设备/MQTT 签名 |
+| `POST` | `/api/app/relay/tickets` | 用户/设备 token | 获取 relay ticket；wire/relay 数据面鉴权使用 |
 
 ### MQTT Webhook
 

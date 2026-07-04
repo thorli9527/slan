@@ -105,6 +105,10 @@ class ClientCorePlugin {
     return _invokeNativeOnly('setMobileServerBaseUrl', serverBaseUrl);
   }
 
+  Future<void> setAndroidDebugEmulatorVpnBypass(bool enabled) {
+    return _invokeNativeOnly('setAndroidDebugEmulatorVpnBypass', enabled);
+  }
+
   /// 派发桌面端通用控制命令。
   ///
   /// macOS/Windows/Linux 原生插件会负责自动启动本地 service，并在

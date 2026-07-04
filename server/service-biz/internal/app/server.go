@@ -18,6 +18,10 @@ func NewServerWithContainer(container Container) *Server {
 	return &Server{container: container}
 }
 
+func (s *Server) Container() Container {
+	return s.container
+}
+
 func (s *Server) Routes() http.Handler {
 	return s.RoutesFor(RouteSetAll)
 }

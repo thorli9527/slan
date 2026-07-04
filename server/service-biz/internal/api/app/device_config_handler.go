@@ -14,9 +14,9 @@ type DeviceConfigHandler struct {
 
 func (h DeviceConfigHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
-		serviceapi.NewRoute(http.MethodGet, "/api/devices/{deviceId}/network-configs", h.DeviceNetworkConfigs),
-		serviceapi.NewRoute(http.MethodGet, "/api/devices/{deviceId}/mqtt-credential", h.DeviceMQTTCredential),
-		serviceapi.NewRoute(http.MethodGet, "/api/devices/{deviceId}/mqtt-profile", h.DeviceMQTTProfile),
+		serviceapi.NewRoute(http.MethodGet, "/api/app/devices/{deviceId}/network-configs", h.DeviceNetworkConfigs),
+		serviceapi.NewRoute(http.MethodGet, "/api/app/devices/{deviceId}/mqtt-credential", h.DeviceMQTTCredential),
+		serviceapi.NewRoute(http.MethodGet, "/api/app/devices/{deviceId}/mqtt-profile", h.DeviceMQTTProfile),
 	}
 }
 

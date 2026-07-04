@@ -52,7 +52,7 @@ func (s DeviceBootstrapKeyService) RevokeDeviceBootstrapKey(ctx context.Context,
 func (s DeviceBootstrapSessionService) BootstrapDeviceSession(ctx context.Context, input BootstrapDeviceSessionInput) (DeviceSessionBootstrapView, error) {
 	input = normalizeBootstrapDeviceSessionInput(input)
 	now := deviceNow(s.Now)
-	bootstrapKey, err := resolveBootstrapSessionKey(ctx, s.Devices, now.Unix(), input.SessionKey)
+	bootstrapKey, err := resolveBootstrapSessionKey(ctx, s.Devices, now.Unix(), input.InstallationKey)
 	if err != nil {
 		return DeviceSessionBootstrapView{}, err
 	}
@@ -86,7 +86,7 @@ func (s DeviceBootstrapSessionService) BootstrapDeviceSession(ctx context.Contex
 		}
 		device = item
 	}
-	session, err := newManagedDeviceSession(now, s.NewSessID, device.DeviceID)
+	session, err := newManagedDeviceSession(now, s.NewSessID, device.DeviceID, input.SessionMode)
 	if err != nil {
 		return DeviceSessionBootstrapView{}, err
 	}
@@ -95,6 +95,9 @@ func (s DeviceBootstrapSessionService) BootstrapDeviceSession(ctx context.Contex
 	}
 	if bootstrapKey != nil && bootstrapKey.NetworkID != "" {
 		if err := s.Networks.SaveNetworkDevice(ctx, newBootstrapNetworkDevice(bootstrapKey.NetworkID, device.DeviceID, now.Unix())); err != nil {
+			return DeviceSessionBootstrapView{}, err
+		}
+		if _, err := bumpNetworkConfigVersion(ctx, s.Networks, nil, s.Now, bootstrapKey.NetworkID, "bootstrap_member_attached"); err != nil {
 			return DeviceSessionBootstrapView{}, err
 		}
 	}

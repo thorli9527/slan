@@ -12,7 +12,7 @@ tray_mode="disabled"
 install_root="$SLAN_LINUX_INSTALL_ROOT"
 config_dir="$SLAN_LINUX_CONFIG_DIR"
 server="$SLAN_LINUX_DEFAULT_CONTROL_BASE_URL"
-session_key="${SLAN_SESSION_KEY:-}"
+installation_key="${SLAN_INSTALLATION_KEY:-${SLAN_SESSION_KEY:-}}"
 package_url="${SLAN_CLIENT_PACKAGE_URL:-}"
 
 assert_safe_install_root() {
@@ -35,11 +35,12 @@ extract_package() {
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--server=URL] [--session-key=sk_xxx] [--package-url=URL] [--tray=enabled|disabled] [--root=PATH] [--config-dir=PATH]
+Usage: install.sh [--server=URL] [--installation-key=ik_xxx] [--session-key=ik_xxx] [--package-url=URL] [--tray=enabled|disabled] [--root=PATH] [--config-dir=PATH]
 
 Options:
   --server=URL      Control-plane base URL.
-  --session-key=KEY One-time device bootstrap session key.
+  --installation-key=KEY One-time device bootstrap installation key.
+  --session-key=KEY Legacy alias for the installation key.
   --package-url=URL Download URL for the Linux client tarball.
   --tray=enabled    Install the desktop shell with tray integration.
   --tray=disabled   Install service/helper only. This is the default.
@@ -65,8 +66,11 @@ for arg in "$@"; do
     --server=*)
       server="${arg#--server=}"
       ;;
+    --installation-key=*)
+      installation_key="${arg#--installation-key=}"
+      ;;
     --session-key=*)
-      session_key="${arg#--session-key=}"
+      installation_key="${arg#--session-key=}"
       ;;
     --package-url=*)
       package_url="${arg#--package-url=}"
@@ -120,7 +124,8 @@ EOF
 
 cat > "$config_dir/$SLAN_LINUX_BOOTSTRAP_ENV_NAME" <<EOF
 SLAN_CONTROL_BASE_URL=$server
-SLAN_SESSION_KEY=$session_key
+SLAN_INSTALLATION_KEY=$installation_key
+SLAN_SESSION_KEY=$installation_key
 EOF
 
 if [ "$tray_mode" = "enabled" ]; then

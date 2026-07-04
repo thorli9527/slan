@@ -4,73 +4,149 @@
       <h3>安全组</h3>
       <p>安全组控制当前网络里的设备访问；规则命中时按规则处理，未命中时按当前网络的组内连通策略处理。</p>
     </div>
-    <button class="ghost small" type="button" (click)="vm.openSecurityGroupDialog()">新增安全组</button>
+    <button class="table-icon-button" type="button" title="新增安全组" aria-label="新增安全组" (click)="vm.openSecurityGroupDialog()">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v14"></path>
+        <path d="M5 12h14"></path>
+      </svg>
+    </button>
   </div>
   <p class="form-error" *ngIf="vm.securityGroupDialogMessage">{{ vm.securityGroupDialogMessage }}</p>
   <p>安全组默认作用于当前网络全部设备；入方向控制谁能访问你，出方向控制你能访问哪里。</p>
-  <table class="compact-table">
-    <thead><tr><th>安全组 ID</th><th>安全组名称</th><th>创建时间</th><th>操作</th></tr></thead>
-    <tbody>
-      <tr *ngFor="let group of vm.currentSecurityGroups">
-        <td><button class="text-link" type="button" (click)="vm.openSecurityGroupRules(group)"><code>{{ group.securityGroupId }}</code></button></td>
-        <td class="tag-cell-wrapper">
-          <div class="alias-tag-cell">
-            <span>{{ vm.securityGroupDisplayName(group) }}</span>
-            <button class="tag-icon-button" type="button" title="修改名称" (click)="vm.openSecurityGroupNameTagDialog(group); $event.stopPropagation()">
+  <div class="rules-table-wrap">
+    <table class="compact-table">
+      <thead><tr><th>安全组 ID</th><th>安全组名称</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let group of vm.currentSecurityGroups">
+          <td>
+            <button class="table-icon-button subtle" type="button" title="查看安全组规则" aria-label="查看安全组规则" (click)="vm.openSecurityGroupRules(group)">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
-                <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
               </svg>
             </button>
-            <div class="tag-popover tag-popover-up" *ngIf="vm.showSecurityGroupNameTagDialog && vm.editingSecurityGroup?.securityGroupId === group.securityGroupId">
-              <div class="tag-popover-arrow"></div>
-              <div class="tag-editor-row"><span>名称</span><input [(ngModel)]="vm.securityGroupNameValue" /></div>
-              <div class="tag-editor-row"><span>描述</span><input [(ngModel)]="vm.securityGroupDescriptionValue" /></div>
-              <p class="form-error" *ngIf="vm.securityGroupDialogMessage">{{ vm.securityGroupDialogMessage }}</p>
-              <div class="tag-popover-actions">
-                <button class="text-link" type="button" (click)="vm.saveSecurityGroupNameTagDialog()">保存</button>
-                <button class="text-link muted" type="button" (click)="vm.closeSecurityGroupNameTagDialog()">取消</button>
+          </td>
+          <td class="tag-cell-wrapper">
+            <div class="alias-tag-cell">
+              <span>{{ vm.securityGroupDisplayName(group) }}</span>
+              <button class="tag-icon-button" type="button" title="修改名称" (click)="vm.openSecurityGroupNameTagDialog(group); $event.stopPropagation()">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
+                  <circle cx="8.5" cy="8.5" r="1.4"></circle>
+                </svg>
+              </button>
+              <div class="tag-popover tag-popover-up" *ngIf="vm.showSecurityGroupNameTagDialog && vm.editingSecurityGroup?.securityGroupId === group.securityGroupId">
+                <div class="tag-popover-arrow"></div>
+                <div class="tag-editor-row"><span>名称</span><input [(ngModel)]="vm.securityGroupNameValue" /></div>
+                <div class="tag-editor-row"><span>描述</span><input [(ngModel)]="vm.securityGroupDescriptionValue" /></div>
+                <p class="form-error" *ngIf="vm.securityGroupDialogMessage">{{ vm.securityGroupDialogMessage }}</p>
+                <div class="tag-popover-actions">
+                  <button class="text-link" type="button" (click)="vm.saveSecurityGroupNameTagDialog()">保存</button>
+                  <button class="text-link muted" type="button" (click)="vm.closeSecurityGroupNameTagDialog()">取消</button>
+                </div>
               </div>
             </div>
-          </div>
-        </td>
-        <td>{{ vm.formatTime(group.createdAt) }}</td>
-        <td class="table-actions"><button class="link-danger" type="button" (click)="vm.removeSecurityGroup(group)">删除</button></td>
-      </tr>
-      <tr *ngIf="vm.currentSecurityGroups.length === 0"><td colspan="4">暂无安全组</td></tr>
-    </tbody>
-  </table>
+          </td>
+          <td>{{ vm.formatTime(group.createdAt) }}</td>
+          <td class="table-actions">
+            <button class="table-icon-button danger" type="button" title="删除安全组" aria-label="删除安全组" (click)="vm.removeSecurityGroup(group)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16"></path>
+                <path d="M9 7V5h6v2"></path>
+                <path d="M8 7l1 12h6l1-12"></path>
+                <path d="M10 11v5"></path>
+                <path d="M14 11v5"></path>
+              </svg>
+            </button>
+          </td>
+        </tr>
+        <tr *ngIf="vm.currentSecurityGroups.length === 0"><td colspan="4">暂无安全组</td></tr>
+      </tbody>
+    </table>
+  </div>
 </section>
 
-<section class="detail-card" *ngIf="vm.workspacePanel === 'securityRules'">
+<section class="detail-card security-rules-card" *ngIf="vm.workspacePanel === 'securityRules'">
   <div class="rules-columns">
     <div>
-      <div class="section-title"><button class="ghost small" type="button" (click)="vm.openRuleDialog('ingress')">新增入方向</button></div>
+      <div class="section-title">
+        <button class="table-icon-button" type="button" title="新增入方向" aria-label="新增入方向" (click)="vm.openRuleDialog('ingress')">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14"></path>
+            <path d="M5 12h14"></path>
+          </svg>
+        </button>
+      </div>
       <p class="form-error" *ngIf="vm.securityRuleDialogMessage">{{ vm.securityRuleDialogMessage }}</p>
-      <table class="compact-table">
-        <thead><tr><th>优先级</th><th>动作</th><th>协议</th><th>端口</th><th>来源对象</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody>
-          <tr *ngFor="let rule of vm.ingressRules">
-            <td>{{ rule.priority }}</td><td><span class="status online">{{ rule.action }}</span></td><td>{{ rule.protocol }}</td><td>{{ rule.port }}</td><td><code>{{ vm.ruleSubjectLabel(rule) }}</code></td>
-            <td><span class="status" [class.online]="rule.enabled !== false">{{ rule.enabled === false ? 'disabled' : 'enabled' }}</span></td>
-            <td class="table-actions"><button class="ghost small" type="button" (click)="vm.openEditRuleDialog(rule)">修改</button><button class="link-danger" type="button" (click)="vm.removeSecurityRule(rule)">删除</button></td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="rules-table-wrap">
+        <table class="compact-table">
+          <thead><tr><th>优先级</th><th>动作</th><th>协议</th><th>端口</th><th>来源对象</th><th>编辑</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let rule of vm.ingressRules">
+              <td>{{ rule.priority }}</td><td><span class="status online">{{ rule.action }}</span></td><td>{{ rule.protocol }}</td><td>{{ rule.port }}</td><td><code>{{ vm.ruleSubjectLabel(rule) }}</code></td>
+              <td>
+                <button class="table-icon-button" type="button" title="编辑规则" aria-label="编辑规则" (click)="vm.openEditRuleDialog(rule)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 20h4l10-10-4-4L4 16v4"></path>
+                    <path d="M13 7l4 4"></path>
+                  </svg>
+                </button>
+              </td>
+              <td class="table-actions">
+                <button class="danger-icon-button" type="button" title="删除规则" aria-label="删除规则" (click)="vm.removeSecurityRule(rule)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 7h16"></path>
+                    <path d="M9 7V5h6v2"></path>
+                    <path d="M8 7l1 12h6l1-12"></path>
+                    <path d="M10 11v5"></path>
+                    <path d="M14 11v5"></path>
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
     <div>
-      <div class="section-title"><button class="ghost small" type="button" (click)="vm.openRuleDialog('egress')">新增出方向</button></div>
+      <div class="section-title">
+        <button class="table-icon-button" type="button" title="新增出方向" aria-label="新增出方向" (click)="vm.openRuleDialog('egress')">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14"></path>
+            <path d="M5 12h14"></path>
+          </svg>
+        </button>
+      </div>
       <p class="form-error" *ngIf="vm.securityRuleDialogMessage">{{ vm.securityRuleDialogMessage }}</p>
-      <table class="compact-table">
-        <thead><tr><th>优先级</th><th>动作</th><th>协议</th><th>端口</th><th>目标对象</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody>
-          <tr *ngFor="let rule of vm.egressRules">
-            <td>{{ rule.priority }}</td><td><span class="status online">{{ rule.action }}</span></td><td>{{ rule.protocol }}</td><td>{{ rule.port }}</td><td><code>{{ vm.ruleSubjectLabel(rule) }}</code></td>
-            <td><span class="status" [class.online]="rule.enabled !== false">{{ rule.enabled === false ? 'disabled' : 'enabled' }}</span></td>
-            <td class="table-actions"><button class="ghost small" type="button" (click)="vm.openEditRuleDialog(rule)">修改</button><button class="link-danger" type="button" (click)="vm.removeSecurityRule(rule)">删除</button></td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="rules-table-wrap">
+        <table class="compact-table">
+          <thead><tr><th>优先级</th><th>动作</th><th>协议</th><th>端口</th><th>目标对象</th><th>编辑</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr *ngFor="let rule of vm.egressRules">
+              <td>{{ rule.priority }}</td><td><span class="status online">{{ rule.action }}</span></td><td>{{ rule.protocol }}</td><td>{{ rule.port }}</td><td><code>{{ vm.ruleSubjectLabel(rule) }}</code></td>
+              <td>
+                <button class="table-icon-button" type="button" title="编辑规则" aria-label="编辑规则" (click)="vm.openEditRuleDialog(rule)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 20h4l10-10-4-4L4 16v4"></path>
+                    <path d="M13 7l4 4"></path>
+                  </svg>
+                </button>
+              </td>
+              <td class="table-actions">
+                <button class="danger-icon-button" type="button" title="删除规则" aria-label="删除规则" (click)="vm.removeSecurityRule(rule)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 7h16"></path>
+                    <path d="M9 7V5h6v2"></path>
+                    <path d="M8 7l1 12h6l1-12"></path>
+                    <path d="M10 11v5"></path>
+                    <path d="M14 11v5"></path>
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 </section>

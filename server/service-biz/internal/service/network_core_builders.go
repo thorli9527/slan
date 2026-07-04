@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"net"
+	"strings"
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/repository"
@@ -16,7 +18,7 @@ func buildNetworkSummaryView(ctx context.Context, devices repository.DeviceRepos
 	deviceCount := 0
 	memberOwners := make(map[string]struct{})
 	for _, membership := range memberships {
-		if !membership.Enabled || membership.Status != "active" {
+		if !networkMemberActive(membership) {
 			continue
 		}
 		deviceCount++
@@ -89,7 +91,43 @@ func buildNetworkConfigView(
 	}
 
 	deviceIDs := buildNetworkConfigDeviceIDs(device.DeviceID, networkDevices)
-	globalIPs, prefixLen := assignedNetworkIPMap(network.CIDR, deviceIDs)
+	deviceByID := map[string]model.Device{
+		device.DeviceID: device,
+	}
+	for _, membership := range networkDevices {
+		if membership.DeviceID == "" {
+			continue
+		}
+		if _, ok := deviceByID[membership.DeviceID]; ok {
+			continue
+		}
+		item, ok, err := devices.GetDevice(ctx, membership.DeviceID)
+		if err != nil {
+			return NetworkConfigView{}, err
+		}
+		if ok {
+			deviceByID[membership.DeviceID] = item
+		}
+	}
+	globalIPs := make(map[string]string, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		if deviceID == "" {
+			continue
+		}
+		item, ok := deviceByID[deviceID]
+		if !ok {
+			item = model.Device{DeviceID: deviceID}
+		}
+		globalIPs[deviceID] = deviceGlobalIP(item)
+	}
+	prefixLen := 0
+	if _, ipnet, err := net.ParseCIDR(network.CIDR); err == nil && ipnet != nil {
+		prefixLen, _ = ipnet.Mask.Size()
+	}
+	deviceGroupsByDevice, err := buildNetworkConfigDeviceGroupsByDevice(ctx, devices, device.OwnerID, deviceIDs)
+	if err != nil {
+		return NetworkConfigView{}, err
+	}
 	localMembership, localMembershipFound := findLocalNetworkMembership(device.DeviceID, networkDevices)
 	peers, err := buildNetworkConfigPeerViews(ctx, users, devices, device.DeviceID, networkDevices, globalIPs)
 	if err != nil {
@@ -97,19 +135,20 @@ func buildNetworkConfigView(
 	}
 
 	return NetworkConfigView{
-		Network:        networkView(network),
-		DeviceID:       device.DeviceID,
-		NodeID:         "node-" + device.DeviceID,
-		GlobalIP:       globalIPs[device.DeviceID],
-		PrefixLen:      prefixLen,
-		GlobalName:     networkGlobalName(device.DeviceID, device.Alias, device.Name),
-		RuntimePath:    networkRuntimePathView(localMembership, localMembershipFound),
-		Peers:          peers,
-		DNSZones:       zoneViews,
-		DNSRecords:     recordViews,
-		PublicMappings: mappingViews,
-		SecurityGroups: securityGroupViews,
-		SecurityRules:  securityRules,
+		Network:              networkView(network),
+		DeviceID:             device.DeviceID,
+		NodeID:               "node-" + device.DeviceID,
+		GlobalIP:             globalIPs[device.DeviceID],
+		PrefixLen:            prefixLen,
+		GlobalName:           networkGlobalName(device.DeviceID, device.Alias, device.Name),
+		DeviceGroupsByDevice: deviceGroupsByDevice,
+		RuntimePath:          networkRuntimePathView(localMembership, localMembershipFound),
+		Peers:                peers,
+		DNSZones:             zoneViews,
+		DNSRecords:           recordViews,
+		PublicMappings:       mappingViews,
+		SecurityGroups:       securityGroupViews,
+		SecurityRules:        securityRules,
 	}, nil
 }
 
@@ -127,12 +166,53 @@ func buildNetworkSecurityRuleViews(ctx context.Context, networks repository.Netw
 	return views, nil
 }
 
+func buildNetworkConfigDeviceGroupsByDevice(
+	ctx context.Context,
+	devices repository.DeviceRepository,
+	ownerUserID string,
+	deviceIDs []string,
+) (map[string][]string, error) {
+	out := make(map[string][]string)
+	if devices == nil || strings.TrimSpace(ownerUserID) == "" {
+		return out, nil
+	}
+	assignments, err := devices.ListDeviceGroupAssignments(ctx, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]struct{}, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		deviceID = strings.TrimSpace(deviceID)
+		if deviceID == "" {
+			continue
+		}
+		allowed[deviceID] = struct{}{}
+	}
+	for _, assignment := range assignments {
+		deviceID := strings.TrimSpace(assignment.DeviceID)
+		if deviceID == "" {
+			continue
+		}
+		if _, ok := allowed[deviceID]; !ok {
+			continue
+		}
+		for _, groupID := range assignment.GroupIDs {
+			groupID = strings.TrimSpace(groupID)
+			if groupID == "" {
+				continue
+			}
+			out[deviceID] = append(out[deviceID], groupID)
+		}
+	}
+	return out, nil
+}
+
 func buildNetworkConfigDeviceIDs(localDeviceID string, memberships []model.NetworkDevice) []string {
 	deviceIDs := make([]string, 0, len(memberships)+1)
 	deviceIDSet := map[string]struct{}{localDeviceID: {}}
 	deviceIDs = append(deviceIDs, localDeviceID)
 	for _, membership := range memberships {
-		if !membership.Enabled || membership.Status != "active" {
+		if !networkMemberActive(membership) {
 			continue
 		}
 		if _, ok := deviceIDSet[membership.DeviceID]; ok {
@@ -163,7 +243,7 @@ func buildNetworkConfigPeerViews(
 ) ([]NetworkConfigPeerView, error) {
 	peers := make([]NetworkConfigPeerView, 0, len(memberships))
 	for _, membership := range memberships {
-		if membership.DeviceID == localDeviceID || !membership.Enabled || membership.Status != "active" {
+		if membership.DeviceID == localDeviceID || !networkMemberActive(membership) {
 			continue
 		}
 		peerDevice, ok, err := devices.GetDevice(ctx, membership.DeviceID)

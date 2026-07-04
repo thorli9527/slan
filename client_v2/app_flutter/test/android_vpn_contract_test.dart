@@ -132,7 +132,7 @@ void main() {
             'networkCode': 'default',
             'intraGroupPolicy': 'allow',
             'configVersion': 123,
-            'globalIp': '100.64.0.2',
+            'globalIp': '10.0.0.2',
             'globalName': 'mac.default',
             'peerCount': 2,
             'dnsRecordCount': 3,
@@ -147,5 +147,47 @@ void main() {
     expect(config.networkConfigs.single.networkId, 'net-1');
     expect(config.networkConfigs.single.deviceId, 'dev-1');
     expect(config.networkConfigs.single.relayCandidateCount, 5);
+  });
+
+  test('android vpn config decodes dns zones and records', () {
+    final config = AndroidVpnSessionConfig.fromJson({
+      'virtualIp': '10.0.0.2',
+      'prefixLen': 32,
+      'dnsServers': ['10.0.0.53'],
+      'dnsZones': [
+        {
+          'zoneId': 'zone-1',
+          'networkId': 'net-1',
+          'zoneName': 'test.lan',
+        },
+      ],
+      'dnsRecords': [
+        {
+          'recordId': 'record-1',
+          'zoneId': 'zone-1',
+          'networkId': 'net-1',
+          'name': 'mac',
+          'fqdn': 'mac.test.lan',
+          'recordType': 'A',
+          'targetIp': '10.0.0.9',
+          'ttl': 60,
+        },
+      ],
+    });
+
+    expect(config.dnsZones, hasLength(1));
+    expect(config.dnsZones.single.zoneName, 'test.lan');
+    expect(config.dnsRecords, hasLength(1));
+    expect(config.dnsRecords.single.fqdn, 'mac.test.lan');
+    expect(config.dnsRecords.single.targetIp, '10.0.0.9');
+
+    final json = config.toJson();
+    final dnsZones = json['dnsZones'] as List<Object?>;
+    final dnsRecords = json['dnsRecords'] as List<Object?>;
+    expect((dnsZones.single as Map<String, Object?>)['zoneName'], 'test.lan');
+    expect(
+      (dnsRecords.single as Map<String, Object?>)['fqdn'],
+      'mac.test.lan',
+    );
   });
 }

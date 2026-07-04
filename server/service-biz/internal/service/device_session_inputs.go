@@ -3,6 +3,7 @@ package service
 type BindDeviceSessionInput struct {
 	UserID        string `json:"userId"`
 	DeviceID      string `json:"deviceId"`
+	SessionMode   string `json:"sessionMode"`
 	Name          string `json:"name"`
 	Platform      string `json:"platform"`
 	Alias         string `json:"alias"`
@@ -17,6 +18,7 @@ type BindDeviceSessionInput struct {
 }
 
 type RenewDeviceSessionInput struct {
+	RefreshToken   string `json:"refreshToken"`
 	NetworkEnabled *bool `json:"networkEnabled"`
 	RXBytesTotal   int64 `json:"rxBytesTotal"`
 	TXBytesTotal   int64 `json:"txBytesTotal"`

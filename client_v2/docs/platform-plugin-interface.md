@@ -14,6 +14,11 @@ This is the boundary between `client-core-service` and platform plugins.
 - heartbeat, runtime state aggregation, traffic/error reporting, and server reporting
 - optional packet or relay-frame forwarding when a platform cannot consume config directly
 
+Additional boundary rule:
+
+- Flutter/Dart must not call `/api/app/...` directly.
+- Flutter/Dart must consume business state only through Rust local API or embedded API.
+
 Platform plugins own:
 
 - platform permissions and lifecycle prompts
@@ -34,6 +39,8 @@ Flutter and platform plugins should use these service methods for control-plane 
 | `localControlStatus` | core-service | MQTT/control connection status. |
 | `localPlatformNetworkConfig` | core-service | Final IP/DNS/routes/MTU/relay/path config plus current server network configs for platform application. |
 | `ingestPlatformRuntimeState` | core-service | Receive platform runtime, traffic, heartbeat, and error reports. |
+| `localReportDeviceRuntime` | core-service | Send runtime report from Rust to business control API. |
+| `localRegisterTestUser` | core-service | Test-only user registration through Rust control-plane client. |
 | `localNetworkShutdown` | core-service | Disable local network and clear runtime state. |
 | `localDiagnosticsExport` | core-service | Unified diagnostics. |
 

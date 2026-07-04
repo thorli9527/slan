@@ -6,6 +6,7 @@
 //! `systemd-resolved` when available.
 
 use std::{
+    env,
     ffi::CString,
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, ErrorKind, Read, Write},
@@ -2168,7 +2169,7 @@ fn normalize_route_destination(destination: &str) -> Result<String> {
 }
 
 fn ensure_ip_command() -> Result<()> {
-    if command_available("ip") {
+    if resolve_command_path("ip").is_some() {
         Ok(())
     } else {
         bail!("Linux iproute2 command 'ip' is required")
@@ -2176,7 +2177,7 @@ fn ensure_ip_command() -> Result<()> {
 }
 
 fn link_exists(interface_name: &str) -> bool {
-    Command::new("ip")
+    Command::new(resolve_command_path("ip").unwrap_or_else(|| PathBuf::from("ip")))
         .args(["link", "show", "dev", interface_name])
         .output()
         .map(|output| output.status.success())
@@ -2189,10 +2190,12 @@ fn run_ip(args: &[&str]) -> Result<()> {
 }
 
 fn run_command(program: &str, args: &[String]) -> Result<()> {
-    let output = Command::new(program)
+    let resolved = resolve_command_path(program).unwrap_or_else(|| PathBuf::from(program));
+    let display_program = resolved.display().to_string();
+    let output = Command::new(&resolved)
         .args(args)
         .output()
-        .with_context(|| format!("run {program} {}", args.join(" ")))?;
+        .with_context(|| format!("run {display_program} {}", args.join(" ")))?;
     if output.status.success() {
         return Ok(());
     }
@@ -2201,7 +2204,7 @@ fn run_command(program: &str, args: &[String]) -> Result<()> {
     let message = if !stderr.is_empty() { stderr } else { stdout };
     bail!(
         "{} {} failed: {}",
-        program,
+        display_program,
         args.join(" "),
         if message.is_empty() {
             output.status.to_string()
@@ -2212,16 +2215,40 @@ fn run_command(program: &str, args: &[String]) -> Result<()> {
 }
 
 fn command_available(program: &str) -> bool {
-    Command::new(program)
-        .arg("-V")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-        || Command::new("which")
-            .arg(program)
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+    resolve_command_path(program).is_some()
+}
+
+fn resolve_command_path(program: &str) -> Option<PathBuf> {
+    let trimmed = program.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = PathBuf::from(trimmed);
+    if candidate.is_absolute() && candidate.exists() {
+        return Some(candidate);
+    }
+    if trimmed.contains('/') && candidate.exists() {
+        return Some(candidate);
+    }
+    if let Some(paths) = env::var_os("PATH") {
+        for dir in env::split_paths(&paths) {
+            let candidate = dir.join(trimmed);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    [
+        "/usr/sbin",
+        "/usr/bin",
+        "/sbin",
+        "/bin",
+        "/usr/local/sbin",
+        "/usr/local/bin",
+    ]
+    .iter()
+    .map(|dir| PathBuf::from(dir).join(trimmed))
+    .find(|candidate| candidate.exists())
 }
 
 #[cfg(test)]
@@ -2267,7 +2294,7 @@ mod tests {
         RelayPeerSession {
             session_id: "session-1".to_string(),
             peer_node_id: "node-peer".to_string(),
-            peer_virtual_ips: vec!["100.64.0.2".to_string()],
+            peer_virtual_ips: vec!["10.0.0.2".to_string()],
             ticket: test_ticket(relay_url),
         }
     }
@@ -2285,7 +2312,7 @@ mod tests {
             },
             peer_paths: vec![PeerPathConfig {
                 peer_node_id: "node-peer".to_string(),
-                peer_virtual_ips: vec!["100.64.0.2".to_string()],
+                peer_virtual_ips: vec!["10.0.0.2".to_string()],
                 candidates: vec![PathCandidate {
                     kind: PathKind::RelayUdp,
                     state: PathState::Probing,
@@ -2312,12 +2339,12 @@ mod tests {
     #[test]
     fn linux_route_destinations_are_normalized_for_acl_routes() {
         assert_eq!(
-            normalize_route_destination("100.64.0.9").unwrap(),
-            "100.64.0.9/32"
+            normalize_route_destination("10.0.0.9").unwrap(),
+            "10.0.0.9/32"
         );
         assert_eq!(
-            normalize_route_destination("100.64.0.0/24").unwrap(),
-            "100.64.0.0/24"
+            normalize_route_destination("10.0.0.0/24").unwrap(),
+            "10.0.0.0/24"
         );
         assert_eq!(normalize_route_destination("mesh").unwrap(), "mesh");
         assert!(normalize_route_destination("not-an-ip").is_err());
@@ -2384,9 +2411,9 @@ mod tests {
 
         let platform = LinuxPlatformNetwork;
         platform.install_adapter().unwrap();
-        platform.configure_ip("100.64.0.1", 32).unwrap();
+        platform.configure_ip("10.0.0.1", 32).unwrap();
         platform
-            .configure_dns(&["100.64.0.53".to_string(), " ".to_string()])
+            .configure_dns(&["10.0.0.53".to_string(), " ".to_string()])
             .unwrap();
         platform
             .configure_routes(&[
@@ -2395,7 +2422,7 @@ mod tests {
                     gateway: None,
                 },
                 RouteSpec {
-                    destination: "100.64.0.2".to_string(),
+                    destination: "10.0.0.2".to_string(),
                     gateway: None,
                 },
             ])
@@ -2406,12 +2433,12 @@ mod tests {
         let state = platform.read_runtime_state().unwrap();
         assert!(state.adapter_present);
         assert!(state.network_enabled);
-        assert_eq!(state.virtual_ip.as_deref(), Some("100.64.0.1"));
+        assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.1"));
         assert_eq!(state.active_path, Some(PathKind::RelayUdp));
 
         let diagnostics = platform.diagnostics().unwrap();
-        assert_eq!(diagnostics.dns_servers, vec!["100.64.0.53"]);
-        assert_eq!(diagnostics.routes, vec!["mesh", "100.64.0.2"]);
+        assert_eq!(diagnostics.dns_servers, vec!["10.0.0.53"]);
+        assert_eq!(diagnostics.routes, vec!["mesh", "10.0.0.2"]);
         assert!(diagnostics
             .checks
             .iter()

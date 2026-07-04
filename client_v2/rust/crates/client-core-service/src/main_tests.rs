@@ -6,12 +6,13 @@ use super::{
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
     relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
     relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
-    routes_with_peer_virtual_ips, status_is_managed_disabled, ControlPeer, PersistedConnectPlan,
-    PersistedConnectPlanPath, PersistedConnectPlanStore, RelayMaintenanceState,
-    RELAY_NO_RX_RECONFIGURE_INTERVALS, RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
+    routes_with_peer_virtual_ips, status_is_managed_disabled, valid_direct_candidate_address,
+    ControlPeer, PersistedConnectPlan, PersistedConnectPlanPath, PersistedConnectPlanStore,
+    RelayMaintenanceState, RELAY_NO_RX_RECONFIGURE_INTERVALS, RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
 };
 use crate::control_plane::{PunchConnectSession, PunchEndpoint};
 use crate::{
+    merge_persisted_client_message_into_state, persist_last_client_message_payload,
     relay_candidates::select_relay_candidates,
     relay_models::{
         PathDiagnoseDns, PathDiagnoseMtu, PathDiagnoseRelay, PersistedRelayCandidate,
@@ -115,6 +116,51 @@ fn sync_assigned_ip_does_not_create_empty_session() {
         !session_file.exists(),
         "SyncAssignedIp must not create an empty persisted session at {}",
         session_file.display()
+    );
+
+    if let Some(value) = previous_state_dir {
+        std::env::set_var("SLAN_STATE_DIR", value);
+    } else {
+        std::env::remove_var("SLAN_STATE_DIR");
+    }
+    let _ = fs::remove_dir_all(&state_dir);
+}
+
+#[test]
+fn persisted_last_client_message_can_restore_view_state_fields() {
+    let _lock = crate::test_env_lock();
+    let state_dir = std::env::temp_dir().join(format!(
+        "slan-last-client-message-test-{}",
+        crate::session_store::current_timestamp_ms()
+    ));
+    let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+    std::env::set_var("SLAN_STATE_DIR", &state_dir);
+    let _ = fs::remove_dir_all(&state_dir);
+
+    persist_last_client_message_payload(&serde_json::json!({
+        "type": "client_message",
+        "payload": {
+            "messageId": "client-msg-restore-1",
+            "fromDeviceId": "peer-device",
+            "body": "hello restore"
+        }
+    }))
+    .expect("persist last client message");
+
+    let mut state = client_core::ClientViewState::default();
+    merge_persisted_client_message_into_state(&mut state);
+
+    assert_eq!(
+        state.last_client_message_id.as_deref(),
+        Some("client-msg-restore-1")
+    );
+    assert_eq!(
+        state.last_client_message_from_device_id.as_deref(),
+        Some("peer-device")
+    );
+    assert_eq!(
+        state.last_client_message_body.as_deref(),
+        Some("hello restore")
     );
 
     if let Some(value) = previous_state_dir {
@@ -256,7 +302,7 @@ fn relay_session_targets_keep_selected_probe_fallback() {
     );
     derp.reachable = false;
 
-    let targets = relay_session_targets(Some(&derp), &[]);
+    let targets = relay_session_targets(Some(&derp), &[], false);
 
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].endpoint_id, "derp-fallback");
@@ -273,7 +319,7 @@ fn relay_session_targets_include_udp_and_derp_candidates() {
         "derp://203.0.113.10:29120",
     );
 
-    let targets = relay_session_targets(Some(&udp), &[udp.clone(), derp]);
+    let targets = relay_session_targets(Some(&udp), &[udp.clone(), derp], false);
 
     let endpoint_ids = targets
         .iter()
@@ -447,6 +493,7 @@ fn punch_connect_session_peer_endpoint_becomes_direct_udp_candidate() {
             network_id: "net-1".to_string(),
             requester_node_id: "node-local".to_string(),
             peer_node_id: peer.node_id.clone(),
+            punch_node_id: "punch-node-1".to_string(),
             requester: None,
             peer: Some(PunchEndpoint {
                 network_id: "net-1".to_string(),
@@ -479,6 +526,61 @@ fn punch_connect_session_peer_endpoint_becomes_direct_udp_candidate() {
         paths[0].candidates[1].address.as_deref(),
         Some("192.168.1.20:49152")
     );
+}
+
+#[test]
+fn peer_path_configs_ignore_zero_port_direct_candidates() {
+    let mut peer = test_peer("node-peer", &["10.0.0.9"]);
+    peer.endpoints.push(crate::control_plane::ControlEndpoint {
+        endpoint_type: "direct_udp".to_string(),
+        address: "10.0.0.9:0".to_string(),
+        updated_at: 0,
+    });
+    peer.endpoints.push(crate::control_plane::ControlEndpoint {
+        endpoint_type: "direct_udp".to_string(),
+        address: "203.0.113.20:49152".to_string(),
+        updated_at: 0,
+    });
+    let mut connect_plans = std::collections::BTreeMap::new();
+    connect_plans.insert(
+        peer.node_id.clone(),
+        PersistedConnectPlan {
+            peer_node_id: peer.node_id.clone(),
+            prefer_direct: true,
+            paths: vec![PersistedConnectPlanPath {
+                path_type: "direct_udp".to_string(),
+                endpoint: "10.0.0.9:0".to_string(),
+                priority: 100,
+            }],
+            relay_ticket: None,
+            updated_at_ms: 1,
+        },
+    );
+
+    let paths = peer_path_configs(
+        &[peer],
+        "node-local",
+        &test_relay_selection("relay-udp", "udp", "relay.example:3478"),
+        &[],
+        &[],
+        Some(connect_plans),
+        Some(std::collections::BTreeMap::new()),
+    );
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0].candidates.len(), 1);
+    assert_eq!(
+        paths[0].candidates[0].address.as_deref(),
+        Some("203.0.113.20:49152")
+    );
+}
+
+#[test]
+fn valid_direct_candidate_address_rejects_zero_port() {
+    assert!(valid_direct_candidate_address("203.0.113.20:49152"));
+    assert!(valid_direct_candidate_address("udp://203.0.113.20:49152"));
+    assert!(!valid_direct_candidate_address("203.0.113.20:0"));
+    assert!(!valid_direct_candidate_address("udp://203.0.113.20:0"));
 }
 
 #[test]
