@@ -95,6 +95,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   openDeviceGroupBindingDialog(group: DeviceGroupRow): void {
+    this.closeInlinePopovers();
     this.bindingDeviceGroup = group;
     this.deviceGroupBindingIds = this.currentUserDevices
       .filter((device) => this.deviceInGroup(device, group.groupId))
@@ -165,6 +166,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   openDeviceGroupPickerDialog(device: DeviceRow): void {
+    this.closeInlinePopovers();
     this.bindingGroupDevice = device;
     this.selectedDeviceGroupIds = [...(this.deviceGroupIdsByDevice[device.deviceId] ?? [])];
     this.deviceGroupBindingMessage = '';
@@ -223,6 +225,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   openDeviceGroupDialog(group?: DeviceGroupRow): void {
+    this.closeInlinePopovers();
     this.deviceListMessage = '';
     this.editingDeviceGroup = group?.groupId ? group : null;
     this.deviceGroupDialogMode = group?.groupId ? 'edit' : 'create';
@@ -363,6 +366,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   openDeviceAliasDialog(device: DeviceRow): void {
+    this.closeInlinePopovers();
     if (this.showDeviceAliasDialog && this.editingDevice?.deviceId === device.deviceId) {
       this.closeDeviceAliasDialog();
       return;
@@ -404,6 +408,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     this.notifyStateChanged();
   }
   async openInviteDialog(): Promise<void> {
+    this.closeInlinePopovers();
     this.deviceListMessage = '';
     const network = this.workspaces.find((item) => item.workspaceId === this.selectedWorkspaceId) ?? this.workspaces[0];
     if (!network) {
@@ -467,6 +472,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   async openBootstrapDialog(): Promise<void> {
+    this.closeInlinePopovers();
     this.deviceListMessage = '';
     const network = this.workspaces.find((item) => item.workspaceId === this.bootstrapNetworkId) ?? this.workspaces[0];
     if (!network) {
@@ -561,6 +567,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   openJoinDialog(device: DeviceRow): void {
+    this.closeInlinePopovers();
     this.deviceListMessage = '';
     this.deviceId = device.deviceId;
     this.joinInviteCode = '';
@@ -604,13 +611,14 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   openDeviceExposureDialog(device: DeviceRow): void {
+    this.closeInlinePopovers();
     this.selectedExposureDevice = device;
-    this.exposureUser = 'bob@staticlss.com';
+    this.exposureUser = '';
     this.showDeviceExposureDialog = true;
   }
 
   closeDeviceExposureDialog(): void {
-    this.showDeviceExposureDialog = false;
+    this.closeDeviceExposureDialogState();
   }
 
   addDeviceExposure(): void {

@@ -17,6 +17,19 @@ import { UserAliasPageComponent } from './user-alias/user-alias-page.component';
   encapsulation: ViewEncapsulation.None,
 })
 export class AppComponent extends AppComponentAuth {
+  private readonly handlePopState = () => this.applyRouteFromLocation();
+  private readonly handleWindowKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    this.closeInlinePopovers();
+    if (this.closeTopmostOverlay()) {
+      this.notifyStateChanged();
+      return;
+    }
+    this.notifyStateChanged();
+  };
+
   constructor(api: AppApiClient, private readonly changeDetector: ChangeDetectorRef) {
     super(api);
   }
@@ -24,7 +37,13 @@ export class AppComponent extends AppComponentAuth {
   ngOnInit(): void {
     void this.loadClientDownloads();
     void this.initializeCustomerAuthFromUrl();
-    window.addEventListener('popstate', () => this.applyRouteFromLocation());
+    window.addEventListener('popstate', this.handlePopState);
+    window.addEventListener('keydown', this.handleWindowKeyDown);
+  }
+
+  ngOnDestroy(): void {
+    window.removeEventListener('popstate', this.handlePopState);
+    window.removeEventListener('keydown', this.handleWindowKeyDown);
   }
 
   get vm(): this {

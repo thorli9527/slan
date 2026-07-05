@@ -6,7 +6,7 @@
         <p>为接入用户邮箱设置别名；其它界面优先显示别名，不再显示邮箱。</p>
       </div>
     </div>
-    <table>
+    <table class="compact-table">
       <thead><tr><th>用户邮箱</th><th>显示别名</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let user of vm.managedUserAliases">
@@ -33,7 +33,7 @@
               </div>
             </div>
           </td>
-          <td>
+          <td class="table-actions">
             <button class="table-icon-button" type="button" title="编辑别名" aria-label="编辑别名" (click)="vm.openUserAliasDialog(user)">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M4 20h4l10-10-4-4L4 16v4"></path>

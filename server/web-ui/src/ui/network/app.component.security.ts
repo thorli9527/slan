@@ -49,6 +49,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   }
 
   async openSecurityGroupDialog(): Promise<void> {
+    this.closeInlinePopovers();
     this.securityGroupDialogMessage = '';
     try {
       const created = await this.api.post<ApiSecurityGroup>(WEB_API.securityGroups(this.selectedWorkspaceId), {
@@ -83,6 +84,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   }
 
   openSecurityGroupNameTagDialog(group: SecurityGroupRow): void {
+    this.closeInlinePopovers();
     if (this.showSecurityGroupNameTagDialog && this.editingSecurityGroup?.securityGroupId === group.securityGroupId) {
       this.closeSecurityGroupNameTagDialog();
       return;
@@ -141,6 +143,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   }
 
   openRuleDialog(direction: string): void {
+    this.closeInlinePopovers();
     this.securityRuleDialogMessage = '';
     this.ruleDirection = direction;
     this.selectedRuleTemplate = direction === 'egress' ? '全部出站' : 'Web 服务';
@@ -153,6 +156,7 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   }
 
   openEditRuleDialog(rule: SecurityRuleRow): void {
+    this.closeInlinePopovers();
     this.securityRuleDialogMessage = '';
     this.ruleDirection = rule.direction;
     this.rulePriority = rule.priority;

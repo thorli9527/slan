@@ -118,8 +118,8 @@
   </main>
 </div>
 
-<div class="modal-backdrop" *ngIf="showPasswordDialog">
-  <section class="modal">
+<div class="modal-backdrop" *ngIf="showPasswordDialog" (click)="dismissOverlayBackdrop()">
+  <section class="modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
         <h2>修改密码</h2>

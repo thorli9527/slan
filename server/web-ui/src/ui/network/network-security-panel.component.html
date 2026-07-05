@@ -15,16 +15,12 @@
   <p>安全组默认作用于当前网络全部设备；入方向控制谁能访问你，出方向控制你能访问哪里。</p>
   <div class="rules-table-wrap">
     <table class="compact-table">
-      <thead><tr><th>安全组 ID</th><th>安全组名称</th><th>创建时间</th><th>操作</th></tr></thead>
+      <thead><tr><th>安全组</th><th>名称</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let group of vm.currentSecurityGroups">
           <td>
-            <button class="table-icon-button subtle" type="button" title="查看安全组规则" aria-label="查看安全组规则" (click)="vm.openSecurityGroupRules(group)">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
-                <circle cx="12" cy="12" r="3"></circle>
-              </svg>
-            </button>
+            <button class="text-link" type="button" title="查看安全组规则" aria-label="查看安全组规则" (click)="vm.openSecurityGroupRules(group)">查看规则</button>
+            <code>{{ group.securityGroupId }}</code>
           </td>
           <td class="tag-cell-wrapper">
             <div class="alias-tag-cell">
@@ -70,6 +66,10 @@
   <div class="rules-columns">
     <div>
       <div class="section-title">
+        <div>
+          <h3>入方向规则</h3>
+          <p>控制谁可以访问当前网络中的设备与端口。</p>
+        </div>
         <button class="table-icon-button" type="button" title="新增入方向" aria-label="新增入方向" (click)="vm.openRuleDialog('ingress')">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 5v14"></path>
@@ -113,6 +113,10 @@
     </div>
     <div>
       <div class="section-title">
+        <div>
+          <h3>出方向规则</h3>
+          <p>控制当前网络中的设备可以访问哪些目标。</p>
+        </div>
         <button class="table-icon-button" type="button" title="新增出方向" aria-label="新增出方向" (click)="vm.openRuleDialog('egress')">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 5v14"></path>

@@ -38,19 +38,23 @@ export abstract class AppComponentNetworks extends AppComponentData {
   }
 
   openWorkspaceDetail(workspace: WorkspaceRow, panel: WorkspacePanel = 'zones'): void {
+    this.closeInlinePopovers();
+    this.closeDeviceExposureDialogState();
     this.selectedWorkspaceId = workspace.workspaceId;
     this.editingWorkspaceName = workspace.name;
     this.workspacePanel = panel;
     this.workspaceRouteMode = 'detail';
     this.active = 'workspaces';
-    history.pushState({}, '', workspacePanelPath(workspace.workspaceId, panel, this.selectedZoneId, this.selectedSecurityGroupId));
+    this.navigateTo(workspacePanelPath(workspace.workspaceId, panel, this.selectedZoneId, this.selectedSecurityGroupId));
     void this.loadWorkspaceDevices(workspace.workspaceId);
   }
 
   backToWorkspaceList(): void {
+    this.closeInlinePopovers();
+    this.closeDeviceExposureDialogState();
     this.workspaceRouteMode = 'list';
     this.active = 'workspaces';
-    history.pushState({}, '', '/spaces');
+    this.navigateTo('/spaces');
   }
 
   openWorkspacePanel(workspace: WorkspaceRow, panel: WorkspacePanel): void {
@@ -58,32 +62,36 @@ export abstract class AppComponentNetworks extends AppComponentData {
   }
 
   openZoneRecords(zone?: DNSZoneRow): void {
+    this.closeInlinePopovers();
     if (zone) {
       this.selectedZoneId = zone.zoneId ?? this.selectedZoneId;
     }
     this.workspacePanel = 'records';
-    history.pushState({}, '', workspacePanelPath(this.selectedWorkspaceId, 'records', this.selectedZoneId, this.selectedSecurityGroupId));
+    this.navigateTo(workspacePanelPath(this.selectedWorkspaceId, 'records', this.selectedZoneId, this.selectedSecurityGroupId));
   }
 
   openSecurityRules(): void {
+    this.closeInlinePopovers();
     this.selectedSecurityGroupId = this.currentSecurityGroups[0]?.securityGroupId ?? this.selectedSecurityGroupId;
     this.workspacePanel = 'securityRules';
-    history.pushState({}, '', workspacePanelPath(this.selectedWorkspaceId, 'securityRules', this.selectedZoneId, this.selectedSecurityGroupId));
+    this.navigateTo(workspacePanelPath(this.selectedWorkspaceId, 'securityRules', this.selectedZoneId, this.selectedSecurityGroupId));
   }
 
   openSecurityGroupRules(group: SecurityGroupRow): void {
+    this.closeInlinePopovers();
     this.selectedSecurityGroupId = group.securityGroupId;
     this.workspacePanel = 'securityRules';
-    history.pushState({}, '', workspacePanelPath(this.selectedWorkspaceId, 'securityRules', this.selectedZoneId, this.selectedSecurityGroupId));
+    this.navigateTo(workspacePanelPath(this.selectedWorkspaceId, 'securityRules', this.selectedZoneId, this.selectedSecurityGroupId));
     void this.loadSecurityRules(group.securityGroupId);
   }
 
   setWorkspacePanel(panel: WorkspacePanel): void {
+    this.closeInlinePopovers();
     if (panel === 'publicMappings' && !this.publicMappingsEnabled) {
       panel = 'zones';
     }
     this.workspacePanel = panel;
-    history.pushState({}, '', workspacePanelPath(this.selectedWorkspaceId, panel, this.selectedZoneId, this.selectedSecurityGroupId));
+    this.navigateTo(workspacePanelPath(this.selectedWorkspaceId, panel, this.selectedZoneId, this.selectedSecurityGroupId));
     void this.loadWorkspaceResources(this.selectedWorkspaceId);
   }
 
@@ -106,6 +114,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
   }
 
   openWorkspaceDialog(): void {
+    this.closeInlinePopovers();
     this.workspaceName = '默认网络';
     this.workspaceCode = '';
     this.workspaceTemplateKey = 'custom';
@@ -117,6 +126,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
   }
 
   openEditWorkspaceDialog(workspace: WorkspaceRow): void {
+    this.closeInlinePopovers();
     this.selectedWorkspaceId = workspace.workspaceId;
     this.workspaceName = workspace.name;
     this.workspaceCode = workspace.code;
@@ -213,6 +223,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
   }
 
   openWorkspaceNameTagDialog(workspace: WorkspaceRow): void {
+    this.closeDeviceExposureDialogState();
     if (this.showWorkspaceNameTagDialog && this.editingWorkspace?.workspaceId === workspace.workspaceId) {
       this.closeWorkspaceTagDialogs();
       return;
@@ -225,6 +236,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
   }
 
   openWorkspacePolicyTagDialog(workspace: WorkspaceRow): void {
+    this.closeDeviceExposureDialogState();
     if (this.showWorkspacePolicyTagDialog && this.editingWorkspace?.workspaceId === workspace.workspaceId) {
       this.closeWorkspaceTagDialogs();
       return;
@@ -349,6 +361,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
   }
 
   openWorkspaceDeviceDialog(): void {
+    this.closeInlinePopovers();
     this.bindDeviceQuery = '';
     this.selectedWorkspaceDeviceId = this.queriedBindableWorkspaceDevices[0]?.deviceId ?? '';
     this.workspaceDeviceDialogMessage = '';
@@ -401,6 +414,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
   }
 
   openWorkspaceDeviceAliasDialog(device: DeviceRow): void {
+    this.closeInlinePopovers();
     if (this.showWorkspaceDeviceAliasDialog && this.editingWorkspaceDevice?.deviceId === device.deviceId) {
       this.closeWorkspaceDeviceAliasDialog();
       return;

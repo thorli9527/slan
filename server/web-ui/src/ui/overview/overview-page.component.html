@@ -65,7 +65,7 @@
         </svg>
       </button>
     </div>
-    <table>
+    <table class="compact-table">
       <thead><tr><th>设备 ID</th><th>别名</th><th>系统</th><th>IP</th><th>状态</th></tr></thead>
       <tbody>
         <tr *ngFor="let device of vm.currentUserDevices">
@@ -91,7 +91,10 @@
     </div>
     <p *ngIf="vm.currentUserDevices.length === 0">当前还没有设备，因此暂无可管理的设备 token。</p>
     <div *ngFor="let device of vm.currentUserDevices" class="device-token-block">
-      <h3>{{ device.alias || device.deviceId }}</h3>
+      <div class="device-token-header">
+        <h3>{{ device.alias || device.deviceId }}</h3>
+        <code>{{ device.deviceId }}</code>
+      </div>
       <table class="compact-table">
         <thead><tr><th>模式</th><th>状态</th><th>过期时间</th><th>刷新过期</th><th>创建时间</th><th>操作</th></tr></thead>
         <tbody>

@@ -88,6 +88,176 @@ export abstract class AppComponentState {
 
   constructor(protected readonly api: AppApiClient) {}
 
+  protected closeInlinePopovers(): void {
+    this.showWorkspaceNameTagDialog = false;
+    this.showWorkspacePolicyTagDialog = false;
+    this.showSecurityGroupNameTagDialog = false;
+    this.showUserAliasDialog = false;
+    this.showDeviceAliasDialog = false;
+    this.showWorkspaceDeviceAliasDialog = false;
+    this.showZoneTagDialog = false;
+    this.editingWorkspace = null;
+    this.editingSecurityGroup = null;
+    this.editingUserAlias = null;
+    this.editingDevice = null;
+    this.editingWorkspaceDevice = null;
+    this.editingZone = null;
+  }
+
+  protected closeDeviceExposureDialogState(): void {
+    this.showDeviceExposureDialog = false;
+    this.selectedExposureDevice = null;
+    this.exposureUser = '';
+  }
+
+  protected navigateTo(path: string): void {
+    history.pushState({}, '', path);
+  }
+
+  protected resetTransientUiState(): void {
+    this.closeInlinePopovers();
+    this.closeDeviceExposureDialogState();
+    this.showPasswordDialog = false;
+    this.showDeviceGroupDialog = false;
+    this.showDeviceGroupBindingDialog = false;
+    this.showDeviceGroupPickerDialog = false;
+    this.showWorkspaceDialog = false;
+    this.showInviteDialog = false;
+    this.showBootstrapDialog = false;
+    this.showJoinDialog = false;
+    this.showWorkspaceDeviceDialog = false;
+    this.showZoneDialog = false;
+    this.showRecordDialog = false;
+    this.showPublicMappingDialog = false;
+    this.showIngressRuleDialog = false;
+    this.showEgressRuleDialog = false;
+    this.authMessage = '';
+    this.passwordMessage = '';
+    this.deviceGroupDialogMessage = '';
+    this.deviceGroupBindingMessage = '';
+    this.deviceListMessage = '';
+    this.deviceAliasDialogMessage = '';
+    this.workspaceDialogMessage = '';
+    this.workspaceDeviceDialogMessage = '';
+    this.workspaceDeviceAliasMessage = '';
+    this.securityGroupDialogMessage = '';
+    this.zoneDialogMessage = '';
+    this.recordDialogMessage = '';
+    this.publicMappingDialogMessage = '';
+    this.securityRuleDialogMessage = '';
+    this.bootstrapMessage = '';
+    this.joinInviteMessage = '';
+  }
+
+  protected closeOverlayDialogs(): void {
+    this.showPasswordDialog = false;
+    this.showDeviceGroupDialog = false;
+    this.showDeviceGroupBindingDialog = false;
+    this.showDeviceGroupPickerDialog = false;
+    this.showWorkspaceDialog = false;
+    this.showInviteDialog = false;
+    this.showBootstrapDialog = false;
+    this.showJoinDialog = false;
+    this.closeDeviceExposureDialogState();
+    this.showWorkspaceDeviceDialog = false;
+    this.showZoneDialog = false;
+    this.showRecordDialog = false;
+    this.showPublicMappingDialog = false;
+    this.showIngressRuleDialog = false;
+    this.showEgressRuleDialog = false;
+  }
+
+  protected closeTopmostOverlay(): boolean {
+    if (this.showPasswordDialog) {
+      this.showPasswordDialog = false;
+      return true;
+    }
+    if (this.showDeviceGroupDialog) {
+      this.showDeviceGroupDialog = false;
+      return true;
+    }
+    if (this.showDeviceGroupBindingDialog) {
+      this.showDeviceGroupBindingDialog = false;
+      return true;
+    }
+    if (this.showDeviceGroupPickerDialog) {
+      this.showDeviceGroupPickerDialog = false;
+      return true;
+    }
+    if (this.showWorkspaceDialog) {
+      this.showWorkspaceDialog = false;
+      return true;
+    }
+    if (this.showInviteDialog) {
+      this.showInviteDialog = false;
+      return true;
+    }
+    if (this.showBootstrapDialog) {
+      this.showBootstrapDialog = false;
+      return true;
+    }
+    if (this.showJoinDialog) {
+      this.showJoinDialog = false;
+      return true;
+    }
+    if (this.showDeviceExposureDialog) {
+      this.closeDeviceExposureDialogState();
+      return true;
+    }
+    if (this.showWorkspaceDeviceDialog) {
+      this.showWorkspaceDeviceDialog = false;
+      return true;
+    }
+    if (this.showZoneDialog) {
+      this.showZoneDialog = false;
+      return true;
+    }
+    if (this.showRecordDialog) {
+      this.showRecordDialog = false;
+      return true;
+    }
+    if (this.showPublicMappingDialog) {
+      this.showPublicMappingDialog = false;
+      return true;
+    }
+    if (this.showIngressRuleDialog || this.showEgressRuleDialog) {
+      this.showIngressRuleDialog = false;
+      this.showEgressRuleDialog = false;
+      return true;
+    }
+    return false;
+  }
+
+  dismissOverlayBackdrop(): void {
+    this.closeInlinePopovers();
+    this.closeTopmostOverlay();
+    this.notifyStateChanged();
+  }
+
+  protected syncWorkspaceSelectionState(): void {
+    if (this.workspaces.length === 0) {
+      this.selectedWorkspaceId = '';
+      this.selectedZoneId = '';
+      this.selectedSecurityGroupId = '';
+      this.workspaceRouteMode = 'list';
+      return;
+    }
+
+    if (!this.workspaces.some((workspace) => workspace.workspaceId === this.selectedWorkspaceId)) {
+      this.selectedWorkspaceId = this.workspaces[0]?.workspaceId ?? '';
+    }
+
+    const zones = this.dnsZones.filter((zone) => zone.workspaceId === this.selectedWorkspaceId);
+    if (!zones.some((zone) => zone.zoneId === this.selectedZoneId)) {
+      this.selectedZoneId = zones[0]?.zoneId ?? '';
+    }
+
+    const groups = this.securityGroups.filter((group) => group.workspaceId === this.selectedWorkspaceId);
+    if (!groups.some((group) => group.securityGroupId === this.selectedSecurityGroupId)) {
+      this.selectedSecurityGroupId = groups[0]?.securityGroupId ?? '';
+    }
+  }
+
   protected async loadClientDownloads(): Promise<void> {}
   protected notifyStateChanged(): void {}
   protected get isDemoMode(): boolean { return !this.currentUserId; }

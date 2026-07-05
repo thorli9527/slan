@@ -4,33 +4,35 @@ import { WEB_API } from '../api-paths';
 
 export abstract class AppComponentOverview extends AppComponentSecurity {
   setActive(id: string): void {
+    this.closeInlinePopovers();
+    this.closeOverlayDialogs();
     this.active = id;
     if (id === 'overview') {
       this.workspaceRouteMode = 'list';
-      history.pushState({}, '', '/overview');
+      this.navigateTo('/overview');
       return;
     }
     if (id === 'devices') {
       this.workspaceRouteMode = 'list';
       this.devicePanel = 'list';
-      history.pushState({}, '', '/devices');
+      this.navigateTo('/devices');
       return;
     }
     if (id === 'deviceGroups') {
       this.active = 'devices';
       this.workspaceRouteMode = 'list';
       this.devicePanel = 'groups';
-      history.pushState({}, '', '/devices/groups');
+      this.navigateTo('/devices/groups');
       return;
     }
     if (id === 'userAliases') {
       this.workspaceRouteMode = 'list';
-      history.pushState({}, '', '/user-aliases');
+      this.navigateTo('/user-aliases');
       return;
     }
     if (id === 'workspaces') {
       this.workspaceRouteMode = 'list';
-      history.pushState({}, '', '/spaces');
+      this.navigateTo('/spaces');
     }
   }
 

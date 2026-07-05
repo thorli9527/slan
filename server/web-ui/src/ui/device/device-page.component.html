@@ -40,12 +40,8 @@
       <tbody>
         <tr *ngFor="let device of vm.currentUserDevices">
           <td class="device-id-cell">
-            <button class="table-icon-button subtle" type="button" [title]="'查看设备: ' + device.deviceId" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
-                <circle cx="12" cy="12" r="3"></circle>
-              </svg>
-            </button>
+            <button class="text-link" type="button" [title]="'查看设备: ' + device.deviceId" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">查看详情</button>
+            <strong>{{ device.alias || device.deviceId }}</strong>
             <code>{{ device.deviceId }}</code>
           </td>
           <td>{{ device.platform }} {{ device.osVersion }}</td>
@@ -214,8 +210,8 @@
   </article>
 </section>
 
-<div class="modal-backdrop" *ngIf="vm.showDeviceGroupDialog">
-  <section class="modal">
+<div class="modal-backdrop" *ngIf="vm.showDeviceGroupDialog" (click)="vm.dismissOverlayBackdrop()">
+  <section class="modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
         <h2>{{ vm.deviceGroupDialogMode === 'create' ? '新增设备分组' : '修改设备分组' }}</h2>
@@ -234,8 +230,8 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="vm.showDeviceGroupBindingDialog">
-  <section class="modal binding-modal">
+<div class="modal-backdrop" *ngIf="vm.showDeviceGroupBindingDialog" (click)="vm.dismissOverlayBackdrop()">
+  <section class="modal binding-modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
         <h2>绑定设备 - {{ vm.bindingDeviceGroup?.name || '-' }}</h2>
@@ -270,8 +266,8 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="vm.showDeviceGroupPickerDialog">
-  <section class="modal binding-modal">
+<div class="modal-backdrop" *ngIf="vm.showDeviceGroupPickerDialog" (click)="vm.dismissOverlayBackdrop()">
+  <section class="modal binding-modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
         <h2>绑定分组</h2>
@@ -309,8 +305,8 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="vm.showBootstrapDialog">
-  <section class="modal">
+<div class="modal-backdrop" *ngIf="vm.showBootstrapDialog" (click)="vm.dismissOverlayBackdrop()">
+  <section class="modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
         <h2>生成接入安装命令</h2>
@@ -353,8 +349,8 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="vm.showInviteDialog">
-  <section class="modal">
+<div class="modal-backdrop" *ngIf="vm.showInviteDialog" (click)="vm.dismissOverlayBackdrop()">
+  <section class="modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
         <h2>生成接入码</h2>
@@ -378,8 +374,8 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="vm.showJoinDialog">
-  <section class="modal">
+<div class="modal-backdrop" *ngIf="vm.showJoinDialog" (click)="vm.dismissOverlayBackdrop()">
+  <section class="modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
         <h2>邀请确认</h2>
@@ -401,8 +397,8 @@
   </section>
 </div>
 
-<div class="modal-backdrop" *ngIf="vm.showDeviceExposureDialog">
-  <section class="modal">
+<div class="modal-backdrop" *ngIf="vm.showDeviceExposureDialog" (click)="vm.dismissOverlayBackdrop()">
+  <section class="modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
         <h2>使用关系</h2>

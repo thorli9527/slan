@@ -31,6 +31,7 @@ import { WEB_API } from '../api-paths';
 
 export abstract class AppComponentDns extends AppComponentDevices {
   openZoneDialog(): void {
+    this.closeInlinePopovers();
     const workspace = this.selectedWorkspace;
     this.zoneDialogMessage = '';
     this.zoneName = workspace.code === 'default' ? 'default.lan' : `${workspace.code}.internal`;
@@ -43,6 +44,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   openEditZoneDialog(zone: DNSZoneRow): void {
+    this.closeInlinePopovers();
     this.zoneDialogMessage = '';
     this.zoneName = zone.zone;
     this.zoneExpose = zone.expose;
@@ -54,6 +56,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   openZoneTagDialog(zone: DNSZoneRow): void {
+    this.closeInlinePopovers();
     if (this.showZoneTagDialog && this.editingZone === zone) {
       this.closeZoneTagDialog();
       return;
@@ -181,6 +184,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   openRecordDialog(): void {
+    this.closeInlinePopovers();
     this.recordDialogMessage = '';
     this.recordName = this.domainName;
     this.recordType = 'A';
@@ -196,6 +200,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   openEditRecordDialog(record: DNSRow): void {
+    this.closeInlinePopovers();
     this.recordDialogMessage = '';
     this.recordName = record.name;
     this.recordType = record.recordType;
@@ -369,6 +374,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   openPublicMappingDialog(): void {
+    this.closeInlinePopovers();
     const device = this.currentUserDevices[0];
     this.publicMappingDialogMessage = '';
     this.publicAlias = 'api';
@@ -386,6 +392,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   openEditPublicMappingDialog(mapping: PublicMappingRow): void {
+    this.closeInlinePopovers();
     this.publicMappingDialogMessage = '';
     const targetType = mapping.targetType ?? (mapping.deviceId ? 'device' : mapping.internalIp ? 'ip' : 'device');
     const record = targetType === 'record'

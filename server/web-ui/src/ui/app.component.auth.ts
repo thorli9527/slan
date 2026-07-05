@@ -151,9 +151,9 @@ export class AppComponentAuth extends AppComponentOverview {
   }
 
   logout(): void {
+    this.resetTransientUiState();
     this.currentSessionToken = '';
     this.currentRefreshToken = '';
-    this.authMessage = '';
     clearBrowserAuth();
     this.mode = 'login';
     this.notifyStateChanged();
@@ -268,6 +268,8 @@ export class AppComponentAuth extends AppComponentOverview {
   }
 
   openPasswordDialog(): void {
+    this.closeInlinePopovers();
+    this.closeDeviceExposureDialogState();
     this.oldPassword = '';
     this.newPassword = '';
     this.confirmPassword = '';

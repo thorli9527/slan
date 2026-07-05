@@ -7,6 +7,9 @@ import { FormsModule } from '@angular/forms';
   standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './network-security-panel.component.html',
+  host: {
+    class: 'detail-panel-host',
+  },
 })
 export class NetworkSecurityPanelComponent {
   @Input({ required: true }) vm!: any;

@@ -4,6 +4,8 @@ import { WEB_API } from '../api-paths';
 
 export abstract class AppComponentUserAlias extends AppComponentNetworks {
   openUserAliasDialog(user: UserAliasRow): void {
+    this.closeInlinePopovers();
+    this.closeDeviceExposureDialogState();
     if (this.showUserAliasDialog && this.editingUserAlias?.email === user.email) {
       this.closeUserAliasDialog();
       return;

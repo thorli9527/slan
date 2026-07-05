@@ -49,41 +49,54 @@ export abstract class AppComponentData extends AppComponentState {
   protected override applyRouteFromLocation(): void {
     const path = window.location.pathname;
     if (path === '/' || path === '/overview') {
+      this.closeInlinePopovers();
+      this.closeOverlayDialogs();
       this.active = 'overview';
       this.workspaceRouteMode = 'list';
       return;
     }
     if (path === '/devices') {
+      this.closeInlinePopovers();
+      this.closeOverlayDialogs();
       this.active = 'devices';
       this.devicePanel = 'list';
       this.workspaceRouteMode = 'list';
       return;
     }
     if (path === '/devices/groups') {
+      this.closeInlinePopovers();
+      this.closeOverlayDialogs();
       this.active = 'devices';
       this.devicePanel = 'groups';
       this.workspaceRouteMode = 'list';
       return;
     }
     if (path === '/user-aliases') {
+      this.closeInlinePopovers();
+      this.closeOverlayDialogs();
       this.active = 'userAliases';
       this.workspaceRouteMode = 'list';
       return;
     }
     const match = path.match(/^\/space\/([^/]+)(?:\/(.+))?$/);
     if (match) {
+      this.closeInlinePopovers();
+      this.closeOverlayDialogs();
       this.selectedWorkspaceId = decodeURIComponent(match[1]);
       this.editingWorkspaceName = this.selectedWorkspace.name;
       const routePanel = panelFromRoute(match[2] ?? '');
       this.workspacePanel = routePanel.panel === 'publicMappings' && !this.publicMappingsEnabled ? 'zones' : routePanel.panel;
       this.selectedZoneId = routePanel.selectedZoneId ?? this.selectedZoneId;
       this.selectedSecurityGroupId = routePanel.selectedSecurityGroupId ?? this.selectedSecurityGroupId;
+      this.syncWorkspaceSelectionState();
       this.workspaceRouteMode = 'detail';
       this.active = 'workspaces';
       void this.loadWorkspaceResources(this.selectedWorkspaceId);
       return;
     }
     if (window.location.pathname === '/spaces') {
+      this.closeInlinePopovers();
+      this.closeOverlayDialogs();
       this.workspaceRouteMode = 'list';
       this.active = 'workspaces';
     }
@@ -121,6 +134,7 @@ export abstract class AppComponentData extends AppComponentState {
       }));
       await Promise.all(this.workspaces.map((workspace) => this.loadWorkspaceDevices(workspace.workspaceId)));
       await this.loadCurrentUserDeviceSessions();
+      this.syncWorkspaceSelectionState();
     } catch {
       if (!this.isDemoMode) {
         this.devices = [];
@@ -135,6 +149,7 @@ export abstract class AppComponentData extends AppComponentState {
         this.workspaceDeviceIdsByWorkspace = {};
         this.workspaceDeviceJoinMethods = {};
         this.workspaces = [];
+        this.syncWorkspaceSelectionState();
       }
     }
   }
@@ -222,6 +237,7 @@ export abstract class AppComponentData extends AppComponentState {
       tasks.push(this.loadPublicMappings(workspaceId));
     }
     await Promise.all(tasks);
+    this.syncWorkspaceSelectionState();
     this.notifyStateChanged();
   }
 

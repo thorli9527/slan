@@ -26,12 +26,8 @@
       <tbody>
         <tr *ngFor="let device of vm.workspaceDevices">
           <td class="device-id-cell">
-            <button class="table-icon-button subtle" type="button" [title]="'查看设备: ' + device.deviceId" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
-                <circle cx="12" cy="12" r="3"></circle>
-              </svg>
-            </button>
+            <button class="text-link" type="button" [title]="'查看设备: ' + device.deviceId" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">查看详情</button>
+            <strong>{{ device.alias || device.deviceId }}</strong>
             <code>{{ device.deviceId }}</code>
           </td>
           <td>{{ vm.workspaceDeviceOwnerLabel(device) }}</td>
