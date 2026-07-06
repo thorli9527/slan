@@ -15,10 +15,13 @@ func newMQTTConfig() mqttkit.Config {
 	if value, ok := envBool("SLAN_MQTT_ENABLED"); ok {
 		cfg.Enabled = value
 	}
+	if value := envString("SLAN_MQTT_BROKER_URL"); value != "" {
+		cfg.BrokerURL = value
+	}
 	if value := envString("SLAN_MQTT_PUBLIC_BROKER_URL"); value != "" {
-		cfg.BrokerURL = value
+		cfg.PublicBrokerURL = value
 	} else if value := envString("SLAN_MQTT_BROKER_URL"); value != "" {
-		cfg.BrokerURL = value
+		cfg.PublicBrokerURL = value
 	}
 	if value := envString("SLAN_MQTT_TOPIC_PREFIX"); value != "" {
 		cfg.TopicPrefix = value

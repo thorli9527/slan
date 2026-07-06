@@ -47,11 +47,11 @@ func (s NetworkCoreService) CreateNetwork(ctx context.Context, input CreateNetwo
 	if err := s.Networks.SaveNetwork(ctx, item); err != nil {
 		return NetworkSummaryView{}, err
 	}
-	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, "network_created")
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, "network_created")
 	if err != nil {
 		return NetworkSummaryView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return NetworkSummaryView{}, err
 	}
 	return s.summarizeNetwork(ctx, item)
@@ -70,11 +70,11 @@ func (s NetworkCoreService) UpdateNetwork(ctx context.Context, input UpdateNetwo
 	if err := s.Networks.SaveNetwork(ctx, item); err != nil {
 		return NetworkSummaryView{}, err
 	}
-	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.Broadcaster, s.Now, item.NetworkID, "network_updated")
+	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, "network_updated")
 	if err != nil {
 		return NetworkSummaryView{}, err
 	}
-	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.Broadcaster, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
+	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
 		return NetworkSummaryView{}, err
 	}
 	return s.summarizeNetwork(ctx, item)

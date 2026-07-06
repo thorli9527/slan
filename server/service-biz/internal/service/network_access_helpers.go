@@ -57,7 +57,7 @@ func securityPeer(value string) (string, string) {
 	return "cidr", value
 }
 
-func normalizedSecurityPeer(peerType, peerValue, legacyCIDR string) (string, string) {
+func normalizedSecurityPeer(peerType, peerValue, fallbackCIDR string) (string, string) {
 	peerType = strings.ToLower(strings.TrimSpace(peerType))
 	peerValue = strings.TrimSpace(peerValue)
 	if peerType != "" {
@@ -75,7 +75,7 @@ func normalizedSecurityPeer(peerType, peerValue, legacyCIDR string) (string, str
 		}
 		return peerType, peerValue
 	}
-	return securityPeer(legacyCIDR)
+	return securityPeer(fallbackCIDR)
 }
 
 func securityRuleLegacyCIDR(peerType, peerValue string) string {
@@ -94,11 +94,27 @@ func securityRuleLegacyCIDR(peerType, peerValue string) string {
 func validateSecurityRulePeer(
 	ctx context.Context,
 	devices repository.DeviceRepository,
+	networks repository.NetworkRepository,
 	actorUserID string,
+	networkID string,
 	peerType string,
 	peerValue string,
 ) error {
 	peerType, peerValue = normalizedSecurityPeer(peerType, peerValue, "")
+	networkID = normalizeNetworkID(networkID)
+	activeNetworkDevicesByID := map[string]model.NetworkDevice{}
+	if networkID != "" && networks != nil {
+		items, err := networks.ListNetworkDevices(ctx, networkID)
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			if !networkMemberActive(item) {
+				continue
+			}
+			activeNetworkDevicesByID[item.DeviceID] = item
+		}
+	}
 	switch peerType {
 	case "", "cidr":
 		return ErrInvalidArgument
@@ -110,7 +126,15 @@ func validateSecurityRulePeer(
 			return nil
 		}
 		return ErrInvalidArgument
-	case "device", "user", "workspace":
+	case "device":
+		if peerValue == "" {
+			return ErrInvalidArgument
+		}
+		if _, ok := activeNetworkDevicesByID[peerValue]; !ok {
+			return ErrInvalidArgument
+		}
+		return nil
+	case "user", "workspace":
 		if peerValue == "" {
 			return ErrInvalidArgument
 		}
@@ -126,7 +150,21 @@ func validateSecurityRulePeer(
 		if !ok || strings.TrimSpace(group.UserID) == "" || group.UserID != actorUserID {
 			return ErrInvalidArgument
 		}
-		return nil
+		assignments, err := devices.ListDeviceGroupAssignments(ctx, actorUserID)
+		if err != nil {
+			return err
+		}
+		for _, assignment := range assignments {
+			if _, ok := activeNetworkDevicesByID[assignment.DeviceID]; !ok {
+				continue
+			}
+			for _, groupID := range assignment.GroupIDs {
+				if strings.TrimSpace(groupID) == peerValue {
+					return nil
+				}
+			}
+		}
+		return ErrInvalidArgument
 	default:
 		return ErrInvalidArgument
 	}

@@ -1,0 +1,51 @@
+<section class="detail-card" *ngIf="vm.workspacePanel === 'deviceGroups'">
+  <div class="section-title">
+    <div>
+      <h3>设备分组</h3>
+      <p>这里只显示当前网络下已经生效的设备分组；设备绑定和细分调整可在设备页继续管理。</p>
+    </div>
+    <div class="table-actions">
+      <button class="table-icon-button" type="button" title="新增分组" aria-label="新增分组" (click)="vm.openDeviceGroupDialog()">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 5v14"></path>
+          <path d="M5 12h14"></path>
+        </svg>
+      </button>
+      <button class="ghost" type="button" (click)="vm.setWorkspacePanel('devices')">设备页管理</button>
+    </div>
+  </div>
+  <p class="form-error" *ngIf="vm.deviceListMessage">{{ vm.deviceListMessage }}</p>
+  <div class="rules-table-wrap">
+    <table class="compact-table">
+      <thead><tr><th>分组名称</th><th>描述</th><th>当前网络设备数</th><th>当前网络设备</th><th>操作</th></tr></thead>
+      <tbody>
+        <tr *ngFor="let group of vm.workspaceDeviceGroups">
+          <td><strong>{{ group.name }}</strong><div class="muted-inline"><code>{{ group.groupId }}</code></div></td>
+          <td>{{ group.description || '-' }}</td>
+          <td>{{ vm.workspaceDeviceGroupCount(group.groupId) }}</td>
+          <td>{{ vm.workspaceDeviceNamesInGroup(group.groupId) }}</td>
+          <td class="table-actions">
+            <button class="table-icon-button" type="button" title="编辑分组" aria-label="编辑分组" (click)="vm.openDeviceGroupDialog(group)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 20h4l10-10-4-4L4 16v4"></path>
+                <path d="M13 7l4 4"></path>
+              </svg>
+            </button>
+            <button class="table-icon-button danger" type="button" title="删除分组" aria-label="删除分组" (click)="vm.removeDeviceGroup(group)">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16"></path>
+                <path d="M9 7V5h6v2"></path>
+                <path d="M8 7l1 12h6l1-12"></path>
+                <path d="M10 11v5"></path>
+                <path d="M14 11v5"></path>
+              </svg>
+            </button>
+          </td>
+        </tr>
+        <tr *ngIf="vm.workspaceDeviceGroups.length === 0">
+          <td colspan="5">当前网络下暂无已生效分组。先在设备页给设备绑定分组，或在这里新增一个分组。</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>

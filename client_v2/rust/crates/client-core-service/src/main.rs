@@ -9,7 +9,10 @@ mod control_transport_worker;
 mod local_api;
 #[cfg(test)]
 mod main_tests;
+mod network_event;
+mod network_event_apply;
 mod network_module;
+mod network_runtime_state;
 mod relay_candidates;
 mod relay_models;
 mod relay_store;
@@ -79,7 +82,7 @@ use crate::local_api::{
 };
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
-    extract_persisted_relay_candidates_from_network_map, normalize_relay_candidate_address,
+    extract_persisted_relay_candidates_from_control_map, normalize_relay_candidate_address,
     relay_candidate_probe_fallback, replace_runtime_relay_candidates, runtime_relay_candidates,
     select_relay_candidates,
 };
@@ -552,16 +555,8 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalPeers => return handle_local_peers(),
         LocalServiceMethod::LocalNetworkActivate => {}
         LocalServiceMethod::LocalNetworkModule => {
-            match load_session() {
-                Ok(session) => {
-                    let client = ControlPlaneClient::from_env();
-                    if let Err(err) = crate::network_module::refresh_network_module_from_session(
-                        &client, &session,
-                    ) {
-                        eprintln!("client-core-service localNetworkModule refresh failed: {err:#}");
-                    }
-                }
-                Err(_) => crate::network_module::clear_network_module(),
+            if load_session().is_err() {
+                crate::network_module::clear_network_module();
             }
             return serde_json::to_string(&crate::network_module::network_module_snapshot())
                 .context("encode local network module");
@@ -2211,7 +2206,7 @@ fn execute_control_task(
     task_queue: &Arc<Mutex<ControlTaskQueue>>,
     task: control_tasks::ControlTask,
 ) -> ClientViewState {
-    if task.action == ControlTaskAction::RefreshNetworkConfig {
+    if task.action == ControlTaskAction::ReconcileNetworkState {
         let state = {
             let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
             match sync_downstream_network_assignment(&mut runtime) {
@@ -2245,7 +2240,7 @@ fn execute_control_task(
     let command = match task.action {
         ControlTaskAction::EnableNetwork => ClientCommand::EnableNetwork,
         ControlTaskAction::DisableNetwork => ClientCommand::DisableNetwork,
-        ControlTaskAction::RefreshNetworkConfig => unreachable!("handled above"),
+        ControlTaskAction::ReconcileNetworkState => unreachable!("handled above"),
         ControlTaskAction::DeviceUserLoginSucceeded => unreachable!("handled above"),
     };
     let state = {
@@ -2322,14 +2317,14 @@ where
                     log_service_error(format!(
                         "client-core-service password login hydrate failed; retry register device: {hydrate_error:#}"
                     ));
-                    let fallback = PersistedSession::from(auth_payload.clone());
-                    match ensure_session_device_registered(fallback.clone()) {
+                    let recovered = PersistedSession::from(auth_payload.clone());
+                    match ensure_session_device_registered(recovered.clone()) {
                         Ok(session) => session,
                         Err(register_error) => {
                             log_service_error(format!(
-                                "client-core-service password login device registration fallback failed: {register_error:#}"
+                                "client-core-service password login device registration recovery failed: {register_error:#}"
                             ));
-                            fallback
+                            recovered
                         }
                     }
                 }
@@ -2364,14 +2359,14 @@ where
                     log_service_error(format!(
                         "client-core-service apply device user login hydrate failed; retry register device: {hydrate_error:#}"
                     ));
-                    let fallback = PersistedSession::from(payload.clone());
-                    match ensure_session_device_registered(fallback.clone()) {
+                    let recovered = PersistedSession::from(payload.clone());
+                    match ensure_session_device_registered(recovered.clone()) {
                         Ok(session) => session,
                         Err(register_error) => {
                             log_service_error(format!(
-                                "client-core-service apply device user login fallback failed: {register_error:#}"
+                                "client-core-service apply device user login recovery failed: {register_error:#}"
                             ));
-                            fallback
+                            recovered
                         }
                     }
                 }
@@ -2556,8 +2551,7 @@ where
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(&mut session)?;
     let network_configs =
-        crate::network_module::refresh_network_module_from_session(&client, &session)
-            .unwrap_or_default();
+        crate::network_module::network_module_configs_for_session(&client, &session);
     let mut activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
     activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
     session.self_node_id = activation.self_node_id.clone();
@@ -2706,10 +2700,9 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
         activation.self_node_id.as_deref(),
         &activation.peers,
         best_relay.as_ref(),
-        &platform_acl_policies(
-            &crate::network_module::refresh_network_module_from_session(&client, &session)
-                .unwrap_or_default(),
-        ),
+        &platform_acl_policies(&crate::network_module::network_module_configs_for_session(
+            &client, &session,
+        )),
         false,
     )
 }
@@ -2843,8 +2836,7 @@ where
     let relay_candidates = runtime_relay_candidates();
     let best_relay = data_plane_relay_candidate(&relay_candidates);
     let network_configs =
-        crate::network_module::refresh_network_module_from_session(&client, session)
-            .unwrap_or_default();
+        crate::network_module::network_module_configs_for_session(&client, session);
     let acl_policies = platform_acl_policies(&network_configs);
     let relay_config = build_relay_data_plane_config(
         &client,
@@ -2903,11 +2895,11 @@ where
 fn ensure_active_network_id(session: &mut PersistedSession) -> Result<String> {
     if session.active_network_id.is_none() {
         let client = ControlPlaneClient::from_env();
-        if let Ok(configs) =
-            crate::network_module::refresh_network_module_from_session(&client, session)
-        {
-            session.active_network_id = configs.into_iter().next().map(|config| config.network_id);
-        }
+        session.active_network_id = crate::network_module::network_module_snapshot()
+            .configs
+            .into_iter()
+            .next()
+            .map(|config| config.network_id);
         if session.active_network_id.is_none() {
             session.active_network_id = client.active_network_id(&session.access_token)?;
         }
@@ -3617,8 +3609,8 @@ fn persisted_relay_candidate(candidate: &RelayCandidate) -> PersistedRelayCandid
     }
 }
 
-pub(crate) fn persist_relay_candidates_from_network_map(map: &Value) -> Result<usize> {
-    let candidates = extract_persisted_relay_candidates_from_network_map(map);
+pub(crate) fn persist_relay_candidates_from_control_map(map: &Value) -> Result<usize> {
+    let candidates = extract_persisted_relay_candidates_from_control_map(map);
     if candidates.is_empty() {
         return Ok(0);
     }
@@ -3774,6 +3766,23 @@ pub(crate) fn publish_state_business_event(
     state: &ClientViewState,
 ) {
     let business_data = serde_json::to_value(state).unwrap_or_else(|_| serde_json::json!({}));
+    publish_business_event(state_notifier, business_type, business_data);
+}
+
+pub(crate) fn publish_state_business_event_with_extra(
+    state_notifier: &Arc<StateChangeNotifier>,
+    business_type: impl Into<String>,
+    state: &ClientViewState,
+    extra_business_data: Value,
+) {
+    let mut business_data = serde_json::to_value(state).unwrap_or_else(|_| serde_json::json!({}));
+    if let (Value::Object(current), Value::Object(extra)) =
+        (&mut business_data, extra_business_data)
+    {
+        for (key, value) in extra {
+            current.insert(key, value);
+        }
+    }
     publish_business_event(state_notifier, business_type, business_data);
 }
 

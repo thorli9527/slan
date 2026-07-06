@@ -13,7 +13,9 @@ type deviceRegistrationTestUsers struct {
 	users map[string]model.User
 }
 
-func (s *deviceRegistrationTestUsers) ListUsers(context.Context) ([]model.User, error) { return nil, nil }
+func (s *deviceRegistrationTestUsers) ListUsers(context.Context) ([]model.User, error) {
+	return nil, nil
+}
 
 func (s *deviceRegistrationTestUsers) GetUser(_ context.Context, userID string) (model.User, bool, error) {
 	item, ok := s.users[userID]

@@ -19,8 +19,8 @@ type BindDeviceSessionInput struct {
 
 type RenewDeviceSessionInput struct {
 	RefreshToken   string `json:"refreshToken"`
-	NetworkEnabled *bool `json:"networkEnabled"`
-	RXBytesTotal   int64 `json:"rxBytesTotal"`
-	TXBytesTotal   int64 `json:"txBytesTotal"`
-	LastSeenAt     int64 `json:"lastSeenAt"`
+	NetworkEnabled *bool  `json:"networkEnabled"`
+	RXBytesTotal   int64  `json:"rxBytesTotal"`
+	TXBytesTotal   int64  `json:"txBytesTotal"`
+	LastSeenAt     int64  `json:"lastSeenAt"`
 }

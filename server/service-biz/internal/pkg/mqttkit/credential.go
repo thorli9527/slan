@@ -26,7 +26,7 @@ func CredentialForDevice(cfg Config, deviceID string, now time.Time) *Credential
 	username := fmt.Sprintf("%s:%s:%d", defaultString(cfg.UsernamePrefix, "device"), strings.TrimSpace(deviceID), expiresAt)
 	password := sign(cfg.Secret, clientID, username, deviceID)
 	return &Credential{
-		BrokerURL:   cfg.BrokerURL,
+		BrokerURL:   publicBrokerURL(cfg),
 		ClientID:    clientID,
 		Username:    username,
 		Password:    password,
@@ -45,7 +45,7 @@ func CredentialForSystem(cfg Config, id string, now time.Time) *Credential {
 	username := SystemUsername(cfg, id, expiresAt)
 	password := sign(cfg.Secret, clientID, username, id)
 	return &Credential{
-		BrokerURL:   cfg.BrokerURL,
+		BrokerURL:   publicBrokerURL(cfg),
 		ClientID:    clientID,
 		Username:    username,
 		Password:    password,
@@ -55,7 +55,29 @@ func CredentialForSystem(cfg Config, id string, now time.Time) *Credential {
 }
 
 func CredentialForServer(cfg Config, now time.Time) *Credential {
-	return CredentialForSystem(cfg, ServerID, now)
+	id := strings.TrimSpace(ServerID)
+	if !cfg.Enabled || id == "" {
+		return nil
+	}
+	expiresAt := now.Add(cfg.CredentialTTL).Unix()
+	clientID := fmt.Sprintf("%s-%s", defaultString(cfg.ClientIDPrefix, "slan-device"), strings.ReplaceAll(id, "/", "-"))
+	username := SystemUsername(cfg, id, expiresAt)
+	password := sign(cfg.Secret, clientID, username, id)
+	return &Credential{
+		BrokerURL:   cfg.BrokerURL,
+		ClientID:    clientID,
+		Username:    username,
+		Password:    password,
+		TopicPrefix: topicRoot(cfg),
+		ExpiresAt:   expiresAt,
+	}
+}
+
+func publicBrokerURL(cfg Config) string {
+	if strings.TrimSpace(cfg.PublicBrokerURL) != "" {
+		return strings.TrimSpace(cfg.PublicBrokerURL)
+	}
+	return strings.TrimSpace(cfg.BrokerURL)
 }
 
 func sign(secret string, parts ...string) string {

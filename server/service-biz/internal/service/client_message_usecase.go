@@ -56,7 +56,7 @@ func (s ClientMessageService) SendClientMessage(ctx context.Context, input SendC
 		len(body),
 	)
 
-	topic, err := s.publishToTargetDevice(ctx, targetDeviceID, raw)
+	topic, err := s.publishToNetworkBroadcast(ctx, network.NetworkID, raw)
 	if err != nil {
 		log.Printf(
 			"client message send error networkId=%s fromDeviceId=%s targetDeviceId=%s error=%v",
@@ -114,7 +114,7 @@ func normalizedClientMessageMetadata(metadata map[string]any) map[string]any {
 	return metadata
 }
 
-func (s ClientMessageService) publishToTargetDevice(ctx context.Context, targetDeviceID string, payload []byte) (string, error) {
+func (s ClientMessageService) publishToNetworkBroadcast(ctx context.Context, networkID string, payload []byte) (string, error) {
 	cfg := s.MQTT
 	credential := mqttkit.CredentialForServer(cfg, time.UnixMilli(currentTimeMillis(s.Now)))
 	if credential == nil {
@@ -124,7 +124,7 @@ func (s ClientMessageService) publishToTargetDevice(ctx context.Context, targetD
 	if err != nil {
 		return "", err
 	}
-	topic := mqttDeviceTopicPrefix(cfg, targetDeviceID) + "/control/down"
+	topic := fmt.Sprintf("%s/networks/%s/broadcast", mqttTopicRoot(cfg), strings.TrimSpace(networkID))
 	var lastErr error
 	for attempt := 1; attempt <= 2; attempt++ {
 		if err := publishClientMessageOnce(ctx, brokerURL, credential, topic, payload, attempt); err != nil {

@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     sync::OnceLock,
     sync::{Arc, Mutex},
     thread,
@@ -15,25 +14,26 @@ use serde::Deserialize;
 
 use crate::{
     client_message_mqtt,
+    control_plane::ControlPlaneClient,
     control_tasks::ControlTaskQueue,
     control_transport::{
         self, ControlTransportMessage, ControlTransportMessageKind, ControlTransportTickRequest,
         MqttQos,
     },
-    current_timestamp_ms, load_session, log_service_error, persist_last_client_message_payload,
-    publish_state_business_event, PersistedSession, StateChangeNotifier,
+    current_timestamp_ms, load_session, log_service_error,
+    network_event::{network_event_business_data, NetworkEventEnvelope, NetworkEventType},
+    network_event_apply::{apply_network_event, ApplyResult},
+    network_runtime_state::RuntimeNetworkState,
+    persist_last_client_message_payload, publish_state_business_event,
+    publish_state_business_event_with_extra, PersistedSession, StateChangeNotifier,
     BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
     BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
 };
 
-const DEVICE_NETWORK_ENABLED_EVENT: &str = "device_network_enabled";
-const DEVICE_NETWORK_DISABLED_EVENT: &str = "device_network_disabled";
 const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
 const ACTIVE_NETWORK_RECONCILE_INTERVAL_MS: u64 = 10_000;
 const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
-const REMOTE_NETWORK_CONFIG_REBUILD_COOLDOWN_MS: u64 = 120_000;
-
-static REMOTE_NETWORK_CONFIG_REBUILDS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+static NETWORK_EVENT_RUNTIME_STATE: OnceLock<Mutex<RuntimeNetworkState>> = OnceLock::new();
 
 #[derive(Debug, Default)]
 pub struct ControlTransportWorkerState {
@@ -41,6 +41,10 @@ pub struct ControlTransportWorkerState {
     reconnect_key: Option<String>,
     backoff_ms: u64,
     next_attempt_ms: u64,
+}
+
+fn network_event_runtime_state() -> &'static Mutex<RuntimeNetworkState> {
+    NETWORK_EVENT_RUNTIME_STATE.get_or_init(|| Mutex::new(RuntimeNetworkState::default()))
 }
 
 pub fn spawn_control_transport_supervisor(
@@ -110,13 +114,13 @@ fn run_control_transport_worker(
         password: mqtt.password,
     };
     let mut client = connect_control_mqtt_with_retry(&credential, &downstream_topic)?;
-    if let Some(topic) = network_broadcast_topic(&session) {
+    if let Some(topic) = network_event_topic(&session) {
         match client.subscribe(&topic) {
             Ok(()) => log_service_error(format!(
-                "client-core-service subscribed network broadcast topic={topic}"
+                "client-core-service subscribed network event topic={topic}"
             )),
             Err(error) => log_service_error(format!(
-                "client-core-service failed to subscribe network broadcast topic={topic}: {error}"
+                "client-core-service failed to subscribe network event topic={topic}: {error}"
             )),
         }
     }
@@ -253,7 +257,7 @@ fn reconcile_active_network_state(
             .map_err(|_| "control task queue mutex poisoned".to_string())?;
         queue
             .enqueue_downstream_unacked(
-                crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
                 false,
             )
             .map_err(|err| err.to_string())?;
@@ -312,7 +316,7 @@ fn sync_after_control_mqtt_connected(
     Ok(())
 }
 
-fn network_broadcast_topic(session: &PersistedSession) -> Option<String> {
+fn network_event_topic(session: &PersistedSession) -> Option<String> {
     let network_id = session.active_network_id.as_deref()?.trim();
     if network_id.is_empty() {
         return None;
@@ -360,15 +364,17 @@ fn ingest_downstream_publish(
         );
         return Ok(());
     }
-    if try_ingest_network_map_response(payload, runtime, state_notifier)? {
+    // `network_map_response` is retained only for relay candidate refreshes.
+    // Network membership / DNS / ACL state now flows through `network_event`.
+    if try_ingest_relay_candidates_response(payload, runtime, state_notifier)? {
         log_service_error(
-            "client-core-service consumed downstream control message as network_map_response",
+            "client-core-service consumed downstream control message as relay_candidates_response",
         );
         return Ok(());
     }
-    if try_ingest_network_config_changed(payload, runtime, task_queue, state_notifier)? {
+    if try_ingest_network_event(payload, runtime, task_queue, state_notifier)? {
         log_service_error(
-            "client-core-service consumed downstream control message as network_config_changed",
+            "client-core-service consumed downstream control message as network_event",
         );
         return Ok(());
     }
@@ -392,7 +398,7 @@ fn ingest_downstream_publish(
                     if let Some(delivery_id) = connect_plan.ack_delivery_id {
                         queue
                             .enqueue_downstream(
-                                crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                                crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
                                 delivery_id,
                                 false,
                             )
@@ -400,7 +406,7 @@ fn ingest_downstream_publish(
                     } else {
                         queue
                             .enqueue_downstream_unacked(
-                                crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                                crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
                                 false,
                             )
                             .map_err(|err| err.to_string())?;
@@ -435,12 +441,6 @@ fn ingest_downstream_publish(
         );
         return Ok(());
     }
-    if try_ingest_device_network_presence(payload, runtime, task_queue, state_notifier)? {
-        log_service_error(
-            "client-core-service consumed downstream control message as device_network_presence",
-        );
-        return Ok(());
-    }
     let message: serde_json::Value = serde_json::from_slice(payload)
         .map_err(|err| format!("decode downstream control message: {err}"))?;
     let message_type = message
@@ -448,6 +448,7 @@ fn ingest_downstream_publish(
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let extra_business_data = downstream_control_business_data(&message);
     let self_device_id = load_session()
         .ok()
         .and_then(|session| session.device_id)
@@ -486,19 +487,48 @@ fn ingest_downstream_publish(
         } else {
             BUSINESS_NETWORK_RUNTIME_CHANGED
         };
-        publish_state_business_event(state_notifier, business_type, &state);
+        if let Some(extra) = extra_business_data.clone() {
+            publish_state_business_event_with_extra(state_notifier, business_type, &state, extra);
+        } else {
+            publish_state_business_event(state_notifier, business_type, &state);
+        }
     } else {
-        publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &{
+        let state = {
             let runtime = runtime
                 .lock()
                 .map_err(|_| "client runtime mutex poisoned".to_string())?;
             runtime.state().clone()
-        });
+        };
+        if let Some(extra) = extra_business_data {
+            publish_state_business_event_with_extra(
+                state_notifier,
+                BUSINESS_CONTROL_SYNC_CHANGED,
+                &state,
+                extra,
+            );
+        } else {
+            publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
+        }
     }
     Ok(())
 }
 
-fn try_ingest_device_network_presence(
+fn downstream_control_business_data(message: &serde_json::Value) -> Option<serde_json::Value> {
+    let message_type = message.get("type").and_then(serde_json::Value::as_str)?;
+    let payload = message.get("payload")?;
+    match message_type {
+        "device_network_disabled" => Some(serde_json::json!({
+            "messageType": "device_network_disabled",
+            "networkId": payload.get("networkId").and_then(serde_json::Value::as_str).unwrap_or_default(),
+            "deviceId": payload.get("deviceId").and_then(serde_json::Value::as_str).unwrap_or_default(),
+            "attachmentId": payload.get("attachmentId").and_then(serde_json::Value::as_str).unwrap_or_default(),
+            "reconfigureRequired": true,
+        })),
+        _ => None,
+    }
+}
+
+fn try_ingest_network_event(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     task_queue: &Arc<Mutex<ControlTaskQueue>>,
@@ -506,56 +536,114 @@ fn try_ingest_device_network_presence(
 ) -> Result<bool, String> {
     let value: serde_json::Value =
         serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
-    let message_type = value
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if !is_device_network_presence_event(message_type) {
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("network_event") {
         return Ok(false);
     }
-    let payload_value = value.get("payload").unwrap_or(&value);
-    let device_id = payload_value
-        .get("deviceId")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    let network_id = payload_value
-        .get("networkId")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    let online = payload_value
-        .get("online")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(message_type == DEVICE_NETWORK_ENABLED_EVENT);
-    let online_count = payload_value
-        .get("onlineDevices")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::len)
-        .unwrap_or_default();
-    log_service_error(format!(
-        "client-core-service network presence message type={message_type} networkId={network_id} deviceId={device_id} online={online} onlineDevices={online_count}"
-    ));
-    let session =
-        load_session().map_err(|err| format!("load session for network presence: {err}"))?;
-    if !network_config_changed_targets_session(&value, &session) {
+    let envelope: NetworkEventEnvelope =
+        serde_json::from_value(value).map_err(|err| format!("decode network_event: {err}"))?;
+    let session = load_session().map_err(|err| format!("load session for network event: {err}"))?;
+    if !network_event_targets_session(&envelope, &session) {
         return Ok(true);
     }
-    let client = crate::control_plane::ControlPlaneClient::from_env();
-    crate::network_module::refresh_network_module_from_session(&client, &session)
-        .map_err(|err| format!("refresh client network module from presence: {err:#}"))?;
+    let local_device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_string();
+    let apply_result = {
+        let mut state = network_event_runtime_state()
+            .lock()
+            .map_err(|_| "network event runtime mutex poisoned".to_string())?;
+        apply_network_event(&mut state, envelope.clone())
+            .map_err(|err| format!("apply network event: {err:#}"))?
+    };
+    let mut config_version = envelope.version;
+    let mut sync_mode = match apply_result {
+        ApplyResult::Applied => "event",
+        ApplyResult::IgnoredDuplicate | ApplyResult::IgnoredStale => "ignored",
+        ApplyResult::NeedsSnapshot => "snapshot",
+    };
+    log_service_error(format!(
+        "client-core-service applied network_event networkId={} eventType={:?} version={} result={:?}",
+        envelope.network_id, envelope.event_type, envelope.version, apply_result
+    ));
+    if matches!(apply_result, ApplyResult::Applied) {
+        crate::network_module::apply_network_module_event(
+            &envelope.network_id,
+            &local_device_id,
+            &envelope,
+        )
+        .map_err(|err| format!("apply network module event: {err:#}"))?;
+    }
+    let client = ControlPlaneClient::from_env();
+    if apply_result == ApplyResult::NeedsSnapshot {
+        {
+            let mut state = network_event_runtime_state()
+                .lock()
+                .map_err(|_| "network event runtime mutex poisoned".to_string())?;
+            state.mark_syncing_snapshot();
+        }
+        let snapshot = client
+            .network_snapshot(&session.access_token, &envelope.network_id)
+            .map_err(|err| format!("load network snapshot: {err:#}"))?;
+        config_version = snapshot.version;
+        sync_mode = "snapshot";
+        crate::network_module::replace_network_module_from_snapshot(
+            &snapshot.network_id,
+            &local_device_id,
+            &snapshot.snapshot,
+        );
+        let snapshot_envelope = NetworkEventEnvelope {
+            r#type: "network_event".to_string(),
+            network_id: snapshot.network_id,
+            version: snapshot.version,
+            event_id: format!("snapshot-{}", snapshot.version),
+            event_type: NetworkEventType::NetworkSnapshot,
+            occurred_at: current_timestamp_ms(),
+            payload: serde_json::to_value(snapshot.snapshot)
+                .map_err(|err| format!("encode network snapshot payload: {err}"))?,
+        };
+        let snapshot_result = {
+            let mut state = network_event_runtime_state()
+                .lock()
+                .map_err(|_| "network event runtime mutex poisoned".to_string())?;
+            apply_network_event(&mut state, snapshot_envelope)
+                .map_err(|err| format!("apply network snapshot: {err:#}"))?
+        };
+        log_service_error(format!(
+            "client-core-service applied network snapshot networkId={} version={} result={:?}",
+            envelope.network_id, snapshot.version, snapshot_result
+        ));
+    }
     let current_state = {
         let runtime = runtime
             .lock()
             .map_err(|_| "client runtime mutex poisoned".to_string())?;
         runtime.state().clone()
     };
-    if current_state.signed_in && current_state.network_enabled {
+    let reconfigure_required = current_state.signed_in
+        && current_state.network_enabled
+        && matches!(
+            apply_result,
+            ApplyResult::Applied | ApplyResult::NeedsSnapshot
+        );
+    let business_data = network_event_business_data(
+        &envelope.network_id,
+        &envelope.event_type,
+        config_version,
+        reconfigure_required,
+        sync_mode,
+    );
+    if reconfigure_required {
         {
             let mut queue = task_queue
                 .lock()
                 .map_err(|_| "control task queue mutex poisoned".to_string())?;
             queue
                 .enqueue_downstream_unacked(
-                    crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
+                    crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
                     false,
                 )
                 .map_err(|err| err.to_string())?;
@@ -566,22 +654,21 @@ fn try_ingest_device_network_presence(
         } else {
             BUSINESS_NETWORK_RUNTIME_CHANGED
         };
-        publish_state_business_event(state_notifier, business_type, &state);
+        publish_state_business_event_with_extra(
+            state_notifier,
+            business_type,
+            &state,
+            business_data,
+        );
     } else {
-        publish_state_business_event(
+        publish_state_business_event_with_extra(
             state_notifier,
             BUSINESS_CONTROL_SYNC_CHANGED,
             &current_state,
+            business_data,
         );
     }
     Ok(true)
-}
-
-fn is_device_network_presence_event(message_type: &str) -> bool {
-    matches!(
-        message_type,
-        DEVICE_NETWORK_ENABLED_EVENT | DEVICE_NETWORK_DISABLED_EVENT
-    )
 }
 
 fn log_downstream_message_summary(value: &serde_json::Value) -> Option<String> {
@@ -854,222 +941,19 @@ impl ClientMessagePayload {
     }
 }
 
-fn try_ingest_network_config_changed(
-    payload: &[u8],
-    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-    task_queue: &Arc<Mutex<ControlTaskQueue>>,
-    state_notifier: &Arc<StateChangeNotifier>,
-) -> Result<bool, String> {
-    let value: serde_json::Value =
-        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
-    let message_type = value
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if !is_network_reconfigure_event(message_type) {
-        return Ok(false);
-    }
-    let ack_delivery_id = if message_type == "network_config_changed" {
-        downstream_message_id(&value)
-    } else {
-        None
-    };
-    let session =
-        load_session().map_err(|err| format!("load session for network module: {err}"))?;
-    if !network_config_changed_targets_session(&value, &session) {
-        log_service_error(
-            "client-core-service ignored downstream network config change for stale session",
-        );
-        return Ok(true);
-    }
-    let remote_network_config_change = message_type == "network_config_changed"
-        && !network_message_targets_self_device(&value, &session);
-    let suppress_remote_network_rebuild = remote_network_config_change
-        && !claim_remote_network_config_rebuild(&value, current_timestamp_ms());
-    let client = crate::control_plane::ControlPlaneClient::from_env();
-    crate::network_module::refresh_network_module_from_session(&client, &session)
-        .map_err(|err| format!("refresh client network module: {err:#}"))?;
-    if let Some((virtual_ip, prefix_len)) = network_config_changed_assignment(&value, &session) {
-        let mut runtime = runtime
-            .lock()
-            .map_err(|_| "client runtime mutex poisoned".to_string())?;
-        crate::dispatch_with_side_effects(
-            &mut runtime,
-            ClientCommand::SyncAssignedIp(AssignedIpPayload {
-                virtual_ip,
-                prefix_len,
-            }),
-        );
-    }
-    let current_state = {
-        let runtime = runtime
-            .lock()
-            .map_err(|_| "client runtime mutex poisoned".to_string())?;
-        runtime.state().clone()
-    };
-    if suppress_remote_network_rebuild {
-        log_service_error(
-            "client-core-service ignored remote network change for data plane refresh",
-        );
-        publish_state_business_event(
-            state_notifier,
-            BUSINESS_CONTROL_SYNC_CHANGED,
-            &current_state,
-        );
-    } else if current_state.signed_in && current_state.network_enabled {
-        {
-            let mut queue = task_queue
-                .lock()
-                .map_err(|_| "control task queue mutex poisoned".to_string())?;
-            if let Some(delivery_id) = ack_delivery_id {
-                queue
-                    .enqueue_downstream(
-                        crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
-                        delivery_id,
-                        false,
-                    )
-                    .map_err(|err| err.to_string())?;
-            } else {
-                queue
-                    .enqueue_downstream_unacked(
-                        crate::control_tasks::ControlTaskAction::RefreshNetworkConfig,
-                        false,
-                    )
-                    .map_err(|err| err.to_string())?;
-            }
-        }
-        let state = crate::drain_pending_control_tasks(runtime, task_queue);
-        let business_type = if state.error.is_some() {
-            BUSINESS_NETWORK_SWITCH_FAILED
-        } else {
-            BUSINESS_NETWORK_RUNTIME_CHANGED
-        };
-        publish_state_business_event(state_notifier, business_type, &state);
-    } else {
-        publish_state_business_event(
-            state_notifier,
-            BUSINESS_CONTROL_SYNC_CHANGED,
-            &current_state,
-        );
-    }
-    Ok(true)
-}
-
-fn is_network_reconfigure_event(message_type: &str) -> bool {
-    matches!(
-        message_type,
-        "network_config_changed"
-            | "network_snapshot"
-            | "dns_changed"
-            | "acl_changed"
-            | "network_member_changed"
-    )
-}
-
-fn network_config_changed_targets_session(
-    value: &serde_json::Value,
+fn network_event_targets_session(
+    envelope: &NetworkEventEnvelope,
     session: &PersistedSession,
 ) -> bool {
-    let payload = value.get("payload").unwrap_or(value);
     let expected_network_id = session
         .active_network_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if let Some(network_id) = payload
-        .get("networkId")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if expected_network_id != Some(network_id) {
-            return false;
-        }
-    }
-    true
+    expected_network_id == Some(envelope.network_id.trim())
 }
 
-fn network_message_targets_self_device(
-    value: &serde_json::Value,
-    session: &PersistedSession,
-) -> bool {
-    let payload = value.get("payload").unwrap_or(value);
-    let Some(self_device_id) = session
-        .device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return false;
-    };
-    payload
-        .get("deviceId")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .is_some_and(|device_id| device_id == self_device_id)
-}
-
-fn claim_remote_network_config_rebuild(value: &serde_json::Value, now_ms: u64) -> bool {
-    let payload = value.get("payload").unwrap_or(value);
-    let network_id = payload
-        .get("networkId")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("-");
-    let device_id = payload
-        .get("deviceId")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("-");
-    let key = format!("{network_id}/{device_id}");
-    let mut guard = REMOTE_NETWORK_CONFIG_REBUILDS
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .expect("remote network config rebuild mutex poisoned");
-    if let Some(previous_ms) = guard.get(&key).copied() {
-        if now_ms.saturating_sub(previous_ms) < REMOTE_NETWORK_CONFIG_REBUILD_COOLDOWN_MS {
-            return false;
-        }
-    }
-    guard.insert(key, now_ms);
-    true
-}
-
-fn network_config_changed_assignment(
-    value: &serde_json::Value,
-    session: &PersistedSession,
-) -> Option<(String, Option<u8>)> {
-    let payload = value.get("payload")?;
-    let target_device_id = payload
-        .get("deviceId")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let self_device_id = session
-        .device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    if target_device_id != self_device_id {
-        return None;
-    }
-    let virtual_ip = payload
-        .get("virtualIp")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?
-        .to_string();
-    let prefix_len = payload
-        .get("prefixLen")
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|value| u8::try_from(value).ok())
-        .filter(|value| *value <= 32);
-    Some((virtual_ip, prefix_len))
-}
-
-fn try_ingest_network_map_response(
+fn try_ingest_relay_candidates_response(
     payload: &[u8],
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
     state_notifier: &Arc<StateChangeNotifier>,
@@ -1079,13 +963,15 @@ fn try_ingest_network_map_response(
     if value.get("type").and_then(serde_json::Value::as_str) != Some("network_map_response") {
         return Ok(false);
     }
+    // The wire message type stays `network_map_response` for now, but the only
+    // supported behavior here is refreshing persisted relay candidates.
     let Some(map) = value.pointer("/payload/map") else {
         return Err("network_map_response payload.map is missing".to_string());
     };
-    let count = crate::persist_relay_candidates_from_network_map(map)
-        .map_err(|err| format!("persist relay candidates from network map: {err:#}"))?;
+    let count = crate::persist_relay_candidates_from_control_map(map)
+        .map_err(|err| format!("persist relay candidates from control map: {err:#}"))?;
     log_service_error(format!(
-        "client-core-service refreshed relay candidates from network map: count={count}"
+        "client-core-service refreshed relay candidates from control map: count={count}"
     ));
     let state = {
         let runtime = runtime
@@ -1215,7 +1101,17 @@ fn try_ingest_device_ip_reassigned(
     if let Some(error) = state.error {
         return Err(error);
     }
-    publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
+    publish_state_business_event_with_extra(
+        state_notifier,
+        BUSINESS_CONTROL_SYNC_CHANGED,
+        &state,
+        serde_json::json!({
+            "messageType": "device_ip_reassigned",
+            "deviceId": target_device_id,
+            "virtualIp": virtual_ip,
+            "prefixLen": prefix_len,
+        }),
+    );
     Ok(true)
 }
 
@@ -1439,14 +1335,15 @@ mod tests {
     use client_core_platform::PlatformNetworkImpl;
 
     use super::{
-        ingest_downstream_publish, network_config_changed_assignment,
-        network_config_changed_targets_session, reconcile_active_network_state,
+        ingest_downstream_publish, network_event_targets_session, reconcile_active_network_state,
+        try_ingest_device_ip_reassigned,
     };
     use crate::control_plane::MqttCredential;
+    use crate::network_event::{NetworkEventEnvelope, NetworkEventType};
     use crate::session_store::PersistedSession;
     use crate::{
         control_tasks::ControlTaskQueue, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
-        BUSINESS_NETWORK_SWITCH_FAILED,
+        BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED,
     };
 
     #[test]
@@ -1626,101 +1523,268 @@ mod tests {
     }
 
     #[test]
-    fn network_config_changed_rejects_stale_network() {
+    fn network_event_rejects_stale_network() {
         let mut session = PersistedSession::empty();
         session.device_id = Some("dev-current".to_string());
         session.active_network_id = Some("net-current".to_string());
 
-        let current = serde_json::json!({
-            "type": "network_config_changed",
+        let current = NetworkEventEnvelope {
+            r#type: "network_event".to_string(),
+            network_id: "net-current".to_string(),
+            version: 1,
+            event_id: "evt-1".to_string(),
+            event_type: NetworkEventType::DnsChanged,
+            occurred_at: 1,
+            payload: serde_json::json!({}),
+        };
+        assert!(network_event_targets_session(&current, &session));
+
+        let stale_network = NetworkEventEnvelope {
+            network_id: "net-old".to_string(),
+            event_id: "evt-2".to_string(),
+            ..current.clone()
+        };
+        assert!(!network_event_targets_session(&stale_network, &session));
+
+        let peer_device = NetworkEventEnvelope {
+            network_id: "net-current".to_string(),
+            event_id: "evt-3".to_string(),
+            ..current
+        };
+        assert!(network_event_targets_session(&peer_device, &session));
+    }
+
+    #[test]
+    fn network_event_publish_includes_sync_metadata_without_reconfigure() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-network-event-metadata-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("dev-1".to_string());
+        session.active_network_id = Some("net-1".to_string());
+        crate::session_store::persist_session(&session).expect("persist session");
+
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
+        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        let state_notifier = Arc::new(StateChangeNotifier::default());
+        let payload = serde_json::json!({
+            "type": "network_event",
+            "networkId": "net-1",
+            "version": 1,
+            "eventId": "evt-1",
+            "eventType": "dns_changed",
+            "occurredAt": 1,
             "payload": {
-                "networkId": "net-current",
-                "deviceId": "dev-current",
-                "virtualIp": "10.0.0.8",
-                "prefixLen": 20
+                "records": []
             }
         });
-        assert!(network_config_changed_targets_session(&current, &session));
+        let payload = serde_json::to_vec(&payload).expect("encode payload");
 
-        let stale_network = serde_json::json!({
-            "type": "network_config_changed",
+        ingest_downstream_publish(&payload, &runtime, &task_queue, &state_notifier)
+            .expect("ingest network event");
+
+        let event = state_notifier
+            .event
+            .lock()
+            .expect("event mutex")
+            .clone()
+            .expect("business event");
+        assert_eq!(event.business_type, BUSINESS_CONTROL_SYNC_CHANGED);
+        assert_eq!(
+            event
+                .business_data
+                .get("messageType")
+                .and_then(serde_json::Value::as_str),
+            Some("network_event")
+        );
+        assert_eq!(
+            event
+                .business_data
+                .get("networkId")
+                .and_then(serde_json::Value::as_str),
+            Some("net-1")
+        );
+        assert_eq!(
+            event
+                .business_data
+                .get("reconfigureRequired")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            event
+                .business_data
+                .get("syncMode")
+                .and_then(serde_json::Value::as_str),
+            Some("event")
+        );
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn device_ip_reassigned_publish_includes_device_metadata() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-device-ip-reassigned-metadata-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("dev-1".to_string());
+        session.active_network_id = Some("net-1".to_string());
+        crate::session_store::persist_session(&session).expect("persist session");
+
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
+        let state_notifier = Arc::new(StateChangeNotifier::default());
+        let payload = serde_json::json!({
+            "type": "device_ip_reassigned",
+            "messageId": "ip-msg-1",
             "payload": {
-                "networkId": "net-old",
-                "deviceId": "dev-current",
+                "deviceId": "dev-1",
+                "networkId": "net-1",
                 "virtualIp": "10.0.0.9",
-                "prefixLen": 20
+                "prefixLen": 32
             }
         });
-        assert!(!network_config_changed_targets_session(
-            &stale_network,
-            &session
-        ));
+        let payload = serde_json::to_vec(&payload).expect("encode payload");
 
-        let peer_device = serde_json::json!({
-            "type": "network_config_changed",
-            "payload": {
-                "networkId": "net-current",
-                "deviceId": "dev-old",
-                "virtualIp": "10.0.0.10",
-                "prefixLen": 20
-            }
-        });
-        assert!(network_config_changed_targets_session(
-            &peer_device,
-            &session
-        ));
+        let accepted = try_ingest_device_ip_reassigned(&payload, &runtime, &state_notifier)
+            .expect("ingest device ip reassigned");
+        assert!(accepted);
+
+        let event = state_notifier
+            .event
+            .lock()
+            .expect("event mutex")
+            .clone()
+            .expect("business event");
+        assert_eq!(event.business_type, BUSINESS_CONTROL_SYNC_CHANGED);
+        assert_eq!(
+            event
+                .business_data
+                .get("messageType")
+                .and_then(serde_json::Value::as_str),
+            Some("device_ip_reassigned")
+        );
+        assert_eq!(
+            event
+                .business_data
+                .get("deviceId")
+                .and_then(serde_json::Value::as_str),
+            Some("dev-1")
+        );
+        assert_eq!(
+            event
+                .business_data
+                .get("virtualIp")
+                .and_then(serde_json::Value::as_str),
+            Some("10.0.0.9")
+        );
+
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
     }
 
     #[test]
-    fn network_config_changed_assignment_requires_current_device() {
+    fn device_network_disabled_publish_includes_device_metadata() {
+        let _lock = crate::test_env_lock();
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-device-disabled-metadata-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&state_dir);
+        std::fs::create_dir_all(&state_dir).expect("create temp state dir");
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
+
         let mut session = PersistedSession::empty();
-        session.device_id = Some("dev-current".to_string());
-        session.active_network_id = Some("net-current".to_string());
+        session.device_id = Some("dev-1".to_string());
+        session.active_network_id = Some("net-1".to_string());
+        crate::session_store::persist_session(&session).expect("persist session");
 
-        let current = serde_json::json!({
-            "type": "network_config_changed",
+        let runtime = Arc::new(Mutex::new(ClientRuntime::new(PlatformNetworkImpl)));
+        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        let state_notifier = Arc::new(StateChangeNotifier::default());
+        let payload = serde_json::json!({
+            "type": "device_network_disabled",
+            "messageId": "disable-msg-1",
             "payload": {
-                "networkId": "net-current",
-                "deviceId": "dev-current",
-                "virtualIp": "10.0.0.8",
-                "prefixLen": 20
+                "deviceId": "dev-1",
+                "networkId": "net-1",
+                "attachmentId": "att-1"
             }
         });
+        let payload = serde_json::to_vec(&payload).expect("encode payload");
+
+        let _ = ingest_downstream_publish(&payload, &runtime, &task_queue, &state_notifier);
+
+        let event = state_notifier
+            .event
+            .lock()
+            .expect("event mutex")
+            .clone()
+            .expect("business event");
+        assert_eq!(event.business_type, BUSINESS_NETWORK_RUNTIME_CHANGED);
         assert_eq!(
-            network_config_changed_assignment(&current, &session),
-            Some(("10.0.0.8".to_string(), Some(20)))
+            event
+                .business_data
+                .get("messageType")
+                .and_then(serde_json::Value::as_str),
+            Some("device_network_disabled")
+        );
+        assert_eq!(
+            event
+                .business_data
+                .get("deviceId")
+                .and_then(serde_json::Value::as_str),
+            Some("dev-1")
+        );
+        assert_eq!(
+            event
+                .business_data
+                .get("networkId")
+                .and_then(serde_json::Value::as_str),
+            Some("net-1")
+        );
+        assert_eq!(
+            event
+                .business_data
+                .get("reconfigureRequired")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
         );
 
-        let peer_device = serde_json::json!({
-            "type": "network_config_changed",
-            "payload": {
-                "networkId": "net-current",
-                "deviceId": "dev-peer",
-                "virtualIp": "10.0.0.1",
-                "prefixLen": 20
-            }
-        });
-        assert_eq!(
-            network_config_changed_assignment(&peer_device, &session),
-            None
-        );
-
-        let missing_device = serde_json::json!({
-            "type": "network_config_changed",
-            "payload": {
-                "networkId": "net-current",
-                "virtualIp": "10.0.0.2",
-                "prefixLen": 20
-            }
-        });
-        assert_eq!(
-            network_config_changed_assignment(&missing_device, &session),
-            None
-        );
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&state_dir);
     }
 
     #[test]
-    fn active_network_reconcile_enqueues_refresh_task_when_network_is_enabled() {
+    fn active_network_reconcile_enqueues_reconcile_task_when_network_is_enabled() {
         let _lock = crate::test_env_lock();
         let state_dir = std::env::temp_dir().join(format!(
             "slan-active-network-reconcile-test-{}",

@@ -425,6 +425,8 @@ export abstract class AppComponentState {
   deviceGroupIdsByDevice: Record<string, string[]> = Object.fromEntries(
     Object.entries(INITIAL_DEVICE_GROUP_IDS).map(([deviceId, groupId]) => [deviceId, [groupId]]),
   );
+  workspaceDeviceGroupsByWorkspace: Record<string, DeviceGroupRow[]> = {};
+  workspaceDeviceGroupIdsByDeviceByWorkspace: Record<string, Record<string, string[]>> = {};
   workspaceDeviceIdsByWorkspace: Record<string, string[]> = Object.fromEntries(
     Object.entries(INITIAL_WORKSPACE_DEVICE_IDS).map(([workspaceId, deviceIds]) => [workspaceId, [...deviceIds]]),
   );
@@ -491,9 +493,6 @@ export abstract class AppComponentState {
     return [
       { value: 'device', label: '设备' },
       { value: 'device_group', label: '设备分组' },
-      { value: 'user', label: '指定用户' },
-      { value: 'workspace', label: '网络' },
-      { value: 'all', label: '全部设备' },
     ];
   }
 
@@ -501,27 +500,15 @@ export abstract class AppComponentState {
     return [
       { value: 'device', label: '设备' },
       { value: 'device_group', label: '设备分组' },
-      { value: 'workspace', label: '网络' },
-      { value: 'user', label: '指定用户' },
-      { value: 'all', label: '全部设备' },
     ];
   }
 
   get ruleSubjectOptions(): Array<{ value: string; label: string }> {
     switch (this.ruleSubjectType) {
       case 'device':
-        return this.visibleDeviceOptions.map((device) => ({ value: device.deviceId, label: `${this.userLabel(device.owner)} / ${device.alias} / ${device.deviceId}` }));
+        return this.workspaceRuleDeviceOptions.map((device) => ({ value: device.deviceId, label: `${this.userLabel(device.owner)} / ${device.alias} / ${device.deviceId}` }));
       case 'device_group':
-        return this.currentDeviceGroups.map((group) => ({ value: group.groupId, label: `${group.name} / ${group.groupId}` }));
-      case 'user':
-        return this.members.map((member) => ({ value: member.user, label: `${member.alias} / ${this.userLabel(member.user)}` }));
-      case 'workspace':
-        return [
-          { value: 'self', label: `${this.selectedWorkspace.name} / 当前网络` },
-          ...this.workspaces.filter((workspace) => workspace.workspaceId !== this.selectedWorkspace.workspaceId).map((workspace) => ({ value: workspace.workspaceId, label: `${workspace.name} / ${workspace.code}` })),
-        ];
-      case 'all':
-        return [{ value: this.effectiveUserId, label: '全部设备' }];
+        return this.workspaceRuleDeviceGroups.map((group) => ({ value: group.groupId, label: `${group.name} / ${group.groupId}` }));
       default:
         return [];
     }
@@ -530,6 +517,17 @@ export abstract class AppComponentState {
   get workspaceDevices(): DeviceRow[] {
     const currentIds = this.currentWorkspaceDeviceIds();
     return this.devices.filter((device) => currentIds.includes(device.deviceId));
+  }
+
+  get workspaceDeviceGroups(): DeviceGroupRow[] {
+    const groups = this.workspaceDeviceGroupsByWorkspace[this.selectedWorkspaceId];
+    if (groups) {
+      return [...groups].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    const workspaceDeviceIds = new Set(this.currentWorkspaceDeviceIds());
+    return this.currentDeviceGroups
+      .filter((group) => this.devicesInGroup(group.groupId).some((device) => workspaceDeviceIds.has(device.deviceId)))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   get currentUserDevices(): DeviceRow[] {
@@ -542,6 +540,19 @@ export abstract class AppComponentState {
 
   get currentDeviceGroups(): DeviceGroupRow[] {
     return [...this.deviceGroups].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  get workspaceRuleDeviceOptions(): DeviceRow[] {
+    const currentIds = new Set(this.currentWorkspaceDeviceIds());
+    return this.devices
+      .filter((device) => currentIds.has(device.deviceId))
+      .sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+  }
+
+  get workspaceRuleDeviceGroups(): DeviceGroupRow[] {
+    return this.workspaceDeviceGroups
+      .filter((group) => this.workspaceDeviceGroupCount(group.groupId) > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   get availableDeviceGroupPresets(): Pick<DeviceGroupRow, 'name' | 'description'>[] {
@@ -565,6 +576,18 @@ export abstract class AppComponentState {
     return this.currentUserDevices.filter((device) => (this.deviceGroupIdsByDevice[device.deviceId] ?? []).includes(groupId)).length;
   }
 
+  workspaceDeviceGroupCount(groupId: string): number {
+    const mappings = this.workspaceDeviceGroupIdsByDeviceByWorkspace[this.selectedWorkspaceId];
+    if (mappings) {
+      return this.workspaceDevices.filter((device) => (mappings[device.deviceId] ?? []).includes(groupId)).length;
+    }
+    const workspaceDeviceIds = new Set(this.currentWorkspaceDeviceIds());
+    return this.workspaceDevices.filter((device) =>
+      workspaceDeviceIds.has(device.deviceId) &&
+      (this.deviceGroupIdsByDevice[device.deviceId] ?? []).includes(groupId),
+    ).length;
+  }
+
   ungroupedDeviceCount(): number {
     return this.currentUserDevices.filter((device) => (this.deviceGroupIdsByDevice[device.deviceId] ?? []).length === 0).length;
   }
@@ -575,6 +598,21 @@ export abstract class AppComponentState {
 
   deviceNamesInGroup(groupId: string): string {
     const names = this.devicesInGroup(groupId).map((device) => device.alias || device.deviceId);
+    return names.length ? names.join('、') : '-';
+  }
+
+  workspaceDeviceNamesInGroup(groupId: string): string {
+    const mappings = this.workspaceDeviceGroupIdsByDeviceByWorkspace[this.selectedWorkspaceId];
+    if (mappings) {
+      const names = this.workspaceDevices
+        .filter((device) => (mappings[device.deviceId] ?? []).includes(groupId))
+        .map((device) => device.alias || device.deviceId);
+      return names.length ? names.join('、') : '-';
+    }
+    const workspaceDeviceIds = new Set(this.currentWorkspaceDeviceIds());
+    const names = this.workspaceDevices
+      .filter((device) => workspaceDeviceIds.has(device.deviceId) && (this.deviceGroupIdsByDevice[device.deviceId] ?? []).includes(groupId))
+      .map((device) => device.alias || device.deviceId);
     return names.length ? names.join('、') : '-';
   }
 
@@ -917,6 +955,7 @@ export abstract class AppComponentState {
   protected abstract applyRouteFromLocation(): void;
   protected abstract loadDashboard(userId?: string): Promise<void>;
   protected abstract loadDeviceGroups(userId: string): Promise<void>;
+  protected abstract loadWorkspaceDeviceGroups(workspaceId: string): Promise<void>;
   protected abstract loadWorkspaceDevices(workspaceId: string): Promise<void>;
   protected abstract loadWorkspaceResources(workspaceId: string): Promise<void>;
   protected abstract loadSecurityRules(securityGroupId: string): Promise<void>;

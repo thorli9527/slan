@@ -11,6 +11,8 @@ export function workspacePanelPath(workspaceId: string, panel: WorkspacePanel, s
   switch (panel) {
     case 'devices':
       return `${base}/devices`;
+    case 'deviceGroups':
+      return `${base}/device-groups`;
     case 'zones':
       return `${base}/zones`;
     case 'records':
@@ -43,6 +45,8 @@ export function panelFromRoute(route: string): WorkspaceRoutePanel {
     case '':
     case 'devices':
       return { panel: 'devices' };
+    case 'device-groups':
+      return { panel: 'deviceGroups' };
     case 'members':
       return { panel: 'zones' };
     case 'zones':

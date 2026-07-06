@@ -64,6 +64,7 @@ type NetworkRuntimePathView struct {
 
 type NetworkConfigView struct {
 	Network              NetworkView             `json:"network"`
+	ConfigVersion        int64                   `json:"configVersion"`
 	DeviceID             string                  `json:"deviceId"`
 	NodeID               string                  `json:"nodeId"`
 	GlobalIP             string                  `json:"globalIp"`

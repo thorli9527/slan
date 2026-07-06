@@ -34,7 +34,7 @@ impl ControlTaskDirection {
 pub enum ControlTaskAction {
     EnableNetwork,
     DisableNetwork,
-    RefreshNetworkConfig,
+    ReconcileNetworkState,
     DeviceUserLoginSucceeded,
 }
 
@@ -43,7 +43,7 @@ impl ControlTaskAction {
         match self {
             Self::EnableNetwork => "enableNetwork",
             Self::DisableNetwork => "disableNetwork",
-            Self::RefreshNetworkConfig => "refreshNetworkConfig",
+            Self::ReconcileNetworkState => "reconcileNetworkState",
             Self::DeviceUserLoginSucceeded => "deviceUserLoginSucceeded",
         }
     }
@@ -52,7 +52,7 @@ impl ControlTaskAction {
         match value {
             "enableNetwork" => Some(Self::EnableNetwork),
             "disableNetwork" => Some(Self::DisableNetwork),
-            "refreshNetworkConfig" => Some(Self::RefreshNetworkConfig),
+            "reconcileNetworkState" => Some(Self::ReconcileNetworkState),
             "deviceUserLoginSucceeded" => Some(Self::DeviceUserLoginSucceeded),
             _ => None,
         }
@@ -489,14 +489,14 @@ mod tests {
     }
 
     #[test]
-    fn refresh_network_config_action_round_trips() {
+    fn reconcile_network_state_action_round_trips() {
         assert_eq!(
-            ControlTaskAction::from_str("refreshNetworkConfig"),
-            Some(ControlTaskAction::RefreshNetworkConfig)
+            ControlTaskAction::from_str("reconcileNetworkState"),
+            Some(ControlTaskAction::ReconcileNetworkState)
         );
         assert_eq!(
-            ControlTaskAction::RefreshNetworkConfig.as_str(),
-            "refreshNetworkConfig"
+            ControlTaskAction::ReconcileNetworkState.as_str(),
+            "reconcileNetworkState"
         );
     }
 

@@ -83,20 +83,20 @@ type CreateOrderInput struct {
 }
 
 type UpdateOrderInput struct {
-	OrderID          string `json:"orderId"`
-	CustomerID       string `json:"customerId"`
-	CustomerEmail    string `json:"customerEmail"`
-	ProductID        string `json:"productId"`
-	ProductName      string `json:"productName"`
-	ProductType      string `json:"productType"`
-	Status           string `json:"status"`
-	Amount           int64  `json:"amount"`
-	Currency         string `json:"currency"`
-	PayStatus        string `json:"payStatus"`
-	ProvisionStatus  string `json:"provisionStatus"`
-	Channel          string `json:"channel"`
-	PaidAt           int64  `json:"paidAt"`
-	ValidUntil       int64  `json:"validUntil"`
+	OrderID         string `json:"orderId"`
+	CustomerID      string `json:"customerId"`
+	CustomerEmail   string `json:"customerEmail"`
+	ProductID       string `json:"productId"`
+	ProductName     string `json:"productName"`
+	ProductType     string `json:"productType"`
+	Status          string `json:"status"`
+	Amount          int64  `json:"amount"`
+	Currency        string `json:"currency"`
+	PayStatus       string `json:"payStatus"`
+	ProvisionStatus string `json:"provisionStatus"`
+	Channel         string `json:"channel"`
+	PaidAt          int64  `json:"paidAt"`
+	ValidUntil      int64  `json:"validUntil"`
 }
 
 type UpdateRenewalInput struct {

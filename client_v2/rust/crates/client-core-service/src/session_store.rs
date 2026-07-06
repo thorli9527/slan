@@ -13,7 +13,7 @@ use crate::{
         local_stable_device_id, set_control_base_url_override, ControlDevice, ControlPlaneClient,
         DeviceSessionResponse, MqttCredential, RelayCandidate,
     },
-    network_module::{refresh_network_module_from_session, replace_network_module_configs},
+    network_module::{network_module_configs_for_session, replace_network_module_configs},
     relay_candidates::replace_runtime_relay_candidates,
     relay_models::PersistedRelayCandidate,
 };
@@ -723,7 +723,8 @@ fn refresh_session_network_from_device_configs(
     client: &ControlPlaneClient,
     session: &mut PersistedSession,
 ) {
-    if let Ok(configs) = refresh_network_module_from_session(client, session) {
+    let configs = network_module_configs_for_session(client, session);
+    if !configs.is_empty() {
         let selected = session
             .active_network_id
             .as_deref()

@@ -9,10 +9,10 @@ import (
 )
 
 type TokenManagementService struct {
-	Users   repository.UserRepository
+	Users    repository.UserRepository
 	Sessions repository.UserSessionRepository
-	Devices repository.DeviceRepository
-	Now     func() time.Time
+	Devices  repository.DeviceRepository
+	Now      func() time.Time
 }
 
 func (s TokenManagementService) ListUserSessions(ctx context.Context, userID string) ([]UserManagedSessionView, error) {

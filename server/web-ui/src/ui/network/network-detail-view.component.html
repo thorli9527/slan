@@ -45,6 +45,7 @@
     <button type="button" class="back-tab" *ngIf="vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">返回</button>
     <button type="button" class="back-tab" *ngIf="vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">返回</button>
     <button type="button" [class.active]="vm.workspacePanel === 'devices'" (click)="vm.setWorkspacePanel('devices')">设备</button>
+    <button type="button" [class.active]="vm.workspacePanel === 'deviceGroups'" (click)="vm.setWorkspacePanel('deviceGroups')">设备分组</button>
     <button type="button" [class.active]="vm.workspacePanel === 'zones' || vm.workspacePanel === 'records'" (click)="vm.setWorkspacePanel('zones')">内网域名</button>
     <button type="button" *ngIf="vm.publicMappingsEnabled" [class.active]="vm.workspacePanel === 'publicMappings'" (click)="vm.setWorkspacePanel('publicMappings')">公网访问</button>
     <button type="button" [class.active]="vm.workspacePanel === 'securityGroups' || vm.workspacePanel === 'securityRules'" (click)="vm.setWorkspacePanel('securityGroups')">安全组</button>
@@ -52,6 +53,7 @@
 
   <div class="detail-grid one-column">
     <app-network-devices-panel [vm]="vm" />
+    <app-network-device-groups-panel [vm]="vm" />
     <app-network-dns-panel [vm]="vm" />
     <app-network-public-mappings-panel [vm]="vm" />
     <app-network-security-panel [vm]="vm" />

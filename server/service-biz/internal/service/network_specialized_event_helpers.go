@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/slan/service-biz/internal/model"
@@ -12,13 +11,13 @@ import (
 func publishDNSChanged(
 	ctx context.Context,
 	networks repository.NetworkRepository,
-	broadcaster networkBroadcastPublisher,
+	eventPublisher NetworkEventPublisher,
 	nowFn func() time.Time,
 	networkID string,
 	version int64,
 	reason string,
 ) error {
-	if broadcaster == nil {
+	if eventPublisher == nil {
 		return nil
 	}
 	zones, err := networks.ListDNSZones(ctx, networkID)
@@ -29,26 +28,31 @@ func publishDNSChanged(
 	if err != nil {
 		return err
 	}
-	return broadcaster.PublishDNSChanged(ctx, networkBroadcastDNSChanged{
-		NetworkID:  strings.TrimSpace(networkID),
-		Version:    version,
-		Reason:     strings.TrimSpace(reason),
-		Zones:      zones,
-		Records:    records,
-		OccurredAt: currentTime(nowFn),
-	})
+	occurredAt := currentTime(nowFn)
+	_ = zones
+	return publishNetworkEvent(
+		ctx,
+		eventPublisher,
+		NetworkEventDNSChanged,
+		networkID,
+		uint64(version),
+		occurredAt.UnixMilli(),
+		NetworkEventDNSChangedPayload{
+			Records: networkEventDNSRecords(records),
+		},
+	)
 }
 
 func publishACLChanged(
 	ctx context.Context,
 	networks repository.NetworkRepository,
-	broadcaster networkBroadcastPublisher,
+	eventPublisher NetworkEventPublisher,
 	nowFn func() time.Time,
 	networkID string,
 	version int64,
 	reason string,
 ) error {
-	if broadcaster == nil {
+	if eventPublisher == nil {
 		return nil
 	}
 	securityGroups, err := networks.ListSecurityGroups(ctx, networkID)
@@ -67,13 +71,18 @@ func publishACLChanged(
 	if err != nil {
 		return err
 	}
-	return broadcaster.PublishACLChanged(ctx, networkBroadcastACLChanged{
-		NetworkID:      strings.TrimSpace(networkID),
-		Version:        version,
-		Reason:         strings.TrimSpace(reason),
-		SecurityGroups: securityGroups,
-		SecurityRules:  securityRules,
-		PublicMappings: publicMappings,
-		OccurredAt:     currentTime(nowFn),
-	})
+	occurredAt := currentTime(nowFn)
+	_ = securityGroups
+	_ = publicMappings
+	return publishNetworkEvent(
+		ctx,
+		eventPublisher,
+		NetworkEventACLChanged,
+		networkID,
+		uint64(version),
+		occurredAt.UnixMilli(),
+		NetworkEventACLChangedPayload{
+			Rules: networkEventACLRules(securityRules),
+		},
+	)
 }

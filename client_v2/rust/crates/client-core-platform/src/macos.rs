@@ -33,8 +33,8 @@ use client_core::{
 use serde::Serialize;
 
 use crate::direct_udp::{
-    clear_direct_udp_endpoint_report, direct_udp_control_packet,
-    direct_udp_probe_interval_from_ms, DirectUdpControlKind, DirectUdpTransport,
+    clear_direct_udp_endpoint_report, direct_udp_control_packet, direct_udp_probe_interval_from_ms,
+    DirectUdpControlKind, DirectUdpTransport,
 };
 
 const UTUN_CONTROL_NAME: &str = "com.apple.net.utun_control";
@@ -621,12 +621,7 @@ fn start_local_data_plane(
             )
         } else {
             clear_direct_udp_endpoint_report();
-            (
-                None,
-                direct_udp_probe_interval_from_ms(0),
-                0,
-                Vec::new(),
-            )
+            (None, direct_udp_probe_interval_from_ms(0), 0, Vec::new())
         };
     eprintln!("macos local data plane attached virtual_ip={local_virtual_ip}");
     let stop = Arc::new(AtomicBool::new(false));
@@ -2811,12 +2806,14 @@ fn run_local_data_plane(
                     {
                         direct_udp.mark_peer_ready(received.peer_index, received.remote_addr);
                         let packet = normalize_ipv4_transport_checksums(packet);
-                        let acl_peer = direct_udp.peers.get(received.peer_index).map(|peer| {
-                            PlatformAclPeer {
-                                peer_node_id: Some(peer.peer_node_id.clone()),
-                                peer_virtual_ips: peer.peer_virtual_ips.clone(),
-                            }
-                        });
+                        let acl_peer =
+                            direct_udp
+                                .peers
+                                .get(received.peer_index)
+                                .map(|peer| PlatformAclPeer {
+                                    peer_node_id: Some(peer.peer_node_id.clone()),
+                                    peer_virtual_ips: peer.peer_virtual_ips.clone(),
+                                });
                         if !acl_allows_ingress_packet(&packet, &acl_policies, acl_peer.as_ref()) {
                             continue;
                         }

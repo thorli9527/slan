@@ -8,6 +8,7 @@ type NetworkCoreUseCase interface {
 	UpdateNetwork(ctx context.Context, input UpdateNetworkInput) (NetworkSummaryView, error)
 	DeleteNetwork(ctx context.Context, input DeleteNetworkInput) error
 	NetworkConfig(ctx context.Context, networkID, deviceID string) (NetworkConfigView, error)
+	NetworkSnapshot(ctx context.Context, networkID, deviceID string) (NetworkSnapshotResponse, error)
 	ResolvedNetworkConfig(ctx context.Context, networkID, deviceID string) (NetworkResolvedConfigView, error)
 	ResolvedDeviceNetworkConfigs(ctx context.Context, deviceID string) ([]NetworkResolvedConfigView, error)
 }

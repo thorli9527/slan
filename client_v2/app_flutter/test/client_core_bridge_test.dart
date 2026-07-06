@@ -590,7 +590,8 @@ void main() {
             'networkEnabled': false,
             'syncing': false,
             'switchEnabled': true,
-            'messageType': 'network_member_changed',
+            'messageType': 'network_event',
+            'eventType': 'member_online',
             'lastClientMessageId': 'msg-2',
             'lastClientMessageFromDeviceId': 'android-peer',
             'lastClientMessageBody': 'hello from embedded payload',
@@ -628,7 +629,7 @@ void main() {
     expect(bridge.state.value.lastClientMessageFromDeviceId, 'android-peer');
     expect(
       bridge.state.value.lastControlSyncMessageType,
-      'network_member_changed',
+      'network_event',
     );
     expect(bridge.state.value.lastControlSyncReconfigureRequired, false);
     expect(embeddedMethods, isNot(contains('localState')));
@@ -676,7 +677,8 @@ void main() {
             'networkEnabled': true,
             'syncing': false,
             'switchEnabled': true,
-            'messageType': 'dns_changed',
+            'messageType': 'network_event',
+            'eventType': 'dns_changed',
             'reconfigureRequired': true,
           },
           'snapshot': {
@@ -710,7 +712,7 @@ void main() {
     await bridge.start();
 
     await _waitFor(
-      () => bridge.state.value.lastControlSyncMessageType == 'dns_changed',
+      () => bridge.state.value.lastControlSyncMessageType == 'network_event',
       reason: 'control sync metadata should be stored in bridge state',
     );
     expect(bridge.state.value.lastControlSyncReconfigureRequired, true);
@@ -790,7 +792,8 @@ void main() {
               'syncing': false,
               'switchEnabled': true,
               'virtualIp': '10.0.0.44',
-              'messageType': 'dns_changed',
+              'messageType': 'network_event',
+              'eventType': 'dns_changed',
               'reconfigureRequired': true,
             },
             'snapshot': {
@@ -852,6 +855,38 @@ void main() {
     await bridge.close();
   });
 
+  test('control sync event key changes with versioned network event payloads',
+      () {
+    final first = controlSyncEventKey(
+      {
+        'revision': 1,
+      },
+      {
+        'messageType': 'network_event',
+        'eventType': 'dns_changed',
+        'networkId': 'net-1',
+        'configVersion': 1,
+        'eventId': 'evt-1',
+      },
+    );
+    final second = controlSyncEventKey(
+      {
+        'revision': 2,
+      },
+      {
+        'messageType': 'network_event',
+        'eventType': 'dns_changed',
+        'networkId': 'net-1',
+        'configVersion': 2,
+        'eventId': 'evt-2',
+      },
+    );
+
+    expect(first, isNot(second));
+    expect(first, contains('evt-1'));
+    expect(second, contains('evt-2'));
+  });
+
   test('mobile send client message uses embedded service request', () async {
     const channel = MethodChannel('dev.slan/client_core_v2');
     final embeddedMethods = <String>[];
@@ -901,7 +936,8 @@ void main() {
     expect(embeddedMethods, ['localSendClientMessage']);
   });
 
-  test('mobile local control status request does not inject device id', () async {
+  test('mobile local control status request does not inject device id',
+      () async {
     const channel = MethodChannel('dev.slan/client_core_v2');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {

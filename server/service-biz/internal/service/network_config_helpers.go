@@ -3,8 +3,8 @@ package service
 import (
 	"fmt"
 	"net"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"

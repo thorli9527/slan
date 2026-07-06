@@ -11,9 +11,11 @@ ENV_SOURCE="${ENV_SOURCE:-$ROOT_DIR/$ENV_FILE}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
 REMOTE_USER="${REMOTE_USER:-root}"
 APP_SERVICES="${APP_SERVICES:-server-biz server-biz-web-console server-biz-ops server-wire server-wire-b server-wire-relay server-wire-relay-b server-wire-punch server-wire-derp server-wire-derp-b server-ui-web opt-ui caddy}"
-INFRA_SERVICES="${INFRA_SERVICES:-postgres redis bifromq}"
+INFRA_SERVICES="${INFRA_SERVICES:-postgres redis}"
+BROKER_SERVICES="${BROKER_SERVICES:-bifromq}"
 PRESERVE_ENV_KEYS="${PRESERVE_ENV_KEYS:-POSTGRES_PASSWORD SLAN_RELAY_TICKET_SECRET SLAN_INTERNAL_WIRE_TOKEN SLAN_WIRE_TICKET_SECRET SLAN_WIRE_TICKET_SECRETS SLAN_MQTT_PASSWORD_SECRET}"
 RUN_REMOTE_SMOKE="${RUN_REMOTE_SMOKE:-1}"
+REMOTE_SMOKE_EXECUTION="${REMOTE_SMOKE_EXECUTION:-server}"
 REMOTE_SMOKE_SEED_WIRE_NODES="${REMOTE_SMOKE_SEED_WIRE_NODES:-0}"
 RUN_REMOTE_PUNCH_SMOKE="${RUN_REMOTE_PUNCH_SMOKE:-1}"
 RUN_REMOTE_UI_OPS_SMOKE="${RUN_REMOTE_UI_OPS_SMOKE:-0}"
@@ -40,9 +42,11 @@ Optional environment variables:
   ENV_SOURCE=/abs/path/to/.env.prod
   COMPOSE_FILE=docker-compose.local.yml
   APP_SERVICES="server-biz server-biz-web-console ..."
-  INFRA_SERVICES="postgres redis bifromq"
+  INFRA_SERVICES="postgres redis"
+  BROKER_SERVICES="bifromq"
   PRESERVE_ENV_KEYS="POSTGRES_PASSWORD ..."
   RUN_REMOTE_SMOKE=1
+  REMOTE_SMOKE_EXECUTION=server|local
   REMOTE_SMOKE_SEED_WIRE_NODES=0
   RUN_REMOTE_PUNCH_SMOKE=1
   RUN_REMOTE_UI_OPS_SMOKE=0
@@ -401,6 +405,44 @@ remote_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$ENV_FILE' -f '$COMPO
 echo "==> Starting app services"
 remote_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' up -d --no-deps --remove-orphans $APP_SERVICES"
 
+if [ -n "$BROKER_SERVICES" ]; then
+  echo "==> Ensuring broker services are running after app webhook endpoints are ready"
+  remote_bash "$REMOTE_DIR" "$ENV_FILE" "$COMPOSE_FILE" "$BROKER_SERVICES" <<'EOF'
+set -euo pipefail
+
+remote_dir="$1"
+env_file="$2"
+compose_file="$3"
+broker_services="$4"
+
+cd "$remote_dir"
+for service in $broker_services; do
+  docker compose --env-file "$env_file" -f "$compose_file" up -d "$service"
+done
+EOF
+
+  echo "==> Waiting for broker services to become healthy"
+  remote_bash "$REMOTE_DIR" "$ENV_FILE" "$COMPOSE_FILE" "$BROKER_SERVICES" <<'EOF'
+set -euo pipefail
+
+remote_dir="$1"
+env_file="$2"
+compose_file="$3"
+broker_services="$4"
+
+cd "$remote_dir"
+for service in $broker_services; do
+  for _ in $(seq 1 30); do
+    status="$(docker compose --env-file "$env_file" -f "$compose_file" ps "$service" --format json 2>/dev/null | sed -n 's/.*"Health":"\([^"]*\)".*/\1/p' | head -n1)"
+    if [ "$status" = "healthy" ] || [ -z "$status" ]; then
+      break
+    fi
+    sleep 2
+  done
+done
+EOF
+fi
+
 echo "==> Remote compose status"
 remote_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$ENV_FILE' -f '$COMPOSE_FILE' ps"
 
@@ -427,12 +469,23 @@ if [ "$RUN_REMOTE_SMOKE" = "1" ]; then
     echo "remote smoke skipped: SLAN_INTERNAL_WIRE_TOKEN missing from ${ENV_SOURCE}" >&2
   else
     echo "==> Remote business smoke"
-    SLAN_INTERNAL_WIRE_TOKEN="${SLAN_INTERNAL_WIRE_TOKEN_VALUE}" \
-    SLAN_BIZ_REMOTE_BASE_URL="${APP_SMOKE_URL}" \
-    SLAN_WEB_REMOTE_BASE_URL="${WEB_SMOKE_URL}" \
-    SLAN_OPS_REMOTE_BASE_URL="${OPS_SMOKE_URL}" \
-    SLAN_SERVICE_BIZ_SMOKE_SEED_WIRE_NODES="${REMOTE_SMOKE_SEED_WIRE_NODES}" \
-    bash "$ROOT_DIR/scripts/service_biz_remote_smoke.sh"
+    if [ "${REMOTE_SMOKE_EXECUTION}" = "server" ]; then
+      remote_ssh "cd '$REMOTE_DIR' && \
+        SLAN_INTERNAL_WIRE_TOKEN='${SLAN_INTERNAL_WIRE_TOKEN_VALUE}' \
+        SLAN_BIZ_SMOKE_START=0 \
+        SLAN_APP_BASE_URL='http://127.0.0.1:${SLAN_BIZ_PUBLIC_PORT:-28080}' \
+        SLAN_WEB_BASE_URL='http://127.0.0.1:${SLAN_BIZ_CONSOLE_PUBLIC_PORT:-28081}' \
+        SLAN_OPS_BASE_URL='http://127.0.0.1:${SLAN_BIZ_OPS_PUBLIC_PORT:-28082}' \
+        SLAN_SERVICE_BIZ_SMOKE_SEED_WIRE_NODES='${REMOTE_SMOKE_SEED_WIRE_NODES}' \
+        bash ./scripts/service_biz_smoke.sh"
+    else
+      SLAN_INTERNAL_WIRE_TOKEN="${SLAN_INTERNAL_WIRE_TOKEN_VALUE}" \
+      SLAN_BIZ_REMOTE_BASE_URL="${APP_SMOKE_URL}" \
+      SLAN_WEB_REMOTE_BASE_URL="${WEB_SMOKE_URL}" \
+      SLAN_OPS_REMOTE_BASE_URL="${OPS_SMOKE_URL}" \
+      SLAN_SERVICE_BIZ_SMOKE_SEED_WIRE_NODES="${REMOTE_SMOKE_SEED_WIRE_NODES}" \
+      bash "$ROOT_DIR/scripts/service_biz_remote_smoke.sh"
+    fi
   fi
 fi
 

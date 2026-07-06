@@ -9,10 +9,10 @@ import (
 )
 
 type OpsAuthSessionService struct {
-	Operators        repository.OperatorRepository
-	OperatorSessions repository.OperatorSessionRepository
+	Operators         repository.OperatorRepository
+	OperatorSessions  repository.OperatorSessionRepository
 	NewOperatorSessID func(string) string
-	Now              func() time.Time
+	Now               func() time.Time
 }
 
 type OpsOperatorService struct {

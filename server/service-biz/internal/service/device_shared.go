@@ -18,13 +18,13 @@ type DeviceCoreService struct {
 }
 
 type deviceCoreDependencies struct {
-	Users       repository.UserRepository
-	Devices     repository.DeviceRepository
-	Networks    repository.NetworkRepository
-	MQTT        mqttkit.Config
-	Broadcaster networkBroadcastPublisher
-	NewDeviceID func() string
-	Now         func() time.Time
+	Users          repository.UserRepository
+	Devices        repository.DeviceRepository
+	Networks       repository.NetworkRepository
+	MQTT           mqttkit.Config
+	EventPublisher NetworkEventPublisher
+	NewDeviceID    func() string
+	Now            func() time.Time
 }
 
 type DeviceCatalogService struct {
@@ -92,13 +92,13 @@ func NewDeviceCoreService(
 	now func() time.Time,
 ) DeviceCoreService {
 	deps := deviceCoreDependencies{
-		Users:       users,
-		Devices:     devices,
-		Networks:    networks,
-		MQTT:        mqtt,
-		Broadcaster: newNetworkBroadcastPublisher(mqtt),
-		NewDeviceID: newDeviceID,
-		Now:         now,
+		Users:          users,
+		Devices:        devices,
+		Networks:       networks,
+		MQTT:           mqtt,
+		EventPublisher: NewNetworkEventPublisher(mqtt),
+		NewDeviceID:    newDeviceID,
+		Now:            now,
 	}
 	return DeviceCoreService{
 		Catalog:      DeviceCatalogService{deviceCoreDependencies: deps},
@@ -108,9 +108,11 @@ func NewDeviceCoreService(
 }
 
 type DeviceGroupService struct {
-	Users   repository.UserRepository
-	Devices repository.DeviceRepository
-	Now     func() time.Time
+	Users          repository.UserRepository
+	Devices        repository.DeviceRepository
+	Networks       repository.NetworkRepository
+	EventPublisher NetworkEventPublisher
+	Now            func() time.Time
 }
 
 type DeviceSessionService struct {
@@ -305,16 +307,16 @@ func newManagedDeviceSession(now time.Time, next func(string) string, deviceID s
 		return model.DeviceSession{}, err
 	}
 	return model.DeviceSession{
-		SessionID:    newDeviceSessionID(next),
-		DeviceID:     deviceID,
-		AccessToken:  access,
-		RefreshToken: refresh,
-		Status:       tokenStatusActive,
-		SessionMode:  normalizedSessionMode(sessionMode),
-		ExpiresAt:    now.Add(defaultDeviceAccessTTL).Unix(),
+		SessionID:     newDeviceSessionID(next),
+		DeviceID:      deviceID,
+		AccessToken:   access,
+		RefreshToken:  refresh,
+		Status:        tokenStatusActive,
+		SessionMode:   normalizedSessionMode(sessionMode),
+		ExpiresAt:     now.Add(defaultDeviceAccessTTL).Unix(),
 		RefreshExpiry: now.Add(deviceRefreshTTL(sessionMode)).Unix(),
-		CreatedAt:    now.Unix(),
-		UpdatedAt:    now.Unix(),
+		CreatedAt:     now.Unix(),
+		UpdatedAt:     now.Unix(),
 	}, nil
 }
 

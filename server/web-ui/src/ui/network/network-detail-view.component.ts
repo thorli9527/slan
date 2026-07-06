@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { Component, Input } from '@angular/core';
+import { NetworkDeviceGroupsPanelComponent } from './network-device-groups-panel.component';
 import { NetworkDevicesPanelComponent } from './network-devices-panel.component';
 import { NetworkDnsPanelComponent } from './network-dns-panel.component';
 import { NetworkPublicMappingsPanelComponent } from './network-public-mappings-panel.component';
@@ -10,6 +11,7 @@ import { NetworkSecurityPanelComponent } from './network-security-panel.componen
   standalone: true,
   imports: [
     CommonModule,
+    NetworkDeviceGroupsPanelComponent,
     NetworkDevicesPanelComponent,
     NetworkDnsPanelComponent,
     NetworkPublicMappingsPanelComponent,

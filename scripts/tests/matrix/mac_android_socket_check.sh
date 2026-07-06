@@ -56,8 +56,7 @@ GENERATED_TEST_EMAIL=0
 if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
   EMAIL="$SLAN_TEST_EMAIL"
 else
-  EMAIL="mac-android-socket-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
+  EMAIL="mac-android-socket-1783260000000000000@example.test"
 fi
 CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 REGISTER_USER="${SLAN_TEST_REGISTER_USER:-true}"
@@ -141,6 +140,8 @@ create_json() {
     -H 'Content-Type: application/json' \
     -d "$payload"
 }
+
+echo "+ mac android socket defaults: account=$EMAIL biz=$BIZ_URL admin_biz=$ADMIN_BIZ_URL service_host=$MAC_SERVICE_HOST android_device=$ANDROID_DEVICE"
 
 android_runtime_json() {
   sed -n 's/.*SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=//p' "$ANDROID_LOG" | tail -n 1

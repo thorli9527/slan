@@ -62,7 +62,7 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 		"networkCode":         appNetworkCode(view.Network),
 		"intraGroupPolicy":    firstNonEmpty(view.Network.IntraGroupPolicy, "allow"),
 		"networkCreatedAt":    view.Network.CreatedAt,
-		"configVersion":       view.Network.UpdatedAt,
+		"configVersion":       view.ConfigVersion,
 		"deviceId":            view.DeviceID,
 		"nodeId":              view.NodeID,
 		"selfNodeId":          view.NodeID,

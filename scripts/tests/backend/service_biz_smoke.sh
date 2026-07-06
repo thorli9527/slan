@@ -7,6 +7,9 @@ ROOT_DIR="$SCRIPT_DIR"
 while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
+if [ ! -e "$ROOT_DIR/.git" ]; then
+  ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+fi
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 PORT="${SLAN_BIZ_SMOKE_PORT:-39080}"
 START_LOCAL_BIZ="${SLAN_BIZ_SMOKE_START:-1}"

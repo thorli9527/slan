@@ -15,14 +15,14 @@ const (
 )
 
 const (
-	defaultUserAccessTTL      = 2 * time.Hour
-	defaultUserRefreshShortTTL = 7 * 24 * time.Hour
-	defaultUserRefreshLongTTL  = 90 * 24 * time.Hour
+	defaultUserAccessTTL        = 2 * time.Hour
+	defaultUserRefreshShortTTL  = 7 * 24 * time.Hour
+	defaultUserRefreshLongTTL   = 90 * 24 * time.Hour
 	defaultUserRefreshManualTTL = 180 * 24 * time.Hour
 
-	defaultDeviceAccessTTL      = 2 * time.Hour
-	defaultDeviceRefreshShortTTL = 30 * 24 * time.Hour
-	defaultDeviceRefreshLongTTL  = 180 * 24 * time.Hour
+	defaultDeviceAccessTTL        = 2 * time.Hour
+	defaultDeviceRefreshShortTTL  = 30 * 24 * time.Hour
+	defaultDeviceRefreshLongTTL   = 180 * 24 * time.Hour
 	defaultDeviceRefreshManualTTL = 365 * 24 * time.Hour
 
 	defaultInstallationKeyTTL = 30 * time.Minute

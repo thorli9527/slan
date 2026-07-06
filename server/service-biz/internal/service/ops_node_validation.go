@@ -11,14 +11,14 @@ import (
 )
 
 const (
-	relayTransportUDP      = "relay_udp"
-	relayTransportDerpTLS  = "derp_tcp_tls_443"
-	nodeStatusActive       = "active"
-	nodeStatusMaintenance  = "maintenance"
-	nodeStatusDisabled     = "disabled"
-	nodeHealthHealthy      = "healthy"
-	nodeHealthWarning      = "warning"
-	nodeHealthDown         = "down"
+	relayTransportUDP     = "relay_udp"
+	relayTransportDerpTLS = "derp_tcp_tls_443"
+	nodeStatusActive      = "active"
+	nodeStatusMaintenance = "maintenance"
+	nodeStatusDisabled    = "disabled"
+	nodeHealthHealthy     = "healthy"
+	nodeHealthWarning     = "warning"
+	nodeHealthDown        = "down"
 )
 
 func validateRelayNodeModel(ctx context.Context, catalog repository.OpsRepository, item model.RelayNode) error {

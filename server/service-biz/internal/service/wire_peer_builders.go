@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/slan/service-biz/internal/model"
-	"github.com/slan/service-biz/internal/repository"
 	"github.com/slan/service-biz/internal/pkg/wirekit"
+	"github.com/slan/service-biz/internal/repository"
 )
 
 func wirePeerAuthzView(peerID, networkID string, device model.Device) WirePeerAuthzView {

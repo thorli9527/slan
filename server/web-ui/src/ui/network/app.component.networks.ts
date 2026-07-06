@@ -47,6 +47,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
     this.active = 'workspaces';
     this.navigateTo(workspacePanelPath(workspace.workspaceId, panel, this.selectedZoneId, this.selectedSecurityGroupId));
     void this.loadWorkspaceDevices(workspace.workspaceId);
+    void this.loadWorkspaceResources(workspace.workspaceId);
   }
 
   backToWorkspaceList(): void {
@@ -325,6 +326,8 @@ export abstract class AppComponentNetworks extends AppComponentData {
     this.workspaceDeviceInvites = this.workspaceDeviceInvites.filter((item) => item.workspaceId !== workspace.workspaceId && item.networkId !== workspace.workspaceId);
     this.deviceBootstrapKeys = this.deviceBootstrapKeys.filter((item) => item.networkId !== workspace.workspaceId);
     delete this.workspaceDeviceIdsByWorkspace[workspace.workspaceId];
+    delete this.workspaceDeviceGroupsByWorkspace[workspace.workspaceId];
+    delete this.workspaceDeviceGroupIdsByDeviceByWorkspace[workspace.workspaceId];
     this.selectedZoneId = '';
     this.selectedSecurityGroupId = '';
 
@@ -347,6 +350,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
   async removeWorkspaceDevice(device: DeviceRow): Promise<void> {
     try {
       await this.api.delete(WEB_API.networkDevice(this.selectedWorkspaceId, device.deviceId, this.effectiveUserId));
+      await this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId);
     } catch {
       if (!this.isDemoMode) {
         this.workspaceDeviceDialogMessage = '移除网络设备失败';
@@ -356,6 +360,9 @@ export abstract class AppComponentNetworks extends AppComponentData {
     }
     const currentIds = this.currentWorkspaceDeviceIds().filter((deviceId) => deviceId !== device.deviceId);
     this.workspaceDeviceIdsByWorkspace[this.selectedWorkspaceId] = currentIds;
+    const mappings = { ...(this.workspaceDeviceGroupIdsByDeviceByWorkspace[this.selectedWorkspaceId] ?? {}) };
+    delete mappings[device.deviceId];
+    this.workspaceDeviceGroupIdsByDeviceByWorkspace[this.selectedWorkspaceId] = mappings;
     this.selectedWorkspace.devices = currentIds.length;
     this.notifyStateChanged();
   }
@@ -395,6 +402,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
         enabled: true,
       });
       await this.loadWorkspaceDevices(this.selectedWorkspaceId);
+      await this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId);
       this.closeWorkspaceDeviceDialog();
       this.notifyStateChanged();
       return;

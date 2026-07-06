@@ -25,8 +25,7 @@ GENERATED_TEST_EMAIL=0
 if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
   EMAIL="$SLAN_TEST_EMAIL"
 else
-  EMAIL="mac-ios-integration-$(date +%s%N)@example.test"
-  GENERATED_TEST_EMAIL=1
+  EMAIL="mac-ios-integration-1783260000000000000@example.test"
 fi
 CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 TIMEOUT="${SLAN_MAC_IOS_TIMEOUT:-60s}"
@@ -62,6 +61,8 @@ if [[ ! -x "$SERVICE_BIN" ]]; then
   echo "run: cd client_v2/rust && cargo build -p client-core-service" >&2
   exit 1
 fi
+
+echo "+ mac ios integration defaults: account=$EMAIL biz=$BIZ_URL service_host=$SERVICE_HOST"
 
 booted_ios_device() {
   xcrun simctl list devices booted |

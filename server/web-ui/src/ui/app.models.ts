@@ -415,7 +415,7 @@ export type SecurityRuleRow = {
 export type SecurityGroupRow = { securityGroupId: string; networkId: string; name: string; description?: string; createdAt: number; workspaceId: string };
 export type DeviceExposureRow = { deviceId: string; user: string; alias: string; status: string };
 export type NetworkDeviceInviteRow = ApiDeviceInvite & { networkId?: string; workspaceId?: string };
-export type NetworkPanel = 'devices' | 'zones' | 'records' | 'publicMappings' | 'securityGroups' | 'securityRules';
+export type NetworkPanel = 'devices' | 'deviceGroups' | 'zones' | 'records' | 'publicMappings' | 'securityGroups' | 'securityRules';
 export type NetworkPreset = { name: string; code: string };
 export type SecurityRuleTemplate = {
   name: string;

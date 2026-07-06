@@ -142,9 +142,11 @@ pub(crate) fn diagnose_direct_candidates(
         .collect()
 }
 
-pub(crate) fn extract_persisted_relay_candidates_from_network_map(
+pub(crate) fn extract_persisted_relay_candidates_from_control_map(
     map: &Value,
 ) -> Vec<PersistedRelayCandidate> {
+    // The older control map shape is still used as a relay-region snapshot source.
+    // It no longer drives general network state updates.
     map.get("relayRegions")
         .and_then(Value::as_array)
         .into_iter()

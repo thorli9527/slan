@@ -3,21 +3,21 @@ package service
 import "github.com/slan/service-biz/internal/pkg/mqttkit"
 
 type DeviceBootstrapKeyView struct {
-	KeyID          string `json:"keyId"`
+	KeyID             string `json:"keyId"`
 	InstallationKeyID string `json:"installationKeyId"`
-	UserID         string `json:"userId"`
-	Name           string `json:"name"`
-	DeviceAlias    string `json:"deviceAlias"`
-	Token          string `json:"token"`
-	InstallationKey string `json:"installationKey"`
-	Status         string `json:"status"`
-	ExpiresAt      int64  `json:"expiresAt"`
-	CreatedAt      int64  `json:"createdAt"`
-	UpdatedAt      int64  `json:"updatedAt"`
-	NetworkID      string `json:"networkId"`
-	UsedAt         int64  `json:"usedAt"`
-	UsedByDeviceID string `json:"usedByDeviceId"`
-	RevokedAt      int64  `json:"revokedAt"`
+	UserID            string `json:"userId"`
+	Name              string `json:"name"`
+	DeviceAlias       string `json:"deviceAlias"`
+	Token             string `json:"token"`
+	InstallationKey   string `json:"installationKey"`
+	Status            string `json:"status"`
+	ExpiresAt         int64  `json:"expiresAt"`
+	CreatedAt         int64  `json:"createdAt"`
+	UpdatedAt         int64  `json:"updatedAt"`
+	NetworkID         string `json:"networkId"`
+	UsedAt            int64  `json:"usedAt"`
+	UsedByDeviceID    string `json:"usedByDeviceId"`
+	RevokedAt         int64  `json:"revokedAt"`
 }
 
 type DeviceSessionBootstrapView struct {

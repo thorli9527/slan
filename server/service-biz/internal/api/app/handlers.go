@@ -62,6 +62,7 @@ func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
 func networkRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
 		NetworkConfigHandler{NetworkCore: deps.NetworkCore}.Routes(),
+		NetworkSnapshotHandler{Snapshots: deps.NetworkCore}.Routes(),
 		NetworkRuntimeHandler{NetworkRuntime: deps.NetworkRuntime}.Routes(),
 	)
 }

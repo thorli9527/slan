@@ -9,22 +9,22 @@ import (
 )
 
 type NetworkCoreService struct {
-	Users        repository.UserRepository
-	Devices      repository.DeviceRepository
-	Networks     repository.NetworkRepository
-	Ops          repository.OpsRepository
-	Broadcaster  networkBroadcastPublisher
-	NewNetworkID func() string
-	Now          func() time.Time
+	Users          repository.UserRepository
+	Devices        repository.DeviceRepository
+	Networks       repository.NetworkRepository
+	Ops            repository.OpsRepository
+	EventPublisher NetworkEventPublisher
+	NewNetworkID   func() string
+	Now            func() time.Time
 }
 
 type NetworkInviteService struct {
-	Users       repository.UserRepository
-	Devices     repository.DeviceRepository
-	Networks    repository.NetworkRepository
-	Broadcaster networkBroadcastPublisher
-	NewInviteID func() string
-	Now         func() time.Time
+	Users          repository.UserRepository
+	Devices        repository.DeviceRepository
+	Networks       repository.NetworkRepository
+	EventPublisher NetworkEventPublisher
+	NewInviteID    func() string
+	Now            func() time.Time
 }
 
 type NetworkDNSService struct {
@@ -32,7 +32,7 @@ type NetworkDNSService struct {
 	Devices        repository.DeviceRepository
 	Networks       repository.NetworkRepository
 	Ops            repository.OpsRepository
-	Broadcaster    networkBroadcastPublisher
+	EventPublisher NetworkEventPublisher
 	NewDNSZoneID   func() string
 	NewDNSRecordID func() string
 	Now            func() time.Time
@@ -43,7 +43,7 @@ type NetworkAccessService struct {
 	Devices            repository.DeviceRepository
 	Networks           repository.NetworkRepository
 	Ops                repository.OpsRepository
-	Broadcaster        networkBroadcastPublisher
+	EventPublisher     NetworkEventPublisher
 	NewPublicMappingID func() string
 	NewSecurityGroupID func() string
 	NewSecurityRuleID  func() string

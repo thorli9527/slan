@@ -267,6 +267,9 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
           description,
         });
         this.deviceGroups = this.deviceGroups.map((item) => item.groupId === group.groupId ? { ...item, ...group } : item);
+        if (this.selectedWorkspaceId) {
+          await this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId);
+        }
         this.closeDeviceGroupDialog();
       } catch {
         if (this.isDemoMode) {
@@ -287,6 +290,9 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
           description,
         });
         this.deviceGroups = [...this.deviceGroups.filter((item) => item.groupId !== localGroup.groupId), { ...group }];
+        if (this.selectedWorkspaceId) {
+          await this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId);
+        }
         this.closeDeviceGroupDialog();
       } catch {
         if (this.isDemoMode) {
@@ -330,6 +336,9 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
         ...this.deviceGroups.filter((item) => item.groupId !== localGroup.groupId),
         { ...created },
       ];
+      if (this.selectedWorkspaceId) {
+        await this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId);
+      }
       this.notifyStateChanged();
     } catch {
       if (this.isDemoMode) {
@@ -352,6 +361,9 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     );
     try {
       await this.api.delete(WEB_API.deviceGroup(this.effectiveUserId, group.groupId, this.effectiveUserId));
+      if (this.selectedWorkspaceId) {
+        await this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId);
+      }
     } catch {
       if (this.isDemoMode) {
         return;

@@ -27,6 +27,7 @@ export const WEB_API = {
   networks: (userId = '') => userId ? `/api/web/users/${encodeURIComponent(userId)}/networks` : '/api/web/networks',
   network: (networkId: string, actorUserId = '') => `/api/web/networks/${encodeURIComponent(networkId)}${actorUserId ? `?actorUserId=${encodeURIComponent(actorUserId)}` : ''}`,
   networkDevices: (networkId: string) => `/api/web/networks/${encodeURIComponent(networkId)}/devices`,
+  networkDeviceGroups: (networkId: string) => `/api/web/networks/${encodeURIComponent(networkId)}/device-groups`,
   networkDevice: (networkId: string, deviceId: string, actorUserId = '') => `/api/web/networks/${encodeURIComponent(networkId)}/devices/${encodeURIComponent(deviceId)}${actorUserId ? `?actorUserId=${encodeURIComponent(actorUserId)}` : ''}`,
   dnsZones: (networkId: string) => `/api/web/networks/${encodeURIComponent(networkId)}/dns/zones`,
   dnsZone: (networkId: string, zoneId: string, actorUserId = '') => `/api/web/networks/${encodeURIComponent(networkId)}/dns/zones/${encodeURIComponent(zoneId)}${actorUserId ? `?actorUserId=${encodeURIComponent(actorUserId)}` : ''}`,

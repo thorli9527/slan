@@ -12,7 +12,7 @@ import (
 func bumpNetworkConfigVersion(
 	ctx context.Context,
 	networks repository.NetworkRepository,
-	broadcaster networkBroadcastPublisher,
+	eventPublisher NetworkEventPublisher,
 	nowFn func() time.Time,
 	networkID string,
 	reason string,
@@ -46,13 +46,21 @@ func bumpNetworkConfigVersion(
 	if err := networks.SaveNetworkVersion(ctx, next); err != nil {
 		return model.NetworkConfigVersion{}, err
 	}
-	if broadcaster != nil {
-		if err := broadcaster.PublishNetworkConfigChanged(ctx, networkBroadcastConfigChanged{
-			NetworkID:  networkID,
-			Version:    next.Version,
-			Reason:     reason,
-			OccurredAt: now,
-		}); err != nil {
+	if eventPublisher != nil {
+		if err := publishNetworkEvent(
+			ctx,
+			eventPublisher,
+			NetworkEventConfigChanged,
+			networkID,
+			uint64(next.Version),
+			now.UnixMilli(),
+			NetworkEventConfigChangedPayload{
+				Network: NetworkEventNetworkView{
+					NetworkID: networkID,
+					UpdatedAt: now.Unix(),
+				},
+			},
+		); err != nil {
 			return model.NetworkConfigVersion{}, err
 		}
 	}

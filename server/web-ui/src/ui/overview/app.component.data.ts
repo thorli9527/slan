@@ -146,6 +146,8 @@ export abstract class AppComponentData extends AppComponentState {
         this.deviceSessionsByDeviceId = {};
         this.deviceGroups = [];
         this.deviceGroupIdsByDevice = {};
+        this.workspaceDeviceGroupsByWorkspace = {};
+        this.workspaceDeviceGroupIdsByDeviceByWorkspace = {};
         this.workspaceDeviceIdsByWorkspace = {};
         this.workspaceDeviceJoinMethods = {};
         this.workspaces = [];
@@ -176,6 +178,41 @@ export abstract class AppComponentData extends AppComponentState {
       if (!this.isDemoMode) {
         this.deviceGroups = [];
         this.deviceGroupIdsByDevice = {};
+      }
+    }
+  }
+
+  protected async loadWorkspaceDeviceGroups(workspaceId: string): Promise<void> {
+    try {
+      const response = await this.api.get<{ items: ApiDeviceGroup[]; members: ApiDeviceGroupMember[] }>(WEB_API.networkDeviceGroups(workspaceId));
+      this.workspaceDeviceGroupsByWorkspace = {
+        ...this.workspaceDeviceGroupsByWorkspace,
+        [workspaceId]: (response.items ?? []).map((group) => ({
+          groupId: group.groupId,
+          name: group.name,
+          description: group.description ?? '',
+          createdAt: group.createdAt,
+          updatedAt: group.updatedAt,
+        })),
+      };
+      const next: Record<string, string[]> = {};
+      for (const member of response.members ?? []) {
+        next[member.deviceId] = [...(next[member.deviceId] ?? []), member.groupId];
+      }
+      this.workspaceDeviceGroupIdsByDeviceByWorkspace = {
+        ...this.workspaceDeviceGroupIdsByDeviceByWorkspace,
+        [workspaceId]: next,
+      };
+    } catch {
+      if (!this.isDemoMode) {
+        this.workspaceDeviceGroupsByWorkspace = {
+          ...this.workspaceDeviceGroupsByWorkspace,
+          [workspaceId]: [],
+        };
+        this.workspaceDeviceGroupIdsByDeviceByWorkspace = {
+          ...this.workspaceDeviceGroupIdsByDeviceByWorkspace,
+          [workspaceId]: {},
+        };
       }
     }
   }
@@ -229,6 +266,7 @@ export abstract class AppComponentData extends AppComponentState {
 
   protected override async loadWorkspaceResources(workspaceId: string): Promise<void> {
     const tasks = [
+      this.loadWorkspaceDeviceGroups(workspaceId),
       this.loadDNSZones(workspaceId),
       this.loadDNSRecords(workspaceId),
       this.loadSecurityResources(workspaceId),

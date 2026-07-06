@@ -13,8 +13,8 @@ class ControlTransportStatus {
     this.mqttLastError,
     this.mqttLastMessageTopic,
     this.mqttLastMessageType,
-    this.mqttNetworkBroadcastTopic,
-    this.mqttNetworkBroadcastSubscribed,
+    this.mqttNetworkEventTopic,
+    this.mqttNetworkEventSubscribed,
     this.activeNetworkId,
     this.deviceId,
     this.lastMqttPublishSummary,
@@ -47,11 +47,11 @@ class ControlTransportStatus {
   /// 最近收到的下行控制消息类型。
   final String? mqttLastMessageType;
 
-  /// 当前订阅的网络广播 topic。
-  final String? mqttNetworkBroadcastTopic;
+  /// 当前订阅的网络事件 topic。
+  final String? mqttNetworkEventTopic;
 
-  /// 网络广播 topic 是否已订阅成功。
-  final bool? mqttNetworkBroadcastSubscribed;
+  /// 网络事件 topic 是否已订阅成功。
+  final bool? mqttNetworkEventSubscribed;
 
   /// 当前活跃网络 ID。
   final String? activeNetworkId;
@@ -76,9 +76,8 @@ class ControlTransportStatus {
       mqttLastError: json['mqttLastError'] as String?,
       mqttLastMessageTopic: json['mqttLastMessageTopic'] as String?,
       mqttLastMessageType: json['mqttLastMessageType'] as String?,
-      mqttNetworkBroadcastTopic: json['mqttNetworkBroadcastTopic'] as String?,
-      mqttNetworkBroadcastSubscribed:
-          json['mqttNetworkBroadcastSubscribed'] as bool?,
+      mqttNetworkEventTopic: json['mqttNetworkEventTopic'] as String?,
+      mqttNetworkEventSubscribed: json['mqttNetworkEventSubscribed'] as bool?,
       activeNetworkId: json['activeNetworkId'] as String?,
       deviceId: json['deviceId'] as String?,
       lastMqttPublishSummary:

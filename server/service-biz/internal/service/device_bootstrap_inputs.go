@@ -18,14 +18,14 @@ type BootstrapDeviceSessionInput struct {
 	InstallationKey string `json:"installationKey"`
 	SessionKey      string `json:"sessionKey"`
 	SessionMode     string `json:"sessionMode"`
-	DeviceID      string `json:"deviceId"`
-	OwnerID       string `json:"ownerId"`
-	Name          string `json:"name"`
-	Platform      string `json:"platform"`
-	Alias         string `json:"alias"`
-	OSName        string `json:"osName"`
-	OSVersion     string `json:"osVersion"`
-	PublicKey     string `json:"publicKey"`
-	DeviceVersion string `json:"deviceVersion"`
-	CountryCode   string `json:"countryCode"`
+	DeviceID        string `json:"deviceId"`
+	OwnerID         string `json:"ownerId"`
+	Name            string `json:"name"`
+	Platform        string `json:"platform"`
+	Alias           string `json:"alias"`
+	OSName          string `json:"osName"`
+	OSVersion       string `json:"osVersion"`
+	PublicKey       string `json:"publicKey"`
+	DeviceVersion   string `json:"deviceVersion"`
+	CountryCode     string `json:"countryCode"`
 }

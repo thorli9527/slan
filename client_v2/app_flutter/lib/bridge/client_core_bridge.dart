@@ -148,6 +148,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// 最近一次处理的控制同步重配标记。
   bool _lastHandledControlSyncReconfigureRequired = false;
 
+  /// 最近一次处理的控制同步事件键，用于区分不同版本/不同事件的重配请求。
+  String? _lastHandledControlSyncEventKey;
+
   /// 移动端 MQTT 确保连接流程是否在运行。
   bool _mobileMqttEnsureRunning = false;
 
@@ -428,9 +431,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           'mqttLastMessageTopic': status?.mqttLastMessageTopic,
           'mqttLastMessageType': status?.mqttLastMessageType,
           'lastMqttPublishSummary': status?.lastMqttPublishSummary,
-          'mqttNetworkBroadcastTopic': status?.mqttNetworkBroadcastTopic,
-          'mqttNetworkBroadcastSubscribed':
-              status?.mqttNetworkBroadcastSubscribed,
+          'mqttNetworkEventTopic': status?.mqttNetworkEventTopic,
+          'mqttNetworkEventSubscribed': status?.mqttNetworkEventSubscribed,
           'activeNetworkId': status?.activeNetworkId,
           'deviceId': status?.deviceId,
         },
@@ -2380,8 +2382,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         : null;
     final trimmedStateDeviceId =
         stateDeviceId?.isNotEmpty == true ? stateDeviceId : null;
-    final trimmedRuntimeDeviceId =
-        runtimeDeviceId?.trim().isNotEmpty == true ? runtimeDeviceId!.trim() : null;
+    final trimmedRuntimeDeviceId = runtimeDeviceId?.trim().isNotEmpty == true
+        ? runtimeDeviceId!.trim()
+        : null;
     if (trimmedStateDeviceId != null) {
       return trimmedStateDeviceId;
     }
@@ -2647,11 +2650,14 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     if (!reconfigureRequired) {
       return false;
     }
+    final eventKey = controlSyncEventKey(event, businessData);
     final messageType = stringField(businessData, 'messageType');
-    if (_lastHandledControlSyncMessageType == messageType &&
+    if (_lastHandledControlSyncEventKey == eventKey &&
+        _lastHandledControlSyncMessageType == messageType &&
         _lastHandledControlSyncReconfigureRequired == reconfigureRequired) {
       return false;
     }
+    _lastHandledControlSyncEventKey = eventKey;
     _lastHandledControlSyncMessageType = messageType;
     _lastHandledControlSyncReconfigureRequired = reconfigureRequired;
     return true;
@@ -2917,7 +2923,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     return response;
   }
 
-  /// 统一记录桌面本地服务 fallback 日志并保留原异常。
+  /// 统一记录桌面本地 service 请求失败日志并保留原异常。
   Future<T> _runLoggedLocalFallback<T>({
     required String fallbackEvent,
     required Future<T> Function() run,

@@ -7,6 +7,9 @@ ROOT_DIR="$SCRIPT_DIR"
 while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
+if [ ! -e "$ROOT_DIR/.git" ]; then
+  ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+fi
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 BIZ_BASE_URL="${SLAN_BIZ_REMOTE_BASE_URL:-${SLAN_APP_BASE_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}}"
 WEB_BASE_URL="${SLAN_WEB_REMOTE_BASE_URL:-${SLAN_WEB_BASE_URL:-http://${SLAN_DEFAULT_MQTT_HOST}:28081}}"

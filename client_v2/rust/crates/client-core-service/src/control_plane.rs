@@ -13,6 +13,8 @@ use client_core::{normalize_virtual_ip, AuthPayload, RelayTicket, RouteSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::network_event::NetworkSnapshotResponse;
+
 const DEFAULT_CONTROL_BASE_URL: &str = "http://47.245.40.231:28080";
 const API_AUTH_DEVICE_LOGIN_DEVICES: &str = "/api/app/auth/device-login-devices";
 const API_AUTH_LOGIN: &str = "/api/app/auth/login";
@@ -58,6 +60,10 @@ fn api_punch_connect_sessions(network_id: &str) -> String {
         "/api/app/networks/{}/punch/connect-sessions",
         network_id.trim()
     )
+}
+
+fn api_network_snapshot(network_id: &str) -> String {
+    format!("/api/app/networks/{}/snapshot", network_id.trim())
 }
 
 #[allow(dead_code)]
@@ -789,6 +795,16 @@ impl ControlPlaneClient {
         let payload: ItemsResponse<RelayCandidate> =
             serde_json::from_value(response).context("decode relay candidates")?;
         Ok(payload.items)
+    }
+
+    pub fn network_snapshot(
+        &self,
+        access_token: &str,
+        network_id: &str,
+    ) -> Result<NetworkSnapshotResponse> {
+        let path = api_network_snapshot(network_id);
+        let response = self.request_json("GET", &path, access_token, None)?;
+        serde_json::from_value(response).context("decode network snapshot")
     }
 
     /// 创建 P2P punch 协商会话。请求会携带设备 ID、MQTT username 和
@@ -1682,10 +1698,10 @@ fn local_device_public_key(device_id: &str) -> Result<String> {
 }
 
 fn device_public_key_at_path(path: &std::path::Path, device_id: &str) -> Result<String> {
-    let legacy = format!("client-v2-{}", device_id.trim());
+    let weak_seeded_key = format!("client-v2-{}", device_id.trim());
     if let Ok(value) = fs::read_to_string(path) {
         let value = value.trim();
-        if is_strong_device_public_key(value) && value != legacy {
+        if is_strong_device_public_key(value) && value != weak_seeded_key {
             return Ok(value.to_string());
         }
     }

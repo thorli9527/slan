@@ -26,6 +26,26 @@
   </section>
 </div>
 
+<div class="modal-backdrop" *ngIf="vm.showDeviceGroupDialog" (click)="vm.dismissOverlayBackdrop()">
+  <section class="modal" (click)="$event.stopPropagation()">
+    <header class="modal-header">
+      <div>
+        <h2>{{ vm.deviceGroupDialogMode === 'create' ? '新增设备分组' : '修改设备分组' }}</h2>
+      </div>
+      <button class="icon-button" type="button" title="关闭" (click)="vm.closeDeviceGroupDialog()">×</button>
+    </header>
+    <div class="form">
+      <label><span>分组名称</span><input [(ngModel)]="vm.deviceGroupName" /></label>
+      <label><span>描述</span><input [(ngModel)]="vm.deviceGroupDescription" /></label>
+    </div>
+    <p class="form-error" *ngIf="vm.deviceGroupDialogMessage">{{ vm.deviceGroupDialogMessage }}</p>
+    <footer class="modal-footer">
+      <button class="ghost" type="button" (click)="vm.closeDeviceGroupDialog()">取消</button>
+      <button class="primary" type="button" (click)="vm.saveDeviceGroupDialog()">保存</button>
+    </footer>
+  </section>
+</div>
+
 <div class="modal-backdrop" *ngIf="vm.showZoneDialog" (click)="vm.dismissOverlayBackdrop()">
   <section class="modal" (click)="$event.stopPropagation()">
     <header class="modal-header">

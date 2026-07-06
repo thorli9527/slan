@@ -89,6 +89,12 @@ func buildNetworkConfigView(
 	if err != nil {
 		return NetworkConfigView{}, err
 	}
+	configVersion := int64(0)
+	if version, ok, err := networks.GetNetworkVersion(ctx, network.NetworkID); err != nil {
+		return NetworkConfigView{}, err
+	} else if ok {
+		configVersion = version.Version
+	}
 
 	deviceIDs := buildNetworkConfigDeviceIDs(device.DeviceID, networkDevices)
 	deviceByID := map[string]model.Device{
@@ -136,6 +142,7 @@ func buildNetworkConfigView(
 
 	return NetworkConfigView{
 		Network:              networkView(network),
+		ConfigVersion:        configVersion,
 		DeviceID:             device.DeviceID,
 		NodeID:               "node-" + device.DeviceID,
 		GlobalIP:             globalIPs[device.DeviceID],

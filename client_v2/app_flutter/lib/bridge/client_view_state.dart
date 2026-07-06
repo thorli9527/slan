@@ -66,7 +66,7 @@ class ClientViewState {
   /// 最近收到的消息正文。
   final String? lastClientMessageBody;
 
-  /// 最近一次控制面同步事件类型，例如 dns_changed、acl_changed。
+  /// 最近一次控制面同步事件类型，例如 `network_event`。
   final String? lastControlSyncMessageType;
 
   /// 最近一次控制面同步事件是否要求客户端重配数据面。

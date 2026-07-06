@@ -87,7 +87,7 @@ func (s DeviceRuntimeAccessService) updateDeviceRuntimeEntity(ctx context.Contex
 		return model.Device{}, err
 	}
 	if updated {
-		if err := s.publishRuntimeMembershipUpdate(ctx, device, networkID, membership, nowTime); err != nil {
+		if err := s.publishRuntimeMembershipEvent(ctx, device, networkID, membership, nowTime); err != nil {
 			return model.Device{}, err
 		}
 	}

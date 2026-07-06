@@ -62,26 +62,42 @@ func publishNetworkSnapshot(
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
 	ops repository.OpsRepository,
-	broadcaster networkBroadcastPublisher,
+	eventPublisher NetworkEventPublisher,
 	nowFn func() time.Time,
 	networkID string,
 	version int64,
 	reason string,
 ) error {
-	if broadcaster == nil {
+	if eventPublisher == nil {
 		return nil
 	}
 	snapshot, err := buildNetworkSnapshotPayload(ctx, users, devices, networks, ops, nowFn, networkID)
 	if err != nil {
 		return err
 	}
-	return broadcaster.PublishNetworkSnapshot(ctx, networkBroadcastSnapshot{
-		NetworkID:  strings.TrimSpace(networkID),
-		Version:    version,
-		Reason:     strings.TrimSpace(reason),
-		Snapshot:   snapshot,
-		OccurredAt: currentTime(nowFn),
-	})
+	occurredAt := currentTime(nowFn)
+	eventSnapshot, err := buildNetworkEventSnapshotFromRepositories(
+		ctx,
+		users,
+		devices,
+		networks,
+		ops,
+		nowFn,
+		networkID,
+	)
+	if err != nil {
+		return err
+	}
+	_ = snapshot
+	return publishNetworkEvent(
+		ctx,
+		eventPublisher,
+		NetworkEventSnapshot,
+		networkID,
+		uint64(version),
+		occurredAt.UnixMilli(),
+		eventSnapshot,
+	)
 }
 
 func networkResolvedSnapshotPayload(resolved NetworkResolvedConfigView) map[string]any {

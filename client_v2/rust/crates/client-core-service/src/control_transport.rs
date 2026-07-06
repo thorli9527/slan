@@ -1355,9 +1355,9 @@ mod tests {
     }
 
     #[test]
-    fn network_map_relay_candidates_are_extracted_for_persistence() {
+    fn control_map_relay_candidates_are_extracted_for_persistence() {
         let candidates =
-            crate::relay_candidates::extract_persisted_relay_candidates_from_network_map(
+            crate::relay_candidates::extract_persisted_relay_candidates_from_control_map(
                 &serde_json::json!({
                     "relayRegions": [
                         {

@@ -74,10 +74,18 @@ Supported downstream messages:
 
 - `device_user_login_succeeded`
   - Applies browser login success payload into runtime/session.
+- `device_network_disabled`
+  - Verifies target `deviceId`.
+  - Schedules local disable flow for the active device.
+  - Publishes control/network runtime event with device metadata.
 - `device_ip_reassigned`
   - Verifies target `deviceId`.
   - Applies final IP through `SyncAssignedIp`.
-  - Publishes `control.sync.changed`.
+  - Publishes `control.sync.changed` with reassigned IP metadata.
+- `network_event`
+  - Applies versioned network snapshot or incremental change event.
+  - Falls back to snapshot sync when versions are stale or discontinuous.
+  - Rebuilds active data plane only when the event requires reconfiguration.
 - `network_map_response`
   - Updates network map/connectivity state.
 - `connect_plan`

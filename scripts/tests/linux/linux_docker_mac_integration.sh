@@ -23,7 +23,7 @@ LINUX_NETWORK_MOCK="${SLAN_LINUX_NETWORK_MOCK:-0}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-EMAIL="${SLAN_TEST_EMAIL:-linux-mac-$(date +%s%N)@example.test}"
+EMAIL="${SLAN_TEST_EMAIL:-linux-mac-1783260000000000000@example.test}"
 REGISTER_USER="${SLAN_TEST_REGISTER_USER:-true}"
 TIMEOUT_SECONDS="${SLAN_LINUX_DOCKER_MAC_TIMEOUT_SECONDS:-120}"
 BOOTSTRAP_TTL_SECONDS="${SLAN_LINUX_DOCKER_MAC_BOOTSTRAP_TTL_SECONDS:-1800}"
@@ -91,6 +91,8 @@ fail() {
 need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
+
+log "linux docker + mac defaults: account=${EMAIL} biz=${BIZ_URL} web=${WEB_BASE_URL}"
 
 json_value() {
   local key="$1"
@@ -346,10 +348,19 @@ wait_signed_in() {
 wait_control_ready() {
   local deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
   local status_json=''
+  local mqtt_connect_attempted=0
   while (( $(date +%s) < deadline )); do
     status_json="$(request_json localControlStatus || true)"
     if [[ -n "$status_json" ]] && jq -e '.ready == true' >/dev/null <<<"$status_json"; then
       return 0
+    fi
+    if [[ "$mqtt_connect_attempted" != "1" ]] && [[ -n "$status_json" ]] && jq -e '
+      (.missing // []) | index("mqtt") != null
+    ' >/dev/null <<<"$status_json"; then
+      request_json localEnsureDevice >/dev/null 2>&1 || true
+      request_json localConnectControlMqtt >/dev/null 2>&1 || true
+      mqtt_connect_attempted=1
+      continue
     fi
     sleep 1
   done

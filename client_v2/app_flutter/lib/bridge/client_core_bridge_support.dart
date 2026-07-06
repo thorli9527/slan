@@ -125,6 +125,26 @@ Map<String, Object?> businessEventEmptyClientMessageQueryLogFields(
   };
 }
 
+String controlSyncEventKey(
+  Map<String, Object?> event,
+  Map<String, Object?> businessData,
+) {
+  final revision = event['revision'];
+  final eventId = stringField(businessData, 'eventId');
+  final configVersion = businessData['configVersion'];
+  final networkId = stringField(businessData, 'networkId') ?? '';
+  final eventType = stringField(businessData, 'eventType') ?? '';
+  final messageType = stringField(businessData, 'messageType') ?? '';
+  return [
+    if (revision != null) '$revision' else '',
+    eventId ?? '',
+    if (configVersion != null) '$configVersion' else '',
+    networkId,
+    eventType,
+    messageType,
+  ].join('|');
+}
+
 ClientViewState mergeBusinessState(
   ClientViewState current,
   ClientViewState incoming, {
