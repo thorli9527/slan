@@ -10,8 +10,8 @@ Policy:
 - State directory: `/Library/Application Support/SLAN`.
 - Logs: `/Library/Logs/SLAN`.
 - Closing the main window hides it.
-- The menu bar item is icon-only and owns only `Settings`, `Enable/Disable Network`, and `Quit`.
-- `Enable/Disable Network` is disabled until the local service reports a signed-in user.
+- The menu bar item is icon-only and owns only `Open`, a checked `Network` switch item, and `Quit`.
+- The `Network` switch item is disabled until the local service reports a signed-in user.
 - The icon itself distinguishes network state: active uses the enabled icon, inactive/signed-out/service-unavailable uses the disabled icon.
 - `Quit` calls `localNetworkShutdown` and then exits the Flutter shell.
 - `localNetworkShutdown` uses `SLAN_CLIENT_CORE_SERVICE_HOST` when provided.
@@ -24,14 +24,14 @@ Implementation boundary:
 - AppKit status item lives in the macOS runner or macOS plugin.
 - Flutter UI only sends `ClientCommand`.
 - Network enable/disable still goes through `client-core-service`.
-- `Settings` opens the main Flutter window. `Enable/Disable Network` sends the local service command only when signed in.
+- `Open` brings the main Flutter window forward. The `Network` switch item sends the local service command only when signed in.
 - Web Console URL resolution matches Windows/Linux: `SLAN_WEB_CONSOLE_URL`, then `SLAN_CONTROL_BASE_URL`, then `http://47.245.40.231:24200`.
 - No mesh, DNS, route, or adapter logic belongs in Swift UI code.
 
 Native pieces:
 
 - `NSStatusItem` with app icon.
-- Menu items: `Settings`, `Enable/Disable Network`, `Quit`.
+- Menu items: `Open`, checked `Network`, `Quit`.
 - The plugin assigns window delegates so close hides the window instead of terminating.
 - Explicit menu bar `Quit` calls `localNetworkShutdown` before terminating.
 

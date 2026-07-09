@@ -56,8 +56,8 @@ Move behavior from the old Flutter client only when the target owner is clear:
 - Linux: tray is optional at install time; service-only installs are valid.
 
 The tray owns UI shell lifetime only. Runtime networking belongs to `client-core-service`.
-Desktop tray/menu-bar UI is intentionally icon-only and exposes only `Settings`, `Enable/Disable Network`, and `Quit`.
-`Enable/Disable Network` is disabled until the local service reports a signed-in user.
+Desktop tray/menu-bar UI is intentionally icon-only and exposes only `Open`, a checked `Network` switch item, and `Quit`.
+The `Network` switch item is disabled until the local service reports a signed-in user.
 The tray icon changes between network enabled and disabled/signed-out states.
 On Windows and macOS, explicit tray/menu-bar Quit calls `localNetworkShutdown` before exiting the shell.
 

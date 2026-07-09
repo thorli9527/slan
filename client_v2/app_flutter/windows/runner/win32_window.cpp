@@ -32,6 +32,17 @@ namespace {
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 constexpr UINT kTrayIconMessage = WM_APP + 1;
 constexpr UINT kTrayIconId = 1;
+constexpr const wchar_t kTrayOpenTitle[] = L"Open";
+constexpr const wchar_t kTrayNetworkTitle[] = L"Network";
+constexpr const wchar_t kTrayQuitTitle[] = L"Quit";
+constexpr const wchar_t kTrayTooltipUnavailable[] =
+    L"SLAN Client V2 - Service unavailable";
+constexpr const wchar_t kTrayTooltipEnabled[] =
+    L"SLAN Client V2 - Network enabled";
+constexpr const wchar_t kTrayTooltipDisabled[] =
+    L"SLAN Client V2 - Network disabled";
+constexpr const wchar_t kTrayTooltipSignedOut[] =
+    L"SLAN Client V2 - Signed out";
 
 /// Registry key for app theme preference.
 ///
@@ -56,6 +67,8 @@ TrayServiceState QueryTrayServiceState();
 void ToggleNetworkFromTray();
 void UpdateTrayIconState(HWND window, const TrayServiceState& state);
 HICON CreateVLTrayIcon(bool network_enabled, bool service_available);
+bool IsTrayNetworkActionEnabled(const TrayServiceState& state);
+const wchar_t* TrayTooltip(const TrayServiceState& state);
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
@@ -149,12 +162,13 @@ void ShowTrayMenu(HWND window) {
   const TrayServiceState state = QueryTrayServiceState();
   UpdateTrayIconState(window, state);
   HMENU menu = CreatePopupMenu();
-  AppendMenu(menu, MF_STRING, ID_TRAY_SETTINGS, L"Settings");
-  const UINT network_flags = MF_STRING | (state.signed_in && state.switch_enabled && !state.syncing ? MF_ENABLED : MF_GRAYED);
-  AppendMenu(menu, network_flags, ID_TRAY_NETWORK,
-             state.network_enabled ? L"Disable Network" : L"Enable Network");
+  AppendMenu(menu, MF_STRING, ID_TRAY_SETTINGS, kTrayOpenTitle);
+  UINT network_flags = MF_STRING;
+  network_flags |= IsTrayNetworkActionEnabled(state) ? MF_ENABLED : MF_GRAYED;
+  network_flags |= state.network_enabled ? MF_CHECKED : MF_UNCHECKED;
+  AppendMenu(menu, network_flags, ID_TRAY_NETWORK, kTrayNetworkTitle);
   AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenu(menu, MF_STRING, ID_TRAY_QUIT, L"Quit");
+  AppendMenu(menu, MF_STRING, ID_TRAY_QUIT, kTrayQuitTitle);
 
   POINT cursor;
   GetCursorPos(&cursor);
@@ -172,19 +186,27 @@ void UpdateTrayIconState(HWND window, const TrayServiceState& state) {
   notify_icon.uID = kTrayIconId;
   notify_icon.uFlags = NIF_ICON | NIF_TIP;
   notify_icon.hIcon = CreateVLTrayIcon(state.network_enabled, state.reachable);
-  const wchar_t* tip = L"SLAN Client V2 - Service unavailable";
-  if (state.reachable) {
-    if (state.network_enabled) {
-      tip = L"SLAN Client V2 - Network enabled";
-    } else if (state.signed_in) {
-      tip = L"SLAN Client V2 - Network disabled";
-    } else {
-      tip = L"SLAN Client V2 - Signed out";
-    }
-  }
+  const wchar_t* tip = TrayTooltip(state);
   wcscpy_s(notify_icon.szTip, tip);
   Shell_NotifyIcon(NIM_MODIFY, &notify_icon);
   DestroyIcon(notify_icon.hIcon);
+}
+
+bool IsTrayNetworkActionEnabled(const TrayServiceState& state) {
+  return state.signed_in && state.switch_enabled && !state.syncing;
+}
+
+const wchar_t* TrayTooltip(const TrayServiceState& state) {
+  if (!state.reachable) {
+    return kTrayTooltipUnavailable;
+  }
+  if (state.network_enabled) {
+    return kTrayTooltipEnabled;
+  }
+  if (state.signed_in) {
+    return kTrayTooltipDisabled;
+  }
+  return kTrayTooltipSignedOut;
 }
 
 void RestoreWindow(HWND window) {

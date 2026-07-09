@@ -5,6 +5,9 @@ import Network
 public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private static let launchdServiceLabel = "dev.slan.client-core-service"
   private static let bundledServiceHost = "127.0.0.1:46394"
+  private static let trayOpenTitle = "Open"
+  private static let trayNetworkTitle = "Network"
+  private static let trayQuitTitle = "Quit"
   private var statusItem: NSStatusItem?
   private var networkMenuItem: NSMenuItem?
   private let bundledServiceLock = NSLock()
@@ -70,20 +73,21 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
 
     let menu = NSMenu()
     menu.addItem(makeMenuItem(
-      title: "Settings",
+      title: Self.trayOpenTitle,
       action: #selector(openMainWindow),
       keyEquivalent: ""
     ))
     let networkItem = makeMenuItem(
-      title: "Enable Network",
+      title: Self.trayNetworkTitle,
       action: #selector(toggleNetwork),
       keyEquivalent: ""
     )
     networkItem.isEnabled = false
+    networkItem.state = .off
     menu.addItem(networkItem)
     menu.addItem(NSMenuItem.separator())
     menu.addItem(makeMenuItem(
-      title: "Quit",
+      title: Self.trayQuitTitle,
       action: #selector(quitShell),
       keyEquivalent: "q"
     ))
@@ -258,8 +262,9 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     latestMenuState = nil
     statusItem?.button?.toolTip = "SLAN Client - Service unavailable"
     applyStatusIcon(networkEnabled: false, serviceAvailable: false)
-    networkMenuItem?.title = "Enable Network"
+    networkMenuItem?.title = Self.trayNetworkTitle
     networkMenuItem?.isEnabled = false
+    networkMenuItem?.state = .off
   }
 
   private func applyMenuStateIfChanged(_ snapshot: [String: Any]) {
@@ -284,10 +289,23 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     } else {
       statusText = "Signed out"
     }
-    networkMenuItem?.title = networkEnabled ? "Disable Network" : "Enable Network"
-    networkMenuItem?.isEnabled = signedIn && switchEnabled && !syncing
+    networkMenuItem?.title = Self.trayNetworkTitle
+    networkMenuItem?.state = networkEnabled ? .on : .off
+    networkMenuItem?.isEnabled = trayNetworkItemEnabled(
+      signedIn: signedIn,
+      syncing: syncing,
+      switchEnabled: switchEnabled
+    )
     applyStatusIcon(networkEnabled: networkEnabled, serviceAvailable: true)
     statusItem?.button?.toolTip = error.isEmpty ? "SLAN Client - \(statusText)" : "SLAN Client - \(statusText): \(error)"
+  }
+
+  private func trayNetworkItemEnabled(
+    signedIn: Bool,
+    syncing: Bool,
+    switchEnabled: Bool
+  ) -> Bool {
+    return signedIn && switchEnabled && !syncing
   }
 
   private func menuStateEquals(_ left: [String: Any]?, _ right: [String: Any]) -> Bool {
@@ -355,17 +373,6 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   private func resolveWebConsoleUrl() -> String {
-    let environment = ProcessInfo.processInfo.environment
-    if let value = environment["SLAN_WEB_CONSOLE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-      !value.isEmpty
-    {
-      return value
-    }
-    if let value = environment["SLAN_CONTROL_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-      !value.isEmpty
-    {
-      return webConsoleUrl(fromControlBaseUrl: value)
-    }
     return "http://47.245.40.231:24200"
   }
 

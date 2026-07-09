@@ -35,6 +35,18 @@ struct TrayServiceState {
   bool switch_enabled = false;
 };
 
+constexpr const char kTrayOpenTitle[] = "Open";
+constexpr const char kTrayNetworkTitle[] = "Network";
+constexpr const char kTrayQuitTitle[] = "Quit";
+constexpr const char kTrayTooltipUnavailable[] =
+    "SLAN Client - Service unavailable";
+constexpr const char kTrayTooltipEnabled[] =
+    "SLAN Client - Network enabled";
+constexpr const char kTrayTooltipDisabled[] =
+    "SLAN Client - Network disabled";
+constexpr const char kTrayTooltipSignedOut[] =
+    "SLAN Client - Signed out";
+
 static std::string service_host() {
   const gchar* env = g_getenv("SLAN_CLIENT_CORE_SERVICE_HOST");
   if (env != nullptr && std::strlen(env) > 0) {
@@ -147,12 +159,14 @@ static void settings_menu_cb(GtkMenuItem* item, gpointer user_data) {
 }
 
 static void refresh_tray_menu(MyApplication* self);
+static bool tray_network_action_enabled(const TrayServiceState& state);
+static const char* tray_tooltip(const TrayServiceState& state);
 
 static void network_menu_cb(GtkMenuItem* item, gpointer user_data) {
   (void)item;
   MyApplication* self = MY_APPLICATION(user_data);
   const TrayServiceState state = query_tray_service_state();
-  if (!state.signed_in || state.syncing || !state.switch_enabled) {
+  if (!tray_network_action_enabled(state)) {
     return;
   }
   send_service_command(state.network_enabled ? "localNetworkDeactivate" : "localNetworkActivate", nullptr);
@@ -185,26 +199,38 @@ static void refresh_tray_menu(MyApplication* self) {
   }
   const TrayServiceState state = query_tray_service_state();
   gtk_menu_item_set_label(GTK_MENU_ITEM(self->network_menu_item),
-                          state.network_enabled ? "Disable Network" : "Enable Network");
+                          kTrayNetworkTitle);
+  if (GTK_IS_CHECK_MENU_ITEM(self->network_menu_item)) {
+    gtk_check_menu_item_set_active(
+        GTK_CHECK_MENU_ITEM(self->network_menu_item), state.network_enabled);
+  }
   gtk_widget_set_sensitive(self->network_menu_item,
-                           state.signed_in && state.switch_enabled && !state.syncing);
+                           tray_network_action_enabled(state));
   if (self->tray_icon != nullptr) {
-    const char* tooltip = "SLAN Client - Service unavailable";
-    if (state.reachable) {
-      if (state.network_enabled) {
-        tooltip = "SLAN Client - Network enabled";
-      } else if (state.signed_in) {
-        tooltip = "SLAN Client - Network disabled";
-      } else {
-        tooltip = "SLAN Client - Signed out";
-      }
-    }
+    const char* tooltip = tray_tooltip(state);
     G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     g_autoptr(GdkPixbuf) icon = make_vl_tray_pixbuf(state.network_enabled, state.reachable);
     gtk_status_icon_set_from_pixbuf(self->tray_icon, icon);
     gtk_status_icon_set_tooltip_text(self->tray_icon, tooltip);
     G_GNUC_END_IGNORE_DEPRECATIONS
   }
+}
+
+static bool tray_network_action_enabled(const TrayServiceState& state) {
+  return state.signed_in && state.switch_enabled && !state.syncing;
+}
+
+static const char* tray_tooltip(const TrayServiceState& state) {
+  if (!state.reachable) {
+    return kTrayTooltipUnavailable;
+  }
+  if (state.network_enabled) {
+    return kTrayTooltipEnabled;
+  }
+  if (state.signed_in) {
+    return kTrayTooltipDisabled;
+  }
+  return kTrayTooltipSignedOut;
 }
 
 static void tray_popup_menu_cb(GtkStatusIcon* status_icon,
@@ -260,9 +286,9 @@ static void install_tray(MyApplication* self) {
     return;
   }
   self->tray_menu = gtk_menu_new();
-  GtkWidget* settings = gtk_menu_item_new_with_label("Settings");
-  self->network_menu_item = gtk_menu_item_new_with_label("Enable Network");
-  GtkWidget* quit = gtk_menu_item_new_with_label("Quit");
+  GtkWidget* settings = gtk_menu_item_new_with_label(kTrayOpenTitle);
+  self->network_menu_item = gtk_check_menu_item_new_with_label(kTrayNetworkTitle);
+  GtkWidget* quit = gtk_menu_item_new_with_label(kTrayQuitTitle);
   gtk_menu_shell_append(GTK_MENU_SHELL(self->tray_menu), settings);
   gtk_menu_shell_append(GTK_MENU_SHELL(self->tray_menu), self->network_menu_item);
   gtk_menu_shell_append(GTK_MENU_SHELL(self->tray_menu), gtk_separator_menu_item_new());
