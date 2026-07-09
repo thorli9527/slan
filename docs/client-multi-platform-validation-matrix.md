@@ -1,6 +1,6 @@
 # Client Multi-Platform Validation Matrix
 
-Last updated: 2026-07-04
+Last updated: 2026-07-09
 
 This document records the client-side integration checks that were actually rerun against the current remote control stack at `http://47.245.40.231:28080`.
 
@@ -40,7 +40,7 @@ It is intentionally execution-oriented:
 
 ### Dual Android
 
-- Script: `bash scripts/android_dual_fast_check.sh`
+- Script: `bash scripts/tests/android/android_dual_fast_check.sh --full-stable`
 - Status: `Passed`
 - Coverage:
   - device login
@@ -51,22 +51,28 @@ It is intentionally execution-oriented:
   - `android-b -> android-a` via DNS: UDP + TCP
   - `android-a -> android-b` via DNS: UDP + TCP
 - Final observed result:
-  - `android-a=11111111111141118111111111111111 / 10.0.0.188`
-  - `android-b=22222222222242228222222222222222 / 10.0.0.189`
+  - `android-a=11111111111141118111111111111111 / 10.0.0.73`
+  - `android-b=22222222222242228222222222222222 / 10.0.0.74`
+  - `zone=android-dual-1783596614-28924.lan`
   - `android dual emulator integration ok`
 
 ### Dual iOS Simulator
 
-- Script: `bash scripts/ios_dual_fast_check.sh`
+- Scripts:
+  - `bash scripts/tests/ios/ios_full_business_check.sh`
+  - `bash scripts/tests/ios/ios_dual_flutter_message_check.sh`
 - Status: `Passed`
 - Coverage:
   - DNS / ACL quick validation
   - MQTT `client_message` quick validation
   - Flutter bidirectional message send/wait
 - Final observed result:
-  - `ios-a=4c5905d156cb4f538434d3a9fec2a521`
-  - `ios-b=3559c3c348ab4737911869192ee678ef`
-  - `iosDualFlutterMessageCheck: ok`
+  - DNS / ACL quick validation: `iosDualAclDnsIntegration: ok`
+  - MQTT quick validation: `clientMessageMqttSmoke: ok`
+  - Flutter bidirectional messages:
+    - `ios-a=bc5c5bc9f4684f7ea083d19bd2a59e86`
+    - `ios-b=9e45fd187de44a698525388170ad1402`
+    - `iosDualFlutterMessageCheck: ok`
 
 ### Dual Docker Linux
 
@@ -114,7 +120,7 @@ It is intentionally execution-oriented:
 
 ### Mac + iOS Fast
 
-- Script: `bash scripts/mac_ios_fast_check.sh`
+- Script: `bash scripts/tests/matrix/mac_ios_fast_check.sh`
 - Status: `Passed`
 - Coverage:
   - local macOS service login
@@ -122,8 +128,8 @@ It is intentionally execution-oriented:
   - Mac receives iOS `client_message`
   - iOS receives Mac `client_message`
 - Final observed result:
-  - `mac=f6fb1cdf0c624ac88296577d2feef7b4`
-  - `ios=e77a96df81554219abeea41deb4a3da4`
+  - `mac=bd9d2e5fe5ac4fab81b156b6d0879566`
+  - `ios=0604f23e0d904c50a595be7d1f5e7f6e`
   - `macIosIntegrationCheck: ok`
 
 ### iOS + Android Without Real iOS Device
@@ -145,38 +151,41 @@ It is intentionally execution-oriented:
 
 ### Mac + Android Passive Direction
 
-- Script: `SLAN_SUDO_PASSWORD='...' bash scripts/mac_android_fast_check.sh`
+- Script: `env SLAN_SUDO_PASSWORD='...' scripts/tests/matrix/mac_android_socket_check.sh`
 - Status: `Passed`
 - Coverage:
   - macOS service login + network enable
   - Mac hosts UDP/TCP echo
   - Android sends UDP/TCP to Mac
 - Final observed result:
-  - `macIp=10.0.0.190`
-  - `androidIp=10.0.0.191`
-  - `SLAN_TEST_UDP_ECHO_OK=10.0.0.190:19090`
-  - `SLAN_TEST_TCP_ECHO_OK=10.0.0.190:19091`
+  - `macIp=10.0.0.83`
+  - `androidIp=10.0.0.84`
+  - `SLAN_TEST_UDP_ECHO_OK=10.0.0.83:19090`
+  - `SLAN_TEST_TCP_ECHO_OK=10.0.0.83:19091`
   - `macAndroidSocketCheck: ok`
 
 ### Mac + Android Active Direction
 
 - Script:
-  - `SLAN_RUN_MAC_ANDROID_ACTIVE=1 SLAN_RUN_MAC_IOS_ACTIVE=0 SLAN_RUN_MAC_LINUX_ACTIVE=0 SLAN_SUDO_PASSWORD='...' bash scripts/mac_active_socket_matrix.sh`
+  - `env SLAN_SUDO_PASSWORD='...' bash scripts/tests/matrix/mac_android_active_socket_check.sh`
 - Status: `Passed`
 - Coverage:
   - macOS service login + network enable
   - Android hosts UDP/TCP echo
   - Mac sends UDP/TCP to Android
 - Final observed result:
-  - `macIp=10.0.0.195`
-  - `androidIp=10.0.0.196`
+  - `macIp=10.0.0.88`
+  - `androidIp=10.0.0.89`
   - Android log recorded UDP receive/send and TCP receive/send markers
   - `macAndroidActiveSocketCheck: ok`
+ - Stability note:
+   - first rerun in this round exited early before Android echo readiness markers appeared
+   - immediate rerun passed end-to-end, so the business chain is working but this case still shows some run-to-run flakiness
 
 ### Tri-Device Control Message Chain
 
 - Script:
-  - `SLAN_CLIENT_CORE_SERVICE_BIN=/Users/thorli/workspace/slan/slan/client_v2/rust/target/debug/client-core-service bash scripts/mac_android_ios_message_check.sh`
+  - `env SLAN_CLIENT_CORE_SERVICE_BIN=client_v2/rust/target/debug/client-core-service bash scripts/tests/matrix/mac_android_ios_message_check.sh`
 - Status: `Passed`
 - Coverage:
   - control-plane `client_message` across three clients
@@ -185,6 +194,9 @@ It is intentionally execution-oriented:
     - `Android -> iOS`
     - `iOS -> Mac`
 - Final observed result:
+  - `Mac -> Android`
+  - `Android -> iOS`
+  - `iOS -> Mac`
   - `triDeviceMessageSmoke: ok`
 
 ## Known Current Limitation
@@ -206,6 +218,12 @@ What is needed:
 
 ## Operational Notes
 
+- In this round, several matrix scripts were updated to avoid `mapfile` so they work on macOS default bash:
+  - `scripts/tests/android/android_dual_emulator_integration.sh`
+  - `scripts/tests/ios/ios_dual_flutter_message_check.sh`
+  - `scripts/tests/matrix/mac_android_socket_check.sh`
+  - `scripts/tests/matrix/mac_android_active_socket_check.sh`
+  - `scripts/tests/matrix/mac_ios_integration_check.sh`
 - For stable Mac + Android reruns, `scripts/mac_android_fast_check.sh` now defaults `SLAN_RESET_EXISTING_MAC_SERVICE_IDENTITY=1`, which helps recover from stale installed macOS identity/session state.
 - For dual iOS reruns, the iOS plugin now persists the requested test device ID override into native stable state, so repeated `flutter test` invocations stay aligned across Flutter UI, iOS plugin, and embedded Rust service.
 - For dual Docker reruns, the Rust session store now writes `client-v2-session.json` atomically, which fixes the previously observed partial-read / decode race during MQTT reconnect and `client_message` delivery.

@@ -40,6 +40,20 @@ REQUESTED_DEVICE_ID_B="${SLAN_IOS_REQUESTED_DEVICE_ID_B:-$(uuidgen | tr '[:upper
 
 PIDS=()
 
+read_lines_into_array() {
+  local __target_var="$1"
+  local __line
+  local -a __values=()
+  while IFS= read -r __line; do
+    __values+=("$__line")
+  done
+  eval "$__target_var=()"
+  local __value
+  for __value in "${__values[@]}"; do
+    eval "$__target_var+=(\"\$__value\")"
+  done
+}
+
 cleanup() {
   local status=$?
   if [[ $status -ne 0 ]]; then
@@ -160,7 +174,7 @@ start_ios_message_wait() {
   local expect_from_device_id="$5"
   local expect_body="$6"
   local expect_defines=()
-  mapfile -t expect_defines < <(
+  read_lines_into_array expect_defines < <(
     slan_mobile_login_message_expect_defines "$expect_from_device_id" "$expect_body"
   )
   run_flutter_test_bg \
@@ -180,7 +194,7 @@ run_ios_message_send() {
   local target_device_id="$5"
   local body="$6"
   local send_defines=()
-  mapfile -t send_defines < <(
+  read_lines_into_array send_defines < <(
     slan_mobile_login_message_send_defines "$target_device_id" "$body"
   )
   run_flutter_test_fg \
@@ -205,7 +219,7 @@ echo "==> requested ios-b device id: $REQUESTED_DEVICE_ID_B"
 xcrun simctl uninstall "$SIM_A_DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl uninstall "$SIM_B_DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 
-mapfile -t COMMON_DART_DEFINES < <(
+read_lines_into_array COMMON_DART_DEFINES < <(
   slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" false true
 )
 

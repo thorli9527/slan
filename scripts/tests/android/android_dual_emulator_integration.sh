@@ -101,6 +101,20 @@ fail() {
   exit 1
 }
 
+read_lines_into_array() {
+  local __target_var="$1"
+  local __line
+  local -a __values=()
+  while IFS= read -r __line; do
+    __values+=("$__line")
+  done
+  eval "$__target_var=()"
+  local __value
+  for __value in "${__values[@]}"; do
+    eval "$__target_var+=(\"\$__value\")"
+  done
+}
+
 extract_json_field() {
   local json="$1"
   local field="$2"
@@ -568,7 +582,7 @@ set_android_vpn_bypass_pref() {
   "$ADB" -s "$device" shell am start -n dev.slan.slan_client_v2/.MainActivity >/dev/null 2>&1 || true
   sleep 2
   local preset_common_dart_defines=()
-  mapfile -t preset_common_dart_defines < <(
+  read_lines_into_array preset_common_dart_defines < <(
     slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
   )
   (
@@ -832,7 +846,7 @@ register_user_if_needed
 "$ADB" -s "$DEVICE_A" shell appops get dev.slan.slan_client_v2 ACTIVATE_VPN >/dev/null 2>&1 || true
 "$ADB" -s "$DEVICE_B" shell appops get dev.slan.slan_client_v2 ACTIVATE_VPN >/dev/null 2>&1 || true
 
-mapfile -t COMMON_DART_DEFINES < <(
+read_lines_into_array COMMON_DART_DEFINES < <(
   slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
 )
 COMMON_DART_DEFINES+=(
@@ -892,7 +906,7 @@ TARGET_B_DNS="android-b.${ZONE_NAME}"
 log "phase 2: validate network module and bidirectional client messages"
 start_logcat_capture "$DEVICE_A" "$LOGCAT_A_PHASE2"
 start_logcat_capture "$DEVICE_B" "$LOGCAT_B_PHASE2"
-mapfile -t PHASE2_FORWARD_EXPECT_DEFINES < <(
+read_lines_into_array PHASE2_FORWARD_EXPECT_DEFINES < <(
   slan_mobile_login_message_expect_defines \
     "$DEVICE_ID_A" \
     "$MESSAGE_A_TO_B" \
@@ -917,7 +931,7 @@ log "phase 2 forward receiver current deviceId=$DEVICE_ID_B_PHASE2 (phase1=$DEVI
 wait_for_device_marker "$PHASE2_BG_PID" "$LOG_B_PHASE2" "SLAN_TEST_MQTT_STATUS" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" >/dev/null
 log "phase 2 forward receiver mqtt ready; settling ${ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS}s before sender"
 sleep "$ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS"
-mapfile -t PHASE2_FORWARD_SEND_DEFINES < <(
+read_lines_into_array PHASE2_FORWARD_SEND_DEFINES < <(
   slan_mobile_login_message_send_defines "$DEVICE_ID_B_PHASE2" "$MESSAGE_A_TO_B"
 )
 run_flutter_test_with_ready_and_completion_markers \
@@ -950,7 +964,7 @@ log "phase 2 forward sender current deviceId=$DEVICE_ID_A_PHASE2 (phase1=$DEVICE
 log "phase 2 reverse receiver bootstrap begin"
 start_logcat_capture "$DEVICE_A" "$LOGCAT_A_PHASE2_REPLY"
 start_logcat_capture "$DEVICE_B" "$LOGCAT_B_PHASE2_REPLY"
-mapfile -t PHASE2_REVERSE_EXPECT_DEFINES < <(
+read_lines_into_array PHASE2_REVERSE_EXPECT_DEFINES < <(
   slan_mobile_login_message_expect_defines \
     "$DEVICE_ID_B" \
     "$MESSAGE_B_TO_A" \
@@ -976,7 +990,7 @@ log "phase 2 reverse receiver current deviceId=$DEVICE_ID_A_PHASE2_REPLY (forwar
 wait_for_device_marker "$PHASE2_REPLY_BG_PID" "$LOG_A_PHASE2_REPLY" "SLAN_TEST_MQTT_STATUS" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" >/dev/null
 log "phase 2 reverse receiver mqtt ready; settling ${ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS}s before sender"
 sleep "$ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS"
-mapfile -t PHASE2_REVERSE_SEND_DEFINES < <(
+read_lines_into_array PHASE2_REVERSE_SEND_DEFINES < <(
   slan_mobile_login_message_send_defines "$DEVICE_ID_A_PHASE2_REPLY" "$MESSAGE_B_TO_A"
 )
 run_flutter_test_with_ready_and_completion_markers \

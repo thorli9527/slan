@@ -39,6 +39,32 @@ curl_internal() {
     "$@"
 }
 
+list_region_node_ids() {
+  local kind="$1"
+  local region="$2"
+  local path
+  case "$kind" in
+    relay) path="relay-nodes" ;;
+    derp) path="derp-nodes" ;;
+    *) fail "unknown node kind: $kind" ;;
+  esac
+  curl_internal "${BIZ_URL}/internal/wire/admin/${path}" | \
+    python3 - "$region" <<'PY'
+import json
+import sys
+
+region = sys.argv[1].strip()
+payload = json.load(sys.stdin)
+items = payload.get("items") or []
+for item in items:
+    if str(item.get("regionId", "")).strip() != region:
+        continue
+    node_id = str(item.get("nodeId", "")).strip()
+    if node_id:
+        print(node_id)
+PY
+}
+
 patch_node_status() {
   if [[ "$SKIP_ADMIN_PATCH" == "1" ]]; then
     echo "skip internal admin patch: kind=$1 region=$2 node=$3 enabled=$4 healthy=${5:-true}"
@@ -64,14 +90,28 @@ patch_node_status() {
 
 set_relay_nodes() {
   local enabled="$1"
-  patch_node_status relay dev relay-dev-1 "$enabled" true
-  patch_node_status relay dev relay-dev-2 "$enabled" true
+  local -a nodes=()
+  while IFS= read -r node; do
+    [[ -n "$node" ]] && nodes+=("$node")
+  done < <(list_region_node_ids relay dev)
+  [[ ${#nodes[@]} -gt 0 ]] || fail "no live relay nodes found in region=dev"
+  local node
+  for node in "${nodes[@]}"; do
+    patch_node_status relay dev "$node" "$enabled" true
+  done
 }
 
 set_derp_nodes() {
   local enabled="$1"
-  patch_node_status derp dev derp-dev-1 "$enabled" true
-  patch_node_status derp dev derp-dev-2 "$enabled" true
+  local -a nodes=()
+  while IFS= read -r node; do
+    [[ -n "$node" ]] && nodes+=("$node")
+  done < <(list_region_node_ids derp dev)
+  [[ ${#nodes[@]} -gt 0 ]] || fail "no live derp nodes found in region=dev"
+  local node
+  for node in "${nodes[@]}"; do
+    patch_node_status derp dev "$node" "$enabled" true
+  done
 }
 
 sudo_run() {

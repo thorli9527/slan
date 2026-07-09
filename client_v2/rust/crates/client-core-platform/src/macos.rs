@@ -1972,6 +1972,16 @@ fn run_udp_data_plane(
                         }
                         match write_utun_ipv4_packet(&mut file, &packet) {
                             Ok(_) => {
+                                macos_trace!(
+                                    "SLAN_MACOS_RELAY_UDP_TUN_WRITE_OK peer={} dst={:?} flags={} bytes={} checksum_valid={:?}",
+                                    peer.peer_node_id,
+                                    ipv4_destination(&packet),
+                                    ipv4_tcp_flags(&packet)
+                                        .map(tcp_flags_summary)
+                                        .unwrap_or_else(|| "NONE".to_string()),
+                                    packet.len(),
+                                    ipv4_transport_checksum_valid(&packet)
+                                );
                                 if !logged_first_utun_write {
                                     macos_trace!(
                                         "SLAN_MACOS_UDP_DP_TUN_WRITE_OK peer={} dst={:?} size={}",
@@ -1985,6 +1995,16 @@ fn run_udp_data_plane(
                                 record_relay_packet_received(stats, peer)
                             }
                             Err(error) => {
+                                macos_trace!(
+                                    "SLAN_MACOS_RELAY_UDP_TUN_WRITE_ERROR peer={} dst={:?} flags={} bytes={} error={}",
+                                    peer.peer_node_id,
+                                    ipv4_destination(&packet),
+                                    ipv4_tcp_flags(&packet)
+                                        .map(tcp_flags_summary)
+                                        .unwrap_or_else(|| "NONE".to_string()),
+                                    packet.len(),
+                                    error
+                                );
                                 eprintln!(
                                     "SLAN_MACOS_UDP_DP_TUN_WRITE_ERROR peer={} error={}",
                                     peer.peer_node_id, error
@@ -2049,10 +2069,30 @@ fn run_udp_data_plane(
                         }
                         match write_utun_ipv4_packet(&mut file, &packet) {
                             Ok(_) => {
+                                macos_trace!(
+                                    "SLAN_MACOS_DERP_TUN_WRITE_OK peer={} dst={:?} flags={} bytes={} checksum_valid={:?}",
+                                    peer.peer_node_id,
+                                    ipv4_destination(&packet),
+                                    ipv4_tcp_flags(&packet)
+                                        .map(tcp_flags_summary)
+                                        .unwrap_or_else(|| "NONE".to_string()),
+                                    packet.len(),
+                                    ipv4_transport_checksum_valid(&packet)
+                                );
                                 stats.last_utun_write_error = None;
                                 record_derp_packet_received(stats, peer)
                             }
                             Err(error) => {
+                                macos_trace!(
+                                    "SLAN_MACOS_DERP_TUN_WRITE_ERROR peer={} dst={:?} flags={} bytes={} error={}",
+                                    peer.peer_node_id,
+                                    ipv4_destination(&packet),
+                                    ipv4_tcp_flags(&packet)
+                                        .map(tcp_flags_summary)
+                                        .unwrap_or_else(|| "NONE".to_string()),
+                                    packet.len(),
+                                    error
+                                );
                                 stats.last_utun_write_error = Some(error.to_string());
                                 record_derp_write_failure(stats, peer)
                             }
@@ -2130,6 +2170,21 @@ fn run_udp_data_plane(
                             continue;
                         }
                         if write_utun_ipv4_packet(&mut file, &packet).is_ok() {
+                            let peer_node_id = direct_udp
+                                .peers
+                                .get(received.peer_index)
+                                .map(|peer| peer.peer_node_id.as_str())
+                                .unwrap_or("unknown");
+                            macos_trace!(
+                                "SLAN_MACOS_DIRECT_UDP_TUN_WRITE_OK peer={} dst={:?} flags={} bytes={} checksum_valid={:?}",
+                                peer_node_id,
+                                ipv4_destination(&packet),
+                                ipv4_tcp_flags(&packet)
+                                    .map(tcp_flags_summary)
+                                    .unwrap_or_else(|| "NONE".to_string()),
+                                packet.len(),
+                                ipv4_transport_checksum_valid(&packet)
+                            );
                             stats.last_utun_write_error = None;
                             if let Some(peer) =
                                 direct_udp
@@ -2144,6 +2199,20 @@ fn run_udp_data_plane(
                                 record_relay_packet_received(stats, peer);
                             }
                         } else {
+                            let peer_node_id = direct_udp
+                                .peers
+                                .get(received.peer_index)
+                                .map(|peer| peer.peer_node_id.as_str())
+                                .unwrap_or("unknown");
+                            macos_trace!(
+                                "SLAN_MACOS_DIRECT_UDP_TUN_WRITE_ERROR peer={} dst={:?} flags={} bytes={}",
+                                peer_node_id,
+                                ipv4_destination(&packet),
+                                ipv4_tcp_flags(&packet)
+                                    .map(tcp_flags_summary)
+                                    .unwrap_or_else(|| "NONE".to_string()),
+                                packet.len()
+                            );
                             stats.last_utun_write_error =
                                 Some("direct_udp utun write failed".to_string());
                         }

@@ -203,7 +203,10 @@ android_runtime_stats_present() {
 
 run_android_socket_test() {
   local target_host="$1"
-  mapfile -t ANDROID_COMMON_DART_DEFINES < <(
+  local -a ANDROID_COMMON_DART_DEFINES=()
+  while IFS= read -r define; do
+    ANDROID_COMMON_DART_DEFINES+=("$define")
+  done < <(
     slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
   )
   (

@@ -40,6 +40,20 @@ MAC_TO_IOS_BODY="${SLAN_MAC_TO_IOS_BODY:-hello-mac-to-ios-$(date +%s%N)}"
 
 PIDS=()
 
+read_lines_into_array() {
+  local __target_var="$1"
+  local __line
+  local -a __values=()
+  while IFS= read -r __line; do
+    __values+=("$__line")
+  done
+  eval "$__target_var=()"
+  local __value
+  for __value in "${__values[@]}"; do
+    eval "$__target_var+=(\"\$__value\")"
+  done
+}
+
 cleanup() {
   status=$?
   if [[ $status -ne 0 && -f "$IOS_LOG" ]]; then
@@ -69,13 +83,13 @@ start_ios_flutter_message_harness() {
   local ios_common_dart_defines=()
   local ios_send_dart_defines=()
   local ios_expect_dart_defines=()
-  mapfile -t ios_common_dart_defines < <(
+  read_lines_into_array ios_common_dart_defines < <(
     slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" false true
   )
-  mapfile -t ios_send_dart_defines < <(
+  read_lines_into_array ios_send_dart_defines < <(
     slan_mobile_login_message_send_defines "$MAC_DEVICE_ID" "$IOS_TO_MAC_BODY"
   )
-  mapfile -t ios_expect_dart_defines < <(
+  read_lines_into_array ios_expect_dart_defines < <(
     slan_mobile_login_message_expect_defines "$MAC_DEVICE_ID" "$MAC_TO_IOS_BODY"
   )
   (

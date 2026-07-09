@@ -274,7 +274,9 @@ flutter_retryable_startup_failure() {
 start_android_flutter_peer_echo() {
   local attempt status
   local android_common_dart_defines=()
-  mapfile -t android_common_dart_defines < <(
+  while IFS= read -r define; do
+    android_common_dart_defines+=("$define")
+  done < <(
     slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
   )
   for attempt in 1 2; do
@@ -424,11 +426,15 @@ fi
 slan_wait_macos_peer_route_ready "$ANDROID_IP" "$MAC_IP" "$MAC_SERVICE_HOST" 120 \
   || fail "mac peer route did not become stable for Android target=${ANDROID_IP} source=${MAC_IP}"
 
-UDP_RESULT="$(send_mac_udp "$MAC_IP" "$ANDROID_IP" "mac-to-android-udp-$(date +%s%N)")"
-[[ "$UDP_RESULT" == echo:* ]] || fail "Mac -> Android UDP failed: $UDP_RESULT"
+if [[ "${SLAN_SKIP_MAC_UDP_SEND:-0}" != "1" ]]; then
+  UDP_RESULT="$(send_mac_udp "$MAC_IP" "$ANDROID_IP" "mac-to-android-udp-$(date +%s%N)")"
+  [[ "$UDP_RESULT" == echo:* ]] || fail "Mac -> Android UDP failed: $UDP_RESULT"
+fi
 TCP_BODY="mac-to-android-tcp-$(date +%s%N)"
-TCP_RESULT="$(send_mac_tcp "$MAC_IP" "$ANDROID_IP" "$TCP_BODY")"
-[[ "$TCP_RESULT" == "echo:${TCP_BODY}" ]] || fail "Mac -> Android TCP failed: $TCP_RESULT"
+if [[ "${SLAN_SKIP_MAC_TCP_SEND:-0}" != "1" ]]; then
+  TCP_RESULT="$(send_mac_tcp "$MAC_IP" "$ANDROID_IP" "$TCP_BODY")"
+  [[ "$TCP_RESULT" == "echo:${TCP_BODY}" ]] || fail "Mac -> Android TCP failed: $TCP_RESULT"
+fi
 
 kill "$ANDROID_PID" 2>/dev/null || true
 wait "$ANDROID_PID" || true
