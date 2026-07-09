@@ -4,18 +4,24 @@ set -euo pipefail
 SCRIPT_PATH="${BASH_SOURCE:-$0}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
 ROOT_DIR="$SCRIPT_DIR"
+FALLBACK_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
+if [ ! -e "$ROOT_DIR/.git" ]; then
+  ROOT_DIR="$FALLBACK_ROOT"
+fi
 . "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 IMAGE="${SLAN_LINUX_DUAL_IMAGE:-ubuntu:24.04}"
-PACKAGE_PATH="${SLAN_LINUX_CLIENT_PACKAGE:-$ROOT_DIR/client_v2/.tmp/installer/linux/SLAN-Client-V2-linux-arm64.tar.gz}"
 BUILD_PACKAGE="${SLAN_LINUX_DUAL_BUILD_PACKAGE:-0}"
 CONTAINER_PREFIX="${SLAN_LINUX_DUAL_PREFIX:-slan-linux-dual}"
 WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
+WEB_API_BASE_URL="${SLAN_WEB_API_BASE_URL:-${SLAN_BIZ_WEB_BASE_URL:-http://47.245.40.231:28081}}"
+WEB_API_PREFIX="${SLAN_WEB_API_PREFIX:-/api/web}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+CONTAINER_BIZ_URL="${SLAN_LINUX_DUAL_CONTAINER_BIZ_URL:-$BIZ_URL}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-EMAIL="${SLAN_LINUX_DUAL_EMAIL:-${SLAN_TEST_EMAIL:-linux-dual-1783260000000000000@example.test}}"
+EMAIL="${SLAN_LINUX_DUAL_EMAIL:-linux-dual-$(date +%s%N)@example.test}"
 TIMEOUT_SECONDS="${SLAN_LINUX_DUAL_TIMEOUT_SECONDS:-120}"
 BOOTSTRAP_TTL_SECONDS="${SLAN_LINUX_DUAL_BOOTSTRAP_TTL_SECONDS:-1800}"
 ENABLE_NETWORK="${SLAN_LINUX_DUAL_ENABLE_NETWORK:-0}"
@@ -24,6 +30,7 @@ UDP_PORT="${SLAN_LINUX_DUAL_UDP_PORT:-19090}"
 TCP_PORT="${SLAN_LINUX_DUAL_TCP_PORT:-19091}"
 RUN_PACKET_TESTS="${SLAN_LINUX_DUAL_PACKET_TESTS:-0}"
 KEEP_CONTAINERS="${SLAN_LINUX_DUAL_KEEP_CONTAINERS:-0}"
+KEEP_REMOTE_STATE="${SLAN_LINUX_DUAL_KEEP_REMOTE_STATE:-0}"
 CONTAINER_PRIVILEGED="${SLAN_LINUX_DUAL_CONTAINER_PRIVILEGED:-0}"
 CONTAINER_A="${CONTAINER_PREFIX}-a"
 CONTAINER_B="${CONTAINER_PREFIX}-b"
@@ -33,6 +40,7 @@ RESULT_DIR="${SLAN_LINUX_DUAL_RESULT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-linu
 RESULT_JSON_A="$RESULT_DIR/a.json"
 RESULT_JSON_B="$RESULT_DIR/b.json"
 LOCAL_API_TIMEOUT_SECONDS="${SLAN_LINUX_DUAL_LOCAL_API_TIMEOUT_SECONDS:-8}"
+BIZ_READY_TIMEOUT_SECONDS="${SLAN_LINUX_DUAL_BIZ_READY_TIMEOUT_SECONDS:-60}"
 
 BOOTSTRAP_ID_A=""
 BOOTSTRAP_KEY_A=""
@@ -55,15 +63,99 @@ fail() {
   exit 1
 }
 
+resolve_linux_package_path() {
+  if [[ -n "${SLAN_LINUX_CLIENT_PACKAGE:-}" ]]; then
+    printf '%s\n' "$SLAN_LINUX_CLIENT_PACKAGE"
+    return
+  fi
+
+  local installer_dir="$ROOT_DIR/client_v2/.tmp/installer/linux"
+  local host_arch
+  host_arch="$(uname -m 2>/dev/null || true)"
+  local preferred=()
+  case "$host_arch" in
+    x86_64|amd64)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+      )
+      ;;
+    arm64|aarch64)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+      )
+      ;;
+    *)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+      )
+      ;;
+  esac
+
+  local candidate
+  for candidate in "${preferred[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  printf '%s\n' "${preferred[0]}"
+}
+
 need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-log "linux dual docker defaults: account=${EMAIL} biz=${BIZ_URL} web=${WEB_BASE_URL}"
+log "linux dual docker defaults: account=${EMAIL} biz=${BIZ_URL} containerBiz=${CONTAINER_BIZ_URL} web=${WEB_BASE_URL} webApi=${WEB_API_BASE_URL}"
+
+if [[ "$RUN_PACKET_TESTS" == "1" && "$LINUX_NETWORK_MOCK" == "1" ]]; then
+  fail "packet tests require SLAN_LINUX_NETWORK_MOCK=0 so the client uses a real TUN data plane"
+fi
+
+if [[ "$RUN_PACKET_TESTS" == "1" && ! -e /dev/net/tun && ! -e /dev/tun ]]; then
+  fail "packet tests require a Linux Docker host with /dev/net/tun; Docker Desktop on macOS cannot provide a real TUN data plane here"
+fi
 
 json_value() {
   local key="$1"
   jq -r --arg key "$key" '.[$key] // empty'
+}
+
+curl_retry() {
+  local attempt
+  local delay=1
+  local max_attempts="${SLAN_LINUX_DUAL_CURL_RETRY_ATTEMPTS:-8}"
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    if curl "$@"; then
+      return 0
+    fi
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      sleep "$delay"
+      if [[ "$delay" -lt 8 ]]; then
+        delay=$((delay * 2))
+      fi
+    fi
+  done
+  return 1
+}
+
+wait_for_biz_ready() {
+  log "wait for biz api ready"
+  local deadline=$((SECONDS + BIZ_READY_TIMEOUT_SECONDS))
+  while (( SECONDS < deadline )); do
+    if curl --silent --show-error --max-time 5 \
+      -o /dev/null \
+      -X POST "${BIZ_URL}/api/app/auth/register" \
+      -H 'Content-Type: application/json' \
+      -d '{"email":"biz-ready-probe@example.test","password":"Password123!"}'; then
+      return 0
+    fi
+    sleep 2
+  done
+  fail "biz api did not become ready within ${BIZ_READY_TIMEOUT_SECONDS}s: ${BIZ_URL}"
 }
 
 cleanup_container() {
@@ -121,7 +213,7 @@ revoke_bootstrap_key() {
   local bootstrap_id="$1"
   [[ -n "$bootstrap_id" && -n "$USER_TOKEN" && -n "$USER_ID" ]] || return 0
   curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys/${bootstrap_id}/revoke" \
+    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/device-bootstrap-keys/${bootstrap_id}/revoke" \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"userId\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
@@ -134,33 +226,39 @@ cleanup() {
   fi
   revoke_bootstrap_key "$BOOTSTRAP_ID_A"
   revoke_bootstrap_key "$BOOTSTRAP_ID_B"
+  if [[ "$KEEP_REMOTE_STATE" == "1" ]]; then
+    rm -rf "$RESULT_DIR"
+    return
+  fi
   if [[ -n "$USER_ID" ]]; then
     for rule_id in "${RULE_IDS[@]:-}"; do
       curl --silent --show-error -X DELETE \
-        "${WEB_BASE_URL}/api/web/security-groups/rules/${rule_id}" >/dev/null 2>&1 || true
+        "${WEB_API_BASE_URL}${WEB_API_PREFIX}/security-groups/rules/${rule_id}" >/dev/null 2>&1 || true
     done
     if [[ -n "$NETWORK_ID" ]]; then
       for record_id in "${RECORD_IDS[@]:-}"; do
         curl --silent --show-error -X DELETE \
-          "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records/${record_id}" >/dev/null 2>&1 || true
+          "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/dns/records/${record_id}" >/dev/null 2>&1 || true
       done
       if [[ -n "$ZONE_ID" ]]; then
         curl --silent --show-error -X DELETE \
-          "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}" >/dev/null 2>&1 || true
+          "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}" >/dev/null 2>&1 || true
       fi
     fi
     local device_ids
     device_ids="$(curl --silent --show-error \
-      "${WEB_BASE_URL}/api/web/devices?userId=${USER_ID}" | jq -r '.items[]?.deviceId // empty' 2>/dev/null || true)"
+      "${WEB_API_BASE_URL}${WEB_API_PREFIX}/devices?userId=${USER_ID}" | jq -r '.items[]?.deviceId // empty' 2>/dev/null || true)"
     while IFS= read -r device_id; do
       [[ -n "$device_id" ]] || continue
       curl --silent --show-error -X DELETE \
-        "${WEB_BASE_URL}/api/web/devices/${device_id}?actorUserId=${USER_ID}" >/dev/null 2>&1 || true
+        "${WEB_API_BASE_URL}${WEB_API_PREFIX}/devices/${device_id}?actorUserId=${USER_ID}" >/dev/null 2>&1 || true
     done <<<"$device_ids"
   fi
   rm -rf "$RESULT_DIR"
 }
 trap cleanup EXIT
+
+PACKAGE_PATH="$(resolve_linux_package_path)"
 
 dump_container_debug() {
   local name="$1"
@@ -173,14 +271,15 @@ dump_container_debug() {
 }
 
 register_and_login() {
+  wait_for_biz_ready
   log "register/login test user"
-  curl --silent --show-error --fail \
+  curl_retry --silent --show-error --fail \
     -X POST "${BIZ_URL}/api/app/auth/register" \
     -H 'Content-Type: application/json' \
     -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" >/dev/null 2>&1 || true
 
   local auth_json
-  auth_json="$(curl --silent --show-error --fail \
+  auth_json="$(curl_retry --silent --show-error --fail \
     -X POST "${BIZ_URL}/api/app/auth/login" \
     -H 'Content-Type: application/json' \
     -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
@@ -192,9 +291,9 @@ register_and_login() {
 resolve_network() {
   log "resolve default network"
   local networks_json
-  networks_json="$(curl --silent --show-error --fail \
+  networks_json="$(curl_retry --silent --show-error --fail \
     -H "Authorization: Bearer ${USER_TOKEN}" \
-    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+    "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks?userId=${USER_ID}")"
   NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
   [[ -n "$NETWORK_ID" ]] || fail "failed to resolve default network"
 }
@@ -202,8 +301,8 @@ resolve_network() {
 create_bootstrap_key() {
   local alias="$1"
   local bootstrap_json
-  bootstrap_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
+  bootstrap_json="$(curl_retry --silent --show-error --fail \
+    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/device-bootstrap-keys" \
     -H "Authorization: Bearer ${USER_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${alias}\",\"ttlSeconds\":${BOOTSTRAP_TTL_SECONDS}}")"
@@ -269,10 +368,10 @@ install_client() {
   local_package_in_container="/workspace/slan/${PACKAGE_PATH#$ROOT_DIR/}"
   container_exec "$name" "
 set -euo pipefail
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
+curl -fsSL '${CONTAINER_BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
 bash /tmp/slan-install.sh \
-  --server='${BIZ_URL}' \
-  --session-key='${bootstrap_key}' \
+  --server='${CONTAINER_BIZ_URL}' \
+  --installation-key='${bootstrap_key}' \
   --tray=disabled \
   --package-url='file://${local_package_in_container}'
 "
@@ -288,6 +387,7 @@ provision_logged_in_container() {
   SLAN_LINUX_RUNTIME_TIMEOUT_SECONDS="$TIMEOUT_SECONDS" \
   SLAN_LINUX_DOCKER_NAME="$container_name" \
   SLAN_LINUX_SERVICE_HOST="$service_host" \
+  SLAN_LINUX_DOCKER_CONTAINER_BIZ_URL="$CONTAINER_BIZ_URL" \
   SLAN_LINUX_DOCKER_EMAIL="$EMAIL" \
   SLAN_LINUX_DOCKER_DEVICE_ALIAS="$device_alias" \
   SLAN_LINUX_DOCKER_TTL_SECONDS="$BOOTSTRAP_TTL_SECONDS" \
@@ -307,7 +407,7 @@ set -euo pipefail
 export SLAN_CLIENT_CORE_SERVICE_HOST='${service_host}'
 export SLAN_LINUX_NETWORK_MOCK='${LINUX_NETWORK_MOCK}'
 exec /usr/bin/slan-client-v2-console \
-  --server-url '${BIZ_URL}' \
+  --server-url '${CONTAINER_BIZ_URL}' \
   --email '${EMAIL}' \
   --password '${PASSWORD}' \
   --device-name '${device_alias}' \
@@ -389,7 +489,7 @@ create_dns_zone_and_records() {
   log "create dns zone ${ZONE_NAME}"
   local zone_json
   zone_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones" \
+    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/dns/zones" \
     -H 'Content-Type: application/json' \
     -d "{\"zoneName\":\"${ZONE_NAME}\"}")"
   ZONE_ID="$(printf '%s' "$zone_json" | jq -r '.zoneId // empty')"
@@ -401,7 +501,7 @@ create_dns_record() {
   local target_device_id="$2"
   local record_json record_id
   record_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records" \
+    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/dns/records" \
     -H 'Content-Type: application/json' \
     -d "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"${record_name}\",\"recordType\":\"A\",\"targetDeviceId\":\"${target_device_id}\",\"port\":\"443\",\"ttl\":60}")"
   record_id="$(printf '%s' "$record_json" | jq -r '.recordId // empty')"
@@ -411,7 +511,7 @@ create_dns_record() {
 
 security_group_id() {
   curl --silent --show-error --fail \
-    "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups" | jq -r '.items[0].securityGroupId // empty'
+    "${WEB_API_BASE_URL}${WEB_API_PREFIX}/networks/${NETWORK_ID}/security-groups" | jq -r '.items[0].securityGroupId // empty'
 }
 
 add_rule() {
@@ -423,7 +523,7 @@ add_rule() {
   local peer_value="$6"
   local rule_json rule_id
   rule_json="$(curl --silent --show-error --fail \
-    -X POST "${WEB_BASE_URL}/api/web/security-groups/${security_group_id}/rules" \
+    -X POST "${WEB_API_BASE_URL}${WEB_API_PREFIX}/security-groups/${security_group_id}/rules" \
     -H 'Content-Type: application/json' \
     -d "{\"direction\":\"${direction}\",\"priority\":100,\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"${peer_type}\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
@@ -475,6 +575,50 @@ wait_network_module() {
   printf '%s\n' "${last_nonempty_module_json:-$module_json}"
   dump_container_debug "$name"
   fail "${name} network module did not receive expected dns/acl config"
+}
+
+wait_network_settled() {
+  local name="$1"
+  local service_host="$2"
+  local min_peers="${3:-1}"
+  local min_dns="${4:-0}"
+  local min_rules="${5:-0}"
+  local consecutive_target="${6:-8}"
+  local deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
+  local consecutive=0
+  local status_json=''
+  local control_json=''
+  local module_json=''
+  local peer_count=0
+  local dns_count=0
+  local rule_count=0
+  log "wait ${name} network settled peers>=${min_peers} dns>=${min_dns} rules>=${min_rules} stable=${consecutive_target}"
+  while (( $(date +%s) < deadline )); do
+    status_json="$(request_json "$name" "$service_host" localStatus || true)"
+    control_json="$(request_json "$name" "$service_host" localControlStatus || true)"
+    module_json="$(request_json "$name" "$service_host" localNetworkModule || true)"
+    if [[ -n "$module_json" ]]; then
+      peer_count="$(jq -r '(.peerCount // ([.configs[]?.peers[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
+      dns_count="$(jq -r '(.dnsRecordCount // ([.configs[]?.dnsRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
+      rule_count="$(jq -r '(.securityRuleCount // ([.configs[]?.rules[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
+    fi
+    if [[ -n "$status_json" && -n "$control_json" && -n "$module_json" ]] && \
+      jq -e '.signedIn == true and .networkEnabled == true and .syncing == false and (.virtualIp // "" | length > 0)' >/dev/null <<<"$status_json" && \
+      jq -e '.ready == true' >/dev/null <<<"$control_json" && \
+      (( peer_count >= min_peers && dns_count >= min_dns && rule_count >= min_rules )); then
+      consecutive=$((consecutive + 1))
+      if (( consecutive >= consecutive_target )); then
+        return 0
+      fi
+    else
+      consecutive=0
+    fi
+    sleep 2
+  done
+  printf '%s\n' "${status_json:-$control_json}"
+  printf '%s\n' "$module_json"
+  dump_container_debug "$name"
+  fail "${name} network did not settle after config updates"
 }
 
 ensure_network_ready() {
@@ -625,8 +769,13 @@ def handle_tcp(conn: socket.socket, addr) -> None:
             data += chunk
         body = data.decode().rstrip('\n')
         log(f'SOCKET_ECHO_TCP_RECEIVED={addr[0]}:{addr[1]} body={body}')
-        conn.sendall(f'echo:{body}\n'.encode())
+        payload = f'echo:{body}\n'.encode()
+        conn.sendall(payload)
+        log(f'SOCKET_ECHO_TCP_SENT={addr[0]}:{addr[1]} bytes={len(payload)}')
+        conn.shutdown(socket.SHUT_WR)
         time.sleep(0.5)
+    except Exception as exc:
+        log(f'SOCKET_ECHO_TCP_ERROR={addr[0]}:{addr[1]} error={exc!r}')
     finally:
         conn.close()
 
@@ -729,10 +878,25 @@ import socket, sys
 target_ip = sys.argv[1]
 port = int(sys.argv[2])
 body = (sys.argv[3] + '\\n').encode()
-s = socket.create_connection((target_ip, port), timeout=8)
-s.sendall(body)
-data = s.recv(2048)
-print(data.decode().strip())
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(8)
+try:
+    s.connect((target_ip, port))
+    s.sendall(body)
+    chunks = []
+    while True:
+        chunk = s.recv(2048)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        if b'\\n' in chunk:
+            break
+    print(b''.join(chunks).decode().strip())
+except Exception as exc:
+    print(f'ERROR:{exc!r}')
+    raise
+finally:
+    s.close()
 PY
 " 2>/dev/null || true)"
   [[ "$output" == "echo:${body}" ]] || fail "TCP echo failed from ${from_name}: got=${output:-<empty>} want=echo:${body}"
@@ -790,6 +954,9 @@ main() {
     ensure_network_ready "$CONTAINER_A" "$SERVICE_HOST_A" >/dev/null
     ensure_network_ready "$CONTAINER_B" "$SERVICE_HOST_B" >/dev/null
   fi
+
+  wait_network_settled "$CONTAINER_A" "$SERVICE_HOST_A" 1 2 4
+  wait_network_settled "$CONTAINER_B" "$SERVICE_HOST_B" 1 2 4
 
   log "verify bidirectional client_message"
   local body_ab body_ba

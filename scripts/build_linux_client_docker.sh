@@ -7,6 +7,7 @@ CONTAINER_NAME="${SLAN_LINUX_BUILD_CONTAINER:-slan-linux-client-build}"
 OUTPUT_DIR="${SLAN_LINUX_BUILD_OUTPUT_DIR:-$ROOT_DIR/client_v2/.tmp/installer/linux}"
 VARIANT="${SLAN_LINUX_BUILD_VARIANT:-console}"
 VERSION="${SLAN_CLIENT_V2_VERSION:-0.1.0}"
+PLATFORM="${SLAN_LINUX_BUILD_PLATFORM:-}"
 ARCHIVE_PATH=""
 
 log() {
@@ -33,12 +34,17 @@ mkdir -p "$OUTPUT_DIR"
 
 log "start build container: $IMAGE"
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-docker run -d \
-  --name "$CONTAINER_NAME" \
-  -v "$ROOT_DIR:/workspace/slan" \
-  -w /workspace/slan \
-  "$IMAGE" \
-  sleep infinity >/dev/null
+docker_run_args=(
+  run -d
+  --name "$CONTAINER_NAME"
+  -v "$ROOT_DIR:/workspace/slan"
+  -w /workspace/slan
+)
+if [[ -n "$PLATFORM" ]]; then
+  docker_run_args+=(--platform "$PLATFORM")
+fi
+docker_run_args+=("$IMAGE" sleep infinity)
+docker "${docker_run_args[@]}" >/dev/null
 
 log "install Linux build dependencies"
 docker exec "$CONTAINER_NAME" bash -lc '

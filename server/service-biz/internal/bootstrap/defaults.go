@@ -117,7 +117,14 @@ func DefaultRelayEndpoint() string {
 	if raw := strings.TrimSpace(os.Getenv("SLAN_RELAY_UDP_ADDR")); raw != "" {
 		return normalizeRelayAddress(raw)
 	}
-	return "127.0.0.1:3478"
+	if host := strings.TrimSpace(os.Getenv("SLAN_WIRE_RELAY_PUBLIC_HOST")); host != "" {
+		port := strings.TrimSpace(os.Getenv("SLAN_WIRE_RELAY_PUBLIC_UDP_PORT"))
+		if port == "" {
+			port = "29110"
+		}
+		return host + ":" + port
+	}
+	return "127.0.0.1:29110"
 }
 
 func normalizeRelayAddress(value string) string {

@@ -13,6 +13,7 @@ MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 RESET_IDENTITY="${SLAN_RESET_MACOS_IDENTITY:-0}"
 DIRECT_UDP_PUBLIC_HOST="${SLAN_DIRECT_UDP_PUBLIC_HOST:-}"
 DIRECT_UDP_ENDPOINT="${SLAN_DIRECT_UDP_ENDPOINT:-}"
+TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}"
 APP_PATH=""
 SOURCE_BIN=""
 ORIGINAL_ARGS=("$@")
@@ -187,6 +188,12 @@ $(if [[ -n "$DIRECT_UDP_ENDPOINT" ]]; then
     <string>${DIRECT_UDP_ENDPOINT}</string>
 ENV
 fi)
+$(if [[ -n "$TEST_RELAY_TRANSPORT_ALLOWLIST" ]]; then
+  cat <<ENV
+    <key>SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST</key>
+    <string>${TEST_RELAY_TRANSPORT_ALLOWLIST}</string>
+ENV
+fi)
   </dict>
 </dict>
 </plist>
@@ -207,6 +214,7 @@ echo "host: $SERVICE_HOST"
 [[ -n "$CONTROL_BASE_URL" ]] && echo "controlBaseUrl: $CONTROL_BASE_URL"
 [[ -n "$DIRECT_UDP_PUBLIC_HOST" ]] && echo "directUdpPublicHost: $DIRECT_UDP_PUBLIC_HOST"
 [[ -n "$DIRECT_UDP_ENDPOINT" ]] && echo "directUdpEndpoint: $DIRECT_UDP_ENDPOINT"
+[[ -n "$TEST_RELAY_TRANSPORT_ALLOWLIST" ]] && echo "testRelayTransportAllowlist: $TEST_RELAY_TRANSPORT_ALLOWLIST"
 echo "plist: $PLIST"
 echo "logs: $LOG_DIR"
 if ! wait_service_ready "$SERVICE_HOST"; then

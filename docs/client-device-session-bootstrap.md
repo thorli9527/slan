@@ -1,6 +1,6 @@
 # Client Device Session Bootstrap
 
-本文档定义客户端设备会话、用户会话、一次性 session key 和 `install.sh`
+本文档定义客户端设备会话、用户会话、一次性接入安装 key 和 `install.sh`
 安装接入流程。
 
 ## Goals
@@ -9,8 +9,8 @@
 - 设备 session 支持自动续期。
 - 用户 session 支持自动续期。
 - 用户退出或自动失效时，同设备上的设备 session 一起失效。
-- Web Console 可以生成一次性 session key，让无用户登录的命令行客户端接入网络。
-- `install.sh` 负责下载安装客户端、写入 session key，并启动客户端服务。
+- Web Console 可以生成一次性接入安装 key，让无用户登录的命令行客户端接入网络。
+- `install.sh` 负责下载安装客户端、写入接入安装 key，并启动客户端服务。
 
 ## Session Model
 
@@ -80,7 +80,7 @@
   - 本地清理用户 session 和设备 session。
 - 通过 session key 初始化的设备没有 `UserSession`。
 - 无用户设备只允许使用 bootstrap key 绑定时授予的网络和策略。
-- session key 只能使用一次，成功使用后立即标记 `used`。
+- 接入安装 key 只能使用一次，成功使用后立即标记 `used`。
 
 ## Web Console Flow
 
@@ -92,7 +92,7 @@
 
 弹窗显示：
 
-- 一次性 session key
+- 一次性接入安装 key
 - 完整安装命令
 - 过期时间
 - 复制按钮
@@ -102,18 +102,18 @@
 ```bash
 curl -fsSL https://staticlss.com/install.sh | sudo bash -s -- \
   --server http://47.245.40.231:28080 \
-  --session-key sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  --installation-key ik_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 ## Bootstrap Flow
 
-1. 用户在 Web Console 创建一次性 session key。
+1. 用户在 Web Console 创建一次性接入安装 key。
 2. 服务端生成 32 位以上随机 key，只返回一次明文。
 3. 用户在目标机器执行 `install.sh` 命令。
 4. `install.sh` 下载并安装客户端。
 5. `install.sh` 写入 bootstrap 配置。
 6. 客户端服务启动。
-7. `client-core-service` 读取 `SLAN_SESSION_KEY`。
+7. `client-core-service` 读取 `SLAN_INSTALLATION_KEY`。
 8. 客户端调用：
 
 ```text
@@ -197,7 +197,7 @@ client-v2-user-session.json
 
 1. 加载 `DeviceSession`。
 2. 如果不存在或已过期：
-   - 若存在 `SLAN_SESSION_KEY`，执行 bootstrap。
+- 若存在 `SLAN_INSTALLATION_KEY`，执行 bootstrap。
    - 否则执行普通设备注册或等待用户登录。
 3. 加载 `UserSession`。
 4. 如果用户 session 存在，执行用户 session 续期。
@@ -234,16 +234,16 @@ client-v2-user-session.json
 - 识别操作系统。
 - 下载对应客户端安装包。
 - 安装客户端。
-- 写入 `SLAN_CONTROL_BASE_URL` 和 `SLAN_SESSION_KEY`。
+- 写入 `SLAN_CONTROL_BASE_URL` 和 `SLAN_INSTALLATION_KEY`。
 - 启动客户端服务。
-- 让 `client-core-service` 在首次启动时消费 session key。
+- 让 `client-core-service` 在首次启动时消费接入安装 key。
 
 推荐命令：
 
 ```bash
 curl -fsSL https://staticlss.com/install.sh | sudo bash -s -- \
   --server http://47.245.40.231:28080 \
-  --session-key sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  --installation-key ik_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 macOS 示例逻辑：
@@ -255,6 +255,7 @@ installer -pkg /tmp/slan-client.pkg -target /
 mkdir -p "/Library/Application Support/SLAN"
 cat > "/Library/Application Support/SLAN/bootstrap.env" <<EOF
 SLAN_CONTROL_BASE_URL=$SERVER
+SLAN_INSTALLATION_KEY=$SESSION_KEY
 SLAN_SESSION_KEY=$SESSION_KEY
 EOF
 launchctl kickstart -k system/com.slan.client.v2 || true
@@ -270,6 +271,7 @@ tar -xzf /tmp/slan-client-linux.tar.gz -C /opt/slan-client
 mkdir -p /etc/slan
 cat > /etc/slan/bootstrap.env <<EOF
 SLAN_CONTROL_BASE_URL=$SERVER
+SLAN_INSTALLATION_KEY=$SESSION_KEY
 SLAN_SESSION_KEY=$SESSION_KEY
 EOF
 /opt/slan-client/install-service.sh

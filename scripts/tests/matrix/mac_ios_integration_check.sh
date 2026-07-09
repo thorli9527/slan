@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 . "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 DEFAULT_MAC_SERVICE_BIN="$ROOT_DIR/client_v2/rust/target/debug/client-core-service"
@@ -21,11 +22,12 @@ PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 RUN_IOS_APP_DNS_ACL_SMOKE="${SLAN_RUN_IOS_APP_DNS_ACL_SMOKE:-1}"
 IOS_APP_DNS_ACL_CHECK_MESSAGES="${SLAN_IOS_APP_DNS_ACL_CHECK_MESSAGES:-1}"
 IOS_APP_DNS_ACL_CLIENTS="${SLAN_IOS_APP_DNS_ACL_CLIENTS:-2}"
-GENERATED_TEST_EMAIL=0
 if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
   EMAIL="$SLAN_TEST_EMAIL"
+  GENERATED_TEST_EMAIL=0
 else
-  EMAIL="mac-ios-integration-1783260000000000000@example.test"
+  EMAIL="mac-ios-integration-$(date +%s%N)@example.test"
+  GENERATED_TEST_EMAIL=1
 fi
 CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 TIMEOUT="${SLAN_MAC_IOS_TIMEOUT:-60s}"
@@ -55,6 +57,66 @@ cleanup() {
   fi
 }
 trap cleanup EXIT INT TERM
+
+run_mac_local_api_check() {
+  (
+    cd "$ROOT_DIR"
+    go run scripts/client_core_service_login_check.go "$@"
+  )
+}
+
+start_ios_flutter_message_harness() {
+  local ios_common_dart_defines=()
+  local ios_send_dart_defines=()
+  local ios_expect_dart_defines=()
+  mapfile -t ios_common_dart_defines < <(
+    slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" false true
+  )
+  mapfile -t ios_send_dart_defines < <(
+    slan_mobile_login_message_send_defines "$MAC_DEVICE_ID" "$IOS_TO_MAC_BODY"
+  )
+  mapfile -t ios_expect_dart_defines < <(
+    slan_mobile_login_message_expect_defines "$MAC_DEVICE_ID" "$MAC_TO_IOS_BODY"
+  )
+  (
+    cd "$APP_DIR"
+    flutter test integration_test/mobile_login_test.dart \
+      -d "$IOS_DEVICE" \
+      "${ios_common_dart_defines[@]}" \
+      --dart-define="SLAN_TEST_CHECK_SWITCH=${SLAN_TEST_CHECK_SWITCH:-false}" \
+      --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=${SLAN_TEST_EXPECT_NETWORK_MODULE:-false}" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=${SLAN_TEST_MIN_NETWORK_MODULE_PEERS:-0}" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=${SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS:-0}" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=${SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES:-0}" \
+      "${ios_send_dart_defines[@]}" \
+      "${ios_expect_dart_defines[@]}"
+  ) >"$IOS_LOG" 2>&1 &
+  IOS_PID="$!"
+  PIDS+=("$IOS_PID")
+}
+
+capture_ios_device_id_or_die() {
+  IOS_DEVICE_ID=""
+  for _ in $(seq 1 90); do
+    if ! kill -0 "$IOS_PID" 2>/dev/null; then
+      cat "$IOS_LOG"
+      echo "iOS integration test exited before device id was reported" >&2
+      exit 1
+    fi
+    IOS_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$IOS_LOG" | tail -n 1)"
+    if [[ -n "$IOS_DEVICE_ID" ]]; then
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ -z "$IOS_DEVICE_ID" ]]; then
+    cat "$IOS_LOG"
+    echo "timed out waiting for iOS device id marker" >&2
+    exit 1
+  fi
+  echo "iOS device id: $IOS_DEVICE_ID"
+}
 
 if [[ ! -x "$SERVICE_BIN" ]]; then
   echo "client-core-service binary is missing: $SERVICE_BIN" >&2
@@ -88,8 +150,7 @@ PIDS+=("$!")
 
 echo "+ login mac client-core-service"
 MAC_OUTPUT="$(
-  cd "$ROOT_DIR"
-  go run scripts/client_core_service_login_check.go \
+  run_mac_local_api_check \
     -biz-url "$BIZ_URL" \
     -address "$SERVICE_HOST" \
     -email "$EMAIL" \
@@ -118,78 +179,31 @@ if [[ "$RUN_IOS_APP_DNS_ACL_SMOKE" == "1" ]]; then
   )
 fi
 
-echo "+ flutter test iOS login and message send/wait"
-(
-  cd "$APP_DIR"
-  flutter test integration_test/mobile_login_test.dart \
-    -d "$IOS_DEVICE" \
-    --dart-define="SLAN_TEST_BIZ_URL=$BIZ_URL" \
-    --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$BIZ_URL" \
-    --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-    --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-    --dart-define="SLAN_TEST_REGISTER_USER=false" \
-    --dart-define="SLAN_TEST_WAIT_MQTT=true" \
-    --dart-define="SLAN_TEST_CHECK_SWITCH=${SLAN_TEST_CHECK_SWITCH:-false}" \
-    --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=${SLAN_TEST_EXPECT_NETWORK_MODULE:-false}" \
-    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=${SLAN_TEST_MIN_NETWORK_MODULE_PEERS:-0}" \
-    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=${SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS:-0}" \
-    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=${SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES:-0}" \
-    --dart-define="SLAN_TEST_SEND_TARGET_DEVICE_ID=$MAC_DEVICE_ID" \
-    --dart-define="SLAN_TEST_SEND_BODY=$IOS_TO_MAC_BODY" \
-    --dart-define="SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID=$MAC_DEVICE_ID" \
-    --dart-define="SLAN_TEST_EXPECT_MESSAGE_BODY=$MAC_TO_IOS_BODY"
-) >"$IOS_LOG" 2>&1 &
-IOS_PID="$!"
-PIDS+=("$IOS_PID")
-
-IOS_DEVICE_ID=""
-for _ in $(seq 1 90); do
-  if ! kill -0 "$IOS_PID" 2>/dev/null; then
-    cat "$IOS_LOG"
-    echo "iOS integration test exited before device id was reported" >&2
-    exit 1
-  fi
-  IOS_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$IOS_LOG" | tail -n 1)"
-  if [[ -n "$IOS_DEVICE_ID" ]]; then
-    break
-  fi
-  sleep 1
-done
-
-if [[ -z "$IOS_DEVICE_ID" ]]; then
-  cat "$IOS_LOG"
-  echo "timed out waiting for iOS device id marker" >&2
-  exit 1
-fi
-echo "iOS device id: $IOS_DEVICE_ID"
+echo "+ start iOS flutter message harness"
+start_ios_flutter_message_harness
+capture_ios_device_id_or_die
 
 echo "+ wait mac receive iOS message"
-(
-  cd "$ROOT_DIR"
-  go run scripts/client_core_service_login_check.go \
-    -biz-url "$BIZ_URL" \
-    -address "$SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -login=false \
-    -expect-from "$IOS_DEVICE_ID" \
-    -expect-body "$IOS_TO_MAC_BODY" \
-    -timeout "$TIMEOUT"
-)
+run_mac_local_api_check \
+  -biz-url "$BIZ_URL" \
+  -address "$SERVICE_HOST" \
+  -email "$EMAIL" \
+  -password "$PASSWORD" \
+  -login=false \
+  -expect-from "$IOS_DEVICE_ID" \
+  -expect-body "$IOS_TO_MAC_BODY" \
+  -timeout "$TIMEOUT"
 
 echo "+ send mac message to iOS"
-(
-  cd "$ROOT_DIR"
-  go run scripts/client_core_service_login_check.go \
-    -biz-url "$BIZ_URL" \
-    -address "$SERVICE_HOST" \
-    -email "$EMAIL" \
-    -password "$PASSWORD" \
-    -login=false \
-    -send-target "$IOS_DEVICE_ID" \
-    -send-body "$MAC_TO_IOS_BODY" \
-    -timeout "$TIMEOUT"
-)
+run_mac_local_api_check \
+  -biz-url "$BIZ_URL" \
+  -address "$SERVICE_HOST" \
+  -email "$EMAIL" \
+  -password "$PASSWORD" \
+  -login=false \
+  -send-target "$IOS_DEVICE_ID" \
+  -send-body "$MAC_TO_IOS_BODY" \
+  -timeout "$TIMEOUT"
 
 echo "+ wait iOS integration test"
 if ! wait "$IOS_PID"; then

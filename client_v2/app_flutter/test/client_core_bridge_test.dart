@@ -467,7 +467,8 @@ void main() {
     expect(calls, isNot(contains('localBusinessEventWatch')));
   });
 
-  test('mobile business event applies latest client message fields', () async {
+  test('mobile business event keeps control sync handling on embedded watch',
+      () async {
     const channel = MethodChannel('dev.slan/client_core_v2');
     final embeddedMethods = <String>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -508,9 +509,8 @@ void main() {
               'networkEnabled': false,
               'syncing': false,
               'switchEnabled': true,
-              'lastClientMessageId': 'msg-1',
-              'lastClientMessageFromDeviceId': 'ios-peer',
-              'lastClientMessageBody': 'hello',
+              'messageType': 'network_event',
+              'eventType': 'member_online',
             },
             'snapshot': {
               'signedIn': true,
@@ -537,16 +537,15 @@ void main() {
     await bridge.start();
 
     await _waitFor(
-      () => bridge.state.value.lastClientMessageBody == 'hello',
-      reason: 'business event should update latest client message fields',
+      () => bridge.state.value.lastControlSyncMessageType == 'network_event',
+      reason: 'business event should update control sync metadata',
     );
-    expect(bridge.state.value.lastClientMessageId, 'msg-1');
-    expect(bridge.state.value.lastClientMessageFromDeviceId, 'ios-peer');
+    expect(bridge.state.value.lastControlSyncMessageType, 'network_event');
+    expect(bridge.state.value.lastControlSyncReconfigureRequired, false);
     expect(embeddedMethods, contains('localBusinessEventWatch'));
   });
 
-  test(
-      'mobile control sync business event uses embedded payload for latest client message',
+  test('mobile control sync business event uses embedded payload metadata',
       () async {
     const channel = MethodChannel('dev.slan/client_core_v2');
     final embeddedMethods = <String>[];
@@ -592,9 +591,6 @@ void main() {
             'switchEnabled': true,
             'messageType': 'network_event',
             'eventType': 'member_online',
-            'lastClientMessageId': 'msg-2',
-            'lastClientMessageFromDeviceId': 'android-peer',
-            'lastClientMessageBody': 'hello from embedded payload',
           },
           'snapshot': {
             'signedIn': true,
@@ -619,14 +615,9 @@ void main() {
     await bridge.start();
 
     await _waitFor(
-      () =>
-          bridge.state.value.lastClientMessageBody ==
-          'hello from embedded payload',
-      reason:
-          'control sync event should use latest client message from payload',
+      () => bridge.state.value.lastControlSyncMessageType == 'network_event',
+      reason: 'control sync event should use metadata from payload',
     );
-    expect(bridge.state.value.lastClientMessageId, 'msg-2');
-    expect(bridge.state.value.lastClientMessageFromDeviceId, 'android-peer');
     expect(
       bridge.state.value.lastControlSyncMessageType,
       'network_event',
@@ -887,7 +878,8 @@ void main() {
     expect(second, contains('evt-2'));
   });
 
-  test('mobile send client message uses embedded service request', () async {
+  test('mobile local send client message request uses embedded service request',
+      () async {
     const channel = MethodChannel('dev.slan/client_core_v2');
     final embeddedMethods = <String>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -925,13 +917,13 @@ void main() {
     );
     _closeBridgeOnTearDown(bridge);
 
-    await bridge.dispatch(const ClientCommand(
-      ClientCommandType.sendClientMessage,
-      {
+    await bridge.requestLocalApi(
+      'localSendClientMessage',
+      const {
         'targetDeviceId': 'ios-target',
         'body': 'hello',
       },
-    ));
+    );
 
     expect(embeddedMethods, ['localSendClientMessage']);
   });

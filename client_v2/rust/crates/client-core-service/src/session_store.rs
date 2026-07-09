@@ -129,6 +129,15 @@ impl PersistedSession {
     }
 }
 
+pub(crate) fn session_device_api_token(session: &PersistedSession) -> &str {
+    session
+        .device_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(session.access_token.as_str())
+}
+
 fn normalize_mqtt_credential(mut mqtt: MqttCredential) -> MqttCredential {
     normalize_mqtt_topic_prefix(&mut mqtt);
     mqtt
@@ -294,18 +303,7 @@ fn bootstrap_session_from_env() -> Result<PersistedSession> {
     if let Some(base_url) = read_bootstrap_env_value("SLAN_CONTROL_BASE_URL") {
         set_control_base_url_override(&base_url);
     }
-    let installation_key = std::env::var("SLAN_INSTALLATION_KEY")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            std::env::var("SLAN_SESSION_KEY")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })
-        .or_else(|| read_bootstrap_env_value("SLAN_INSTALLATION_KEY"))
-        .or_else(|| read_bootstrap_env_value("SLAN_SESSION_KEY"))
+    let installation_key = read_bootstrap_env_value("SLAN_INSTALLATION_KEY")
         .context("missing SLAN_INSTALLATION_KEY")?;
     let client = ControlPlaneClient::from_env();
     let response = client.bootstrap_device_session(&installation_key)?;
@@ -334,11 +332,43 @@ fn renew_device_session(session: PersistedSession) -> Result<PersistedSession> {
     )?;
     let mut renewed = persisted_session_from_device_session(response);
     renewed.user_label = default_string(&session.user_label, &renewed.user_label);
+    preserve_session_network_identity(&session, &mut renewed);
     backfill_desktop_session_mqtt(&client, &mut renewed);
     refresh_session_network_from_device_configs(&client, &mut renewed);
     ensure_session_node_binding(&client, &mut renewed)?;
     persist_session(&renewed)?;
     Ok(renewed)
+}
+
+fn preserve_session_network_identity(previous: &PersistedSession, current: &mut PersistedSession) {
+    if current
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        current.active_network_id = previous
+            .active_network_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+    }
+    if current
+        .virtual_ip
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        current.virtual_ip = previous
+            .virtual_ip
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+    }
 }
 
 fn persisted_session_from_device_session(
@@ -748,7 +778,7 @@ fn refresh_session_network_from_device_configs(
         }
     }
     if session.active_network_id.is_none() {
-        if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
+        if let Ok(Some(network_id)) = client.active_network_id(session_device_api_token(session)) {
             session.active_network_id = Some(network_id);
         }
     }
@@ -786,7 +816,8 @@ pub(crate) fn ensure_session_node_binding(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| format!("node-{device_id}"));
-    let Ok(node) = client.register_node(&session.access_token, &device_id, &node_id) else {
+    let Ok(node) = client.register_node(session_device_api_token(session), &device_id, &node_id)
+    else {
         session.self_node_id = Some(node_id);
         return Ok(());
     };
@@ -804,7 +835,7 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
     };
     if session.active_network_id.is_none() {
         let client = ControlPlaneClient::from_env();
-        if let Ok(Some(network_id)) = client.active_network_id(&session.access_token) {
+        if let Ok(Some(network_id)) = client.active_network_id(session_device_api_token(&session)) {
             session.active_network_id = Some(network_id);
             let _ = persist_session(&session);
         }
@@ -824,6 +855,7 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
         return;
     };
     let client = ControlPlaneClient::from_env();
+    let reported_at_ms = current_timestamp_ms();
     let Some(device_token) = session
         .device_token
         .as_deref()
@@ -832,14 +864,28 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
     else {
         return;
     };
-    let _ = (device_id, network_id);
     let _ = client.renew_device_session(
         device_token,
         session.device_refresh_token.as_deref(),
         state.network_enabled,
-        0,
-        0,
+        state.traffic_rx_bytes.unwrap_or_default(),
+        state.traffic_tx_bytes.unwrap_or_default(),
     );
+    if state.network_enabled {
+        let body = serde_json::json!({
+            "deviceId": device_id,
+            "networkId": network_id,
+            "reportedAtMs": reported_at_ms,
+            "lastSeenAt": reported_at_ms / 1000,
+            "status": "active",
+            "rxBytesTotal": state.traffic_rx_bytes.unwrap_or_default(),
+            "txBytesTotal": state.traffic_tx_bytes.unwrap_or_default(),
+        });
+        let _ = client.report_device_runtime(session_device_api_token(&session), device_id, body);
+    } else {
+        let _ =
+            client.deactivate_network(session_device_api_token(&session), device_id, network_id);
+    }
 }
 
 pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device: &ControlDevice) {
@@ -1254,5 +1300,33 @@ mod tests {
 
         assert_eq!(session.device_id.as_deref(), Some("remote-device"));
         assert_eq!(session.active_network_id.as_deref(), Some("net-1"));
+    }
+
+    #[test]
+    fn preserve_session_network_identity_keeps_previous_network_values() {
+        let mut previous = PersistedSession::empty();
+        previous.active_network_id = Some("net-1".to_string());
+        previous.virtual_ip = Some("10.0.1.21".to_string());
+
+        let mut current = PersistedSession::empty();
+        preserve_session_network_identity(&previous, &mut current);
+
+        assert_eq!(current.active_network_id.as_deref(), Some("net-1"));
+        assert_eq!(current.virtual_ip.as_deref(), Some("10.0.1.21"));
+    }
+
+    #[test]
+    fn preserve_session_network_identity_does_not_override_current_values() {
+        let mut previous = PersistedSession::empty();
+        previous.active_network_id = Some("net-1".to_string());
+        previous.virtual_ip = Some("10.0.1.21".to_string());
+
+        let mut current = PersistedSession::empty();
+        current.active_network_id = Some("net-2".to_string());
+        current.virtual_ip = Some("10.0.1.22".to_string());
+        preserve_session_network_identity(&previous, &mut current);
+
+        assert_eq!(current.active_network_id.as_deref(), Some("net-2"));
+        assert_eq!(current.virtual_ip.as_deref(), Some("10.0.1.22"));
     }
 }

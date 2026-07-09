@@ -301,7 +301,7 @@ void main() {
     expect(bridge.androidPrepareCount, greaterThanOrEqualTo(2));
   });
 
-  testWidgets('signed in panel shows latest client message', (tester) async {
+  testWidgets('signed in panel shows current device id', (tester) async {
     final bridge = _UiTestBridge(
       initialState: const ClientViewState(
         signedIn: true,
@@ -311,8 +311,6 @@ void main() {
         syncing: false,
         switchEnabled: true,
         virtualIp: '10.0.0.10',
-        lastClientMessageFromDeviceId: 'ios-peer',
-        lastClientMessageBody: 'hello',
       ),
       activationDelay: Duration.zero,
     );
@@ -320,90 +318,8 @@ void main() {
     await tester.pumpWidget(SlanClientV2App(bridge: bridge));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('last-client-message-value')), findsOneWidget);
-    expect(find.text('ios-peer: hello'), findsOneWidget);
     expect(find.byKey(const Key('client-device-id-value')), findsOneWidget);
     expect(find.text('device-current'), findsOneWidget);
-  });
-
-  testWidgets('message composer dispatches send client message command',
-      (tester) async {
-    final bridge = _UiTestBridge(
-      initialState: const ClientViewState(
-        signedIn: true,
-        userLabel: 'tester@example.com',
-        networkEnabled: true,
-        syncing: false,
-        switchEnabled: true,
-        virtualIp: '10.0.0.10',
-      ),
-      activationDelay: Duration.zero,
-      messageDelay: const Duration(milliseconds: 150),
-    );
-
-    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const Key('client-message-target')),
-      'ios-target',
-    );
-    await tester.enterText(
-      find.byKey(const Key('client-message-body')),
-      'hello',
-    );
-    await tester.tap(find.byKey(const Key('client-message-send')));
-    await tester.pump();
-
-    expect(bridge.lastCommand, ClientCommandType.sendClientMessage);
-    expect(bridge.lastPayload?['targetDeviceId'], 'ios-target');
-    expect(bridge.lastPayload?['body'], 'hello');
-    expect(
-        tester
-            .widget<FilledButton>(find.byKey(const Key('client-message-send')))
-            .onPressed,
-        isNull);
-    expect(find.text('发送中'), findsOneWidget);
-    expect(find.text('消息已发送'), findsNothing);
-
-    await tester.pump(bridge.messageDelay);
-    await tester.pumpAndSettle();
-
-    expect(find.text('消息已发送'), findsOneWidget);
-    expect(find.text('hello'), findsNothing);
-  });
-
-  testWidgets('message composer keeps input when send fails', (tester) async {
-    final bridge = _UiTestBridge(
-      initialState: const ClientViewState(
-        signedIn: true,
-        userLabel: 'tester@example.com',
-        networkEnabled: true,
-        syncing: false,
-        switchEnabled: true,
-        virtualIp: '10.0.0.10',
-      ),
-      activationDelay: Duration.zero,
-      messageError: 'mqtt publish failed',
-    );
-
-    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const Key('client-message-target')),
-      'ios-target',
-    );
-    await tester.enterText(
-      find.byKey(const Key('client-message-body')),
-      'hello',
-    );
-    await tester.tap(find.byKey(const Key('client-message-send')));
-    await tester.pumpAndSettle();
-
-    expect(bridge.lastCommand, ClientCommandType.sendClientMessage);
-    expect(find.text('消息发送失败：mqtt publish failed'), findsOneWidget);
-    expect(find.text('hello'), findsOneWidget);
   });
 }
 
@@ -420,8 +336,6 @@ class _UiTestBridge implements ClientCoreBridge {
     this.assignedIp,
     this.activationError,
     this.disableError,
-    this.messageDelay = Duration.zero,
-    this.messageError,
   })  : _state = ValueNotifier<ClientViewState>(initialState),
         _androidNetworkAuthorization =
             ValueNotifier<AndroidNetworkAuthorizationState>(
@@ -435,8 +349,6 @@ class _UiTestBridge implements ClientCoreBridge {
   final String? assignedIp;
   final String? activationError;
   final String? disableError;
-  final Duration messageDelay;
-  final String? messageError;
   ClientCommandType? lastCommand;
   Map<String, Object?>? lastPayload;
   int androidPrepareCount = 0;
@@ -479,13 +391,6 @@ class _UiTestBridge implements ClientCoreBridge {
     }
     if (command.type == ClientCommandType.disableNetwork) {
       _disable(command);
-      return;
-    }
-    if (command.type == ClientCommandType.sendClientMessage) {
-      await Future<void>.delayed(messageDelay);
-      if (messageError != null) {
-        throw messageError!;
-      }
       return;
     }
   }

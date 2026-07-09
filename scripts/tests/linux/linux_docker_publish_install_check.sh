@@ -9,6 +9,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
 done
 OUTPUT_DIR="${SLAN_LINUX_BUILD_OUTPUT_DIR:-$ROOT_DIR/client_v2/.tmp/installer/linux}"
 PACKAGE_PATH="${SLAN_LINUX_CLIENT_PACKAGE:-}"
+PREFERRED_ARCH="${SLAN_LINUX_PUBLISH_ARCH:-amd64}"
 
 log() {
   printf '==> %s\n' "$*"
@@ -20,9 +21,14 @@ fail() {
 }
 
 if [[ -z "$PACKAGE_PATH" ]]; then
-  log "build Linux package in Docker"
-  bash "$ROOT_DIR/scripts/build_linux_client_docker.sh"
-  PACKAGE_PATH="$(find "$OUTPUT_DIR" -maxdepth 1 -type f -name 'SLAN-Client-V2-linux-*.tar.gz' | sort | tail -1)"
+  if [[ "$PREFERRED_ARCH" == "amd64" ]]; then
+    log "build preferred Linux amd64 package on remote Linux host"
+    bash "$ROOT_DIR/scripts/build_linux_client_remote.sh"
+  else
+    log "build Linux package in Docker"
+    bash "$ROOT_DIR/scripts/build_linux_client_docker.sh"
+  fi
+  PACKAGE_PATH="$OUTPUT_DIR/SLAN-Client-V2-linux-${PREFERRED_ARCH}.tar.gz"
 fi
 
 [[ -n "$PACKAGE_PATH" && -f "$PACKAGE_PATH" ]] || fail "missing Linux package tarball"
@@ -31,4 +37,4 @@ log "upload Linux package to remote ops downloads"
 bash "$ROOT_DIR/scripts/upload_linux_client_download.sh" "$PACKAGE_PATH"
 
 log "run Linux Docker bootstrap install verification"
-bash "$ROOT_DIR/scripts/linux_docker_bootstrap_install_check.sh"
+bash "$ROOT_DIR/scripts/tests/linux/linux_docker_bootstrap_install_check.sh"

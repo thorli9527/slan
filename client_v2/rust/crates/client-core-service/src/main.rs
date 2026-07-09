@@ -75,10 +75,11 @@ use crate::local_api::{
     LocalPathPlanResponse, LocalPeerView, LocalPeersResponse, LocalServiceMethod,
     LocalSessionResponse, LocalStatusResponse, MarkControlAckedRequest,
     PlatformRuntimeStateReportRequest, RegisterTestUserRequest, ReportDeviceRuntimeRequest,
-    ServiceRequest, StoredBusinessEvent, WatchBusinessEventRequest, WatchBusinessEventResponse,
-    WatchStateRequest, WatchStateResponse, BUSINESS_CONTROL_SYNC_CHANGED,
-    BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED,
-    BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED, BUSINESS_STATE_CHANGED,
+    ServiceRequest, SetRelayTransportAllowlistRequest, StoredBusinessEvent,
+    WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
+    BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
+    BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED,
+    BUSINESS_STATE_CHANGED,
 };
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
@@ -102,7 +103,8 @@ use crate::session_store::{
     hydrate_session_from_control_plane, load_pending_console_login, load_session,
     load_valid_registered_session, persist_session, prepare_client_login_session,
     refresh_startup_session, remove_session, report_runtime_state, revoke_remote_sessions,
-    session_auth_invalid_error, session_is_expired, sync_session_device_fields, PersistedSession,
+    session_auth_invalid_error, session_device_api_token, session_is_expired,
+    sync_session_device_fields, PersistedSession,
 };
 use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
 
@@ -565,6 +567,9 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalPathDiagnose => return handle_path_diagnose(),
         LocalServiceMethod::LocalRelayCandidates => return handle_relay_candidates(false),
         LocalServiceMethod::LocalRefreshRelayCandidates => return handle_relay_candidates(true),
+        LocalServiceMethod::LocalSetRelayTransportAllowlist => {
+            return handle_set_relay_transport_allowlist(request)
+        }
         LocalServiceMethod::LocalRelayPrepare => return handle_prepare_relay_data_plane(),
         LocalServiceMethod::LocalControlStatus => {
             return serde_json::to_string(&control_transport_status()?)
@@ -991,7 +996,8 @@ fn handle_report_device_runtime(request: ServiceRequest) -> Result<String> {
     let session = load_session().context("load session for report device runtime")?;
     let client = ControlPlaneClient::from_env();
     let body = input.body.clone();
-    if let Err(error) = client.report_device_runtime(&session.access_token, &input.device_id, body)
+    if let Err(error) =
+        client.report_device_runtime(session_device_api_token(&session), &input.device_id, body)
     {
         let message = format!("{error:#}");
         if message.contains("HTTP 404: not found") {
@@ -1004,7 +1010,11 @@ fn handle_report_device_runtime(request: ServiceRequest) -> Result<String> {
                 .filter(|value| !value.is_empty())
                 .unwrap_or(input.device_id.as_str());
             client
-                .report_device_runtime(&repaired.access_token, repaired_device_id, input.body)
+                .report_device_runtime(
+                    session_device_api_token(&repaired),
+                    repaired_device_id,
+                    input.body,
+                )
                 .context("report device runtime after session repair")?;
         } else {
             return Err(error).context("report device runtime");
@@ -1154,7 +1164,7 @@ fn handle_send_client_message(request: ServiceRequest) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("device id is not available"))?;
     let client = ControlPlaneClient::from_env();
     let response = client.send_client_message(
-        &session.access_token,
+        session_device_api_token(&session),
         &network_id,
         from_device_id,
         &input.target_device_id,
@@ -1182,6 +1192,18 @@ fn control_transport_tick_plan(args: Value) -> Result<ControlTransportTickPlan> 
 fn handle_relay_candidates(refresh: bool) -> Result<String> {
     let response = relay_candidates_response(refresh)?;
     serde_json::to_string(&response).context("encode relay candidates")
+}
+
+fn handle_set_relay_transport_allowlist(request: ServiceRequest) -> Result<String> {
+    let input: SetRelayTransportAllowlistRequest =
+        serde_json::from_value(request.args).context("decode relay transport allowlist request")?;
+    let allowlist = crate::relay_candidates::set_test_relay_transport_allowlist(
+        (!input.transports.is_empty()).then_some(input.transports),
+    );
+    serde_json::to_string(&serde_json::json!({
+        "transports": allowlist.unwrap_or_default(),
+    }))
+    .context("encode relay transport allowlist response")
 }
 
 fn handle_prepare_relay_data_plane() -> Result<String> {
@@ -1447,7 +1469,8 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("device unavailable: current device is not registered"))?;
-    let activation = client.activate_network(&session.access_token, device_id, &network_id)?;
+    let activation =
+        client.activate_network(session_device_api_token(&session), device_id, &network_id)?;
     if !activation.relay_candidates.is_empty() {
         replace_runtime_relay_candidates(
             activation
@@ -2439,12 +2462,16 @@ where
 
     if matches!(&command, ClientCommand::EnableNetwork) && runtime.state().virtual_ip.is_none() {
         if let Ok(session) = load_session() {
-            if let Some(virtual_ip) = session.virtual_ip {
+            if let Some(virtual_ip) = session.virtual_ip.clone() {
                 let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
                     virtual_ip,
                     prefix_len: session.active_network_id.as_deref().and_then(|network_id| {
                         ControlPlaneClient::from_env()
-                            .network_prefix_len(&session.access_token, network_id, None)
+                            .network_prefix_len(
+                                session_device_api_token(&session),
+                                network_id,
+                                None,
+                            )
                             .ok()
                     }),
                 }));
@@ -2552,7 +2579,8 @@ where
     let network_id = ensure_active_network_id(&mut session)?;
     let network_configs =
         crate::network_module::network_module_configs_for_session(&client, &session);
-    let mut activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    let mut activation =
+        client.activate_network(session_device_api_token(&session), &device_id, &network_id)?;
     activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
@@ -2678,7 +2706,8 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
     };
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(&mut session)?;
-    let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    let activation =
+        client.activate_network(session_device_api_token(&session), &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     if !activation.relay_candidates.is_empty() {
         replace_runtime_relay_candidates(
@@ -2795,13 +2824,17 @@ where
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(session)?;
     let mut activation =
-        match client.activate_network(&session.access_token, &device_id, &network_id) {
+        match client.activate_network(session_device_api_token(session), &device_id, &network_id) {
             Ok(activation) => activation,
             Err(error) if error.to_string().contains("HTTP 404") => {
                 session.active_network_id = None;
                 let refreshed_network_id = ensure_active_network_id(session)?;
                 client
-                    .activate_network(&session.access_token, &device_id, &refreshed_network_id)
+                    .activate_network(
+                        session_device_api_token(session),
+                        &device_id,
+                        &refreshed_network_id,
+                    )
                     .with_context(|| {
                         format!(
                             "activate refreshed network after stale network config {network_id}"
@@ -2901,7 +2934,8 @@ fn ensure_active_network_id(session: &mut PersistedSession) -> Result<String> {
             .next()
             .map(|config| config.network_id);
         if session.active_network_id.is_none() {
-            session.active_network_id = client.active_network_id(&session.access_token)?;
+            session.active_network_id =
+                client.active_network_id(session_device_api_token(session))?;
         }
     }
     let Some(network_id) = session.active_network_id.clone() else {
@@ -2924,7 +2958,8 @@ fn refresh_relay_candidates_for_session(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("device unavailable: current device is not registered"))?;
     let client = ControlPlaneClient::from_env();
-    let candidates = client.relay_candidates(&session.access_token, device_id, network_id)?;
+    let candidates =
+        client.relay_candidates(session_device_api_token(session), device_id, network_id)?;
     if candidates.is_empty() {
         return Ok(false);
     }
@@ -2968,7 +3003,12 @@ fn build_relay_data_plane_config(
             if let Some(session) = connect_plans.get(&peer.node_id).and_then(|plan| {
                 relay_session_from_connect_plan_ticket(plan, network_id, local_node_id, peer)
             }) {
-                sessions.push(session);
+                if relay_targets
+                    .iter()
+                    .any(|target| relay_session_matches_candidate(&session, target))
+                {
+                    sessions.push(session);
+                }
             }
             for target in &relay_targets {
                 if sessions
@@ -2983,7 +3023,7 @@ fn build_relay_data_plane_config(
                 let preferred_relay_endpoint_id =
                     (transport != "derp_tcp_tls_443").then_some(target.endpoint_id.as_str());
                 match client.issue_relay_ticket(
-                    &session.access_token,
+                    session_device_api_token(session),
                     network_id,
                     local_node_id,
                     peer.node_id.as_str(),
@@ -2992,12 +3032,15 @@ fn build_relay_data_plane_config(
                     preferred_relay_endpoint_id,
                     target.region_id.as_deref(),
                 ) {
-                    Ok(ticket) => sessions.push(RelayPeerSession {
+                    Ok(mut ticket) => {
+                        normalize_relay_ticket_for_candidate(&mut ticket, target);
+                        sessions.push(RelayPeerSession {
                         session_id: ticket.session_id.clone(),
                         peer_node_id: peer.node_id.clone(),
                         peer_virtual_ips: peer.virtual_ips.clone(),
                         ticket,
-                    }),
+                    })
+                    }
                     Err(error) => {
                         log_service_error(format!(
                             "client-core-service issue relay ticket skipped: peerNodeId={} endpointId={} transport={} error={error:#}",
@@ -3009,6 +3052,18 @@ fn build_relay_data_plane_config(
             sessions
         })
         .collect::<Vec<_>>();
+    let sessions = filter_relay_sessions_for_transport(&sessions, relay_transport);
+    log_service_error(format!(
+        "client-core-service relay config transport={} target={} sessions={} filtered_sessions=[{}]",
+        relay_transport,
+        relay.address,
+        sessions.len(),
+        sessions
+            .iter()
+            .map(relay_session_debug_summary)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
     let policy = relay_payload_policy(
         relay.address.as_str(),
         network_id,
@@ -3022,7 +3077,9 @@ fn build_relay_data_plane_config(
     );
 
     let relay_address = sessions
-        .first()
+        .iter()
+        .find(|session| relay_session_matches_candidate(session, relay))
+        .or_else(|| sessions.first())
         .map(|session| session.ticket.relay_url.trim())
         .filter(|value| !value.is_empty())
         .map(str::to_string)
@@ -3048,6 +3105,71 @@ fn build_relay_data_plane_config(
         acl_policies: acl_policies_for_network(acl_policies, network_id),
         sessions,
     })
+}
+
+fn filter_relay_sessions_for_transport(
+    sessions: &[RelayPeerSession],
+    relay_transport: &str,
+) -> Vec<RelayPeerSession> {
+    let filtered = sessions
+        .iter()
+        .filter(|session| relay_session_transport_matches(session, relay_transport))
+        .cloned()
+        .collect::<Vec<_>>();
+    if filtered.is_empty() {
+        return sessions.to_vec();
+    }
+    filtered
+}
+
+fn relay_session_transport_matches(session: &RelayPeerSession, relay_transport: &str) -> bool {
+    let Some(expected_kind) = relay_path_kind_for_transport(relay_transport) else {
+        return false;
+    };
+    relay_path_kind_from_relay_url(session.ticket.relay_url.as_str()) == Some(expected_kind)
+}
+
+fn relay_session_debug_summary(session: &RelayPeerSession) -> String {
+    format!(
+        "{}:{}:{}",
+        session.peer_node_id, session.session_id, session.ticket.relay_url
+    )
+}
+
+fn relay_path_kind_from_relay_url(relay_url: &str) -> Option<PathKind> {
+    let (scheme, _) = relay_url.trim().split_once("://")?;
+    match scheme.to_ascii_lowercase().as_str() {
+        "udp" | "relay+udp" => Some(PathKind::RelayUdp),
+        "derp" | "derp+tcp+tls" | "derp_tcp_tls_443" => Some(PathKind::DerpTcpTls443),
+        _ => None,
+    }
+}
+
+fn normalize_relay_ticket_for_candidate(
+    ticket: &mut RelayTicket,
+    candidate: &RelayCandidateSelection,
+) {
+    let transport = normalize_relay_transport(candidate.transport.as_str()).unwrap_or("udp");
+    if transport == "derp_tcp_tls_443" {
+        if ticket.allowed_derp_node_ids.is_empty() {
+            ticket
+                .allowed_derp_node_ids
+                .push(candidate.endpoint_id.clone());
+        }
+        ticket.relay_url = relay_address_for_transport(transport, candidate.address.as_str());
+    }
+}
+
+fn relay_address_for_transport(transport: &str, address: &str) -> String {
+    let trimmed = address.trim();
+    if transport == "derp_tcp_tls_443"
+        && !trimmed.starts_with("derp://")
+        && !trimmed.starts_with("derp+tcp+tls://")
+        && !trimmed.starts_with("derp_tcp_tls_443://")
+    {
+        return format!("derp://{trimmed}");
+    }
+    trimmed.to_string()
 }
 
 fn peer_path_configs(
@@ -3290,7 +3412,7 @@ fn create_punch_connect_sessions(
         .filter(|peer| peer.node_id != local_node_id)
         .filter_map(|peer| {
             match client.create_punch_connect_session(
-                &session.access_token,
+                session_device_api_token(session),
                 device_id,
                 session.mqtt.as_ref(),
                 network_id,
@@ -3552,7 +3674,7 @@ where
         })?;
     let prefix_len = session.active_network_id.as_deref().and_then(|network_id| {
         client
-            .network_prefix_len(&session.access_token, network_id, None)
+            .network_prefix_len(session_device_api_token(&session), network_id, None)
             .ok()
     });
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
@@ -3584,7 +3706,7 @@ fn deactivate_control_network() {
         return;
     };
     let client = ControlPlaneClient::from_env();
-    match client.deactivate_network(&session.access_token, device_id, network_id) {
+    match client.deactivate_network(session_device_api_token(&session), device_id, network_id) {
         Ok(()) => log_service_error(format!(
             "client-core-service deactivated control network on logout/disable: deviceId={device_id} networkId={network_id}"
         )),
@@ -4239,7 +4361,7 @@ pub(crate) fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<Platform
     }
     let client = ControlPlaneClient::from_env();
     if session.active_network_id.is_none() {
-        if let Ok(network_id) = client.active_network_id(&session.access_token) {
+        if let Ok(network_id) = client.active_network_id(session_device_api_token(&session)) {
             session.active_network_id = network_id;
         }
     }

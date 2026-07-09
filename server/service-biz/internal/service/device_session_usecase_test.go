@@ -162,3 +162,68 @@ func TestBindDeviceSessionAutoRegistersMissingDevice(t *testing.T) {
 		t.Fatalf("expected bound session to be returned, got %+v", view.Session)
 	}
 }
+
+func TestBindDeviceSessionReattachesExistingDeviceToDefaultNetwork(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	devices := &deviceSessionTestDevices{
+		networkRuntimeTestDevices: networkRuntimeTestDevices{
+			devices: map[string]model.Device{
+				"linux-1": {
+					DeviceID:  "linux-1",
+					OwnerID:   "user-1",
+					VirtualIP: "10.0.1.20",
+					Name:      "Docker Linux",
+					Platform:  "linux",
+					Status:    "active",
+					CreatedAt: now.Unix(),
+					UpdatedAt: now.Unix(),
+				},
+			},
+		},
+	}
+	networks := &deviceSessionTestNetworks{
+		networkRuntimeTestNetworks: networkRuntimeTestNetworks{
+			networks: map[string]model.Network{
+				"net-1": {
+					NetworkID: "net-1",
+					OwnerID:   "user-1",
+					Name:      "Default",
+					CIDR:      "10.0.0.0/24",
+					Default:   true,
+					Status:    "active",
+				},
+			},
+			networkDevices: map[string][]model.NetworkDevice{},
+		},
+	}
+	service := DeviceSessionService{
+		Users: &deviceSessionTestUsers{
+			users: map[string]model.User{
+				"user-1": {UserID: "user-1", Email: "user-1@example.test", Status: "active"},
+			},
+		},
+		Devices:   devices,
+		Networks:  networks,
+		MQTT:      mqttkit.DefaultConfig(),
+		NewSessID: func(scope string) string { return scope + "-1" },
+		Now:       func() time.Time { return now },
+	}
+
+	view, err := service.BindDeviceSession(context.Background(), BindDeviceSessionInput{
+		UserID:    "user-1",
+		DeviceID:  "linux-1",
+		Name:      "Docker Linux",
+		Platform:  "linux",
+		Alias:     "docker-linux",
+		PublicKey: "pub-1",
+	})
+	if err != nil {
+		t.Fatalf("BindDeviceSession returned error: %v", err)
+	}
+	if len(networks.networkDevices["net-1"]) != 1 {
+		t.Fatalf("expected detached device to be reattached, got %+v", networks.networkDevices["net-1"])
+	}
+	if view.Profile.Device.DeviceID != "linux-1" {
+		t.Fatalf("expected existing device to be preserved, got %+v", view.Profile.Device)
+	}
+}

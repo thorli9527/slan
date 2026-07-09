@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
@@ -205,16 +206,14 @@ if [[ "$IOS_SEND_UDP" == "1" ]]; then
   ANDROID_REGISTER_USER=true
 else
   echo "+ warm-enable iOS network and keep control session fresh"
+  mapfile -t IOS_WARM_COMMON_DART_DEFINES < <(
+    slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" true true
+  )
   (
     cd "$APP_DIR"
     flutter test integration_test/mobile_login_test.dart \
       -d "$IOS_DEVICE" \
-      --dart-define="SLAN_TEST_BIZ_URL=$BIZ_URL" \
-      --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$BIZ_URL" \
-      --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-      --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-      --dart-define="SLAN_TEST_REGISTER_USER=true" \
-      --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+      "${IOS_WARM_COMMON_DART_DEFINES[@]}" \
       --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
       --dart-define="SLAN_TEST_HOLD_SECONDS=$IOS_PEER_HOLD_SECONDS"
   ) >"$WORK_DIR/ios-warm-network.log" 2>&1 &
@@ -245,16 +244,14 @@ fi
 
 echo "+ start Android UDP echo integration test"
 start_android_vpn_appops_guard
+mapfile -t ANDROID_ECHO_COMMON_DART_DEFINES < <(
+  slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" "$ANDROID_REGISTER_USER" true
+)
 (
   cd "$APP_DIR"
   flutter test integration_test/mobile_login_test.dart \
     -d "$ANDROID_DEVICE" \
-    --dart-define="SLAN_TEST_BIZ_URL=$ANDROID_BIZ_URL" \
-    --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$ANDROID_BIZ_URL" \
-    --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-    --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-    --dart-define="SLAN_TEST_REGISTER_USER=$ANDROID_REGISTER_USER" \
-    --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+    "${ANDROID_ECHO_COMMON_DART_DEFINES[@]}" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
     --dart-define="SLAN_TEST_UDP_ECHO_PORT=$UDP_PORT" \
     --dart-define="SLAN_TEST_TCP_ECHO_PORT=$TCP_PORT" \
@@ -305,16 +302,14 @@ if [[ "$IOS_SEND_UDP" != "1" ]]; then
 fi
 
 echo "+ run iOS UDP/TCP echo client integration test target=$ANDROID_IP udp=$UDP_PORT tcp=$TCP_PORT"
+mapfile -t IOS_SEND_COMMON_DART_DEFINES < <(
+  slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" false true
+)
 (
   cd "$APP_DIR"
   flutter test integration_test/mobile_login_test.dart \
     -d "$IOS_DEVICE" \
-    --dart-define="SLAN_TEST_BIZ_URL=$BIZ_URL" \
-    --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$BIZ_URL" \
-    --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-    --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-    --dart-define="SLAN_TEST_REGISTER_USER=false" \
-    --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+    "${IOS_SEND_COMMON_DART_DEFINES[@]}" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
     --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=${SLAN_IOS_SEND_POST_ENABLE_WAIT_SECONDS:-8}" \
     --dart-define="SLAN_TEST_UDP_SEND_TARGET=$ANDROID_IP:$UDP_PORT" \

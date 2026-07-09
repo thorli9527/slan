@@ -5,7 +5,7 @@ import 'compact_info_row.dart';
 
 /// 已登录首页状态面板。
 ///
-/// 集中展示当前用户、虚拟 IP、流量统计、设备 ID 和最近一条客户端消息。
+/// 集中展示当前用户、虚拟 IP、流量统计和设备 ID。
 class SignedInStatusPanel extends StatelessWidget {
   const SignedInStatusPanel({
     required this.userLabel,
@@ -82,31 +82,9 @@ class SignedInStatusPanel extends StatelessWidget {
               value: _deviceIdText(state)!,
             ),
           ],
-          if (_lastClientMessageText(state) != null) ...[
-            const SizedBox(height: 7),
-            CompactInfoRow(
-              valueKey: const Key('last-client-message-value'),
-              icon: Icons.mark_chat_unread_rounded,
-              label: '最近消息',
-              value: _lastClientMessageText(state)!,
-            ),
-          ],
         ],
       ),
     );
-  }
-
-  /// 格式化最近一条客户端消息。
-  String? _lastClientMessageText(ClientViewState state) {
-    final body = state.lastClientMessageBody?.trim();
-    if (body == null || body.isEmpty) {
-      return null;
-    }
-    final from = state.lastClientMessageFromDeviceId?.trim();
-    if (from == null || from.isEmpty) {
-      return body;
-    }
-    return '$from: $body';
   }
 
   /// 清理设备 ID，空字符串不展示。

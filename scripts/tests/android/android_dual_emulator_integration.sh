@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 . "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
@@ -43,6 +44,7 @@ ANDROID_DEBUG_EMULATOR_VPN_BYPASS="${SLAN_ANDROID_DEBUG_EMULATOR_VPN_BYPASS:-1}"
 ANDROID_PHASE34_RECEIVER_HOLD_SECONDS="${SLAN_ANDROID_DUAL_PHASE34_RECEIVER_HOLD_SECONDS:-240}"
 ANDROID_PHASE34_MARKER_WAIT_SECONDS="${SLAN_ANDROID_DUAL_PHASE34_MARKER_WAIT_SECONDS:-300}"
 ANDROID_PHASE34_RELAY_REFRESH_WAIT_SECONDS="${SLAN_ANDROID_DUAL_PHASE34_RELAY_REFRESH_WAIT_SECONDS:-120}"
+ANDROID_PHASE34_RELAY_TRANSPORT_ALLOWLIST="${SLAN_ANDROID_DUAL_PHASE34_RELAY_TRANSPORT_ALLOWLIST:-udp}"
 ANDROID_PHASE2_EXPECT_MESSAGE_TIMEOUT_SECONDS="${SLAN_ANDROID_DUAL_PHASE2_EXPECT_MESSAGE_TIMEOUT_SECONDS:-180}"
 ANDROID_PHASE2_EXPECT_MQTT_TIMEOUT_SECONDS="${SLAN_ANDROID_DUAL_PHASE2_EXPECT_MQTT_TIMEOUT_SECONDS:-60}"
 ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS="${SLAN_ANDROID_DUAL_PHASE2_RECEIVER_SETTLE_SECONDS:-6}"
@@ -565,17 +567,17 @@ set_android_vpn_bypass_pref() {
   [[ "$ANDROID_PRESET_VPN_BYPASS" == "1" ]] || return 0
   "$ADB" -s "$device" shell am start -n dev.slan.slan_client_v2/.MainActivity >/dev/null 2>&1 || true
   sleep 2
+  local preset_common_dart_defines=()
+  mapfile -t preset_common_dart_defines < <(
+    slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
+  )
   (
     cd "$APP_DIR"
     "$FLUTTER_BIN" test integration_test/mobile_login_test.dart \
       -d "$device" \
       --timeout "$TIMEOUT" \
       --plain-name "mobile password login signs in through client-core-service" \
-      --dart-define="SLAN_TEST_BIZ_URL=$ANDROID_BIZ_URL" \
-      --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$ANDROID_BIZ_URL" \
-      --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-      --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-      --dart-define="SLAN_TEST_REGISTER_USER=false" \
+      "${preset_common_dart_defines[@]}" \
       --dart-define="SLAN_TEST_CHECK_SWITCH=false" \
       --dart-define="SLAN_TEST_HOLD_SECONDS=0" \
       --dart-define="SLAN_TEST_ANDROID_SET_VPN_BYPASS_ONLY=true" \
@@ -830,13 +832,10 @@ register_user_if_needed
 "$ADB" -s "$DEVICE_A" shell appops get dev.slan.slan_client_v2 ACTIVATE_VPN >/dev/null 2>&1 || true
 "$ADB" -s "$DEVICE_B" shell appops get dev.slan.slan_client_v2 ACTIVATE_VPN >/dev/null 2>&1 || true
 
-COMMON_DART_DEFINES=(
-  --dart-define="SLAN_TEST_BIZ_URL=$ANDROID_BIZ_URL"
-  --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$ANDROID_BIZ_URL"
-  --dart-define="SLAN_TEST_EMAIL=$EMAIL"
-  --dart-define="SLAN_TEST_PASSWORD=$PASSWORD"
-  --dart-define="SLAN_TEST_REGISTER_USER=false"
-  --dart-define="SLAN_TEST_WAIT_MQTT=true"
+mapfile -t COMMON_DART_DEFINES < <(
+  slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
+)
+COMMON_DART_DEFINES+=(
   --dart-define="SLAN_TEST_CHECK_SWITCH=true"
   --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=3"
   --dart-define="SLAN_UI_DIAGNOSTICS=true"
@@ -893,6 +892,13 @@ TARGET_B_DNS="android-b.${ZONE_NAME}"
 log "phase 2: validate network module and bidirectional client messages"
 start_logcat_capture "$DEVICE_A" "$LOGCAT_A_PHASE2"
 start_logcat_capture "$DEVICE_B" "$LOGCAT_B_PHASE2"
+mapfile -t PHASE2_FORWARD_EXPECT_DEFINES < <(
+  slan_mobile_login_message_expect_defines \
+    "$DEVICE_ID_A" \
+    "$MESSAGE_A_TO_B" \
+    "$ANDROID_PHASE2_EXPECT_MQTT_TIMEOUT_SECONDS" \
+    "$ANDROID_PHASE2_EXPECT_MESSAGE_TIMEOUT_SECONDS"
+)
 run_flutter_test_bg_ready "$DEVICE_B" "$LOG_B_PHASE2" "SLAN_TEST_NETWORK_IP" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
   "SLAN_TEST_NETWORK_IP=" \
   "SLAN_TEST_NETWORK_MODULE=" \
@@ -903,9 +909,7 @@ run_flutter_test_bg_ready "$DEVICE_B" "$LOG_B_PHASE2" "SLAN_TEST_NETWORK_IP" "$A
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
-  --dart-define="SLAN_TEST_EXPECT_MQTT_TIMEOUT_SECONDS=$ANDROID_PHASE2_EXPECT_MQTT_TIMEOUT_SECONDS" \
-  --dart-define="SLAN_TEST_EXPECT_MESSAGE_TIMEOUT_SECONDS=$ANDROID_PHASE2_EXPECT_MESSAGE_TIMEOUT_SECONDS" \
-  --dart-define="SLAN_TEST_EXPECT_MESSAGE_BODY=$MESSAGE_A_TO_B" >/dev/null
+  "${PHASE2_FORWARD_EXPECT_DEFINES[@]}" >/dev/null
 PHASE2_BG_PID="$RUN_FLUTTER_BG_PID"
 DEVICE_ID_B_PHASE2="$(wait_for_device_marker "$PHASE2_BG_PID" "$LOG_B_PHASE2" "SLAN_TEST_CLIENT_DEVICE_ID" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS")"
 [[ -n "$DEVICE_ID_B_PHASE2" ]] || { cat "$LOG_B_PHASE2" >&2; fail "failed to capture android B phase2 device id"; }
@@ -913,6 +917,9 @@ log "phase 2 forward receiver current deviceId=$DEVICE_ID_B_PHASE2 (phase1=$DEVI
 wait_for_device_marker "$PHASE2_BG_PID" "$LOG_B_PHASE2" "SLAN_TEST_MQTT_STATUS" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" >/dev/null
 log "phase 2 forward receiver mqtt ready; settling ${ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS}s before sender"
 sleep "$ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS"
+mapfile -t PHASE2_FORWARD_SEND_DEFINES < <(
+  slan_mobile_login_message_send_defines "$DEVICE_ID_B_PHASE2" "$MESSAGE_A_TO_B"
+)
 run_flutter_test_with_ready_and_completion_markers \
   "$DEVICE_A" "$LOG_A_PHASE2" \
   "SLAN_TEST_MQTT_STATUS" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
@@ -928,8 +935,7 @@ run_flutter_test_with_ready_and_completion_markers \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
-  --dart-define="SLAN_TEST_SEND_TARGET_DEVICE_ID=$DEVICE_ID_B_PHASE2" \
-  --dart-define="SLAN_TEST_SEND_BODY=$MESSAGE_A_TO_B"
+  "${PHASE2_FORWARD_SEND_DEFINES[@]}"
 wait_for_completed_log_markers \
   "$LOG_B_PHASE2" "$ANDROID_PHASE2_EXPECT_MESSAGE_TIMEOUT_SECONDS" \
   "SLAN_TEST_NETWORK_IP=" \
@@ -944,6 +950,13 @@ log "phase 2 forward sender current deviceId=$DEVICE_ID_A_PHASE2 (phase1=$DEVICE
 log "phase 2 reverse receiver bootstrap begin"
 start_logcat_capture "$DEVICE_A" "$LOGCAT_A_PHASE2_REPLY"
 start_logcat_capture "$DEVICE_B" "$LOGCAT_B_PHASE2_REPLY"
+mapfile -t PHASE2_REVERSE_EXPECT_DEFINES < <(
+  slan_mobile_login_message_expect_defines \
+    "$DEVICE_ID_B" \
+    "$MESSAGE_B_TO_A" \
+    "$ANDROID_PHASE2_EXPECT_MQTT_TIMEOUT_SECONDS" \
+    "$ANDROID_PHASE2_EXPECT_MESSAGE_TIMEOUT_SECONDS"
+)
 run_flutter_test_bg_ready "$DEVICE_A" "$LOG_A_PHASE2_REPLY" "SLAN_TEST_NETWORK_IP" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
   "SLAN_TEST_NETWORK_IP=" \
   "SLAN_TEST_NETWORK_MODULE=" \
@@ -954,9 +967,7 @@ run_flutter_test_bg_ready "$DEVICE_A" "$LOG_A_PHASE2_REPLY" "SLAN_TEST_NETWORK_I
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
-  --dart-define="SLAN_TEST_EXPECT_MQTT_TIMEOUT_SECONDS=$ANDROID_PHASE2_EXPECT_MQTT_TIMEOUT_SECONDS" \
-  --dart-define="SLAN_TEST_EXPECT_MESSAGE_TIMEOUT_SECONDS=$ANDROID_PHASE2_EXPECT_MESSAGE_TIMEOUT_SECONDS" \
-  --dart-define="SLAN_TEST_EXPECT_MESSAGE_BODY=$MESSAGE_B_TO_A" >/dev/null
+  "${PHASE2_REVERSE_EXPECT_DEFINES[@]}" >/dev/null
 PHASE2_REPLY_BG_PID="$RUN_FLUTTER_BG_PID"
 log "phase 2 reverse receiver background pid=$PHASE2_REPLY_BG_PID"
 DEVICE_ID_A_PHASE2_REPLY="$(wait_for_device_marker "$PHASE2_REPLY_BG_PID" "$LOG_A_PHASE2_REPLY" "SLAN_TEST_CLIENT_DEVICE_ID" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS")"
@@ -965,6 +976,9 @@ log "phase 2 reverse receiver current deviceId=$DEVICE_ID_A_PHASE2_REPLY (forwar
 wait_for_device_marker "$PHASE2_REPLY_BG_PID" "$LOG_A_PHASE2_REPLY" "SLAN_TEST_MQTT_STATUS" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" >/dev/null
 log "phase 2 reverse receiver mqtt ready; settling ${ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS}s before sender"
 sleep "$ANDROID_PHASE2_RECEIVER_SETTLE_SECONDS"
+mapfile -t PHASE2_REVERSE_SEND_DEFINES < <(
+  slan_mobile_login_message_send_defines "$DEVICE_ID_A_PHASE2_REPLY" "$MESSAGE_B_TO_A"
+)
 run_flutter_test_with_ready_and_completion_markers \
   "$DEVICE_B" "$LOG_B_PHASE2_REPLY" \
   "SLAN_TEST_MQTT_STATUS" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
@@ -980,8 +994,7 @@ run_flutter_test_with_ready_and_completion_markers \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
-  --dart-define="SLAN_TEST_SEND_TARGET_DEVICE_ID=$DEVICE_ID_A_PHASE2_REPLY" \
-  --dart-define="SLAN_TEST_SEND_BODY=$MESSAGE_B_TO_A"
+  "${PHASE2_REVERSE_SEND_DEFINES[@]}"
 wait_for_completed_log_markers \
   "$LOG_A_PHASE2_REPLY" "$ANDROID_PHASE2_EXPECT_MESSAGE_TIMEOUT_SECONDS" \
   "SLAN_TEST_NETWORK_IP=" \
@@ -1008,8 +1021,10 @@ start_logcat_capture "$DEVICE_B" "$LOGCAT_B_PHASE3"
 run_flutter_test_bg_ready "$DEVICE_A" "$LOG_A_PHASE3" "SLAN_TEST_UDP_ECHO_PORT" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
   "SLAN_TEST_UDP_ECHO_PORT=$UDP_PORT" \
   "SLAN_TEST_TCP_ECHO_PORT=$TCP_PORT" \
+  "SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST_RESPONSE=" \
   -- \
   "${DEVICE_A_DART_DEFINES[@]}" \
+  --dart-define="SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=${ANDROID_PHASE34_RELAY_TRANSPORT_ALLOWLIST}" \
   --dart-define="SLAN_TEST_UDP_ECHO_PORT=$UDP_PORT" \
   --dart-define="SLAN_TEST_TCP_ECHO_PORT=$TCP_PORT" \
   --dart-define="SLAN_TEST_HOLD_SECONDS=$ANDROID_PHASE34_RECEIVER_HOLD_SECONDS" >/dev/null
@@ -1023,10 +1038,12 @@ if [[ -n "$RELAY_ADMIN_BASE_URL" ]]; then
   }
 fi
 run_flutter_test_with_ready_and_completion_markers "$DEVICE_B" "$LOG_B_PHASE3" \
-  "SLAN_TEST_NETWORK_IP" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
+  "SLAN_TEST_SOCKET_TARGETS_READY" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
   "SLAN_TEST_TCP_ECHO_OK=${TARGET_A_DNS}:${TCP_PORT}" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
   "SLAN_TEST_NETWORK_IP=" \
   "SLAN_TEST_MQTT_STATUS" \
+  "SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST_RESPONSE=" \
+  "SLAN_TEST_SOCKET_TARGETS_READY=" \
   "SLAN_TEST_UDP_SEND_TARGET=${TARGET_A_DNS}:${UDP_PORT}" \
   "SLAN_TEST_TCP_SEND_TARGET=${TARGET_A_DNS}:${TCP_PORT}" \
   "SLAN_TEST_ANDROID_PACKET_TUNNEL_READY=" \
@@ -1035,6 +1052,7 @@ run_flutter_test_with_ready_and_completion_markers "$DEVICE_B" "$LOG_B_PHASE3" \
   "SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=" \
   -- \
   "${DEVICE_B_DART_DEFINES[@]}" \
+  --dart-define="SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=${ANDROID_PHASE34_RELAY_TRANSPORT_ALLOWLIST}" \
   --dart-define="SLAN_TEST_UDP_SEND_TARGET=${TARGET_A_DNS}:${UDP_PORT}" \
   --dart-define="SLAN_TEST_UDP_SEND_BODY=udp-b-to-a-$(date +%s%N)" \
   --dart-define="SLAN_TEST_TCP_SEND_TARGET=${TARGET_A_DNS}:${TCP_PORT}" \
@@ -1056,8 +1074,10 @@ start_logcat_capture "$DEVICE_B" "$LOGCAT_B_PHASE4"
 run_flutter_test_bg_ready "$DEVICE_B" "$LOG_B_PHASE4" "SLAN_TEST_UDP_ECHO_PORT" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
   "SLAN_TEST_UDP_ECHO_PORT=$UDP_PORT" \
   "SLAN_TEST_TCP_ECHO_PORT=$TCP_PORT" \
+  "SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST_RESPONSE=" \
   -- \
   "${DEVICE_B_DART_DEFINES[@]}" \
+  --dart-define="SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=${ANDROID_PHASE34_RELAY_TRANSPORT_ALLOWLIST}" \
   --dart-define="SLAN_TEST_UDP_ECHO_PORT=$UDP_PORT" \
   --dart-define="SLAN_TEST_TCP_ECHO_PORT=$TCP_PORT" \
   --dart-define="SLAN_TEST_HOLD_SECONDS=$ANDROID_PHASE34_RECEIVER_HOLD_SECONDS" >/dev/null
@@ -1071,10 +1091,12 @@ if [[ -n "$RELAY_ADMIN_BASE_URL" ]]; then
   }
 fi
 run_flutter_test_with_ready_and_completion_markers "$DEVICE_A" "$LOG_A_PHASE4" \
-  "SLAN_TEST_NETWORK_IP" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
+  "SLAN_TEST_SOCKET_TARGETS_READY" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
   "SLAN_TEST_TCP_ECHO_OK=${TARGET_B_DNS}:${TCP_PORT}" "$ANDROID_PHASE34_MARKER_WAIT_SECONDS" \
   "SLAN_TEST_NETWORK_IP=" \
   "SLAN_TEST_MQTT_STATUS" \
+  "SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST_RESPONSE=" \
+  "SLAN_TEST_SOCKET_TARGETS_READY=" \
   "SLAN_TEST_UDP_SEND_TARGET=${TARGET_B_DNS}:${UDP_PORT}" \
   "SLAN_TEST_TCP_SEND_TARGET=${TARGET_B_DNS}:${TCP_PORT}" \
   "SLAN_TEST_ANDROID_PACKET_TUNNEL_READY=" \
@@ -1083,6 +1105,7 @@ run_flutter_test_with_ready_and_completion_markers "$DEVICE_A" "$LOG_A_PHASE4" \
   "SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=" \
   -- \
   "${DEVICE_A_DART_DEFINES[@]}" \
+  --dart-define="SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=${ANDROID_PHASE34_RELAY_TRANSPORT_ALLOWLIST}" \
   --dart-define="SLAN_TEST_UDP_SEND_TARGET=${TARGET_B_DNS}:${UDP_PORT}" \
   --dart-define="SLAN_TEST_UDP_SEND_BODY=udp-a-to-b-$(date +%s%N)" \
   --dart-define="SLAN_TEST_TCP_SEND_TARGET=${TARGET_B_DNS}:${TCP_PORT}" \

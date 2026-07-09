@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
@@ -213,6 +214,64 @@ run_client_core_login_check() {
   return "$status"
 }
 
+start_android_flutter_message_harness() {
+  local android_common_dart_defines=()
+  local android_send_dart_defines=()
+  local android_expect_dart_defines=()
+  mapfile -t android_common_dart_defines < <(
+    slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
+  )
+  mapfile -t android_send_dart_defines < <(
+    slan_mobile_login_message_send_defines "$MAC_DEVICE_ID" "$ANDROID_TO_MAC_BODY"
+  )
+  mapfile -t android_expect_dart_defines < <(
+    slan_mobile_login_message_expect_defines "$MAC_DEVICE_ID" "$MAC_TO_ANDROID_BODY"
+  )
+  (
+    cd "$APP_DIR"
+    flutter test integration_test/mobile_login_test.dart \
+      -d "$ANDROID_DEVICE" \
+      --timeout "${SLAN_ANDROID_FLUTTER_TEST_TIMEOUT:-10m}" \
+      "${android_common_dart_defines[@]}" \
+      --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID" \
+      --dart-define="SLAN_TEST_CHECK_SWITCH=${SLAN_TEST_CHECK_SWITCH:-true}" \
+      --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=${SLAN_TEST_EXPECT_NETWORK_MODULE:-false}" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=${SLAN_TEST_MIN_NETWORK_MODULE_PEERS:-0}" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=${SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS:-0}" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=${SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES:-0}" \
+      --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=${SLAN_TEST_POST_ENABLE_WAIT_SECONDS:-0}" \
+      --dart-define="SLAN_TEST_UDP_ECHO_PORT=${SLAN_TEST_UDP_ECHO_PORT:-0}" \
+      --dart-define="SLAN_TEST_TCP_ECHO_PORT=${SLAN_TEST_TCP_ECHO_PORT:-0}" \
+      "${android_send_dart_defines[@]}" \
+      "${android_expect_dart_defines[@]}"
+  ) >"$ANDROID_LOG" 2>&1 &
+  ANDROID_PID="$!"
+  PIDS+=("$ANDROID_PID")
+}
+
+capture_android_device_id_or_die() {
+  ANDROID_DEVICE_ID=""
+  for _ in $(seq 1 "$ANDROID_DEVICE_ID_WAIT_SECONDS"); do
+    if ! kill -0 "$ANDROID_PID" 2>/dev/null; then
+      cat "$ANDROID_LOG"
+      echo "Android integration test exited before device id was reported" >&2
+      exit 1
+    fi
+    ANDROID_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$ANDROID_LOG" | tail -n 1)"
+    if [[ -n "$ANDROID_DEVICE_ID" ]]; then
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ -z "$ANDROID_DEVICE_ID" ]]; then
+    cat "$ANDROID_LOG"
+    echo "timed out waiting for Android device id marker" >&2
+    exit 1
+  fi
+  echo "Android device id: $ANDROID_DEVICE_ID"
+}
+
 start_android_vpn_appops_guard() {
   (
     while true; do
@@ -349,55 +408,9 @@ if [[ -z "$MAC_DEVICE_ID" ]]; then
   exit 1
 fi
 
-echo "+ flutter test Android login and message send/wait"
-(
-  cd "$APP_DIR"
-  flutter test integration_test/mobile_login_test.dart \
-    -d "$ANDROID_DEVICE" \
-    --timeout "${SLAN_ANDROID_FLUTTER_TEST_TIMEOUT:-10m}" \
-    --dart-define="SLAN_TEST_BIZ_URL=$ANDROID_BIZ_URL" \
-    --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$ANDROID_BIZ_URL" \
-    --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-    --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-    --dart-define="SLAN_TEST_REGISTER_USER=false" \
-    --dart-define="SLAN_TEST_WAIT_MQTT=true" \
-    --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID" \
-    --dart-define="SLAN_TEST_CHECK_SWITCH=${SLAN_TEST_CHECK_SWITCH:-true}" \
-    --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=${SLAN_TEST_EXPECT_NETWORK_MODULE:-false}" \
-    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=${SLAN_TEST_MIN_NETWORK_MODULE_PEERS:-0}" \
-    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=${SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS:-0}" \
-    --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=${SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES:-0}" \
-    --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=${SLAN_TEST_POST_ENABLE_WAIT_SECONDS:-0}" \
-    --dart-define="SLAN_TEST_UDP_ECHO_PORT=${SLAN_TEST_UDP_ECHO_PORT:-0}" \
-    --dart-define="SLAN_TEST_TCP_ECHO_PORT=${SLAN_TEST_TCP_ECHO_PORT:-0}" \
-    --dart-define="SLAN_TEST_SEND_TARGET_DEVICE_ID=$MAC_DEVICE_ID" \
-    --dart-define="SLAN_TEST_SEND_BODY=$ANDROID_TO_MAC_BODY" \
-    --dart-define="SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID=$MAC_DEVICE_ID" \
-    --dart-define="SLAN_TEST_EXPECT_MESSAGE_BODY=$MAC_TO_ANDROID_BODY"
-) >"$ANDROID_LOG" 2>&1 &
-ANDROID_PID="$!"
-PIDS+=("$ANDROID_PID")
-
-ANDROID_DEVICE_ID=""
-for _ in $(seq 1 "$ANDROID_DEVICE_ID_WAIT_SECONDS"); do
-  if ! kill -0 "$ANDROID_PID" 2>/dev/null; then
-    cat "$ANDROID_LOG"
-    echo "Android integration test exited before device id was reported" >&2
-    exit 1
-  fi
-  ANDROID_DEVICE_ID="$(sed -n 's/.*SLAN_TEST_CLIENT_DEVICE_ID=\([^[:space:]]*\).*/\1/p' "$ANDROID_LOG" | tail -n 1)"
-  if [[ -n "$ANDROID_DEVICE_ID" ]]; then
-    break
-  fi
-  sleep 1
-done
-
-if [[ -z "$ANDROID_DEVICE_ID" ]]; then
-  cat "$ANDROID_LOG"
-  echo "timed out waiting for Android device id marker" >&2
-  exit 1
-fi
-echo "Android device id: $ANDROID_DEVICE_ID"
+echo "+ start Android flutter message harness"
+start_android_flutter_message_harness
+capture_android_device_id_or_die
 
 provision_dns_acl_resources "$MAC_DEVICE_ID" "$ANDROID_DEVICE_ID"
 

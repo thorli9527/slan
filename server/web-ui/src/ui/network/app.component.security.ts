@@ -205,11 +205,11 @@ export abstract class AppComponentSecurity extends AppComponentDns {
     }
     if (rule.subjectType === 'device') {
       const device = this.devices.find((item) => item.deviceId === rule.subjectValue);
-      return device ? `${device.alias || device.deviceId} / ${device.deviceId}` : rule.subjectValue;
+      return device?.alias || rule.subjectValue;
     }
     if (rule.subjectType === 'device_group') {
       const group = this.deviceGroups.find((item) => item.groupId === rule.subjectValue);
-      return group ? `${group.name} / ${group.groupId}` : rule.subjectValue;
+      return group?.name || rule.subjectValue;
     }
     if (rule.subjectType === 'user') {
       const member = this.members.find((item) => item.user === rule.subjectValue);

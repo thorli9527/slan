@@ -41,10 +41,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
     "syncReason": nil,
     "switchEnabled": true,
     "notice": "iosClientReady",
-    "error": nil,
-    "lastClientMessageId": nil,
-    "lastClientMessageFromDeviceId": nil,
-    "lastClientMessageBody": nil
+    "error": nil
   ]
 
   /// 注册 Flutter MethodChannel，并初始化稳定 device/node ID。

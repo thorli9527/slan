@@ -1,5 +1,7 @@
 package service
 
+import "strings"
+
 import "context"
 
 func (s NetworkCoreService) NetworkSnapshot(
@@ -33,7 +35,17 @@ func buildNetworkEventSnapshotPayload(
 ) NetworkSnapshotPayload {
 	view := resolved.Config
 
-	members := make([]NetworkEventMemberView, 0, len(view.Peers))
+	members := make([]NetworkEventMemberView, 0, len(view.Peers)+1)
+	if strings.TrimSpace(view.DeviceID) != "" {
+		members = append(members, NetworkEventMemberView{
+			DeviceID:   view.DeviceID,
+			DeviceName: view.GlobalName,
+			VirtualIP:  view.GlobalIP,
+			Online:     strings.TrimSpace(view.GlobalIP) != "",
+			Tags:       []string{},
+			GroupIDs:   []string{},
+		})
+	}
 	peerPaths := make([]NetworkEventPeerPathView, 0, len(view.Peers))
 	for _, peer := range view.Peers {
 		members = append(members, NetworkEventMemberView{
@@ -41,6 +53,8 @@ func buildNetworkEventSnapshotPayload(
 			DeviceName: peer.Alias,
 			VirtualIP:  peer.GlobalIP,
 			Online:     stringsEqualFold(peer.Status, "online"),
+			Tags:       []string{},
+			GroupIDs:   []string{},
 		})
 		peerPaths = append(peerPaths, NetworkEventPeerPathView{
 			PeerDeviceID: peer.DeviceID,
@@ -55,6 +69,7 @@ func buildNetworkEventSnapshotPayload(
 			deviceGroups = append(deviceGroups, NetworkEventDeviceGroupView{
 				GroupID:         groupID,
 				Name:            groupID,
+				Tags:            []string{},
 				MemberDeviceIDs: []string{deviceID},
 			})
 		}
@@ -76,17 +91,35 @@ func buildNetworkEventSnapshotPayload(
 
 	aclRules := make([]NetworkEventACLRuleView, 0, len(view.SecurityRules))
 	for _, rule := range view.SecurityRules {
+		sourceType := strings.TrimSpace(rule.PeerType)
+		sourceValue := strings.TrimSpace(rule.PeerValue)
+		sourceDeviceIDs := []string{}
+		sourceGroupIDs := []string{}
+		switch sourceType {
+		case "device":
+			if sourceValue != "" {
+				sourceDeviceIDs = []string{sourceValue}
+			}
+		case "device_group":
+			if sourceValue != "" {
+				sourceGroupIDs = []string{sourceValue}
+			}
+		}
 		aclRules = append(aclRules, NetworkEventACLRuleView{
-			RuleID:     rule.RuleID,
-			Priority:   int(rule.Priority),
-			Action:     rule.Action,
-			Direction:  rule.Direction,
-			Protocol:   rule.Protocol,
-			PortRanges: []string{rule.PortRange},
-			SourceType: rule.PeerType,
-			TargetType: "current_device",
-			Enabled:    rule.Enabled,
-			UpdatedAt:  rule.UpdatedAt,
+			RuleID:          rule.RuleID,
+			Priority:        int(rule.Priority),
+			Action:          rule.Action,
+			Direction:       rule.Direction,
+			Protocol:        rule.Protocol,
+			PortRanges:      []string{rule.PortRange},
+			SourceType:      sourceType,
+			SourceDeviceIDs: sourceDeviceIDs,
+			SourceGroupIDs:  sourceGroupIDs,
+			TargetType:      "current_device",
+			TargetDeviceIDs: []string{},
+			TargetGroupIDs:  []string{},
+			Enabled:         rule.Enabled,
+			UpdatedAt:       rule.UpdatedAt,
 		})
 	}
 
@@ -94,6 +127,7 @@ func buildNetworkEventSnapshotPayload(
 		Network: NetworkEventNetworkView{
 			NetworkID:        view.Network.NetworkID,
 			Name:             view.Network.Name,
+			Tags:             []string{},
 			DefaultACLPolicy: defaultACLPolicyFromResolved(view),
 			UpdatedAt:        int64(view.Network.UpdatedAt),
 		},

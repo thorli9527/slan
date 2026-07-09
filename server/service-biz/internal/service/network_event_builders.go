@@ -64,15 +64,9 @@ func buildNetworkEventSnapshotFromRepositories(
 	if err != nil {
 		return NetworkSnapshotPayload{}, err
 	}
-	primaryDeviceID := ""
-	for _, member := range memberships {
-		if !networkMemberActive(member) {
-			continue
-		}
-		primaryDeviceID = strings.TrimSpace(member.DeviceID)
-		if primaryDeviceID != "" {
-			break
-		}
+	primaryDeviceID, err := firstActiveManagedNetworkDeviceID(ctx, devices, memberships)
+	if err != nil {
+		return NetworkSnapshotPayload{}, err
 	}
 	if primaryDeviceID == "" {
 		network, err := requireManagedNetwork(ctx, networks, networkID)
@@ -109,6 +103,8 @@ func networkEventMemberView(member model.NetworkDevice) NetworkEventMemberView {
 		VirtualIP:  strings.TrimSpace(member.VirtualIP),
 		Online:     networkMemberOnline(member),
 		LastSeenAt: member.LastSeenAt,
+		Tags:       []string{},
+		GroupIDs:   []string{},
 	}
 }
 
@@ -131,17 +127,35 @@ func networkEventDNSRecords(records []model.DNSRecord) []NetworkEventDNSRecordVi
 func networkEventACLRules(rules []model.SecurityRule) []NetworkEventACLRuleView {
 	out := make([]NetworkEventACLRuleView, 0, len(rules))
 	for _, rule := range rules {
+		sourceType := strings.TrimSpace(rule.PeerType)
+		sourceValue := strings.TrimSpace(rule.PeerValue)
+		sourceDeviceIDs := []string{}
+		sourceGroupIDs := []string{}
+		switch sourceType {
+		case "device":
+			if sourceValue != "" {
+				sourceDeviceIDs = []string{sourceValue}
+			}
+		case "device_group":
+			if sourceValue != "" {
+				sourceGroupIDs = []string{sourceValue}
+			}
+		}
 		out = append(out, NetworkEventACLRuleView{
-			RuleID:     rule.RuleID,
-			Priority:   rule.Priority,
-			Action:     rule.Action,
-			Direction:  rule.Direction,
-			Protocol:   rule.Protocol,
-			PortRanges: []string{rule.PortRange},
-			SourceType: rule.PeerType,
-			TargetType: "current_device",
-			Enabled:    rule.Enabled,
-			UpdatedAt:  rule.UpdatedAt,
+			RuleID:          rule.RuleID,
+			Priority:        rule.Priority,
+			Action:          rule.Action,
+			Direction:       rule.Direction,
+			Protocol:        rule.Protocol,
+			PortRanges:      []string{rule.PortRange},
+			SourceType:      sourceType,
+			SourceDeviceIDs: sourceDeviceIDs,
+			SourceGroupIDs:  sourceGroupIDs,
+			TargetType:      "current_device",
+			TargetDeviceIDs: []string{},
+			TargetGroupIDs:  []string{},
+			Enabled:         rule.Enabled,
+			UpdatedAt:       rule.UpdatedAt,
 		})
 	}
 	return out

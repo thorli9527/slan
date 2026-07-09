@@ -42,3 +42,63 @@ and operator habits.
 - New test scripts should be added under the matching category first, then
   optionally exposed via a root-level symlink if they are intended to be
   operator-facing.
+
+## Current Stable Matrix
+
+These are the currently verified quick-entry flows that should be preferred for
+routine regression runs.
+
+- Dual Android full business chain:
+  `bash scripts/tests/android/android_dual_fast_check.sh --full-stable`
+  Coverage: login, MQTT, bidirectional client message, DNS, ACL, UDP echo, TCP
+  echo.
+- Dual iOS simulator business chain:
+  `bash scripts/tests/ios/ios_dual_fast_check.sh --full-stable`
+  Coverage: DNS, ACL, MQTT, bidirectional Flutter message.
+- Mixed Mac + Android real packet chain:
+  `bash scripts/tests/matrix/mac_android_fast_check.sh --full-stable`
+  Coverage: login, MQTT, DNS route propagation, Mac-hosted UDP echo, Mac-hosted
+  TCP echo, Android -> Mac real packet send over the tunnel.
+- Mixed Mac + iOS simulator business chain:
+  `bash scripts/tests/matrix/mac_ios_integration_check.sh`
+  Coverage: Mac service login, iOS app DNS/ACL smoke, MQTT, bidirectional Mac
+  <-> iOS client message.
+- Mixed Linux Docker + Mac real packet chain:
+  `bash scripts/tests/linux/linux_docker_mac_integration.sh`
+  Coverage: Linux Docker install/bootstrap, login, MQTT, DNS, ACL,
+  bidirectional client message, Mac -> Linux UDP/TCP, Linux -> Mac UDP/TCP.
+- Remote x86 Linux package + install preflight:
+  `bash scripts/tests/linux/linux_remote_install_check.sh`
+  Coverage: remote `amd64` package presence/build, remote install script,
+  installed files, systemd service, local API availability.
+- Android + remote x86 Linux mixed chain:
+  `bash scripts/tests/matrix/android_remote_linux_integration.sh`
+  Coverage: remote Linux install preflight, Android app login, remote Linux
+  login, DNS, ACL, bidirectional client message, Android -> Linux UDP/TCP,
+  Linux -> Android UDP/TCP.
+- Aggregate current feasible matrix:
+  `bash scripts/current_client_regression.sh`
+  Coverage: current machine-feasible cross-client regression set.
+
+### Stable Defaults
+
+- Dual Android phase 3/4 now pins
+  `SLAN_ANDROID_DUAL_PHASE34_RELAY_TRANSPORT_ALLOWLIST=udp` by default.
+- Mixed Mac + Android stable mode now also pins
+  `SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=udp` by default.
+- Dual Android sender-side socket probes now wait for
+  `SLAN_TEST_SOCKET_TARGETS_READY` before firing UDP/TCP payloads.
+- Mixed Mac/Android, Mac/iOS, and Linux/Mac checks now default to a unique test
+  email per run unless `SLAN_TEST_EMAIL` is set explicitly. This avoids stale
+  remote devices polluting peer/session selection during matrix tests.
+- Android + remote Linux now runs
+  `scripts/tests/linux/linux_remote_install_check.sh` first by default. Set
+  `SLAN_RUN_REMOTE_LINUX_INSTALL_CHECK=0` only when you intentionally want to
+  skip the install preflight.
+
+### Known Boundaries
+
+- iOS simulator validates control-plane and app-level business flows, but it
+  does not prove real-device PacketTunnel UDP/TCP data-plane behavior.
+- Linux Docker packet smoke still requires a Linux host with real TUN support;
+  Docker Desktop on macOS is not sufficient for that path.

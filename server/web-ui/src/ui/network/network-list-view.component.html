@@ -46,7 +46,7 @@
         <tr *ngFor="let workspace of vm.workspaces" [class.selected-row]="workspace.workspaceId === vm.selectedWorkspace.workspaceId">
           <td class="tag-cell-wrapper">
             <div class="alias-tag-cell">
-              <button class="text-link" type="button" title="查看网络详情" aria-label="查看网络详情" (click)="vm.openWorkspaceDetail(workspace)">查看详情</button>
+              <button class="text-link" type="button" [title]="'查看网络详情: ' + (workspace.name || workspace.workspaceId)" aria-label="查看网络详情" (click)="vm.openWorkspaceDetail(workspace)">查看详情</button>
               <strong>{{ workspace.name }}</strong>
               <button class="tag-icon-button" type="button" title="修改名称" (click)="vm.openWorkspaceNameTagDialog(workspace); $event.stopPropagation()">
                 <svg viewBox="0 0 24 24" aria-hidden="true">

@@ -201,14 +201,17 @@ rsync -az \
   -e "$(rsync_ssh_command)" \
   "$ENV_SOURCE" "$SSH_TARGET:$REMOTE_ENV_TMP"
 
+preserve_env_keys_csv="${PRESERVE_ENV_KEYS// /,}"
+
 echo "==> Installing remote env ${ENV_FILE}"
-remote_bash "$REMOTE_DIR" "$ENV_FILE" "$REMOTE_ENV_TMP" "$PRESERVE_ENV_KEYS" <<'EOF'
+remote_bash "$REMOTE_DIR" "$ENV_FILE" "$REMOTE_ENV_TMP" "$preserve_env_keys_csv" "$REMOTE_HOST" <<'EOF'
 set -euo pipefail
 
 remote_dir="$1"
 env_file="$2"
 incoming="$3"
-preserve_keys_raw="$4"
+preserve_keys_csv="$4"
+remote_host="$5"
 target="$remote_dir/$env_file"
 
 set_env_value() {
@@ -278,11 +281,85 @@ normalize_ticket_secrets() {
   esac
 }
 
+normalize_mqtt_public_broker_url() {
+  local file="$1"
+  local host="$2"
+
+  host="${host#"${host%%[![:space:]]*}"}"
+  host="${host%"${host##*[![:space:]]}"}"
+  case "$host" in
+    ""|localhost|127.0.0.1|0.0.0.0|::1)
+      return
+      ;;
+  esac
+  set_env_value "$file" "SLAN_MQTT_PUBLIC_BROKER_URL" "mqtt://${host}:1883"
+}
+
+env_value_trimmed() {
+  local file="$1"
+  local key="$2"
+  local value
+
+  value="$(env_value "$file" "$key")"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+env_value_or_default() {
+  local file="$1"
+  local key="$2"
+  local fallback="$3"
+  local value
+
+  value="$(env_value_trimmed "$file" "$key")"
+  if [ -n "$value" ]; then
+    printf '%s' "$value"
+    return
+  fi
+  printf '%s' "$fallback"
+}
+
+normalize_wire_public_endpoints() {
+  local file="$1"
+  local host="$2"
+  local relay_port
+  local relay_b_port
+  local derp_port
+  local derp_b_port
+
+  host="${host#"${host%%[![:space:]]*}"}"
+  host="${host%"${host##*[![:space:]]}"}"
+  case "$host" in
+    ""|localhost|127.0.0.1|0.0.0.0|::1)
+      return
+      ;;
+  esac
+
+  relay_port="$(env_value_or_default "$file" "SLAN_WIRE_RELAY_PORT" "29110")"
+  relay_b_port="$(env_value_or_default "$file" "SLAN_WIRE_RELAY_B_PORT" "29112")"
+  derp_port="$(env_value_or_default "$file" "SLAN_WIRE_DERP_PORT" "29120")"
+  derp_b_port="$(env_value_or_default "$file" "SLAN_WIRE_DERP_B_PORT" "29122")"
+
+  set_env_value "$file" "SLAN_WIRE_RELAY_PUBLIC_HOST" "$host"
+  set_env_value "$file" "SLAN_WIRE_RELAY_PUBLIC_UDP_PORT" "$relay_port"
+  set_env_value "$file" "SLAN_WIRE_RELAY_B_PUBLIC_HOST" "$host"
+  set_env_value "$file" "SLAN_WIRE_RELAY_B_PUBLIC_UDP_PORT" "$relay_b_port"
+  set_env_value "$file" "SLAN_WIRE_DERP_PUBLIC_HOST" "$host"
+  set_env_value "$file" "SLAN_WIRE_DERP_PUBLIC_PORT" "$derp_port"
+  set_env_value "$file" "SLAN_WIRE_DERP_B_PUBLIC_HOST" "$host"
+  set_env_value "$file" "SLAN_WIRE_DERP_B_PUBLIC_PORT" "$derp_b_port"
+  set_env_value "$file" "SLAN_RELAY_ENDPOINTS" "${host}:${relay_port}"
+}
+
 mkdir -p "$(dirname "$target")"
 
 if [ -f "$target" ]; then
   cp "$target" "$target.bak"
-  for key in $preserve_keys_raw; do
+  old_ifs="$IFS"
+  IFS=','
+  for key in $preserve_keys_csv; do
+    IFS="$old_ifs"
     current="$(awk -F= -v key="$key" '$1 == key { print substr($0, index($0, "=") + 1) }' "$target" | tail -n1)"
     if [ -n "$current" ]; then
       awk -v key="$key" -v value="$current" '
@@ -303,10 +380,14 @@ if [ -f "$target" ]; then
       ' "$incoming" > "$incoming.next"
       mv "$incoming.next" "$incoming"
     fi
+    IFS=','
   done
+  IFS="$old_ifs"
 fi
 
 normalize_ticket_secrets "$incoming"
+normalize_mqtt_public_broker_url "$incoming" "$remote_host"
+normalize_wire_public_endpoints "$incoming" "$remote_host"
 mv "$incoming" "$target"
 EOF
 

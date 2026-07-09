@@ -45,6 +45,8 @@ Optional environment variables:
   SLAN_MACOS_NETWORK_MOCK=1|0
   SLAN_MAC_ANDROID_SOCKET_TIMEOUT
   SLAN_ANDROID_SEND_POST_ENABLE_WAIT_SECONDS
+  SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST
+    Default is `udp` for the stable mixed-client path.
   SLAN_KEEP_MAC_ANDROID_SOCKET_WORK_DIR=1|0
 
 Examples:
@@ -64,6 +66,7 @@ export SLAN_SKIP_ANDROID_BUILD="${SLAN_SKIP_ANDROID_BUILD:-1}"
 export SLAN_MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 export SLAN_MAC_ANDROID_SOCKET_TIMEOUT="${SLAN_MAC_ANDROID_SOCKET_TIMEOUT:-90s}"
 export SLAN_ANDROID_SEND_POST_ENABLE_WAIT_SECONDS="${SLAN_ANDROID_SEND_POST_ENABLE_WAIT_SECONDS:-35}"
+export SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-udp}"
 export SLAN_KEEP_MAC_ANDROID_SOCKET_WORK_DIR="${SLAN_KEEP_MAC_ANDROID_SOCKET_WORK_DIR:-0}"
 
 echo "==> mac/android fast uses biz=${SLAN_BIZ_URL}"
@@ -73,5 +76,6 @@ echo "==> reset existing mac identity: ${SLAN_RESET_EXISTING_MAC_SERVICE_IDENTIT
 echo "==> skip android build: ${SLAN_SKIP_ANDROID_BUILD}"
 echo "==> network mock: ${SLAN_MACOS_NETWORK_MOCK} (0 means real data-plane)"
 echo "==> stable mode: timeout=${SLAN_MAC_ANDROID_SOCKET_TIMEOUT} android post-enable wait=${SLAN_ANDROID_SEND_POST_ENABLE_WAIT_SECONDS}s"
+echo "==> stable mode: relay transport allowlist=${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST}"
 
 exec bash "$ROOT_DIR/scripts/mac_android_socket_check.sh"

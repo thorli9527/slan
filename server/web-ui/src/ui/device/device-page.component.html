@@ -40,7 +40,7 @@
       <tbody>
         <tr *ngFor="let device of vm.currentUserDevices">
           <td class="device-id-cell">
-            <button class="text-link" type="button" [title]="'查看设备: ' + device.deviceId" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">查看详情</button>
+            <button class="text-link" type="button" [title]="'查看设备: ' + (device.alias || device.deviceId)" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">查看详情</button>
             <strong>{{ device.alias || device.deviceId }}</strong>
             <code>{{ device.deviceId }}</code>
           </td>

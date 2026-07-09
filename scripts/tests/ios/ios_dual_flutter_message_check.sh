@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 BUNDLE_ID="${SLAN_IOS_BUNDLE_ID:-dev.slan.client.v2}"
@@ -123,6 +124,74 @@ run_flutter_test_fg() {
   ) >"$log_file" 2>&1
 }
 
+capture_device_id_or_die() {
+  local log_file="$1"
+  local label="$2"
+  local device_id
+  device_id="$(extract_log_value "$log_file" "SLAN_TEST_CLIENT_DEVICE_ID")"
+  [[ -n "$device_id" ]] || {
+    cat "$log_file" >&2
+    echo "failed to capture ${label} device id" >&2
+    exit 1
+  }
+  printf '%s\n' "$device_id"
+}
+
+run_ios_login_capture() {
+  local device="$1"
+  local log_file="$2"
+  local build_dir="$3"
+  local requested_device_id="$4"
+  local register_user="$5"
+  run_flutter_test_fg \
+    "$device" \
+    "$log_file" \
+    "$build_dir" \
+    "${COMMON_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$requested_device_id" \
+    --dart-define="SLAN_TEST_REGISTER_USER=$register_user"
+}
+
+start_ios_message_wait() {
+  local device="$1"
+  local log_file="$2"
+  local build_dir="$3"
+  local requested_device_id="$4"
+  local expect_from_device_id="$5"
+  local expect_body="$6"
+  local expect_defines=()
+  mapfile -t expect_defines < <(
+    slan_mobile_login_message_expect_defines "$expect_from_device_id" "$expect_body"
+  )
+  run_flutter_test_bg \
+    "$device" \
+    "$log_file" \
+    "$build_dir" \
+    "${COMMON_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$requested_device_id" \
+    "${expect_defines[@]}"
+}
+
+run_ios_message_send() {
+  local device="$1"
+  local log_file="$2"
+  local build_dir="$3"
+  local requested_device_id="$4"
+  local target_device_id="$5"
+  local body="$6"
+  local send_defines=()
+  mapfile -t send_defines < <(
+    slan_mobile_login_message_send_defines "$target_device_id" "$body"
+  )
+  run_flutter_test_fg \
+    "$device" \
+    "$log_file" \
+    "$build_dir" \
+    "${COMMON_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_DEVICE_ID=$requested_device_id" \
+    "${send_defines[@]}"
+}
+
 SIM_A_DEVICE="${SLAN_IOS_SIM_A_DEVICE:-$SIM_A_NAME}"
 SIM_B_DEVICE="${SLAN_IOS_SIM_B_DEVICE:-$SIM_B_NAME}"
 
@@ -136,90 +205,66 @@ echo "==> requested ios-b device id: $REQUESTED_DEVICE_ID_B"
 xcrun simctl uninstall "$SIM_A_DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl uninstall "$SIM_B_DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 
-COMMON_DART_DEFINES=(
-  --dart-define="SLAN_TEST_BIZ_URL=$BIZ_URL"
-  --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$BIZ_URL"
-  --dart-define="SLAN_TEST_EMAIL=$EMAIL"
-  --dart-define="SLAN_TEST_PASSWORD=$PASSWORD"
-  --dart-define="SLAN_TEST_WAIT_MQTT=true"
+mapfile -t COMMON_DART_DEFINES < <(
+  slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" false true
 )
 
 echo "==> phase 1: login ios-a and capture device id"
-run_flutter_test_fg \
+run_ios_login_capture \
   "$SIM_A_DEVICE" \
   "$LOG_A_PHASE1" \
   "$WORK_DIR/build-a-phase1" \
-  "${COMMON_DART_DEFINES[@]}" \
-  --dart-define="SLAN_TEST_DEVICE_ID=$REQUESTED_DEVICE_ID_A" \
-  --dart-define="SLAN_TEST_REGISTER_USER=true"
-DEVICE_ID_A="$(extract_log_value "$LOG_A_PHASE1" "SLAN_TEST_CLIENT_DEVICE_ID")"
-[[ -n "$DEVICE_ID_A" ]] || {
-  cat "$LOG_A_PHASE1" >&2
-  echo "failed to capture ios-a device id" >&2
-  exit 1
-}
+  "$REQUESTED_DEVICE_ID_A" \
+  true
+DEVICE_ID_A="$(capture_device_id_or_die "$LOG_A_PHASE1" "ios-a")"
 echo "ios-a device id: $DEVICE_ID_A"
 
 echo "==> phase 1: login ios-b and capture device id"
-run_flutter_test_fg \
+run_ios_login_capture \
   "$SIM_B_DEVICE" \
   "$LOG_B_PHASE1" \
   "$WORK_DIR/build-b-phase1" \
-  "${COMMON_DART_DEFINES[@]}" \
-  --dart-define="SLAN_TEST_DEVICE_ID=$REQUESTED_DEVICE_ID_B" \
-  --dart-define="SLAN_TEST_REGISTER_USER=false"
-DEVICE_ID_B="$(extract_log_value "$LOG_B_PHASE1" "SLAN_TEST_CLIENT_DEVICE_ID")"
-[[ -n "$DEVICE_ID_B" ]] || {
-  cat "$LOG_B_PHASE1" >&2
-  echo "failed to capture ios-b device id" >&2
-  exit 1
-}
+  "$REQUESTED_DEVICE_ID_B" \
+  false
+DEVICE_ID_B="$(capture_device_id_or_die "$LOG_B_PHASE1" "ios-b")"
 echo "ios-b device id: $DEVICE_ID_B"
 
 echo "==> phase 2: ios-b sends message to ios-a"
-run_flutter_test_bg \
+start_ios_message_wait \
   "$SIM_A_DEVICE" \
   "$LOG_A_WAIT" \
   "$WORK_DIR/build-a-wait" \
-  "${COMMON_DART_DEFINES[@]}" \
-  --dart-define="SLAN_TEST_DEVICE_ID=$REQUESTED_DEVICE_ID_A" \
-  --dart-define="SLAN_TEST_REGISTER_USER=false" \
-  --dart-define="SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID=$DEVICE_ID_B" \
-  --dart-define="SLAN_TEST_EXPECT_MESSAGE_BODY=$MESSAGE_B_TO_A"
+  "$REQUESTED_DEVICE_ID_A" \
+  "$DEVICE_ID_B" \
+  "$MESSAGE_B_TO_A"
 WAIT_PID_A="$RUN_FLUTTER_BG_PID"
 sleep "$WAIT_BEFORE_SEND_SECONDS"
-run_flutter_test_fg \
+run_ios_message_send \
   "$SIM_B_DEVICE" \
   "$LOG_B_SEND" \
   "$WORK_DIR/build-b-send" \
-  "${COMMON_DART_DEFINES[@]}" \
-  --dart-define="SLAN_TEST_DEVICE_ID=$REQUESTED_DEVICE_ID_B" \
-  --dart-define="SLAN_TEST_REGISTER_USER=false" \
-  --dart-define="SLAN_TEST_SEND_TARGET_DEVICE_ID=$DEVICE_ID_A" \
-  --dart-define="SLAN_TEST_SEND_BODY=$MESSAGE_B_TO_A"
+  "$REQUESTED_DEVICE_ID_B" \
+  "$DEVICE_ID_A" \
+  "$MESSAGE_B_TO_A"
 wait "$WAIT_PID_A"
 
 echo "==> phase 3: ios-a sends message to ios-b"
-run_flutter_test_bg \
+start_ios_message_wait \
   "$SIM_B_DEVICE" \
   "$LOG_B_WAIT" \
   "$WORK_DIR/build-b-wait" \
-  "${COMMON_DART_DEFINES[@]}" \
-  --dart-define="SLAN_TEST_DEVICE_ID=$REQUESTED_DEVICE_ID_B" \
-  --dart-define="SLAN_TEST_REGISTER_USER=false" \
-  --dart-define="SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID=$DEVICE_ID_A" \
-  --dart-define="SLAN_TEST_EXPECT_MESSAGE_BODY=$MESSAGE_A_TO_B"
+  "$REQUESTED_DEVICE_ID_B" \
+  "$DEVICE_ID_A" \
+  "$MESSAGE_A_TO_B"
 WAIT_PID_B="$RUN_FLUTTER_BG_PID"
 sleep "$WAIT_BEFORE_SEND_SECONDS"
-run_flutter_test_fg \
+run_ios_message_send \
   "$SIM_A_DEVICE" \
   "$LOG_A_SEND" \
   "$WORK_DIR/build-a-send" \
-  "${COMMON_DART_DEFINES[@]}" \
-  --dart-define="SLAN_TEST_DEVICE_ID=$REQUESTED_DEVICE_ID_A" \
-  --dart-define="SLAN_TEST_REGISTER_USER=false" \
-  --dart-define="SLAN_TEST_SEND_TARGET_DEVICE_ID=$DEVICE_ID_B" \
-  --dart-define="SLAN_TEST_SEND_BODY=$MESSAGE_A_TO_B"
+  "$REQUESTED_DEVICE_ID_A" \
+  "$DEVICE_ID_B" \
+  "$MESSAGE_A_TO_B"
 wait "$WAIT_PID_B"
 
 echo "iosDualFlutterMessageCheck: ok email=$EMAIL ios-a=$DEVICE_ID_A ios-b=$DEVICE_ID_B"

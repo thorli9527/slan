@@ -25,8 +25,8 @@ use crate::{
     network_event_apply::{apply_network_event, ApplyResult},
     network_runtime_state::RuntimeNetworkState,
     persist_last_client_message_payload, publish_state_business_event,
-    publish_state_business_event_with_extra, PersistedSession, StateChangeNotifier,
-    BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
+    publish_state_business_event_with_extra, session_device_api_token, PersistedSession,
+    StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
     BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
 };
 
@@ -300,6 +300,7 @@ fn sync_after_control_mqtt_connected(
     state_notifier: &Arc<StateChangeNotifier>,
 ) -> Result<(), String> {
     crate::sync_control_assignment(runtime);
+    let session = load_session().map_err(|err| err.to_string())?;
     let state = {
         let runtime = runtime
             .lock()
@@ -310,9 +311,64 @@ fn sync_after_control_mqtt_connected(
         publish_state_business_event(state_notifier, BUSINESS_CONTROL_SYNC_CHANGED, &state);
         return Ok(());
     }
+    if let Err(error) = refresh_network_snapshot_cache(&session) {
+        log_service_error(format!(
+            "client-core-service startup network snapshot refresh skipped: {error}"
+        ));
+    }
     log_service_error("client-core-service skipped reconnect config rebuild for active data plane");
     let business_type = BUSINESS_CONTROL_SYNC_CHANGED;
     publish_state_business_event(state_notifier, business_type, &state);
+    Ok(())
+}
+
+fn refresh_network_snapshot_cache(session: &PersistedSession) -> Result<(), String> {
+    let network_id = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "active network id missing".to_string())?;
+    let local_device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "local device id missing".to_string())?;
+    let client = ControlPlaneClient::from_env();
+    let snapshot = client
+        .network_snapshot(
+            session_device_api_token(session),
+            network_id,
+            local_device_id,
+        )
+        .map_err(|err| format!("load startup network snapshot: {err:#}"))?;
+    crate::network_module::replace_network_module_from_snapshot(
+        &snapshot.network_id,
+        local_device_id,
+        &snapshot.snapshot,
+    );
+    let snapshot_envelope = NetworkEventEnvelope {
+        r#type: "network_event".to_string(),
+        network_id: snapshot.network_id.clone(),
+        version: snapshot.version,
+        event_id: format!("startup-snapshot-{}", snapshot.version),
+        event_type: NetworkEventType::NetworkSnapshot,
+        occurred_at: current_timestamp_ms(),
+        payload: serde_json::to_value(snapshot.snapshot)
+            .map_err(|err| format!("encode startup network snapshot payload: {err}"))?,
+    };
+    let snapshot_result = {
+        let mut state = network_event_runtime_state()
+            .lock()
+            .map_err(|_| "network event runtime mutex poisoned".to_string())?;
+        apply_network_event(&mut state, snapshot_envelope)
+            .map_err(|err| format!("apply startup network snapshot: {err:#}"))?
+    };
+    log_service_error(format!(
+        "client-core-service refreshed startup network snapshot networkId={} version={} result={:?}",
+        snapshot.network_id, snapshot.version, snapshot_result
+    ));
     Ok(())
 }
 
@@ -542,7 +598,12 @@ fn try_ingest_network_event(
     let envelope: NetworkEventEnvelope =
         serde_json::from_value(value).map_err(|err| format!("decode network_event: {err}"))?;
     let session = load_session().map_err(|err| format!("load session for network event: {err}"))?;
-    if !network_event_targets_session(&envelope, &session) {
+    let runtime_active_network_id = network_event_runtime_state()
+        .lock()
+        .map_err(|_| "network event runtime mutex poisoned".to_string())?
+        .active_network_id
+        .clone();
+    if !network_event_targets_session(&envelope, &session, runtime_active_network_id.as_deref()) {
         return Ok(true);
     }
     let local_device_id = session
@@ -569,7 +630,7 @@ fn try_ingest_network_event(
         "client-core-service applied network_event networkId={} eventType={:?} version={} result={:?}",
         envelope.network_id, envelope.event_type, envelope.version, apply_result
     ));
-    if matches!(apply_result, ApplyResult::Applied) {
+    if !matches!(apply_result, ApplyResult::IgnoredDuplicate) {
         crate::network_module::apply_network_module_event(
             &envelope.network_id,
             &local_device_id,
@@ -586,7 +647,11 @@ fn try_ingest_network_event(
             state.mark_syncing_snapshot();
         }
         let snapshot = client
-            .network_snapshot(&session.access_token, &envelope.network_id)
+            .network_snapshot(
+                session_device_api_token(&session),
+                &envelope.network_id,
+                &local_device_id,
+            )
             .map_err(|err| format!("load network snapshot: {err:#}"))?;
         config_version = snapshot.version;
         sync_mode = "snapshot";
@@ -944,13 +1009,22 @@ impl ClientMessagePayload {
 fn network_event_targets_session(
     envelope: &NetworkEventEnvelope,
     session: &PersistedSession,
+    runtime_active_network_id: Option<&str>,
 ) -> bool {
-    let expected_network_id = session
-        .active_network_id
-        .as_deref()
+    let expected_network_id = runtime_active_network_id
         .map(str::trim)
-        .filter(|value| !value.is_empty());
-    expected_network_id == Some(envelope.network_id.trim())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            session
+                .active_network_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        });
+    let Some(expected_network_id) = expected_network_id else {
+        return true;
+    };
+    expected_network_id == envelope.network_id.trim()
 }
 
 fn try_ingest_relay_candidates_response(
@@ -1216,6 +1290,13 @@ fn publish_outbox_message_async(
     task_queue: Arc<Mutex<ControlTaskQueue>>,
 ) {
     std::thread::spawn(move || {
+        log_service_error(format!(
+            "client-core-service outbox publish start id={} kind={:?} topic={} summary={}",
+            message.id,
+            message.kind,
+            message.topic,
+            outbox_message_summary(&message.payload),
+        ));
         if let Err(error) = publish_outbox_message(&session, &message)
             .and_then(|_| mark_transport_published(&message, &task_queue))
         {
@@ -1223,8 +1304,54 @@ fn publish_outbox_message_async(
                 "client-core-service outbox publish failed id={} topic={} error={}",
                 message.id, message.topic, error
             ));
+        } else {
+            log_service_error(format!(
+                "client-core-service outbox publish ok id={} kind={:?} topic={}",
+                message.id, message.kind, message.topic
+            ));
         }
     });
+}
+
+fn outbox_message_summary(value: &serde_json::Value) -> String {
+    let message_type = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let network_id = value
+        .get("networkId")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            value
+                .get("payload")
+                .and_then(|payload| payload.get("networkId"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or_default();
+    let node_id = value
+        .get("payload")
+        .and_then(|payload| payload.get("nodeId"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let peer_node_id = value
+        .get("payload")
+        .and_then(|payload| payload.get("peerNodeId"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let endpoint = value
+        .get("payload")
+        .and_then(|payload| payload.get("endpoint"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let relay_transport = value
+        .get("payload")
+        .and_then(|payload| payload.get("relayTransport"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    format!(
+        "type={} networkId={} nodeId={} peerNodeId={} endpoint={} relayTransport={}",
+        message_type, network_id, node_id, peer_node_id, endpoint, relay_transport
+    )
 }
 
 fn mark_transport_published(
@@ -1537,21 +1664,52 @@ mod tests {
             occurred_at: 1,
             payload: serde_json::json!({}),
         };
-        assert!(network_event_targets_session(&current, &session));
+        assert!(network_event_targets_session(&current, &session, None));
 
         let stale_network = NetworkEventEnvelope {
             network_id: "net-old".to_string(),
             event_id: "evt-2".to_string(),
             ..current.clone()
         };
-        assert!(!network_event_targets_session(&stale_network, &session));
+        assert!(!network_event_targets_session(
+            &stale_network,
+            &session,
+            None
+        ));
 
         let peer_device = NetworkEventEnvelope {
             network_id: "net-current".to_string(),
             event_id: "evt-3".to_string(),
             ..current
         };
-        assert!(network_event_targets_session(&peer_device, &session));
+        assert!(network_event_targets_session(&peer_device, &session, None));
+    }
+
+    #[test]
+    fn network_event_targets_runtime_network_when_session_is_empty() {
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("dev-current".to_string());
+
+        let current = NetworkEventEnvelope {
+            r#type: "network_event".to_string(),
+            network_id: "net-current".to_string(),
+            version: 1,
+            event_id: "evt-1".to_string(),
+            event_type: NetworkEventType::DnsChanged,
+            occurred_at: 1,
+            payload: serde_json::json!({}),
+        };
+
+        assert!(network_event_targets_session(
+            &current,
+            &session,
+            Some("net-current"),
+        ));
+        assert!(!network_event_targets_session(
+            &current,
+            &session,
+            Some("net-other"),
+        ));
     }
 
     #[test]

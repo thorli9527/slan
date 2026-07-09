@@ -48,9 +48,23 @@ func resolveClientDownload(fileName string, requestPath string, items []model.Cl
 
 func clientBootstrapInstallScript(items []model.ClientDownload) string {
 	packageURL := "/downloads/clients/slan-client-linux.tar.gz"
+	amd64PackageURL := packageURL
+	arm64PackageURL := packageURL
 	if latest := latestActiveClientDownload(items, "linux"); latest != nil {
 		if resolved := strings.TrimSpace(downloadTargetURL(*latest)); resolved != "" {
 			packageURL = resolved
+			amd64PackageURL = resolved
+			arm64PackageURL = resolved
+		}
+	}
+	if latest := latestActiveClientDownloadByArch(items, "linux", "amd64"); latest != nil {
+		if resolved := strings.TrimSpace(downloadTargetURL(*latest)); resolved != "" {
+			amd64PackageURL = resolved
+		}
+	}
+	if latest := latestActiveClientDownloadByArch(items, "linux", "arm64"); latest != nil {
+		if resolved := strings.TrimSpace(downloadTargetURL(*latest)); resolved != "" {
+			arm64PackageURL = resolved
 		}
 	}
 	return `#!/usr/bin/env sh
@@ -59,6 +73,8 @@ set -eu
 server="http://127.0.0.1:28080"
 installation_key=""
 package_url="` + packageURL + `"
+package_url_amd64="` + amd64PackageURL + `"
+package_url_arm64="` + arm64PackageURL + `"
 install_root="${SLAN_INSTALL_ROOT:-/opt/slan-client-v2}"
 config_dir="${SLAN_CONFIG_DIR:-/etc/slan}"
 tray_mode="disabled"
@@ -98,8 +114,20 @@ done
 
 mkdir -p "$config_dir"
 if [ -z "$package_url" ]; then
-  package_url="${server%/}/` + strings.TrimPrefix(packageURL, "/") + `"
-elif [ "${package_url#/}" != "$package_url" ]; then
+  arch="$(uname -m 2>/dev/null || true)"
+  case "$arch" in
+    x86_64|amd64)
+      package_url="$package_url_amd64"
+      ;;
+    aarch64|arm64)
+      package_url="$package_url_arm64"
+      ;;
+    *)
+      package_url="$package_url_amd64"
+      ;;
+  esac
+fi
+if [ "${package_url#/}" != "$package_url" ]; then
   package_url="${server%/}${package_url}"
 fi
 if command -v curl >/dev/null 2>&1; then
@@ -136,6 +164,39 @@ func latestActiveClientDownload(items []model.ClientDownload, platform string) *
 			continue
 		}
 		if !strings.EqualFold(strings.TrimSpace(item.Status), "active") {
+			continue
+		}
+		targetURL := strings.TrimSpace(downloadTargetURL(item))
+		if targetURL == "" || strings.EqualFold(targetURL, "/downloads/clients/install.sh") {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].UpdatedAt != filtered[j].UpdatedAt {
+			return filtered[i].UpdatedAt > filtered[j].UpdatedAt
+		}
+		if filtered[i].CreatedAt != filtered[j].CreatedAt {
+			return filtered[i].CreatedAt > filtered[j].CreatedAt
+		}
+		return filtered[i].DownloadID > filtered[j].DownloadID
+	})
+	return &filtered[0]
+}
+
+func latestActiveClientDownloadByArch(items []model.ClientDownload, platform string, arch string) *model.ClientDownload {
+	filtered := make([]model.ClientDownload, 0, len(items))
+	for _, item := range items {
+		if !strings.EqualFold(strings.TrimSpace(item.Platform), platform) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(item.Status), "active") {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(item.Arch), arch) {
 			continue
 		}
 		targetURL := strings.TrimSpace(downloadTargetURL(item))

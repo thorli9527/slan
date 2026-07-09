@@ -153,24 +153,6 @@ class ClientCoreLocalService {
     return requestJson('localNetworkShutdown');
   }
 
-  /// 发送设备到设备的业务消息。
-  ///
-  /// [metadata] 可用于标识 ping、测试消息等特殊用途。
-  Future<Map<String, Object?>?> localSendClientMessage({
-    required String targetDeviceId,
-    required String body,
-    Map<String, Object?>? metadata,
-  }) async {
-    return requestJson(
-      'localSendClientMessage',
-      arguments: {
-        'targetDeviceId': targetDeviceId,
-        'body': body,
-        if (metadata != null) 'metadata': metadata,
-      },
-    );
-  }
-
   /// 供集成测试使用的测试用户注册入口。
   Future<Map<String, Object?>?> localRegisterTestUser({
     required String email,

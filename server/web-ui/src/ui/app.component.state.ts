@@ -506,9 +506,9 @@ export abstract class AppComponentState {
   get ruleSubjectOptions(): Array<{ value: string; label: string }> {
     switch (this.ruleSubjectType) {
       case 'device':
-        return this.workspaceRuleDeviceOptions.map((device) => ({ value: device.deviceId, label: `${this.userLabel(device.owner)} / ${device.alias} / ${device.deviceId}` }));
+        return this.workspaceRuleDeviceOptions.map((device) => ({ value: device.deviceId, label: device.alias }));
       case 'device_group':
-        return this.workspaceRuleDeviceGroups.map((group) => ({ value: group.groupId, label: `${group.name} / ${group.groupId}` }));
+        return this.workspaceRuleDeviceGroups.map((group) => ({ value: group.groupId, label: group.name }));
       default:
         return [];
     }

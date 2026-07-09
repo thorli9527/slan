@@ -196,35 +196,6 @@ bool UrlHasPort(const std::string& url, const std::string& port_suffix) {
 }
 
 std::string ResolveWebConsoleUrl() {
-  if (const auto value = ReadEnvironmentString(L"SLAN_WEB_CONSOLE_URL")) {
-    if (!value->empty()) {
-      return *value;
-    }
-  }
-  if (const auto value = ReadEnvironmentString(L"SLAN_CONTROL_BASE_URL")) {
-    if (!value->empty()) {
-      const auto scheme = UrlScheme(*value);
-      const auto host = UrlHost(*value);
-      if (host == "api.dev.staticlss.com") {
-        return scheme + "://web.dev.staticlss.com";
-      }
-      if (host == "api.slan.localhost" || host == "slan.localhost") {
-        return scheme + "://web.slan.localhost";
-      }
-      if (host == "127.0.0.1" || host == "localhost" || host == "::1" ||
-          UrlHasPort(*value, ":28080")) {
-        auto local_url = *value;
-        const auto port_pos = local_url.find(":28080");
-        if (port_pos != std::string::npos) {
-          local_url.replace(port_pos, 6, ":24200");
-          return local_url;
-        }
-        if (!host.empty()) {
-          return scheme + "://" + host + ":24200";
-        }
-      }
-    }
-  }
   return kDefaultWebConsoleUrl;
 }
 

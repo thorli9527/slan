@@ -14,6 +14,7 @@ SERVER_HOST="${SLAN_SERVER_HOST:-$SLAN_DEFAULT_MQTT_HOST}"
 MODES="${SLAN_PATH_MATRIX_MODES:-direct,udp-relay,tcp-relay}"
 MANAGE_MAC_SERVICE="${SLAN_PATH_MATRIX_MANAGE_MAC_SERVICE:-0}"
 RESTORE_ACTIVE="${SLAN_PATH_MATRIX_RESTORE_ACTIVE:-1}"
+SKIP_ADMIN_PATCH="${SLAN_PATH_MATRIX_SKIP_ADMIN_PATCH:-0}"
 MAC_SERVICE_HOST="${SLAN_MAC_SERVICE_HOST:-127.0.0.1:46392}"
 MACOS_APP_PATH="${SLAN_MACOS_APP_PATH:-client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
 MACOS_SERVICE_BINARY="${SLAN_MACOS_SERVICE_BINARY:-}"
@@ -39,6 +40,10 @@ curl_internal() {
 }
 
 patch_node_status() {
+  if [[ "$SKIP_ADMIN_PATCH" == "1" ]]; then
+    echo "skip internal admin patch: kind=$1 region=$2 node=$3 enabled=$4 healthy=${5:-true}"
+    return 0
+  fi
   local kind="$1"
   local region="$2"
   local node="$3"
@@ -96,9 +101,15 @@ install_macos_service_no_direct() {
   fi
   echo "+ install macOS service with direct UDP disabled"
   if [[ -n "$MACOS_SERVICE_BINARY" ]]; then
-    sudo_run env SLAN_DIRECT_UDP_ENDPOINT=disabled scripts/install_macos_service.sh --binary "$MACOS_SERVICE_BINARY"
+    sudo_run env \
+      SLAN_DIRECT_UDP_ENDPOINT=disabled \
+      SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}" \
+      scripts/install_macos_service.sh --binary "$MACOS_SERVICE_BINARY"
   else
-    sudo_run env SLAN_DIRECT_UDP_ENDPOINT=disabled scripts/install_macos_service.sh --app "$MACOS_APP_PATH"
+    sudo_run env \
+      SLAN_DIRECT_UDP_ENDPOINT=disabled \
+      SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}" \
+      scripts/install_macos_service.sh --app "$MACOS_APP_PATH"
   fi
 }
 
@@ -169,11 +180,13 @@ run_udp_relay() {
 run_tcp_relay() {
   set_relay_nodes false
   set_derp_nodes true
+  export SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-derp_tcp_tls_443}"
   install_macos_service_no_direct
   run_socket_check tcp-relay \
     SLAN_SKIP_ANDROID_UDP_SEND=1 \
     SLAN_EXPECT_ANDROID_RELAY_URL_CONTAINS="derp://" \
     SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS=derp_tcp_tls_443 \
+    SLAN_EXPECT_ANDROID_DERP_PEER_IPS_CONTAINS="node-" \
     ${SLAN_EXPECT_RELAY_TCP_FRAMES_RECEIVED_MIN:+SLAN_EXPECT_ANDROID_RELAY_TCP_FRAMES_RECEIVED_MIN="$SLAN_EXPECT_RELAY_TCP_FRAMES_RECEIVED_MIN"}
 }
 

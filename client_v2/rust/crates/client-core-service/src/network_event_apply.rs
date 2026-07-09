@@ -1,12 +1,13 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 
 use crate::{
     network_event::{
         NetworkEventAclChangedPayload, NetworkEventConfigChangedPayload,
         NetworkEventDeviceGroupPayload, NetworkEventDeviceGroupRemovedPayload,
         NetworkEventDnsChangedPayload, NetworkEventEnvelope, NetworkEventMemberPayload,
-        NetworkEventMemberRemovedPayload, NetworkEventPeerPathChangedPayload,
-        NetworkEventPresencePayload, NetworkEventType, NetworkSnapshotPayload,
+        NetworkEventMemberRemovedPayload, NetworkEventMemberView,
+        NetworkEventPeerPathChangedPayload, NetworkEventPresencePayload, NetworkEventType,
+        NetworkSnapshotPayload,
     },
     network_runtime_state::{NetworkSyncStatus, RuntimeNetworkState},
 };
@@ -39,13 +40,16 @@ pub fn apply_network_event(
     } else {
         state.bind_network_id(&envelope.network_id);
     }
-    match check_version(state, envelope.version) {
-        VersionCheck::IgnoreStale => return Ok(ApplyResult::IgnoredStale),
-        VersionCheck::NeedSnapshot => {
-            state.sync_status = NetworkSyncStatus::OutOfSync;
-            return Ok(ApplyResult::NeedsSnapshot);
+    let versionless_runtime_event = is_versionless_runtime_event(&envelope);
+    if !versionless_runtime_event {
+        match check_version(state, envelope.version) {
+            VersionCheck::IgnoreStale => return Ok(ApplyResult::IgnoredStale),
+            VersionCheck::NeedSnapshot => {
+                state.sync_status = NetworkSyncStatus::OutOfSync;
+                return Ok(ApplyResult::NeedsSnapshot);
+            }
+            VersionCheck::Apply => {}
         }
-        VersionCheck::Apply => {}
     }
     if state.has_seen_event(&envelope.event_id) {
         return Ok(ApplyResult::IgnoredDuplicate);
@@ -71,8 +75,11 @@ pub fn apply_network_event(
             let payload: NetworkEventPresencePayload = serde_json::from_value(envelope.payload)?;
             let member = state
                 .members_by_device_id
-                .get_mut(&payload.device_id)
-                .ok_or_else(|| anyhow!("member presence target missing"))?;
+                .entry(payload.device_id.clone())
+                .or_insert_with(|| NetworkEventMemberView {
+                    device_id: payload.device_id.clone(),
+                    ..NetworkEventMemberView::default()
+                });
             member.online = payload.online;
             member.last_seen_at = payload.last_seen_at;
         }
@@ -139,10 +146,20 @@ pub fn apply_network_event(
         }
     }
 
-    state.version = envelope.version;
+    if !versionless_runtime_event {
+        state.version = envelope.version;
+    }
     state.sync_status = NetworkSyncStatus::Live;
     state.remember_event(envelope.event_id, envelope.occurred_at);
     Ok(ApplyResult::Applied)
+}
+
+fn is_versionless_runtime_event(envelope: &NetworkEventEnvelope) -> bool {
+    envelope.version == 0
+        && matches!(
+            envelope.event_type,
+            NetworkEventType::MemberOnline | NetworkEventType::MemberOffline
+        )
 }
 
 fn apply_snapshot(state: &mut RuntimeNetworkState, payload: NetworkSnapshotPayload) {
@@ -195,7 +212,10 @@ fn check_version(state: &RuntimeNetworkState, incoming: u64) -> VersionCheck {
 mod tests {
     use super::{apply_network_event, ApplyResult};
     use crate::{
-        network_event::{NetworkEventEnvelope, NetworkEventType},
+        network_event::{
+            NetworkEventAclChangedPayload, NetworkEventEnvelope, NetworkEventMemberView,
+            NetworkEventType,
+        },
         network_runtime_state::{NetworkSyncStatus, RuntimeNetworkState},
     };
 
@@ -242,5 +262,73 @@ mod tests {
 
         assert_eq!(result, ApplyResult::NeedsSnapshot);
         assert_eq!(state.sync_status, NetworkSyncStatus::OutOfSync);
+    }
+
+    #[test]
+    fn network_event_payload_treats_null_sequences_as_empty() {
+        let member: NetworkEventMemberView = serde_json::from_value(serde_json::json!({
+            "deviceId": "device-1",
+            "deviceName": "Device 1",
+            "virtualIp": "10.0.1.10",
+            "online": true,
+            "lastSeenAt": 1,
+            "tags": null,
+            "groupIds": null,
+            "deviceVersion": "1.0.0",
+            "platform": "linux"
+        }))
+        .expect("decode member");
+        assert!(member.tags.is_empty());
+        assert!(member.group_ids.is_empty());
+
+        let acl: NetworkEventAclChangedPayload = serde_json::from_value(serde_json::json!({
+            "rules": null
+        }))
+        .expect("decode acl");
+        assert!(acl.rules.is_empty());
+    }
+
+    #[test]
+    fn applies_versionless_member_presence_without_advancing_snapshot_version() {
+        let mut state = RuntimeNetworkState::default();
+        state.bind_network_id("net-1");
+        state.version = 480;
+        state.members_by_device_id.insert(
+            "dev-2".to_string(),
+            NetworkEventMemberView {
+                device_id: "dev-2".to_string(),
+                online: false,
+                ..NetworkEventMemberView::default()
+            },
+        );
+
+        let result = apply_network_event(
+            &mut state,
+            NetworkEventEnvelope {
+                r#type: "network_event".to_string(),
+                network_id: "net-1".to_string(),
+                version: 0,
+                event_id: "presence-dev-2-1".to_string(),
+                event_type: NetworkEventType::MemberOnline,
+                occurred_at: 1,
+                payload: serde_json::json!({
+                    "deviceId": "dev-2",
+                    "online": true,
+                    "lastSeenAt": 123
+                }),
+            },
+        )
+        .expect("apply versionless presence event");
+
+        assert_eq!(result, ApplyResult::Applied);
+        assert_eq!(state.version, 480);
+        assert_eq!(
+            state
+                .members_by_device_id
+                .get("dev-2")
+                .expect("member exists")
+                .online,
+            true
+        );
     }
 }

@@ -14,9 +14,14 @@ use crate::{
 };
 
 static RUNTIME_RELAY_CANDIDATES: OnceLock<Mutex<Vec<PersistedRelayCandidate>>> = OnceLock::new();
+static TEST_RELAY_TRANSPORT_ALLOWLIST: OnceLock<Mutex<Option<Vec<String>>>> = OnceLock::new();
 
 fn runtime_store() -> &'static Mutex<Vec<PersistedRelayCandidate>> {
     RUNTIME_RELAY_CANDIDATES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn test_allowlist_store() -> &'static Mutex<Option<Vec<String>>> {
+    TEST_RELAY_TRANSPORT_ALLOWLIST.get_or_init(|| Mutex::new(None))
 }
 
 pub(crate) fn replace_runtime_relay_candidates(
@@ -33,6 +38,36 @@ pub(crate) fn runtime_relay_candidates() -> Vec<PersistedRelayCandidate> {
     runtime_store()
         .lock()
         .expect("runtime relay candidates mutex poisoned")
+        .clone()
+}
+
+pub(crate) fn set_test_relay_transport_allowlist(
+    allowlist: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    let normalized = allowlist.and_then(|items| {
+        let values = items
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                normalize_relay_transport(value.as_str())
+                    .unwrap_or(value.as_str())
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        (!values.is_empty()).then_some(values)
+    });
+    let mut guard = test_allowlist_store()
+        .lock()
+        .expect("test relay transport allowlist mutex poisoned");
+    *guard = normalized.clone();
+    guard.clone()
+}
+
+pub(crate) fn current_test_relay_transport_allowlist() -> Option<Vec<String>> {
+    test_allowlist_store()
+        .lock()
+        .expect("test relay transport allowlist mutex poisoned")
         .clone()
 }
 
@@ -89,7 +124,7 @@ pub(crate) fn best_udp_relay_candidate(
 pub(crate) fn select_relay_candidates(
     candidates: &[PersistedRelayCandidate],
 ) -> Vec<RelayCandidateSelection> {
-    let mut selections = candidates
+    let mut selections = filtered_relay_candidates_for_testing(candidates)
         .iter()
         .filter(|candidate| {
             !candidate.endpoint_id.trim().is_empty()
@@ -115,6 +150,44 @@ pub(crate) fn select_relay_candidates(
         };
     }
     selections
+}
+
+fn filtered_relay_candidates_for_testing(
+    candidates: &[PersistedRelayCandidate],
+) -> Vec<PersistedRelayCandidate> {
+    let Some(allowlist) =
+        current_test_relay_transport_allowlist().or_else(relay_transport_allowlist_from_env)
+    else {
+        return candidates.to_vec();
+    };
+    candidates
+        .iter()
+        .filter(|candidate| {
+            normalize_relay_transport(candidate.transport.as_str())
+                .map(|transport| allowlist.iter().any(|allowed| allowed == transport))
+                .unwrap_or_else(|| {
+                    allowlist
+                        .iter()
+                        .any(|allowed| allowed == candidate.transport.trim())
+                })
+        })
+        .cloned()
+        .collect()
+}
+
+fn relay_transport_allowlist_from_env() -> Option<Vec<String>> {
+    let raw = std::env::var("SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST").ok()?;
+    let allowlist = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            normalize_relay_transport(value)
+                .unwrap_or(value)
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    (!allowlist.is_empty()).then_some(allowlist)
 }
 
 pub(crate) fn diagnose_direct_candidates(
@@ -324,7 +397,11 @@ fn optional_trimmed_string(value: Option<&Value>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_relay_candidate_address;
+    use super::{
+        normalize_relay_candidate_address, select_relay_candidates,
+        set_test_relay_transport_allowlist,
+    };
+    use crate::relay_models::PersistedRelayCandidate;
 
     #[test]
     fn relay_candidate_address_accepts_matching_scheme_or_bare_address() {
@@ -352,5 +429,41 @@ mod tests {
             normalize_relay_candidate_address("http3://127.0.0.1:9443", "http3"),
             None
         );
+    }
+
+    #[test]
+    fn relay_candidate_selection_can_be_filtered_by_test_allowlist() {
+        let _lock = crate::test_env_lock();
+        set_test_relay_transport_allowlist(Some(vec!["derp_tcp_tls_443".to_string()]));
+        let selections = select_relay_candidates(&[
+            PersistedRelayCandidate {
+                endpoint_id: "relay-udp".to_string(),
+                transport: "udp".to_string(),
+                address: "udp://127.0.0.1:29110".to_string(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+                reachable_hint: true,
+                observed_rtt_ms_hint: Some(10),
+                path_score_hint: Some(10),
+                selected_hint: true,
+            },
+            PersistedRelayCandidate {
+                endpoint_id: "relay-derp".to_string(),
+                transport: "derp_tcp_tls_443".to_string(),
+                address: "derp://127.0.0.1:29120".to_string(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+                reachable_hint: true,
+                observed_rtt_ms_hint: Some(20),
+                path_score_hint: Some(20),
+                selected_hint: false,
+            },
+        ]);
+        set_test_relay_transport_allowlist(None);
+
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].endpoint_id, "relay-derp");
     }
 }

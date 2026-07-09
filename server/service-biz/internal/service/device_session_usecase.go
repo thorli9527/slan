@@ -16,6 +16,15 @@ func (s DeviceSessionService) BindDeviceSession(ctx context.Context, input BindD
 		return DeviceSessionBoundView{}, err
 	}
 	nowUnix := deviceNow(s.Now).Unix()
+	if err := ensureDeviceAttachedToDefaultNetworkIfMissing(
+		ctx,
+		s.Networks,
+		device.OwnerID,
+		device.DeviceID,
+		nowUnix,
+	); err != nil {
+		return DeviceSessionBoundView{}, err
+	}
 	device, updated := applyBindDeviceSessionInput(device, input, nowUnix)
 	if updated {
 		if err := s.Devices.SaveDevice(ctx, device); err != nil {

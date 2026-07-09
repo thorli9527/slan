@@ -26,14 +26,11 @@ enum ClientCommandType {
 
   /// 打开 Web Console，并尽量携带一次性登录 key。
   openWebConsole,
-
-  /// 发送客户端到客户端的控制消息。
-  sendClientMessage,
 }
 
 /// UI 层传递给 bridge 的统一命令对象。
 ///
-/// [payload] 只承载命令特有参数，例如账号密码、目标设备 ID、消息体等。
+/// [payload] 只承载命令特有参数，例如账号密码或一次性登录参数。
 /// 无参数命令保持 payload 为空，序列化时不会输出 payload 字段。
 class ClientCommand {
   const ClientCommand(this.type, [this.payload]);

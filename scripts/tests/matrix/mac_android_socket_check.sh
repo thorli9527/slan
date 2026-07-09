@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
 ADB="${SLAN_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
@@ -52,11 +53,12 @@ if [[ -n "$ANDROID_DEVICE" ]]; then
   ADB_ARGS+=(-s "$ANDROID_DEVICE")
 fi
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-GENERATED_TEST_EMAIL=0
 if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
   EMAIL="$SLAN_TEST_EMAIL"
+  GENERATED_TEST_EMAIL=0
 else
-  EMAIL="mac-android-socket-1783260000000000000@example.test"
+  EMAIL="mac-android-socket-$(date +%s%N)@example.test"
+  GENERATED_TEST_EMAIL=1
 fi
 CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 REGISTER_USER="${SLAN_TEST_REGISTER_USER:-true}"
@@ -80,6 +82,7 @@ MAC_CORE_LOG="$WORK_DIR/state/SLAN/client-core-service.log"
 INSTALLED_MAC_SERVICE_BIN="/Library/Application Support/SLAN/client-core-service"
 RESET_EXISTING_MAC_SERVICE_IDENTITY="${SLAN_RESET_EXISTING_MAC_SERVICE_IDENTITY:-1}"
 SUDO_PASSWORD="${SLAN_SUDO_PASSWORD:-}"
+ANDROID_TEST_TIMEOUT_SECONDS="${SLAN_ANDROID_TEST_TIMEOUT_SECONDS:-180}"
 
 NETWORK_ID=""
 USER_ID=""
@@ -166,10 +169,129 @@ assert_android_stat_min() {
   fi
 }
 
+assert_android_runtime_contains() {
+  local expected="$1"
+  local json
+  json="$(android_runtime_json)"
+  [[ -n "$json" ]] || fail "missing SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD in Android log"
+  printf '%s' "$json" | grep -Eq "$expected" \
+    || fail "Android runtime stats do not contain expected pattern: $expected"
+}
+
 assert_android_config_contains() {
   local expected="$1"
   grep -q "SLAN_ANDROID_NETWORK_CONFIG .*${expected}" "$ANDROID_LOG" \
     || fail "Android network config does not contain expected pattern: $expected"
+}
+
+android_success_markers_present() {
+  local target_host="$1"
+  if [[ "${SLAN_SKIP_ANDROID_UDP_SEND:-0}" != "1" ]] && \
+    ! grep -q "SLAN_TEST_UDP_ECHO_OK=$target_host:$UDP_PORT" "$ANDROID_LOG"; then
+    return 1
+  fi
+  if [[ "${SLAN_SKIP_ANDROID_TCP_SEND:-0}" != "1" ]] && \
+    ! grep -q "SLAN_TEST_TCP_ECHO_OK=$target_host:$TCP_PORT" "$ANDROID_LOG"; then
+    return 1
+  fi
+  return 0
+}
+
+android_runtime_stats_present() {
+  grep -q "SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=" "$ANDROID_LOG"
+}
+
+run_android_socket_test() {
+  local target_host="$1"
+  mapfile -t ANDROID_COMMON_DART_DEFINES < <(
+    slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
+  )
+  (
+    cd "$APP_DIR"
+    flutter test integration_test/mobile_login_test.dart \
+      -d "$ANDROID_DEVICE" \
+      "${ANDROID_COMMON_DART_DEFINES[@]}" \
+      --dart-define="SLAN_TEST_DEVICE_ID=${SLAN_ANDROID_TEST_DEVICE_ID:-}" \
+      --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
+      --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=$ANDROID_POST_ENABLE_WAIT_SECONDS" \
+      --dart-define="SLAN_TEST_HOLD_SECONDS=${SLAN_ANDROID_TEST_HOLD_SECONDS:-0}" \
+      --dart-define="SLAN_TEST_UDP_SEND_TARGET=$ANDROID_UDP_TARGET" \
+      --dart-define="SLAN_TEST_UDP_SEND_BODY=$UDP_BODY" \
+      --dart-define="SLAN_TEST_TCP_SEND_TARGET=$ANDROID_TCP_TARGET" \
+      --dart-define="SLAN_TEST_TCP_SEND_BODY=$TCP_BODY" \
+      --dart-define="SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}"
+  ) >"$ANDROID_LOG" 2>&1 &
+  local android_pid=$!
+  PIDS+=("$android_pid")
+
+  local start_ts now elapsed
+  start_ts=$(date +%s)
+  while kill -0 "$android_pid" 2>/dev/null; do
+    if android_success_markers_present "$target_host"; then
+      local settle_start now_settle settle_elapsed
+      settle_start=$(date +%s)
+      while kill -0 "$android_pid" 2>/dev/null; do
+        if android_runtime_stats_present; then
+          break
+        fi
+        now_settle=$(date +%s)
+        settle_elapsed=$((now_settle - settle_start))
+        if (( settle_elapsed >= 20 )); then
+          break
+        fi
+        sleep 1
+      done
+      if kill -0 "$android_pid" 2>/dev/null; then
+        kill -INT "$android_pid" 2>/dev/null || true
+        sleep 2
+      fi
+      if kill -0 "$android_pid" 2>/dev/null; then
+        kill -TERM "$android_pid" 2>/dev/null || true
+        sleep 2
+      fi
+      if kill -0 "$android_pid" 2>/dev/null; then
+        kill -KILL "$android_pid" 2>/dev/null || true
+      fi
+      wait "$android_pid" 2>/dev/null || true
+      return 0
+    fi
+    now=$(date +%s)
+    elapsed=$((now - start_ts))
+    if (( elapsed >= ANDROID_TEST_TIMEOUT_SECONDS )); then
+      kill -TERM "$android_pid" 2>/dev/null || true
+      sleep 2
+      kill -KILL "$android_pid" 2>/dev/null || true
+      wait "$android_pid" 2>/dev/null || true
+      echo "Android socket integration test timed out after ${ANDROID_TEST_TIMEOUT_SECONDS}s" >&2
+      return 1
+    fi
+    sleep 2
+  done
+
+  wait "$android_pid"
+}
+
+set_macos_relay_transport_allowlist() {
+  local allowlist="${1:-}"
+  [[ -n "$allowlist" ]] || return 0
+  python3 - "$MAC_SERVICE_HOST" "$allowlist" <<'PY'
+import json
+import socket
+import sys
+
+host, port = sys.argv[1].rsplit(":", 1)
+payload = json.dumps({
+    "method": "localSetRelayTransportAllowlist",
+    "args": {"transports": [item.strip() for item in sys.argv[2].split(",") if item.strip()]},
+}).encode() + b"\n"
+s = socket.create_connection((host, int(port)), timeout=5)
+try:
+    s.sendall(payload)
+    s.shutdown(socket.SHUT_WR)
+    print(s.recv(65535).decode())
+finally:
+    s.close()
+PY
 }
 
 run_client_core_login_check() {
@@ -271,6 +393,8 @@ reset_existing_macos_service_identity() {
     SLAN_CONTROL_BASE_URL="$BIZ_URL"
     SLAN_MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
     SLAN_RESET_MACOS_IDENTITY=1
+    SLAN_DIRECT_UDP_ENDPOINT="${SLAN_DIRECT_UDP_ENDPOINT:-}"
+    SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}"
     "$ROOT_DIR/scripts/install_macos_service.sh"
     --binary "$expected_bin"
   )
@@ -405,6 +529,11 @@ else
   verify_existing_macos_service "$SERVICE_BIN"
 fi
 
+if [[ -n "${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}" ]]; then
+  echo "+ set macOS relay transport allowlist: ${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST}"
+  set_macos_relay_transport_allowlist "${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST}"
+fi
+
 echo "+ login and enable Mac service network at $MAC_SERVICE_HOST"
 if ! MAC_OUTPUT="$(
   run_client_core_login_check "mac socket login" \
@@ -525,25 +654,7 @@ else
     ANDROID_TCP_TARGET="$TARGET_HOST:$TCP_PORT"
   fi
 fi
-(
-  cd "$APP_DIR"
-  flutter test integration_test/mobile_login_test.dart \
-    -d "$ANDROID_DEVICE" \
-    --dart-define="SLAN_TEST_BIZ_URL=$ANDROID_BIZ_URL" \
-    --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$ANDROID_BIZ_URL" \
-    --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-    --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-    --dart-define="SLAN_TEST_DEVICE_ID=${SLAN_ANDROID_TEST_DEVICE_ID:-}" \
-    --dart-define="SLAN_TEST_REGISTER_USER=false" \
-    --dart-define="SLAN_TEST_WAIT_MQTT=true" \
-    --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
-    --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=$ANDROID_POST_ENABLE_WAIT_SECONDS" \
-    --dart-define="SLAN_TEST_HOLD_SECONDS=${SLAN_ANDROID_TEST_HOLD_SECONDS:-0}" \
-    --dart-define="SLAN_TEST_UDP_SEND_TARGET=$ANDROID_UDP_TARGET" \
-    --dart-define="SLAN_TEST_UDP_SEND_BODY=$UDP_BODY" \
-    --dart-define="SLAN_TEST_TCP_SEND_TARGET=$ANDROID_TCP_TARGET" \
-    --dart-define="SLAN_TEST_TCP_SEND_BODY=$TCP_BODY"
-) >"$ANDROID_LOG" 2>&1
+run_android_socket_test "$TARGET_HOST"
 cat "$ANDROID_LOG"
 
 if [[ "${SLAN_SKIP_ANDROID_UDP_SEND:-0}" != "1" ]] && ! grep -q "SLAN_TEST_UDP_ECHO_OK=$TARGET_HOST:$UDP_PORT" "$ANDROID_LOG"; then
@@ -585,6 +696,9 @@ if [[ -n "${SLAN_EXPECT_ANDROID_RELAY_TCP_SYN_ACK_MIN:-}" ]]; then
 fi
 if [[ -n "${SLAN_EXPECT_ANDROID_RELAY_TCP_FRAMES_RECEIVED_MIN:-}" ]]; then
   assert_android_stat_min "relayTcpFramesReceived" "$SLAN_EXPECT_ANDROID_RELAY_TCP_FRAMES_RECEIVED_MIN"
+fi
+if [[ -n "${SLAN_EXPECT_ANDROID_DERP_PEER_IPS_CONTAINS:-}" ]]; then
+  assert_android_runtime_contains "\"derpPeerVirtualIps\":\\[[^]]*${SLAN_EXPECT_ANDROID_DERP_PEER_IPS_CONTAINS}"
 fi
 cat "$ECHO_LOG"
 

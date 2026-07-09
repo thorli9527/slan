@@ -35,6 +35,23 @@ func attachDeviceToDefaultNetwork(ctx context.Context, networks repository.Netwo
 	})
 }
 
+func ensureDeviceAttachedToDefaultNetworkIfMissing(
+	ctx context.Context,
+	networks repository.NetworkRepository,
+	ownerID string,
+	deviceID string,
+	now int64,
+) error {
+	items, err := networks.ListNetworksByDevice(ctx, deviceID)
+	if err != nil {
+		return err
+	}
+	if len(items) > 0 {
+		return nil
+	}
+	return attachDeviceToDefaultNetwork(ctx, networks, ownerID, deviceID, now)
+}
+
 func registerManagedDevice(ctx context.Context, users repository.UserRepository, devices repository.DeviceRepository, networks repository.NetworkRepository, nowFn func() time.Time, newID func() string, input RegisterDeviceInput) (model.Device, error) {
 	input = normalizeRegisterDeviceInput(input)
 	if input.OwnerID == "" || input.Name == "" || input.Platform == "" {

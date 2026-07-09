@@ -8,7 +8,6 @@ import '../../bridge/client_core_bridge.dart';
 import '../../bridge/client_ui_diagnostics.dart';
 import '../../bridge/client_view_state.dart';
 import 'widgets/android_authorization_panel.dart';
-import 'widgets/client_message_tools.dart';
 import 'widgets/network_status_panel.dart';
 import 'widgets/password_login_form.dart';
 import 'widgets/signed_in_actions.dart';
@@ -16,7 +15,7 @@ import 'widgets/signed_out_status.dart';
 
 /// SLAN 桌面/移动客户端首页。
 ///
-/// 页面只负责呈现状态和收集用户输入；登录、网络开关、消息发送、Ping 等
+/// 页面只负责呈现状态和收集用户输入；登录和网络开关等
 /// 实际业务都通过 [ClientCoreBridge] 派发到本地服务或移动端原生插件。
 class HomePage extends StatefulWidget {
   const HomePage({required this.bridge, super.key});
@@ -32,27 +31,11 @@ class HomePage extends StatefulWidget {
 ///
 /// 这里保存表单输入、临时操作结果和诊断快照；可持久化业务状态统一来自 bridge。
 class _HomePageState extends State<HomePage> {
-  /// 客户端 Ping 消息前缀，用于对端识别并回包。
-  static const String _clientPingPrefix = 'SLAN_PING:';
-
-  /// 客户端 Pong 消息前缀，用于本端计算 RTT。
-  static const String _clientPongPrefix = 'SLAN_PONG:';
-
   /// 移动端密码登录账号输入框。
   final TextEditingController _emailController = TextEditingController();
 
   /// 移动端密码登录密码输入框。
   final TextEditingController _passwordController = TextEditingController();
-
-  /// 设备消息目标设备 ID 输入框。
-  final TextEditingController _messageTargetController =
-      TextEditingController();
-
-  /// 设备消息内容输入框。
-  final TextEditingController _messageBodyController = TextEditingController();
-
-  /// Ping 工具目标设备 ID 输入框。
-  final TextEditingController _pingTargetController = TextEditingController();
 
   /// 移动端控制面 API 地址输入框。
   final TextEditingController _serverBaseUrlController =
@@ -64,23 +47,11 @@ class _HomePageState extends State<HomePage> {
   /// 最近一次已弹窗展示的网络错误，避免同一错误反复弹窗。
   String? _lastShownError;
 
-  /// Ping 工具展示的最近结果。
-  String? _lastPingResult;
-
-  /// 设备消息发送结果。
-  String? _lastMessageSendResult;
-
   /// 当前移动端控制面 API 地址。
   String? _serverBaseUrl;
 
   /// 上一次登录态，用于从未登录变已登录时触发平台授权准备。
   bool _lastSignedIn = false;
-
-  /// 是否正在发送设备消息。
-  bool _sendingMessage = false;
-
-  /// 是否正在执行客户端 Ping。
-  bool _pinging = false;
 
   @override
   void initState() {
@@ -96,9 +67,6 @@ class _HomePageState extends State<HomePage> {
     widget.bridge.state.removeListener(_logStateChange);
     _emailController.dispose();
     _passwordController.dispose();
-    _messageTargetController.dispose();
-    _messageBodyController.dispose();
-    _pingTargetController.dispose();
     _serverBaseUrlController.dispose();
     super.dispose();
   }
@@ -123,21 +91,6 @@ class _HomePageState extends State<HomePage> {
                       if (state.signedIn) ...[
                         _buildSignedInHeader(state: state),
                         _buildAndroidAuthorizationPanel(),
-                        const SizedBox(height: 14),
-                        ClientMessageComposer(
-                          targetController: _messageTargetController,
-                          bodyController: _messageBodyController,
-                          syncing: state.syncing || _sendingMessage,
-                          resultText: _lastMessageSendResult,
-                          onSend: _sendClientMessage,
-                        ),
-                        const SizedBox(height: 14),
-                        ClientPingTool(
-                          targetController: _pingTargetController,
-                          syncing: state.syncing || _pinging,
-                          resultText: _lastPingResult,
-                          onPing: _pingClient,
-                        ),
                         const SizedBox(height: 14),
                         SignedInActions(
                           showConsole: _showWebConsoleAction,
@@ -327,166 +280,6 @@ class _HomePageState extends State<HomePage> {
             : ClientCommandType.disableNetwork,
       ),
     );
-  }
-
-  /// 发送客户端 Ping 消息并等待目标设备 Pong。
-  Future<void> _pingClient() async {
-    if (_pinging) {
-      return;
-    }
-    final targetDeviceId = _pingTargetController.text.trim();
-    if (targetDeviceId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入目标设备 ID')),
-      );
-      return;
-    }
-    final sentAtMs = DateTime.now().millisecondsSinceEpoch;
-    final pingId = 'ping-$sentAtMs';
-    setState(() {
-      _pinging = true;
-      _lastPingResult = '等待响应...';
-    });
-    try {
-      await widget.bridge.dispatch(
-        ClientCommand(
-          ClientCommandType.sendClientMessage,
-          {
-            'targetDeviceId': targetDeviceId,
-            'body': '$_clientPingPrefix$pingId:$sentAtMs',
-            'metadata': {
-              'kind': 'client_ping',
-              'pingId': pingId,
-              'sentAtMs': sentAtMs,
-            },
-          },
-        ),
-      );
-      final rttMs = await _waitForClientPong(
-        targetDeviceId: targetDeviceId,
-        pingId: pingId,
-        sentAtMs: sentAtMs,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _lastPingResult = '来自 $targetDeviceId：${rttMs}ms';
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ping 成功：${rttMs}ms')),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _lastPingResult = '失败：$error';
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ping 失败：$error')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _pinging = false);
-      }
-    }
-  }
-
-  /// 向目标设备发送普通客户端消息。
-  Future<void> _sendClientMessage() async {
-    if (_sendingMessage) {
-      return;
-    }
-    final targetDeviceId = _messageTargetController.text.trim();
-    final body = _messageBodyController.text.trim();
-    if (targetDeviceId.isEmpty || body.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入目标设备 ID 和消息内容')),
-      );
-      return;
-    }
-    setState(() {
-      _sendingMessage = true;
-      _lastMessageSendResult = null;
-    });
-    try {
-      await widget.bridge.dispatch(
-        ClientCommand(
-          ClientCommandType.sendClientMessage,
-          {
-            'targetDeviceId': targetDeviceId,
-            'body': body,
-          },
-        ),
-      );
-      if (!mounted) {
-        return;
-      }
-      _messageBodyController.clear();
-      setState(() {
-        _lastMessageSendResult = '消息已发送';
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _lastMessageSendResult = '消息发送失败：$error';
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _sendingMessage = false);
-      }
-    }
-  }
-
-  /// 等待客户端 Pong 并返回 RTT 毫秒数。
-  Future<int> _waitForClientPong({
-    required String targetDeviceId,
-    required String pingId,
-    required int sentAtMs,
-  }) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 15));
-    while (DateTime.now().isBefore(deadline)) {
-      final state = widget.bridge.state.value;
-      final body = state.lastClientMessageBody?.trim() ?? '';
-      final from = state.lastClientMessageFromDeviceId?.trim() ?? '';
-      final rtt = _pongRttMs(
-        body: body,
-        fromDeviceId: from,
-        expectedDeviceId: targetDeviceId,
-        expectedPingId: pingId,
-        sentAtMs: sentAtMs,
-      );
-      if (rtt != null) {
-        return rtt;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-    }
-    throw TimeoutException('等待 Ping 响应超时');
-  }
-
-  /// 校验收到的消息是否为当前 Ping 的 Pong，并计算 RTT。
-  int? _pongRttMs({
-    required String body,
-    required String fromDeviceId,
-    required String expectedDeviceId,
-    required String expectedPingId,
-    required int sentAtMs,
-  }) {
-    if (fromDeviceId != expectedDeviceId ||
-        !body.startsWith(_clientPongPrefix)) {
-      return null;
-    }
-    final parts = body.substring(_clientPongPrefix.length).split(':');
-    if (parts.length < 2 ||
-        parts[0] != expectedPingId ||
-        int.tryParse(parts[1]) != sentAtMs) {
-      return null;
-    }
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    return nowMs >= sentAtMs ? nowMs - sentAtMs : 0;
   }
 
   /// 启动 bridge 并准备 Android 授权状态。

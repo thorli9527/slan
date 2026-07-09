@@ -113,11 +113,6 @@ tmp_file="$env_file.tmp"
 mv "$tmp_file" "$env_file"
 
 if [ "$foreground" = "true" ]; then
-  export SLAN_CONTROL_BASE_URL="$server_url"
-  export SLAN_PENDING_EMAIL="$email"
-  export SLAN_PENDING_PASSWORD="$password"
-  export SLAN_PENDING_DEVICE_NAME="$device_name"
-  export SLAN_PENDING_ENABLE_NETWORK="$enable_network"
   exec "$service_bin"
 fi
 

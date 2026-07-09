@@ -22,7 +22,7 @@ use crate::{
     client_message_mqtt,
     control_plane::{
         local_stable_device_id, set_client_device_id_override, set_control_base_url_override,
-        ControlPlaneClient,
+        ControlPlaneClient, RelayCandidate,
     },
     control_transport::{self, ControlTransportMessage, MqttQos},
     local_api::{
@@ -34,11 +34,15 @@ use crate::{
     network_event::{network_event_business_data, NetworkEventEnvelope},
     network_event_apply::{apply_network_event, ApplyResult},
     network_runtime_state::RuntimeNetworkState,
+    relay_candidates::{
+        replace_runtime_relay_candidates, runtime_relay_candidates, select_relay_candidates,
+    },
+    relay_models::{PersistedRelayCandidate, RelayCandidateListResponse},
     session_store::{
         app_data_dir, current_timestamp_ms, ensure_session_device_registered,
         ensure_session_node_binding, hydrate_session_from_control_plane, load_session,
         persist_session, prepare_client_login_session, remove_session, report_runtime_state,
-        PersistedSession,
+        session_device_api_token, PersistedSession,
     },
 };
 
@@ -142,6 +146,131 @@ pub fn embedded_handle_request_json(request_json: &str) -> String {
     }
 }
 
+fn embedded_relay_candidates_response(refresh: bool) -> Result<RelayCandidateListResponse> {
+    let mut session = load_session().context("load embedded session")?;
+    let network_id = embedded_active_network_id(&mut session)?;
+    let refreshed = if refresh {
+        embedded_refresh_relay_candidates_for_session(&session, &network_id)?
+    } else {
+        false
+    };
+    let selections = select_relay_candidates(&runtime_relay_candidates());
+    let best = selections.iter().find(|item| item.selected).cloned();
+    Ok(RelayCandidateListResponse {
+        network_id: Some(network_id),
+        refreshed,
+        candidates: selections,
+        best,
+    })
+}
+
+fn embedded_active_network_id(session: &mut PersistedSession) -> Result<String> {
+    if session.active_network_id.is_none() {
+        session.active_network_id = crate::network_module::network_module_snapshot()
+            .configs
+            .into_iter()
+            .next()
+            .map(|config| config.network_id);
+        if session.active_network_id.is_none() {
+            let client = ControlPlaneClient::from_env();
+            session.active_network_id =
+                client.active_network_id(session_device_api_token(session))?;
+        }
+    }
+    session
+        .active_network_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("device unavailable: current user has no active network"))
+}
+
+fn embedded_refresh_relay_candidates_for_session(
+    session: &PersistedSession,
+    network_id: &str,
+) -> Result<bool> {
+    let device_id = session
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("device unavailable: current device is not registered"))?;
+    let client = ControlPlaneClient::from_env();
+    let candidates =
+        client.relay_candidates(session_device_api_token(session), device_id, network_id)?;
+    if candidates.is_empty() {
+        return Ok(false);
+    }
+    replace_runtime_relay_candidates(
+        candidates
+            .iter()
+            .map(embedded_persisted_relay_candidate)
+            .collect(),
+    );
+    Ok(true)
+}
+
+fn embedded_persisted_relay_candidate(candidate: &RelayCandidate) -> PersistedRelayCandidate {
+    PersistedRelayCandidate {
+        endpoint_id: candidate.endpoint_id.clone(),
+        transport: candidate.transport.clone(),
+        address: candidate.address.clone(),
+        country_code: candidate.country_code.clone(),
+        region_id: candidate.region_id.clone(),
+        cluster_id: candidate.cluster_id.clone(),
+        reachable_hint: candidate.reachable,
+        observed_rtt_ms_hint: candidate.observed_rtt_ms,
+        path_score_hint: candidate.path_score,
+        selected_hint: candidate.selected,
+    }
+}
+
+fn embedded_relay_candidate_from_selection(
+    selection: &crate::relay_models::RelayCandidateSelection,
+) -> RelayCandidate {
+    let transport =
+        client_core::normalize_relay_transport(selection.transport.as_str()).unwrap_or("udp");
+    RelayCandidate {
+        endpoint_id: selection.endpoint_id.clone(),
+        transport: selection.transport.clone(),
+        address: relay_address_for_transport(transport, selection.address.as_str()),
+        country_code: selection.country_code.clone(),
+        region_id: selection.region_id.clone(),
+        cluster_id: selection.cluster_id.clone(),
+        reachable: selection.reachable,
+        observed_rtt_ms: selection.rtt_ms,
+        path_score: Some(selection.path_score),
+        selected: selection.selected,
+    }
+}
+
+fn normalize_embedded_relay_ticket_for_candidate(
+    ticket: &mut client_core::RelayTicket,
+    candidate: &RelayCandidate,
+) {
+    let transport =
+        client_core::normalize_relay_transport(candidate.transport.as_str()).unwrap_or("udp");
+    if transport == "derp_tcp_tls_443" {
+        if ticket.allowed_derp_node_ids.is_empty() {
+            ticket
+                .allowed_derp_node_ids
+                .push(candidate.endpoint_id.clone());
+        }
+        ticket.relay_url = relay_address_for_transport(transport, candidate.address.as_str());
+    }
+}
+
+fn relay_address_for_transport(transport: &str, address: &str) -> String {
+    let trimmed = address.trim();
+    if transport == "derp_tcp_tls_443"
+        && !trimmed.starts_with("derp://")
+        && !trimmed.starts_with("derp+tcp+tls://")
+        && !trimmed.starts_with("derp_tcp_tls_443://")
+    {
+        return format!("derp://{trimmed}");
+    }
+    trimmed.to_string()
+}
+
 fn handle_request_json(request_json: &str) -> Result<String> {
     let request: ServiceRequest = serde_json::from_str(request_json).context("decode request")?;
     apply_embedded_request_overrides(&request.args);
@@ -173,6 +302,26 @@ fn handle_request_json(request_json: &str) -> Result<String> {
             }
             serde_json::to_string(&crate::network_module::network_module_snapshot())
                 .context("encode local network module")
+        }
+        LocalServiceMethod::LocalRelayCandidates => {
+            serde_json::to_string(&embedded_relay_candidates_response(false)?)
+                .context("encode relay candidates")
+        }
+        LocalServiceMethod::LocalRefreshRelayCandidates => {
+            serde_json::to_string(&embedded_relay_candidates_response(true)?)
+                .context("encode relay candidates")
+        }
+        LocalServiceMethod::LocalSetRelayTransportAllowlist => {
+            let input: crate::local_api::SetRelayTransportAllowlistRequest =
+                serde_json::from_value(request.args)
+                    .context("decode relay transport allowlist request")?;
+            let allowlist = crate::relay_candidates::set_test_relay_transport_allowlist(
+                (!input.transports.is_empty()).then_some(input.transports),
+            );
+            serde_json::to_string(&serde_json::json!({
+                "transports": allowlist.unwrap_or_default(),
+            }))
+            .context("encode relay transport allowlist response")
         }
         LocalServiceMethod::LocalControlStatus => {
             serde_json::to_string(&embedded_control_status()).context("encode control status")
@@ -343,7 +492,7 @@ fn platform_network_config() -> Result<Value> {
     {
         Some(value) => value,
         None => client
-            .active_network_id(&session.access_token)?
+            .active_network_id(session_device_api_token(&session))?
             .ok_or_else(|| anyhow::anyhow!("active network is not available"))?,
     };
     session.active_network_id = Some(network_id.clone());
@@ -352,7 +501,8 @@ fn platform_network_config() -> Result<Value> {
         .clone()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("device id is not available"))?;
-    let activation = client.activate_network(&session.access_token, &device_id, &network_id)?;
+    let activation =
+        client.activate_network(session_device_api_token(&session), &device_id, &network_id)?;
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
     ensure_session_node_binding(&client, &mut session)
@@ -366,11 +516,21 @@ fn platform_network_config() -> Result<Value> {
             prefix_len: Some(activation.prefix_len),
         }));
     }
-    let best_relay = activation
-        .relay_candidates
+    if !activation.relay_candidates.is_empty() {
+        replace_runtime_relay_candidates(
+            activation
+                .relay_candidates
+                .iter()
+                .map(embedded_persisted_relay_candidate)
+                .collect(),
+        );
+    }
+    let relay_candidates = select_relay_candidates(&runtime_relay_candidates());
+    let best_relay = relay_candidates
         .iter()
-        .find(|candidate| candidate.transport == "udp")
-        .or_else(|| activation.relay_candidates.first());
+        .find(|candidate| candidate.selected)
+        .map(embedded_relay_candidate_from_selection)
+        .or_else(|| activation.relay_candidates.first().cloned());
     let all_acl_policies = platform_acl_policies(&network_configs);
     let eligible_relay_peer_count =
         embedded_eligible_relay_peer_count(activation.self_node_id.as_deref(), &activation.peers);
@@ -380,7 +540,7 @@ fn platform_network_config() -> Result<Value> {
         network_id.as_str(),
         activation.self_node_id.as_deref(),
         &activation.peers,
-        best_relay,
+        best_relay.as_ref(),
         &all_acl_policies,
     ) {
         Ok(config) => (Some(config), None),
@@ -393,7 +553,7 @@ fn platform_network_config() -> Result<Value> {
     let platform_relay_address = relay_data_plane
         .as_ref()
         .map(|config| config.relay_address.clone())
-        .or_else(|| best_relay.map(|relay| relay.address.clone()));
+        .or_else(|| best_relay.as_ref().map(|relay| relay.address.clone()));
     let config = PlatformNetworkConfig {
         session_name: "SLAN".to_string(),
         virtual_ip: activation.virtual_ip.clone(),
@@ -408,8 +568,8 @@ fn platform_network_config() -> Result<Value> {
             activation.virtual_ip.as_str(),
         ),
         mtu: Some(1280),
-        relay_endpoint_id: best_relay.map(|relay| relay.endpoint_id.clone()),
-        relay_transport: best_relay.map(|relay| relay.transport.clone()),
+        relay_endpoint_id: best_relay.as_ref().map(|relay| relay.endpoint_id.clone()),
+        relay_transport: best_relay.as_ref().map(|relay| relay.transport.clone()),
         relay_address: platform_relay_address,
         acl_policies: all_acl_policies.clone(),
         relay_data_plane,
@@ -552,7 +712,7 @@ fn build_embedded_relay_data_plane_config(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("network map missing self node id"))?;
-    let access_token = session.access_token.trim();
+    let access_token = session_device_api_token(session).trim();
     let eligible_peers = peers
         .iter()
         .filter(|peer| peer.relay_allowed)
@@ -577,12 +737,15 @@ fn build_embedded_relay_data_plane_config(
             preferred_relay_endpoint_id,
             relay.region_id.as_deref(),
         ) {
-            Ok(ticket) => sessions.push(RelayPeerSession {
-                session_id: ticket.session_id.clone(),
-                peer_node_id: peer.node_id.clone(),
-                peer_virtual_ips: peer.virtual_ips.clone(),
-                ticket,
-            }),
+            Ok(mut ticket) => {
+                normalize_embedded_relay_ticket_for_candidate(&mut ticket, relay);
+                sessions.push(RelayPeerSession {
+                    session_id: ticket.session_id.clone(),
+                    peer_node_id: peer.node_id.clone(),
+                    peer_virtual_ips: peer.virtual_ips.clone(),
+                    ticket,
+                })
+            }
             Err(error) => ticket_errors.push(format!("{}:{error:#}", peer.node_id)),
         }
     }
@@ -1422,7 +1585,7 @@ fn ingest_embedded_network_event(value: &Value) -> Result<()> {
         "SLAN_EMBEDDED_NETWORK_EVENT_APPLIED networkId={} eventType={:?} version={} result={:?}",
         envelope.network_id, envelope.event_type, envelope.version, apply_result,
     );
-    if matches!(apply_result, ApplyResult::Applied) {
+    if !matches!(apply_result, ApplyResult::IgnoredDuplicate) {
         crate::network_module::apply_network_module_event(
             &envelope.network_id,
             &local_device_id,
@@ -1439,7 +1602,11 @@ fn ingest_embedded_network_event(value: &Value) -> Result<()> {
         }
         let client = ControlPlaneClient::from_env();
         let snapshot = client
-            .network_snapshot(&session.access_token, &envelope.network_id)
+            .network_snapshot(
+                session_device_api_token(&session),
+                &envelope.network_id,
+                &local_device_id,
+            )
             .context("load embedded network snapshot")?;
         crate::network_module::replace_network_module_from_snapshot(
             &snapshot.network_id,
@@ -2006,7 +2173,7 @@ fn send_embedded_client_message(input: SendClientMessageRequest) -> Result<Value
     );
     let client = ControlPlaneClient::from_env();
     let response = client.send_client_message(
-        &session.access_token,
+        session_device_api_token(&session),
         network_id,
         from_device_id,
         &input.target_device_id,
@@ -2036,7 +2203,8 @@ fn report_embedded_device_runtime(input: ReportDeviceRuntimeRequest) -> Result<V
     let session = load_session().context("load session for report device runtime")?;
     let client = ControlPlaneClient::from_env();
     let body = input.body.clone();
-    if let Err(error) = client.report_device_runtime(&session.access_token, &input.device_id, body)
+    if let Err(error) =
+        client.report_device_runtime(session_device_api_token(&session), &input.device_id, body)
     {
         let message = format!("{error:#}");
         if message.contains("HTTP 404: not found") {
@@ -2049,7 +2217,11 @@ fn report_embedded_device_runtime(input: ReportDeviceRuntimeRequest) -> Result<V
                 .filter(|value| !value.is_empty())
                 .unwrap_or(input.device_id.as_str());
             client
-                .report_device_runtime(&repaired.access_token, repaired_device_id, input.body)
+                .report_device_runtime(
+                    session_device_api_token(&repaired),
+                    repaired_device_id,
+                    input.body,
+                )
                 .context("report embedded device runtime after session repair")?;
         } else {
             return Err(error).context("report embedded device runtime");

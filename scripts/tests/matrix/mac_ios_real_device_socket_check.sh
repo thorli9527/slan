@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
@@ -176,16 +177,14 @@ if ! grep -q "SOCKET_ECHO_TCP_READY=$TCP_PORT" "$ECHO_LOG"; then
 fi
 
 echo "+ run iOS real-device UDP/TCP sender target=$MAC_IP udp=$UDP_PORT tcp=$TCP_PORT"
+mapfile -t IOS_COMMON_DART_DEFINES < <(
+  slan_mobile_login_common_defines "$BIZ_URL" "$EMAIL" "$PASSWORD" false true
+)
 (
   cd "$APP_DIR"
   flutter test integration_test/mobile_login_test.dart \
     -d "$SLAN_IOS_FLUTTER_DEVICE" \
-    --dart-define="SLAN_TEST_BIZ_URL=$BIZ_URL" \
-    --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$BIZ_URL" \
-    --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-    --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-    --dart-define="SLAN_TEST_REGISTER_USER=false" \
-    --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+    "${IOS_COMMON_DART_DEFINES[@]}" \
     --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
     --dart-define="SLAN_TEST_HOLD_SECONDS=$IOS_PEER_HOLD_SECONDS" \
     --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=$IOS_POST_ENABLE_WAIT_SECONDS" \

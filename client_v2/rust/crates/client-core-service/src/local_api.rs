@@ -29,6 +29,7 @@ pub(crate) enum LocalServiceMethod {
     LocalPathDiagnose,
     LocalRelayCandidates,
     LocalRefreshRelayCandidates,
+    LocalSetRelayTransportAllowlist,
     LocalRelayPrepare,
     LocalControlStatus,
     LocalEnsureDevice,
@@ -74,6 +75,7 @@ impl LocalServiceMethod {
             "localPathDiagnose" => Self::LocalPathDiagnose,
             "localRelayCandidates" => Self::LocalRelayCandidates,
             "localRefreshRelayCandidates" => Self::LocalRefreshRelayCandidates,
+            "localSetRelayTransportAllowlist" => Self::LocalSetRelayTransportAllowlist,
             "localRelayPrepare" => Self::LocalRelayPrepare,
             "localControlStatus" => Self::LocalControlStatus,
             "localEnsureDevice" => Self::LocalEnsureDevice,
@@ -234,6 +236,13 @@ pub(crate) struct RegisterTestUserRequest {
 pub(crate) struct ReportDeviceRuntimeRequest {
     pub(crate) device_id: String,
     pub(crate) body: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetRelayTransportAllowlistRequest {
+    #[serde(default)]
+    pub(crate) transports: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -24,7 +24,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use client_core::{
-    acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
+    acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request, ipv4_source,
     ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
@@ -243,6 +243,7 @@ impl PlatformNetwork for LinuxPlatformNetwork {
         .with_context(|| format!("set Linux TUN MTU on {interface_name}"))?;
         run_ip(&["link", "set", "dev", &interface_name, "up"])
             .with_context(|| format!("bring Linux TUN interface {interface_name} up"))?;
+        ensure_firewalld_trusts_interface(&interface_name);
         runtime.network_enabled = true;
         Ok(())
     }
@@ -256,6 +257,7 @@ impl PlatformNetwork for LinuxPlatformNetwork {
             return Ok(());
         }
         let interface_name = runtime.interface_name().to_string();
+        let _ = run_ip(&["-4", "addr", "flush", "dev", &interface_name]);
         run_ip(&[
             "addr",
             "replace",
@@ -1260,6 +1262,11 @@ fn run_udp_data_plane(
                             stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
                             continue;
                         }
+                        eprintln!(
+                            "linux relay inbound udp->tun peer={} packet={}",
+                            peer.peer_node_id,
+                            packet_summary(&packet)
+                        );
                         match write_tun_packet_with_retry(&mut file, &packet) {
                             Ok(_) => record_relay_packet_received(stats, peer),
                             Err(_) => record_relay_write_failure(stats, peer),
@@ -1302,6 +1309,11 @@ fn run_udp_data_plane(
                             stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
                             continue;
                         }
+                        eprintln!(
+                            "linux derp inbound->tun peer={} packet={}",
+                            peer.peer_node_id,
+                            packet_summary(&packet)
+                        );
                         match write_tun_packet_with_retry(&mut file, &packet) {
                             Ok(_) => record_derp_packet_received(stats, peer),
                             Err(_) => record_derp_write_failure(stats, peer),
@@ -1369,6 +1381,15 @@ fn run_udp_data_plane(
                             stats.last_tun_drop_reason = Some("acl_ingress_denied".to_string());
                             continue;
                         }
+                        eprintln!(
+                            "linux direct-udp inbound->tun peer={} packet={}",
+                            direct_udp
+                                .peers
+                                .get(received.peer_index)
+                                .map(|peer| peer.peer_node_id.as_str())
+                                .unwrap_or("unknown"),
+                            packet_summary(&packet)
+                        );
                         if write_tun_packet_with_retry(&mut file, &packet).is_ok() {
                             if let Some(peer) =
                                 direct_udp
@@ -1738,6 +1759,47 @@ fn ipv4_tcp_flags(packet: &[u8]) -> Option<u8> {
         return None;
     }
     Some(packet[ihl + 13])
+}
+
+fn ipv4_transport_ports(packet: &[u8]) -> Option<(u16, u16)> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 {
+        return None;
+    }
+    let ihl = usize::from(packet[0] & 0x0f) * 4;
+    if ihl < 20 || packet.len() < ihl + 4 {
+        return None;
+    }
+    match packet.get(9).copied() {
+        Some(6) | Some(17) => Some((
+            u16::from_be_bytes([packet[ihl], packet[ihl + 1]]),
+            u16::from_be_bytes([packet[ihl + 2], packet[ihl + 3]]),
+        )),
+        _ => None,
+    }
+}
+
+fn packet_summary(packet: &[u8]) -> String {
+    let protocol = packet.get(9).copied().unwrap_or_default();
+    let flags = ipv4_tcp_flags(packet)
+        .map(|value| format!("0x{value:02x}"))
+        .unwrap_or_else(|| "none".to_string());
+    let (source_port, destination_port) = ipv4_transport_ports(packet)
+        .map(|(source, destination)| (source.to_string(), destination.to_string()))
+        .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
+    let checksum_valid = ipv4_transport_checksum_valid(packet)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!(
+        "len={}; protocol={}; src={}; dst={}; srcPort={}; dstPort={}; tcpFlags={}; checksumValid={}",
+        packet.len(),
+        protocol,
+        ipv4_source(packet).unwrap_or_else(|| "unknown".to_string()),
+        ipv4_destination(packet).unwrap_or_else(|| "unknown".to_string()),
+        source_port,
+        destination_port,
+        flags,
+        checksum_valid,
+    )
 }
 
 fn ipv4_tcp_payload_len(packet: &[u8]) -> Option<usize> {
@@ -2187,6 +2249,33 @@ fn link_exists(interface_name: &str) -> bool {
 fn run_ip(args: &[&str]) -> Result<()> {
     let owned: Vec<String> = args.iter().map(|value| value.to_string()).collect();
     run_command("ip", &owned)
+}
+
+fn ensure_firewalld_trusts_interface(interface_name: &str) {
+    if !command_available("firewall-cmd") {
+        return;
+    }
+    let query_args = vec![
+        "--zone".to_string(),
+        "trusted".to_string(),
+        "--query-interface".to_string(),
+        interface_name.to_string(),
+    ];
+    if run_command("firewall-cmd", &query_args).is_ok() {
+        return;
+    }
+    let add_args = vec![
+        "--zone".to_string(),
+        "trusted".to_string(),
+        "--add-interface".to_string(),
+        interface_name.to_string(),
+    ];
+    if let Err(error) = run_command("firewall-cmd", &add_args) {
+        eprintln!(
+            "linux firewalld trust failed for interface {}: {error:#}",
+            interface_name
+        );
+    }
 }
 
 fn run_command(program: &str, args: &[String]) -> Result<()> {

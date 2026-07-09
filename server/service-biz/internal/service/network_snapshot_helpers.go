@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/repository"
 )
 
@@ -30,11 +31,15 @@ func buildNetworkSnapshotPayload(
 		if !networkMemberActive(member) {
 			continue
 		}
-		networkDevices = append(networkDevices, member.DeviceID)
+		deviceID := strings.TrimSpace(member.DeviceID)
+		if deviceID == "" {
+			continue
+		}
+		networkDevices = append(networkDevices, deviceID)
 	}
-	primaryDeviceID := ""
-	if len(networkDevices) > 0 {
-		primaryDeviceID = strings.TrimSpace(networkDevices[0])
+	primaryDeviceID, err := firstActiveManagedNetworkDeviceID(ctx, devices, memberships)
+	if err != nil {
+		return nil, err
 	}
 	if primaryDeviceID == "" {
 		return map[string]any{
@@ -54,6 +59,33 @@ func buildNetworkSnapshotPayload(
 		return nil, err
 	}
 	return networkResolvedSnapshotPayload(resolved), nil
+}
+
+func firstActiveManagedNetworkDeviceID(
+	ctx context.Context,
+	devices repository.DeviceRepository,
+	memberships []model.NetworkDevice,
+) (string, error) {
+	if devices == nil {
+		return "", nil
+	}
+	for _, member := range memberships {
+		if !networkMemberActive(member) {
+			continue
+		}
+		deviceID := strings.TrimSpace(member.DeviceID)
+		if deviceID == "" {
+			continue
+		}
+		_, ok, err := devices.GetDevice(ctx, deviceID)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return deviceID, nil
+		}
+	}
+	return "", nil
 }
 
 func publishNetworkSnapshot(

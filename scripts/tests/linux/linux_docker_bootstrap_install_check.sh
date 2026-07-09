@@ -116,7 +116,7 @@ log "download and execute install command inside container"
 docker exec "$CONTAINER_NAME" bash -lc "
 set -euo pipefail
 curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh --server='${BIZ_URL}' --session-key='${BOOTSTRAP_KEY}' --tray=disabled
+bash /tmp/slan-install.sh --server='${BIZ_URL}' --installation-key='${BOOTSTRAP_KEY}' --tray=disabled
 "
 
 log "verify bootstrap config written"
@@ -124,6 +124,7 @@ docker exec "$CONTAINER_NAME" bash -lc "
 set -euo pipefail
 test -f /etc/slan/bootstrap.env
 grep -q '^SLAN_CONTROL_BASE_URL=${BIZ_URL}\$' /etc/slan/bootstrap.env
+grep -q '^SLAN_INSTALLATION_KEY=${BOOTSTRAP_KEY}\$' /etc/slan/bootstrap.env
 grep -q '^SLAN_SESSION_KEY=${BOOTSTRAP_KEY}\$' /etc/slan/bootstrap.env
 test -f /etc/slan/client-v2-install.env
 grep -q '^SLAN_LINUX_TRAY_MODE=disabled\$' /etc/slan/client-v2-install.env

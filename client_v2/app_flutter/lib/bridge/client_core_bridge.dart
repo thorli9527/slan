@@ -166,17 +166,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// bridge 是否已经关闭，关闭后不再接受后台状态回写。
   bool _closed = false;
 
-  /// 移动端内嵌服务默认控制面地址，可由 dart-define 覆盖。
-  static const _embeddedControlBaseUrl =
-      String.fromEnvironment('SLAN_EMBEDDED_CONTROL_BASE_URL');
-
   /// 集成测试时强制使用的设备 ID。
   static const _testDeviceId = String.fromEnvironment('SLAN_TEST_DEVICE_ID');
 
   /// 默认生产控制面地址。
-  static const _defaultControlBaseUrl = String.fromEnvironment(
-      'SLAN_CONTROL_BASE_URL',
-      defaultValue: 'http://47.245.40.231:28080');
+  static const _defaultControlBaseUrl = 'http://47.245.40.231:28080';
 
   @override
   ValueListenable<ClientViewState> get state => _state;
@@ -399,10 +393,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     if (command.type == ClientCommandType.localNetworkShutdown) {
       await _localNetworkShutdownWithFallback();
       await _refreshState();
-      return;
-    }
-    if (command.type == ClientCommandType.sendClientMessage) {
-      await _sendClientMessageWithFallback(command.payload);
       return;
     }
     await _dispatchControlWithFallback(command);
@@ -821,18 +811,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     );
   }
 
-  /// 推导 Web Console 地址。
-  ///
-  /// 优先级：显式 `SLAN_WEB_CONSOLE_URL` > 从 `SLAN_CONTROL_BASE_URL`
-  /// 推导 > 默认生产 Web 地址。
+  /// 根据当前控制面地址推导 Web Console 地址。
   String _resolveWebConsoleUrl() {
-    final webConsoleUrl =
-        Platform.environment['SLAN_WEB_CONSOLE_URL']?.trim() ?? '';
-    if (webConsoleUrl.isNotEmpty) {
-      return webConsoleUrl;
-    }
-    final controlBaseUrl =
-        Platform.environment['SLAN_CONTROL_BASE_URL']?.trim() ?? '';
+    final controlBaseUrl = _effectiveControlBaseUrl;
     final controlUri = Uri.tryParse(controlBaseUrl);
     final controlHost = controlUri?.host.toLowerCase() ?? '';
     final controlScheme =
@@ -868,83 +849,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     return deviceId?.trim() ?? '';
   }
 
-  /// 发送客户端到客户端消息。
-  ///
-  /// 桌面端走本地服务；移动端走内嵌服务。页面层的 Ping 工具也复用这条
-  /// 通道，只是在 metadata/body 中带上 ping 标记。
-  Future<void> _sendClientMessageWithFallback(
-    Map<String, Object?>? payload,
-  ) async {
-    final targetDeviceId = (payload?['targetDeviceId'] as String?)?.trim();
-    final body = (payload?['body'] as String?)?.trim();
-    final metadata = payload?['metadata'];
-    if (targetDeviceId == null ||
-        targetDeviceId.isEmpty ||
-        body == null ||
-        body.isEmpty) {
-      throw StateError('targetDeviceId and body are required');
-    }
-    ClientUiDiagnostics.unawaitedLog(
-      'bridge.sendClientMessage.begin',
-      state: _state.value,
-      fields: {
-        'targetDeviceId': targetDeviceId,
-        'bodyLength': body.length,
-        'usesNativeMobileControlPlane': _usesNativeMobileControlPlane,
-      },
-    );
-    if (_usesNativeMobileControlPlane) {
-      final embedded = await _embeddedServiceRequest(
-        'localSendClientMessage',
-        {
-          'targetDeviceId': targetDeviceId,
-          'body': body,
-          if (metadata is Map) 'metadata': metadata.cast<String, Object?>(),
-        },
-        true,
-      );
-      if (embedded == null) {
-        throw StateError('embedded send client message is not available');
-      }
-      ClientUiDiagnostics.unawaitedLog(
-        'bridge.sendClientMessage.embedded.ok',
-        state: _state.value,
-        fields: {
-          'targetDeviceId': targetDeviceId,
-          'responseKeys': embedded.keys.toList(),
-          'messageId': embedded['messageId'],
-          'topic': embedded['topic'],
-          'transport': embedded['transport'],
-          'qos': embedded['qos'],
-        },
-      );
-      return;
-    }
-    try {
-      await _localService.localSendClientMessage(
-        targetDeviceId: targetDeviceId,
-        body: body,
-        metadata: metadata is Map ? metadata.cast<String, Object?>() : null,
-      );
-      ClientUiDiagnostics.unawaitedLog(
-        'bridge.sendClientMessage.local.ok',
-        state: _state.value,
-        fields: {
-          'targetDeviceId': targetDeviceId,
-          'bodyLength': body.length,
-        },
-      );
-      return;
-    } on Object catch (error) {
-      ClientUiDiagnostics.unawaitedLog(
-        'bridge.sendClientMessage.fallback',
-        state: _state.value,
-        fields: {'message': error.toString()},
-      );
-      rethrow;
-    }
-  }
-
   /// 查询控制通道状态，按平台选择本地服务或内嵌服务。
   Future<Object?> _localControlStatusWithFallback() async {
     if (_usesNativeMobileControlPlane) {
@@ -978,25 +882,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     if (!_usesNativeMobileControlPlane) {
       return null;
     }
-    var embeddedArgs = _embeddedArguments(arguments);
-    if (method == 'localSendClientMessage') {
-      final argMap = embeddedArgs is Map
-          ? Map<String, Object?>.from(embeddedArgs.cast<String, Object?>())
-          : <String, Object?>{'value': embeddedArgs};
-      argMap.remove('deviceId');
-      embeddedArgs = argMap;
-      ClientUiDiagnostics.unawaitedLog(
-        'bridge.embeddedService.request',
-        state: _state.value,
-        fields: {
-          'method': method,
-          'targetDeviceId': argMap['targetDeviceId'],
-          'bodyLength': (argMap['body'] as String?)?.length,
-          'deviceId': argMap['deviceId'],
-          'controlBaseUrl': argMap['controlBaseUrl'],
-        },
-      );
-    }
+    final embeddedArgs = _embeddedArguments(arguments);
     try {
       final response = await _plugin.embeddedServiceRequest(jsonEncode({
         'method': method,
@@ -1007,20 +893,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         throw PlatformException(
           code: 'embedded_service_error',
           message: error,
-        );
-      }
-      if (method == 'localSendClientMessage') {
-        ClientUiDiagnostics.unawaitedLog(
-          'bridge.embeddedService.response',
-          state: _state.value,
-          fields: {
-            'method': method,
-            'messageId': response?['messageId'],
-            'topic': response?['topic'],
-            'transport': response?['transport'],
-            'qos': response?['qos'],
-            'responseKeys': response?.keys.toList(),
-          },
         );
       }
       return response;
@@ -1124,10 +996,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   /// 移动端内嵌服务的默认控制面地址。
-  String get _defaultEmbeddedControlBaseUrl =>
-      _embeddedControlBaseUrl.isNotEmpty
-          ? _embeddedControlBaseUrl
-          : _defaultControlBaseUrl;
+  String get _defaultEmbeddedControlBaseUrl => _defaultControlBaseUrl;
 
   /// 归一化服务地址，保证协议存在并去掉末尾 `/`。
   static String _normalizeServerBaseUrl(String value) {
@@ -2541,15 +2410,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     if (_nativeMobilePeerRefreshRequired(event)) {
       await _refreshNativeMobilePeersFromControlSync();
     }
-    final payloadPreferred = _payloadPreferredBusinessEventState(
-      event,
-      type: type,
-      businessDataMap: businessDataMap,
-      snapshotMap: snapshotMap,
-    );
-    if (payloadPreferred != null) {
-      return payloadPreferred;
-    }
     if (!businessEventRequiresStateQuery(
       type,
       networkToggleInFlight: _networkToggleInFlight,
@@ -2571,30 +2431,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     return payload is Map ? payload.cast<String, Object?>() : null;
   }
 
-  ClientViewState? _payloadPreferredBusinessEventState(
-    Map<String, Object?> event, {
-    required String? type,
-    required Map<String, Object?>? businessDataMap,
-    required Map<String, Object?>? snapshotMap,
-  }) {
-    final payloadCarriesClientMessage =
-        businessEventPayloadCarriesClientMessage(type, businessDataMap) ||
-            businessEventPayloadCarriesClientMessage(type, snapshotMap);
-    if (!payloadCarriesClientMessage) {
-      return null;
-    }
-    ClientUiDiagnostics.unawaitedLog(
-      'bridge.businessEvent.payloadClientMessagePreferred',
-      state: _state.value,
-      fields: businessEventPayloadClientMessagePreferredLogFields(
-        type,
-        businessDataMap: businessDataMap,
-        snapshotMap: snapshotMap,
-      ),
-    );
-    return _reduceBusinessEvent(event);
-  }
-
   Future<ClientViewState?> _queriedBusinessEventState(
     Map<String, Object?> event, {
     required String? type,
@@ -2607,13 +2443,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           state: _state.value,
           fields: businessEventStateQueriedLogFields(type, state),
         );
-        if (shouldLogEmptyClientMessageQuery(type, state)) {
-          ClientUiDiagnostics.unawaitedLog(
-            'bridge.businessEvent.stateQueried.emptyClientMessage',
-            state: _state.value,
-            fields: businessEventEmptyClientMessageQueryLogFields(type, state),
-          );
-        }
         return _reduceBusinessEvent(event, queriedState: state);
       }
     } on Object catch (error) {
@@ -2829,13 +2658,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         'bridge.localState.embedded',
         state: _state.value,
         fields: {
-          'lastClientMessageId': embedded?['lastClientMessageId'],
-          'lastClientMessageFromDeviceId':
-              embedded?['lastClientMessageFromDeviceId'],
-          'lastClientMessageBodyLength':
-              (embedded?['lastClientMessageBody'] as String?)?.length,
           'notice': embedded?['notice'],
           'lastDownstreamSummary': embedded?['lastDownstreamSummary'],
+          'hasBusinessState': embedded != null,
         },
       );
       return embedded == null ? null : _stateFromResult(embedded);

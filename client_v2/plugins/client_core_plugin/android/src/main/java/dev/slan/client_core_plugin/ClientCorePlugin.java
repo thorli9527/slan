@@ -162,9 +162,6 @@ public final class ClientCorePlugin
       state.put("switchEnabled", true);
       state.put("notice", signedOut ? "signedOut" : "androidClientReady");
       state.put("error", null);
-      state.put("lastClientMessageId", null);
-      state.put("lastClientMessageFromDeviceId", null);
-      state.put("lastClientMessageBody", null);
     }
   }
 

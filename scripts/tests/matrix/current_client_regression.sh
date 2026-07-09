@@ -26,11 +26,12 @@ RUN_MAC_IOS_FAST="${SLAN_RUN_CURRENT_MAC_IOS_FAST:-1}"
 RUN_IOS_ANDROID_PARTIAL="${SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL:-1}"
 RUN_TRI_MESSAGE="${SLAN_RUN_CURRENT_TRI_MESSAGE:-1}"
 RUN_IOS_TRI_MATRIX="${SLAN_RUN_CURRENT_IOS_TRI_MATRIX:-1}"
+RUN_LINUX_DUAL_DOCKER_PACKET="${SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER_PACKET:-0}"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
 Usage:
-  bash scripts/current_client_regression.sh
+  bash scripts/tests/matrix/current_client_regression.sh
 
 Purpose:
   Run the client regression set that is currently feasible on this machine:
@@ -44,6 +45,7 @@ Optional environment variables:
   SLAN_RUN_CURRENT_ANDROID_DUAL=1|0
   SLAN_RUN_CURRENT_IOS_DUAL=1|0
   SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER=1|0
+  SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER_PACKET=1|0
   SLAN_RUN_CURRENT_MAC_ANDROID=1|0
   SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE=1|0
   SLAN_RUN_CURRENT_MAC_IOS_FAST=1|0
@@ -60,11 +62,11 @@ Optional environment variables:
   SLAN_IOS_FLUTTER_DEVICE
 
 Examples:
-  bash scripts/current_client_regression.sh
-  SLAN_CURRENT_REGRESSION_RESULT_ROOT=/tmp/slan-regression bash scripts/current_client_regression.sh
-  SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER=0 bash scripts/current_client_regression.sh
-  SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL=0 bash scripts/current_client_regression.sh
-  SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE=0 bash scripts/current_client_regression.sh
+  bash scripts/tests/matrix/current_client_regression.sh
+  SLAN_CURRENT_REGRESSION_RESULT_ROOT=/tmp/slan-regression bash scripts/tests/matrix/current_client_regression.sh
+  SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER=0 bash scripts/tests/matrix/current_client_regression.sh
+  SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL=0 bash scripts/tests/matrix/current_client_regression.sh
+  SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE=0 bash scripts/tests/matrix/current_client_regression.sh
 EOF
   exit 0
 fi
@@ -123,25 +125,31 @@ mkdir -p "$LOG_DIR"
 
 ln -sfn "$RESULT_DIR" "$LATEST_LINK"
 
-log "current regression toggles: android-dual=${RUN_ANDROID_DUAL} ios-dual=${RUN_IOS_DUAL} linux-dual-docker=${RUN_LINUX_DUAL_DOCKER} mac-android=${RUN_MAC_ANDROID} mac-android-active=${RUN_MAC_ANDROID_ACTIVE} mac-ios-fast=${RUN_MAC_IOS_FAST} ios-android-partial=${RUN_IOS_ANDROID_PARTIAL} tri-message=${RUN_TRI_MESSAGE} ios-tri-matrix=${RUN_IOS_TRI_MATRIX}"
+log "current regression toggles: android-dual=${RUN_ANDROID_DUAL} ios-dual=${RUN_IOS_DUAL} linux-dual-docker=${RUN_LINUX_DUAL_DOCKER} linux-dual-docker-packet=${RUN_LINUX_DUAL_DOCKER_PACKET} mac-android=${RUN_MAC_ANDROID} mac-android-active=${RUN_MAC_ANDROID_ACTIVE} mac-ios-fast=${RUN_MAC_IOS_FAST} ios-android-partial=${RUN_IOS_ANDROID_PARTIAL} tri-message=${RUN_TRI_MESSAGE} ios-tri-matrix=${RUN_IOS_TRI_MATRIX}"
 log "control url: ${SLAN_BIZ_URL}"
 log "result dir: ${RESULT_DIR}"
 log "latest link: ${LATEST_LINK}"
 
 if [[ "$RUN_ANDROID_DUAL" == "1" ]]; then
-  run_step "Run dual Android full chain" android_dual run_in_root bash scripts/android_dual_fast_check.sh
+  run_step "Run dual Android full chain" android_dual run_in_root env \
+    SLAN_ANDROID_DUAL_PHASE34_RELAY_TRANSPORT_ALLOWLIST="${SLAN_ANDROID_DUAL_PHASE34_RELAY_TRANSPORT_ALLOWLIST:-udp}" \
+    bash scripts/tests/android/android_dual_fast_check.sh --full-stable
 fi
 
 if [[ "$RUN_IOS_DUAL" == "1" ]]; then
-  run_step "Run dual iOS simulator chain" ios_dual run_in_root bash scripts/ios_dual_fast_check.sh
+  run_step "Run dual iOS simulator chain" ios_dual run_in_root bash scripts/tests/ios/ios_dual_fast_check.sh --full-stable
 fi
 
 if [[ "$RUN_LINUX_DUAL_DOCKER" == "1" ]]; then
-  run_step "Run dual Docker Linux full chain" linux_dual_docker run_in_root bash scripts/linux_dual_docker_packet_smoke.sh
+  run_step "Run dual Docker Linux control-plane chain" linux_dual_docker run_in_root bash scripts/tests/linux/linux_dual_docker_integration.sh
+fi
+
+if [[ "$RUN_LINUX_DUAL_DOCKER_PACKET" == "1" ]]; then
+  run_step "Run dual Docker Linux packet chain" linux_dual_docker_packet run_in_root bash scripts/tests/linux/linux_dual_docker_packet_smoke.sh
 fi
 
 if [[ "$RUN_MAC_ANDROID" == "1" ]]; then
-  run_step "Run Mac + Android passive-direction chain" mac_android_passive run_in_root bash scripts/mac_android_fast_check.sh
+  run_step "Run Mac + Android passive-direction chain" mac_android_passive run_in_root bash scripts/tests/matrix/mac_android_fast_check.sh
 fi
 
 if [[ "$RUN_MAC_ANDROID_ACTIVE" == "1" ]]; then
@@ -149,25 +157,25 @@ if [[ "$RUN_MAC_ANDROID_ACTIVE" == "1" ]]; then
     SLAN_RUN_MAC_ANDROID_ACTIVE=1 \
     SLAN_RUN_MAC_IOS_ACTIVE=0 \
     SLAN_RUN_MAC_LINUX_ACTIVE=0 \
-    bash scripts/mac_active_socket_matrix.sh
+    bash scripts/tests/matrix/mac_active_socket_matrix.sh
 fi
 
 if [[ "$RUN_MAC_IOS_FAST" == "1" ]]; then
-  run_step "Run Mac + iOS fast chain" mac_ios_fast run_in_root bash scripts/mac_ios_fast_check.sh
+  run_step "Run Mac + iOS fast chain" mac_ios_fast run_in_root bash scripts/tests/matrix/mac_ios_fast_check.sh
 fi
 
 if [[ "$RUN_IOS_ANDROID_PARTIAL" == "1" ]]; then
-  run_step "Run iOS + Android partial readiness chain" ios_android_partial run_in_root bash scripts/ios_android_socket_check.sh
+  run_step "Run iOS + Android partial readiness chain" ios_android_partial run_in_root bash scripts/tests/ios/ios_android_socket_check.sh
 fi
 
 if [[ "$RUN_TRI_MESSAGE" == "1" ]]; then
   run_step "Run Mac + Android + iOS tri-device message chain" tri_message run_in_root env \
     SLAN_CLIENT_CORE_SERVICE_BIN="$ROOT_DIR/client_v2/rust/target/debug/client-core-service" \
-    bash scripts/mac_android_ios_message_check.sh
+    bash scripts/tests/matrix/mac_android_ios_message_check.sh
 fi
 
 if [[ "$RUN_IOS_TRI_MATRIX" == "1" ]]; then
-  run_step "Run iOS tri-client local protocol matrix" ios_tri_matrix run_in_root bash scripts/ios_triclient_packet_matrix.sh
+  run_step "Run iOS tri-client local protocol matrix" ios_tri_matrix run_in_root bash scripts/tests/ios/ios_triclient_packet_matrix.sh
 fi
 
 log "current client regression complete"

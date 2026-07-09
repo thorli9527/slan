@@ -10,7 +10,6 @@ done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 IMAGE="${SLAN_LINUX_DOCKER_IMAGE:-ubuntu:24.04}"
 CONTAINER_NAME="${SLAN_LINUX_DOCKER_NAME:-slan-linux-local-install-check}"
-PACKAGE_PATH="${SLAN_LINUX_CLIENT_PACKAGE:-$ROOT_DIR/client_v2/.tmp/installer/linux/SLAN-Client-V2-linux-arm64.tar.gz}"
 SERVER_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 SESSION_KEY="${SLAN_TEST_SESSION_KEY:-local-docker-session-key}"
 TRAY_MODE="${SLAN_LINUX_TRAY_MODE:-disabled}"
@@ -27,6 +26,50 @@ fail() {
 need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
+
+resolve_linux_package_path() {
+  if [[ -n "${SLAN_LINUX_CLIENT_PACKAGE:-}" ]]; then
+    printf '%s\n' "$SLAN_LINUX_CLIENT_PACKAGE"
+    return
+  fi
+
+  local installer_dir="$ROOT_DIR/client_v2/.tmp/installer/linux"
+  local host_arch
+  host_arch="$(uname -m 2>/dev/null || true)"
+  local preferred=()
+  case "$host_arch" in
+    x86_64|amd64)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+      )
+      ;;
+    arm64|aarch64)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+      )
+      ;;
+    *)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+      )
+      ;;
+  esac
+
+  local candidate
+  for candidate in "${preferred[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  printf '%s\n' "${preferred[0]}"
+}
+
+PACKAGE_PATH="$(resolve_linux_package_path)"
 
 need docker
 
@@ -60,7 +103,7 @@ set -euo pipefail
 cd /workspace/slan/client_v2/install/linux
 bash install.sh \
   --server='${SERVER_URL}' \
-  --session-key='${SESSION_KEY}' \
+  --installation-key='${SESSION_KEY}' \
   --tray='${TRAY_MODE}' \
   --package-url='file:///workspace/slan/${PACKAGE_PATH#$ROOT_DIR/}'
 "
@@ -71,6 +114,7 @@ set -euo pipefail
 test -x /opt/slan-client-v2/bin/client-core-service
 test -f /etc/slan/bootstrap.env
 grep -q '^SLAN_CONTROL_BASE_URL=${SERVER_URL}\$' /etc/slan/bootstrap.env
+grep -q '^SLAN_INSTALLATION_KEY=${SESSION_KEY}\$' /etc/slan/bootstrap.env
 grep -q '^SLAN_SESSION_KEY=${SESSION_KEY}\$' /etc/slan/bootstrap.env
 test -f /etc/slan/client-v2-install.env
 grep -q '^SLAN_LINUX_TRAY_MODE=${TRAY_MODE}\$' /etc/slan/client-v2-install.env

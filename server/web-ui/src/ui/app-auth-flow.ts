@@ -14,20 +14,24 @@ export type ConsoleLoginTarget = {
 };
 
 export function readStoredBrowserAuth(): ApiAuthResponse | null {
-  const payload = window.localStorage.getItem(BROWSER_AUTH_KEY);
+  const payload = window.sessionStorage.getItem(BROWSER_AUTH_KEY);
   if (!payload) {
     return null;
   }
   const auth = JSON.parse(payload) as ApiAuthResponse;
-  return isValidAuth(auth) ? auth : null;
+  if (!isValidAuth(auth)) {
+    clearBrowserAuth();
+    return null;
+  }
+  return auth;
 }
 
 export function persistBrowserAuth(auth: ApiAuthResponse): void {
-  window.localStorage.setItem(BROWSER_AUTH_KEY, JSON.stringify(auth));
+  window.sessionStorage.setItem(BROWSER_AUTH_KEY, JSON.stringify(auth));
 }
 
 export function clearBrowserAuth(): void {
-  window.localStorage.removeItem(BROWSER_AUTH_KEY);
+  window.sessionStorage.removeItem(BROWSER_AUTH_KEY);
 }
 
 export function clientLoginTarget(params = currentParams()): ClientLoginTarget | null {

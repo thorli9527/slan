@@ -15,6 +15,14 @@ import { shortCodeFromEmail } from './app.utils';
 import { WEB_API } from './api-paths';
 
 export class AppComponentAuth extends AppComponentOverview {
+  clearAuthMessageOnCredentialsChange(): void {
+    if (!this.authMessage) {
+      return;
+    }
+    this.authMessage = '';
+    this.notifyStateChanged();
+  }
+
   protected async initializeCustomerAuthFromUrl(): Promise<void> {
     if (await this.completeClientLoginFromStoredBrowserAuth()) {
       return;
@@ -65,10 +73,14 @@ export class AppComponentAuth extends AppComponentOverview {
       if (!auth) {
         return false;
       }
-      await this.applyAuth(auth);
+      this.authMessage = '正在恢复浏览器登录状态...';
+      this.notifyStateChanged();
+      const renewedAuth = await this.renewBrowserAuth(auth);
+      await this.applyAuth(renewedAuth);
       return true;
     } catch (error) {
       this.authMessage = `浏览器登录态恢复失败：${error instanceof Error ? error.message : String(error)}`;
+      clearBrowserAuth();
       this.mode = 'login';
       this.notifyStateChanged();
       return false;

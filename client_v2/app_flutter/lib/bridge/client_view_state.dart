@@ -1,4 +1,4 @@
-/// ClientViewState 是 Flutter UI 渲染首页、网络开关、消息和流量统计的状态快照。
+/// ClientViewState 是 Flutter UI 渲染首页、网络开关和流量统计的状态快照。
 class ClientViewState {
   const ClientViewState({
     required this.signedIn,
@@ -12,9 +12,6 @@ class ClientViewState {
     this.notice,
     this.error,
     this.errorSource,
-    this.lastClientMessageId,
-    this.lastClientMessageFromDeviceId,
-    this.lastClientMessageBody,
     this.lastControlSyncMessageType,
     this.lastControlSyncReconfigureRequired,
     this.trafficTxBytes,
@@ -56,15 +53,6 @@ class ClientViewState {
 
   /// 错误来源，用于 UI 区分网络切换、登录等场景。
   final String? errorSource;
-
-  /// 最近收到的客户端消息 ID。
-  final String? lastClientMessageId;
-
-  /// 最近收到消息的发送设备 ID。
-  final String? lastClientMessageFromDeviceId;
-
-  /// 最近收到的消息正文。
-  final String? lastClientMessageBody;
 
   /// 最近一次控制面同步事件类型，例如 `network_event`。
   final String? lastControlSyncMessageType;
@@ -115,10 +103,6 @@ class ClientViewState {
       notice: json['notice'] as String?,
       error: json['error'] as String?,
       errorSource: json['errorSource'] as String?,
-      lastClientMessageId: json['lastClientMessageId'] as String?,
-      lastClientMessageFromDeviceId:
-          json['lastClientMessageFromDeviceId'] as String?,
-      lastClientMessageBody: json['lastClientMessageBody'] as String?,
       lastControlSyncMessageType: json['lastControlSyncMessageType'] as String?,
       lastControlSyncReconfigureRequired:
           json['lastControlSyncReconfigureRequired'] as bool?,
@@ -146,9 +130,6 @@ class ClientViewState {
     String? notice,
     String? error,
     String? errorSource,
-    String? lastClientMessageId,
-    String? lastClientMessageFromDeviceId,
-    String? lastClientMessageBody,
     String? lastControlSyncMessageType,
     bool? lastControlSyncReconfigureRequired,
     int? trafficTxBytes,
@@ -173,11 +154,6 @@ class ClientViewState {
       notice: notice,
       error: error,
       errorSource: errorSource,
-      lastClientMessageId: lastClientMessageId ?? this.lastClientMessageId,
-      lastClientMessageFromDeviceId:
-          lastClientMessageFromDeviceId ?? this.lastClientMessageFromDeviceId,
-      lastClientMessageBody:
-          lastClientMessageBody ?? this.lastClientMessageBody,
       lastControlSyncMessageType:
           lastControlSyncMessageType ?? this.lastControlSyncMessageType,
       lastControlSyncReconfigureRequired: lastControlSyncReconfigureRequired ??
@@ -208,10 +184,6 @@ class ClientViewState {
             notice == other.notice &&
             error == other.error &&
             errorSource == other.errorSource &&
-            lastClientMessageId == other.lastClientMessageId &&
-            lastClientMessageFromDeviceId ==
-                other.lastClientMessageFromDeviceId &&
-            lastClientMessageBody == other.lastClientMessageBody &&
             lastControlSyncMessageType == other.lastControlSyncMessageType &&
             lastControlSyncReconfigureRequired ==
                 other.lastControlSyncReconfigureRequired &&
@@ -237,9 +209,6 @@ class ClientViewState {
       notice,
       error,
       errorSource,
-      lastClientMessageId,
-      lastClientMessageFromDeviceId,
-      lastClientMessageBody,
       lastControlSyncMessageType,
       lastControlSyncReconfigureRequired,
       trafficTxBytes,

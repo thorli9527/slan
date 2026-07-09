@@ -11,7 +11,6 @@ source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 
 IMAGE="${SLAN_LINUX_DOCKER_IMAGE:-ubuntu:24.04}"
-PACKAGE_PATH="${SLAN_LINUX_CLIENT_PACKAGE:-$ROOT_DIR/client_v2/.tmp/installer/linux/SLAN-Client-V2-linux-arm64.tar.gz}"
 BUILD_PACKAGE="${SLAN_LINUX_DOCKER_MAC_BUILD_PACKAGE:-0}"
 CONTAINER_NAME="${SLAN_LINUX_DOCKER_MAC_NAME:-slan-linux-mac-check}"
 CONTAINER_PRIVILEGED="${SLAN_LINUX_DOCKER_CONTAINER_PRIVILEGED:-1}"
@@ -23,7 +22,6 @@ LINUX_NETWORK_MOCK="${SLAN_LINUX_NETWORK_MOCK:-0}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
 WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
-EMAIL="${SLAN_TEST_EMAIL:-linux-mac-1783260000000000000@example.test}"
 REGISTER_USER="${SLAN_TEST_REGISTER_USER:-true}"
 TIMEOUT_SECONDS="${SLAN_LINUX_DOCKER_MAC_TIMEOUT_SECONDS:-120}"
 BOOTSTRAP_TTL_SECONDS="${SLAN_LINUX_DOCKER_MAC_BOOTSTRAP_TTL_SECONDS:-1800}"
@@ -49,8 +47,11 @@ TCP_BODY_MAC_TO_LINUX="${SLAN_TEST_TCP_BODY_MAC_TO_LINUX:-mac-to-linux-tcp-$(dat
 UDP_BODY_LINUX_TO_MAC="${SLAN_TEST_UDP_BODY_LINUX_TO_MAC:-linux-to-mac-udp-$(date +%s%N)}"
 TCP_BODY_LINUX_TO_MAC="${SLAN_TEST_TCP_BODY_LINUX_TO_MAC:-linux-to-mac-tcp-$(date +%s%N)}"
 
-GENERATED_TEST_EMAIL=0
-if [[ -z "${SLAN_TEST_EMAIL:-}" ]]; then
+if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
+  EMAIL="$SLAN_TEST_EMAIL"
+  GENERATED_TEST_EMAIL=0
+else
+  EMAIL="linux-mac-$(date +%s%N)@example.test"
   GENERATED_TEST_EMAIL=1
 fi
 CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
@@ -78,6 +79,50 @@ LINUX_DEVICE_ID=""
 LINUX_IP=""
 
 PIDS=()
+
+resolve_linux_package_path() {
+  if [[ -n "${SLAN_LINUX_CLIENT_PACKAGE:-}" ]]; then
+    printf '%s\n' "$SLAN_LINUX_CLIENT_PACKAGE"
+    return
+  fi
+
+  local installer_dir="$ROOT_DIR/client_v2/.tmp/installer/linux"
+  local host_arch
+  host_arch="$(uname -m 2>/dev/null || true)"
+  local preferred=()
+  case "$host_arch" in
+    x86_64|amd64)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+      )
+      ;;
+    arm64|aarch64)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+      )
+      ;;
+    *)
+      preferred+=(
+        "$installer_dir/SLAN-Client-V2-linux-amd64.tar.gz"
+        "$installer_dir/SLAN-Client-V2-linux-arm64.tar.gz"
+      )
+      ;;
+  esac
+
+  local candidate
+  for candidate in "${preferred[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  printf '%s\n' "${preferred[0]}"
+}
+
+PACKAGE_PATH="$(resolve_linux_package_path)"
 
 log() {
   printf '==> %s\n' "$*"
@@ -298,7 +343,7 @@ set -euo pipefail
 curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
 bash /tmp/slan-install.sh \
   --server='${BIZ_URL}' \
-  --session-key='${BOOTSTRAP_KEY}' \
+  --installation-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
   --package-url='file://${local_package_in_container}'
 "

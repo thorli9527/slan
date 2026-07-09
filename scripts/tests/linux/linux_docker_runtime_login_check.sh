@@ -4,9 +4,13 @@ set -euo pipefail
 SCRIPT_PATH="${BASH_SOURCE:-$0}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
 ROOT_DIR="$SCRIPT_DIR"
+FALLBACK_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
+if [ ! -e "$ROOT_DIR/.git" ]; then
+  ROOT_DIR="$FALLBACK_ROOT"
+fi
 . "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 IMAGE="${SLAN_LINUX_DOCKER_IMAGE:-ubuntu:24.04}"
 CONTAINER_NAME="${SLAN_LINUX_DOCKER_NAME:-slan-linux-runtime-check}"
@@ -16,7 +20,9 @@ KEEP_CONTAINER="${SLAN_LINUX_DOCKER_KEEP_CONTAINER:-0}"
 CONTAINER_PRIVILEGED="${SLAN_LINUX_DOCKER_CONTAINER_PRIVILEGED:-0}"
 RESULT_JSON_PATH="${SLAN_LINUX_DOCKER_RESULT_JSON_PATH:-}"
 WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
+WEB_API_BASE_URL="${SLAN_WEB_API_BASE_URL:-${SLAN_BIZ_WEB_BASE_URL:-http://47.245.40.231:28081}}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+CONTAINER_BIZ_URL="${SLAN_LINUX_DOCKER_CONTAINER_BIZ_URL:-$BIZ_URL}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 EMAIL="${SLAN_LINUX_DOCKER_EMAIL:-linux-runtime-$(date +%s%N)@example.test}"
 DEVICE_ALIAS="${SLAN_LINUX_DOCKER_DEVICE_ALIAS:-Docker Linux Runtime}"
@@ -24,6 +30,7 @@ TTL_SECONDS="${SLAN_LINUX_DOCKER_TTL_SECONDS:-1800}"
 SERVICE_HOST="${SLAN_LINUX_SERVICE_HOST:-127.0.0.1:46392}"
 LOGIN_TIMEOUT_SECONDS="${SLAN_LINUX_RUNTIME_TIMEOUT_SECONDS:-90}"
 LINUX_NETWORK_MOCK="${SLAN_LINUX_NETWORK_MOCK:-1}"
+BIZ_READY_TIMEOUT_SECONDS="${SLAN_LINUX_DOCKER_BIZ_READY_TIMEOUT_SECONDS:-60}"
 
 BOOTSTRAP_ID=""
 BOOTSTRAP_KEY=""
@@ -45,13 +52,47 @@ json_value() {
   jq -r --arg key "$key" '.[$key] // empty'
 }
 
+curl_retry() {
+  local attempt
+  local delay=1
+  local max_attempts="${SLAN_LINUX_DOCKER_CURL_RETRY_ATTEMPTS:-8}"
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    if curl "$@"; then
+      return 0
+    fi
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      sleep "$delay"
+      if [[ "$delay" -lt 8 ]]; then
+        delay=$((delay * 2))
+      fi
+    fi
+  done
+  return 1
+}
+
+wait_for_biz_ready() {
+  log "wait for biz api ready"
+  local deadline=$((SECONDS + BIZ_READY_TIMEOUT_SECONDS))
+  while (( SECONDS < deadline )); do
+    if curl --silent --show-error --max-time 5 \
+      -o /dev/null \
+      -X POST "${BIZ_URL}/api/app/auth/register" \
+      -H 'Content-Type: application/json' \
+      -d '{"email":"biz-ready-probe@example.test","password":"Password123!"}'; then
+      return 0
+    fi
+    sleep 2
+  done
+  fail "biz api did not become ready within ${BIZ_READY_TIMEOUT_SECONDS}s: ${BIZ_URL}"
+}
+
 cleanup() {
   if [[ "$KEEP_CONTAINER" != "1" ]]; then
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
   if [[ -n "$BOOTSTRAP_ID" && -n "$USER_TOKEN" && -n "$USER_ID" ]]; then
     curl --silent --show-error --fail \
-      -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
+      -X POST "${WEB_API_BASE_URL}/api/web/device-bootstrap-keys/${BOOTSTRAP_ID}/revoke" \
       -H "Authorization: Bearer ${USER_TOKEN}" \
       -H 'Content-Type: application/json' \
       -d "{\"userId\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
@@ -90,13 +131,14 @@ need curl
 need jq
 need docker
 
+wait_for_biz_ready
 log "register/login Linux Docker runtime test user"
-curl --silent --show-error --fail \
+curl_retry --silent --show-error --fail \
   -X POST "${BIZ_URL}/api/app/auth/register" \
   -H 'Content-Type: application/json' \
   -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" >/dev/null 2>&1 || true
 
-auth_json="$(curl --silent --show-error --fail \
+auth_json="$(curl_retry --silent --show-error --fail \
   -X POST "${BIZ_URL}/api/app/auth/login" \
   -H 'Content-Type: application/json' \
   -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
@@ -106,15 +148,15 @@ USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.
 [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || fail "failed to login test user"
 
 log "resolve default network"
-networks_json="$(curl --silent --show-error --fail \
+networks_json="$(curl_retry --silent --show-error --fail \
   -H "Authorization: Bearer ${USER_TOKEN}" \
-  "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+  "${WEB_API_BASE_URL}/api/web/networks?userId=${USER_ID}")"
 NETWORK_ID="$(printf '%s' "$networks_json" | jq -r '.items[0].networkId // .[0].networkId // empty')"
 [[ -n "$NETWORK_ID" ]] || fail "failed to resolve test network"
 
 log "create bootstrap key"
-bootstrap_json="$(curl --silent --show-error --fail \
-  -X POST "${WEB_BASE_URL}/api/web/device-bootstrap-keys" \
+bootstrap_json="$(curl_retry --silent --show-error --fail \
+  -X POST "${WEB_API_BASE_URL}/api/web/device-bootstrap-keys" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"networkId\":\"${NETWORK_ID}\",\"deviceAlias\":\"${DEVICE_ALIAS}\",\"ttlSeconds\":${TTL_SECONDS}}")"
@@ -170,10 +212,10 @@ if [[ -n "$LOCAL_PACKAGE_PATH" ]]; then
   local_package_in_container="/workspace/slan/${LOCAL_PACKAGE_PATH#$ROOT_DIR/}"
   docker_exec "
 set -euo pipefail
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
+curl -fsSL '${CONTAINER_BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
 bash /tmp/slan-install.sh \
-  --server='${BIZ_URL}' \
-  --session-key='${BOOTSTRAP_KEY}' \
+  --server='${CONTAINER_BIZ_URL}' \
+  --installation-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
   --package-url='file://${local_package_in_container}'
 "
@@ -181,8 +223,8 @@ else
   log "download and execute install command inside container"
   docker_exec "
 set -euo pipefail
-curl -fsSL '${BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
-bash /tmp/slan-install.sh --server='${BIZ_URL}' --session-key='${BOOTSTRAP_KEY}' --tray=disabled
+curl -fsSL '${CONTAINER_BIZ_URL}/downloads/clients/install.sh' -o /tmp/slan-install.sh
+bash /tmp/slan-install.sh --server='${CONTAINER_BIZ_URL}' --installation-key='${BOOTSTRAP_KEY}' --tray=disabled
 "
 fi
 
@@ -193,7 +235,7 @@ set -euo pipefail
 export SLAN_CLIENT_CORE_SERVICE_HOST='${SERVICE_HOST}'
 export SLAN_LINUX_NETWORK_MOCK='${LINUX_NETWORK_MOCK}'
 exec /usr/bin/slan-client-v2-console \
-  --server-url '${BIZ_URL}' \
+  --server-url '${CONTAINER_BIZ_URL}' \
   --email '${EMAIL}' \
   --password '${PASSWORD}' \
   --device-name '${DEVICE_ALIAS}' \

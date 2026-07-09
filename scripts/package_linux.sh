@@ -127,7 +127,11 @@ else
 fi
 
 export SLAN_CLIENT_V2_ARCH="$ARCH"
-"$PACKAGE_SCRIPT" "${PACKAGE_ARGS[@]}"
+if [ "${#PACKAGE_ARGS[@]}" -gt 0 ]; then
+  "$PACKAGE_SCRIPT" "${PACKAGE_ARGS[@]}"
+else
+  "$PACKAGE_SCRIPT"
+fi
 
 TAR_PATH="$OUTPUT_DIR/SLAN-Client-V2-linux-$ARCH.tar.gz"
 DEB_PATH="$OUTPUT_DIR/${SLAN_LINUX_PACKAGE_NAME}_${VERSION}_${ARCH}.deb"

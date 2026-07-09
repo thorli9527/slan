@@ -16,6 +16,7 @@ use crate::{
     control_plane::MqttCredential,
     control_tasks::{ControlTask, ControlTaskStatus},
     relay_models::PersistedRelayCandidate,
+    session_store::app_data_dir,
     session_store::PersistedSession,
     time_utils::ticket_timing_with_window,
 };
@@ -486,7 +487,9 @@ fn direct_udp_endpoint_file_path() -> PathBuf {
     if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
         return PathBuf::from(dir).join("client-v2-direct-udp-endpoint.json");
     }
-    PathBuf::from("client-v2-direct-udp-endpoint.json")
+    app_data_dir()
+        .join("SLAN")
+        .join("client-v2-direct-udp-endpoint.json")
 }
 
 fn relay_path_health_messages(
@@ -820,7 +823,9 @@ fn relay_stats_file_path() -> PathBuf {
     if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
         return PathBuf::from(dir).join("client-v2-relay-stats.json");
     }
-    PathBuf::from("client-v2-relay-stats.json")
+    app_data_dir()
+        .join("SLAN")
+        .join("client-v2-relay-stats.json")
 }
 
 fn runtime_packet_loss_ppm(stats: &RelayRuntimeStats) -> Option<u32> {
@@ -1158,6 +1163,16 @@ mod tests {
 
     #[test]
     fn path_health_outbox_uses_control_up_envelope() {
+        let state_dir = std::env::temp_dir().join(format!(
+            "slan-control-transport-path-health-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&state_dir).unwrap();
+        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
+        std::env::set_var("SLAN_STATE_DIR", &state_dir);
         let mut session = PersistedSession::empty();
         session.active_network_id = Some("net-1".to_string());
         session.mqtt = Some(MqttCredential {
@@ -1225,6 +1240,11 @@ mod tests {
                 .and_then(Value::as_str),
             Some("udp")
         );
+        if let Some(value) = previous_state_dir {
+            std::env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            std::env::remove_var("SLAN_STATE_DIR");
+        }
     }
 
     #[test]

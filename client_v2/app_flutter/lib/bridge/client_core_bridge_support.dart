@@ -36,25 +36,6 @@ bool businessEventRequiresStateQuery(String? type,
       type == ClientBusinessEventType.networkSwitchFailed;
 }
 
-bool businessEventPayloadCarriesClientMessage(
-  String? type,
-  Map<String, Object?>? payload,
-) {
-  if (payload == null) {
-    return false;
-  }
-  if (type != ClientBusinessEventType.controlSyncChanged &&
-      type != ClientBusinessEventType.stateChanged) {
-    return false;
-  }
-  final messageId = stringField(payload, 'lastClientMessageId');
-  final fromDeviceId = stringField(payload, 'lastClientMessageFromDeviceId');
-  final body = stringField(payload, 'lastClientMessageBody');
-  return (messageId != null && messageId.isNotEmpty) ||
-      (fromDeviceId != null && fromDeviceId.isNotEmpty) ||
-      (body != null && body.isNotEmpty);
-}
-
 Map<String, Object?> businessEventReceivedLogFields(
   String? type, {
   Map<String, Object?>? businessDataMap,
@@ -63,55 +44,14 @@ Map<String, Object?> businessEventReceivedLogFields(
   return {
     'businessType': type,
     'businessDataMessageType': businessDataMap?['messageType'],
-    'businessDataLastClientMessageId': businessDataMap?['lastClientMessageId'],
-    'businessDataLastClientMessageFromDeviceId':
-        businessDataMap?['lastClientMessageFromDeviceId'],
-    'businessDataLastClientMessageBodyLength':
-        (businessDataMap?['lastClientMessageBody'] as String?)?.length,
-    'snapshotLastClientMessageId': snapshotMap?['lastClientMessageId'],
-    'snapshotLastClientMessageFromDeviceId':
-        snapshotMap?['lastClientMessageFromDeviceId'],
-    'snapshotLastClientMessageBodyLength':
-        (snapshotMap?['lastClientMessageBody'] as String?)?.length,
-  };
-}
-
-Map<String, Object?> businessEventPayloadClientMessagePreferredLogFields(
-  String? type, {
-  Map<String, Object?>? businessDataMap,
-  Map<String, Object?>? snapshotMap,
-}) {
-  return {
-    'businessType': type,
-    'businessDataLastClientMessageId': businessDataMap?['lastClientMessageId'],
-    'snapshotLastClientMessageId': snapshotMap?['lastClientMessageId'],
+    'businessDataEventType': businessDataMap?['eventType'],
+    'businessDataNetworkId': businessDataMap?['networkId'],
+    'snapshotSignedIn': snapshotMap?['signedIn'],
+    'snapshotNetworkEnabled': snapshotMap?['networkEnabled'],
   };
 }
 
 Map<String, Object?> businessEventStateQueriedLogFields(
-  String? type,
-  ClientViewState state,
-) {
-  return {
-    'businessType': type,
-    'queriedLastClientMessageId': state.lastClientMessageId,
-    'queriedLastClientMessageFromDeviceId': state.lastClientMessageFromDeviceId,
-    'queriedLastClientMessageBodyLength': state.lastClientMessageBody?.length,
-    'queriedNotice': state.notice,
-  };
-}
-
-bool shouldLogEmptyClientMessageQuery(String? type, ClientViewState state) {
-  if (type != ClientBusinessEventType.controlSyncChanged &&
-      type != ClientBusinessEventType.stateChanged) {
-    return false;
-  }
-  return state.lastClientMessageId == null &&
-      state.lastClientMessageFromDeviceId == null &&
-      state.lastClientMessageBody == null;
-}
-
-Map<String, Object?> businessEventEmptyClientMessageQueryLogFields(
   String? type,
   ClientViewState state,
 ) {
@@ -177,9 +117,6 @@ ClientViewState mergeBusinessState(
     notice: incoming.notice,
     error: incoming.error,
     errorSource: incoming.errorSource,
-    lastClientMessageId: incoming.lastClientMessageId,
-    lastClientMessageFromDeviceId: incoming.lastClientMessageFromDeviceId,
-    lastClientMessageBody: incoming.lastClientMessageBody,
     lastControlSyncMessageType: controlSyncMessageType,
     lastControlSyncReconfigureRequired: controlSyncReconfigureRequired,
     trafficTxBytes: incoming.trafficTxBytes,

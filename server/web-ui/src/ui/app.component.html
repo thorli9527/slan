@@ -18,11 +18,11 @@
       </label>
       <label>
         <span>邮箱</span>
-        <input [(ngModel)]="authEmail" type="email" />
+        <input [(ngModel)]="authEmail" (ngModelChange)="clearAuthMessageOnCredentialsChange()" type="email" />
       </label>
       <label>
         <span>密码</span>
-        <input [(ngModel)]="authPassword" type="password" />
+        <input [(ngModel)]="authPassword" (ngModelChange)="clearAuthMessageOnCredentialsChange()" type="password" />
       </label>
       <button class="primary block" type="button" (click)="enter(mode)">
         {{ mode === 'login' ? '登录并进入主页' : '注册并进入主页' }}

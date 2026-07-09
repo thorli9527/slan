@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:slan_client_v2/app/slan_client_v2_app.dart';
-import 'package:slan_client_v2/bridge/client_commands.dart';
 import 'package:slan_client_v2/bridge/client_core_bridge.dart';
 
 final _ipv4Pattern = RegExp(r'\b(?:\d{1,3}\.){3}\d{1,3}\b');
@@ -18,308 +17,344 @@ const _defaultTestControlBaseUrl = String.fromEnvironment(
   defaultValue: 'http://47.245.40.231:28080',
 );
 
+class _LocalApiClientMessageCheckConfig {
+  const _LocalApiClientMessageCheckConfig({
+    required this.sendTargetDeviceId,
+    required this.sendBody,
+    required this.expectFromDeviceId,
+    required this.expectBody,
+    required this.expectMessageTimeoutSeconds,
+    required this.expectMqttTimeoutSeconds,
+  });
+
+  final String sendTargetDeviceId;
+  final String sendBody;
+  final String expectFromDeviceId;
+  final String expectBody;
+  final int expectMessageTimeoutSeconds;
+  final int expectMqttTimeoutSeconds;
+
+  bool get hasSend =>
+      sendTargetDeviceId.trim().isNotEmpty || sendBody.trim().isNotEmpty;
+
+  bool get hasExpect =>
+      expectFromDeviceId.trim().isNotEmpty || expectBody.trim().isNotEmpty;
+
+  String get trimmedSendTargetDeviceId => sendTargetDeviceId.trim();
+  String get trimmedSendBody => sendBody.trim();
+  String get trimmedExpectFromDeviceId => expectFromDeviceId.trim();
+  String get trimmedExpectBody => expectBody.trim();
+
+  void validate() {
+    if (hasSend &&
+        (trimmedSendTargetDeviceId.isEmpty || trimmedSendBody.isEmpty)) {
+      fail(
+        'SLAN_TEST_SEND_TARGET_DEVICE_ID and SLAN_TEST_SEND_BODY must be set together',
+      );
+    }
+    if (hasExpect &&
+        (trimmedExpectFromDeviceId.isEmpty && trimmedExpectBody.isEmpty)) {
+      fail(
+        'SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID or '
+        'SLAN_TEST_EXPECT_MESSAGE_BODY must be set when message expectation is enabled',
+      );
+    }
+  }
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('mobile password login signs in through client-core-service',
       (tester) async {
-    const bizUrl = String.fromEnvironment(
-      'SLAN_TEST_BIZ_URL',
-      defaultValue: _defaultTestControlBaseUrl,
-    );
-    const checkSwitch = bool.fromEnvironment(
-      'SLAN_TEST_CHECK_SWITCH',
-      defaultValue: false,
-    );
-    const requireTunnelState = bool.fromEnvironment(
-      'SLAN_TEST_REQUIRE_TUNNEL_STATE',
-      defaultValue: false,
-    );
-    const reenableNetwork = bool.fromEnvironment(
-      'SLAN_TEST_REENABLE_NETWORK',
-      defaultValue: false,
-    );
-    const waitMqtt = bool.fromEnvironment(
-      'SLAN_TEST_WAIT_MQTT',
-      defaultValue: false,
-    );
-    const configuredEmail = String.fromEnvironment('SLAN_TEST_EMAIL');
-    const setAndroidVpnBypassOnly = bool.fromEnvironment(
-      'SLAN_TEST_ANDROID_SET_VPN_BYPASS_ONLY',
-      defaultValue: false,
-    );
-    const androidDebugEmulatorVpnBypass = bool.fromEnvironment(
-      'SLAN_TEST_ANDROID_DEBUG_EMULATOR_VPN_BYPASS',
-      defaultValue: false,
-    );
-    const password = String.fromEnvironment(
-      'SLAN_TEST_PASSWORD',
-      defaultValue: 'Password123!',
-    );
-    const registerUser = bool.fromEnvironment(
-      'SLAN_TEST_REGISTER_USER',
-      defaultValue: true,
-    );
-    const expectedDeviceId =
-        String.fromEnvironment('SLAN_TEST_EXPECT_DEVICE_ID');
-    const sendTargetDeviceId =
-        String.fromEnvironment('SLAN_TEST_SEND_TARGET_DEVICE_ID');
-    const sendBody = String.fromEnvironment('SLAN_TEST_SEND_BODY');
-    const expectMessageFromDeviceId =
-        String.fromEnvironment('SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID');
-    const expectMessageBody =
-        String.fromEnvironment('SLAN_TEST_EXPECT_MESSAGE_BODY');
-    const expectMessageTimeoutSeconds = int.fromEnvironment(
-      'SLAN_TEST_EXPECT_MESSAGE_TIMEOUT_SECONDS',
-      defaultValue: 45,
-    );
-    const expectMqttTimeoutSeconds = int.fromEnvironment(
-      'SLAN_TEST_EXPECT_MQTT_TIMEOUT_SECONDS',
-      defaultValue: 15,
-    );
-    const holdSeconds = int.fromEnvironment(
-      'SLAN_TEST_HOLD_SECONDS',
-      defaultValue: 0,
-    );
-    const expectNetworkModule = bool.fromEnvironment(
-      'SLAN_TEST_EXPECT_NETWORK_MODULE',
-      defaultValue: false,
-    );
-    const minNetworkModulePeers = int.fromEnvironment(
-      'SLAN_TEST_MIN_NETWORK_MODULE_PEERS',
-      defaultValue: 0,
-    );
-    const minNetworkModuleDnsRecords = int.fromEnvironment(
-      'SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS',
-      defaultValue: 0,
-    );
-    const minNetworkModuleSecurityRules = int.fromEnvironment(
-      'SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES',
-      defaultValue: 0,
-    );
-    const udpEchoPort = int.fromEnvironment(
-      'SLAN_TEST_UDP_ECHO_PORT',
-      defaultValue: 0,
-    );
-    const udpSendTarget = String.fromEnvironment('SLAN_TEST_UDP_SEND_TARGET');
-    const udpSendBody = String.fromEnvironment(
-      'SLAN_TEST_UDP_SEND_BODY',
-      defaultValue: 'slan-mobile-socket-smoke',
-    );
-    const postEnableWaitSeconds = int.fromEnvironment(
-      'SLAN_TEST_POST_ENABLE_WAIT_SECONDS',
-      defaultValue: 0,
-    );
-    const tcpEchoPort = int.fromEnvironment(
-      'SLAN_TEST_TCP_ECHO_PORT',
-      defaultValue: 0,
-    );
-    const tcpSendTarget = String.fromEnvironment('SLAN_TEST_TCP_SEND_TARGET');
-    const tcpSendBody = String.fromEnvironment(
-      'SLAN_TEST_TCP_SEND_BODY',
-      defaultValue: 'slan-mobile-tcp-smoke',
-    );
-    if (setAndroidVpnBypassOnly) {
-      await ClientCorePlugin().setAndroidDebugEmulatorVpnBypass(
-        androidDebugEmulatorVpnBypass,
+    final semantics = tester.ensureSemantics();
+    try {
+      const bizUrl = String.fromEnvironment(
+        'SLAN_TEST_BIZ_URL',
+        defaultValue: _defaultTestControlBaseUrl,
       );
-      return;
-    }
-
-    final email = configuredEmail.trim().isEmpty
-        ? 'mobile-login-${DateTime.now().microsecondsSinceEpoch}@example.test'
-        : configuredEmail.trim();
-    if (registerUser) {
-      await _registerTestUser(bizUrl, email, password);
-    }
-
-    final bridge = MethodChannelClientCoreBridge();
-    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
-    await tester.pumpAndSettle(const Duration(seconds: 1));
-    await bridge.updateServerBaseUrl(bizUrl);
-    await tester.pumpAndSettle(const Duration(seconds: 1));
-    debugPrint('SLAN_TEST_CONFIGURED_BIZ_URL=$bizUrl');
-    debugPrint(
-        'SLAN_TEST_BRIDGE_SERVER_BASE_URL=${await bridge.serverBaseUrl()}');
-    debugPrint(
-      'SLAN_TEST_PLUGIN_MOBILE_SERVER_BASE_URL='
-      '${await ClientCorePlugin().mobileServerBaseUrl()}',
-    );
-    if (tester.any(find.byKey(const Key('server-settings')))) {
-      await tester.setMobileServerUrl(bizUrl);
-    }
-
-    final signedInEmail = tester.signedInEmailText();
-    if (signedInEmail != null && signedInEmail != email) {
-      await tester.logoutSignedInUser();
-    }
-    if (tester.signedInEmailText() == null) {
-      await tester.enterText(find.byKey(const Key('login-email')), email);
-      await tester.enterText(
-        find.byKey(const Key('login-password')),
-        password,
+      const checkSwitch = bool.fromEnvironment(
+        'SLAN_TEST_CHECK_SWITCH',
+        defaultValue: false,
       );
-      final loginButton = find.byKey(const Key('login-submit'));
-      await tester.ensureVisible(loginButton);
-      await tester.tap(loginButton);
-      await tester.pump();
-
-      await tester.pumpUntilSignedInOrLoginFailed(
-        timeout: const Duration(seconds: 15),
+      const requireTunnelState = bool.fromEnvironment(
+        'SLAN_TEST_REQUIRE_TUNNEL_STATE',
+        defaultValue: false,
       );
-    }
-    expect(tester.signedInEmailText(), email);
-    expect(find.byKey(const Key('network-switch')), findsOneWidget);
-    expect(find.byKey(const Key('client-ping-target')), findsOneWidget);
-    expect(find.byKey(const Key('client-device-id-value')), findsOneWidget);
-    final currentDeviceId = tester
-        .widget<Text>(find.byKey(const Key('client-device-id-value')))
-        .data
-        ?.trim();
-    if (currentDeviceId == null || currentDeviceId.isEmpty) {
-      fail('signed in UI returned empty device id');
-    }
-    debugPrint('SLAN_TEST_CLIENT_DEVICE_ID=$currentDeviceId');
-    if (expectedDeviceId.trim().isNotEmpty) {
-      expect(find.text(expectedDeviceId.trim()), findsOneWidget);
-    }
-    if (waitMqtt) {
-      await tester.pumpUntilMqttConnected(
-        bridge,
-        timeout: const Duration(seconds: 45),
+      const reenableNetwork = bool.fromEnvironment(
+        'SLAN_TEST_REENABLE_NETWORK',
+        defaultValue: false,
       );
-    }
-
-    if (checkSwitch) {
-      if (reenableNetwork && tester.networkIpText() != null) {
-        await tester.tap(find.byKey(const Key('network-switch')));
-        await tester.pump();
-        await tester.pumpUntilNetworkDisabledOrFailed(
-          timeout: const Duration(seconds: 20),
-        );
-      }
-      await tester.ensureAndroidNetworkAuthorizationReady(
-        timeout: const Duration(seconds: 12),
+      const waitMqtt = bool.fromEnvironment(
+        'SLAN_TEST_WAIT_MQTT',
+        defaultValue: false,
       );
-      if (!await tester.isNetworkEffectivelyEnabled()) {
-        await tester.tap(find.byKey(const Key('network-switch')));
-      }
-      await tester.pump();
-      await tester.pumpUntilNetworkEnabledOrFailed(
-        timeout: const Duration(seconds: 45),
+      const configuredEmail = String.fromEnvironment('SLAN_TEST_EMAIL');
+      const setAndroidVpnBypassOnly = bool.fromEnvironment(
+        'SLAN_TEST_ANDROID_SET_VPN_BYPASS_ONLY',
+        defaultValue: false,
       );
-      expect(find.text('操作失败'), findsNothing);
-      final ipText = tester.networkIpText();
-      expect(ipText, isNotNull);
-      expect(ipText, isNotEmpty);
-      debugPrint('SLAN_TEST_NETWORK_IP=$ipText');
-      if (requireTunnelState) {
-        await tester.logPlatformTunnelState();
-      }
-      if (postEnableWaitSeconds > 0) {
-        await Future<void>.delayed(
-          Duration(seconds: postEnableWaitSeconds),
-        );
-      }
-    }
-
-    RawDatagramSocket? udpEchoSocket;
-    ServerSocket? tcpEchoServer;
-    if (udpEchoPort > 0) {
-      if (!checkSwitch) {
-        fail('SLAN_TEST_UDP_ECHO_PORT requires SLAN_TEST_CHECK_SWITCH=true');
-      }
-      udpEchoSocket = await tester.startUdpEchoServer(udpEchoPort);
-    }
-    if (tcpEchoPort > 0) {
-      if (!checkSwitch) {
-        fail('SLAN_TEST_TCP_ECHO_PORT requires SLAN_TEST_CHECK_SWITCH=true');
-      }
-      tcpEchoServer = await tester.startTcpEchoServer(tcpEchoPort);
-    }
-
-    if (udpSendTarget.trim().isNotEmpty) {
-      if (!checkSwitch) {
-        fail('SLAN_TEST_UDP_SEND_TARGET requires SLAN_TEST_CHECK_SWITCH=true');
-      }
-      await tester.pumpUntilSocketTargetsReady(
-        targets: [udpSendTarget.trim()],
-        timeout: const Duration(seconds: 45),
+      const androidDebugEmulatorVpnBypass = bool.fromEnvironment(
+        'SLAN_TEST_ANDROID_DEBUG_EMULATOR_VPN_BYPASS',
+        defaultValue: false,
       );
-      await tester.ensureRealPacketTunnelForSocketSend();
-      await tester.sendUdpEcho(
-        target: udpSendTarget.trim(),
-        body: udpSendBody.trim(),
-        timeout: const Duration(seconds: 12),
+      const password = String.fromEnvironment(
+        'SLAN_TEST_PASSWORD',
+        defaultValue: 'Password123!',
       );
-    }
-    if (tcpSendTarget.trim().isNotEmpty) {
-      if (!checkSwitch) {
-        fail('SLAN_TEST_TCP_SEND_TARGET requires SLAN_TEST_CHECK_SWITCH=true');
-      }
-      await tester.pumpUntilSocketTargetsReady(
-        targets: [tcpSendTarget.trim()],
-        timeout: const Duration(seconds: 45),
+      const registerUser = bool.fromEnvironment(
+        'SLAN_TEST_REGISTER_USER',
+        defaultValue: true,
       );
-      await tester.ensureRealPacketTunnelForSocketSend();
-      await tester.sendTcpEcho(
-        target: tcpSendTarget.trim(),
-        body: tcpSendBody.trim(),
-        timeout: const Duration(seconds: 12),
-      );
-    }
-
-    if (sendTargetDeviceId.trim().isNotEmpty || sendBody.trim().isNotEmpty) {
-      if (sendTargetDeviceId.trim().isEmpty || sendBody.trim().isEmpty) {
-        fail(
-            'SLAN_TEST_SEND_TARGET_DEVICE_ID and SLAN_TEST_SEND_BODY must be set together');
-      }
-      await bridge.dispatch(
-        ClientCommand(
-          ClientCommandType.sendClientMessage,
-          {
-            'targetDeviceId': sendTargetDeviceId.trim(),
-            'body': sendBody.trim(),
-          },
+      const expectedDeviceId =
+          String.fromEnvironment('SLAN_TEST_EXPECT_DEVICE_ID');
+      const messageCheck = _LocalApiClientMessageCheckConfig(
+        sendTargetDeviceId: String.fromEnvironment(
+          'SLAN_TEST_SEND_TARGET_DEVICE_ID',
+        ),
+        sendBody: String.fromEnvironment('SLAN_TEST_SEND_BODY'),
+        expectFromDeviceId: String.fromEnvironment(
+          'SLAN_TEST_EXPECT_MESSAGE_FROM_DEVICE_ID',
+        ),
+        expectBody: String.fromEnvironment('SLAN_TEST_EXPECT_MESSAGE_BODY'),
+        expectMessageTimeoutSeconds: int.fromEnvironment(
+          'SLAN_TEST_EXPECT_MESSAGE_TIMEOUT_SECONDS',
+          defaultValue: 45,
+        ),
+        expectMqttTimeoutSeconds: int.fromEnvironment(
+          'SLAN_TEST_EXPECT_MQTT_TIMEOUT_SECONDS',
+          defaultValue: 15,
         ),
       );
+      const holdSeconds = int.fromEnvironment(
+        'SLAN_TEST_HOLD_SECONDS',
+        defaultValue: 0,
+      );
+      const expectNetworkModule = bool.fromEnvironment(
+        'SLAN_TEST_EXPECT_NETWORK_MODULE',
+        defaultValue: false,
+      );
+      const minNetworkModulePeers = int.fromEnvironment(
+        'SLAN_TEST_MIN_NETWORK_MODULE_PEERS',
+        defaultValue: 0,
+      );
+      const minNetworkModuleDnsRecords = int.fromEnvironment(
+        'SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS',
+        defaultValue: 0,
+      );
+      const minNetworkModuleSecurityRules = int.fromEnvironment(
+        'SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES',
+        defaultValue: 0,
+      );
+      const udpEchoPort = int.fromEnvironment(
+        'SLAN_TEST_UDP_ECHO_PORT',
+        defaultValue: 0,
+      );
+      const udpSendTarget = String.fromEnvironment('SLAN_TEST_UDP_SEND_TARGET');
+      const udpSendBody = String.fromEnvironment(
+        'SLAN_TEST_UDP_SEND_BODY',
+        defaultValue: 'slan-mobile-socket-smoke',
+      );
+      const postEnableWaitSeconds = int.fromEnvironment(
+        'SLAN_TEST_POST_ENABLE_WAIT_SECONDS',
+        defaultValue: 0,
+      );
+      const tcpEchoPort = int.fromEnvironment(
+        'SLAN_TEST_TCP_ECHO_PORT',
+        defaultValue: 0,
+      );
+      const tcpSendTarget = String.fromEnvironment('SLAN_TEST_TCP_SEND_TARGET');
+      const tcpSendBody = String.fromEnvironment(
+        'SLAN_TEST_TCP_SEND_BODY',
+        defaultValue: 'slan-mobile-tcp-smoke',
+      );
+      const relayTransportAllowlist = String.fromEnvironment(
+        'SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST',
+      );
+      if (setAndroidVpnBypassOnly) {
+        await ClientCorePlugin().setAndroidDebugEmulatorVpnBypass(
+          androidDebugEmulatorVpnBypass,
+        );
+        return;
+      }
+      messageCheck.validate();
+
+      final email = configuredEmail.trim().isEmpty
+          ? 'mobile-login-${DateTime.now().microsecondsSinceEpoch}@example.test'
+          : configuredEmail.trim();
+      if (registerUser) {
+        await _registerTestUser(bizUrl, email, password);
+      }
+
+      final bridge = MethodChannelClientCoreBridge();
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle(const Duration(seconds: 1));
+      await bridge.updateServerBaseUrl(bizUrl);
+      await tester.pumpAndSettle(const Duration(seconds: 1));
+      debugPrint('SLAN_TEST_CONFIGURED_BIZ_URL=$bizUrl');
       debugPrint(
-        'SLAN_TEST_CLIENT_MESSAGE_SENT='
-        '${sendTargetDeviceId.trim()}:${sendBody.trim()}',
+          'SLAN_TEST_BRIDGE_SERVER_BASE_URL=${await bridge.serverBaseUrl()}');
+      debugPrint(
+        'SLAN_TEST_PLUGIN_MOBILE_SERVER_BASE_URL='
+        '${await ClientCorePlugin().mobileServerBaseUrl()}',
       );
-    }
+      await tester.configureRelayTransportAllowlist(relayTransportAllowlist);
+      if (tester.any(find.byKey(const Key('server-settings')))) {
+        await tester.setMobileServerUrl(bizUrl);
+      }
 
-    if (expectMessageFromDeviceId.trim().isNotEmpty ||
-        expectMessageBody.trim().isNotEmpty) {
-      await tester.pumpUntilMqttConnected(
-        bridge,
-        timeout: Duration(seconds: expectMqttTimeoutSeconds),
-      );
-      await tester.pumpUntilClientMessage(
-        bridge,
-        fromDeviceId: expectMessageFromDeviceId.trim(),
-        body: expectMessageBody.trim(),
-        timeout: Duration(seconds: expectMessageTimeoutSeconds),
-      );
-    }
+      final signedInEmail = tester.signedInEmailText();
+      if (signedInEmail != null && signedInEmail != email) {
+        await tester.logoutSignedInUser();
+      }
+      if (tester.signedInEmailText() == null) {
+        await tester.enterText(find.byKey(const Key('login-email')), email);
+        await tester.enterText(
+          find.byKey(const Key('login-password')),
+          password,
+        );
+        final loginButton = find.byKey(const Key('login-submit'));
+        await tester.ensureVisible(loginButton);
+        await tester.tap(loginButton);
+        await tester.pump();
 
-    if (expectNetworkModule) {
-      await tester.pumpUntilNetworkModule(
-        bridge,
-        minPeers: minNetworkModulePeers,
-        minDnsRecords: minNetworkModuleDnsRecords,
-        minSecurityRules: minNetworkModuleSecurityRules,
-        timeout: const Duration(seconds: 45),
+        await tester.pumpUntilSignedInOrLoginFailed(
+          timeout: const Duration(seconds: 15),
+        );
+      }
+      expect(tester.signedInEmailText(), email);
+      expect(find.byKey(const Key('network-switch')), findsOneWidget);
+      expect(find.byKey(const Key('client-device-id-value')), findsOneWidget);
+      final currentDeviceId = tester
+          .widget<Text>(find.byKey(const Key('client-device-id-value')))
+          .data
+          ?.trim();
+      if (currentDeviceId == null || currentDeviceId.isEmpty) {
+        fail('signed in UI returned empty device id');
+      }
+      debugPrint('SLAN_TEST_CLIENT_DEVICE_ID=$currentDeviceId');
+      if (expectedDeviceId.trim().isNotEmpty) {
+        expect(find.text(expectedDeviceId.trim()), findsOneWidget);
+      }
+      if (waitMqtt) {
+        await tester.pumpUntilMqttConnected(
+          bridge,
+          timeout: const Duration(seconds: 45),
+        );
+      }
+      await tester.logRelayCandidates(
+        prefix: 'SLAN_TEST_RELAY_CANDIDATES_AFTER_LOGIN',
       );
-    }
 
-    await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD');
-    if (holdSeconds > 0) {
-      await tester.pump(Duration(seconds: holdSeconds));
-      await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_AFTER_HOLD');
+      if (checkSwitch) {
+        if (reenableNetwork && tester.networkIpText() != null) {
+          await tester.tap(find.byKey(const Key('network-switch')));
+          await tester.pump();
+          await tester.pumpUntilNetworkDisabledOrFailed(
+            timeout: const Duration(seconds: 20),
+          );
+        }
+        await tester.ensureAndroidNetworkAuthorizationReady(
+          timeout: const Duration(seconds: 12),
+        );
+        if (!await tester.isNetworkEffectivelyEnabled()) {
+          await tester.tap(find.byKey(const Key('network-switch')));
+        }
+        await tester.pump();
+        await tester.pumpUntilNetworkEnabledOrFailed(
+          timeout: const Duration(seconds: 45),
+        );
+        expect(find.text('操作失败'), findsNothing);
+        final ipText = tester.networkIpText();
+        expect(ipText, isNotNull);
+        expect(ipText, isNotEmpty);
+        debugPrint('SLAN_TEST_NETWORK_IP=$ipText');
+        await tester.logRelayCandidates(
+          prefix: 'SLAN_TEST_RELAY_CANDIDATES_AFTER_ENABLE',
+        );
+        if (requireTunnelState) {
+          await tester.logPlatformTunnelState();
+        }
+        if (postEnableWaitSeconds > 0) {
+          await Future<void>.delayed(
+            Duration(seconds: postEnableWaitSeconds),
+          );
+        }
+      }
+
+      RawDatagramSocket? udpEchoSocket;
+      ServerSocket? tcpEchoServer;
+      if (udpEchoPort > 0) {
+        if (!checkSwitch) {
+          fail('SLAN_TEST_UDP_ECHO_PORT requires SLAN_TEST_CHECK_SWITCH=true');
+        }
+        udpEchoSocket = await tester.startUdpEchoServer(udpEchoPort);
+      }
+      if (tcpEchoPort > 0) {
+        if (!checkSwitch) {
+          fail('SLAN_TEST_TCP_ECHO_PORT requires SLAN_TEST_CHECK_SWITCH=true');
+        }
+        tcpEchoServer = await tester.startTcpEchoServer(tcpEchoPort);
+      }
+
+      if (udpSendTarget.trim().isNotEmpty) {
+        if (!checkSwitch) {
+          fail(
+              'SLAN_TEST_UDP_SEND_TARGET requires SLAN_TEST_CHECK_SWITCH=true');
+        }
+        await tester.pumpUntilSocketTargetsReady(
+          targets: [udpSendTarget.trim()],
+          timeout: const Duration(seconds: 45),
+        );
+        await tester.ensureRealPacketTunnelForSocketSend();
+        await tester.sendUdpEcho(
+          target: udpSendTarget.trim(),
+          body: udpSendBody.trim(),
+          timeout: const Duration(seconds: 12),
+        );
+      }
+      if (tcpSendTarget.trim().isNotEmpty) {
+        if (!checkSwitch) {
+          fail(
+              'SLAN_TEST_TCP_SEND_TARGET requires SLAN_TEST_CHECK_SWITCH=true');
+        }
+        await tester.pumpUntilSocketTargetsReady(
+          targets: [tcpSendTarget.trim()],
+          timeout: const Duration(seconds: 45),
+        );
+        await tester.ensureRealPacketTunnelForSocketSend();
+        await tester.sendTcpEcho(
+          target: tcpSendTarget.trim(),
+          body: tcpSendBody.trim(),
+          timeout: const Duration(seconds: 12),
+        );
+      }
+
+      await tester.performLocalApiClientMessageCheckIfRequested(
+        bridge,
+        messageCheck,
+      );
+
+      if (expectNetworkModule) {
+        await tester.pumpUntilNetworkModule(
+          bridge,
+          minPeers: minNetworkModulePeers,
+          minDnsRecords: minNetworkModuleDnsRecords,
+          minSecurityRules: minNetworkModuleSecurityRules,
+          timeout: const Duration(seconds: 45),
+        );
+      }
+
+      await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD');
+      if (holdSeconds > 0) {
+        await tester.pump(Duration(seconds: holdSeconds));
+        await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_AFTER_HOLD');
+      }
+      udpEchoSocket?.close();
+      await tcpEchoServer?.close();
+    } finally {
+      semantics.dispose();
     }
-    udpEchoSocket?.close();
-    await tcpEchoServer?.close();
   });
 }
 
@@ -387,8 +422,11 @@ Future<void> _registerTestUser(
     final deviceId = (result?['deviceId'] as String? ?? '').trim();
     final auth = result?['auth'];
     final session = auth is Map ? auth['session'] : null;
-    final nestedToken = session is Map ? '${session['token'] ?? ''}'.trim() : '';
-    if (accessToken.isNotEmpty || deviceId.isNotEmpty || nestedToken.isNotEmpty) {
+    final nestedToken =
+        session is Map ? '${session['token'] ?? ''}'.trim() : '';
+    if (accessToken.isNotEmpty ||
+        deviceId.isNotEmpty ||
+        nestedToken.isNotEmpty) {
       return;
     }
     debugPrint('SLAN_TEST_REGISTER_FALLBACK_LOCAL_API_EMPTY=$result');
@@ -424,6 +462,41 @@ Future<void> _registerTestUser(
 }
 
 extension on WidgetTester {
+  Future<void> configureRelayTransportAllowlist(String rawAllowlist) async {
+    final transports = rawAllowlist
+        .split(',')
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList();
+    if (transports.isEmpty) {
+      return;
+    }
+    final response =
+        await ClientCorePlugin().embeddedServiceRequest(jsonEncode({
+      'method': 'localSetRelayTransportAllowlist',
+      'args': {
+        'transports': transports,
+      },
+    }));
+    debugPrint(
+      'SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST_RESPONSE='
+      '${jsonEncode(response ?? <String, Object?>{})}',
+    );
+  }
+
+  Future<void> logRelayCandidates({
+    bool refresh = false,
+    String prefix = 'SLAN_TEST_RELAY_CANDIDATES',
+  }) async {
+    final response =
+        await ClientCorePlugin().embeddedServiceRequest(jsonEncode({
+      'method':
+          refresh ? 'localRefreshRelayCandidates' : 'localRelayCandidates',
+      'args': const <String, Object?>{},
+    }));
+    debugPrint('$prefix=${jsonEncode(response ?? <String, Object?>{})}');
+  }
+
   Future<void> ensureAndroidNetworkAuthorizationReady({
     required Duration timeout,
   }) async {
@@ -805,8 +878,53 @@ extension on WidgetTester {
     return hasReadyText && hasAddress;
   }
 
-  Future<void> pumpUntilClientMessage(
-    ClientCoreBridge bridge, {
+  Future<void> sendClientMessageViaLocalApi(
+    MethodChannelClientCoreBridge bridge, {
+    required String targetDeviceId,
+    required String body,
+  }) async {
+    await bridge.requestLocalApi(
+      'localSendClientMessage',
+      {
+        'targetDeviceId': targetDeviceId,
+        'body': body,
+      },
+    );
+  }
+
+  Future<void> performLocalApiClientMessageCheckIfRequested(
+    MethodChannelClientCoreBridge bridge,
+    _LocalApiClientMessageCheckConfig config,
+  ) async {
+    if (config.hasSend) {
+      await sendClientMessageViaLocalApi(
+        bridge,
+        targetDeviceId: config.trimmedSendTargetDeviceId,
+        body: config.trimmedSendBody,
+      );
+      debugPrint(
+        'SLAN_TEST_CLIENT_MESSAGE_SENT='
+        '${config.trimmedSendTargetDeviceId}:${config.trimmedSendBody}',
+      );
+    }
+
+    if (!config.hasExpect) {
+      return;
+    }
+    await pumpUntilMqttConnected(
+      bridge,
+      timeout: Duration(seconds: config.expectMqttTimeoutSeconds),
+    );
+    await pumpUntilLocalApiClientMessage(
+      bridge,
+      fromDeviceId: config.trimmedExpectFromDeviceId,
+      body: config.trimmedExpectBody,
+      timeout: Duration(seconds: config.expectMessageTimeoutSeconds),
+    );
+  }
+
+  Future<void> pumpUntilLocalApiClientMessage(
+    MethodChannelClientCoreBridge bridge, {
     required String fromDeviceId,
     required String body,
     required Duration timeout,
@@ -815,22 +933,24 @@ extension on WidgetTester {
     final expectedBody = body.trim();
     if (expectedFrom.isEmpty && expectedBody.isEmpty) {
       fail(
-        'pumpUntilClientMessage requires fromDeviceId or body to be set',
+        'pumpUntilLocalApiClientMessage requires fromDeviceId or body to be set',
       );
     }
     final end = DateTime.now().add(timeout);
+    Map<String, Object?>? lastState;
     while (DateTime.now().isBefore(end)) {
       await pump(const Duration(milliseconds: 500));
-      final state = bridge.state.value;
-      final fromMatches = expectedFrom.isEmpty ||
-          state.lastClientMessageFromDeviceId == expectedFrom;
-      final bodyMatches =
-          expectedBody.isEmpty || state.lastClientMessageBody == expectedBody;
+      final state = await bridge.requestLocalApi('localState');
+      lastState = state;
+      final actualFrom =
+          '${state?['lastClientMessageFromDeviceId'] ?? ''}'.trim();
+      final actualBody = '${state?['lastClientMessageBody'] ?? ''}'.trim();
+      final fromMatches = expectedFrom.isEmpty || actualFrom == expectedFrom;
+      final bodyMatches = expectedBody.isEmpty || actualBody == expectedBody;
       if (fromMatches && bodyMatches) {
         debugPrint(
           'SLAN_TEST_CLIENT_MESSAGE_OK='
-          '${state.lastClientMessageFromDeviceId}:'
-          '${state.lastClientMessageBody}',
+          '$actualFrom:$actualBody',
         );
         return;
       }
@@ -838,8 +958,7 @@ extension on WidgetTester {
     fail(
       'client message not received: expectedFrom="$expectedFrom" '
       'expectedBody="$expectedBody" '
-      'state="${bridge.state.value.lastClientMessageFromDeviceId}: '
-      '${bridge.state.value.lastClientMessageBody}"',
+      'state="$lastState"',
     );
   }
 
@@ -1363,6 +1482,13 @@ extension on WidgetTester {
         (state['relayFramesReceived'] as num?)?.toInt() ?? 0;
     final directUdpFramesReceived =
         (state['directUdpFramesReceived'] as num?)?.toInt() ?? 0;
+    final relayControlPacketsReceived =
+        (state['relayControlPacketsReceived'] as num?)?.toInt() ?? 0;
+    final lastRelayControlKind =
+        '${state['lastRelayControlKind'] ?? ''}'.trim();
+    final hasRelayTransportSignal = relayFramesReceived > 0 ||
+        relayControlPacketsReceived > 0 ||
+        lastRelayControlKind.isNotEmpty;
     if (readyPeers > 0) {
       return true;
     }
@@ -1376,17 +1502,17 @@ extension on WidgetTester {
     }
     if (relaySessions > 0 &&
         attachedRelaySessions > 0 &&
-        relayFramesReceived > 0 &&
+        hasRelayTransportSignal &&
         noPeerPackets <= 0) {
       return true;
     }
-    if (_isBenignAndroidNoPeerPacket(lastNoPeerPacket)) {
+    if (_isBenignAndroidNoPeerPacket(lastNoPeerPacket) &&
+        relaySessions > 0 &&
+        attachedRelaySessions > 0 &&
+        hasRelayTransportSignal) {
       return true;
     }
-    if (noPeerPackets > 0) {
-      return false;
-    }
-    return true;
+    return false;
   }
 
   bool _isBenignAndroidNoPeerPacket(String packetSummary) {

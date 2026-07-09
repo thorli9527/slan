@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/repository"
@@ -75,4 +76,21 @@ func findNetworkMembership(
 		}
 	}
 	return model.NetworkDevice{}, false, nil
+}
+
+func shouldPublishRuntimeMembershipPresenceEvent(previous model.NetworkDevice, current model.NetworkDevice) bool {
+	previous = normalizeNetworkMember(previous)
+	current = normalizeNetworkMember(current)
+	if networkMemberOnline(previous) != networkMemberOnline(current) {
+		return true
+	}
+	if previous.PresenceStatus != current.PresenceStatus {
+		return true
+	}
+	return strings.TrimSpace(previous.ActivePath) != strings.TrimSpace(current.ActivePath) ||
+		strings.TrimSpace(previous.NATType) != strings.TrimSpace(current.NATType) ||
+		strings.TrimSpace(previous.RelayTransport) != strings.TrimSpace(current.RelayTransport) ||
+		strings.TrimSpace(previous.RelayEndpoint) != strings.TrimSpace(current.RelayEndpoint) ||
+		strings.TrimSpace(previous.DerpNodeID) != strings.TrimSpace(current.DerpNodeID) ||
+		strings.TrimSpace(previous.PeerNodeID) != strings.TrimSpace(current.PeerNodeID)
 }

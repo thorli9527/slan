@@ -62,8 +62,12 @@ fn api_punch_connect_sessions(network_id: &str) -> String {
     )
 }
 
-fn api_network_snapshot(network_id: &str) -> String {
-    format!("/api/app/networks/{}/snapshot", network_id.trim())
+fn api_network_snapshot(network_id: &str, device_id: &str) -> String {
+    format!(
+        "/api/app/networks/{}/snapshot?deviceId={}",
+        network_id.trim(),
+        device_id.trim()
+    )
 }
 
 #[allow(dead_code)]
@@ -522,7 +526,6 @@ impl ControlPlaneClient {
     pub fn from_env() -> Self {
         Self {
             base_url: control_base_url_override()
-                .or_else(|| env::var("SLAN_CONTROL_BASE_URL").ok())
                 .unwrap_or_else(|| DEFAULT_CONTROL_BASE_URL.to_string()),
         }
     }
@@ -801,8 +804,9 @@ impl ControlPlaneClient {
         &self,
         access_token: &str,
         network_id: &str,
+        device_id: &str,
     ) -> Result<NetworkSnapshotResponse> {
-        let path = api_network_snapshot(network_id);
+        let path = api_network_snapshot(network_id, device_id);
         let response = self.request_json("GET", &path, access_token, None)?;
         serde_json::from_value(response).context("decode network snapshot")
     }

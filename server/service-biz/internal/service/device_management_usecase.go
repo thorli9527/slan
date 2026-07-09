@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
@@ -104,11 +105,12 @@ func (s DeviceRuntimeAccessService) updateDeviceRuntimeMembership(ctx context.Co
 	}
 	membership.NetworkID = networkID
 	membership.DeviceID = input.DeviceID
+	previous := membership
 	updated := applyUpdateDeviceRuntimeMembership(membership, input, now)
 	if err := s.Networks.SaveNetworkDevice(ctx, updated); err != nil {
 		return "", model.NetworkDevice{}, false, err
 	}
-	return networkID, updated, true, nil
+	return networkID, updated, shouldPublishRuntimeMembershipPresenceEvent(previous, updated), nil
 }
 
 func (s DeviceProvisioningService) DeleteDevice(ctx context.Context, input DeleteDeviceInput) error {
@@ -119,7 +121,35 @@ func (s DeviceProvisioningService) DeleteDevice(ctx context.Context, input Delet
 	if _, err := requireOwnedManagedDevice(ctx, s.Users, s.Devices, input.ActorUserID, input.DeviceID); err != nil {
 		return err
 	}
-	return s.Devices.DeleteDevice(ctx, input.DeviceID)
+	networksByDevice, err := s.Networks.ListNetworksByDevice(ctx, input.DeviceID)
+	if err != nil {
+		return err
+	}
+	for _, network := range networksByDevice {
+		if strings.TrimSpace(network.NetworkID) == "" {
+			continue
+		}
+		if err := s.Networks.DeleteNetworkDevice(ctx, network.NetworkID, input.DeviceID); err != nil {
+			return err
+		}
+	}
+	if err := s.Devices.DeleteDevice(ctx, input.DeviceID); err != nil {
+		return err
+	}
+	for _, network := range networksByDevice {
+		networkID := strings.TrimSpace(network.NetworkID)
+		if networkID == "" {
+			continue
+		}
+		version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, networkID, "device_deleted")
+		if err != nil {
+			return err
+		}
+		if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, nil, s.EventPublisher, s.Now, networkID, version.Version, version.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s DeviceProvisioningService) RenewDevice(ctx context.Context, deviceID string) (DeviceProfileView, error) {

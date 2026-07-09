@@ -8,6 +8,7 @@ while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
   ROOT_DIR=$(dirname "$ROOT_DIR")
 done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
+source "$ROOT_DIR/scripts/lib/flutter_mobile_login_test.sh"
 source "$ROOT_DIR/scripts/test_cleanup_lib.sh"
 
 APP_DIR="$ROOT_DIR/client_v2/app_flutter"
@@ -272,6 +273,10 @@ flutter_retryable_startup_failure() {
 
 start_android_flutter_peer_echo() {
   local attempt status
+  local android_common_dart_defines=()
+  mapfile -t android_common_dart_defines < <(
+    slan_mobile_login_common_defines "$ANDROID_BIZ_URL" "$EMAIL" "$PASSWORD" false true
+  )
   for attempt in 1 2; do
     : >"$ANDROID_LOG"
     (
@@ -279,12 +284,7 @@ start_android_flutter_peer_echo() {
       flutter test integration_test/mobile_login_test.dart \
         -d "$ANDROID_DEVICE" \
         --timeout "${SLAN_ANDROID_FLUTTER_TEST_TIMEOUT:-12m}" \
-        --dart-define="SLAN_TEST_BIZ_URL=$ANDROID_BIZ_URL" \
-        --dart-define="SLAN_EMBEDDED_CONTROL_BASE_URL=$ANDROID_BIZ_URL" \
-        --dart-define="SLAN_TEST_EMAIL=$EMAIL" \
-        --dart-define="SLAN_TEST_PASSWORD=$PASSWORD" \
-        --dart-define="SLAN_TEST_REGISTER_USER=false" \
-        --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+        "${android_common_dart_defines[@]}" \
         --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
         --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=$ANDROID_POST_ENABLE_WAIT_SECONDS" \
         --dart-define="SLAN_TEST_HOLD_SECONDS=$ANDROID_HOLD_SECONDS" \

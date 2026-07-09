@@ -17,7 +17,7 @@ use crate::{
         NetworkEventMemberRemovedPayload, NetworkEventPresencePayload, NetworkEventType,
         NetworkSnapshotPayload,
     },
-    session_store::PersistedSession,
+    session_store::{session_device_api_token, PersistedSession},
 };
 
 static NETWORK_MODULE: OnceLock<Mutex<ClientNetworkModule>> = OnceLock::new();
@@ -96,7 +96,7 @@ pub(crate) fn refresh_network_module_from_session(
     else {
         return Ok(Vec::new());
     };
-    let configs = client.device_network_configs(&session.access_token, device_id)?;
+    let configs = client.device_network_configs(session_device_api_token(session), device_id)?;
     replace_network_module_configs(configs.clone());
     Ok(configs)
 }
