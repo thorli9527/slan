@@ -28,6 +28,10 @@ and operator habits.
   desktop UI and browser UI smoke tests.
 - `shared/`
   reusable Go helpers and shell helpers used by the higher-level tests.
+  Includes `desktop_local_dns_smoke.sh`, which verifies the desktop
+  `client-core-service` local DNS listener, localhost system-DNS handoff, and a
+  real UDP DNS lookup against the managed record set after the desktop client is
+  signed in and the network is enabled.
 - `guard/`
   API-surface and boundary guard checks for client architecture constraints.
   Includes `audit_ui_template_methods.sh`, which scans `vm.*` calls used by
@@ -67,6 +71,11 @@ routine regression runs.
   `bash scripts/tests/linux/linux_docker_mac_integration.sh`
   Coverage: Linux Docker install/bootstrap, login, MQTT, DNS, ACL,
   bidirectional client message, Mac -> Linux UDP/TCP, Linux -> Mac UDP/TCP.
+- Mixed remote Linux + Mac real packet chain:
+  `bash scripts/mac_remote_linux_fast_check.sh`
+  Coverage: remote Linux install/bootstrap, Mac service login, remote Linux
+  login, DNS, ACL, bidirectional client message, Mac -> Linux UDP/TCP,
+  Linux -> Mac UDP/TCP.
 - Remote x86 Linux package + install preflight:
   `bash scripts/tests/linux/linux_remote_install_check.sh`
   Coverage: remote `amd64` package presence/build, remote install script,
@@ -79,6 +88,8 @@ routine regression runs.
 - Aggregate current feasible matrix:
   `bash scripts/current_client_regression.sh`
   Coverage: current machine-feasible cross-client regression set.
+  Optional remote mixed chain:
+  `SLAN_RUN_CURRENT_MAC_REMOTE_LINUX=1 bash scripts/current_client_regression.sh`
 
 ### Stable Defaults
 
@@ -95,6 +106,9 @@ routine regression runs.
   `scripts/tests/linux/linux_remote_install_check.sh` first by default. Set
   `SLAN_RUN_REMOTE_LINUX_INSTALL_CHECK=0` only when you intentionally want to
   skip the install preflight.
+- Mac + remote Linux uses the same remote install preflight by default and can
+  preserve the failure workspace with `SLAN_KEEP_MAC_REMOTE_LINUX_WORK_DIR=1`
+  for postmortem inspection.
 
 ### Known Boundaries
 

@@ -23,6 +23,7 @@ RUN_LINUX_DUAL_DOCKER="${SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER:-1}"
 RUN_MAC_ANDROID="${SLAN_RUN_CURRENT_MAC_ANDROID:-1}"
 RUN_MAC_ANDROID_ACTIVE="${SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE:-1}"
 RUN_MAC_IOS_FAST="${SLAN_RUN_CURRENT_MAC_IOS_FAST:-1}"
+RUN_MAC_REMOTE_LINUX="${SLAN_RUN_CURRENT_MAC_REMOTE_LINUX:-0}"
 RUN_IOS_ANDROID_PARTIAL="${SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL:-1}"
 RUN_TRI_MESSAGE="${SLAN_RUN_CURRENT_TRI_MESSAGE:-1}"
 RUN_IOS_TRI_MATRIX="${SLAN_RUN_CURRENT_IOS_TRI_MATRIX:-1}"
@@ -36,8 +37,9 @@ Usage:
 Purpose:
   Run the client regression set that is currently feasible on this machine:
   dual Android, dual iOS simulator, dual Docker Linux, Mac + Android,
-  Mac + iOS fast, iOS + Android partial readiness, tri-device
-  control-message smoke, and the local iOS tri-client protocol matrix.
+  Mac + iOS fast, optional Mac + remote Linux, iOS + Android partial
+  readiness, tri-device control-message smoke, and the local iOS
+  tri-client protocol matrix.
 
 This wrapper intentionally excludes checks that require a real iOS device.
 
@@ -49,6 +51,7 @@ Optional environment variables:
   SLAN_RUN_CURRENT_MAC_ANDROID=1|0
   SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE=1|0
   SLAN_RUN_CURRENT_MAC_IOS_FAST=1|0
+  SLAN_RUN_CURRENT_MAC_REMOTE_LINUX=1|0
   SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL=1|0
   SLAN_RUN_CURRENT_TRI_MESSAGE=1|0
   SLAN_RUN_CURRENT_IOS_TRI_MATRIX=1|0
@@ -60,6 +63,9 @@ Optional environment variables:
   SLAN_SUDO_PASSWORD
   SLAN_ANDROID_FLUTTER_DEVICE
   SLAN_IOS_FLUTTER_DEVICE
+  SLAN_REMOTE_LINUX_HOST
+  SLAN_REMOTE_LINUX_USER
+  SLAN_REMOTE_LINUX_PASSWORD or SLAN_REMOTE_LINUX_SSH_KEY
 
 Examples:
   bash scripts/tests/matrix/current_client_regression.sh
@@ -67,6 +73,7 @@ Examples:
   SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER=0 bash scripts/tests/matrix/current_client_regression.sh
   SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL=0 bash scripts/tests/matrix/current_client_regression.sh
   SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE=0 bash scripts/tests/matrix/current_client_regression.sh
+  SLAN_RUN_CURRENT_MAC_REMOTE_LINUX=1 bash scripts/tests/matrix/current_client_regression.sh
 EOF
   exit 0
 fi
@@ -125,7 +132,7 @@ mkdir -p "$LOG_DIR"
 
 ln -sfn "$RESULT_DIR" "$LATEST_LINK"
 
-log "current regression toggles: android-dual=${RUN_ANDROID_DUAL} ios-dual=${RUN_IOS_DUAL} linux-dual-docker=${RUN_LINUX_DUAL_DOCKER} linux-dual-docker-packet=${RUN_LINUX_DUAL_DOCKER_PACKET} mac-android=${RUN_MAC_ANDROID} mac-android-active=${RUN_MAC_ANDROID_ACTIVE} mac-ios-fast=${RUN_MAC_IOS_FAST} ios-android-partial=${RUN_IOS_ANDROID_PARTIAL} tri-message=${RUN_TRI_MESSAGE} ios-tri-matrix=${RUN_IOS_TRI_MATRIX}"
+log "current regression toggles: android-dual=${RUN_ANDROID_DUAL} ios-dual=${RUN_IOS_DUAL} linux-dual-docker=${RUN_LINUX_DUAL_DOCKER} linux-dual-docker-packet=${RUN_LINUX_DUAL_DOCKER_PACKET} mac-android=${RUN_MAC_ANDROID} mac-android-active=${RUN_MAC_ANDROID_ACTIVE} mac-ios-fast=${RUN_MAC_IOS_FAST} mac-remote-linux=${RUN_MAC_REMOTE_LINUX} ios-android-partial=${RUN_IOS_ANDROID_PARTIAL} tri-message=${RUN_TRI_MESSAGE} ios-tri-matrix=${RUN_IOS_TRI_MATRIX}"
 log "control url: ${SLAN_BIZ_URL}"
 log "result dir: ${RESULT_DIR}"
 log "latest link: ${LATEST_LINK}"
@@ -162,6 +169,10 @@ fi
 
 if [[ "$RUN_MAC_IOS_FAST" == "1" ]]; then
   run_step "Run Mac + iOS fast chain" mac_ios_fast run_in_root bash scripts/tests/matrix/mac_ios_fast_check.sh
+fi
+
+if [[ "$RUN_MAC_REMOTE_LINUX" == "1" ]]; then
+  run_step "Run Mac + remote Linux fast chain" mac_remote_linux run_in_root bash scripts/mac_remote_linux_fast_check.sh
 fi
 
 if [[ "$RUN_IOS_ANDROID_PARTIAL" == "1" ]]; then
