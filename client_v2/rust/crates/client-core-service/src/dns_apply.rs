@@ -108,6 +108,7 @@ fn build_dns_record_view(item: &crate::network_event::NetworkEventDnsRecordView)
         name,
         fqdn,
         record_type,
+        value: item.value.clone(),
         target_device_id: item.target_device_id.clone(),
         target_ip: item.target_ip.clone(),
         cname: item.cname.clone(),
@@ -123,5 +124,50 @@ fn normalized_ttl(ttl: i32) -> u32 {
         ttl as u32
     } else {
         60
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_dns_runtime_event;
+    use crate::{
+        dns_runtime_state::{dns_runtime_state, CachedDnsAnswer, CachedDnsResultKind},
+        network_event::{NetworkEventAclChangedPayload, NetworkEventEnvelope, NetworkEventType},
+    };
+
+    #[test]
+    fn acl_change_clears_dns_cache() {
+        let _lock = crate::test_env_lock();
+        {
+            let mut dns = dns_runtime_state()
+                .lock()
+                .expect("dns runtime mutex poisoned");
+            dns.cache_by_question.clear();
+            dns.put_cached_answer(CachedDnsAnswer {
+                qname: "peer.example".to_string(),
+                qtype: "A".to_string(),
+                result_kind: CachedDnsResultKind::AnswerA,
+                ttl: Some(60),
+                answers: vec!["10.0.0.9".to_string()],
+                expires_at_ms: u64::MAX,
+            });
+        }
+
+        apply_dns_runtime_event(&NetworkEventEnvelope {
+            r#type: "network_event".to_string(),
+            network_id: "net-1".to_string(),
+            version: 2,
+            event_id: "evt-acl-clear-1".to_string(),
+            event_type: NetworkEventType::AclChanged,
+            occurred_at: 2,
+            payload: serde_json::to_value(NetworkEventAclChangedPayload { rules: vec![] })
+                .expect("encode acl payload"),
+        })
+        .expect("apply acl changed event");
+
+        let dns = dns_runtime_state()
+            .lock()
+            .expect("dns runtime mutex poisoned");
+        assert!(dns.cache_by_question.is_empty());
     }
 }

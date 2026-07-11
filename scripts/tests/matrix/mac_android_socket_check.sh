@@ -64,6 +64,7 @@ CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}
 REGISTER_USER="${SLAN_TEST_REGISTER_USER:-true}"
 TIMEOUT="${SLAN_MAC_ANDROID_SOCKET_TIMEOUT:-90s}"
 MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+RUN_MAC_LOCAL_DNS_SMOKE="${SLAN_RUN_MAC_LOCAL_DNS_SMOKE:-1}"
 UDP_PORT="${SLAN_TEST_UDP_ECHO_PORT:-19090}"
 TCP_PORT="${SLAN_TEST_TCP_ECHO_PORT:-19091}"
 UDP_BODY="${SLAN_TEST_UDP_SEND_BODY:-hello-android-to-mac-udp-$(date +%s%N)}"
@@ -558,6 +559,15 @@ if ! MAC_OUTPUT="$(
   exit 1
 fi
 echo "$MAC_OUTPUT"
+if [[ "$RUN_MAC_LOCAL_DNS_SMOKE" == "1" ]]; then
+  echo "+ run mac local dns smoke on $MAC_SERVICE_HOST"
+  (
+    cd "$ROOT_DIR"
+    SLAN_CLIENT_CORE_SERVICE_HOST="${MAC_SERVICE_HOST%:*}" \
+      SLAN_CLIENT_CORE_SERVICE_PORT="${MAC_SERVICE_HOST##*:}" \
+      bash scripts/tests/shared/desktop_local_dns_smoke.sh
+  )
+fi
 MAC_DEVICE_ID="$(echo "$MAC_OUTPUT" | sed -n 's/.*deviceId=\([^ ]*\).*/\1/p' | tail -n 1)"
 MAC_IP="$(echo "$MAC_OUTPUT" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
 if [[ -z "$MAC_DEVICE_ID" ]]; then

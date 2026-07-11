@@ -87,9 +87,35 @@ routine regression runs.
   Linux -> Android UDP/TCP.
 - Aggregate current feasible matrix:
   `bash scripts/current_client_regression.sh`
-  Coverage: current machine-feasible cross-client regression set.
+  Coverage: current machine-feasible cross-client regression set, including a
+  split dual-iOS quick/message steps, optional Android phase2-only message
+  step, a split Linux Docker control-plane vs UDP/TCP packet path, and a
+  standalone macOS local DNS smoke step.
   Optional remote mixed chain:
   `SLAN_RUN_CURRENT_MAC_REMOTE_LINUX=1 bash scripts/current_client_regression.sh`
+  Optional local DNS toggle:
+  `SLAN_RUN_CURRENT_MAC_LOCAL_DNS_SMOKE=0 bash scripts/current_client_regression.sh`
+  Optional Android phase2-only toggle:
+  `SLAN_RUN_CURRENT_ANDROID_DUAL_PHASE2_ONLY=1`
+  Optional iOS split toggles:
+  `SLAN_RUN_CURRENT_IOS_DUAL_QUICK=0`
+  `SLAN_RUN_CURRENT_IOS_DUAL_FLUTTER_MESSAGE=0`
+- Aggregate quick high-signal matrix:
+  `bash scripts/current_client_quick_regression.sh`
+  Coverage: dual Android phase2 bidirectional message, dual iOS DNS/ACL/MQTT
+  quick, dual Docker Linux DNS/ACL/message control-plane, and standalone macOS
+  local DNS smoke.
+- Show latest quick high-signal summary:
+  `bash scripts/current_client_quick_summary.sh`
+  Prints the latest `summary.txt` from the quick regression result root.
+- Show latest full current regression summary:
+  `bash scripts/current_client_regression_summary.sh`
+  Prints the latest `summary.txt` from the full current regression result root.
+- Show latest failed log paths:
+  `bash scripts/current_client_failed_logs.sh`
+  Defaults to `full`; pass `quick` to inspect the latest quick regression.
+  Add `--tail N` to print the last `N` lines from each failed log.
+  Prints a friendly message when the latest run has no failures.
 
 ### Stable Defaults
 

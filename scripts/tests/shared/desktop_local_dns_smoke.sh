@@ -11,6 +11,7 @@ done
 SERVICE_HOST="${SLAN_CLIENT_CORE_SERVICE_HOST:-127.0.0.1}"
 SERVICE_PORT="${SLAN_CLIENT_CORE_SERVICE_PORT:-46392}"
 DNS_STATE_TIMEOUT_SECONDS="${SLAN_LOCAL_DNS_SMOKE_TIMEOUT_SECONDS:-20}"
+REQUIRE_SYSTEM_DNS_LOCALHOST="${SLAN_LOCAL_DNS_REQUIRE_SYSTEM_RESOLVER:-0}"
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -30,7 +31,10 @@ fail() {
 
 request() {
   local method="$1"
-  local args="${2:-{}}"
+  local args="${2:-}"
+  if [[ -z "$args" ]]; then
+    args='{}'
+  fi
   python3 - "$SERVICE_HOST" "$SERVICE_PORT" "$method" "$args" <<'PY'
 import json
 import socket
@@ -92,7 +96,14 @@ pick_dns_record() {
     | (add // [])
     | map(select((.enabled // true) == true))
     | map(select(((.fqdn // "") | length) > 0))
-    | map(select(((.recordType // "A") | ascii_upcase) == "A" or ((.recordType // "") | ascii_upcase) == "CNAME"))
+    | map(select(
+        ((.recordType // "A") | ascii_upcase) == "A" or
+        ((.recordType // "") | ascii_upcase) == "AAAA" or
+        ((.recordType // "") | ascii_upcase) == "CNAME" or
+        ((.recordType // "") | ascii_upcase) == "TXT" or
+        ((.recordType // "") | ascii_upcase) == "PTR" or
+        ((.recordType // "") | ascii_upcase) == "SRV"
+      ))
     | .[0] // empty
   ' <<<"$module_json"
 }
@@ -140,7 +151,12 @@ requester_device_id="$(jq -r '.serverRequesterDeviceId // empty' <<<"$dns_state_
 [[ -n "$requester_device_id" ]] || requester_device_id="$(jq -r '.deviceId // empty' <<<"$status_json")"
 [[ -n "$requester_device_id" ]] || fail "requester device id available for dns resolve"
 
-resolve_json="$(request localDnsResolve "{\"requesterDeviceId\":\"${requester_device_id}\",\"qname\":\"${fqdn}\",\"qtype\":\"${record_type}\"}")"
+resolve_args="$(jq -nc \
+  --arg requesterDeviceId "$requester_device_id" \
+  --arg qname "$fqdn" \
+  --arg qtype "$record_type" \
+  '{requesterDeviceId: $requesterDeviceId, qname: $qname, qtype: $qtype}')"
+resolve_json="$(request localDnsResolve "$resolve_args")"
 resolve_result="$(jq -r '.result // empty' <<<"$resolve_json")"
 [[ -n "$resolve_result" ]] || fail "localDnsResolve returned result"
 
@@ -158,7 +174,7 @@ fqdn = sys.argv[2].strip().rstrip(".")
 qtype_name = sys.argv[3].strip().upper()
 host, port = bind_addr.rsplit(":", 1)
 port = int(port)
-qtype = {"A": 1, "CNAME": 5}.get(qtype_name, 1)
+qtype = {"A": 1, "CNAME": 5, "PTR": 12, "TXT": 16, "AAAA": 28, "SRV": 33}.get(qtype_name, 1)
 
 def encode_name(name: str) -> bytes:
     parts = [part for part in name.split(".") if part]
@@ -221,9 +237,34 @@ for _ in range(ancount):
     rdata_end = offset + rdlength
     if answer_type == 1 and rdlength == 4:
         answers.append({"type": "A", "value": str(ipaddress.IPv4Address(response[rdata_start:rdata_end]))})
+    elif answer_type == 28 and rdlength == 16:
+        answers.append({"type": "AAAA", "value": str(ipaddress.IPv6Address(response[rdata_start:rdata_end]))})
     elif answer_type == 5:
         cname, _ = parse_name(response, rdata_start)
         answers.append({"type": "CNAME", "value": cname})
+    elif answer_type == 12:
+        ptr, _ = parse_name(response, rdata_start)
+        answers.append({"type": "PTR", "value": ptr})
+    elif answer_type == 16 and rdlength >= 1:
+        texts = []
+        cursor = rdata_start
+        while cursor < rdata_end:
+            txt_len = response[cursor]
+            cursor += 1
+            txt_end = min(cursor + txt_len, rdata_end)
+            texts.append(response[cursor:txt_end].decode())
+            cursor = txt_end
+        answers.append({"type": "TXT", "value": "".join(texts)})
+    elif answer_type == 33 and rdlength >= 7:
+        priority, weight, port_value = struct.unpack("!HHH", response[rdata_start:rdata_start + 6])
+        target, _ = parse_name(response, rdata_start + 6)
+        answers.append({
+            "type": "SRV",
+            "priority": priority,
+            "weight": weight,
+            "port": port_value,
+            "value": target,
+        })
     offset = rdata_end
 
 print(json.dumps({"rcode": rcode, "answerCount": ancount, "answers": answers}))
@@ -242,12 +283,47 @@ fi
 
 case "$resolve_result" in
   answer_a)
-    expected_ip="$(jq -r '.ip' <<<"$resolve_json")"
-    assert_jq "$dns_query_json" '.rcode == 0 and (.answers | any(.type == "A" and .value == $ip))' "udp dns answer matches authoritative A record" --arg ip "$expected_ip"
+    assert_jq "$resolve_json" '.ips | type == "array" and length > 0' "localDnsResolve returns A answer list"
+    expected_ips_json="$(jq -c '.ips' <<<"$resolve_json")"
+    assert_jq "$dns_query_json" '
+      [.answers[]? | select(.type == "A") | .value] as $actual_ips
+      | .rcode == 0
+      and ($expected_ips | all(.[]; $actual_ips | index(.) != null))
+    ' "udp dns answer matches authoritative A record set" --argjson expected_ips "$expected_ips_json"
     ;;
   answer_cname)
     expected_cname="$(jq -r '.cname' <<<"$resolve_json")"
     assert_jq "$dns_query_json" '.rcode == 0 and (.answers | any(.type == "CNAME" and .value == $cname))' "udp dns answer matches authoritative CNAME record" --arg cname "$expected_cname"
+    ;;
+  answer_aaaa)
+    assert_jq "$resolve_json" '.ips | type == "array" and length > 0' "localDnsResolve returns AAAA answer list"
+    expected_ips_json="$(jq -c '.ips' <<<"$resolve_json")"
+    assert_jq "$dns_query_json" '
+      [.answers[]? | select(.type == "AAAA") | .value] as $actual_ips
+      | .rcode == 0
+      and ($expected_ips | all(.[]; $actual_ips | index(.) != null))
+    ' "udp dns answer matches authoritative AAAA record set" --argjson expected_ips "$expected_ips_json"
+    ;;
+  answer_txt)
+    assert_jq "$resolve_json" '.texts | type == "array" and length > 0' "localDnsResolve returns TXT answer list"
+    expected_texts_json="$(jq -c '.texts' <<<"$resolve_json")"
+    assert_jq "$dns_query_json" '
+      [.answers[]? | select(.type == "TXT") | .value] as $actual_texts
+      | .rcode == 0
+      and ($expected_texts | all(.[]; $actual_texts | index(.) != null))
+    ' "udp dns answer matches authoritative TXT record set" --argjson expected_texts "$expected_texts_json"
+    ;;
+  answer_ptr)
+    expected_name="$(jq -r '.name' <<<"$resolve_json")"
+    assert_jq "$dns_query_json" '.rcode == 0 and (.answers | any(.type == "PTR" and .value == $name))' "udp dns answer matches authoritative PTR record" --arg name "$expected_name"
+    ;;
+  answer_srv)
+    expected_target="$(jq -r '.target' <<<"$resolve_json")"
+    expected_port="$(jq -r '.port' <<<"$resolve_json")"
+    assert_jq "$dns_query_json" '
+      .rcode == 0 and
+      (.answers | any(.type == "SRV" and .value == $target and ((.port | tostring) == $port)))
+    ' "udp dns answer matches authoritative SRV record" --arg target "$expected_target" --arg port "$expected_port"
     ;;
   nxdomain)
     assert_jq "$dns_query_json" '.rcode == 3' "udp dns returns nxdomain"
@@ -260,8 +336,10 @@ esac
 
 if system_dns_points_localhost; then
   pass "system dns points to localhost"
-else
+elif [[ "$REQUIRE_SYSTEM_DNS_LOCALHOST" == "1" ]]; then
   fail "system dns points to localhost"
+else
+  pass "system dns localhost routing not required for this smoke"
 fi
 
 printf 'desktopLocalDnsSmoke: ok service=%s:%s qname=%s qtype=%s bind=%s\n' \

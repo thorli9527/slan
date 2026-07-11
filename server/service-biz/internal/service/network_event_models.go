@@ -73,6 +73,7 @@ type NetworkEventDNSRecordView struct {
 	Name           string `json:"name"`
 	FQDN           string `json:"fqdn"`
 	RecordType     string `json:"recordType"`
+	Value          string `json:"value"`
 	TargetDeviceID string `json:"targetDeviceId"`
 	TargetIP       string `json:"targetIp"`
 	CNAME          string `json:"cname"`
@@ -90,9 +91,11 @@ type NetworkEventACLRuleView struct {
 	Protocol        string   `json:"protocol"`
 	PortRanges      []string `json:"portRanges"`
 	SourceType      string   `json:"sourceType"`
+	SourceValues    []string `json:"sourceValues"`
 	SourceDeviceIDs []string `json:"sourceDeviceIds"`
 	SourceGroupIDs  []string `json:"sourceGroupIds"`
 	TargetType      string   `json:"targetType"`
+	TargetValues    []string `json:"targetValues"`
 	TargetDeviceIDs []string `json:"targetDeviceIds"`
 	TargetGroupIDs  []string `json:"targetGroupIds"`
 	Enabled         bool     `json:"enabled"`

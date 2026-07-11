@@ -18,11 +18,15 @@ SUMMARY_FILE="$RESULT_DIR/summary.txt"
 LOG_DIR="$RESULT_DIR/logs"
 
 RUN_ANDROID_DUAL="${SLAN_RUN_CURRENT_ANDROID_DUAL:-1}"
+RUN_ANDROID_DUAL_PHASE2_ONLY="${SLAN_RUN_CURRENT_ANDROID_DUAL_PHASE2_ONLY:-0}"
 RUN_IOS_DUAL="${SLAN_RUN_CURRENT_IOS_DUAL:-1}"
+RUN_IOS_DUAL_QUICK="${SLAN_RUN_CURRENT_IOS_DUAL_QUICK:-1}"
+RUN_IOS_DUAL_FLUTTER_MESSAGE="${SLAN_RUN_CURRENT_IOS_DUAL_FLUTTER_MESSAGE:-1}"
 RUN_LINUX_DUAL_DOCKER="${SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER:-1}"
 RUN_MAC_ANDROID="${SLAN_RUN_CURRENT_MAC_ANDROID:-1}"
 RUN_MAC_ANDROID_ACTIVE="${SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE:-1}"
 RUN_MAC_IOS_FAST="${SLAN_RUN_CURRENT_MAC_IOS_FAST:-1}"
+RUN_MAC_LOCAL_DNS_SMOKE="${SLAN_RUN_CURRENT_MAC_LOCAL_DNS_SMOKE:-1}"
 RUN_MAC_REMOTE_LINUX="${SLAN_RUN_CURRENT_MAC_REMOTE_LINUX:-0}"
 RUN_IOS_ANDROID_PARTIAL="${SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL:-1}"
 RUN_TRI_MESSAGE="${SLAN_RUN_CURRENT_TRI_MESSAGE:-1}"
@@ -45,12 +49,16 @@ This wrapper intentionally excludes checks that require a real iOS device.
 
 Optional environment variables:
   SLAN_RUN_CURRENT_ANDROID_DUAL=1|0
+  SLAN_RUN_CURRENT_ANDROID_DUAL_PHASE2_ONLY=1|0
   SLAN_RUN_CURRENT_IOS_DUAL=1|0
+  SLAN_RUN_CURRENT_IOS_DUAL_QUICK=1|0
+  SLAN_RUN_CURRENT_IOS_DUAL_FLUTTER_MESSAGE=1|0
   SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER=1|0
   SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER_PACKET=1|0
   SLAN_RUN_CURRENT_MAC_ANDROID=1|0
   SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE=1|0
   SLAN_RUN_CURRENT_MAC_IOS_FAST=1|0
+  SLAN_RUN_CURRENT_MAC_LOCAL_DNS_SMOKE=1|0
   SLAN_RUN_CURRENT_MAC_REMOTE_LINUX=1|0
   SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL=1|0
   SLAN_RUN_CURRENT_TRI_MESSAGE=1|0
@@ -132,10 +140,17 @@ mkdir -p "$LOG_DIR"
 
 ln -sfn "$RESULT_DIR" "$LATEST_LINK"
 
-log "current regression toggles: android-dual=${RUN_ANDROID_DUAL} ios-dual=${RUN_IOS_DUAL} linux-dual-docker=${RUN_LINUX_DUAL_DOCKER} linux-dual-docker-packet=${RUN_LINUX_DUAL_DOCKER_PACKET} mac-android=${RUN_MAC_ANDROID} mac-android-active=${RUN_MAC_ANDROID_ACTIVE} mac-ios-fast=${RUN_MAC_IOS_FAST} mac-remote-linux=${RUN_MAC_REMOTE_LINUX} ios-android-partial=${RUN_IOS_ANDROID_PARTIAL} tri-message=${RUN_TRI_MESSAGE} ios-tri-matrix=${RUN_IOS_TRI_MATRIX}"
+log "current regression toggles: android-dual=${RUN_ANDROID_DUAL} android-dual-phase2-only=${RUN_ANDROID_DUAL_PHASE2_ONLY} ios-dual=${RUN_IOS_DUAL} ios-dual-quick=${RUN_IOS_DUAL_QUICK} ios-dual-message=${RUN_IOS_DUAL_FLUTTER_MESSAGE} linux-dual-docker=${RUN_LINUX_DUAL_DOCKER} linux-dual-docker-packet=${RUN_LINUX_DUAL_DOCKER_PACKET} mac-android=${RUN_MAC_ANDROID} mac-android-active=${RUN_MAC_ANDROID_ACTIVE} mac-ios-fast=${RUN_MAC_IOS_FAST} mac-remote-linux=${RUN_MAC_REMOTE_LINUX} ios-android-partial=${RUN_IOS_ANDROID_PARTIAL} tri-message=${RUN_TRI_MESSAGE} ios-tri-matrix=${RUN_IOS_TRI_MATRIX}"
 log "control url: ${SLAN_BIZ_URL}"
 log "result dir: ${RESULT_DIR}"
 log "latest link: ${LATEST_LINK}"
+log "run mac local dns smoke: ${RUN_MAC_LOCAL_DNS_SMOKE}"
+
+if [[ "$RUN_ANDROID_DUAL_PHASE2_ONLY" == "1" ]]; then
+  run_step "Run dual Android phase2 bidirectional message chain" android_dual_phase2 run_in_root env \
+    SLAN_ANDROID_DUAL_PHASE34_RELAY_TRANSPORT_ALLOWLIST="${SLAN_ANDROID_DUAL_PHASE34_RELAY_TRANSPORT_ALLOWLIST:-udp}" \
+    bash scripts/tests/android/android_dual_fast_check.sh --phase2-only
+fi
 
 if [[ "$RUN_ANDROID_DUAL" == "1" ]]; then
   run_step "Run dual Android full chain" android_dual run_in_root env \
@@ -144,19 +159,30 @@ if [[ "$RUN_ANDROID_DUAL" == "1" ]]; then
 fi
 
 if [[ "$RUN_IOS_DUAL" == "1" ]]; then
-  run_step "Run dual iOS simulator chain" ios_dual run_in_root bash scripts/tests/ios/ios_dual_fast_check.sh --full-stable
+  if [[ "$RUN_IOS_DUAL_QUICK" == "1" ]]; then
+    run_step "Run dual iOS simulator DNS/ACL/MQTT quick chain" ios_dual_quick run_in_root env \
+      SLAN_RUN_IOS_START_SIMS=1 \
+      bash scripts/tests/ios/ios_dual_fast_check.sh --quick-only
+  fi
+  if [[ "$RUN_IOS_DUAL_FLUTTER_MESSAGE" == "1" ]]; then
+    run_step "Run dual iOS simulator Flutter message chain" ios_dual_message run_in_root env \
+      SLAN_RUN_IOS_START_SIMS=0 \
+      bash scripts/tests/ios/ios_dual_fast_check.sh --message-only
+  fi
 fi
 
 if [[ "$RUN_LINUX_DUAL_DOCKER" == "1" ]]; then
-  run_step "Run dual Docker Linux control-plane chain" linux_dual_docker run_in_root bash scripts/tests/linux/linux_dual_docker_integration.sh
+  run_step "Run dual Docker Linux DNS/ACL/message control-plane chain" linux_dual_docker run_in_root bash scripts/tests/linux/linux_dual_docker_integration.sh
 fi
 
 if [[ "$RUN_LINUX_DUAL_DOCKER_PACKET" == "1" ]]; then
-  run_step "Run dual Docker Linux packet chain" linux_dual_docker_packet run_in_root bash scripts/tests/linux/linux_dual_docker_packet_smoke.sh
+  run_step "Run dual Docker Linux UDP/TCP packet chain" linux_dual_docker_packet run_in_root bash scripts/tests/linux/linux_dual_docker_packet_smoke.sh
 fi
 
 if [[ "$RUN_MAC_ANDROID" == "1" ]]; then
-  run_step "Run Mac + Android passive-direction chain" mac_android_passive run_in_root bash scripts/tests/matrix/mac_android_fast_check.sh
+  run_step "Run Mac + Android passive-direction chain" mac_android_passive run_in_root env \
+    SLAN_RUN_MAC_LOCAL_DNS_SMOKE=0 \
+    bash scripts/tests/matrix/mac_android_fast_check.sh
 fi
 
 if [[ "$RUN_MAC_ANDROID_ACTIVE" == "1" ]]; then
@@ -168,7 +194,15 @@ if [[ "$RUN_MAC_ANDROID_ACTIVE" == "1" ]]; then
 fi
 
 if [[ "$RUN_MAC_IOS_FAST" == "1" ]]; then
-  run_step "Run Mac + iOS fast chain" mac_ios_fast run_in_root bash scripts/tests/matrix/mac_ios_fast_check.sh
+  run_step "Run Mac + iOS fast chain" mac_ios_fast run_in_root env \
+    SLAN_RUN_MAC_LOCAL_DNS_SMOKE=0 \
+    bash scripts/tests/matrix/mac_ios_fast_check.sh
+fi
+
+if [[ "$RUN_MAC_LOCAL_DNS_SMOKE" == "1" ]]; then
+  run_step "Run macOS local DNS smoke" mac_local_dns run_in_root env \
+    SLAN_RUN_LOCAL_DNS_SMOKE=1 \
+    bash scripts/tests/macos/macos_service_smoke.sh
 fi
 
 if [[ "$RUN_MAC_REMOTE_LINUX" == "1" ]]; then

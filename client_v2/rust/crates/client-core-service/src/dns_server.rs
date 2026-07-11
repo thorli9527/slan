@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, SocketAddr, UdpSocket},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     sync::{Mutex, OnceLock},
     time::Duration,
 };
@@ -21,6 +21,10 @@ const DNS_FLAG_RECURSION_AVAILABLE: u16 = 0x0080;
 const DNS_RCODE_NXDOMAIN: u16 = 0x0003;
 const DNS_TYPE_A: u16 = 1;
 const DNS_TYPE_CNAME: u16 = 5;
+const DNS_TYPE_PTR: u16 = 12;
+const DNS_TYPE_TXT: u16 = 16;
+const DNS_TYPE_AAAA: u16 = 28;
+const DNS_TYPE_SRV: u16 = 33;
 const DNS_CLASS_IN: u16 = 1;
 const DNS_HEADER_SIZE: usize = 12;
 const DNS_POINTER_MASK: u8 = 0xC0;
@@ -102,7 +106,7 @@ impl DnsServer {
     pub(crate) fn serve_once(
         &self,
         runtime: &RuntimeNetworkState,
-        dns: &RuntimeDnsState,
+        dns: &mut RuntimeDnsState,
         requester_device_id: &str,
     ) -> Result<bool> {
         let mut buffer = [0_u8; MAX_DNS_PACKET_SIZE];
@@ -134,7 +138,7 @@ impl DnsServer {
     pub(crate) fn handle_query_packet(
         &self,
         runtime: &RuntimeNetworkState,
-        dns: &RuntimeDnsState,
+        dns: &mut RuntimeDnsState,
         requester_device_id: &str,
         raw_query: &[u8],
     ) -> Result<Vec<u8>> {
@@ -148,11 +152,23 @@ impl DnsServer {
             qtype_name,
         );
         match result {
-            ResolveAuthoritativeResult::AnswerA { ttl, ip } => {
-                build_a_response(raw_query, &question, ttl, &ip)
+            ResolveAuthoritativeResult::AnswerA { ttl, ips } => {
+                build_a_response(raw_query, &question, ttl, &ips)
+            }
+            ResolveAuthoritativeResult::AnswerAaaa { ttl, ips } => {
+                build_aaaa_response(raw_query, &question, ttl, &ips)
             }
             ResolveAuthoritativeResult::AnswerCname { ttl, cname } => {
                 build_cname_response(raw_query, &question, ttl, &cname)
+            }
+            ResolveAuthoritativeResult::AnswerPtr { ttl, name } => {
+                build_ptr_response(raw_query, &question, ttl, &name)
+            }
+            ResolveAuthoritativeResult::AnswerTxt { ttl, texts } => {
+                build_txt_response(raw_query, &question, ttl, &texts)
+            }
+            ResolveAuthoritativeResult::AnswerSrv { ttl, port, target } => {
+                build_srv_response(raw_query, &question, ttl, port, &target)
             }
             ResolveAuthoritativeResult::NxDomain => {
                 build_error_response(raw_query, &question, DNS_RCODE_NXDOMAIN)
@@ -241,6 +257,10 @@ fn dns_type_name(qtype: u16) -> &'static str {
     match qtype {
         DNS_TYPE_A => "A",
         DNS_TYPE_CNAME => "CNAME",
+        DNS_TYPE_PTR => "PTR",
+        DNS_TYPE_TXT => "TXT",
+        DNS_TYPE_AAAA => "AAAA",
+        DNS_TYPE_SRV => "SRV",
         _ => "UNKNOWN",
     }
 }
@@ -249,22 +269,28 @@ fn build_a_response(
     raw_query: &[u8],
     question: &ParsedQuestion,
     ttl: u32,
-    ip: &str,
+    ips: &[String],
 ) -> Result<Vec<u8>> {
     if question.qclass != DNS_CLASS_IN {
         return build_empty_response(raw_query, question);
     }
-    let ip: Ipv4Addr = ip
-        .trim()
-        .parse()
-        .with_context(|| format!("parse dns A record ip {ip}"))?;
-    let mut response = build_response_prefix(raw_query, question, 1, 0)?;
-    push_name_pointer(&mut response);
-    response.extend_from_slice(&DNS_TYPE_A.to_be_bytes());
-    response.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
-    response.extend_from_slice(&ttl.to_be_bytes());
-    response.extend_from_slice(&(4_u16).to_be_bytes());
-    response.extend_from_slice(&ip.octets());
+    let parsed = ips
+        .iter()
+        .map(|ip| {
+            ip.trim()
+                .parse::<Ipv4Addr>()
+                .with_context(|| format!("parse dns A record ip {ip}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut response = build_response_prefix(raw_query, question, parsed.len() as u16, 0)?;
+    for ip in parsed {
+        push_name_pointer(&mut response);
+        response.extend_from_slice(&DNS_TYPE_A.to_be_bytes());
+        response.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
+        response.extend_from_slice(&ttl.to_be_bytes());
+        response.extend_from_slice(&(4_u16).to_be_bytes());
+        response.extend_from_slice(&ip.octets());
+    }
     Ok(response)
 }
 
@@ -286,6 +312,113 @@ fn build_cname_response(
     response.extend_from_slice(&ttl.to_be_bytes());
     response.extend_from_slice(&(encoded_cname.len() as u16).to_be_bytes());
     response.extend_from_slice(&encoded_cname);
+    Ok(response)
+}
+
+fn build_ptr_response(
+    raw_query: &[u8],
+    question: &ParsedQuestion,
+    ttl: u32,
+    name: &str,
+) -> Result<Vec<u8>> {
+    if question.qclass != DNS_CLASS_IN {
+        return build_empty_response(raw_query, question);
+    }
+    let mut encoded_name = Vec::new();
+    encode_name(name, &mut encoded_name)?;
+    let mut response = build_response_prefix(raw_query, question, 1, 0)?;
+    push_name_pointer(&mut response);
+    response.extend_from_slice(&DNS_TYPE_PTR.to_be_bytes());
+    response.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
+    response.extend_from_slice(&ttl.to_be_bytes());
+    response.extend_from_slice(&(encoded_name.len() as u16).to_be_bytes());
+    response.extend_from_slice(&encoded_name);
+    Ok(response)
+}
+
+fn build_txt_response(
+    raw_query: &[u8],
+    question: &ParsedQuestion,
+    ttl: u32,
+    texts: &[String],
+) -> Result<Vec<u8>> {
+    if question.qclass != DNS_CLASS_IN {
+        return build_empty_response(raw_query, question);
+    }
+    let encoded = texts
+        .iter()
+        .map(|text| {
+            let text_bytes = text.as_bytes();
+            if text_bytes.len() > 255 {
+                return Err(anyhow!("dns TXT record exceeds 255 bytes"));
+            }
+            Ok(text_bytes.to_vec())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut response = build_response_prefix(raw_query, question, encoded.len() as u16, 0)?;
+    for text_bytes in encoded {
+        push_name_pointer(&mut response);
+        response.extend_from_slice(&DNS_TYPE_TXT.to_be_bytes());
+        response.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
+        response.extend_from_slice(&ttl.to_be_bytes());
+        response.extend_from_slice(&((text_bytes.len() + 1) as u16).to_be_bytes());
+        response.push(text_bytes.len() as u8);
+        response.extend_from_slice(&text_bytes);
+    }
+    Ok(response)
+}
+
+fn build_aaaa_response(
+    raw_query: &[u8],
+    question: &ParsedQuestion,
+    ttl: u32,
+    ips: &[String],
+) -> Result<Vec<u8>> {
+    if question.qclass != DNS_CLASS_IN {
+        return build_empty_response(raw_query, question);
+    }
+    let parsed = ips
+        .iter()
+        .map(|ip| {
+            ip.trim()
+                .parse::<Ipv6Addr>()
+                .with_context(|| format!("parse dns AAAA record ip {ip}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut response = build_response_prefix(raw_query, question, parsed.len() as u16, 0)?;
+    for ip in parsed {
+        push_name_pointer(&mut response);
+        response.extend_from_slice(&DNS_TYPE_AAAA.to_be_bytes());
+        response.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
+        response.extend_from_slice(&ttl.to_be_bytes());
+        response.extend_from_slice(&(16_u16).to_be_bytes());
+        response.extend_from_slice(&ip.octets());
+    }
+    Ok(response)
+}
+
+fn build_srv_response(
+    raw_query: &[u8],
+    question: &ParsedQuestion,
+    ttl: u32,
+    port: u16,
+    target: &str,
+) -> Result<Vec<u8>> {
+    if question.qclass != DNS_CLASS_IN {
+        return build_empty_response(raw_query, question);
+    }
+    let mut encoded_target = Vec::new();
+    encode_name(target, &mut encoded_target)?;
+    let mut response = build_response_prefix(raw_query, question, 1, 0)?;
+    push_name_pointer(&mut response);
+    response.extend_from_slice(&DNS_TYPE_SRV.to_be_bytes());
+    response.extend_from_slice(&DNS_CLASS_IN.to_be_bytes());
+    response.extend_from_slice(&ttl.to_be_bytes());
+    response.extend_from_slice(&((6 + encoded_target.len()) as u16).to_be_bytes());
+    response.extend_from_slice(&0_u16.to_be_bytes());
+    response.extend_from_slice(&0_u16.to_be_bytes());
+    response.extend_from_slice(&port.to_be_bytes());
+    response.extend_from_slice(&encoded_target);
     Ok(response)
 }
 
@@ -354,7 +487,7 @@ fn encode_name(name: &str, output: &mut Vec<u8>) -> Result<()> {
 mod tests {
     use super::{
         build_cname_response, build_error_response, parse_question, DNS_RCODE_NXDOMAIN, DNS_TYPE_A,
-        DNS_TYPE_CNAME,
+        DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_PTR, DNS_TYPE_SRV, DNS_TYPE_TXT,
     };
 
     #[test]
@@ -369,8 +502,8 @@ mod tests {
     fn builds_a_like_dns_response() {
         let packet = build_question_packet("home.slan.test", DNS_TYPE_A);
         let question = parse_question(&packet).expect("parse dns question");
-        let response =
-            super::build_a_response(&packet, &question, 30, "10.0.0.2").expect("build response");
+        let response = super::build_a_response(&packet, &question, 30, &["10.0.0.2".to_string()])
+            .expect("build response");
         assert_eq!(u16::from_be_bytes([response[6], response[7]]), 1);
         assert_eq!(parse_response_answer_ipv4(&response), "10.0.0.2");
     }
@@ -383,6 +516,50 @@ mod tests {
             .expect("build cname response");
         assert_eq!(u16::from_be_bytes([response[6], response[7]]), 1);
         assert_eq!(parse_response_cname(&response), "node.slan.test");
+    }
+
+    #[test]
+    fn builds_aaaa_response() {
+        let packet = build_question_packet("v6.slan.test", DNS_TYPE_AAAA);
+        let question = parse_question(&packet).expect("parse dns question");
+        let response =
+            super::build_aaaa_response(&packet, &question, 60, &["2001:db8::20".to_string()])
+                .expect("build aaaa response");
+        assert_eq!(u16::from_be_bytes([response[6], response[7]]), 1);
+        assert_eq!(parse_response_answer_ipv6(&response), "2001:db8::20");
+    }
+
+    #[test]
+    fn builds_ptr_response() {
+        let packet = build_question_packet("4.3.2.1.in-addr.arpa", DNS_TYPE_PTR);
+        let question = parse_question(&packet).expect("parse dns question");
+        let response = super::build_ptr_response(&packet, &question, 60, "peer.slan.test")
+            .expect("build ptr response");
+        assert_eq!(u16::from_be_bytes([response[6], response[7]]), 1);
+        assert_eq!(parse_response_cname(&response), "peer.slan.test");
+    }
+
+    #[test]
+    fn builds_txt_response() {
+        let packet = build_question_packet("txt.slan.test", DNS_TYPE_TXT);
+        let question = parse_question(&packet).expect("parse dns question");
+        let response =
+            super::build_txt_response(&packet, &question, 60, &["hello-slan".to_string()])
+                .expect("build txt");
+        assert_eq!(u16::from_be_bytes([response[6], response[7]]), 1);
+        assert_eq!(parse_response_txt(&response), "hello-slan");
+    }
+
+    #[test]
+    fn builds_srv_response() {
+        let packet = build_question_packet("_sip._tcp.slan.test", DNS_TYPE_SRV);
+        let question = parse_question(&packet).expect("parse dns question");
+        let response = super::build_srv_response(&packet, &question, 60, 5060, "peer.slan.test")
+            .expect("build srv response");
+        assert_eq!(u16::from_be_bytes([response[6], response[7]]), 1);
+        let (port, target) = parse_response_srv(&response);
+        assert_eq!(port, 5060);
+        assert_eq!(target, "peer.slan.test");
     }
 
     #[test]
@@ -420,5 +597,38 @@ mod tests {
         let end = cursor + rdlength;
         assert!(end <= packet.len());
         super::parse_name(packet, &mut cursor).expect("parse cname")
+    }
+
+    fn parse_response_answer_ipv6(packet: &[u8]) -> String {
+        let (rdlength_offset, rdata_offset) = answer_offsets(packet);
+        let length = u16::from_be_bytes([packet[rdlength_offset], packet[rdlength_offset + 1]]);
+        assert_eq!(length, 16);
+        let octets: [u8; 16] = packet[rdata_offset..rdata_offset + 16]
+            .try_into()
+            .expect("ipv6 response octets");
+        std::net::Ipv6Addr::from(octets).to_string()
+    }
+
+    fn parse_response_txt(packet: &[u8]) -> String {
+        let (_, rdata_offset) = answer_offsets(packet);
+        let txt_len = usize::from(packet[rdata_offset]);
+        let start = rdata_offset + 1;
+        let end = start + txt_len;
+        String::from_utf8(packet[start..end].to_vec()).expect("decode txt")
+    }
+
+    fn parse_response_srv(packet: &[u8]) -> (u16, String) {
+        let (_, data_offset) = answer_offsets(packet);
+        let port = u16::from_be_bytes([packet[data_offset + 4], packet[data_offset + 5]]);
+        let mut cursor = data_offset + 6;
+        let target = super::parse_name(packet, &mut cursor).expect("parse srv target");
+        (port, target)
+    }
+
+    fn answer_offsets(packet: &[u8]) -> (usize, usize) {
+        let question = parse_question(packet).expect("parse dns response question");
+        let rdlength_offset = question.question_end + 10;
+        let rdata_offset = question.question_end + 12;
+        (rdlength_offset, rdata_offset)
     }
 }

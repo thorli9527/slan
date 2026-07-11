@@ -364,6 +364,7 @@ fn refresh_network_snapshot_cache(session: &PersistedSession) -> Result<(), Stri
         let mut state = network_event_runtime_state()
             .lock()
             .map_err(|_| "network event runtime mutex poisoned".to_string())?;
+        state.bind_persisted_session(session);
         apply_network_event(&mut state, snapshot_envelope)
             .map_err(|err| format!("apply startup network snapshot: {err:#}"))?
     };
@@ -631,6 +632,7 @@ fn try_ingest_network_event(
         let mut state = network_event_runtime_state()
             .lock()
             .map_err(|_| "network event runtime mutex poisoned".to_string())?;
+        state.bind_persisted_session(&session);
         apply_network_event(&mut state, envelope.clone())
             .map_err(|err| format!("apply network event: {err:#}"))?
     };
@@ -690,6 +692,7 @@ fn try_ingest_network_event(
             let mut state = network_event_runtime_state()
                 .lock()
                 .map_err(|_| "network event runtime mutex poisoned".to_string())?;
+            state.bind_persisted_session(&session);
             apply_network_event(&mut state, snapshot_envelope.clone())
                 .map_err(|err| format!("apply network snapshot: {err:#}"))?
         };

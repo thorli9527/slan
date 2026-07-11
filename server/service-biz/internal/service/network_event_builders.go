@@ -124,7 +124,7 @@ func networkEventDNSRecords(
 		switch strings.ToUpper(strings.TrimSpace(record.Type)) {
 		case "CNAME":
 			cname = value
-		default:
+		case "A", "AAAA":
 			if strings.Contains(value, ".") {
 				targetIP = value
 			} else {
@@ -138,6 +138,7 @@ func networkEventDNSRecords(
 			Name:           record.Name,
 			FQDN:           networkEventRecordFQDN(record.Name, zoneNamesByID[record.ZoneID]),
 			RecordType:     strings.TrimSpace(record.Type),
+			Value:          value,
 			TargetDeviceID: targetDeviceID,
 			TargetIP:       targetIP,
 			CNAME:          cname,
@@ -198,6 +199,7 @@ func networkEventACLRules(rules []model.SecurityRule) []NetworkEventACLRuleView 
 	for _, rule := range rules {
 		sourceType := strings.TrimSpace(rule.PeerType)
 		sourceValue := strings.TrimSpace(rule.PeerValue)
+		sourceValues := []string{}
 		sourceDeviceIDs := []string{}
 		sourceGroupIDs := []string{}
 		switch sourceType {
@@ -209,6 +211,10 @@ func networkEventACLRules(rules []model.SecurityRule) []NetworkEventACLRuleView 
 			if sourceValue != "" {
 				sourceGroupIDs = []string{sourceValue}
 			}
+		default:
+			if sourceValue != "" {
+				sourceValues = []string{sourceValue}
+			}
 		}
 		out = append(out, NetworkEventACLRuleView{
 			RuleID:          rule.RuleID,
@@ -218,9 +224,11 @@ func networkEventACLRules(rules []model.SecurityRule) []NetworkEventACLRuleView 
 			Protocol:        rule.Protocol,
 			PortRanges:      []string{rule.PortRange},
 			SourceType:      sourceType,
+			SourceValues:    sourceValues,
 			SourceDeviceIDs: sourceDeviceIDs,
 			SourceGroupIDs:  sourceGroupIDs,
 			TargetType:      "current_device",
+			TargetValues:    []string{},
 			TargetDeviceIDs: []string{},
 			TargetGroupIDs:  []string{},
 			Enabled:         rule.Enabled,

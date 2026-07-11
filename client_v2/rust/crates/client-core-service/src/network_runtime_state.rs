@@ -4,6 +4,7 @@ use crate::network_event::{
     NetworkEventAclRuleView, NetworkEventDeviceGroupView, NetworkEventDnsRecordView,
     NetworkEventMemberView, NetworkEventNetworkView, NetworkEventPeerPathView,
 };
+use crate::session_store::PersistedSession;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum NetworkSyncStatus {
@@ -19,6 +20,8 @@ pub struct RuntimeNetworkState {
     pub active_network_id: Option<String>,
     pub version: u64,
     pub network: Option<NetworkEventNetworkView>,
+    pub self_device_id: Option<String>,
+    pub self_virtual_ip: Option<String>,
 
     pub members_by_device_id: BTreeMap<String, NetworkEventMemberView>,
     pub groups_by_group_id: BTreeMap<String, NetworkEventDeviceGroupView>,
@@ -39,6 +42,21 @@ impl RuntimeNetworkState {
             return;
         }
         self.active_network_id = Some(network_id.to_string());
+    }
+
+    pub fn bind_session_identity(&mut self, device_id: Option<&str>, virtual_ip: Option<&str>) {
+        self.self_device_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        self.self_virtual_ip = virtual_ip
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+    }
+
+    pub fn bind_persisted_session(&mut self, session: &PersistedSession) {
+        self.bind_session_identity(session.device_id.as_deref(), session.virtual_ip.as_deref());
     }
 
     pub fn mark_syncing_snapshot(&mut self) {

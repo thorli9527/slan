@@ -32,6 +32,7 @@ fi
 CLEANUP_TEST_DEVICES="${SLAN_CLEANUP_REMOTE_TEST_DEVICES:-$GENERATED_TEST_EMAIL}"
 TIMEOUT="${SLAN_MAC_IOS_TIMEOUT:-60s}"
 WORK_DIR="${SLAN_MAC_IOS_WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/slan-mac-ios.XXXXXX")}"
+RUN_MAC_LOCAL_DNS_SMOKE="${SLAN_RUN_MAC_LOCAL_DNS_SMOKE:-1}"
 MAC_LOG="$WORK_DIR/macos-service.log"
 IOS_LOG="$WORK_DIR/ios-flutter-test.log"
 MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
@@ -174,6 +175,15 @@ MAC_OUTPUT="$(
     -timeout "$TIMEOUT"
 )"
 echo "$MAC_OUTPUT"
+if [[ "$RUN_MAC_LOCAL_DNS_SMOKE" == "1" ]]; then
+  echo "+ run mac local dns smoke on $SERVICE_HOST"
+  (
+    cd "$ROOT_DIR"
+    SLAN_CLIENT_CORE_SERVICE_HOST="${SERVICE_HOST%:*}" \
+      SLAN_CLIENT_CORE_SERVICE_PORT="${SERVICE_HOST##*:}" \
+      bash scripts/tests/shared/desktop_local_dns_smoke.sh
+  )
+fi
 MAC_DEVICE_ID="$(echo "$MAC_OUTPUT" | sed -n 's/.*deviceId=\([^ ]*\).*/\1/p' | tail -n 1)"
 if [[ -z "$MAC_DEVICE_ID" ]]; then
   echo "failed to parse mac device id from login output" >&2

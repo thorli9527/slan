@@ -3,6 +3,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct DnsZoneView {
     pub zone_id: String,
@@ -12,6 +13,7 @@ pub struct DnsZoneView {
     pub updated_at: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct DnsRecordView {
     pub record_id: String,
@@ -20,6 +22,7 @@ pub struct DnsRecordView {
     pub name: String,
     pub fqdn: String,
     pub record_type: String,
+    pub value: String,
     pub target_device_id: String,
     pub target_ip: String,
     pub cname: String,
@@ -30,9 +33,24 @@ pub struct DnsRecordView {
 }
 
 #[derive(Debug, Clone, Default)]
+pub enum CachedDnsResultKind {
+    #[default]
+    NoData,
+    AnswerA,
+    AnswerAaaa,
+    AnswerCname,
+    AnswerPtr,
+    AnswerTxt,
+    AnswerSrv,
+    NxDomain,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct CachedDnsAnswer {
     pub qname: String,
     pub qtype: String,
+    pub result_kind: CachedDnsResultKind,
+    pub ttl: Option<u32>,
     pub answers: Vec<String>,
     pub expires_at_ms: u64,
 }
@@ -103,6 +121,18 @@ impl RuntimeDnsState {
             normalize_fqdn(qname),
             qtype.trim().to_ascii_uppercase()
         )
+    }
+
+    pub fn cached_answer(&self, qname: &str, qtype: &str, now_ms: u64) -> Option<&CachedDnsAnswer> {
+        let key = Self::cache_key(qname, qtype);
+        self.cache_by_question
+            .get(&key)
+            .filter(|value| value.expires_at_ms > now_ms)
+    }
+
+    pub fn put_cached_answer(&mut self, answer: CachedDnsAnswer) {
+        let key = Self::cache_key(&answer.qname, &answer.qtype);
+        self.cache_by_question.insert(key, answer);
     }
 }
 

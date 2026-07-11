@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE:-$0}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
+ROOT_DIR="$SCRIPT_DIR"
+while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
+  ROOT_DIR=$(dirname "$ROOT_DIR")
+done
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage:
+  bash scripts/current_client_quick_regression.sh
+
+Purpose:
+  Run the fastest high-signal subset of the current client regression matrix:
+  dual Android phase2 bidirectional message, dual iOS DNS/ACL/MQTT quick
+  validation, dual Docker Linux DNS/ACL/message control-plane validation, and
+  the standalone macOS local DNS smoke.
+
+Optional environment variables:
+  SLAN_RUN_QUICK_ANDROID_PHASE2=1|0
+  SLAN_RUN_QUICK_IOS_QUICK=1|0
+  SLAN_RUN_QUICK_LINUX_CONTROL=1|0
+  SLAN_RUN_QUICK_MAC_LOCAL_DNS=1|0
+  SLAN_CURRENT_QUICK_REGRESSION_RESULT_ROOT
+  SLAN_CURRENT_QUICK_REGRESSION_RESULT_DIR
+  SLAN_CURRENT_QUICK_REGRESSION_LATEST_LINK
+  SLAN_BIZ_URL
+  SLAN_WEB_BASE_URL
+
+Examples:
+  bash scripts/current_client_quick_regression.sh
+  SLAN_RUN_QUICK_LINUX_CONTROL=0 bash scripts/current_client_quick_regression.sh
+  SLAN_RUN_QUICK_ANDROID_PHASE2=0 SLAN_RUN_QUICK_IOS_QUICK=1 bash scripts/current_client_quick_regression.sh
+EOF
+  exit 0
+fi
+
+export SLAN_CURRENT_REGRESSION_RESULT_ROOT="${SLAN_CURRENT_QUICK_REGRESSION_RESULT_ROOT:-${SLAN_CURRENT_REGRESSION_RESULT_ROOT:-${TMPDIR:-/tmp}/slan-current-quick-regression}}"
+export SLAN_CURRENT_REGRESSION_RESULT_DIR="${SLAN_CURRENT_QUICK_REGRESSION_RESULT_DIR:-${SLAN_CURRENT_QUICK_REGRESSION_RESULT_DIR:-}}"
+export SLAN_CURRENT_REGRESSION_LATEST_LINK="${SLAN_CURRENT_QUICK_REGRESSION_LATEST_LINK:-${SLAN_CURRENT_REGRESSION_LATEST_LINK:-${SLAN_CURRENT_REGRESSION_RESULT_ROOT}/latest}}"
+
+export SLAN_RUN_CURRENT_ANDROID_DUAL="${SLAN_RUN_QUICK_ANDROID_FULL:-0}"
+export SLAN_RUN_CURRENT_ANDROID_DUAL_PHASE2_ONLY="${SLAN_RUN_QUICK_ANDROID_PHASE2:-1}"
+export SLAN_RUN_CURRENT_IOS_DUAL_QUICK="${SLAN_RUN_QUICK_IOS_QUICK:-1}"
+export SLAN_RUN_CURRENT_IOS_DUAL_FLUTTER_MESSAGE="${SLAN_RUN_QUICK_IOS_MESSAGE:-0}"
+if [[ -n "${SLAN_RUN_QUICK_IOS:-}" ]]; then
+  export SLAN_RUN_CURRENT_IOS_DUAL="${SLAN_RUN_QUICK_IOS}"
+elif [[ "$SLAN_RUN_CURRENT_IOS_DUAL_QUICK" == "1" || "$SLAN_RUN_CURRENT_IOS_DUAL_FLUTTER_MESSAGE" == "1" ]]; then
+  export SLAN_RUN_CURRENT_IOS_DUAL="1"
+else
+  export SLAN_RUN_CURRENT_IOS_DUAL="0"
+fi
+export SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER="${SLAN_RUN_QUICK_LINUX_CONTROL:-1}"
+export SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER_PACKET="${SLAN_RUN_QUICK_LINUX_PACKET:-0}"
+export SLAN_RUN_CURRENT_MAC_ANDROID="${SLAN_RUN_QUICK_MAC_ANDROID:-0}"
+export SLAN_RUN_CURRENT_MAC_ANDROID_ACTIVE="${SLAN_RUN_QUICK_MAC_ANDROID_ACTIVE:-0}"
+export SLAN_RUN_CURRENT_MAC_IOS_FAST="${SLAN_RUN_QUICK_MAC_IOS:-0}"
+export SLAN_RUN_CURRENT_MAC_LOCAL_DNS_SMOKE="${SLAN_RUN_QUICK_MAC_LOCAL_DNS:-1}"
+export SLAN_RUN_CURRENT_MAC_REMOTE_LINUX="${SLAN_RUN_QUICK_MAC_REMOTE_LINUX:-0}"
+export SLAN_RUN_CURRENT_IOS_ANDROID_PARTIAL="${SLAN_RUN_QUICK_IOS_ANDROID_PARTIAL:-0}"
+export SLAN_RUN_CURRENT_TRI_MESSAGE="${SLAN_RUN_QUICK_TRI_MESSAGE:-0}"
+export SLAN_RUN_CURRENT_IOS_TRI_MATRIX="${SLAN_RUN_QUICK_IOS_TRI_MATRIX:-0}"
+
+printf '==> current quick regression profile: android-phase2=%s ios-quick=%s linux-control=%s mac-local-dns=%s\n' \
+  "$SLAN_RUN_CURRENT_ANDROID_DUAL_PHASE2_ONLY" \
+  "$SLAN_RUN_CURRENT_IOS_DUAL_QUICK" \
+  "$SLAN_RUN_CURRENT_LINUX_DUAL_DOCKER" \
+  "$SLAN_RUN_CURRENT_MAC_LOCAL_DNS_SMOKE"
+
+exec bash "$ROOT_DIR/scripts/tests/matrix/current_client_regression.sh"

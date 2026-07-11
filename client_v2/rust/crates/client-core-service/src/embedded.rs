@@ -26,7 +26,7 @@ use crate::{
     },
     control_transport::{self, ControlTransportMessage, MqttQos},
     dns_apply::apply_dns_runtime_event,
-    dns_authority::{resolve_authoritative, ResolveAuthoritativeResult},
+    dns_authority::{resolve_authoritative, resolve_authoritative_result_json},
     dns_runtime_state::dns_runtime_state,
     local_api::{
         LocalDnsResolveRequest, LocalServiceMethod, RegisterTestUserRequest,
@@ -416,13 +416,10 @@ fn refresh_state_json() -> Value {
 
 fn local_dns_state_json() -> Value {
     let network = network_event_runtime_state()
-        .try_lock()
+        .lock()
         .ok()
         .map(|guard| guard.clone());
-    let dns = dns_runtime_state()
-        .try_lock()
-        .ok()
-        .map(|guard| guard.clone());
+    let dns = dns_runtime_state().lock().ok().map(|guard| guard.clone());
     let server = crate::dns_server::local_dns_server_status()
         .try_lock()
         .ok()
@@ -430,6 +427,8 @@ fn local_dns_state_json() -> Value {
         .unwrap_or_default();
     serde_json::json!({
         "activeNetworkId": dns.as_ref().and_then(|value| value.active_network_id.clone()),
+        "selfDeviceId": network.as_ref().and_then(|value| value.self_device_id.clone()),
+        "selfVirtualIp": network.as_ref().and_then(|value| value.self_virtual_ip.clone()),
         "zoneCount": dns.as_ref().map(|value| value.zones_by_id.len()).unwrap_or(0),
         "recordCount": dns.as_ref().map(|value| value.records_by_id.len()).unwrap_or(0),
         "cacheCount": dns.as_ref().map(|value| value.cache_by_question.len()).unwrap_or(0),
@@ -454,39 +453,28 @@ fn local_dns_state_json() -> Value {
         "desiredNetworkEnabled": server.desired_network_enabled,
         "desiredHasRequesterDeviceId": server.desired_has_requester_device_id,
         "desiredHasDnsData": server.desired_has_dns_data,
-        "networkLockBusy": network.is_none(),
-        "dnsLockBusy": dns.is_none(),
+        "networkLockBusy": false,
+        "dnsLockBusy": false,
     })
 }
 
 fn local_dns_resolve_json(input: LocalDnsResolveRequest) -> Value {
-    let Ok(network) = network_event_runtime_state().try_lock() else {
+    let Ok(mut network) = network_event_runtime_state().lock() else {
         return serde_json::json!({ "error": "network dns runtime busy: network state lock unavailable" });
     };
-    let Ok(dns) = dns_runtime_state().try_lock() else {
+    if let Ok(session) = load_session() {
+        network.bind_persisted_session(&session);
+    }
+    let Ok(mut dns) = dns_runtime_state().lock() else {
         return serde_json::json!({ "error": "network dns runtime busy: dns state lock unavailable" });
     };
-    match resolve_authoritative(
+    resolve_authoritative_result_json(resolve_authoritative(
         &network,
-        &dns,
+        &mut dns,
         &input.requester_device_id,
         &input.qname,
         &input.qtype,
-    ) {
-        ResolveAuthoritativeResult::AnswerA { ttl, ip } => serde_json::json!({
-            "result": "answer_a",
-            "ttl": ttl,
-            "ip": ip,
-        }),
-        ResolveAuthoritativeResult::AnswerCname { ttl, cname } => serde_json::json!({
-            "result": "answer_cname",
-            "ttl": ttl,
-            "cname": cname,
-        }),
-        ResolveAuthoritativeResult::NxDomain => serde_json::json!({ "result": "nxdomain" }),
-        ResolveAuthoritativeResult::NoData => serde_json::json!({ "result": "nodata" }),
-        ResolveAuthoritativeResult::NotManaged => serde_json::json!({ "result": "not_managed" }),
-    }
+    ))
 }
 
 fn apply_embedded_request_overrides(args: &Value) {
@@ -1673,6 +1661,7 @@ fn ingest_embedded_network_event(value: &Value) -> Result<()> {
         let mut state = network_event_runtime_state()
             .lock()
             .expect("embedded network event runtime mutex poisoned");
+        state.bind_persisted_session(&session);
         apply_network_event(&mut state, envelope.clone())?
     };
     apply_dns_runtime_event(&envelope).context("apply embedded dns runtime event")?;
@@ -1722,6 +1711,7 @@ fn ingest_embedded_network_event(value: &Value) -> Result<()> {
             let mut state = network_event_runtime_state()
                 .lock()
                 .expect("embedded network event runtime mutex poisoned");
+            state.bind_persisted_session(&session);
             apply_network_event(&mut state, snapshot_envelope.clone())?
         };
         apply_dns_runtime_event(&snapshot_envelope)

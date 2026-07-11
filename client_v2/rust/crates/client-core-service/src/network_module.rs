@@ -205,10 +205,17 @@ pub(crate) fn replace_network_module_from_snapshot(
                 network_id: network_id.to_string(),
                 name: record.name.clone(),
                 fqdn: (!record.fqdn.trim().is_empty()).then(|| record.fqdn.clone()),
-                record_type: "A".to_string(),
+                record_type: if record.record_type.trim().is_empty() {
+                    "A".to_string()
+                } else {
+                    record.record_type.clone()
+                },
                 target_device_id: (!record.target_device_id.trim().is_empty())
                     .then(|| record.target_device_id.clone()),
                 target_ip: (!record.target_ip.trim().is_empty()).then(|| record.target_ip.clone()),
+                cname: (!record.cname.trim().is_empty()).then(|| record.cname.clone()),
+                port: (record.port > 0).then(|| record.port.to_string()),
+                ttl: (record.ttl > 0).then(|| i64::from(record.ttl)),
                 ..DeviceDnsRecord::default()
             })
             .collect(),
@@ -372,9 +379,10 @@ fn to_device_security_rule(
         protocol: rule.protocol,
         peer_type: rule.source_type,
         peer_value: rule
-            .source_device_ids
+            .source_values
             .first()
             .cloned()
+            .or_else(|| rule.source_device_ids.first().cloned())
             .or_else(|| rule.source_group_ids.first().cloned())
             .unwrap_or_default(),
         enabled: rule.enabled,
@@ -512,8 +520,10 @@ mod tests {
                     zone_id: "zone-1".to_string(),
                     name: "peer".to_string(),
                     fqdn: "peer.example".to_string(),
+                    record_type: "AAAA".to_string(),
                     target_device_id: "device-peer".to_string(),
-                    target_ip: "10.0.0.3".to_string(),
+                    target_ip: "2001:db8::20".to_string(),
+                    ttl: 120,
                     ..NetworkEventDnsRecordView::default()
                 }],
                 acl_rules: vec![NetworkEventAclRuleView {
@@ -538,6 +548,12 @@ mod tests {
         assert_eq!(snapshot.configs[0].device_id, "device-self");
         assert_eq!(snapshot.configs[0].global_ip.as_deref(), Some("10.0.0.2"));
         assert_eq!(snapshot.configs[0].peers[0].device_id, "device-peer");
+        assert_eq!(snapshot.configs[0].dns_records[0].record_type, "AAAA");
+        assert_eq!(
+            snapshot.configs[0].dns_records[0].target_ip.as_deref(),
+            Some("2001:db8::20")
+        );
+        assert_eq!(snapshot.configs[0].dns_records[0].ttl, Some(120));
     }
 
     #[test]
@@ -633,8 +649,10 @@ mod tests {
                         zone_id: "zone-2".to_string(),
                         name: "api".to_string(),
                         fqdn: "api.example".to_string(),
+                        record_type: "CNAME".to_string(),
                         target_device_id: "device-self".to_string(),
-                        target_ip: "10.0.0.2".to_string(),
+                        cname: "backend.example".to_string(),
+                        ttl: 90,
                         ..NetworkEventDnsRecordView::default()
                     }],
                 })
@@ -674,6 +692,12 @@ mod tests {
         assert_eq!(snapshot.dns_record_count, 1);
         assert_eq!(snapshot.security_rule_count, 1);
         assert_eq!(snapshot.configs[0].dns_records[0].record_id, "dns-2");
+        assert_eq!(snapshot.configs[0].dns_records[0].record_type, "CNAME");
+        assert_eq!(
+            snapshot.configs[0].dns_records[0].cname.as_deref(),
+            Some("backend.example")
+        );
+        assert_eq!(snapshot.configs[0].dns_records[0].ttl, Some(90));
         assert_eq!(snapshot.configs[0].rules[0].rule_id, "rule-4");
     }
 }

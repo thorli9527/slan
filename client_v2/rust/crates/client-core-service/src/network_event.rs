@@ -97,6 +97,8 @@ pub struct NetworkEventDnsRecordView {
     #[serde(default)]
     pub record_type: String,
     #[serde(default)]
+    pub value: String,
+    #[serde(default)]
     pub target_device_id: String,
     #[serde(default)]
     pub target_ip: String,
@@ -124,10 +126,14 @@ pub struct NetworkEventAclRuleView {
     pub port_ranges: Vec<String>,
     pub source_type: String,
     #[serde(default, deserialize_with = "null_default")]
+    pub source_values: Vec<String>,
+    #[serde(default, deserialize_with = "null_default")]
     pub source_device_ids: Vec<String>,
     #[serde(default, deserialize_with = "null_default")]
     pub source_group_ids: Vec<String>,
     pub target_type: String,
+    #[serde(default, deserialize_with = "null_default")]
+    pub target_values: Vec<String>,
     #[serde(default, deserialize_with = "null_default")]
     pub target_device_ids: Vec<String>,
     #[serde(default, deserialize_with = "null_default")]

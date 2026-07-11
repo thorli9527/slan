@@ -100,6 +100,7 @@ func buildNetworkEventSnapshotPayload(
 			Name:           record.Name,
 			FQDN:           networkEventRecordFQDN(record.Name, zoneNamesByID[record.ZoneID]),
 			RecordType:     strings.TrimSpace(record.Type),
+			Value:          strings.TrimSpace(record.Value),
 			TargetDeviceID: record.TargetDeviceID,
 			TargetIP:       record.TargetIP,
 			CNAME:          record.CNAME,
@@ -114,6 +115,7 @@ func buildNetworkEventSnapshotPayload(
 	for _, rule := range view.SecurityRules {
 		sourceType := strings.TrimSpace(rule.PeerType)
 		sourceValue := strings.TrimSpace(rule.PeerValue)
+		sourceValues := []string{}
 		sourceDeviceIDs := []string{}
 		sourceGroupIDs := []string{}
 		switch sourceType {
@@ -125,6 +127,10 @@ func buildNetworkEventSnapshotPayload(
 			if sourceValue != "" {
 				sourceGroupIDs = []string{sourceValue}
 			}
+		default:
+			if sourceValue != "" {
+				sourceValues = []string{sourceValue}
+			}
 		}
 		aclRules = append(aclRules, NetworkEventACLRuleView{
 			RuleID:          rule.RuleID,
@@ -134,9 +140,11 @@ func buildNetworkEventSnapshotPayload(
 			Protocol:        rule.Protocol,
 			PortRanges:      []string{rule.PortRange},
 			SourceType:      sourceType,
+			SourceValues:    sourceValues,
 			SourceDeviceIDs: sourceDeviceIDs,
 			SourceGroupIDs:  sourceGroupIDs,
 			TargetType:      "current_device",
+			TargetValues:    []string{},
 			TargetDeviceIDs: []string{},
 			TargetGroupIDs:  []string{},
 			Enabled:         rule.Enabled,

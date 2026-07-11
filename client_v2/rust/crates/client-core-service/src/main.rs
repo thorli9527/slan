@@ -76,7 +76,7 @@ use crate::control_transport::{
     ControlTransportTickRequest, PublishedControlTransportMessage,
 };
 use crate::control_transport_worker::{network_event_runtime_state, ControlTransportWorkerState};
-use crate::dns_authority::{resolve_authoritative, ResolveAuthoritativeResult};
+use crate::dns_authority::{resolve_authoritative, resolve_authoritative_result_json};
 use crate::dns_runtime_state::dns_runtime_state;
 use crate::dns_server::{
     desired_local_dns_bind_addr, local_dns_server_last_query_at_ms, local_dns_server_status,
@@ -758,13 +758,10 @@ fn handle_local_status(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>)
 
 fn handle_local_dns_state() -> Result<String> {
     let network = network_event_runtime_state()
-        .try_lock()
+        .lock()
         .ok()
         .map(|guard| guard.clone());
-    let dns = dns_runtime_state()
-        .try_lock()
-        .ok()
-        .map(|guard| guard.clone());
+    let dns = dns_runtime_state().lock().ok().map(|guard| guard.clone());
     let server = local_dns_server_status()
         .try_lock()
         .ok()
@@ -772,6 +769,8 @@ fn handle_local_dns_state() -> Result<String> {
         .unwrap_or_default();
     serde_json::to_string(&serde_json::json!({
         "activeNetworkId": dns.as_ref().and_then(|value| value.active_network_id.clone()),
+        "selfDeviceId": network.as_ref().and_then(|value| value.self_device_id.clone()),
+        "selfVirtualIp": network.as_ref().and_then(|value| value.self_virtual_ip.clone()),
         "zoneCount": dns.as_ref().map(|value| value.zones_by_id.len()).unwrap_or(0),
         "recordCount": dns.as_ref().map(|value| value.records_by_id.len()).unwrap_or(0),
         "cacheCount": dns.as_ref().map(|value| value.cache_by_question.len()).unwrap_or(0),
@@ -796,8 +795,8 @@ fn handle_local_dns_state() -> Result<String> {
         "desiredNetworkEnabled": server.desired_network_enabled,
         "desiredHasRequesterDeviceId": server.desired_has_requester_device_id,
         "desiredHasDnsData": server.desired_has_dns_data,
-        "networkLockBusy": network.is_none(),
-        "dnsLockBusy": dns.is_none(),
+        "networkLockBusy": false,
+        "dnsLockBusy": false,
     }))
     .context("encode local dns state")
 }
@@ -805,33 +804,22 @@ fn handle_local_dns_state() -> Result<String> {
 fn handle_local_dns_resolve(request: ServiceRequest) -> Result<String> {
     let input: LocalDnsResolveRequest =
         serde_json::from_value(request.args).context("decode local dns resolve request")?;
-    let network = network_event_runtime_state()
-        .try_lock()
+    let mut network = network_event_runtime_state()
+        .lock()
         .map_err(|_| anyhow::anyhow!("network dns runtime busy: network state lock unavailable"))?;
-    let dns = dns_runtime_state()
-        .try_lock()
+    if let Ok(session) = load_session() {
+        network.bind_persisted_session(&session);
+    }
+    let mut dns = dns_runtime_state()
+        .lock()
         .map_err(|_| anyhow::anyhow!("network dns runtime busy: dns state lock unavailable"))?;
-    let payload = match resolve_authoritative(
+    let payload = resolve_authoritative_result_json(resolve_authoritative(
         &network,
-        &dns,
+        &mut dns,
         &input.requester_device_id,
         &input.qname,
         &input.qtype,
-    ) {
-        ResolveAuthoritativeResult::AnswerA { ttl, ip } => serde_json::json!({
-            "result": "answer_a",
-            "ttl": ttl,
-            "ip": ip,
-        }),
-        ResolveAuthoritativeResult::AnswerCname { ttl, cname } => serde_json::json!({
-            "result": "answer_cname",
-            "ttl": ttl,
-            "cname": cname,
-        }),
-        ResolveAuthoritativeResult::NxDomain => serde_json::json!({ "result": "nxdomain" }),
-        ResolveAuthoritativeResult::NoData => serde_json::json!({ "result": "nodata" }),
-        ResolveAuthoritativeResult::NotManaged => serde_json::json!({ "result": "not_managed" }),
-    };
+    ));
     serde_json::to_string(&payload).context("encode local dns resolve response")
 }
 
@@ -4310,21 +4298,25 @@ fn spawn_local_dns_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkIm
             }
             log_service_error("client-core-service local dns supervisor status updated");
 
-            let network = network_event_runtime_state()
-                .lock()
-                .expect("network event runtime mutex poisoned")
-                .clone();
-            let dns = dns_runtime_state()
-                .lock()
-                .expect("dns runtime mutex poisoned")
-                .clone();
+            let network = {
+                let mut state = network_event_runtime_state()
+                    .lock()
+                    .expect("network event runtime mutex poisoned");
+                if let Ok(session) = load_session() {
+                    state.bind_persisted_session(&session);
+                }
+                state.clone()
+            };
             log_service_error("client-core-service local dns supervisor serving");
             let requester_device_id = desired.requester_device_id.clone().unwrap_or_default();
             let Some(active_server) = server.as_ref() else {
                 thread::sleep(Duration::from_millis(250));
                 continue;
             };
-            if let Err(error) = active_server.serve_once(&network, &dns, &requester_device_id) {
+            let mut dns = dns_runtime_state()
+                .lock()
+                .expect("dns runtime mutex poisoned");
+            if let Err(error) = active_server.serve_once(&network, &mut dns, &requester_device_id) {
                 log_service_error(format!(
                     "client-core-service local dns supervisor serve_once failed: {error:#}"
                 ));
