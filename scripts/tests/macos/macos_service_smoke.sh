@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_PATH="${BASH_SOURCE:-$0}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
+ROOT_DIR="$SCRIPT_DIR"
+while [ ! -e "$ROOT_DIR/.git" ] && [ "$ROOT_DIR" != "/" ]; do
+  ROOT_DIR=$(dirname "$ROOT_DIR")
+done
+
 LABEL="dev.slan.client-core-service"
 APP_PATH="${SLAN_MACOS_APP_PATH:-client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
 SERVICE_IN_APP="${APP_PATH%/}/Contents/MacOS/client-core-service"
 SESSION_FILE="/Library/Application Support/SLAN/client-v2-session.json"
 SHUTDOWN_CHECK=0
+RUN_LOCAL_DNS_SMOKE="${SLAN_RUN_LOCAL_DNS_SMOKE:-0}"
 
 service_info() {
   local binary="$1"
@@ -158,4 +166,12 @@ PY
     exit 1
   fi
   echo "serviceStillRunningAfterShutdown: true"
+fi
+
+if [[ "$RUN_LOCAL_DNS_SMOKE" == "1" ]]; then
+  echo "runLocalDnsSmoke: true"
+  (
+    cd "$ROOT_DIR"
+    bash scripts/tests/shared/desktop_local_dns_smoke.sh
+  )
 fi

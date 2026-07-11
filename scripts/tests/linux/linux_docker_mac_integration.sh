@@ -305,6 +305,14 @@ start_container() {
     --name "$CONTAINER_NAME"
     -v "$ROOT_DIR:/workspace/slan"
   )
+  case "$(basename "$PACKAGE_PATH")" in
+    *-amd64.tar.gz|*_amd64.deb)
+      docker_args+=(--platform linux/amd64)
+      ;;
+    *-arm64.tar.gz|*_arm64.deb)
+      docker_args+=(--platform linux/arm64)
+      ;;
+  esac
   if [[ "$CONTAINER_PRIVILEGED" == "1" ]]; then
     docker_args+=(--privileged)
   else
@@ -524,7 +532,7 @@ login_and_enable_mac() {
       -address "$MAC_SERVICE_HOST" \
       -email "$EMAIL" \
       -password "$PASSWORD" \
-      -register="$REGISTER_USER" \
+      -register=false \
       -enable-network=true \
       -timeout 90s
   )" || {

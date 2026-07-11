@@ -402,10 +402,12 @@ fn normalize_direct_udp_address(address: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
+    if trimmed.starts_with("relay+udp://") {
+        return None;
+    }
     let stripped = trimmed
         .strip_prefix("udp://")
-        .or_else(|| trimmed.strip_prefix("direct+udp://"))
-        .or_else(|| trimmed.strip_prefix("relay+udp://"));
+        .or_else(|| trimmed.strip_prefix("direct+udp://"));
     if stripped.is_none() && trimmed.contains("://") {
         return None;
     }
@@ -543,8 +545,8 @@ mod tests {
             Some("127.0.0.1:3478")
         );
         assert_eq!(
-            normalize_direct_udp_address("relay+udp://127.0.0.1:3478").as_deref(),
-            Some("127.0.0.1:3478")
+            normalize_direct_udp_address("relay+udp://127.0.0.1:3478"),
+            None
         );
         assert_eq!(normalize_direct_udp_address("https://127.0.0.1:3478"), None);
     }

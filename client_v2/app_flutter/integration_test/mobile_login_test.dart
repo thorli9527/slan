@@ -67,9 +67,7 @@ void main() {
 
   testWidgets('mobile password login signs in through client-core-service',
       (tester) async {
-    addTearDown(() {
-      tester.platformDispatcher.semanticsEnabledTestValue = false;
-    });
+    final semantics = tester.ensureSemantics();
     try {
       const bizUrl = String.fromEnvironment(
         'SLAN_TEST_BIZ_URL',
@@ -354,7 +352,10 @@ void main() {
       }
       udpEchoSocket?.close();
       await tcpEchoServer?.close();
-    } finally {}
+    } finally {
+      semantics.dispose();
+      tester.platformDispatcher.semanticsEnabledTestValue = false;
+    }
   });
 }
 

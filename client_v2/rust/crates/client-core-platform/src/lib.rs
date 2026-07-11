@@ -1,3 +1,8 @@
+use std::{
+    env,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+};
+
 use anyhow::Result;
 use client_core::{NetworkRuntimeState, PlatformNetwork, RouteSpec};
 
@@ -36,6 +41,66 @@ pub type PlatformNetworkImpl = NoopPlatformNetwork;
 
 #[derive(Debug, Clone, Default)]
 pub struct NoopPlatformNetwork;
+
+pub fn effective_dns_servers(configured: &[String]) -> Vec<String> {
+    if let Some(local) = local_dns_override_server() {
+        return vec![local];
+    }
+    configured
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn local_dns_override_server() -> Option<String> {
+    let bind = env::var("SLAN_LOCAL_DNS_BIND").ok()?;
+    let bind = bind.trim();
+    if bind.is_empty() {
+        return None;
+    }
+    let addr: SocketAddr = bind.parse().ok()?;
+    if addr.port() != 53 {
+        return None;
+    }
+    let ip = match addr.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    Some(ip.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_dns_servers;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env test mutex poisoned")
+    }
+
+    #[test]
+    fn effective_dns_servers_prefers_local_override_on_port_53() {
+        let _lock = env_lock();
+        std::env::set_var("SLAN_LOCAL_DNS_BIND", "127.0.0.1:53");
+        let actual = effective_dns_servers(&["8.8.8.8".to_string(), "1.1.1.1".to_string()]);
+        assert_eq!(actual, vec!["127.0.0.1".to_string()]);
+        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
+    }
+
+    #[test]
+    fn effective_dns_servers_ignores_non_53_local_override() {
+        let _lock = env_lock();
+        std::env::set_var("SLAN_LOCAL_DNS_BIND", "127.0.0.1:53535");
+        let actual = effective_dns_servers(&["8.8.8.8".to_string(), "".to_string()]);
+        assert_eq!(actual, vec!["8.8.8.8".to_string()]);
+        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
+    }
+}
 
 impl PlatformNetwork for NoopPlatformNetwork {
     fn install_adapter(&self) -> Result<()> {

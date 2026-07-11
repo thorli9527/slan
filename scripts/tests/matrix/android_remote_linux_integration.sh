@@ -35,6 +35,7 @@ PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 TIMEOUT_SECONDS="${SLAN_ANDROID_REMOTE_LINUX_TIMEOUT_SECONDS:-180}"
 LOCAL_API_TIMEOUT_SECONDS="${SLAN_ANDROID_REMOTE_LINUX_LOCAL_API_TIMEOUT_SECONDS:-120}"
 ANDROID_DEVICE="${SLAN_ANDROID_FLUTTER_DEVICE:-emulator-5554}"
+ADB_TARGET=("$ADB" -s "$ANDROID_DEVICE")
 ANDROID_TEST_DEVICE_ID="${SLAN_ANDROID_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 LINUX_DEVICE_ALIAS="${SLAN_REMOTE_LINUX_DEVICE_ALIAS:-Remote Linux CLI}"
 BOOTSTRAP_TTL_SECONDS="${SLAN_REMOTE_LINUX_BOOTSTRAP_TTL_SECONDS:-1800}"
@@ -457,7 +458,7 @@ provision_dns_acl_resources() {
 start_android_vpn_appops_guard() {
   (
     while true; do
-      "$ADB" shell cmd appops set dev.slan.slan_client_v2 ACTIVATE_VPN allow >/dev/null 2>&1 || true
+      "${ADB_TARGET[@]}" shell cmd appops set dev.slan.slan_client_v2 ACTIVATE_VPN allow >/dev/null 2>&1 || true
       sleep 0.25
     done
   ) &
@@ -473,13 +474,13 @@ tap_bounds_center() {
   local y2="${BASH_REMATCH[4]}"
   local x=$(( (x1 + x2) / 2 ))
   local y=$(( (y1 + y2) / 2 ))
-  "$ADB" shell input tap "$x" "$y" >/dev/null 2>&1 || true
+  "${ADB_TARGET[@]}" shell input tap "$x" "$y" >/dev/null 2>&1 || true
 }
 
 start_android_vpn_consent_guard() {
   (
     while true; do
-      xml="$("$ADB" shell uiautomator dump /sdcard/slan-ui.xml >/dev/null 2>&1 && "$ADB" shell cat /sdcard/slan-ui.xml 2>/dev/null || true)"
+      xml="$("${ADB_TARGET[@]}" shell uiautomator dump /sdcard/slan-ui.xml >/dev/null 2>&1 && "${ADB_TARGET[@]}" shell cat /sdcard/slan-ui.xml 2>/dev/null || true)"
       if [[ "$xml" == *"package=\"com.android.vpndialogs\""* || "$xml" == *"VPN"* || "$xml" == *"连接请求"* || "$xml" == *"网络请求"* ]]; then
         bounds="$(
           printf '%s' "$xml" | tr '>' '\n' | grep -E \
@@ -489,7 +490,7 @@ start_android_vpn_consent_guard() {
         if [[ -n "$bounds" ]]; then
           tap_bounds_center "$bounds"
         else
-          "$ADB" shell input keyevent 66 >/dev/null 2>&1 || true
+          "${ADB_TARGET[@]}" shell input keyevent 66 >/dev/null 2>&1 || true
         fi
       fi
       sleep 0.5
@@ -499,12 +500,12 @@ start_android_vpn_consent_guard() {
 }
 
 wait_android_boot() {
-  "$ADB" wait-for-device
+  "${ADB_TARGET[@]}" wait-for-device
   local boot_completed
-  boot_completed="$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+  boot_completed="$("${ADB_TARGET[@]}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
   if [[ "$boot_completed" != "1" ]]; then
     for _ in $(seq 1 60); do
-      boot_completed="$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+      boot_completed="$("${ADB_TARGET[@]}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
       [[ "$boot_completed" == "1" ]] && break
       sleep 1
     done
@@ -648,8 +649,8 @@ if is_truthy "$RUN_REMOTE_INSTALL_CHECK"; then
 fi
 
 wait_android_boot
-"$ADB" shell pm clear dev.slan.slan_client_v2 >/dev/null 2>&1 || true
-"$ADB" shell cmd appops set dev.slan.slan_client_v2 ACTIVATE_VPN allow >/dev/null 2>&1 || true
+"${ADB_TARGET[@]}" shell pm clear dev.slan.slan_client_v2 >/dev/null 2>&1 || true
+"${ADB_TARGET[@]}" shell cmd appops set dev.slan.slan_client_v2 ACTIVATE_VPN allow >/dev/null 2>&1 || true
 start_android_vpn_appops_guard
 start_android_vpn_consent_guard
 

@@ -32,6 +32,8 @@ use client_core::{
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 
+use crate::effective_dns_servers;
+
 const DEFAULT_INTERFACE_NAME: &str = "SLAN LAN Adapter";
 const WINDOWS_WINTUN_DRIVER_TYPE: &str = "Wintun";
 const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
@@ -163,7 +165,8 @@ impl PlatformNetwork for WindowsPlatformNetwork {
     }
 
     fn configure_dns(&self, dns_servers: &[String]) -> Result<()> {
-        configure_dns(DEFAULT_INTERFACE_NAME, dns_servers).context("configure Wintun DNS")?;
+        let effective = effective_dns_servers(dns_servers);
+        configure_dns(DEFAULT_INTERFACE_NAME, &effective).context("configure Wintun DNS")?;
         persist_state(&load_cached_runtime_state().unwrap_or_default())
     }
 
@@ -2523,10 +2526,12 @@ fn normalize_direct_udp_address(address: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
+    if trimmed.starts_with("relay+udp://") {
+        return None;
+    }
     let normalized = trimmed
         .strip_prefix("udp://")
         .or_else(|| trimmed.strip_prefix("direct+udp://"))
-        .or_else(|| trimmed.strip_prefix("relay+udp://"))
         .or_else(|| (!trimmed.contains("://")).then_some(trimmed))?
         .trim();
     (!normalized.is_empty()).then(|| normalized.to_string())
@@ -4453,8 +4458,8 @@ mod tests {
             Some("127.0.0.1:3478")
         );
         assert_eq!(
-            normalize_direct_udp_address("relay+udp://127.0.0.1:3478").as_deref(),
-            Some("127.0.0.1:3478")
+            normalize_direct_udp_address("relay+udp://127.0.0.1:3478"),
+            None
         );
         assert_eq!(
             normalize_direct_udp_address("direct+udp://127.0.0.1:3478").as_deref(),

@@ -40,6 +40,7 @@ use crate::direct_udp::{
     direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
     DirectUdpTransport,
 };
+use crate::effective_dns_servers;
 
 const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
 const DEFAULT_INTERFACE_NAME: &str = "slan0";
@@ -305,11 +306,7 @@ impl PlatformNetwork for LinuxPlatformNetwork {
 
     fn configure_dns(&self, dns_servers: &[String]) -> Result<()> {
         let mut runtime = runtime().lock().expect("linux runtime mutex poisoned");
-        runtime.dns_servers = dns_servers
-            .iter()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .collect();
+        runtime.dns_servers = effective_dns_servers(dns_servers);
         if runtime.mock_enabled || runtime.dns_servers.is_empty() {
             return Ok(());
         }
@@ -2496,6 +2493,7 @@ mod tests {
     fn linux_mock_runtime_records_dns_acl_and_relay_config() {
         let _guard = test_lock();
         std::env::set_var("SLAN_LINUX_NETWORK_MOCK", "1");
+        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
         reset_runtime();
 
         let platform = LinuxPlatformNetwork;
@@ -2542,6 +2540,33 @@ mod tests {
         drop(runtime);
 
         platform.disable_network().unwrap();
+        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
+        std::env::remove_var("SLAN_LINUX_NETWORK_MOCK");
+        reset_runtime();
+    }
+
+    #[test]
+    fn linux_mock_runtime_prefers_local_dns_override() {
+        let _guard = test_lock();
+        std::env::set_var("SLAN_LINUX_NETWORK_MOCK", "1");
+        std::env::set_var("SLAN_LOCAL_DNS_BIND", "127.0.0.1:53");
+        reset_runtime();
+
+        let platform = LinuxPlatformNetwork;
+        platform.install_adapter().unwrap();
+        platform
+            .configure_dns(&["10.0.0.53".to_string(), "8.8.8.8".to_string()])
+            .unwrap();
+
+        let diagnostics = platform.diagnostics().unwrap();
+        assert_eq!(diagnostics.dns_servers, vec!["127.0.0.1"]);
+
+        let runtime = runtime().lock().expect("linux runtime mutex poisoned");
+        assert_eq!(runtime.dns_servers, vec!["127.0.0.1".to_string()]);
+        drop(runtime);
+
+        platform.disable_network().unwrap();
+        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
         std::env::remove_var("SLAN_LINUX_NETWORK_MOCK");
         reset_runtime();
     }

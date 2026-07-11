@@ -36,6 +36,7 @@ use crate::direct_udp::{
     clear_direct_udp_endpoint_report, direct_udp_control_packet, direct_udp_probe_interval_from_ms,
     DirectUdpControlKind, DirectUdpTransport,
 };
+use crate::effective_dns_servers;
 
 const UTUN_CONTROL_NAME: &str = "com.apple.net.utun_control";
 const UTUN_OPT_IFNAME: libc::c_int = 2;
@@ -316,14 +317,10 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        let effective_dns_servers = effective_dns_servers(dns_servers);
         if macos_network_mock_enabled() {
             ensure_mock_runtime(&mut runtime);
-            runtime.dns_servers = dns_servers
-                .iter()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-                .collect();
+            runtime.dns_servers = effective_dns_servers;
             return Ok(());
         }
         ensure_utun_runtime(&mut runtime)?;
@@ -331,12 +328,7 @@ impl PlatformNetwork for MacosPlatformNetwork {
             .interface_name
             .clone()
             .ok_or_else(|| anyhow!("macos utun interface is not ready"))?;
-        runtime.dns_servers = dns_servers
-            .iter()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect();
+        runtime.dns_servers = effective_dns_servers;
         macos_trace!(
             "SLAN_MACOS_CONFIGURE_DNS_START interface={} dns_servers={}",
             interface_name,
@@ -3113,14 +3105,28 @@ fn macos_diagnostic_checks(runtime: &MacosRuntime) -> Vec<PlatformDiagnosticChec
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::{
+        net::Ipv4Addr,
+        sync::{Mutex, OnceLock},
+    };
 
     use client_core::RelayTicket;
 
-    use super::{
-        local_virtual_ip_reply, parse_ifconfig_ipv4_addresses, parse_virtual_ipv4,
-        relay_udp_address_for_session,
-    };
+    use super::*;
+
+    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("macos platform test mutex poisoned")
+    }
+
+    fn reset_runtime() {
+        let mut runtime = runtime()
+            .lock()
+            .expect("macos network runtime mutex poisoned");
+        *runtime = MacosRuntime::default();
+    }
 
     #[test]
     fn parses_ifconfig_ipv4_addresses() {
@@ -3168,6 +3174,35 @@ mod tests {
         assert_eq!(&reply[16..20], &[10, 0, 0, 9]);
         assert_eq!(reply[20], 0);
         assert!(local_virtual_ip_reply(&request, "10.0.0.3/32", &[], &[]).is_none());
+    }
+
+    #[test]
+    fn macos_mock_runtime_prefers_local_dns_override() {
+        let _guard = test_lock();
+        std::env::set_var("SLAN_MACOS_NETWORK_MOCK", "1");
+        std::env::set_var("SLAN_LOCAL_DNS_BIND", "127.0.0.1:53");
+        reset_runtime();
+
+        let platform = MacosPlatformNetwork;
+        platform.install_adapter().unwrap();
+        platform.configure_ip("10.0.0.1", 32).unwrap();
+        platform
+            .configure_dns(&["10.0.0.53".to_string(), "8.8.8.8".to_string()])
+            .unwrap();
+
+        let diagnostics = platform.diagnostics().unwrap();
+        assert_eq!(diagnostics.dns_servers, vec!["127.0.0.1"]);
+
+        let runtime = runtime()
+            .lock()
+            .expect("macos network runtime mutex poisoned");
+        assert_eq!(runtime.dns_servers, vec!["127.0.0.1".to_string()]);
+        drop(runtime);
+
+        platform.disable_network().unwrap();
+        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
+        std::env::remove_var("SLAN_MACOS_NETWORK_MOCK");
+        reset_runtime();
     }
 
     fn test_session(relay_url: &str) -> client_core::RelayPeerSession {
