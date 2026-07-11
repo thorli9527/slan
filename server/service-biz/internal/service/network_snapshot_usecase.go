@@ -1,8 +1,10 @@
 package service
 
-import "strings"
-
-import "context"
+import (
+	"context"
+	"strconv"
+	"strings"
+)
 
 func (s NetworkCoreService) NetworkSnapshot(
 	ctx context.Context,
@@ -75,15 +77,34 @@ func buildNetworkEventSnapshotPayload(
 		}
 	}
 
+	dnsZones := make([]NetworkEventDNSZoneView, 0, len(view.DNSZones))
+	zoneNamesByID := make(map[string]string, len(view.DNSZones))
+	for _, zone := range view.DNSZones {
+		zoneNamesByID[zone.ZoneID] = strings.TrimSpace(zone.Name)
+		dnsZones = append(dnsZones, NetworkEventDNSZoneView{
+			ZoneID:       zone.ZoneID,
+			NetworkID:    zone.NetworkID,
+			ZoneName:     zone.Name,
+			ExposeGlobal: zone.ExposeGlobal,
+			UpdatedAt:    zone.UpdatedAt,
+		})
+	}
+
 	dnsRecords := make([]NetworkEventDNSRecordView, 0, len(view.DNSRecords))
 	for _, record := range view.DNSRecords {
+		port, _ := strconv.Atoi(strings.TrimSpace(record.Port))
 		dnsRecords = append(dnsRecords, NetworkEventDNSRecordView{
 			RecordID:       record.RecordID,
 			ZoneID:         record.ZoneID,
+			NetworkID:      record.NetworkID,
 			Name:           record.Name,
-			FQDN:           record.Name,
+			FQDN:           networkEventRecordFQDN(record.Name, zoneNamesByID[record.ZoneID]),
+			RecordType:     strings.TrimSpace(record.Type),
 			TargetDeviceID: record.TargetDeviceID,
 			TargetIP:       record.TargetIP,
+			CNAME:          record.CNAME,
+			Port:           port,
+			TTL:            record.TTL,
 			Enabled:        !stringsEqualFold(record.Status, "disabled"),
 			UpdatedAt:      record.UpdatedAt,
 		})
@@ -133,6 +154,7 @@ func buildNetworkEventSnapshotPayload(
 		},
 		Members:      members,
 		DeviceGroups: deviceGroups,
+		DNSZones:     dnsZones,
 		DNSRecords:   dnsRecords,
 		ACLRules:     aclRules,
 		PeerPaths:    peerPaths,

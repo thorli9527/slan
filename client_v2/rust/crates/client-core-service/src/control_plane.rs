@@ -13,7 +13,7 @@ use client_core::{normalize_virtual_ip, AuthPayload, RelayTicket, RouteSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::network_event::NetworkSnapshotResponse;
+use crate::{network_event::NetworkSnapshotResponse, relay_store::relay_only_path_policy_enabled};
 
 const DEFAULT_CONTROL_BASE_URL: &str = "http://47.245.40.231:28080";
 const API_AUTH_DEVICE_LOGIN_DEVICES: &str = "/api/app/auth/device-login-devices";
@@ -1228,6 +1228,9 @@ fn network_config_control_endpoints(peer: &Value) -> Vec<ControlEndpoint> {
 }
 
 fn valid_direct_udp_endpoint_address(address: &str) -> bool {
+    if relay_only_path_policy_enabled() {
+        return false;
+    }
     let trimmed = address.trim();
     let normalized = trimmed
         .strip_prefix("udp://")

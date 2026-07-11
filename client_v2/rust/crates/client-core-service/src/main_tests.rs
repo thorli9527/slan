@@ -18,7 +18,7 @@ use crate::{
         PathDiagnoseDns, PathDiagnoseMtu, PathDiagnoseRelay, PersistedRelayCandidate,
         RelayCandidateSelection, RelayRuntimeStats,
     },
-    relay_store::relay_runtime_failure_total,
+    relay_store::{relay_only_path_policy_enabled, relay_runtime_failure_total},
 };
 use client_core::{
     AssignedIpPayload, ClientCommand, ClientRuntime, NetworkRuntimeState, PathKind,
@@ -576,9 +576,24 @@ fn peer_path_configs_ignore_zero_port_direct_candidates() {
 }
 
 #[test]
+fn relay_only_path_policy_enabled_reads_env() {
+    let _guard = crate::test_env_lock();
+    unsafe {
+        std::env::set_var("SLAN_FORCE_RELAY_ONLY", "1");
+    }
+    assert!(relay_only_path_policy_enabled());
+    unsafe {
+        std::env::remove_var("SLAN_FORCE_RELAY_ONLY");
+    }
+}
+
+#[test]
 fn valid_direct_candidate_address_rejects_zero_port() {
     assert!(valid_direct_candidate_address("203.0.113.20:49152"));
     assert!(valid_direct_candidate_address("udp://203.0.113.20:49152"));
+    assert!(!valid_direct_candidate_address(
+        "relay+udp://203.0.113.20:49152"
+    ));
     assert!(!valid_direct_candidate_address("203.0.113.20:0"));
     assert!(!valid_direct_candidate_address("udp://203.0.113.20:0"));
 }

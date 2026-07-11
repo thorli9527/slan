@@ -25,11 +25,15 @@ use crate::{
         ControlPlaneClient, RelayCandidate,
     },
     control_transport::{self, ControlTransportMessage, MqttQos},
+    dns_apply::apply_dns_runtime_event,
+    dns_authority::{resolve_authoritative, ResolveAuthoritativeResult},
+    dns_runtime_state::dns_runtime_state,
     local_api::{
-        LocalServiceMethod, RegisterTestUserRequest, ReportDeviceRuntimeRequest,
-        SendClientMessageRequest, ServiceRequest, WatchBusinessEventRequest,
-        WatchBusinessEventResponse, WatchStateRequest, WatchStateResponse,
-        BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_SESSION_CHANGED, BUSINESS_STATE_CHANGED,
+        LocalDnsResolveRequest, LocalServiceMethod, RegisterTestUserRequest,
+        ReportDeviceRuntimeRequest, SendClientMessageRequest, ServiceRequest,
+        WatchBusinessEventRequest, WatchBusinessEventResponse, WatchStateRequest,
+        WatchStateResponse, BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_SESSION_CHANGED,
+        BUSINESS_STATE_CHANGED,
     },
     network_event::{network_event_business_data, NetworkEventEnvelope},
     network_event_apply::{apply_network_event, ApplyResult},
@@ -38,6 +42,7 @@ use crate::{
         replace_runtime_relay_candidates, runtime_relay_candidates, select_relay_candidates,
     },
     relay_models::{PersistedRelayCandidate, RelayCandidateListResponse},
+    relay_store::relay_only_path_policy_enabled,
     session_store::{
         app_data_dir, current_timestamp_ms, ensure_session_device_registered,
         ensure_session_node_binding, hydrate_session_from_control_plane, load_session,
@@ -303,6 +308,15 @@ fn handle_request_json(request_json: &str) -> Result<String> {
             serde_json::to_string(&crate::network_module::network_module_snapshot())
                 .context("encode local network module")
         }
+        LocalServiceMethod::LocalDnsState => {
+            serde_json::to_string(&local_dns_state_json()).context("encode local dns state")
+        }
+        LocalServiceMethod::LocalDnsResolve => {
+            let input: LocalDnsResolveRequest =
+                serde_json::from_value(request.args).context("decode local dns resolve request")?;
+            serde_json::to_string(&local_dns_resolve_json(input))
+                .context("encode local dns resolve response")
+        }
         LocalServiceMethod::LocalRelayCandidates => {
             serde_json::to_string(&embedded_relay_candidates_response(false)?)
                 .context("encode relay candidates")
@@ -398,6 +412,81 @@ fn refresh_state_json() -> Value {
         }
     }
     value
+}
+
+fn local_dns_state_json() -> Value {
+    let network = network_event_runtime_state()
+        .try_lock()
+        .ok()
+        .map(|guard| guard.clone());
+    let dns = dns_runtime_state()
+        .try_lock()
+        .ok()
+        .map(|guard| guard.clone());
+    let server = crate::dns_server::local_dns_server_status()
+        .try_lock()
+        .ok()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    serde_json::json!({
+        "activeNetworkId": dns.as_ref().and_then(|value| value.active_network_id.clone()),
+        "zoneCount": dns.as_ref().map(|value| value.zones_by_id.len()).unwrap_or(0),
+        "recordCount": dns.as_ref().map(|value| value.records_by_id.len()).unwrap_or(0),
+        "cacheCount": dns.as_ref().map(|value| value.cache_by_question.len()).unwrap_or(0),
+        "memberCount": network.as_ref().map(|value| value.members_by_device_id.len()).unwrap_or(0),
+        "syncStatus": network
+            .as_ref()
+            .map(|value| format!("{:?}", value.sync_status))
+            .unwrap_or_else(|| "Busy".to_string()),
+        "lastReloadAtMs": dns.as_ref().and_then(|value| value.last_reload_at_ms),
+        "upstreamServers": dns
+            .as_ref()
+            .map(|value| value.upstream_servers.clone())
+            .unwrap_or_default(),
+        "serverEnabled": server.enabled,
+        "serverListening": server.listening,
+        "serverBindAddr": server.bind_addr,
+        "serverRequesterDeviceId": server.requester_device_id,
+        "serverLastError": server.last_error,
+        "serverLastQueryAtMs": server.last_query_at_ms,
+        "desiredEnabled": server.desired_enabled,
+        "desiredSignedIn": server.desired_signed_in,
+        "desiredNetworkEnabled": server.desired_network_enabled,
+        "desiredHasRequesterDeviceId": server.desired_has_requester_device_id,
+        "desiredHasDnsData": server.desired_has_dns_data,
+        "networkLockBusy": network.is_none(),
+        "dnsLockBusy": dns.is_none(),
+    })
+}
+
+fn local_dns_resolve_json(input: LocalDnsResolveRequest) -> Value {
+    let Ok(network) = network_event_runtime_state().try_lock() else {
+        return serde_json::json!({ "error": "network dns runtime busy: network state lock unavailable" });
+    };
+    let Ok(dns) = dns_runtime_state().try_lock() else {
+        return serde_json::json!({ "error": "network dns runtime busy: dns state lock unavailable" });
+    };
+    match resolve_authoritative(
+        &network,
+        &dns,
+        &input.requester_device_id,
+        &input.qname,
+        &input.qtype,
+    ) {
+        ResolveAuthoritativeResult::AnswerA { ttl, ip } => serde_json::json!({
+            "result": "answer_a",
+            "ttl": ttl,
+            "ip": ip,
+        }),
+        ResolveAuthoritativeResult::AnswerCname { ttl, cname } => serde_json::json!({
+            "result": "answer_cname",
+            "ttl": ttl,
+            "cname": cname,
+        }),
+        ResolveAuthoritativeResult::NxDomain => serde_json::json!({ "result": "nxdomain" }),
+        ResolveAuthoritativeResult::NoData => serde_json::json!({ "result": "nodata" }),
+        ResolveAuthoritativeResult::NotManaged => serde_json::json!({ "result": "not_managed" }),
+    }
 }
 
 fn apply_embedded_request_overrides(args: &Value) {
@@ -789,6 +878,7 @@ fn embedded_peer_path_configs(
     relay_path_kind: PathKind,
     relay_sessions: &[RelayPeerSession],
 ) -> Vec<PeerPathConfig> {
+    let relay_only = relay_only_path_policy_enabled();
     peers
         .iter()
         .filter(|peer| peer.node_id != local_node_id)
@@ -798,27 +888,29 @@ fn embedded_peer_path_configs(
                 .find(|session| session.peer_node_id == peer.node_id);
             let mut candidates = Vec::new();
             let mut direct_addresses = Vec::new();
-            for endpoint in &peer.endpoints {
-                let address = endpoint.address.trim();
-                if address.is_empty()
-                    || !valid_embedded_direct_candidate_address(address)
-                    || direct_addresses.iter().any(|value| value == address)
-                {
-                    continue;
+            if !relay_only {
+                for endpoint in &peer.endpoints {
+                    let address = endpoint.address.trim();
+                    if address.is_empty()
+                        || !valid_embedded_direct_candidate_address(address)
+                        || direct_addresses.iter().any(|value| value == address)
+                    {
+                        continue;
+                    }
+                    direct_addresses.push(address.to_string());
+                    candidates.push(PathCandidate {
+                        kind: PathKind::DirectUdp,
+                        state: PathState::Probing,
+                        endpoint_id: None,
+                        address: Some(address.to_string()),
+                        session_id: None,
+                        transport: Some("udp".to_string()),
+                        rtt_ms: None,
+                        path_score: Some(900),
+                        last_ok_at_ms: None,
+                        last_error: None,
+                    });
                 }
-                direct_addresses.push(address.to_string());
-                candidates.push(PathCandidate {
-                    kind: PathKind::DirectUdp,
-                    state: PathState::Probing,
-                    endpoint_id: None,
-                    address: Some(address.to_string()),
-                    session_id: None,
-                    transport: Some("udp".to_string()),
-                    rtt_ms: None,
-                    path_score: Some(900),
-                    last_ok_at_ms: None,
-                    last_error: None,
-                });
             }
             if let Some(session) = relay_session {
                 let relay_transport = relay.transport.trim().to_ascii_lowercase();
@@ -846,10 +938,12 @@ fn embedded_peer_path_configs(
 
 fn valid_embedded_direct_candidate_address(address: &str) -> bool {
     let trimmed = address.trim();
+    if trimmed.starts_with("relay+udp://") {
+        return false;
+    }
     let normalized = trimmed
         .strip_prefix("udp://")
         .or_else(|| trimmed.strip_prefix("direct+udp://"))
-        .or_else(|| trimmed.strip_prefix("relay+udp://"))
         .unwrap_or(trimmed);
     normalized
         .parse::<std::net::SocketAddr>()
@@ -1581,6 +1675,7 @@ fn ingest_embedded_network_event(value: &Value) -> Result<()> {
             .expect("embedded network event runtime mutex poisoned");
         apply_network_event(&mut state, envelope.clone())?
     };
+    apply_dns_runtime_event(&envelope).context("apply embedded dns runtime event")?;
     eprintln!(
         "SLAN_EMBEDDED_NETWORK_EVENT_APPLIED networkId={} eventType={:?} version={} result={:?}",
         envelope.network_id, envelope.event_type, envelope.version, apply_result,
@@ -1627,8 +1722,10 @@ fn ingest_embedded_network_event(value: &Value) -> Result<()> {
             let mut state = network_event_runtime_state()
                 .lock()
                 .expect("embedded network event runtime mutex poisoned");
-            apply_network_event(&mut state, snapshot_envelope)?
+            apply_network_event(&mut state, snapshot_envelope.clone())?
         };
+        apply_dns_runtime_event(&snapshot_envelope)
+            .context("apply embedded dns runtime snapshot")?;
         eprintln!(
             "SLAN_EMBEDDED_NETWORK_SNAPSHOT_APPLIED networkId={} version={} result={:?}",
             envelope.network_id, snapshot.version, snapshot_result,

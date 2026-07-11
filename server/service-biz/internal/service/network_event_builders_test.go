@@ -70,3 +70,78 @@ func TestBuildNetworkEventSnapshotPayloadMapsAclSources(t *testing.T) {
 		t.Fatalf("expected snapshot group source id mapping, got %+v", got)
 	}
 }
+
+func TestNetworkEventDNSRecordsBuildsFullFQDN(t *testing.T) {
+	records := networkEventDNSRecords(
+		[]model.DNSRecord{
+			{
+				RecordID:  "rec-1",
+				NetworkID: "net-1",
+				ZoneID:    "zone-1",
+				Name:      "self",
+				Type:      "A",
+				Value:     "device-1",
+				TTL:       60,
+			},
+		},
+		[]model.DNSZone{
+			{
+				ZoneID:    "zone-1",
+				NetworkID: "net-1",
+				Name:      "example.lan",
+			},
+		},
+	)
+
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].FQDN != "self.example.lan" {
+		t.Fatalf("expected full fqdn, got %q", records[0].FQDN)
+	}
+	if records[0].TargetDeviceID != "device-1" {
+		t.Fatalf("expected target device id, got %q", records[0].TargetDeviceID)
+	}
+}
+
+func TestBuildNetworkEventSnapshotPayloadBuildsFullFQDN(t *testing.T) {
+	payload := buildNetworkEventSnapshotPayload(NetworkResolvedConfigView{
+		Config: NetworkConfigView{
+			Network: NetworkView{
+				NetworkID: "net-1",
+				Name:      "Default",
+			},
+			DeviceID:   "device-local",
+			GlobalIP:   "10.0.1.10",
+			GlobalName: "local",
+			DNSZones: []DNSZoneView{
+				{
+					ZoneID:    "zone-1",
+					NetworkID: "net-1",
+					Name:      "example.lan",
+				},
+			},
+			DNSRecords: []DNSRecordView{
+				{
+					RecordID:       "rec-1",
+					NetworkID:      "net-1",
+					ZoneID:         "zone-1",
+					Name:           "self",
+					Type:           "A",
+					TargetDeviceID: "device-local",
+					TTL:            60,
+				},
+			},
+		},
+	})
+
+	if len(payload.DNSZones) != 1 {
+		t.Fatalf("expected 1 dns zone, got %d", len(payload.DNSZones))
+	}
+	if len(payload.DNSRecords) != 1 {
+		t.Fatalf("expected 1 dns record, got %d", len(payload.DNSRecords))
+	}
+	if payload.DNSRecords[0].FQDN != "self.example.lan" {
+		t.Fatalf("expected full fqdn, got %q", payload.DNSRecords[0].FQDN)
+	}
+}

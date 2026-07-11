@@ -58,13 +58,26 @@ type NetworkEventDeviceGroupView struct {
 	UpdatedAt       int64    `json:"updatedAt"`
 }
 
+type NetworkEventDNSZoneView struct {
+	ZoneID       string `json:"zoneId"`
+	NetworkID    string `json:"networkId"`
+	ZoneName     string `json:"zoneName"`
+	ExposeGlobal bool   `json:"exposeGlobal"`
+	UpdatedAt    int64  `json:"updatedAt"`
+}
+
 type NetworkEventDNSRecordView struct {
 	RecordID       string `json:"recordId"`
 	ZoneID         string `json:"zoneId"`
+	NetworkID      string `json:"networkId"`
 	Name           string `json:"name"`
 	FQDN           string `json:"fqdn"`
+	RecordType     string `json:"recordType"`
 	TargetDeviceID string `json:"targetDeviceId"`
 	TargetIP       string `json:"targetIp"`
+	CNAME          string `json:"cname"`
+	Port           int    `json:"port"`
+	TTL            int    `json:"ttl"`
 	Enabled        bool   `json:"enabled"`
 	UpdatedAt      int64  `json:"updatedAt"`
 }
@@ -98,6 +111,7 @@ type NetworkSnapshotPayload struct {
 	Network      NetworkEventNetworkView       `json:"network"`
 	Members      []NetworkEventMemberView      `json:"members"`
 	DeviceGroups []NetworkEventDeviceGroupView `json:"deviceGroups"`
+	DNSZones     []NetworkEventDNSZoneView     `json:"dnsZones"`
 	DNSRecords   []NetworkEventDNSRecordView   `json:"dnsRecords"`
 	ACLRules     []NetworkEventACLRuleView     `json:"aclRules"`
 	PeerPaths    []NetworkEventPeerPathView    `json:"peerPaths"`
@@ -136,6 +150,7 @@ type NetworkEventACLChangedPayload struct {
 }
 
 type NetworkEventDNSChangedPayload struct {
+	Zones   []NetworkEventDNSZoneView   `json:"zones"`
 	Records []NetworkEventDNSRecordView `json:"records"`
 }
 

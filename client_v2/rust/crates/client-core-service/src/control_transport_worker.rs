@@ -20,7 +20,9 @@ use crate::{
         self, ControlTransportMessage, ControlTransportMessageKind, ControlTransportTickRequest,
         MqttQos,
     },
-    current_timestamp_ms, load_session, log_service_error,
+    current_timestamp_ms,
+    dns_apply::apply_dns_runtime_event,
+    load_session, log_service_error,
     network_event::{network_event_business_data, NetworkEventEnvelope, NetworkEventType},
     network_event_apply::{apply_network_event, ApplyResult},
     network_runtime_state::RuntimeNetworkState,
@@ -43,7 +45,7 @@ pub struct ControlTransportWorkerState {
     next_attempt_ms: u64,
 }
 
-fn network_event_runtime_state() -> &'static Mutex<RuntimeNetworkState> {
+pub(crate) fn network_event_runtime_state() -> &'static Mutex<RuntimeNetworkState> {
     NETWORK_EVENT_RUNTIME_STATE.get_or_init(|| Mutex::new(RuntimeNetworkState::default()))
 }
 
@@ -355,7 +357,7 @@ fn refresh_network_snapshot_cache(session: &PersistedSession) -> Result<(), Stri
         event_id: format!("startup-snapshot-{}", snapshot.version),
         event_type: NetworkEventType::NetworkSnapshot,
         occurred_at: current_timestamp_ms(),
-        payload: serde_json::to_value(snapshot.snapshot)
+        payload: serde_json::to_value(&snapshot.snapshot)
             .map_err(|err| format!("encode startup network snapshot payload: {err}"))?,
     };
     let snapshot_result = {
@@ -365,6 +367,18 @@ fn refresh_network_snapshot_cache(session: &PersistedSession) -> Result<(), Stri
         apply_network_event(&mut state, snapshot_envelope)
             .map_err(|err| format!("apply startup network snapshot: {err:#}"))?
     };
+    let dns_snapshot_envelope = NetworkEventEnvelope {
+        r#type: "network_event".to_string(),
+        network_id: snapshot.network_id.clone(),
+        version: snapshot.version,
+        event_id: format!("startup-snapshot-{}", snapshot.version),
+        event_type: NetworkEventType::NetworkSnapshot,
+        occurred_at: current_timestamp_ms(),
+        payload: serde_json::to_value(&snapshot.snapshot)
+            .map_err(|err| format!("encode startup network snapshot payload: {err}"))?,
+    };
+    apply_dns_runtime_event(&dns_snapshot_envelope)
+        .map_err(|err| format!("apply startup dns snapshot: {err:#}"))?;
     log_service_error(format!(
         "client-core-service refreshed startup network snapshot networkId={} version={} result={:?}",
         snapshot.network_id, snapshot.version, snapshot_result
@@ -620,6 +634,8 @@ fn try_ingest_network_event(
         apply_network_event(&mut state, envelope.clone())
             .map_err(|err| format!("apply network event: {err:#}"))?
     };
+    apply_dns_runtime_event(&envelope)
+        .map_err(|err| format!("apply dns runtime event: {err:#}"))?;
     let mut config_version = envelope.version;
     let mut sync_mode = match apply_result {
         ApplyResult::Applied => "event",
@@ -667,16 +683,18 @@ fn try_ingest_network_event(
             event_id: format!("snapshot-{}", snapshot.version),
             event_type: NetworkEventType::NetworkSnapshot,
             occurred_at: current_timestamp_ms(),
-            payload: serde_json::to_value(snapshot.snapshot)
+            payload: serde_json::to_value(&snapshot.snapshot)
                 .map_err(|err| format!("encode network snapshot payload: {err}"))?,
         };
         let snapshot_result = {
             let mut state = network_event_runtime_state()
                 .lock()
                 .map_err(|_| "network event runtime mutex poisoned".to_string())?;
-            apply_network_event(&mut state, snapshot_envelope)
+            apply_network_event(&mut state, snapshot_envelope.clone())
                 .map_err(|err| format!("apply network snapshot: {err:#}"))?
         };
+        apply_dns_runtime_event(&snapshot_envelope)
+            .map_err(|err| format!("apply dns runtime snapshot: {err:#}"))?;
         log_service_error(format!(
             "client-core-service applied network snapshot networkId={} version={} result={:?}",
             envelope.network_id, snapshot.version, snapshot_result

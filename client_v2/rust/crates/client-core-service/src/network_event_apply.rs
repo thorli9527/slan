@@ -199,7 +199,7 @@ enum VersionCheck {
 }
 
 fn check_version(state: &RuntimeNetworkState, incoming: u64) -> VersionCheck {
-    if incoming <= state.version {
+    if incoming < state.version {
         return VersionCheck::IgnoreStale;
     }
     if state.version > 0 && incoming > state.version + 1 {

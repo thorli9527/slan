@@ -50,6 +50,12 @@ pub(crate) fn relay_path_policy(
     path_type: Option<&str>,
 ) -> PathPolicy {
     let _ = (network_id, device_id, path_type);
+    if relay_only_path_policy_enabled() {
+        return PathPolicy {
+            preferred: vec![client_core::PathKind::RelayUdp],
+            ..PathPolicy::default()
+        };
+    }
     PathPolicy::default()
 }
 
@@ -117,6 +123,15 @@ pub(crate) fn relay_stats_file_path() -> PathBuf {
 
 fn service_state_dir() -> PathBuf {
     app_data_dir().join("SLAN")
+}
+
+pub(crate) fn relay_only_path_policy_enabled() -> bool {
+    matches!(
+        std::env::var("SLAN_FORCE_RELAY_ONLY")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if matches!(value.as_str(), "1" | "true" | "yes" | "on")
+    )
 }
 
 #[cfg(test)]

@@ -24,6 +24,8 @@ pub(crate) enum LocalServiceMethod {
     LocalStatus,
     LocalSession,
     LocalNetworkModule,
+    LocalDnsState,
+    LocalDnsResolve,
     LocalPeers,
     LocalPathPlan,
     LocalPathDiagnose,
@@ -70,6 +72,8 @@ impl LocalServiceMethod {
             "localStatus" => Self::LocalStatus,
             "localSession" => Self::LocalSession,
             "localNetworkModule" => Self::LocalNetworkModule,
+            "localDnsState" => Self::LocalDnsState,
+            "localDnsResolve" => Self::LocalDnsResolve,
             "localPeers" => Self::LocalPeers,
             "localPathPlan" => Self::LocalPathPlan,
             "localPathDiagnose" => Self::LocalPathDiagnose,
@@ -240,6 +244,15 @@ pub(crate) struct ReportDeviceRuntimeRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct LocalDnsResolveRequest {
+    pub(crate) requester_device_id: String,
+    pub(crate) qname: String,
+    #[serde(default = "default_dns_qtype")]
+    pub(crate) qtype: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SetRelayTransportAllowlistRequest {
     #[serde(default)]
     pub(crate) transports: Vec<String>,
@@ -290,6 +303,10 @@ fn default_watch_timeout_ms() -> u64 {
     30_000
 }
 
+fn default_dns_qtype() -> String {
+    "A".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::LocalServiceMethod;
@@ -323,6 +340,14 @@ mod tests {
         assert_eq!(
             LocalServiceMethod::parse("localNetworkModule"),
             LocalServiceMethod::LocalNetworkModule
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localDnsState"),
+            LocalServiceMethod::LocalDnsState
+        );
+        assert_eq!(
+            LocalServiceMethod::parse("localDnsResolve"),
+            LocalServiceMethod::LocalDnsResolve
         );
         assert_eq!(
             LocalServiceMethod::parse("localPathPlan"),

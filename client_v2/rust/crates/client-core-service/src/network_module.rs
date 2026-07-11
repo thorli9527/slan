@@ -184,12 +184,16 @@ pub(crate) fn replace_network_module_from_snapshot(
             })
             .collect(),
         dns_zones: snapshot
-            .dns_records
+            .dns_zones
             .iter()
-            .map(|record| DeviceDnsZone {
-                zone_id: record.zone_id.clone(),
-                network_id: network_id.to_string(),
-                zone_name: record.zone_id.clone(),
+            .map(|zone| DeviceDnsZone {
+                zone_id: zone.zone_id.clone(),
+                network_id: if zone.network_id.trim().is_empty() {
+                    network_id.to_string()
+                } else {
+                    zone.network_id.clone()
+                },
+                zone_name: zone.zone_name.clone(),
             })
             .collect(),
         dns_records: snapshot
@@ -262,12 +266,16 @@ pub(crate) fn apply_network_module_event(
             let payload: NetworkEventDnsChangedPayload =
                 serde_json::from_value(envelope.payload.clone())?;
             config.dns_zones = payload
-                .records
+                .zones
                 .iter()
-                .map(|record| DeviceDnsZone {
-                    zone_id: record.zone_id.clone(),
-                    network_id: network_id.to_string(),
-                    zone_name: record.zone_id.clone(),
+                .map(|zone| DeviceDnsZone {
+                    zone_id: zone.zone_id.clone(),
+                    network_id: if zone.network_id.trim().is_empty() {
+                        network_id.to_string()
+                    } else {
+                        zone.network_id.clone()
+                    },
+                    zone_name: zone.zone_name.clone(),
                 })
                 .collect();
             config.dns_records = payload
@@ -381,13 +389,24 @@ fn to_device_dns_record(
     DeviceDnsRecord {
         record_id: record.record_id,
         zone_id: record.zone_id,
-        network_id: network_id.to_string(),
+        network_id: if record.network_id.trim().is_empty() {
+            network_id.to_string()
+        } else {
+            record.network_id
+        },
         name: record.name,
         fqdn: (!record.fqdn.trim().is_empty()).then_some(record.fqdn),
-        record_type: "A".to_string(),
+        record_type: if record.record_type.trim().is_empty() {
+            "A".to_string()
+        } else {
+            record.record_type
+        },
         target_device_id: (!record.target_device_id.trim().is_empty())
             .then_some(record.target_device_id),
         target_ip: (!record.target_ip.trim().is_empty()).then_some(record.target_ip),
+        cname: (!record.cname.trim().is_empty()).then_some(record.cname),
+        port: (record.port > 0).then(|| record.port.to_string()),
+        ttl: (record.ttl > 0).then(|| i64::from(record.ttl)),
         ..DeviceDnsRecord::default()
     }
 }
@@ -608,6 +627,7 @@ mod tests {
                 event_type: NetworkEventType::DnsChanged,
                 occurred_at: 2,
                 payload: serde_json::to_value(NetworkEventDnsChangedPayload {
+                    zones: vec![],
                     records: vec![NetworkEventDnsRecordView {
                         record_id: "dns-2".to_string(),
                         zone_id: "zone-2".to_string(),

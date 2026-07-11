@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,17 +109,85 @@ func networkEventMemberView(member model.NetworkDevice) NetworkEventMemberView {
 	}
 }
 
-func networkEventDNSRecords(records []model.DNSRecord) []NetworkEventDNSRecordView {
+func networkEventDNSRecords(
+	records []model.DNSRecord,
+	zones []model.DNSZone,
+) []NetworkEventDNSRecordView {
+	zoneNamesByID := networkEventZoneNamesByID(zones)
 	out := make([]NetworkEventDNSRecordView, 0, len(records))
 	for _, record := range records {
+		port, _ := strconv.Atoi(strings.TrimSpace(record.Port))
+		value := strings.TrimSpace(record.Value)
+		targetDeviceID := ""
+		targetIP := ""
+		cname := ""
+		switch strings.ToUpper(strings.TrimSpace(record.Type)) {
+		case "CNAME":
+			cname = value
+		default:
+			if strings.Contains(value, ".") {
+				targetIP = value
+			} else {
+				targetDeviceID = value
+			}
+		}
 		out = append(out, NetworkEventDNSRecordView{
-			RecordID:  record.RecordID,
-			ZoneID:    record.ZoneID,
-			Name:      record.Name,
-			FQDN:      record.Name,
-			TargetIP:  record.Value,
-			Enabled:   true,
-			UpdatedAt: record.UpdatedAt,
+			RecordID:       record.RecordID,
+			ZoneID:         record.ZoneID,
+			NetworkID:      record.NetworkID,
+			Name:           record.Name,
+			FQDN:           networkEventRecordFQDN(record.Name, zoneNamesByID[record.ZoneID]),
+			RecordType:     strings.TrimSpace(record.Type),
+			TargetDeviceID: targetDeviceID,
+			TargetIP:       targetIP,
+			CNAME:          cname,
+			Port:           port,
+			TTL:            record.TTL,
+			Enabled:        true,
+			UpdatedAt:      record.UpdatedAt,
+		})
+	}
+	return out
+}
+
+func networkEventZoneNamesByID(zones []model.DNSZone) map[string]string {
+	out := make(map[string]string, len(zones))
+	for _, zone := range zones {
+		zoneID := strings.TrimSpace(zone.ZoneID)
+		if zoneID == "" {
+			continue
+		}
+		out[zoneID] = strings.TrimSpace(zone.Name)
+	}
+	return out
+}
+
+func networkEventRecordFQDN(name, zoneName string) string {
+	fqdn := strings.TrimSpace(name)
+	zoneName = strings.TrimSpace(zoneName)
+	if fqdn == "" {
+		return ""
+	}
+	if zoneName == "" {
+		return fqdn
+	}
+	lowerFQDN := strings.ToLower(fqdn)
+	lowerZone := strings.ToLower(zoneName)
+	if strings.EqualFold(fqdn, zoneName) || strings.HasSuffix(lowerFQDN, "."+lowerZone) {
+		return fqdn
+	}
+	return fqdn + "." + zoneName
+}
+
+func networkEventDNSZones(zones []model.DNSZone) []NetworkEventDNSZoneView {
+	out := make([]NetworkEventDNSZoneView, 0, len(zones))
+	for _, zone := range zones {
+		out = append(out, NetworkEventDNSZoneView{
+			ZoneID:       zone.ZoneID,
+			NetworkID:    zone.NetworkID,
+			ZoneName:     zone.Name,
+			ExposeGlobal: zone.ExposeGlobal,
+			UpdatedAt:    zone.UpdatedAt,
 		})
 	}
 	return out

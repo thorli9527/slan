@@ -68,14 +68,47 @@ pub struct NetworkEventDeviceGroupView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct NetworkEventDnsRecordView {
-    pub record_id: String,
+pub struct NetworkEventDnsZoneView {
+    #[serde(default)]
     pub zone_id: String,
+    #[serde(default)]
+    pub network_id: String,
+    #[serde(default)]
+    pub zone_name: String,
+    #[serde(default)]
+    pub expose_global: bool,
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkEventDnsRecordView {
+    #[serde(default)]
+    pub record_id: String,
+    #[serde(default)]
+    pub zone_id: String,
+    #[serde(default)]
+    pub network_id: String,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub fqdn: String,
+    #[serde(default)]
+    pub record_type: String,
+    #[serde(default)]
     pub target_device_id: String,
+    #[serde(default)]
     pub target_ip: String,
+    #[serde(default)]
+    pub cname: String,
+    #[serde(default)]
+    pub port: i32,
+    #[serde(default)]
+    pub ttl: i32,
+    #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
     pub updated_at: u64,
 }
 
@@ -121,6 +154,8 @@ pub struct NetworkSnapshotPayload {
     pub members: Vec<NetworkEventMemberView>,
     #[serde(default, deserialize_with = "null_default")]
     pub device_groups: Vec<NetworkEventDeviceGroupView>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub dns_zones: Vec<NetworkEventDnsZoneView>,
     #[serde(default, deserialize_with = "null_default")]
     pub dns_records: Vec<NetworkEventDnsRecordView>,
     #[serde(default, deserialize_with = "null_default")]
@@ -191,6 +226,8 @@ pub struct NetworkEventAclChangedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkEventDnsChangedPayload {
+    #[serde(default, deserialize_with = "null_default")]
+    pub zones: Vec<NetworkEventDnsZoneView>,
     #[serde(default, deserialize_with = "null_default")]
     pub records: Vec<NetworkEventDnsRecordView>,
 }

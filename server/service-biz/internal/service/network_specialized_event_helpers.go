@@ -38,7 +38,8 @@ func publishDNSChanged(
 		uint64(version),
 		occurredAt.UnixMilli(),
 		NetworkEventDNSChangedPayload{
-			Records: networkEventDNSRecords(records),
+			Zones:   networkEventDNSZones(zones),
+			Records: networkEventDNSRecords(records, zones),
 		},
 	)
 }

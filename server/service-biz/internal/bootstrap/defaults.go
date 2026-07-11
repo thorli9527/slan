@@ -44,7 +44,7 @@ func defaultProducts(now int64) []model.Product {
 func defaultDownloads(now int64) []model.ClientDownload {
 	return []model.ClientDownload{
 		{DownloadID: "download0000000000000000000000000001", Name: "slan-client-linux.tar.gz", Platform: "linux", Version: "0.1.0", URL: "/downloads/clients/slan-client-linux.tar.gz", Status: "active", CreatedAt: now, UpdatedAt: now},
-		{DownloadID: "download0000000000000000000000000002", Name: "slan-client-macos.tar.gz", Platform: "macos", Version: "0.1.0", URL: "/downloads/clients/slan-client-macos.tar.gz", Status: "active", CreatedAt: now, UpdatedAt: now},
+		{DownloadID: "download0000000000000000000000000002", Name: "slan-client-macos.pkg", Platform: "macos", Version: "0.1.0", URL: "/downloads/clients/slan-client-macos.pkg", Status: "active", CreatedAt: now, UpdatedAt: now},
 		{DownloadID: "download0000000000000000000000000003", Name: "slan-client-windows.zip", Platform: "windows", Version: "0.1.0", URL: "/downloads/clients/slan-client-windows.zip", Status: "active", CreatedAt: now, UpdatedAt: now},
 	}
 }
