@@ -24,7 +24,8 @@
             ],
             "allowedCommonJsDependencies": [
               "qrcode"
-            ]
+            ],
+            "outputHashing": "all"
           }
         },
         "serve": {

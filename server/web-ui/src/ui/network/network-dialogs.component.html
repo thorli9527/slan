@@ -59,11 +59,39 @@
         <label class="span-2"><span>{{ vm.showIngressRuleDialog ? '来源对象' : '目标对象' }}</span><select [(ngModel)]="vm.ruleSubjectValue"><option *ngFor="let item of vm.ruleSubjectOptions" [value]="item.value">{{ item.label }}</option></select></label>
         <label><span>端口</span><input [(ngModel)]="vm.rulePort" /></label>
         <label class="span-2"><span>描述</span><input [(ngModel)]="vm.ruleDescription" /></label>
-        <label><span>启用</span><input type="checkbox" [(ngModel)]="vm.ruleEnabled" /></label>
+        <label class="rule-toggle-field">
+          <span>启用</span>
+          <span class="switch-control">
+            <input type="checkbox" [(ngModel)]="vm.ruleEnabled" [attr.aria-label]="vm.ruleEnabled ? '停用规则' : '启用规则'" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </span>
+          <strong>{{ vm.ruleEnabled ? '已启用' : '已停用' }}</strong>
+        </label>
       </div>
       <p class="form-error" *ngIf="vm.securityRuleDialogMessage">{{ vm.securityRuleDialogMessage }}</p>
     </div>
-    <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeRuleDialog()">取消</button><button class="primary" type="button" [disabled]="!vm.ruleSubjectValue" (click)="vm.saveRuleDialog()">{{ vm.ruleDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
+    <footer class="modal-footer rule-modal-footer">
+      <button
+        class="table-icon-button danger"
+        type="button"
+        *ngIf="vm.ruleDialogMode === 'edit' && vm.editingRule"
+        [title]="vm.showIngressRuleDialog ? '删除入方向规则' : '删除出方向规则'"
+        [attr.aria-label]="vm.showIngressRuleDialog ? '删除入方向规则' : '删除出方向规则'"
+        (click)="vm.removeSecurityRule(vm.editingRule)"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h16"></path>
+          <path d="M9 7V5h6v2"></path>
+          <path d="M8 7l1 12h6l1-12"></path>
+          <path d="M10 11v5"></path>
+          <path d="M14 11v5"></path>
+        </svg>
+      </button>
+      <div class="modal-footer-actions">
+        <button class="ghost" type="button" (click)="vm.closeRuleDialog()">取消</button>
+        <button class="primary" type="button" [disabled]="!vm.ruleSubjectValue" (click)="vm.saveRuleDialog()">{{ vm.ruleDialogMode === 'create' ? '创建' : '保存' }}</button>
+      </div>
+    </footer>
   </section>
 </div>
 

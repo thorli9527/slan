@@ -12,8 +12,6 @@ import {
   INITIAL_DNS_ZONES,
   DEVICE_GROUP_PRESETS,
   INITIAL_MEMBERS,
-  INITIAL_SECURITY_GROUPS,
-  INITIAL_SECURITY_RULES,
   INITIAL_USER_ALIASES,
   INITIAL_WORKSPACE_DEVICE_INVITES,
   INITIAL_WORKSPACE_DEVICE_IDS,
@@ -391,8 +389,8 @@ export abstract class AppComponentState {
   userAliases: UserAliasRow[] = INITIAL_USER_ALIASES.map((item) => ({ ...item }));
   dnsZones: DNSZoneRow[] = INITIAL_DNS_ZONES.map((item) => ({ ...item }));
   dnsRecords: DNSRow[] = INITIAL_DNS_RECORDS.map((item) => ({ ...item }));
-  securityRules: SecurityRuleRow[] = INITIAL_SECURITY_RULES.map((item) => ({ ...item }));
-  securityGroups: SecurityGroupRow[] = INITIAL_SECURITY_GROUPS.map((item) => ({ ...item }));
+  securityRules: SecurityRuleRow[] = [];
+  securityGroups: SecurityGroupRow[] = [];
   deviceExposures: DeviceExposureRow[] = INITIAL_DEVICE_EXPOSURES.map((item) => ({ ...item }));
   workspaceDeviceInvites: WorkspaceDeviceInviteRow[] = INITIAL_WORKSPACE_DEVICE_INVITES.map((item) => ({ ...item }));
   deviceBootstrapKeys: DeviceBootstrapKeyRow[] = INITIAL_DEVICE_BOOTSTRAP_KEYS.map((item) => ({ ...item }));

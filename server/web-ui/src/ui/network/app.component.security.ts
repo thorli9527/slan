@@ -25,6 +25,7 @@ import {
 } from '../app.models';
 import { WEB_API } from '../api-paths';
 import { compactUuid } from '../app.utils';
+import { ApiHttpError } from '../app-api.service';
 
 
 export abstract class AppComponentSecurity extends AppComponentDns {
@@ -256,8 +257,14 @@ export abstract class AppComponentSecurity extends AppComponentDns {
     const portTo = this.rulePort === 'all' ? 0 : Number.parseInt(this.rulePort.split(',').at(-1) ?? this.rulePort, 10) || portFrom;
     const peer = this.normalizedRulePeer();
     if (this.ruleDialogMode === 'edit' && this.editingRule) {
+      const ruleId = this.editingRule.ruleId?.trim() ?? '';
+      if (!ruleId) {
+        this.securityRuleDialogMessage = '更新安全规则失败：规则不存在，请刷新页面后重试';
+        this.notifyStateChanged();
+        return;
+      }
       try {
-        const updated = await this.api.patch<ApiSecurityRule>(WEB_API.securityRule(this.editingRule.ruleId ?? '', this.effectiveUserId), {
+        const updated = await this.api.patch<ApiSecurityRule>(WEB_API.securityRule(ruleId, this.effectiveUserId), {
           actorUserId: this.effectiveUserId,
           direction: this.ruleDirection,
           priority: this.rulePriority,
@@ -271,9 +278,9 @@ export abstract class AppComponentSecurity extends AppComponentDns {
           enabled: this.ruleEnabled,
         });
         Object.assign(this.editingRule, this.mapSecurityRule(updated));
-      } catch {
+      } catch (error) {
         if (!this.isDemoMode) {
-          this.securityRuleDialogMessage = '更新安全规则失败';
+          this.securityRuleDialogMessage = this.securityRuleFailureMessage('更新', error);
           this.notifyStateChanged();
           return;
         }
@@ -322,16 +329,46 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   }
 
   async removeSecurityRule(rule: SecurityRuleRow): Promise<void> {
-    try {
-      await this.api.delete(WEB_API.securityRule(rule.ruleId ?? '', this.effectiveUserId));
-    } catch {
-      if (!this.isDemoMode) {
-        this.securityRuleDialogMessage = '删除安全规则失败';
-        this.notifyStateChanged();
-        return;
+    const ruleId = rule.ruleId?.trim() ?? '';
+    const directionLabel = rule.direction === 'egress' ? '出方向' : '入方向';
+    if (!window.confirm(`确定删除这条${directionLabel}规则吗？删除后立即生效。`)) {
+      return;
+    }
+    this.securityRuleDialogMessage = '';
+    if (!ruleId && !this.isDemoMode) {
+      this.securityRuleDialogMessage = '删除安全规则失败：规则不存在，请刷新页面后重试';
+      this.notifyStateChanged();
+      return;
+    }
+    if (ruleId) {
+      try {
+        await this.api.delete(WEB_API.securityRule(ruleId, this.effectiveUserId));
+      } catch (error) {
+        if (!this.isDemoMode) {
+          this.securityRuleDialogMessage = this.securityRuleFailureMessage('删除', error);
+          this.notifyStateChanged();
+          return;
+        }
       }
     }
-    this.securityRules = this.securityRules.filter((item) => item !== rule);
+    this.securityRules = this.securityRules.filter((item) => ruleId ? item.ruleId !== ruleId : item !== rule);
+    if (this.editingRule === rule || (ruleId && this.editingRule?.ruleId === ruleId)) {
+      this.closeRuleDialog();
+      this.editingRule = null;
+    }
     this.notifyStateChanged();
+  }
+
+  private securityRuleFailureMessage(action: string, error: unknown): string {
+    if (!(error instanceof ApiHttpError)) {
+      return `${action}安全规则失败`;
+    }
+    const detail = ({
+      invalid_argument: '来源或目标对象无效，请选择当前网络中的设备或设备分组',
+      not_found: '规则不存在，请刷新页面后重试',
+      forbidden: '当前用户无权修改该规则',
+      unauthorized: '登录状态已失效，请重新登录',
+    } as Record<string, string>)[error.code] ?? `服务端返回 HTTP ${error.status}`;
+    return `${action}安全规则失败：${detail}`;
   }
 }

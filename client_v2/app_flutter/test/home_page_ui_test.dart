@@ -12,6 +12,54 @@ import 'package:slan_client_v2/bridge/client_view_state.dart';
 import 'package:slan_client_v2/bridge/control_transport_status.dart';
 
 void main() {
+  testWidgets('home omits shell header and runtime notice banner',
+      (tester) async {
+    final bridge = _UiTestBridge(
+      initialState: const ClientViewState(
+        signedIn: true,
+        userLabel: 'tester@example.com',
+        networkEnabled: false,
+        syncing: false,
+        switchEnabled: true,
+        notice: 'signedIn',
+      ),
+      activationDelay: Duration.zero,
+    );
+
+    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+    await tester.pumpAndSettle();
+
+    expect(find.text('SLAN Client'), findsNothing);
+    expect(find.text('signedIn'), findsNothing);
+    expect(find.byKey(const Key('network-switch')), findsOneWidget);
+  });
+
+  testWidgets('desktop network control omits enabled status label',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final bridge = _UiTestBridge(
+        initialState: const ClientViewState(
+          signedIn: true,
+          userLabel: 'tester@example.com',
+          networkEnabled: true,
+          syncing: false,
+          switchEnabled: true,
+        ),
+        activationDelay: Duration.zero,
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('network-switch')), findsOneWidget);
+      expect(find.text('网络已启用'), findsNothing);
+      expect(find.text('网络未启用'), findsNothing);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   testWidgets('mobile login server settings updates bridge url',
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;

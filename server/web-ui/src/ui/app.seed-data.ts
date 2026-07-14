@@ -7,8 +7,6 @@ import {
   DNSZoneRow,
   MemberRow,
   NavGroup,
-  SecurityGroupRow,
-  SecurityRuleRow,
   SecurityRuleTemplate,
   UserAliasRow,
   WorkspaceDeviceInviteRow,
@@ -27,9 +25,6 @@ export const DEFAULT_ZONE_ID = '00000000000040008000000000000007';
 export const DEV_ZONE_ID = '00000000000040008000000000000008';
 export const DEFAULT_RECORD_ID = '00000000000040008000000000000009';
 export const DEV_RECORD_ID = '0000000000004000800000000000000a';
-export const DEFAULT_SECURITY_GROUP_ID = '0000000000004000800000000000000c';
-export const DEV_SECURITY_GROUP_ID = '0000000000004000800000000000000d';
-
 export const WORKSPACE_PRESETS: WorkspacePreset[] = [
   { name: '默认网络', code: 'default' },
   { name: '开发组', code: 'dev' },
@@ -133,18 +128,6 @@ export const INITIAL_DNS_ZONES: DNSZoneRow[] = [
 export const INITIAL_DNS_RECORDS: DNSRow[] = [
   { recordId: DEFAULT_RECORD_ID, zoneId: DEFAULT_ZONE_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@staticlss.com / 办公 Mac / 443', deviceId: DEFAULT_MAC_DEVICE_ID, port: '443', ttl: 60, targetType: 'device', expose: false },
   { recordId: DEV_RECORD_ID, zoneId: DEV_ZONE_ID, networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@staticlss.com / Alice iPhone / 8443', deviceId: DEFAULT_IPHONE_DEVICE_ID, port: '8443', ttl: 60, targetType: 'device', expose: true },
-];
-
-export const INITIAL_SECURITY_GROUPS: SecurityGroupRow[] = [
-  { securityGroupId: DEFAULT_SECURITY_GROUP_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: '', createdAt: 1767225600 },
-  { securityGroupId: DEV_SECURITY_GROUP_ID, networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: '', createdAt: 1767225600 },
-];
-
-export const INITIAL_SECURITY_RULES: SecurityRuleRow[] = [
-  { ruleId: '0000000000004000800000000000000e', securityGroupId: DEFAULT_SECURITY_GROUP_ID, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self', enabled: true },
-  { ruleId: '0000000000004000800000000000000f', securityGroupId: DEFAULT_SECURITY_GROUP_ID, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'user', subjectValue: DEFAULT_USER_ID, enabled: true },
-  { ruleId: '00000000000040008000000000000010', securityGroupId: DEV_SECURITY_GROUP_ID, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self', enabled: true },
-  { ruleId: '00000000000040008000000000000011', securityGroupId: DEV_SECURITY_GROUP_ID, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'user', subjectValue: DEFAULT_USER_ID, enabled: true },
 ];
 
 export const INITIAL_DEVICE_EXPOSURES: DeviceExposureRow[] = [

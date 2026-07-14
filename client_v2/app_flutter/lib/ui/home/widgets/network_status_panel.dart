@@ -152,6 +152,12 @@ class _NetworkControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (desktop) {
+      return SizedBox(
+        width: 88,
+        child: _NetworkSwitch(state: state, onToggle: onToggle),
+      );
+    }
     final theme = Theme.of(context);
     final enabled = state.networkEnabled;
     final label = state.syncing
@@ -160,7 +166,7 @@ class _NetworkControl extends StatelessWidget {
             ? '网络已启用'
             : '网络未启用';
     return SizedBox(
-      width: desktop ? 138 : 112,
+      width: 112,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,

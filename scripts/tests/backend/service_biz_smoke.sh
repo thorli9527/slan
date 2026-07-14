@@ -328,6 +328,16 @@ GROUP_RULE_ID="$(printf '%s' "${GROUP_RULE}" | sed -n 's/.*"ruleId":"\([^"]*\)".
 if [[ -z "${GROUP_RULE_ID}" ]]; then
   fail "missing device_group security rule id: ${GROUP_RULE}"
 fi
+GROUP_RULE_UPDATED="$(http_json -X PATCH "${WEB_BASE_URL}/api/web/security-groups/rules/${GROUP_RULE_ID}?actorUserId=${USER_ID}" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":5,\"action\":\"allow\",\"protocol\":\"tcp\",\"portFrom\":443,\"portTo\":443,\"peerType\":\"device_group\",\"peerValue\":\"${DEVICE_GROUP_ID}\",\"description\":\"updated smoke group ingress\",\"enabled\":true}")"
+if ! printf '%s' "${GROUP_RULE_UPDATED}" | grep -q '"priority":5'; then
+  fail "security rule update did not persist priority: ${GROUP_RULE_UPDATED}"
+fi
+if ! printf '%s' "${GROUP_RULE_UPDATED}" | grep -q '"description":"updated smoke group ingress"'; then
+  fail "security rule update did not persist description: ${GROUP_RULE_UPDATED}"
+fi
 GROUP_RULE_CONFIG="$(http_json "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}")"
 if ! printf '%s' "${GROUP_RULE_CONFIG}" | grep -q "\"ruleId\":\"${GROUP_RULE_ID}\""; then

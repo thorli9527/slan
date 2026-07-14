@@ -31,7 +31,7 @@ import {
   WorkspacePanel,
   WorkspaceRow,
 } from '../app.models';
-import { compactUuid, slug } from '../app.utils';
+import { slug } from '../app.utils';
 import { WEB_API } from '../api-paths';
 
 export abstract class AppComponentData extends AppComponentState {
@@ -300,7 +300,15 @@ export abstract class AppComponentData extends AppComponentState {
       const groups = await this.api.get<{ items: ApiSecurityGroup[] }>(WEB_API.securityGroups(workspaceId));
       const groupItems = groups.items ?? [];
       if (groupItems.length === 0) {
-        this.ensureDefaultSecuritySeed(workspaceId);
+        const removedGroupIds = new Set(
+          this.securityGroups
+            .filter((group) => group.workspaceId === workspaceId)
+            .map((group) => group.securityGroupId),
+        );
+        this.securityGroups = this.securityGroups.filter((group) => group.workspaceId !== workspaceId);
+        this.securityRules = this.securityRules.filter((rule) => !removedGroupIds.has(rule.securityGroupId ?? ''));
+        this.selectedSecurityGroupId = '';
+        this.notifyStateChanged();
         return;
       }
       this.securityGroups = [
@@ -327,7 +335,7 @@ export abstract class AppComponentData extends AppComponentState {
       const mappedRules = (rules.items ?? []).map((rule) => this.mapSecurityRule(rule));
       this.securityRules = [
         ...this.securityRules.filter((rule) => rule.securityGroupId !== securityGroupId),
-        ...(mappedRules.length > 0 ? mappedRules : this.defaultSecurityRules(securityGroupId)),
+        ...mappedRules,
       ];
       this.notifyStateChanged();
     } catch {
@@ -336,32 +344,6 @@ export abstract class AppComponentData extends AppComponentState {
         this.notifyStateChanged();
       }
     }
-  }
-
-  private ensureDefaultSecuritySeed(workspaceId: string): void {
-    const existing = this.securityGroups.find((group) => group.workspaceId === workspaceId);
-    const group = existing ?? {
-      securityGroupId: compactUuid(),
-      networkId: workspaceId,
-      workspaceId,
-      name: '',
-      createdAt: Math.floor(Date.now() / 1000),
-    };
-    if (!existing) {
-      this.securityGroups = [...this.securityGroups, group];
-    }
-    this.selectedSecurityGroupId = group.securityGroupId;
-    this.securityRules = [
-      ...this.securityRules.filter((rule) => rule.securityGroupId !== group.securityGroupId),
-      ...this.defaultSecurityRules(group.securityGroupId),
-    ];
-  }
-
-  private defaultSecurityRules(securityGroupId: string): SecurityRuleRow[] {
-    return [
-      { ruleId: compactUuid(), securityGroupId, direction: 'ingress', priority: 100, action: 'allow', protocol: 'tcp', port: '22', subjectType: 'workspace', subjectValue: 'self', enabled: true },
-      { ruleId: compactUuid(), securityGroupId, direction: 'egress', priority: 100, action: 'allow', protocol: 'all', port: 'all', subjectType: 'user', subjectValue: this.effectiveUserId, enabled: true },
-    ];
   }
 
   protected override mapDevice(device: ApiDevice): DeviceRow {

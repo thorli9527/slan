@@ -403,6 +403,79 @@ func TestAddSecurityRuleAllowsOwnedDeviceGroupPeer(t *testing.T) {
 	}
 }
 
+func TestUpdateSecurityRulePersistsReferencedDeviceGroupPeer(t *testing.T) {
+	users := &networkAccessTestUsers{users: map[string]model.User{
+		"user-1": {UserID: "user-1", Email: "u@example.com", Status: "active"},
+	}}
+	devices := &networkAccessTestDevices{deviceGroups: map[string]model.DeviceGroup{
+		"dgrp-1": {GroupID: "dgrp-1", UserID: "user-1", Name: "Members"},
+	}}
+	networks := &networkAccessTestNetworks{
+		networks: map[string]model.Network{
+			"net-1": {NetworkID: "net-1", OwnerID: "user-1", Name: "Default Network", Status: "active"},
+		},
+		securityGroup: map[string]model.SecurityGroup{
+			"sg-1": {SecurityGroupID: "sg-1", NetworkID: "net-1", Name: "Default Security Group"},
+		},
+		securityRules: map[string]model.SecurityRule{
+			"sgr-1": {
+				RuleID:          "sgr-1",
+				SecurityGroupID: "sg-1",
+				Direction:       "ingress",
+				Protocol:        "tcp",
+				PortRange:       "22",
+				PeerType:        "device_group",
+				PeerValue:       "dgrp-1",
+				Action:          "allow",
+				Priority:        100,
+				Enabled:         true,
+			},
+		},
+		groupReferences: map[string][]model.NetworkDeviceGroupReference{
+			"net-1": {{NetworkID: "net-1", GroupID: "dgrp-1"}},
+		},
+	}
+	service := NetworkAccessService{
+		Users:    users,
+		Devices:  devices,
+		Networks: networks,
+		Now:      func() time.Time { return time.Unix(1700000000, 0) },
+	}
+	priority := 5
+	enabled := false
+
+	view, err := service.UpdateSecurityRule(context.Background(), UpdateSecurityRuleInput{
+		RuleID:      "sgr-1",
+		ActorUserID: "user-1",
+		Direction:   "egress",
+		Protocol:    "udp",
+		PortRange:   "53",
+		PeerType:    "device_group",
+		PeerValue:   "dgrp-1",
+		Action:      "deny",
+		Priority:    &priority,
+		Description: "updated rule",
+		Enabled:     &enabled,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSecurityRule returned error: %v", err)
+	}
+	if view.Priority != priority || view.Description != "updated rule" || view.Enabled {
+		t.Fatalf("unexpected updated view: %+v", view)
+	}
+	saved := networks.securityRules["sgr-1"]
+	if saved.Direction != "egress" || saved.Protocol != "udp" || saved.PortRange != "53" || saved.Action != "deny" {
+		t.Fatalf("unexpected saved rule: %+v", saved)
+	}
+	version, ok, err := networks.GetNetworkVersion(context.Background(), "net-1")
+	if err != nil {
+		t.Fatalf("GetNetworkVersion returned error: %v", err)
+	}
+	if !ok || version.Version != 1 || version.Reason != "security_rule_updated" {
+		t.Fatalf("expected update version bump, got ok=%v version=%+v", ok, version)
+	}
+}
+
 func TestAddSecurityRuleAllowsCurrentNetworkDevicePeer(t *testing.T) {
 	users := &networkAccessTestUsers{users: map[string]model.User{
 		"user-1": {UserID: "user-1", Email: "u@example.com", Status: "active"},
