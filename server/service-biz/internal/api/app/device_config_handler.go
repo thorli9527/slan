@@ -8,8 +8,9 @@ import (
 )
 
 type DeviceConfigHandler struct {
-	Devices     servicepkg.DeviceCoreUseCase
-	NetworkCore servicepkg.NetworkCoreUseCase
+	Devices        servicepkg.DeviceCoreUseCase
+	DeviceSessions servicepkg.DeviceSessionUseCase
+	NetworkCore    servicepkg.NetworkCoreUseCase
 }
 
 func (h DeviceConfigHandler) Routes() []serviceapi.Route {
@@ -21,7 +22,11 @@ func (h DeviceConfigHandler) Routes() []serviceapi.Route {
 }
 
 func (h DeviceConfigHandler) DeviceNetworkConfigs(w http.ResponseWriter, r *http.Request) {
-	items, err := h.NetworkCore.ResolvedDeviceNetworkConfigs(r.Context(), requestDeviceID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r))
+	if !ok {
+		return
+	}
+	items, err := h.NetworkCore.ResolvedDeviceNetworkConfigs(r.Context(), deviceID)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
@@ -34,7 +39,11 @@ func (h DeviceConfigHandler) DeviceNetworkConfigs(w http.ResponseWriter, r *http
 }
 
 func (h DeviceConfigHandler) DeviceMQTTCredential(w http.ResponseWriter, r *http.Request) {
-	item, err := h.Devices.DeviceMQTTCredential(r.Context(), requestDeviceID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r))
+	if !ok {
+		return
+	}
+	item, err := h.Devices.DeviceMQTTCredential(r.Context(), deviceID)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
@@ -43,7 +52,11 @@ func (h DeviceConfigHandler) DeviceMQTTCredential(w http.ResponseWriter, r *http
 }
 
 func (h DeviceConfigHandler) DeviceMQTTProfile(w http.ResponseWriter, r *http.Request) {
-	item, err := h.Devices.DeviceMQTTProfile(r.Context(), requestDeviceID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r))
+	if !ok {
+		return
+	}
+	item, err := h.Devices.DeviceMQTTProfile(r.Context(), deviceID)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return

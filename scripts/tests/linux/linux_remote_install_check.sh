@@ -231,7 +231,7 @@ grep -q \"^SLAN_CONTROL_BASE_URL=${BIZ_URL}\$\" /etc/slan/bootstrap.env
 grep -q \"^SLAN_INSTALLATION_KEY=${bootstrap_key}\$\" /etc/slan/bootstrap.env
 test -f /etc/slan/client-v2-install.env
 grep -q \"^SLAN_LINUX_TRAY_MODE=${TRAY_MODE}\$\" /etc/slan/client-v2-install.env
-test -f /var/lib/SLAN/client-v2-device-id.txt
+jq -e '.deviceId | length > 0' /var/lib/SLAN/config.json >/dev/null
 systemctl is-active --quiet slan-client-v2.service
 '"
 

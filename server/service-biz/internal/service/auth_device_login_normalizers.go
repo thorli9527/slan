@@ -17,6 +17,7 @@ func normalizePrepareDeviceLoginDeviceInput(input PrepareDeviceLoginDeviceInput)
 }
 
 func normalizeCompleteDeviceLoginDeviceInput(input CompleteDeviceLoginDeviceInput) CompleteDeviceLoginDeviceInput {
+	input.AccessToken = normalizeUserAccessToken(input.AccessToken)
 	input.DeviceID = strings.TrimSpace(input.DeviceID)
 	input.UserID = strings.TrimSpace(input.UserID)
 	input.Name = strings.TrimSpace(input.Name)

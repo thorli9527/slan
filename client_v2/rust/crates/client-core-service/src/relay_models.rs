@@ -63,7 +63,7 @@ pub(crate) struct PathDiagnoseResponse {
     pub(crate) direct_candidates: Vec<PathDiagnoseDirectCandidate>,
     pub(crate) relay_candidates: Vec<RelayCandidateSelection>,
     pub(crate) mtu: PathDiagnoseMtu,
-    pub(crate) dns: PathDiagnoseDns,
+    pub(crate) resolver: PathDiagnoseResolver,
     pub(crate) platform: PlatformNetworkDiagnostics,
     pub(crate) export_path: Option<String>,
 }
@@ -178,7 +178,7 @@ pub(crate) struct PathDiagnoseMtu {
 
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PathDiagnoseDns {
+pub(crate) struct PathDiagnoseResolver {
     pub(crate) expected_servers: Vec<String>,
     pub(crate) actual_servers: Vec<String>,
     pub(crate) checked: bool,

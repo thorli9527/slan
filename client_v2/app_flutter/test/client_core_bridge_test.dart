@@ -8,6 +8,32 @@ import 'package:slan_client_v2/bridge/client_core_bridge.dart';
 import 'package:slan_client_v2/bridge/client_core_bridge_support.dart';
 import 'package:slan_client_v2/bridge/client_view_state.dart';
 
+Map<String, Object?> _nativePlatformNetworkConfigPayload({
+  String virtualIp = '10.0.0.44',
+  List<String> resolverServers = const ['10.0.0.1'],
+}) {
+  return {
+    'sessionName': 'SLAN',
+    'virtualIp': virtualIp,
+    'prefixLen': 32,
+    ..._nativePlatformResolverTransportPayload(resolverServers),
+    'routes': [
+      {'destination': '10.0.0.0/8'}
+    ],
+    'mtu': 1280,
+  };
+}
+
+Map<String, Object?> _nativePlatformResolverTransportPayload(
+  List<String> servers,
+) {
+  return {
+    'resolver': {
+      'servers': servers,
+    },
+  };
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -41,9 +67,24 @@ void main() {
           .setMockMethodCallHandler(channel, null);
     });
 
-    final bridge = MethodChannelClientCoreBridge(
-      localServiceHost: await _unusedLoopbackHost(),
-    );
+    final service = await _FakeClientService.start([
+      const _ServiceReply(
+        expectedMethod: 'localState',
+        body: {
+          'signedIn': true,
+          'userLabel': 'desktop@example.test',
+          'deviceId': 'desktop-device-1',
+          'networkEnabled': false,
+          'syncing': false,
+          'switchEnabled': true,
+          'notice': 'signedIn',
+        },
+      ),
+    ]);
+    addTearDown(service.close);
+
+    final bridge =
+        MethodChannelClientCoreBridge(localServiceHost: service.host);
     _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(
@@ -53,6 +94,12 @@ void main() {
     expect(calls, ['dispatch']);
     expect(bridge.state.value.deviceId, 'desktop-device-1');
     expect(bridge.state.value.notice, 'loginBrowserRequested');
+    await _waitFor(
+      () => bridge.state.value.signedIn,
+      reason: 'desktop browser login state should be refreshed',
+    );
+    expect(bridge.state.value.userLabel, 'desktop@example.test');
+    expect(service.seenMethods, contains('localState'));
   });
 
   test('android runtime diagnostics preserve native relay counters', () {
@@ -333,16 +380,8 @@ void main() {
         final request =
             jsonDecode(call.arguments as String) as Map<String, Object?>;
         expect(request['method'], 'localPlatformNetworkConfig');
-        return {
-          'sessionName': 'SLAN',
-          'virtualIp': '10.0.0.44',
-          'prefixLen': 32,
-          'dnsServers': ['10.0.0.1'],
-          'routes': [
-            {'destination': '10.0.0.0/8'}
-          ],
-          'mtu': 1280,
-        };
+        final networkConfigPayload = _nativePlatformNetworkConfigPayload();
+        return networkConfigPayload;
       }
       if (call.method == 'iosStartPacketTunnel') {
         final config = (call.arguments as Map).cast<String, Object?>();
@@ -669,7 +708,7 @@ void main() {
             'syncing': false,
             'switchEnabled': true,
             'messageType': 'network_event',
-            'eventType': 'dns_changed',
+            'eventType': 'network_config_changed',
             'reconfigureRequired': true,
           },
           'snapshot': {
@@ -709,7 +748,8 @@ void main() {
     expect(bridge.state.value.lastControlSyncReconfigureRequired, true);
   });
 
-  test('mobile control sync uses rust reconfigure flag for dns change',
+  test(
+      'mobile control sync uses rust reconfigure flag for network config change',
       () async {
     const channel = MethodChannel('dev.slan/client_core_v2');
     final calls = <String>[];
@@ -747,16 +787,8 @@ void main() {
           };
         }
         if (method == 'localPlatformNetworkConfig') {
-          return {
-            'sessionName': 'SLAN',
-            'virtualIp': '10.0.0.44',
-            'prefixLen': 32,
-            'dnsServers': ['10.0.0.1'],
-            'routes': [
-              {'destination': '10.0.0.0/8'}
-            ],
-            'mtu': 1280,
-          };
+          final networkConfigPayload = _nativePlatformNetworkConfigPayload();
+          return networkConfigPayload;
         }
         if (method == 'localBusinessEventWatch') {
           if (emittedBusinessEvent) {
@@ -784,7 +816,7 @@ void main() {
               'switchEnabled': true,
               'virtualIp': '10.0.0.44',
               'messageType': 'network_event',
-              'eventType': 'dns_changed',
+              'eventType': 'network_config_changed',
               'reconfigureRequired': true,
             },
             'snapshot': {
@@ -840,7 +872,7 @@ void main() {
     await _waitFor(
       () => calls.contains('androidStartVpn'),
       reason:
-          'dns change with rust reconfigure flag should refresh mobile config',
+          'network config change with rust reconfigure flag should refresh mobile config',
     );
     expect(embeddedMethods, contains('localPlatformNetworkConfig'));
     await bridge.close();
@@ -854,7 +886,7 @@ void main() {
       },
       {
         'messageType': 'network_event',
-        'eventType': 'dns_changed',
+        'eventType': 'network_config_changed',
         'networkId': 'net-1',
         'configVersion': 1,
         'eventId': 'evt-1',
@@ -866,7 +898,7 @@ void main() {
       },
       {
         'messageType': 'network_event',
-        'eventType': 'dns_changed',
+        'eventType': 'network_config_changed',
         'networkId': 'net-1',
         'configVersion': 2,
         'eventId': 'evt-2',

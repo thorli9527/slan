@@ -145,7 +145,7 @@ wait_network_module() {
     module_json="$(request_json localNetworkModule || true)"
     if [[ -n "$module_json" ]]; then
       peer_count="$(jq -r '(.peerCount // ([.configs[]?.peers[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
-      dns_count="$(jq -r '(.dnsRecordCount // ([.configs[]?.dnsRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
+      dns_count="$(jq -r '(.resolverRecordCount // ([.configs[]?.resolverRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
       rule_count="$(jq -r '(.securityRuleCount // ([.configs[]?.rules[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
     fi
     if [[ -n "$module_json" ]] && (( peer_count >= min_peers && dns_count >= min_dns && rule_count >= min_rules )); then

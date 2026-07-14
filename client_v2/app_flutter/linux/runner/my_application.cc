@@ -35,8 +35,7 @@ struct TrayServiceState {
   bool switch_enabled = false;
 };
 
-constexpr const char kTrayOpenTitle[] = "Open";
-constexpr const char kTrayNetworkTitle[] = "Network";
+constexpr const char kTrayOpenTitle[] = "Open Client";
 constexpr const char kTrayQuitTitle[] = "Quit";
 constexpr const char kTrayTooltipUnavailable[] =
     "SLAN Client - Service unavailable";
@@ -198,8 +197,12 @@ static void refresh_tray_menu(MyApplication* self) {
     return;
   }
   const TrayServiceState state = query_tray_service_state();
+  const char* network_label = !state.signed_in
+                                  ? "Sign in to enable network"
+                                  : (state.network_enabled ? "Disable Network"
+                                                           : "Enable Network");
   gtk_menu_item_set_label(GTK_MENU_ITEM(self->network_menu_item),
-                          kTrayNetworkTitle);
+                          network_label);
   if (GTK_IS_CHECK_MENU_ITEM(self->network_menu_item)) {
     gtk_check_menu_item_set_active(
         GTK_CHECK_MENU_ITEM(self->network_menu_item), state.network_enabled);
@@ -287,7 +290,7 @@ static void install_tray(MyApplication* self) {
   }
   self->tray_menu = gtk_menu_new();
   GtkWidget* settings = gtk_menu_item_new_with_label(kTrayOpenTitle);
-  self->network_menu_item = gtk_check_menu_item_new_with_label(kTrayNetworkTitle);
+  self->network_menu_item = gtk_check_menu_item_new_with_label("Enable Network");
   GtkWidget* quit = gtk_menu_item_new_with_label(kTrayQuitTitle);
   gtk_menu_shell_append(GTK_MENU_SHELL(self->tray_menu), settings);
   gtk_menu_shell_append(GTK_MENU_SHELL(self->tray_menu), self->network_menu_item);
@@ -344,11 +347,11 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "slan_client_v2");
+    gtk_header_bar_set_title(header_bar, "SLAN Client");
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "slan_client_v2");
+    gtk_window_set_title(window, "SLAN Client");
   }
 
   gtk_window_set_default_size(window, 1280, 720);

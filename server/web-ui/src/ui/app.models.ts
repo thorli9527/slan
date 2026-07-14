@@ -201,26 +201,6 @@ export type ApiNetworkDNSRecord = {
   createdAt: number;
 };
 
-export type ApiPublicDomainMapping = {
-  mappingId: string;
-  networkId: string;
-  alias: string;
-  publicDomain: string;
-  sourceRecord: string;
-  deviceId: string;
-  internalIp?: string;
-  protocol: string;
-  internalPort?: number;
-  port: string;
-  externalPortValue?: number;
-  externalPort: string;
-  accessMode?: string;
-  tlsMode?: string;
-  status: string;
-  createdAt: number;
-  updatedAt: number;
-};
-
 export type ApiSecurityGroup = {
   securityGroupId: string;
   networkId: string;
@@ -379,24 +359,6 @@ export type DNSRow = {
   expose: boolean;
   workspaceId: string;
 };
-export type PublicMappingRow = {
-  mappingId?: string;
-  networkId: string;
-  alias: string;
-  publicDomain: string;
-  sourceRecord: string;
-  deviceId: string;
-  internalIp?: string;
-  targetType?: 'device' | 'ip' | 'record';
-  protocol: string;
-  internalPort?: string;
-  port: string;
-  externalPort: string;
-  accessMode: string;
-  tlsMode: string;
-  status: string;
-  workspaceId: string;
-};
 export type RuleSubjectType = 'device' | 'device_group' | 'user' | 'network' | 'workspace' | 'all';
 export type IntraGroupPolicy = 'allow' | 'deny';
 export type SecurityRuleRow = {
@@ -415,7 +377,7 @@ export type SecurityRuleRow = {
 export type SecurityGroupRow = { securityGroupId: string; networkId: string; name: string; description?: string; createdAt: number; workspaceId: string };
 export type DeviceExposureRow = { deviceId: string; user: string; alias: string; status: string };
 export type NetworkDeviceInviteRow = ApiDeviceInvite & { networkId?: string; workspaceId?: string };
-export type NetworkPanel = 'devices' | 'deviceGroups' | 'zones' | 'records' | 'publicMappings' | 'securityGroups' | 'securityRules';
+export type NetworkPanel = 'devices' | 'deviceGroups' | 'zones' | 'records' | 'securityGroups' | 'securityRules';
 export type NetworkPreset = { name: string; code: string };
 export type SecurityRuleTemplate = {
   name: string;
@@ -438,5 +400,4 @@ export type ApiWorkspace = ApiNetwork & { workspaceId?: string };
 export type ApiWorkspaceDevice = ApiNetworkDevice & { workspaceDeviceId?: string; workspaceId?: string };
 export type ApiDNSZone = ApiNetworkDNSZone & { workspaceId?: string };
 export type ApiDNSRecord = ApiNetworkDNSRecord & { workspaceId?: string };
-export type ApiPublicMapping = ApiPublicDomainMapping & { workspaceId?: string };
 export type ApiSecurityRule = ApiSecurityGroupRule;

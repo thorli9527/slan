@@ -15,11 +15,43 @@ func (h DeviceGroupHandler) Routes() []serviceapi.Route {
 	return []serviceapi.Route{
 		serviceapi.NewRoute(http.MethodGet, "/api/users/{userId}/device-groups", h.ListDeviceGroups),
 		serviceapi.NewRoute(http.MethodGet, "/api/networks/{networkId}/device-groups", h.ListNetworkDeviceGroups),
+		serviceapi.NewRoute(http.MethodPost, "/api/networks/{networkId}/device-groups", h.AddNetworkDeviceGroup),
+		serviceapi.NewRoute(http.MethodDelete, "/api/networks/{networkId}/device-groups/{groupId}", h.RemoveNetworkDeviceGroup),
 		serviceapi.NewRoute(http.MethodPost, "/api/users/{userId}/device-groups", h.CreateDeviceGroup),
 		serviceapi.NewRoute(http.MethodPatch, "/api/users/{userId}/device-groups/{groupId}", h.UpdateDeviceGroup),
 		serviceapi.NewRoute(http.MethodDelete, "/api/users/{userId}/device-groups/{groupId}", h.DeleteDeviceGroup),
 		serviceapi.NewRoute(http.MethodPut, "/api/users/{userId}/devices/{deviceId}/groups", h.SetDeviceGroups),
 	}
+}
+
+func (h DeviceGroupHandler) AddNetworkDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	var req networkDeviceGroupRequest
+	if !serviceapi.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	view, err := h.DeviceGroups.AddNetworkDeviceGroup(r.Context(), servicepkg.AddNetworkDeviceGroupInput{
+		NetworkID:   requestNetworkID(r),
+		GroupID:     req.GroupID,
+		ActorUserID: firstNonEmpty(requestActorUserID(r), req.ActorUserID),
+	})
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	writeDeviceGroupCollection(w, view)
+}
+
+func (h DeviceGroupHandler) RemoveNetworkDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	view, err := h.DeviceGroups.RemoveNetworkDeviceGroup(r.Context(), servicepkg.RemoveNetworkDeviceGroupInput{
+		NetworkID:   requestNetworkID(r),
+		GroupID:     requestGroupID(r),
+		ActorUserID: requestActorUserID(r),
+	})
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	writeDeviceGroupCollection(w, view)
 }
 
 func (h DeviceGroupHandler) ListDeviceGroups(w http.ResponseWriter, r *http.Request) {
@@ -28,11 +60,7 @@ func (h DeviceGroupHandler) ListDeviceGroups(w http.ResponseWriter, r *http.Requ
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteItemsWithMembers(
-		w,
-		serviceapi.MapPayloads(view.Items, deviceGroupPayload),
-		view.Members,
-	)
+	writeDeviceGroupCollection(w, view)
 }
 
 func (h DeviceGroupHandler) ListNetworkDeviceGroups(w http.ResponseWriter, r *http.Request) {
@@ -41,11 +69,11 @@ func (h DeviceGroupHandler) ListNetworkDeviceGroups(w http.ResponseWriter, r *ht
 		serviceapi.WriteError(w, err)
 		return
 	}
-	serviceapi.WriteItemsWithMembers(
-		w,
-		serviceapi.MapPayloads(view.Items, deviceGroupPayload),
-		view.Members,
-	)
+	writeDeviceGroupCollection(w, view)
+}
+
+func writeDeviceGroupCollection(w http.ResponseWriter, view servicepkg.DeviceGroupCollectionView) {
+	serviceapi.WriteItemsWithMembers(w, serviceapi.MapPayloads(view.Items, deviceGroupPayload), view.Members)
 }
 
 func (h DeviceGroupHandler) CreateDeviceGroup(w http.ResponseWriter, r *http.Request) {

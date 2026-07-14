@@ -118,6 +118,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// 用户是否刚刚主动退出，用于抑制旧 session 事件回写 UI。
   bool _localLogoutRequested = false;
 
+  /// 桌面浏览器登录状态监听代次；递增可终止上一轮等待。
+  int _desktopBrowserLoginWatchEpoch = 0;
+
   /// 业务事件 watch loop 是否已启动。
   bool _watchingBusinessEvents = false;
 
@@ -355,6 +358,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       _localLogoutRequested = false;
     }
     if (command.type == ClientCommandType.logout) {
+      _desktopBrowserLoginWatchEpoch++;
       _clearNetworkToggle();
       _localLogoutRequested = true;
       _setStateIfChanged(ClientViewState.initial());
@@ -396,6 +400,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return;
     }
     await _dispatchControlWithFallback(command);
+    if (command.type == ClientCommandType.openClientLogin &&
+        _isDesktopHostPlatform &&
+        !_state.value.signedIn) {
+      _startDesktopBrowserLoginStateWatch();
+    }
   }
 
   /// 查询控制通道状态。
@@ -443,6 +452,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   @override
   Future<void> close() async {
     _closed = true;
+    _desktopBrowserLoginWatchEpoch++;
     _watchingBusinessEvents = false;
     _watchingAndroidNetworkEvents = false;
     _watchingIosNetworkEvents = false;
@@ -452,6 +462,39 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     _mobileMqttEnsureInFlight = null;
     _repairingNativeMobileMqtt = false;
     _clearNetworkToggle();
+  }
+
+  /// 浏览器登录期间轮询本地 Rust 状态，作为业务事件长轮询的桌面兜底。
+  ///
+  /// 请求只访问 loopback `client-core-service`；收到登录态、退出或超时后立即
+  /// 停止。这样即使原生托盘和 Flutter 同时持有长轮询，也不会让 UI 停在
+  /// “打开浏览器登录”页面。
+  void _startDesktopBrowserLoginStateWatch() {
+    final epoch = ++_desktopBrowserLoginWatchEpoch;
+    unawaited(Future<void>(() async {
+      final deadline = DateTime.now().add(const Duration(minutes: 10));
+      while (!_closed &&
+          epoch == _desktopBrowserLoginWatchEpoch &&
+          DateTime.now().isBefore(deadline)) {
+        try {
+          final next = await _queryCurrentState();
+          if (next?.signedIn == true) {
+            _setStateIfChanged(next!);
+            return;
+          }
+        } on Object catch (error) {
+          ClientUiDiagnostics.unawaitedLog(
+            'bridge.desktopBrowserLogin.stateWatchFailed',
+            state: _state.value,
+            fields: {'message': error.toString()},
+          );
+        }
+        await _pauseIfActive(
+          const Duration(milliseconds: 500),
+          () => !_closed && epoch == _desktopBrowserLoginWatchEpoch,
+        );
+      }
+    }));
   }
 
   Future<void> _pauseIfActive(

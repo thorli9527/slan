@@ -46,7 +46,7 @@ func authRoutes(deps RouteDependencies) []serviceapi.Route {
 
 func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
-		DeviceHandler{Devices: deps.DeviceCore, NetworkCore: deps.NetworkCore}.Routes(),
+		DeviceHandler{Devices: deps.DeviceCore, DeviceSessions: deps.DeviceSession, NetworkCore: deps.NetworkCore}.Routes(),
 		DeviceSessionHandler{
 			DeviceBootstrap:   deps.DeviceBootstrap,
 			DeviceSessions:    deps.DeviceSession,
@@ -54,15 +54,15 @@ func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
 			NetworkRuntime:    deps.NetworkRuntime,
 			NetworkConfigView: deps.NetworkCore,
 		}.Routes(),
-		DeviceConfigHandler{Devices: deps.DeviceCore, NetworkCore: deps.NetworkCore}.Routes(),
-		ClientMessageHandler{Messages: deps.ClientMessages}.Routes(),
+		DeviceConfigHandler{Devices: deps.DeviceCore, DeviceSessions: deps.DeviceSession, NetworkCore: deps.NetworkCore}.Routes(),
+		ClientMessageHandler{Messages: deps.ClientMessages, DeviceSessions: deps.DeviceSession}.Routes(),
 	)
 }
 
 func networkRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
-		NetworkConfigHandler{NetworkCore: deps.NetworkCore}.Routes(),
-		NetworkSnapshotHandler{Snapshots: deps.NetworkCore}.Routes(),
-		NetworkRuntimeHandler{NetworkRuntime: deps.NetworkRuntime}.Routes(),
+		NetworkConfigHandler{NetworkCore: deps.NetworkCore, DeviceSessions: deps.DeviceSession}.Routes(),
+		NetworkSnapshotHandler{Snapshots: deps.NetworkCore, DeviceSessions: deps.DeviceSession}.Routes(),
+		NetworkRuntimeHandler{NetworkRuntime: deps.NetworkRuntime, DeviceSessions: deps.DeviceSession}.Routes(),
 	)
 }

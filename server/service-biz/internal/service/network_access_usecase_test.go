@@ -120,11 +120,51 @@ func (s *networkAccessTestDevices) ListDeviceGroupAssignments(context.Context, s
 }
 
 type networkAccessTestNetworks struct {
-	networks       map[string]model.Network
-	securityGroup  map[string]model.SecurityGroup
-	securityRules  map[string]model.SecurityRule
-	versions       map[string]model.NetworkConfigVersion
-	networkDevices map[string][]model.NetworkDevice
+	networks        map[string]model.Network
+	securityGroup   map[string]model.SecurityGroup
+	securityRules   map[string]model.SecurityRule
+	versions        map[string]model.NetworkConfigVersion
+	networkDevices  map[string][]model.NetworkDevice
+	groupReferences map[string][]model.NetworkDeviceGroupReference
+}
+
+func (s *networkAccessTestNetworks) ListNetworkDeviceGroupReferences(_ context.Context, networkID string) ([]model.NetworkDeviceGroupReference, error) {
+	return append([]model.NetworkDeviceGroupReference(nil), s.groupReferences[networkID]...), nil
+}
+
+func (s *networkAccessTestNetworks) SaveNetworkDeviceGroupReference(_ context.Context, item model.NetworkDeviceGroupReference) error {
+	if s.groupReferences == nil {
+		s.groupReferences = map[string][]model.NetworkDeviceGroupReference{}
+	}
+	items := s.groupReferences[item.NetworkID]
+	for index := range items {
+		if items[index].GroupID == item.GroupID {
+			items[index] = item
+			s.groupReferences[item.NetworkID] = items
+			return nil
+		}
+	}
+	s.groupReferences[item.NetworkID] = append(items, item)
+	return nil
+}
+
+func (s *networkAccessTestNetworks) DeleteNetworkDeviceGroupReference(_ context.Context, networkID, groupID string) error {
+	items := s.groupReferences[networkID]
+	filtered := items[:0]
+	for _, item := range items {
+		if item.GroupID != groupID {
+			filtered = append(filtered, item)
+		}
+	}
+	s.groupReferences[networkID] = filtered
+	return nil
+}
+
+func (s *networkAccessTestNetworks) DeleteNetworkDeviceGroupReferencesByGroup(_ context.Context, groupID string) error {
+	for networkID := range s.groupReferences {
+		_ = s.DeleteNetworkDeviceGroupReference(context.Background(), networkID, groupID)
+	}
+	return nil
 }
 
 func (s *networkAccessTestNetworks) GetNetwork(_ context.Context, networkID string) (model.Network, bool, error) {
@@ -176,7 +216,19 @@ func (s *networkAccessTestNetworks) ListNetworkDevices(_ context.Context, networ
 func (s *networkAccessTestNetworks) GetNetworkDevice(context.Context, string, string) (model.NetworkDevice, bool, error) {
 	return model.NetworkDevice{}, false, nil
 }
-func (s *networkAccessTestNetworks) SaveNetworkDevice(context.Context, model.NetworkDevice) error {
+func (s *networkAccessTestNetworks) SaveNetworkDevice(_ context.Context, item model.NetworkDevice) error {
+	if s.networkDevices == nil {
+		s.networkDevices = map[string][]model.NetworkDevice{}
+	}
+	items := s.networkDevices[item.NetworkID]
+	for index := range items {
+		if items[index].DeviceID == item.DeviceID {
+			items[index] = item
+			s.networkDevices[item.NetworkID] = items
+			return nil
+		}
+	}
+	s.networkDevices[item.NetworkID] = append(items, item)
 	return nil
 }
 func (s *networkAccessTestNetworks) GetNetworkVersion(_ context.Context, networkID string) (model.NetworkConfigVersion, bool, error) {
@@ -190,7 +242,15 @@ func (s *networkAccessTestNetworks) SaveNetworkVersion(_ context.Context, item m
 	s.versions[item.NetworkID] = item
 	return nil
 }
-func (s *networkAccessTestNetworks) DeleteNetworkDevice(context.Context, string, string) error {
+func (s *networkAccessTestNetworks) DeleteNetworkDevice(_ context.Context, networkID, deviceID string) error {
+	items := s.networkDevices[networkID]
+	filtered := items[:0]
+	for _, item := range items {
+		if item.DeviceID != deviceID {
+			filtered = append(filtered, item)
+		}
+	}
+	s.networkDevices[networkID] = filtered
 	return nil
 }
 func (s *networkAccessTestNetworks) ListDeviceInvitesByUser(context.Context, string) ([]model.DeviceInvite, error) {
@@ -224,16 +284,6 @@ func (s *networkAccessTestNetworks) GetDNSRecord(context.Context, string) (model
 }
 func (s *networkAccessTestNetworks) SaveDNSRecord(context.Context, model.DNSRecord) error { return nil }
 func (s *networkAccessTestNetworks) DeleteDNSRecord(context.Context, string) error        { return nil }
-func (s *networkAccessTestNetworks) ListPublicMappings(context.Context, string) ([]model.PublicMapping, error) {
-	return nil, nil
-}
-func (s *networkAccessTestNetworks) GetPublicMapping(context.Context, string) (model.PublicMapping, bool, error) {
-	return model.PublicMapping{}, false, nil
-}
-func (s *networkAccessTestNetworks) SavePublicMapping(context.Context, model.PublicMapping) error {
-	return nil
-}
-func (s *networkAccessTestNetworks) DeletePublicMapping(context.Context, string) error { return nil }
 func (s *networkAccessTestNetworks) ListSecurityGroups(context.Context, string) ([]model.SecurityGroup, error) {
 	return nil, nil
 }
@@ -301,6 +351,9 @@ func TestAddSecurityRuleAllowsOwnedDeviceGroupPeer(t *testing.T) {
 				{NetworkID: "net-1", DeviceID: "dev-1", Enabled: true, MemberStatus: model.NetworkMemberStatusActive},
 			},
 		},
+		groupReferences: map[string][]model.NetworkDeviceGroupReference{
+			"net-1": {{NetworkID: "net-1", GroupID: "dgrp-1"}},
+		},
 	}
 	devices.deviceGroupAssignments = []model.DeviceGroupAssignment{
 		{UserID: "user-1", DeviceID: "dev-1", GroupIDs: []string{"dgrp-1"}},
@@ -347,6 +400,50 @@ func TestAddSecurityRuleAllowsOwnedDeviceGroupPeer(t *testing.T) {
 	}
 	if !ok || version.Version != 1 {
 		t.Fatalf("expected network version bump, got ok=%v version=%+v", ok, version)
+	}
+}
+
+func TestAddSecurityRuleAllowsCurrentNetworkDevicePeer(t *testing.T) {
+	users := &networkAccessTestUsers{users: map[string]model.User{
+		"user-1": {UserID: "user-1", Email: "u@example.com", Status: "active"},
+	}}
+	devices := &networkAccessTestDevices{devices: map[string]model.Device{
+		"dev-1": {DeviceID: "dev-1", OwnerID: "user-1", Name: "Device 1", Status: "active"},
+	}}
+	networks := &networkAccessTestNetworks{
+		networks: map[string]model.Network{
+			"net-1": {NetworkID: "net-1", OwnerID: "user-1", Name: "Default Network", Status: "active"},
+		},
+		securityGroup: map[string]model.SecurityGroup{
+			"sg-1": {SecurityGroupID: "sg-1", NetworkID: "net-1", Name: "Default Security Group"},
+		},
+		networkDevices: map[string][]model.NetworkDevice{
+			"net-1": {{NetworkID: "net-1", DeviceID: "dev-1", Enabled: true, MemberStatus: model.NetworkMemberStatusActive}},
+		},
+	}
+	service := NetworkAccessService{
+		Users: users, Devices: devices, Networks: networks,
+		Now:               func() time.Time { return time.Unix(1700000000, 0) },
+		NewSecurityRuleID: func() string { return "sgr-device-1" },
+	}
+
+	view, err := service.AddSecurityRule(context.Background(), CreateSecurityRuleInput{
+		SecurityGroupID: "sg-1",
+		ActorUserID:     "user-1",
+		Direction:       "ingress",
+		Protocol:        "tcp",
+		PortRange:       "22",
+		PeerType:        "device",
+		PeerValue:       "dev-1",
+		Action:          "allow",
+		Priority:        10,
+		Enabled:         true,
+	})
+	if err != nil {
+		t.Fatalf("AddSecurityRule returned error: %v", err)
+	}
+	if view.PeerType != "device" || view.PeerValue != "dev-1" {
+		t.Fatalf("unexpected device peer: %+v", view)
 	}
 }
 
@@ -453,7 +550,7 @@ func TestAddSecurityRuleRejectsDeviceGroupWithoutCurrentNetworkMembers(t *testin
 	}
 }
 
-func TestListNetworkDeviceGroupsFiltersMembersToCurrentNetwork(t *testing.T) {
+func TestListNetworkDeviceGroupsReturnsReferencedGroupsAndTheirMembers(t *testing.T) {
 	users := &networkAccessTestUsers{
 		users: map[string]model.User{
 			"user-1": {UserID: "user-1", Email: "u@example.com", Status: "active"},
@@ -478,6 +575,12 @@ func TestListNetworkDeviceGroupsFiltersMembersToCurrentNetwork(t *testing.T) {
 				{NetworkID: "net-1", DeviceID: "dev-1", Enabled: true, MemberStatus: model.NetworkMemberStatusActive},
 			},
 		},
+		groupReferences: map[string][]model.NetworkDeviceGroupReference{
+			"net-1": {
+				{NetworkID: "net-1", GroupID: "dgrp-1"},
+				{NetworkID: "net-1", GroupID: "dgrp-2"},
+			},
+		},
 	}
 	svc := DeviceGroupService{
 		Users:    users,
@@ -492,11 +595,62 @@ func TestListNetworkDeviceGroupsFiltersMembersToCurrentNetwork(t *testing.T) {
 	if len(view.Items) != 2 {
 		t.Fatalf("expected 2 groups, got %d", len(view.Items))
 	}
-	if len(view.Members) != 1 {
-		t.Fatalf("expected 1 network member assignment, got %d", len(view.Members))
+	if len(view.Members) != 2 {
+		t.Fatalf("expected 2 referenced group member assignments, got %d", len(view.Members))
 	}
 	if view.Members[0].GroupID != "dgrp-1" || view.Members[0].DeviceID != "dev-1" {
 		t.Fatalf("unexpected member payload: %#v", view.Members[0])
+	}
+}
+
+func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
+	users := &networkAccessTestUsers{users: map[string]model.User{
+		"user-1": {UserID: "user-1", Email: "u@example.com", Status: "active"},
+	}}
+	devices := &networkAccessTestDevices{
+		devices: map[string]model.Device{
+			"dev-1": {DeviceID: "dev-1", OwnerID: "user-1", Name: "Device 1", Status: "active"},
+		},
+		deviceGroups: map[string]model.DeviceGroup{
+			"dgrp-1": {GroupID: "dgrp-1", UserID: "user-1", Name: "Group 1"},
+		},
+		deviceGroupAssignments: []model.DeviceGroupAssignment{
+			{UserID: "user-1", DeviceID: "dev-1", GroupIDs: []string{"dgrp-1"}},
+		},
+	}
+	networks := &networkAccessTestNetworks{
+		networks: map[string]model.Network{
+			"net-1": {NetworkID: "net-1", OwnerID: "user-1", Name: "Network 1", Status: "active"},
+		},
+		networkDevices:  map[string][]model.NetworkDevice{},
+		groupReferences: map[string][]model.NetworkDeviceGroupReference{},
+	}
+	service := DeviceGroupService{
+		Users:         users,
+		Devices:       devices,
+		Networks:      networks,
+		NetworkGroups: networks,
+		Now:           func() time.Time { return time.Unix(1700000000, 0) },
+	}
+
+	view, err := service.AddNetworkDeviceGroup(context.Background(), AddNetworkDeviceGroupInput{
+		NetworkID: "net-1", GroupID: "dgrp-1", ActorUserID: "user-1",
+	})
+	if err != nil {
+		t.Fatalf("AddNetworkDeviceGroup returned error: %v", err)
+	}
+	if len(view.Items) != 1 || len(networks.networkDevices["net-1"]) != 1 {
+		t.Fatalf("expected referenced group and one materialized member, view=%+v members=%+v", view, networks.networkDevices["net-1"])
+	}
+
+	view, err = service.RemoveNetworkDeviceGroup(context.Background(), RemoveNetworkDeviceGroupInput{
+		NetworkID: "net-1", GroupID: "dgrp-1", ActorUserID: "user-1",
+	})
+	if err != nil {
+		t.Fatalf("RemoveNetworkDeviceGroup returned error: %v", err)
+	}
+	if len(view.Items) != 0 || len(networks.networkDevices["net-1"]) != 0 {
+		t.Fatalf("expected reference and materialized member removal, view=%+v members=%+v", view, networks.networkDevices["net-1"])
 	}
 }
 

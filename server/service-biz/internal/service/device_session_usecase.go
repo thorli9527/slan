@@ -2,9 +2,26 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/slan/service-biz/internal/model"
 )
+
+func (s DeviceSessionService) AuthenticateDeviceSession(ctx context.Context, accessToken string) (DeviceSessionView, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return DeviceSessionView{}, ErrUnauthorized
+	}
+	session, ok, err := s.Devices.GetDeviceSessionByAccessToken(ctx, accessToken)
+	if err != nil {
+		return DeviceSessionView{}, err
+	}
+	now := deviceNow(s.Now).Unix()
+	if !ok || session.Status != tokenStatusActive || session.RevokedAt > 0 || session.ExpiresAt < now {
+		return DeviceSessionView{}, ErrUnauthorized
+	}
+	return deviceSessionView(session), nil
+}
 
 func (s DeviceSessionService) BindDeviceSession(ctx context.Context, input BindDeviceSessionInput) (DeviceSessionBoundView, error) {
 	input = normalizeBindDeviceSessionInput(input)
@@ -16,15 +33,6 @@ func (s DeviceSessionService) BindDeviceSession(ctx context.Context, input BindD
 		return DeviceSessionBoundView{}, err
 	}
 	nowUnix := deviceNow(s.Now).Unix()
-	if err := ensureDeviceAttachedToDefaultNetworkIfMissing(
-		ctx,
-		s.Networks,
-		device.OwnerID,
-		device.DeviceID,
-		nowUnix,
-	); err != nil {
-		return DeviceSessionBoundView{}, err
-	}
 	device, updated := applyBindDeviceSessionInput(device, input, nowUnix)
 	if updated {
 		if err := s.Devices.SaveDevice(ctx, device); err != nil {
@@ -35,7 +43,7 @@ func (s DeviceSessionService) BindDeviceSession(ctx context.Context, input BindD
 	if err != nil {
 		return DeviceSessionBoundView{}, err
 	}
-	if err := s.Devices.SaveDeviceSession(ctx, session); err != nil {
+	if err := replaceDeviceSession(ctx, s.Devices, session); err != nil {
 		return DeviceSessionBoundView{}, err
 	}
 	return buildBoundDeviceSessionView(ctx, s.Users, s.Networks, s.MQTT, deviceNow(s.Now), device, session)
@@ -89,17 +97,11 @@ func (s DeviceSessionService) RenewDeviceSession(ctx context.Context, accessToke
 	if accessToken != "" && normalizeDeviceAccessToken(accessToken) != session.AccessToken {
 		return DeviceSessionBoundView{}, ErrUnauthorized
 	}
-	session.Status = tokenStatusRevoked
-	session.RevokedAt = now.Unix()
-	session.UpdatedAt = now.Unix()
-	if err := s.Devices.SaveDeviceSession(ctx, session); err != nil {
-		return DeviceSessionBoundView{}, err
-	}
 	session, err = newManagedDeviceSession(now, s.NewSessID, session.DeviceID, session.SessionMode)
 	if err != nil {
 		return DeviceSessionBoundView{}, err
 	}
-	if err := s.Devices.SaveDeviceSession(ctx, session); err != nil {
+	if err := replaceDeviceSession(ctx, s.Devices, session); err != nil {
 		return DeviceSessionBoundView{}, err
 	}
 	device, err := getManagedDevice(ctx, s.Devices, session.DeviceID)

@@ -102,89 +102,47 @@ func validateSecurityRulePeer(
 ) error {
 	peerType, peerValue = normalizedSecurityPeer(peerType, peerValue, "")
 	networkID = normalizeNetworkID(networkID)
-	activeNetworkDevicesByID := map[string]model.NetworkDevice{}
-	if networkID != "" && networks != nil {
-		items, err := networks.ListNetworkDevices(ctx, networkID)
-		if err != nil {
-			return err
-		}
-		for _, item := range items {
-			if !networkMemberActive(item) {
-				continue
-			}
-			activeNetworkDevicesByID[item.DeviceID] = item
-		}
-	}
-	switch peerType {
-	case "", "cidr":
-		return ErrInvalidArgument
-	case "all":
-		if peerValue == "" {
-			return nil
-		}
-		if strings.EqualFold(peerValue, "all") || strings.EqualFold(peerValue, "any") || peerValue == "*" {
-			return nil
-		}
-		return ErrInvalidArgument
-	case "device":
-		if peerValue == "" {
-			return ErrInvalidArgument
-		}
-		if _, ok := activeNetworkDevicesByID[peerValue]; !ok {
-			return ErrInvalidArgument
-		}
-		return nil
-	case "user", "workspace":
-		if peerValue == "" {
-			return ErrInvalidArgument
-		}
-		return nil
-	case "device_group":
-		if peerValue == "" || devices == nil {
-			return ErrInvalidArgument
-		}
-		group, ok, err := devices.GetDeviceGroup(ctx, peerValue)
-		if err != nil {
-			return err
-		}
-		if !ok || strings.TrimSpace(group.UserID) == "" || group.UserID != actorUserID {
-			return ErrInvalidArgument
-		}
-		assignments, err := devices.ListDeviceGroupAssignments(ctx, actorUserID)
-		if err != nil {
-			return err
-		}
-		for _, assignment := range assignments {
-			if _, ok := activeNetworkDevicesByID[assignment.DeviceID]; !ok {
-				continue
-			}
-			for _, groupID := range assignment.GroupIDs {
-				if strings.TrimSpace(groupID) == peerValue {
-					return nil
-				}
-			}
-		}
-		return ErrInvalidArgument
-	default:
+	if !supportedSecurityRulePeerType(peerType) || peerValue == "" || devices == nil || networks == nil || networkID == "" {
 		return ErrInvalidArgument
 	}
+	if peerType == "device" {
+		members, err := networks.ListNetworkDevices(ctx, networkID)
+		if err != nil {
+			return err
+		}
+		for _, member := range members {
+			if member.DeviceID == peerValue && networkMemberActive(member) {
+				return nil
+			}
+		}
+		return ErrInvalidArgument
+	}
+	group, ok, err := devices.GetDeviceGroup(ctx, peerValue)
+	if err != nil {
+		return err
+	}
+	if !ok || strings.TrimSpace(group.UserID) == "" || group.UserID != actorUserID {
+		return ErrInvalidArgument
+	}
+	groupReferences, ok := networks.(repository.NetworkDeviceGroupRepository)
+	if !ok {
+		return ErrNotImplemented
+	}
+	references, err := groupReferences.ListNetworkDeviceGroupReferences(ctx, networkID)
+	if err != nil {
+		return err
+	}
+	for _, reference := range references {
+		if reference.GroupID == peerValue {
+			return nil
+		}
+	}
+	return ErrInvalidArgument
 }
 
-func requireOwnedManagedPublicMapping(
-	ctx context.Context,
-	users repository.UserRepository,
-	networks repository.NetworkRepository,
-	actorUserID string,
-	mappingID string,
-) (model.PublicMapping, error) {
-	item, err := requireManagedPublicMapping(ctx, networks, mappingID)
-	if err != nil {
-		return model.PublicMapping{}, err
-	}
-	if _, err := requireOwnedManagedNetwork(ctx, users, networks, actorUserID, item.NetworkID); err != nil {
-		return model.PublicMapping{}, err
-	}
-	return item, nil
+func supportedSecurityRulePeerType(peerType string) bool {
+	peerType = strings.ToLower(strings.TrimSpace(peerType))
+	return peerType == "device" || peerType == "device_group"
 }
 
 func requireOwnedManagedSecurityGroup(

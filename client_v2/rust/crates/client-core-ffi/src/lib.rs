@@ -27,10 +27,10 @@ mod android_tun {
         stable_hash64,
     };
     use client_core::{
-        acl_allows_egress_packet, acl_allows_ingress_packet, dns_response_for_query,
-        icmp_echo_reply_for_request, ipv4_transport_checksum_valid,
-        normalize_ipv4_transport_checksums, AndroidVpnSessionConfig, PlatformAclPeer,
-        PlatformDnsRecord, RelayPeerSession,
+        acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
+        ipv4_transport_checksum_valid, normalize_ipv4_transport_checksums,
+        resolver_response_for_query, AndroidVpnSessionConfig, PlatformAclPeer,
+        PlatformResolverRecord, RelayPeerSession,
     };
     use client_core_platform::direct_udp::{
         direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
@@ -339,13 +339,13 @@ mod android_tun {
                 .and_then(|config| config.relay_data_plane.as_ref())
                 .map(|config| config.acl_policies.clone())
                 .unwrap_or_default();
-            let dns_records = parsed_config
+            let resolver_records = parsed_config
                 .as_ref()
-                .map(|config| config.dns_records.clone())
-                .unwrap_or_else(Vec::<PlatformDnsRecord>::new);
-            let dns_servers = parsed_config
+                .map(|config| config.resolver_records.clone())
+                .unwrap_or_else(Vec::<PlatformResolverRecord>::new);
+            let resolver_servers = parsed_config
                 .as_ref()
-                .map(|config| config.dns_servers.clone())
+                .map(|config| config.resolver.servers.clone())
                 .unwrap_or_default();
             while !thread_stop.load(Ordering::SeqCst) {
                 let mut did_work = false;
@@ -377,8 +377,8 @@ mod android_tun {
                             if let Some(reply) = local_dns_reply(
                                 packet,
                                 local_virtual_ip.as_str(),
-                                &dns_servers,
-                                &dns_records,
+                                &resolver_servers,
+                                &resolver_records,
                             ) {
                                 write_android_tun_inbound_packet(&mut file, &thread_stats, &reply);
                             } else {
@@ -2038,10 +2038,10 @@ mod android_tun {
         packet: &[u8],
         local_virtual_ip: &str,
         dns_servers: &[String],
-        dns_records: &[PlatformDnsRecord],
+        dns_records: &[PlatformResolverRecord],
     ) -> Option<Vec<u8>> {
         for dns_server in dns_servers {
-            if let Some(reply) = dns_response_for_query(packet, dns_server, dns_records) {
+            if let Some(reply) = resolver_response_for_query(packet, dns_server, dns_records) {
                 return Some(reply);
             }
         }

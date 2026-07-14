@@ -128,10 +128,9 @@ class AndroidAuthorizationPanel extends StatelessWidget {
     return 'Android 网络状态待确认';
   }
 
-  /// 展示核心 VPN 配置，便于现场确认虚拟 IP 和 DNS。
+  /// 展示核心 VPN 配置，便于现场确认虚拟 IP。
   String _configText(AndroidVpnSessionConfig config) {
-    final dns = config.dnsServers.isEmpty ? '-' : config.dnsServers.join(',');
-    return '${config.virtualIp}/${config.prefixLen}  DNS $dns';
+    return '${config.virtualIp}/${config.prefixLen}';
   }
 
   /// 压缩错误里的换行和多空格，避免横向卡片被撑开。

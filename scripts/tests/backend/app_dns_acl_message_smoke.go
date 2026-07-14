@@ -72,10 +72,10 @@ type provisionedResources struct {
 }
 
 type networkModuleSnapshot struct {
-	NetworkCount      int `json:"networkCount"`
-	PeerCount         int `json:"peerCount"`
-	DNSRecordCount    int `json:"dnsRecordCount"`
-	SecurityRuleCount int `json:"securityRuleCount"`
+	NetworkCount        int `json:"networkCount"`
+	PeerCount           int `json:"peerCount"`
+	ResolverRecordCount int `json:"resolverRecordCount"`
+	SecurityRuleCount   int `json:"securityRuleCount"`
 }
 
 type mqttCredentialEnvelope struct {
@@ -168,10 +168,10 @@ func main() {
 	}
 
 	minPeers := clientCount - 1
-	minDNSRecords := clientCount
+	minResolverRecords := clientCount
 	minSecurityRules := clientCount * (clientCount - 1) * 2
 	for _, client := range clients {
-		waitModule(ctx, client, minPeers, minDNSRecords, minSecurityRules)
+		waitModule(ctx, client, minPeers, minResolverRecords, minSecurityRules)
 	}
 
 	if checkMessages {
@@ -245,7 +245,7 @@ func assertAppNetworkConfig(ctx context.Context, bizURL, userToken, networkID, d
 		userToken,
 		&out,
 	)
-	dnsRecords := jsonArrayLen(out["dnsRecords"])
+	resolverRecords := jsonArrayLen(out["resolverRecords"])
 	securityRules := jsonArrayLen(out["securityRules"])
 	if securityRules == 0 {
 		securityRules = jsonArrayLen(out["rules"])
@@ -254,8 +254,8 @@ func assertAppNetworkConfig(ctx context.Context, bizURL, userToken, networkID, d
 		securityRules = jsonIntValue(out["securityRuleCount"])
 	}
 	peers := jsonArrayLen(out["peers"])
-	if dnsRecords < clientCount {
-		fail("app network-config dnsRecords too small for %s: got=%d want>=%d payload=%#v", deviceID, dnsRecords, clientCount, out)
+	if resolverRecords < clientCount {
+		fail("app network-config resolverRecords too small for %s: got=%d want>=%d payload=%#v", deviceID, resolverRecords, clientCount, out)
 	}
 	if securityRules < clientCount*2-2 {
 		fail("app network-config securityRules too small for %s: got=%d payload=%#v", deviceID, securityRules, out)
@@ -263,7 +263,7 @@ func assertAppNetworkConfig(ctx context.Context, bizURL, userToken, networkID, d
 	if peers < clientCount-1 {
 		fail("app network-config peers too small for %s: got=%d want>=%d payload=%#v", deviceID, peers, clientCount-1, out)
 	}
-	fmt.Printf("appDnsAclMessageSmoke: networkConfig device=%s peers=%d dnsRecords=%d securityRules=%d\n", deviceID, peers, dnsRecords, securityRules)
+	fmt.Printf("appDnsAclMessageSmoke: networkConfig device=%s peers=%d resolverRecords=%d securityRules=%d\n", deviceID, peers, resolverRecords, securityRules)
 }
 
 func jsonArrayLen(value any) int {
@@ -390,7 +390,7 @@ func addRule(ctx context.Context, webBaseURL, securityGroupID, direction, peerTy
 	}
 }
 
-func waitModule(ctx context.Context, client *appSmokeClient, minPeers, minDNSRecords, minSecurityRules int) {
+func waitModule(ctx context.Context, client *appSmokeClient, minPeers, minResolverRecords, minSecurityRules int) {
 	deadline := time.Now().Add(25 * time.Second)
 	var last networkModuleSnapshot
 	var lastResponse map[string]any
@@ -402,8 +402,8 @@ func waitModule(ctx context.Context, client *appSmokeClient, minPeers, minDNSRec
 			lastResponse = response
 			payload, _ := json.Marshal(response)
 			_ = json.Unmarshal(payload, &last)
-			if last.PeerCount >= minPeers && last.DNSRecordCount >= minDNSRecords && last.SecurityRuleCount >= minSecurityRules {
-				fmt.Printf("appDnsAclMessageSmoke: module %s peers=%d dnsRecords=%d securityRules=%d\n", client.name, last.PeerCount, last.DNSRecordCount, last.SecurityRuleCount)
+			if last.PeerCount >= minPeers && last.ResolverRecordCount >= minResolverRecords && last.SecurityRuleCount >= minSecurityRules {
+				fmt.Printf("appDnsAclMessageSmoke: module %s peers=%d resolverRecords=%d securityRules=%d\n", client.name, last.PeerCount, last.ResolverRecordCount, last.SecurityRuleCount)
 				return
 			}
 		}
@@ -433,7 +433,7 @@ func sendClientMessage(ctx context.Context, from *appSmokeClient, targetDeviceID
 	response, err := localRequest(from.address, "localSendClientMessage", map[string]any{
 		"targetDeviceId": targetDeviceID,
 		"body":           body,
-		"metadata": map[string]any{"smoke": "app-dns-acl-message"},
+		"metadata":       map[string]any{"smoke": "app-dns-acl-message"},
 	}, 8*time.Second)
 	if err != nil {
 		fail("%s send client message failed: %v", from.name, err)

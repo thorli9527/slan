@@ -9,7 +9,7 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{anyhow, Result};
 use client_core::{
     NetworkRuntimeState, PeerPathRuntime, PlatformDiagnosticCheck, PlatformNetwork,
-    PlatformNetworkDiagnostics, RelayDataPlaneConfig, RouteSpec,
+    PlatformNetworkDiagnostics, PlatformResolverConfig, RelayDataPlaneConfig, RouteSpec,
 };
 
 const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
@@ -27,7 +27,9 @@ struct IosCachedNetworkConfig {
     installed: bool,
     virtual_ip: Option<String>,
     prefix_len: Option<u8>,
-    dns_servers: Vec<String>,
+    resolver_servers: Vec<String>,
+    resolver_search_domains: Vec<String>,
+    resolver_split_domains: Vec<String>,
     routes: Vec<RouteSpec>,
     relay_config: Option<RelayDataPlaneConfig>,
 }
@@ -75,16 +77,19 @@ impl PlatformNetwork for IosPlatformNetwork {
         Ok(())
     }
 
-    fn configure_dns(&self, dns_servers: &[String]) -> Result<()> {
+    fn configure_resolver(&self, resolver: &PlatformResolverConfig) -> Result<()> {
         let mut config = cached_config()
             .lock()
             .map_err(|_| anyhow!("ios network config lock poisoned"))?;
-        config.dns_servers = dns_servers
+        config.resolver_servers = resolver
+            .servers
             .iter()
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .collect();
+        config.resolver_search_domains = resolver.search_domains.clone();
+        config.resolver_split_domains = resolver.split_domains.clone();
         Ok(())
     }
 
@@ -161,7 +166,9 @@ impl PlatformNetwork for IosPlatformNetwork {
                 .and_then(|relay| relay.relay_mtu)
                 .map(u32::from),
             mss: None,
-            dns_servers: config.dns_servers.clone(),
+            resolver_servers: config.resolver_servers.clone(),
+            resolver_search_domains: config.resolver_search_domains.clone(),
+            resolver_split_domains: config.resolver_split_domains.clone(),
             routes: config
                 .routes
                 .iter()
@@ -202,4 +209,37 @@ fn ios_diagnostic_checks(config: &IosCachedNetworkConfig) -> Vec<PlatformDiagnos
         });
     }
     checks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IosPlatformNetwork;
+    use client_core::{PlatformNetwork, PlatformResolverConfig};
+
+    #[test]
+    fn diagnostics_include_resolver_search_and_split_domains() {
+        let platform = IosPlatformNetwork;
+        platform.install_adapter().expect("install adapter");
+        platform
+            .configure_resolver(&PlatformResolverConfig {
+                servers: vec!["10.0.0.53".to_string()],
+                search_domains: vec!["corp.lan".to_string()],
+                split_domains: vec!["mesh.local".to_string()],
+                fallback_to_system_resolvers: false,
+            })
+            .expect("configure resolver");
+
+        let diagnostics = platform.diagnostics().expect("diagnostics");
+        assert_eq!(diagnostics.resolver_servers, vec!["10.0.0.53".to_string()]);
+        assert_eq!(
+            diagnostics.resolver_search_domains,
+            vec!["corp.lan".to_string()]
+        );
+        assert_eq!(
+            diagnostics.resolver_split_domains,
+            vec!["mesh.local".to_string()]
+        );
+
+        platform.disable_network().expect("disable network");
+    }
 }

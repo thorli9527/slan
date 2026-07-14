@@ -1,31 +1,31 @@
 use std::net::Ipv4Addr;
 
-use crate::platform::PlatformDnsRecord;
+use crate::platform::PlatformResolverRecord;
 
 const DNS_PORT: u16 = 53;
 const DNS_TYPE_A: u16 = 1;
 const DNS_TYPE_CNAME: u16 = 5;
 const DNS_CLASS_IN: u16 = 1;
 
-pub fn dns_response_for_query(
+pub fn resolver_response_for_query(
     packet: &[u8],
-    local_dns_ip: &str,
-    dns_records: &[PlatformDnsRecord],
+    local_resolver_ip: &str,
+    resolver_records: &[PlatformResolverRecord],
 ) -> Option<Vec<u8>> {
-    let query = DnsIpv4Query::parse(packet)?;
-    let reply_ip = crate::normalize_virtual_ip(local_dns_ip);
+    let query = ResolverIpv4Query::parse(packet)?;
+    let reply_ip = crate::normalize_virtual_ip(local_resolver_ip);
     if query.destination_ip != reply_ip {
         return None;
     }
     if query.destination_port != DNS_PORT {
         return None;
     }
-    let resolved = resolve_dns_answers(&query.qname, query.qtype, dns_records)?;
-    build_dns_ipv4_response(packet, &query, &resolved, &reply_ip)
+    let resolved = resolve_resolver_answers(&query.qname, query.qtype, resolver_records)?;
+    build_resolver_ipv4_response(packet, &query, &resolved, &reply_ip)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct DnsIpv4Query {
+struct ResolverIpv4Query {
     destination_ip: String,
     destination_port: u16,
     source_port: u16,
@@ -40,13 +40,13 @@ struct DnsIpv4Query {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct DnsAnswer {
+struct ResolverAnswer {
     rr_type: u16,
     ttl: u32,
     rdata: Vec<u8>,
 }
 
-impl DnsIpv4Query {
+impl ResolverIpv4Query {
     fn parse(packet: &[u8]) -> Option<Self> {
         if packet.len() < 20 || packet[0] >> 4 != 4 {
             return None;
@@ -112,14 +112,14 @@ impl DnsIpv4Query {
     }
 }
 
-fn resolve_dns_answers(
+fn resolve_resolver_answers(
     qname: &str,
     qtype: u16,
-    dns_records: &[PlatformDnsRecord],
-) -> Option<Vec<DnsAnswer>> {
+    resolver_records: &[PlatformResolverRecord],
+) -> Option<Vec<ResolverAnswer>> {
     let normalized = normalize_name(qname)?;
     let mut answers = Vec::new();
-    for record in dns_records {
+    for record in resolver_records {
         let record_name = normalize_name(record.fqdn.as_deref().unwrap_or(record.name.as_str()))?;
         if record_name != normalized {
             continue;
@@ -134,7 +134,7 @@ fn resolve_dns_answers(
                     .trim()
                     .parse::<Ipv4Addr>()
                     .ok()?;
-                answers.push(DnsAnswer {
+                answers.push(ResolverAnswer {
                     rr_type: DNS_TYPE_A,
                     ttl,
                     rdata: ip.octets().to_vec(),
@@ -142,7 +142,7 @@ fn resolve_dns_answers(
             }
             (DNS_TYPE_CNAME, "CNAME") => {
                 let cname = normalize_name(record.cname.as_deref()?)?;
-                answers.push(DnsAnswer {
+                answers.push(ResolverAnswer {
                     rr_type: DNS_TYPE_CNAME,
                     ttl,
                     rdata: encode_qname(&cname)?,
@@ -154,10 +154,10 @@ fn resolve_dns_answers(
     (!answers.is_empty()).then_some(answers)
 }
 
-fn build_dns_ipv4_response(
+fn build_resolver_ipv4_response(
     packet: &[u8],
-    query: &DnsIpv4Query,
-    answers: &[DnsAnswer],
+    query: &ResolverIpv4Query,
+    answers: &[ResolverAnswer],
     reply_ip: &str,
 ) -> Option<Vec<u8>> {
     let dns_query = &packet[query.dns_offset..query.dns_offset + query.dns_len];
@@ -245,16 +245,16 @@ fn normalize_name(value: &str) -> Option<String> {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use super::dns_response_for_query;
-    use crate::{ipv4_destination, ipv4_source, PlatformDnsRecord};
+    use super::resolver_response_for_query;
+    use crate::{ipv4_destination, ipv4_source, PlatformResolverRecord};
 
     #[test]
     fn responds_to_a_record_query_for_local_dns_ip() {
-        let query = dns_query_packet("10.0.0.1", "10.0.0.53", 53000, "mac.test.lan", 1);
-        let response = dns_response_for_query(
+        let query = resolver_query_packet("10.0.0.1", "10.0.0.53", 53000, "mac.test.lan", 1);
+        let response = resolver_response_for_query(
             &query,
             "10.0.0.53/32",
-            &[PlatformDnsRecord {
+            &[PlatformResolverRecord {
                 record_id: "record-1".to_string(),
                 zone_id: "zone-1".to_string(),
                 network_id: "network-1".to_string(),
@@ -263,7 +263,7 @@ mod tests {
                 record_type: "A".to_string(),
                 target_ip: Some("10.0.0.9".to_string()),
                 ttl: Some(120),
-                ..PlatformDnsRecord::default()
+                ..PlatformResolverRecord::default()
             }],
         )
         .unwrap();
@@ -278,22 +278,22 @@ mod tests {
 
     #[test]
     fn ignores_non_matching_destination_or_unknown_record() {
-        let query = dns_query_packet("10.0.0.1", "10.0.0.53", 53000, "mac.test.lan", 1);
-        assert!(dns_response_for_query(&query, "10.0.0.2/32", &[]).is_none());
-        assert!(dns_response_for_query(
+        let query = resolver_query_packet("10.0.0.1", "10.0.0.53", 53000, "mac.test.lan", 1);
+        assert!(resolver_response_for_query(&query, "10.0.0.2/32", &[]).is_none());
+        assert!(resolver_response_for_query(
             &query,
             "10.0.0.53/32",
-            &[PlatformDnsRecord {
+            &[PlatformResolverRecord {
                 fqdn: Some("other.test.lan".to_string()),
                 record_type: "A".to_string(),
                 target_ip: Some("10.0.0.9".to_string()),
-                ..PlatformDnsRecord::default()
+                ..PlatformResolverRecord::default()
             }]
         )
         .is_none());
     }
 
-    fn dns_query_packet(
+    fn resolver_query_packet(
         src_ip: &str,
         dst_ip: &str,
         src_port: u16,

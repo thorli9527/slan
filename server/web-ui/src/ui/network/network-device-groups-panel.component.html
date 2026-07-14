@@ -2,16 +2,19 @@
   <div class="section-title">
     <div>
       <h3>设备分组</h3>
-      <p>这里只显示当前网络下已经生效的设备分组；设备绑定和细分调整可在设备页继续管理。</p>
+      <p>网络只引用设备管理中已有的分组；分组成员变化会自动同步到当前网络。</p>
     </div>
     <div class="table-actions">
-      <button class="table-icon-button" type="button" title="新增分组" aria-label="新增分组" (click)="vm.openDeviceGroupDialog()">
+      <select [(ngModel)]="vm.selectedWorkspaceDeviceGroupReferenceId" aria-label="选择设备分组">
+        <option value="">选择要引用的分组</option>
+        <option *ngFor="let group of vm.availableWorkspaceDeviceGroupReferences" [value]="group.groupId">{{ group.name }}</option>
+      </select>
+      <button class="table-icon-button" type="button" title="引用分组" aria-label="引用分组" [disabled]="!vm.selectedWorkspaceDeviceGroupReferenceId" (click)="vm.addWorkspaceDeviceGroupReference()">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 5v14"></path>
           <path d="M5 12h14"></path>
         </svg>
       </button>
-      <button class="ghost" type="button" (click)="vm.setWorkspacePanel('devices')">设备页管理</button>
     </div>
   </div>
   <p class="form-error" *ngIf="vm.deviceListMessage">{{ vm.deviceListMessage }}</p>
@@ -20,18 +23,12 @@
       <thead><tr><th>分组名称</th><th>描述</th><th>当前网络设备数</th><th>当前网络设备</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let group of vm.workspaceDeviceGroups">
-          <td><strong>{{ group.name }}</strong><div class="muted-inline"><code>{{ group.groupId }}</code></div></td>
+          <td><strong>{{ group.name }}</strong></td>
           <td>{{ group.description || '-' }}</td>
           <td>{{ vm.workspaceDeviceGroupCount(group.groupId) }}</td>
           <td>{{ vm.workspaceDeviceNamesInGroup(group.groupId) }}</td>
           <td class="table-actions">
-            <button class="table-icon-button" type="button" title="编辑分组" aria-label="编辑分组" (click)="vm.openDeviceGroupDialog(group)">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 20h4l10-10-4-4L4 16v4"></path>
-                <path d="M13 7l4 4"></path>
-              </svg>
-            </button>
-            <button class="table-icon-button danger" type="button" title="删除分组" aria-label="删除分组" (click)="vm.removeDeviceGroup(group)">
+            <button class="table-icon-button danger" type="button" title="取消引用" aria-label="取消引用" (click)="vm.removeWorkspaceDeviceGroupReference(group)">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M4 7h16"></path>
                 <path d="M9 7V5h6v2"></path>
@@ -43,7 +40,7 @@
           </td>
         </tr>
         <tr *ngIf="vm.workspaceDeviceGroups.length === 0">
-          <td colspan="5">当前网络下暂无已生效分组。先在设备页给设备绑定分组，或在这里新增一个分组。</td>
+          <td colspan="5">当前网络尚未引用设备分组。</td>
         </tr>
       </tbody>
     </table>

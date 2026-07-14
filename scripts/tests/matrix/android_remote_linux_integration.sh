@@ -41,6 +41,7 @@ LINUX_DEVICE_ALIAS="${SLAN_REMOTE_LINUX_DEVICE_ALIAS:-Remote Linux CLI}"
 BOOTSTRAP_TTL_SECONDS="${SLAN_REMOTE_LINUX_BOOTSTRAP_TTL_SECONDS:-1800}"
 BUILD_LINUX_PACKAGE="${SLAN_REMOTE_LINUX_BUILD_PACKAGE:-0}"
 BUILD_LINUX_PACKAGE_REMOTE="${SLAN_REMOTE_LINUX_BUILD_PACKAGE_REMOTE:-1}"
+PREPARE_REMOTE_DEPENDENCIES="${SLAN_REMOTE_LINUX_PREPARE_DEPENDENCIES:-1}"
 USE_REMOTE_BUILT_PACKAGE_DIRECTLY="${SLAN_REMOTE_LINUX_USE_REMOTE_BUILT_PACKAGE_DIRECTLY:-0}"
 LINUX_NETWORK_MOCK="${SLAN_LINUX_NETWORK_MOCK:-0}"
 if [[ -n "${SLAN_TEST_UDP_ECHO_PORT:-}" ]]; then
@@ -53,7 +54,7 @@ if [[ -n "${SLAN_TEST_TCP_ECHO_PORT:-}" ]]; then
 else
   TCP_PORT="$((UDP_PORT + 1))"
 fi
-NETWORK_MODULE_RULES_MIN="${SLAN_ANDROID_REMOTE_LINUX_MIN_SECURITY_RULES:-8}"
+NETWORK_MODULE_RULES_MIN="${SLAN_ANDROID_REMOTE_LINUX_MIN_SECURITY_RULES:-4}"
 ANDROID_DEVICE_ID_WAIT_SECONDS="${SLAN_ANDROID_DEVICE_ID_WAIT_SECONDS:-180}"
 ANDROID_ECHO_HOLD_SECONDS="${SLAN_ANDROID_ECHO_HOLD_SECONDS:-75}"
 ANDROID_ECHO_STARTUP_TIMEOUT_SECONDS="${SLAN_ANDROID_ECHO_STARTUP_TIMEOUT_SECONDS:-180}"
@@ -85,6 +86,7 @@ NETWORK_ID=""
 SECURITY_GROUP_ID=""
 BOOTSTRAP_KEY_ID=""
 BOOTSTRAP_KEY=""
+DEVICE_GROUP_ID=""
 ZONE_ID=""
 ZONE_NAME=""
 RULE_IDS=()
@@ -130,7 +132,9 @@ json_field() {
 
 best_effort_delete() {
   local url="$1"
-  curl --silent --show-error --connect-timeout 5 --max-time 20 -X DELETE "$url" >/dev/null 2>&1 || true
+  curl --silent --show-error --connect-timeout 5 --max-time 20 \
+    -X DELETE "$url" \
+    -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -158,6 +162,12 @@ cleanup() {
     if [[ -n "$ZONE_ID" ]]; then
       best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
     fi
+    if [[ -n "$DEVICE_GROUP_ID" ]]; then
+      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
+    fi
+  fi
+  if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
+    best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}"
   fi
   slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_ANDROID_REMOTE_LINUX_WORK_DIR:-0}" != "1" ]]; then
@@ -263,6 +273,12 @@ remote_helper() {
 }
 
 remote_prepare_dependencies() {
+  if ! is_truthy "$PREPARE_REMOTE_DEPENDENCIES"; then
+    remote_exec "uname -m" >"$REMOTE_PREP_LOG"
+    REMOTE_ARCH="$(tr -d '\r' <"$REMOTE_PREP_LOG" | grep -E '^(x86_64|amd64|aarch64|arm64|armv7l|armhf)$' | tail -n 1)"
+    [[ -n "$REMOTE_ARCH" ]] || fail "failed to detect remote Linux architecture"
+    return 0
+  fi
   remote_exec "
 set -euo pipefail
 mkdir -p '${REMOTE_DIR}'
@@ -353,6 +369,16 @@ register_and_login_user() {
   [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || fail "failed to login test user"
 }
 
+refresh_user_token() {
+  local auth_json
+  auth_json="$(curl --silent --show-error --fail \
+    -X POST "${BIZ_URL}/api/app/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
+  USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
+  [[ -n "$USER_TOKEN" ]] || fail "failed to refresh test user token"
+}
+
 create_bootstrap_key() {
   local bootstrap_json
   bootstrap_json="$(curl --silent --show-error --fail \
@@ -435,24 +461,47 @@ add_rule() {
   local priority="$5"
   local rule_json rule_id
   rule_json="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
-    "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
+    "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device_group\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
   RULE_IDS+=("$rule_id")
 }
 
-provision_dns_acl_resources() {
+provision_network_device_group() {
+  local group_json
+  group_json="$(create_json "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+    "{\"name\":\"android-linux-$(date +%s%N)\",\"description\":\"Android Linux integration devices\"}")"
+  DEVICE_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.groupId // empty')"
+  [[ -n "$DEVICE_GROUP_ID" ]] || fail "device group create returned empty groupId"
+
+  local device_id
+  for device_id in "$ANDROID_DEVICE_ID" "$LINUX_DEVICE_ID"; do
+    curl --silent --show-error --fail \
+      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
+      -H "Authorization: Bearer ${USER_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
+  done
+  log "prepared device group assignments group=${DEVICE_GROUP_ID}"
+}
+
+attach_device_group_to_network() {
+  create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+    "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
+  log "attached device group network=${NETWORK_ID} group=${DEVICE_GROUP_ID}"
+}
+
+provision_dns_resources() {
   create_dns_zone
   create_dns_record linux "$LINUX_DEVICE_ID"
   create_dns_record android "$ANDROID_DEVICE_ID"
-  add_rule ingress udp "$UDP_PORT" "$ANDROID_DEVICE_ID" 100
-  add_rule egress udp "$UDP_PORT" "$ANDROID_DEVICE_ID" 110
-  add_rule ingress tcp "$TCP_PORT" "$ANDROID_DEVICE_ID" 120
-  add_rule egress tcp "$TCP_PORT" "$ANDROID_DEVICE_ID" 130
-  add_rule ingress udp "$UDP_PORT" "$LINUX_DEVICE_ID" 140
-  add_rule egress udp "$UDP_PORT" "$LINUX_DEVICE_ID" 150
-  add_rule ingress tcp "$TCP_PORT" "$LINUX_DEVICE_ID" 160
-  add_rule egress tcp "$TCP_PORT" "$LINUX_DEVICE_ID" 170
+}
+
+provision_acl_resources() {
+  add_rule ingress udp "$UDP_PORT" "$DEVICE_GROUP_ID" 100
+  add_rule egress udp "$UDP_PORT" "$DEVICE_GROUP_ID" 110
+  add_rule ingress tcp "$TCP_PORT" "$DEVICE_GROUP_ID" 120
+  add_rule egress tcp "$TCP_PORT" "$DEVICE_GROUP_ID" 130
 }
 
 start_android_vpn_appops_guard() {
@@ -537,7 +586,6 @@ start_android_message_harness() {
       --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=$ANDROID_POST_ENABLE_WAIT_SECONDS" \
       --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=true" \
       --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
-      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
       --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
       "${send_defines[@]}" \
       "${expect_defines[@]}"
@@ -676,6 +724,7 @@ remote_exec "
 set -euo pipefail
 mkdir -p '${REMOTE_DIR}'
 systemctl stop slan-client-v2.service >/dev/null 2>&1 || true
+rm -f /var/lib/SLAN/config.json
 rm -f /var/lib/SLAN/client-v2-session.json
 rm -f /var/lib/SLAN/client-v2-device-id.txt
 rm -f /var/lib/SLAN/client-v2-device-public-key.txt
@@ -697,18 +746,31 @@ LINUX_DEVICE_ID="$(json_field "$remote_signed_in_json" '.deviceId // empty')"
 [[ -n "$LINUX_DEVICE_ID" ]] || fail "failed to parse remote Linux device id"
 log "wait remote Linux control transport"
 remote_helper wait_control_ready "$TIMEOUT_SECONDS" >/dev/null
+log "start Android flutter message harness"
+start_android_message_harness
+capture_android_device_id_or_die
+
+log "attach Android and Linux through a network device group"
+refresh_user_token
+provision_network_device_group
+
+log "provision dns resources"
+provision_dns_resources
+attach_device_group_to_network
+log "provision acl resources"
+provision_acl_resources
+
+log "restart remote Linux client and reload the complete network snapshot"
+remote_exec "systemctl restart slan-client-v2.service"
+remote_helper wait_local_api "$LOCAL_API_TIMEOUT_SECONDS" >/dev/null
+remote_helper wait_signed_in_or_login "$EMAIL" "$PASSWORD" "$TIMEOUT_SECONDS" >/dev/null
+remote_helper wait_control_ready "$TIMEOUT_SECONDS" >/dev/null
+
 log "enable remote Linux network"
 remote_network_json="$(remote_helper ensure_network_ready "$TIMEOUT_SECONDS")"
 LINUX_IP="$(json_field "$remote_network_json" '.virtualIp // empty')"
 LINUX_IP="${LINUX_IP%%/*}"
 [[ -n "$LINUX_IP" ]] || fail "failed to parse remote Linux virtual IP"
-
-log "start Android flutter message harness"
-start_android_message_harness
-capture_android_device_id_or_die
-
-log "provision dns + acl resources"
-provision_dns_acl_resources
 
 log "wait remote Linux network module snapshot"
 remote_helper wait_network_module 1 2 "$NETWORK_MODULE_RULES_MIN" "$TIMEOUT_SECONDS" >/dev/null

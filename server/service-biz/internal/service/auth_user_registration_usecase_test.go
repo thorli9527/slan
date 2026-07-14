@@ -196,22 +196,6 @@ func (s *authUserRegistrationTestNetworks) DeleteDNSRecord(context.Context, stri
 	return nil
 }
 
-func (s *authUserRegistrationTestNetworks) ListPublicMappings(context.Context, string) ([]model.PublicMapping, error) {
-	return nil, nil
-}
-
-func (s *authUserRegistrationTestNetworks) GetPublicMapping(context.Context, string) (model.PublicMapping, bool, error) {
-	return model.PublicMapping{}, false, nil
-}
-
-func (s *authUserRegistrationTestNetworks) SavePublicMapping(context.Context, model.PublicMapping) error {
-	return nil
-}
-
-func (s *authUserRegistrationTestNetworks) DeletePublicMapping(context.Context, string) error {
-	return nil
-}
-
 func (s *authUserRegistrationTestNetworks) ListSecurityGroups(_ context.Context, networkID string) ([]model.SecurityGroup, error) {
 	out := []model.SecurityGroup{}
 	for _, item := range s.securityGroups {

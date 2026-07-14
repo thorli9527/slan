@@ -161,7 +161,7 @@ fn acl_rule_peer_matches(
                 .any(|ip| normalize_virtual_ip(ip) == *subject_ip)
         });
     }
-    if matches!(peer_type.as_str(), "domain" | "dns") {
+    if matches!(peer_type.as_str(), "domain") {
         return acl_subject_ips(rule.direction.as_str(), packet_direction, packet)
             .iter()
             .any(|subject_ip| {

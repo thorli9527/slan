@@ -85,13 +85,14 @@ func ensureRelayTicketAllowed(
 		globalIPs[deviceID] = deviceGlobalIP(item)
 	}
 	dstIP := strings.TrimSpace(globalIPs[dstDeviceID])
+	srcIP := strings.TrimSpace(globalIPs[srcDeviceID])
 
 	srcACL := newRelayTicketACLContext(network.NetworkID, network.OwnerID, srcDeviceID, deviceMap, globalIPs, deviceGroupsByDevice)
 	if relayTicketBroadDeny(rules, srcACL, "egress", dstIP) {
 		return ErrForbidden
 	}
 	dstACL := newRelayTicketACLContext(network.NetworkID, network.OwnerID, dstDeviceID, deviceMap, globalIPs, deviceGroupsByDevice)
-	if relayTicketBroadDeny(rules, dstACL, "ingress", dstIP) {
+	if relayTicketBroadDeny(rules, dstACL, "ingress", srcIP) {
 		return ErrForbidden
 	}
 	return nil

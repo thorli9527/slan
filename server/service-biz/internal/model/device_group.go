@@ -15,3 +15,10 @@ type DeviceGroupAssignment struct {
 	GroupIDs  []string `json:"groupIds"`
 	UpdatedAt int64    `json:"updatedAt"`
 }
+
+type NetworkDeviceGroupReference struct {
+	NetworkID string `json:"networkId"`
+	GroupID   string `json:"groupId"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+}

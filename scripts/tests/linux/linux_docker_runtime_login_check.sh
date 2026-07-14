@@ -108,7 +108,7 @@ dump_container_debug() {
   docker_exec "echo '--- service log ---'; tail -n 200 /var/lib/SLAN/client-core-service.log 2>/dev/null || tail -n 200 /root/.local/share/SLAN/client-core-service.log 2>/dev/null || true" || true
   docker_exec "echo '--- console env ---'; cat /etc/slan/client-v2-console.env 2>/dev/null || true" || true
   docker_exec "echo '--- bootstrap env ---'; cat /etc/slan/bootstrap.env 2>/dev/null || true" || true
-  docker_exec "echo '--- session json ---'; cat /var/lib/SLAN/client-v2-session.json 2>/dev/null || cat /root/.local/share/SLAN/client-v2-session.json 2>/dev/null || true" || true
+  docker_exec "echo '--- encrypted client config ---'; jq '{version,deviceId,algorithm:.encrypted.algorithm,encrypted:(.encrypted.ciphertext != null)}' /var/lib/SLAN/config.json 2>/dev/null || true" || true
   docker_exec "echo '--- console stdout ---'; cat /tmp/slan-console.out 2>/dev/null || true" || true
   docker_exec "echo '--- console stderr ---'; cat /tmp/slan-console.err 2>/dev/null || true" || true
 }
@@ -312,7 +312,7 @@ if [ -f /etc/slan/client-v2-console.env ]; then
 else
   echo "console bootstrap env consumed"
 fi
-test -f /var/lib/SLAN/client-v2-session.json
+jq -e '.deviceId != "" and .encrypted.algorithm == "AES-256-GCM" and (.encrypted.ciphertext | length) > 0' /var/lib/SLAN/config.json >/dev/null
 find /opt/slan-client-v2 -maxdepth 3 -type f | sort | head -50
 '
 

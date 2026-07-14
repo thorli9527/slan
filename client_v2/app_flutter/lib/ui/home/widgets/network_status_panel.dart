@@ -8,6 +8,7 @@ import 'compact_info_row.dart';
 /// 集中展示当前用户、虚拟 IP、流量统计和设备 ID。
 class SignedInStatusPanel extends StatelessWidget {
   const SignedInStatusPanel({
+    required this.desktop,
     required this.userLabel,
     required this.currentIp,
     required this.state,
@@ -17,6 +18,8 @@ class SignedInStatusPanel extends StatelessWidget {
 
   /// 当前用户展示名。
   final String userLabel;
+
+  final bool desktop;
 
   /// 当前虚拟 IP 文案，未启用网络时由页面层传入“未启用”。
   final String currentIp;
@@ -31,10 +34,10 @@ class SignedInStatusPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+      padding: EdgeInsets.fromLTRB(16, desktop ? 16 : 12, 16, 14),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(10),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Column(
@@ -45,12 +48,16 @@ class SignedInStatusPanel extends StatelessWidget {
             children: [
               Expanded(child: CompactIdentity(userLabel: userLabel)),
               const SizedBox(width: 12),
-              _NetworkControl(state: state, onToggle: onToggle),
+              _NetworkControl(
+                desktop: desktop,
+                state: state,
+                onToggle: onToggle,
+              ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Divider(height: 1, color: theme.colorScheme.outlineVariant),
-          const SizedBox(height: 9),
+          const SizedBox(height: 11),
           CompactInfoRow(
             valueKey: const Key('network-ip-value'),
             icon: Icons.router_rounded,
@@ -129,7 +136,13 @@ class SignedInStatusPanel extends StatelessWidget {
 
 /// 网络开关及状态标签。
 class _NetworkControl extends StatelessWidget {
-  const _NetworkControl({required this.state, required this.onToggle});
+  const _NetworkControl({
+    required this.desktop,
+    required this.state,
+    required this.onToggle,
+  });
+
+  final bool desktop;
 
   /// 当前 UI 状态，决定开关值、loading 和文案。
   final ClientViewState state;
@@ -147,24 +160,33 @@ class _NetworkControl extends StatelessWidget {
             ? '网络已启用'
             : '网络未启用';
     return SizedBox(
-      width: 112,
+      width: desktop ? 138 : 112,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _NetworkSwitch(state: state, onToggle: onToggle),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelSmall?.copyWith(
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
               color: enabled
-                  ? theme.colorScheme.primary
-                  : theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w800,
+                  ? const Color(0xffebf4ff)
+                  : theme.colorScheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: enabled
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
+          const SizedBox(height: 6),
+          _NetworkSwitch(state: state, onToggle: onToggle),
         ],
       ),
     );

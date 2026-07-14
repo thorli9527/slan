@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"hash/fnv"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
@@ -68,7 +69,27 @@ func (s *GormStore) ListDeviceSessionsByDeviceID(_ context.Context, deviceID str
 
 func (s *GormStore) SaveDeviceSession(_ context.Context, item model.DeviceSession) error {
 	row := deviceSessionRecordFromModel(item)
-	return upsertByColumns(s.db, &row, []string{"session_id"}, []string{"device_id", "access_token", "refresh_token", "status", "session_mode", "expires_at", "refresh_expiry", "created_at", "updated_at", "revoked_at"})
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		lockedStore := &GormStore{db: tx}
+		if err := lockedStore.AcquireAdvisoryLock(deviceSessionLockID(item.DeviceID)); err != nil {
+			return err
+		}
+		if err := tx.Delete(
+			&gormDeviceSessionRecord{},
+			"device_id = ? AND session_id <> ?",
+			strings.TrimSpace(item.DeviceID),
+			strings.TrimSpace(item.SessionID),
+		).Error; err != nil {
+			return err
+		}
+		return upsertByColumns(tx, &row, []string{"session_id"}, []string{"device_id", "access_token", "refresh_token", "status", "session_mode", "expires_at", "refresh_expiry", "created_at", "updated_at", "revoked_at"})
+	})
+}
+
+func deviceSessionLockID(deviceID string) int64 {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte("device-session:" + strings.TrimSpace(deviceID)))
+	return int64(hash.Sum64())
 }
 
 func (s *GormStore) DeleteDeviceSessionByAccessToken(_ context.Context, accessToken string) error {

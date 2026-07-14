@@ -9,8 +9,9 @@ import (
 )
 
 type DeviceHandler struct {
-	Devices     servicepkg.DeviceCoreUseCase
-	NetworkCore servicepkg.NetworkCoreUseCase
+	Devices        servicepkg.DeviceCoreUseCase
+	DeviceSessions servicepkg.DeviceSessionUseCase
+	NetworkCore    servicepkg.NetworkCoreUseCase
 }
 
 func (h DeviceHandler) Routes() []serviceapi.Route {
@@ -49,7 +50,11 @@ func (h DeviceHandler) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h DeviceHandler) RenewDevice(w http.ResponseWriter, r *http.Request) {
-	view, err := h.Devices.RenewDevice(r.Context(), requestDeviceID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r))
+	if !ok {
+		return
+	}
+	view, err := h.Devices.RenewDevice(r.Context(), deviceID)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
@@ -63,7 +68,11 @@ func (h DeviceHandler) UpdateDeviceRuntime(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	input := req.ToInput()
-	serviceapi.SetIfEmpty(&input.DeviceID, requestDeviceID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r), input.DeviceID)
+	if !ok {
+		return
+	}
+	input.DeviceID = deviceID
 	view, err := h.Devices.UpdateDeviceRuntime(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)

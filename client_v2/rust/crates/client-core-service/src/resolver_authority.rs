@@ -1,6 +1,9 @@
 use crate::{
-    dns_runtime_state::{normalize_fqdn, CachedDnsAnswer, CachedDnsResultKind, RuntimeDnsState},
     network_runtime_state::RuntimeNetworkState,
+    resolver_runtime_state::{
+        normalize_fqdn, CachedResolverAnswer, CachedResolverResultKind, ResolverRecordView,
+        RuntimeResolverState,
+    },
     session_store::current_timestamp_ms,
 };
 use serde_json::{json, Value};
@@ -16,6 +19,13 @@ pub enum ResolveAuthoritativeResult {
     NxDomain,
     NoData,
     NotManaged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ResolverRouteDecision {
+    Authoritative,
+    ForwardUpstream,
+    NoData,
 }
 
 pub(crate) fn resolve_authoritative_result_json(result: ResolveAuthoritativeResult) -> Value {
@@ -57,9 +67,26 @@ pub(crate) fn resolve_authoritative_result_json(result: ResolveAuthoritativeResu
     }
 }
 
+pub(crate) fn route_resolver_query(
+    resolver: &RuntimeResolverState,
+    qname: &str,
+) -> ResolverRouteDecision {
+    let fqdn = normalize_fqdn(qname);
+    if fqdn.is_empty() {
+        return ResolverRouteDecision::NoData;
+    }
+    if resolve_managed_name(resolver, &fqdn).is_some() {
+        return ResolverRouteDecision::Authoritative;
+    }
+    if resolver.matches_split_domain(&fqdn) || !resolver.effective_upstream_resolvers().is_empty() {
+        return ResolverRouteDecision::ForwardUpstream;
+    }
+    ResolverRouteDecision::NoData
+}
+
 pub(crate) fn resolve_authoritative(
     runtime: &RuntimeNetworkState,
-    dns: &mut RuntimeDnsState,
+    dns: &mut RuntimeResolverState,
     requester_device_id: &str,
     qname: &str,
     qtype: &str,
@@ -76,7 +103,7 @@ pub(crate) fn resolve_authoritative(
     let Some(resolved_name) = resolve_managed_name(dns, &fqdn) else {
         return ResolveAuthoritativeResult::NotManaged;
     };
-    let Some(record_ids) = dns.record_ids_by_fqdn.get(&resolved_name) else {
+    let Some(record_ids) = dns.authority.record_ids_by_fqdn.get(&resolved_name) else {
         let result = ResolveAuthoritativeResult::NxDomain;
         cache_result(dns, &fqdn, &wanted, &result);
         return result;
@@ -87,7 +114,7 @@ pub(crate) fn resolve_authoritative(
     let mut txt_answers = Vec::new();
     let mut answer_ttl = None;
     for record_id in record_ids {
-        let Some(record) = dns.records_by_id.get(record_id) else {
+        let Some(record) = dns.authority.records_by_id.get(record_id) else {
             continue;
         };
         if !record.enabled {
@@ -212,25 +239,26 @@ pub(crate) fn resolve_authoritative(
     result
 }
 
-fn resolve_managed_name(dns: &RuntimeDnsState, fqdn: &str) -> Option<String> {
-    if dns.record_ids_by_fqdn.contains_key(fqdn) {
+fn resolve_managed_name(dns: &RuntimeResolverState, fqdn: &str) -> Option<String> {
+    if dns.authority.record_ids_by_fqdn.contains_key(fqdn) {
         return Some(fqdn.to_string());
     }
     if fqdn.contains('.') {
-        return dns.zones_by_id.values().find_map(|zone| {
+        return dns.authority.zones_by_id.values().find_map(|zone| {
             let zone_name = normalize_fqdn(&zone.zone_name);
             (!zone_name.is_empty()
                 && (fqdn == zone_name || fqdn.ends_with(&format!(".{zone_name}"))))
             .then(|| fqdn.to_string())
         });
     }
-    dns.zones_by_id.values().find_map(|zone| {
+    dns.authority.zones_by_id.values().find_map(|zone| {
         let zone_name = normalize_fqdn(&zone.zone_name);
         if zone_name.is_empty() {
             return None;
         }
         let candidate = format!("{fqdn}.{zone_name}");
-        dns.record_ids_by_fqdn
+        dns.authority
+            .record_ids_by_fqdn
             .contains_key(&candidate)
             .then_some(candidate)
     })
@@ -283,7 +311,7 @@ fn record_visible_to_requester(
 
 fn resolve_record_target_ipv4(
     runtime: &RuntimeNetworkState,
-    record: &crate::dns_runtime_state::DnsRecordView,
+    record: &ResolverRecordView,
 ) -> Option<String> {
     let target_ip = record.target_ip.trim();
     if !target_ip.is_empty() && target_ip.parse::<std::net::Ipv4Addr>().is_ok() {
@@ -296,7 +324,7 @@ fn resolve_record_target_ipv4(
     runtime_virtual_ip_for_device(runtime, target_device_id)
 }
 
-fn resolve_record_target_ipv6(record: &crate::dns_runtime_state::DnsRecordView) -> Option<String> {
+fn resolve_record_target_ipv6(record: &ResolverRecordView) -> Option<String> {
     let target_ip = record.target_ip.trim();
     (!target_ip.is_empty() && target_ip.parse::<std::net::Ipv6Addr>().is_ok())
         .then(|| target_ip.to_string())
@@ -439,7 +467,7 @@ fn acl_side_matches(
         }),
         "ip" | "cidr" | "subnet" => runtime_virtual_ip_for_device(runtime, device_id)
             .is_some_and(|member_ip| values.iter().any(|item| acl_ip_matches(item, &member_ip))),
-        "domain" | "dns" => {
+        "domain" => {
             let fqdn = normalize_fqdn(record_fqdn);
             let name = normalize_fqdn(record_name);
             values.iter().any(|item| {
@@ -523,29 +551,29 @@ fn ipv4_cidr_contains(network: &str, prefix: &str, ip: &str) -> bool {
     (u32::from(network) & mask) == (u32::from(ip) & mask)
 }
 
-fn cached_answer_to_result(cached: &CachedDnsAnswer) -> ResolveAuthoritativeResult {
+fn cached_answer_to_result(cached: &CachedResolverAnswer) -> ResolveAuthoritativeResult {
     match cached.result_kind {
-        CachedDnsResultKind::AnswerA => ResolveAuthoritativeResult::AnswerA {
+        CachedResolverResultKind::AnswerA => ResolveAuthoritativeResult::AnswerA {
             ttl: cached.ttl.unwrap_or(30),
             ips: cached.answers.clone(),
         },
-        CachedDnsResultKind::AnswerAaaa => ResolveAuthoritativeResult::AnswerAaaa {
+        CachedResolverResultKind::AnswerAaaa => ResolveAuthoritativeResult::AnswerAaaa {
             ttl: cached.ttl.unwrap_or(30),
             ips: cached.answers.clone(),
         },
-        CachedDnsResultKind::AnswerCname => ResolveAuthoritativeResult::AnswerCname {
+        CachedResolverResultKind::AnswerCname => ResolveAuthoritativeResult::AnswerCname {
             ttl: cached.ttl.unwrap_or(30),
             cname: cached.answers.first().cloned().unwrap_or_default(),
         },
-        CachedDnsResultKind::AnswerPtr => ResolveAuthoritativeResult::AnswerPtr {
+        CachedResolverResultKind::AnswerPtr => ResolveAuthoritativeResult::AnswerPtr {
             ttl: cached.ttl.unwrap_or(30),
             name: cached.answers.first().cloned().unwrap_or_default(),
         },
-        CachedDnsResultKind::AnswerTxt => ResolveAuthoritativeResult::AnswerTxt {
+        CachedResolverResultKind::AnswerTxt => ResolveAuthoritativeResult::AnswerTxt {
             ttl: cached.ttl.unwrap_or(30),
             texts: cached.answers.clone(),
         },
-        CachedDnsResultKind::AnswerSrv => {
+        CachedResolverResultKind::AnswerSrv => {
             let target = cached.answers.first().cloned().unwrap_or_default();
             let port = cached
                 .answers
@@ -558,13 +586,13 @@ fn cached_answer_to_result(cached: &CachedDnsAnswer) -> ResolveAuthoritativeResu
                 target,
             }
         }
-        CachedDnsResultKind::NxDomain => ResolveAuthoritativeResult::NxDomain,
-        CachedDnsResultKind::NoData => ResolveAuthoritativeResult::NoData,
+        CachedResolverResultKind::NxDomain => ResolveAuthoritativeResult::NxDomain,
+        CachedResolverResultKind::NoData => ResolveAuthoritativeResult::NoData,
     }
 }
 
 fn cache_result(
-    dns: &mut RuntimeDnsState,
+    dns: &mut RuntimeResolverState,
     qname: &str,
     qtype: &str,
     result: &ResolveAuthoritativeResult,
@@ -572,37 +600,43 @@ fn cache_result(
     let now_ms = current_timestamp_ms();
     let (result_kind, ttl, answers) = match result {
         ResolveAuthoritativeResult::AnswerA { ttl, ips } => {
-            (CachedDnsResultKind::AnswerA, Some(*ttl), ips.clone())
+            (CachedResolverResultKind::AnswerA, Some(*ttl), ips.clone())
         }
-        ResolveAuthoritativeResult::AnswerAaaa { ttl, ips } => {
-            (CachedDnsResultKind::AnswerAaaa, Some(*ttl), ips.clone())
-        }
+        ResolveAuthoritativeResult::AnswerAaaa { ttl, ips } => (
+            CachedResolverResultKind::AnswerAaaa,
+            Some(*ttl),
+            ips.clone(),
+        ),
         ResolveAuthoritativeResult::AnswerCname { ttl, cname } => (
-            CachedDnsResultKind::AnswerCname,
+            CachedResolverResultKind::AnswerCname,
             Some(*ttl),
             vec![cname.clone()],
         ),
         ResolveAuthoritativeResult::AnswerPtr { ttl, name } => (
-            CachedDnsResultKind::AnswerPtr,
+            CachedResolverResultKind::AnswerPtr,
             Some(*ttl),
             vec![name.clone()],
         ),
-        ResolveAuthoritativeResult::AnswerTxt { ttl, texts } => {
-            (CachedDnsResultKind::AnswerTxt, Some(*ttl), texts.clone())
-        }
+        ResolveAuthoritativeResult::AnswerTxt { ttl, texts } => (
+            CachedResolverResultKind::AnswerTxt,
+            Some(*ttl),
+            texts.clone(),
+        ),
         ResolveAuthoritativeResult::AnswerSrv { ttl, port, target } => (
-            CachedDnsResultKind::AnswerSrv,
+            CachedResolverResultKind::AnswerSrv,
             Some(*ttl),
             vec![target.clone(), port.to_string()],
         ),
         ResolveAuthoritativeResult::NxDomain => {
-            (CachedDnsResultKind::NxDomain, Some(30), Vec::new())
+            (CachedResolverResultKind::NxDomain, Some(30), Vec::new())
         }
-        ResolveAuthoritativeResult::NoData => (CachedDnsResultKind::NoData, Some(30), Vec::new()),
+        ResolveAuthoritativeResult::NoData => {
+            (CachedResolverResultKind::NoData, Some(30), Vec::new())
+        }
         ResolveAuthoritativeResult::NotManaged => return,
     };
     let ttl_value = ttl.unwrap_or(30).max(1);
-    dns.put_cached_answer(CachedDnsAnswer {
+    dns.put_cached_answer(CachedResolverAnswer {
         qname: qname.to_string(),
         qtype: qtype.to_string(),
         result_kind,
@@ -614,24 +648,27 @@ fn cache_result(
 
 #[cfg(test)]
 mod tests {
-    use super::{acl_side_matches, resolve_authoritative, ResolveAuthoritativeResult};
+    use super::{
+        acl_side_matches, resolve_authoritative, route_resolver_query, ResolveAuthoritativeResult,
+        ResolverRouteDecision,
+    };
     use crate::{
-        dns_runtime_state::{DnsRecordView, DnsZoneView, RuntimeDnsState},
         network_event::NetworkEventMemberView,
         network_runtime_state::RuntimeNetworkState,
+        resolver_runtime_state::{ResolverRecordView, ResolverZoneView, RuntimeResolverState},
     };
 
     #[test]
     fn short_name_resolves_via_zone_search_suffix() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -670,15 +707,15 @@ mod tests {
 
     #[test]
     fn full_fqdn_still_resolves_normally() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -717,15 +754,15 @@ mod tests {
 
     #[test]
     fn explicit_ipv6_record_resolves_as_aaaa() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -764,15 +801,15 @@ mod tests {
 
     #[test]
     fn answer_is_cached_after_first_lookup() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -800,26 +837,70 @@ mod tests {
 
         let first = resolve_authoritative(&runtime, &mut dns, "device-1", "self", "A");
         assert!(matches!(first, ResolveAuthoritativeResult::AnswerA { .. }));
-        assert_eq!(dns.cache_by_question.len(), 1);
+        assert_eq!(dns.cache.cache_by_question.len(), 1);
 
-        dns.records_by_id.clear();
-        dns.record_ids_by_fqdn.clear();
+        dns.authority.records_by_id.clear();
+        dns.authority.record_ids_by_fqdn.clear();
 
         let second = resolve_authoritative(&runtime, &mut dns, "device-1", "self", "A");
         assert_eq!(second, first);
     }
 
     #[test]
-    fn deny_acl_hides_record_from_requester() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+    fn route_resolver_query_prefers_authoritative_for_managed_domain() {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
+            record_id: "rec-1".to_string(),
+            zone_id: "zone-1".to_string(),
+            network_id: "net-1".to_string(),
+            name: "peer".to_string(),
+            fqdn: "peer.example.lan".to_string(),
+            record_type: "A".to_string(),
+            value: String::new(),
+            target_device_id: "device-1".to_string(),
+            target_ip: "10.0.0.9".to_string(),
+            cname: String::new(),
+            port: 0,
+            ttl: 60,
+            enabled: true,
+            updated_at: 0,
+        }]);
+
+        assert_eq!(
+            route_resolver_query(&dns, "peer.example.lan"),
+            ResolverRouteDecision::Authoritative
+        );
+    }
+
+    #[test]
+    fn route_resolver_query_falls_back_to_upstream_for_unmanaged_domain() {
+        let mut dns = RuntimeResolverState::default();
+        dns.set_upstream_servers(vec!["1.1.1.1:53".to_string()]);
+
+        assert_eq!(
+            route_resolver_query(&dns, "www.example.com"),
+            ResolverRouteDecision::ForwardUpstream
+        );
+    }
+
+    #[test]
+    fn deny_acl_hides_record_from_requester() {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
+            zone_id: "zone-1".to_string(),
+            network_id: "net-1".to_string(),
+            zone_name: "example.lan".to_string(),
+            expose_global: false,
+            updated_at: 0,
+        }]);
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -879,15 +960,15 @@ mod tests {
 
     #[test]
     fn device_group_allow_acl_exposes_record_to_requester() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -984,15 +1065,15 @@ mod tests {
 
     #[test]
     fn current_device_acl_rule_exposes_target_peer_record() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -1071,15 +1152,15 @@ mod tests {
 
     #[test]
     fn cidr_acl_rule_matches_target_virtual_ip() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -1146,15 +1227,15 @@ mod tests {
 
     #[test]
     fn domain_acl_rule_matches_record_fqdn() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -1221,15 +1302,15 @@ mod tests {
 
     #[test]
     fn domain_acl_rule_does_not_match_other_record_name() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -1290,15 +1371,15 @@ mod tests {
 
     #[test]
     fn ptr_record_resolves_from_value() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "arpa".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-ptr".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -1342,15 +1423,15 @@ mod tests {
 
     #[test]
     fn txt_record_resolves_from_value() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-txt".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -1388,8 +1469,8 @@ mod tests {
 
     #[test]
     fn multiple_a_records_resolve_as_multi_answer() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
@@ -1397,7 +1478,7 @@ mod tests {
             updated_at: 0,
         }]);
         dns.replace_records(vec![
-            DnsRecordView {
+            ResolverRecordView {
                 record_id: "rec-1".to_string(),
                 zone_id: "zone-1".to_string(),
                 network_id: "net-1".to_string(),
@@ -1413,7 +1494,7 @@ mod tests {
                 enabled: true,
                 updated_at: 0,
             },
-            DnsRecordView {
+            ResolverRecordView {
                 record_id: "rec-2".to_string(),
                 zone_id: "zone-1".to_string(),
                 network_id: "net-1".to_string(),
@@ -1453,8 +1534,8 @@ mod tests {
 
     #[test]
     fn multiple_txt_records_resolve_as_multi_answer() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
@@ -1462,7 +1543,7 @@ mod tests {
             updated_at: 0,
         }]);
         dns.replace_records(vec![
-            DnsRecordView {
+            ResolverRecordView {
                 record_id: "rec-1".to_string(),
                 zone_id: "zone-1".to_string(),
                 network_id: "net-1".to_string(),
@@ -1478,7 +1559,7 @@ mod tests {
                 enabled: true,
                 updated_at: 0,
             },
-            DnsRecordView {
+            ResolverRecordView {
                 record_id: "rec-2".to_string(),
                 zone_id: "zone-1".to_string(),
                 network_id: "net-1".to_string(),
@@ -1518,15 +1599,15 @@ mod tests {
 
     #[test]
     fn srv_record_resolves_from_value_and_port() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-srv".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
@@ -1571,15 +1652,15 @@ mod tests {
 
     #[test]
     fn self_target_a_record_falls_back_to_session_virtual_ip() {
-        let mut dns = RuntimeDnsState::default();
-        dns.replace_zones(vec![DnsZoneView {
+        let mut dns = RuntimeResolverState::default();
+        dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
             expose_global: false,
             updated_at: 0,
         }]);
-        dns.replace_records(vec![DnsRecordView {
+        dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-self".to_string(),
             zone_id: "zone-1".to_string(),
             network_id: "net-1".to_string(),

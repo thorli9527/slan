@@ -7,7 +7,6 @@ import {
   DNSZoneRow,
   MemberRow,
   NavGroup,
-  PublicMappingRow,
   SecurityGroupRow,
   SecurityRuleRow,
   SecurityRuleTemplate,
@@ -28,7 +27,6 @@ export const DEFAULT_ZONE_ID = '00000000000040008000000000000007';
 export const DEV_ZONE_ID = '00000000000040008000000000000008';
 export const DEFAULT_RECORD_ID = '00000000000040008000000000000009';
 export const DEV_RECORD_ID = '0000000000004000800000000000000a';
-export const DEFAULT_MAPPING_ID = '0000000000004000800000000000000b';
 export const DEFAULT_SECURITY_GROUP_ID = '0000000000004000800000000000000c';
 export const DEV_SECURITY_GROUP_ID = '0000000000004000800000000000000d';
 
@@ -135,10 +133,6 @@ export const INITIAL_DNS_ZONES: DNSZoneRow[] = [
 export const INITIAL_DNS_RECORDS: DNSRow[] = [
   { recordId: DEFAULT_RECORD_ID, zoneId: DEFAULT_ZONE_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, name: 'mac', fqdn: 'mac.default.lan', recordType: 'A', value: 'alice@staticlss.com / 办公 Mac / 443', deviceId: DEFAULT_MAC_DEVICE_ID, port: '443', ttl: 60, targetType: 'device', expose: false },
   { recordId: DEV_RECORD_ID, zoneId: DEV_ZONE_ID, networkId: DEV_NETWORK_ID, workspaceId: DEV_NETWORK_ID, name: 'api', fqdn: 'api.dev.internal', recordType: 'A', value: 'alice@staticlss.com / Alice iPhone / 8443', deviceId: DEFAULT_IPHONE_DEVICE_ID, port: '8443', ttl: 60, targetType: 'device', expose: true },
-];
-
-export const INITIAL_PUBLIC_MAPPINGS: PublicMappingRow[] = [
-  { mappingId: DEFAULT_MAPPING_ID, networkId: DEFAULT_NETWORK_ID, workspaceId: DEFAULT_NETWORK_ID, alias: 'api', publicDomain: 'api.default.alice.pub.staticlss.com', sourceRecord: 'api', deviceId: DEFAULT_IPHONE_DEVICE_ID, targetType: 'device', protocol: 'HTTP', port: '8443', externalPort: '443', accessMode: 'public', tlsMode: 'auto', status: 'enabled' },
 ];
 
 export const INITIAL_SECURITY_GROUPS: SecurityGroupRow[] = [

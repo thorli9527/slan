@@ -81,18 +81,32 @@ class _HomePageState extends State<HomePage> {
             return Align(
               alignment: Alignment.topCenter,
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                padding: EdgeInsets.fromLTRB(
+                  _isDesktopLike ? 28 : 20,
+                  _isDesktopLike ? 22 : 12,
+                  _isDesktopLike ? 28 : 20,
+                  24,
+                ),
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 560),
+                  constraints: BoxConstraints(
+                    maxWidth: _isDesktopLike ? 860 : 560,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      _buildShellHeader(state),
+                      const SizedBox(height: 16),
+                      _buildStateBanner(state),
+                      if (state.notice?.trim().isNotEmpty == true ||
+                          state.error?.trim().isNotEmpty == true)
+                        const SizedBox(height: 12),
                       if (state.signedIn) ...[
                         _buildSignedInHeader(state: state),
                         _buildAndroidAuthorizationPanel(),
                         const SizedBox(height: 14),
                         SignedInActions(
+                          desktop: _isDesktopLike,
                           showConsole: _showWebConsoleAction,
                           onOpenConsole: _showWebConsoleAction
                               ? () => widget.bridge.dispatch(
@@ -106,7 +120,7 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ),
                       ] else ...[
-                        const SignedOutStatus(),
+                        SignedOutStatus(desktop: _isDesktopLike),
                         const SizedBox(height: 14),
                         if (_usesPasswordLogin)
                           PasswordLoginForm(
@@ -119,8 +133,9 @@ class _HomePageState extends State<HomePage> {
                           )
                         else
                           SizedBox(
-                            height: 40,
-                            child: FilledButton(
+                            height: 46,
+                            child: FilledButton.icon(
+                              key: const Key('desktop-browser-login'),
                               onPressed: state.syncing
                                   ? null
                                   : () => widget.bridge.dispatch(
@@ -128,7 +143,8 @@ class _HomePageState extends State<HomePage> {
                                           ClientCommandType.openClientLogin,
                                         ),
                                       ),
-                              child: const Text('Login'),
+                              icon: const Icon(Icons.login_rounded, size: 18),
+                              label: const Text('打开浏览器登录'),
                             ),
                           ),
                       ],
@@ -150,6 +166,8 @@ class _HomePageState extends State<HomePage> {
 
   /// 桌面端登录后显示打开 Web Console 的入口。
   bool get _showWebConsoleAction => !_usesPasswordLogin;
+
+  bool get _isDesktopLike => !_usesPasswordLogin;
 
   /// 读取当前服务端地址并同步到设置输入框。
   Future<void> _loadServerBaseUrl() async {
@@ -413,11 +431,114 @@ class _HomePageState extends State<HomePage> {
     required ClientViewState state,
   }) {
     return SignedInStatusPanel(
+      desktop: _isDesktopLike,
       userLabel: _userLabel(state),
       currentIp: _ipText(state),
       state: state,
       onToggle: _toggleNetwork,
     );
+  }
+
+  Widget _buildShellHeader(ClientViewState state) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        _isDesktopLike ? 22 : 18,
+        _isDesktopLike ? 20 : 16,
+        _isDesktopLike ? 22 : 18,
+        _isDesktopLike ? 20 : 16,
+      ),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xfffff4ec), Color(0xfff4ede7)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: const Color(0xffeadccf)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: _isDesktopLike ? 56 : 48,
+            height: _isDesktopLike ? 56 : 48,
+            decoration: BoxDecoration(
+              color: const Color(0xffb85c2f),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Icon(
+              Icons.hub_rounded,
+              color: Colors.white,
+              size: 26,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'SLAN Client',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xff4c2a19),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _headerSubtitle(state),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xff7a604d),
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          _HeaderStateChip(label: _headerStatusLabel(state)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStateBanner(ClientViewState state) {
+    final notice = state.notice?.trim();
+    if (notice != null &&
+        notice.isNotEmpty &&
+        notice != 'macosStatusItemReady') {
+      return _InlineBanner(
+        icon: Icons.info_outline_rounded,
+        tone: _BannerTone.info,
+        text: notice,
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  String _headerSubtitle(ClientViewState state) {
+    if (_isDesktopLike) {
+      return state.signedIn
+          ? '设备已接入本地控制服务，可直接切换虚拟网络并打开 Web Console。'
+          : '使用浏览器完成登录，客户端会自动同步设备与网络状态。';
+    }
+    return state.signedIn ? '当前设备已登录，可直接启用虚拟网络。' : '输入账号密码后即可同步设备与网络配置。';
+  }
+
+  String _headerStatusLabel(ClientViewState state) {
+    if (state.error?.trim().isNotEmpty == true) {
+      return '异常';
+    }
+    if (state.syncing) {
+      return '同步中';
+    }
+    if (state.networkEnabled) {
+      return '已连接';
+    }
+    if (state.signedIn) {
+      return '已登录';
+    }
+    return '未登录';
   }
 
   /// 构建 Android VPN 授权提示；非 Android 或无需提示时隐藏。
@@ -455,5 +576,78 @@ class _HomePageState extends State<HomePage> {
       return '未启用';
     }
     return virtualIp;
+  }
+}
+
+class _HeaderStateChip extends StatelessWidget {
+  const _HeaderStateChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xffe5d6ca)),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: const Color(0xff5c3924),
+            ),
+      ),
+    );
+  }
+}
+
+enum _BannerTone { info }
+
+class _InlineBanner extends StatelessWidget {
+  const _InlineBanner({
+    required this.icon,
+    required this.tone,
+    required this.text,
+  });
+
+  final IconData icon;
+  final _BannerTone tone;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xffeef6ff),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xffcfe1f8),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            icon,
+            size: 18,
+            color: const Color(0xff2f6fb8),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xff224e81),
+                    height: 1.35,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

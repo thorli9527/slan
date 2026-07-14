@@ -7,10 +7,6 @@ import (
 )
 
 type NetworkSecurityRepository interface {
-	ListPublicMappings(ctx context.Context, networkID string) ([]model.PublicMapping, error)
-	GetPublicMapping(ctx context.Context, mappingID string) (model.PublicMapping, bool, error)
-	SavePublicMapping(ctx context.Context, mapping model.PublicMapping) error
-	DeletePublicMapping(ctx context.Context, mappingID string) error
 	ListSecurityGroups(ctx context.Context, networkID string) ([]model.SecurityGroup, error)
 	GetSecurityGroup(ctx context.Context, securityGroupID string) (model.SecurityGroup, bool, error)
 	SaveSecurityGroup(ctx context.Context, group model.SecurityGroup) error

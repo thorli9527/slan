@@ -108,11 +108,13 @@ func NewDeviceCoreService(
 }
 
 type DeviceGroupService struct {
-	Users          repository.UserRepository
-	Devices        repository.DeviceRepository
-	Networks       repository.NetworkRepository
-	EventPublisher NetworkEventPublisher
-	Now            func() time.Time
+	Users           repository.UserRepository
+	Devices         repository.DeviceRepository
+	Networks        repository.NetworkRepository
+	NetworkGroups   repository.NetworkDeviceGroupRepository
+	EventPublisher  NetworkEventPublisher
+	DevicePublisher DeviceControlPublisher
+	Now             func() time.Time
 }
 
 type DeviceSessionService struct {

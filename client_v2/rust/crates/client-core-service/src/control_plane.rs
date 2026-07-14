@@ -31,6 +31,14 @@ const API_RELAY_TICKETS: &str = "/api/app/relay/tickets";
 static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CLIENT_DEVICE_ID_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
+fn null_vec_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<Vec<T>>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
 fn api_device_network_configs(device_id: &str) -> String {
     format!("/api/app/devices/{}/network-configs", device_id.trim())
 }
@@ -181,11 +189,11 @@ pub(crate) struct DeviceSessionResponse {
 pub(crate) struct RuntimeEndpointsResponse {
     #[serde(default)]
     pub mqtt: Option<MqttCredential>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub punch_nodes: Vec<RuntimePunchNode>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub relay_candidates: Vec<RelayCandidate>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub networks: Vec<RuntimeNetworkEndpoint>,
     #[serde(default)]
     pub refreshed_at: i64,
@@ -214,7 +222,7 @@ pub(crate) struct RuntimePunchNode {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeNetworkEndpoint {
     pub network_id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub relay_candidates: Vec<RelayCandidate>,
 }
 
@@ -228,6 +236,7 @@ pub(crate) struct DeviceSessionPayload {
     pub device_token_expires_at: i64,
     #[serde(default)]
     pub device_refresh_token: Option<String>,
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub active_network_ids: Vec<String>,
 }
 
@@ -245,7 +254,7 @@ pub(crate) struct SendClientMessageResponse {
 pub struct NetworkActivationPlan {
     pub virtual_ip: String,
     pub prefix_len: u8,
-    pub dns_servers: Vec<String>,
+    pub resolver: DeviceResolverConfig,
     pub routes: Vec<RouteSpec>,
     pub relay_candidates: Vec<RelayCandidate>,
     pub self_node_id: Option<String>,
@@ -283,9 +292,9 @@ pub struct ControlPeer {
     pub node_id: String,
     #[serde(default)]
     pub relay_allowed: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub virtual_ips: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub endpoints: Vec<ControlEndpoint>,
 }
 
@@ -333,17 +342,32 @@ pub struct DeviceNetworkConfig {
     #[serde(default)]
     pub global_name: Option<String>,
     #[serde(default)]
+    pub resolver: DeviceResolverConfig,
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub peers: Vec<DeviceNetworkPeer>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub security_groups: Vec<DeviceSecurityGroup>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub rules: Vec<DeviceSecurityRule>,
-    #[serde(default)]
-    pub dns_zones: Vec<DeviceDnsZone>,
-    #[serde(default)]
-    pub dns_records: Vec<DeviceDnsRecord>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_vec_default")]
+    pub resolver_zones: Vec<DeviceResolverZone>,
+    #[serde(default, deserialize_with = "null_vec_default")]
+    pub resolver_records: Vec<DeviceResolverRecord>,
+    #[serde(default, deserialize_with = "null_vec_default")]
     pub relay_candidates: Vec<RelayCandidate>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceResolverConfig {
+    #[serde(default, deserialize_with = "null_vec_default")]
+    pub servers: Vec<String>,
+    #[serde(default, deserialize_with = "null_vec_default")]
+    pub search_domains: Vec<String>,
+    #[serde(default, deserialize_with = "null_vec_default")]
+    pub split_domains: Vec<String>,
+    #[serde(default)]
+    pub fallback_to_system_resolvers: bool,
 }
 
 /// DeviceNetworkPeer 是同一虚拟网络内的对端设备摘要。
@@ -396,19 +420,19 @@ pub struct DeviceSecurityRule {
     pub enabled: bool,
 }
 
-/// DeviceDnsZone 是下发给设备的 DNS Zone。
+/// DeviceResolverZone 是下发给设备的解析域配置。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeviceDnsZone {
+pub struct DeviceResolverZone {
     pub zone_id: String,
     pub network_id: String,
     pub zone_name: String,
 }
 
-/// DeviceDnsRecord 是下发给设备的 DNS 解析记录。
+/// DeviceResolverRecord 是下发给设备的解析记录。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeviceDnsRecord {
+pub struct DeviceResolverRecord {
     pub record_id: String,
     pub zone_id: String,
     pub network_id: String,
@@ -887,6 +911,7 @@ impl ControlPlaneClient {
     pub fn console_login_key(
         &self,
         access_token: &str,
+        user_id: &str,
         device_id: Option<&str>,
     ) -> Result<Option<String>> {
         let response = self.request_json(
@@ -894,6 +919,7 @@ impl ControlPlaneClient {
             API_AUTH_CONSOLE_LOGIN_KEYS,
             access_token,
             Some(serde_json::json!({
+                "userId": user_id.trim(),
                 "deviceId": device_id.unwrap_or_default(),
             })),
         )?;
@@ -1127,10 +1153,11 @@ fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActiva
         .or_else(|| {
             optional_string(response, "deviceId").map(|device_id| format!("node-{device_id}"))
         });
+    let resolver = extract_resolver_config(response);
     Ok(NetworkActivationPlan {
         virtual_ip,
         prefix_len: network_config_prefix_len(response).unwrap_or(32),
-        dns_servers: extract_dns_servers(response),
+        resolver,
         routes: network_config_routes(response),
         relay_candidates: extract_relay_candidates(response),
         self_node_id,
@@ -1288,17 +1315,12 @@ fn non_empty_string(value: &str) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
-fn extract_dns_servers(response: &Value) -> Vec<String> {
+fn extract_resolver_config(response: &Value) -> DeviceResolverConfig {
     response
-        .pointer("/dns/servers")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect()
+        .get("resolver")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<DeviceResolverConfig>(value).ok())
+        .unwrap_or_default()
 }
 
 fn extract_relay_candidates(response: &Value) -> Vec<RelayCandidate> {
@@ -1662,10 +1684,34 @@ fn md5_hex(input: &[u8]) -> String {
 }
 
 fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
-    let path = state_dir().join("client-v2-device-id.txt");
-    stable_device_id_at_path(&path, preferred_device_id)
+    let legacy_path = state_dir().join("client-v2-device-id.txt");
+    let overridden = env_device_id_override();
+    if overridden.is_none() {
+        if let Some(device_id) = crate::client_config::load_device_id()? {
+            if let Some(normalized) = normalize_device_id(&device_id) {
+                if normalized != device_id {
+                    crate::client_config::store_device_id(&normalized)?;
+                }
+                return Ok(normalized);
+            }
+        }
+    }
+    let legacy_device_id = fs::read_to_string(&legacy_path)
+        .ok()
+        .and_then(|value| normalize_device_id(value.trim()));
+    let device_id = overridden
+        .or(legacy_device_id)
+        .or_else(|| preferred_device_id.and_then(normalize_device_id))
+        .unwrap_or_else(uuid_v4_device_id);
+    crate::client_config::store_device_id(&device_id)?;
+    if legacy_path.exists() {
+        fs::remove_file(&legacy_path)
+            .with_context(|| format!("remove {}", legacy_path.display()))?;
+    }
+    Ok(device_id)
 }
 
+#[cfg(test)]
 fn stable_device_id_at_path(
     path: &std::path::Path,
     preferred_device_id: Option<&str>,
@@ -1700,10 +1746,27 @@ pub fn local_stable_device_id() -> Result<String> {
 }
 
 fn local_device_public_key(device_id: &str) -> Result<String> {
-    let path = state_dir().join("client-v2-device-public-key.txt");
-    device_public_key_at_path(&path, device_id)
+    if let Some(value) = crate::client_config::load_device_public_key(device_id)? {
+        if is_strong_device_public_key(&value) {
+            return Ok(value);
+        }
+    }
+    let legacy_path = state_dir().join("client-v2-device-public-key.txt");
+    let weak_seeded_key = format!("client-v2-{}", device_id.trim());
+    let legacy_key = fs::read_to_string(&legacy_path).ok().and_then(|value| {
+        let value = value.trim();
+        (is_strong_device_public_key(value) && value != weak_seeded_key).then(|| value.to_string())
+    });
+    let public_key = legacy_key.unwrap_or_else(random_device_public_key);
+    crate::client_config::store_device_public_key(device_id, &public_key)?;
+    if legacy_path.exists() {
+        fs::remove_file(&legacy_path)
+            .with_context(|| format!("remove {}", legacy_path.display()))?;
+    }
+    Ok(public_key)
 }
 
+#[cfg(test)]
 fn device_public_key_at_path(path: &std::path::Path, device_id: &str) -> Result<String> {
     let weak_seeded_key = format!("client-v2-{}", device_id.trim());
     if let Ok(value) = fs::read_to_string(path) {
@@ -1721,16 +1784,18 @@ fn device_public_key_at_path(path: &std::path::Path, device_id: &str) -> Result<
 }
 
 pub fn reset_local_device_id() -> Result<String> {
-    let path = state_dir().join("client-v2-device-id.txt");
-    reset_device_id_at_path(&path)
-}
-
-fn reset_device_id_at_path(path: &std::path::Path) -> Result<String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
     let created = uuid_v4_device_id();
-    fs::write(path, &created).with_context(|| format!("write {}", path.display()))?;
+    crate::client_config::store_device_id(&created)?;
+    for file_name in [
+        "client-v2-device-id.txt",
+        "client-v2-device-public-key.txt",
+        "client-v2-session.json",
+    ] {
+        let path = state_dir().join(file_name);
+        if path.exists() {
+            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        }
+    }
     Ok(created)
 }
 
@@ -1883,31 +1948,7 @@ fn format_uuid_v4(mut bytes: [u8; 16]) -> String {
 }
 
 fn state_dir() -> PathBuf {
-    if let Some(dir) = env::var_os("SLAN_STATE_DIR") {
-        return PathBuf::from(dir).join("SLAN");
-    }
-    if cfg!(target_os = "windows") {
-        return env::var_os("ProgramData")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("SLAN");
-    }
-    if cfg!(target_os = "macos") {
-        return PathBuf::from("/Library/Application Support/SLAN");
-    }
-    if cfg!(target_os = "ios") {
-        if let Some(home) = env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("SLAN");
-        }
-        return env::temp_dir().join("SLAN");
-    }
-    if cfg!(target_os = "android") {
-        return env::temp_dir().join("SLAN");
-    }
-    PathBuf::from("/var/lib").join("SLAN")
+    crate::client_config::client_state_dir()
 }
 
 fn device_name() -> String {
@@ -2038,7 +2079,52 @@ mod tests {
     }
 
     #[test]
+    fn console_login_key_posts_authenticated_user_and_device() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let address = listener.local_addr().expect("local address");
+        let request_handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let request = read_http_request(&mut stream);
+            let response_body = br#"{"loginKey":"console-key-1"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_body.len()
+            )
+            .expect("write response headers");
+            stream
+                .write_all(response_body)
+                .expect("write response body");
+            request
+        });
+
+        let client = ControlPlaneClient {
+            base_url: format!("http://{address}"),
+        };
+        let key = client
+            .console_login_key("access-1", "user-1", Some("device-1"))
+            .expect("create console login key");
+
+        assert_eq!(key.as_deref(), Some("console-key-1"));
+        let request = request_handle.join().expect("request handle");
+        assert!(request.starts_with("POST /api/app/auth/console-login-keys HTTP/1.1"));
+        assert!(request.contains("Authorization: Bearer access-1\r\n"));
+        let (_, body) = request.split_once("\r\n\r\n").expect("request body");
+        let body: Value = serde_json::from_str(body).expect("decode request body");
+        assert_eq!(body.get("userId").and_then(Value::as_str), Some("user-1"));
+        assert_eq!(
+            body.get("deviceId").and_then(Value::as_str),
+            Some("device-1")
+        );
+    }
+
+    #[test]
     fn prepare_device_login_reads_prelogin_mqtt_credential() {
+        let _guard = crate::test_env_lock();
+        let state_dir = unique_test_state_dir("prepare-device-login");
+        fs::create_dir_all(&state_dir).expect("create state dir");
+        let previous_state_dir = env::var_os("SLAN_STATE_DIR");
+        env::set_var("SLAN_STATE_DIR", &state_dir);
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         let address = listener.local_addr().expect("local address");
         let request_handle = thread::spawn(move || {
@@ -2061,7 +2147,7 @@ mod tests {
             base_url: format!("http://{address}"),
         };
         let prepared = client
-            .prepare_device_login("device-1", "macos")
+            .prepare_device_login("0123456789abcdef0123456789abcdef", "macos")
             .expect("prepare device login");
         let mqtt = prepared.mqtt.expect("mqtt credential");
 
@@ -2071,6 +2157,13 @@ mod tests {
         assert_eq!(mqtt.client_id, "slan-device-1");
         assert_eq!(mqtt.password, "mqtt-secret");
         assert_eq!(mqtt.topic_prefix, "slan/device-1");
+
+        if let Some(value) = previous_state_dir {
+            env::set_var("SLAN_STATE_DIR", value);
+        } else {
+            env::remove_var("SLAN_STATE_DIR");
+        }
+        let _ = fs::remove_dir_all(state_dir);
     }
 
     #[test]
@@ -2080,7 +2173,7 @@ mod tests {
             "deviceId": "device-1",
             "globalIp": "10.0.0.2",
             "prefixLen": 24,
-            "dns": {
+            "resolver": {
                 "servers": ["10.0.0.53"]
             },
             "relayCandidates": [{
@@ -2104,7 +2197,7 @@ mod tests {
 
         assert_eq!(plan.virtual_ip, "10.0.0.2");
         assert_eq!(plan.prefix_len, 24);
-        assert_eq!(plan.dns_servers, vec!["10.0.0.53".to_string()]);
+        assert_eq!(plan.resolver.servers, vec!["10.0.0.53".to_string()]);
         assert_eq!(plan.relay_candidates.len(), 1);
         assert_eq!(plan.relay_candidates[0].endpoint_id, "relay-1");
         assert_eq!(plan.peers.len(), 1);
@@ -2128,7 +2221,7 @@ mod tests {
             "deviceId": "device-1",
             "globalIp": "10.0.0.2",
             "networkMap": {
-                "dns": {
+                "resolver": {
                     "servers": ["10.0.0.53"]
                 },
                 "relayRegions": [{
@@ -2143,7 +2236,7 @@ mod tests {
         }))
         .expect("activation plan");
 
-        assert!(plan.dns_servers.is_empty());
+        assert!(plan.resolver.servers.is_empty());
         assert!(plan.relay_candidates.is_empty());
     }
 

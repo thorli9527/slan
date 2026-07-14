@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"strings"
 
 	serviceapi "github.com/slan/service-biz/internal/api"
 	servicepkg "github.com/slan/service-biz/internal/service"
@@ -9,6 +10,7 @@ import (
 
 type NetworkRuntimeHandler struct {
 	NetworkRuntime servicepkg.NetworkRuntimeUseCase
+	DeviceSessions servicepkg.DeviceSessionUseCase
 }
 
 func (h NetworkRuntimeHandler) Routes() []serviceapi.Route {
@@ -35,6 +37,11 @@ func (h NetworkRuntimeHandler) RelayCandidates(w http.ResponseWriter, r *http.Re
 		input = bodyInput
 		input.NetworkID = requestNetworkID(r)
 	}
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, input.DeviceID)
+	if !ok {
+		return
+	}
+	input.DeviceID = deviceID
 	items, err := h.NetworkRuntime.RelayCandidates(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
@@ -50,6 +57,14 @@ func (h NetworkRuntimeHandler) CreatePunchConnectSession(w http.ResponseWriter, 
 	}
 	input := req.toInput()
 	serviceapi.SetIfEmpty(&input.NetworkID, requestNetworkID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(input.RequesterNodeID) != "node-"+deviceID {
+		serviceapi.WriteError(w, servicepkg.ErrUnauthorized)
+		return
+	}
 	item, err := h.NetworkRuntime.CreatePunchConnectSession(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
@@ -63,7 +78,16 @@ func (h NetworkRuntimeHandler) IssueRelayTicket(w http.ResponseWriter, r *http.R
 	if !serviceapi.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	item, err := h.NetworkRuntime.IssueRelayTicket(r.Context(), req.toInput())
+	input := req.toInput()
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(input.SrcNodeID) != "node-"+deviceID {
+		serviceapi.WriteError(w, servicepkg.ErrUnauthorized)
+		return
+	}
+	item, err := h.NetworkRuntime.IssueRelayTicket(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return

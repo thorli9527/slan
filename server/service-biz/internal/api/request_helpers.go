@@ -84,8 +84,6 @@ func resourceSegmentForKey(pathKey string) string {
 		return "zones"
 	case "recordId":
 		return "records"
-	case "mappingId":
-		return "public-mappings"
 	case "groupId":
 		return "device-groups"
 	case "securityGroupId":

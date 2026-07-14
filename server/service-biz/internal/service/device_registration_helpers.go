@@ -52,6 +52,55 @@ func ensureDeviceAttachedToDefaultNetworkIfMissing(
 	return attachDeviceToDefaultNetwork(ctx, networks, ownerID, deviceID, now)
 }
 
+func registerInstalledDevice(
+	ctx context.Context,
+	users repository.UserRepository,
+	devices repository.DeviceRepository,
+	nowFn func() time.Time,
+	input RegisterDeviceInput,
+) (model.Device, error) {
+	input = normalizeRegisterDeviceInput(input)
+	if input.OwnerID == "" || input.DeviceID == "" || input.Name == "" || input.Platform == "" {
+		return model.Device{}, ErrInvalidArgument
+	}
+	if _, ok, err := users.GetUser(ctx, input.OwnerID); err != nil {
+		return model.Device{}, err
+	} else if !ok {
+		return model.Device{}, ErrNotFound
+	}
+	now := deviceNow(nowFn).Unix()
+	existing, exists, err := devices.GetDevice(ctx, input.DeviceID)
+	if err != nil {
+		return model.Device{}, err
+	}
+	device := model.Device{
+		DeviceID:      input.DeviceID,
+		OwnerID:       input.OwnerID,
+		Name:          input.Name,
+		Platform:      input.Platform,
+		Alias:         input.Alias,
+		OSName:        input.OSName,
+		OSVersion:     input.OSVersion,
+		PublicKey:     input.PublicKey,
+		DeviceVersion: input.DeviceVersion,
+		CountryCode:   input.CountryCode,
+		Status:        "active",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if exists {
+		device.VirtualIP = existing.VirtualIP
+		device.CreatedAt = existing.CreatedAt
+		device.LastSeenAt = existing.LastSeenAt
+		device.RXBytesTotal = existing.RXBytesTotal
+		device.TXBytesTotal = existing.TXBytesTotal
+	}
+	if err := devices.SaveDevice(ctx, device); err != nil {
+		return model.Device{}, err
+	}
+	return device, nil
+}
+
 func registerManagedDevice(ctx context.Context, users repository.UserRepository, devices repository.DeviceRepository, networks repository.NetworkRepository, nowFn func() time.Time, newID func() string, input RegisterDeviceInput) (model.Device, error) {
 	input = normalizeRegisterDeviceInput(input)
 	if input.OwnerID == "" || input.Name == "" || input.Platform == "" {
@@ -108,9 +157,6 @@ func registerManagedDevice(ctx context.Context, users repository.UserRepository,
 		device.LastSeenAt = existing.LastSeenAt
 	}
 	if err := devices.SaveDevice(ctx, device); err != nil {
-		return model.Device{}, err
-	}
-	if err := attachDeviceToDefaultNetwork(ctx, networks, device.OwnerID, device.DeviceID, now); err != nil {
 		return model.Device{}, err
 	}
 	return device, nil

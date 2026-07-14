@@ -41,31 +41,35 @@ func (s DeviceGroupService) ListNetworkDeviceGroups(ctx context.Context, network
 	if err != nil {
 		return DeviceGroupCollectionView{}, err
 	}
+	groups, err := s.requireNetworkDeviceGroupRepository()
+	if err != nil {
+		return DeviceGroupCollectionView{}, err
+	}
+	references, err := groups.ListNetworkDeviceGroupReferences(ctx, networkID)
+	if err != nil {
+		return DeviceGroupCollectionView{}, err
+	}
+	referencedGroupIDs := make(map[string]struct{}, len(references))
+	for _, reference := range references {
+		referencedGroupIDs[reference.GroupID] = struct{}{}
+	}
 	assignments, err := s.Devices.ListDeviceGroupAssignments(ctx, userID)
 	if err != nil {
 		return DeviceGroupCollectionView{}, err
 	}
-	memberships, err := s.Networks.ListNetworkDevices(ctx, networkID)
-	if err != nil {
-		return DeviceGroupCollectionView{}, err
-	}
-	allowedDeviceIDs := make(map[string]struct{}, len(memberships))
-	for _, membership := range memberships {
-		if membership.DeviceID == "" {
+	views := make([]DeviceGroupView, 0, len(referencedGroupIDs))
+	for _, item := range items {
+		if _, ok := referencedGroupIDs[item.GroupID]; !ok {
 			continue
 		}
-		allowedDeviceIDs[membership.DeviceID] = struct{}{}
-	}
-	views := make([]DeviceGroupView, 0, len(items))
-	for _, item := range items {
 		views = append(views, deviceGroupView(item))
 	}
 	members := make([]DeviceGroupMemberView, 0)
 	for _, assignment := range assignments {
-		if _, ok := allowedDeviceIDs[assignment.DeviceID]; !ok {
-			continue
-		}
 		for _, groupID := range assignment.GroupIDs {
+			if _, ok := referencedGroupIDs[groupID]; !ok {
+				continue
+			}
 			members = append(members, DeviceGroupMemberView{
 				GroupID:  groupID,
 				DeviceID: assignment.DeviceID,
@@ -165,10 +169,17 @@ func (s DeviceGroupService) DeleteDeviceGroup(ctx context.Context, input DeleteD
 	if input.ActorUserID != "" && input.ActorUserID != group.UserID {
 		return ErrUnauthorized
 	}
+	groups, err := s.requireNetworkDeviceGroupRepository()
+	if err != nil {
+		return err
+	}
+	if err := groups.DeleteNetworkDeviceGroupReferencesByGroup(ctx, input.GroupID); err != nil {
+		return err
+	}
 	if err := s.Devices.DeleteDeviceGroup(ctx, input.GroupID); err != nil {
 		return err
 	}
-	return s.publishDeviceGroupChangesForOwnerNetworks(ctx, group.UserID, "device_group_deleted")
+	return s.syncOwnerNetworkDeviceGroups(ctx, group.UserID, "device_group_deleted")
 }
 
 func (s DeviceGroupService) SetDeviceGroups(ctx context.Context, input SetDeviceGroupsInput) error {
@@ -206,7 +217,7 @@ func (s DeviceGroupService) SetDeviceGroups(ctx context.Context, input SetDevice
 	}); err != nil {
 		return err
 	}
-	return s.publishDeviceGroupChangesForDeviceNetworks(ctx, input.DeviceID, "device_group_assignment_updated")
+	return s.syncOwnerNetworkDeviceGroups(ctx, input.UserID, "device_group_assignment_updated")
 }
 
 func (s DeviceGroupService) publishDeviceGroupChangesForOwnerNetworks(ctx context.Context, ownerUserID, reason string) error {

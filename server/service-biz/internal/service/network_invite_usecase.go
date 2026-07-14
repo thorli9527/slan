@@ -29,6 +29,9 @@ func (s NetworkInviteService) ListDeviceInvites(ctx context.Context, userID, net
 
 func (s NetworkInviteService) CreateDeviceInvite(ctx context.Context, input CreateDeviceInviteInput) (DeviceInviteView, error) {
 	input = normalizeCreateDeviceInviteInput(input)
+	if input.NetworkID != "" {
+		return DeviceInviteView{}, ErrInvalidArgument
+	}
 	if input.UserID == "" {
 		input.UserID = input.OwnerUserID
 	}
@@ -39,20 +42,6 @@ func (s NetworkInviteService) CreateDeviceInvite(ctx context.Context, input Crea
 		return DeviceInviteView{}, ErrInvalidArgument
 	}
 	actorUserID := firstNonEmpty(input.InviterUserID, input.OwnerUserID, input.UserID)
-	if input.NetworkID != "" {
-		network, err := requireManagedNetwork(ctx, s.Networks, input.NetworkID)
-		if err != nil {
-			return DeviceInviteView{}, err
-		}
-		if actorUserID != "" {
-			if _, err := requireNetworkUser(ctx, s.Users, actorUserID); err != nil {
-				return DeviceInviteView{}, err
-			}
-			if network.OwnerID != actorUserID {
-				return DeviceInviteView{}, ErrUnauthorized
-			}
-		}
-	}
 	if input.DeviceID != "" {
 		device, err := requireManagedDevice(ctx, s.Devices, input.DeviceID)
 		if err != nil {
@@ -114,6 +103,9 @@ func (s NetworkInviteService) AcceptDeviceInvite(ctx context.Context, input Acce
 	if invite.Status != "pending" || invite.ExpiresAt < networkNow(s.Now).Unix() {
 		return DeviceInviteView{}, ErrConflict
 	}
+	if invite.NetworkID != "" {
+		return DeviceInviteView{}, ErrInvalidArgument
+	}
 	deviceID, err := resolveAcceptedDeviceInviteDeviceID(invite, input)
 	if err != nil {
 		return DeviceInviteView{}, err
@@ -122,22 +114,7 @@ func (s NetworkInviteService) AcceptDeviceInvite(ctx context.Context, input Acce
 		return DeviceInviteView{}, err
 	}
 	acceptedAt := networkNow(s.Now).Unix()
-	if invite.NetworkID == "" {
-		invite = acceptStandaloneInvite(invite, input.UserID, deviceID, acceptedAt)
-		if err := s.Networks.SaveDeviceInvite(ctx, invite); err != nil {
-			return DeviceInviteView{}, err
-		}
-		view, err := buildDeviceInviteView(ctx, s.Users, s.Devices, invite)
-		if err != nil {
-			return DeviceInviteView{}, err
-		}
-		return view, nil
-	}
-	item := newNetworkDeviceMembership(invite.NetworkID, deviceID, true, acceptedAt)
-	if err := s.Networks.SaveNetworkDevice(ctx, item); err != nil {
-		return DeviceInviteView{}, err
-	}
-	invite = acceptNetworkInvite(invite, input.UserID, item, acceptedAt)
+	invite = acceptStandaloneInvite(invite, input.UserID, deviceID, acceptedAt)
 	if err := s.Networks.SaveDeviceInvite(ctx, invite); err != nil {
 		return DeviceInviteView{}, err
 	}
@@ -145,8 +122,6 @@ func (s NetworkInviteService) AcceptDeviceInvite(ctx context.Context, input Acce
 	if err != nil {
 		return DeviceInviteView{}, err
 	}
-	view.AcceptedDeviceID = item.DeviceID
-	view.AcceptedUserID = invite.UserID
 	return view, nil
 }
 

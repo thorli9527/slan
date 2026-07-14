@@ -4,24 +4,60 @@ import 'package:flutter/material.dart';
 ///
 /// 保持为独立组件，方便后续补充注册引导或登录状态说明而不增大首页文件。
 class SignedOutStatus extends StatelessWidget {
-  const SignedOutStatus({super.key});
+  const SignedOutStatus({
+    this.desktop = false,
+    super.key,
+  });
+
+  final bool desktop;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
       decoration: BoxDecoration(
+        color: Colors.white,
         border: Border.all(color: const Color(0xffe2d6cf)),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '登录后启用组网',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: Color(0xfffff1e9),
+                  borderRadius: BorderRadius.all(Radius.circular(14)),
                 ),
+                child: const Icon(
+                  Icons.lock_open_rounded,
+                  color: Color(0xffb85c2f),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '登录后启用组网',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            desktop
+                ? '桌面端会通过浏览器完成登录，然后自动回到客户端同步设备状态。'
+                : '登录成功后即可启用虚拟网络，并接收当前设备的网络配置。',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.35,
+            ),
           ),
         ],
       ),

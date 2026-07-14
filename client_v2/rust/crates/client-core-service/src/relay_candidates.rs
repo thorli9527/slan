@@ -135,9 +135,9 @@ pub(crate) fn select_relay_candidates(
         .collect::<Vec<_>>();
     selections.sort_by(|left, right| {
         right
-            .reachable
-            .cmp(&left.reachable)
-            .then_with(|| right.selected.cmp(&left.selected))
+            .selected
+            .cmp(&left.selected)
+            .then_with(|| right.reachable.cmp(&left.reachable))
             .then_with(|| left.path_score.cmp(&right.path_score))
             .then_with(|| left.endpoint_id.cmp(&right.endpoint_id))
     });
@@ -465,5 +465,41 @@ mod tests {
 
         assert_eq!(selections.len(), 1);
         assert_eq!(selections[0].endpoint_id, "relay-derp");
+    }
+
+    #[test]
+    fn server_selected_candidate_stays_sticky_across_peer_local_probes() {
+        let _lock = crate::test_env_lock();
+        set_test_relay_transport_allowlist(None);
+        let selections = select_relay_candidates(&[
+            PersistedRelayCandidate {
+                endpoint_id: "derp-server-selected".to_string(),
+                transport: "derp_tcp_tls_443".to_string(),
+                address: "derp://127.0.0.1:1".to_string(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+                reachable_hint: true,
+                observed_rtt_ms_hint: Some(500),
+                path_score_hint: Some(600),
+                selected_hint: true,
+            },
+            PersistedRelayCandidate {
+                endpoint_id: "derp-locally-faster".to_string(),
+                transport: "derp_tcp_tls_443".to_string(),
+                address: "derp://127.0.0.1:2".to_string(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+                reachable_hint: true,
+                observed_rtt_ms_hint: Some(10),
+                path_score_hint: Some(110),
+                selected_hint: false,
+            },
+        ]);
+
+        assert_eq!(selections[0].endpoint_id, "derp-server-selected");
+        assert!(selections[0].selected);
+        assert!(!selections[1].selected);
     }
 }

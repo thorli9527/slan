@@ -4,13 +4,10 @@ import (
 	"context"
 	"net"
 	"sort"
-	"strconv"
 	"strings"
 
 	servicepkg "github.com/slan/service-biz/internal/service"
 )
-
-const appDefaultDNSServer = "10.0.0.53"
 
 func appMQTTCredentialPayload(view servicepkg.DeviceMQTTProfileView) any {
 	if view.Credential != nil {
@@ -51,6 +48,7 @@ func buildDeviceNetworkConfigPayloads(ctx context.Context, useCase servicepkg.Ne
 
 func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView) map[string]any {
 	view := resolved.Config
+	view.DNS = servicepkg.BuildNetworkDNSConfigView(view)
 	view.SecurityRules = expandedSecurityRules(view)
 	deviceIDsByIP := buildDeviceIDsByIP(view)
 	zoneNamesByID := buildZoneNamesByID(view.DNSZones)
@@ -69,7 +67,7 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 		"globalIp":            view.GlobalIP,
 		"prefixLen":           view.PrefixLen,
 		"globalName":          view.GlobalName,
-		"dns":                 networkDNSPayload(view),
+		"resolver":            networkDNSPayload(view),
 		"runtimePath":         runtimePathPayload(view.RuntimePath),
 		"peerCount":           len(view.Peers),
 		"dnsRecordCount":      len(view.DNSRecords),
@@ -78,10 +76,9 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 		"securityGroups":      securityGroupPayloads(view.SecurityGroups),
 		"rules":               securityRulePayloadsForView(view),
 		"aclPolicies":         aclPolicies,
-		"dnsZones":            dnsZonePayloads(view.DNSZones),
-		"dnsRecords":          dnsRecordPayloads(view.DNSRecords, zoneNamesByID, deviceIDsByIP),
+		"resolverZones":       dnsZonePayloads(view.DNSZones),
+		"resolverRecords":     dnsRecordPayloads(view.DNSRecords, zoneNamesByID, deviceIDsByIP),
 		"peers":               networkPeerPayloads(view.Peers),
-		"publicMappings":      publicMappingPayloads(view.PublicMappings, deviceIDsByIP),
 		"relayCandidates":     relayCandidatePayloads(view.RuntimePath, orderedRelayCandidates),
 	}
 }
@@ -136,22 +133,13 @@ func securityRuleDeviceGroupMembers(view servicepkg.NetworkConfigView, groupID s
 }
 
 func networkDNSPayload(view servicepkg.NetworkConfigView) map[string]any {
+	config := servicepkg.BuildNetworkDNSConfigView(view)
 	return map[string]any{
-		"servers":     []string{appDefaultDNSServer},
-		"searchZones": dnsSearchZones(view.DNSZones),
+		"servers":                   config.Servers,
+		"searchDomains":             config.SearchDomains,
+		"splitDomains":              config.SplitDomains,
+		"fallbackToSystemResolvers": config.FallbackToSystemResolvers,
 	}
-}
-
-func dnsSearchZones(items []servicepkg.DNSZoneView) []string {
-	values := make([]string, 0, len(items))
-	for _, item := range items {
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		values = append(values, name)
-	}
-	return uniqueStrings(values)
 }
 
 func runtimeEndpointsPayload(view servicepkg.DeviceMQTTProfileView, punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any, refreshedAt int64) map[string]any {
@@ -487,6 +475,9 @@ func resolveSecurityRulePeer(rule servicepkg.SecurityRuleView, view servicepkg.N
 }
 
 func uniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
 	if len(values) < 2 {
 		return values
 	}
@@ -544,30 +535,6 @@ func dnsRecordPayloads(items []servicepkg.DNSRecordView, zoneNamesByID map[strin
 			"cname":          item.CNAME,
 			"port":           item.Port,
 			"ttl":            item.TTL,
-		})
-	}
-	return payloads
-}
-
-func publicMappingPayloads(items []servicepkg.PublicMappingView, deviceIDsByIP map[string]string) []map[string]any {
-	payloads := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		deviceID := item.DeviceID
-		if deviceID == "" && item.InternalIP != "" && deviceIDsByIP != nil {
-			deviceID = strings.TrimSpace(deviceIDsByIP[item.InternalIP])
-		}
-		payloads = append(payloads, map[string]any{
-			"mappingId":    item.MappingID,
-			"networkId":    item.NetworkID,
-			"alias":        item.Name,
-			"publicDomain": item.Name,
-			"sourceRecord": firstNonEmpty(deviceID, item.InternalIP, item.Name),
-			"deviceId":     deviceID,
-			"internalIp":   item.InternalIP,
-			"protocol":     item.Protocol,
-			"port":         strconv.Itoa(item.InternalPort),
-			"externalPort": strconv.Itoa(item.ExternalPort),
-			"status":       item.Status,
 		})
 	}
 	return payloads

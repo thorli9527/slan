@@ -53,6 +53,10 @@ type securityGroupRow struct {
 	SecurityGroupID string `json:"securityGroupId"`
 }
 
+type deviceGroupRow struct {
+	GroupID string `json:"groupId"`
+}
+
 type dnsZoneRow struct {
 	ZoneID string `json:"zoneId"`
 }
@@ -69,13 +73,14 @@ type provisionedResources struct {
 	zoneIDs   []string
 	recordIDs []string
 	ruleIDs   []string
+	groupIDs  []string
 }
 
 type networkModuleSnapshot struct {
-	NetworkCount      int `json:"networkCount"`
-	PeerCount         int `json:"peerCount"`
-	DNSRecordCount    int `json:"dnsRecordCount"`
-	SecurityRuleCount int `json:"securityRuleCount"`
+	NetworkCount        int `json:"networkCount"`
+	PeerCount           int `json:"peerCount"`
+	ResolverRecordCount int `json:"resolverRecordCount"`
+	SecurityRuleCount   int `json:"securityRuleCount"`
 }
 
 type mqttCredentialEnvelope struct {
@@ -89,6 +94,7 @@ type integrationFailure struct {
 }
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
+var webAccessToken string
 
 const (
 	defaultClientControlBaseURL = "http://47.245.40.231:28080"
@@ -131,6 +137,7 @@ func main() {
 
 	email := fmt.Sprintf("ios-dual-acl-dns-%d@example.test", time.Now().UnixNano())
 	auth := register(ctx, bizURL, email, password)
+	webAccessToken = auth.Auth.Session.Token
 	userID := auth.Auth.User.UserID
 	networkID := auth.DefaultNetwork.NetworkID
 	if networkID == "" {
@@ -148,7 +155,7 @@ func main() {
 		fmt.Printf("iosDualAclDnsIntegration: workDir=%s\n", root)
 	}
 	clients := make([]*dualClient, 0, clientCount)
-	defer cleanupIntegration(webBaseURL, &networkID, userID, resources, &clients)
+	defer cleanupIntegration(bizURL, webBaseURL, email, password, &networkID, userID, resources, &clients)
 	for index := 0; index < clientCount; index++ {
 		name := fmt.Sprintf("ios-%c", 'a'+rune(index))
 		clients = append(clients, startService(ctx, serviceBin, bizURL, filepath.Join(root, name), "ios-sim-"+string('a'+rune(index))+"-"+uniqueSuffix(), name))
@@ -164,13 +171,14 @@ func main() {
 		assertMQTTBrokerHost(ctx, bizURL, client.deviceID, expectMQTTHost)
 		waitControlReady(ctx, client)
 	}
+	webAccessToken = loginUser(ctx, bizURL, email, password).Auth.Session.Token
 
-	provisionDNSAndACL(ctx, webBaseURL, networkID, clients, resources)
+	provisionDNSAndACL(ctx, webBaseURL, userID, networkID, clients, resources)
 	minPeers := clientCount - 1
-	minDNSRecords := clientCount
-	minSecurityRules := clientCount * (clientCount - 1) * 2
+	minResolverRecords := clientCount
+	minSecurityRules := 2
 	for _, client := range clients {
-		waitModule(ctx, client, minPeers, minDNSRecords, minSecurityRules)
+		waitModule(ctx, client, minPeers, minResolverRecords, minSecurityRules)
 	}
 
 	if checkMessages {
@@ -310,7 +318,7 @@ func waitControlReady(ctx context.Context, client *dualClient) {
 	fail("%s control transport is not ready: %#v", client.name, last)
 }
 
-func provisionDNSAndACL(ctx context.Context, webBaseURL, networkID string, clients []*dualClient, resources *provisionedResources) {
+func provisionDNSAndACL(ctx context.Context, webBaseURL, userID, networkID string, clients []*dualClient, resources *provisionedResources) {
 	var groups itemsEnvelope[securityGroupRow]
 	getJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/security-groups", &groups)
 	if len(groups.Items) == 0 {
@@ -339,15 +347,25 @@ func provisionDNSAndACL(ctx context.Context, webBaseURL, networkID string, clien
 			resources.recordIDs = append(resources.recordIDs, record.RecordID)
 		}
 	}
-	for _, from := range clients {
-		for _, target := range clients {
-			if from == target {
-				continue
-			}
-			addRule(ctx, webBaseURL, groups.Items[0].SecurityGroupID, "ingress", "device", from.deviceID, 443, resources)
-			addRule(ctx, webBaseURL, groups.Items[0].SecurityGroupID, "egress", "device", target.deviceID, 443, resources)
-		}
+	var deviceGroup deviceGroupRow
+	postJSON(ctx, webBaseURL+"/api/web/users/"+url.PathEscape(userID)+"/device-groups", map[string]any{
+		"name":        "ios-integration-" + uniqueSuffix(),
+		"description": "iOS integration devices",
+	}, &deviceGroup)
+	if deviceGroup.GroupID == "" {
+		fail("created device group returned empty group id")
 	}
+	resources.groupIDs = append(resources.groupIDs, deviceGroup.GroupID)
+	for _, client := range clients {
+		putJSON(ctx, webBaseURL+"/api/web/users/"+url.PathEscape(userID)+"/devices/"+url.PathEscape(client.deviceID)+"/groups", map[string]any{
+			"groupIds": []string{deviceGroup.GroupID},
+		}, nil)
+	}
+	postJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(networkID)+"/device-groups", map[string]any{
+		"groupId": deviceGroup.GroupID,
+	}, nil)
+	addRule(ctx, webBaseURL, groups.Items[0].SecurityGroupID, "ingress", "device_group", deviceGroup.GroupID, 443, resources)
+	addRule(ctx, webBaseURL, groups.Items[0].SecurityGroupID, "egress", "device_group", deviceGroup.GroupID, 443, resources)
 	deviceIDs := make([]string, 0, len(clients))
 	for _, client := range clients {
 		deviceIDs = append(deviceIDs, client.name+"="+client.deviceID)
@@ -373,7 +391,7 @@ func addRule(ctx context.Context, webBaseURL, securityGroupID, direction, peerTy
 	}
 }
 
-func waitModule(ctx context.Context, client *dualClient, minPeers, minDNSRecords, minSecurityRules int) {
+func waitModule(ctx context.Context, client *dualClient, minPeers, minResolverRecords, minSecurityRules int) {
 	deadline := time.Now().Add(25 * time.Second)
 	var last networkModuleSnapshot
 	var lastResponse map[string]any
@@ -385,8 +403,8 @@ func waitModule(ctx context.Context, client *dualClient, minPeers, minDNSRecords
 			lastResponse = response
 			payload, _ := json.Marshal(response)
 			_ = json.Unmarshal(payload, &last)
-			if last.PeerCount >= minPeers && last.DNSRecordCount >= minDNSRecords && last.SecurityRuleCount >= minSecurityRules {
-				fmt.Printf("iosDualAclDnsIntegration: module %s peers=%d dnsRecords=%d securityRules=%d\n", client.name, last.PeerCount, last.DNSRecordCount, last.SecurityRuleCount)
+			if last.PeerCount >= minPeers && last.ResolverRecordCount >= minResolverRecords && last.SecurityRuleCount >= minSecurityRules {
+				fmt.Printf("iosDualAclDnsIntegration: module %s peers=%d resolverRecords=%d securityRules=%d\n", client.name, last.PeerCount, last.ResolverRecordCount, last.SecurityRuleCount)
 				return
 			}
 		}
@@ -519,9 +537,19 @@ func register(ctx context.Context, bizURL, email, password string) authEnvelope 
 	return out
 }
 
-func cleanupIntegration(webBaseURL string, networkID *string, userID string, resources *provisionedResources, clients *[]*dualClient) {
+func loginUser(ctx context.Context, bizURL, email, password string) authEnvelope {
+	var out authEnvelope
+	postJSON(ctx, bizURL+"/api/app/auth/login", map[string]any{"email": email, "password": password}, &out)
+	if out.Auth.Session.Token == "" {
+		fail("login returned empty session token")
+	}
+	return out
+}
+
+func cleanupIntegration(bizURL, webBaseURL, email, password string, networkID *string, userID string, resources *provisionedResources, clients *[]*dualClient) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+	webAccessToken = loginUser(ctx, bizURL, email, password).Auth.Session.Token
 	if resources != nil {
 		for index := len(resources.ruleIDs) - 1; index >= 0; index-- {
 			deleteJSON(ctx, webBaseURL+"/api/web/security-groups/rules/"+url.PathEscape(resources.ruleIDs[index]))
@@ -533,6 +561,12 @@ func cleanupIntegration(webBaseURL string, networkID *string, userID string, res
 			for index := len(resources.zoneIDs) - 1; index >= 0; index-- {
 				deleteJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(*networkID)+"/dns/zones/"+url.PathEscape(resources.zoneIDs[index]))
 			}
+			for index := len(resources.groupIDs) - 1; index >= 0; index-- {
+				deleteJSON(ctx, webBaseURL+"/api/web/networks/"+url.PathEscape(*networkID)+"/device-groups/"+url.PathEscape(resources.groupIDs[index]))
+			}
+		}
+		for index := len(resources.groupIDs) - 1; index >= 0; index-- {
+			deleteJSON(ctx, webBaseURL+"/api/web/users/"+url.PathEscape(userID)+"/device-groups/"+url.PathEscape(resources.groupIDs[index]))
 		}
 	}
 	cleanupDevicesForUser(ctx, webBaseURL, userID, clients)
@@ -580,6 +614,7 @@ func getJSON(ctx context.Context, rawURL string, out any) {
 	if err != nil {
 		fail("build request %s: %v", rawURL, err)
 	}
+	setWebAuthorization(req)
 	doJSON(req, out)
 }
 
@@ -588,6 +623,7 @@ func getBestEffortJSON(ctx context.Context, rawURL string, out any) {
 	if err != nil {
 		return
 	}
+	setWebAuthorization(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return
@@ -609,6 +645,21 @@ func postJSON(ctx context.Context, rawURL string, body any, out any) {
 		fail("build request %s: %v", rawURL, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setWebAuthorization(req)
+	doJSON(req, out)
+}
+
+func putJSON(ctx context.Context, rawURL string, body any, out any) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		fail("encode request %s: %v", rawURL, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(payload))
+	if err != nil {
+		fail("build request %s: %v", rawURL, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	setWebAuthorization(req)
 	doJSON(req, out)
 }
 
@@ -617,9 +668,16 @@ func deleteJSON(ctx context.Context, rawURL string) {
 	if err != nil {
 		return
 	}
+	setWebAuthorization(req)
 	resp, err := httpClient.Do(req)
 	if err == nil {
 		_ = resp.Body.Close()
+	}
+}
+
+func setWebAuthorization(req *http.Request) {
+	if token := strings.TrimSpace(webAccessToken); token != "" && strings.Contains(req.URL.Path, "/api/web/") {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 }
 

@@ -10,14 +10,15 @@ import android.content.pm.ApplicationInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
+import android.system.Os;
 import android.system.OsConstants;
 import android.util.Log;
 import java.io.Closeable;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -30,6 +31,7 @@ public final class SlanVpnService extends VpnService {
   static final String ACTION_START = "dev.slan.client_core_plugin.START_VPN";
   static final String ACTION_STOP = "dev.slan.client_core_plugin.STOP_VPN";
   static final String EXTRA_CONFIG_JSON = "configJson";
+  private static final String RESOLVER_CONFIG_KEY = "dns";
 
   private static final String CHANNEL_ID = "slan_vpn";
   private static final int NOTIFICATION_ID = 24018;
@@ -129,7 +131,11 @@ public final class SlanVpnService extends VpnService {
     if (mtu >= 576) {
       builder.setMtu(mtu);
     }
-    addDnsServers(builder, config.optJSONArray("dnsServers"));
+    addDnsServers(
+        builder,
+        config.optJSONObject(RESOLVER_CONFIG_KEY) != null
+            ? config.optJSONObject(RESOLVER_CONFIG_KEY).optJSONArray("servers")
+            : null);
     addRoutes(builder, config.optJSONArray("routes"));
     if (isDebugBuild()) {
       builder.addAllowedApplication(getPackageName());
@@ -251,31 +257,7 @@ public final class SlanVpnService extends VpnService {
         protectedRelaySockets.add(descriptor);
         protectedRelaySockets.add(socket);
       } else {
-        DatagramSocket socket = new DatagramSocket(null);
-        // Ensure the UDP fd is allocated before protect(). Some Android emulator
-        // builds can report protect=false for an unbound DatagramSocket.
-        socket.bind(ipv4WildcardEphemeral());
-        ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
-        ParcelFileDescriptor rustDescriptor =
-            ParcelFileDescriptor.dup(descriptor.getFileDescriptor());
-        int relayFd = rustDescriptor.detachFd();
-        if (!protect(relayFd)) {
-          Log.e(
-              TAG,
-              "Android VPN protect(relay UDP) failed index="
-                  + index
-                  + " url="
-                  + relayUrl
-                  + " local="
-                  + socket.getLocalSocketAddress()
-                  + " fd="
-                  + relayFd);
-          closeDetachedFds(new int[] {relayFd});
-          descriptor.close();
-          socket.close();
-          throw new IllegalStateException("Android VPN failed to protect relay socket");
-        }
-        socket.connect(new InetSocketAddress(hostPort.host, hostPort.port));
+        int relayFd = detachProtectedIpv4DatagramSocket(hostPort.host, hostPort.port);
         fds[index] = relayFd;
         Log.i(
             TAG,
@@ -283,46 +265,45 @@ public final class SlanVpnService extends VpnService {
                 + index
                 + " fd="
                 + relayFd
-                + " local="
-                + socket.getLocalSocketAddress()
                 + " remote="
-                + socket.getRemoteSocketAddress());
-        protectedRelaySockets.add(descriptor);
-        protectedRelaySockets.add(socket);
+                + hostPort.host
+                + ":"
+                + hostPort.port);
       }
     }
     if (needsDirectSocket) {
-      DatagramSocket socket = new DatagramSocket(null);
-      socket.bind(ipv4WildcardEphemeral());
-      ParcelFileDescriptor descriptor = ParcelFileDescriptor.fromDatagramSocket(socket);
-      ParcelFileDescriptor rustDescriptor =
-          ParcelFileDescriptor.dup(descriptor.getFileDescriptor());
-      int directFd = rustDescriptor.detachFd();
-      if (!protect(directFd)) {
-        Log.e(
-            TAG,
-            "Android VPN protect(direct UDP) failed local="
-                + socket.getLocalSocketAddress()
-                + " fd="
-                + directFd);
-        closeDetachedFds(new int[] {directFd});
-        descriptor.close();
-        socket.close();
-        throw new IllegalStateException("Android VPN failed to protect direct UDP socket");
-      }
+      int directFd = detachProtectedIpv4DatagramSocket(null, 0);
       fds[sessionCount] = directFd;
       Log.i(
           TAG,
           "Prepared Android VPN direct UDP fd index="
               + sessionCount
               + " fd="
-              + directFd
-              + " local="
-              + socket.getLocalSocketAddress());
-      protectedRelaySockets.add(descriptor);
-      protectedRelaySockets.add(socket);
+              + directFd);
     }
     return fds;
+  }
+
+  private int detachProtectedIpv4DatagramSocket(String remoteHost, int remotePort)
+      throws Exception {
+    FileDescriptor rawFd =
+        Os.socket(OsConstants.AF_INET, OsConstants.SOCK_DGRAM, OsConstants.IPPROTO_UDP);
+    ParcelFileDescriptor descriptor = null;
+    try {
+      Os.bind(rawFd, InetAddress.getByName("0.0.0.0"), 0);
+      if (remoteHost != null && !remoteHost.isEmpty()) {
+        Os.connect(rawFd, InetAddress.getByName(remoteHost), remotePort);
+      }
+      descriptor = ParcelFileDescriptor.dup(rawFd);
+    } finally {
+      Os.close(rawFd);
+    }
+    int socketFd = descriptor.detachFd();
+    if (!protect(socketFd)) {
+      closeDetachedFds(new int[] {socketFd});
+      throw new IllegalStateException("Android VPN failed to protect IPv4 UDP socket");
+    }
+    return socketFd;
   }
 
   private String sessionRelayUrl(JSONObject session, JSONObject relayDataPlane) {
@@ -478,10 +459,6 @@ public final class SlanVpnService extends VpnService {
       } catch (IOException ignored) {
       }
     }
-  }
-
-  private InetSocketAddress ipv4WildcardEphemeral() throws IOException {
-    return new InetSocketAddress(InetAddress.getByName("0.0.0.0"), 0);
   }
 
   private Notification notification() {

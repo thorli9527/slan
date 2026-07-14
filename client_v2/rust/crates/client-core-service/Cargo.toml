@@ -5,12 +5,16 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
+aes-gcm.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 client-core = { path = "../client-core" }
 client-core-platform = { path = "../client-core-platform" }
 control-mqtt-client = { path = "../control-mqtt-client" }
+getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8"

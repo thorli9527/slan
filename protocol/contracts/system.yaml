@@ -558,6 +558,12 @@ contracts:
       dnsServers:
         type: string[]
         required: false
+      dnsSearchDomains:
+        type: string[]
+        required: false
+      dnsSplitDomains:
+        type: string[]
+        required: false
       routes:
         type: string[]
         required: false

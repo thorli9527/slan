@@ -25,57 +25,87 @@ export class ApiHttpError extends Error {
 
 @Injectable({ providedIn: 'root' })
 export class AppApiClient {
+  private accessToken: () => string = () => '';
+  private refreshSession: (() => Promise<void>) | null = null;
+  private sessionInvalidated: (() => void) | null = null;
+  private refreshPromise: Promise<void> | null = null;
+
+  configureAuth(
+    accessToken: () => string,
+    refreshSession: () => Promise<void>,
+    sessionInvalidated: () => void,
+  ): void {
+    this.accessToken = accessToken;
+    this.refreshSession = refreshSession;
+    this.sessionInvalidated = sessionInvalidated;
+  }
+
   async get<T>(path: string): Promise<T> {
-    const response = await fetch(`${apiBase()}${path}`);
-    if (!response.ok) {
-      throw await this.httpError('GET', path, response);
-    }
-    return response.json() as Promise<T>;
+    return this.request<T>('GET', path);
   }
 
   async post<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${apiBase()}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      throw await this.httpError('POST', path, response);
-    }
-    return response.json() as Promise<T>;
+    return this.request<T>('POST', path, body);
   }
 
   async postAuthorized<T>(path: string, bearerToken: string, body: unknown): Promise<T> {
-    const response = await fetch(`${apiBase()}${path}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${bearerToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      throw await this.httpError('POST', path, response);
-    }
-    return response.json() as Promise<T>;
+    return this.request<T>('POST', path, body, bearerToken, false);
   }
 
   async patch<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${apiBase()}${path}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      throw await this.httpError('PATCH', path, response);
-    }
-    return response.json() as Promise<T>;
+    return this.request<T>('PATCH', path, body);
   }
 
   async delete<T>(path: string): Promise<T> {
-    const response = await fetch(`${apiBase()}${path}`, { method: 'DELETE' });
+    return this.request<T>('DELETE', path);
+  }
+
+  async put<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PUT', path, body);
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    explicitToken = '',
+    allowRefresh = true,
+  ): Promise<T> {
+    const response = await this.fetch(method, path, body, explicitToken || this.accessToken());
+    if (response.status === 401 && allowRefresh && this.accessToken() && this.refreshSession) {
+      try {
+        await this.refreshOnce();
+      } catch {
+        this.sessionInvalidated?.();
+        throw await this.httpError(method, path, response);
+      }
+      const retried = await this.fetch(method, path, body, this.accessToken());
+      if (retried.status === 401) {
+        this.sessionInvalidated?.();
+      }
+      return this.readResponse<T>(method, path, retried);
+    }
+    return this.readResponse<T>(method, path, response);
+  }
+
+  private fetch(method: string, path: string, body: unknown, token: string): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return fetch(`${apiBase()}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  }
+
+  private async readResponse<T>(method: string, path: string, response: Response): Promise<T> {
     if (!response.ok) {
-      throw await this.httpError('DELETE', path, response);
+      throw await this.httpError(method, path, response);
     }
     if (response.status === 204) {
       return undefined as T;
@@ -83,16 +113,13 @@ export class AppApiClient {
     return response.json() as Promise<T>;
   }
 
-  async put<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${apiBase()}${path}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      throw await this.httpError('PUT', path, response);
+  private refreshOnce(): Promise<void> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.refreshSession!().finally(() => {
+        this.refreshPromise = null;
+      });
     }
-    return response.json() as Promise<T>;
+    return this.refreshPromise;
   }
 
   private async httpError(method: string, path: string, response: Response): Promise<ApiHttpError> {

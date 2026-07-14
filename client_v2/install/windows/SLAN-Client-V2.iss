@@ -120,6 +120,7 @@ end;
 
 procedure ClearPreviousClientV2State();
 begin
+  DeleteFile(ExpandConstant('{commonappdata}\SLAN\config.json'));
   DeleteFile(ExpandConstant('{commonappdata}\SLAN\client-v2-session.json'));
   DeleteFile(ExpandConstant('{commonappdata}\SLAN\client-v2-control-tasks.xml'));
 end;
@@ -129,6 +130,7 @@ var
   StateDir: string;
 begin
   StateDir := ExpandConstant('{commonappdata}\SLAN');
+  DeleteFile(StateDir + '\config.json');
   DeleteFile(StateDir + '\client-v2-session.json');
   DeleteFile(StateDir + '\client-v2-control-tasks.xml');
   DeleteFile(StateDir + '\client-v2-device-id.txt');

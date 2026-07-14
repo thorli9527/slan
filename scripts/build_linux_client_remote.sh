@@ -19,6 +19,7 @@ VARIANT="${SLAN_LINUX_BUILD_VARIANT:-console}"
 VERSION="${SLAN_CLIENT_V2_VERSION:-0.1.0}"
 RUST_PROFILE="${SLAN_REMOTE_LINUX_RUST_PROFILE:-debug}"
 SKIP_FETCH="${SLAN_REMOTE_LINUX_SKIP_FETCH:-0}"
+SKIP_DEPENDENCIES="${SLAN_REMOTE_LINUX_SKIP_DEPENDENCIES:-0}"
 LOCAL_ARCHIVE="${LOCAL_OUTPUT_DIR}/SLAN-Client-V2-linux-amd64.tar.gz"
 LOCAL_DEB="${LOCAL_OUTPUT_DIR}/slan-client-v2_${VERSION}_amd64.deb"
 ARCHIVE_BASENAME="$(basename "$LOCAL_ARCHIVE")"
@@ -189,6 +190,10 @@ prepare_source_archive() {
 }
 
 install_remote_deps() {
+  if is_truthy "$SKIP_DEPENDENCIES"; then
+    log "skip remote Linux build dependencies"
+    return 0
+  fi
   log "install remote Linux build dependencies"
   remote_expect_ssh "mkdir -p '$REMOTE_BUILD_DIR'"
   remote_expect_ssh "bash -lc '
@@ -216,9 +221,18 @@ sync_sources() {
   remote_expect_scp "$LOCAL_SOURCE_TAR" "$REMOTE_BUILD_DIR/source.tar.gz"
   remote_expect_ssh "bash -lc '
 set -euo pipefail
+cache_dir=\"$REMOTE_BUILD_DIR/.rust-target-cache\"
+rm -rf \"\$cache_dir\"
+if [ -d \"$REMOTE_BUILD_DIR/client_v2/rust/target\" ]; then
+  mv \"$REMOTE_BUILD_DIR/client_v2/rust/target\" \"\$cache_dir\"
+fi
 rm -rf \"$REMOTE_BUILD_DIR/scripts\" \"$REMOTE_BUILD_DIR/client_v2\"
 mkdir -p \"$REMOTE_BUILD_DIR\"
 tar -C \"$REMOTE_BUILD_DIR\" -xzf \"$REMOTE_BUILD_DIR/source.tar.gz\"
+if [ -d \"\$cache_dir\" ]; then
+  mkdir -p \"$REMOTE_BUILD_DIR/client_v2/rust\"
+  mv \"\$cache_dir\" \"$REMOTE_BUILD_DIR/client_v2/rust/target\"
+fi
 '"
 }
 

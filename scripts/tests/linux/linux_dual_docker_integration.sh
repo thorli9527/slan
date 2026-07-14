@@ -267,7 +267,7 @@ dump_container_debug() {
   container_exec "$name" "echo '--- console stdout ---'; tail -n 200 /tmp/slan-console.out 2>/dev/null || true" || true
   container_exec "$name" "echo '--- console stderr ---'; tail -n 200 /tmp/slan-console.err 2>/dev/null || true" || true
   container_exec "$name" "echo '--- service log ---'; tail -n 200 /var/lib/SLAN/client-core-service.log 2>/dev/null || tail -n 200 /root/.local/share/SLAN/client-core-service.log 2>/dev/null || true" || true
-  container_exec "$name" "echo '--- session json ---'; cat /var/lib/SLAN/client-v2-session.json 2>/dev/null || cat /root/.local/share/SLAN/client-v2-session.json 2>/dev/null || true" || true
+  container_exec "$name" "echo '--- encrypted client config ---'; jq '{version,deviceId,algorithm:.encrypted.algorithm,encrypted:(.encrypted.ciphertext != null)}' /var/lib/SLAN/config.json 2>/dev/null || true" || true
 }
 
 register_and_login() {
@@ -549,7 +549,7 @@ wait_network_module() {
     if [[ -n "$module_json" ]]; then
       last_nonempty_module_json="$module_json"
       peer_count="$(jq -r '(.peerCount // ([.configs[]?.peers[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
-      dns_count="$(jq -r '(.dnsRecordCount // ([.configs[]?.dnsRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
+      dns_count="$(jq -r '(.resolverRecordCount // ([.configs[]?.resolverRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
       rule_count="$(jq -r '(.securityRuleCount // ([.configs[]?.rules[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
     fi
     if [[ -n "$module_json" ]] && \
@@ -563,7 +563,7 @@ wait_network_module() {
     if [[ -n "$module_json" ]]; then
       last_nonempty_module_json="$module_json"
       peer_count="$(jq -r '(.peerCount // ([.configs[]?.peers[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
-      dns_count="$(jq -r '(.dnsRecordCount // ([.configs[]?.dnsRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
+      dns_count="$(jq -r '(.resolverRecordCount // ([.configs[]?.resolverRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
       rule_count="$(jq -r '(.securityRuleCount // ([.configs[]?.rules[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
     fi
     if [[ -n "$module_json" ]] && \
@@ -599,7 +599,7 @@ wait_network_settled() {
     module_json="$(request_json "$name" "$service_host" localNetworkModule || true)"
     if [[ -n "$module_json" ]]; then
       peer_count="$(jq -r '(.peerCount // ([.configs[]?.peers[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
-      dns_count="$(jq -r '(.dnsRecordCount // ([.configs[]?.dnsRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
+      dns_count="$(jq -r '(.resolverRecordCount // ([.configs[]?.resolverRecords[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
       rule_count="$(jq -r '(.securityRuleCount // ([.configs[]?.rules[]?] | length) // 0)' <<<"$module_json" 2>/dev/null || printf '0\n')"
     fi
     if [[ -n "$status_json" && -n "$control_json" && -n "$module_json" ]] && \
@@ -813,7 +813,7 @@ resolve_record_from_module() {
   module_json="$(request_json "$name" "$service_host" localNetworkModule || true)"
   ip="$(jq -r --arg fqdn "$fqdn" --arg name "$record_name" '
     .configs[]? as $config
-    | $config.dnsRecords[]?
+    | $config.resolverRecords[]?
     | select((.fqdn // "" | ascii_downcase) == ($fqdn | ascii_downcase) or (.name // "" | ascii_downcase) == ($name | ascii_downcase))
     | if (.targetIp // "") != "" then
         .targetIp

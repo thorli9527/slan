@@ -48,14 +48,3 @@ func newNetworkDeviceMembership(networkID, deviceID string, enabled bool, now in
 		UpdatedAt:      now,
 	}
 }
-
-func applyUpdateNetworkDeviceInput(item model.NetworkDevice, input UpdateNetworkDeviceInput, now int64) model.NetworkDevice {
-	if input.Enabled != nil {
-		item.Enabled = *input.Enabled
-	}
-	if input.Status != "" {
-		item.MemberStatus = model.NetworkMemberStatus(input.Status)
-	}
-	item.UpdatedAt = now
-	return item
-}

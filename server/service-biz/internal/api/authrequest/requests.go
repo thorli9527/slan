@@ -101,6 +101,7 @@ func (r PrepareDeviceLoginDevice) ToInput() servicepkg.PrepareDeviceLoginDeviceI
 }
 
 type CompleteDeviceLoginDevice struct {
+	AccessToken   string `json:"accessToken"`
 	DeviceID      string `json:"deviceId"`
 	UserID        string `json:"userId"`
 	Name          string `json:"name"`
@@ -115,6 +116,7 @@ type CompleteDeviceLoginDevice struct {
 
 func (r CompleteDeviceLoginDevice) ToInput() servicepkg.CompleteDeviceLoginDeviceInput {
 	return servicepkg.CompleteDeviceLoginDeviceInput{
+		AccessToken:   r.AccessToken,
 		DeviceID:      r.DeviceID,
 		UserID:        r.UserID,
 		Name:          r.Name,

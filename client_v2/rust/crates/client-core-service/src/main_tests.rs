@@ -1,7 +1,7 @@
 use super::{
     android_data_plane_relay_candidate, data_plane_relay_candidate,
     diagnostic_connect_plan_summaries, parse_rfc3339_utc_ms, path_diagnose_active_path_counts,
-    path_diagnose_dns, path_diagnose_health, peer_path_configs,
+    path_diagnose_health, path_diagnose_resolver, peer_path_configs,
     relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
     relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
     relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
@@ -15,15 +15,15 @@ use crate::{
     merge_persisted_client_message_into_state, persist_last_client_message_payload,
     relay_candidates::select_relay_candidates,
     relay_models::{
-        PathDiagnoseDns, PathDiagnoseMtu, PathDiagnoseRelay, PersistedRelayCandidate,
+        PathDiagnoseMtu, PathDiagnoseRelay, PathDiagnoseResolver, PersistedRelayCandidate,
         RelayCandidateSelection, RelayRuntimeStats,
     },
     relay_store::{relay_only_path_policy_enabled, relay_runtime_failure_total},
 };
 use client_core::{
     AssignedIpPayload, ClientCommand, ClientRuntime, NetworkRuntimeState, PathKind,
-    PeerPathRuntime, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
-    RelayPeerSession, RelayTicket, RouteSpec,
+    PeerPathRuntime, PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig,
+    RelayDataPlaneConfig, RelayPeerSession, RelayTicket, RouteSpec,
 };
 use std::{
     fs,
@@ -46,7 +46,7 @@ impl PlatformNetwork for TestPlatformNetwork {
         Ok(())
     }
 
-    fn configure_dns(&self, _dns_servers: &[String]) -> anyhow::Result<()> {
+    fn configure_resolver(&self, _resolver: &PlatformResolverConfig) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -97,7 +97,6 @@ fn sync_assigned_ip_does_not_create_empty_session() {
         "slan-sync-assigned-ip-test-{}",
         crate::session_store::current_timestamp_ms()
     ));
-    let session_file = state_dir.join("SLAN").join("client-v2-session.json");
     let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
     std::env::set_var("SLAN_STATE_DIR", &state_dir);
     let _ = fs::remove_dir_all(&state_dir);
@@ -113,9 +112,8 @@ fn sync_assigned_ip_does_not_create_empty_session() {
 
     assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.2"));
     assert!(
-        !session_file.exists(),
-        "SyncAssignedIp must not create an empty persisted session at {}",
-        session_file.display()
+        crate::session_store::load_session().is_err(),
+        "SyncAssignedIp must not create an empty persisted session"
     );
 
     if let Some(value) = previous_state_dir {
@@ -840,15 +838,15 @@ fn relay_failure_total_excludes_local_packet_noise() {
 }
 
 #[test]
-fn path_diagnose_dns_reports_missing_expected_servers() {
-    let dns = path_diagnose_dns(
+fn path_diagnose_resolver_reports_missing_expected_servers() {
+    let resolver = path_diagnose_resolver(
         &["10.0.0.1".to_string(), "8.8.8.8".to_string()],
         &["10.0.0.1".to_string()],
     );
 
-    assert!(dns.checked);
-    assert_eq!(dns.ok, Some(false));
-    assert_eq!(dns.missing_servers, vec!["8.8.8.8".to_string()]);
+    assert!(resolver.checked);
+    assert_eq!(resolver.ok, Some(false));
+    assert_eq!(resolver.missing_servers, vec!["8.8.8.8".to_string()]);
 }
 
 #[test]
@@ -915,7 +913,7 @@ fn path_diagnose_health_fails_on_missing_attached_peer_sessions() {
     let health = path_diagnose_health(
         Some(&relay),
         &PathDiagnoseMtu::default(),
-        &PathDiagnoseDns::default(),
+        &PathDiagnoseResolver::default(),
         &PlatformNetworkDiagnostics::default(),
         &relay_candidates,
         &peer_paths,
@@ -969,7 +967,7 @@ fn path_diagnose_health_reports_ok_for_clean_relay() {
     let health = path_diagnose_health(
         Some(&relay),
         &PathDiagnoseMtu::default(),
-        &PathDiagnoseDns::default(),
+        &PathDiagnoseResolver::default(),
         &PlatformNetworkDiagnostics::default(),
         &relay_candidates,
         &peer_paths,
@@ -1020,7 +1018,7 @@ fn path_diagnose_health_reports_degraded_for_relay_response_gap() {
     let health = path_diagnose_health(
         Some(&relay),
         &PathDiagnoseMtu::default(),
-        &PathDiagnoseDns::default(),
+        &PathDiagnoseResolver::default(),
         &PlatformNetworkDiagnostics::default(),
         &relay_candidates,
         &peer_paths,
@@ -1041,7 +1039,7 @@ fn path_diagnose_health_accepts_runtime_peer_paths_without_stats() {
     let health = path_diagnose_health(
         None,
         &PathDiagnoseMtu::default(),
-        &PathDiagnoseDns::default(),
+        &PathDiagnoseResolver::default(),
         &PlatformNetworkDiagnostics::default(),
         &relay_candidates,
         &peer_paths,

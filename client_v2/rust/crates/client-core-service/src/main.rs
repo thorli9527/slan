@@ -1,19 +1,16 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod acl_policy;
+mod client_config;
 mod client_message_mqtt;
 mod control_plane;
 mod control_tasks;
 mod control_transport;
 mod control_transport_worker;
-mod dns_apply;
-mod dns_authority;
-mod dns_forwarder;
-mod dns_runtime_state;
-mod dns_server;
 mod local_api;
 #[cfg(test)]
 mod main_tests;
+mod mobile_platform_config;
 mod network_event;
 mod network_event_apply;
 mod network_module;
@@ -21,6 +18,11 @@ mod network_runtime_state;
 mod relay_candidates;
 mod relay_models;
 mod relay_store;
+mod resolver_apply;
+mod resolver_authority;
+mod resolver_forwarder;
+mod resolver_runtime_state;
+mod resolver_server;
 mod session_store;
 mod time_utils;
 
@@ -45,9 +47,9 @@ use anyhow::{Context, Result};
 use client_core::{
     normalize_relay_transport, normalize_virtual_ip, relay_path_kind_for_transport,
     AssignedIpPayload, ClientCommand, ClientRuntime, ClientViewState, PathCandidate, PathKind,
-    PathState, PeerPathConfig, PlatformAclPolicy, PlatformDeviceNetworkConfig, PlatformDnsRecord,
-    PlatformDnsZone, PlatformNetwork, PlatformNetworkConfig, PlatformNetworkDiagnostics,
-    RelayDataPlaneConfig, RelayPeerSession, RelayTicket, TrafficStatsPayload,
+    PathState, PeerPathConfig, PlatformAclPolicy, PlatformNetwork, PlatformNetworkDiagnostics,
+    PlatformResolverConfig, PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig,
+    RelayPeerSession, RelayTicket, TrafficStatsPayload,
 };
 use client_core_platform::PlatformNetworkImpl;
 use serde_json::Value;
@@ -76,14 +78,8 @@ use crate::control_transport::{
     ControlTransportTickRequest, PublishedControlTransportMessage,
 };
 use crate::control_transport_worker::{network_event_runtime_state, ControlTransportWorkerState};
-use crate::dns_authority::{resolve_authoritative, resolve_authoritative_result_json};
-use crate::dns_runtime_state::dns_runtime_state;
-use crate::dns_server::{
-    desired_local_dns_bind_addr, local_dns_server_last_query_at_ms, local_dns_server_status,
-    set_local_dns_server_status, DnsServer, LocalDnsServerStatus,
-};
 use crate::local_api::{
-    LocalDnsResolveRequest, LocalPathPlanResponse, LocalPeerView, LocalPeersResponse,
+    LocalPathPlanResponse, LocalPeerView, LocalPeersResponse, LocalResolverResolveRequest,
     LocalServiceMethod, LocalSessionResponse, LocalStatusResponse, MarkControlAckedRequest,
     PlatformRuntimeStateReportRequest, RegisterTestUserRequest, ReportDeviceRuntimeRequest,
     ServiceRequest, SetRelayTransportAllowlistRequest, StoredBusinessEvent,
@@ -92,6 +88,9 @@ use crate::local_api::{
     BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_NETWORK_SWITCH_FINISHED, BUSINESS_SESSION_CHANGED,
     BUSINESS_STATE_CHANGED,
 };
+use crate::mobile_platform_config::{
+    MobilePlatformDeviceNetworkConfig, MobilePlatformNetworkConfig,
+};
 use crate::relay_candidates::{
     best_relay_candidate, best_udp_relay_candidate, diagnose_direct_candidates,
     extract_persisted_relay_candidates_from_control_map, normalize_relay_candidate_address,
@@ -99,14 +98,21 @@ use crate::relay_candidates::{
     select_relay_candidates,
 };
 use crate::relay_models::{
-    PathDiagnoseDns, PathDiagnoseHealth, PathDiagnoseHealthReason, PathDiagnoseMtu,
-    PathDiagnosePathCount, PathDiagnoseRelay, PathDiagnoseRelayPeer, PathDiagnoseResponse,
+    PathDiagnoseHealth, PathDiagnoseHealthReason, PathDiagnoseMtu, PathDiagnosePathCount,
+    PathDiagnoseRelay, PathDiagnoseRelayPeer, PathDiagnoseResolver, PathDiagnoseResponse,
     PersistedRelayCandidate, RelayCandidateListResponse, RelayCandidateSelection,
     RelayRuntimeStats,
 };
 use crate::relay_store::{
     diagnostics_export_file_path, load_relay_runtime_stats, relay_only_path_policy_enabled,
     relay_path_policy, relay_payload_policy, relay_runtime_failure_total, relay_stats_file_path,
+};
+use crate::resolver_authority::{resolve_authoritative, resolve_authoritative_result_json};
+use crate::resolver_runtime_state::resolver_runtime_state;
+use crate::resolver_server::{
+    desired_local_resolver_bind_addr, local_resolver_server_last_query_at_ms,
+    local_resolver_server_status, set_local_resolver_server_status, LocalResolverServerStatus,
+    ResolverServer,
 };
 use crate::session_store::{
     app_data_dir, clear_pending_console_login, current_timestamp_ms,
@@ -270,7 +276,7 @@ fn run_service_server() -> Result<()> {
     };
     spawn_session_refresh_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
     spawn_runtime_sync_worker(Arc::clone(&runtime), Arc::clone(&state_notifier));
-    spawn_local_dns_supervisor(Arc::clone(&runtime));
+    spawn_local_resolver_supervisor(Arc::clone(&runtime));
     spawn_control_task_worker(
         Arc::clone(&runtime),
         Arc::clone(&task_queue),
@@ -571,12 +577,23 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
         LocalServiceMethod::LocalNetworkModule => {
             if load_session().is_err() {
                 crate::network_module::clear_network_module();
+            } else if let Ok(session) = load_session() {
+                let snapshot = crate::network_module::network_module_snapshot();
+                let missing_resolver_snapshot = snapshot.configs.iter().all(|config| {
+                    config.resolver_zones.is_empty() && config.resolver_records.is_empty()
+                });
+                if snapshot.configs.is_empty() || missing_resolver_snapshot {
+                    let client = ControlPlaneClient::from_env();
+                    let _ = crate::network_module::refresh_network_module_from_session(
+                        &client, &session,
+                    );
+                }
             }
             return serde_json::to_string(&crate::network_module::network_module_snapshot())
                 .context("encode local network module");
         }
-        LocalServiceMethod::LocalDnsState => return handle_local_dns_state(),
-        LocalServiceMethod::LocalDnsResolve => return handle_local_dns_resolve(request),
+        LocalServiceMethod::LocalResolverState => return handle_local_resolver_state(),
+        LocalServiceMethod::LocalResolverResolve => return handle_local_resolver_resolve(request),
         LocalServiceMethod::LocalPathPlan => return handle_local_path_plan(),
         LocalServiceMethod::LocalPathDiagnose => return handle_path_diagnose(),
         LocalServiceMethod::LocalRelayCandidates => return handle_relay_candidates(false),
@@ -756,34 +773,53 @@ fn handle_local_status(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>)
     serde_json::to_string(&response).context("encode local status")
 }
 
-fn handle_local_dns_state() -> Result<String> {
+fn handle_local_resolver_state() -> Result<String> {
     let network = network_event_runtime_state()
         .lock()
         .ok()
         .map(|guard| guard.clone());
-    let dns = dns_runtime_state().lock().ok().map(|guard| guard.clone());
-    let server = local_dns_server_status()
+    let resolver = resolver_runtime_state()
+        .lock()
+        .ok()
+        .map(|guard| guard.clone());
+    let server = local_resolver_server_status()
         .try_lock()
         .ok()
         .map(|guard| guard.clone())
         .unwrap_or_default();
     serde_json::to_string(&serde_json::json!({
-        "activeNetworkId": dns.as_ref().and_then(|value| value.active_network_id.clone()),
+        "activeNetworkId": resolver.as_ref().and_then(|value| value.active_network_id().map(str::to_string)),
         "selfDeviceId": network.as_ref().and_then(|value| value.self_device_id.clone()),
         "selfVirtualIp": network.as_ref().and_then(|value| value.self_virtual_ip.clone()),
-        "zoneCount": dns.as_ref().map(|value| value.zones_by_id.len()).unwrap_or(0),
-        "recordCount": dns.as_ref().map(|value| value.records_by_id.len()).unwrap_or(0),
-        "cacheCount": dns.as_ref().map(|value| value.cache_by_question.len()).unwrap_or(0),
+        "zoneCount": resolver.as_ref().map(|value| value.zone_count()).unwrap_or(0),
+        "recordCount": resolver.as_ref().map(|value| value.record_count()).unwrap_or(0),
+        "cacheCount": resolver.as_ref().map(|value| value.cache_count()).unwrap_or(0),
         "memberCount": network.as_ref().map(|value| value.members_by_device_id.len()).unwrap_or(0),
         "syncStatus": network
             .as_ref()
             .map(|value| format!("{:?}", value.sync_status))
             .unwrap_or_else(|| "Busy".to_string()),
-        "lastReloadAtMs": dns.as_ref().and_then(|value| value.last_reload_at_ms),
-        "upstreamServers": dns
+        "lastReloadAtMs": resolver.as_ref().and_then(|value| value.last_reload_at_ms),
+        "upstreamServers": resolver
             .as_ref()
-            .map(|value| value.upstream_servers.clone())
+            .map(|value| value.effective_upstream_resolvers())
             .unwrap_or_default(),
+        "searchDomains": resolver
+            .as_ref()
+            .map(|value| value.config.search_domains.clone())
+            .unwrap_or_default(),
+        "splitDomains": resolver
+            .as_ref()
+            .map(|value| value.config.split_domains.clone())
+            .unwrap_or_default(),
+        "systemResolvers": resolver
+            .as_ref()
+            .map(|value| value.config.system_resolvers.clone())
+            .unwrap_or_default(),
+        "fallbackToSystemResolvers": resolver
+            .as_ref()
+            .map(|value| value.config.fallback_to_system_resolvers)
+            .unwrap_or(false),
         "serverEnabled": server.enabled,
         "serverListening": server.listening,
         "serverBindAddr": server.bind_addr,
@@ -794,33 +830,33 @@ fn handle_local_dns_state() -> Result<String> {
         "desiredSignedIn": server.desired_signed_in,
         "desiredNetworkEnabled": server.desired_network_enabled,
         "desiredHasRequesterDeviceId": server.desired_has_requester_device_id,
-        "desiredHasDnsData": server.desired_has_dns_data,
+        "desiredHasResolverData": server.desired_has_resolver_data,
         "networkLockBusy": false,
-        "dnsLockBusy": false,
+        "resolverLockBusy": false,
     }))
-    .context("encode local dns state")
+    .context("encode local resolver state")
 }
 
-fn handle_local_dns_resolve(request: ServiceRequest) -> Result<String> {
-    let input: LocalDnsResolveRequest =
-        serde_json::from_value(request.args).context("decode local dns resolve request")?;
-    let mut network = network_event_runtime_state()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("network dns runtime busy: network state lock unavailable"))?;
+fn handle_local_resolver_resolve(request: ServiceRequest) -> Result<String> {
+    let input: LocalResolverResolveRequest =
+        serde_json::from_value(request.args).context("decode local resolver resolve request")?;
+    let mut network = network_event_runtime_state().lock().map_err(|_| {
+        anyhow::anyhow!("network resolver runtime busy: network state lock unavailable")
+    })?;
     if let Ok(session) = load_session() {
         network.bind_persisted_session(&session);
     }
-    let mut dns = dns_runtime_state()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("network dns runtime busy: dns state lock unavailable"))?;
+    let mut resolver = resolver_runtime_state().lock().map_err(|_| {
+        anyhow::anyhow!("network resolver runtime busy: resolver state lock unavailable")
+    })?;
     let payload = resolve_authoritative_result_json(resolve_authoritative(
         &network,
-        &mut dns,
+        &mut resolver,
         &input.requester_device_id,
         &input.qname,
         &input.qtype,
     ));
-    serde_json::to_string(&payload).context("encode local dns resolve response")
+    serde_json::to_string(&payload).context("encode local resolver resolve response")
 }
 
 fn last_client_message_file_path() -> std::path::PathBuf {
@@ -1215,13 +1251,14 @@ fn handle_local_ensure_device(
 }
 
 fn console_login_key() -> Result<Value> {
-    let session = ensure_session_device_registered(load_session()?)?;
+    let session = load_session()?;
     if session.session_kind == "device" || session.user_id.trim().is_empty() {
         anyhow::bail!("user login is required before opening Web Console");
     }
     let client = ControlPlaneClient::from_env();
     let login_key = client.console_login_key(
         &session.access_token,
+        &session.user_id,
         session
             .device_id
             .as_deref()
@@ -1678,11 +1715,11 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
         }),
         note: Some("Windows applies adapter MTU directly. MSS is reported as an effective IPv4 payload guard when platform readback is available; otherwise the relay maxFramePayload guard is enforced in the local data thread.".to_string()),
     };
-    let dns = path_diagnose_dns(&activation.dns_servers, &platform.dns_servers);
+    let resolver = path_diagnose_resolver(&activation.resolver.servers, &platform.resolver_servers);
     let health = path_diagnose_health(
         relay.as_ref(),
         &mtu,
-        &dns,
+        &resolver,
         &platform,
         &relay_candidates,
         &peer_paths,
@@ -1697,7 +1734,7 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
         direct_candidates,
         relay_candidates,
         mtu,
-        dns,
+        resolver,
         platform,
         export_path: None,
     })
@@ -1706,7 +1743,7 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
 fn path_diagnose_health(
     relay: Option<&PathDiagnoseRelay>,
     mtu: &PathDiagnoseMtu,
-    dns: &PathDiagnoseDns,
+    resolver: &PathDiagnoseResolver,
     platform: &PlatformNetworkDiagnostics,
     relay_candidates: &[RelayCandidateSelection],
     peer_paths: &[client_core::PeerPathRuntime],
@@ -1858,13 +1895,13 @@ fn path_diagnose_health(
             "no runtime peer paths are recorded",
         );
     }
-    if dns.checked && dns.ok == Some(false) {
+    if resolver.checked && resolver.ok == Some(false) {
         failed = true;
         push_path_health_reason(
             &mut reasons,
-            "dns_mismatch",
+            "resolver_mismatch",
             "failed",
-            "Windows DNS configuration does not match the expected network DNS servers",
+            "Windows resolver configuration does not match the expected network resolver servers",
         );
     }
     if mtu.actual_mtu_checked && mtu.actual_mtu_ok == Some(false) {
@@ -1967,9 +2004,12 @@ fn relay_attached_transport_count(stats: &RelayRuntimeStats) -> u32 {
     stats.relay_session_count
 }
 
-fn path_diagnose_dns(expected_servers: &[String], actual_servers: &[String]) -> PathDiagnoseDns {
-    let expected = normalized_dns_servers(expected_servers);
-    let actual = normalized_dns_servers(actual_servers);
+fn path_diagnose_resolver(
+    expected_servers: &[String],
+    actual_servers: &[String],
+) -> PathDiagnoseResolver {
+    let expected = normalized_resolver_servers(expected_servers);
+    let actual = normalized_resolver_servers(actual_servers);
     let missing = expected
         .iter()
         .filter(|server| {
@@ -1989,7 +2029,7 @@ fn path_diagnose_dns(expected_servers: &[String], actual_servers: &[String]) -> 
         .cloned()
         .collect::<Vec<_>>();
     let checked = !expected.is_empty();
-    PathDiagnoseDns {
+    PathDiagnoseResolver {
         expected_servers: expected,
         actual_servers: actual,
         checked,
@@ -1999,7 +2039,7 @@ fn path_diagnose_dns(expected_servers: &[String], actual_servers: &[String]) -> 
     }
 }
 
-fn normalized_dns_servers(servers: &[String]) -> Vec<String> {
+fn normalized_resolver_servers(servers: &[String]) -> Vec<String> {
     let mut normalized = servers
         .iter()
         .map(|value| value.trim())
@@ -2645,7 +2685,7 @@ where
 
 fn platform_network_config_from_latest_control<P>(
     runtime: &mut ClientRuntime<P>,
-) -> Result<PlatformNetworkConfig>
+) -> Result<MobilePlatformNetworkConfig>
 where
     P: client_core::PlatformNetwork,
 {
@@ -2658,8 +2698,6 @@ where
     };
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(&mut session)?;
-    let network_configs =
-        crate::network_module::network_module_configs_for_session(&client, &session);
     let mut activation =
         client.activate_network(session_device_api_token(&session), &device_id, &network_id)?;
     activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
@@ -2676,14 +2714,24 @@ where
                 .collect(),
         );
     }
+    let network_configs =
+        crate::network_module::refresh_network_module_from_session(&client, &session)
+            .unwrap_or_else(|_| {
+                crate::network_module::network_module_configs_for_session(&client, &session)
+            });
     let all_acl_policies = platform_acl_policies(&network_configs);
     let relay_candidates = runtime_relay_candidates();
     let best_relay = android_data_plane_relay_candidate(&relay_candidates);
     {
-        let mut dns = dns_runtime_state()
+        let mut resolver = resolver_runtime_state()
             .lock()
-            .expect("dns runtime mutex poisoned");
-        dns.set_upstream_servers(activation.dns_servers.clone());
+            .expect("resolver runtime mutex poisoned");
+        crate::resolver_apply::apply_resolver_from_device_network_configs(
+            &mut resolver,
+            &network_id,
+            &activation.resolver,
+            &network_configs,
+        );
     }
     persist_session(&session)?;
     let _ = runtime.dispatch(ClientCommand::SyncAssignedIp(AssignedIpPayload {
@@ -2695,14 +2743,13 @@ where
         &activation.peers,
         activation.virtual_ip.as_str(),
     );
-    Ok(PlatformNetworkConfig {
+    let resolver = platform_resolver_config(&network_id, &activation.resolver, &network_configs);
+    Ok(MobilePlatformNetworkConfig {
         session_name: "SLAN".to_string(),
         virtual_ip: activation.virtual_ip,
         prefix_len: activation.prefix_len,
         network_configs: platform_network_configs(&network_configs),
-        dns_servers: activation.dns_servers,
-        dns_zones: platform_dns_zones(&network_configs),
-        dns_records: platform_dns_records(&network_configs),
+        resolver,
         routes,
         mtu: Some(1280),
         relay_endpoint_id: best_relay.as_ref().map(|relay| relay.endpoint_id.clone()),
@@ -2725,10 +2772,10 @@ where
 
 fn platform_network_configs(
     configs: &[crate::control_plane::DeviceNetworkConfig],
-) -> Vec<PlatformDeviceNetworkConfig> {
+) -> Vec<MobilePlatformDeviceNetworkConfig> {
     configs
         .iter()
-        .map(|config| PlatformDeviceNetworkConfig {
+        .map(|config| MobilePlatformDeviceNetworkConfig {
             network_id: config.network_id.clone(),
             device_id: config.device_id.clone(),
             network_name: config.network_name.clone(),
@@ -2739,49 +2786,89 @@ fn platform_network_configs(
             global_ip: config.global_ip.clone(),
             global_name: config.global_name.clone(),
             peer_count: config.peers.len(),
-            dns_record_count: config.dns_records.len(),
             security_rule_count: config.rules.len(),
             relay_candidate_count: config.relay_candidates.len(),
         })
         .collect()
 }
 
-fn platform_dns_zones(
+fn platform_resolver_zones(
     configs: &[crate::control_plane::DeviceNetworkConfig],
-) -> Vec<PlatformDnsZone> {
+) -> Vec<PlatformResolverZone> {
     configs
         .iter()
         .flat_map(|config| {
-            config.dns_zones.iter().map(|zone| PlatformDnsZone {
-                zone_id: zone.zone_id.clone(),
-                network_id: zone.network_id.clone(),
-                zone_name: zone.zone_name.clone(),
-            })
+            config
+                .resolver_zones
+                .iter()
+                .map(|zone| PlatformResolverZone {
+                    zone_id: zone.zone_id.clone(),
+                    network_id: zone.network_id.clone(),
+                    zone_name: zone.zone_name.clone(),
+                })
         })
         .collect()
 }
 
-fn platform_dns_records(
+fn platform_resolver_records(
     configs: &[crate::control_plane::DeviceNetworkConfig],
-) -> Vec<PlatformDnsRecord> {
+) -> Vec<PlatformResolverRecord> {
     configs
         .iter()
         .flat_map(|config| {
-            config.dns_records.iter().map(|record| PlatformDnsRecord {
-                record_id: record.record_id.clone(),
-                zone_id: record.zone_id.clone(),
-                network_id: record.network_id.clone(),
-                name: record.name.clone(),
-                fqdn: record.fqdn.clone(),
-                record_type: record.record_type.clone(),
-                target_device_id: record.target_device_id.clone(),
-                target_ip: record.target_ip.clone(),
-                cname: record.cname.clone(),
-                port: record.port.clone(),
-                ttl: record.ttl,
-            })
+            config
+                .resolver_records
+                .iter()
+                .map(|record| PlatformResolverRecord {
+                    record_id: record.record_id.clone(),
+                    zone_id: record.zone_id.clone(),
+                    network_id: record.network_id.clone(),
+                    name: record.name.clone(),
+                    fqdn: record.fqdn.clone(),
+                    record_type: record.record_type.clone(),
+                    target_device_id: record.target_device_id.clone(),
+                    target_ip: record.target_ip.clone(),
+                    cname: record.cname.clone(),
+                    port: record.port.clone(),
+                    ttl: record.ttl,
+                })
         })
         .collect()
+}
+
+fn platform_resolver_config(
+    active_network_id: &str,
+    activation_dns: &crate::control_plane::DeviceResolverConfig,
+    configs: &[crate::control_plane::DeviceNetworkConfig],
+) -> PlatformResolverConfig {
+    let from_network = configs
+        .iter()
+        .find(|config| config.network_id.trim() == active_network_id.trim())
+        .or_else(|| configs.first())
+        .map(|config| PlatformResolverConfig {
+            servers: config.resolver.servers.clone(),
+            search_domains: config.resolver.search_domains.clone(),
+            split_domains: config.resolver.split_domains.clone(),
+            fallback_to_system_resolvers: config.resolver.fallback_to_system_resolvers,
+        })
+        .unwrap_or_default();
+    let mut resolver = from_network;
+    if resolver.servers.is_empty() {
+        resolver.servers = activation_dns.servers.clone();
+    }
+    if resolver.search_domains.is_empty() {
+        resolver.search_domains = activation_dns.search_domains.clone();
+    }
+    if resolver.split_domains.is_empty() {
+        resolver.split_domains = activation_dns.split_domains.clone();
+    }
+    if !resolver.fallback_to_system_resolvers {
+        resolver.fallback_to_system_resolvers = activation_dns.fallback_to_system_resolvers;
+    }
+    if resolver.split_domains.is_empty() {
+        resolver.split_domains = resolver.search_domains.clone();
+    }
+    resolver
 }
 
 fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig> {
@@ -2885,10 +2972,6 @@ fn load_network_session() -> Result<PersistedSession> {
         let _ = remove_session();
         return Err(anyhow::anyhow!("login required"));
     }
-    if session_is_expired(&session) {
-        let _ = remove_session();
-        return Err(anyhow::anyhow!("session expired; please login again"));
-    }
     ensure_session_device_registered(session).inspect_err(|error| {
         if session_auth_invalid_error(error) {
             let _ = remove_session();
@@ -2933,10 +3016,10 @@ where
     activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
     session.self_node_id = activation.self_node_id.clone();
     log_service_error(format!(
-        "client-core-service enable preflight ok: ip={}/{} dns={} routes={} peers={} relays={}",
+        "client-core-service enable preflight ok: ip={}/{} resolvers={} routes={} peers={} relays={}",
         activation.virtual_ip,
         activation.prefix_len,
-        activation.dns_servers.len(),
+        activation.resolver.servers.len(),
         activation.routes.len(),
         activation.peer_count,
         activation.relay_candidates.len()
@@ -2955,14 +3038,19 @@ where
     }
     let relay_candidates = runtime_relay_candidates();
     let best_relay = data_plane_relay_candidate(&relay_candidates);
-    {
-        let mut dns = dns_runtime_state()
-            .lock()
-            .expect("dns runtime mutex poisoned");
-        dns.set_upstream_servers(activation.dns_servers.clone());
-    }
     let network_configs =
         crate::network_module::network_module_configs_for_session(&client, session);
+    {
+        let mut resolver = resolver_runtime_state()
+            .lock()
+            .expect("resolver runtime mutex poisoned");
+        crate::resolver_apply::apply_resolver_from_device_network_configs(
+            &mut resolver,
+            &network_id,
+            &activation.resolver,
+            &network_configs,
+        );
+    }
     let acl_policies = platform_acl_policies(&network_configs);
     let relay_config = build_relay_data_plane_config(
         &client,
@@ -2991,9 +3079,9 @@ where
         activation.virtual_ip
     ));
     log_service_error(format!(
-        "client-core-service enable apply start: prefix={} dns={} routes={} relay={}",
+        "client-core-service enable apply start: prefix={} resolvers={} routes={} relay={}",
         activation.prefix_len,
-        activation.dns_servers.len(),
+        activation.resolver.servers.len(),
         routes_with_peer_virtual_ips(
             activation.routes.clone(),
             &activation.peers,
@@ -3002,11 +3090,12 @@ where
         .len(),
         relay_config.is_some()
     ));
+    let resolver = platform_resolver_config(&network_id, &activation.resolver, &network_configs);
     runtime.enable_network_with_config(
         activation.prefix_len,
-        &activation.dns_servers,
-        &platform_dns_zones(&network_configs),
-        &platform_dns_records(&network_configs),
+        &resolver,
+        &platform_resolver_zones(&network_configs),
+        &platform_resolver_records(&network_configs),
         &routes_with_peer_virtual_ips(
             activation.routes.clone(),
             &activation.peers,
@@ -4064,13 +4153,6 @@ fn spawn_session_refresh_worker(
 ) {
     thread::spawn(move || loop {
         thread::sleep(SESSION_REFRESH_INTERVAL);
-        let signed_in = {
-            let runtime = runtime.lock().expect("client runtime mutex poisoned");
-            runtime.state().signed_in
-        };
-        if !signed_in {
-            continue;
-        }
         match refresh_logged_in_session() {
             Ok(Some(session)) => {
                 let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
@@ -4116,17 +4198,13 @@ fn refresh_logged_in_session() -> Result<Option<PersistedSession>> {
         Ok(session) => session,
         Err(error) => {
             if error.to_string().contains("No such file or directory") {
-                return Err(anyhow::anyhow!("login required"));
+                return Ok(None);
             }
             return Err(error);
         }
     };
     if session.access_token.trim().is_empty() {
         return Ok(None);
-    }
-    if session_is_expired(&session) {
-        let _ = remove_session();
-        return Err(anyhow::anyhow!("session expired; please login again"));
     }
     ensure_session_device_registered(session).map(Some)
 }
@@ -4174,50 +4252,50 @@ fn spawn_runtime_sync_worker(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LocalDnsDesiredState {
+struct LocalResolverDesiredState {
     enabled: bool,
     bind_addr: String,
     requester_device_id: Option<String>,
     signed_in: bool,
     network_enabled: bool,
     has_requester_device_id: bool,
-    has_dns_data: bool,
+    has_resolver_data: bool,
 }
 
-fn spawn_local_dns_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) {
+fn spawn_local_resolver_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) {
     thread::spawn(move || {
-        log_service_error("client-core-service local dns supervisor started");
-        let mut server: Option<DnsServer> = None;
+        log_service_error("client-core-service local resolver supervisor started");
+        let mut server: Option<ResolverServer> = None;
         let mut bound_addr: Option<String> = None;
         loop {
-            log_service_error("client-core-service local dns supervisor tick.begin");
-            let desired = desired_local_dns_state(&runtime);
+            log_service_error("client-core-service local resolver supervisor tick.begin");
+            let desired = desired_local_resolver_state(&runtime);
             log_service_error(format!(
-                "client-core-service local dns supervisor desired enabled={} signedIn={} networkEnabled={} hasRequester={} hasDnsData={} bind={}",
+                "client-core-service local resolver supervisor desired enabled={} signedIn={} networkEnabled={} hasRequester={} hasResolverData={} bind={}",
                 desired.enabled,
                 desired.signed_in,
                 desired.network_enabled,
                 desired.has_requester_device_id,
-                desired.has_dns_data,
+                desired.has_resolver_data,
                 desired.bind_addr,
             ));
             if !desired.enabled {
                 server = None;
                 bound_addr = None;
-                set_local_dns_server_status(LocalDnsServerStatus {
+                set_local_resolver_server_status(LocalResolverServerStatus {
                     enabled: false,
                     listening: false,
                     bind_addr: Some(desired.bind_addr),
                     requester_device_id: desired.requester_device_id,
                     last_error: None,
-                    last_query_at_ms: local_dns_server_last_query_at_ms(),
+                    last_query_at_ms: local_resolver_server_last_query_at_ms(),
                     desired_enabled: Some(desired.enabled),
                     desired_signed_in: Some(desired.signed_in),
                     desired_network_enabled: Some(desired.network_enabled),
                     desired_has_requester_device_id: Some(desired.has_requester_device_id),
-                    desired_has_dns_data: Some(desired.has_dns_data),
+                    desired_has_resolver_data: Some(desired.has_resolver_data),
                 });
-                log_service_error("client-core-service local dns supervisor desired disabled");
+                log_service_error("client-core-service local resolver supervisor desired disabled");
                 thread::sleep(Duration::from_millis(500));
                 continue;
             }
@@ -4226,10 +4304,10 @@ fn spawn_local_dns_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkIm
                 server.is_none() || bound_addr.as_deref() != Some(desired.bind_addr.as_str());
             if should_rebind {
                 log_service_error(format!(
-                    "client-core-service local dns supervisor binding {}",
+                    "client-core-service local resolver supervisor binding {}",
                     desired.bind_addr
                 ));
-                match DnsServer::bind(&desired.bind_addr) {
+                match ResolverServer::bind(&desired.bind_addr) {
                     Ok(next) => {
                         let listening_addr = next
                             .local_addr()
@@ -4237,42 +4315,42 @@ fn spawn_local_dns_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkIm
                             .unwrap_or_else(|_| desired.bind_addr.clone());
                         bound_addr = Some(listening_addr.clone());
                         server = Some(next);
-                        set_local_dns_server_status(LocalDnsServerStatus {
+                        set_local_resolver_server_status(LocalResolverServerStatus {
                             enabled: true,
                             listening: true,
                             bind_addr: Some(listening_addr),
                             requester_device_id: desired.requester_device_id.clone(),
                             last_error: None,
-                            last_query_at_ms: local_dns_server_last_query_at_ms(),
+                            last_query_at_ms: local_resolver_server_last_query_at_ms(),
                             desired_enabled: Some(desired.enabled),
                             desired_signed_in: Some(desired.signed_in),
                             desired_network_enabled: Some(desired.network_enabled),
                             desired_has_requester_device_id: Some(desired.has_requester_device_id),
-                            desired_has_dns_data: Some(desired.has_dns_data),
+                            desired_has_resolver_data: Some(desired.has_resolver_data),
                         });
                         log_service_error(format!(
-                            "client-core-service local dns supervisor bound {}",
+                            "client-core-service local resolver supervisor bound {}",
                             bound_addr.as_deref().unwrap_or("")
                         ));
                     }
                     Err(error) => {
                         server = None;
                         bound_addr = None;
-                        set_local_dns_server_status(LocalDnsServerStatus {
+                        set_local_resolver_server_status(LocalResolverServerStatus {
                             enabled: true,
                             listening: false,
                             bind_addr: Some(desired.bind_addr.clone()),
                             requester_device_id: desired.requester_device_id.clone(),
                             last_error: Some(error.to_string()),
-                            last_query_at_ms: local_dns_server_last_query_at_ms(),
+                            last_query_at_ms: local_resolver_server_last_query_at_ms(),
                             desired_enabled: Some(desired.enabled),
                             desired_signed_in: Some(desired.signed_in),
                             desired_network_enabled: Some(desired.network_enabled),
                             desired_has_requester_device_id: Some(desired.has_requester_device_id),
-                            desired_has_dns_data: Some(desired.has_dns_data),
+                            desired_has_resolver_data: Some(desired.has_resolver_data),
                         });
                         log_service_error(format!(
-                            "client-core-service local dns supervisor bind failed: {error}"
+                            "client-core-service local resolver supervisor bind failed: {error}"
                         ));
                         thread::sleep(Duration::from_secs(1));
                         continue;
@@ -4281,9 +4359,9 @@ fn spawn_local_dns_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkIm
             }
 
             {
-                let mut status = local_dns_server_status()
+                let mut status = local_resolver_server_status()
                     .lock()
-                    .expect("local dns server status mutex poisoned");
+                    .expect("local resolver server status mutex poisoned");
                 status.enabled = true;
                 status.listening = server.is_some();
                 status.bind_addr = bound_addr
@@ -4294,9 +4372,9 @@ fn spawn_local_dns_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkIm
                 status.desired_signed_in = Some(desired.signed_in);
                 status.desired_network_enabled = Some(desired.network_enabled);
                 status.desired_has_requester_device_id = Some(desired.has_requester_device_id);
-                status.desired_has_dns_data = Some(desired.has_dns_data);
+                status.desired_has_resolver_data = Some(desired.has_resolver_data);
             }
-            log_service_error("client-core-service local dns supervisor status updated");
+            log_service_error("client-core-service local resolver supervisor status updated");
 
             let network = {
                 let mut state = network_event_runtime_state()
@@ -4307,23 +4385,25 @@ fn spawn_local_dns_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkIm
                 }
                 state.clone()
             };
-            log_service_error("client-core-service local dns supervisor serving");
+            log_service_error("client-core-service local resolver supervisor serving");
             let requester_device_id = desired.requester_device_id.clone().unwrap_or_default();
             let Some(active_server) = server.as_ref() else {
                 thread::sleep(Duration::from_millis(250));
                 continue;
             };
-            let mut dns = dns_runtime_state()
+            let mut resolver = resolver_runtime_state()
                 .lock()
-                .expect("dns runtime mutex poisoned");
-            if let Err(error) = active_server.serve_once(&network, &mut dns, &requester_device_id) {
+                .expect("resolver runtime mutex poisoned");
+            if let Err(error) =
+                active_server.serve_once(&network, &mut resolver, &requester_device_id)
+            {
                 log_service_error(format!(
-                    "client-core-service local dns supervisor serve_once failed: {error:#}"
+                    "client-core-service local resolver supervisor serve_once failed: {error:#}"
                 ));
                 {
-                    let mut status = local_dns_server_status()
+                    let mut status = local_resolver_server_status()
                         .lock()
-                        .expect("local dns server status mutex poisoned");
+                        .expect("local resolver server status mutex poisoned");
                     status.last_error = Some(error.to_string());
                     status.listening = false;
                 }
@@ -4335,19 +4415,17 @@ fn spawn_local_dns_supervisor(runtime: Arc<Mutex<ClientRuntime<PlatformNetworkIm
     });
 }
 
-fn desired_local_dns_state(
+fn desired_local_resolver_state(
     runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
-) -> LocalDnsDesiredState {
+) -> LocalResolverDesiredState {
     let state = {
         let runtime = runtime.lock().expect("client runtime mutex poisoned");
         runtime.state().clone()
     };
-    let dns = dns_runtime_state()
+    let resolver = resolver_runtime_state()
         .lock()
-        .expect("dns runtime mutex poisoned");
-    let has_dns_data = !dns.records_by_id.is_empty()
-        || !dns.zones_by_id.is_empty()
-        || !dns.upstream_servers.is_empty();
+        .expect("resolver runtime mutex poisoned");
+    let has_resolver_data = resolver.has_resolver_data();
     let requester_device_id = state
         .device_id
         .as_deref()
@@ -4355,17 +4433,17 @@ fn desired_local_dns_state(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
     let has_requester_device_id = requester_device_id.is_some();
-    LocalDnsDesiredState {
+    LocalResolverDesiredState {
         enabled: state.signed_in
             && state.network_enabled
             && has_requester_device_id
-            && has_dns_data,
-        bind_addr: desired_local_dns_bind_addr(),
+            && has_resolver_data,
+        bind_addr: desired_local_resolver_bind_addr(),
         requester_device_id,
         signed_in: state.signed_in,
         network_enabled: state.network_enabled,
         has_requester_device_id,
-        has_dns_data,
+        has_resolver_data,
     }
 }
 
@@ -4656,18 +4734,23 @@ fn relay_ticket_timing(now_ms: u64, ticket_expires_at: Option<&str>) -> TicketTi
 }
 
 pub(crate) fn sync_control_assignment(runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>) {
-    let Ok(mut session) = load_session() else {
+    let Ok(session) = load_session() else {
         return;
     };
-    if session_is_expired(&session) {
-        let _ = remove_session();
-        let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
-        let _ = runtime.dispatch(ClientCommand::Logout);
-        return;
-    }
     if session.access_token.trim().is_empty() {
         return;
     }
+    let mut session = match ensure_session_device_registered(session) {
+        Ok(session) => session,
+        Err(error) => {
+            if session_auth_invalid_error(&error) {
+                let _ = remove_session();
+                let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
+                let _ = runtime.dispatch(ClientCommand::Logout);
+            }
+            return;
+        }
+    };
     let client = ControlPlaneClient::from_env();
     if session.active_network_id.is_none() {
         if let Ok(network_id) = client.active_network_id(session_device_api_token(&session)) {

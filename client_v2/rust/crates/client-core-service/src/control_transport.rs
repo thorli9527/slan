@@ -1163,6 +1163,7 @@ mod tests {
 
     #[test]
     fn path_health_outbox_uses_control_up_envelope() {
+        let _lock = crate::test_env_lock();
         let state_dir = std::env::temp_dir().join(format!(
             "slan-control-transport-path-health-{}",
             std::time::SystemTime::now()

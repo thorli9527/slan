@@ -12,7 +12,7 @@ pub use command::{
     AssignedIpPayload, AuthPayload, ClientCommand, ClientMessageNoticePayload,
     PasswordLoginPayload, TrafficStatsPayload,
 };
-pub use dns::dns_response_for_query;
+pub use dns::resolver_response_for_query;
 pub use error::{ClientCoreError, ClientCoreResult};
 pub use packet::{
     acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
@@ -30,9 +30,10 @@ pub use platform::{
     AndroidNetworkEvent, AndroidNetworkEventType, AndroidSocketProtectionReason,
     AndroidSocketProtectionRequest, AndroidVpnConsentRequest, AndroidVpnPermissionState,
     AndroidVpnSessionConfig, NetworkRuntimeState, PlatformAclPeer, PlatformAclPolicy,
-    PlatformAclRule, PlatformDeviceNetworkConfig, PlatformDiagnosticCheck, PlatformDnsRecord,
-    PlatformDnsZone, PlatformNetwork, PlatformNetworkConfig, PlatformNetworkDiagnostics,
-    RelayDataPlaneConfig, RelayPeerSession, RelayTicket, RouteSpec,
+    PlatformAclRule, PlatformDeviceNetworkConfig, PlatformDiagnosticCheck, PlatformNetwork,
+    PlatformNetworkConfig, PlatformNetworkDiagnostics, PlatformResolverConfig,
+    PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig, RelayPeerSession,
+    RelayTicket, RouteSpec,
 };
 pub use relay_frame::relay_frame_is_replayed;
 pub use runtime::ClientRuntime;

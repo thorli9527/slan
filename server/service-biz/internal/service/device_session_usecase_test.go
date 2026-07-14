@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -53,7 +54,52 @@ func (s *deviceSessionTestDevices) SaveDevice(_ context.Context, device model.De
 }
 
 func (s *deviceSessionTestDevices) SaveDeviceSession(_ context.Context, session model.DeviceSession) error {
+	for index, current := range s.savedSessions {
+		if current.SessionID == session.SessionID {
+			s.savedSessions[index] = session
+			return nil
+		}
+	}
 	s.savedSessions = append(s.savedSessions, session)
+	return nil
+}
+
+func (s *deviceSessionTestDevices) GetDeviceSessionByAccessToken(_ context.Context, token string) (model.DeviceSession, bool, error) {
+	for _, session := range s.savedSessions {
+		if session.AccessToken == token {
+			return session, true, nil
+		}
+	}
+	return model.DeviceSession{}, false, nil
+}
+
+func (s *deviceSessionTestDevices) GetDeviceSessionByRefreshToken(_ context.Context, token string) (model.DeviceSession, bool, error) {
+	for _, session := range s.savedSessions {
+		if session.RefreshToken == token {
+			return session, true, nil
+		}
+	}
+	return model.DeviceSession{}, false, nil
+}
+
+func (s *deviceSessionTestDevices) ListDeviceSessionsByDeviceID(_ context.Context, deviceID string) ([]model.DeviceSession, error) {
+	items := make([]model.DeviceSession, 0, 1)
+	for _, session := range s.savedSessions {
+		if session.DeviceID == deviceID {
+			items = append(items, session)
+		}
+	}
+	return items, nil
+}
+
+func (s *deviceSessionTestDevices) DeleteDeviceSessionByAccessToken(_ context.Context, token string) error {
+	items := s.savedSessions[:0]
+	for _, session := range s.savedSessions {
+		if session.AccessToken != token {
+			items = append(items, session)
+		}
+	}
+	s.savedSessions = items
 	return nil
 }
 
@@ -149,8 +195,8 @@ func TestBindDeviceSessionAutoRegistersMissingDevice(t *testing.T) {
 	if len(devices.savedSessions) != 1 {
 		t.Fatalf("expected one saved device session, got %d", len(devices.savedSessions))
 	}
-	if len(networks.networkDevices["net-1"]) != 1 {
-		t.Fatalf("expected default network membership to be created, got %+v", networks.networkDevices["net-1"])
+	if len(networks.networkDevices["net-1"]) != 0 {
+		t.Fatalf("expected bind not to create individual network membership, got %+v", networks.networkDevices["net-1"])
 	}
 	if view.Profile.Device.DeviceID != "android-1" {
 		t.Fatalf("expected view device android-1, got %+v", view.Profile.Device)
@@ -160,6 +206,88 @@ func TestBindDeviceSessionAutoRegistersMissingDevice(t *testing.T) {
 	}
 	if view.Session.DeviceID != "android-1" || view.Session.AccessToken == "" {
 		t.Fatalf("expected bound session to be returned, got %+v", view.Session)
+	}
+}
+
+func TestBindDeviceSessionReplacesPreviousDeviceToken(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	devices := &deviceSessionTestDevices{
+		networkRuntimeTestDevices: networkRuntimeTestDevices{
+			devices: map[string]model.Device{
+				"mac-1": {
+					DeviceID: "mac-1",
+					OwnerID:  "user-1",
+					Name:     "Mac",
+					Platform: "macos",
+					Status:   "active",
+				},
+			},
+		},
+	}
+	networks := &deviceSessionTestNetworks{
+		networkRuntimeTestNetworks: networkRuntimeTestNetworks{
+			networks: map[string]model.Network{
+				"net-1": {
+					NetworkID: "net-1",
+					OwnerID:   "user-1",
+					Name:      "Default",
+					CIDR:      "10.0.0.0/24",
+					Default:   true,
+					Status:    "active",
+				},
+			},
+			networkDevices: map[string][]model.NetworkDevice{},
+		},
+	}
+	nextSession := 0
+	service := DeviceSessionService{
+		Users: &deviceSessionTestUsers{users: map[string]model.User{
+			"user-1": {UserID: "user-1", Email: "user-1@example.test", Status: "active"},
+		}},
+		Devices:  devices,
+		Networks: networks,
+		MQTT:     mqttkit.DefaultConfig(),
+		NewSessID: func(scope string) string {
+			nextSession++
+			return fmt.Sprintf("%s-%d", scope, nextSession)
+		},
+		Now: func() time.Time { return now },
+	}
+
+	first, err := service.BindDeviceSession(context.Background(), BindDeviceSessionInput{
+		UserID: "user-1", DeviceID: "mac-1",
+	})
+	if err != nil {
+		t.Fatalf("first BindDeviceSession returned error: %v", err)
+	}
+	second, err := service.BindDeviceSession(context.Background(), BindDeviceSessionInput{
+		UserID: "user-1", DeviceID: "mac-1",
+	})
+	if err != nil {
+		t.Fatalf("second BindDeviceSession returned error: %v", err)
+	}
+	if first.Session.AccessToken == second.Session.AccessToken {
+		t.Fatal("expected replacement access token")
+	}
+	items, err := devices.ListDeviceSessionsByDeviceID(context.Background(), "mac-1")
+	if err != nil {
+		t.Fatalf("ListDeviceSessionsByDeviceID returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].AccessToken != second.Session.AccessToken {
+		t.Fatalf("expected only replacement session, got %+v", items)
+	}
+	if _, ok, _ := devices.GetDeviceSessionByAccessToken(context.Background(), first.Session.AccessToken); ok {
+		t.Fatal("expected previous access token to be invalid")
+	}
+	if _, err := service.AuthenticateDeviceSession(context.Background(), first.Session.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected previous access token to be unauthorized, got %v", err)
+	}
+	authenticated, err := service.AuthenticateDeviceSession(context.Background(), second.Session.AccessToken)
+	if err != nil {
+		t.Fatalf("AuthenticateDeviceSession returned error for replacement token: %v", err)
+	}
+	if authenticated.DeviceID != "mac-1" {
+		t.Fatalf("expected authenticated device mac-1, got %q", authenticated.DeviceID)
 	}
 }
 
@@ -220,8 +348,8 @@ func TestBindDeviceSessionReattachesExistingDeviceToDefaultNetwork(t *testing.T)
 	if err != nil {
 		t.Fatalf("BindDeviceSession returned error: %v", err)
 	}
-	if len(networks.networkDevices["net-1"]) != 1 {
-		t.Fatalf("expected detached device to be reattached, got %+v", networks.networkDevices["net-1"])
+	if len(networks.networkDevices["net-1"]) != 0 {
+		t.Fatalf("expected detached device to remain outside the network until its group is referenced, got %+v", networks.networkDevices["net-1"])
 	}
 	if view.Profile.Device.DeviceID != "linux-1" {
 		t.Fatalf("expected existing device to be preserved, got %+v", view.Profile.Device)

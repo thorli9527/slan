@@ -19,12 +19,13 @@ type NetworkCoreService struct {
 }
 
 type NetworkInviteService struct {
-	Users          repository.UserRepository
-	Devices        repository.DeviceRepository
-	Networks       repository.NetworkRepository
-	EventPublisher NetworkEventPublisher
-	NewInviteID    func() string
-	Now            func() time.Time
+	Users           repository.UserRepository
+	Devices         repository.DeviceRepository
+	Networks        repository.NetworkRepository
+	EventPublisher  NetworkEventPublisher
+	DevicePublisher DeviceControlPublisher
+	NewInviteID     func() string
+	Now             func() time.Time
 }
 
 type NetworkDNSService struct {
@@ -44,7 +45,6 @@ type NetworkAccessService struct {
 	Networks           repository.NetworkRepository
 	Ops                repository.OpsRepository
 	EventPublisher     NetworkEventPublisher
-	NewPublicMappingID func() string
 	NewSecurityGroupID func() string
 	NewSecurityRuleID  func() string
 	Now                func() time.Time
@@ -89,15 +89,6 @@ func newManagedDNSRecordID(networks repository.NetworkRepository, next func() st
 	}
 	return repositoryID[dnsRecordIDProvider](networks, "rec", func(provider dnsRecordIDProvider) string {
 		return provider.NewDNSRecordID()
-	})
-}
-
-func newManagedPublicMappingID(networks repository.NetworkRepository, next func() string) string {
-	if next != nil {
-		return generatedID(next, "map")
-	}
-	return repositoryID[publicMappingIDProvider](networks, "map", func(provider publicMappingIDProvider) string {
-		return provider.NewPublicMappingID()
 	})
 }
 
@@ -215,17 +206,6 @@ func requireManagedSecurityRule(ctx context.Context, networks repository.Network
 	}
 	if !ok {
 		return model.SecurityRule{}, ErrNotFound
-	}
-	return item, nil
-}
-
-func requireManagedPublicMapping(ctx context.Context, networks repository.NetworkRepository, mappingID string) (model.PublicMapping, error) {
-	item, ok, err := networks.GetPublicMapping(ctx, mappingID)
-	if err != nil {
-		return model.PublicMapping{}, err
-	}
-	if !ok {
-		return model.PublicMapping{}, ErrNotFound
 	}
 	return item, nil
 }

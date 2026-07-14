@@ -13,6 +13,7 @@ APP_PATHS=(
 
 SYSTEM_FILES=(
   "/Library/LaunchDaemons/${SERVICE_LABEL}.plist"
+  "/Library/LaunchAgents/${SERVICE_LABEL}.plist"
   "/Library/LaunchAgents/${APP_LABEL}.plist"
 )
 
@@ -144,6 +145,8 @@ bootout_launchd_jobs() {
   local uid
   uid="$(console_uid)"
   if [[ -n "$uid" && "$uid" != "0" ]]; then
+    run_cmd launchctl bootout "gui/${uid}/${SERVICE_LABEL}" >/dev/null 2>&1 || true
+    run_cmd launchctl disable "gui/${uid}/${SERVICE_LABEL}" >/dev/null 2>&1 || true
     run_cmd launchctl bootout "gui/${uid}/${APP_LABEL}" >/dev/null 2>&1 || true
     run_cmd launchctl disable "gui/${uid}/${APP_LABEL}" >/dev/null 2>&1 || true
   fi
@@ -154,6 +157,7 @@ stop_processes() {
   for name in "${APP_PROCESS_NAMES[@]}" "${SERVICE_PROCESS_NAMES[@]}"; do
     run_cmd pkill -x "$name" >/dev/null 2>&1 || true
   done
+  run_cmd pkill -f 'scripts/install_macos_service.sh' >/dev/null 2>&1 || true
 }
 
 forget_receipts() {
@@ -175,6 +179,14 @@ remove_user_data() {
       path="${home}/${relative}"
       remove_path "$path"
     done
+    while IFS= read -r path; do
+      remove_path "$path"
+    done < <(find "${home}/Library/Application Support/CrashReporter" -maxdepth 1 -type f \
+      \( -name 'client_core_service_*' -o -name 'slan_client_v2_*' \) -print 2>/dev/null)
+    while IFS= read -r path; do
+      remove_path "$path"
+    done < <(find "${home}/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
+      \( -name 'client_core_service_*' -o -name 'slan_client_v2_*' \) -print 2>/dev/null)
   done < <(user_homes)
 }
 

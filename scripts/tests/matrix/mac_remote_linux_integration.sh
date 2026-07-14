@@ -27,6 +27,7 @@ REMOTE_SERVICE_HOST="${SLAN_REMOTE_LINUX_SERVICE_HOST:-127.0.0.1:46392}"
 RUN_REMOTE_INSTALL_CHECK="${SLAN_RUN_REMOTE_LINUX_INSTALL_CHECK:-1}"
 BUILD_LINUX_PACKAGE="${SLAN_REMOTE_LINUX_BUILD_PACKAGE:-0}"
 BUILD_LINUX_PACKAGE_REMOTE="${SLAN_REMOTE_LINUX_BUILD_PACKAGE_REMOTE:-1}"
+PREPARE_REMOTE_DEPENDENCIES="${SLAN_REMOTE_LINUX_PREPARE_DEPENDENCIES:-1}"
 USE_REMOTE_BUILT_PACKAGE_DIRECTLY="${SLAN_REMOTE_LINUX_USE_REMOTE_BUILT_PACKAGE_DIRECTLY:-0}"
 LINUX_DEVICE_ALIAS="${SLAN_REMOTE_LINUX_DEVICE_ALIAS:-Remote Linux CLI}"
 
@@ -82,6 +83,7 @@ NETWORK_ID=""
 SECURITY_GROUP_ID=""
 BOOTSTRAP_KEY_ID=""
 BOOTSTRAP_KEY=""
+DEVICE_GROUP_ID=""
 ZONE_ID=""
 ZONE_NAME=""
 RULE_IDS=()
@@ -120,7 +122,9 @@ is_truthy() {
 
 best_effort_delete() {
   local url="$1"
-  curl --silent --show-error --connect-timeout 5 --max-time 20 -X DELETE "$url" >/dev/null 2>&1 || true
+  curl --silent --show-error --connect-timeout 5 --max-time 20 \
+    -X DELETE "$url" \
+    -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
 }
 
 sudo_run() {
@@ -174,9 +178,13 @@ verify_existing_macos_service() {
   local expected_bin="$1"
   local expected_hash installed_hash health_output
   [[ -x "$expected_bin" ]] || fail "expected mac client-core-service binary is missing: $expected_bin"
-  [[ -x "/Library/Application Support/SLAN/client-core-service" ]] || fail "installed mac client-core-service is missing"
+  sudo_run test -x "/Library/Application Support/SLAN/client-core-service" \
+    || fail "installed mac client-core-service is missing"
   expected_hash="$(sha256_file "$expected_bin")"
-  installed_hash="$(sha256_file "/Library/Application Support/SLAN/client-core-service")"
+  installed_hash="$(
+    sudo_run shasum -a 256 "/Library/Application Support/SLAN/client-core-service" \
+      | awk '{print $1}'
+  )"
   [[ "$expected_hash" == "$installed_hash" ]] || fail "installed mac client-core-service is stale; reinstall with scripts/install_macos_service.sh"
   health_output="$(
     run_client_core_login_check "mac service health" \
@@ -448,7 +456,7 @@ for config in module.get("configs", []) or []:
             ip = str(peer.get("globalIp") or "").strip()
         if ip:
             peers[device_id] = ip
-    for record in config.get("dnsRecords", []) or []:
+    for record in config.get("resolverRecords", []) or []:
         names = {
             str(record.get("fqdn") or "").strip().lower(),
             str(record.get("name") or "").strip().lower(),
@@ -562,6 +570,12 @@ remote_helper() {
 }
 
 remote_prepare_dependencies() {
+  if ! is_truthy "$PREPARE_REMOTE_DEPENDENCIES"; then
+    remote_exec "uname -m" >"$REMOTE_PREP_LOG"
+    REMOTE_ARCH="$(tr -d '\r' <"$REMOTE_PREP_LOG" | grep -E '^(x86_64|amd64|aarch64|arm64|armv7l|armhf)$' | tail -n 1)"
+    [[ -n "$REMOTE_ARCH" ]] || fail "failed to detect remote Linux architecture"
+    return 0
+  fi
   remote_exec "
 set -euo pipefail
 mkdir -p '${REMOTE_DIR}'
@@ -652,6 +666,16 @@ register_and_login_user() {
   [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || fail "failed to login test user"
 }
 
+refresh_user_token() {
+  local auth_json
+  auth_json="$(curl --silent --show-error --fail \
+    -X POST "${BIZ_URL}/api/app/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
+  USER_TOKEN="$(printf '%s' "$auth_json" | jq -r '.accessToken // .token // .auth.accessToken // .auth.session.token // empty')"
+  [[ -n "$USER_TOKEN" ]] || fail "failed to refresh test user token"
+}
+
 resolve_network_context() {
   local networks_json groups_json
   networks_json="$(curl --silent --show-error --fail \
@@ -732,7 +756,7 @@ resolve_record_from_remote_module() {
   module_json="$(remote_helper request_json localNetworkModule)"
   jq -r --arg fqdn "$fqdn" '
     .configs[]? as $config
-    | $config.dnsRecords[]?
+    | $config.resolverRecords[]?
     | select(
         ((.fqdn // "" | ascii_downcase) == ($fqdn | ascii_downcase)) or
         ((.name // "" | ascii_downcase) == ($fqdn | ascii_downcase))
@@ -762,10 +786,34 @@ add_rule() {
   local priority="$5"
   local rule_json rule_id
   rule_json="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
-    "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
+    "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device_group\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(printf '%s' "$rule_json" | jq -r '.ruleId // empty')"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
   RULE_IDS+=("$rule_id")
+}
+
+provision_network_device_group() {
+  local group_json
+  group_json="$(create_json "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+    "{\"name\":\"mac-linux-$(date +%s%N)\",\"description\":\"Mac Linux integration devices\"}")"
+  DEVICE_GROUP_ID="$(printf '%s' "$group_json" | jq -r '.groupId // empty')"
+  [[ -n "$DEVICE_GROUP_ID" ]] || fail "device group create returned empty groupId"
+
+  local device_id
+  for device_id in "$MAC_DEVICE_ID" "$LINUX_DEVICE_ID"; do
+    curl --silent --show-error --fail \
+      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
+      -H "Authorization: Bearer ${USER_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
+  done
+  log "prepared device group assignments group=${DEVICE_GROUP_ID}"
+}
+
+attach_device_group_to_network() {
+  create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+    "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
+  log "attached device group network=${NETWORK_ID} group=${DEVICE_GROUP_ID}"
 }
 
 json_field() {
@@ -799,6 +847,12 @@ cleanup() {
     if [[ -n "$ZONE_ID" ]]; then
       best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
     fi
+    if [[ -n "$DEVICE_GROUP_ID" ]]; then
+      best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
+    fi
+  fi
+  if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
+    best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}"
   fi
   slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_MAC_REMOTE_LINUX_WORK_DIR:-0}" != "1" ]]; then
@@ -849,6 +903,7 @@ main() {
 set -euo pipefail
 mkdir -p '${REMOTE_DIR}'
 systemctl stop slan-client-v2.service >/dev/null 2>&1 || true
+rm -f /var/lib/SLAN/config.json
 rm -f /var/lib/SLAN/client-v2-session.json
 rm -f /var/lib/SLAN/client-v2-device-id.txt
 rm -f /var/lib/SLAN/client-v2-device-public-key.txt
@@ -877,21 +932,24 @@ bash '${REMOTE_DIR}/install.sh' \
   log "wait remote Linux control transport"
   remote_helper wait_control_ready "$TIMEOUT_SECONDS" >/dev/null
 
+  refresh_user_token
+  provision_network_device_group
   create_dns_zone
   create_dns_record mac "$MAC_DEVICE_ID"
   create_dns_record linux "$LINUX_DEVICE_ID"
-  add_rule ingress tcp 443 "$MAC_DEVICE_ID" 100
-  add_rule egress tcp 443 "$LINUX_DEVICE_ID" 110
-  add_rule ingress tcp 443 "$LINUX_DEVICE_ID" 120
-  add_rule egress tcp 443 "$MAC_DEVICE_ID" 130
-  add_rule ingress udp "$UDP_PORT" "$MAC_DEVICE_ID" 140
-  add_rule egress udp "$UDP_PORT" "$LINUX_DEVICE_ID" 150
-  add_rule ingress udp "$UDP_PORT" "$LINUX_DEVICE_ID" 160
-  add_rule egress udp "$UDP_PORT" "$MAC_DEVICE_ID" 170
-  add_rule ingress tcp "$TCP_PORT" "$MAC_DEVICE_ID" 180
-  add_rule egress tcp "$TCP_PORT" "$LINUX_DEVICE_ID" 190
-  add_rule ingress tcp "$TCP_PORT" "$LINUX_DEVICE_ID" 200
-  add_rule egress tcp "$TCP_PORT" "$MAC_DEVICE_ID" 210
+  attach_device_group_to_network
+  add_rule ingress tcp 443 "$DEVICE_GROUP_ID" 100
+  add_rule egress tcp 443 "$DEVICE_GROUP_ID" 110
+  add_rule ingress udp "$UDP_PORT" "$DEVICE_GROUP_ID" 120
+  add_rule egress udp "$UDP_PORT" "$DEVICE_GROUP_ID" 130
+  add_rule ingress tcp "$TCP_PORT" "$DEVICE_GROUP_ID" 140
+  add_rule egress tcp "$TCP_PORT" "$DEVICE_GROUP_ID" 150
+
+  log "restart remote Linux client and reload the complete network snapshot"
+  remote_exec "systemctl restart slan-client-v2.service"
+  remote_helper wait_local_api "$LOCAL_API_TIMEOUT_SECONDS" >/dev/null
+  remote_helper wait_signed_in_or_login "$EMAIL" "$PASSWORD" "$TIMEOUT_SECONDS" >/dev/null
+  remote_helper wait_control_ready "$TIMEOUT_SECONDS" >/dev/null
 
   log "wait remote Linux network module receive dns/acl config"
   remote_helper wait_network_module 1 2 4 "$TIMEOUT_SECONDS" >/dev/null

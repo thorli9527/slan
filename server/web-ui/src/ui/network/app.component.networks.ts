@@ -4,19 +4,18 @@ import {
   ApiDevice,
   ApiDNSRecord,
   ApiDNSZone,
-  ApiPublicMapping,
   ApiSecurityGroup,
   ApiSecurityRule,
   ApiUserAlias,
   ApiWorkspace,
   ApiWorkspaceDevice,
   DeviceExposureRow,
+  DeviceGroupRow,
   DeviceRow,
   DNSRow,
   DNSZoneRow,
   MemberRow,
   NavItem,
-  PublicMappingRow,
   RuleSubjectType,
   SecurityGroupRow,
   SecurityRuleRow,
@@ -88,9 +87,6 @@ export abstract class AppComponentNetworks extends AppComponentData {
 
   setWorkspacePanel(panel: WorkspacePanel): void {
     this.closeInlinePopovers();
-    if (panel === 'publicMappings' && !this.publicMappingsEnabled) {
-      panel = 'zones';
-    }
     this.workspacePanel = panel;
     this.navigateTo(workspacePanelPath(this.selectedWorkspaceId, panel, this.selectedZoneId, this.selectedSecurityGroupId));
     void this.loadWorkspaceResources(this.selectedWorkspaceId);
@@ -321,7 +317,6 @@ export abstract class AppComponentNetworks extends AppComponentData {
     this.workspaces = this.workspaces.filter((item) => item.workspaceId !== workspace.workspaceId);
     this.dnsZones = this.dnsZones.filter((item) => item.workspaceId !== workspace.workspaceId);
     this.dnsRecords = this.dnsRecords.filter((item) => item.workspaceId !== workspace.workspaceId);
-    this.publicMappings = this.publicMappings.filter((item) => item.workspaceId !== workspace.workspaceId);
     this.securityGroups = this.securityGroups.filter((item) => item.workspaceId !== workspace.workspaceId);
     this.workspaceDeviceInvites = this.workspaceDeviceInvites.filter((item) => item.workspaceId !== workspace.workspaceId && item.networkId !== workspace.workspaceId);
     this.deviceBootstrapKeys = this.deviceBootstrapKeys.filter((item) => item.networkId !== workspace.workspaceId);
@@ -347,119 +342,43 @@ export abstract class AppComponentNetworks extends AppComponentData {
     return policy === 'deny' ? '组内隔离' : '组内互通';
   }
 
-  async removeWorkspaceDevice(device: DeviceRow): Promise<void> {
-    try {
-      await this.api.delete(WEB_API.networkDevice(this.selectedWorkspaceId, device.deviceId, this.effectiveUserId));
-      await this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId);
-    } catch {
-      if (!this.isDemoMode) {
-        this.workspaceDeviceDialogMessage = '移除网络设备失败';
-        this.notifyStateChanged();
-        return;
-      }
-    }
-    const currentIds = this.currentWorkspaceDeviceIds().filter((deviceId) => deviceId !== device.deviceId);
-    this.workspaceDeviceIdsByWorkspace[this.selectedWorkspaceId] = currentIds;
-    const mappings = { ...(this.workspaceDeviceGroupIdsByDeviceByWorkspace[this.selectedWorkspaceId] ?? {}) };
-    delete mappings[device.deviceId];
-    this.workspaceDeviceGroupIdsByDeviceByWorkspace[this.selectedWorkspaceId] = mappings;
-    this.selectedWorkspace.devices = currentIds.length;
-    this.notifyStateChanged();
-  }
-
-  openWorkspaceDeviceDialog(): void {
-    this.closeInlinePopovers();
-    this.bindDeviceQuery = '';
-    this.selectedWorkspaceDeviceId = this.queriedBindableWorkspaceDevices[0]?.deviceId ?? '';
-    this.workspaceDeviceDialogMessage = '';
-    this.showWorkspaceDeviceDialog = true;
-  }
-
-  queryWorkspaceDevices(): void {
-    const first = this.queriedBindableWorkspaceDevices[0]?.deviceId ?? '';
-    if (!this.queriedBindableWorkspaceDevices.some((device) => device.deviceId === this.selectedWorkspaceDeviceId)) {
-      this.selectedWorkspaceDeviceId = first;
-    }
-  }
-
-  closeWorkspaceDeviceDialog(): void {
-    this.showWorkspaceDeviceDialog = false;
-    this.workspaceDeviceDialogMessage = '';
-  }
-
-  async saveWorkspaceDeviceDialog(): Promise<void> {
-    const currentIds = this.currentWorkspaceDeviceIds();
-    if (!this.selectedWorkspaceDeviceId || currentIds.includes(this.selectedWorkspaceDeviceId)) {
+  async addWorkspaceDeviceGroupReference(): Promise<void> {
+    const groupId = this.selectedWorkspaceDeviceGroupReferenceId;
+    if (!groupId || !this.selectedWorkspaceId) {
       return;
     }
-    this.workspaceDeviceDialogMessage = '';
-    const selected = this.devices.find((device) => device.deviceId === this.selectedWorkspaceDeviceId);
+    this.deviceListMessage = '';
     try {
-      await this.api.post(WEB_API.networkDevices(this.selectedWorkspaceId), {
-        deviceId: this.selectedWorkspaceDeviceId,
+      await this.api.post(WEB_API.networkDeviceGroups(this.selectedWorkspaceId), {
+        groupId,
         actorUserId: this.effectiveUserId,
-        alias: selected?.alias ?? '',
-        enabled: true,
       });
-      await this.loadWorkspaceDevices(this.selectedWorkspaceId);
-      await this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId);
-      this.closeWorkspaceDeviceDialog();
-      this.notifyStateChanged();
-      return;
+      this.selectedWorkspaceDeviceGroupReferenceId = '';
+      await Promise.all([
+        this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId),
+        this.loadWorkspaceDevices(this.selectedWorkspaceId),
+      ]);
     } catch {
-      if (!this.isDemoMode) {
-        this.workspaceDeviceDialogMessage = '添加网络设备失败';
-        this.notifyStateChanged();
-        return;
-      }
+      this.deviceListMessage = '引用设备分组失败';
     }
-    const nextIds = [...currentIds, this.selectedWorkspaceDeviceId];
-    this.workspaceDeviceIdsByWorkspace[this.selectedWorkspaceId] = nextIds;
-    this.workspaceDeviceJoinMethods[`${this.selectedWorkspaceId}|${this.selectedWorkspaceDeviceId}`] = '手动添加';
-    this.selectedWorkspace.devices = nextIds.length;
-    this.closeWorkspaceDeviceDialog();
     this.notifyStateChanged();
   }
 
-  openWorkspaceDeviceAliasDialog(device: DeviceRow): void {
-    this.closeInlinePopovers();
-    if (this.showWorkspaceDeviceAliasDialog && this.editingWorkspaceDevice?.deviceId === device.deviceId) {
-      this.closeWorkspaceDeviceAliasDialog();
+  async removeWorkspaceDeviceGroupReference(group: DeviceGroupRow): Promise<void> {
+    if (!this.selectedWorkspaceId) {
       return;
     }
-    this.editingWorkspaceDevice = device;
-    this.workspaceDeviceAliasValue = device.alias;
-    this.workspaceDeviceAliasMessage = '';
-    this.showWorkspaceDeviceAliasDialog = true;
-  }
-
-  closeWorkspaceDeviceAliasDialog(): void {
-    this.showWorkspaceDeviceAliasDialog = false;
-    this.editingWorkspaceDevice = null;
-    this.workspaceDeviceAliasMessage = '';
-  }
-
-  async saveWorkspaceDeviceAliasDialog(): Promise<void> {
-    if (!this.editingWorkspaceDevice || !this.workspaceDeviceAliasValue.trim()) {
-      return;
-    }
-    const device = this.editingWorkspaceDevice;
-    const alias = this.workspaceDeviceAliasValue.trim();
-    this.workspaceDeviceAliasMessage = '';
+    this.deviceListMessage = '';
     try {
-      await this.api.patch(WEB_API.networkDevice(this.selectedWorkspaceId, device.deviceId, this.effectiveUserId), {
-        actorUserId: this.effectiveUserId,
-        alias,
-      });
+      await this.api.delete(WEB_API.networkDeviceGroup(this.selectedWorkspaceId, group.groupId, this.effectiveUserId));
+      await Promise.all([
+        this.loadWorkspaceDeviceGroups(this.selectedWorkspaceId),
+        this.loadWorkspaceDevices(this.selectedWorkspaceId),
+      ]);
     } catch {
-      if (!this.isDemoMode) {
-        this.workspaceDeviceAliasMessage = '更新网络设备别名失败';
-        this.notifyStateChanged();
-        return;
-      }
+      this.deviceListMessage = '取消设备分组引用失败';
     }
-    this.devices = this.devices.map((item) => item.deviceId === device.deviceId ? { ...item, alias } : item);
-    this.closeWorkspaceDeviceAliasDialog();
     this.notifyStateChanged();
   }
+
 }

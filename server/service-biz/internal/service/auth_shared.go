@@ -76,11 +76,14 @@ type AuthDeviceLoginService struct {
 }
 
 type authDeviceLoginDependencies struct {
-	Users    repository.UserRepository
-	Devices  repository.DeviceRepository
-	Networks repository.NetworkRepository
-	MQTT     mqttkit.Config
-	Now      func() time.Time
+	Users           repository.UserRepository
+	Sessions        repository.UserSessionRepository
+	Devices         repository.DeviceRepository
+	Networks        repository.NetworkRepository
+	MQTT            mqttkit.Config
+	DevicePublisher DeviceControlPublisher
+	EventPublisher  NetworkEventPublisher
+	Now             func() time.Time
 }
 
 type AuthDeviceLoginPrepareService struct {
@@ -141,17 +144,23 @@ func NewAuthConsoleService(
 
 func NewAuthDeviceLoginService(
 	users repository.UserRepository,
+	sessions repository.UserSessionRepository,
 	devices repository.DeviceRepository,
 	networks repository.NetworkRepository,
 	mqtt mqttkit.Config,
+	devicePublisher DeviceControlPublisher,
+	eventPublisher NetworkEventPublisher,
 	now func() time.Time,
 ) AuthDeviceLoginService {
 	deps := authDeviceLoginDependencies{
-		Users:    users,
-		Devices:  devices,
-		Networks: networks,
-		MQTT:     mqtt,
-		Now:      now,
+		Users:           users,
+		Sessions:        sessions,
+		Devices:         devices,
+		Networks:        networks,
+		MQTT:            mqtt,
+		DevicePublisher: devicePublisher,
+		EventPublisher:  eventPublisher,
+		Now:             now,
 	}
 	return AuthDeviceLoginService{
 		Prepare:  AuthDeviceLoginPrepareService{authDeviceLoginDependencies: deps},

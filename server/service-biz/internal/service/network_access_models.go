@@ -9,25 +9,6 @@ type SecurityGroupView struct {
 	UpdatedAt       int64  `json:"updatedAt"`
 }
 
-type PublicMappingView struct {
-	MappingID    string `json:"mappingId"`
-	NetworkID    string `json:"networkId"`
-	Name         string `json:"name"`
-	PublicDomain string `json:"publicDomain"`
-	SourceRecord string `json:"sourceRecord"`
-	Protocol     string `json:"protocol"`
-	InternalIP   string `json:"internalIp"`
-	InternalPort int    `json:"internalPort"`
-	ExternalPort int    `json:"externalPort"`
-	AccessMode   string `json:"accessMode"`
-	TLSMode      string `json:"tlsMode"`
-	TargetType   string `json:"targetType"`
-	Status       string `json:"status"`
-	CreatedAt    int64  `json:"createdAt"`
-	UpdatedAt    int64  `json:"updatedAt"`
-	DeviceID     string `json:"deviceId"`
-}
-
 type SecurityRuleView struct {
 	RuleID          string `json:"ruleId"`
 	SecurityGroupID string `json:"securityGroupId"`

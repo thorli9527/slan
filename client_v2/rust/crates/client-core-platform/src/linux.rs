@@ -2,7 +2,7 @@
 //!
 //! Linux uses `client-core-service` for control/session/MQTT/path decisions and
 //! keeps OS privileges behind this platform layer. The default backend manages a
-//! persistent `slan0` TUN interface through `iproute2` and DNS through
+//! persistent `slan0` TUN interface through `iproute2` and resolver settings through
 //! `systemd-resolved` when available.
 
 use std::{
@@ -32,7 +32,7 @@ use client_core::{
     },
     NetworkRuntimeState, PathCandidate, PathKind, PathState, PeerPathRuntime, PlatformAclPeer,
     PlatformAclPolicy, PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkDiagnostics,
-    RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
+    PlatformResolverConfig, RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
 };
 use serde::Serialize;
 
@@ -40,7 +40,7 @@ use crate::direct_udp::{
     direct_udp_control_packet, direct_udp_probe_interval_from_ms, DirectUdpControlKind,
     DirectUdpTransport,
 };
-use crate::effective_dns_servers;
+use crate::effective_resolver_servers;
 
 const HOST_INTERFACE_PREFIX_LEN: u8 = 32;
 const DEFAULT_INTERFACE_NAME: &str = "slan0";
@@ -55,7 +55,7 @@ const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
 
 /// LinuxPlatformNetwork 是 Linux 的 PlatformNetwork 实现，负责 TUN、路由、
-/// DNS、relay 数据面和 direct UDP runtime 的平台适配。
+/// resolver、relay 数据面和 direct UDP runtime 的平台适配。
 #[derive(Debug, Clone, Default)]
 pub struct LinuxPlatformNetwork;
 
@@ -65,7 +65,9 @@ struct LinuxRuntime {
     interface_name: String,
     virtual_ip: Option<String>,
     prefix_len: Option<u8>,
-    dns_servers: Vec<String>,
+    resolver_servers: Vec<String>,
+    resolver_search_domains: Vec<String>,
+    resolver_split_domains: Vec<String>,
     routes: Vec<RouteSpec>,
     relay_config: Option<RelayDataPlaneConfig>,
     tun: Option<TunRuntime>,
@@ -304,25 +306,27 @@ impl PlatformNetwork for LinuxPlatformNetwork {
         Ok(())
     }
 
-    fn configure_dns(&self, dns_servers: &[String]) -> Result<()> {
+    fn configure_resolver(&self, resolver: &PlatformResolverConfig) -> Result<()> {
         let mut runtime = runtime().lock().expect("linux runtime mutex poisoned");
-        runtime.dns_servers = effective_dns_servers(dns_servers);
-        if runtime.mock_enabled || runtime.dns_servers.is_empty() {
+        runtime.resolver_servers = effective_resolver_servers(&resolver.servers);
+        runtime.resolver_search_domains = resolver.search_domains.clone();
+        runtime.resolver_split_domains = resolver.split_domains.clone();
+        if runtime.mock_enabled || runtime.resolver_servers.is_empty() {
             return Ok(());
         }
         let interface_name = runtime.interface_name().to_string();
         if command_available("resolvectl") {
             let mut dns_args = vec!["dns".to_string(), interface_name.clone()];
-            dns_args.extend(runtime.dns_servers.iter().cloned());
+            dns_args.extend(runtime.resolver_servers.iter().cloned());
             run_command("resolvectl", &dns_args)?;
-            let _ = run_command(
-                "resolvectl",
-                &[
-                    "domain".to_string(),
-                    interface_name.clone(),
-                    "~slan".to_string(),
-                ],
+            let domain_args = resolvectl_domain_args(
+                &interface_name,
+                &resolver.search_domains,
+                &resolver.split_domains,
             );
+            if domain_args.len() > 2 {
+                let _ = run_command("resolvectl", &domain_args);
+            }
             let _ = run_command(
                 "resolvectl",
                 &[
@@ -368,8 +372,8 @@ impl PlatformNetwork for LinuxPlatformNetwork {
             },
         ];
         checks.push(PlatformDiagnosticCheck {
-            name: "dns".to_string(),
-            ok: command_available("resolvectl") || runtime.dns_servers.is_empty(),
+            name: "resolver".to_string(),
+            ok: command_available("resolvectl") || runtime.resolver_servers.is_empty(),
             message: Some("resolvectl is used when Linux DNS servers are configured".to_string()),
         });
         checks.push(PlatformDiagnosticCheck {
@@ -420,7 +424,9 @@ impl PlatformNetwork for LinuxPlatformNetwork {
             virtual_ip: runtime.virtual_ip.clone(),
             mtu: Some(DEFAULT_MTU),
             mss: None,
-            dns_servers: runtime.dns_servers.clone(),
+            resolver_servers: runtime.resolver_servers.clone(),
+            resolver_search_domains: runtime.resolver_search_domains.clone(),
+            resolver_split_domains: runtime.resolver_split_domains.clone(),
             routes: runtime
                 .routes
                 .iter()
@@ -488,6 +494,31 @@ impl PlatformNetwork for LinuxPlatformNetwork {
                 .unwrap_or_default(),
         })
     }
+}
+
+fn resolvectl_domain_args(
+    interface_name: &str,
+    search_domains: &[String],
+    split_domains: &[String],
+) -> Vec<String> {
+    let mut domain_args = vec!["domain".to_string(), interface_name.to_string()];
+    for domain in split_domains
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        domain_args.push(format!("~{domain}"));
+    }
+    for domain in search_domains
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        if !domain_args.iter().any(|existing| existing == domain) {
+            domain_args.push(domain.to_string());
+        }
+    }
+    domain_args
 }
 
 fn restart_data_plane(runtime: &mut LinuxRuntime) -> Result<()> {
@@ -2500,7 +2531,10 @@ mod tests {
         platform.install_adapter().unwrap();
         platform.configure_ip("10.0.0.1", 32).unwrap();
         platform
-            .configure_dns(&["10.0.0.53".to_string(), " ".to_string()])
+            .configure_resolver(&client_core::PlatformResolverConfig {
+                servers: vec!["10.0.0.53".to_string(), " ".to_string()],
+                ..client_core::PlatformResolverConfig::default()
+            })
             .unwrap();
         platform
             .configure_routes(&[
@@ -2524,7 +2558,7 @@ mod tests {
         assert_eq!(state.active_path, Some(PathKind::RelayUdp));
 
         let diagnostics = platform.diagnostics().unwrap();
-        assert_eq!(diagnostics.dns_servers, vec!["10.0.0.53"]);
+        assert_eq!(diagnostics.resolver_servers, vec!["10.0.0.53"]);
         assert_eq!(diagnostics.routes, vec!["mesh", "10.0.0.2"]);
         assert!(diagnostics
             .checks
@@ -2555,20 +2589,44 @@ mod tests {
         let platform = LinuxPlatformNetwork;
         platform.install_adapter().unwrap();
         platform
-            .configure_dns(&["10.0.0.53".to_string(), "8.8.8.8".to_string()])
+            .configure_resolver(&client_core::PlatformResolverConfig {
+                servers: vec!["10.0.0.53".to_string(), "8.8.8.8".to_string()],
+                ..client_core::PlatformResolverConfig::default()
+            })
             .unwrap();
 
         let diagnostics = platform.diagnostics().unwrap();
-        assert_eq!(diagnostics.dns_servers, vec!["127.0.0.1"]);
+        assert_eq!(diagnostics.resolver_servers, vec!["127.0.0.1"]);
 
         let runtime = runtime().lock().expect("linux runtime mutex poisoned");
-        assert_eq!(runtime.dns_servers, vec!["127.0.0.1".to_string()]);
+        assert_eq!(runtime.resolver_servers, vec!["127.0.0.1".to_string()]);
         drop(runtime);
 
         platform.disable_network().unwrap();
         std::env::remove_var("SLAN_LOCAL_DNS_BIND");
         std::env::remove_var("SLAN_LINUX_NETWORK_MOCK");
         reset_runtime();
+    }
+
+    #[test]
+    fn resolvectl_domain_args_include_split_and_search_domains() {
+        let args = resolvectl_domain_args(
+            "slan0",
+            &["corp.lan".to_string(), "svc.lan".to_string()],
+            &["corp.lan".to_string(), "mesh.local".to_string()],
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "domain".to_string(),
+                "slan0".to_string(),
+                "~corp.lan".to_string(),
+                "~mesh.local".to_string(),
+                "corp.lan".to_string(),
+                "svc.lan".to_string(),
+            ]
+        );
     }
 
     fn ipv4_packet(src: &str, dst: &str) -> Vec<u8> {

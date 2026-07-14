@@ -41,6 +41,8 @@ pub(crate) struct PersistedSession {
     #[serde(default)]
     pub(crate) self_node_id: Option<String>,
     pub(crate) active_network_id: Option<String>,
+    #[serde(default)]
+    pub(crate) network_ids: Vec<String>,
     pub(crate) virtual_ip: Option<String>,
     #[serde(default)]
     pub(crate) relay_candidates: Vec<PersistedRelayCandidate>,
@@ -87,7 +89,8 @@ impl From<AuthPayload> for PersistedSession {
             device_refresh_token: None,
             device_id: payload.device_id,
             self_node_id: None,
-            active_network_id: payload.active_network_id,
+            active_network_id: payload.active_network_id.clone(),
+            network_ids: payload.active_network_id.into_iter().collect(),
             virtual_ip: payload.virtual_ip,
             relay_candidates: Vec::new(),
             mqtt: None,
@@ -112,6 +115,7 @@ impl PersistedSession {
             device_id: None,
             self_node_id: None,
             active_network_id: None,
+            network_ids: Vec::new(),
             virtual_ip: None,
             relay_candidates: Vec::new(),
             mqtt: None,
@@ -165,15 +169,6 @@ pub(crate) fn load_valid_registered_session() -> Option<PersistedSession> {
     if session.access_token.trim().is_empty() {
         if prelogin_session_is_usable(&session) {
             return Some(session);
-        }
-        let _ = remove_session();
-        return bootstrap_session_from_env().ok();
-    }
-    if session_is_expired(&session) {
-        if session.session_kind == "device" {
-            if let Ok(renewed) = renew_device_session(session.clone()) {
-                return Some(renewed);
-            }
         }
         let _ = remove_session();
         return bootstrap_session_from_env().ok();
@@ -315,62 +310,6 @@ fn bootstrap_session_from_env() -> Result<PersistedSession> {
     Ok(session)
 }
 
-fn renew_device_session(session: PersistedSession) -> Result<PersistedSession> {
-    let client = ControlPlaneClient::from_env();
-    let network_enabled = session
-        .virtual_ip
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some();
-    let response = client.renew_device_session(
-        &session.access_token,
-        session.device_refresh_token.as_deref(),
-        network_enabled,
-        0,
-        0,
-    )?;
-    let mut renewed = persisted_session_from_device_session(response);
-    renewed.user_label = default_string(&session.user_label, &renewed.user_label);
-    preserve_session_network_identity(&session, &mut renewed);
-    backfill_desktop_session_mqtt(&client, &mut renewed);
-    refresh_session_network_from_device_configs(&client, &mut renewed);
-    ensure_session_node_binding(&client, &mut renewed)?;
-    persist_session(&renewed)?;
-    Ok(renewed)
-}
-
-fn preserve_session_network_identity(previous: &PersistedSession, current: &mut PersistedSession) {
-    if current
-        .active_network_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
-    {
-        current.active_network_id = previous
-            .active_network_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-    }
-    if current
-        .virtual_ip
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
-    {
-        current.virtual_ip = previous
-            .virtual_ip
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-    }
-}
-
 fn persisted_session_from_device_session(
     response: crate::control_plane::DeviceSessionResponse,
 ) -> PersistedSession {
@@ -385,6 +324,7 @@ fn persisted_session_from_device_session(
         .cloned()
         .or_else(|| config.map(|item| item.network_id.clone()))
         .or_else(|| response.device.active_network_id.clone());
+    let network_ids = response.device_session.active_network_ids.clone();
     let virtual_ip = config
         .and_then(|item| item.global_ip.clone())
         .or_else(|| response.device.global_ip.clone())
@@ -411,6 +351,7 @@ fn persisted_session_from_device_session(
         device_id: Some(response.device_session.device_id.clone()),
         self_node_id: None,
         active_network_id,
+        network_ids,
         virtual_ip,
         relay_candidates,
         mqtt,
@@ -439,15 +380,15 @@ pub(crate) fn ensure_session_device_registered(
     }
     let client = ControlPlaneClient::from_env();
     if session.session_kind == "device" {
-        ensure_bound_device_session(&client, &mut session)?;
+        ensure_bound_device_session(&client, &mut session, false)?;
         backfill_desktop_session_mqtt(&client, &mut session);
         refresh_session_network_from_device_configs(&client, &mut session);
         ensure_session_node_binding(&client, &mut session)?;
         persist_session(&session)?;
         return Ok(session);
     }
-    renew_user_session_if_needed(&client, &mut session)?;
-    ensure_bound_device_session(&client, &mut session)?;
+    let user_token_renewed = renew_user_session_if_needed(&client, &mut session)?;
+    ensure_bound_device_session(&client, &mut session, user_token_renewed)?;
     backfill_desktop_session_mqtt(&client, &mut session);
     refresh_session_network_from_device_configs(&client, &mut session);
     ensure_session_node_binding(&client, &mut session)?;
@@ -481,9 +422,9 @@ pub(crate) fn prepare_client_login_session(platform: &str) -> Result<PersistedSe
 fn renew_user_session_if_needed(
     client: &ControlPlaneClient,
     session: &mut PersistedSession,
-) -> Result<()> {
+) -> Result<bool> {
     if !user_session_should_renew(session) {
-        return Ok(());
+        return Ok(false);
     }
     let payload = client.renew_user_session(
         &session.access_token,
@@ -506,12 +447,13 @@ fn renew_user_session_if_needed(
     if let Some(virtual_ip) = payload.virtual_ip {
         session.virtual_ip = Some(virtual_ip);
     }
-    Ok(())
+    Ok(true)
 }
 
 fn ensure_bound_device_session(
     client: &ControlPlaneClient,
     session: &mut PersistedSession,
+    force_renew: bool,
 ) -> Result<()> {
     let has_device_token = session
         .device_token
@@ -522,7 +464,7 @@ fn ensure_bound_device_session(
     if !has_device_token {
         return bind_session_device_session(client, session);
     }
-    if device_session_should_renew(session) {
+    if force_renew || device_session_should_renew(session) {
         return renew_bound_device_session(client, session);
     }
     Ok(())
@@ -558,9 +500,20 @@ fn renew_bound_device_session(
     );
     let mqtt = mqtt_from_device_session_response(&response);
     session.device_session_id = Some(response.device_session.session_id);
-    session.device_token = Some(response.device_session.device_token);
+    let renewed_device_token = response.device_session.device_token;
+    if session.session_kind == "device" {
+        session.access_token = renewed_device_token.clone();
+        session.authenticated_at_ms = current_timestamp_ms();
+        session.expires_in = response
+            .device_session
+            .device_token_expires_at
+            .checked_sub((current_timestamp_ms() / 1_000) as i64)
+            .map(|value| value.max(0) as u64);
+    }
+    session.device_token = Some(renewed_device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
+    session.network_ids = response.device_session.active_network_ids.clone();
     session.mqtt = mqtt.or(session.mqtt.take());
     if !relay_candidates.is_empty() {
         session.relay_candidates = relay_candidates.clone();
@@ -606,6 +559,7 @@ fn bind_session_device_session(
     session.device_token = Some(response.device_session.device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
+    session.network_ids = response.device_session.active_network_ids.clone();
     session.mqtt = mqtt.or(session.mqtt.take());
     if !relay_candidates.is_empty() {
         session.relay_candidates = relay_candidates.clone();
@@ -864,13 +818,6 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
     else {
         return;
     };
-    let _ = client.renew_device_session(
-        device_token,
-        session.device_refresh_token.as_deref(),
-        state.network_enabled,
-        state.traffic_rx_bytes.unwrap_or_default(),
-        state.traffic_tx_bytes.unwrap_or_default(),
-    );
     if state.network_enabled {
         let body = serde_json::json!({
             "deviceId": device_id,
@@ -881,10 +828,9 @@ pub(crate) fn report_runtime_state(state: &ClientViewState) {
             "rxBytesTotal": state.traffic_rx_bytes.unwrap_or_default(),
             "txBytesTotal": state.traffic_tx_bytes.unwrap_or_default(),
         });
-        let _ = client.report_device_runtime(session_device_api_token(&session), device_id, body);
+        let _ = client.report_device_runtime(device_token, device_id, body);
     } else {
-        let _ =
-            client.deactivate_network(session_device_api_token(&session), device_id, network_id);
+        let _ = client.deactivate_network(device_token, device_id, network_id);
     }
 }
 
@@ -922,7 +868,7 @@ pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device:
     }
 }
 
-fn session_file_path() -> PathBuf {
+fn legacy_session_file_path() -> PathBuf {
     let base = app_data_dir();
     base.join("SLAN").join("client-v2-session.json")
 }
@@ -1029,15 +975,6 @@ pub(crate) fn clear_pending_console_login() -> Result<()> {
     Ok(())
 }
 
-fn default_string(value: &str, fallback: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() {
-        fallback.to_string()
-    } else {
-        value.to_string()
-    }
-}
-
 pub(crate) fn app_data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
         return PathBuf::from(dir);
@@ -1065,48 +1002,35 @@ pub(crate) fn app_data_dir() -> PathBuf {
 }
 
 pub(crate) fn load_session() -> Result<PersistedSession> {
-    let path = session_file_path();
-    let payload = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let mut session: PersistedSession =
-        serde_json::from_slice(&payload).with_context(|| format!("decode {}", path.display()))?;
+    let device_id = local_stable_device_id().context("load device id for client config")?;
+    let mut session = match crate::client_config::load_secret::<PersistedSession>(
+        &device_id,
+        crate::client_config::KEY_SESSION,
+    )? {
+        Some(session) => session,
+        None => migrate_legacy_session(&device_id)?,
+    };
     session.relay_candidates.clear();
     normalize_session_mqtt_topic_prefix(&mut session);
     Ok(session)
 }
 
 pub(crate) fn persist_session(session: &PersistedSession) -> Result<()> {
-    let path = session_file_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
+    let device_id = local_stable_device_id().context("load device id for client config")?;
     let mut session = session.clone();
     session.relay_candidates.clear();
     normalize_session_mqtt_topic_prefix(&mut session);
-    let payload = serde_json::to_vec_pretty(&session).context("encode client session")?;
-    write_file_atomically(&path, &payload)
+    crate::client_config::store_secret(&device_id, crate::client_config::KEY_SESSION, &session)
 }
 
-fn write_file_atomically(path: &std::path::Path, payload: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .context("atomic write path missing parent directory")?;
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .context("atomic write path missing file name")?;
-    let temp_path = parent.join(format!(
-        ".{}.tmp-{}-{}",
-        file_name,
-        std::process::id(),
-        current_timestamp_ms()
-    ));
-    fs::write(&temp_path, payload).with_context(|| format!("write {}", temp_path.display()))?;
-    #[cfg(windows)]
-    if path.exists() {
-        fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
-    }
-    fs::rename(&temp_path, path)
-        .with_context(|| format!("rename {} -> {}", temp_path.display(), path.display()))
+fn migrate_legacy_session(device_id: &str) -> Result<PersistedSession> {
+    let path = legacy_session_file_path();
+    let payload = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let session: PersistedSession =
+        serde_json::from_slice(&payload).with_context(|| format!("decode {}", path.display()))?;
+    crate::client_config::store_secret(device_id, crate::client_config::KEY_SESSION, &session)?;
+    fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+    Ok(session)
 }
 
 pub(crate) fn revoke_remote_sessions(session: &PersistedSession) {
@@ -1122,9 +1046,12 @@ pub(crate) fn revoke_remote_sessions(session: &PersistedSession) {
 }
 
 pub(crate) fn remove_session() -> Result<()> {
-    let path = session_file_path();
-    if path.exists() {
-        fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+    let device_id = local_stable_device_id().context("load device id for client config")?;
+    crate::client_config::remove_secret(&device_id, crate::client_config::KEY_SESSION)?;
+    let legacy_path = legacy_session_file_path();
+    if legacy_path.exists() {
+        fs::remove_file(&legacy_path)
+            .with_context(|| format!("remove {}", legacy_path.display()))?;
     }
     Ok(())
 }
@@ -1175,6 +1102,38 @@ mod tests {
         )));
 
         assert!(!device_session_should_renew(&session));
+    }
+
+    #[test]
+    fn expired_standalone_device_session_is_renewed() {
+        let mut session = PersistedSession::empty();
+        session.session_kind = "device".to_string();
+        session.access_token = "device-token-old".to_string();
+        session.device_token = Some("device-token-old".to_string());
+        session.device_refresh_token = Some("device-refresh-token".to_string());
+        session.device_token_expires_at = Some((current_timestamp_ms() / 1_000) as i64 - 1);
+
+        assert!(session_is_expired(&session));
+        assert!(device_session_should_renew(&session));
+    }
+
+    #[test]
+    fn persisted_session_json_contains_device_credentials() {
+        let mut session = PersistedSession::empty();
+        session.session_kind = "user".to_string();
+        session.access_token = "user-token".to_string();
+        session.refresh_token = Some("user-refresh-token".to_string());
+        session.device_session_id = Some("device-session-1".to_string());
+        session.device_token = Some("device-token".to_string());
+        session.device_refresh_token = Some("device-refresh-token".to_string());
+        session.device_token_expires_at = Some(4_102_444_800);
+
+        let payload = serde_json::to_value(&session).expect("encode persisted session");
+
+        assert_eq!(payload["deviceSessionId"], "device-session-1");
+        assert_eq!(payload["deviceToken"], "device-token");
+        assert_eq!(payload["deviceRefreshToken"], "device-refresh-token");
+        assert_eq!(payload["deviceTokenExpiresAt"], 4_102_444_800i64);
     }
 
     #[test]
@@ -1300,33 +1259,5 @@ mod tests {
 
         assert_eq!(session.device_id.as_deref(), Some("remote-device"));
         assert_eq!(session.active_network_id.as_deref(), Some("net-1"));
-    }
-
-    #[test]
-    fn preserve_session_network_identity_keeps_previous_network_values() {
-        let mut previous = PersistedSession::empty();
-        previous.active_network_id = Some("net-1".to_string());
-        previous.virtual_ip = Some("10.0.1.21".to_string());
-
-        let mut current = PersistedSession::empty();
-        preserve_session_network_identity(&previous, &mut current);
-
-        assert_eq!(current.active_network_id.as_deref(), Some("net-1"));
-        assert_eq!(current.virtual_ip.as_deref(), Some("10.0.1.21"));
-    }
-
-    #[test]
-    fn preserve_session_network_identity_does_not_override_current_values() {
-        let mut previous = PersistedSession::empty();
-        previous.active_network_id = Some("net-1".to_string());
-        previous.virtual_ip = Some("10.0.1.21".to_string());
-
-        let mut current = PersistedSession::empty();
-        current.active_network_id = Some("net-2".to_string());
-        current.virtual_ip = Some("10.0.1.22".to_string());
-        preserve_session_network_identity(&previous, &mut current);
-
-        assert_eq!(current.active_network_id.as_deref(), Some("net-2"));
-        assert_eq!(current.virtual_ip.as_deref(), Some("10.0.1.22"));
     }
 }

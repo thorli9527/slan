@@ -17,8 +17,6 @@ export function workspacePanelPath(workspaceId: string, panel: WorkspacePanel, s
       return `${base}/zones`;
     case 'records':
       return `${base}/zones/${encodeURIComponent(selectedZoneId)}/records`;
-    case 'publicMappings':
-      return `${base}/public-mappings`;
     case 'securityGroups':
       return selectedSecurityGroupId && selectedSecurityGroupId !== 'default' ? `${base}/security-groups/${encodeURIComponent(selectedSecurityGroupId)}` : `${base}/security-groups`;
     case 'securityRules':
@@ -51,8 +49,6 @@ export function panelFromRoute(route: string): WorkspaceRoutePanel {
       return { panel: 'zones' };
     case 'zones':
       return { panel: 'zones' };
-    case 'public-mappings':
-      return { panel: 'publicMappings' };
     case 'security-groups':
       return { panel: 'securityGroups' };
     default:

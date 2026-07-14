@@ -8,7 +8,8 @@ import (
 )
 
 type NetworkConfigHandler struct {
-	NetworkCore servicepkg.NetworkCoreUseCase
+	NetworkCore    servicepkg.NetworkCoreUseCase
+	DeviceSessions servicepkg.DeviceSessionUseCase
 }
 
 func (h NetworkConfigHandler) Routes() []serviceapi.Route {
@@ -18,7 +19,11 @@ func (h NetworkConfigHandler) Routes() []serviceapi.Route {
 }
 
 func (h NetworkConfigHandler) NetworkConfig(w http.ResponseWriter, r *http.Request) {
-	view, err := h.NetworkCore.ResolvedNetworkConfig(r.Context(), requestNetworkID(r), requestDeviceID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r))
+	if !ok {
+		return
+	}
+	view, err := h.NetworkCore.ResolvedNetworkConfig(r.Context(), requestNetworkID(r), deviceID)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return

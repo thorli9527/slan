@@ -1,10 +1,6 @@
 package service
 
-import (
-	"context"
-
-	"github.com/slan/service-biz/internal/model"
-)
+import "context"
 
 func (s DeviceBootstrapKeyService) CreateDeviceBootstrapKey(ctx context.Context, input CreateDeviceBootstrapKeyInput) (DeviceBootstrapKeyView, error) {
 	input = normalizeCreateDeviceBootstrapKeyInput(input)
@@ -58,48 +54,27 @@ func (s DeviceBootstrapSessionService) BootstrapDeviceSession(ctx context.Contex
 	}
 	input = applyBootstrapSessionOwner(input, bootstrapKey)
 
-	var device model.Device
-	if input.DeviceID != "" {
-		item, err := getManagedDevice(ctx, s.Devices, input.DeviceID)
-		if err != nil {
-			return DeviceSessionBootstrapView{}, err
-		}
-		device = item
-	} else {
-		if input.OwnerID == "" || input.Name == "" || input.Platform == "" {
-			return DeviceSessionBootstrapView{}, ErrInvalidArgument
-		}
-		item, err := registerManagedDevice(ctx, s.Users, s.Devices, s.Networks, s.Now, nil, RegisterDeviceInput{
-			OwnerID:       input.OwnerID,
-			DeviceID:      input.DeviceID,
-			Name:          input.Name,
-			Platform:      input.Platform,
-			Alias:         input.Alias,
-			OSName:        input.OSName,
-			OSVersion:     input.OSVersion,
-			PublicKey:     input.PublicKey,
-			DeviceVersion: input.DeviceVersion,
-			CountryCode:   input.CountryCode,
-		})
-		if err != nil {
-			return DeviceSessionBootstrapView{}, err
-		}
-		device = item
+	device, err := registerInstalledDevice(ctx, s.Users, s.Devices, s.Now, RegisterDeviceInput{
+		OwnerID:       input.OwnerID,
+		DeviceID:      input.DeviceID,
+		Name:          input.Name,
+		Platform:      input.Platform,
+		Alias:         input.Alias,
+		OSName:        input.OSName,
+		OSVersion:     input.OSVersion,
+		PublicKey:     input.PublicKey,
+		DeviceVersion: input.DeviceVersion,
+		CountryCode:   input.CountryCode,
+	})
+	if err != nil {
+		return DeviceSessionBootstrapView{}, err
 	}
 	session, err := newManagedDeviceSession(now, s.NewSessID, device.DeviceID, input.SessionMode)
 	if err != nil {
 		return DeviceSessionBootstrapView{}, err
 	}
-	if err := s.Devices.SaveDeviceSession(ctx, session); err != nil {
+	if err := replaceDeviceSession(ctx, s.Devices, session); err != nil {
 		return DeviceSessionBootstrapView{}, err
-	}
-	if bootstrapKey != nil && bootstrapKey.NetworkID != "" {
-		if err := s.Networks.SaveNetworkDevice(ctx, newBootstrapNetworkDevice(bootstrapKey.NetworkID, device.DeviceID, now.Unix())); err != nil {
-			return DeviceSessionBootstrapView{}, err
-		}
-		if _, err := bumpNetworkConfigVersion(ctx, s.Networks, nil, s.Now, bootstrapKey.NetworkID, "bootstrap_member_attached"); err != nil {
-			return DeviceSessionBootstrapView{}, err
-		}
 	}
 	if bootstrapKey != nil {
 		usedAt := now.Unix()

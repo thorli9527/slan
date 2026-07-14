@@ -42,6 +42,7 @@ export class AppComponent extends AppComponentAuth {
   }
 
   ngOnDestroy(): void {
+    this.disposeAuthLifecycle();
     window.removeEventListener('popstate', this.handlePopState);
     window.removeEventListener('keydown', this.handleWindowKeyDown);
   }

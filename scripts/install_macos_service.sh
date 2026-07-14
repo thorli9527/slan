@@ -130,6 +130,7 @@ pkill -x "client-core-service" >/dev/null 2>&1 || true
 rm -f "$PLIST" "$SERVICE_BIN" "$SERVICE_PID"
 if [[ "$RESET_IDENTITY" == "1" ]]; then
   rm -f \
+    "${INSTALL_DIR}/config.json" \
     "${INSTALL_DIR}/client-v2-session.json" \
     "${INSTALL_DIR}/client-v2-device-id.txt" \
     "${INSTALL_DIR}/client-v2-device-public-key.txt"

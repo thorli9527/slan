@@ -211,4 +211,13 @@ func TestBuildNetworkEventSnapshotPayloadBuildsFullFQDN(t *testing.T) {
 	if payload.DNSRecords[0].FQDN != "self.example.lan" {
 		t.Fatalf("expected full fqdn, got %q", payload.DNSRecords[0].FQDN)
 	}
+	if len(payload.DNSConfig.Servers) != 1 || payload.DNSConfig.Servers[0] != DefaultNetworkDNSServer {
+		t.Fatalf("expected dns config default server, got %+v", payload.DNSConfig.Servers)
+	}
+	if len(payload.DNSConfig.SearchDomains) != 1 || payload.DNSConfig.SearchDomains[0] != "example.lan" {
+		t.Fatalf("expected dns search domain, got %+v", payload.DNSConfig.SearchDomains)
+	}
+	if len(payload.DNSConfig.SplitDomains) != 1 || payload.DNSConfig.SplitDomains[0] != "example.lan" {
+		t.Fatalf("expected dns split domain, got %+v", payload.DNSConfig.SplitDomains)
+	}
 }

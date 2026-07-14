@@ -29,9 +29,12 @@ func newAuthServices(deps UseCaseDependencies) AuthServices {
 		ConsoleAuth: servicepkg.NewAuthConsoleService(repos.Users, repos.Sessions, ids.NewSessionID, nil),
 		DeviceLoginAuth: servicepkg.NewAuthDeviceLoginService(
 			repos.Users,
+			repos.Sessions,
 			repos.Devices,
 			deps.networkRepositories().Networks,
 			deps.mqttConfig(),
+			servicepkg.NewDeviceControlPublisher(deps.mqttConfig()),
+			servicepkg.NewNetworkEventPublisher(deps.mqttConfig()),
 			nil,
 		),
 	}

@@ -3,10 +3,6 @@ package service
 import "context"
 
 type NetworkAccessUseCase interface {
-	ListPublicMappings(ctx context.Context, networkID string) ([]PublicMappingView, error)
-	CreatePublicMapping(ctx context.Context, input CreatePublicMappingInput) (PublicMappingView, error)
-	UpdatePublicMapping(ctx context.Context, input UpdatePublicMappingInput) (PublicMappingView, error)
-	DeletePublicMapping(ctx context.Context, input DeletePublicMappingInput) error
 	ListSecurityGroups(ctx context.Context, networkID string) ([]SecurityGroupView, error)
 	CreateSecurityGroup(ctx context.Context, input CreateSecurityGroupInput) (SecurityGroupView, error)
 	UpdateSecurityGroup(ctx context.Context, input UpdateSecurityGroupInput) (SecurityGroupView, error)

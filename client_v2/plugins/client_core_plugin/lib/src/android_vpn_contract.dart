@@ -24,16 +24,19 @@ class AndroidVpnConsentRequest {
   }
 }
 
+const _resolverConfigKey = 'resolver';
+
 /// AndroidVpnSessionConfig 是启动 Android VpnService 所需的完整网络配置。
+///
+/// 这里仅透传平台协议里的 `resolver` 负载；
+/// Flutter 层不再展开或管理 zone / record 级别数据。
 class AndroidVpnSessionConfig {
   const AndroidVpnSessionConfig({
     required this.sessionName,
     required this.virtualIp,
     required this.prefixLen,
     this.networkConfigs = const <PlatformDeviceNetworkConfig>[],
-    this.dnsServers = const <String>[],
-    this.dnsZones = const <PlatformDnsZone>[],
-    this.dnsRecords = const <PlatformDnsRecord>[],
+    Map<String, Object?>? resolverConfigPayload,
     this.routes = const <Map<String, Object?>>[],
     this.mtu,
     this.relayEndpointId,
@@ -41,15 +44,13 @@ class AndroidVpnSessionConfig {
     this.relayAddress,
     this.aclPolicies = const <PlatformAclPolicy>[],
     this.relayDataPlane,
-  });
+  }) : _resolverConfigPayload = resolverConfigPayload;
 
   final String sessionName;
   final String virtualIp;
   final int prefixLen;
   final List<PlatformDeviceNetworkConfig> networkConfigs;
-  final List<String> dnsServers;
-  final List<PlatformDnsZone> dnsZones;
-  final List<PlatformDnsRecord> dnsRecords;
+  final Map<String, Object?>? _resolverConfigPayload;
   final List<Map<String, Object?>> routes;
   final int? mtu;
   final String? relayEndpointId;
@@ -64,9 +65,7 @@ class AndroidVpnSessionConfig {
       virtualIp: _virtualIp(json['virtualIp']),
       prefixLen: json['prefixLen'] as int? ?? 32,
       networkConfigs: _platformDeviceNetworkConfigs(json['networkConfigs']),
-      dnsServers: _stringList(json['dnsServers']),
-      dnsZones: _platformDnsZones(json['dnsZones']),
-      dnsRecords: _platformDnsRecords(json['dnsRecords']),
+      resolverConfigPayload: _jsonMapPayload(json[_resolverConfigKey]),
       routes: _mapList(json['routes']),
       mtu: json['mtu'] as int?,
       relayEndpointId: json['relayEndpointId'] as String?,
@@ -84,9 +83,7 @@ class AndroidVpnSessionConfig {
       'prefixLen': prefixLen,
       'networkConfigs':
           networkConfigs.map((config) => config.toJson()).toList(),
-      'dnsServers': dnsServers,
-      'dnsZones': dnsZones.map((zone) => zone.toJson()).toList(),
-      'dnsRecords': dnsRecords.map((record) => record.toJson()).toList(),
+      _resolverConfigKey: _resolverConfigPayload ?? const <String, Object?>{},
       'routes': routes,
       if (mtu != null) 'mtu': mtu,
       if (relayEndpointId != null) 'relayEndpointId': relayEndpointId,
@@ -120,7 +117,6 @@ class PlatformDeviceNetworkConfig {
     this.globalIp,
     this.globalName,
     this.peerCount = 0,
-    this.dnsRecordCount = 0,
     this.securityRuleCount = 0,
     this.relayCandidateCount = 0,
   });
@@ -134,7 +130,6 @@ class PlatformDeviceNetworkConfig {
   final String? globalIp;
   final String? globalName;
   final int peerCount;
-  final int dnsRecordCount;
   final int securityRuleCount;
   final int relayCandidateCount;
 
@@ -149,7 +144,6 @@ class PlatformDeviceNetworkConfig {
       globalIp: json['globalIp'] as String?,
       globalName: json['globalName'] as String?,
       peerCount: json['peerCount'] as int? ?? 0,
-      dnsRecordCount: json['dnsRecordCount'] as int? ?? 0,
       securityRuleCount: json['securityRuleCount'] as int? ?? 0,
       relayCandidateCount: json['relayCandidateCount'] as int? ?? 0,
     );
@@ -166,97 +160,8 @@ class PlatformDeviceNetworkConfig {
       if (globalIp != null) 'globalIp': globalIp,
       if (globalName != null) 'globalName': globalName,
       'peerCount': peerCount,
-      'dnsRecordCount': dnsRecordCount,
       'securityRuleCount': securityRuleCount,
       'relayCandidateCount': relayCandidateCount,
-    };
-  }
-}
-
-class PlatformDnsZone {
-  const PlatformDnsZone({
-    required this.zoneId,
-    required this.networkId,
-    required this.zoneName,
-  });
-
-  final String zoneId;
-  final String networkId;
-  final String zoneName;
-
-  factory PlatformDnsZone.fromJson(Map<String, Object?> json) {
-    return PlatformDnsZone(
-      zoneId: json['zoneId'] as String? ?? '',
-      networkId: json['networkId'] as String? ?? '',
-      zoneName: json['zoneName'] as String? ?? '',
-    );
-  }
-
-  Map<String, Object?> toJson() {
-    return {
-      'zoneId': zoneId,
-      'networkId': networkId,
-      'zoneName': zoneName,
-    };
-  }
-}
-
-class PlatformDnsRecord {
-  const PlatformDnsRecord({
-    required this.recordId,
-    required this.zoneId,
-    required this.networkId,
-    required this.name,
-    this.fqdn,
-    this.recordType = '',
-    this.targetDeviceId,
-    this.targetIp,
-    this.cname,
-    this.port,
-    this.ttl,
-  });
-
-  final String recordId;
-  final String zoneId;
-  final String networkId;
-  final String name;
-  final String? fqdn;
-  final String recordType;
-  final String? targetDeviceId;
-  final String? targetIp;
-  final String? cname;
-  final String? port;
-  final int? ttl;
-
-  factory PlatformDnsRecord.fromJson(Map<String, Object?> json) {
-    return PlatformDnsRecord(
-      recordId: json['recordId'] as String? ?? '',
-      zoneId: json['zoneId'] as String? ?? '',
-      networkId: json['networkId'] as String? ?? '',
-      name: json['name'] as String? ?? '',
-      fqdn: json['fqdn'] as String?,
-      recordType: json['recordType'] as String? ?? '',
-      targetDeviceId: json['targetDeviceId'] as String?,
-      targetIp: json['targetIp'] as String?,
-      cname: json['cname'] as String?,
-      port: json['port'] as String?,
-      ttl: json['ttl'] as int?,
-    );
-  }
-
-  Map<String, Object?> toJson() {
-    return {
-      'recordId': recordId,
-      'zoneId': zoneId,
-      'networkId': networkId,
-      'name': name,
-      if (fqdn != null) 'fqdn': fqdn,
-      'recordType': recordType,
-      if (targetDeviceId != null) 'targetDeviceId': targetDeviceId,
-      if (targetIp != null) 'targetIp': targetIp,
-      if (cname != null) 'cname': cname,
-      if (port != null) 'port': port,
-      if (ttl != null) 'ttl': ttl,
     };
   }
 }
@@ -707,24 +612,14 @@ List<PlatformDeviceNetworkConfig> _platformDeviceNetworkConfigs(Object? value) {
       .toList();
 }
 
-List<PlatformDnsZone> _platformDnsZones(Object? value) {
-  if (value is! List) {
-    return const <PlatformDnsZone>[];
+Map<String, Object?>? _jsonMapPayload(Object? value) {
+  if (value is Map<String, Object?>) {
+    return value;
   }
-  return value
-      .whereType<Map>()
-      .map((item) => PlatformDnsZone.fromJson(item.cast<String, Object?>()))
-      .toList();
-}
-
-List<PlatformDnsRecord> _platformDnsRecords(Object? value) {
-  if (value is! List) {
-    return const <PlatformDnsRecord>[];
+  if (value is Map) {
+    return value.map((key, item) => MapEntry('$key', item));
   }
-  return value
-      .whereType<Map>()
-      .map((item) => PlatformDnsRecord.fromJson(item.cast<String, Object?>()))
-      .toList();
+  return null;
 }
 
 List<PlatformAclPolicy> _platformAclPolicies(Object? value) {

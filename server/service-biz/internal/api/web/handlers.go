@@ -30,9 +30,11 @@ type RouteDependencies struct {
 func Routes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.WithRequiredPrefix(serviceapi.CombineRoutes(
 		authRoutes(deps),
-		userRoutes(deps),
-		deviceRoutes(deps),
-		networkRoutes(deps),
+		withRequiredUserSession(serviceapi.CombineRoutes(
+			userRoutes(deps),
+			deviceRoutes(deps),
+			networkRoutes(deps),
+		), deps.AuthSessions),
 		downloadRoutes(deps),
 	), "/api/web")
 }
@@ -60,7 +62,7 @@ func userRoutes(deps RouteDependencies) []serviceapi.Route {
 			UserEntitlements: deps.UserEntitlements,
 		}.Routes(),
 		TokenManagementHandler{
-			UserTokens: deps.UserTokens,
+			UserTokens:   deps.UserTokens,
 			DeviceTokens: deps.DeviceTokens,
 		}.Routes(),
 		UserAliasHandler{AuthAlias: deps.AuthAlias}.Routes(),
@@ -79,9 +81,8 @@ func networkRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
 		NetworkCoreHandler{NetworkCore: deps.NetworkCore}.Routes(),
 		NetworkInviteHandler{NetworkInvite: deps.NetworkInvite}.Routes(),
-		NetworkMembershipHandler{NetworkInvite: deps.NetworkInvite}.Routes(),
+		NetworkMembershipHandler{NetworkDevices: deps.NetworkInvite}.Routes(),
 		NetworkDNSHandler{NetworkDNS: deps.NetworkDNS}.Routes(),
-		NetworkMappingHandler{NetworkAccess: deps.NetworkAccess}.Routes(),
 		NetworkSecurityHandler{NetworkAccess: deps.NetworkAccess}.Routes(),
 	)
 }

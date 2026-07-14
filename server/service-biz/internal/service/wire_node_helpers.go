@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"sort"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
@@ -134,9 +135,19 @@ func wireStableRelayCandidate(candidates []RelayCandidateView, sessionID string)
 	if sessionID == "" {
 		return RelayCandidateView{}, false
 	}
+	stableCandidates := append([]RelayCandidateView(nil), candidates...)
+	sort.Slice(stableCandidates, func(i, j int) bool {
+		if stableCandidates[i].EndpointID != stableCandidates[j].EndpointID {
+			return stableCandidates[i].EndpointID < stableCandidates[j].EndpointID
+		}
+		if stableCandidates[i].Transport != stableCandidates[j].Transport {
+			return stableCandidates[i].Transport < stableCandidates[j].Transport
+		}
+		return stableCandidates[i].Address < stableCandidates[j].Address
+	})
 	sum := sha256.Sum256([]byte(sessionID))
-	index := int(binary.BigEndian.Uint64(sum[:8]) % uint64(len(candidates)))
-	return candidates[index], true
+	index := int(binary.BigEndian.Uint64(sum[:8]) % uint64(len(stableCandidates)))
+	return stableCandidates[index], true
 }
 
 func stableRelaySessionSeed(networkID, srcNodeID, dstNodeID string) string {

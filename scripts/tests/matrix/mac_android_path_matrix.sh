@@ -90,6 +90,10 @@ patch_node_status() {
 
 set_relay_nodes() {
   local enabled="$1"
+  if [[ "$SKIP_ADMIN_PATCH" == "1" ]]; then
+    echo "skip relay node administration: requested enabled=$enabled"
+    return 0
+  fi
   local -a nodes=()
   while IFS= read -r node; do
     [[ -n "$node" ]] && nodes+=("$node")
@@ -103,6 +107,10 @@ set_relay_nodes() {
 
 set_derp_nodes() {
   local enabled="$1"
+  if [[ "$SKIP_ADMIN_PATCH" == "1" ]]; then
+    echo "skip derp node administration: requested enabled=$enabled"
+    return 0
+  fi
   local -a nodes=()
   while IFS= read -r node; do
     [[ -n "$node" ]] && nodes+=("$node")
@@ -196,6 +204,8 @@ run_socket_check() {
 }
 
 run_direct() {
+  export SLAN_DIRECT_UDP_ENDPOINT=
+  unset SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST
   set_relay_nodes true
   set_derp_nodes true
   install_macos_service_direct
@@ -207,23 +217,29 @@ run_direct() {
 }
 
 run_udp_relay() {
+  export SLAN_DIRECT_UDP_ENDPOINT=disabled
+  export SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=udp
   set_relay_nodes true
   set_derp_nodes true
   install_macos_service_no_direct
   run_socket_check udp-relay \
     SLAN_SKIP_ANDROID_TCP_SEND=1 \
+    SLAN_SKIP_MAC_TCP_SEND=1 \
     SLAN_EXPECT_ANDROID_RELAY_URL_CONTAINS="udp://" \
     SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS=relay_udp \
     ${SLAN_EXPECT_RELAY_FRAMES_SENT_MIN:+SLAN_EXPECT_ANDROID_RELAY_FRAMES_SENT_MIN="$SLAN_EXPECT_RELAY_FRAMES_SENT_MIN"}
 }
 
 run_tcp_relay() {
+  export SLAN_DIRECT_UDP_ENDPOINT=disabled
+  export SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TCP_RELAY_TRANSPORT_ALLOWLIST:-derp_tcp_tls_443}"
   set_relay_nodes false
   set_derp_nodes true
-  export SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-derp_tcp_tls_443}"
   install_macos_service_no_direct
   run_socket_check tcp-relay \
+    SLAN_ANDROID_TEST_TIMEOUT_SECONDS="${SLAN_TCP_RELAY_ANDROID_TEST_TIMEOUT_SECONDS:-240}" \
     SLAN_SKIP_ANDROID_UDP_SEND=1 \
+    SLAN_SKIP_MAC_UDP_SEND=1 \
     SLAN_EXPECT_ANDROID_RELAY_URL_CONTAINS="derp://" \
     SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS=derp_tcp_tls_443 \
     SLAN_EXPECT_ANDROID_DERP_PEER_IPS_CONTAINS="node-" \

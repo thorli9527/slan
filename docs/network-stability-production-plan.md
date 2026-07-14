@@ -14,7 +14,7 @@
 
 ### 设备 ID 生命周期
 
-- macOS / Windows / Linux：安装、覆盖安装、升级必须保留 `client-v2-device-id.txt`。
+- macOS / Windows / Linux：安装、覆盖安装、升级必须保留 `config.json`。
 - Android / iOS：App 升级必须保留平台持久化 `deviceId`；清除 App 数据或卸载重装后允许生成新 ID。
 - 服务端必须能识别同一个 `deviceId` 被不同物理设备并发使用的异常：同一时间出现不同公钥、平台指纹或 MQTT client 连接冲突时记录安全事件，并拒绝静默串号。
 - 验收：五个平台各跑“首次安装、升级、重启、卸载重装、两台设备并发登录”矩阵，确认设备 ID、用户 session、设备 session 不串。

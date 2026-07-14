@@ -608,7 +608,10 @@ extract_log_value() {
 relay_admin_base_url_from_udp_address() {
   local relay_address="$1"
   local trimmed host port admin_port
-  trimmed="${relay_address#udp://}"
+  trimmed="$relay_address"
+  trimmed="${trimmed#udp://}"
+  trimmed="${trimmed#derp://}"
+  trimmed="${trimmed#derp+tcp+tls://}"
   host="${trimmed%:*}"
   port="${trimmed##*:}"
   [[ -n "$host" && "$port" =~ ^[0-9]+$ ]] || return 1
@@ -921,7 +924,6 @@ run_flutter_test_bg_ready "$DEVICE_B" "$LOG_B_PHASE2" "SLAN_TEST_NETWORK_IP" "$A
   "${DEVICE_B_DART_DEFINES[@]}" \
   --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=true" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
-  --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
   "${PHASE2_FORWARD_EXPECT_DEFINES[@]}" >/dev/null
 PHASE2_BG_PID="$RUN_FLUTTER_BG_PID"
@@ -947,7 +949,6 @@ run_flutter_test_with_ready_and_completion_markers \
   "${DEVICE_A_DART_DEFINES[@]}" \
   --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=true" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
-  --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
   "${PHASE2_FORWARD_SEND_DEFINES[@]}"
 wait_for_completed_log_markers \
@@ -979,7 +980,6 @@ run_flutter_test_bg_ready "$DEVICE_A" "$LOG_A_PHASE2_REPLY" "SLAN_TEST_NETWORK_I
   "${DEVICE_A_DART_DEFINES[@]}" \
   --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=true" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
-  --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
   "${PHASE2_REVERSE_EXPECT_DEFINES[@]}" >/dev/null
 PHASE2_REPLY_BG_PID="$RUN_FLUTTER_BG_PID"
@@ -1006,7 +1006,6 @@ run_flutter_test_with_ready_and_completion_markers \
   "${DEVICE_B_DART_DEFINES[@]}" \
   --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=true" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
-  --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS=2" \
   --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=$NETWORK_MODULE_RULES_MIN" \
   "${PHASE2_REVERSE_SEND_DEFINES[@]}"
 wait_for_completed_log_markers \

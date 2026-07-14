@@ -8,7 +8,8 @@ import (
 )
 
 type ClientMessageHandler struct {
-	Messages servicepkg.ClientMessageUseCase
+	Messages       servicepkg.ClientMessageUseCase
+	DeviceSessions servicepkg.DeviceSessionUseCase
 }
 
 func (h ClientMessageHandler) Routes() []serviceapi.Route {
@@ -23,7 +24,11 @@ func (h ClientMessageHandler) SendClientMessage(w http.ResponseWriter, r *http.R
 		return
 	}
 	input := req.toInput()
-	serviceapi.SetIfEmpty(&input.FromDeviceID, requestDeviceID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r), input.FromDeviceID)
+	if !ok {
+		return
+	}
+	input.FromDeviceID = deviceID
 	item, err := h.Messages.SendClientMessage(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)

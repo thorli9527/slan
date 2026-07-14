@@ -14,6 +14,7 @@ type PrepareDeviceLoginDeviceInput struct {
 }
 
 type CompleteDeviceLoginDeviceInput struct {
+	AccessToken   string `json:"accessToken"`
 	DeviceID      string `json:"deviceId"`
 	UserID        string `json:"userId"`
 	Name          string `json:"name"`

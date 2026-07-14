@@ -4,11 +4,12 @@ import Network
 
 public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private static let launchdServiceLabel = "dev.slan.client-core-service"
-  private static let bundledServiceHost = "127.0.0.1:46394"
-  private static let trayOpenTitle = "Open"
+  private static let defaultServiceHost = "127.0.0.1:46392"
+  private static let trayOpenTitle = "Open Client"
   private static let trayNetworkTitle = "Network"
   private static let trayQuitTitle = "Quit"
   private var statusItem: NSStatusItem?
+  private var trayStatusMenuItem: NSMenuItem?
   private var networkMenuItem: NSMenuItem?
   private let bundledServiceLock = NSLock()
   private var bundledServiceProcess: Process?
@@ -68,10 +69,14 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
 
   private func installStatusItem() {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    applyStatusIcon(networkEnabled: false, serviceAvailable: false)
+    applyStatusIcon(signedIn: false, networkEnabled: false, serviceAvailable: false)
     item.button?.toolTip = "SLAN Client"
 
     let menu = NSMenu()
+    let trayStatusItem = NSMenuItem(title: "Status: Starting", action: nil, keyEquivalent: "")
+    trayStatusItem.isEnabled = false
+    menu.addItem(trayStatusItem)
+    menu.addItem(NSMenuItem.separator())
     menu.addItem(makeMenuItem(
       title: Self.trayOpenTitle,
       action: #selector(openMainWindow),
@@ -92,30 +97,48 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       keyEquivalent: "q"
     ))
     item.menu = menu
+    trayStatusMenuItem = trayStatusItem
     networkMenuItem = networkItem
     self.statusItem = item
-    applyStatusIcon(networkEnabled: false, serviceAvailable: false)
+    applyStatusIcon(signedIn: false, networkEnabled: false, serviceAvailable: false)
     startStateWatchLoop()
   }
 
-  private func applyStatusIcon(networkEnabled: Bool, serviceAvailable: Bool) {
+  private func applyStatusIcon(
+    signedIn: Bool,
+    networkEnabled: Bool,
+    serviceAvailable: Bool
+  ) {
     guard let button = statusItem?.button else {
       return
     }
-    let image = makeVLStatusImage(networkEnabled: networkEnabled, serviceAvailable: serviceAvailable)
+    let image = makeVLStatusImage(
+      signedIn: signedIn,
+      networkEnabled: networkEnabled,
+      serviceAvailable: serviceAvailable
+    )
     button.image = image
     button.imagePosition = .imageOnly
   }
 
-  private func makeVLStatusImage(networkEnabled: Bool, serviceAvailable: Bool) -> NSImage {
+  private func makeVLStatusImage(
+    signedIn: Bool,
+    networkEnabled: Bool,
+    serviceAvailable: Bool
+  ) -> NSImage {
     let size = NSSize(width: 22, height: 22)
     let image = NSImage(size: size)
     image.lockFocus()
-    let fill = networkEnabled
-      ? NSColor(calibratedRed: 0.04, green: 0.39, blue: 0.96, alpha: 1)
-      : (serviceAvailable
-        ? NSColor(calibratedRed: 0.43, green: 0.48, blue: 0.57, alpha: 1)
-        : NSColor(calibratedRed: 0.83, green: 0.20, blue: 0.17, alpha: 1))
+    let fill: NSColor
+    if !serviceAvailable {
+      fill = NSColor(calibratedRed: 0.83, green: 0.20, blue: 0.17, alpha: 1)
+    } else if networkEnabled {
+      fill = NSColor(calibratedRed: 0.04, green: 0.39, blue: 0.96, alpha: 1)
+    } else if signedIn {
+      fill = NSColor(calibratedRed: 0.93, green: 0.39, blue: 0.06, alpha: 1)
+    } else {
+      fill = NSColor(calibratedRed: 0.43, green: 0.48, blue: 0.57, alpha: 1)
+    }
     fill.setFill()
     NSBezierPath(roundedRect: NSRect(x: 1, y: 1, width: 20, height: 20), xRadius: 5, yRadius: 5).fill()
     let paragraph = NSMutableParagraphStyle()
@@ -261,8 +284,9 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     }
     latestMenuState = nil
     statusItem?.button?.toolTip = "SLAN Client - Service unavailable"
-    applyStatusIcon(networkEnabled: false, serviceAvailable: false)
-    networkMenuItem?.title = Self.trayNetworkTitle
+    applyStatusIcon(signedIn: false, networkEnabled: false, serviceAvailable: false)
+    trayStatusMenuItem?.title = "Status: Service unavailable"
+    networkMenuItem?.title = "Network unavailable"
     networkMenuItem?.isEnabled = false
     networkMenuItem?.state = .off
   }
@@ -281,23 +305,40 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if !error.isEmpty {
       statusText = "Error"
     } else if syncing {
-      statusText = "Connecting"
+      statusText = "Updating network"
     } else if networkEnabled {
-      statusText = "Connected"
+      statusText = "Network enabled"
     } else if signedIn {
-      statusText = "Disconnected"
+      statusText = "Network disabled"
     } else {
       statusText = "Signed out"
     }
-    networkMenuItem?.title = Self.trayNetworkTitle
+    trayStatusMenuItem?.title = "Status: \(statusText)"
+    if !signedIn {
+      networkMenuItem?.title = "Sign in to enable network"
+      networkMenuItem?.toolTip = "Open the client and sign in first"
+    } else if syncing {
+      networkMenuItem?.title = "Updating Network..."
+      networkMenuItem?.toolTip = "Wait for the current network operation"
+    } else {
+      networkMenuItem?.title = networkEnabled ? "Disable Network" : "Enable Network"
+      networkMenuItem?.toolTip = networkEnabled
+        ? "Disable the SLAN virtual network"
+        : "Enable the SLAN virtual network"
+    }
     networkMenuItem?.state = networkEnabled ? .on : .off
     networkMenuItem?.isEnabled = trayNetworkItemEnabled(
       signedIn: signedIn,
       syncing: syncing,
       switchEnabled: switchEnabled
     )
-    applyStatusIcon(networkEnabled: networkEnabled, serviceAvailable: true)
+    applyStatusIcon(
+      signedIn: signedIn,
+      networkEnabled: networkEnabled,
+      serviceAvailable: true
+    )
     statusItem?.button?.toolTip = error.isEmpty ? "SLAN Client - \(statusText)" : "SLAN Client - \(statusText): \(error)"
+    statusItem?.button?.setAccessibilityLabel("SLAN Client - \(statusText)")
   }
 
   private func trayNetworkItemEnabled(
@@ -448,7 +489,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if let response = forwardToService(method: method, arguments: arguments) {
       return response
     }
-    if tryStartBundledService() {
+    if tryStartLaunchdService() {
       for _ in 0..<15 {
         if let response = forwardToService(method: method, arguments: arguments) {
           return response
@@ -456,7 +497,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
         Thread.sleep(forTimeInterval: 0.1)
       }
     }
-    if tryStartLaunchdService() {
+    if tryStartBundledService() {
       for _ in 0..<15 {
         if let response = forwardToService(method: method, arguments: arguments) {
           return response
@@ -515,8 +556,9 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     bundledServiceLock.lock()
     defer { bundledServiceLock.unlock() }
 
+    let serviceHost = configuredServiceHost()
     if let process = bundledServiceProcess, process.isRunning {
-      bundledServicePreferredHost = Self.bundledServiceHost
+      bundledServicePreferredHost = serviceHost
       return true
     }
     if forceRestart {
@@ -547,7 +589,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     let process = Process()
     process.executableURL = serviceURL
     var environment = ProcessInfo.processInfo.environment
-    environment["SLAN_CLIENT_CORE_SERVICE_HOST"] = Self.bundledServiceHost
+    environment["SLAN_CLIENT_CORE_SERVICE_HOST"] = serviceHost
     if let stateRoot {
       environment["SLAN_STATE_DIR"] = stateRoot.path
     }
@@ -558,7 +600,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       defer { self.bundledServiceLock.unlock() }
       if self.bundledServiceProcess === terminated {
         self.bundledServiceProcess = nil
-        if self.bundledServicePreferredHost == Self.bundledServiceHost {
+        if self.bundledServicePreferredHost == serviceHost {
           self.bundledServicePreferredHost = nil
         }
       }
@@ -566,7 +608,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     do {
       try process.run()
       bundledServiceProcess = process
-      bundledServicePreferredHost = Self.bundledServiceHost
+      bundledServicePreferredHost = serviceHost
       Thread.sleep(forTimeInterval: 0.3)
       return true
     } catch {
@@ -696,8 +738,12 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if bundledRunning, let preferredHost, !preferredHost.isEmpty {
       return preferredHost
     }
+    return configuredServiceHost()
+  }
+
+  private func configuredServiceHost() -> String {
     return ProcessInfo.processInfo.environment["SLAN_CLIENT_CORE_SERVICE_HOST"]
-      ?? "127.0.0.1:46392"
+      ?? Self.defaultServiceHost
   }
 
   private func compactState() -> [String: Any] {

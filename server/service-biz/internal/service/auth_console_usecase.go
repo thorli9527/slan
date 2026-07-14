@@ -43,7 +43,7 @@ func (s AuthConsoleLoginService) ConsoleLogin(ctx context.Context, input Console
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	if err := s.Sessions.SaveUserSession(ctx, session); err != nil {
+	if err := replaceUserSession(ctx, s.Sessions, session); err != nil {
 		return AuthSessionView{}, err
 	}
 	item = markConsoleLoginKeyUsed(item, now.Unix())

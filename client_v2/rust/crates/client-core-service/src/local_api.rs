@@ -24,8 +24,8 @@ pub(crate) enum LocalServiceMethod {
     LocalStatus,
     LocalSession,
     LocalNetworkModule,
-    LocalDnsState,
-    LocalDnsResolve,
+    LocalResolverState,
+    LocalResolverResolve,
     LocalPeers,
     LocalPathPlan,
     LocalPathDiagnose,
@@ -72,8 +72,8 @@ impl LocalServiceMethod {
             "localStatus" => Self::LocalStatus,
             "localSession" => Self::LocalSession,
             "localNetworkModule" => Self::LocalNetworkModule,
-            "localDnsState" => Self::LocalDnsState,
-            "localDnsResolve" => Self::LocalDnsResolve,
+            "localResolverState" => Self::LocalResolverState,
+            "localResolverResolve" => Self::LocalResolverResolve,
             "localPeers" => Self::LocalPeers,
             "localPathPlan" => Self::LocalPathPlan,
             "localPathDiagnose" => Self::LocalPathDiagnose,
@@ -244,10 +244,10 @@ pub(crate) struct ReportDeviceRuntimeRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LocalDnsResolveRequest {
+pub(crate) struct LocalResolverResolveRequest {
     pub(crate) requester_device_id: String,
     pub(crate) qname: String,
-    #[serde(default = "default_dns_qtype")]
+    #[serde(default = "default_resolver_qtype")]
     pub(crate) qtype: String,
 }
 
@@ -303,7 +303,7 @@ fn default_watch_timeout_ms() -> u64 {
     30_000
 }
 
-fn default_dns_qtype() -> String {
+fn default_resolver_qtype() -> String {
     "A".to_string()
 }
 
@@ -342,12 +342,12 @@ mod tests {
             LocalServiceMethod::LocalNetworkModule
         );
         assert_eq!(
-            LocalServiceMethod::parse("localDnsState"),
-            LocalServiceMethod::LocalDnsState
+            LocalServiceMethod::parse("localResolverState"),
+            LocalServiceMethod::LocalResolverState
         );
         assert_eq!(
-            LocalServiceMethod::parse("localDnsResolve"),
-            LocalServiceMethod::LocalDnsResolve
+            LocalServiceMethod::parse("localResolverResolve"),
+            LocalServiceMethod::LocalResolverResolve
         );
         assert_eq!(
             LocalServiceMethod::parse("localPathPlan"),

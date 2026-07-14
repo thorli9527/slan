@@ -26,13 +26,13 @@ use client_core::{
     },
     relay_peer_index_for_packet, selected_runtime_paths, update_peer_active_path,
     NetworkRuntimeState, PathKind, PathPolicy, PathState, PathTracker, PeerPathRuntime,
-    PlatformAclPeer, PlatformNetwork, PlatformNetworkDiagnostics, RelayDataPlaneConfig,
-    RelayPeerSession, RouteSpec,
+    PlatformAclPeer, PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig,
+    RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
 };
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 
-use crate::effective_dns_servers;
+use crate::effective_resolver_servers;
 
 const DEFAULT_INTERFACE_NAME: &str = "SLAN LAN Adapter";
 const WINDOWS_WINTUN_DRIVER_TYPE: &str = "Wintun";
@@ -164,8 +164,8 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         persist_state(&load_cached_runtime_state().unwrap_or_default())
     }
 
-    fn configure_dns(&self, dns_servers: &[String]) -> Result<()> {
-        let effective = effective_dns_servers(dns_servers);
+    fn configure_resolver(&self, resolver: &PlatformResolverConfig) -> Result<()> {
+        let effective = effective_resolver_servers(&resolver.servers);
         configure_dns(DEFAULT_INTERFACE_NAME, &effective).context("configure Wintun DNS")?;
         persist_state(&load_cached_runtime_state().unwrap_or_default())
     }
@@ -3702,6 +3702,8 @@ fn read_windows_network_diagnostics(interface_name: &str) -> Result<PlatformNetw
            mtu=if ($iface) {{ [int]$iface.NlMtuBytes }} else {{ $null }}; \
            mss=$mss; \
            dnsServers=$dns; \
+           dnsSearchDomains=@(); \
+           dnsSplitDomains=@(); \
            routes=$routes; \
            checks=$checks \
          }} | ConvertTo-Json -Compress -Depth 5"

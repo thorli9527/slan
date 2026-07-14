@@ -121,20 +121,6 @@ func (s *networkRuntimeTestNetworks) SaveDNSRecord(context.Context, model.DNSRec
 	return nil
 }
 func (s *networkRuntimeTestNetworks) DeleteDNSRecord(context.Context, string) error { return nil }
-func (s *networkRuntimeTestNetworks) ListPublicMappings(context.Context, string) ([]model.PublicMapping, error) {
-	return nil, nil
-}
-
-func (s *networkRuntimeTestNetworks) GetPublicMapping(context.Context, string) (model.PublicMapping, bool, error) {
-	return model.PublicMapping{}, false, nil
-}
-
-func (s *networkRuntimeTestNetworks) SavePublicMapping(context.Context, model.PublicMapping) error {
-	return nil
-}
-
-func (s *networkRuntimeTestNetworks) DeletePublicMapping(context.Context, string) error { return nil }
-
 func (s *networkRuntimeTestNetworks) ListSecurityGroups(_ context.Context, networkID string) ([]model.SecurityGroup, error) {
 	out := []model.SecurityGroup{}
 	for _, item := range s.securityGroups {
@@ -266,7 +252,10 @@ func (s *networkRuntimeTestDevices) SetDeviceGroups(context.Context, model.Devic
 }
 
 func (s *networkRuntimeTestDevices) ListDeviceGroupAssignments(context.Context, string) ([]model.DeviceGroupAssignment, error) {
-	return nil, nil
+	return []model.DeviceGroupAssignment{
+		{UserID: "user-1", DeviceID: "src", GroupIDs: []string{"group-src"}},
+		{UserID: "user-1", DeviceID: "dst", GroupIDs: []string{"group-dst"}},
+	}, nil
 }
 
 type networkRuntimeTestOps struct {
@@ -365,7 +354,8 @@ func TestIssueRelayTicketRejectsBroadIngressDeny(t *testing.T) {
 		Direction:       "ingress",
 		Protocol:        "all",
 		PortRange:       "all",
-		CIDR:            "peer:device:dst",
+		PeerType:        "device_group",
+		PeerValue:       "group-src",
 		Action:          "deny",
 		Priority:        5,
 		Enabled:         true,
@@ -491,8 +481,8 @@ func newNetworkRuntimeTestService(rules []model.SecurityRule) NetworkRuntimeServ
 	return NetworkRuntimeService{
 		Devices: &networkRuntimeTestDevices{
 			devices: map[string]model.Device{
-				"src": {DeviceID: "src", Alias: "mac-src", Name: "Mac"},
-				"dst": {DeviceID: "dst", Alias: "ios-dst", Name: "iPhone"},
+				"src": {DeviceID: "src", OwnerID: "user-1", Alias: "mac-src", Name: "Mac"},
+				"dst": {DeviceID: "dst", OwnerID: "user-1", Alias: "ios-dst", Name: "iPhone"},
 			},
 		},
 		Networks: &networkRuntimeTestNetworks{

@@ -1,13 +1,23 @@
 import 'package:client_core_plugin/client_core_plugin.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+Map<String, Object?> _nativePlatformResolverConfigPayload(
+  List<String> servers,
+) {
+  return {
+    'resolver': {
+      'servers': servers,
+    },
+  };
+}
+
 void main() {
   test('android vpn config preserves relay data plane', () {
     final config = AndroidVpnSessionConfig.fromJson({
       'sessionName': 'SLAN',
       'virtualIp': '10.0.0.2',
       'prefixLen': 32,
-      'dnsServers': ['10.0.0.1'],
+      ..._nativePlatformResolverConfigPayload(const ['10.0.0.1']),
       'routes': [
         {'destination': '10.0.0.9/32'},
       ],
@@ -99,8 +109,10 @@ void main() {
     final session = sessions.single as Map<String, Object?>;
     final ticket = session['ticket'] as Map<String, Object?>;
     expect(relayJson['relayAddress'], '127.0.0.1:3478');
-    expect((relayJson['pathPolicy'] as Map<String, Object?>)['fallbackEnabled'],
-        isTrue);
+    expect(
+      (relayJson['pathPolicy'] as Map<String, Object?>)['fallbackEnabled'],
+      isTrue,
+    );
     expect(peerPath['peerNodeId'], 'node-b');
     expect((candidates.first as Map<String, Object?>)['kind'], 'direct_udp');
     expect(session['peerNodeId'], 'node-b');
@@ -135,7 +147,6 @@ void main() {
             'globalIp': '10.0.0.2',
             'globalName': 'mac.default',
             'peerCount': 2,
-            'dnsRecordCount': 3,
             'securityRuleCount': 4,
             'relayCandidateCount': 5,
           },
@@ -149,45 +160,25 @@ void main() {
     expect(config.networkConfigs.single.relayCandidateCount, 5);
   });
 
-  test('android vpn config decodes dns zones and records', () {
+  test('android vpn config preserves native resolver config payload', () {
     final config = AndroidVpnSessionConfig.fromJson({
       'virtualIp': '10.0.0.2',
       'prefixLen': 32,
-      'dnsServers': ['10.0.0.53'],
-      'dnsZones': [
-        {
-          'zoneId': 'zone-1',
-          'networkId': 'net-1',
-          'zoneName': 'test.lan',
-        },
-      ],
-      'dnsRecords': [
-        {
-          'recordId': 'record-1',
-          'zoneId': 'zone-1',
-          'networkId': 'net-1',
-          'name': 'mac',
-          'fqdn': 'mac.test.lan',
-          'recordType': 'A',
-          'targetIp': '10.0.0.9',
-          'ttl': 60,
-        },
-      ],
+      ..._nativePlatformResolverConfigPayload(const ['10.0.0.53']),
     });
 
-    expect(config.dnsZones, hasLength(1));
-    expect(config.dnsZones.single.zoneName, 'test.lan');
-    expect(config.dnsRecords, hasLength(1));
-    expect(config.dnsRecords.single.fqdn, 'mac.test.lan');
-    expect(config.dnsRecords.single.targetIp, '10.0.0.9');
-
     final json = config.toJson();
-    final dnsZones = json['dnsZones'] as List<Object?>;
-    final dnsRecords = json['dnsRecords'] as List<Object?>;
-    expect((dnsZones.single as Map<String, Object?>)['zoneName'], 'test.lan');
+    final resolverConfigPayload = json['resolver'] as Map<String, Object?>;
+    expect(resolverConfigPayload['servers'], ['10.0.0.53']);
     expect(
-      (dnsRecords.single as Map<String, Object?>)['fqdn'],
-      'mac.test.lan',
+      json.containsKey('dnsZones'),
+      isFalse,
+      reason: 'zone-level resolver data should not be re-expanded in Flutter',
+    );
+    expect(
+      json.containsKey('dnsRecords'),
+      isFalse,
+      reason: 'record-level resolver data should not be re-expanded in Flutter',
     );
   });
 }

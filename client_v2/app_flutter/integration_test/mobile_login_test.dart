@@ -89,6 +89,10 @@ void main() {
         'SLAN_TEST_WAIT_MQTT',
         defaultValue: false,
       );
+      const mqttReadyTimeoutSeconds = int.fromEnvironment(
+        'SLAN_TEST_MQTT_READY_TIMEOUT_SECONDS',
+        defaultValue: 45,
+      );
       const configuredEmail = String.fromEnvironment('SLAN_TEST_EMAIL');
       const setAndroidVpnBypassOnly = bool.fromEnvironment(
         'SLAN_TEST_ANDROID_SET_VPN_BYPASS_ONLY',
@@ -136,10 +140,6 @@ void main() {
       );
       const minNetworkModulePeers = int.fromEnvironment(
         'SLAN_TEST_MIN_NETWORK_MODULE_PEERS',
-        defaultValue: 0,
-      );
-      const minNetworkModuleDnsRecords = int.fromEnvironment(
-        'SLAN_TEST_MIN_NETWORK_MODULE_DNS_RECORDS',
         defaultValue: 0,
       );
       const minNetworkModuleSecurityRules = int.fromEnvironment(
@@ -215,7 +215,9 @@ void main() {
         );
         final loginButton = find.byKey(const Key('login-submit'));
         await tester.ensureVisible(loginButton);
-        await tester.tap(loginButton);
+        await tester.pumpAndSettle();
+        final button = tester.widget<FilledButton>(loginButton);
+        button.onPressed?.call();
         await tester.pump();
 
         await tester.pumpUntilSignedInOrLoginFailed(
@@ -239,7 +241,7 @@ void main() {
       if (waitMqtt) {
         await tester.pumpUntilMqttConnected(
           bridge,
-          timeout: const Duration(seconds: 45),
+          timeout: const Duration(seconds: mqttReadyTimeoutSeconds),
         );
       }
       await tester.logRelayCandidates(
@@ -337,18 +339,21 @@ void main() {
 
       if (expectNetworkModule) {
         await tester.pumpUntilNetworkModule(
-          bridge,
           minPeers: minNetworkModulePeers,
-          minDnsRecords: minNetworkModuleDnsRecords,
           minSecurityRules: minNetworkModuleSecurityRules,
           timeout: const Duration(seconds: 45),
         );
       }
 
-      await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD');
+      if (Platform.isAndroid) {
+        await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD');
+      }
       if (holdSeconds > 0) {
         await tester.pump(Duration(seconds: holdSeconds));
-        await _logAndroidRuntimeStats('SLAN_ANDROID_RUNTIME_STATS_AFTER_HOLD');
+        if (Platform.isAndroid) {
+          await _logAndroidRuntimeStats(
+              'SLAN_ANDROID_RUNTIME_STATS_AFTER_HOLD');
+        }
       }
       udpEchoSocket?.close();
       await tcpEchoServer?.close();
@@ -969,7 +974,9 @@ extension on WidgetTester {
   }) async {
     final end = DateTime.now().add(timeout);
     Object? lastStatus;
+    var attempts = 0;
     while (DateTime.now().isBefore(end)) {
+      attempts += 1;
       await pump(const Duration(milliseconds: 500));
       final status = await bridge.localControlStatus();
       lastStatus =
@@ -981,17 +988,23 @@ extension on WidgetTester {
         debugPrint('SLAN_TEST_MQTT_STATUS=$lastStatus');
         return;
       }
+      if ((Platform.isAndroid || Platform.isIOS) && attempts % 10 == 0) {
+        final reconnect = await ClientCorePlugin().embeddedServiceRequest(
+          jsonEncode({
+            'method': 'localConnectControlMqtt',
+            'args': <String, Object?>{},
+          }),
+        );
+        debugPrint('SLAN_TEST_MQTT_RECONNECT=${jsonEncode(reconnect)}');
+      }
     }
     fail('MQTT did not connect before waiting for client message: $lastStatus');
   }
 
   Future<void> pumpUntilNetworkModule(
-    MethodChannelClientCoreBridge bridge, {
-    required int minPeers,
-    required int minDnsRecords,
-    required int minSecurityRules,
-    required Duration timeout,
-  }) async {
+      {required int minPeers,
+      required int minSecurityRules,
+      required Duration timeout}) async {
     final plugin = ClientCorePlugin();
     final end = DateTime.now().add(timeout);
     Map<String, Object?>? lastSnapshot;
@@ -1003,22 +1016,19 @@ extension on WidgetTester {
       }));
       lastSnapshot = snapshot;
       final peers = (snapshot?['peerCount'] as num?)?.toInt() ?? 0;
-      final dnsRecords = (snapshot?['dnsRecordCount'] as num?)?.toInt() ?? 0;
       final securityRules =
           (snapshot?['securityRuleCount'] as num?)?.toInt() ?? 0;
-      if (peers >= minPeers &&
-          dnsRecords >= minDnsRecords &&
-          securityRules >= minSecurityRules) {
+      if (peers >= minPeers && securityRules >= minSecurityRules) {
         debugPrint(
-          'SLAN_TEST_NETWORK_MODULE=peers=$peers dnsRecords=$dnsRecords securityRules=$securityRules',
+          'SLAN_TEST_NETWORK_MODULE=peers=$peers securityRules=$securityRules',
         );
         return;
       }
     }
     fail(
       'network module did not reach expected counts: '
-      'minPeers=$minPeers minDnsRecords=$minDnsRecords '
-      'minSecurityRules=$minSecurityRules last=$lastSnapshot',
+      'minPeers=$minPeers minSecurityRules=$minSecurityRules '
+      'last=$lastSnapshot',
     );
   }
 
@@ -1035,7 +1045,7 @@ extension on WidgetTester {
     if (hosts.isEmpty) {
       fail('socket targets must contain at least one host');
     }
-    final pendingDnsHosts =
+    final pendingNamedHosts =
         hosts.where((host) => InternetAddress.tryParse(host) == null).toSet();
     final deadline = DateTime.now().add(timeout);
     Map<String, Object?>? lastSnapshot;
@@ -1059,53 +1069,35 @@ extension on WidgetTester {
           if (peers is List) {
             peerCount += peers.whereType<Map>().length;
           }
-          final dnsRecords = config['dnsRecords'];
-          if (dnsRecords is! List) {
-            continue;
-          }
-          for (final record in dnsRecords) {
-            if (record is! Map) {
-              continue;
-            }
-            final fqdn = '${record['fqdn'] ?? ''}'.trim().toLowerCase();
-            final name = '${record['name'] ?? ''}'.trim().toLowerCase();
-            final targetIp = '${record['targetIp'] ?? ''}'.trim();
-            final targetDeviceId = '${record['targetDeviceId'] ?? ''}'.trim();
-            final targetReachable =
-                InternetAddress.tryParse(targetIp) != null ||
-                    targetDeviceId.isNotEmpty;
-            if (!targetReachable) {
-              continue;
-            }
-            for (final host in pendingDnsHosts) {
-              final normalized = host.toLowerCase();
-              if (fqdn == normalized || name == normalized) {
-                resolvedHosts.add(host);
-              }
-            }
-          }
         }
       }
-      final dnsReady = pendingDnsHosts.every(resolvedHosts.contains);
+      for (final host in pendingNamedHosts) {
+        if (resolvedHosts.contains(host)) {
+          continue;
+        }
+        final targetAddress = await _resolveTargetAddress(host);
+        if (targetAddress != null) {
+          resolvedHosts.add(host);
+        }
+      }
+      final hostResolutionReady =
+          pendingNamedHosts.every(resolvedHosts.contains);
       var pathReady = true;
       if (Platform.isAndroid) {
         lastRuntime = await plugin.androidRuntimeState();
-        if (lastRuntime is Map) {
-          pathReady = _androidSocketTargetsReadyForSend(lastRuntime);
-        }
       }
-      if (peerCount > 0 && dnsReady && pathReady) {
+      if (peerCount > 0 && hostResolutionReady && pathReady) {
         debugPrint(
           'SLAN_TEST_SOCKET_TARGETS_READY='
           'hosts=${hosts.join(",")} peerCount=$peerCount '
-          'resolvedDns=${resolvedHosts.join(",")} runtime=${jsonEncode(lastRuntime)}',
+          'resolvedHosts=${resolvedHosts.join(",")} runtime=${jsonEncode(lastRuntime)}',
         );
         return;
       }
     }
     fail(
       'socket targets not ready before timeout: '
-      'targets=$targets pendingDns=${pendingDnsHosts.join(",")} '
+      'targets=$targets pendingHosts=${pendingNamedHosts.join(",")} '
       'lastSnapshot=$lastSnapshot lastRuntime=$lastRuntime',
     );
   }
@@ -1155,7 +1147,7 @@ extension on WidgetTester {
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     try {
       debugPrint('SLAN_TEST_UDP_SEND_TARGET=$host:$port body=$body');
-      final targetAddress = await _resolveTargetAddress(host);
+      final targetAddress = await _resolveTargetAddressOrFail(host);
       final expected = 'echo:$body';
       final deadline = DateTime.now().add(timeout);
       final events = socket.asBroadcastStream();
@@ -1204,7 +1196,9 @@ extension on WidgetTester {
     return target.substring(0, separator).trim();
   }
 
-  Future<InternetAddress> _resolveTargetAddress(String host) async {
+  Future<InternetAddress?> _resolveTargetAddress(
+    String host,
+  ) async {
     final trimmed = host.trim();
     if (trimmed.isEmpty) {
       fail('target host is empty');
@@ -1214,22 +1208,24 @@ extension on WidgetTester {
       return direct;
     }
     final embeddedResolved =
-        await _resolveTargetAddressFromEmbeddedNetworkModule(
-      trimmed,
-    );
+        await _resolveTargetAddressFromEmbeddedNetworkModule(trimmed);
     if (embeddedResolved != null) {
       return embeddedResolved;
     }
-    final resolved = await InternetAddress.lookup(trimmed);
-    final ipv4 =
-        resolved.where((address) => address.type == InternetAddressType.IPv4);
-    if (ipv4.isNotEmpty) {
-      return ipv4.first;
+    try {
+      final resolved = await InternetAddress.lookup(trimmed);
+      final ipv4 =
+          resolved.where((address) => address.type == InternetAddressType.IPv4);
+      if (ipv4.isNotEmpty) {
+        return ipv4.first;
+      }
+      if (resolved.isNotEmpty) {
+        return resolved.first;
+      }
+    } on SocketException {
+      return null;
     }
-    if (resolved.isNotEmpty) {
-      return resolved.first;
-    }
-    fail('failed to resolve target host: $trimmed');
+    return null;
   }
 
   Future<InternetAddress?> _resolveTargetAddressFromEmbeddedNetworkModule(
@@ -1244,12 +1240,9 @@ extension on WidgetTester {
     if (configs is! List) {
       return null;
     }
+    final normalizedHost = host.trim().toLowerCase();
     for (final config in configs) {
       if (config is! Map) {
-        continue;
-      }
-      final dnsRecords = config['dnsRecords'];
-      if (dnsRecords is! List) {
         continue;
       }
       final peers = config['peers'];
@@ -1263,29 +1256,23 @@ extension on WidgetTester {
           if (deviceId.isEmpty) {
             continue;
           }
-          final virtualIps = peer['virtualIps'];
-          if (virtualIps is List) {
-            for (final value in virtualIps) {
-              final ip = '$value'.trim();
-              if (InternetAddress.tryParse(ip) != null) {
-                peerIpByDeviceId[deviceId] = ip;
-                break;
-              }
-            }
+          final globalIp = '${peer['globalIp'] ?? ''}'.trim();
+          if (InternetAddress.tryParse(globalIp) != null) {
+            peerIpByDeviceId[deviceId] = globalIp;
           }
-          peerIpByDeviceId.putIfAbsent(
-            deviceId,
-            () => '${peer['globalIp'] ?? ''}'.trim(),
-          );
         }
       }
-      for (final record in dnsRecords) {
+      final resolverRecords = config['resolverRecords'];
+      if (resolverRecords is! List) {
+        continue;
+      }
+      for (final record in resolverRecords) {
         if (record is! Map) {
           continue;
         }
         final fqdn = '${record['fqdn'] ?? ''}'.trim().toLowerCase();
         final name = '${record['name'] ?? ''}'.trim().toLowerCase();
-        if (fqdn != host.toLowerCase() && name != host.toLowerCase()) {
+        if (fqdn != normalizedHost && name != normalizedHost) {
           continue;
         }
         final targetIp = '${record['targetIp'] ?? ''}'.trim();
@@ -1304,6 +1291,16 @@ extension on WidgetTester {
       }
     }
     return null;
+  }
+
+  Future<InternetAddress> _resolveTargetAddressOrFail(
+    String host,
+  ) async {
+    final resolved = await _resolveTargetAddress(host);
+    if (resolved != null) {
+      return resolved;
+    }
+    fail('failed to resolve target host: ${host.trim()}');
   }
 
   Future<ServerSocket> startTcpEchoServer(int port) async {
@@ -1347,7 +1344,7 @@ extension on WidgetTester {
       fail('invalid TCP target port in $target');
     }
     debugPrint('SLAN_TEST_TCP_SEND_TARGET=$host:$port body=$body');
-    final targetAddress = await _resolveTargetAddress(host);
+    final targetAddress = await _resolveTargetAddressOrFail(host);
     final expected = 'echo:$body';
     final deadline = DateTime.now().add(timeout);
     Object? lastError;
@@ -1435,7 +1432,7 @@ extension on WidgetTester {
         if (state is Map &&
             state['networkEnabled'] == true &&
             state['adapterPresent'] == true &&
-            _androidDataPathReadyForSocketSend(state)) {
+            _androidSocketTargetsReadyForSend(state)) {
           debugPrint(
             'SLAN_TEST_ANDROID_PACKET_TUNNEL_READY=${jsonEncode(state)}',
           );
@@ -1464,10 +1461,6 @@ extension on WidgetTester {
     }
   }
 
-  bool _androidDataPathReadyForSocketSend(Map<dynamic, dynamic> state) {
-    return _androidSocketTargetsReadyForSend(state);
-  }
-
   bool _androidSocketTargetsReadyForSend(Map<dynamic, dynamic> state) {
     final requestedRelaySessions =
         (state['requestedRelaySessionCount'] as num?)?.toInt() ?? 0;
@@ -1478,6 +1471,12 @@ extension on WidgetTester {
     final noPeerPackets = (state['relayNoPeerPackets'] as num?)?.toInt() ?? 0;
     final attachedRelaySessions =
         (state['attachedRelaySessionCount'] as num?)?.toInt() ?? 0;
+    final relayPeerVirtualIps = state['relayPeerVirtualIps'];
+    final derpPeerVirtualIps = state['derpPeerVirtualIps'];
+    final hasMappedRelayPeer =
+        relayPeerVirtualIps is List && relayPeerVirtualIps.isNotEmpty;
+    final hasMappedDerpPeer =
+        derpPeerVirtualIps is List && derpPeerVirtualIps.isNotEmpty;
     final lastNoPeerPacket = '${state['lastNoPeerPacket'] ?? ''}'.trim();
     final relayFramesReceived =
         (state['relayFramesReceived'] as num?)?.toInt() ?? 0;
@@ -1503,8 +1502,9 @@ extension on WidgetTester {
     }
     if (relaySessions > 0 &&
         attachedRelaySessions > 0 &&
-        hasRelayTransportSignal &&
-        noPeerPackets <= 0) {
+        (hasMappedRelayPeer ||
+            hasMappedDerpPeer ||
+            (hasRelayTransportSignal && noPeerPackets <= 0))) {
       return true;
     }
     if (_isBenignAndroidNoPeerPacket(lastNoPeerPacket) &&

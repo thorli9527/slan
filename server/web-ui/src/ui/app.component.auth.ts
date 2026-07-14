@@ -15,6 +15,9 @@ import { shortCodeFromEmail } from './app.utils';
 import { WEB_API } from './api-paths';
 
 export class AppComponentAuth extends AppComponentOverview {
+  private activeAuth: ApiAuthResponse | null = null;
+  private authRefreshTimer: number | null = null;
+
   clearAuthMessageOnCredentialsChange(): void {
     if (!this.authMessage) {
       return;
@@ -24,6 +27,11 @@ export class AppComponentAuth extends AppComponentOverview {
   }
 
   protected async initializeCustomerAuthFromUrl(): Promise<void> {
+    this.api.configureAuth(
+      () => this.currentSessionToken,
+      () => this.refreshActiveSession(),
+      () => this.expireBrowserAuth(),
+    );
     if (await this.completeClientLoginFromStoredBrowserAuth()) {
       return;
     }
@@ -162,8 +170,26 @@ export class AppComponentAuth extends AppComponentOverview {
     return error instanceof Error ? error.message : String(error);
   }
 
-  logout(): void {
+  async logout(): Promise<void> {
+    const accessToken = this.currentSessionToken;
+    try {
+      if (accessToken) {
+        await this.api.postAuthorized(WEB_API.authLogout, accessToken, {});
+      }
+    } catch {
+      // Local logout must still complete when the server session already expired.
+    }
+    this.expireBrowserAuth();
+  }
+
+  protected disposeAuthLifecycle(): void {
+    this.clearAuthRefreshTimer();
+  }
+
+  private expireBrowserAuth(): void {
     this.resetTransientUiState();
+    this.clearAuthRefreshTimer();
+    this.activeAuth = null;
     this.currentSessionToken = '';
     this.currentRefreshToken = '';
     clearBrowserAuth();
@@ -172,6 +198,14 @@ export class AppComponentAuth extends AppComponentOverview {
   }
 
   private async applyAuth(auth: ApiAuthResponse, persist = true): Promise<void> {
+    this.applyAuthState(auth, persist);
+    await this.loadDashboard(auth.user.userId);
+    this.applyRouteFromLocation();
+    this.notifyStateChanged();
+  }
+
+  private applyAuthState(auth: ApiAuthResponse, persist = true): void {
+    this.activeAuth = auth;
     this.currentUser = auth.user.email;
     this.currentUserId = auth.user.userId;
     this.currentUserShortCode = shortCodeFromEmail(auth.user.email);
@@ -180,19 +214,15 @@ export class AppComponentAuth extends AppComponentOverview {
     if (persist) {
       persistBrowserAuth(auth);
     }
+    this.scheduleAuthRefresh(auth);
     this.authMessage = '';
     this.mode = 'home';
-    this.notifyStateChanged();
-    await this.loadDashboard(auth.user.userId);
-    this.applyRouteFromLocation();
     this.notifyStateChanged();
   }
 
   private async completeDeviceLogin(auth: ApiAuthResponse, target: ClientLoginTarget): Promise<void> {
     await this.api.post(WEB_API.completeDeviceLogin(target.deviceId), {
       accessToken: auth.session.token,
-      userId: auth.user.userId,
-      email: auth.user.email,
       action: target.authMode,
     });
   }
@@ -206,6 +236,31 @@ export class AppComponentAuth extends AppComponentOverview {
       },
     );
     return response.auth;
+  }
+
+  private async refreshActiveSession(): Promise<void> {
+    const auth = this.activeAuth ?? readStoredBrowserAuth();
+    if (!auth?.session?.refreshToken) {
+      throw new Error('missing refresh token');
+    }
+    const renewed = await this.renewBrowserAuth(auth);
+    this.applyAuthState(renewed);
+  }
+
+  private scheduleAuthRefresh(auth: ApiAuthResponse): void {
+    this.clearAuthRefreshTimer();
+    const refreshAt = auth.session.expiresAt * 1000 - 5 * 60 * 1000;
+    const delay = Math.max(refreshAt - Date.now(), 1000);
+    this.authRefreshTimer = window.setTimeout(() => {
+      void this.refreshActiveSession().catch(() => this.expireBrowserAuth());
+    }, delay);
+  }
+
+  private clearAuthRefreshTimer(): void {
+    if (this.authRefreshTimer !== null) {
+      window.clearTimeout(this.authRefreshTimer);
+      this.authRefreshTimer = null;
+    }
   }
 
   private async prepareDeviceLogin(target: ClientLoginTarget): Promise<void> {

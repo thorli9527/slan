@@ -67,6 +67,7 @@ function Get-SlanWindowsInstallManifest {
       'SLAN Client V2 Service'
     )
     StateFiles = @(
+      'config.json',
       'client-v2-session.json',
       'client-v2-control-tasks.xml',
       'client-v2-device-id.txt',

@@ -25,3 +25,15 @@ type SetDeviceGroupsInput struct {
 	DeviceID    string   `json:"deviceId"`
 	GroupIDs    []string `json:"groupIds"`
 }
+
+type AddNetworkDeviceGroupInput struct {
+	NetworkID   string `json:"networkId"`
+	GroupID     string `json:"groupId"`
+	ActorUserID string `json:"actorUserId"`
+}
+
+type RemoveNetworkDeviceGroupInput struct {
+	NetworkID   string `json:"networkId"`
+	GroupID     string `json:"groupId"`
+	ActorUserID string `json:"actorUserId"`
+}

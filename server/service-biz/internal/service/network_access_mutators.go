@@ -2,52 +2,6 @@ package service
 
 import "github.com/slan/service-biz/internal/model"
 
-func newManagedPublicMapping(id string, now int64, input CreatePublicMappingInput) model.PublicMapping {
-	return model.PublicMapping{
-		MappingID:    id,
-		NetworkID:    input.NetworkID,
-		Name:         input.Name,
-		PublicDomain: input.PublicDomain,
-		SourceRecord: input.SourceRecord,
-		DeviceID:     input.DeviceID,
-		Protocol:     input.Protocol,
-		InternalIP:   input.InternalIP,
-		InternalPort: input.InternalPort,
-		ExternalPort: input.ExternalPort,
-		AccessMode:   input.AccessMode,
-		TLSMode:      input.TLSMode,
-		Status:       "enabled",
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-}
-
-func applyUpdatePublicMappingInput(item model.PublicMapping, input UpdatePublicMappingInput, now int64) model.PublicMapping {
-	if input.Name != "" {
-		item.Name = input.Name
-	}
-	item.PublicDomain = input.PublicDomain
-	item.DeviceID = input.DeviceID
-	item.SourceRecord = input.SourceRecord
-	if input.Protocol != "" {
-		item.Protocol = input.Protocol
-	}
-	item.InternalIP = input.InternalIP
-	if input.InternalPort > 0 {
-		item.InternalPort = input.InternalPort
-	}
-	if input.ExternalPort > 0 {
-		item.ExternalPort = input.ExternalPort
-	}
-	item.AccessMode = input.AccessMode
-	item.TLSMode = input.TLSMode
-	if input.Status != "" {
-		item.Status = normalizePublicMappingStatus(input.Status)
-	}
-	item.UpdatedAt = now
-	return item
-}
-
 func newManagedSecurityGroup(id string, now int64, input CreateSecurityGroupInput) model.SecurityGroup {
 	return model.SecurityGroup{
 		SecurityGroupID: id,

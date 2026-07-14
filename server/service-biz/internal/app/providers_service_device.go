@@ -17,10 +17,12 @@ func newDeviceServices(deps UseCaseDependencies) DeviceServices {
 			nil,
 		),
 		GroupManagement: servicepkg.DeviceGroupService{
-			Users:          repos.Users,
-			Devices:        repos.Devices,
-			Networks:       repos.Networks,
-			EventPublisher: eventPublisher,
+			Users:           repos.Users,
+			Devices:         repos.Devices,
+			Networks:        repos.Networks,
+			NetworkGroups:   repos.NetworkGroups,
+			EventPublisher:  eventPublisher,
+			DevicePublisher: servicepkg.NewDeviceControlPublisher(deps.mqttConfig()),
 		},
 		SessionRuntime: servicepkg.DeviceSessionService{
 			Users:     repos.Users,

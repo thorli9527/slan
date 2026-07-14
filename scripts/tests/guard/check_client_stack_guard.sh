@@ -21,4 +21,7 @@ bash "$ROOT_DIR/scripts/audit_client_api_surface.sh"
 log "Protocol/client contract guard"
 bash "$ROOT_DIR/scripts/check_protocol_contracts.sh"
 
+log "macOS local service host contract"
+bash "$ROOT_DIR/scripts/tests/guard/check_macos_service_host.sh"
+
 log "client stack guard passed"

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/slan/service-biz/internal/model"
@@ -45,6 +46,12 @@ func buildBootstrapDeviceSessionView(
 	bound, err := buildBoundDeviceSessionView(ctx, users, networks, mqttConfig, now, device, session)
 	if err != nil {
 		return DeviceSessionBootstrapView{}, err
+	}
+	if strings.TrimSpace(device.VirtualIP) == "" {
+		bound.Profile.ActiveNetworkID = ""
+		bound.Profile.CurrentVirtualIP = ""
+		bound.Profile.VirtualIP = ""
+		bound.Profile.GlobalIP = ""
 	}
 	return DeviceSessionBootstrapView{
 		Profile:    bound.Profile,

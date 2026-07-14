@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     sync::OnceLock,
     sync::{Arc, Mutex},
     thread,
@@ -20,16 +21,16 @@ use crate::{
         self, ControlTransportMessage, ControlTransportMessageKind, ControlTransportTickRequest,
         MqttQos,
     },
-    current_timestamp_ms,
-    dns_apply::apply_dns_runtime_event,
-    load_session, log_service_error,
+    current_timestamp_ms, load_session, log_service_error,
     network_event::{network_event_business_data, NetworkEventEnvelope, NetworkEventType},
     network_event_apply::{apply_network_event, ApplyResult},
+    network_module::replace_network_module_configs,
     network_runtime_state::RuntimeNetworkState,
-    persist_last_client_message_payload, publish_state_business_event,
-    publish_state_business_event_with_extra, session_device_api_token, PersistedSession,
-    StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED, BUSINESS_NETWORK_RUNTIME_CHANGED,
-    BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
+    persist_last_client_message_payload, persist_session, publish_state_business_event,
+    publish_state_business_event_with_extra,
+    resolver_apply::apply_resolver_runtime_event,
+    session_device_api_token, PersistedSession, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
+    BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
 };
 
 const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
@@ -116,7 +117,7 @@ fn run_control_transport_worker(
         password: mqtt.password,
     };
     let mut client = connect_control_mqtt_with_retry(&credential, &downstream_topic)?;
-    if let Some(topic) = network_event_topic(&session) {
+    for topic in network_event_topics(&session) {
         match client.subscribe(&topic) {
             Ok(()) => log_service_error(format!(
                 "client-core-service subscribed network event topic={topic}"
@@ -378,8 +379,8 @@ fn refresh_network_snapshot_cache(session: &PersistedSession) -> Result<(), Stri
         payload: serde_json::to_value(&snapshot.snapshot)
             .map_err(|err| format!("encode startup network snapshot payload: {err}"))?,
     };
-    apply_dns_runtime_event(&dns_snapshot_envelope)
-        .map_err(|err| format!("apply startup dns snapshot: {err:#}"))?;
+    apply_resolver_runtime_event(&dns_snapshot_envelope)
+        .map_err(|err| format!("apply startup resolver snapshot: {err:#}"))?;
     log_service_error(format!(
         "client-core-service refreshed startup network snapshot networkId={} version={} result={:?}",
         snapshot.network_id, snapshot.version, snapshot_result
@@ -387,12 +388,10 @@ fn refresh_network_snapshot_cache(session: &PersistedSession) -> Result<(), Stri
     Ok(())
 }
 
-fn network_event_topic(session: &PersistedSession) -> Option<String> {
-    let network_id = session.active_network_id.as_deref()?.trim();
-    if network_id.is_empty() {
-        return None;
-    }
-    let mqtt = session.mqtt.as_ref()?;
+fn network_event_topics(session: &PersistedSession) -> Vec<String> {
+    let Some(mqtt) = session.mqtt.as_ref() else {
+        return Vec::new();
+    };
     let mut prefix = mqtt.topic_prefix.trim_end_matches('/').to_string();
     if let Some(device_id) = session
         .device_id
@@ -405,7 +404,25 @@ fn network_event_topic(session: &PersistedSession) -> Option<String> {
             prefix.truncate(prefix.len() - suffix.len());
         }
     }
-    Some(format!("{prefix}/networks/{network_id}/broadcast"))
+    let mut network_ids = session
+        .network_ids
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    if let Some(network_id) = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        network_ids.insert(network_id.to_string());
+    }
+    network_ids
+        .into_iter()
+        .map(|network_id| format!("{prefix}/networks/{network_id}/broadcast"))
+        .collect()
 }
 
 fn ingest_downstream_publish(
@@ -429,6 +446,12 @@ fn ingest_downstream_publish(
         );
         return Ok(());
     }
+    if try_ingest_device_network_membership_changed(payload, runtime, state_notifier)? {
+        log_service_error(
+            "client-core-service consumed downstream control message as device_network_membership_changed",
+        );
+        return Ok(());
+    }
     if try_ingest_device_ip_reassigned(payload, runtime, state_notifier)? {
         log_service_error(
             "client-core-service consumed downstream control message as device_ip_reassigned",
@@ -436,7 +459,7 @@ fn ingest_downstream_publish(
         return Ok(());
     }
     // `network_map_response` is retained only for relay candidate refreshes.
-    // Network membership / DNS / ACL state now flows through `network_event`.
+    // Network membership / resolver / ACL state now flows through `network_event`.
     if try_ingest_relay_candidates_response(payload, runtime, state_notifier)? {
         log_service_error(
             "client-core-service consumed downstream control message as relay_candidates_response",
@@ -584,6 +607,76 @@ fn ingest_downstream_publish(
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceNetworkMembershipChangedPayload {
+    device_id: String,
+    #[serde(default)]
+    network_ids: Vec<String>,
+}
+
+fn try_ingest_device_network_membership_changed(
+    payload: &[u8],
+    runtime: &Arc<Mutex<ClientRuntime<PlatformNetworkImpl>>>,
+    state_notifier: &Arc<StateChangeNotifier>,
+) -> Result<bool, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|err| format!("decode downstream json: {err}"))?;
+    if value.get("type").and_then(serde_json::Value::as_str)
+        != Some("device_network_membership_changed")
+    {
+        return Ok(false);
+    }
+    let event: DeviceNetworkMembershipChangedPayload = serde_json::from_value(
+        value
+            .get("payload")
+            .cloned()
+            .ok_or_else(|| "device_network_membership_changed payload is missing".to_string())?,
+    )
+    .map_err(|err| format!("decode device network membership payload: {err}"))?;
+    let mut session = load_session().map_err(|err| err.to_string())?;
+    let expected_device_id = session
+        .device_id
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if expected_device_id.is_empty() || event.device_id.trim() != expected_device_id {
+        return Err("device_network_membership_changed target device mismatch".to_string());
+    }
+    session.network_ids = event
+        .network_ids
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if session
+        .active_network_id
+        .as_ref()
+        .is_some_and(|network_id| !session.network_ids.contains(network_id))
+    {
+        session.active_network_id = session.network_ids.first().cloned();
+    }
+    persist_session(&session).map_err(|err| err.to_string())?;
+    if !session.access_token.trim().is_empty() {
+        let client = ControlPlaneClient::from_env();
+        if let Ok(configs) =
+            client.device_network_configs(session_device_api_token(&session), &expected_device_id)
+        {
+            replace_network_module_configs(configs);
+        }
+    }
+    let state = runtime
+        .lock()
+        .map_err(|_| "client runtime mutex poisoned".to_string())?
+        .state()
+        .clone();
+    publish_state_business_event(state_notifier, BUSINESS_NETWORK_RUNTIME_CHANGED, &state);
+    Ok(true)
+}
+
 fn downstream_control_business_data(message: &serde_json::Value) -> Option<serde_json::Value> {
     let message_type = message.get("type").and_then(serde_json::Value::as_str)?;
     let payload = message.get("payload")?;
@@ -636,8 +729,8 @@ fn try_ingest_network_event(
         apply_network_event(&mut state, envelope.clone())
             .map_err(|err| format!("apply network event: {err:#}"))?
     };
-    apply_dns_runtime_event(&envelope)
-        .map_err(|err| format!("apply dns runtime event: {err:#}"))?;
+    apply_resolver_runtime_event(&envelope)
+        .map_err(|err| format!("apply resolver runtime event: {err:#}"))?;
     let mut config_version = envelope.version;
     let mut sync_mode = match apply_result {
         ApplyResult::Applied => "event",
@@ -696,8 +789,8 @@ fn try_ingest_network_event(
             apply_network_event(&mut state, snapshot_envelope.clone())
                 .map_err(|err| format!("apply network snapshot: {err:#}"))?
         };
-        apply_dns_runtime_event(&snapshot_envelope)
-            .map_err(|err| format!("apply dns runtime snapshot: {err:#}"))?;
+        apply_resolver_runtime_event(&snapshot_envelope)
+            .map_err(|err| format!("apply resolver runtime snapshot: {err:#}"))?;
         log_service_error(format!(
             "client-core-service applied network snapshot networkId={} version={} result={:?}",
             envelope.network_id, snapshot.version, snapshot_result
@@ -1032,6 +1125,12 @@ fn network_event_targets_session(
     session: &PersistedSession,
     runtime_active_network_id: Option<&str>,
 ) -> bool {
+    if !session.network_ids.is_empty() {
+        return session
+            .network_ids
+            .iter()
+            .any(|network_id| network_id.trim() == envelope.network_id.trim());
+    }
     let expected_network_id = runtime_active_network_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1400,11 +1499,12 @@ fn thin_qos(qos: MqttQos) -> ThinMqttQoS {
 fn reconnect_key(session: &PersistedSession) -> String {
     let mqtt = session.mqtt.as_ref();
     format!(
-        "{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}",
         session.session_kind.as_str(),
         session.user_id.as_str(),
         session.device_id.as_deref().unwrap_or_default(),
         session.active_network_id.as_deref().unwrap_or_default(),
+        session.network_ids.join(","),
         mqtt.map(|value| value.client_id.as_str())
             .unwrap_or_default(),
         mqtt.map(|value| value.topic_prefix.as_str())
@@ -1483,8 +1583,8 @@ mod tests {
     use client_core_platform::PlatformNetworkImpl;
 
     use super::{
-        ingest_downstream_publish, network_event_targets_session, reconcile_active_network_state,
-        try_ingest_device_ip_reassigned,
+        ingest_downstream_publish, network_event_targets_session, network_event_topics,
+        reconcile_active_network_state, try_ingest_device_ip_reassigned,
     };
     use crate::control_plane::MqttCredential;
     use crate::network_event::{NetworkEventEnvelope, NetworkEventType};
@@ -1493,6 +1593,53 @@ mod tests {
         control_tasks::ControlTaskQueue, StateChangeNotifier, BUSINESS_CONTROL_SYNC_CHANGED,
         BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED,
     };
+
+    #[test]
+    fn subscribes_all_session_network_topics() {
+        let mut session = PersistedSession::prelogin(
+            "device-1",
+            Some(MqttCredential {
+                broker_url: "mqtt://127.0.0.1:1883".to_string(),
+                client_id: "device-1".to_string(),
+                username: "device-1".to_string(),
+                password: "secret".to_string(),
+                topic_prefix: "slan/devices/device-1".to_string(),
+                expires_at: None,
+            }),
+        );
+        session.network_ids = vec!["network-b".to_string(), "network-a".to_string()];
+        session.active_network_id = Some("network-a".to_string());
+
+        assert_eq!(
+            network_event_topics(&session),
+            vec![
+                "slan/networks/network-a/broadcast".to_string(),
+                "slan/networks/network-b/broadcast".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn accepts_events_for_any_session_network() {
+        let mut session = PersistedSession::empty();
+        session.active_network_id = Some("network-a".to_string());
+        session.network_ids = vec!["network-a".to_string(), "network-b".to_string()];
+        let envelope = NetworkEventEnvelope {
+            r#type: "network_event".to_string(),
+            network_id: "network-b".to_string(),
+            version: 1,
+            event_id: "event-1".to_string(),
+            event_type: NetworkEventType::NetworkConfigChanged,
+            occurred_at: 1,
+            payload: serde_json::json!({}),
+        };
+
+        assert!(network_event_targets_session(
+            &envelope,
+            &session,
+            Some("network-a")
+        ));
+    }
 
     #[test]
     fn client_message_downstream_updates_runtime_state_and_notifies() {
@@ -1681,7 +1828,7 @@ mod tests {
             network_id: "net-current".to_string(),
             version: 1,
             event_id: "evt-1".to_string(),
-            event_type: NetworkEventType::DnsChanged,
+            event_type: NetworkEventType::ResolverChanged,
             occurred_at: 1,
             payload: serde_json::json!({}),
         };
@@ -1716,7 +1863,7 @@ mod tests {
             network_id: "net-current".to_string(),
             version: 1,
             event_id: "evt-1".to_string(),
-            event_type: NetworkEventType::DnsChanged,
+            event_type: NetworkEventType::ResolverChanged,
             occurred_at: 1,
             payload: serde_json::json!({}),
         };
@@ -1758,7 +1905,7 @@ mod tests {
             "networkId": "net-1",
             "version": 1,
             "eventId": "evt-1",
-            "eventType": "dns_changed",
+            "eventType": "resolver_changed",
             "occurredAt": 1,
             "payload": {
                 "records": []

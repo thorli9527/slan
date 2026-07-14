@@ -3,7 +3,6 @@ import {
   ApiDevice,
   ApiDNSRecord,
   ApiDNSZone,
-  ApiPublicMapping,
   ApiSecurityGroup,
   ApiSecurityRule,
   ApiUserAlias,
@@ -15,7 +14,6 @@ import {
   DNSZoneRow,
   MemberRow,
   NavItem,
-  PublicMappingRow,
   RuleSubjectType,
   SecurityGroupRow,
   SecurityRuleRow,
@@ -229,14 +227,6 @@ export abstract class AppComponentDns extends AppComponentDevices {
     return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${this.recordPort}`;
   }
 
-  publicMappingDeviceLabel(mapping: PublicMappingRow): string {
-    const device = this.devices.find((item) => item.deviceId === mapping.deviceId);
-    if (!device) {
-      return mapping.deviceId || '-';
-    }
-    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId}`;
-  }
-
   syncRecordValue(): void {
     this.recordValue = this.buildRecordValue();
   }
@@ -371,179 +361,6 @@ export abstract class AppComponentDns extends AppComponentDevices {
       .replace(/\/.*$/, '')
       .replace(/[^a-z0-9.-]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'internal.lan';
-  }
-
-  openPublicMappingDialog(): void {
-    this.closeInlinePopovers();
-    const device = this.currentUserDevices[0];
-    this.publicMappingDialogMessage = '';
-    this.publicAlias = 'api';
-    this.publicTargetType = 'device';
-    this.publicSourceRecord = device?.deviceId ?? '';
-    this.publicInternalIp = '10.0.0.10';
-    this.publicProtocol = 'HTTP';
-    this.publicInternalPort = '8443';
-    this.publicExternalPort = '443';
-    this.publicAccessMode = 'public';
-    this.publicTlsMode = 'auto';
-    this.editingPublicMapping = null;
-    this.publicMappingDialogMode = 'create';
-    this.showPublicMappingDialog = true;
-  }
-
-  openEditPublicMappingDialog(mapping: PublicMappingRow): void {
-    this.closeInlinePopovers();
-    this.publicMappingDialogMessage = '';
-    const targetType = mapping.targetType ?? (mapping.deviceId ? 'device' : mapping.internalIp ? 'ip' : 'device');
-    const record = targetType === 'record'
-      ? this.currentDNSRecords.find((item) => item.fqdn === mapping.sourceRecord || item.name === mapping.sourceRecord)
-      : null;
-    this.publicAlias = mapping.alias;
-    this.publicTargetType = targetType;
-    this.publicSourceRecord = targetType === 'device'
-      ? mapping.deviceId
-      : targetType === 'record'
-        ? (record?.recordId ?? '')
-        : mapping.sourceRecord;
-    this.publicInternalIp = mapping.internalIp || '';
-    this.publicProtocol = mapping.protocol;
-    this.publicInternalPort = mapping.internalPort || mapping.port;
-    this.publicExternalPort = mapping.externalPort;
-    this.publicAccessMode = mapping.accessMode;
-    this.publicTlsMode = mapping.tlsMode;
-    this.editingPublicMapping = mapping;
-    this.publicMappingDialogMode = 'edit';
-    this.showPublicMappingDialog = true;
-  }
-
-  closePublicMappingDialog(): void {
-    this.showPublicMappingDialog = false;
-    this.publicMappingDialogMessage = '';
-  }
-
-  async savePublicMappingDialog(): Promise<void> {
-    this.publicMappingDialogMessage = '';
-    const device = this.currentUserDevices.find((item) => item.deviceId === this.publicSourceRecord) ?? this.currentUserDevices[0];
-    const record = this.currentDNSRecords.find((item) => (item.recordId ?? '') === this.publicSourceRecord);
-    const recordDeviceID = record?.targetType === 'device' ? record.deviceId : '';
-    const recordInternalIP = record?.targetType === 'ip' ? record.value.trim() : '';
-    const deviceID = this.publicTargetType === 'device' ? device?.deviceId ?? '' : this.publicTargetType === 'record' ? recordDeviceID : '';
-    const internalIP = this.publicTargetType === 'ip' ? this.publicInternalIp.trim() : this.publicTargetType === 'record' ? recordInternalIP : '';
-    const sourceRecord = this.publicTargetType === 'device'
-      ? device?.deviceId || ''
-      : this.publicTargetType === 'record'
-        ? (record?.fqdn || record?.name || '')
-        : internalIP;
-    const alias = slug(this.publicAlias);
-    const publicDomain = `${alias}.${this.selectedWorkspace.code}.${this.userSlug}.pub.staticlss.com`;
-    const internalPort = this.publicInternalPort.trim() || this.publicExternalPort.trim();
-    if (this.publicMappingDialogMode === 'edit' && this.editingPublicMapping) {
-      const mappingId = this.resourceId(this.editingPublicMapping.mappingId);
-      if (mappingId) {
-        try {
-          const updated = await this.api.patch<ApiPublicMapping>(WEB_API.publicMapping(this.selectedWorkspaceId, mappingId, this.effectiveUserId), {
-            actorUserId: this.effectiveUserId,
-            alias,
-            publicDomain,
-            sourceRecord,
-            deviceId: deviceID,
-            internalIp: internalIP,
-            protocol: this.publicProtocol,
-            internalPort: Number.parseInt(internalPort, 10) || 0,
-            port: internalPort,
-            externalPort: this.publicExternalPort,
-            accessMode: this.publicAccessMode,
-            tlsMode: this.publicTlsMode,
-            status: this.editingPublicMapping.status,
-          });
-          Object.assign(this.editingPublicMapping, {
-            ...this.mapPublicMapping(updated),
-            accessMode: this.publicAccessMode,
-            tlsMode: this.publicTlsMode,
-          });
-        } catch {
-          if (!this.isDemoMode) {
-            this.publicMappingDialogMessage = '更新公网映射失败';
-            this.notifyStateChanged();
-            return;
-          }
-          this.editingPublicMapping.alias = alias;
-          this.editingPublicMapping.publicDomain = publicDomain;
-          this.editingPublicMapping.sourceRecord = sourceRecord;
-          this.editingPublicMapping.deviceId = deviceID;
-          this.editingPublicMapping.internalIp = internalIP;
-          this.editingPublicMapping.targetType = this.publicTargetType;
-          this.editingPublicMapping.protocol = this.publicProtocol;
-          this.editingPublicMapping.internalPort = internalPort;
-          this.editingPublicMapping.port = internalPort;
-          this.editingPublicMapping.externalPort = this.publicExternalPort;
-          this.editingPublicMapping.accessMode = this.publicAccessMode;
-          this.editingPublicMapping.tlsMode = this.publicTlsMode;
-        }
-      } else {
-        this.editingPublicMapping.alias = alias;
-        this.editingPublicMapping.publicDomain = publicDomain;
-        this.editingPublicMapping.sourceRecord = sourceRecord;
-        this.editingPublicMapping.deviceId = deviceID;
-        this.editingPublicMapping.internalIp = internalIP;
-        this.editingPublicMapping.targetType = this.publicTargetType;
-        this.editingPublicMapping.protocol = this.publicProtocol;
-        this.editingPublicMapping.internalPort = internalPort;
-        this.editingPublicMapping.port = internalPort;
-        this.editingPublicMapping.externalPort = this.publicExternalPort;
-        this.editingPublicMapping.accessMode = this.publicAccessMode;
-        this.editingPublicMapping.tlsMode = this.publicTlsMode;
-      }
-      this.closePublicMappingDialog();
-      return;
-    }
-    try {
-      const created = await this.api.post<ApiPublicMapping>(WEB_API.publicMappings(this.selectedWorkspaceId), {
-        actorUserId: this.effectiveUserId,
-        alias,
-        publicDomain,
-        sourceRecord,
-        deviceId: deviceID,
-        internalIp: internalIP,
-        protocol: this.publicProtocol,
-        internalPort: Number.parseInt(internalPort, 10) || 0,
-        port: internalPort,
-        externalPort: this.publicExternalPort,
-        accessMode: this.publicAccessMode,
-        tlsMode: this.publicTlsMode,
-        status: 'enabled',
-      });
-      this.publicMappings = [...this.publicMappings, { ...this.mapPublicMapping(created), accessMode: this.publicAccessMode, tlsMode: this.publicTlsMode }];
-    } catch {
-      if (!this.isDemoMode) {
-        this.publicMappingDialogMessage = '创建公网映射失败';
-        this.notifyStateChanged();
-        return;
-      }
-      this.publicMappings = [
-        ...this.publicMappings,
-        { mappingId: this.localResourceId('mapping'), networkId: this.selectedWorkspaceId, workspaceId: this.selectedWorkspaceId, alias, publicDomain, sourceRecord, deviceId: deviceID, internalIp: internalIP, targetType: this.publicTargetType, protocol: this.publicProtocol, internalPort, port: internalPort, externalPort: this.publicExternalPort, accessMode: this.publicAccessMode, tlsMode: this.publicTlsMode, status: 'enabled' },
-      ];
-    }
-    this.closePublicMappingDialog();
-    this.notifyStateChanged();
-  }
-
-  async removePublicMapping(mapping: PublicMappingRow): Promise<void> {
-    const mappingId = this.resourceId(mapping.mappingId);
-    if (mappingId) {
-      try {
-        await this.api.delete(WEB_API.publicMapping(mapping.workspaceId, mappingId, this.effectiveUserId));
-      } catch {
-        if (!this.isDemoMode) {
-          this.publicMappingDialogMessage = '删除公网映射失败';
-          this.notifyStateChanged();
-          return;
-        }
-      }
-    }
-    this.publicMappings = this.publicMappings.filter((item) => item !== mapping);
-    this.notifyStateChanged();
   }
 
   protected resourceId(value: string | undefined): string | undefined {

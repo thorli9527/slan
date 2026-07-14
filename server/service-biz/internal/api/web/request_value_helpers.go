@@ -2,7 +2,6 @@ package web
 
 import (
 	"net/http"
-	"strconv"
 
 	serviceapi "github.com/slan/service-biz/internal/api"
 )
@@ -11,24 +10,20 @@ func firstNonEmpty(values ...string) string {
 	return serviceapi.FirstNonEmpty(values...)
 }
 
-func atoi(value string) int {
-	n, _ := strconv.Atoi(value)
-	return n
-}
-
 func requestUserID(r *http.Request) string {
-	return serviceapi.PathOrQuery(r, "userId", "userId")
+	return firstNonEmpty(serviceapi.AuthenticatedUserID(r.Context()), serviceapi.PathOrQuery(r, "userId", "userId"))
 }
 
 func requestOwnerID(r *http.Request) string {
 	return serviceapi.FirstNonEmpty(
+		serviceapi.AuthenticatedUserID(r.Context()),
 		serviceapi.PathOrQuery(r, "userId", "ownerUserId"),
 		serviceapi.PathOrQuery(r, "ownerId", "ownerId"),
 	)
 }
 
 func requestActorUserID(r *http.Request) string {
-	return serviceapi.PathOrQuery(r, "actorUserId", "actorUserId")
+	return firstNonEmpty(serviceapi.AuthenticatedUserID(r.Context()), serviceapi.PathOrQuery(r, "actorUserId", "actorUserId"))
 }
 
 func requestNetworkID(r *http.Request) string {
@@ -45,10 +40,6 @@ func requestZoneID(r *http.Request) string {
 
 func requestRecordID(r *http.Request) string {
 	return serviceapi.PathOrQuery(r, "recordId", "recordId")
-}
-
-func requestMappingID(r *http.Request) string {
-	return serviceapi.PathOrQuery(r, "mappingId", "mappingId")
 }
 
 func requestSecurityGroupID(r *http.Request) string {
@@ -69,50 +60,53 @@ func requestBootstrapKeyID(r *http.Request) string {
 
 func setOwnerAndActor(r *http.Request, ownerID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(ownerID, requestOwnerID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
+	setActorUserID(r, actorUserID)
 }
 
 func setUserAndActor(r *http.Request, userID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(userID, requestUserID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
+	setActorUserID(r, actorUserID)
 }
 
 func setDeviceAndActor(r *http.Request, deviceID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(deviceID, requestDeviceID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
+	setActorUserID(r, actorUserID)
 }
 
 func setNetworkAndActor(r *http.Request, networkID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(networkID, requestNetworkID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
+	setActorUserID(r, actorUserID)
 }
 
 func setZoneAndActor(r *http.Request, zoneID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(zoneID, requestZoneID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
+	setActorUserID(r, actorUserID)
 }
 
 func setRecordAndActor(r *http.Request, recordID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(recordID, requestRecordID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
-}
-
-func setMappingAndActor(r *http.Request, mappingID *string, actorUserID *string) {
-	serviceapi.SetIfEmpty(mappingID, requestMappingID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
+	setActorUserID(r, actorUserID)
 }
 
 func setSecurityGroupAndActor(r *http.Request, securityGroupID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(securityGroupID, requestSecurityGroupID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
+	setActorUserID(r, actorUserID)
 }
 
 func setRuleAndActor(r *http.Request, ruleID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(ruleID, requestRuleID(r))
-	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
+	setActorUserID(r, actorUserID)
 }
 
 func setGroupAndActor(r *http.Request, groupID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(groupID, requestGroupID(r))
+	setActorUserID(r, actorUserID)
+}
+
+func setActorUserID(r *http.Request, actorUserID *string) {
+	if authenticated := serviceapi.AuthenticatedUserID(r.Context()); authenticated != "" {
+		*actorUserID = authenticated
+		return
+	}
 	serviceapi.SetIfEmpty(actorUserID, requestActorUserID(r))
 }

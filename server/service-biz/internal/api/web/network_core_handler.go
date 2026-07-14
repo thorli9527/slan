@@ -52,7 +52,7 @@ func (h NetworkCoreHandler) UpdateNetwork(w http.ResponseWriter, r *http.Request
 	}
 	input := req.toInput()
 	serviceapi.SetIfEmpty(&input.NetworkID, requestNetworkID(r))
-	serviceapi.SetIfEmpty(&input.ActorUserID, firstNonEmpty(req.ActorUserID, requestActorUserID(r)))
+	setActorUserID(r, &input.ActorUserID)
 	item, err := h.NetworkCore.UpdateNetwork(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)

@@ -41,6 +41,11 @@ type setDeviceGroupsRequest struct {
 	GroupIDs    []string `json:"groupIds"`
 }
 
+type networkDeviceGroupRequest struct {
+	GroupID     string `json:"groupId"`
+	ActorUserID string `json:"actorUserId"`
+}
+
 func (r setDeviceGroupsRequest) toInput() servicepkg.SetDeviceGroupsInput {
 	return servicepkg.SetDeviceGroupsInput{
 		UserID:      r.UserID,

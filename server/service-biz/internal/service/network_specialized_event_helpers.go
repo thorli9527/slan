@@ -28,6 +28,9 @@ func publishDNSChanged(
 	if err != nil {
 		return err
 	}
+	dnsConfig := BuildNetworkDNSConfigView(NetworkConfigView{
+		DNSZones: dnsZoneViews(zones),
+	})
 	occurredAt := currentTime(nowFn)
 	_ = zones
 	return publishNetworkEvent(
@@ -38,6 +41,12 @@ func publishDNSChanged(
 		uint64(version),
 		occurredAt.UnixMilli(),
 		NetworkEventDNSChangedPayload{
+			Config: NetworkEventDNSConfigView{
+				Servers:                   append([]string(nil), dnsConfig.Servers...),
+				SearchDomains:             append([]string(nil), dnsConfig.SearchDomains...),
+				SplitDomains:              append([]string(nil), dnsConfig.SplitDomains...),
+				FallbackToSystemResolvers: dnsConfig.FallbackToSystemResolvers,
+			},
 			Zones:   networkEventDNSZones(zones),
 			Records: networkEventDNSRecords(records, zones),
 		},
@@ -66,15 +75,14 @@ func publishACLChanged(
 		if err != nil {
 			return err
 		}
-		securityRules = append(securityRules, items...)
-	}
-	publicMappings, err := networks.ListPublicMappings(ctx, networkID)
-	if err != nil {
-		return err
+		for _, item := range items {
+			if supportedSecurityRulePeerType(item.PeerType) {
+				securityRules = append(securityRules, item)
+			}
+		}
 	}
 	occurredAt := currentTime(nowFn)
 	_ = securityGroups
-	_ = publicMappings
 	return publishNetworkEvent(
 		ctx,
 		eventPublisher,

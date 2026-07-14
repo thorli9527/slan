@@ -67,9 +67,10 @@ func bindAuthRepositories(store *repository.GormStore) AuthRepositories {
 
 func bindDeviceRepositories(store *repository.GormStore) DeviceRepositories {
 	return DeviceRepositories{
-		Users:    store,
-		Devices:  store,
-		Networks: store,
+		Users:         store,
+		Devices:       store,
+		Networks:      store,
+		NetworkGroups: store,
 	}
 }
 

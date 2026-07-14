@@ -15,7 +15,7 @@ const (
 	NetworkEventDeviceGroupRemoved NetworkEventType = "device_group_removed"
 	NetworkEventDeviceGroupUpdated NetworkEventType = "device_group_updated"
 	NetworkEventACLChanged         NetworkEventType = "acl_changed"
-	NetworkEventDNSChanged         NetworkEventType = "dns_changed"
+	NetworkEventDNSChanged         NetworkEventType = "resolver_changed"
 	NetworkEventConfigChanged      NetworkEventType = "network_config_changed"
 	NetworkEventPeerPathChanged    NetworkEventType = "peer_path_changed"
 )
@@ -83,6 +83,13 @@ type NetworkEventDNSRecordView struct {
 	UpdatedAt      int64  `json:"updatedAt"`
 }
 
+type NetworkEventDNSConfigView struct {
+	Servers                   []string `json:"servers"`
+	SearchDomains             []string `json:"searchDomains"`
+	SplitDomains              []string `json:"splitDomains"`
+	FallbackToSystemResolvers bool     `json:"fallbackToSystemResolvers"`
+}
+
 type NetworkEventACLRuleView struct {
 	RuleID          string   `json:"ruleId"`
 	Priority        int      `json:"priority"`
@@ -114,8 +121,9 @@ type NetworkSnapshotPayload struct {
 	Network      NetworkEventNetworkView       `json:"network"`
 	Members      []NetworkEventMemberView      `json:"members"`
 	DeviceGroups []NetworkEventDeviceGroupView `json:"deviceGroups"`
-	DNSZones     []NetworkEventDNSZoneView     `json:"dnsZones"`
-	DNSRecords   []NetworkEventDNSRecordView   `json:"dnsRecords"`
+	DNSConfig    NetworkEventDNSConfigView     `json:"resolverConfig"`
+	DNSZones     []NetworkEventDNSZoneView     `json:"resolverZones"`
+	DNSRecords   []NetworkEventDNSRecordView   `json:"resolverRecords"`
 	ACLRules     []NetworkEventACLRuleView     `json:"aclRules"`
 	PeerPaths    []NetworkEventPeerPathView    `json:"peerPaths"`
 }
@@ -153,6 +161,7 @@ type NetworkEventACLChangedPayload struct {
 }
 
 type NetworkEventDNSChangedPayload struct {
+	Config  NetworkEventDNSConfigView   `json:"config"`
 	Zones   []NetworkEventDNSZoneView   `json:"zones"`
 	Records []NetworkEventDNSRecordView `json:"records"`
 }

@@ -36,6 +36,7 @@ func buildNetworkEventSnapshotPayload(
 	resolved NetworkResolvedConfigView,
 ) NetworkSnapshotPayload {
 	view := resolved.Config
+	dnsConfig := BuildNetworkDNSConfigView(view)
 
 	members := make([]NetworkEventMemberView, 0, len(view.Peers)+1)
 	if strings.TrimSpace(view.DeviceID) != "" {
@@ -162,10 +163,16 @@ func buildNetworkEventSnapshotPayload(
 		},
 		Members:      members,
 		DeviceGroups: deviceGroups,
-		DNSZones:     dnsZones,
-		DNSRecords:   dnsRecords,
-		ACLRules:     aclRules,
-		PeerPaths:    peerPaths,
+		DNSConfig: NetworkEventDNSConfigView{
+			Servers:                   append([]string(nil), dnsConfig.Servers...),
+			SearchDomains:             append([]string(nil), dnsConfig.SearchDomains...),
+			SplitDomains:              append([]string(nil), dnsConfig.SplitDomains...),
+			FallbackToSystemResolvers: dnsConfig.FallbackToSystemResolvers,
+		},
+		DNSZones:   dnsZones,
+		DNSRecords: dnsRecords,
+		ACLRules:   aclRules,
+		PeerPaths:  peerPaths,
 	}
 }
 

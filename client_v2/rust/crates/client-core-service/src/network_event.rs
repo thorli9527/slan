@@ -22,7 +22,7 @@ pub enum NetworkEventType {
     DeviceGroupRemoved,
     DeviceGroupUpdated,
     AclChanged,
-    DnsChanged,
+    ResolverChanged,
     NetworkConfigChanged,
     PeerPathChanged,
 }
@@ -68,7 +68,20 @@ pub struct NetworkEventDeviceGroupView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct NetworkEventDnsZoneView {
+pub struct NetworkEventResolverConfigView {
+    #[serde(default, deserialize_with = "null_default")]
+    pub servers: Vec<String>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub search_domains: Vec<String>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub split_domains: Vec<String>,
+    #[serde(default)]
+    pub fallback_to_system_resolvers: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkEventResolverZoneView {
     #[serde(default)]
     pub zone_id: String,
     #[serde(default)]
@@ -83,7 +96,7 @@ pub struct NetworkEventDnsZoneView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct NetworkEventDnsRecordView {
+pub struct NetworkEventResolverRecordView {
     #[serde(default)]
     pub record_id: String,
     #[serde(default)]
@@ -160,10 +173,12 @@ pub struct NetworkSnapshotPayload {
     pub members: Vec<NetworkEventMemberView>,
     #[serde(default, deserialize_with = "null_default")]
     pub device_groups: Vec<NetworkEventDeviceGroupView>,
+    #[serde(default)]
+    pub resolver_config: NetworkEventResolverConfigView,
     #[serde(default, deserialize_with = "null_default")]
-    pub dns_zones: Vec<NetworkEventDnsZoneView>,
+    pub resolver_zones: Vec<NetworkEventResolverZoneView>,
     #[serde(default, deserialize_with = "null_default")]
-    pub dns_records: Vec<NetworkEventDnsRecordView>,
+    pub resolver_records: Vec<NetworkEventResolverRecordView>,
     #[serde(default, deserialize_with = "null_default")]
     pub acl_rules: Vec<NetworkEventAclRuleView>,
     #[serde(default, deserialize_with = "null_default")]
@@ -231,11 +246,13 @@ pub struct NetworkEventAclChangedPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct NetworkEventDnsChangedPayload {
+pub struct NetworkEventResolverChangedPayload {
+    #[serde(default)]
+    pub config: NetworkEventResolverConfigView,
     #[serde(default, deserialize_with = "null_default")]
-    pub zones: Vec<NetworkEventDnsZoneView>,
+    pub zones: Vec<NetworkEventResolverZoneView>,
     #[serde(default, deserialize_with = "null_default")]
-    pub records: Vec<NetworkEventDnsRecordView>,
+    pub records: Vec<NetworkEventResolverRecordView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

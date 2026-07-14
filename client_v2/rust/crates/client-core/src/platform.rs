@@ -52,7 +52,11 @@ pub struct PlatformNetworkDiagnostics {
     #[serde(default)]
     pub mss: Option<u32>,
     #[serde(default)]
-    pub dns_servers: Vec<String>,
+    pub resolver_servers: Vec<String>,
+    #[serde(default)]
+    pub resolver_search_domains: Vec<String>,
+    #[serde(default)]
+    pub resolver_split_domains: Vec<String>,
     #[serde(default)]
     pub routes: Vec<String>,
     #[serde(default)]
@@ -86,7 +90,28 @@ pub struct AndroidVpnConsentRequest {
     pub message: Option<String>,
 }
 
-/// Android VPN 会话配置，同时作为跨平台 PlatformNetworkConfig 的当前别名。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformResolverConfig {
+    /// 需要写入平台网络栈的 resolver 服务器。
+    #[serde(default)]
+    pub servers: Vec<String>,
+    /// 平台侧搜索域。
+    #[serde(default)]
+    pub search_domains: Vec<String>,
+    /// 平台侧 split-horizon 域。
+    #[serde(default)]
+    pub split_domains: Vec<String>,
+    /// 当本地 authoritative 数据不足时是否允许回退系统 resolver。
+    #[serde(default)]
+    pub fallback_to_system_resolvers: bool,
+}
+
+/// Rust 内部平台网络配置。
+///
+/// 这份结构既用于 Android/iOS 启动参数，也用于 FFI、本地 resolver responder、
+/// macOS 数据面等内部模块。Flutter 层消费的是 service 额外裁剪后的 DTO，
+/// 不应假定这里的全部字段都会跨层暴露。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AndroidVpnSessionConfig {
@@ -98,11 +123,12 @@ pub struct AndroidVpnSessionConfig {
     pub prefix_len: u8,
     #[serde(default)]
     pub network_configs: Vec<PlatformDeviceNetworkConfig>,
-    pub dns_servers: Vec<String>,
     #[serde(default)]
-    pub dns_zones: Vec<PlatformDnsZone>,
+    pub resolver: PlatformResolverConfig,
     #[serde(default)]
-    pub dns_records: Vec<PlatformDnsRecord>,
+    pub resolver_zones: Vec<PlatformResolverZone>,
+    #[serde(default)]
+    pub resolver_records: Vec<PlatformResolverRecord>,
     pub routes: Vec<RouteSpec>,
     pub mtu: Option<u16>,
     pub relay_endpoint_id: Option<String>,
@@ -114,10 +140,10 @@ pub struct AndroidVpnSessionConfig {
     pub relay_data_plane: Option<RelayDataPlaneConfig>,
 }
 
-/// 当前平台网络配置类型；后续各平台分化时可替换为枚举或专用结构。
+/// 当前 Rust 内部平台网络配置类型；后续各平台分化时可替换为枚举或专用结构。
 pub type PlatformNetworkConfig = AndroidVpnSessionConfig;
 
-/// 单个网络配置摘要，用于平台层了解本设备在各网络内的配置规模。
+/// 单个网络配置摘要，供 Rust 内部平台层评估配置规模。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformDeviceNetworkConfig {
@@ -140,26 +166,26 @@ pub struct PlatformDeviceNetworkConfig {
     #[serde(default)]
     pub peer_count: usize,
     #[serde(default)]
-    pub dns_record_count: usize,
+    pub resolver_record_count: usize,
     #[serde(default)]
     pub security_rule_count: usize,
     #[serde(default)]
     pub relay_candidate_count: usize,
 }
 
-/// 客户端本地 DNS Zone 配置。
+/// Rust 内部本地 resolver zone 配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct PlatformDnsZone {
+pub struct PlatformResolverZone {
     pub zone_id: String,
     pub network_id: String,
     pub zone_name: String,
 }
 
-/// 客户端本地 DNS 记录配置，目前供隧道内 DNS responder 使用。
+/// Rust 内部本地 resolver 记录配置，目前供隧道内 resolver responder 使用。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct PlatformDnsRecord {
+pub struct PlatformResolverRecord {
     pub record_id: String,
     pub zone_id: String,
     pub network_id: String,
@@ -344,13 +370,13 @@ pub trait PlatformNetwork {
     fn configure_ip(&self, virtual_ip: &str, prefix_len: u8) -> Result<()>;
     /// 配置系统或 VPN 路由。
     fn configure_routes(&self, routes: &[RouteSpec]) -> Result<()>;
-    /// 配置 DNS。
-    fn configure_dns(&self, dns_servers: &[String]) -> Result<()>;
-    /// 配置本地 DNS zone/record 映射。
-    fn configure_dns_map(
+    /// 配置平台 resolver。
+    fn configure_resolver(&self, resolver: &PlatformResolverConfig) -> Result<()>;
+    /// 配置本地 authoritative resolver 的 zone/record 映射。
+    fn configure_resolver_map(
         &self,
-        _dns_zones: &[PlatformDnsZone],
-        _dns_records: &[PlatformDnsRecord],
+        _resolver_zones: &[PlatformResolverZone],
+        _resolver_records: &[PlatformResolverRecord],
     ) -> Result<()> {
         Ok(())
     }
@@ -431,20 +457,25 @@ mod tests {
     }
 
     #[test]
-    fn platform_network_config_round_trips_acl_policies() {
+    fn internal_platform_network_config_round_trips_acl_policies() {
         let acl_policy = test_acl_policy();
         let config = AndroidVpnSessionConfig {
             session_name: "SLAN".to_string(),
             virtual_ip: "10.0.0.1".to_string(),
             prefix_len: 32,
             network_configs: Vec::new(),
-            dns_servers: vec!["10.0.0.53".to_string()],
-            dns_zones: vec![PlatformDnsZone {
+            resolver: PlatformResolverConfig {
+                servers: vec!["10.0.0.53".to_string()],
+                search_domains: vec!["test.lan".to_string()],
+                split_domains: vec!["test.lan".to_string()],
+                fallback_to_system_resolvers: false,
+            },
+            resolver_zones: vec![PlatformResolverZone {
                 zone_id: "zone-1".to_string(),
                 network_id: "network-1".to_string(),
                 zone_name: "test.lan".to_string(),
             }],
-            dns_records: vec![PlatformDnsRecord {
+            resolver_records: vec![PlatformResolverRecord {
                 record_id: "record-1".to_string(),
                 zone_id: "zone-1".to_string(),
                 network_id: "network-1".to_string(),
@@ -453,7 +484,7 @@ mod tests {
                 record_type: "A".to_string(),
                 target_ip: Some("10.0.0.2".to_string()),
                 ttl: Some(60),
-                ..PlatformDnsRecord::default()
+                ..PlatformResolverRecord::default()
             }],
             routes: vec![RouteSpec {
                 destination: "mesh".to_string(),
@@ -467,17 +498,19 @@ mod tests {
             relay_data_plane: Some(test_relay_config(acl_policy.clone())),
         };
 
-        let value = serde_json::to_value(&config).expect("serialize platform config");
+        let value = serde_json::to_value(&config).expect("serialize internal platform config");
         assert!(value.get("aclPolicies").is_some());
         assert_eq!(
             value
                 .pointer("/dnsZones/0/zoneName")
+                .or_else(|| value.pointer("/resolverZones/0/zoneName"))
                 .and_then(|value| value.as_str()),
             Some("test.lan")
         );
         assert_eq!(
             value
                 .pointer("/dnsRecords/0/fqdn")
+                .or_else(|| value.pointer("/resolverRecords/0/fqdn"))
                 .and_then(|value| value.as_str()),
             Some("mac.test.lan")
         );
@@ -494,10 +527,15 @@ mod tests {
             .is_some());
 
         let decoded: AndroidVpnSessionConfig =
-            serde_json::from_value(value).expect("deserialize platform config");
+            serde_json::from_value(value).expect("deserialize internal platform config");
         assert_eq!(decoded.acl_policies, vec![acl_policy.clone()]);
-        assert_eq!(decoded.dns_zones.len(), 1);
-        assert_eq!(decoded.dns_records.len(), 1);
+        assert_eq!(decoded.resolver.servers, vec!["10.0.0.53".to_string()]);
+        assert_eq!(
+            decoded.resolver.search_domains,
+            vec!["test.lan".to_string()]
+        );
+        assert_eq!(decoded.resolver_zones.len(), 1);
+        assert_eq!(decoded.resolver_records.len(), 1);
         assert_eq!(
             decoded
                 .relay_data_plane
@@ -508,25 +546,30 @@ mod tests {
     }
 
     #[test]
-    fn platform_network_config_defaults_missing_acl_policies_to_empty() {
+    fn internal_platform_network_config_defaults_missing_acl_policies_to_empty() {
         let decoded: AndroidVpnSessionConfig = serde_json::from_value(serde_json::json!({
             "sessionName": "SLAN",
             "virtualIp": "10.0.0.1",
             "prefixLen": 32,
-            "dnsServers": [],
-            "dnsZones": [],
-            "dnsRecords": [],
+            "resolver": {
+                "servers": [],
+                "searchDomains": [],
+                "splitDomains": [],
+                "fallbackToSystemResolvers": false
+            },
+            "resolverZones": [],
+            "resolverRecords": [],
             "routes": [],
             "mtu": null,
             "relayEndpointId": null,
             "relayTransport": null,
             "relayAddress": null
         }))
-        .expect("deserialize minimal platform config");
+        .expect("deserialize minimal internal platform config");
 
         assert!(decoded.acl_policies.is_empty());
-        assert!(decoded.dns_zones.is_empty());
-        assert!(decoded.dns_records.is_empty());
+        assert!(decoded.resolver_zones.is_empty());
+        assert!(decoded.resolver_records.is_empty());
         assert!(decoded.relay_data_plane.is_none());
     }
 }

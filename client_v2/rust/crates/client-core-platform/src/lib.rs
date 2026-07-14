@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Result;
-use client_core::{NetworkRuntimeState, PlatformNetwork, RouteSpec};
+use client_core::{NetworkRuntimeState, PlatformNetwork, PlatformResolverConfig, RouteSpec};
 
 pub mod direct_udp;
 
@@ -42,7 +42,7 @@ pub type PlatformNetworkImpl = NoopPlatformNetwork;
 #[derive(Debug, Clone, Default)]
 pub struct NoopPlatformNetwork;
 
-pub fn effective_dns_servers(configured: &[String]) -> Vec<String> {
+pub fn effective_resolver_servers(configured: &[String]) -> Vec<String> {
     if let Some(local) = local_dns_override_server() {
         return vec![local];
     }
@@ -73,7 +73,7 @@ fn local_dns_override_server() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::effective_dns_servers;
+    use super::effective_resolver_servers;
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -84,19 +84,19 @@ mod tests {
     }
 
     #[test]
-    fn effective_dns_servers_prefers_local_override_on_port_53() {
+    fn effective_resolver_servers_prefers_local_override_on_port_53() {
         let _lock = env_lock();
         std::env::set_var("SLAN_LOCAL_DNS_BIND", "127.0.0.1:53");
-        let actual = effective_dns_servers(&["8.8.8.8".to_string(), "1.1.1.1".to_string()]);
+        let actual = effective_resolver_servers(&["8.8.8.8".to_string(), "1.1.1.1".to_string()]);
         assert_eq!(actual, vec!["127.0.0.1".to_string()]);
         std::env::remove_var("SLAN_LOCAL_DNS_BIND");
     }
 
     #[test]
-    fn effective_dns_servers_ignores_non_53_local_override() {
+    fn effective_resolver_servers_ignores_non_53_local_override() {
         let _lock = env_lock();
         std::env::set_var("SLAN_LOCAL_DNS_BIND", "127.0.0.1:53535");
-        let actual = effective_dns_servers(&["8.8.8.8".to_string(), "".to_string()]);
+        let actual = effective_resolver_servers(&["8.8.8.8".to_string(), "".to_string()]);
         assert_eq!(actual, vec!["8.8.8.8".to_string()]);
         std::env::remove_var("SLAN_LOCAL_DNS_BIND");
     }
@@ -115,7 +115,7 @@ impl PlatformNetwork for NoopPlatformNetwork {
         anyhow::bail!("network operations are not implemented on this platform yet")
     }
 
-    fn configure_dns(&self, _dns_servers: &[String]) -> Result<()> {
+    fn configure_resolver(&self, _resolver: &PlatformResolverConfig) -> Result<()> {
         anyhow::bail!("network operations are not implemented on this platform yet")
     }
 

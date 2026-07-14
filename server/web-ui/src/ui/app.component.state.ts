@@ -12,7 +12,6 @@ import {
   INITIAL_DNS_ZONES,
   DEVICE_GROUP_PRESETS,
   INITIAL_MEMBERS,
-  INITIAL_PUBLIC_MAPPINGS,
   INITIAL_SECURITY_GROUPS,
   INITIAL_SECURITY_RULES,
   INITIAL_USER_ALIASES,
@@ -32,7 +31,6 @@ import {
   ClientDownload,
   ApiDNSRecord,
   ApiDNSZone,
-  ApiPublicMapping,
   ApiSecurityGroup,
   ApiSecurityRule,
   ApiUserAlias,
@@ -47,7 +45,6 @@ import {
   DNSZoneRow,
   MemberRow,
   NavItem,
-  PublicMappingRow,
   RuleSubjectType,
   SecurityGroupRow,
   SecurityRuleRow,
@@ -77,7 +74,6 @@ export abstract class AppComponentState {
   readonly workspacePresets = WORKSPACE_PRESETS;
   readonly securityRuleTemplates: SecurityRuleTemplate[] = SECURITY_RULE_TEMPLATES;
   readonly navGroups = NAV_GROUPS;
-  readonly publicMappingsEnabled = true;
   readonly downloadPlatforms = [
     { platform: 'macos', label: 'Mac', hint: 'macOS 13 及以上' },
     { platform: 'windows', label: 'Windows', hint: 'Windows 10/11 x64' },
@@ -94,13 +90,11 @@ export abstract class AppComponentState {
     this.showSecurityGroupNameTagDialog = false;
     this.showUserAliasDialog = false;
     this.showDeviceAliasDialog = false;
-    this.showWorkspaceDeviceAliasDialog = false;
     this.showZoneTagDialog = false;
     this.editingWorkspace = null;
     this.editingSecurityGroup = null;
     this.editingUserAlias = null;
     this.editingDevice = null;
-    this.editingWorkspaceDevice = null;
     this.editingZone = null;
   }
 
@@ -125,10 +119,8 @@ export abstract class AppComponentState {
     this.showInviteDialog = false;
     this.showBootstrapDialog = false;
     this.showJoinDialog = false;
-    this.showWorkspaceDeviceDialog = false;
     this.showZoneDialog = false;
     this.showRecordDialog = false;
-    this.showPublicMappingDialog = false;
     this.showIngressRuleDialog = false;
     this.showEgressRuleDialog = false;
     this.authMessage = '';
@@ -138,12 +130,9 @@ export abstract class AppComponentState {
     this.deviceListMessage = '';
     this.deviceAliasDialogMessage = '';
     this.workspaceDialogMessage = '';
-    this.workspaceDeviceDialogMessage = '';
-    this.workspaceDeviceAliasMessage = '';
     this.securityGroupDialogMessage = '';
     this.zoneDialogMessage = '';
     this.recordDialogMessage = '';
-    this.publicMappingDialogMessage = '';
     this.securityRuleDialogMessage = '';
     this.bootstrapMessage = '';
     this.joinInviteMessage = '';
@@ -159,10 +148,8 @@ export abstract class AppComponentState {
     this.showBootstrapDialog = false;
     this.showJoinDialog = false;
     this.closeDeviceExposureDialogState();
-    this.showWorkspaceDeviceDialog = false;
     this.showZoneDialog = false;
     this.showRecordDialog = false;
-    this.showPublicMappingDialog = false;
     this.showIngressRuleDialog = false;
     this.showEgressRuleDialog = false;
   }
@@ -204,20 +191,12 @@ export abstract class AppComponentState {
       this.closeDeviceExposureDialogState();
       return true;
     }
-    if (this.showWorkspaceDeviceDialog) {
-      this.showWorkspaceDeviceDialog = false;
-      return true;
-    }
     if (this.showZoneDialog) {
       this.showZoneDialog = false;
       return true;
     }
     if (this.showRecordDialog) {
       this.showRecordDialog = false;
-      return true;
-    }
-    if (this.showPublicMappingDialog) {
-      this.showPublicMappingDialog = false;
       return true;
     }
     if (this.showIngressRuleDialog || this.showEgressRuleDialog) {
@@ -338,24 +317,17 @@ export abstract class AppComponentState {
   showDeviceExposureDialog = false;
   selectedExposureDevice: DeviceRow | null = null;
   exposureUser = 'bob@staticlss.com';
-  showWorkspaceDeviceDialog = false;
-  showWorkspaceDeviceAliasDialog = false;
   showDeviceAliasDialog = false;
   showWorkspaceNameTagDialog = false;
   showWorkspacePolicyTagDialog = false;
   showSecurityGroupNameTagDialog = false;
   showUserAliasDialog = false;
-  editingWorkspaceDevice: DeviceRow | null = null;
   editingDevice: DeviceRow | null = null;
   editingWorkspace: WorkspaceRow | null = null;
   editingSecurityGroup: SecurityGroupRow | null = null;
   editingUserAlias: UserAliasRow | null = null;
   bindDeviceQuery = '';
-  selectedWorkspaceDeviceId = '';
-  workspaceDeviceDialogMessage = '';
-  workspaceDeviceAliasMessage = '';
   securityGroupDialogMessage = '';
-  workspaceDeviceAliasValue = '';
   deviceAliasValue = '';
   workspaceNameValue = '';
   workspaceIntraGroupPolicyValue: 'allow' | 'deny' = 'allow';
@@ -363,13 +335,6 @@ export abstract class AppComponentState {
   securityGroupNameValue = '';
   securityGroupDescriptionValue = '';
   userAliasValue = '';
-  workspaceDeviceId = 'android-001';
-  workspaceDeviceOwner = 'alice@staticlss.com';
-  workspaceDeviceAlias = 'Android 测试机';
-  workspaceDeviceIp = '10.0.0.3';
-  workspaceDevicePlatform = 'Android';
-  workspaceDeviceOSVersion = '15';
-  workspaceDeviceStatus = 'active';
   showZoneDialog = false;
   showZoneTagDialog = false;
   zoneDialogMessage = '';
@@ -393,19 +358,6 @@ export abstract class AppComponentState {
   recordTargetIp = '10.0.0.10';
   recordCname = 'upstream.internal';
   recordPort = '443';
-  showPublicMappingDialog = false;
-  publicMappingDialogMessage = '';
-  publicMappingDialogMode: 'create' | 'edit' = 'create';
-  editingPublicMapping: PublicMappingRow | null = null;
-  publicAlias = 'api';
-  publicTargetType: 'device' | 'ip' | 'record' = 'device';
-  publicSourceRecord = 'api';
-  publicInternalIp = '10.0.0.10';
-  publicProtocol = 'HTTP';
-  publicInternalPort = '8443';
-  publicExternalPort = '443';
-  publicAccessMode = 'public';
-  publicTlsMode = 'auto';
   showIngressRuleDialog = false;
   showEgressRuleDialog = false;
   securityRuleDialogMessage = '';
@@ -417,8 +369,9 @@ export abstract class AppComponentState {
   rulePort = '443';
   ruleDescription = '';
   ruleEnabled = true;
-  ruleSubjectType: RuleSubjectType = 'device';
-  ruleSubjectValue = DEFAULT_MAC_DEVICE_ID;
+  ruleSubjectType: RuleSubjectType = 'device_group';
+  ruleSubjectValue = '';
+	selectedWorkspaceDeviceGroupReferenceId = '';
   selectedRuleTemplate = 'Web 服务';
   devices: DeviceRow[] = INITIAL_DEVICES.map((item) => ({ ...item }));
   deviceGroups: DeviceGroupRow[] = INITIAL_DEVICE_GROUPS.map((item) => ({ ...item }));
@@ -438,7 +391,6 @@ export abstract class AppComponentState {
   userAliases: UserAliasRow[] = INITIAL_USER_ALIASES.map((item) => ({ ...item }));
   dnsZones: DNSZoneRow[] = INITIAL_DNS_ZONES.map((item) => ({ ...item }));
   dnsRecords: DNSRow[] = INITIAL_DNS_RECORDS.map((item) => ({ ...item }));
-  publicMappings: PublicMappingRow[] = INITIAL_PUBLIC_MAPPINGS.map((item) => ({ ...item }));
   securityRules: SecurityRuleRow[] = INITIAL_SECURITY_RULES.map((item) => ({ ...item }));
   securityGroups: SecurityGroupRow[] = INITIAL_SECURITY_GROUPS.map((item) => ({ ...item }));
   deviceExposures: DeviceExposureRow[] = INITIAL_DEVICE_EXPOSURES.map((item) => ({ ...item }));
@@ -491,22 +443,22 @@ export abstract class AppComponentState {
 
   get ingressSubjectTypes(): Array<{ value: RuleSubjectType; label: string }> {
     return [
-      { value: 'device', label: '设备' },
       { value: 'device_group', label: '设备分组' },
+      { value: 'device', label: '设备' },
     ];
   }
 
   get egressSubjectTypes(): Array<{ value: RuleSubjectType; label: string }> {
     return [
-      { value: 'device', label: '设备' },
       { value: 'device_group', label: '设备分组' },
+      { value: 'device', label: '设备' },
     ];
   }
 
   get ruleSubjectOptions(): Array<{ value: string; label: string }> {
     switch (this.ruleSubjectType) {
       case 'device':
-        return this.workspaceRuleDeviceOptions.map((device) => ({ value: device.deviceId, label: device.alias }));
+        return this.workspaceRuleDeviceOptions.map((device) => ({ value: device.deviceId, label: device.alias || device.deviceId }));
       case 'device_group':
         return this.workspaceRuleDeviceGroups.map((group) => ({ value: group.groupId, label: group.name }));
       default:
@@ -550,9 +502,12 @@ export abstract class AppComponentState {
   }
 
   get workspaceRuleDeviceGroups(): DeviceGroupRow[] {
-    return this.workspaceDeviceGroups
-      .filter((group) => this.workspaceDeviceGroupCount(group.groupId) > 0)
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return this.workspaceDeviceGroups.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  get availableWorkspaceDeviceGroupReferences(): DeviceGroupRow[] {
+    const referenced = new Set(this.workspaceDeviceGroups.map((group) => group.groupId));
+    return this.currentDeviceGroups.filter((group) => !referenced.has(group.groupId));
   }
 
   get availableDeviceGroupPresets(): Pick<DeviceGroupRow, 'name' | 'description'>[] {
@@ -702,14 +657,6 @@ export abstract class AppComponentState {
     }
   }
 
-  get currentPublicMappings(): PublicMappingRow[] {
-    return this.publicMappings.filter((mapping) => mapping.workspaceId === this.selectedWorkspaceId);
-  }
-
-  get publicMappableDNSRecords(): DNSRow[] {
-    return this.currentDNSRecords.filter((record) => record.targetType !== 'cname');
-  }
-
   get currentSecurityGroups(): SecurityGroupRow[] {
     return this.securityGroups.filter((group) => group.workspaceId === this.selectedWorkspaceId);
   }
@@ -823,25 +770,6 @@ export abstract class AppComponentState {
     return this.workspaceDeviceJoinMethods[`${workspaceId}|${deviceId}`] ?? '手动添加';
   }
 
-  get bindableWorkspaceDevices(): DeviceRow[] {
-    const currentIds = this.currentWorkspaceDeviceIds();
-    return this.currentUserDevices.filter((device) => !currentIds.includes(device.deviceId));
-  }
-
-  get queriedBindableWorkspaceDevices(): DeviceRow[] {
-    const query = this.bindDeviceQuery.trim().toLowerCase();
-    if (!query) {
-      return this.bindableWorkspaceDevices;
-    }
-    return this.bindableWorkspaceDevices.filter((device) => [
-      device.deviceId,
-      device.owner,
-      device.alias,
-      device.ip,
-      device.platform,
-      device.osVersion,
-    ].some((value) => value.toLowerCase().includes(query)));
-  }
 
   get selectedWorkspace(): WorkspaceRow {
     return this.workspaces.find((workspace) => workspace.workspaceId === this.selectedWorkspaceId) ?? this.workspaces[0] ?? this.emptyWorkspace;
@@ -919,24 +847,6 @@ export abstract class AppComponentState {
     return `${this.userSlug}.slan.com`;
   }
 
-  get publicDomainPreview(): string {
-    return `${slug(this.publicAlias)}.${this.selectedWorkspace.code}.${this.userSlug}.pub.staticlss.com`;
-  }
-
-  publicMappingTargetLabel(mapping: PublicMappingRow): string {
-    if (mapping.targetType === 'record') {
-      return mapping.sourceRecord || '-';
-    }
-    if (mapping.targetType === 'ip') {
-      return mapping.internalIp || mapping.sourceRecord || '-';
-    }
-    const device = this.devices.find((item) => item.deviceId === mapping.deviceId);
-    if (!device) {
-      return mapping.deviceId || '-';
-    }
-    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId}`;
-  }
-
   get selectedDeviceExposures(): DeviceExposureRow[] {
     if (!this.selectedExposureDevice) {
       return [];
@@ -964,7 +874,6 @@ export abstract class AppComponentState {
   protected abstract mapDevice(device: ApiDevice): DeviceRow;
   protected abstract mapDNSZone(zone: ApiDNSZone): DNSZoneRow;
   protected abstract mapDNSRecord(record: ApiDNSRecord): DNSRow;
-  protected abstract mapPublicMapping(mapping: ApiPublicMapping): PublicMappingRow;
   protected abstract mapSecurityGroup(group: ApiSecurityGroup): SecurityGroupRow;
   protected abstract mapSecurityRule(rule: ApiSecurityRule): SecurityRuleRow;
   abstract isWorkspaceCodeDuplicated(code: string, exceptWorkspaceId?: string): boolean;

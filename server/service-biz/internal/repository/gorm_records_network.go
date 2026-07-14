@@ -58,6 +58,13 @@ type gormNetworkDeviceRecord struct {
 	UpdatedAt          int64               `gorm:"not null"`
 }
 
+type gormNetworkDeviceGroupReferenceRecord struct {
+	NetworkID string `gorm:"primaryKey;size:64"`
+	GroupID   string `gorm:"primaryKey;size:64;index"`
+	CreatedAt int64  `gorm:"not null"`
+	UpdatedAt int64  `gorm:"not null"`
+}
+
 type gormDeviceInviteRecord struct {
 	InviteID      string `gorm:"primaryKey;size:64"`
 	InviteCode    string `gorm:"size:255;index"`

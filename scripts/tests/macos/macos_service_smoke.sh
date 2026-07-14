@@ -11,7 +11,7 @@ done
 LABEL="dev.slan.client-core-service"
 APP_PATH="${SLAN_MACOS_APP_PATH:-client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
 SERVICE_IN_APP="${APP_PATH%/}/Contents/MacOS/client-core-service"
-SESSION_FILE="/Library/Application Support/SLAN/client-v2-session.json"
+CONFIG_FILE="/Library/Application Support/SLAN/config.json"
 SHUTDOWN_CHECK=0
 RUN_LOCAL_DNS_SMOKE="${SLAN_RUN_LOCAL_DNS_SMOKE:-0}"
 
@@ -130,8 +130,8 @@ PY
 
 if [[ "$SHUTDOWN_CHECK" == "1" ]]; then
   before=""
-  if [[ -f "$SESSION_FILE" ]]; then
-    before="$(shasum -a 256 "$SESSION_FILE" | awk '{print $1}')"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    before="$(shasum -a 256 "$CONFIG_FILE" | awk '{print $1}')"
   fi
   python3 - <<'PY'
 import json
@@ -154,9 +154,9 @@ if data.get("networkEnabled") is True:
 print("localNetworkShutdown: ok")
 PY
   if [[ -n "$before" ]]; then
-    after="$(shasum -a 256 "$SESSION_FILE" | awk '{print $1}')"
+    after="$(shasum -a 256 "$CONFIG_FILE" | awk '{print $1}')"
     if [[ "$before" != "$after" ]]; then
-      echo "session file changed after localNetworkShutdown: $SESSION_FILE" >&2
+      echo "config file changed after localNetworkShutdown: $CONFIG_FILE" >&2
       exit 1
     fi
     echo "sessionPreserved: true"

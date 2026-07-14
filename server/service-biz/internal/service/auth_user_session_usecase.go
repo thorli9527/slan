@@ -12,7 +12,7 @@ func (s AuthUserSessionService) LoginUser(ctx context.Context, input LoginUserIn
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	if err := s.Sessions.SaveUserSession(ctx, session); err != nil {
+	if err := replaceUserSession(ctx, s.Sessions, session); err != nil {
 		return AuthSessionView{}, err
 	}
 	return authSessionView(user, session), nil
@@ -51,17 +51,11 @@ func (s AuthUserSessionService) RenewUserSession(ctx context.Context, accessToke
 	if accessToken != "" && normalizeUserAccessToken(accessToken) != session.AccessToken {
 		return AuthSessionView{}, ErrUnauthorized
 	}
-	session.Status = tokenStatusRevoked
-	session.RevokedAt = now.Unix()
-	session.UpdatedAt = now.Unix()
-	if err := s.Sessions.SaveUserSession(ctx, session); err != nil {
-		return AuthSessionView{}, err
-	}
 	nextSession, err := newAuthUserSession(now, s.NewSessID, session.UserID, session.SessionMode)
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	if err := s.Sessions.SaveUserSession(ctx, nextSession); err != nil {
+	if err := replaceUserSession(ctx, s.Sessions, nextSession); err != nil {
 		return AuthSessionView{}, err
 	}
 	return authSessionView(user, nextSession), nil

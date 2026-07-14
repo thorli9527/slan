@@ -1,1 +1,0 @@
-tests/macos/analyze_macos_virtualization_owners.sh

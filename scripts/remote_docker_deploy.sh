@@ -192,6 +192,8 @@ rsync -az --delete \
   --exclude '.tmp/' \
   --exclude 'client_v2/app_flutter/build/' \
   --exclude 'client_v2/app_flutter/build.rootcache*/' \
+  --exclude 'client_v2/app_flutter/android/.kotlin/' \
+  --exclude 'client_v2/app_flutter/android/.gradle/' \
   "$ROOT_DIR/" "$SSH_TARGET:$REMOTE_DIR/"
 
 REMOTE_ENV_TMP="$REMOTE_DIR/.env.deploy.incoming"

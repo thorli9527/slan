@@ -1,1 +1,0 @@
-tests/android/android_dual_phase2_reverse_debug.sh

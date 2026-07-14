@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::network_event::{
-    NetworkEventAclRuleView, NetworkEventDeviceGroupView, NetworkEventDnsRecordView,
-    NetworkEventMemberView, NetworkEventNetworkView, NetworkEventPeerPathView,
+    NetworkEventAclRuleView, NetworkEventDeviceGroupView, NetworkEventMemberView,
+    NetworkEventNetworkView, NetworkEventPeerPathView, NetworkEventResolverRecordView,
 };
 use crate::session_store::PersistedSession;
 
@@ -25,7 +25,7 @@ pub struct RuntimeNetworkState {
 
     pub members_by_device_id: BTreeMap<String, NetworkEventMemberView>,
     pub groups_by_group_id: BTreeMap<String, NetworkEventDeviceGroupView>,
-    pub dns_by_record_id: BTreeMap<String, NetworkEventDnsRecordView>,
+    pub records_by_record_id: BTreeMap<String, NetworkEventResolverRecordView>,
     pub acl_by_rule_id: BTreeMap<String, NetworkEventAclRuleView>,
     pub peer_paths_by_device_id: BTreeMap<String, NetworkEventPeerPathView>,
 

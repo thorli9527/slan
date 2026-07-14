@@ -109,49 +109,6 @@ func (r acceptDeviceInviteRequest) toInput() servicepkg.AcceptDeviceInviteInput 
 	}
 }
 
-type addNetworkDeviceRequest struct {
-	NetworkID   string `json:"networkId"`
-	DeviceID    string `json:"deviceId"`
-	ActorUserID string `json:"actorUserId"`
-	Alias       string `json:"alias"`
-	Enabled     *bool  `json:"enabled,omitempty"`
-}
-
-func (r addNetworkDeviceRequest) fields() (string, string, *bool) {
-	return r.NetworkID, r.DeviceID, r.Enabled
-}
-
-func (r addNetworkDeviceRequest) toInput() servicepkg.AddNetworkDeviceInput {
-	networkID, deviceID, enabled := r.fields()
-	return servicepkg.AddNetworkDeviceInput{
-		NetworkID:   networkID,
-		DeviceID:    deviceID,
-		ActorUserID: r.ActorUserID,
-		Alias:       r.Alias,
-		Enabled:     enabled,
-	}
-}
-
-type updateNetworkDeviceRequest struct {
-	NetworkID   string `json:"networkId"`
-	DeviceID    string `json:"deviceId"`
-	ActorUserID string `json:"actorUserId"`
-	Alias       string `json:"alias"`
-	Enabled     *bool  `json:"enabled,omitempty"`
-	Status      string `json:"status"`
-}
-
-func (r updateNetworkDeviceRequest) toInput() servicepkg.UpdateNetworkDeviceInput {
-	return servicepkg.UpdateNetworkDeviceInput{
-		NetworkID:   r.NetworkID,
-		DeviceID:    r.DeviceID,
-		ActorUserID: r.ActorUserID,
-		Alias:       r.Alias,
-		Enabled:     r.Enabled,
-		Status:      r.Status,
-	}
-}
-
 type createDNSZoneFields struct {
 	ActorUserID  string `json:"actorUserId"`
 	ZoneName     string `json:"zoneName"`
@@ -243,77 +200,6 @@ type updateDNSRecordRequest struct {
 
 func (r updateDNSRecordRequest) toInput() servicepkg.UpdateDNSRecordInput {
 	return r.dnsRecordFields.updateInput()
-}
-
-type publicMappingFieldsRequest struct {
-	ActorUserID  string `json:"actorUserId"`
-	Alias        string `json:"alias"`
-	PublicDomain string `json:"publicDomain"`
-	SourceRecord string `json:"sourceRecord"`
-	DeviceID     string `json:"deviceId"`
-	InternalIP   string `json:"internalIp"`
-	InternalPort int    `json:"internalPort"`
-	Protocol     string `json:"protocol"`
-	Port         string `json:"port"`
-	ExternalPort string `json:"externalPort"`
-	AccessMode   string `json:"accessMode"`
-	TLSMode      string `json:"tlsMode"`
-	Status       string `json:"status"`
-}
-
-func (f publicMappingFieldsRequest) fields() (string, int, int) {
-	return publicMappingFields(f.Alias, f.PublicDomain, f.SourceRecord, f.InternalPort, f.Port, f.ExternalPort)
-}
-
-func (f publicMappingFieldsRequest) createInput() servicepkg.CreatePublicMappingInput {
-	name, internalPort, externalPort := f.fields()
-	return servicepkg.CreatePublicMappingInput{
-		ActorUserID:  f.ActorUserID,
-		Name:         name,
-		PublicDomain: f.PublicDomain,
-		SourceRecord: f.SourceRecord,
-		DeviceID:     f.DeviceID,
-		Protocol:     f.Protocol,
-		InternalIP:   f.InternalIP,
-		InternalPort: internalPort,
-		ExternalPort: externalPort,
-		AccessMode:   f.AccessMode,
-		TLSMode:      f.TLSMode,
-	}
-}
-
-func (f publicMappingFieldsRequest) updateInput() servicepkg.UpdatePublicMappingInput {
-	name, internalPort, externalPort := f.fields()
-	return servicepkg.UpdatePublicMappingInput{
-		ActorUserID:  f.ActorUserID,
-		Name:         name,
-		PublicDomain: f.PublicDomain,
-		SourceRecord: f.SourceRecord,
-		DeviceID:     f.DeviceID,
-		Protocol:     f.Protocol,
-		InternalIP:   f.InternalIP,
-		InternalPort: internalPort,
-		ExternalPort: externalPort,
-		AccessMode:   f.AccessMode,
-		TLSMode:      f.TLSMode,
-		Status:       f.Status,
-	}
-}
-
-type createPublicMappingRequest struct {
-	publicMappingFieldsRequest
-}
-
-func (r createPublicMappingRequest) toInput() servicepkg.CreatePublicMappingInput {
-	return r.publicMappingFieldsRequest.createInput()
-}
-
-type updatePublicMappingRequest struct {
-	publicMappingFieldsRequest
-}
-
-func (r updatePublicMappingRequest) toInput() servicepkg.UpdatePublicMappingInput {
-	return r.publicMappingFieldsRequest.updateInput()
 }
 
 type securityGroupFields struct {
@@ -454,13 +340,6 @@ func (r updateSecurityRuleRequest) toInput() servicepkg.UpdateSecurityRuleInput 
 
 func dnsRecordValue(targetDeviceID, targetIP, cname string) string {
 	return firstNonEmpty(targetDeviceID, targetIP, cname)
-}
-
-func publicMappingFields(alias, publicDomain, sourceRecord string, internalPort int, port, externalPort string) (string, int, int) {
-	if internalPort <= 0 {
-		internalPort = atoi(port)
-	}
-	return firstNonEmpty(alias, publicDomain, sourceRecord), internalPort, atoi(externalPort)
 }
 
 func securityRuleFields(portFrom, portTo int, peerType, peerValue string) (string, string, string) {

@@ -256,7 +256,6 @@ void main() {
           sessionName: 'SLAN',
           virtualIp: '10.0.0.10',
           prefixLen: 32,
-          dnsServers: ['10.0.0.1'],
           relayEndpointId: 'relay-cn',
         ),
       ),

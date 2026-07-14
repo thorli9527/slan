@@ -3,7 +3,6 @@ import {
   ApiDevice,
   ApiDNSRecord,
   ApiDNSZone,
-  ApiPublicMapping,
   ApiSecurityGroup,
   ApiSecurityRule,
   ApiUserAlias,
@@ -15,7 +14,6 @@ import {
   DNSZoneRow,
   MemberRow,
   NavItem,
-  PublicMappingRow,
   RuleSubjectType,
   SecurityGroupRow,
   SecurityRuleRow,
@@ -194,8 +192,8 @@ export abstract class AppComponentSecurity extends AppComponentDns {
     this.ruleProtocol = template.protocol;
     this.rulePort = template.port;
     this.ruleDescription = template.description || '';
-    this.ruleSubjectType = template.subjectType;
-    this.ruleSubjectValue = template.subjectValue;
+    this.ruleSubjectType = 'device_group';
+    this.ruleSubjectValue = '';
     this.onRuleSubjectTypeChanged();
   }
 
@@ -236,14 +234,8 @@ export abstract class AppComponentSecurity extends AppComponentDns {
   }
 
   private normalizedRulePeer(): { peerType: RuleSubjectType; peerValue: string } {
-    if (this.ruleSubjectType === 'all') {
-      return {
-        peerType: 'user',
-        peerValue: this.effectiveUserId,
-      };
-    }
     return {
-      peerType: this.ruleSubjectType,
+      peerType: this.ruleSubjectType === 'device' ? 'device' : 'device_group',
       peerValue: this.ruleSubjectValue,
     };
   }

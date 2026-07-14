@@ -7,10 +7,13 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 
 use crate::{
-    dns_authority::{resolve_authoritative, ResolveAuthoritativeResult},
-    dns_forwarder::forward_dns_query,
-    dns_runtime_state::RuntimeDnsState,
     network_runtime_state::RuntimeNetworkState,
+    resolver_authority::{
+        resolve_authoritative, route_resolver_query, ResolveAuthoritativeResult,
+        ResolverRouteDecision,
+    },
+    resolver_forwarder::forward_resolver_query,
+    resolver_runtime_state::RuntimeResolverState,
     session_store::current_timestamp_ms,
 };
 
@@ -32,12 +35,12 @@ const MAX_DNS_PACKET_SIZE: usize = 4096;
 const DNS_SERVER_READ_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_LOCAL_DNS_BIND_ADDR: &str = "127.0.0.1:53";
 
-pub(crate) struct DnsServer {
+pub(crate) struct ResolverServer {
     socket: UdpSocket,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct LocalDnsServerStatus {
+pub(crate) struct LocalResolverServerStatus {
     pub enabled: bool,
     pub listening: bool,
     pub bind_addr: Option<String>,
@@ -48,7 +51,7 @@ pub(crate) struct LocalDnsServerStatus {
     pub desired_signed_in: Option<bool>,
     pub desired_network_enabled: Option<bool>,
     pub desired_has_requester_device_id: Option<bool>,
-    pub desired_has_dns_data: Option<bool>,
+    pub desired_has_resolver_data: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,27 +62,27 @@ struct ParsedQuestion {
     question_end: usize,
 }
 
-static LOCAL_DNS_SERVER_STATUS: OnceLock<Mutex<LocalDnsServerStatus>> = OnceLock::new();
+static LOCAL_DNS_SERVER_STATUS: OnceLock<Mutex<LocalResolverServerStatus>> = OnceLock::new();
 
-pub(crate) fn local_dns_server_status() -> &'static Mutex<LocalDnsServerStatus> {
-    LOCAL_DNS_SERVER_STATUS.get_or_init(|| Mutex::new(LocalDnsServerStatus::default()))
+pub(crate) fn local_resolver_server_status() -> &'static Mutex<LocalResolverServerStatus> {
+    LOCAL_DNS_SERVER_STATUS.get_or_init(|| Mutex::new(LocalResolverServerStatus::default()))
 }
 
-pub(crate) fn set_local_dns_server_status(status: LocalDnsServerStatus) {
-    let mut current = local_dns_server_status()
+pub(crate) fn set_local_resolver_server_status(status: LocalResolverServerStatus) {
+    let mut current = local_resolver_server_status()
         .lock()
-        .expect("local dns server status mutex poisoned");
+        .expect("local resolver server status mutex poisoned");
     *current = status;
 }
 
-pub(crate) fn local_dns_server_last_query_at_ms() -> Option<u64> {
-    local_dns_server_status()
+pub(crate) fn local_resolver_server_last_query_at_ms() -> Option<u64> {
+    local_resolver_server_status()
         .try_lock()
         .ok()
         .and_then(|status| status.last_query_at_ms)
 }
 
-pub(crate) fn desired_local_dns_bind_addr() -> String {
+pub(crate) fn desired_local_resolver_bind_addr() -> String {
     std::env::var("SLAN_LOCAL_DNS_BIND")
         .ok()
         .map(|value| value.trim().to_string())
@@ -87,26 +90,26 @@ pub(crate) fn desired_local_dns_bind_addr() -> String {
         .unwrap_or_else(|| DEFAULT_LOCAL_DNS_BIND_ADDR.to_string())
 }
 
-impl DnsServer {
+impl ResolverServer {
     pub(crate) fn bind(bind_addr: &str) -> Result<Self> {
         let socket = UdpSocket::bind(bind_addr)
-            .with_context(|| format!("bind local dns udp socket {bind_addr}"))?;
+            .with_context(|| format!("bind local resolver udp socket {bind_addr}"))?;
         socket
             .set_read_timeout(Some(DNS_SERVER_READ_TIMEOUT))
-            .context("set local dns udp read timeout")?;
+            .context("set local resolver udp read timeout")?;
         Ok(Self { socket })
     }
 
     pub(crate) fn local_addr(&self) -> Result<SocketAddr> {
         self.socket
             .local_addr()
-            .context("read local dns udp socket addr")
+            .context("read local resolver udp socket addr")
     }
 
     pub(crate) fn serve_once(
         &self,
         runtime: &RuntimeNetworkState,
-        dns: &mut RuntimeDnsState,
+        dns: &mut RuntimeResolverState,
         requester_device_id: &str,
     ) -> Result<bool> {
         let mut buffer = [0_u8; MAX_DNS_PACKET_SIZE];
@@ -127,9 +130,9 @@ impl DnsServer {
         self.socket
             .send_to(&response, peer)
             .with_context(|| format!("send dns response to {peer}"))?;
-        let mut status = local_dns_server_status()
+        let mut status = local_resolver_server_status()
             .lock()
-            .expect("local dns server status mutex poisoned");
+            .expect("local resolver server status mutex poisoned");
         status.last_query_at_ms = Some(current_timestamp_ms());
         status.last_error = None;
         Ok(true)
@@ -138,49 +141,50 @@ impl DnsServer {
     pub(crate) fn handle_query_packet(
         &self,
         runtime: &RuntimeNetworkState,
-        dns: &mut RuntimeDnsState,
+        dns: &mut RuntimeResolverState,
         requester_device_id: &str,
         raw_query: &[u8],
     ) -> Result<Vec<u8>> {
         let question = parse_question(raw_query)?;
-        let qtype_name = dns_type_name(question.qtype);
-        let result = resolve_authoritative(
-            runtime,
-            dns,
-            requester_device_id,
-            &question.qname,
-            qtype_name,
-        );
-        match result {
-            ResolveAuthoritativeResult::AnswerA { ttl, ips } => {
-                build_a_response(raw_query, &question, ttl, &ips)
-            }
-            ResolveAuthoritativeResult::AnswerAaaa { ttl, ips } => {
-                build_aaaa_response(raw_query, &question, ttl, &ips)
-            }
-            ResolveAuthoritativeResult::AnswerCname { ttl, cname } => {
-                build_cname_response(raw_query, &question, ttl, &cname)
-            }
-            ResolveAuthoritativeResult::AnswerPtr { ttl, name } => {
-                build_ptr_response(raw_query, &question, ttl, &name)
-            }
-            ResolveAuthoritativeResult::AnswerTxt { ttl, texts } => {
-                build_txt_response(raw_query, &question, ttl, &texts)
-            }
-            ResolveAuthoritativeResult::AnswerSrv { ttl, port, target } => {
-                build_srv_response(raw_query, &question, ttl, port, &target)
-            }
-            ResolveAuthoritativeResult::NxDomain => {
-                build_error_response(raw_query, &question, DNS_RCODE_NXDOMAIN)
-            }
-            ResolveAuthoritativeResult::NoData => build_empty_response(raw_query, &question),
-            ResolveAuthoritativeResult::NotManaged => {
-                if dns.upstream_servers.is_empty() {
-                    build_empty_response(raw_query, &question)
-                } else {
-                    forward_dns_query(dns, raw_query)
+        match route_resolver_query(dns, &question.qname) {
+            ResolverRouteDecision::Authoritative => {
+                let qtype_name = dns_type_name(question.qtype);
+                let result = resolve_authoritative(
+                    runtime,
+                    dns,
+                    requester_device_id,
+                    &question.qname,
+                    qtype_name,
+                );
+                match result {
+                    ResolveAuthoritativeResult::AnswerA { ttl, ips } => {
+                        build_a_response(raw_query, &question, ttl, &ips)
+                    }
+                    ResolveAuthoritativeResult::AnswerAaaa { ttl, ips } => {
+                        build_aaaa_response(raw_query, &question, ttl, &ips)
+                    }
+                    ResolveAuthoritativeResult::AnswerCname { ttl, cname } => {
+                        build_cname_response(raw_query, &question, ttl, &cname)
+                    }
+                    ResolveAuthoritativeResult::AnswerPtr { ttl, name } => {
+                        build_ptr_response(raw_query, &question, ttl, &name)
+                    }
+                    ResolveAuthoritativeResult::AnswerTxt { ttl, texts } => {
+                        build_txt_response(raw_query, &question, ttl, &texts)
+                    }
+                    ResolveAuthoritativeResult::AnswerSrv { ttl, port, target } => {
+                        build_srv_response(raw_query, &question, ttl, port, &target)
+                    }
+                    ResolveAuthoritativeResult::NxDomain => {
+                        build_error_response(raw_query, &question, DNS_RCODE_NXDOMAIN)
+                    }
+                    ResolveAuthoritativeResult::NoData | ResolveAuthoritativeResult::NotManaged => {
+                        build_empty_response(raw_query, &question)
+                    }
                 }
             }
+            ResolverRouteDecision::ForwardUpstream => forward_resolver_query(dns, raw_query),
+            ResolverRouteDecision::NoData => build_empty_response(raw_query, &question),
         }
     }
 }

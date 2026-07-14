@@ -1,1 +1,0 @@
-tests/macos/analyze_macos_virtual_interfaces.sh

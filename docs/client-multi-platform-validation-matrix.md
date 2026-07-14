@@ -226,7 +226,7 @@ What is needed:
   - `scripts/tests/matrix/mac_ios_integration_check.sh`
 - For stable Mac + Android reruns, `scripts/mac_android_fast_check.sh` now defaults `SLAN_RESET_EXISTING_MAC_SERVICE_IDENTITY=1`, which helps recover from stale installed macOS identity/session state.
 - For dual iOS reruns, the iOS plugin now persists the requested test device ID override into native stable state, so repeated `flutter test` invocations stay aligned across Flutter UI, iOS plugin, and embedded Rust service.
-- For dual Docker reruns, the Rust session store now writes `client-v2-session.json` atomically, which fixes the previously observed partial-read / decode race during MQTT reconnect and `client_message` delivery.
+- For dual Docker reruns, the Rust client atomically writes `config.json`; only `deviceId` is plaintext and credentials are stored in an AES-256-GCM encrypted payload.
 
 ## Recommended Rerun Entry
 

@@ -207,22 +207,55 @@ http_call "" -X POST "${APP_BASE_URL}/api/app/devices/register" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DST_DEVICE_ID}\",\"name\":\"Smoke iPhone\",\"platform\":\"ios\",\"osName\":\"iOS\",\"osVersion\":\"18.3\",\"alias\":\"Smoke iPhone\",\"publicKey\":\"smoke-ios-public-key\"}" >/dev/null || fail "failed to register destination device"
 
-http_call "" "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/mqtt-credential" \
-  -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null || fail "mqtt credential lookup failed"
-http_call "" -X POST "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/renew" \
+SOURCE_SESSION="$(http_json -X POST "${APP_BASE_URL}/api/app/device/session/bind" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"deviceId\":\"${DEVICE_ID}\",\"sessionMode\":\"long_lived\"}")"
+DEVICE_TOKEN="$(printf '%s' "${SOURCE_SESSION}" | sed -n 's/.*"deviceToken":"\([^"]*\)".*/\1/p')"
+DST_SESSION="$(http_json -X POST "${APP_BASE_URL}/api/app/device/session/bind" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"deviceId\":\"${DST_DEVICE_ID}\",\"sessionMode\":\"long_lived\"}")"
+DST_DEVICE_TOKEN="$(printf '%s' "${DST_SESSION}" | sed -n 's/.*"deviceToken":"\([^"]*\)".*/\1/p')"
+if [[ -z "${DEVICE_TOKEN}" || -z "${DST_DEVICE_TOKEN}" ]]; then
+  fail "missing device session token"
+fi
+
+MEMBER_GROUP="$(http_json -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"actorUserId\":\"${USER_ID}\",\"name\":\"Smoke Network Members\",\"description\":\"network membership smoke\"}")"
+MEMBER_GROUP_ID="$(printf '%s' "${MEMBER_GROUP}" | sed -n 's/.*"groupId":"\([^"]*\)".*/\1/p')"
+if [[ -z "${MEMBER_GROUP_ID}" ]]; then
+  fail "missing network member group id"
+fi
+for member_device_id in "${DEVICE_ID}" "${DST_DEVICE_ID}"; do
+  http_call "" -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${member_device_id}/groups" \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"actorUserId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\"]}" >/dev/null || fail "failed to assign network member group"
+done
+http_call "" -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"actorUserId\":\"${USER_ID}\",\"groupId\":\"${MEMBER_GROUP_ID}\"}" >/dev/null || fail "failed to reference network member group"
+
+http_call "" "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/mqtt-credential" \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "mqtt credential lookup failed"
+http_call "" -X POST "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/renew" \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"networkEnabled\":true,\"rxBytesTotal\":1024,\"txBytesTotal\":2048}" >/dev/null || fail "source device renew failed"
 http_call "" -X POST "${APP_BASE_URL}/api/app/devices/${DST_DEVICE_ID}/renew" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H "Authorization: Bearer ${DST_DEVICE_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"networkEnabled\":true,\"rxBytesTotal\":256,\"txBytesTotal\":512}" >/dev/null || fail "destination device renew failed"
 http_call "" "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/network-configs" \
-  -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null || fail "device network configs failed"
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "device network configs failed"
 http_call "" "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null || fail "app network config failed"
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "app network config failed"
 http_call "" "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/relay-candidates?deviceId=${DEVICE_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null || fail "relay candidates failed"
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "relay candidates failed"
 PEER_ID="${NETWORK_ID}:${DEVICE_ID}"
 PEER_AUTHZ_STATUS="$(http_status "${APP_BASE_URL}/internal/wire/peers/${PEER_ID}/authz" \
   -H "X-Slan-Internal-Token: ${WIRE_TOKEN}")"
@@ -256,7 +289,7 @@ else
   fail "network topology lookup failed with status ${TOPOLOGY_STATUS}"
 fi
 RELAY_TICKET="$(http_json -X POST "${APP_BASE_URL}/api/app/relay/tickets" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"reason\":\"smoke\"}")"
 RELAY_TICKET_ID="$(printf '%s' "${RELAY_TICKET}" | sed -n 's/.*"ticketId":"\([^"]*\)".*/\1/p')"
@@ -282,7 +315,11 @@ fi
 http_call "" -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${DEVICE_ID}/groups" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null || fail "failed to assign device group"
+  -d "{\"actorUserId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\",\"${DEVICE_GROUP_ID}\"]}" >/dev/null || fail "failed to assign device group"
+http_call "" -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"actorUserId\":\"${USER_ID}\",\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null || fail "failed to reference ACL device group"
 GROUP_RULE="$(http_json -X POST "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
@@ -292,7 +329,7 @@ if [[ -z "${GROUP_RULE_ID}" ]]; then
   fail "missing device_group security rule id: ${GROUP_RULE}"
 fi
 GROUP_RULE_CONFIG="$(http_json "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}")"
+  -H "Authorization: Bearer ${DEVICE_TOKEN}")"
 if ! printf '%s' "${GROUP_RULE_CONFIG}" | grep -q "\"ruleId\":\"${GROUP_RULE_ID}\""; then
   fail "device_group ACL rule missing from network config: ${GROUP_RULE_CONFIG}"
 fi
@@ -307,21 +344,21 @@ http_call "" -X DELETE "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/$
 INGRESS_DENY_RULE="$(http_json -X POST "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":5,\"action\":\"deny\",\"protocol\":\"all\",\"portFrom\":0,\"portTo\":0,\"peerType\":\"device\",\"peerValue\":\"${DST_DEVICE_ID}\",\"description\":\"deny smoke peer ingress\",\"enabled\":true}")"
+  -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"ingress\",\"priority\":5,\"action\":\"deny\",\"protocol\":\"all\",\"portFrom\":0,\"portTo\":0,\"peerType\":\"device\",\"peerValue\":\"${DEVICE_ID}\",\"description\":\"deny smoke peer ingress\",\"enabled\":true}")"
 INGRESS_DENY_RULE_ID="$(printf '%s' "${INGRESS_DENY_RULE}" | sed -n 's/.*"ruleId":"\([^"]*\)".*/\1/p')"
 if [[ -z "${INGRESS_DENY_RULE_ID}" ]]; then
   fail "missing ingress deny security rule id: ${INGRESS_DENY_RULE}"
 fi
 INGRESS_DENIED_CONFIG="$(http_json "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}")"
+  -H "Authorization: Bearer ${DEVICE_TOKEN}")"
 if ! printf '%s' "${INGRESS_DENIED_CONFIG}" | grep -q "\"ruleId\":\"${INGRESS_DENY_RULE_ID}\""; then
   fail "ingress ACL deny rule missing from network config: ${INGRESS_DENIED_CONFIG}"
 fi
-if ! printf '%s' "${INGRESS_DENIED_CONFIG}" | grep -q "\"resolvedPeerNodeId\":\"node-${DST_DEVICE_ID}\""; then
+if ! printf '%s' "${INGRESS_DENIED_CONFIG}" | grep -q "\"resolvedPeerNodeId\":\"node-${DEVICE_ID}\""; then
   fail "ingress ACL deny rule missing resolved peer node: ${INGRESS_DENIED_CONFIG}"
 fi
 INGRESS_DENIED_TICKET_STATUS="$(curl --silent --show-error --output /tmp/slan-service-biz-ingress-denied-ticket.json --write-out '%{http_code}' --max-time "${HTTP_TIMEOUT_SECS}" -X POST "${APP_BASE_URL}/api/app/relay/tickets" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"reason\":\"smoke-ingress-denied\"}")"
 if [[ "${INGRESS_DENIED_TICKET_STATUS}" == "200" || "${INGRESS_DENIED_TICKET_STATUS}" == "201" ]]; then
@@ -335,7 +372,7 @@ http_call "" -X POST "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_I
   -H 'Content-Type: application/json' \
   -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"egress\",\"priority\":10,\"action\":\"deny\",\"protocol\":\"all\",\"portFrom\":0,\"portTo\":0,\"peerType\":\"device\",\"peerValue\":\"${DST_DEVICE_ID}\",\"description\":\"deny smoke peer\",\"enabled\":true}" >/dev/null || fail "failed to create egress deny rule"
 DENIED_CONFIG="$(http_json "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
-  -H "Authorization: Bearer ${USER_TOKEN}")"
+  -H "Authorization: Bearer ${DEVICE_TOKEN}")"
 if ! printf '%s' "${DENIED_CONFIG}" | grep -q '"securityRuleCount":1'; then
   fail "ACL deny rule count missing from network config: ${DENIED_CONFIG}"
 fi
@@ -343,7 +380,7 @@ if ! printf '%s' "${DENIED_CONFIG}" | grep -q "\"resolvedPeerNodeId\":\"node-${D
   fail "ACL deny rule missing resolved peer node: ${DENIED_CONFIG}"
 fi
 DENIED_TICKET_STATUS="$(curl --silent --show-error --output /tmp/slan-service-biz-denied-ticket.json --write-out '%{http_code}' --max-time "${HTTP_TIMEOUT_SECS}" -X POST "${APP_BASE_URL}/api/app/relay/tickets" \
-  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"networkId\":\"${NETWORK_ID}\",\"srcNodeId\":\"node-${DEVICE_ID}\",\"dstNodeId\":\"node-${DST_DEVICE_ID}\",\"reason\":\"smoke-denied\"}")"
 if [[ "${DENIED_TICKET_STATUS}" == "200" || "${DENIED_TICKET_STATUS}" == "201" ]]; then

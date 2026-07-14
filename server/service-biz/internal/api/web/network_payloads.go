@@ -1,7 +1,6 @@
 package web
 
 import (
-	"strconv"
 	"strings"
 
 	servicepkg "github.com/slan/service-biz/internal/service"
@@ -122,32 +121,6 @@ func mapDNSRecordPayloads(items []servicepkg.DNSRecordView, zoneName func(servic
 	return payloads
 }
 
-func publicMappingPayload(view servicepkg.PublicMappingView) map[string]any {
-	return map[string]any{
-		"mappingId":         view.MappingID,
-		"networkId":         view.NetworkID,
-		"workspaceId":       view.NetworkID,
-		"name":              view.Name,
-		"alias":             view.Name,
-		"publicDomain":      firstNonEmpty(view.PublicDomain, view.Name),
-		"sourceRecord":      firstNonEmpty(view.SourceRecord, view.DeviceID, view.InternalIP, view.Name),
-		"deviceId":          view.DeviceID,
-		"internalIp":        view.InternalIP,
-		"targetType":        view.TargetType,
-		"protocol":          view.Protocol,
-		"internalPort":      view.InternalPort,
-		"internalPortValue": view.InternalPort,
-		"port":              formatInt(view.InternalPort),
-		"externalPortValue": view.ExternalPort,
-		"externalPort":      formatInt(view.ExternalPort),
-		"accessMode":        view.AccessMode,
-		"tlsMode":           view.TLSMode,
-		"status":            view.Status,
-		"createdAt":         view.CreatedAt,
-		"updatedAt":         view.UpdatedAt,
-	}
-}
-
 func securityGroupPayload(view servicepkg.SecurityGroupView) map[string]any {
 	return map[string]any{
 		"securityGroupId": view.SecurityGroupID,
@@ -181,11 +154,4 @@ func securityRulePayload(view servicepkg.SecurityRuleView) map[string]any {
 		"createdAt":       view.CreatedAt,
 		"updatedAt":       view.UpdatedAt,
 	}
-}
-
-func formatInt(value int) string {
-	if value <= 0 {
-		return ""
-	}
-	return strconv.Itoa(value)
 }

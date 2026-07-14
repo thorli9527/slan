@@ -55,7 +55,7 @@ If no assigned virtual IP exists, enable must fail clearly instead of showing a 
 
 Session and assigned IP:
 
-- `client-core-service` persists session at `C:\ProgramData\SLAN\client-v2-session.json`.
+- `client-core-service` persists the plaintext device ID and AES-256-GCM encrypted credentials at `C:\ProgramData\SLAN\config.json`.
 - The session stores access token, device id, active network id, and assigned virtual IP.
 - `syncAssignedIp` updates the assigned IP in service state and session storage.
 - When enabling network, service can recover assigned IP from local session even if UI no longer shows the current adapter IP.

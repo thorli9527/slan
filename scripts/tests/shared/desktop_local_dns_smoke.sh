@@ -77,9 +77,9 @@ wait_for_dns_ready() {
   while (( $(date +%s) < deadline )); do
     local status dns_state
     status="$(request localStatus)"
-    dns_state="$(request localDnsState)"
+    dns_state="$(request localResolverState)"
     if jq -e '.signedIn == true and .networkEnabled == true' >/dev/null <<<"$status" &&
-       jq -e '.serverEnabled == true and .serverListening == true and (.serverBindAddr | type == "string") and (.serverBindAddr | endswith(":53"))' >/dev/null <<<"$dns_state"; then
+       jq -e '.serverEnabled == true and .serverListening == true and (.serverBindAddr | type == "string") and (.serverBindAddr | test(":[0-9]+$"))' >/dev/null <<<"$dns_state"; then
       printf '%s\n%s\n' "$status" "$dns_state"
       return 0
     fi
@@ -92,7 +92,7 @@ pick_dns_record() {
   local module_json="$1"
   jq -c '
     .configs
-    | map(.dnsRecords // [])
+    | map(.resolverRecords // [])
     | (add // [])
     | map(select((.enabled // true) == true))
     | map(select(((.fqdn // "") | length) > 0))
@@ -132,7 +132,7 @@ need python3
 status_and_dns="$(wait_for_dns_ready || true)"
 if [[ -z "$status_and_dns" ]]; then
   echo "localStatus=$(request localStatus)" >&2
-  echo "localDnsState=$(request localDnsState)" >&2
+  echo "localResolverState=$(request localResolverState)" >&2
   fail "local dns server reaches signed-in/listening state"
 fi
 
@@ -156,9 +156,9 @@ resolve_args="$(jq -nc \
   --arg qname "$fqdn" \
   --arg qtype "$record_type" \
   '{requesterDeviceId: $requesterDeviceId, qname: $qname, qtype: $qtype}')"
-resolve_json="$(request localDnsResolve "$resolve_args")"
+resolve_json="$(request localResolverResolve "$resolve_args")"
 resolve_result="$(jq -r '.result // empty' <<<"$resolve_json")"
-[[ -n "$resolve_result" ]] || fail "localDnsResolve returned result"
+[[ -n "$resolve_result" ]] || fail "localResolverResolve returned result"
 
 bind_addr="$(jq -r '.serverBindAddr' <<<"$dns_state_before")"
 last_query_before="$(jq -r '.serverLastQueryAtMs // 0' <<<"$dns_state_before")"
@@ -271,7 +271,7 @@ print(json.dumps({"rcode": rcode, "answerCount": ancount, "answers": answers}))
 PY
 )"
 
-dns_state_after="$(request localDnsState)"
+dns_state_after="$(request localResolverState)"
 last_query_after="$(jq -r '.serverLastQueryAtMs // 0' <<<"$dns_state_after")"
 if [[ "$last_query_after" -gt "$last_query_before" ]]; then
   pass "udp dns query reached local dns server"
@@ -283,7 +283,7 @@ fi
 
 case "$resolve_result" in
   answer_a)
-    assert_jq "$resolve_json" '.ips | type == "array" and length > 0' "localDnsResolve returns A answer list"
+    assert_jq "$resolve_json" '.ips | type == "array" and length > 0' "localResolverResolve returns A answer list"
     expected_ips_json="$(jq -c '.ips' <<<"$resolve_json")"
     assert_jq "$dns_query_json" '
       [.answers[]? | select(.type == "A") | .value] as $actual_ips
@@ -296,7 +296,7 @@ case "$resolve_result" in
     assert_jq "$dns_query_json" '.rcode == 0 and (.answers | any(.type == "CNAME" and .value == $cname))' "udp dns answer matches authoritative CNAME record" --arg cname "$expected_cname"
     ;;
   answer_aaaa)
-    assert_jq "$resolve_json" '.ips | type == "array" and length > 0' "localDnsResolve returns AAAA answer list"
+    assert_jq "$resolve_json" '.ips | type == "array" and length > 0' "localResolverResolve returns AAAA answer list"
     expected_ips_json="$(jq -c '.ips' <<<"$resolve_json")"
     assert_jq "$dns_query_json" '
       [.answers[]? | select(.type == "AAAA") | .value] as $actual_ips
@@ -305,7 +305,7 @@ case "$resolve_result" in
     ' "udp dns answer matches authoritative AAAA record set" --argjson expected_ips "$expected_ips_json"
     ;;
   answer_txt)
-    assert_jq "$resolve_json" '.texts | type == "array" and length > 0' "localDnsResolve returns TXT answer list"
+    assert_jq "$resolve_json" '.texts | type == "array" and length > 0' "localResolverResolve returns TXT answer list"
     expected_texts_json="$(jq -c '.texts' <<<"$resolve_json")"
     assert_jq "$dns_query_json" '
       [.answers[]? | select(.type == "TXT") | .value] as $actual_texts
@@ -330,7 +330,7 @@ case "$resolve_result" in
     ;;
   *)
     echo "$resolve_json" >&2
-    fail "localDnsResolve returned authoritative answer"
+    fail "localResolverResolve returned authoritative answer"
     ;;
 esac
 

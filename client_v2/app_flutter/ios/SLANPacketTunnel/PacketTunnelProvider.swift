@@ -43,7 +43,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     ipv4.includedRoutes = routes.isEmpty ? [NEIPv4Route.default()] : routes
     networkSettings.ipv4Settings = ipv4
 
-    if let dnsServers = config["dnsServers"] as? [String], !dnsServers.isEmpty {
+    let dnsServers =
+      ((config["dns"] as? [String: Any])?["servers"] as? [String])
+      ?? []
+    if !dnsServers.isEmpty {
       networkSettings.dnsSettings = NEDNSSettings(servers: dnsServers)
     }
     if let mtu = config["mtu"] as? Int, mtu >= 576 {

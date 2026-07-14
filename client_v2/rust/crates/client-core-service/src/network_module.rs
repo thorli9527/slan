@@ -8,14 +8,13 @@ use serde::Serialize;
 
 use crate::{
     control_plane::{
-        ControlPlaneClient, DeviceDnsRecord, DeviceDnsZone, DeviceNetworkConfig, DeviceNetworkPeer,
-        DeviceSecurityRule,
+        ControlPlaneClient, DeviceNetworkConfig, DeviceNetworkPeer, DeviceResolverConfig,
+        DeviceResolverRecord, DeviceResolverZone, DeviceSecurityRule,
     },
     network_event::{
-        NetworkEventAclChangedPayload, NetworkEventConfigChangedPayload,
-        NetworkEventDnsChangedPayload, NetworkEventEnvelope, NetworkEventMemberPayload,
-        NetworkEventMemberRemovedPayload, NetworkEventPresencePayload, NetworkEventType,
-        NetworkSnapshotPayload,
+        NetworkEventAclChangedPayload, NetworkEventConfigChangedPayload, NetworkEventEnvelope,
+        NetworkEventMemberPayload, NetworkEventMemberRemovedPayload, NetworkEventPresencePayload,
+        NetworkEventResolverChangedPayload, NetworkEventType, NetworkSnapshotPayload,
     },
     session_store::{session_device_api_token, PersistedSession},
 };
@@ -37,7 +36,7 @@ pub(crate) struct ClientNetworkModule {
 pub(crate) struct ClientNetworkSnapshot {
     pub(crate) network_count: usize,
     pub(crate) peer_count: usize,
-    pub(crate) dns_record_count: usize,
+    pub(crate) resolver_record_count: usize,
     pub(crate) security_group_count: usize,
     pub(crate) security_rule_count: usize,
     pub(crate) relay_candidate_count: usize,
@@ -75,7 +74,7 @@ impl ClientNetworkModule {
         ClientNetworkSnapshot {
             network_count: configs.len(),
             peer_count: configs.iter().map(|item| item.peers.len()).sum(),
-            dns_record_count: configs.iter().map(|item| item.dns_records.len()).sum(),
+            resolver_record_count: configs.iter().map(|item| item.resolver_records.len()).sum(),
             security_group_count: configs.iter().map(|item| item.security_groups.len()).sum(),
             security_rule_count: configs.iter().map(|item| item.rules.len()).sum(),
             relay_candidate_count: configs.iter().map(|item| item.relay_candidates.len()).sum(),
@@ -96,9 +95,55 @@ pub(crate) fn refresh_network_module_from_session(
     else {
         return Ok(Vec::new());
     };
+    if let Some(network_id) = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Ok(snapshot) =
+            client.network_snapshot(session_device_api_token(session), network_id, device_id)
+        {
+            replace_network_module_from_snapshot(
+                &snapshot.network_id,
+                device_id,
+                &snapshot.snapshot,
+            );
+            let configs = network_module_snapshot().configs;
+            sync_resolver_runtime_state(session, &configs);
+            return Ok(configs);
+        }
+    }
     let configs = client.device_network_configs(session_device_api_token(session), device_id)?;
     replace_network_module_configs(configs.clone());
+    sync_resolver_runtime_state(session, &configs);
     Ok(configs)
+}
+
+fn sync_resolver_runtime_state(session: &PersistedSession, configs: &[DeviceNetworkConfig]) {
+    let network_id = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| configs.first().map(|config| config.network_id.as_str()));
+    let Some(network_id) = network_id else {
+        return;
+    };
+    let activation_resolver = configs
+        .iter()
+        .find(|config| config.network_id.trim() == network_id)
+        .map(|config| config.resolver.clone())
+        .unwrap_or_default();
+    let mut resolver = crate::resolver_runtime_state::resolver_runtime_state()
+        .lock()
+        .expect("resolver runtime mutex poisoned");
+    crate::resolver_apply::apply_resolver_from_device_network_configs(
+        &mut resolver,
+        network_id,
+        &activation_resolver,
+        configs,
+    );
 }
 
 pub(crate) fn network_module_configs_for_session(
@@ -149,6 +194,12 @@ pub(crate) fn replace_network_module_from_snapshot(
         global_name: self_member.and_then(|member| {
             (!member.device_name.trim().is_empty()).then(|| member.device_name.clone())
         }),
+        resolver: DeviceResolverConfig {
+            servers: snapshot.resolver_config.servers.clone(),
+            search_domains: snapshot.resolver_config.search_domains.clone(),
+            split_domains: snapshot.resolver_config.split_domains.clone(),
+            fallback_to_system_resolvers: snapshot.resolver_config.fallback_to_system_resolvers,
+        },
         peers: snapshot
             .members
             .iter()
@@ -183,10 +234,10 @@ pub(crate) fn replace_network_module_from_snapshot(
                 ..DeviceSecurityRule::default()
             })
             .collect(),
-        dns_zones: snapshot
-            .dns_zones
+        resolver_zones: snapshot
+            .resolver_zones
             .iter()
-            .map(|zone| DeviceDnsZone {
+            .map(|zone| DeviceResolverZone {
                 zone_id: zone.zone_id.clone(),
                 network_id: if zone.network_id.trim().is_empty() {
                     network_id.to_string()
@@ -196,10 +247,10 @@ pub(crate) fn replace_network_module_from_snapshot(
                 zone_name: zone.zone_name.clone(),
             })
             .collect(),
-        dns_records: snapshot
-            .dns_records
+        resolver_records: snapshot
+            .resolver_records
             .iter()
-            .map(|record| DeviceDnsRecord {
+            .map(|record| DeviceResolverRecord {
                 record_id: record.record_id.clone(),
                 zone_id: record.zone_id.clone(),
                 network_id: network_id.to_string(),
@@ -216,7 +267,7 @@ pub(crate) fn replace_network_module_from_snapshot(
                 cname: (!record.cname.trim().is_empty()).then(|| record.cname.clone()),
                 port: (record.port > 0).then(|| record.port.to_string()),
                 ttl: (record.ttl > 0).then(|| i64::from(record.ttl)),
-                ..DeviceDnsRecord::default()
+                ..DeviceResolverRecord::default()
             })
             .collect(),
         relay_candidates: Vec::new(),
@@ -269,13 +320,19 @@ pub(crate) fn apply_network_module_event(
                 .map(to_device_security_rule)
                 .collect();
         }
-        NetworkEventType::DnsChanged => {
-            let payload: NetworkEventDnsChangedPayload =
+        NetworkEventType::ResolverChanged => {
+            let payload: NetworkEventResolverChangedPayload =
                 serde_json::from_value(envelope.payload.clone())?;
-            config.dns_zones = payload
+            config.resolver = DeviceResolverConfig {
+                servers: payload.config.servers.clone(),
+                search_domains: payload.config.search_domains.clone(),
+                split_domains: payload.config.split_domains.clone(),
+                fallback_to_system_resolvers: payload.config.fallback_to_system_resolvers,
+            };
+            config.resolver_zones = payload
                 .zones
                 .iter()
-                .map(|zone| DeviceDnsZone {
+                .map(|zone| DeviceResolverZone {
                     zone_id: zone.zone_id.clone(),
                     network_id: if zone.network_id.trim().is_empty() {
                         network_id.to_string()
@@ -285,10 +342,10 @@ pub(crate) fn apply_network_module_event(
                     zone_name: zone.zone_name.clone(),
                 })
                 .collect();
-            config.dns_records = payload
+            config.resolver_records = payload
                 .records
                 .into_iter()
-                .map(|record| to_device_dns_record(network_id, record))
+                .map(|record| to_device_resolver_record(network_id, record))
                 .collect();
         }
         NetworkEventType::NetworkConfigChanged => {
@@ -390,11 +447,11 @@ fn to_device_security_rule(
     }
 }
 
-fn to_device_dns_record(
+fn to_device_resolver_record(
     network_id: &str,
-    record: crate::network_event::NetworkEventDnsRecordView,
-) -> DeviceDnsRecord {
-    DeviceDnsRecord {
+    record: crate::network_event::NetworkEventResolverRecordView,
+) -> DeviceResolverRecord {
+    DeviceResolverRecord {
         record_id: record.record_id,
         zone_id: record.zone_id,
         network_id: if record.network_id.trim().is_empty() {
@@ -415,7 +472,7 @@ fn to_device_dns_record(
         cname: (!record.cname.trim().is_empty()).then_some(record.cname),
         port: (record.port > 0).then(|| record.port.to_string()),
         ttl: (record.ttl > 0).then(|| i64::from(record.ttl)),
-        ..DeviceDnsRecord::default()
+        ..DeviceResolverRecord::default()
     }
 }
 
@@ -441,9 +498,10 @@ mod tests {
     };
     use crate::control_plane::{DeviceNetworkConfig, DeviceSecurityGroup, DeviceSecurityRule};
     use crate::network_event::{
-        NetworkEventAclChangedPayload, NetworkEventAclRuleView, NetworkEventDnsChangedPayload,
-        NetworkEventDnsRecordView, NetworkEventEnvelope, NetworkEventMemberPayload,
-        NetworkEventMemberView, NetworkEventNetworkView, NetworkEventType, NetworkSnapshotPayload,
+        NetworkEventAclChangedPayload, NetworkEventAclRuleView, NetworkEventEnvelope,
+        NetworkEventMemberPayload, NetworkEventMemberView, NetworkEventNetworkView,
+        NetworkEventResolverChangedPayload, NetworkEventResolverRecordView, NetworkEventType,
+        NetworkSnapshotPayload,
     };
 
     #[test]
@@ -515,7 +573,7 @@ mod tests {
                         ..NetworkEventMemberView::default()
                     },
                 ],
-                dns_records: vec![NetworkEventDnsRecordView {
+                resolver_records: vec![NetworkEventResolverRecordView {
                     record_id: "dns-1".to_string(),
                     zone_id: "zone-1".to_string(),
                     name: "peer".to_string(),
@@ -524,7 +582,7 @@ mod tests {
                     target_device_id: "device-peer".to_string(),
                     target_ip: "2001:db8::20".to_string(),
                     ttl: 120,
-                    ..NetworkEventDnsRecordView::default()
+                    ..NetworkEventResolverRecordView::default()
                 }],
                 acl_rules: vec![NetworkEventAclRuleView {
                     rule_id: "rule-2".to_string(),
@@ -543,17 +601,17 @@ mod tests {
         let snapshot = network_module_snapshot();
         assert_eq!(snapshot.network_count, 1);
         assert_eq!(snapshot.peer_count, 1);
-        assert_eq!(snapshot.dns_record_count, 1);
+        assert_eq!(snapshot.resolver_record_count, 1);
         assert_eq!(snapshot.security_rule_count, 1);
         assert_eq!(snapshot.configs[0].device_id, "device-self");
         assert_eq!(snapshot.configs[0].global_ip.as_deref(), Some("10.0.0.2"));
         assert_eq!(snapshot.configs[0].peers[0].device_id, "device-peer");
-        assert_eq!(snapshot.configs[0].dns_records[0].record_type, "AAAA");
+        assert_eq!(snapshot.configs[0].resolver_records[0].record_type, "AAAA");
         assert_eq!(
-            snapshot.configs[0].dns_records[0].target_ip.as_deref(),
+            snapshot.configs[0].resolver_records[0].target_ip.as_deref(),
             Some("2001:db8::20")
         );
-        assert_eq!(snapshot.configs[0].dns_records[0].ttl, Some(120));
+        assert_eq!(snapshot.configs[0].resolver_records[0].ttl, Some(120));
     }
 
     #[test]
@@ -613,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn dns_and_acl_events_update_module_incrementally() {
+    fn resolver_and_acl_events_update_module_incrementally() {
         let _lock = crate::test_env_lock();
         clear_network_module();
         replace_network_module_from_snapshot(
@@ -639,12 +697,18 @@ mod tests {
                 r#type: "network_event".to_string(),
                 network_id: "network-4".to_string(),
                 version: 2,
-                event_id: "evt-dns-1".to_string(),
-                event_type: NetworkEventType::DnsChanged,
+                event_id: "evt-resolver-1".to_string(),
+                event_type: NetworkEventType::ResolverChanged,
                 occurred_at: 2,
-                payload: serde_json::to_value(NetworkEventDnsChangedPayload {
+                payload: serde_json::to_value(NetworkEventResolverChangedPayload {
+                    config: crate::network_event::NetworkEventResolverConfigView {
+                        servers: vec!["10.0.0.53".to_string()],
+                        search_domains: vec!["example.lan".to_string()],
+                        split_domains: vec!["example.lan".to_string()],
+                        fallback_to_system_resolvers: false,
+                    },
                     zones: vec![],
-                    records: vec![NetworkEventDnsRecordView {
+                    records: vec![NetworkEventResolverRecordView {
                         record_id: "dns-2".to_string(),
                         zone_id: "zone-2".to_string(),
                         name: "api".to_string(),
@@ -653,13 +717,13 @@ mod tests {
                         target_device_id: "device-self".to_string(),
                         cname: "backend.example".to_string(),
                         ttl: 90,
-                        ..NetworkEventDnsRecordView::default()
+                        ..NetworkEventResolverRecordView::default()
                     }],
                 })
-                .expect("encode dns payload"),
+                .expect("encode resolver payload"),
             },
         )
-        .expect("apply dns event");
+        .expect("apply resolver event");
 
         apply_network_module_event(
             "network-4",
@@ -689,15 +753,19 @@ mod tests {
         .expect("apply acl event");
 
         let snapshot = network_module_snapshot();
-        assert_eq!(snapshot.dns_record_count, 1);
+        assert_eq!(snapshot.resolver_record_count, 1);
         assert_eq!(snapshot.security_rule_count, 1);
-        assert_eq!(snapshot.configs[0].dns_records[0].record_id, "dns-2");
-        assert_eq!(snapshot.configs[0].dns_records[0].record_type, "CNAME");
         assert_eq!(
-            snapshot.configs[0].dns_records[0].cname.as_deref(),
+            snapshot.configs[0].resolver.servers,
+            vec!["10.0.0.53".to_string()]
+        );
+        assert_eq!(snapshot.configs[0].resolver_records[0].record_id, "dns-2");
+        assert_eq!(snapshot.configs[0].resolver_records[0].record_type, "CNAME");
+        assert_eq!(
+            snapshot.configs[0].resolver_records[0].cname.as_deref(),
             Some("backend.example")
         );
-        assert_eq!(snapshot.configs[0].dns_records[0].ttl, Some(90));
+        assert_eq!(snapshot.configs[0].resolver_records[0].ttl, Some(90));
         assert_eq!(snapshot.configs[0].rules[0].rule_id, "rule-4");
     }
 }

@@ -48,9 +48,13 @@ client-desktop-ui-test:
 	./scripts/test_client_desktop_ui.sh
 
 client-macos-build:
-	cd client_v2/rust && cargo build -p client-core-service --release
+	cd client_v2/rust && cargo build -p client-core-service --release --target aarch64-apple-darwin
+	cd client_v2/rust && cargo build -p client-core-service --release --target x86_64-apple-darwin
 	cd client_v2/app_flutter && flutter build macos
-	cp client_v2/rust/target/release/client-core-service client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
+	lipo -create \
+		client_v2/rust/target/aarch64-apple-darwin/release/client-core-service \
+		client_v2/rust/target/x86_64-apple-darwin/release/client-core-service \
+		-output client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
 	chmod 755 client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app/Contents/MacOS/client-core-service
 	codesign --force --deep --sign - client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app
 	codesign --verify --deep --strict --verbose=2 client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app

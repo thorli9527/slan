@@ -62,6 +62,13 @@ type NetworkRuntimePathView struct {
 	ObservedAt      int64  `json:"observedAt"`
 }
 
+type NetworkDNSConfigView struct {
+	Servers                   []string `json:"servers"`
+	SearchDomains             []string `json:"searchDomains"`
+	SplitDomains              []string `json:"splitDomains"`
+	FallbackToSystemResolvers bool     `json:"fallbackToSystemResolvers"`
+}
+
 type NetworkConfigView struct {
 	Network              NetworkView             `json:"network"`
 	ConfigVersion        int64                   `json:"configVersion"`
@@ -70,12 +77,12 @@ type NetworkConfigView struct {
 	GlobalIP             string                  `json:"globalIp"`
 	PrefixLen            int                     `json:"prefixLen"`
 	GlobalName           string                  `json:"globalName"`
+	DNS                  NetworkDNSConfigView    `json:"dns"`
 	DeviceGroupsByDevice map[string][]string     `json:"deviceGroupsByDevice"`
 	RuntimePath          NetworkRuntimePathView  `json:"runtimePath"`
 	Peers                []NetworkConfigPeerView `json:"peers"`
 	DNSZones             []DNSZoneView           `json:"dnsZones"`
 	DNSRecords           []DNSRecordView         `json:"dnsRecords"`
-	PublicMappings       []PublicMappingView     `json:"publicMappings"`
 	SecurityGroups       []SecurityGroupView     `json:"securityGroups"`
 	SecurityRules        []SecurityRuleView      `json:"securityRules"`
 }

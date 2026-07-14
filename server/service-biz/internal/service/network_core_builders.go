@@ -60,10 +60,6 @@ func buildNetworkConfigView(
 	if err != nil {
 		return NetworkConfigView{}, err
 	}
-	mappings, err := networks.ListPublicMappings(ctx, network.NetworkID)
-	if err != nil {
-		return NetworkConfigView{}, err
-	}
 	securityGroups, err := networks.ListSecurityGroups(ctx, network.NetworkID)
 	if err != nil {
 		return NetworkConfigView{}, err
@@ -76,10 +72,6 @@ func buildNetworkConfigView(
 	recordViews := make([]DNSRecordView, 0, len(records))
 	for _, item := range records {
 		recordViews = append(recordViews, dnsRecordView(item))
-	}
-	mappingViews := make([]PublicMappingView, 0, len(mappings))
-	for _, item := range mappings {
-		mappingViews = append(mappingViews, publicMappingView(item))
 	}
 	securityGroupViews := make([]SecurityGroupView, 0, len(securityGroups))
 	for _, item := range securityGroups {
@@ -153,7 +145,6 @@ func buildNetworkConfigView(
 		Peers:                peers,
 		DNSZones:             zoneViews,
 		DNSRecords:           recordViews,
-		PublicMappings:       mappingViews,
 		SecurityGroups:       securityGroupViews,
 		SecurityRules:        securityRules,
 	}, nil
@@ -167,6 +158,9 @@ func buildNetworkSecurityRuleViews(ctx context.Context, networks repository.Netw
 			return nil, err
 		}
 		for _, item := range items {
+			if !supportedSecurityRulePeerType(item.PeerType) {
+				continue
+			}
 			views = append(views, securityRuleView(item))
 		}
 	}

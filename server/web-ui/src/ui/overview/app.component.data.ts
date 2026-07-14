@@ -10,7 +10,6 @@ import {
   ClientDownload,
   ApiDNSRecord,
   ApiDNSZone,
-  ApiPublicMapping,
   ApiSecurityGroup,
   ApiSecurityRule,
   ApiUserAlias,
@@ -23,7 +22,6 @@ import {
   DNSZoneRow,
   MemberRow,
   NavItem,
-  PublicMappingRow,
   RuleSubjectType,
   SecurityGroupRow,
   SecurityRuleRow,
@@ -85,7 +83,7 @@ export abstract class AppComponentData extends AppComponentState {
       this.selectedWorkspaceId = decodeURIComponent(match[1]);
       this.editingWorkspaceName = this.selectedWorkspace.name;
       const routePanel = panelFromRoute(match[2] ?? '');
-      this.workspacePanel = routePanel.panel === 'publicMappings' && !this.publicMappingsEnabled ? 'zones' : routePanel.panel;
+      this.workspacePanel = routePanel.panel;
       this.selectedZoneId = routePanel.selectedZoneId ?? this.selectedZoneId;
       this.selectedSecurityGroupId = routePanel.selectedSecurityGroupId ?? this.selectedSecurityGroupId;
       this.syncWorkspaceSelectionState();
@@ -265,16 +263,12 @@ export abstract class AppComponentData extends AppComponentState {
   }
 
   protected override async loadWorkspaceResources(workspaceId: string): Promise<void> {
-    const tasks = [
+    await Promise.all([
       this.loadWorkspaceDeviceGroups(workspaceId),
       this.loadDNSZones(workspaceId),
       this.loadDNSRecords(workspaceId),
       this.loadSecurityResources(workspaceId),
-    ];
-    if (this.publicMappingsEnabled) {
-      tasks.push(this.loadPublicMappings(workspaceId));
-    }
-    await Promise.all(tasks);
+    ]);
     this.syncWorkspaceSelectionState();
     this.notifyStateChanged();
   }
@@ -297,17 +291,6 @@ export abstract class AppComponentData extends AppComponentState {
     } catch {
       if (!this.isDemoMode) {
         this.dnsRecords = this.dnsRecords.filter((record) => record.workspaceId !== workspaceId);
-      }
-    }
-  }
-
-  private async loadPublicMappings(workspaceId: string): Promise<void> {
-    try {
-      const response = await this.api.get<{ items: ApiPublicMapping[] }>(WEB_API.publicMappings(workspaceId));
-      this.publicMappings = [...this.publicMappings.filter((mapping) => mapping.workspaceId !== workspaceId), ...(response.items ?? []).map((mapping) => this.mapPublicMapping(mapping))];
-    } catch {
-      if (!this.isDemoMode) {
-        this.publicMappings = this.publicMappings.filter((mapping) => mapping.workspaceId !== workspaceId);
       }
     }
   }
@@ -416,34 +399,6 @@ export abstract class AppComponentData extends AppComponentState {
       ttl: record.ttl,
       targetType,
       expose: false,
-    };
-  }
-
-  protected override mapPublicMapping(mapping: ApiPublicMapping): PublicMappingRow {
-    const targetType = mapping.sourceRecord && mapping.sourceRecord !== mapping.deviceId && mapping.sourceRecord !== mapping.internalIp
-      ? 'record'
-      : mapping.deviceId
-        ? 'device'
-        : mapping.internalIp
-          ? 'ip'
-          : 'device';
-    return {
-      mappingId: mapping.mappingId,
-      networkId: mapping.networkId,
-      workspaceId: mapping.networkId,
-      alias: mapping.alias,
-      publicDomain: mapping.publicDomain,
-      sourceRecord: mapping.sourceRecord,
-      deviceId: mapping.deviceId,
-      internalIp: mapping.internalIp,
-      targetType,
-      protocol: mapping.protocol,
-      internalPort: mapping.internalPort ? String(mapping.internalPort) : mapping.port,
-      port: mapping.port,
-      externalPort: mapping.externalPort,
-      accessMode: mapping.accessMode || 'public',
-      tlsMode: mapping.tlsMode || 'auto',
-      status: mapping.status,
     };
   }
 

@@ -113,7 +113,7 @@ class _ServerSettingsSummary extends StatelessWidget {
       child: Row(
         children: [
           Icon(
-            Icons.dns_rounded,
+            Icons.settings_ethernet_rounded,
             size: 18,
             color: theme.colorScheme.primary,
           ),

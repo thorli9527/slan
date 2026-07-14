@@ -8,7 +8,8 @@ import (
 )
 
 type NetworkSnapshotHandler struct {
-	Snapshots servicepkg.NetworkSnapshotUseCase
+	Snapshots      servicepkg.NetworkSnapshotUseCase
+	DeviceSessions servicepkg.DeviceSessionUseCase
 }
 
 func (h NetworkSnapshotHandler) Routes() []serviceapi.Route {
@@ -18,7 +19,11 @@ func (h NetworkSnapshotHandler) Routes() []serviceapi.Route {
 }
 
 func (h NetworkSnapshotHandler) NetworkSnapshot(w http.ResponseWriter, r *http.Request) {
-	item, err := h.Snapshots.NetworkSnapshot(r.Context(), requestNetworkID(r), requestDeviceID(r))
+	deviceID, ok := authenticatedDeviceID(w, r, h.DeviceSessions, requestDeviceID(r))
+	if !ok {
+		return
+	}
+	item, err := h.Snapshots.NetworkSnapshot(r.Context(), requestNetworkID(r), deviceID)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return

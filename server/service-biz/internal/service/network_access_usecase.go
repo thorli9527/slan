@@ -1,88 +1,10 @@
 package service
 
-import "context"
+import (
+	"context"
 
-func (s NetworkAccessService) ListPublicMappings(ctx context.Context, networkID string) ([]PublicMappingView, error) {
-	items, err := s.Networks.ListPublicMappings(ctx, normalizeNetworkID(networkID))
-	if err != nil {
-		return nil, err
-	}
-	return publicMappingViews(items), nil
-}
-
-func (s NetworkAccessService) CreatePublicMapping(ctx context.Context, input CreatePublicMappingInput) (PublicMappingView, error) {
-	input = normalizeCreatePublicMappingInput(input)
-	if input.NetworkID == "" || input.Name == "" {
-		return PublicMappingView{}, ErrInvalidArgument
-	}
-	if _, err := requireOwnedManagedNetwork(ctx, s.Users, s.Networks, input.ActorUserID, input.NetworkID); err != nil {
-		return PublicMappingView{}, err
-	}
-	now := networkNow(s.Now).Unix()
-	item := newManagedPublicMapping(newManagedPublicMappingID(s.Networks, s.NewPublicMappingID), now, input)
-	if err := s.Networks.SavePublicMapping(ctx, item); err != nil {
-		return PublicMappingView{}, err
-	}
-	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, "public_mapping_created")
-	if err != nil {
-		return PublicMappingView{}, err
-	}
-	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
-		return PublicMappingView{}, err
-	}
-	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
-		return PublicMappingView{}, err
-	}
-	return publicMappingView(item), nil
-}
-
-func (s NetworkAccessService) UpdatePublicMapping(ctx context.Context, input UpdatePublicMappingInput) (PublicMappingView, error) {
-	input = normalizeUpdatePublicMappingInput(input)
-	if input.MappingID == "" {
-		return PublicMappingView{}, ErrInvalidArgument
-	}
-	item, err := requireOwnedManagedPublicMapping(ctx, s.Users, s.Networks, input.ActorUserID, input.MappingID)
-	if err != nil {
-		return PublicMappingView{}, err
-	}
-	item = applyUpdatePublicMappingInput(item, input, networkNow(s.Now).Unix())
-	if err := s.Networks.SavePublicMapping(ctx, item); err != nil {
-		return PublicMappingView{}, err
-	}
-	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, "public_mapping_updated")
-	if err != nil {
-		return PublicMappingView{}, err
-	}
-	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
-		return PublicMappingView{}, err
-	}
-	if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, item.NetworkID, version.Version, version.Reason); err != nil {
-		return PublicMappingView{}, err
-	}
-	return publicMappingView(item), nil
-}
-
-func (s NetworkAccessService) DeletePublicMapping(ctx context.Context, input DeletePublicMappingInput) error {
-	input = normalizeDeletePublicMappingInput(input)
-	if input.MappingID == "" {
-		return ErrInvalidArgument
-	}
-	mapping, err := requireOwnedManagedPublicMapping(ctx, s.Users, s.Networks, input.ActorUserID, input.MappingID)
-	if err != nil {
-		return err
-	}
-	if err := s.Networks.DeletePublicMapping(ctx, input.MappingID); err != nil {
-		return err
-	}
-	version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, mapping.NetworkID, "public_mapping_deleted")
-	if err != nil {
-		return err
-	}
-	if err := publishACLChanged(ctx, s.Networks, s.EventPublisher, s.Now, mapping.NetworkID, version.Version, version.Reason); err != nil {
-		return err
-	}
-	return publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, s.Ops, s.EventPublisher, s.Now, mapping.NetworkID, version.Version, version.Reason)
-}
+	"github.com/slan/service-biz/internal/model"
+)
 
 func (s NetworkAccessService) ListSecurityGroups(ctx context.Context, networkID string) ([]SecurityGroupView, error) {
 	items, err := s.Networks.ListSecurityGroups(ctx, normalizeNetworkID(networkID))
@@ -171,7 +93,13 @@ func (s NetworkAccessService) ListSecurityRules(ctx context.Context, securityGro
 	if err != nil {
 		return nil, err
 	}
-	return securityRuleViews(items), nil
+	groupRules := make([]model.SecurityRule, 0, len(items))
+	for _, item := range items {
+		if supportedSecurityRulePeerType(item.PeerType) {
+			groupRules = append(groupRules, item)
+		}
+	}
+	return securityRuleViews(groupRules), nil
 }
 
 func (s NetworkAccessService) AddSecurityRule(ctx context.Context, input CreateSecurityRuleInput) (SecurityRuleView, error) {

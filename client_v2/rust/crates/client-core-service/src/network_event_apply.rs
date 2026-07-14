@@ -4,10 +4,9 @@ use crate::{
     network_event::{
         NetworkEventAclChangedPayload, NetworkEventConfigChangedPayload,
         NetworkEventDeviceGroupPayload, NetworkEventDeviceGroupRemovedPayload,
-        NetworkEventDnsChangedPayload, NetworkEventEnvelope, NetworkEventMemberPayload,
-        NetworkEventMemberRemovedPayload, NetworkEventMemberView,
-        NetworkEventPeerPathChangedPayload, NetworkEventPresencePayload, NetworkEventType,
-        NetworkSnapshotPayload,
+        NetworkEventEnvelope, NetworkEventMemberPayload, NetworkEventMemberRemovedPayload,
+        NetworkEventMemberView, NetworkEventPeerPathChangedPayload, NetworkEventPresencePayload,
+        NetworkEventResolverChangedPayload, NetworkEventType, NetworkSnapshotPayload,
     },
     network_runtime_state::{NetworkSyncStatus, RuntimeNetworkState},
 };
@@ -101,12 +100,13 @@ pub fn apply_network_event(
                 state.acl_by_rule_id.insert(rule.rule_id.clone(), rule);
             }
         }
-        NetworkEventType::DnsChanged => {
-            let payload: NetworkEventDnsChangedPayload = serde_json::from_value(envelope.payload)?;
-            state.dns_by_record_id.clear();
+        NetworkEventType::ResolverChanged => {
+            let payload: NetworkEventResolverChangedPayload =
+                serde_json::from_value(envelope.payload)?;
+            state.records_by_record_id.clear();
             for record in payload.records {
                 state
-                    .dns_by_record_id
+                    .records_by_record_id
                     .insert(record.record_id.clone(), record);
             }
         }
@@ -175,8 +175,8 @@ fn apply_snapshot(state: &mut RuntimeNetworkState, payload: NetworkSnapshotPaylo
         .into_iter()
         .map(|item| (item.group_id.clone(), item))
         .collect();
-    state.dns_by_record_id = payload
-        .dns_records
+    state.records_by_record_id = payload
+        .resolver_records
         .into_iter()
         .map(|item| (item.record_id.clone(), item))
         .collect();
@@ -229,7 +229,7 @@ mod tests {
                 network_id: "net-1".to_string(),
                 version: 1,
                 event_id: "evt-1".to_string(),
-                event_type: NetworkEventType::DnsChanged,
+                event_type: NetworkEventType::ResolverChanged,
                 occurred_at: 1,
                 payload: serde_json::json!({ "records": [] }),
             },
@@ -253,7 +253,7 @@ mod tests {
                 network_id: "net-2".to_string(),
                 version: 1,
                 event_id: "evt-2".to_string(),
-                event_type: NetworkEventType::DnsChanged,
+                event_type: NetworkEventType::ResolverChanged,
                 occurred_at: 2,
                 payload: serde_json::json!({ "records": [] }),
             },

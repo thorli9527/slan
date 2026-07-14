@@ -6,40 +6,47 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::dns_runtime_state::RuntimeDnsState;
+use crate::resolver_runtime_state::RuntimeResolverState;
 
 const DEFAULT_DNS_PORT: u16 = 53;
 const FORWARD_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_DNS_PACKET_SIZE: usize = 4096;
 
-pub(crate) fn forward_dns_query(dns: &RuntimeDnsState, raw_query: &[u8]) -> Result<Vec<u8>> {
-    let upstream = dns
-        .upstream_servers
+pub(crate) fn forward_resolver_query(
+    resolver: &RuntimeResolverState,
+    raw_query: &[u8],
+) -> Result<Vec<u8>> {
+    let upstream_resolvers = resolver.effective_upstream_resolvers();
+    let upstream = upstream_resolvers
         .iter()
         .find_map(|value| parse_upstream_socket_addr(value).ok())
-        .ok_or_else(|| anyhow!("no upstream dns server configured"))?;
-    forward_dns_query_to_addr(upstream, raw_query)
+        .ok_or_else(|| anyhow!("no upstream resolver server configured"))?;
+    forward_resolver_query_to_addr(upstream, raw_query)
 }
 
-pub(crate) fn forward_dns_query_to_addr(upstream: SocketAddr, raw_query: &[u8]) -> Result<Vec<u8>> {
-    let socket = UdpSocket::bind("0.0.0.0:0").context("bind temporary dns forward udp socket")?;
+pub(crate) fn forward_resolver_query_to_addr(
+    upstream: SocketAddr,
+    raw_query: &[u8],
+) -> Result<Vec<u8>> {
+    let socket =
+        UdpSocket::bind("0.0.0.0:0").context("bind temporary resolver forward udp socket")?;
     socket
         .set_read_timeout(Some(FORWARD_TIMEOUT))
-        .context("set dns forward read timeout")?;
+        .context("set resolver forward read timeout")?;
     socket
         .set_write_timeout(Some(FORWARD_TIMEOUT))
-        .context("set dns forward write timeout")?;
+        .context("set resolver forward write timeout")?;
     socket
         .send_to(raw_query, upstream)
-        .with_context(|| format!("send dns query to upstream {upstream}"))?;
+        .with_context(|| format!("send resolver query to upstream {upstream}"))?;
 
     let mut buffer = vec![0_u8; MAX_DNS_PACKET_SIZE];
     let (size, source) = socket
         .recv_from(&mut buffer)
-        .with_context(|| format!("receive dns response from upstream {upstream}"))?;
+        .with_context(|| format!("receive resolver response from upstream {upstream}"))?;
     if source.ip() != upstream.ip() {
         return Err(anyhow!(
-            "dns response source mismatch: expected {} got {}",
+            "resolver response source mismatch: expected {} got {}",
             upstream.ip(),
             source.ip()
         ));
@@ -53,7 +60,7 @@ pub(crate) fn parse_upstream_socket_addr(value: &str) -> io::Result<SocketAddr> 
     if trimmed.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "empty upstream dns server",
+            "empty upstream resolver server",
         ));
     }
     let candidate = if trimmed.contains(':') {
@@ -64,7 +71,7 @@ pub(crate) fn parse_upstream_socket_addr(value: &str) -> io::Result<SocketAddr> 
     candidate
         .to_socket_addrs()?
         .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "resolve upstream dns server"))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "resolve upstream resolver server"))
 }
 
 #[cfg(test)]

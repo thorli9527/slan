@@ -81,6 +81,9 @@ func (s *GormStore) DeleteNetwork(_ context.Context, networkID string) error {
 			func() error { return tx.Delete(&gormDNSRecordRecord{}, "network_id = ?", networkID).Error },
 			func() error { return tx.Delete(&gormDNSZoneRecord{}, "network_id = ?", networkID).Error },
 			func() error { return tx.Delete(&gormNetworkDeviceRecord{}, "network_id = ?", networkID).Error },
+			func() error {
+				return tx.Delete(&gormNetworkDeviceGroupReferenceRecord{}, "network_id = ?", networkID).Error
+			},
 			func() error { return tx.Delete(&gormDeviceInviteRecord{}, "network_id = ?", networkID).Error },
 			func() error { return tx.Delete(&gormBootstrapKeyRecord{}, "network_id = ?", networkID).Error },
 			func() error { return tx.Delete(&gormNetworkRecord{}, "network_id = ?", networkID).Error },
@@ -113,6 +116,43 @@ func (s *GormStore) SaveNetworkDevice(_ context.Context, item model.NetworkDevic
 
 func (s *GormStore) DeleteNetworkDevice(_ context.Context, networkID, deviceID string) error {
 	return s.db.Delete(&gormNetworkDeviceRecord{}, "network_id = ? AND device_id = ?", networkID, deviceID).Error
+}
+
+func (s *GormStore) ListNetworkDeviceGroupReferences(_ context.Context, networkID string) ([]model.NetworkDeviceGroupReference, error) {
+	return listModels(
+		s.db.Where("network_id = ?", strings.TrimSpace(networkID)).Order("group_id asc"),
+		func(row gormNetworkDeviceGroupReferenceRecord) model.NetworkDeviceGroupReference {
+			return model.NetworkDeviceGroupReference{
+				NetworkID: row.NetworkID,
+				GroupID:   row.GroupID,
+				CreatedAt: row.CreatedAt,
+				UpdatedAt: row.UpdatedAt,
+			}
+		},
+	)
+}
+
+func (s *GormStore) SaveNetworkDeviceGroupReference(_ context.Context, item model.NetworkDeviceGroupReference) error {
+	row := gormNetworkDeviceGroupReferenceRecord{
+		NetworkID: strings.TrimSpace(item.NetworkID),
+		GroupID:   strings.TrimSpace(item.GroupID),
+		CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt,
+	}
+	return upsertByColumns(s.db, &row, []string{"network_id", "group_id"}, []string{"updated_at"})
+}
+
+func (s *GormStore) DeleteNetworkDeviceGroupReference(_ context.Context, networkID, groupID string) error {
+	return s.db.Delete(
+		&gormNetworkDeviceGroupReferenceRecord{},
+		"network_id = ? AND group_id = ?",
+		strings.TrimSpace(networkID),
+		strings.TrimSpace(groupID),
+	).Error
+}
+
+func (s *GormStore) DeleteNetworkDeviceGroupReferencesByGroup(_ context.Context, groupID string) error {
+	return s.db.Delete(&gormNetworkDeviceGroupReferenceRecord{}, "group_id = ?", strings.TrimSpace(groupID)).Error
 }
 
 func (s *GormStore) ListDeviceInvitesByUser(_ context.Context, userID string) ([]model.DeviceInvite, error) {
