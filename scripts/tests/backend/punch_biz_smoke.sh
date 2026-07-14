@@ -10,6 +10,7 @@ done
 source "$ROOT_DIR/scripts/lib/client_default_endpoints.sh"
 
 BASE_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
 RUN_ID="$(date +%s%N)"
 EMAIL="${SLAN_TEST_EMAIL:-punch-smoke-${RUN_ID}@example.test}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
@@ -17,6 +18,9 @@ DEVICE_A="${SLAN_PUNCH_SMOKE_DEVICE_A:-punch-smoke-mac-${RUN_ID}}"
 DEVICE_B="${SLAN_PUNCH_SMOKE_DEVICE_B:-punch-smoke-android-${RUN_ID}}"
 DENY_FILE="${TMPDIR:-/tmp}/slan-punch-smoke-deny-${RUN_ID}.json"
 USER_ID=""
+USER_TOKEN=""
+NETWORK_ID=""
+MEMBER_GROUP_ID=""
 DEVICE_A_CREATED=0
 DEVICE_B_CREATED=0
 
@@ -29,17 +33,29 @@ cleanup_device() {
   case "${device_id}" in
     punch-smoke-*${RUN_ID}*)
       [[ -n "${USER_ID}" ]] || return 0
-      best_effort_curl -X DELETE "${BASE_URL}/api/web/devices/${device_id}?actorUserId=${USER_ID}"
+      best_effort_curl -X DELETE \
+        "${WEB_BASE_URL}/api/web/devices/${device_id}?actorUserId=${USER_ID}" \
+        -H "Authorization: Bearer ${USER_TOKEN}"
       ;;
   esac
 }
 
 cleanup() {
+  if [[ -n "${MEMBER_GROUP_ID}" && -n "${NETWORK_ID}" ]]; then
+    best_effort_curl -X DELETE \
+      "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${MEMBER_GROUP_ID}?actorUserId=${USER_ID}" \
+      -H "Authorization: Bearer ${USER_TOKEN}"
+  fi
   if [[ "${DEVICE_A_CREATED}" == "1" ]]; then
     cleanup_device "${DEVICE_A}"
   fi
   if [[ "${DEVICE_B_CREATED}" == "1" ]]; then
     cleanup_device "${DEVICE_B}"
+  fi
+  if [[ -n "${MEMBER_GROUP_ID}" && -n "${USER_ID}" ]]; then
+    best_effort_curl -X DELETE \
+      "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${MEMBER_GROUP_ID}?actorUserId=${USER_ID}" \
+      -H "Authorization: Bearer ${USER_TOKEN}"
   fi
   rm -f "${DENY_FILE}"
 }
@@ -85,11 +101,41 @@ if [[ -z "${USER_ID}" || -z "${NETWORK_ID}" || -z "${USER_TOKEN}" ]]; then
   exit 1
 fi
 
+curl_json -X POST "${BASE_URL}/api/app/devices/register" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_A}\",\"name\":\"Punch Mac\",\"platform\":\"macos\",\"osName\":\"macOS\",\"osVersion\":\"15.0\",\"alias\":\"Punch Mac\",\"publicKey\":\"punch-smoke-pub-a-${RUN_ID}\"}" >/dev/null
+DEVICE_A_CREATED=1
+curl_json -X POST "${BASE_URL}/api/app/devices/register" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_B}\",\"name\":\"Punch Android\",\"platform\":\"android\",\"osName\":\"Android\",\"osVersion\":\"15\",\"alias\":\"Punch Android\",\"publicKey\":\"punch-smoke-pub-b-${RUN_ID}\"}" >/dev/null
+DEVICE_B_CREATED=1
+
+MEMBER_GROUP="$(curl_json -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -d "{\"actorUserId\":\"${USER_ID}\",\"name\":\"Punch Network Members ${RUN_ID}\",\"description\":\"punch smoke network membership\"}")"
+MEMBER_GROUP_ID="$(printf '%s' "${MEMBER_GROUP}" | json_value groupId)"
+if [[ -z "${MEMBER_GROUP_ID}" ]]; then
+  echo "missing network member group id" >&2
+  exit 1
+fi
+for member_device_id in "${DEVICE_A}" "${DEVICE_B}"; do
+  curl_json -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${member_device_id}/groups" \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -d "{\"actorUserId\":\"${USER_ID}\",\"groupIds\":[\"${MEMBER_GROUP_ID}\"]}" >/dev/null
+done
+curl_json -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
+  -d "{\"actorUserId\":\"${USER_ID}\",\"groupId\":\"${MEMBER_GROUP_ID}\"}" >/dev/null
+
 BIND_A="$(curl_json -X POST "${BASE_URL}/api/app/device/session/bind" \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${USER_TOKEN}" \
-  -d "{\"deviceId\":\"${DEVICE_A}\",\"name\":\"Punch Mac\",\"platform\":\"macos\",\"osName\":\"macOS\",\"osVersion\":\"15.0\",\"alias\":\"Punch Mac\",\"publicKey\":\"punch-smoke-pub-a-${RUN_ID}\"}")"
-DEVICE_A_CREATED=1
+  -d "{\"deviceId\":\"${DEVICE_A}\"}")"
 DEVICE_TOKEN_A="$(printf '%s' "${BIND_A}" | json_value deviceToken)"
 MQTT_USERNAME_A="$(printf '%s' "${BIND_A}" | json_value username)"
 MQTT_PASSWORD_A="$(printf '%s' "${BIND_A}" | json_value password)"
@@ -101,8 +147,7 @@ PUNCH_SIGNATURE_A="$(md5_hex "${DEVICE_A}${MQTT_PASSWORD_A}")"
 curl_json -X POST "${BASE_URL}/api/app/device/session/bind" \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${USER_TOKEN}" \
-  -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_B}\",\"name\":\"Punch Android\",\"platform\":\"android\",\"osName\":\"Android\",\"osVersion\":\"15\",\"alias\":\"Punch Android\",\"publicKey\":\"punch-smoke-pub-b-${RUN_ID}\"}" >/dev/null
-DEVICE_B_CREATED=1
+  -d "{\"deviceId\":\"${DEVICE_B}\"}" >/dev/null
 
 SESSION="$(curl_json -X POST "${BASE_URL}/api/app/networks/${NETWORK_ID}/punch/connect-sessions" \
   -H 'Content-Type: application/json' \
