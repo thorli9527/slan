@@ -71,7 +71,7 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 		return CompleteDeviceLoginDeviceView{}, err
 	}
 	if input.UserID != "" && input.UserID != user.UserID {
-		return CompleteDeviceLoginDeviceView{}, ErrUnauthorized
+		return CompleteDeviceLoginDeviceView{}, ErrForbidden
 	}
 	input.UserID = user.UserID
 	item, ok, err := s.Devices.GetDeviceLoginDevice(ctx, input.DeviceID)

@@ -171,12 +171,15 @@ fn embedded_relay_candidates_response(refresh: bool) -> Result<RelayCandidateLis
 }
 
 fn embedded_active_network_id(session: &mut PersistedSession) -> Result<String> {
+    session.active_network_id = session
+        .active_network_id
+        .take()
+        .and_then(|value| non_empty_embedded_network_id(&value));
     if session.active_network_id.is_none() {
         session.active_network_id = crate::network_module::network_module_snapshot()
             .configs
             .into_iter()
-            .next()
-            .map(|config| config.network_id);
+            .find_map(|config| non_empty_embedded_network_id(&config.network_id));
         if session.active_network_id.is_none() {
             let client = ControlPlaneClient::from_env();
             session.active_network_id =
@@ -188,6 +191,11 @@ fn embedded_active_network_id(session: &mut PersistedSession) -> Result<String> 
         .clone()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("device unavailable: current user has no active network"))
+}
+
+fn non_empty_embedded_network_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn embedded_refresh_relay_candidates_for_session(
@@ -609,7 +617,7 @@ fn platform_network_config() -> Result<Value> {
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("device id is not available"))?;
     let activation =
-        client.activate_network(session_device_api_token(&session), &device_id, &network_id)?;
+        client.activate_device_networks(session_device_api_token(&session), &device_id)?;
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
     ensure_session_node_binding(&client, &mut session)

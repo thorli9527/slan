@@ -33,7 +33,7 @@ func (s TokenManagementService) RevokeUserSession(ctx context.Context, input Rev
 		return UserManagedSessionView{}, ErrInvalidArgument
 	}
 	if input.UserID != input.ActorUserID {
-		return UserManagedSessionView{}, ErrUnauthorized
+		return UserManagedSessionView{}, ErrForbidden
 	}
 	items, err := listUserSessionsByUserID(ctx, s.Sessions, input.UserID)
 	if err != nil {
@@ -77,7 +77,7 @@ func (s TokenManagementService) RevokeDeviceSession(ctx context.Context, input R
 		return DeviceManagedSessionView{}, err
 	}
 	if device.OwnerID != input.ActorUserID {
-		return DeviceManagedSessionView{}, ErrUnauthorized
+		return DeviceManagedSessionView{}, ErrForbidden
 	}
 	items, err := listDeviceSessionsByDeviceID(ctx, s.Devices, input.DeviceID)
 	if err != nil {

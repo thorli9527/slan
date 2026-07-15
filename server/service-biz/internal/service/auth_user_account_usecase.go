@@ -28,14 +28,14 @@ func (s AuthUserAccountService) ChangeUserPassword(ctx context.Context, input Ch
 		return ChangedUserPasswordView{}, ErrInvalidArgument
 	}
 	if input.ActorUserID != "" && input.ActorUserID != input.UserID {
-		return ChangedUserPasswordView{}, ErrUnauthorized
+		return ChangedUserPasswordView{}, ErrForbidden
 	}
 	user, err := requireAuthUser(ctx, s.Users, input.UserID)
 	if err != nil {
 		return ChangedUserPasswordView{}, err
 	}
 	if normalizedSecret(input.OldPassword) != "" && !verifyPassword(user.PasswordHash, input.OldPassword) {
-		return ChangedUserPasswordView{}, ErrUnauthorized
+		return ChangedUserPasswordView{}, ErrForbidden
 	}
 	user = applyChangedUserPassword(user, input.NewPassword, authNow(s.Now).Unix())
 	if err := s.Users.SaveUser(ctx, user); err != nil {

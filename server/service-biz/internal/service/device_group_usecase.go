@@ -107,7 +107,7 @@ func (s DeviceGroupService) CreateDeviceGroup(ctx context.Context, input CreateD
 		return DeviceGroupView{}, ErrInvalidArgument
 	}
 	if input.ActorUserID != "" && input.ActorUserID != input.UserID {
-		return DeviceGroupView{}, ErrUnauthorized
+		return DeviceGroupView{}, ErrForbidden
 	}
 	if _, ok, err := s.Users.GetUser(ctx, input.UserID); err != nil {
 		return DeviceGroupView{}, err
@@ -138,7 +138,7 @@ func (s DeviceGroupService) UpdateDeviceGroup(ctx context.Context, input UpdateD
 		return DeviceGroupView{}, ErrNotFound
 	}
 	if input.ActorUserID != "" && input.ActorUserID != group.UserID {
-		return DeviceGroupView{}, ErrUnauthorized
+		return DeviceGroupView{}, ErrForbidden
 	}
 	if input.Name != "" {
 		group.Name = input.Name
@@ -167,7 +167,7 @@ func (s DeviceGroupService) DeleteDeviceGroup(ctx context.Context, input DeleteD
 		return ErrNotFound
 	}
 	if input.ActorUserID != "" && input.ActorUserID != group.UserID {
-		return ErrUnauthorized
+		return ErrForbidden
 	}
 	groups, err := s.requireNetworkDeviceGroupRepository()
 	if err != nil {
@@ -188,14 +188,26 @@ func (s DeviceGroupService) SetDeviceGroups(ctx context.Context, input SetDevice
 		return ErrInvalidArgument
 	}
 	if input.ActorUserID != "" && input.ActorUserID != input.UserID {
-		return ErrUnauthorized
+		return ErrForbidden
 	}
-	device, err := requireOwnedManagedDevice(ctx, s.Users, s.Devices, input.ActorUserID, input.DeviceID)
+	device, err := requireManagedDevice(ctx, s.Devices, input.DeviceID)
 	if err != nil {
 		return err
 	}
+	if _, err := requireNetworkUser(ctx, s.Users, input.UserID); err != nil {
+		return err
+	}
 	if device.OwnerID != input.UserID {
-		return ErrUnauthorized
+		if s.Relations == nil {
+			return ErrForbidden
+		}
+		relation, ok, err := s.Relations.GetDeviceUserRelation(ctx, input.DeviceID, input.UserID)
+		if err != nil {
+			return err
+		}
+		if !ok || relation.Status != model.DeviceRelationStatusActive {
+			return ErrForbidden
+		}
 	}
 	for _, groupID := range input.GroupIDs {
 		group, ok, err := s.Devices.GetDeviceGroup(ctx, normalizeDeviceGroupID(groupID))
@@ -206,7 +218,7 @@ func (s DeviceGroupService) SetDeviceGroups(ctx context.Context, input SetDevice
 			return ErrNotFound
 		}
 		if group.UserID != input.UserID {
-			return ErrUnauthorized
+			return ErrForbidden
 		}
 	}
 	if err := s.Devices.SetDeviceGroups(ctx, model.DeviceGroupAssignment{

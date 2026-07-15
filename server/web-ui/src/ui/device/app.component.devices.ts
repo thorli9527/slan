@@ -145,7 +145,12 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     }
     this.deviceGroupIdsByDevice = next;
     try {
-      await Promise.all(this.currentUserDevices.map((device) =>
+      const changedDevices = this.currentUserDevices.filter((device) => {
+        const before = previous[device.deviceId] ?? [];
+        const after = next[device.deviceId] ?? [];
+        return before.length !== after.length || before.some((groupId) => !after.includes(groupId));
+      });
+      await Promise.all(changedDevices.map((device) =>
         this.api.put(WEB_API.deviceGroupsForDevice(this.effectiveUserId, device.deviceId, this.effectiveUserId), {
           actorUserId: this.effectiveUserId,
           groupIds: next[device.deviceId] ?? [],
@@ -153,15 +158,31 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       ));
       await this.loadDeviceGroups(this.effectiveUserId);
       this.closeDeviceGroupBindingDialog();
-    } catch {
+    } catch (error) {
       if (this.isDemoMode) {
         this.closeDeviceGroupBindingDialog();
         return;
       }
-      this.deviceGroupIdsByDevice = previous;
-      this.deviceGroupBindingMessage = '保存失败，请重试';
+      await this.loadDeviceGroups(this.effectiveUserId);
+      this.deviceGroupBindingIds = this.currentUserDevices
+        .filter((device) => this.deviceInGroup(device, group.groupId))
+        .map((device) => device.deviceId);
+      this.deviceGroupBindingMessage = this.deviceGroupBindingFailureMessage(error);
       this.notifyStateChanged();
     }
+  }
+
+  private deviceGroupBindingFailureMessage(error: unknown): string {
+    if (!(error instanceof ApiHttpError)) {
+      return '保存失败，请重试';
+    }
+    const detail = ({
+      invalid_argument: '请求参数无效',
+      not_found: '设备或设备分组不存在，请刷新页面后重试',
+      forbidden: '当前用户无权管理所选设备',
+      unauthorized: '登录状态已失效，请重新登录',
+    } as Record<string, string>)[error.code] ?? `服务端返回 HTTP ${error.status}`;
+    return `保存失败：${detail}`;
   }
 
   openDeviceGroupPickerDialog(device: DeviceRow): void {

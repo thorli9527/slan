@@ -19,6 +19,7 @@ func newDeviceServices(deps UseCaseDependencies) DeviceServices {
 		GroupManagement: servicepkg.DeviceGroupService{
 			Users:           repos.Users,
 			Devices:         repos.Devices,
+			Relations:       repos.Relations,
 			Networks:        repos.Networks,
 			NetworkGroups:   repos.NetworkGroups,
 			EventPublisher:  eventPublisher,

@@ -27,17 +27,14 @@ export class ApiHttpError extends Error {
 export class AppApiClient {
   private accessToken: () => string = () => '';
   private refreshSession: (() => Promise<void>) | null = null;
-  private sessionInvalidated: (() => void) | null = null;
   private refreshPromise: Promise<void> | null = null;
 
   configureAuth(
     accessToken: () => string,
     refreshSession: () => Promise<void>,
-    sessionInvalidated: () => void,
   ): void {
     this.accessToken = accessToken;
     this.refreshSession = refreshSession;
-    this.sessionInvalidated = sessionInvalidated;
   }
 
   async get<T>(path: string): Promise<T> {
@@ -73,16 +70,8 @@ export class AppApiClient {
   ): Promise<T> {
     const response = await this.fetch(method, path, body, explicitToken || this.accessToken());
     if (response.status === 401 && allowRefresh && this.accessToken() && this.refreshSession) {
-      try {
-        await this.refreshOnce();
-      } catch {
-        this.sessionInvalidated?.();
-        throw await this.httpError(method, path, response);
-      }
+      await this.refreshOnce();
       const retried = await this.fetch(method, path, body, this.accessToken());
-      if (retried.status === 401) {
-        this.sessionInvalidated?.();
-      }
       return this.readResponse<T>(method, path, retried);
     }
     return this.readResponse<T>(method, path, response);

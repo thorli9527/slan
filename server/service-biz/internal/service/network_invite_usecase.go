@@ -49,7 +49,7 @@ func (s NetworkInviteService) CreateDeviceInvite(ctx context.Context, input Crea
 			return DeviceInviteView{}, err
 		}
 		if actorUserID != "" && device.OwnerID != actorUserID {
-			return DeviceInviteView{}, ErrUnauthorized
+			return DeviceInviteView{}, ErrForbidden
 		}
 	}
 	if _, err := requireNetworkUser(ctx, s.Users, input.UserID); err != nil {
@@ -119,7 +119,7 @@ func (s NetworkInviteService) AcceptDeviceInvite(ctx context.Context, input Acce
 		return DeviceInviteView{}, err
 	}
 	if device.OwnerID != input.ActorUserID {
-		return DeviceInviteView{}, ErrUnauthorized
+		return DeviceInviteView{}, ErrForbidden
 	}
 	if invite.InviterUserID == device.OwnerID {
 		return DeviceInviteView{}, ErrConflict
@@ -162,7 +162,7 @@ func (s NetworkInviteService) RevokeDeviceInvite(ctx context.Context, input Revo
 		return DeviceInviteView{}, err
 	}
 	if !allowed {
-		return DeviceInviteView{}, ErrUnauthorized
+		return DeviceInviteView{}, ErrForbidden
 	}
 	if invite.Status != "revoked" {
 		invite = revokeDeviceInvite(invite)

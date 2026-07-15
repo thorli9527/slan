@@ -17,6 +17,7 @@ import { WEB_API } from './api-paths';
 export class AppComponentAuth extends AppComponentOverview {
   private activeAuth: ApiAuthResponse | null = null;
   private authRefreshTimer: number | null = null;
+  private activeRefreshPromise: Promise<void> | null = null;
 
   clearAuthMessageOnCredentialsChange(): void {
     if (!this.authMessage) {
@@ -30,7 +31,6 @@ export class AppComponentAuth extends AppComponentOverview {
     this.api.configureAuth(
       () => this.currentSessionToken,
       () => this.refreshActiveSession(),
-      () => this.expireBrowserAuth(),
     );
     if (await this.completeClientLoginFromStoredBrowserAuth()) {
       return;
@@ -47,51 +47,50 @@ export class AppComponentAuth extends AppComponentOverview {
     if (!target) {
       return false;
     }
+    const auth = readStoredBrowserAuth();
+    if (!auth) {
+      return false;
+    }
     try {
-      const auth = readStoredBrowserAuth();
-      if (!auth) {
-        return false;
-      }
       this.authMessage = '正在检查浏览器登录状态...';
       this.notifyStateChanged();
       const renewedAuth = await this.renewBrowserAuth(auth);
       this.authMessage = '正在同步客户端登录...';
       this.notifyStateChanged();
       if (!(await this.syncClientLogin(renewedAuth, target))) {
-        clearBrowserAuth();
-        this.mode = 'login';
-        this.notifyStateChanged();
-        return false;
+        await this.applyAuth(renewedAuth);
+        this.navigateToDefaultHome();
+        return true;
       }
       await this.applyAuth(renewedAuth);
       this.navigateToDefaultHome();
       return true;
     } catch (error) {
+      this.applyAuthState(auth);
       this.authMessage = `浏览器登录态恢复失败：${error instanceof Error ? error.message : String(error)}`;
-      clearBrowserAuth();
-      this.mode = 'login';
+      this.applyRouteFromLocation();
       this.notifyStateChanged();
-      return false;
+      return true;
     }
   }
 
   protected async restoreBrowserAuth(): Promise<boolean> {
+    const auth = readStoredBrowserAuth();
+    if (!auth) {
+      return false;
+    }
     try {
-      const auth = readStoredBrowserAuth();
-      if (!auth) {
-        return false;
-      }
       this.authMessage = '正在恢复浏览器登录状态...';
       this.notifyStateChanged();
       const renewedAuth = await this.renewBrowserAuth(auth);
       await this.applyAuth(renewedAuth);
       return true;
     } catch (error) {
+      this.applyAuthState(auth);
       this.authMessage = `浏览器登录态恢复失败：${error instanceof Error ? error.message : String(error)}`;
-      clearBrowserAuth();
-      this.mode = 'login';
+      this.applyRouteFromLocation();
       this.notifyStateChanged();
-      return false;
+      return true;
     }
   }
 
@@ -238,12 +237,25 @@ export class AppComponentAuth extends AppComponentOverview {
     return response.auth;
   }
 
-  private async refreshActiveSession(): Promise<void> {
+  private refreshActiveSession(): Promise<void> {
+    if (!this.activeRefreshPromise) {
+      this.activeRefreshPromise = this.performActiveSessionRefresh().finally(() => {
+        this.activeRefreshPromise = null;
+      });
+    }
+    return this.activeRefreshPromise;
+  }
+
+  private async performActiveSessionRefresh(): Promise<void> {
     const auth = this.activeAuth ?? readStoredBrowserAuth();
     if (!auth?.session?.refreshToken) {
       throw new Error('missing refresh token');
     }
+    const accessToken = this.currentSessionToken;
     const renewed = await this.renewBrowserAuth(auth);
+    if (!this.currentSessionToken || this.currentSessionToken !== accessToken) {
+      return;
+    }
     this.applyAuthState(renewed);
   }
 
@@ -252,8 +264,32 @@ export class AppComponentAuth extends AppComponentOverview {
     const refreshAt = auth.session.expiresAt * 1000 - 5 * 60 * 1000;
     const delay = Math.max(refreshAt - Date.now(), 1000);
     this.authRefreshTimer = window.setTimeout(() => {
-      void this.refreshActiveSession().catch(() => this.expireBrowserAuth());
+      void this.refreshActiveSession().catch((error: unknown) => {
+        if (!this.currentSessionToken) {
+          return;
+        }
+        this.authMessage = `登录状态刷新失败，将自动重试：${error instanceof Error ? error.message : String(error)}`;
+        this.notifyStateChanged();
+        this.scheduleAuthRefreshRetry();
+      });
     }, delay);
+  }
+
+  private scheduleAuthRefreshRetry(): void {
+    this.clearAuthRefreshTimer();
+    if (!this.currentSessionToken) {
+      return;
+    }
+    this.authRefreshTimer = window.setTimeout(() => {
+      void this.refreshActiveSession().catch((error: unknown) => {
+        if (!this.currentSessionToken) {
+          return;
+        }
+        this.authMessage = `登录状态刷新失败，将自动重试：${error instanceof Error ? error.message : String(error)}`;
+        this.notifyStateChanged();
+        this.scheduleAuthRefreshRetry();
+      });
+    }, 30_000);
   }
 
   private clearAuthRefreshTimer(): void {
@@ -293,9 +329,6 @@ export class AppComponentAuth extends AppComponentOverview {
       this.notifyStateChanged();
       return true;
     } catch (error) {
-      if (error instanceof ApiHttpError && error.status === 409) {
-        clearBrowserAuth();
-      }
       this.authMessage = `客户端登录同步失败：${this.clientLoginSyncErrorMessage(error)}`;
       this.notifyStateChanged();
       return false;

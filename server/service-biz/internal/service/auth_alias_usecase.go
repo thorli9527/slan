@@ -18,7 +18,7 @@ func (s AuthAliasService) UpsertUserAlias(ctx context.Context, input UpsertUserA
 		return UserAliasView{}, ErrInvalidArgument
 	}
 	if input.ActorUserID != "" && input.ActorUserID != input.UserID {
-		return UserAliasView{}, ErrUnauthorized
+		return UserAliasView{}, ErrForbidden
 	}
 	if _, err := requireAuthUser(ctx, s.Users, input.UserID); err != nil {
 		return UserAliasView{}, err

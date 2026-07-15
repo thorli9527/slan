@@ -1588,7 +1588,7 @@ fn path_diagnose_response() -> Result<PathDiagnoseResponse> {
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("device unavailable: current device is not registered"))?;
     let activation =
-        client.activate_network(session_device_api_token(&session), device_id, &network_id)?;
+        client.activate_device_networks(session_device_api_token(&session), device_id)?;
     if !activation.relay_candidates.is_empty() {
         replace_runtime_relay_candidates(
             activation
@@ -2699,7 +2699,7 @@ where
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(&mut session)?;
     let mut activation =
-        client.activate_network(session_device_api_token(&session), &device_id, &network_id)?;
+        client.activate_device_networks(session_device_api_token(&session), &device_id)?;
     activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
     session.self_node_id = activation.self_node_id.clone();
     session.virtual_ip = Some(activation.virtual_ip.clone());
@@ -2881,7 +2881,7 @@ fn prepare_relay_data_plane_from_latest_control() -> Result<RelayDataPlaneConfig
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(&mut session)?;
     let activation =
-        client.activate_network(session_device_api_token(&session), &device_id, &network_id)?;
+        client.activate_device_networks(session_device_api_token(&session), &device_id)?;
     session.self_node_id = activation.self_node_id.clone();
     if !activation.relay_candidates.is_empty() {
         replace_runtime_relay_candidates(
@@ -2994,25 +2994,7 @@ where
     let client = ControlPlaneClient::from_env();
     let network_id = ensure_active_network_id(session)?;
     let mut activation =
-        match client.activate_network(session_device_api_token(session), &device_id, &network_id) {
-            Ok(activation) => activation,
-            Err(error) if error.to_string().contains("HTTP 404") => {
-                session.active_network_id = None;
-                let refreshed_network_id = ensure_active_network_id(session)?;
-                client
-                    .activate_network(
-                        session_device_api_token(session),
-                        &device_id,
-                        &refreshed_network_id,
-                    )
-                    .with_context(|| {
-                        format!(
-                            "activate refreshed network after stale network config {network_id}"
-                        )
-                    })?
-            }
-            Err(error) => return Err(error),
-        };
+        client.activate_device_networks(session_device_api_token(session), &device_id)?;
     activation.virtual_ip = normalize_virtual_ip(&activation.virtual_ip);
     session.self_node_id = activation.self_node_id.clone();
     log_service_error(format!(
@@ -3108,13 +3090,16 @@ where
 }
 
 fn ensure_active_network_id(session: &mut PersistedSession) -> Result<String> {
+    session.active_network_id = session
+        .active_network_id
+        .take()
+        .and_then(|value| non_empty_network_id(&value));
     if session.active_network_id.is_none() {
         let client = ControlPlaneClient::from_env();
         session.active_network_id = crate::network_module::network_module_snapshot()
             .configs
             .into_iter()
-            .next()
-            .map(|config| config.network_id);
+            .find_map(|config| non_empty_network_id(&config.network_id));
         if session.active_network_id.is_none() {
             session.active_network_id =
                 client.active_network_id(session_device_api_token(session))?;
@@ -3127,6 +3112,11 @@ fn ensure_active_network_id(session: &mut PersistedSession) -> Result<String> {
         ));
     };
     Ok(network_id)
+}
+
+fn non_empty_network_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn refresh_relay_candidates_for_session(

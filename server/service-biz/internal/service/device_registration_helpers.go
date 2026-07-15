@@ -115,7 +115,7 @@ func registerManagedDevice(ctx context.Context, users repository.UserRepository,
 		if _, ok, err := users.GetUser(ctx, input.ActorUserID); err != nil {
 			return model.Device{}, err
 		} else if !ok || input.ActorUserID != input.OwnerID {
-			return model.Device{}, ErrUnauthorized
+			return model.Device{}, ErrForbidden
 		}
 	}
 	now := deviceNow(nowFn).Unix()

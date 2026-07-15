@@ -28,7 +28,7 @@ func (s DeviceGroupService) AddNetworkDeviceGroup(ctx context.Context, input Add
 		return DeviceGroupCollectionView{}, ErrNotFound
 	}
 	if group.UserID != network.OwnerID {
-		return DeviceGroupCollectionView{}, ErrUnauthorized
+		return DeviceGroupCollectionView{}, ErrForbidden
 	}
 	now := deviceNow(s.Now).Unix()
 	groups, err := s.requireNetworkDeviceGroupRepository()

@@ -92,7 +92,7 @@ type gormDeviceGroupRecord struct {
 
 type gormDeviceGroupAssignmentRecord struct {
 	DeviceID  string          `gorm:"primaryKey;size:64"`
-	UserID    string          `gorm:"size:64;index"`
+	UserID    string          `gorm:"primaryKey;size:64;index"`
 	GroupIDs  jsonStringSlice `gorm:"type:json"`
 	UpdatedAt int64           `gorm:"not null"`
 }

@@ -113,11 +113,16 @@ func NewDeviceCoreService(
 type DeviceGroupService struct {
 	Users           repository.UserRepository
 	Devices         repository.DeviceRepository
+	Relations       DeviceGroupRelationReader
 	Networks        repository.NetworkRepository
 	NetworkGroups   repository.NetworkDeviceGroupRepository
 	EventPublisher  NetworkEventPublisher
 	DevicePublisher DeviceControlPublisher
 	Now             func() time.Time
+}
+
+type DeviceGroupRelationReader interface {
+	GetDeviceUserRelation(ctx context.Context, deviceID, userID string) (model.DeviceUserRelation, bool, error)
 }
 
 type DeviceSessionService struct {

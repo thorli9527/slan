@@ -145,7 +145,7 @@ func TestRevokeDeviceInviteAllowsInviterAndDeviceOwner(t *testing.T) {
 	}{
 		{name: "inviter removes shared device", actorID: "inviter"},
 		{name: "device owner withdraws sharing", actorID: "owner"},
-		{name: "unrelated user is rejected", actorID: "other", wantErr: ErrUnauthorized},
+		{name: "unrelated user is rejected", actorID: "other", wantErr: ErrForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

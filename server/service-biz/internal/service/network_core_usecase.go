@@ -39,7 +39,7 @@ func (s NetworkCoreService) CreateNetwork(ctx context.Context, input CreateNetwo
 			return NetworkSummaryView{}, err
 		}
 		if input.ActorUserID != input.OwnerID {
-			return NetworkSummaryView{}, ErrUnauthorized
+			return NetworkSummaryView{}, ErrForbidden
 		}
 	}
 	now := networkNow(s.Now).Unix()

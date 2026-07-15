@@ -3,6 +3,11 @@ package repository
 import "github.com/slan/service-biz/internal/model"
 
 func (s *GormStore) migrate() error {
+	if s.db.Migrator().HasTable(&gormDeviceGroupAssignmentRecord{}) {
+		if err := s.ensureUserScopedDeviceGroupAssignments(); err != nil {
+			return err
+		}
+	}
 	if err := s.db.AutoMigrate(
 		&gormCounter{},
 		&gormUserRecord{},
@@ -49,10 +54,50 @@ func (s *GormStore) migrate() error {
 	if err := s.ensureSingleDeviceSession(); err != nil {
 		return err
 	}
+	if err := s.ensureUserScopedDeviceGroupAssignments(); err != nil {
+		return err
+	}
 	if err := s.migrateNetworkMembershipsToDeviceGroups(); err != nil {
 		return err
 	}
 	return s.ensureIndexes()
+}
+
+func (s *GormStore) ensureUserScopedDeviceGroupAssignments() error {
+	if s.db.Dialector.Name() != "postgres" {
+		return nil
+	}
+	return s.db.Exec(`
+		DO $$
+		DECLARE
+			primary_key_name text;
+			primary_key_columns text[];
+		BEGIN
+			SELECT constraint_row.conname,
+			       array_agg(attribute_row.attname ORDER BY key_column.ordinality)
+			INTO primary_key_name, primary_key_columns
+			FROM pg_constraint constraint_row
+			JOIN unnest(constraint_row.conkey) WITH ORDINALITY AS key_column(attnum, ordinality) ON true
+			JOIN pg_attribute attribute_row
+			  ON attribute_row.attrelid = constraint_row.conrelid
+			 AND attribute_row.attnum = key_column.attnum
+			WHERE constraint_row.contype = 'p'
+			  AND constraint_row.conrelid = 'gorm_device_group_assignment_records'::regclass
+			GROUP BY constraint_row.conname;
+
+			IF primary_key_columns IS DISTINCT FROM ARRAY['device_id', 'user_id']::text[] THEN
+				IF primary_key_name IS NOT NULL THEN
+					EXECUTE format(
+						'ALTER TABLE gorm_device_group_assignment_records DROP CONSTRAINT %I',
+						primary_key_name
+					);
+				END IF;
+				ALTER TABLE gorm_device_group_assignment_records
+					ADD CONSTRAINT gorm_device_group_assignment_records_pkey
+					PRIMARY KEY (device_id, user_id);
+			END IF;
+		END $$;
+	`).Error
 }
 
 func (s *GormStore) ensureSingleActiveDeviceOwner() error {
@@ -105,7 +150,9 @@ func (s *GormStore) migrateNetworkMembershipsToDeviceGroups() error {
 		SELECT DISTINCT membership.network_id, group_id.value, EXTRACT(EPOCH FROM NOW())::BIGINT, EXTRACT(EPOCH FROM NOW())::BIGINT
 		FROM gorm_network_device_records membership
 		JOIN gorm_network_records network ON network.network_id = membership.network_id
-		JOIN gorm_device_group_assignment_records assignment ON assignment.device_id = membership.device_id
+		JOIN gorm_device_group_assignment_records assignment
+		  ON assignment.device_id = membership.device_id
+		 AND assignment.user_id = network.owner_id
 		CROSS JOIN LATERAL json_array_elements_text(assignment.group_ids::json) AS group_id(value)
 		JOIN gorm_device_group_records device_group ON device_group.group_id = group_id.value AND device_group.user_id = network.owner_id
 		ON CONFLICT (network_id, group_id) DO NOTHING
@@ -118,6 +165,9 @@ func (s *GormStore) migrateNetworkMembershipsToDeviceGroups() error {
 			SELECT 1
 			FROM gorm_network_device_group_reference_records reference
 			JOIN gorm_device_group_assignment_records assignment ON assignment.device_id = membership.device_id
+			JOIN gorm_device_group_records device_group
+			  ON device_group.group_id = reference.group_id
+			 AND device_group.user_id = assignment.user_id
 			WHERE reference.network_id = membership.network_id
 			  AND assignment.group_ids::jsonb ? reference.group_id
 		)

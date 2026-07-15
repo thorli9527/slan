@@ -18,7 +18,13 @@ export function readStoredBrowserAuth(): ApiAuthResponse | null {
   if (!payload) {
     return null;
   }
-  const auth = JSON.parse(payload) as ApiAuthResponse;
+  let auth: ApiAuthResponse;
+  try {
+    auth = JSON.parse(payload) as ApiAuthResponse;
+  } catch {
+    clearBrowserAuth();
+    return null;
+  }
   if (!isValidAuth(auth)) {
     clearBrowserAuth();
     return null;

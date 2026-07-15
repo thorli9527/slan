@@ -26,7 +26,7 @@ func authorizeBootstrapKeyCreation(
 		return ErrNotFound
 	}
 	if input.ActorUserID != "" && input.ActorUserID != input.UserID {
-		return ErrUnauthorized
+		return ErrForbidden
 	}
 	if input.NetworkID == "" {
 		return nil
@@ -36,7 +36,7 @@ func authorizeBootstrapKeyCreation(
 		return err
 	}
 	if input.ActorUserID != "" && network.OwnerID != input.ActorUserID {
-		return ErrUnauthorized
+		return ErrForbidden
 	}
 	return nil
 }
@@ -63,7 +63,7 @@ func requireBootstrapKeyForRevoke(
 		return model.DeviceBootstrapKey{}, ErrNotFound
 	}
 	if key.UserID != input.ActorUserID {
-		return model.DeviceBootstrapKey{}, ErrUnauthorized
+		return model.DeviceBootstrapKey{}, ErrForbidden
 	}
 	return key, nil
 }

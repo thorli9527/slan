@@ -156,7 +156,7 @@ func requireOwnedManagedDevice(ctx context.Context, users repository.UserReposit
 		return model.Device{}, err
 	}
 	if device.OwnerID != actorUserID {
-		return model.Device{}, ErrUnauthorized
+		return model.Device{}, ErrForbidden
 	}
 	return device, nil
 }
@@ -173,7 +173,7 @@ func requireOwnedManagedNetwork(ctx context.Context, users repository.UserReposi
 		return model.Network{}, err
 	}
 	if network.OwnerID != actorUserID {
-		return model.Network{}, ErrUnauthorized
+		return model.Network{}, ErrForbidden
 	}
 	return network, nil
 }

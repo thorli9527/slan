@@ -77,6 +77,10 @@ impl From<PersistedSession> for AuthPayload {
 
 impl From<AuthPayload> for PersistedSession {
     fn from(payload: AuthPayload) -> Self {
+        let active_network_id = payload
+            .active_network_id
+            .as_deref()
+            .and_then(non_empty_session_network_id);
         Self {
             access_token: payload.access_token,
             refresh_token: payload.refresh_token,
@@ -89,8 +93,8 @@ impl From<AuthPayload> for PersistedSession {
             device_refresh_token: None,
             device_id: payload.device_id,
             self_node_id: None,
-            active_network_id: payload.active_network_id.clone(),
-            network_ids: payload.active_network_id.into_iter().collect(),
+            active_network_id: active_network_id.clone(),
+            network_ids: active_network_id.into_iter().collect(),
             virtual_ip: payload.virtual_ip,
             relay_candidates: Vec::new(),
             mqtt: None,
@@ -98,6 +102,11 @@ impl From<AuthPayload> for PersistedSession {
             authenticated_at_ms: current_timestamp_ms(),
         }
     }
+}
+
+fn non_empty_session_network_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 impl PersistedSession {
@@ -320,11 +329,22 @@ fn persisted_session_from_device_session(
     let active_network_id = response
         .device_session
         .active_network_ids
-        .first()
-        .cloned()
-        .or_else(|| config.map(|item| item.network_id.clone()))
-        .or_else(|| response.device.active_network_id.clone());
-    let network_ids = response.device_session.active_network_ids.clone();
+        .iter()
+        .find_map(|value| non_empty_session_network_id(value))
+        .or_else(|| config.and_then(|item| non_empty_session_network_id(&item.network_id)))
+        .or_else(|| {
+            response
+                .device
+                .active_network_id
+                .as_deref()
+                .and_then(non_empty_session_network_id)
+        });
+    let network_ids = response
+        .device_session
+        .active_network_ids
+        .iter()
+        .filter_map(|value| non_empty_session_network_id(value))
+        .collect();
     let virtual_ip = config
         .and_then(|item| item.global_ip.clone())
         .or_else(|| response.device.global_ip.clone())
@@ -441,7 +461,11 @@ fn renew_user_session_if_needed(
     if let Some(device_id) = payload.device_id {
         session.device_id = Some(device_id);
     }
-    if let Some(active_network_id) = payload.active_network_id {
+    if let Some(active_network_id) = payload
+        .active_network_id
+        .as_deref()
+        .and_then(non_empty_session_network_id)
+    {
         session.active_network_id = Some(active_network_id);
     }
     if let Some(virtual_ip) = payload.virtual_ip {
@@ -513,7 +537,12 @@ fn renew_bound_device_session(
     session.device_token = Some(renewed_device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
-    session.network_ids = response.device_session.active_network_ids.clone();
+    session.network_ids = response
+        .device_session
+        .active_network_ids
+        .iter()
+        .filter_map(|value| non_empty_session_network_id(value))
+        .collect();
     session.mqtt = mqtt.or(session.mqtt.take());
     if !relay_candidates.is_empty() {
         session.relay_candidates = relay_candidates.clone();
@@ -523,8 +552,12 @@ fn renew_bound_device_session(
     if let Some(configs) = response.network_configs {
         let items = configs.items;
         replace_network_module_configs(items.clone());
-        if let Some(config) = items.last() {
-            session.active_network_id = Some(config.network_id.clone());
+        if let Some(config) = items
+            .iter()
+            .rev()
+            .find(|item| !item.network_id.trim().is_empty())
+        {
+            session.active_network_id = non_empty_session_network_id(&config.network_id);
             if let Some(global_ip) = config
                 .global_ip
                 .as_deref()
@@ -559,7 +592,12 @@ fn bind_session_device_session(
     session.device_token = Some(response.device_session.device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
-    session.network_ids = response.device_session.active_network_ids.clone();
+    session.network_ids = response
+        .device_session
+        .active_network_ids
+        .iter()
+        .filter_map(|value| non_empty_session_network_id(value))
+        .collect();
     session.mqtt = mqtt.or(session.mqtt.take());
     if !relay_candidates.is_empty() {
         session.relay_candidates = relay_candidates.clone();
@@ -569,8 +607,12 @@ fn bind_session_device_session(
     if let Some(configs) = response.network_configs {
         let items = configs.items;
         replace_network_module_configs(items.clone());
-        if let Some(config) = items.last() {
-            session.active_network_id = Some(config.network_id.clone());
+        if let Some(config) = items
+            .iter()
+            .rev()
+            .find(|item| !item.network_id.trim().is_empty())
+        {
+            session.active_network_id = non_empty_session_network_id(&config.network_id);
             if let Some(global_ip) = config
                 .global_ip
                 .as_deref()

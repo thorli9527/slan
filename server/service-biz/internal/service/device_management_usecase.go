@@ -126,7 +126,7 @@ func (s DeviceProvisioningService) DeleteDevice(ctx context.Context, input Delet
 		return err
 	}
 	if device.OwnerID != input.ActorUserID {
-		return ErrUnauthorized
+		return ErrForbidden
 	}
 	return ErrForbidden
 }

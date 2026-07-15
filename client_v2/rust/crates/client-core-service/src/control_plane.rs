@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{ErrorKind, Read, Write},
     net::TcpStream,
@@ -45,14 +46,6 @@ fn api_device_network_configs(device_id: &str) -> String {
 
 fn api_device_runtime(device_id: &str) -> String {
     format!("/api/app/devices/{}/runtime", device_id.trim())
-}
-
-fn api_network_config(network_id: &str, device_id: &str) -> String {
-    format!(
-        "/api/app/networks/{}/network-config?deviceId={}",
-        network_id.trim(),
-        device_id.trim()
-    )
 }
 
 fn api_relay_candidates(network_id: &str, device_id: &str) -> String {
@@ -337,6 +330,12 @@ pub struct DeviceNetworkConfig {
     #[serde(default)]
     pub config_version: Option<i64>,
     pub device_id: String,
+    #[serde(default)]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub self_node_id: Option<String>,
+    #[serde(default)]
+    pub prefix_len: Option<u8>,
     #[serde(default)]
     pub global_ip: Option<String>,
     #[serde(default)]
@@ -729,8 +728,7 @@ impl ControlPlaneClient {
         Ok(self
             .device_network_configs(access_token, &device_id)?
             .into_iter()
-            .next()
-            .map(|config| config.network_id))
+            .find_map(|config| non_empty_string(&config.network_id)))
     }
 
     pub fn device_network_configs(
@@ -751,38 +749,29 @@ impl ControlPlaneClient {
         device_id: &str,
         node_id: &str,
     ) -> Result<ControlNode> {
-        let resolved_network_id = self.active_network_id(access_token)?;
-        if let Some(network_id) = resolved_network_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            let path = api_network_config(network_id, device_id);
-            let response = self.request_json("GET", &path, access_token, None)?;
-            if let Some(resolved_node_id) = optional_string(&response, "selfNodeId")
-                .or_else(|| optional_string(&response, "nodeId"))
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                return Ok(ControlNode {
-                    node_id: resolved_node_id,
-                });
-            }
+        let resolved_node_id = self
+            .device_network_configs(access_token, device_id)?
+            .into_iter()
+            .find_map(|config| config.self_node_id.or(config.node_id))
+            .and_then(|value| non_empty_string(&value));
+        if let Some(resolved_node_id) = resolved_node_id {
+            return Ok(ControlNode {
+                node_id: resolved_node_id,
+            });
         }
         Ok(ControlNode {
             node_id: node_id.trim().to_string(),
         })
     }
 
-    pub fn activate_network(
+    pub fn activate_device_networks(
         &self,
         access_token: &str,
         device_id: &str,
-        network_id: &str,
     ) -> Result<NetworkActivationPlan> {
-        let config_path = api_network_config(network_id, device_id);
+        let config_path = api_device_network_configs(device_id);
         let response = self.request_json("GET", &config_path, access_token, None)?;
-        activation_plan_from_network_config(&response)
+        activation_plan_from_device_network_configs(&response)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -902,10 +891,11 @@ impl ControlPlaneClient {
     ) -> Result<u8> {
         let _ = subnet_id;
         let device_id = local_stable_device_id()?;
-        let path = api_network_config(network_id, &device_id);
-        let response = self.request_json("GET", &path, access_token, None)?;
-        network_config_prefix_len(&response)
-            .ok_or_else(|| anyhow::anyhow!("network config missing prefixLen"))
+        self.device_network_configs(access_token, &device_id)?
+            .into_iter()
+            .find(|config| config.network_id.trim() == network_id.trim())
+            .and_then(|config| config.prefix_len)
+            .ok_or_else(|| anyhow::anyhow!("device network config missing prefixLen"))
     }
 
     pub fn console_login_key(
@@ -1164,6 +1154,91 @@ fn activation_plan_from_network_config(response: &Value) -> Result<NetworkActiva
         peers,
         peer_count,
     })
+}
+
+fn activation_plan_from_device_network_configs(response: &Value) -> Result<NetworkActivationPlan> {
+    let configs = response
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("device network configs response missing items"))?;
+    if configs.is_empty() {
+        bail!("device unavailable: current device is not assigned to any network");
+    }
+
+    let mut merged = NetworkActivationPlan::default();
+    let mut route_keys = BTreeSet::new();
+    let mut relay_keys = BTreeSet::new();
+    let mut peers = BTreeMap::<String, ControlPeer>::new();
+    for config in configs {
+        let plan = activation_plan_from_network_config(config)?;
+        if merged.virtual_ip.is_empty() {
+            merged.virtual_ip = plan.virtual_ip;
+            merged.prefix_len = plan.prefix_len;
+            merged.self_node_id = plan.self_node_id;
+        }
+        append_unique_strings(&mut merged.resolver.servers, plan.resolver.servers);
+        append_unique_strings(
+            &mut merged.resolver.search_domains,
+            plan.resolver.search_domains,
+        );
+        append_unique_strings(
+            &mut merged.resolver.split_domains,
+            plan.resolver.split_domains,
+        );
+        merged.resolver.fallback_to_system_resolvers |= plan.resolver.fallback_to_system_resolvers;
+        for route in plan.routes {
+            let key = (
+                route.destination.clone(),
+                route.gateway.clone().unwrap_or_default(),
+            );
+            if route_keys.insert(key) {
+                merged.routes.push(route);
+            }
+        }
+        for relay in plan.relay_candidates {
+            let key = (relay.transport.clone(), relay.address.clone());
+            if relay_keys.insert(key) {
+                merged.relay_candidates.push(relay);
+            }
+        }
+        for peer in plan.peers {
+            merge_control_peer(&mut peers, peer);
+        }
+    }
+    merged.peers = peers.into_values().collect();
+    merged.peer_count = merged.peers.len();
+    Ok(merged)
+}
+
+fn append_unique_strings(target: &mut Vec<String>, values: Vec<String>) {
+    let mut existing = target.iter().cloned().collect::<BTreeSet<_>>();
+    for value in values {
+        if existing.insert(value.clone()) {
+            target.push(value);
+        }
+    }
+}
+
+fn merge_control_peer(peers: &mut BTreeMap<String, ControlPeer>, incoming: ControlPeer) {
+    let entry = peers
+        .entry(incoming.node_id.clone())
+        .or_insert_with(|| ControlPeer {
+            node_id: incoming.node_id.clone(),
+            ..ControlPeer::default()
+        });
+    entry.relay_allowed |= incoming.relay_allowed;
+    append_unique_strings(&mut entry.virtual_ips, incoming.virtual_ips);
+    let mut endpoint_keys = entry
+        .endpoints
+        .iter()
+        .map(|item| (item.endpoint_type.clone(), item.address.clone()))
+        .collect::<BTreeSet<_>>();
+    for endpoint in incoming.endpoints {
+        let key = (endpoint.endpoint_type.clone(), endpoint.address.clone());
+        if endpoint_keys.insert(key) {
+            entry.endpoints.push(endpoint);
+        }
+    }
 }
 
 fn network_config_prefix_len(response: &Value) -> Option<u8> {
@@ -1995,10 +2070,10 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        activation_plan_from_network_config, decode_control_json, device_public_key_at_path,
-        is_strong_device_public_key, md5_hex, punch_auth_headers, punch_mqtt_signature,
-        stable_device_id_at_path, ControlPlaneClient, MqttCredential, PunchConnectSession,
-        DEFAULT_CONTROL_BASE_URL,
+        activation_plan_from_device_network_configs, activation_plan_from_network_config,
+        decode_control_json, device_public_key_at_path, is_strong_device_public_key, md5_hex,
+        punch_auth_headers, punch_mqtt_signature, stable_device_id_at_path, ControlPlaneClient,
+        MqttCredential, PunchConnectSession, DEFAULT_CONTROL_BASE_URL,
     };
 
     #[test]
@@ -2238,6 +2313,76 @@ mod tests {
 
         assert!(plan.resolver.servers.is_empty());
         assert!(plan.relay_candidates.is_empty());
+    }
+
+    #[test]
+    fn device_activation_merges_all_network_configs() {
+        let plan = activation_plan_from_device_network_configs(&serde_json::json!({
+            "items": [{
+                "networkId": "net-1",
+                "deviceId": "device-1",
+                "globalIp": "10.0.0.1",
+                "prefixLen": 24,
+                "resolver": {"servers": ["10.0.0.53"], "splitDomains": ["one.internal"]},
+                "peers": [{"deviceId": "peer-1", "virtualIps": ["10.0.0.2"]}],
+                "relayCandidates": [{
+                    "endpointId": "relay-1", "transport": "udp", "address": "203.0.113.1:3478"
+                }]
+            }, {
+                "networkId": "net-2",
+                "deviceId": "device-1",
+                "globalIp": "10.0.0.1",
+                "prefixLen": 24,
+                "resolver": {"servers": ["10.0.0.54"], "splitDomains": ["two.internal"]},
+                "peers": [{"deviceId": "peer-2", "virtualIps": ["10.0.0.3"]}],
+                "relayCandidates": [{
+                    "endpointId": "relay-2", "transport": "tcp", "address": "203.0.113.2:443"
+                }]
+            }]
+        }))
+        .expect("merged activation plan");
+
+        assert_eq!(plan.virtual_ip, "10.0.0.1");
+        assert_eq!(plan.resolver.servers, vec!["10.0.0.53", "10.0.0.54"]);
+        assert_eq!(
+            plan.resolver.split_domains,
+            vec!["one.internal", "two.internal"]
+        );
+        assert_eq!(plan.routes.len(), 2);
+        assert_eq!(plan.peers.len(), 2);
+        assert_eq!(plan.relay_candidates.len(), 2);
+    }
+
+    #[test]
+    fn device_activation_request_does_not_include_network_id() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let address = listener.local_addr().expect("local address");
+        let request_handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let request = read_http_request(&mut stream);
+            let response_body = br#"{"items":[{"networkId":"net-1","deviceId":"device-1","globalIp":"10.0.0.1","prefixLen":24}]}"#;
+            write!(
+				stream,
+				"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+				response_body.len()
+			)
+			.expect("write response headers");
+            stream
+                .write_all(response_body)
+                .expect("write response body");
+            request
+        });
+
+        let client = ControlPlaneClient {
+            base_url: format!("http://{address}"),
+        };
+        client
+            .activate_device_networks("device-token", "device-1")
+            .expect("activate device networks");
+
+        let request = request_handle.join().expect("request handle");
+        assert!(request.starts_with("GET /api/app/devices/device-1/network-configs HTTP/1.1"));
+        assert!(!request.contains("networkId"));
     }
 
     #[test]

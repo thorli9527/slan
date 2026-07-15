@@ -85,7 +85,7 @@ func TestUserDeviceDeletionIsRejectedForOwnerAndNonOwner(t *testing.T) {
 	}
 	if err := service.DeleteDevice(context.Background(), DeleteDeviceInput{
 		DeviceID: "device-1", ActorUserID: "other",
-	}); err != ErrUnauthorized {
-		t.Fatalf("non-owner delete error = %v, want %v", err, ErrUnauthorized)
+	}); err != ErrForbidden {
+		t.Fatalf("non-owner delete error = %v, want %v", err, ErrForbidden)
 	}
 }

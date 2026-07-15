@@ -40,6 +40,15 @@ type networkAccessTestDevices struct {
 	deviceGroupAssignments []model.DeviceGroupAssignment
 }
 
+type networkAccessTestDeviceGroupRelations struct {
+	relations map[string]model.DeviceUserRelation
+}
+
+func (s *networkAccessTestDeviceGroupRelations) GetDeviceUserRelation(_ context.Context, deviceID, userID string) (model.DeviceUserRelation, bool, error) {
+	item, ok := s.relations[deviceID+"\x00"+userID]
+	return item, ok, nil
+}
+
 func (s *networkAccessTestDevices) ListDevicesByOwner(_ context.Context, ownerID string) ([]model.Device, error) {
 	items := make([]model.Device, 0)
 	for _, item := range s.devices {
@@ -110,7 +119,14 @@ func (s *networkAccessTestDevices) SaveDeviceGroup(_ context.Context, item model
 	return nil
 }
 func (s *networkAccessTestDevices) DeleteDeviceGroup(context.Context, string) error { return nil }
-func (s *networkAccessTestDevices) SetDeviceGroups(context.Context, model.DeviceGroupAssignment) error {
+func (s *networkAccessTestDevices) SetDeviceGroups(_ context.Context, assignment model.DeviceGroupAssignment) error {
+	for index, item := range s.deviceGroupAssignments {
+		if item.DeviceID == assignment.DeviceID && item.UserID == assignment.UserID {
+			s.deviceGroupAssignments[index] = assignment
+			return nil
+		}
+	}
+	s.deviceGroupAssignments = append(s.deviceGroupAssignments, assignment)
 	return nil
 }
 func (s *networkAccessTestDevices) ListDeviceGroupAssignments(context.Context, string) ([]model.DeviceGroupAssignment, error) {
@@ -847,5 +863,43 @@ func TestSetDeviceGroupsPublishesImpactedNetworkChange(t *testing.T) {
 	}
 	if eventPublisher.events[2].EventType != NetworkEventSnapshot {
 		t.Fatalf("expected third event type %q, got %q", NetworkEventSnapshot, eventPublisher.events[2].EventType)
+	}
+}
+
+func TestSetDeviceGroupsAllowsActiveSharedDeviceRelation(t *testing.T) {
+	users := &networkAccessTestUsers{users: map[string]model.User{
+		"shared-user": {UserID: "shared-user", Email: "shared@example.com", Status: "active"},
+	}}
+	devices := &networkAccessTestDevices{
+		devices: map[string]model.Device{
+			"shared-device": {DeviceID: "shared-device", OwnerID: "owner-user", Status: "active"},
+		},
+		deviceGroups: map[string]model.DeviceGroup{
+			"shared-group": {GroupID: "shared-group", UserID: "shared-user", Name: "Development"},
+		},
+	}
+	relations := &networkAccessTestDeviceGroupRelations{relations: map[string]model.DeviceUserRelation{
+		"shared-device\x00shared-user": {
+			DeviceID: "shared-device", UserID: "shared-user",
+			Role: model.DeviceRelationRoleShared, Status: model.DeviceRelationStatusActive,
+		},
+	}}
+	networks := &networkAccessTestNetworks{networks: map[string]model.Network{}}
+
+	err := (DeviceGroupService{
+		Users: users, Devices: devices, Relations: relations, Networks: networks,
+	}).SetDeviceGroups(context.Background(), SetDeviceGroupsInput{
+		UserID: "shared-user", ActorUserID: "shared-user", DeviceID: "shared-device",
+		GroupIDs: []string{"shared-group"},
+	})
+	if err != nil {
+		t.Fatalf("SetDeviceGroups returned error for shared device: %v", err)
+	}
+	if len(devices.deviceGroupAssignments) != 1 {
+		t.Fatalf("expected one user-scoped assignment, got %d", len(devices.deviceGroupAssignments))
+	}
+	assignment := devices.deviceGroupAssignments[0]
+	if assignment.UserID != "shared-user" || assignment.DeviceID != "shared-device" {
+		t.Fatalf("unexpected assignment scope: %#v", assignment)
 	}
 }

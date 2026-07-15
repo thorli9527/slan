@@ -47,6 +47,7 @@ impl ClientNetworkModule {
     fn replace_all(&mut self, configs: Vec<DeviceNetworkConfig>) {
         self.configs = configs
             .into_iter()
+            .filter(|config| !config.network_id.trim().is_empty())
             .map(|config| (config.network_id.clone(), config))
             .collect();
     }
@@ -188,6 +189,9 @@ pub(crate) fn replace_network_module_from_snapshot(
         network_created_at: None,
         config_version: None,
         device_id: local_device_id.to_string(),
+        node_id: None,
+        self_node_id: None,
+        prefix_len: None,
         global_ip: self_member.and_then(|member| {
             (!member.virtual_ip.trim().is_empty()).then(|| member.virtual_ip.clone())
         }),

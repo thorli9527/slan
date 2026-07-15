@@ -21,7 +21,7 @@ func ensureDeviceAlias(ctx context.Context, devices deviceAliasStore, nowFn func
 		return err
 	}
 	if actorUserID != "" && device.OwnerID != actorUserID {
-		return ErrUnauthorized
+		return ErrForbidden
 	}
 	if device.Alias == alias {
 		return nil

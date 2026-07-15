@@ -34,7 +34,7 @@ func (s *GormStore) SetDeviceGroups(_ context.Context, assignment model.DeviceGr
 		GroupIDs:  jsonStringSlice(assignment.GroupIDs),
 		UpdatedAt: assignment.UpdatedAt,
 	}
-	return upsertByColumns(s.db, &row, []string{"device_id"}, []string{"user_id", "group_ids", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"device_id", "user_id"}, []string{"group_ids", "updated_at"})
 }
 
 func (s *GormStore) ListDeviceGroupAssignments(_ context.Context, userID string) ([]model.DeviceGroupAssignment, error) {

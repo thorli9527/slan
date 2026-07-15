@@ -53,7 +53,7 @@ func (s DeviceSessionService) resolveBindDevice(ctx context.Context, input BindD
 	device, err := getManagedDevice(ctx, s.Devices, input.DeviceID)
 	if err == nil {
 		if input.UserID != "" && device.OwnerID != input.UserID {
-			return model.Device{}, ErrUnauthorized
+			return model.Device{}, ErrForbidden
 		}
 		return device, nil
 	}
