@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strings"
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
@@ -17,7 +16,11 @@ func (s DeviceCatalogService) ListDevices(ctx context.Context, ownerID string) (
 }
 
 func (s DeviceCatalogService) ListVisibleDevices(ctx context.Context, ownerID string) ([]DeviceView, error) {
-	return s.ListDevices(ctx, ownerID)
+	items, err := listVisibleManagedDevices(ctx, s.Devices, s.Relations, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	return deviceViews(items), nil
 }
 
 func (s DeviceCatalogService) GetDevice(ctx context.Context, deviceID string) (DeviceView, error) {
@@ -115,41 +118,17 @@ func (s DeviceRuntimeAccessService) updateDeviceRuntimeMembership(ctx context.Co
 
 func (s DeviceProvisioningService) DeleteDevice(ctx context.Context, input DeleteDeviceInput) error {
 	input = normalizeDeleteDeviceInput(input)
-	if input.DeviceID == "" {
+	if input.DeviceID == "" || input.ActorUserID == "" {
 		return ErrInvalidArgument
 	}
-	if _, err := requireOwnedManagedDevice(ctx, s.Users, s.Devices, input.ActorUserID, input.DeviceID); err != nil {
-		return err
-	}
-	networksByDevice, err := s.Networks.ListNetworksByDevice(ctx, input.DeviceID)
+	device, err := requireManagedDevice(ctx, s.Devices, input.DeviceID)
 	if err != nil {
 		return err
 	}
-	for _, network := range networksByDevice {
-		if strings.TrimSpace(network.NetworkID) == "" {
-			continue
-		}
-		if err := s.Networks.DeleteNetworkDevice(ctx, network.NetworkID, input.DeviceID); err != nil {
-			return err
-		}
+	if device.OwnerID != input.ActorUserID {
+		return ErrUnauthorized
 	}
-	if err := s.Devices.DeleteDevice(ctx, input.DeviceID); err != nil {
-		return err
-	}
-	for _, network := range networksByDevice {
-		networkID := strings.TrimSpace(network.NetworkID)
-		if networkID == "" {
-			continue
-		}
-		version, err := bumpNetworkConfigVersion(ctx, s.Networks, s.EventPublisher, s.Now, networkID, "device_deleted")
-		if err != nil {
-			return err
-		}
-		if err := publishNetworkSnapshot(ctx, s.Users, s.Devices, s.Networks, nil, s.EventPublisher, s.Now, networkID, version.Version, version.Reason); err != nil {
-			return err
-		}
-	}
-	return nil
+	return ErrForbidden
 }
 
 func (s DeviceProvisioningService) RenewDevice(ctx context.Context, deviceID string) (DeviceProfileView, error) {
@@ -226,7 +205,7 @@ func (s DeviceCatalogService) ListDeviceProfiles(ctx context.Context, ownerID st
 }
 
 func (s DeviceCatalogService) ListVisibleDeviceProfiles(ctx context.Context, ownerID string) ([]DeviceProfileView, error) {
-	items, err := listOwnedManagedDevices(ctx, s.Devices, ownerID)
+	items, err := listVisibleManagedDevices(ctx, s.Devices, s.Relations, ownerID)
 	if err != nil {
 		return nil, err
 	}

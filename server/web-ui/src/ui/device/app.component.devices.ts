@@ -28,6 +28,7 @@ import {
 } from '../app.models';
 import { WEB_API } from '../api-paths';
 import { compactUuid } from '../app.utils';
+import { ApiHttpError } from '../app-api.service';
 export abstract class AppComponentDevices extends AppComponentUserAlias {
   setDevicePanel(panel: 'list' | 'groups'): void {
     this.devicePanel = panel;
@@ -420,16 +421,6 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   async openInviteDialog(): Promise<void> {
     this.closeInlinePopovers();
     this.deviceListMessage = '';
-    const network = this.workspaces.find((item) => item.workspaceId === this.selectedWorkspaceId) ?? this.workspaces[0];
-    if (!network) {
-      this.workspaceInviteCode = '';
-      this.inviteQrDataUrl = '';
-      this.joinInviteMessage = '请先创建网络。';
-      this.showInviteDialog = true;
-      this.notifyStateChanged();
-      return;
-    }
-    this.selectedWorkspaceId = network.workspaceId;
     if (!this.canCreateDeviceInvite) {
       this.workspaceInviteCode = '';
       this.inviteQrDataUrl = '';
@@ -440,17 +431,16 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     }
     try {
       const invite = await this.api.post<WorkspaceDeviceInviteRow>(WEB_API.deviceInvites(), {
-        networkId: network.workspaceId,
         inviterUserId: this.effectiveUserId,
         ttlSeconds: 86400,
       });
       this.workspaceInviteCode = invite.inviteCode;
       this.upsertWorkspaceDeviceInvite(invite);
-    } catch {
+    } catch (error) {
       if (!this.isDemoMode) {
         this.workspaceInviteCode = '';
         this.inviteQrDataUrl = '';
-        this.joinInviteMessage = '生成接入码失败';
+        this.joinInviteMessage = this.deviceInviteFailureMessage(error);
         this.showInviteDialog = true;
         this.notifyStateChanged();
         return;
@@ -459,8 +449,6 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       this.workspaceInviteCode = `JOIN-${randomPart}`;
       this.upsertWorkspaceDeviceInvite({
         inviteId: compactUuid(),
-        networkId: network.workspaceId,
-        workspaceId: network.workspaceId,
         inviterUserId: this.effectiveUserId,
         inviteCode: this.workspaceInviteCode,
         status: 'pending',
@@ -479,6 +467,19 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     });
     this.showInviteDialog = true;
     this.notifyStateChanged();
+  }
+
+  private deviceInviteFailureMessage(error: unknown): string {
+    if (!(error instanceof ApiHttpError)) {
+      return '生成接入码失败，请稍后重试';
+    }
+    const detail = ({
+      invalid_argument: '请求参数无效，请刷新页面后重试',
+      unauthorized: '登录状态已失效，请重新登录',
+      forbidden: '当前用户无权生成接入码',
+      conflict: '接入码状态冲突，请稍后重试',
+    } as Record<string, string>)[error.code] ?? `服务端返回 HTTP ${error.status}`;
+    return `生成接入码失败：${detail}`;
   }
 
   async openBootstrapDialog(): Promise<void> {
@@ -574,6 +575,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   closeInviteDialog(): void {
     this.showInviteDialog = false;
     this.joinInviteMessage = '';
+    void this.loadDashboard(this.currentUserId);
   }
 
   openJoinDialog(device: DeviceRow): void {
@@ -646,18 +648,33 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   }
 
   async removeDevice(device: DeviceRow): Promise<void> {
+    const invite = this.deviceShareInvite(device);
+    if (!invite) {
+      this.deviceListMessage = this.isCurrentUserDeviceOwner(device)
+        ? 'owner 设备不允许删除'
+        : '未找到设备共享关系';
+      this.notifyStateChanged();
+      return;
+    }
     try {
-      await this.api.delete(WEB_API.device(device.deviceId, this.effectiveUserId));
+      await this.api.post(WEB_API.deviceInviteRevoke(invite.inviteId), {
+        actorUserId: this.effectiveUserId,
+      });
       await this.loadDashboard(this.currentUserId);
       return;
     } catch {
       if (!this.isDemoMode) {
-        this.deviceListMessage = '删除设备失败';
+        this.deviceListMessage = this.isCurrentUserDeviceOwner(device)
+          ? '撤回设备共享失败'
+          : '移除共享设备失败';
         this.notifyStateChanged();
         return;
       }
     }
-    this.devices = this.devices.filter((item) => item.deviceId !== device.deviceId);
+    this.workspaceDeviceInvites = this.workspaceDeviceInvites.map((item) =>
+      item.inviteId === invite.inviteId ? { ...item, status: 'revoked' } : item,
+    );
+    this.devices = this.devices.filter((item) => item.deviceId !== device.deviceId || this.isCurrentUserDeviceOwner(item));
     this.notifyStateChanged();
   }
 

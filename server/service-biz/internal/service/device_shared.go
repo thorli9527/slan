@@ -20,6 +20,7 @@ type DeviceCoreService struct {
 type deviceCoreDependencies struct {
 	Users          repository.UserRepository
 	Devices        repository.DeviceRepository
+	Relations      repository.DeviceRelationRepository
 	Networks       repository.NetworkRepository
 	MQTT           mqttkit.Config
 	EventPublisher NetworkEventPublisher
@@ -86,6 +87,7 @@ func NewDeviceBootstrapService(
 func NewDeviceCoreService(
 	users repository.UserRepository,
 	devices repository.DeviceRepository,
+	relations repository.DeviceRelationRepository,
 	networks repository.NetworkRepository,
 	mqtt mqttkit.Config,
 	newDeviceID func() string,
@@ -94,6 +96,7 @@ func NewDeviceCoreService(
 	deps := deviceCoreDependencies{
 		Users:          users,
 		Devices:        devices,
+		Relations:      relations,
 		Networks:       networks,
 		MQTT:           mqtt,
 		EventPublisher: NewNetworkEventPublisher(mqtt),

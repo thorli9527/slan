@@ -21,6 +21,7 @@ type NetworkCoreService struct {
 type NetworkInviteService struct {
 	Users           repository.UserRepository
 	Devices         repository.DeviceRepository
+	Relations       repository.DeviceRelationRepository
 	Networks        repository.NetworkRepository
 	EventPublisher  NetworkEventPublisher
 	DevicePublisher DeviceControlPublisher

@@ -58,6 +58,10 @@ func requestBootstrapKeyID(r *http.Request) string {
 	return serviceapi.PathOrQuery(r, "keyId", "keyId")
 }
 
+func requestInviteID(r *http.Request) string {
+	return serviceapi.PathOrQuery(r, "inviteId", "inviteId")
+}
+
 func setOwnerAndActor(r *http.Request, ownerID *string, actorUserID *string) {
 	serviceapi.SetIfEmpty(ownerID, requestOwnerID(r))
 	setActorUserID(r, actorUserID)

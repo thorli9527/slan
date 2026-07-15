@@ -17,6 +17,7 @@ func (h NetworkInviteHandler) Routes() []serviceapi.Route {
 		serviceapi.NewRoute(http.MethodPost, "/api/device-invites", h.CreateDeviceInvite),
 		serviceapi.NewRoute(http.MethodGet, "/api/device-invites", h.ListDeviceInvites),
 		serviceapi.NewRoute(http.MethodPost, "/api/device-invites/accept", h.AcceptDeviceInvite),
+		serviceapi.NewRoute(http.MethodPost, "/api/device-invites/{inviteId}/revoke", h.RevokeDeviceInvite),
 	}
 }
 
@@ -50,7 +51,24 @@ func (h NetworkInviteHandler) AcceptDeviceInvite(w http.ResponseWriter, r *http.
 		return
 	}
 	input := req.toInput()
+	setActorUserID(r, &input.ActorUserID)
 	item, err := h.NetworkInvite.AcceptDeviceInvite(r.Context(), input)
+	if err != nil {
+		serviceapi.WriteError(w, err)
+		return
+	}
+	serviceapi.WriteEnvelope(w, http.StatusOK, "invite", deviceInvitePayload(item))
+}
+
+func (h NetworkInviteHandler) RevokeDeviceInvite(w http.ResponseWriter, r *http.Request) {
+	var req revokeDeviceInviteRequest
+	if !serviceapi.DecodeJSONOrError(w, r, &req) {
+		return
+	}
+	input := req.toInput()
+	input.InviteID = requestInviteID(r)
+	setActorUserID(r, &input.ActorUserID)
+	item, err := h.NetworkInvite.RevokeDeviceInvite(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return

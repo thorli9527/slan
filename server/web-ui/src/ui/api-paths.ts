@@ -23,6 +23,7 @@ export const WEB_API = {
   deviceSessionRevoke: (deviceId: string, sessionId: string, actorUserId = '') => `/api/web/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}/revoke${actorUserId ? `?actorUserId=${encodeURIComponent(actorUserId)}` : ''}`,
   deviceInvites: (userId = '') => userId ? `/api/web/users/${encodeURIComponent(userId)}/device-invites` : '/api/web/device-invites',
   deviceInviteAccept: '/api/web/device-invites/accept',
+  deviceInviteRevoke: (inviteId: string) => `/api/web/device-invites/${encodeURIComponent(inviteId)}/revoke`,
   deviceBootstrapKeys: (userId = '') => userId ? `/api/web/users/${encodeURIComponent(userId)}/device-bootstrap-keys` : '/api/web/device-bootstrap-keys',
   deviceBootstrapKeyRevoke: (keyId: string, actorUserId = '') => `/api/web/device-bootstrap-keys/${encodeURIComponent(keyId)}/revoke${actorUserId ? `?actorUserId=${encodeURIComponent(actorUserId)}` : ''}`,
   networks: (userId = '') => userId ? `/api/web/users/${encodeURIComponent(userId)}/networks` : '/api/web/networks',

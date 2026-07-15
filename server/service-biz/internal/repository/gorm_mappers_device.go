@@ -5,7 +5,6 @@ import "github.com/slan/service-biz/internal/model"
 func deviceRecordFromModel(item model.Device) gormDeviceRecord {
 	return gormDeviceRecord{
 		DeviceID:      item.DeviceID,
-		OwnerID:       item.OwnerID,
 		VirtualIP:     item.VirtualIP,
 		Name:          item.Name,
 		Platform:      item.Platform,
@@ -27,7 +26,6 @@ func deviceRecordFromModel(item model.Device) gormDeviceRecord {
 func (r gormDeviceRecord) model() model.Device {
 	return model.Device{
 		DeviceID:      r.DeviceID,
-		OwnerID:       r.OwnerID,
 		VirtualIP:     r.VirtualIP,
 		Name:          r.Name,
 		Platform:      r.Platform,
@@ -46,35 +44,69 @@ func (r gormDeviceRecord) model() model.Device {
 	}
 }
 
+func deviceUserRelationRecordFromModel(item model.DeviceUserRelation) gormDeviceUserRelationRecord {
+	return gormDeviceUserRelationRecord{
+		RelationID: item.RelationID,
+		DeviceID:   item.DeviceID,
+		UserID:     item.UserID,
+		Role:       item.Role,
+		SourceType: item.SourceType,
+		SourceID:   item.SourceID,
+		Status:     item.Status,
+		CreatedBy:  item.CreatedBy,
+		CreatedAt:  item.CreatedAt,
+		UpdatedAt:  item.UpdatedAt,
+		RevokedBy:  item.RevokedBy,
+		RevokedAt:  item.RevokedAt,
+	}
+}
+
+func (r gormDeviceUserRelationRecord) model() model.DeviceUserRelation {
+	return model.DeviceUserRelation{
+		RelationID: r.RelationID,
+		DeviceID:   r.DeviceID,
+		UserID:     r.UserID,
+		Role:       r.Role,
+		SourceType: r.SourceType,
+		SourceID:   r.SourceID,
+		Status:     r.Status,
+		CreatedBy:  r.CreatedBy,
+		CreatedAt:  r.CreatedAt,
+		UpdatedAt:  r.UpdatedAt,
+		RevokedBy:  r.RevokedBy,
+		RevokedAt:  r.RevokedAt,
+	}
+}
+
 func deviceSessionRecordFromModel(item model.DeviceSession) gormDeviceSessionRecord {
 	return gormDeviceSessionRecord{
-		SessionID:    item.SessionID,
-		DeviceID:     item.DeviceID,
-		AccessToken:  item.AccessToken,
-		RefreshToken: item.RefreshToken,
-		Status:       item.Status,
-		SessionMode:  item.SessionMode,
-		ExpiresAt:    item.ExpiresAt,
+		SessionID:     item.SessionID,
+		DeviceID:      item.DeviceID,
+		AccessToken:   item.AccessToken,
+		RefreshToken:  item.RefreshToken,
+		Status:        item.Status,
+		SessionMode:   item.SessionMode,
+		ExpiresAt:     item.ExpiresAt,
 		RefreshExpiry: item.RefreshExpiry,
-		CreatedAt:    item.CreatedAt,
-		UpdatedAt:    item.UpdatedAt,
-		RevokedAt:    item.RevokedAt,
+		CreatedAt:     item.CreatedAt,
+		UpdatedAt:     item.UpdatedAt,
+		RevokedAt:     item.RevokedAt,
 	}
 }
 
 func (r gormDeviceSessionRecord) model() model.DeviceSession {
 	return model.DeviceSession{
-		SessionID:    r.SessionID,
-		DeviceID:     r.DeviceID,
-		AccessToken:  r.AccessToken,
-		RefreshToken: r.RefreshToken,
-		Status:       r.Status,
-		SessionMode:  r.SessionMode,
-		ExpiresAt:    r.ExpiresAt,
+		SessionID:     r.SessionID,
+		DeviceID:      r.DeviceID,
+		AccessToken:   r.AccessToken,
+		RefreshToken:  r.RefreshToken,
+		Status:        r.Status,
+		SessionMode:   r.SessionMode,
+		ExpiresAt:     r.ExpiresAt,
 		RefreshExpiry: r.RefreshExpiry,
-		CreatedAt:    r.CreatedAt,
-		UpdatedAt:    r.UpdatedAt,
-		RevokedAt:    r.RevokedAt,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+		RevokedAt:     r.RevokedAt,
 	}
 }
 

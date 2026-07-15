@@ -24,3 +24,9 @@ func normalizeAcceptDeviceInviteInput(input AcceptDeviceInviteInput) AcceptDevic
 	input.Alias = strings.TrimSpace(input.Alias)
 	return input
 }
+
+func normalizeRevokeDeviceInviteInput(input RevokeDeviceInviteInput) RevokeDeviceInviteInput {
+	input.InviteID = strings.TrimSpace(input.InviteID)
+	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
+	return input
+}

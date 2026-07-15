@@ -8,6 +8,7 @@ import (
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/pkg/mqttkit"
+	"github.com/slan/service-biz/internal/repository"
 )
 
 func (s AuthDeviceLoginPrepareService) PrepareDeviceLoginDevice(ctx context.Context, input PrepareDeviceLoginDeviceInput) (PrepareDeviceLoginDeviceView, error) {
@@ -114,6 +115,8 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 		return CompleteDeviceLoginDeviceView{}, ErrInvalidArgument
 	}
 	now := nowTime.Unix()
+	ownerChanged := false
+	previousNetworkMembers := make([]model.NetworkDevice, 0)
 	device := model.Device{
 		DeviceID:      item.DeviceID,
 		OwnerID:       item.UserID,
@@ -133,6 +136,13 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 	if existing, ok, err := s.Devices.GetDevice(ctx, item.DeviceID); err != nil {
 		return CompleteDeviceLoginDeviceView{}, err
 	} else if ok {
+		ownerChanged = existing.OwnerID != "" && existing.OwnerID != item.UserID
+		if ownerChanged {
+			previousNetworkMembers, err = deviceNetworkMemberships(ctx, s.Networks, existing.DeviceID)
+			if err != nil {
+				return CompleteDeviceLoginDeviceView{}, err
+			}
+		}
 		device = existing
 		device.OwnerID = item.UserID
 		device.Name = item.Name
@@ -152,6 +162,14 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 	}
 	if err := s.Devices.SaveDevice(ctx, device); err != nil {
 		return CompleteDeviceLoginDeviceView{}, err
+	}
+	if ownerChanged {
+		if err := publishDeviceOwnerChangedNetworkRemovals(
+			ctx, s.Users, s.Devices, s.Networks, s.EventPublisher, s.Now,
+			device.DeviceID, previousNetworkMembers,
+		); err != nil {
+			return CompleteDeviceLoginDeviceView{}, err
+		}
 	}
 	item.Status = "completed"
 	item.UpdatedAt = now
@@ -204,4 +222,47 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 		}
 	}
 	return completedDeviceLoginView(item), nil
+}
+
+func deviceNetworkMemberships(ctx context.Context, networks repository.NetworkRepository, deviceID string) ([]model.NetworkDevice, error) {
+	items, err := networks.ListNetworksByDevice(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]model.NetworkDevice, 0, len(items))
+	for _, network := range items {
+		member, ok, err := networks.GetNetworkDevice(ctx, network.NetworkID, deviceID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			members = append(members, member)
+		}
+	}
+	return members, nil
+}
+
+func publishDeviceOwnerChangedNetworkRemovals(
+	ctx context.Context,
+	users repository.UserRepository,
+	devices repository.DeviceRepository,
+	networks repository.NetworkRepository,
+	publisher NetworkEventPublisher,
+	nowFn func() time.Time,
+	deviceID string,
+	members []model.NetworkDevice,
+) error {
+	for _, member := range members {
+		version, err := bumpNetworkConfigVersion(ctx, networks, publisher, nowFn, member.NetworkID, "device_owner_changed")
+		if err != nil {
+			return err
+		}
+		if err := publishNetworkMemberChanged(ctx, publisher, nowFn, member.NetworkID, deviceID, "removed", member, version.Version, version.Reason); err != nil {
+			return err
+		}
+		if err := publishNetworkSnapshot(ctx, users, devices, networks, nil, publisher, nowFn, member.NetworkID, version.Version, version.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
 }

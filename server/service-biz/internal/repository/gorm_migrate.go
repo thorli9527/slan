@@ -1,5 +1,7 @@
 package repository
 
+import "github.com/slan/service-biz/internal/model"
+
 func (s *GormStore) migrate() error {
 	if err := s.db.AutoMigrate(
 		&gormCounter{},
@@ -8,6 +10,7 @@ func (s *GormStore) migrate() error {
 		&gormConsoleLoginKeyRecord{},
 		&gormUserAliasRecord{},
 		&gormDeviceRecord{},
+		&gormDeviceUserRelationRecord{},
 		&gormDeviceLoginRecord{},
 		&gormDeviceSessionRecord{},
 		&gormBootstrapKeyRecord{},
@@ -37,6 +40,12 @@ func (s *GormStore) migrate() error {
 	); err != nil {
 		return err
 	}
+	if err := s.migrateDeviceOwnershipRelations(); err != nil {
+		return err
+	}
+	if err := s.ensureSingleActiveDeviceOwner(); err != nil {
+		return err
+	}
 	if err := s.ensureSingleDeviceSession(); err != nil {
 		return err
 	}
@@ -44,6 +53,47 @@ func (s *GormStore) migrate() error {
 		return err
 	}
 	return s.ensureIndexes()
+}
+
+func (s *GormStore) ensureSingleActiveDeviceOwner() error {
+	return s.db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS uidx_device_user_relation_active_owner
+		ON gorm_device_user_relation_records (device_id)
+		WHERE role = 'owner' AND status = 'active'
+	`).Error
+}
+
+func (s *GormStore) migrateDeviceOwnershipRelations() error {
+	if !s.db.Migrator().HasColumn("gorm_device_records", "owner_id") {
+		return nil
+	}
+	type legacyDeviceOwner struct {
+		DeviceID  string
+		OwnerID   string
+		CreatedAt int64
+		UpdatedAt int64
+	}
+	var owners []legacyDeviceOwner
+	if err := s.db.Table("gorm_device_records").Select("device_id, owner_id, created_at, updated_at").Where("owner_id <> ''").Scan(&owners).Error; err != nil {
+		return err
+	}
+	for _, owner := range owners {
+		relation := gormDeviceUserRelationRecord{
+			RelationID: deviceUserRelationID(owner.DeviceID, owner.OwnerID),
+			DeviceID:   owner.DeviceID,
+			UserID:     owner.OwnerID,
+			Role:       model.DeviceRelationRoleOwner,
+			SourceType: "registration",
+			Status:     model.DeviceRelationStatusActive,
+			CreatedBy:  owner.OwnerID,
+			CreatedAt:  owner.CreatedAt,
+			UpdatedAt:  owner.UpdatedAt,
+		}
+		if err := upsertByColumns(s.db, &relation, []string{"device_id", "user_id"}, []string{"relation_id", "role", "source_type", "source_id", "status", "created_by", "created_at", "updated_at", "revoked_by", "revoked_at"}); err != nil {
+			return err
+		}
+	}
+	return s.db.Migrator().DropColumn("gorm_device_records", "owner_id")
 }
 
 func (s *GormStore) migrateNetworkMembershipsToDeviceGroups() error {
@@ -105,6 +155,7 @@ func (s *GormStore) ensureIndexes() error {
 	}{
 		{model: &gormUserAliasRecord{}, name: "uidx_gorm_user_alias_records_user_alias"},
 		{model: &gormNetworkDeviceRecord{}, name: "uidx_gorm_network_device_records_network_device"},
+		{model: &gormDeviceUserRelationRecord{}, name: "uidx_device_user_relation"},
 	} {
 		if s.db.Migrator().HasIndex(spec.model, spec.name) {
 			continue

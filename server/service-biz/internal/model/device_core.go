@@ -19,3 +19,28 @@ type Device struct {
 	UpdatedAt     int64  `json:"updatedAt"`
 	LastSeenAt    int64  `json:"lastSeenAt,omitempty"`
 }
+
+const (
+	DeviceRelationRoleOwner  = "owner"
+	DeviceRelationRoleShared = "shared"
+
+	DeviceRelationStatusActive  = "active"
+	DeviceRelationStatusRevoked = "revoked"
+)
+
+// DeviceUserRelation owns user-level authorization for a device. Device
+// lifecycle and runtime presence remain on Device and NetworkDevice.
+type DeviceUserRelation struct {
+	RelationID string `json:"relationId"`
+	DeviceID   string `json:"deviceId"`
+	UserID     string `json:"userId"`
+	Role       string `json:"role"`
+	SourceType string `json:"sourceType"`
+	SourceID   string `json:"sourceId,omitempty"`
+	Status     string `json:"status"`
+	CreatedBy  string `json:"createdBy,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
+	UpdatedAt  int64  `json:"updatedAt"`
+	RevokedBy  string `json:"revokedBy,omitempty"`
+	RevokedAt  int64  `json:"revokedAt,omitempty"`
+}

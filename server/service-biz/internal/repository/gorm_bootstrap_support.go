@@ -25,7 +25,7 @@ func (s *GormStore) SaveCounter(name string, value int64) error {
 
 func (s *GormStore) DeleteLegacyDemoSeed(_ context.Context) error {
 	userIDs := s.db.Model(&gormUserRecord{}).Select("user_id").Where("email = ? OR user_id = ?", legacyDemoEmail, "user-000001")
-	deviceIDs := s.db.Model(&gormDeviceRecord{}).Select("device_id").Where("owner_id IN (?) OR device_id = ?", userIDs, "dev-000001")
+	deviceIDs := s.db.Model(&gormDeviceUserRelationRecord{}).Select("device_id").Where("user_id IN (?)", userIDs)
 	networkIDs := s.db.Model(&gormNetworkRecord{}).Select("network_id").Where("owner_id IN (?) OR network_id = ?", userIDs, "net-000001")
 
 	if err := s.db.Delete(&gormUserSessionRecord{}, "user_id IN (?)", userIDs).Error; err != nil {
@@ -75,6 +75,14 @@ func (s *GormStore) DeleteLegacyDemoSeed(_ context.Context) error {
 		return err
 	}
 	if err := s.db.Delete(&gormDeviceRecord{}, "device_id IN (?)", deviceIDs).Error; err != nil {
+		return err
+	}
+	if err := s.db.Delete(
+		&gormDeviceUserRelationRecord{},
+		"user_id IN (?) OR device_id NOT IN (?)",
+		userIDs,
+		s.db.Model(&gormDeviceRecord{}).Select("device_id"),
+	).Error; err != nil {
 		return err
 	}
 	if err := s.db.Delete(&gormUserRecord{}, "user_id IN (?)", userIDs).Error; err != nil {

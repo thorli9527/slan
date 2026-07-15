@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/slan/service-biz/internal/model"
+	"github.com/slan/service-biz/internal/repository"
 )
 
 func (s NetworkInviteService) ListDeviceInvites(ctx context.Context, userID, networkID string) ([]DeviceInviteView, error) {
@@ -110,12 +111,28 @@ func (s NetworkInviteService) AcceptDeviceInvite(ctx context.Context, input Acce
 	if err != nil {
 		return DeviceInviteView{}, err
 	}
+	if input.ActorUserID == "" {
+		return DeviceInviteView{}, ErrInvalidArgument
+	}
+	device, err := requireManagedDevice(ctx, s.Devices, deviceID)
+	if err != nil {
+		return DeviceInviteView{}, err
+	}
+	if device.OwnerID != input.ActorUserID {
+		return DeviceInviteView{}, ErrUnauthorized
+	}
+	if invite.InviterUserID == device.OwnerID {
+		return DeviceInviteView{}, ErrConflict
+	}
 	if err := ensureNetworkDeviceAlias(ctx, s.Devices, s.Now, input.ActorUserID, deviceID, input.Alias); err != nil {
 		return DeviceInviteView{}, err
 	}
 	acceptedAt := networkNow(s.Now).Unix()
 	invite = acceptStandaloneInvite(invite, input.UserID, deviceID, acceptedAt)
-	if err := s.Networks.SaveDeviceInvite(ctx, invite); err != nil {
+	if s.Relations == nil {
+		return DeviceInviteView{}, ErrInvalidArgument
+	}
+	if err := s.Relations.SaveDeviceInviteWithRelation(ctx, invite, newSharedDeviceRelation(invite, acceptedAt)); err != nil {
 		return DeviceInviteView{}, err
 	}
 	view, err := buildDeviceInviteView(ctx, s.Users, s.Devices, invite)
@@ -123,6 +140,63 @@ func (s NetworkInviteService) AcceptDeviceInvite(ctx context.Context, input Acce
 		return DeviceInviteView{}, err
 	}
 	return view, nil
+}
+
+func (s NetworkInviteService) RevokeDeviceInvite(ctx context.Context, input RevokeDeviceInviteInput) (DeviceInviteView, error) {
+	input = normalizeRevokeDeviceInviteInput(input)
+	if input.InviteID == "" || input.ActorUserID == "" {
+		return DeviceInviteView{}, ErrInvalidArgument
+	}
+	invite, ok, err := s.Networks.GetDeviceInvite(ctx, input.InviteID)
+	if err != nil {
+		return DeviceInviteView{}, err
+	}
+	if !ok {
+		return DeviceInviteView{}, ErrNotFound
+	}
+	if invite.Status != "pending" && invite.Status != "accepted" && invite.Status != "revoked" {
+		return DeviceInviteView{}, ErrConflict
+	}
+	allowed, err := deviceInviteCanBeRevokedBy(ctx, s.Devices, invite, input.ActorUserID)
+	if err != nil {
+		return DeviceInviteView{}, err
+	}
+	if !allowed {
+		return DeviceInviteView{}, ErrUnauthorized
+	}
+	if invite.Status != "revoked" {
+		invite = revokeDeviceInvite(invite)
+		if invite.DeviceID != "" && invite.InviterUserID != "" {
+			if s.Relations == nil {
+				return DeviceInviteView{}, ErrInvalidArgument
+			}
+			if err := s.Relations.RevokeDeviceInviteWithRelation(ctx, invite, invite.InviterUserID, input.ActorUserID, networkNow(s.Now).Unix()); err != nil {
+				return DeviceInviteView{}, err
+			}
+		} else if err := s.Networks.SaveDeviceInvite(ctx, invite); err != nil {
+			return DeviceInviteView{}, err
+		}
+	}
+	return buildDeviceInviteView(ctx, s.Users, s.Devices, invite)
+}
+
+func deviceInviteCanBeRevokedBy(
+	ctx context.Context,
+	devices repository.DeviceRepository,
+	invite model.DeviceInvite,
+	actorUserID string,
+) (bool, error) {
+	if actorUserID == invite.InviterUserID {
+		return true, nil
+	}
+	if invite.Status == "pending" || invite.DeviceID == "" {
+		return false, nil
+	}
+	device, ok, err := devices.GetDevice(ctx, invite.DeviceID)
+	if err != nil {
+		return false, err
+	}
+	return ok && device.OwnerID == actorUserID, nil
 }
 
 func resolveAcceptedDeviceInviteDeviceID(invite model.DeviceInvite, input AcceptDeviceInviteInput) (string, error) {

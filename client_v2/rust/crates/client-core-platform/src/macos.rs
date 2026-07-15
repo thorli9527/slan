@@ -51,6 +51,7 @@ const RELAY_STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
+const DATA_PLANE_SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 
 fn macos_verbose_trace_enabled() -> bool {
     matches!(
@@ -100,7 +101,18 @@ impl Drop for UtunRuntime {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            let started = Instant::now();
+            while !handle.is_finished() && started.elapsed() < DATA_PLANE_SHUTDOWN_GRACE {
+                thread::sleep(DATA_PLANE_IDLE_SLEEP);
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+            } else {
+                eprintln!(
+                    "macos data plane shutdown timed out interface={}; detaching thread",
+                    self.interface_name
+                );
+            }
         }
     }
 }
@@ -426,9 +438,16 @@ impl PlatformNetwork for MacosPlatformNetwork {
             runtime.utun = None;
             return Ok(());
         }
-        runtime.utun = None;
+        let utun = runtime.utun.take();
         let interface_name = runtime.interface_name.take();
         let routes = mem::take(&mut runtime.routes);
+        runtime.virtual_ip = None;
+        runtime.prefix_len = None;
+        runtime.resolver_servers.clear();
+        runtime.relay_config = None;
+        drop(runtime);
+
+        drop(utun);
         if let Some(interface_name) = interface_name.as_deref() {
             let _ = clear_utun_dns(interface_name);
             for route in routes.iter().rev() {
@@ -436,10 +455,6 @@ impl PlatformNetwork for MacosPlatformNetwork {
             }
             let _ = run_command("/sbin/ifconfig", &[interface_name, "down"]);
         }
-        runtime.virtual_ip = None;
-        runtime.prefix_len = None;
-        runtime.resolver_servers.clear();
-        runtime.relay_config = None;
         Ok(())
     }
 
@@ -3184,6 +3199,24 @@ mod tests {
             .lock()
             .expect("macos network runtime mutex poisoned");
         *runtime = MacosRuntime::default();
+    }
+
+    #[test]
+    fn utun_runtime_drop_does_not_wait_forever_for_data_plane() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = thread::spawn(|| thread::sleep(Duration::from_secs(2)));
+        let runtime = UtunRuntime {
+            interface_name: "utun-test".to_string(),
+            file: None,
+            stop: Arc::clone(&stop),
+            handle: Some(handle),
+        };
+
+        let started = Instant::now();
+        drop(runtime);
+
+        assert!(stop.load(Ordering::SeqCst));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

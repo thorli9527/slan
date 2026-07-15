@@ -29,6 +29,25 @@ func acceptStandaloneInvite(invite model.DeviceInvite, userID, deviceID string, 
 	return invite
 }
 
+func revokeDeviceInvite(invite model.DeviceInvite) model.DeviceInvite {
+	invite.Status = "revoked"
+	return invite
+}
+
+func newSharedDeviceRelation(invite model.DeviceInvite, createdAt int64) model.DeviceUserRelation {
+	return model.DeviceUserRelation{
+		DeviceID:   invite.DeviceID,
+		UserID:     invite.InviterUserID,
+		Role:       model.DeviceRelationRoleShared,
+		SourceType: "invite",
+		SourceID:   invite.InviteID,
+		Status:     model.DeviceRelationStatusActive,
+		CreatedBy:  invite.UserID,
+		CreatedAt:  createdAt,
+		UpdatedAt:  createdAt,
+	}
+}
+
 func acceptNetworkInvite(invite model.DeviceInvite, userID string, networkDevice model.NetworkDevice, acceptedAt int64) model.DeviceInvite {
 	invite.Status = "accepted"
 	invite.DeviceID = networkDevice.DeviceID

@@ -20,6 +20,7 @@ func newNetworkServices(deps UseCaseDependencies) NetworkServices {
 		InviteManagement: servicepkg.NetworkInviteService{
 			Users:           repos.Users,
 			Devices:         repos.Devices,
+			Relations:       repos.Relations,
 			Networks:        repos.Networks,
 			EventPublisher:  eventPublisher,
 			DevicePublisher: devicePublisher,

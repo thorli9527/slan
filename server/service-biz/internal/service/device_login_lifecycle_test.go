@@ -40,7 +40,8 @@ func (s *deviceLoginTestSessions) SaveConsoleLoginKey(context.Context, model.Con
 
 type deviceLoginTestDevices struct {
 	deviceRegistrationTestDevices
-	logins map[string]model.DeviceLoginDevice
+	logins         map[string]model.DeviceLoginDevice
+	onOwnerChanged func(deviceID string)
 }
 
 func (s *deviceLoginTestDevices) GetDeviceLoginDevice(_ context.Context, deviceID string) (model.DeviceLoginDevice, bool, error) {
@@ -50,6 +51,17 @@ func (s *deviceLoginTestDevices) GetDeviceLoginDevice(_ context.Context, deviceI
 
 func (s *deviceLoginTestDevices) SaveDeviceLoginDevice(_ context.Context, item model.DeviceLoginDevice) error {
 	s.logins[item.DeviceID] = item
+	return nil
+}
+
+func (s *deviceLoginTestDevices) SaveDevice(ctx context.Context, item model.Device) error {
+	previous, ok := s.devices[item.DeviceID]
+	if err := s.deviceRegistrationTestDevices.SaveDevice(ctx, item); err != nil {
+		return err
+	}
+	if ok && previous.OwnerID != "" && previous.OwnerID != item.OwnerID && s.onOwnerChanged != nil {
+		s.onOwnerChanged(item.DeviceID)
+	}
 	return nil
 }
 
@@ -77,6 +89,18 @@ func (s *deviceLoginTestNetworks) SaveNetworkDevice(_ context.Context, item mode
 		}
 	}
 	s.networkDevices[item.NetworkID] = append(items, item)
+	return nil
+}
+
+func (s *deviceLoginTestNetworks) DeleteNetworkDevice(_ context.Context, networkID, deviceID string) error {
+	items := s.networkDevices[networkID]
+	kept := items[:0]
+	for _, item := range items {
+		if item.DeviceID != deviceID {
+			kept = append(kept, item)
+		}
+	}
+	s.networkDevices[networkID] = kept
 	return nil
 }
 
@@ -177,5 +201,66 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 	}
 	if got := publisher.event.Payload["virtualIp"]; got != "10.0.0.1" {
 		t.Fatalf("expected virtual IP in private login event, got %#v", got)
+	}
+}
+
+func TestCompleteDeviceLoginChangingOwnerClearsOldNetworkExposure(t *testing.T) {
+	now := time.Unix(1700006000, 0)
+	networks := &deviceLoginTestNetworks{networkRuntimeTestNetworks: networkRuntimeTestNetworks{
+		networks: map[string]model.Network{
+			"old-network": {NetworkID: "old-network", OwnerID: "old-user", Name: "Old", Status: "active"},
+		},
+		networkDevices: map[string][]model.NetworkDevice{
+			"old-network": {{NetworkID: "old-network", DeviceID: "device-1", Enabled: true, MemberStatus: model.NetworkMemberStatusActive}},
+		},
+	}}
+	devices := &deviceLoginTestDevices{
+		deviceRegistrationTestDevices: deviceRegistrationTestDevices{
+			networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{
+				"device-1": {DeviceID: "device-1", OwnerID: "old-user", VirtualIP: "10.0.0.1", Name: "Mac", Platform: "macos", Status: "active"},
+			}},
+		},
+		logins: map[string]model.DeviceLoginDevice{
+			"device-1": {DeviceID: "device-1", Name: "Mac", Platform: "macos", Status: "pending", ExpiresAt: now.Add(time.Minute).Unix()},
+		},
+	}
+	devices.onOwnerChanged = func(deviceID string) {
+		_ = networks.DeleteNetworkDevice(context.Background(), "old-network", deviceID)
+	}
+	devicePublisher := &deviceLoginTestPublisher{}
+	networkPublisher := &deviceRuntimeTestEventPublisher{}
+	service := AuthDeviceLoginCompleteService{authDeviceLoginDependencies: authDeviceLoginDependencies{
+		Users: &deviceRegistrationTestUsers{users: map[string]model.User{
+			"new-user": {UserID: "new-user", Email: "new@example.test", Status: "active"},
+		}},
+		Sessions: &deviceLoginTestSessions{sessions: map[string]model.UserSession{
+			"access-new": {UserID: "new-user", AccessToken: "access-new", RefreshToken: "refresh-new", Status: "active", ExpiresAt: now.Add(time.Hour).Unix()},
+		}},
+		Devices: devices, Networks: networks, DevicePublisher: devicePublisher,
+		EventPublisher: networkPublisher, Now: func() time.Time { return now },
+	}}
+
+	if _, err := service.CompleteDeviceLoginDevice(context.Background(), CompleteDeviceLoginDeviceInput{
+		AccessToken: "access-new", DeviceID: "device-1",
+	}); err != nil {
+		t.Fatalf("complete owner-changing login: %v", err)
+	}
+	if got := devices.devices["device-1"].OwnerID; got != "new-user" {
+		t.Fatalf("owner = %q, want new-user", got)
+	}
+	if len(networks.networkDevices["old-network"]) != 0 {
+		t.Fatalf("old network still exposes device: %#v", networks.networkDevices["old-network"])
+	}
+	foundRemoved := false
+	for _, event := range networkPublisher.events {
+		if event.EventType == NetworkEventMemberRemoved && event.NetworkID == "old-network" {
+			foundRemoved = true
+		}
+	}
+	if !foundRemoved {
+		t.Fatalf("expected member removed event, got %#v", networkPublisher.events)
+	}
+	if got := devicePublisher.event.Payload["activeNetworkId"]; got != "" {
+		t.Fatalf("login retained old active network: %#v", got)
 	}
 }

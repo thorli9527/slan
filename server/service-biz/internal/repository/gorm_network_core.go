@@ -156,7 +156,8 @@ func (s *GormStore) DeleteNetworkDeviceGroupReferencesByGroup(_ context.Context,
 }
 
 func (s *GormStore) ListDeviceInvitesByUser(_ context.Context, userID string) ([]model.DeviceInvite, error) {
-	return listModels(s.db.Where("user_id = ?", userID).Order("invite_id asc"), func(row gormDeviceInviteRecord) model.DeviceInvite {
+	userID = strings.TrimSpace(userID)
+	return listModels(s.db.Where("user_id = ? OR inviter_user_id = ?", userID, userID).Order("invite_id asc"), func(row gormDeviceInviteRecord) model.DeviceInvite {
 		return row.model()
 	})
 }

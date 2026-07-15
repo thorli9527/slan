@@ -745,6 +745,17 @@ export abstract class AppComponentState {
     return this.currentOwnerKeys().has(device.owner.trim().toLowerCase());
   }
 
+  deviceShareInvite(device: DeviceRow): WorkspaceDeviceInviteRow | null {
+    return this.workspaceDeviceInvites.find((invite) =>
+      this.effectiveInviteStatus(invite) === 'accepted'
+      && invite.acceptedDeviceId === device.deviceId,
+    ) ?? null;
+  }
+
+  deviceShareActionLabel(device: DeviceRow): string {
+    return this.isCurrentUserDeviceOwner(device) ? '撤回设备共享' : '移除共享设备';
+  }
+
   userLabel(value: string): string {
     const current = (this.currentUser || this.authEmail).trim().toLowerCase();
     if (value.trim().toLowerCase() === current) {

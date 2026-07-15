@@ -17,3 +17,8 @@ type AcceptDeviceInviteInput struct {
 	ActorUserID string `json:"actorUserId"`
 	Alias       string `json:"alias"`
 }
+
+type RevokeDeviceInviteInput struct {
+	InviteID    string `json:"inviteId"`
+	ActorUserID string `json:"actorUserId"`
+}

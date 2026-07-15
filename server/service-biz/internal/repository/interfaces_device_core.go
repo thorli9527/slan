@@ -20,3 +20,13 @@ type DeviceCoreRepository interface {
 	SaveDeviceSession(ctx context.Context, item model.DeviceSession) error
 	DeleteDeviceSessionByAccessToken(ctx context.Context, accessToken string) error
 }
+
+type DeviceRelationRepository interface {
+	ListDeviceRelationsByUser(ctx context.Context, userID string) ([]model.DeviceUserRelation, error)
+	ListDeviceRelationsByDevice(ctx context.Context, deviceID string) ([]model.DeviceUserRelation, error)
+	GetDeviceUserRelation(ctx context.Context, deviceID, userID string) (model.DeviceUserRelation, bool, error)
+	SaveDeviceUserRelation(ctx context.Context, relation model.DeviceUserRelation) error
+	RevokeDeviceUserRelation(ctx context.Context, deviceID, userID, revokedBy string, revokedAt int64) error
+	SaveDeviceInviteWithRelation(ctx context.Context, invite model.DeviceInvite, relation model.DeviceUserRelation) error
+	RevokeDeviceInviteWithRelation(ctx context.Context, invite model.DeviceInvite, sharedUserID, revokedBy string, revokedAt int64) error
+}

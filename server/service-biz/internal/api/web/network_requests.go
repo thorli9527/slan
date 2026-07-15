@@ -109,6 +109,14 @@ func (r acceptDeviceInviteRequest) toInput() servicepkg.AcceptDeviceInviteInput 
 	}
 }
 
+type revokeDeviceInviteRequest struct {
+	ActorUserID string `json:"actorUserId"`
+}
+
+func (r revokeDeviceInviteRequest) toInput() servicepkg.RevokeDeviceInviteInput {
+	return servicepkg.RevokeDeviceInviteInput{ActorUserID: r.ActorUserID}
+}
+
 type createDNSZoneFields struct {
 	ActorUserID  string `json:"actorUserId"`
 	ZoneName     string `json:"zoneName"`

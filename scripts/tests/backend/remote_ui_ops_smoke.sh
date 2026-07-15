@@ -21,6 +21,7 @@ USER_TOKEN=""
 DEVICE_ID=""
 SECOND_USER_ID=""
 SECOND_USER_EMAIL=""
+SECOND_USER_TOKEN=""
 SECOND_DEVICE_ID=""
 BOOTSTRAP_ID=""
 WORKSPACE_ID=""
@@ -120,12 +121,15 @@ USER_TOKEN="$(printf '%s' "${USER_AUTH}" | json_value token)"
 NETWORK_ID="$(printf '%s' "${USER_AUTH}" | json_value networkId)"
 [[ -n "${USER_ID}" && -n "${USER_TOKEN}" && -n "${NETWORK_ID}" ]] || fail "web register missing user/token/network"
 
-curl --silent --fail -X POST "${WEB_BASE}/api/web/auth/login" \
+USER_LOGIN="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/auth/login" \
   -H 'Content-Type: application/json' \
-  -d "{\"email\":\"${USER_EMAIL}\",\"password\":\"password123\"}" >/dev/null || fail "web login failed"
+  -d "{\"email\":\"${USER_EMAIL}\",\"password\":\"password123\"}")" || fail "web login failed"
+USER_TOKEN="$(printf '%s' "${USER_LOGIN}" | json_value token)"
+[[ -n "${USER_TOKEN}" ]] || fail "web login missing token"
 
 DEVICE_ID="remote-ui-${RUN_ID}-mac"
 DEVICE_REGISTER="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/devices/register" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_ID}\",\"name\":\"Remote UI Mac\",\"platform\":\"macos\",\"osName\":\"macOS\",\"osVersion\":\"15.3\",\"alias\":\"Remote UI Mac\",\"publicKey\":\"remote-ui-public-key-${RUN_ID}\"}")" || fail "web device register failed"
 printf '%s' "${DEVICE_REGISTER}" | grep -Eq '"globalIp":"([0-9]{1,3}\.){3}[0-9]{1,3}"' || fail "device register missing global IP"
@@ -173,18 +177,28 @@ SECOND_AUTH="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/auth/register" 
   -H 'Content-Type: application/json' \
   -d "{\"email\":\"${SECOND_USER_EMAIL}\",\"password\":\"password123\",\"name\":\"Remote UI Peer\"}")" || fail "second user register failed"
 SECOND_USER_ID="$(printf '%s' "${SECOND_AUTH}" | json_value userId)"
+SECOND_USER_TOKEN="$(printf '%s' "${SECOND_AUTH}" | json_value token)"
+[[ -n "${SECOND_USER_ID}" && -n "${SECOND_USER_TOKEN}" ]] || fail "second user registration missing user/token"
 SECOND_DEVICE_ID="remote-ui-${RUN_ID}-ios"
 curl --silent --fail -X POST "${WEB_BASE}/api/web/devices/register" \
+  -H "Authorization: Bearer ${SECOND_USER_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"userId\":\"${SECOND_USER_ID}\",\"deviceId\":\"${SECOND_DEVICE_ID}\",\"name\":\"Remote UI iOS\",\"platform\":\"ios\",\"osName\":\"iOS\",\"osVersion\":\"18.3\",\"alias\":\"Remote UI iOS\",\"publicKey\":\"remote-ui-second-public-key-${RUN_ID}\"}" >/dev/null || fail "second device register failed"
 INVITE="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/device-invites" \
+  -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d "{\"networkId\":\"${NETWORK_ID}\",\"inviterUserId\":\"${USER_ID}\",\"userId\":\"${SECOND_USER_ID}\",\"ttlSeconds\":600}")" || fail "device invite create failed"
+  -d "{\"inviterUserId\":\"${USER_ID}\",\"ttlSeconds\":600}")" || fail "device invite create failed"
 INVITE_CODE="$(printf '%s' "${INVITE}" | json_value inviteCode)"
-[[ -n "${INVITE_CODE}" ]] || fail "missing invite code"
+INVITE_ID="$(printf '%s' "${INVITE}" | json_value inviteId)"
+[[ -n "${INVITE_CODE}" && -n "${INVITE_ID}" ]] || fail "missing invite code/id"
 curl --silent --fail -X POST "${WEB_BASE}/api/web/device-invites/accept" \
+  -H "Authorization: Bearer ${SECOND_USER_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"inviteCode\":\"${INVITE_CODE}\",\"actorUserId\":\"${SECOND_USER_ID}\",\"deviceId\":\"${SECOND_DEVICE_ID}\",\"alias\":\"Remote UI iOS\"}" >/dev/null || fail "device invite accept failed"
+INVITER_VISIBLE_DEVICES="$(curl --silent --fail -H "Authorization: Bearer ${USER_TOKEN}" "${WEB_BASE}/api/web/users/${USER_ID}/devices/visible")" || fail "inviter visible devices failed after invite acceptance"
+printf '%s' "${INVITER_VISIBLE_DEVICES}" | grep -Fq "\"deviceId\":\"${SECOND_DEVICE_ID}\"" || fail "accepted invited device is not visible to inviter"
+INVITER_INVITES="$(curl --silent --fail -H "Authorization: Bearer ${USER_TOKEN}" "${WEB_BASE}/api/web/device-invites?userId=${USER_ID}")" || fail "inviter invite list failed after acceptance"
+printf '%s' "${INVITER_INVITES}" | grep -Fq "\"inviteCode\":\"${INVITE_CODE}\"" || fail "accepted invite disappeared from inviter list"
 
 DEVICE_GROUP="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/users/${USER_ID}/device-groups" \
   -H 'Content-Type: application/json' \
@@ -195,6 +209,16 @@ curl --silent --fail -X PUT "${WEB_BASE}/api/web/users/${USER_ID}/devices/${SECO
   -H 'Content-Type: application/json' \
   -d "{\"actorUserId\":\"${USER_ID}\",\"deviceId\":\"${DEVICE_ID}\",\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null || fail "device group assignment failed"
 curl --silent --fail "${WEB_BASE}/api/web/users/${USER_ID}/device-groups" >/dev/null || fail "device groups list failed"
+curl --silent --fail -X POST "${WEB_BASE}/api/web/device-invites/${INVITE_ID}/revoke" \
+  -H "Authorization: Bearer ${SECOND_USER_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"actorUserId\":\"${SECOND_USER_ID}\"}" | grep -Fq '"status":"revoked"' || fail "device owner invite revoke failed"
+INVITER_VISIBLE_AFTER_REVOKE="$(curl --silent --fail -H "Authorization: Bearer ${USER_TOKEN}" "${WEB_BASE}/api/web/users/${USER_ID}/devices/visible")" || fail "inviter visible devices failed after revoke"
+if printf '%s' "${INVITER_VISIBLE_AFTER_REVOKE}" | grep -Fq "\"deviceId\":\"${SECOND_DEVICE_ID}\""; then
+  fail "revoked shared device is still visible to inviter"
+fi
+OWNER_VISIBLE_AFTER_REVOKE="$(curl --silent --fail -H "Authorization: Bearer ${SECOND_USER_TOKEN}" "${WEB_BASE}/api/web/users/${SECOND_USER_ID}/devices/visible")" || fail "owner visible devices failed after revoke"
+printf '%s' "${OWNER_VISIBLE_AFTER_REVOKE}" | grep -Fq "\"deviceId\":\"${SECOND_DEVICE_ID}\"" || fail "owner device disappeared after invite revoke"
 
 WORKSPACE="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/networks" \
   -H 'Content-Type: application/json' \

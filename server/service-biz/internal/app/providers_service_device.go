@@ -7,7 +7,7 @@ func newDeviceServices(deps UseCaseDependencies) DeviceServices {
 	ids := deps.deviceIDs()
 	eventPublisher := servicepkg.NewNetworkEventPublisher(deps.mqttConfig())
 	return DeviceServices{
-		DeviceManagement: servicepkg.NewDeviceCoreService(repos.Users, repos.Devices, repos.Networks, deps.mqttConfig(), ids.NewDeviceID, nil),
+		DeviceManagement: servicepkg.NewDeviceCoreService(repos.Users, repos.Devices, repos.Relations, repos.Networks, deps.mqttConfig(), ids.NewDeviceID, nil),
 		BootstrapAuth: servicepkg.NewDeviceBootstrapService(
 			repos.Users,
 			repos.Devices,
