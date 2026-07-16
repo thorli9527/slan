@@ -83,8 +83,13 @@ void main() {
     ]);
     addTearDown(service.close);
 
-    final bridge =
-        MethodChannelClientCoreBridge(localServiceHost: service.host);
+    String? openedUrl;
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: service.host,
+      openExternalUrl: (url) async {
+        openedUrl = url;
+      },
+    );
     _closeBridgeOnTearDown(bridge);
 
     await bridge.dispatch(
@@ -94,6 +99,10 @@ void main() {
     expect(calls, ['dispatch']);
     expect(bridge.state.value.deviceId, 'desktop-device-1');
     expect(bridge.state.value.notice, 'loginBrowserRequested');
+    expect(
+      openedUrl,
+      'http://47.245.40.231:24200?auth=login&source=client&deviceId=desktop-device-1',
+    );
     await _waitFor(
       () => bridge.state.value.signedIn,
       reason: 'desktop browser login state should be refreshed',

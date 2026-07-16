@@ -74,10 +74,12 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     @visibleForTesting bool? useMobileControlPlane,
     @visibleForTesting ClientBridgeRuntimePlatform runtimePlatform =
         ClientBridgeRuntimePlatform.host,
+    @visibleForTesting Future<void> Function(String url)? openExternalUrl,
   })  : _plugin = ClientCorePlugin(),
         _localService = ClientCoreLocalService(host: localServiceHost),
         _useMobileControlPlaneOverride = useMobileControlPlane,
         _runtimePlatform = runtimePlatform,
+        _openExternalUrlOverride = openExternalUrl,
         _state = ValueNotifier<ClientViewState>(ClientViewState.initial()),
         _androidNetworkAuthorization =
             ValueNotifier<AndroidNetworkAuthorizationState>(
@@ -95,6 +97,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   /// 测试用平台枚举，生产环境默认根据 Dart `Platform` 判断。
   final ClientBridgeRuntimePlatform _runtimePlatform;
+
+  /// 测试时替代系统浏览器启动命令。
+  final Future<void> Function(String url)? _openExternalUrlOverride;
 
   /// 当前 UI 状态。
   final ValueNotifier<ClientViewState> _state;
@@ -638,9 +643,22 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       return;
     }
     if (_usesDesktopBrowserPlugin(command.type)) {
+      ClientUiDiagnostics.unawaitedCriticalLog(
+        'bridge.browser.dispatch.begin',
+        state: _state.value,
+        fields: {'command': command.type.name},
+      );
       try {
         final result = await _plugin.dispatch(command.toJson());
-        _applyStateFromResult(result);
+        final state = _applyStateFromResult(result);
+        ClientUiDiagnostics.unawaitedCriticalLog(
+          'bridge.browser.dispatch.completed',
+          state: _state.value,
+          fields: {'command': command.type.name},
+        );
+        if (_isMacOS) {
+          await _afterLocalControlDispatch(command, state);
+        }
         return;
       } on MissingPluginException catch (error) {
         _logDesktopBrowserPluginFailure(
@@ -820,16 +838,56 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       ...base.queryParameters,
       ...query,
     }).toString();
+    ClientUiDiagnostics.unawaitedCriticalLog(
+      'bridge.browser.url.prepared',
+      state: _state.value,
+      fields: {
+        'host': base.host,
+        'port': base.hasPort ? base.port : null,
+        'browserLogin': browserLogin,
+        'hasConsoleLoginKey': loginKey.isNotEmpty,
+        'hasDeviceId': safeDeviceId.isNotEmpty,
+      },
+    );
     await _openExternalUrl(url);
   }
 
   /// 用当前桌面平台的系统命令打开外部 URL。
   Future<void> _openExternalUrl(String url) async {
+    final override = _openExternalUrlOverride;
+    if (override != null) {
+      await override(url);
+      return;
+    }
     if (!_isDesktopHostPlatform) {
       throw UnsupportedError('open browser is not supported on this platform');
     }
     if (_isMacOS) {
-      await _startDetachedProcess('open', [url]);
+      ClientUiDiagnostics.unawaitedCriticalLog(
+        'bridge.browser.native.begin',
+        state: _state.value,
+      );
+      try {
+        final opened = await _plugin.openExternalUrl(url);
+        ClientUiDiagnostics.unawaitedCriticalLog(
+          'bridge.browser.native.completed',
+          state: _state.value,
+          fields: {'opened': opened},
+        );
+        if (!opened) {
+          throw StateError('macOS did not open the browser');
+        }
+      } on Object catch (error) {
+        ClientUiDiagnostics.unawaitedCriticalLog(
+          'bridge.browser.native.failed',
+          state: _state.value,
+          fields: {
+            'errorType': error.runtimeType.toString(),
+            'message': error.toString(),
+          },
+        );
+        rethrow;
+      }
       return;
     }
     if (_isWindows) {

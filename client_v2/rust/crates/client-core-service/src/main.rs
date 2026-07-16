@@ -2059,17 +2059,7 @@ fn handle_watch_state(
     let input: WatchStateRequest =
         serde_json::from_value(request.args).context("decode watch state request")?;
     let timeout = Duration::from_millis(input.timeout_ms.clamp(1_000, 60_000));
-    let mut revision = state_notifier
-        .revision
-        .lock()
-        .expect("state revision mutex poisoned");
-    if *revision <= input.last_revision {
-        let wait_result = state_notifier
-            .changed
-            .wait_timeout_while(revision, timeout, |current| *current <= input.last_revision)
-            .expect("state revision condvar poisoned");
-        revision = wait_result.0;
-    }
+    let current_revision = wait_for_state_revision(state_notifier, input.last_revision, timeout);
     let state = {
         let mut runtime = runtime.lock().expect("client runtime mutex poisoned");
         match runtime.refresh() {
@@ -2078,10 +2068,29 @@ fn handle_watch_state(
         }
     };
     serde_json::to_string(&WatchStateResponse {
-        revision: *revision,
+        revision: current_revision,
         state,
     })
     .context("encode watch state response")
+}
+
+fn wait_for_state_revision(
+    state_notifier: &StateChangeNotifier,
+    last_revision: u64,
+    timeout: Duration,
+) -> u64 {
+    let mut revision = state_notifier
+        .revision
+        .lock()
+        .expect("state revision mutex poisoned");
+    if *revision <= last_revision {
+        revision = state_notifier
+            .changed
+            .wait_timeout_while(revision, timeout, |current| *current <= last_revision)
+            .expect("state revision condvar poisoned")
+            .0;
+    }
+    *revision
 }
 
 fn handle_watch_business_event(

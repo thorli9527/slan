@@ -102,13 +102,8 @@ class _HomePageState extends State<HomePage> {
                         SignedInActions(
                           desktop: _isDesktopLike,
                           showConsole: _showWebConsoleAction,
-                          onOpenConsole: _showWebConsoleAction
-                              ? () => widget.bridge.dispatch(
-                                    const ClientCommand(
-                                      ClientCommandType.openWebConsole,
-                                    ),
-                                  )
-                              : null,
+                          onOpenConsole:
+                              _showWebConsoleAction ? _openWebConsole : null,
                           onLogout: () => widget.bridge.dispatch(
                             const ClientCommand(ClientCommandType.logout),
                           ),
@@ -130,13 +125,8 @@ class _HomePageState extends State<HomePage> {
                             height: 46,
                             child: FilledButton.icon(
                               key: const Key('desktop-browser-login'),
-                              onPressed: state.syncing
-                                  ? null
-                                  : () => widget.bridge.dispatch(
-                                        const ClientCommand(
-                                          ClientCommandType.openClientLogin,
-                                        ),
-                                      ),
+                              onPressed:
+                                  state.syncing ? null : _openBrowserLogin,
                               icon: const Icon(Icons.login_rounded, size: 18),
                               label: const Text('打开浏览器登录'),
                             ),
@@ -273,6 +263,55 @@ class _HomePageState extends State<HomePage> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('登录失败：$error')),
+      );
+    }
+  }
+
+  Future<void> _openBrowserLogin() async {
+    await _dispatchDesktopBrowserCommand(
+      const ClientCommand(ClientCommandType.openClientLogin),
+      failurePrefix: '打开浏览器登录失败',
+    );
+  }
+
+  Future<void> _openWebConsole() async {
+    await _dispatchDesktopBrowserCommand(
+      const ClientCommand(ClientCommandType.openWebConsole),
+      failurePrefix: '打开 Web Console 失败',
+    );
+  }
+
+  Future<void> _dispatchDesktopBrowserCommand(
+    ClientCommand command, {
+    required String failurePrefix,
+  }) async {
+    ClientUiDiagnostics.unawaitedCriticalLog(
+      'home.browser.tap',
+      state: widget.bridge.state.value,
+      fields: {'command': command.type.name},
+    );
+    try {
+      await widget.bridge.dispatch(command);
+      ClientUiDiagnostics.unawaitedCriticalLog(
+        'home.browser.completed',
+        state: widget.bridge.state.value,
+        fields: {'command': command.type.name},
+      );
+    } catch (error) {
+      ClientUiDiagnostics.unawaitedCriticalLog(
+        'home.browser.failed',
+        state: widget.bridge.state.value,
+        fields: {
+          'command': command.type.name,
+          'errorType': error.runtimeType.toString(),
+          'message': _friendlyError('$error'),
+        },
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$failurePrefix：${_friendlyError('$error')}')),
       );
     }
   }

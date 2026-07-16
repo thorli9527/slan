@@ -45,6 +45,23 @@ class ClientUiDiagnostics {
     await _enqueueWrite(line);
   }
 
+  /// 始终记录影响用户操作的关键事件，不受诊断构建开关控制。
+  ///
+  /// 调用方不得在 [fields] 中传入 token、登录 key 或完整设备标识。
+  static Future<void> logCritical(
+    String event, {
+    ClientViewState? state,
+    Map<String, Object?> fields = const {},
+  }) async {
+    final entry = <String, Object?>{
+      'ts': DateTime.now().toIso8601String(),
+      'event': event,
+      if (state != null) 'state': state.toDiagnosticsJson(),
+      ...fields,
+    };
+    await _enqueueWrite(jsonEncode(entry));
+  }
+
   /// fire-and-forget 版本，适合 UI 事件处理里调用。
   static void unawaitedLog(
     String event, {
@@ -52,6 +69,15 @@ class ClientUiDiagnostics {
     Map<String, Object?> fields = const {},
   }) {
     log(event, state: state, fields: fields).ignore();
+  }
+
+  /// fire-and-forget 的关键事件日志。
+  static void unawaitedCriticalLog(
+    String event, {
+    ClientViewState? state,
+    Map<String, Object?> fields = const {},
+  }) {
+    logCritical(event, state: state, fields: fields).ignore();
   }
 
   /// 把日志追加操作接到串行队列末尾。
@@ -77,6 +103,9 @@ class ClientUiDiagnostics {
       final programData =
           Platform.environment['ProgramData'] ?? r'C:\ProgramData';
       return '$programData\\SLAN\\client-v2-ui.log';
+    }
+    if (Platform.isMacOS) {
+      return '/tmp/slan/client-v2-ui.log';
     }
     final tmp = Directory.systemTemp.path;
     return '$tmp/slan/client-v2-ui.log';

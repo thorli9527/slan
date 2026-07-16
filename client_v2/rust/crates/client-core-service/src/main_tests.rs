@@ -7,8 +7,9 @@ use super::{
     relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
     relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
     routes_with_peer_virtual_ips, status_is_managed_disabled, valid_direct_candidate_address,
-    ControlPeer, PersistedConnectPlan, PersistedConnectPlanPath, PersistedConnectPlanStore,
-    RelayMaintenanceState, RELAY_NO_RX_RECONFIGURE_INTERVALS, RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
+    wait_for_state_revision, ControlPeer, PersistedConnectPlan, PersistedConnectPlanPath,
+    PersistedConnectPlanStore, RelayMaintenanceState, StateChangeNotifier,
+    RELAY_NO_RX_RECONFIGURE_INTERVALS, RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
 };
 use crate::control_plane::{PunchConnectSession, PunchEndpoint};
 use crate::{
@@ -28,10 +29,29 @@ use client_core::{
 use std::{
     fs,
     net::{TcpListener, UdpSocket},
+    time::Duration,
 };
 
 #[derive(Debug, Clone, Default)]
 struct TestPlatformNetwork;
+
+#[test]
+fn state_revision_wait_releases_notifier_lock_before_runtime_access() {
+    let notifier = StateChangeNotifier::default();
+    *notifier
+        .revision
+        .lock()
+        .expect("state revision mutex poisoned") = 7;
+
+    assert_eq!(
+        wait_for_state_revision(&notifier, 0, Duration::from_millis(1)),
+        7
+    );
+    assert!(
+        notifier.revision.try_lock().is_ok(),
+        "state watch must release the revision lock before reading runtime state"
+    );
+}
 
 impl PlatformNetwork for TestPlatformNetwork {
     fn install_adapter(&self) -> anyhow::Result<()> {

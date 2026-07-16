@@ -111,10 +111,15 @@ class ClientCorePlugin {
 
   /// 派发桌面端通用控制命令。
   ///
-  /// macOS/Windows/Linux 原生插件会负责自动启动本地 service，并在
-  /// openClientLogin/openWebConsole 这类命令中打开系统默认浏览器。
+  /// macOS/Windows/Linux 原生插件会负责自动启动本地 service。
   Future<Object?> dispatch(Map<String, Object?> command) {
     return _invokeNativeOnly('dispatch', command);
+  }
+
+  /// 通过桌面系统打开外部 URL，并要求浏览器窗口进入前台。
+  Future<bool> openExternalUrl(String url) async {
+    final result = await _invokeNativeOnly('openExternalUrl', url);
+    return result == true;
   }
 
   Future<Object?> _invokeNativeOnly(String method, [Object? arguments]) {

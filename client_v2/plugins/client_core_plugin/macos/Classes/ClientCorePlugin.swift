@@ -12,6 +12,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private var trayStatusMenuItem: NSMenuItem?
   private var networkMenuItem: NSMenuItem?
   private let bundledServiceLock = NSLock()
+  private let browserLogLock = NSLock()
   private var bundledServiceProcess: Process?
   private var bundledServicePreferredHost: String?
   private let stateWatchQueue = DispatchQueue(
@@ -47,24 +48,146 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    let commandType = readCommandType(call.arguments)
+    if call.method == "openExternalUrl" {
+      guard let rawUrl = call.arguments as? String else {
+        result(FlutterError(
+          code: "invalid_url",
+          message: "external URL must be a string",
+          details: nil
+        ))
+        return
+      }
+      openExternalUrl(rawUrl, result: result)
+      return
+    }
     if let serviceResponse = forwardToServiceWithAutoStart(
       method: call.method,
       arguments: call.arguments
     ) {
-      if commandType == "openWebConsole" {
-        openAuthenticatedConsole()
-      } else if commandType == "openClientLogin" {
-        openConsole(
-          deviceId: extractStringField(serviceResponse, "deviceId"),
-          browserLogin: true
-        )
-      }
       result(serviceResponse)
       return
     }
 
     result(FlutterMethodNotImplemented)
+  }
+
+  private func openExternalUrl(_ rawUrl: String, result: @escaping FlutterResult) {
+    guard let url = URL(string: rawUrl), let scheme = url.scheme,
+      scheme == "http" || scheme == "https"
+    else {
+      result(FlutterError(
+        code: "invalid_url",
+        message: "only HTTP and HTTPS URLs can be opened",
+        details: rawUrl
+      ))
+      return
+    }
+
+    writeBrowserLog(
+      "native.request scheme=\(url.scheme ?? "") host=\(url.host ?? "")"
+    )
+    let applicationUrl = NSWorkspace.shared.urlForApplication(toOpen: url)
+    let applicationBundle = applicationUrl.flatMap { Bundle(url: $0) }
+    let bundleId = applicationBundle?.bundleIdentifier ?? ""
+    let chromiumBrowser = bundleId.hasPrefix("com.google.Chrome")
+      || bundleId.hasPrefix("org.chromium.Chromium")
+      || bundleId.hasPrefix("com.microsoft.edgemac")
+      || bundleId.hasPrefix("com.brave.Browser")
+
+    DispatchQueue.global(qos: .userInitiated).async {
+      let process = Process()
+      if chromiumBrowser, let executableUrl = applicationBundle?.executableURL {
+        process.executableURL = executableUrl
+        process.arguments = ["--new-window", rawUrl]
+      } else {
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [rawUrl]
+      }
+      process.standardOutput = FileHandle.nullDevice
+      process.standardError = FileHandle.nullDevice
+      do {
+        try process.run()
+        process.waitUntilExit()
+      } catch {
+        self.finishBrowserOpen(
+          result: result,
+          rawUrl: rawUrl,
+          bundleId: bundleId,
+          error: error.localizedDescription
+        )
+        return
+      }
+      guard process.terminationStatus == 0 else {
+        self.finishBrowserOpen(
+          result: result,
+          rawUrl: rawUrl,
+          bundleId: bundleId,
+          error: "open returned \(process.terminationStatus)"
+        )
+        return
+      }
+      self.finishBrowserOpen(
+        result: result,
+        rawUrl: rawUrl,
+        bundleId: bundleId
+      )
+    }
+  }
+
+  private func finishBrowserOpen(
+    result: @escaping FlutterResult,
+    rawUrl: String,
+    bundleId: String,
+    error: String? = nil
+  ) {
+    DispatchQueue.main.async {
+      if let error = error {
+        self.writeBrowserLog("native.failed error=\(error)")
+        result(FlutterError(
+          code: "open_browser_failed",
+          message: error,
+          details: rawUrl
+        ))
+        return
+      }
+      let application = NSRunningApplication
+        .runningApplications(withBundleIdentifier: bundleId)
+        .last
+      application?.unhide()
+      let activated = application?.activate(
+        options: [.activateAllWindows, .activateIgnoringOtherApps]
+      ) ?? false
+      self.writeBrowserLog(
+        "native.completed bundle=\(bundleId) activated=\(activated)"
+      )
+      result(true)
+    }
+  }
+
+  private func writeBrowserLog(_ message: String) {
+    browserLogLock.lock()
+    defer { browserLogLock.unlock() }
+    let formatter = ISO8601DateFormatter()
+    let line = "\(formatter.string(from: Date())) SLAN_BROWSER \(message)\n"
+    let directory = URL(fileURLWithPath: "/tmp/slan", isDirectory: true)
+    let file = directory.appendingPathComponent("client-v2-native.log")
+    do {
+      try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true
+      )
+      if !FileManager.default.fileExists(atPath: file.path) {
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+      }
+      let handle = try FileHandle(forWritingTo: file)
+      defer { handle.closeFile() }
+      handle.seekToEndOfFile()
+      if let data = line.data(using: .utf8) {
+        handle.write(data)
+      }
+    } catch {
+      NSLog("SLAN_BROWSER log.failed error=%@", error.localizedDescription)
+    }
   }
 
   private func installStatusItem() {
@@ -366,10 +489,12 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
         showWebConsoleOpenError(error.isEmpty ? "failed to create console login key" : error)
         return
       }
-      openConsole(
+      if !openConsole(
         deviceId: extractStringField(response, "deviceId"),
         consoleLoginKey: loginKey
-      )
+      ) {
+        showWebConsoleOpenError("macOS did not accept the Web Console URL")
+      }
       return
     }
     showWebConsoleOpenError("client-core-service is not available")
@@ -386,11 +511,12 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     }
   }
 
+  @discardableResult
   private func openConsole(
     deviceId: String = "",
     consoleLoginKey: String = "",
     browserLogin: Bool = false
-  ) {
+  ) -> Bool {
     let target = resolveWebConsoleUrl()
     var components = URLComponents(string: target)
     var queryItems = components?.queryItems ?? []
@@ -408,8 +534,30 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     if !queryItems.isEmpty {
       components?.queryItems = queryItems
     }
-    if let url = components?.url ?? URL(string: target) {
-      NSWorkspace.shared.open(url)
+    guard let url = components?.url ?? URL(string: target) else {
+      return false
+    }
+    if openWithSystemCommand(url) {
+      return true
+    }
+    if Thread.isMainThread {
+      return NSWorkspace.shared.open(url)
+    }
+    return DispatchQueue.main.sync { NSWorkspace.shared.open(url) }
+  }
+
+  private func openWithSystemCommand(_ url: URL) -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    process.arguments = [url.absoluteString]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    do {
+      try process.run()
+      process.waitUntilExit()
+      return process.terminationStatus == 0
+    } catch {
+      return false
     }
   }
 
@@ -438,16 +586,6 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
 
   private func usableClientDeviceId(_ deviceId: String) -> String {
     return deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
-  private func readCommandType(_ arguments: Any?) -> String {
-    guard
-      let command = arguments as? [String: Any],
-      let type = command["type"] as? String
-    else {
-      return ""
-    }
-    return type
   }
 
   private func extractStringField(_ json: String, _ field: String) -> String {
