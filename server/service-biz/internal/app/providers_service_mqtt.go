@@ -6,8 +6,9 @@ func newMQTTServices(deps UseCaseDependencies) MQTTServices {
 	repos := deps.mqttRepositories()
 	return MQTTServices{
 		BrokerWebhook: servicepkg.MQTTWebhookService{
-			Networks: repos.Networks,
-			Config:   deps.mqttConfig(),
+			Networks:       repos.Networks,
+			EventPublisher: servicepkg.NewNetworkEventPublisher(deps.mqttConfig()),
+			Config:         deps.mqttConfig(),
 		},
 	}
 }

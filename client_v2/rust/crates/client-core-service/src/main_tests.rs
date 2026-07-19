@@ -1,18 +1,30 @@
 use super::{
-    android_data_plane_relay_candidate, data_plane_relay_candidate,
-    diagnostic_connect_plan_summaries, parse_rfc3339_utc_ms, path_diagnose_active_path_counts,
-    path_diagnose_health, path_diagnose_resolver, peer_path_configs,
-    relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
-    relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
-    relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
-    relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
-    routes_with_peer_virtual_ips, status_is_managed_disabled, valid_direct_candidate_address,
-    wait_for_state_revision, ControlPeer, PersistedConnectPlan, PersistedConnectPlanPath,
-    PersistedConnectPlanStore, RelayMaintenanceState, StateChangeNotifier,
-    RELAY_NO_RX_RECONFIGURE_INTERVALS, RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
+    android_data_plane_relay_candidate, apply_prepared_runtime_refresh,
+    commit_control_network_activation, commit_logout, commit_network_deactivation,
+    commit_prepared_login, data_plane_relay_candidate, diagnostic_connect_plan_summaries,
+    filter_relay_sessions_for_transport, invalidate_runtime_session, local_status_active_path,
+    method_business_event_type, parse_rfc3339_utc_ms, path_diagnose_active_path_counts,
+    path_diagnose_health, path_diagnose_resolver, peer_network_id, peer_path_configs,
+    publish_method_business_event, relay_candidate_matching_connect_plan_path,
+    relay_maintenance_reconfigure_reason, relay_path_candidate_from_connect_plan,
+    relay_reconfigure_backoff_applies, relay_session_from_connect_plan_ticket,
+    relay_session_targets, relay_sessions_missing, relay_ticket_should_renew, relay_ticket_timing,
+    relay_transport_for_path_type, request_is_watch, routes_with_peer_virtual_ips,
+    status_is_managed_disabled, valid_direct_candidate_address, ControlPeer, LocalRequestMetrics,
+    PersistedConnectPlan, PersistedConnectPlanPath, PersistedConnectPlanStore,
+    PreparedControlNetworkActivation, RelayMaintenanceState, LOCAL_REQUEST_CONCURRENCY_LIMIT,
+    LOCAL_WATCH_CONCURRENCY_LIMIT, RELAY_NO_RX_RECONFIGURE_INTERVALS,
+    RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
 };
-use crate::control_plane::{PunchConnectSession, PunchEndpoint};
+use crate::control_plane::{
+    DeviceNetworkConfig, DeviceNetworkPeer, PunchConnectSession, PunchEndpoint,
+};
 use crate::{
+    local_api::{
+        request_correlation_id, response_with_correlation_id, LocalServiceMethod,
+        BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED, BUSINESS_SESSION_CHANGED,
+        BUSINESS_STATE_CHANGED,
+    },
     merge_persisted_client_message_into_state, persist_last_client_message_payload,
     relay_candidates::select_relay_candidates,
     relay_models::{
@@ -20,38 +32,112 @@ use crate::{
         RelayCandidateSelection, RelayRuntimeStats,
     },
     relay_store::{relay_only_path_policy_enabled, relay_runtime_failure_total},
+    runtime_actor::RuntimeActorHandle,
+    runtime_event_hub::RuntimeEventHub,
 };
 use client_core::{
-    AssignedIpPayload, ClientCommand, ClientRuntime, NetworkRuntimeState, PathKind,
-    PeerPathRuntime, PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig,
+    AssignedIpPayload, ClientCommand, ClientRuntime, ClientViewState, NetworkRuntimeState,
+    PathKind, PeerPathRuntime, PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig,
     RelayDataPlaneConfig, RelayPeerSession, RelayTicket, RouteSpec,
 };
+use client_core_platform::PlatformNetworkImpl;
 use std::{
     fs,
     net::{TcpListener, UdpSocket},
-    time::Duration,
 };
+
+#[test]
+fn local_request_limits_protect_commands_from_duplicate_watchers() {
+    let metrics = LocalRequestMetrics::default();
+    for _ in 0..LOCAL_REQUEST_CONCURRENCY_LIMIT {
+        assert!(metrics.try_accept());
+    }
+    assert!(!metrics.try_accept());
+    for _ in 0..LOCAL_REQUEST_CONCURRENCY_LIMIT {
+        metrics.finish();
+    }
+
+    assert!(metrics.try_accept());
+    for _ in 0..LOCAL_WATCH_CONCURRENCY_LIMIT {
+        assert!(metrics.try_begin_watch());
+    }
+    assert!(!metrics.try_begin_watch());
+    for _ in 0..LOCAL_WATCH_CONCURRENCY_LIMIT {
+        metrics.end_watch();
+    }
+    metrics.finish();
+
+    let diagnostics = metrics.diagnostics();
+    assert_eq!(diagnostics.active, 0);
+    assert_eq!(diagnostics.active_watches, 0);
+    assert_eq!(diagnostics.accepted_total, 65);
+    assert_eq!(diagnostics.completed_total, 65);
+    assert_eq!(diagnostics.rejected_total, 1);
+    assert_eq!(diagnostics.watch_accepted_total, 8);
+    assert_eq!(diagnostics.watch_rejected_total, 1);
+}
+
+#[test]
+fn local_request_watch_classification_only_matches_long_polls() {
+    assert!(request_is_watch(
+        r#"{"method":"localStateWatch","args":{}}"#
+    ));
+    assert!(request_is_watch(
+        r#"{"method":"localBusinessEventWatch","args":{}}"#
+    ));
+    assert!(!request_is_watch(
+        r#"{"method":"localNetworkActivate","args":{}}"#
+    ));
+    assert!(!request_is_watch("not-json"));
+}
+
+#[test]
+fn local_request_correlation_uses_first_non_empty_supported_identity() {
+    assert_eq!(
+        request_correlation_id(&serde_json::json!({
+            "requestId": " request-1 ",
+            "messageId": "message-1"
+        }))
+        .as_deref(),
+        Some("request-1")
+    );
+    assert_eq!(
+        request_correlation_id(&serde_json::json!({
+            "requestId": " ",
+            "messageId": "message-1"
+        }))
+        .as_deref(),
+        Some("message-1")
+    );
+    assert_eq!(request_correlation_id(&serde_json::json!({})), None);
+}
+
+#[test]
+fn local_response_echoes_correlation_without_overwriting_existing_value() {
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&response_with_correlation_id(
+            r#"{"ok":true}"#,
+            Some("request-1")
+        ))
+        .expect("response json")["requestId"],
+        "request-1"
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&response_with_correlation_id(
+            r#"{"requestId":"server-id"}"#,
+            Some("request-1")
+        ))
+        .expect("response json")["requestId"],
+        "server-id"
+    );
+    assert_eq!(
+        response_with_correlation_id("plain", Some("request-1")),
+        "plain"
+    );
+}
 
 #[derive(Debug, Clone, Default)]
 struct TestPlatformNetwork;
-
-#[test]
-fn state_revision_wait_releases_notifier_lock_before_runtime_access() {
-    let notifier = StateChangeNotifier::default();
-    *notifier
-        .revision
-        .lock()
-        .expect("state revision mutex poisoned") = 7;
-
-    assert_eq!(
-        wait_for_state_revision(&notifier, 0, Duration::from_millis(1)),
-        7
-    );
-    assert!(
-        notifier.revision.try_lock().is_ok(),
-        "state watch must release the revision lock before reading runtime state"
-    );
-}
 
 impl PlatformNetwork for TestPlatformNetwork {
     fn install_adapter(&self) -> anyhow::Result<()> {
@@ -111,6 +197,278 @@ fn managed_disable_statuses_disable_local_network() {
 }
 
 #[test]
+fn stale_network_activation_plan_cannot_restore_logged_out_runtime() {
+    let mut session = crate::PersistedSession::empty();
+    session.device_id = Some("device-1".to_string());
+    session.virtual_ip = Some("10.0.0.2".to_string());
+    let plan = PreparedControlNetworkActivation {
+        session,
+        relay_candidates: Vec::new(),
+        network_configs: Vec::new(),
+        prefix_len: 32,
+        resolver: PlatformResolverConfig::default(),
+        resolver_zones: Vec::new(),
+        resolver_records: Vec::new(),
+        routes: Vec::new(),
+        relay_config: None,
+    };
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+
+    let error = commit_control_network_activation(&mut runtime, plan)
+        .expect_err("logged out runtime must reject stale activation plan");
+
+    assert!(error.to_string().contains("session changed"));
+    assert!(!runtime.state().signed_in);
+    assert!(!runtime.state().network_enabled);
+}
+
+#[test]
+fn stale_network_activation_result_preserves_current_runtime_state() {
+    let mut session = crate::PersistedSession::empty();
+    session.device_id = Some("old-device".to_string());
+    session.virtual_ip = Some("10.0.0.2".to_string());
+    let plan = PreparedControlNetworkActivation {
+        session,
+        relay_candidates: Vec::new(),
+        network_configs: Vec::new(),
+        prefix_len: 32,
+        resolver: PlatformResolverConfig::default(),
+        resolver_zones: Vec::new(),
+        resolver_records: Vec::new(),
+        routes: Vec::new(),
+        relay_config: None,
+    };
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+    runtime
+        .dispatch(ClientCommand::ApplyDeviceUserLogin(
+            client_core::AuthPayload {
+                access_token: "new-token".to_string(),
+                refresh_token: None,
+                user_id: "new-user".to_string(),
+                user_label: "new@example.test".to_string(),
+                device_id: Some("new-device".to_string()),
+                active_network_id: None,
+                virtual_ip: Some("10.0.0.9".to_string()),
+                expires_in: None,
+            },
+        ))
+        .expect("apply current login");
+
+    let committed = super::commit_control_network_activation_result(&mut runtime, Ok(plan));
+    let state = committed.state;
+
+    assert_eq!(state.device_id.as_deref(), Some("new-device"));
+    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.9"));
+    assert!(state.error.is_none());
+    assert!(committed.rollback_platform);
+}
+
+#[test]
+fn failed_network_activation_preflight_does_not_request_platform_rollback() {
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+
+    let committed = super::commit_control_network_activation_result(
+        &mut runtime,
+        Err(anyhow::anyhow!("activation preflight failed")),
+    );
+
+    assert!(committed.state.error.is_some());
+    assert!(!committed.rollback_platform);
+}
+
+#[test]
+fn stale_prepared_login_cannot_replace_current_runtime_session() {
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+    runtime
+        .dispatch(ClientCommand::ApplyDeviceUserLogin(
+            client_core::AuthPayload {
+                access_token: "new-token".to_string(),
+                refresh_token: None,
+                user_id: "new-user".to_string(),
+                user_label: "new@example.test".to_string(),
+                device_id: Some("new-device".to_string()),
+                active_network_id: None,
+                virtual_ip: Some("10.0.0.9".to_string()),
+                expires_in: None,
+            },
+        ))
+        .expect("apply current login");
+    let mut stale_session = crate::PersistedSession::empty();
+    stale_session.device_id = Some("old-device".to_string());
+    stale_session.user_label = "old@example.test".to_string();
+
+    let state = commit_prepared_login(
+        &mut runtime,
+        Ok(crate::PreparedSession::from_session(stale_session)),
+        Some("old-device".to_string()),
+        true,
+        "login failed",
+    );
+
+    assert_eq!(state.device_id.as_deref(), Some("new-device"));
+    assert_eq!(state.user_label.as_deref(), Some("new@example.test"));
+    assert!(state.signed_in);
+}
+
+#[test]
+fn stale_invalid_session_result_cannot_logout_new_runtime_session() {
+    let runtime = RuntimeActorHandle::spawn(ClientRuntime::new(PlatformNetworkImpl));
+    let stale_revision = runtime.snapshot().revision;
+    runtime
+        .call_named("test.login", None, |runtime| {
+            runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(
+                client_core::AuthPayload {
+                    access_token: "new-token".to_string(),
+                    refresh_token: None,
+                    user_id: "new-user".to_string(),
+                    user_label: "new@example.test".to_string(),
+                    device_id: Some("new-device".to_string()),
+                    active_network_id: None,
+                    virtual_ip: None,
+                    expires_in: None,
+                },
+            ))
+        })
+        .expect("apply newer runtime session");
+
+    let invalidated =
+        invalidate_runtime_session(&runtime, "test.stale.logout", stale_revision, None, false)
+            .expect("ignore stale invalid session result");
+
+    assert!(invalidated.is_none());
+    let state = runtime.snapshot().state;
+    assert!(state.signed_in);
+    assert_eq!(state.device_id.as_deref(), Some("new-device"));
+}
+
+#[test]
+fn stale_logout_cannot_clear_current_runtime_session() {
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+    runtime
+        .dispatch(ClientCommand::ApplyDeviceUserLogin(
+            client_core::AuthPayload {
+                access_token: "new-token".to_string(),
+                refresh_token: None,
+                user_id: "new-user".to_string(),
+                user_label: "new@example.test".to_string(),
+                device_id: Some("new-device".to_string()),
+                active_network_id: None,
+                virtual_ip: Some("10.0.0.9".to_string()),
+                expires_in: None,
+            },
+        ))
+        .expect("apply current login");
+
+    let state = commit_logout(&mut runtime, Some("old-device".to_string()), true);
+
+    assert_eq!(state.device_id.as_deref(), Some("new-device"));
+    assert_eq!(state.user_label.as_deref(), Some("new@example.test"));
+    assert!(state.signed_in);
+}
+
+#[test]
+fn prepared_runtime_refresh_applies_platform_snapshot_without_platform_read() {
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+    runtime
+        .dispatch(ClientCommand::ApplyDeviceUserLogin(
+            client_core::AuthPayload {
+                access_token: "token".to_string(),
+                refresh_token: None,
+                user_id: "user".to_string(),
+                user_label: "user@example.test".to_string(),
+                device_id: Some("device-1".to_string()),
+                active_network_id: None,
+                virtual_ip: None,
+                expires_in: None,
+            },
+        ))
+        .expect("apply login");
+    let prepared = NetworkRuntimeState {
+        network_enabled: true,
+        virtual_ip: Some("10.0.0.8".to_string()),
+        ..NetworkRuntimeState::default()
+    };
+
+    let state = apply_prepared_runtime_refresh(&mut runtime, Ok(Some(prepared)));
+
+    assert!(state.network_enabled);
+    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.8"));
+}
+
+#[test]
+fn dispatch_business_event_type_matches_command_semantics() {
+    let state = ClientViewState::default();
+    assert_eq!(
+        method_business_event_type(
+            LocalServiceMethod::Dispatch,
+            Some("loginWithPassword"),
+            Some(&state),
+        ),
+        BUSINESS_SESSION_CHANGED
+    );
+    assert_eq!(
+        method_business_event_type(
+            LocalServiceMethod::Dispatch,
+            Some("syncAssignedIp"),
+            Some(&state),
+        ),
+        BUSINESS_NETWORK_RUNTIME_CHANGED
+    );
+    assert_eq!(
+        method_business_event_type(LocalServiceMethod::Dispatch, Some("refresh"), Some(&state),),
+        BUSINESS_STATE_CHANGED
+    );
+
+    let mut failed = state.clone();
+    failed.error = Some("expected failure".to_string());
+    assert_eq!(
+        method_business_event_type(
+            LocalServiceMethod::Dispatch,
+            Some("enableNetwork"),
+            Some(&failed),
+        ),
+        BUSINESS_NETWORK_SWITCH_FAILED
+    );
+}
+
+#[test]
+fn retried_local_request_id_publishes_one_business_event() {
+    let hub = RuntimeEventHub::with_capacity(4);
+    let request = serde_json::json!({
+        "method": "dispatch",
+        "args": {
+            "type": "refresh",
+            "requestId": "local-request-1",
+        },
+    })
+    .to_string();
+    let response = serde_json::to_string(&ClientViewState::default()).expect("encode state");
+
+    publish_method_business_event(&hub, &request, &response);
+    publish_method_business_event(&hub, &request, &response);
+
+    assert_eq!(hub.latest_revision(), 1);
+    let event = hub.next_after(0).expect("published event");
+    assert_eq!(event.event_id, "local-request-1");
+    assert_eq!(event.business_type, BUSINESS_STATE_CHANGED);
+}
+
+#[test]
+fn failed_platform_deactivation_preserves_enabled_runtime_state() {
+    let mut runtime = ClientRuntime::new(TestPlatformNetwork);
+    runtime.apply_network_enabled_state("10.0.0.8".to_string());
+
+    let state = commit_network_deactivation(
+        &mut runtime,
+        Err(anyhow::anyhow!("platform disable failed")),
+    );
+
+    assert!(state.network_enabled);
+    assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.8"));
+    assert_eq!(state.error.as_deref(), Some("platform disable failed"));
+}
+
+#[test]
 fn sync_assigned_ip_does_not_create_empty_session() {
     let _lock = crate::test_env_lock();
     let state_dir = std::env::temp_dir().join(format!(
@@ -122,13 +480,14 @@ fn sync_assigned_ip_does_not_create_empty_session() {
     let _ = fs::remove_dir_all(&state_dir);
 
     let mut runtime = ClientRuntime::new(TestPlatformNetwork);
-    let state = super::dispatch_with_side_effects(
-        &mut runtime,
-        ClientCommand::SyncAssignedIp(AssignedIpPayload {
-            virtual_ip: "10.0.0.2".to_string(),
-            prefix_len: Some(20),
-        }),
-    );
+    let payload = AssignedIpPayload {
+        virtual_ip: "10.0.0.2".to_string(),
+        prefix_len: Some(20),
+    };
+    assert!(super::prepare_assigned_ip_session(&payload)
+        .expect("prepare assigned IP without session")
+        .is_none());
+    let state = runtime.apply_assigned_ip_state(payload);
 
     assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.2"));
     assert!(
@@ -347,6 +706,56 @@ fn relay_session_targets_include_udp_and_derp_candidates() {
 }
 
 #[test]
+fn relay_session_targets_keep_one_candidate_per_transport() {
+    let selected = test_relay_selection(
+        "derp-selected",
+        "derp_tcp_tls_443",
+        "derp://203.0.113.10:29120",
+    );
+    let alternate = test_relay_selection(
+        "derp-alternate",
+        "derp_tcp_tls_443",
+        "derp://203.0.113.11:29120",
+    );
+
+    let targets = relay_session_targets(Some(&selected), &[alternate], false);
+
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].endpoint_id, "derp-selected");
+}
+
+#[test]
+fn relay_session_filter_rejects_ticket_for_another_transport() {
+    let mut ticket = test_relay_ticket("net-1", "node-local", "node-peer");
+    ticket.relay_url = "udp://relay.example:29110".to_string();
+    let sessions = vec![RelayPeerSession {
+        session_id: ticket.session_id.clone(),
+        peer_node_id: "node-peer".to_string(),
+        peer_virtual_ips: vec!["10.0.0.9".to_string()],
+        ticket,
+    }];
+
+    assert!(filter_relay_sessions_for_transport(&sessions, "derp_tcp_tls_443").is_empty());
+}
+
+#[test]
+fn relay_session_filter_keeps_ticket_for_requested_transport() {
+    let mut ticket = test_relay_ticket("net-1", "node-local", "node-peer");
+    ticket.relay_url = "derp://relay.example:29120".to_string();
+    let sessions = vec![RelayPeerSession {
+        session_id: ticket.session_id.clone(),
+        peer_node_id: "node-peer".to_string(),
+        peer_virtual_ips: vec!["10.0.0.9".to_string()],
+        ticket,
+    }];
+
+    assert_eq!(
+        filter_relay_sessions_for_transport(&sessions, "derp_tcp_tls_443").len(),
+        1
+    );
+}
+
+#[test]
 fn connect_plan_relay_path_becomes_path_candidate() {
     let candidate = relay_path_candidate_from_connect_plan(
         &PersistedConnectPlanPath {
@@ -499,7 +908,7 @@ fn connect_plan_relay_ticket_must_match_peer() {
 fn punch_connect_session_peer_endpoint_becomes_direct_udp_candidate() {
     let mut peer = test_peer("node-peer", &["10.0.0.9"]);
     peer.endpoints.push(crate::control_plane::ControlEndpoint {
-        endpoint_type: "lan".to_string(),
+        endpoint_type: "lan_udp".to_string(),
         address: "192.168.1.20:49152".to_string(),
         updated_at: 0,
     });
@@ -535,13 +944,56 @@ fn punch_connect_session_peer_endpoint_becomes_direct_udp_candidate() {
     );
 
     assert_eq!(paths.len(), 1);
-    assert_eq!(paths[0].candidates[0].kind, PathKind::DirectUdp);
+    assert_eq!(paths[0].candidates[0].kind, PathKind::LanUdp);
     assert_eq!(
         paths[0].candidates[0].address.as_deref(),
-        Some("203.0.113.20:49152")
+        Some("192.168.1.20:49152")
     );
     assert_eq!(
         paths[0].candidates[1].address.as_deref(),
+        Some("203.0.113.20:49152")
+    );
+}
+
+#[test]
+fn peer_endpoint_type_overrides_stale_connect_plan_type() {
+    let mut peer = test_peer("node-peer", &["10.0.0.9"]);
+    peer.endpoints.push(crate::control_plane::ControlEndpoint {
+        endpoint_type: "lan_udp".to_string(),
+        address: "192.168.1.20:49152".to_string(),
+        updated_at: 0,
+    });
+    let mut connect_plans = std::collections::BTreeMap::new();
+    connect_plans.insert(
+        peer.node_id.clone(),
+        PersistedConnectPlan {
+            peer_node_id: peer.node_id.clone(),
+            prefer_direct: true,
+            paths: vec![PersistedConnectPlanPath {
+                path_type: "direct_udp".to_string(),
+                endpoint: "192.168.1.20:49152".to_string(),
+                priority: 100,
+            }],
+            relay_ticket: None,
+            updated_at_ms: 1,
+        },
+    );
+
+    let paths = peer_path_configs(
+        &[peer],
+        "node-local",
+        &test_relay_selection("relay-udp", "udp", "relay.example:3478"),
+        &[],
+        &[],
+        Some(connect_plans),
+        Some(std::collections::BTreeMap::new()),
+    );
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0].candidates.len(), 1);
+    assert_eq!(paths[0].candidates[0].kind, PathKind::LanUdp);
+    assert_eq!(
+        paths[0].candidates[0].address.as_deref(),
         Some("192.168.1.20:49152")
     );
 }
@@ -606,6 +1058,18 @@ fn relay_only_path_policy_enabled_reads_env() {
 }
 
 #[test]
+fn local_status_prefers_canonical_platform_path_over_relay_transport() {
+    assert_eq!(
+        local_status_active_path(Some(&PathKind::DirectUdp), Some("udp".to_string())),
+        Some(serde_json::json!("direct_udp"))
+    );
+    assert_eq!(
+        local_status_active_path(None, Some("udp".to_string())),
+        Some(serde_json::json!("udp"))
+    );
+}
+
+#[test]
 fn valid_direct_candidate_address_rejects_zero_port() {
     assert!(valid_direct_candidate_address("203.0.113.20:49152"));
     assert!(valid_direct_candidate_address("udp://203.0.113.20:49152"));
@@ -618,6 +1082,7 @@ fn valid_direct_candidate_address_rejects_zero_port() {
 
 #[test]
 fn routes_include_peer_virtual_ip_host_routes_for_multi_device_mesh() {
+    let network_configs = vec![test_network_config(&[("a", "10.0.0.2"), ("b", "10.0.0.9")])];
     let routes = routes_with_peer_virtual_ips(
         vec![RouteSpec {
             destination: "10.0.0.0/24".to_string(),
@@ -627,6 +1092,7 @@ fn routes_include_peer_virtual_ip_host_routes_for_multi_device_mesh() {
             test_peer("node-a", &["10.0.0.2/32"]),
             test_peer("node-b", &["10.0.0.9"]),
         ],
+        &network_configs,
         "10.0.0.2",
     );
 
@@ -643,12 +1109,14 @@ fn routes_include_peer_virtual_ip_host_routes_for_multi_device_mesh() {
 
 #[test]
 fn routes_do_not_duplicate_existing_peer_host_routes() {
+    let network_configs = vec![test_network_config(&[("b", "10.0.0.9")])];
     let routes = routes_with_peer_virtual_ips(
         vec![RouteSpec {
             destination: "10.0.0.9/32".to_string(),
             gateway: None,
         }],
         &[test_peer("node-b", &["10.0.0.9"])],
+        &network_configs,
         "10.0.0.2",
     );
 
@@ -659,6 +1127,23 @@ fn routes_do_not_duplicate_existing_peer_host_routes() {
             .count(),
         1
     );
+}
+
+#[test]
+fn routes_use_authoritative_network_ip_instead_of_transport_candidate() {
+    let network_configs = vec![test_network_config(&[("peer", "10.0.0.3")])];
+    let routes = routes_with_peer_virtual_ips(
+        vec![RouteSpec {
+            destination: "100.101.50.145/32".to_string(),
+            gateway: None,
+        }],
+        &[test_peer("node-peer", &["100.101.50.145", "10.0.0.3"])],
+        &network_configs,
+        "10.0.0.2",
+    );
+
+    assert_eq!(routes.len(), 1);
+    assert_eq!(routes[0].destination, "10.0.0.3/32");
 }
 
 #[test]
@@ -1103,6 +1588,46 @@ fn test_peer(node_id: &str, virtual_ips: &[&str]) -> ControlPeer {
         relay_allowed: true,
         endpoints: Vec::new(),
     }
+}
+
+fn test_network_config(peers: &[(&str, &str)]) -> DeviceNetworkConfig {
+    DeviceNetworkConfig {
+        peers: peers
+            .iter()
+            .map(|(device_id, global_ip)| DeviceNetworkPeer {
+                device_id: (*device_id).to_string(),
+                global_ip: Some((*global_ip).to_string()),
+                ..DeviceNetworkPeer::default()
+            })
+            .collect(),
+        ..DeviceNetworkConfig::default()
+    }
+}
+
+#[test]
+fn peer_network_id_uses_the_network_containing_the_peer() {
+    let mut primary = test_network_config(&[("peer-primary", "10.0.0.2")]);
+    primary.network_id = "network-primary".to_string();
+    let mut shared = test_network_config(&[("peer-shared", "10.0.0.3")]);
+    shared.network_id = "network-shared".to_string();
+    let configs = vec![primary, shared];
+
+    assert_eq!(
+        peer_network_id(
+            "network-primary",
+            &test_peer("peer-shared", &["10.0.0.3"]),
+            &configs,
+        ),
+        "network-shared",
+    );
+    assert_eq!(
+        peer_network_id(
+            "network-primary",
+            &test_peer("peer-unknown", &["10.0.0.4"]),
+            &configs,
+        ),
+        "network-primary",
+    );
 }
 
 fn test_peer_path(node_id: &str, active_path: Option<PathKind>) -> PeerPathRuntime {

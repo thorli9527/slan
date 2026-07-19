@@ -64,9 +64,15 @@ func (s *networkAccessTestDevices) GetDevice(_ context.Context, deviceID string)
 	return item, ok, nil
 }
 
-func (s *networkAccessTestDevices) SaveDevice(context.Context, model.Device) error { return nil }
-func (s *networkAccessTestDevices) DeleteDevice(context.Context, string) error     { return nil }
-func (s *networkAccessTestDevices) NewDeviceVirtualIPID() string                   { return "vip-test-1" }
+func (s *networkAccessTestDevices) SaveDevice(_ context.Context, device model.Device) error {
+	if s.devices == nil {
+		s.devices = map[string]model.Device{}
+	}
+	s.devices[device.DeviceID] = device
+	return nil
+}
+func (s *networkAccessTestDevices) DeleteDevice(context.Context, string) error { return nil }
+func (s *networkAccessTestDevices) NewDeviceVirtualIPID() string               { return "vip-000001" }
 func (s *networkAccessTestDevices) GetDeviceLoginDevice(context.Context, string) (model.DeviceLoginDevice, bool, error) {
 	return model.DeviceLoginDevice{}, false, nil
 }
@@ -730,6 +736,9 @@ func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
 	}
 	if len(view.Items) != 1 || len(networks.networkDevices["net-1"]) != 1 {
 		t.Fatalf("expected referenced group and one materialized member, view=%+v members=%+v", view, networks.networkDevices["net-1"])
+	}
+	if got := devices.devices["dev-1"].VirtualIP; got != "10.0.0.1" {
+		t.Fatalf("expected group materialization to allocate 10.0.0.1, got %q", got)
 	}
 
 	view, err = service.RemoveNetworkDeviceGroup(context.Background(), RemoveNetworkDeviceGroupInput{

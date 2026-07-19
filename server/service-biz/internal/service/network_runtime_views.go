@@ -22,6 +22,7 @@ func punchNodeView(item model.PunchNode) PunchNodeView {
 		Address:       item.Endpoint,
 		PublicUDPIP:   host,
 		PublicUDPPort: port,
+		Priority:      item.Priority,
 	}
 }
 

@@ -278,6 +278,7 @@ class RelayDataPlaneConfig {
     required this.relayAddress,
     required this.localNodeId,
     required this.networkId,
+    this.nodeConfigs = const <NodeConfig>[],
     this.pathPolicy,
     this.peerPaths = const <PeerPathConfig>[],
     this.relayMtu,
@@ -291,6 +292,7 @@ class RelayDataPlaneConfig {
   final String relayAddress;
   final String localNodeId;
   final String networkId;
+  final List<NodeConfig> nodeConfigs;
   final PathPolicy? pathPolicy;
   final List<PeerPathConfig> peerPaths;
   final int? relayMtu;
@@ -305,6 +307,7 @@ class RelayDataPlaneConfig {
       relayAddress: json['relayAddress'] as String? ?? '',
       localNodeId: json['localNodeId'] as String? ?? '',
       networkId: json['networkId'] as String? ?? '',
+      nodeConfigs: _nodeConfigs(json['nodeConfigs']),
       pathPolicy: _pathPolicy(json['pathPolicy']),
       peerPaths: _peerPathConfigs(json['peerPaths']),
       relayMtu: json['relayMtu'] as int?,
@@ -321,12 +324,73 @@ class RelayDataPlaneConfig {
       'relayAddress': relayAddress,
       'localNodeId': localNodeId,
       'networkId': networkId,
+      'nodeConfigs': nodeConfigs.map((node) => node.toJson()).toList(),
       if (pathPolicy != null) 'pathPolicy': pathPolicy!.toJson(),
       'peerPaths': peerPaths.map((path) => path.toJson()).toList(),
       if (relayMtu != null) 'relayMtu': relayMtu,
       if (maxFramePayload != null) 'maxFramePayload': maxFramePayload,
       'aclPolicies': aclPolicies.map((policy) => policy.toJson()).toList(),
       'sessions': sessions.map((session) => session.toJson()).toList(),
+    };
+  }
+}
+
+/// NodeConfig is an opaque server-managed direct-discovery or relay node.
+class NodeConfig {
+  const NodeConfig({
+    required this.address,
+    required this.connectionType,
+    required this.transport,
+    required this.pathKind,
+    this.nodeId = '',
+    this.priority = 0,
+  });
+
+  final String nodeId;
+  final String connectionType;
+  final String transport;
+  final String pathKind;
+  final String address;
+  final int priority;
+
+  bool get isValid {
+    if (nodeId.trim().isEmpty || address.trim().isEmpty) {
+      return false;
+    }
+    return switch ((connectionType, transport, pathKind)) {
+      ('direct', 'udp', 'direct_udp') => true,
+      ('relay', 'udp', 'relay_udp') => true,
+      ('relay', 'tcp', 'relay_tcp') => true,
+      _ => false,
+    };
+  }
+
+  int get pathRank => switch (pathKind) {
+        'direct_udp' => 0,
+        'relay_udp' => 1,
+        'relay_tcp' => 2,
+        _ => 0x7fffffff,
+      };
+
+  factory NodeConfig.fromJson(Map<String, Object?> json) {
+    return NodeConfig(
+      nodeId: json['nodeId'] as String? ?? '',
+      connectionType: json['connectionType'] as String? ?? '',
+      transport: json['transport'] as String? ?? '',
+      pathKind: json['pathKind'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      priority: _intValue(json['priority']),
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      'nodeId': nodeId,
+      'connectionType': connectionType,
+      'transport': transport,
+      'pathKind': pathKind,
+      'address': address,
+      'priority': priority,
     };
   }
 }
@@ -650,6 +714,29 @@ List<PeerPathConfig> _peerPathConfigs(Object? value) {
       .whereType<Map>()
       .map((item) => PeerPathConfig.fromJson(item.cast<String, Object?>()))
       .toList(growable: false);
+}
+
+List<NodeConfig> _nodeConfigs(Object? value) {
+  if (value is! List) {
+    return const <NodeConfig>[];
+  }
+  final nodes = value
+      .whereType<Map>()
+      .map((item) => NodeConfig.fromJson(item.cast<String, Object?>()))
+      .where((node) => node.isValid)
+      .toList();
+  nodes.sort((left, right) {
+    final pathComparison = left.pathRank.compareTo(right.pathRank);
+    if (pathComparison != 0) {
+      return pathComparison;
+    }
+    final priorityComparison = left.priority.compareTo(right.priority);
+    if (priorityComparison != 0) {
+      return priorityComparison;
+    }
+    return left.nodeId.compareTo(right.nodeId);
+  });
+  return List<NodeConfig>.unmodifiable(nodes);
 }
 
 List<PathCandidate> _pathCandidates(Object? value) {

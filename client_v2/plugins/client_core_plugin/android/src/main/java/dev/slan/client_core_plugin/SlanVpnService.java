@@ -32,6 +32,8 @@ public final class SlanVpnService extends VpnService {
   static final String ACTION_STOP = "dev.slan.client_core_plugin.STOP_VPN";
   static final String EXTRA_CONFIG_JSON = "configJson";
   private static final String RESOLVER_CONFIG_KEY = "dns";
+  private static final String VPN_SOCKET_PREFS = "slan_vpn_sockets";
+  private static final String DIRECT_UDP_PORT_KEY = "direct_udp_port";
 
   private static final String CHANNEL_ID = "slan_vpn";
   private static final int NOTIFICATION_ID = 24018;
@@ -257,7 +259,7 @@ public final class SlanVpnService extends VpnService {
         protectedRelaySockets.add(descriptor);
         protectedRelaySockets.add(socket);
       } else {
-        int relayFd = detachProtectedIpv4DatagramSocket(hostPort.host, hostPort.port);
+        int relayFd = detachProtectedIpv4DatagramSocket(hostPort.host, hostPort.port, 0);
         fds[index] = relayFd;
         Log.i(
             TAG,
@@ -272,7 +274,8 @@ public final class SlanVpnService extends VpnService {
       }
     }
     if (needsDirectSocket) {
-      int directFd = detachProtectedIpv4DatagramSocket(null, 0);
+      int preferredPort = preferredDirectUdpPort(relayDataPlane);
+      int directFd = detachProtectedIpv4DatagramSocket(null, 0, preferredPort);
       fds[sessionCount] = directFd;
       Log.i(
           TAG,
@@ -284,13 +287,51 @@ public final class SlanVpnService extends VpnService {
     return fds;
   }
 
-  private int detachProtectedIpv4DatagramSocket(String remoteHost, int remotePort)
+  private int preferredDirectUdpPort(JSONObject relayDataPlane) {
+    int persisted =
+        getSharedPreferences(VPN_SOCKET_PREFS, MODE_PRIVATE).getInt(DIRECT_UDP_PORT_KEY, 0);
+    if (persisted > 0) {
+      return persisted;
+    }
+    String localNodeId = relayDataPlane.optString("localNodeId", "").trim();
+    String compact = localNodeId.startsWith("node-") ? localNodeId.substring(5) : localNodeId;
+    int seed;
+    try {
+      seed = Integer.parseInt(compact.substring(0, Math.min(4, compact.length())), 16);
+    } catch (RuntimeException ignored) {
+      seed = localNodeId.hashCode();
+    }
+    return 40000 + Math.floorMod(seed, 20000);
+  }
+
+  private int detachProtectedIpv4DatagramSocket(
+      String remoteHost, int remotePort, int preferredLocalPort)
       throws Exception {
     FileDescriptor rawFd =
         Os.socket(OsConstants.AF_INET, OsConstants.SOCK_DGRAM, OsConstants.IPPROTO_UDP);
     ParcelFileDescriptor descriptor = null;
     try {
-      Os.bind(rawFd, InetAddress.getByName("0.0.0.0"), 0);
+      try {
+        Os.bind(rawFd, InetAddress.getByName("0.0.0.0"), preferredLocalPort);
+      } catch (Exception bindError) {
+        if (preferredLocalPort <= 0) {
+          throw bindError;
+        }
+        Log.w(TAG, "Preferred direct UDP port unavailable; allocating a new port", bindError);
+        Os.bind(rawFd, InetAddress.getByName("0.0.0.0"), 0);
+      }
+      if (remoteHost == null) {
+        Object local = Os.getsockname(rawFd);
+        if (local instanceof InetSocketAddress) {
+          int localPort = ((InetSocketAddress) local).getPort();
+          if (localPort > 0) {
+            getSharedPreferences(VPN_SOCKET_PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(DIRECT_UDP_PORT_KEY, localPort)
+                .apply();
+          }
+        }
+      }
       if (remoteHost != null && !remoteHost.isEmpty()) {
         Os.connect(rawFd, InetAddress.getByName(remoteHost), remotePort);
       }

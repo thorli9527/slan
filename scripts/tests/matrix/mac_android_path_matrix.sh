@@ -49,20 +49,8 @@ list_region_node_ids() {
     *) fail "unknown node kind: $kind" ;;
   esac
   curl_internal "${BIZ_URL}/internal/wire/admin/${path}" | \
-    python3 - "$region" <<'PY'
-import json
-import sys
-
-region = sys.argv[1].strip()
-payload = json.load(sys.stdin)
-items = payload.get("items") or []
-for item in items:
-    if str(item.get("regionId", "")).strip() != region:
-        continue
-    node_id = str(item.get("nodeId", "")).strip()
-    if node_id:
-        print(node_id)
-PY
+    jq -r --arg region "$region" \
+      '.items[]? | select(.regionId == $region) | .nodeId // empty'
 }
 
 patch_node_status() {
@@ -122,6 +110,27 @@ set_derp_nodes() {
   done
 }
 
+set_single_derp_node() {
+  if [[ "$SKIP_ADMIN_PATCH" == "1" ]]; then
+    echo "skip DERP node administration: requested a single active node"
+    return 0
+  fi
+  local -a nodes=()
+  while IFS= read -r node; do
+    [[ -n "$node" ]] && nodes+=("$node")
+  done < <(list_region_node_ids derp dev)
+  [[ ${#nodes[@]} -gt 0 ]] || fail "no live DERP nodes found in region=dev"
+  local index
+  for index in "${!nodes[@]}"; do
+    if [[ "$index" == "0" ]]; then
+      patch_node_status derp dev "${nodes[$index]}" true true
+    else
+      patch_node_status derp dev "${nodes[$index]}" false true
+    fi
+  done
+  echo "DERP path test pinned to node=${nodes[0]}"
+}
+
 sudo_run() {
   if [[ -n "$SUDO_PASSWORD" ]]; then
     printf '%s\n' "$SUDO_PASSWORD" | sudo -S "$@"
@@ -134,11 +143,11 @@ install_macos_service_direct() {
   if [[ "$MANAGE_MAC_SERVICE" != "1" ]]; then
     return 0
   fi
-  echo "+ install macOS service with direct UDP enabled"
+  echo "+ install macOS service with server-managed direct UDP enabled"
   if [[ -n "$MACOS_SERVICE_BINARY" ]]; then
-    sudo_run env SLAN_DIRECT_UDP_ENDPOINT= scripts/install_macos_service.sh --binary "$MACOS_SERVICE_BINARY"
+    sudo_run env SLAN_FORCE_RELAY_ONLY=0 scripts/install_macos_service.sh --binary "$MACOS_SERVICE_BINARY"
   else
-    sudo_run env SLAN_DIRECT_UDP_ENDPOINT= scripts/install_macos_service.sh --app "$MACOS_APP_PATH"
+    sudo_run env SLAN_FORCE_RELAY_ONLY=0 scripts/install_macos_service.sh --app "$MACOS_APP_PATH"
   fi
 }
 
@@ -147,15 +156,15 @@ install_macos_service_no_direct() {
     echo "SLAN_PATH_MATRIX_MANAGE_MAC_SERVICE is not 1; assuming current Mac service direct UDP state is already suitable"
     return 0
   fi
-  echo "+ install macOS service with direct UDP disabled"
+  echo "+ install macOS service in relay-only test mode"
   if [[ -n "$MACOS_SERVICE_BINARY" ]]; then
     sudo_run env \
-      SLAN_DIRECT_UDP_ENDPOINT=disabled \
+      SLAN_FORCE_RELAY_ONLY=1 \
       SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}" \
       scripts/install_macos_service.sh --binary "$MACOS_SERVICE_BINARY"
   else
     sudo_run env \
-      SLAN_DIRECT_UDP_ENDPOINT=disabled \
+      SLAN_FORCE_RELAY_ONLY=1 \
       SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}" \
       scripts/install_macos_service.sh --app "$MACOS_APP_PATH"
   fi
@@ -190,6 +199,7 @@ run_socket_check() {
     SLAN_MACOS_APP_PATH="$MACOS_APP_PATH"
     SLAN_BIZ_URL="$BIZ_URL"
     SLAN_ANDROID_BIZ_URL="$ANDROID_BIZ_URL"
+    SLAN_FORCE_RELAY_ONLY="${SLAN_FORCE_RELAY_ONLY:-0}"
     SLAN_TEST_EMAIL="$email"
     SLAN_CLEANUP_REMOTE_TEST_DEVICES=1
   )
@@ -204,12 +214,13 @@ run_socket_check() {
 }
 
 run_direct() {
-  export SLAN_DIRECT_UDP_ENDPOINT=
+  export SLAN_FORCE_RELAY_ONLY=0
   unset SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST
   set_relay_nodes true
   set_derp_nodes true
   install_macos_service_direct
   run_socket_check direct \
+    SLAN_FORCE_RELAY_ONLY=0 \
     SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS=direct_udp \
     SLAN_EXPECT_ANDROID_DIRECT_CANDIDATES_CONTAINS="[0-9]" \
     SLAN_EXPECT_ANDROID_DIRECT_READY_MIN="${SLAN_EXPECT_DIRECT_READY_MIN:-1}" \
@@ -217,31 +228,31 @@ run_direct() {
 }
 
 run_udp_relay() {
-  export SLAN_DIRECT_UDP_ENDPOINT=disabled
+  export SLAN_FORCE_RELAY_ONLY=1
   export SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=udp
   set_relay_nodes true
   set_derp_nodes true
   install_macos_service_no_direct
   run_socket_check udp-relay \
-    SLAN_SKIP_ANDROID_TCP_SEND=1 \
-    SLAN_SKIP_MAC_TCP_SEND=1 \
+    SLAN_FORCE_RELAY_ONLY=1 \
     SLAN_EXPECT_ANDROID_RELAY_URL_CONTAINS="udp://" \
     SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS=relay_udp \
+    SLAN_EXPECT_ANDROID_DIRECT_READY_MAX=0 \
     ${SLAN_EXPECT_RELAY_FRAMES_SENT_MIN:+SLAN_EXPECT_ANDROID_RELAY_FRAMES_SENT_MIN="$SLAN_EXPECT_RELAY_FRAMES_SENT_MIN"}
 }
 
 run_tcp_relay() {
-  export SLAN_DIRECT_UDP_ENDPOINT=disabled
+  export SLAN_FORCE_RELAY_ONLY=1
   export SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TCP_RELAY_TRANSPORT_ALLOWLIST:-derp_tcp_tls_443}"
   set_relay_nodes false
-  set_derp_nodes true
+  set_single_derp_node
   install_macos_service_no_direct
   run_socket_check tcp-relay \
+    SLAN_FORCE_RELAY_ONLY=1 \
     SLAN_ANDROID_TEST_TIMEOUT_SECONDS="${SLAN_TCP_RELAY_ANDROID_TEST_TIMEOUT_SECONDS:-240}" \
-    SLAN_SKIP_ANDROID_UDP_SEND=1 \
-    SLAN_SKIP_MAC_UDP_SEND=1 \
     SLAN_EXPECT_ANDROID_RELAY_URL_CONTAINS="derp://" \
     SLAN_EXPECT_ANDROID_PATH_KIND_CONTAINS=derp_tcp_tls_443 \
+    SLAN_EXPECT_ANDROID_DIRECT_READY_MAX=0 \
     SLAN_EXPECT_ANDROID_DERP_PEER_IPS_CONTAINS="node-" \
     ${SLAN_EXPECT_RELAY_TCP_FRAMES_RECEIVED_MIN:+SLAN_EXPECT_ANDROID_RELAY_TCP_FRAMES_RECEIVED_MIN="$SLAN_EXPECT_RELAY_TCP_FRAMES_RECEIVED_MIN"}
 }

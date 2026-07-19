@@ -161,7 +161,7 @@ fn acl_rule_peer_matches(
                 .any(|ip| normalize_virtual_ip(ip) == *subject_ip)
         });
     }
-    if matches!(peer_type.as_str(), "domain") {
+    if matches!(peer_type.as_str(), "domain" | "device_group") {
         return acl_subject_ips(rule.direction.as_str(), packet_direction, packet)
             .iter()
             .any(|subject_ip| {
@@ -526,6 +526,50 @@ mod tests {
     }
 
     #[test]
+    fn acl_device_group_allow_all_accepts_every_tcp_and_udp_port() {
+        let policy = PlatformAclPolicy {
+            network_id: "network-1".to_string(),
+            rules: vec![PlatformAclRule {
+                rule_id: "allow-group-all".to_string(),
+                direction: "all".to_string(),
+                priority: 1,
+                action: "allow".to_string(),
+                protocol: "all".to_string(),
+                port_from: 0,
+                port_to: 0,
+                peer_type: "device_group".to_string(),
+                peer_value: "group-1".to_string(),
+                enabled: true,
+                resolved_peer_virtual_ips: vec!["10.0.0.2".to_string(), "10.0.0.3".to_string()],
+                ..PlatformAclRule::default()
+            }],
+        };
+
+        for port in [1, 22, 80, 443, 8080, 65_535] {
+            assert!(acl_allows_egress_packet(
+                &tcp_packet("10.0.0.2", "10.0.0.3", port),
+                std::slice::from_ref(&policy),
+                None,
+            ));
+            assert!(acl_allows_ingress_packet(
+                &tcp_packet("10.0.0.3", "10.0.0.2", port),
+                std::slice::from_ref(&policy),
+                None,
+            ));
+            assert!(acl_allows_egress_packet(
+                &udp_packet("10.0.0.2", "10.0.0.3", port),
+                std::slice::from_ref(&policy),
+                None,
+            ));
+            assert!(acl_allows_ingress_packet(
+                &udp_packet("10.0.0.3", "10.0.0.2", port),
+                std::slice::from_ref(&policy),
+                None,
+            ));
+        }
+    }
+
+    #[test]
     fn acl_denies_matching_device_and_protocol_port() {
         let packet = tcp_packet("10.0.0.2", "10.0.0.3", 443);
         let policy = PlatformAclPolicy {
@@ -834,6 +878,20 @@ mod tests {
         packet[20..22].copy_from_slice(&12345_u16.to_be_bytes());
         packet[22..24].copy_from_slice(&dst_port.to_be_bytes());
         packet[32] = 0x50;
+        let ip_sum = super::internet_checksum(&packet[..20]);
+        packet[10..12].copy_from_slice(&ip_sum.to_be_bytes());
+        packet
+    }
+
+    fn udp_packet(src: &str, dst: &str, dst_port: u16) -> Vec<u8> {
+        let mut packet = ipv4_packet(src, dst);
+        packet.resize(28, 0);
+        packet[2..4].copy_from_slice(&(28_u16).to_be_bytes());
+        packet[8] = 64;
+        packet[9] = 17;
+        packet[20..22].copy_from_slice(&12345_u16.to_be_bytes());
+        packet[22..24].copy_from_slice(&dst_port.to_be_bytes());
+        packet[24..26].copy_from_slice(&8_u16.to_be_bytes());
         let ip_sum = super::internet_checksum(&packet[..20]);
         packet[10..12].copy_from_slice(&ip_sum.to_be_bytes());
         packet

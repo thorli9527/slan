@@ -35,7 +35,7 @@ DEVICE_ID_A=""
 DEVICE_ID_B=""
 UDP_PORT="${SLAN_ANDROID_DUAL_UDP_PORT:-40001}"
 TCP_PORT="${SLAN_ANDROID_DUAL_TCP_PORT:-41001}"
-NETWORK_MODULE_RULES_MIN="${SLAN_ANDROID_DUAL_MIN_SECURITY_RULES:-12}"
+NETWORK_MODULE_RULES_MIN="${SLAN_ANDROID_DUAL_MIN_SECURITY_RULES:-6}"
 ANDROID_DEVICE_ID_WAIT_SECONDS="${SLAN_ANDROID_DUAL_DEVICE_ID_WAIT_SECONDS:-180}"
 ANDROID_DEBUG_EMULATOR_VPN_BYPASS="${SLAN_ANDROID_DEBUG_EMULATOR_VPN_BYPASS:-1}"
 # Phase 3/4 launch the receiver first, then wait for relay refresh, then build
@@ -55,6 +55,7 @@ ANDROID_VPN_CONSENT_GUARD_SECONDS="${SLAN_ANDROID_DUAL_VPN_CONSENT_GUARD_SECONDS
 ANDROID_VPN_CONSENT_POLL_SECONDS="${SLAN_ANDROID_DUAL_VPN_CONSENT_POLL_SECONDS:-2}"
 ANDROID_PRESET_VPN_BYPASS="${SLAN_ANDROID_DUAL_PRESET_VPN_BYPASS:-0}"
 ANDROID_BG_RECEIVER_COMPLETION_GRACE_SECONDS="${SLAN_ANDROID_DUAL_BG_RECEIVER_COMPLETION_GRACE_SECONDS:-20}"
+ANDROID_REQUIRE_DIRECT_UDP="${SLAN_ANDROID_DUAL_REQUIRE_DIRECT_UDP:-0}"
 
 LOG_A_PHASE1="$WORK_DIR/android-a-phase1.log"
 LOG_B_PHASE1="$WORK_DIR/android-b-phase1.log"
@@ -81,10 +82,12 @@ RULE_IDS=()
 RECORD_IDS=()
 BG_APP_DIRS=()
 ZONE_ID=""
+DEVICE_GROUP_ID=""
 ZONE_NAME=""
 NETWORK_ID=""
 SECURITY_GROUP_ID=""
 USER_ID=""
+USER_TOKEN=""
 ANDROID_IP_A=""
 ANDROID_IP_B=""
 
@@ -123,14 +126,20 @@ extract_json_field() {
 
 best_effort_delete() {
   local url="$1"
-  curl --silent --show-error --connect-timeout 5 --max-time 20 -X DELETE "$url" >/dev/null 2>&1 || true
+  local -a auth_args=()
+  [[ -n "$USER_TOKEN" ]] && auth_args=(-H "Authorization: Bearer ${USER_TOKEN}")
+  curl --silent --show-error --connect-timeout 5 --max-time 20 \
+    -X DELETE "$url" "${auth_args[@]}" >/dev/null 2>&1 || true
 }
 
 create_json() {
   local url="$1"
   local payload="$2"
+  local -a auth_args=()
+  [[ -n "$USER_TOKEN" ]] && auth_args=(-H "Authorization: Bearer ${USER_TOKEN}")
   curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -X POST "$url" \
+    "${auth_args[@]}" \
     -H 'Content-Type: application/json' \
     -d "$payload"
 }
@@ -219,22 +228,26 @@ register_user_if_needed() {
 }
 
 ensure_network_context() {
-  [[ -n "$NETWORK_ID" && -n "$USER_ID" && -n "$SECURITY_GROUP_ID" ]] && return 0
-
   local auth networks groups
   auth="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
     -X POST "${WEB_BASE_URL}/api/web/auth/login" \
     -H 'Content-Type: application/json' \
     -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
   USER_ID="$(extract_json_field "$auth" "userId")"
+  USER_TOKEN="$(extract_json_field "$auth" "token")"
   [[ -n "$USER_ID" ]] || fail "failed to parse user id"
+  [[ -n "$USER_TOKEN" ]] || fail "failed to parse user access token"
+
+  [[ -n "$NETWORK_ID" && -n "$SECURITY_GROUP_ID" ]] && return 0
 
   networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
     "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
   NETWORK_ID="$(extract_json_field "$networks" "networkId")"
   [[ -n "$NETWORK_ID" ]] || fail "failed to parse network id"
 
   groups="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
     "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/security-groups")"
   SECURITY_GROUP_ID="$(extract_json_field "$groups" "securityGroupId")"
   [[ -n "$SECURITY_GROUP_ID" ]] || fail "failed to parse security group id"
@@ -248,7 +261,7 @@ create_security_rule() {
   local priority="$5"
   local response rule_id
   response="$(create_json "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_ID}/rules" \
-    "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
+    "{\"direction\":\"${direction}\",\"priority\":${priority},\"action\":\"allow\",\"protocol\":\"${protocol}\",\"portFrom\":${port},\"portTo\":${port},\"peerType\":\"device_group\",\"peerValue\":\"${peer_value}\",\"enabled\":true}")"
   rule_id="$(extract_json_field "$response" "ruleId")"
   [[ -n "$rule_id" ]] || fail "failed to create ${protocol}:${port} ${direction} rule for ${peer_value}"
   RULE_IDS+=("$rule_id")
@@ -277,17 +290,34 @@ provision_dns_acl_resources() {
   RECORD_IDS+=("$record_id")
 
   local priority=100
-  local peer
-  for peer in "$DEVICE_ID_A" "$DEVICE_ID_B"; do
-    create_security_rule ingress "$peer" tcp 443 "$priority"; priority=$((priority + 10))
-    create_security_rule egress "$peer" tcp 443 "$priority"; priority=$((priority + 10))
-    create_security_rule ingress "$peer" udp "$UDP_PORT" "$priority"; priority=$((priority + 10))
-    create_security_rule egress "$peer" udp "$UDP_PORT" "$priority"; priority=$((priority + 10))
-    create_security_rule ingress "$peer" tcp "$TCP_PORT" "$priority"; priority=$((priority + 10))
-    create_security_rule egress "$peer" tcp "$TCP_PORT" "$priority"; priority=$((priority + 10))
-  done
+  create_security_rule ingress "$DEVICE_GROUP_ID" tcp 443 "$priority"; priority=$((priority + 10))
+  create_security_rule egress "$DEVICE_GROUP_ID" tcp 443 "$priority"; priority=$((priority + 10))
+  create_security_rule ingress "$DEVICE_GROUP_ID" udp "$UDP_PORT" "$priority"; priority=$((priority + 10))
+  create_security_rule egress "$DEVICE_GROUP_ID" udp "$UDP_PORT" "$priority"; priority=$((priority + 10))
+  create_security_rule ingress "$DEVICE_GROUP_ID" tcp "$TCP_PORT" "$priority"; priority=$((priority + 10))
+  create_security_rule egress "$DEVICE_GROUP_ID" tcp "$TCP_PORT" "$priority"
 
   log "provisioned dns zone ${ZONE_NAME} with records and acl rules"
+}
+
+provision_network_device_group() {
+  ensure_network_context
+  local response device_id
+  response="$(create_json "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+    "{\"name\":\"android-dual-$(date +%s%N)\",\"description\":\"Dual Android integration devices\"}")"
+  DEVICE_GROUP_ID="$(extract_json_field "$response" "groupId")"
+  [[ -n "$DEVICE_GROUP_ID" ]] || fail "failed to create Android device group"
+
+  for device_id in "$DEVICE_ID_A" "$DEVICE_ID_B"; do
+    curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
+      -H "Authorization: Bearer ${USER_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
+  done
+  create_json "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+    "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
+  log "attached Android device group ${DEVICE_GROUP_ID} to network ${NETWORK_ID}"
 }
 
 run_flutter_test_in_dir() {
@@ -625,6 +655,22 @@ extract_json_int_field() {
   printf '%s' "$json" | sed -n "s/.*\"${field}\":\\([0-9][0-9]*\\).*/\\1/p" | head -n 1
 }
 
+assert_direct_udp_runtime_log() {
+  local log_file="$1"
+  local direction="$2"
+  local marker payload ready sent received
+  marker="$(rg 'SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=' "$log_file" | tail -n 1 || true)"
+  [[ -n "$marker" ]] || fail "$direction missing Android runtime stats"
+  payload="${marker#*SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=}"
+  ready="$(extract_json_int_field "$payload" "directUdpReadyPeerCount")"
+  sent="$(extract_json_int_field "$payload" "directUdpFramesSent")"
+  received="$(extract_json_int_field "$payload" "directUdpFramesReceived")"
+  if [[ ! "$ready" =~ ^[1-9][0-9]*$ || ! "$sent" =~ ^[1-9][0-9]*$ || ! "$received" =~ ^[1-9][0-9]*$ ]]; then
+    fail "$direction did not use bidirectional direct UDP: ready=${ready:-0} sent=${sent:-0} received=${received:-0}"
+  fi
+  log "$direction direct UDP verified ready=$ready sent=$sent received=$received"
+}
+
 wait_for_relay_refresh_marker() {
   local admin_base_url="$1"
   local participant_id="$2"
@@ -704,6 +750,27 @@ run_phase1_capture() {
   if [[ -n "$RELAY_ADDRESS_B" ]]; then
     RELAY_ADMIN_BASE_URL="$(relay_admin_base_url_from_udp_address "$RELAY_ADDRESS_B" || true)"
   fi
+}
+
+bootstrap_device_ids() {
+  log "bootstrap both Android identities before assigning their device group"
+  run_flutter_test "$DEVICE_A" "$LOG_A_PHASE1" \
+    "SLAN_TEST_CLIENT_DEVICE_ID=" \
+    "SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=" \
+    -- \
+    "${DEVICE_A_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_CHECK_SWITCH=false" \
+    --dart-define="SLAN_TEST_WAIT_MQTT=false"
+  run_flutter_test "$DEVICE_B" "$LOG_B_PHASE1" \
+    "SLAN_TEST_CLIENT_DEVICE_ID=" \
+    "SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=" \
+    -- \
+    "${DEVICE_B_DART_DEFINES[@]}" \
+    --dart-define="SLAN_TEST_CHECK_SWITCH=false" \
+    --dart-define="SLAN_TEST_WAIT_MQTT=false"
+  DEVICE_ID_A="$(wait_for_completed_log_marker "$LOG_A_PHASE1" "SLAN_TEST_CLIENT_DEVICE_ID" "$ANDROID_PHASE1_DEVICE_ID_WAIT_SECONDS")"
+  DEVICE_ID_B="$(wait_for_completed_log_marker "$LOG_B_PHASE1" "SLAN_TEST_CLIENT_DEVICE_ID" "$ANDROID_PHASE1_DEVICE_ID_WAIT_SECONDS")"
+  [[ -n "$DEVICE_ID_A" && -n "$DEVICE_ID_B" ]] || fail "failed to bootstrap dual Android device ids"
 }
 
 wait_for_completed_log_marker() {
@@ -816,7 +883,10 @@ cleanup() {
       best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/records/${RECORD_IDS[$index]}"
     done
     [[ -n "$ZONE_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/dns/zones/${ZONE_ID}"
+    [[ -n "$DEVICE_GROUP_ID" ]] && best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
   fi
+  [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]] && \
+    best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}"
   slan_cleanup_remote_test_devices "$WEB_BASE_URL" "$EMAIL" "$PASSWORD" 1
   if [[ $status -ne 0 || "${SLAN_KEEP_ANDROID_DUAL_WORK_DIR:-0}" == "1" ]]; then
     echo "kept work dir: $WORK_DIR"
@@ -876,6 +946,9 @@ slan_cleanup_remote_test_devices "$WEB_BASE_URL" "$EMAIL" "$PASSWORD" 1
 prepare_device "$DEVICE_A"
 prepare_device "$DEVICE_B"
 
+bootstrap_device_ids
+provision_network_device_group
+
 log "phase 1: establish both android devices and capture device ids / virtual ips"
 PHASE1_MAX_ATTEMPTS="${SLAN_ANDROID_DUAL_PHASE1_MAX_ATTEMPTS:-3}"
 for phase1_attempt in $(seq 1 "$PHASE1_MAX_ATTEMPTS"); do
@@ -893,6 +966,9 @@ for phase1_attempt in $(seq 1 "$PHASE1_MAX_ATTEMPTS"); do
   slan_cleanup_remote_test_devices "$WEB_BASE_URL" "$EMAIL" "$PASSWORD" 1
   prepare_device "$DEVICE_A"
   prepare_device "$DEVICE_B"
+  DEVICE_GROUP_ID=""
+  bootstrap_device_ids
+  provision_network_device_group
   sleep 3
 done
 
@@ -1126,5 +1202,10 @@ run_flutter_test_with_ready_and_completion_markers "$DEVICE_A" "$LOG_A_PHASE4" \
 log "phase 4 sender returned"
 stop_bg_flutter_receiver "$PHASE4_BG_PID"
 log "phase 4 complete"
+
+if [[ "$ANDROID_REQUIRE_DIRECT_UDP" == "1" ]]; then
+  assert_direct_udp_runtime_log "$LOG_B_PHASE3" "android-b->android-a"
+  assert_direct_udp_runtime_log "$LOG_A_PHASE4" "android-a->android-b"
+fi
 
 log "android dual emulator integration ok email=$EMAIL a=$DEVICE_ID_A/$ANDROID_IP_A b=$DEVICE_ID_B/$ANDROID_IP_B zone=$ZONE_NAME"

@@ -181,7 +181,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         if let relayRuntime = relayRuntime,
           relayRuntime.send(packet: outboundPacket, destination: destination.address)
         {
-          if relayRuntime.lastSendPath == "direct_udp" {
+          if Self.isDirectUdpPath(relayRuntime.lastSendPath) {
             tunnelStats.directUdpFramesSent = relayRuntime.directUdpFramesSent
           } else {
             tunnelStats.relayFramesSent += 1
@@ -330,6 +330,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
   private static func nowMs() -> Int64 {
     Int64(Date().timeIntervalSince1970 * 1000)
+  }
+
+  private static func isDirectUdpPath(_ path: String?) -> Bool {
+    path == "lan_udp" || path == "ipv6_udp" || path == "direct_udp"
   }
 }
 
@@ -1091,8 +1095,10 @@ private final class RelayRuntime {
     guard let frame = Self.encodeFrame(seq: seq, configHash: configHash, payload: packet) else {
       return false
     }
-    if directUdpRuntime?.send(frame: frame, destination: destination) == true {
-      lastSendPath = "direct_udp"
+    if let directUdpRuntime = directUdpRuntime,
+      directUdpRuntime.send(frame: frame, destination: destination)
+    {
+      lastSendPath = directUdpRuntime.lastSendPath ?? "direct_udp"
       if let peer = relayPeer, Ipv4Packet.shouldHedgeDirectPacketToRelay(packet) {
         sendRelayFrame(peer, frame: frame, packet: packet)
       }
@@ -1209,12 +1215,19 @@ private final class RelayRuntime {
 
 // Direct UDP 运行时，聚合多个点对点候选路径并统计探测与数据帧状态。
 private final class DirectUdpRuntime {
+  private let networkId: String
   private let localNodeId: String
   private let maxFramePayload: Int
   private let configHash: UInt64
   private let packetFlow: NEPacketTunnelFlow
   private let aclPolicies: [AclPolicy]
   private var peers: [DirectUdpPeerRuntime]
+  private let punchNodes: [DirectUdpNodeConfig]
+  private let queue = DispatchQueue(label: "dev.slan.client.v2.direct-udp", qos: .utility)
+  private var listener: NWListener?
+  private var punchConnections: [NWConnection] = []
+  private var running = false
+  private(set) var lastSendPath: String?
 
   var attachedPeerCount: Int {
     peers.count
@@ -1258,6 +1271,8 @@ private final class DirectUdpRuntime {
     packetFlow: NEPacketTunnelFlow,
     aclPolicies: [AclPolicy]
   ) {
+    let networkId = (config["networkId"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     let peerPaths = config["peerPaths"] as? [[String: Any]] ?? []
     let peers = peerPaths.compactMap {
       DirectUdpPeerRuntime(
@@ -1272,21 +1287,65 @@ private final class DirectUdpRuntime {
     if peers.isEmpty {
       return nil
     }
+    self.networkId = networkId
     self.localNodeId = localNodeId
     self.maxFramePayload = maxFramePayload
     self.configHash = configHash
     self.packetFlow = packetFlow
     self.aclPolicies = aclPolicies
     self.peers = peers
+    self.punchNodes = (config["nodeConfigs"] as? [[String: Any]] ?? [])
+      .compactMap(DirectUdpNodeConfig.parse)
+      .sorted {
+        if $0.priority == $1.priority {
+          return $0.nodeId < $1.nodeId
+        }
+        return $0.priority < $1.priority
+      }
   }
 
-  // 启动所有直链候选的 UDP 探测。
+  // 先绑定一个共享 UDP 端口，再让打洞节点和所有 peer 复用该源端口。
   func start() {
-    peers.forEach { $0.start() }
+    guard listener == nil else {
+      return
+    }
+    running = true
+    let parameters = NWParameters.udp
+    parameters.allowLocalEndpointReuse = true
+    guard let listener = try? NWListener(using: parameters, on: .any) else {
+      running = false
+      return
+    }
+    listener.newConnectionHandler = { [weak self] connection in
+      guard let self = self, self.running else {
+        connection.cancel()
+        return
+      }
+      connection.start(queue: self.queue)
+      self.receiveUnsolicited(on: connection)
+    }
+    listener.stateUpdateHandler = { [weak self, weak listener] state in
+      guard let self = self, let listener = listener else {
+        return
+      }
+      if case .ready = state, let port = listener.port {
+        self.startSharedPortConnections(port)
+      }
+      if case .failed = state {
+        self.stop()
+      }
+    }
+    self.listener = listener
+    listener.start(queue: queue)
   }
 
   // 停止直链 UDP 连接，避免 NetworkExtension 退出后仍持有 socket。
   func stop() {
+    running = false
+    listener?.cancel()
+    listener = nil
+    punchConnections.forEach { $0.cancel() }
+    punchConnections.removeAll()
     peers.forEach { $0.stop() }
     peers.removeAll()
   }
@@ -1298,7 +1357,103 @@ private final class DirectUdpRuntime {
     else {
       return false
     }
-    return peer.send(frame)
+    let sent = peer.send(frame)
+    if sent {
+      lastSendPath = peer.pathKind
+    }
+    return sent
+  }
+
+  private func startSharedPortConnections(_ localPort: Network.NWEndpoint.Port) {
+    guard running else {
+      return
+    }
+    peers.forEach { $0.start(localPort: localPort, queue: queue) }
+    startPunchConnections(localPort: localPort)
+  }
+
+  private func startPunchConnections(localPort: Network.NWEndpoint.Port) {
+    guard !networkId.isEmpty else {
+      return
+    }
+    punchConnections.forEach { $0.cancel() }
+    punchConnections = punchNodes.compactMap { node in
+      guard let endpoint = DirectUdpEndpoint.parse(node.address) else {
+        return nil
+      }
+      let connection = NWConnection(
+        host: endpoint.host,
+        port: endpoint.port,
+        using: Self.sharedPortParameters(localPort)
+      )
+      connection.stateUpdateHandler = { [weak self, weak connection] state in
+        guard let self = self, let connection = connection, self.running else {
+          return
+        }
+        if case .ready = state {
+          self.sendPunchProbe(on: connection)
+          self.receivePunchResponse(on: connection)
+          self.schedulePunchProbe(on: connection)
+        }
+      }
+      connection.start(queue: queue)
+      return connection
+    }
+  }
+
+  private func sendPunchProbe(on connection: NWConnection) {
+    let payload: [String: Any] = [
+      "kind": "endpoint_probe",
+      "networkId": networkId,
+      "nodeId": localNodeId,
+      "type": "direct_udp",
+      "natType": "unknown"
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload) else {
+      return
+    }
+    connection.send(content: data, completion: .contentProcessed { _ in })
+  }
+
+  private func schedulePunchProbe(on connection: NWConnection) {
+    queue.asyncAfter(deadline: .now() + 15) { [weak self, weak connection] in
+      guard let self = self, let connection = connection, self.running else {
+        return
+      }
+      self.sendPunchProbe(on: connection)
+      self.schedulePunchProbe(on: connection)
+    }
+  }
+
+  private func receivePunchResponse(on connection: NWConnection) {
+    connection.receiveMessage { [weak self, weak connection] _, _, _, _ in
+      guard let self = self, let connection = connection, self.running else {
+        return
+      }
+      self.receivePunchResponse(on: connection)
+    }
+  }
+
+  private func receiveUnsolicited(on connection: NWConnection) {
+    connection.receiveMessage { [weak self, weak connection] data, _, _, _ in
+      guard let self = self, let connection = connection, self.running else {
+        connection?.cancel()
+        return
+      }
+      if let data = data {
+        for peer in self.peers where peer.consume(data, responseConnection: connection) {
+          break
+        }
+      }
+      self.receiveUnsolicited(on: connection)
+    }
+  }
+
+  fileprivate static func sharedPortParameters(_ localPort: Network.NWEndpoint.Port) -> NWParameters {
+    let parameters = NWParameters.udp
+    parameters.allowLocalEndpointReuse = true
+    parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.any), port: localPort)
+    return parameters
   }
 }
 
@@ -1306,6 +1461,7 @@ private final class DirectUdpRuntime {
 private final class DirectUdpPeerRuntime {
   private let peerNodeId: String
   private let peerVirtualIps: Set<String>
+  fileprivate let pathKind: String
   private let localNodeId: String
   private let localVirtualIp: String
   private let configHash: UInt64
@@ -1341,8 +1497,10 @@ private final class DirectUdpPeerRuntime {
       .map(RelayPeerRuntime.normalizeVirtualIp)
       .filter { !$0.isEmpty }
     let candidates = peerPath["candidates"] as? [[String: Any]] ?? []
-    guard let address = candidates.compactMap(Self.directUdpAddress).first,
-      let endpoint = Self.endpoint(address),
+    guard let candidate = candidates.compactMap(Self.directUdpCandidate).min(by: {
+      Self.pathPriority($0.kind) < Self.pathPriority($1.kind)
+    }),
+      let endpoint = DirectUdpEndpoint.parse(candidate.address),
       !peerNodeId.isEmpty,
       !peerVirtualIps.isEmpty
     else {
@@ -1350,6 +1508,7 @@ private final class DirectUdpPeerRuntime {
     }
     self.peerNodeId = peerNodeId
     self.peerVirtualIps = Set(peerVirtualIps)
+    self.pathKind = candidate.kind
     self.localNodeId = localNodeId
     self.localVirtualIp = RelayPeerRuntime.normalizeVirtualIp(localVirtualIp)
     self.configHash = configHash
@@ -1359,12 +1518,16 @@ private final class DirectUdpPeerRuntime {
   }
 
   // 建立 UDP NWConnection，ready 后立即开始接收和周期性探测。
-  func start() {
+  func start(localPort: Network.NWEndpoint.Port, queue: DispatchQueue) {
     guard connection == nil else {
       return
     }
     running = true
-    let connection = NWConnection(host: endpoint.host, port: endpoint.port, using: .udp)
+    let connection = NWConnection(
+      host: endpoint.host,
+      port: endpoint.port,
+      using: DirectUdpRuntime.sharedPortParameters(localPort)
+    )
     connection.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
       guard let self = self else {
         return
@@ -1382,7 +1545,7 @@ private final class DirectUdpPeerRuntime {
       }
     }
     self.connection = connection
-    connection.start(queue: DispatchQueue.global(qos: .utility))
+    connection.start(queue: queue)
   }
 
   // 关闭 peer 直链连接并重置 ready 状态。
@@ -1446,35 +1609,7 @@ private final class DirectUdpPeerRuntime {
         return
       }
       if let data = data {
-        if self.consumeControl(data) {
-          if self.running {
-            self.receive()
-          }
-          return
-        }
-        if let packet = RelayRuntime.decodeFrame(data) {
-          self.ready = true
-          self.framesReceived += 1
-          guard AclPolicy.allows(packet, policies: self.aclPolicies, direction: .ingress, peer: self.aclPeer) else {
-            if self.running {
-              self.receive()
-            }
-            return
-          }
-          if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: self.localVirtualIp)
-          {
-            self.seq &+= 1
-            if let frame = RelayRuntime.encodeFrame(
-              seq: self.seq,
-              configHash: self.configHash,
-              payload: reply
-            ) {
-              _ = self.send(frame)
-            }
-          } else {
-            self.writePacketToFlow(Ipv4Packet.normalizeTransportChecksums(packet))
-          }
-        }
+        _ = self.consume(data, responseConnection: self.connection)
       }
       if self.running {
         self.receive()
@@ -1482,8 +1617,40 @@ private final class DirectUdpPeerRuntime {
     }
   }
 
+  // 同时处理已连接 socket 和共享监听端口收到的数据。
+  @discardableResult
+  fileprivate func consume(_ data: Data, responseConnection: NWConnection?) -> Bool {
+    if consumeControl(data, responseConnection: responseConnection) {
+      return true
+    }
+    guard let packet = RelayRuntime.decodeFrame(data),
+      let source = Ipv4Packet.sourceAddress(packet),
+      peerVirtualIps.contains(RelayPeerRuntime.normalizeVirtualIp(source))
+    else {
+      return false
+    }
+    ready = true
+    framesReceived += 1
+    guard AclPolicy.allows(packet, policies: aclPolicies, direction: .ingress, peer: aclPeer) else {
+      return true
+    }
+    if let reply = Ipv4Packet.icmpEchoReply(for: packet, localVirtualIp: localVirtualIp) {
+      seq &+= 1
+      if let frame = RelayRuntime.encodeFrame(seq: seq, configHash: configHash, payload: reply) {
+        if let responseConnection = responseConnection, responseConnection !== connection {
+          responseConnection.send(content: frame, completion: .contentProcessed { _ in })
+        } else {
+          _ = send(frame)
+        }
+      }
+    } else {
+      writePacketToFlow(Ipv4Packet.normalizeTransportChecksums(packet))
+    }
+    return true
+  }
+
   // 处理直链控制消息，probe 会回 pong，pong/probe 都会把 peer 标记为 ready。
-  private func consumeControl(_ data: Data) -> Bool {
+  private func consumeControl(_ data: Data, responseConnection: NWConnection?) -> Bool {
     guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       value["kind"] as? String == "direct_udp",
       let type = value["type"] as? String
@@ -1496,7 +1663,19 @@ private final class DirectUdpPeerRuntime {
     ready = true
     if type == "probe" {
       probesReceived += 1
-      sendPong()
+      if let responseConnection = responseConnection, responseConnection !== connection {
+        let payload: [String: Any] = [
+          "kind": "direct_udp",
+          "type": "pong",
+          "nodeId": localNodeId
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload) {
+          responseConnection.send(content: data, completion: .contentProcessed { _ in })
+          pongsSent += 1
+        }
+      } else {
+        sendPong()
+      }
     } else if type == "pong" {
       pongsReceived += 1
     }
@@ -1517,7 +1696,7 @@ private final class DirectUdpPeerRuntime {
   }
 
   // 从路径候选中筛选可以用于点对点直链的 UDP 地址。
-  private static func directUdpAddress(_ candidate: [String: Any]) -> String? {
+  private static func directUdpCandidate(_ candidate: [String: Any]) -> (kind: String, address: String)? {
     let kind = (candidate["kind"] as? String ?? "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .lowercased()
@@ -1526,10 +1705,49 @@ private final class DirectUdpPeerRuntime {
     }
     let address = (candidate["address"] as? String ?? "")
       .trimmingCharacters(in: .whitespacesAndNewlines)
-    return address.isEmpty ? nil : address
+    return address.isEmpty ? nil : (kind, address)
   }
 
-  private static func endpoint(_ address: String) -> (
+  private static func pathPriority(_ kind: String) -> Int {
+    switch kind {
+    case "lan_udp": return 0
+    case "ipv6_udp": return 1
+    case "direct_udp": return 2
+    default: return Int.max
+    }
+  }
+
+}
+
+private struct DirectUdpNodeConfig {
+  let nodeId: String
+  let address: String
+  let priority: Int
+
+  static func parse(_ value: [String: Any]) -> DirectUdpNodeConfig? {
+    let nodeId = AclPolicy.string(value["nodeId"])
+    let connectionType = AclPolicy.string(value["connectionType"]).lowercased()
+    let transport = AclPolicy.string(value["transport"]).lowercased()
+    let pathKind = AclPolicy.string(value["pathKind"]).lowercased()
+    let address = AclPolicy.string(value["address"])
+    guard !nodeId.isEmpty,
+      connectionType == "direct",
+      transport == "udp",
+      pathKind == "direct_udp",
+      DirectUdpEndpoint.parse(address) != nil
+    else {
+      return nil
+    }
+    return DirectUdpNodeConfig(
+      nodeId: nodeId,
+      address: address,
+      priority: AclPolicy.int(value["priority"])
+    )
+  }
+}
+
+private enum DirectUdpEndpoint {
+  static func parse(_ address: String) -> (
     host: Network.NWEndpoint.Host,
     port: Network.NWEndpoint.Port
   )? {

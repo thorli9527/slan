@@ -134,6 +134,18 @@ slan_linux_stop_runtime() {
     pkill -x "$process_name" >/dev/null 2>&1 || true
   done
 
+  # Linux truncates process names to 15 bytes, so client-core-service cannot
+  # reliably be stopped with pkill -x. Match only the installed executables.
+  pkill -f "^$SLAN_LINUX_SERVICE_BIN([[:space:]]|$)" >/dev/null 2>&1 || true
+  pkill -f "^$SLAN_LINUX_GUI_BIN([[:space:]]|$)" >/dev/null 2>&1 || true
+
+  stop_attempt=0
+  while pgrep -f "^$SLAN_LINUX_SERVICE_BIN([[:space:]]|$)" >/dev/null 2>&1 && \
+    [ "$stop_attempt" -lt 20 ]; do
+    stop_attempt=$((stop_attempt + 1))
+    sleep 1
+  done
+
   rm -f "$SLAN_LINUX_ETC_SERVICE_UNIT_PATH" "$SLAN_LINUX_SERVICE_UNIT_PATH"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload >/dev/null 2>&1 || true

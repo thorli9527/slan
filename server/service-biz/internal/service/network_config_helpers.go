@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
-	"github.com/slan/service-biz/internal/pkg/wirekit"
 )
 
 func assignedNetworkIPMap(cidr string, deviceIDs []string) (map[string]string, int) {
@@ -47,10 +46,12 @@ func assignedNetworkIPMap(cidr string, deviceIDs []string) (map[string]string, i
 }
 
 func deviceGlobalIP(device model.Device) string {
-	if value := strings.TrimSpace(device.VirtualIP); value != "" {
-		return value
-	}
-	return wirekit.DeviceVirtualIP(device.DeviceID)
+	return strings.TrimSpace(device.VirtualIP)
+}
+
+func managedDeviceVirtualIP(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value)).To4()
+	return ip != nil && ip[0] == 10
 }
 
 func allocatedDeviceVirtualIP(sequenceID string) string {

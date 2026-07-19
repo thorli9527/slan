@@ -88,6 +88,38 @@ assert_safe_install_root() {
   esac
 }
 
+stop_runtime() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop slan-client-v2.service >/dev/null 2>&1 || true
+    systemctl reset-failed slan-client-v2.service >/dev/null 2>&1 || true
+  fi
+
+  attempt=0
+  while [ "$attempt" -lt 20 ]; do
+    found=0
+    for process_exe in /proc/[0-9]*/exe; do
+      target="$(readlink "$process_exe" 2>/dev/null || true)"
+      case "$target" in
+        "$install_root/bin/client-core-service"|"$install_root/gui/slan_client_v2")
+          found=1
+          pid="${process_exe#/proc/}"
+          pid="${pid%/exe}"
+          if [ "$attempt" -lt 10 ]; then
+            kill "$pid" >/dev/null 2>&1 || true
+          else
+            kill -KILL "$pid" >/dev/null 2>&1 || true
+          fi
+          ;;
+      esac
+    done
+    [ "$found" -eq 0 ] && return 0
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  echo "Unable to stop existing SLAN client runtime" >&2
+  return 1
+}
+
 extract_package() {
   package_path="$1"
   install_root_prefix="${install_root#/}/"
@@ -134,6 +166,7 @@ if command -v curl >/dev/null 2>&1; then
   tmp_pkg="$(mktemp /tmp/slan-client-linux.XXXXXX.tar.gz)"
   if curl -fsSL "$package_url" -o "$tmp_pkg"; then
     assert_safe_install_root
+    stop_runtime
     rm -rf "$install_root"
     extract_package "$tmp_pkg"
   else
@@ -151,6 +184,7 @@ SLAN_CLIENT_V2_INSTALL_ROOT=$install_root
 SLAN_LINUX_TRAY_MODE=$tray_mode
 EOF
 if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload 2>/dev/null || true
   systemctl enable --now slan-client-v2 2>/dev/null || true
 fi
 echo "SLAN Client V2 bootstrap config written to $config_dir"

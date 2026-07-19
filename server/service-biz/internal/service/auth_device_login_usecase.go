@@ -157,7 +157,7 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 		device.LastSeenAt = now
 		device.UpdatedAt = now
 	}
-	if strings.TrimSpace(device.VirtualIP) == "" {
+	if !managedDeviceVirtualIP(device.VirtualIP) {
 		device.VirtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(s.Devices))
 	}
 	if err := s.Devices.SaveDevice(ctx, device); err != nil {

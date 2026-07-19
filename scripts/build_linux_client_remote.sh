@@ -30,6 +30,7 @@ ssh_opts=(
   -o StrictHostKeyChecking=accept-new
   -o ServerAliveInterval=30
   -o ConnectTimeout=15
+  -o NumberOfPasswordPrompts=1
 )
 
 log() {

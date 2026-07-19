@@ -171,6 +171,13 @@ void main() {
       const relayTransportAllowlist = String.fromEnvironment(
         'SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST',
       );
+      const forceRelayOnlyValue = String.fromEnvironment(
+        'SLAN_TEST_FORCE_RELAY_ONLY',
+        defaultValue: 'false',
+      );
+      final forceRelayOnly = const {'1', 'true', 'yes', 'on'}.contains(
+        forceRelayOnlyValue.trim().toLowerCase(),
+      );
       if (setAndroidVpnBypassOnly) {
         await ClientCorePlugin().setAndroidDebugEmulatorVpnBypass(
           androidDebugEmulatorVpnBypass,
@@ -178,6 +185,11 @@ void main() {
         return;
       }
       messageCheck.validate();
+
+      if (Platform.isAndroid) {
+        await ClientCorePlugin().setAndroidTestForceRelayOnly(forceRelayOnly);
+        debugPrint('SLAN_TEST_FORCE_RELAY_ONLY=$forceRelayOnly');
+      }
 
       final email = configuredEmail.trim().isEmpty
           ? 'mobile-login-${DateTime.now().microsecondsSinceEpoch}@example.test'

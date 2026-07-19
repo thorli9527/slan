@@ -44,7 +44,7 @@ func buildDeviceProfile(ctx context.Context, users repository.UserRepository, ne
 			view.OwnerEmail = owner.Email
 		}
 	}
-	items, err := networks.ListNetworksByDevice(ctx, device.DeviceID)
+	items, err := activeDeviceNetworks(ctx, networks, device.DeviceID)
 	if err != nil {
 		return DeviceProfileView{}, err
 	}
@@ -55,4 +55,22 @@ func buildDeviceProfile(ctx context.Context, users repository.UserRepository, ne
 	view.ActiveNetworkID = activeNetwork.NetworkID
 	view.MembershipStatus = "active"
 	return view, nil
+}
+
+func activeDeviceNetworks(ctx context.Context, networks repository.NetworkRepository, deviceID string) ([]model.Network, error) {
+	items, err := networks.ListNetworksByDevice(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	active := make([]model.Network, 0, len(items))
+	for _, network := range items {
+		member, ok, err := networks.GetNetworkDevice(ctx, network.NetworkID, deviceID)
+		if err != nil {
+			return nil, err
+		}
+		if ok && networkMemberActive(member) {
+			active = append(active, network)
+		}
+	}
+	return active, nil
 }

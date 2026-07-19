@@ -11,7 +11,13 @@ import 'package:flutter/services.dart';
 /// `{ "method": "...", "args": {...} }`，服务返回一行 JSON。这个类只负责
 /// 协议封装，不持有 UI 状态。
 class ClientCoreLocalService {
-  ClientCoreLocalService({String? host}) : _host = host;
+  ClientCoreLocalService({
+    String? host,
+    Duration connectTimeout = const Duration(seconds: 2),
+    Duration? responseTimeoutOverride,
+  })  : _host = host,
+        _connectTimeout = connectTimeout,
+        _responseTimeoutOverride = responseTimeoutOverride;
 
   /// 编译期指定的本地服务地址，便于测试和定制端口。
   static const _definedServiceHost =
@@ -19,6 +25,28 @@ class ClientCoreLocalService {
 
   /// 构造时显式传入的服务地址，优先级最高。
   final String? _host;
+  final Duration _connectTimeout;
+  final Duration? _responseTimeoutOverride;
+
+  static const _defaultResponseTimeout = Duration(seconds: 15);
+  static const _commandResponseTimeout = Duration(seconds: 65);
+  static const _watchResponseGrace = Duration(seconds: 5);
+  static const _commandMethods = <String>{
+    'start',
+    'refresh',
+    'dispatch',
+    'consoleLoginKey',
+    'localEnsureDevice',
+    'localConnectControlMqtt',
+    'localRefreshRelayCandidates',
+    'localRelayPrepare',
+    'localRegisterTestUser',
+    'localNetworkActivate',
+    'localNetworkDeactivate',
+    'localNetworkShutdown',
+    'localLogout',
+  };
+  static int _requestSequence = 0;
 
   /// 查询当前 UI 状态快照。
   Future<Map<String, Object?>?> localState() async {
@@ -167,31 +195,19 @@ class ClientCoreLocalService {
     );
   }
 
-  /// 通过 Rust local API 统一上报设备 runtime 到控制面。
-  Future<Map<String, Object?>?> localReportDeviceRuntime({
-    required String deviceId,
-    required Map<String, Object?> body,
-  }) async {
-    return requestJson(
-      'localReportDeviceRuntime',
-      arguments: {
-        'deviceId': deviceId,
-        'body': body,
-      },
-    );
-  }
-
   /// 长轮询等待业务事件。
   ///
   /// 业务事件用于驱动 UI 增量刷新，例如登录成功、网络配置变化、消息到达。
   Future<Map<String, Object?>?> localBusinessEventWatch({
     required int lastRevision,
+    String? streamId,
     int timeoutMs = 30000,
   }) async {
     return requestJson(
       'localBusinessEventWatch',
       arguments: {
         'lastRevision': lastRevision,
+        if (streamId != null && streamId.isNotEmpty) 'streamId': streamId,
         'timeoutMs': timeoutMs,
       },
       allowEmptyResponse: true,
@@ -253,6 +269,7 @@ class ClientCoreLocalService {
     String method, {
     Object? arguments,
     bool allowEmptyResponse = false,
+    String? requestId,
   }) async {
     final host = _serviceHost();
     final separator = host.lastIndexOf(':');
@@ -271,15 +288,18 @@ class ClientCoreLocalService {
       );
     }
 
+    final effectiveRequestId = requestId ?? createRequestId();
+    final requestArguments =
+        _argumentsWithRequestId(arguments, effectiveRequestId);
     final socket = await Socket.connect(
       hostname,
       port,
-      timeout: const Duration(seconds: 2),
+      timeout: _connectTimeout,
     );
     try {
       final payload = jsonEncode({
         'method': method,
-        'args': arguments ?? <String, Object?>{},
+        'args': requestArguments,
       });
       socket.write('$payload\n');
       await socket.flush();
@@ -289,7 +309,20 @@ class ClientCoreLocalService {
             .transform(utf8.decoder)
             .transform(const LineSplitter())
             .first
-            .timeout(const Duration(seconds: 90));
+            .timeout(responseTimeoutFor(method, requestArguments));
+      } on TimeoutException catch (error) {
+        socket.destroy();
+        throw PlatformException(
+          code: 'local_service_timeout',
+          message: 'SLAN local service request timed out: $method',
+          details: {
+            'method': method,
+            'timeoutMs':
+                responseTimeoutFor(method, requestArguments).inMilliseconds,
+            'requestId': effectiveRequestId,
+            'error': error.toString(),
+          },
+        );
       } on StateError {
         if (allowEmptyResponse) {
           return '';
@@ -297,8 +330,48 @@ class ClientCoreLocalService {
         rethrow;
       }
     } finally {
-      await socket.close();
+      socket.destroy();
     }
+  }
+
+  String createRequestId() => _nextRequestId();
+
+  Duration responseTimeoutFor(String method, Object? arguments) {
+    final override = _responseTimeoutOverride;
+    if (override != null) {
+      return override;
+    }
+    if (method == 'localStateWatch' || method == 'localBusinessEventWatch') {
+      final configuredMs = arguments is Map ? arguments['timeoutMs'] : null;
+      final timeoutMs = configuredMs is num ? configuredMs.toInt() : 30000;
+      return Duration(
+        milliseconds:
+            timeoutMs.clamp(1000, 60000) + _watchResponseGrace.inMilliseconds,
+      );
+    }
+    return _commandMethods.contains(method)
+        ? _commandResponseTimeout
+        : _defaultResponseTimeout;
+  }
+
+  static String _nextRequestId() {
+    _requestSequence += 1;
+    final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
+    return 'flutter$timestamp${_requestSequence.toRadixString(16)}';
+  }
+
+  static Object _argumentsWithRequestId(Object? arguments, String requestId) {
+    if (arguments == null) {
+      return <String, Object?>{'requestId': requestId};
+    }
+    if (arguments is Map) {
+      final normalized = <String, Object?>{
+        for (final entry in arguments.entries) '${entry.key}': entry.value,
+      };
+      normalized.putIfAbsent('requestId', () => requestId);
+      return normalized;
+    }
+    return arguments;
   }
 
   /// 解析本地服务地址。

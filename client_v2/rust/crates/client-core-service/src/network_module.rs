@@ -3,20 +3,21 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use anyhow::Result;
 use serde::Serialize;
 
 use crate::{
     control_plane::{
-        ControlPlaneClient, DeviceNetworkConfig, DeviceNetworkPeer, DeviceResolverConfig,
-        DeviceResolverRecord, DeviceResolverZone, DeviceSecurityRule,
+        DeviceNetworkConfig, DeviceNetworkPeer, DeviceResolverConfig, DeviceResolverRecord,
+        DeviceResolverZone, DeviceSecurityRule,
     },
     network_event::{
-        NetworkEventAclChangedPayload, NetworkEventConfigChangedPayload, NetworkEventEnvelope,
-        NetworkEventMemberPayload, NetworkEventMemberRemovedPayload, NetworkEventPresencePayload,
-        NetworkEventResolverChangedPayload, NetworkEventType, NetworkSnapshotPayload,
+        NetworkEventAclChangedPayload, NetworkEventConfigChangedPayload,
+        NetworkEventDeviceGroupPayload, NetworkEventDeviceGroupRemovedPayload,
+        NetworkEventEnvelope, NetworkEventMemberPayload, NetworkEventMemberRemovedPayload,
+        NetworkEventPresencePayload, NetworkEventResolverChangedPayload, NetworkEventType,
+        NetworkSnapshotPayload,
     },
-    session_store::{session_device_api_token, PersistedSession},
+    session_store::PersistedSession,
 };
 
 static NETWORK_MODULE: OnceLock<Mutex<ClientNetworkModule>> = OnceLock::new();
@@ -84,44 +85,10 @@ impl ClientNetworkModule {
     }
 }
 
-pub(crate) fn refresh_network_module_from_session(
-    client: &ControlPlaneClient,
+pub(crate) fn sync_resolver_runtime_state(
     session: &PersistedSession,
-) -> Result<Vec<DeviceNetworkConfig>> {
-    let Some(device_id) = session
-        .device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(Vec::new());
-    };
-    if let Some(network_id) = session
-        .active_network_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if let Ok(snapshot) =
-            client.network_snapshot(session_device_api_token(session), network_id, device_id)
-        {
-            replace_network_module_from_snapshot(
-                &snapshot.network_id,
-                device_id,
-                &snapshot.snapshot,
-            );
-            let configs = network_module_snapshot().configs;
-            sync_resolver_runtime_state(session, &configs);
-            return Ok(configs);
-        }
-    }
-    let configs = client.device_network_configs(session_device_api_token(session), device_id)?;
-    replace_network_module_configs(configs.clone());
-    sync_resolver_runtime_state(session, &configs);
-    Ok(configs)
-}
-
-fn sync_resolver_runtime_state(session: &PersistedSession, configs: &[DeviceNetworkConfig]) {
+    configs: &[DeviceNetworkConfig],
+) {
     let network_id = session
         .active_network_id
         .as_deref()
@@ -147,17 +114,6 @@ fn sync_resolver_runtime_state(session: &PersistedSession, configs: &[DeviceNetw
     );
 }
 
-pub(crate) fn network_module_configs_for_session(
-    client: &ControlPlaneClient,
-    session: &PersistedSession,
-) -> Vec<DeviceNetworkConfig> {
-    let cached = network_module_snapshot().configs;
-    if !cached.is_empty() {
-        return cached;
-    }
-    refresh_network_module_from_session(client, session).unwrap_or_default()
-}
-
 pub(crate) fn replace_network_module_configs(configs: Vec<DeviceNetworkConfig>) {
     module()
         .lock()
@@ -179,7 +135,7 @@ pub(crate) fn replace_network_module_from_snapshot(
         .members
         .iter()
         .find(|member| member.device_id == local_device_id);
-    let config = DeviceNetworkConfig {
+    let mut config = DeviceNetworkConfig {
         network_id: network_id.to_string(),
         network_name: (!snapshot.network.name.trim().is_empty())
             .then(|| snapshot.network.name.clone()),
@@ -217,6 +173,7 @@ pub(crate) fn replace_network_module_from_snapshot(
                 ..DeviceNetworkPeer::default()
             })
             .collect(),
+        device_groups_by_device: snapshot_device_groups_by_device(snapshot),
         security_groups: Vec::new(),
         rules: snapshot
             .acl_rules
@@ -276,7 +233,39 @@ pub(crate) fn replace_network_module_from_snapshot(
             .collect(),
         relay_candidates: Vec::new(),
     };
-    replace_network_module_configs(vec![config]);
+    let mut guard = module()
+        .lock()
+        .expect("client network module mutex poisoned");
+    if let Some(existing) = guard.configs.get(network_id) {
+        config.network_code = existing.network_code.clone();
+        config.network_created_at = existing.network_created_at;
+        config.config_version = existing.config_version;
+        config.node_id = existing.node_id.clone();
+        config.self_node_id = existing.self_node_id.clone();
+        config.prefix_len = existing.prefix_len;
+        config.global_ip = config.global_ip.or_else(|| existing.global_ip.clone());
+        config.global_name = config.global_name.or_else(|| existing.global_name.clone());
+        config.security_groups = existing.security_groups.clone();
+        config.relay_candidates = existing.relay_candidates.clone();
+        for peer in &mut config.peers {
+            let Some(existing_peer) = existing
+                .peers
+                .iter()
+                .find(|candidate| candidate.device_id == peer.device_id)
+            else {
+                continue;
+            };
+            peer.owner_id = existing_peer.owner_id.clone();
+            peer.owner_email = existing_peer.owner_email.clone();
+            peer.alias = peer.alias.clone().or_else(|| existing_peer.alias.clone());
+            peer.global_ip = peer
+                .global_ip
+                .clone()
+                .or_else(|| existing_peer.global_ip.clone());
+            peer.global_name = existing_peer.global_name.clone();
+        }
+    }
+    guard.configs.insert(network_id.to_string(), config);
 }
 
 pub(crate) fn apply_network_module_event(
@@ -362,10 +351,17 @@ pub(crate) fn apply_network_module_event(
                 config.intra_group_policy = Some(payload.network.default_acl_policy);
             }
         }
-        NetworkEventType::DeviceGroupAdded
-        | NetworkEventType::DeviceGroupRemoved
-        | NetworkEventType::DeviceGroupUpdated
-        | NetworkEventType::PeerPathChanged => {}
+        NetworkEventType::DeviceGroupAdded | NetworkEventType::DeviceGroupUpdated => {
+            let payload: NetworkEventDeviceGroupPayload =
+                serde_json::from_value(envelope.payload.clone())?;
+            apply_device_group_upsert(config, payload);
+        }
+        NetworkEventType::DeviceGroupRemoved => {
+            let payload: NetworkEventDeviceGroupRemovedPayload =
+                serde_json::from_value(envelope.payload.clone())?;
+            remove_device_group(config, &payload.group_id);
+        }
+        NetworkEventType::PeerPathChanged => {}
     }
     Ok(())
 }
@@ -376,6 +372,7 @@ fn apply_member_upsert(
     payload: NetworkEventMemberPayload,
 ) {
     let member = payload.member;
+    set_device_groups(config, &member.device_id, member.group_ids.clone());
     if member.device_id == local_device_id {
         if !member.virtual_ip.trim().is_empty() {
             config.global_ip = Some(member.virtual_ip);
@@ -404,12 +401,74 @@ fn apply_member_upsert(
 }
 
 fn apply_member_removed(config: &mut DeviceNetworkConfig, local_device_id: &str, device_id: &str) {
+    config.device_groups_by_device.remove(device_id);
     if device_id == local_device_id {
         config.global_ip = None;
         config.global_name = None;
         return;
     }
     config.peers.retain(|peer| peer.device_id != device_id);
+}
+
+fn snapshot_device_groups_by_device(
+    snapshot: &NetworkSnapshotPayload,
+) -> BTreeMap<String, Vec<String>> {
+    let mut groups_by_device = BTreeMap::<String, Vec<String>>::new();
+    for member in &snapshot.members {
+        set_group_ids(
+            &mut groups_by_device,
+            &member.device_id,
+            member.group_ids.clone(),
+        );
+    }
+    for group in &snapshot.device_groups {
+        for device_id in &group.member_device_ids {
+            let group_ids = groups_by_device.entry(device_id.clone()).or_default();
+            group_ids.push(group.group_id.clone());
+            group_ids.sort();
+            group_ids.dedup();
+        }
+    }
+    groups_by_device
+}
+
+fn apply_device_group_upsert(
+    config: &mut DeviceNetworkConfig,
+    payload: NetworkEventDeviceGroupPayload,
+) {
+    let group = payload.group;
+    remove_device_group(config, &group.group_id);
+    for device_id in group.member_device_ids {
+        let group_ids = config.device_groups_by_device.entry(device_id).or_default();
+        group_ids.push(group.group_id.clone());
+        group_ids.sort();
+        group_ids.dedup();
+    }
+}
+
+fn remove_device_group(config: &mut DeviceNetworkConfig, group_id: &str) {
+    for group_ids in config.device_groups_by_device.values_mut() {
+        group_ids.retain(|value| value != group_id);
+    }
+}
+
+fn set_device_groups(config: &mut DeviceNetworkConfig, device_id: &str, group_ids: Vec<String>) {
+    set_group_ids(&mut config.device_groups_by_device, device_id, group_ids);
+}
+
+fn set_group_ids(
+    groups_by_device: &mut BTreeMap<String, Vec<String>>,
+    device_id: &str,
+    mut group_ids: Vec<String>,
+) {
+    group_ids.retain(|value| !value.trim().is_empty());
+    group_ids.sort();
+    group_ids.dedup();
+    if group_ids.is_empty() {
+        groups_by_device.remove(device_id);
+    } else {
+        groups_by_device.insert(device_id.to_string(), group_ids);
+    }
 }
 
 fn apply_member_presence(
@@ -502,10 +561,10 @@ mod tests {
     };
     use crate::control_plane::{DeviceNetworkConfig, DeviceSecurityGroup, DeviceSecurityRule};
     use crate::network_event::{
-        NetworkEventAclChangedPayload, NetworkEventAclRuleView, NetworkEventEnvelope,
-        NetworkEventMemberPayload, NetworkEventMemberView, NetworkEventNetworkView,
-        NetworkEventResolverChangedPayload, NetworkEventResolverRecordView, NetworkEventType,
-        NetworkSnapshotPayload,
+        NetworkEventAclChangedPayload, NetworkEventAclRuleView, NetworkEventDeviceGroupView,
+        NetworkEventEnvelope, NetworkEventMemberPayload, NetworkEventMemberView,
+        NetworkEventNetworkView, NetworkEventResolverChangedPayload,
+        NetworkEventResolverRecordView, NetworkEventType, NetworkSnapshotPayload,
     };
 
     #[test]
@@ -567,6 +626,7 @@ mod tests {
                         device_name: "Self".to_string(),
                         virtual_ip: "10.0.0.2".to_string(),
                         online: true,
+                        group_ids: vec!["group-1".to_string()],
                         ..NetworkEventMemberView::default()
                     },
                     NetworkEventMemberView {
@@ -577,6 +637,11 @@ mod tests {
                         ..NetworkEventMemberView::default()
                     },
                 ],
+                device_groups: vec![NetworkEventDeviceGroupView {
+                    group_id: "group-1".to_string(),
+                    member_device_ids: vec!["device-self".to_string(), "device-peer".to_string()],
+                    ..NetworkEventDeviceGroupView::default()
+                }],
                 resolver_records: vec![NetworkEventResolverRecordView {
                     record_id: "dns-1".to_string(),
                     zone_id: "zone-1".to_string(),
@@ -610,12 +675,70 @@ mod tests {
         assert_eq!(snapshot.configs[0].device_id, "device-self");
         assert_eq!(snapshot.configs[0].global_ip.as_deref(), Some("10.0.0.2"));
         assert_eq!(snapshot.configs[0].peers[0].device_id, "device-peer");
+        assert_eq!(
+            snapshot.configs[0]
+                .device_groups_by_device
+                .get("device-peer"),
+            Some(&vec!["group-1".to_string()])
+        );
         assert_eq!(snapshot.configs[0].resolver_records[0].record_type, "AAAA");
         assert_eq!(
             snapshot.configs[0].resolver_records[0].target_ip.as_deref(),
             Some("2001:db8::20")
         );
         assert_eq!(snapshot.configs[0].resolver_records[0].ttl, Some(120));
+    }
+
+    #[test]
+    fn snapshot_payload_updates_one_network_without_dropping_other_configs() {
+        let _lock = crate::test_env_lock();
+        clear_network_module();
+        replace_network_module_configs(vec![
+            DeviceNetworkConfig {
+                network_id: "network-primary".to_string(),
+                device_id: "device-self".to_string(),
+                ..DeviceNetworkConfig::default()
+            },
+            DeviceNetworkConfig {
+                network_id: "network-shared".to_string(),
+                device_id: "device-self".to_string(),
+                node_id: Some("node-device-self".to_string()),
+                self_node_id: Some("node-device-self".to_string()),
+                prefix_len: Some(24),
+                ..DeviceNetworkConfig::default()
+            },
+        ]);
+
+        replace_network_module_from_snapshot(
+            "network-shared",
+            "device-self",
+            &NetworkSnapshotPayload {
+                network: NetworkEventNetworkView {
+                    network_id: "network-shared".to_string(),
+                    name: "Shared".to_string(),
+                    ..NetworkEventNetworkView::default()
+                },
+                members: vec![NetworkEventMemberView {
+                    device_id: "device-self".to_string(),
+                    virtual_ip: "10.0.0.18".to_string(),
+                    online: true,
+                    ..NetworkEventMemberView::default()
+                }],
+                ..NetworkSnapshotPayload::default()
+            },
+        );
+
+        let snapshot = network_module_snapshot();
+        assert_eq!(snapshot.network_count, 2);
+        let shared = snapshot
+            .configs
+            .iter()
+            .find(|config| config.network_id == "network-shared")
+            .expect("shared network config");
+        assert_eq!(shared.node_id.as_deref(), Some("node-device-self"));
+        assert_eq!(shared.self_node_id.as_deref(), Some("node-device-self"));
+        assert_eq!(shared.prefix_len, Some(24));
+        assert_eq!(shared.global_ip.as_deref(), Some("10.0.0.18"));
     }
 
     #[test]

@@ -43,6 +43,13 @@ MAC_TEST_DEVICE_ID="${SLAN_MAC_TEST_DEVICE_ID:-$(uuidgen | tr '[:upper:]' '[:low
 MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 RESET_EXISTING_MAC_SERVICE_IDENTITY="${SLAN_RESET_EXISTING_MAC_SERVICE_IDENTITY:-1}"
 SUDO_PASSWORD="${SLAN_SUDO_PASSWORD:-}"
+FORCE_RELAY_ONLY="${SLAN_FORCE_RELAY_ONLY:-0}"
+TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}"
+EXPECT_PATH_KIND="${SLAN_EXPECT_PATH_KIND:-}"
+PATH_MODE="${SLAN_PATH_MODE:-auto}"
+POST_ENABLE_WAIT_SECONDS="${SLAN_MAC_REMOTE_LINUX_POST_ENABLE_WAIT_SECONDS:-45}"
+SKIP_UDP_CHECKS="${SLAN_SKIP_UDP_CHECKS:-0}"
+KEEP_RESOURCES="${SLAN_KEEP_MAC_REMOTE_LINUX_RESOURCES:-0}"
 
 if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
   EMAIL="$SLAN_TEST_EMAIL"
@@ -63,6 +70,7 @@ if [[ -n "${SLAN_TEST_TCP_ECHO_PORT:-}" ]]; then
 else
   TCP_PORT="$((UDP_PORT + 1))"
 fi
+HTTP_PORT="${SLAN_TEST_HTTP_PORT:-80}"
 
 MAC_TO_LINUX_BODY="${SLAN_MAC_TO_LINUX_BODY:-hello-mac-to-linux-$(date +%s%N)}"
 LINUX_TO_MAC_BODY="${SLAN_LINUX_TO_MAC_BODY:-hello-linux-to-mac-$(date +%s%N)}"
@@ -215,6 +223,8 @@ reset_existing_macos_service_identity() {
     SLAN_CLIENT_CORE_SERVICE_HOST="$MAC_SERVICE_HOST"
     SLAN_CONTROL_BASE_URL="$BIZ_URL"
     SLAN_MACOS_NETWORK_MOCK="$MACOS_NETWORK_MOCK"
+    SLAN_FORCE_RELAY_ONLY="$FORCE_RELAY_ONLY"
+    SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="$TEST_RELAY_TRANSPORT_ALLOWLIST"
     SLAN_RESET_MACOS_IDENTITY=1
     "$ROOT_DIR/scripts/install_macos_service.sh"
     --binary "$expected_bin"
@@ -241,6 +251,8 @@ start_mac_service_if_needed() {
       SLAN_CONTROL_BASE_URL="$BIZ_URL" \
       SLAN_CLIENT_DEVICE_ID="$MAC_TEST_DEVICE_ID" \
       SLAN_MACOS_NETWORK_MOCK="$MACOS_NETWORK_MOCK" \
+      SLAN_FORCE_RELAY_ONLY="$FORCE_RELAY_ONLY" \
+      SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="$TEST_RELAY_TRANSPORT_ALLOWLIST" \
       SLAN_STATE_DIR="$WORK_DIR/state" \
       "$MAC_SERVICE_BIN" >"$MAC_SERVICE_LOG" 2>&1 &
     PIDS+=("$!")
@@ -254,7 +266,7 @@ start_mac_service_if_needed() {
   verify_existing_macos_service "$MAC_SERVICE_BIN"
 }
 
-login_and_enable_mac() {
+login_mac() {
   local output
   output="$(
     run_client_core_login_check "mac remote linux login" \
@@ -263,16 +275,33 @@ login_and_enable_mac() {
       -email "$EMAIL" \
       -password "$PASSWORD" \
       -register=false \
-      -enable-network=true \
       -timeout 90s
   )" || {
     echo "$output" >&2
-    fail "failed to login/enable mac service network"
+    fail "failed to login mac service"
   }
   echo "$output"
   MAC_DEVICE_ID="$(echo "$output" | sed -n 's/.*deviceId=\([^ ]*\).*/\1/p' | tail -n 1)"
-  MAC_IP="$(echo "$output" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
   [[ -n "$MAC_DEVICE_ID" ]] || fail "failed to parse Mac device id"
+}
+
+enable_mac_network() {
+  local output
+  output="$(
+    run_client_core_login_check "mac remote linux enable network" \
+      -address "$MAC_SERVICE_HOST" \
+      -email "$EMAIL" \
+      -password "$PASSWORD" \
+      -register=false \
+      -login=false \
+      -enable-network=true \
+      -timeout 120s
+  )" || {
+    echo "$output" >&2
+    fail "failed to enable mac service network"
+  }
+  echo "$output"
+  MAC_IP="$(echo "$output" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
   [[ -n "$MAC_IP" ]] || fail "failed to parse Mac virtual IP"
   MAC_IP="${MAC_IP%%/*}"
 }
@@ -418,6 +447,33 @@ PY
   fail "Mac TCP echo failed: got=${output:-<empty>} want=echo:${body}"
 }
 
+send_mac_http() {
+  local source_ip="$1"
+  local target_ip="$2"
+  local attempts=5
+  local output=''
+  local status=0
+  local attempt
+  for attempt in $(seq 1 "$attempts"); do
+    set +e
+    output="$(curl --silent --show-error --fail \
+      --interface "$source_ip" \
+      --connect-timeout 5 \
+      --max-time 15 \
+      --write-out $'\nSLAN_HTTP_STATUS=%{http_code}' \
+      "http://${target_ip}:${HTTP_PORT}/" 2>&1)"
+    status=$?
+    set -e
+    if [[ $status -eq 0 ]] && grep -q '^SLAN_HTTP_STATUS=200$' <<<"$output"; then
+      log "Mac -> Linux HTTP ok source=$source_ip target=${target_ip}:${HTTP_PORT}"
+      return 0
+    fi
+    log "Mac HTTP retry ${attempt}/${attempts} source=$source_ip target=${target_ip}:${HTTP_PORT} output=${output:-<empty>}"
+    sleep "$attempt"
+  done
+  fail "Mac -> Linux HTTP failed source=$source_ip target=${target_ip}:${HTTP_PORT} output=${output:-<empty>}"
+}
+
 resolve_record_from_mac_module() {
   local fqdn="$1"
   python3 - "$MAC_SERVICE_HOST" "$fqdn" <<'PY'
@@ -475,10 +531,46 @@ raise SystemExit(1)
 PY
 }
 
+mac_request_json() {
+  local method="$1"
+  python3 - "$MAC_SERVICE_HOST" "$method" <<'PY'
+import json
+import socket
+import sys
+
+address, method = sys.argv[1:]
+host, port = address.rsplit(":", 1)
+sock = socket.create_connection((host, int(port)), timeout=5)
+sock.settimeout(5)
+sock.sendall((json.dumps({"method": method, "args": {}}) + "\n").encode())
+sock.shutdown(socket.SHUT_WR)
+data = b""
+while True:
+    chunk = sock.recv(65535)
+    if not chunk:
+        break
+    data += chunk
+sock.close()
+print(json.dumps(json.loads(data.decode() or "{}"), separators=(",", ":")))
+PY
+}
+
+assert_active_path() {
+  local label="$1"
+  local status_json="$2"
+  local actual
+  actual="$(jq -r '.activePath // empty' <<<"$status_json")"
+  log "$label active path=${actual:-<none>}"
+  if [[ -n "$EXPECT_PATH_KIND" && "$actual" != "$EXPECT_PATH_KIND" ]]; then
+    fail "$label active path mismatch: got=${actual:-<none>} expected=$EXPECT_PATH_KIND status=$status_json"
+  fi
+}
+
 ssh_opts=(
   -o StrictHostKeyChecking=accept-new
   -o ServerAliveInterval=30
   -o ConnectTimeout=10
+  -o NumberOfPasswordPrompts=1
 )
 
 remote_expect_ssh() {
@@ -504,7 +596,13 @@ spawn ssh {*}$ssh_opts ${remote_user}@${remote_host} $remote_command
 expect {
   "yes/no" { send "yes\r"; exp_continue }
   "*assword:" { send "${remote_password}\r"; exp_continue }
-  eof
+  eof {}
+  timeout {
+    catch {close}
+    catch {exec kill -TERM [exp_pid]}
+    catch {wait}
+    exit 124
+  }
 }
 catch wait result
 set exit_code [lindex $result 3]
@@ -529,7 +627,13 @@ spawn scp {*}{${ssh_opts[*]}} $local_path ${REMOTE_USER}@${REMOTE_HOST}:$remote_
 expect {
   "yes/no" { send "yes\r"; exp_continue }
   "*assword:" { send "${REMOTE_PASSWORD}\r"; exp_continue }
-  eof
+  eof {}
+  timeout {
+    catch {close}
+    catch {exec kill -TERM [exp_pid]}
+    catch {wait}
+    exit 124
+  }
 }
 catch wait result
 exit [lindex \$result 3]
@@ -836,7 +940,9 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
-  if [[ -n "$NETWORK_ID" ]]; then
+  if is_truthy "$KEEP_RESOURCES"; then
+    echo "kept remote integration resources: email=$EMAIL network=$NETWORK_ID group=$DEVICE_GROUP_ID mac=$MAC_DEVICE_ID linux=$LINUX_DEVICE_ID" >&2
+  elif [[ -n "$NETWORK_ID" ]]; then
     local index
     for ((index=${#RULE_IDS[@]}-1; index>=0; index--)); do
       best_effort_delete "${WEB_BASE_URL}/api/web/security-groups/rules/${RULE_IDS[$index]}"
@@ -850,11 +956,13 @@ cleanup() {
     if [[ -n "$DEVICE_GROUP_ID" ]]; then
       best_effort_delete "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}"
     fi
+    if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
+      best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}"
+    fi
+    slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
+  else
+    slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   fi
-  if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
-    best_effort_delete "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}"
-  fi
-  slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_MAC_REMOTE_LINUX_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
   else
@@ -915,12 +1023,17 @@ bash '${REMOTE_DIR}/install.sh' \
   --installation-key='${BOOTSTRAP_KEY}' \
   --tray=disabled \
   --package-url='file://${REMOTE_PACKAGE_PATH}'
+cat > /etc/slan/client-v2.env <<'EOF'
+SLAN_FORCE_RELAY_ONLY=${FORCE_RELAY_ONLY}
+SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST=${TEST_RELAY_TRANSPORT_ALLOWLIST}
+EOF
+systemctl restart slan-client-v2.service
 "
 
   log "start or verify mac local service"
   start_mac_service_if_needed
-  log "login and enable Mac network"
-  login_and_enable_mac
+  log "sign in Mac local service"
+  login_mac
 
   log "wait remote Linux local API"
   remote_helper wait_local_api "$LOCAL_API_TIMEOUT_SECONDS" >/dev/null
@@ -938,12 +1051,31 @@ bash '${REMOTE_DIR}/install.sh' \
   create_dns_record mac "$MAC_DEVICE_ID"
   create_dns_record linux "$LINUX_DEVICE_ID"
   attach_device_group_to_network
+  add_rule ingress all 0 "$DEVICE_GROUP_ID" 90
+  add_rule egress all 0 "$DEVICE_GROUP_ID" 95
   add_rule ingress tcp 443 "$DEVICE_GROUP_ID" 100
   add_rule egress tcp 443 "$DEVICE_GROUP_ID" 110
   add_rule ingress udp "$UDP_PORT" "$DEVICE_GROUP_ID" 120
   add_rule egress udp "$UDP_PORT" "$DEVICE_GROUP_ID" 130
   add_rule ingress tcp "$TCP_PORT" "$DEVICE_GROUP_ID" 140
   add_rule egress tcp "$TCP_PORT" "$DEVICE_GROUP_ID" 150
+
+  log "install and start remote Linux nginx"
+  remote_exec "
+if ! command -v nginx >/dev/null 2>&1; then
+  if command -v dnf >/dev/null 2>&1; then
+    dnf install -y nginx
+  elif command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+  else
+    echo 'unsupported package manager for nginx' >&2
+    exit 1
+  fi
+fi
+systemctl enable --now nginx
+curl --silent --show-error --fail --max-time 5 http://127.0.0.1:${HTTP_PORT}/ >/dev/null
+"
 
   log "restart remote Linux client and reload the complete network snapshot"
   remote_exec "systemctl restart slan-client-v2.service"
@@ -954,6 +1086,9 @@ bash '${REMOTE_DIR}/install.sh' \
   log "wait remote Linux network module receive dns/acl config"
   remote_helper wait_network_module 1 2 4 "$TIMEOUT_SECONDS" >/dev/null
 
+  log "enable Mac network after device group is attached"
+  enable_mac_network
+
   log "enable remote Linux network"
   local remote_network_json
   remote_network_json="$(remote_helper ensure_network_ready "$TIMEOUT_SECONDS")"
@@ -961,6 +1096,11 @@ bash '${REMOTE_DIR}/install.sh' \
   LINUX_IP="${LINUX_IP%%/*}"
   [[ -n "$LINUX_IP" ]] || fail "failed to parse remote Linux virtual IP"
   log "resolved network identities macDeviceId=$MAC_DEVICE_ID macIp=$MAC_IP linuxDeviceId=$LINUX_DEVICE_ID linuxIp=$LINUX_IP"
+
+  if (( POST_ENABLE_WAIT_SECONDS > 0 )); then
+    log "wait ${POST_ENABLE_WAIT_SECONDS}s for peer path convergence mode=$PATH_MODE"
+    sleep "$POST_ENABLE_WAIT_SECONDS"
+  fi
 
   local linux_target_ip mac_target_ip
   linux_target_ip="$(resolve_record_from_mac_module "linux.${ZONE_NAME}" || true)"
@@ -985,19 +1125,28 @@ bash '${REMOTE_DIR}/install.sh' \
   remote_helper start_echo_server "$UDP_PORT" "$TCP_PORT" "${REMOTE_DIR}/remote-echo.log" >/dev/null
   remote_helper wait_echo_ready "$UDP_PORT" "$TCP_PORT" "${REMOTE_DIR}/remote-echo.log" 30 >/dev/null
 
-  log "run macOS -> remote Linux UDP/TCP socket checks"
-  send_mac_udp "$MAC_IP" "$linux_target_ip" "$MAC_UDP_BODY"
-  send_mac_tcp "$MAC_IP" "$linux_target_ip" "$MAC_TCP_BODY"
-
   log "start macOS echo server for reverse checks"
   start_mac_echo_server
   wait_mac_echo_ready
 
-  log "run remote Linux -> macOS UDP/TCP socket checks"
-  remote_helper send_udp_echo "$mac_target_ip" "$UDP_PORT" "$LINUX_UDP_BODY" >/dev/null
+  log "run remote Linux -> macOS UDP/TCP socket checks and warm lazy relay transports"
+  if ! is_truthy "$SKIP_UDP_CHECKS"; then
+    remote_helper send_udp_echo "$mac_target_ip" "$UDP_PORT" "$LINUX_UDP_BODY" >/dev/null
+  fi
   remote_helper send_tcp_echo "$mac_target_ip" "$TCP_PORT" "$LINUX_TCP_BODY" >/dev/null
 
-  echo "macRemoteLinuxIntegration: ok email=$EMAIL mac=$MAC_DEVICE_ID linux=$LINUX_DEVICE_ID macIp=$MAC_IP linuxIp=$LINUX_IP zone=$ZONE_NAME remote=$REMOTE_HOST"
+  log "run macOS -> remote Linux UDP/TCP socket checks"
+  if ! is_truthy "$SKIP_UDP_CHECKS"; then
+    send_mac_udp "$MAC_IP" "$linux_target_ip" "$MAC_UDP_BODY"
+  fi
+  send_mac_tcp "$MAC_IP" "$linux_target_ip" "$MAC_TCP_BODY"
+  send_mac_http "$MAC_IP" "$linux_target_ip"
+
+  log "verify selected data path mode=$PATH_MODE"
+  assert_active_path "Mac" "$(mac_request_json localStatus)"
+  assert_active_path "Linux" "$(remote_helper request_json localStatus)"
+
+  echo "macRemoteLinuxIntegration: ok mode=$PATH_MODE path=${EXPECT_PATH_KIND:-auto} email=$EMAIL mac=$MAC_DEVICE_ID linux=$LINUX_DEVICE_ID macIp=$MAC_IP linuxIp=$LINUX_IP zone=$ZONE_NAME remote=$REMOTE_HOST"
 }
 
 main "$@"

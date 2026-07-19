@@ -39,6 +39,22 @@ impl PathKind {
     pub fn is_relay(self) -> bool {
         matches!(self, Self::RelayUdp | Self::DerpTcpTls443)
     }
+
+    /// 判断该路径是否使用点对点 UDP 数据面。
+    pub fn is_direct_udp(self) -> bool {
+        matches!(self, Self::LanUdp | Self::Ipv6Udp | Self::DirectUdp)
+    }
+
+    /// 返回固定的数据面选择优先级，数值越小越优先。
+    pub fn priority(self) -> u8 {
+        match self {
+            Self::LanUdp => 0,
+            Self::Ipv6Udp => 1,
+            Self::DirectUdp => 2,
+            Self::RelayUdp => 3,
+            Self::DerpTcpTls443 => 4,
+        }
+    }
 }
 
 /// 将控制面下发的 relay transport 归一化为客户端支持的 transport。

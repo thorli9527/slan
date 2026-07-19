@@ -15,6 +15,7 @@ BUNDLE_ID="${SLAN_IOS_BUNDLE_ID:-dev.slan.client.v2}"
 SIM_A_NAME="${SLAN_IOS_SIM_A_NAME:-iPhone 17 Pro}"
 SIM_B_NAME="${SLAN_IOS_SIM_B_NAME:-SLAN iPhone 16 Pro Clean 26.5}"
 BIZ_URL="${SLAN_BIZ_URL:-$SLAN_DEFAULT_CONTROL_BASE_URL}"
+WEB_BASE_URL="${SLAN_WEB_BASE_URL:-$SLAN_DEFAULT_WEB_BASE_URL}"
 PASSWORD="${SLAN_TEST_PASSWORD:-Password123!}"
 GENERATED_TEST_EMAIL=0
 if [[ -n "${SLAN_TEST_EMAIL:-}" ]]; then
@@ -39,6 +40,10 @@ REQUESTED_DEVICE_ID_A="${SLAN_IOS_REQUESTED_DEVICE_ID_A:-$(uuidgen | tr '[:upper
 REQUESTED_DEVICE_ID_B="${SLAN_IOS_REQUESTED_DEVICE_ID_B:-$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')}"
 
 PIDS=()
+USER_ID=""
+USER_TOKEN=""
+NETWORK_ID=""
+DEVICE_GROUP_ID=""
 
 read_lines_into_array() {
   local __target_var="$1"
@@ -71,6 +76,20 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
+  if [[ -n "$DEVICE_GROUP_ID" && -n "$USER_ID" ]]; then
+    local auth
+    auth="$(curl --silent --show-error --connect-timeout 5 --max-time 15 \
+      -X POST "${WEB_BASE_URL}/api/web/auth/login" \
+      -H 'Content-Type: application/json' \
+      -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" 2>/dev/null || true)"
+    USER_TOKEN="$(printf '%s' "$auth" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+    curl --silent --show-error --connect-timeout 5 --max-time 20 \
+      -X DELETE "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
+      -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
+    curl --silent --show-error --connect-timeout 5 --max-time 20 \
+      -X DELETE "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups/${DEVICE_GROUP_ID}?actorUserId=${USER_ID}" \
+      -H "Authorization: Bearer ${USER_TOKEN}" >/dev/null 2>&1 || true
+  fi
   slan_cleanup_remote_test_devices "$BIZ_URL" "$EMAIL" "$PASSWORD" "$CLEANUP_TEST_DEVICES"
   if [[ "${SLAN_KEEP_IOS_DUAL_FLUTTER_WORK_DIR:-0}" != "1" ]]; then
     rm -rf "$WORK_DIR"
@@ -163,7 +182,44 @@ run_ios_login_capture() {
     "$build_dir" \
     "${COMMON_DART_DEFINES[@]}" \
     --dart-define="SLAN_TEST_DEVICE_ID=$requested_device_id" \
-    --dart-define="SLAN_TEST_REGISTER_USER=$register_user"
+    --dart-define="SLAN_TEST_REGISTER_USER=$register_user" \
+    --dart-define="SLAN_TEST_WAIT_MQTT=false"
+}
+
+provision_network_device_group() {
+  local auth networks response device_id
+  auth="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    -X POST "${WEB_BASE_URL}/api/web/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}")"
+  USER_ID="$(printf '%s' "$auth" | sed -n 's/.*"userId":"\([^"]*\)".*/\1/p')"
+  USER_TOKEN="$(printf '%s' "$auth" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+  [[ -n "$USER_ID" && -n "$USER_TOKEN" ]] || { echo "failed to authenticate iOS test admin" >&2; exit 1; }
+  networks="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
+    "${WEB_BASE_URL}/api/web/networks?userId=${USER_ID}")"
+  NETWORK_ID="$(printf '%s' "$networks" | sed -n 's/.*"networkId":"\([^"]*\)".*/\1/p' | head -n 1)"
+  [[ -n "$NETWORK_ID" ]] || { echo "failed to resolve iOS test network" >&2; exit 1; }
+  response="$(curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    -X POST "${WEB_BASE_URL}/api/web/users/${USER_ID}/device-groups" \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"name\":\"ios-flutter-$(date +%s%N)\",\"description\":\"Dual iOS Flutter devices\"}")"
+  DEVICE_GROUP_ID="$(printf '%s' "$response" | sed -n 's/.*"groupId":"\([^"]*\)".*/\1/p')"
+  [[ -n "$DEVICE_GROUP_ID" ]] || { echo "failed to create iOS test device group" >&2; exit 1; }
+  for device_id in "$DEVICE_ID_A" "$DEVICE_ID_B"; do
+    curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+      -X PUT "${WEB_BASE_URL}/api/web/users/${USER_ID}/devices/${device_id}/groups" \
+      -H "Authorization: Bearer ${USER_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      -d "{\"groupIds\":[\"${DEVICE_GROUP_ID}\"]}" >/dev/null
+  done
+  curl --silent --show-error --fail --connect-timeout 5 --max-time 30 \
+    -X POST "${WEB_BASE_URL}/api/web/networks/${NETWORK_ID}/device-groups" \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"groupId\":\"${DEVICE_GROUP_ID}\"}" >/dev/null
+  echo "==> attached iOS device group ${DEVICE_GROUP_ID} to network ${NETWORK_ID}"
 }
 
 start_ios_message_wait() {
@@ -242,6 +298,8 @@ run_ios_login_capture \
   false
 DEVICE_ID_B="$(capture_device_id_or_die "$LOG_B_PHASE1" "ios-b")"
 echo "ios-b device id: $DEVICE_ID_B"
+
+provision_network_device_group
 
 echo "==> phase 2: ios-b sends message to ios-a"
 start_ios_message_wait \

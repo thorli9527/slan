@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:slan_client_v2/bridge/client_commands.dart';
 import 'package:slan_client_v2/bridge/client_core_bridge.dart';
 import 'package:slan_client_v2/bridge/client_core_bridge_support.dart';
 import 'package:slan_client_v2/bridge/client_view_state.dart';
+import 'package:slan_client_v2/bridge/control_transport_status.dart';
 
 Map<String, Object?> _nativePlatformNetworkConfigPayload({
   String virtualIp = '10.0.0.44',
@@ -35,6 +37,27 @@ Map<String, Object?> _nativePlatformResolverTransportPayload(
 }
 
 void main() {
+  test('control transport status preserves all network subscriptions', () {
+    final status = ControlTransportStatus.fromJson({
+      'mqttCredentialReady': true,
+      'controlSessionReady': true,
+      'ready': true,
+      'missing': <String>[],
+      'mqttConnected': true,
+      'mqttNetworkEventTopics': <String>[
+        'slan/networks/network-a/broadcast',
+        'slan/networks/network-b/broadcast',
+      ],
+      'mqttNetworkEventSubscribed': true,
+    });
+
+    expect(status.mqttNetworkEventTopics, [
+      'slan/networks/network-a/broadcast',
+      'slan/networks/network-b/broadcast',
+    ]);
+    expect(status.mqttNetworkEventSubscribed, isTrue);
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('client login command uses openClientLogin type', () {
@@ -132,12 +155,36 @@ void main() {
       'relayNoPeerPackets': 2,
       'relayWriteFailures': 1,
       'tunWriteFailures': 1,
+      'embeddedServicePendingLimit': 129,
+      'embeddedServicePendingCount': 3,
+      'embeddedServiceQueueDepth': 2,
+      'embeddedServiceActiveCount': 1,
+      'embeddedServiceCompletedTotal': 40,
+      'embeddedServiceRejectedTotal': 2,
+      'embeddedWatchPendingLimit': 3,
+      'embeddedWatchPendingCount': 1,
+      'embeddedWatchQueueDepth': 0,
+      'embeddedWatchActiveCount': 1,
+      'embeddedWatchCompletedTotal': 12,
+      'embeddedWatchRejectedTotal': 0,
     });
 
     expect(fields['requestedRelaySessionCount'], 2);
     expect(fields['attachedRelaySessionCount'], 1);
     expect(fields['relayDetachSent'], 1);
     expect(fields['lastRelayAttachError'], 'relay attach timed out');
+    expect(fields['embeddedServicePendingLimit'], 129);
+    expect(fields['embeddedServicePendingCount'], 3);
+    expect(fields['embeddedServiceQueueDepth'], 2);
+    expect(fields['embeddedServiceActiveCount'], 1);
+    expect(fields['embeddedServiceCompletedTotal'], 40);
+    expect(fields['embeddedServiceRejectedTotal'], 2);
+    expect(fields['embeddedWatchPendingLimit'], 3);
+    expect(fields['embeddedWatchPendingCount'], 1);
+    expect(fields['embeddedWatchQueueDepth'], 0);
+    expect(fields['embeddedWatchActiveCount'], 1);
+    expect(fields['embeddedWatchCompletedTotal'], 12);
+    expect(fields['embeddedWatchRejectedTotal'], 0);
   });
 
   test('ios packet tunnel diagnostics preserve routing counters', () {
@@ -247,6 +294,114 @@ void main() {
     expect(bridge.state.value.signedIn, isTrue);
     expect(bridge.state.value.userLabel, 'ios-user@example.com');
     expect(bridge.state.value.deviceId, 'ios-device-1');
+  });
+
+  test('mobile platform event updates UI only after rust business event',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    final ingestSeen = Completer<void>();
+    final releaseBusinessEvent = Completer<void>();
+    var platformEventSent = false;
+    var businessEventSent = false;
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'androidWatchNetworkEvent') {
+        if (platformEventSent) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          return null;
+        }
+        platformEventSent = true;
+        return {
+          'eventType': 'vpnStarted',
+          'runtimeState': {
+            'adapterPresent': true,
+            'networkEnabled': true,
+            'virtualIp': '10.0.0.44',
+          },
+        };
+      }
+      if (call.method != 'embeddedServiceRequest') {
+        return <String, Object?>{};
+      }
+      final request =
+          jsonDecode(call.arguments as String) as Map<String, Object?>;
+      final method = request['method'] as String;
+      if (method == 'start') {
+        return {
+          'signedIn': false,
+          'networkEnabled': false,
+          'syncing': false,
+          'switchEnabled': true,
+        };
+      }
+      if (method == 'ingestPlatformRuntimeState') {
+        if (!ingestSeen.isCompleted) {
+          ingestSeen.complete();
+        }
+        return {
+          'accepted': true,
+          'state': {
+            'signedIn': false,
+            'networkEnabled': true,
+            'virtualIp': '10.0.0.44',
+            'syncing': false,
+            'switchEnabled': true,
+          },
+        };
+      }
+      if (method == 'localBusinessEventWatch') {
+        await releaseBusinessEvent.future;
+        if (businessEventSent) {
+          return null;
+        }
+        businessEventSent = true;
+        return {
+          'revision': 1,
+          'businessType': ClientBusinessEventType.networkRuntimeChanged,
+          'businessData': {
+            'signedIn': false,
+            'networkEnabled': true,
+            'virtualIp': '10.0.0.44',
+            'syncing': false,
+            'switchEnabled': true,
+            'messageType': 'platform_runtime_state',
+          },
+          'snapshot': {
+            'signedIn': false,
+            'networkEnabled': true,
+            'virtualIp': '10.0.0.44',
+            'syncing': false,
+            'switchEnabled': true,
+          },
+        };
+      }
+      fail('unexpected embedded method $method');
+    });
+    addTearDown(() {
+      if (!releaseBusinessEvent.isCompleted) {
+        releaseBusinessEvent.complete();
+      }
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: await _unusedLoopbackHost(),
+      runtimePlatform: ClientBridgeRuntimePlatform.android,
+      useMobileControlPlane: true,
+    );
+    _closeBridgeOnTearDown(bridge);
+    await bridge.start();
+    await ingestSeen.future.timeout(const Duration(seconds: 2));
+
+    expect(bridge.state.value.networkEnabled, isFalse);
+    releaseBusinessEvent.complete();
+    await _waitFor(
+      () => bridge.state.value.networkEnabled,
+      reason: 'rust business event should be the only UI state writer',
+    );
+    expect(bridge.state.value.virtualIp, '10.0.0.44');
   });
 
   test('mobile start uses embedded service before native state', () async {
@@ -1002,6 +1157,167 @@ void main() {
     await bridge.localControlStatus();
   });
 
+  test('business event replay gap restores snapshot and advances cursor',
+      () async {
+    final recoveredState = <String, Object?>{
+      'signedIn': true,
+      'networkEnabled': true,
+      'syncing': false,
+      'switchEnabled': true,
+      'virtualIp': '10.0.0.20',
+    };
+    final service = await _FakeClientService.start([
+      _ServiceReply(
+        expectedMethod: 'localBusinessEventWatch',
+        body: {
+          'revision': 3,
+          'streamId': 'stream-a',
+          'oldestAvailableRevision': 3,
+          'latestRevision': 9,
+          'replayGap': true,
+          'businessType': ClientBusinessEventType.stateChanged,
+          'businessData': <String, Object?>{},
+          'snapshot': recoveredState,
+        },
+      ),
+      _ServiceReply(
+        expectedMethod: 'localBusinessEventWatch',
+        body: {
+          'revision': 8,
+          'streamId': 'stream-a',
+          'oldestAvailableRevision': 3,
+          'latestRevision': 9,
+          'replayGap': false,
+          'businessType': ClientBusinessEventType.stateChanged,
+          'businessData': <String, Object?>{},
+          'snapshot': recoveredState,
+        },
+      ),
+      _ServiceReply(
+        expectedMethod: 'localBusinessEventWatch',
+        body: {
+          'revision': 9,
+          'streamId': 'stream-a',
+          'oldestAvailableRevision': 3,
+          'latestRevision': 9,
+          'replayGap': false,
+          'businessType': ClientBusinessEventType.stateChanged,
+          'businessData': <String, Object?>{},
+          'snapshot': recoveredState,
+        },
+      ),
+    ]);
+    addTearDown(service.close);
+
+    final bridge =
+        MethodChannelClientCoreBridge(localServiceHost: service.host);
+    _closeBridgeOnTearDown(bridge);
+    await bridge.start();
+
+    await _waitFor(
+      () =>
+          bridge.state.value.virtualIp == '10.0.0.20' &&
+          service.seenRequests
+                  .where((request) =>
+                      request['method'] == 'localBusinessEventWatch')
+                  .length >=
+              3,
+      reason: 'replay gap should restore snapshot and issue next watch',
+    );
+    final watchRequests = service.seenRequests
+        .where((request) => request['method'] == 'localBusinessEventWatch')
+        .toList();
+    final secondArgs =
+        (watchRequests[1]['args'] as Map).cast<String, Object?>();
+    final thirdArgs = (watchRequests[2]['args'] as Map).cast<String, Object?>();
+    expect(secondArgs['lastRevision'], 9);
+    expect(secondArgs['streamId'], 'stream-a');
+    expect(thirdArgs['lastRevision'], 9);
+    expect(thirdArgs['streamId'], 'stream-a');
+  });
+
+  test('business event stream reset recovers after rust service restart',
+      () async {
+    Map<String, Object?> state(String virtualIp) => {
+          'signedIn': true,
+          'networkEnabled': true,
+          'syncing': false,
+          'switchEnabled': true,
+          'virtualIp': virtualIp,
+        };
+    final service = await _FakeClientService.start([
+      _ServiceReply(
+        expectedMethod: 'localBusinessEventWatch',
+        body: {
+          'revision': 1,
+          'streamId': 'stream-a',
+          'streamReset': false,
+          'oldestAvailableRevision': 1,
+          'latestRevision': 1,
+          'replayGap': false,
+          'businessType': ClientBusinessEventType.stateChanged,
+          'businessData': state('10.0.0.20'),
+          'snapshot': state('10.0.0.20'),
+        },
+      ),
+      _ServiceReply(
+        expectedMethod: 'localBusinessEventWatch',
+        body: {
+          'revision': 0,
+          'streamId': 'stream-b',
+          'streamReset': true,
+          'oldestAvailableRevision': null,
+          'latestRevision': 0,
+          'replayGap': false,
+          'businessType': ClientBusinessEventType.stateChanged,
+          'businessData': <String, Object?>{},
+          'snapshot': state('10.0.0.21'),
+        },
+      ),
+      _ServiceReply(
+        expectedMethod: 'localBusinessEventWatch',
+        body: {
+          'revision': 0,
+          'streamId': 'stream-b',
+          'streamReset': false,
+          'oldestAvailableRevision': null,
+          'latestRevision': 0,
+          'replayGap': false,
+          'businessType': ClientBusinessEventType.stateChanged,
+          'businessData': <String, Object?>{},
+          'snapshot': state('10.0.0.21'),
+        },
+      ),
+    ]);
+    addTearDown(service.close);
+
+    final bridge =
+        MethodChannelClientCoreBridge(localServiceHost: service.host);
+    _closeBridgeOnTearDown(bridge);
+    await bridge.start();
+
+    await _waitFor(
+      () =>
+          bridge.state.value.virtualIp == '10.0.0.21' &&
+          service.seenRequests
+                  .where((request) =>
+                      request['method'] == 'localBusinessEventWatch')
+                  .length >=
+              3,
+      reason: 'stream reset should restore new snapshot and resume watching',
+    );
+    final watchRequests = service.seenRequests
+        .where((request) => request['method'] == 'localBusinessEventWatch')
+        .toList();
+    final secondArgs =
+        (watchRequests[1]['args'] as Map).cast<String, Object?>();
+    final thirdArgs = (watchRequests[2]['args'] as Map).cast<String, Object?>();
+    expect(secondArgs['streamId'], 'stream-a');
+    expect(secondArgs['lastRevision'], 1);
+    expect(thirdArgs['streamId'], 'stream-b');
+    expect(thirdArgs['lastRevision'], 0);
+  });
+
   test('enable switch updates asynchronously after service result', () async {
     final service = await _FakeClientService.start([
       _ServiceReply(
@@ -1657,6 +1973,7 @@ class _FakeClientService {
   final List<_ServiceReply> _replies;
   int _index = 0;
   final List<String> seenMethods = [];
+  final List<Map<String, Object?>> seenRequests = [];
 
   String get host => '127.0.0.1:${_server.port}';
 
@@ -1677,6 +1994,7 @@ class _FakeClientService {
           .transform(const LineSplitter())
           .first;
       final requestJson = jsonDecode(request) as Map<String, Object?>;
+      seenRequests.add(requestJson);
       final method = requestJson['method'];
       if (method is String) {
         seenMethods.add(method);

@@ -3,7 +3,6 @@ use std::{
     env, fs,
     io::{ErrorKind, Read, Write},
     net::TcpStream,
-    path::PathBuf,
     sync::{Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
@@ -28,6 +27,7 @@ const API_DEVICE_SESSION_BIND: &str = "/api/app/device/session/bind";
 const API_DEVICE_SESSION_RENEW: &str = "/api/app/device/session/renew";
 const API_CLIENT_MESSAGES: &str = "/api/app/client/messages";
 const API_DEVICES: &str = "/api/app/devices";
+const API_RUNTIME_ENDPOINTS: &str = "/api/app/runtime/endpoints";
 const API_RELAY_TICKETS: &str = "/api/app/relay/tickets";
 static CONTROL_BASE_URL_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CLIENT_DEVICE_ID_OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
@@ -183,40 +183,29 @@ pub(crate) struct RuntimeEndpointsResponse {
     #[serde(default)]
     pub mqtt: Option<MqttCredential>,
     #[serde(default, deserialize_with = "null_vec_default")]
-    pub punch_nodes: Vec<RuntimePunchNode>,
-    #[serde(default, deserialize_with = "null_vec_default")]
-    pub relay_candidates: Vec<RelayCandidate>,
-    #[serde(default, deserialize_with = "null_vec_default")]
-    pub networks: Vec<RuntimeNetworkEndpoint>,
+    pub node_configs: Vec<RuntimeNodeConfig>,
     #[serde(default)]
     pub refreshed_at: i64,
 }
 
-/// RuntimePunchNode 是 UDP 打洞服务的公网访问地址。
+/// RuntimeNodeConfig 是服务端统一下发的直连发现或中继节点。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RuntimePunchNode {
+pub(crate) struct RuntimeNodeConfig {
     #[serde(default)]
     pub node_id: String,
     #[serde(default)]
-    pub name: Option<String>,
+    pub connection_type: String,
     #[serde(default)]
-    pub region: Option<String>,
+    pub transport: String,
     #[serde(default)]
     pub address: String,
     #[serde(default)]
-    pub public_udp_ip: String,
+    pub path_kind: String,
     #[serde(default)]
-    pub public_udp_port: u16,
-}
-
-/// RuntimeNetworkEndpoint 是单个虚拟网络可用的 relay 候选。
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RuntimeNetworkEndpoint {
-    pub network_id: String,
+    pub priority: u16,
     #[serde(default, deserialize_with = "null_vec_default")]
-    pub relay_candidates: Vec<RelayCandidate>,
+    pub network_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -344,6 +333,8 @@ pub struct DeviceNetworkConfig {
     pub resolver: DeviceResolverConfig,
     #[serde(default, deserialize_with = "null_vec_default")]
     pub peers: Vec<DeviceNetworkPeer>,
+    #[serde(default)]
+    pub device_groups_by_device: BTreeMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "null_vec_default")]
     pub security_groups: Vec<DeviceSecurityGroup>,
     #[serde(default, deserialize_with = "null_vec_default")]
@@ -813,6 +804,11 @@ impl ControlPlaneClient {
         Ok(payload.items)
     }
 
+    pub(crate) fn runtime_endpoints(&self, access_token: &str) -> Result<RuntimeEndpointsResponse> {
+        let response = self.request_json("GET", API_RUNTIME_ENDPOINTS, access_token, None)?;
+        serde_json::from_value(response).context("decode runtime endpoints")
+    }
+
     pub fn network_snapshot(
         &self,
         access_token: &str,
@@ -867,8 +863,8 @@ impl ControlPlaneClient {
             "networkId": network_id.trim(),
             "status": "inactive",
         });
-        let paths = [api_device_runtime(device_id)];
-        let _ = self.request_json_with_fallbacks("POST", &paths, access_token, Some(body))?;
+        let path = api_device_runtime(device_id);
+        let _ = self.request_json("POST", &path, access_token, Some(body))?;
         Ok(())
     }
 
@@ -878,8 +874,8 @@ impl ControlPlaneClient {
         device_id: &str,
         body: Value,
     ) -> Result<()> {
-        let paths = [api_device_runtime(device_id)];
-        let _ = self.request_json_with_fallbacks("POST", &paths, access_token, Some(body))?;
+        let path = api_device_runtime(device_id);
+        let _ = self.request_json("POST", &path, access_token, Some(body))?;
         Ok(())
     }
 
@@ -955,30 +951,6 @@ impl ControlPlaneClient {
         body: Option<Value>,
     ) -> Result<Value> {
         self.request_json_with_headers(method, path, access_token, &[], body)
-    }
-
-    fn request_json_with_fallbacks(
-        &self,
-        method: &str,
-        paths: &[String],
-        access_token: &str,
-        body: Option<Value>,
-    ) -> Result<Value> {
-        let mut last_error = None;
-        for (index, path) in paths.iter().enumerate() {
-            match self.request_json(method, path, access_token, body.clone()) {
-                Ok(value) => return Ok(value),
-                Err(error) => {
-                    let is_last = index + 1 == paths.len();
-                    let not_found = error.to_string().contains("404");
-                    if !not_found || is_last {
-                        return Err(error);
-                    }
-                    last_error = Some(error);
-                }
-            }
-        }
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("request fallback failed")))
     }
 
     fn request_json_with_headers(
@@ -1759,7 +1731,6 @@ fn md5_hex(input: &[u8]) -> String {
 }
 
 fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
-    let legacy_path = state_dir().join("client-v2-device-id.txt");
     let overridden = env_device_id_override();
     if overridden.is_none() {
         if let Some(device_id) = crate::client_config::load_device_id()? {
@@ -1771,49 +1742,11 @@ fn stable_device_id(preferred_device_id: Option<&str>) -> Result<String> {
             }
         }
     }
-    let legacy_device_id = fs::read_to_string(&legacy_path)
-        .ok()
-        .and_then(|value| normalize_device_id(value.trim()));
     let device_id = overridden
-        .or(legacy_device_id)
         .or_else(|| preferred_device_id.and_then(normalize_device_id))
         .unwrap_or_else(uuid_v4_device_id);
     crate::client_config::store_device_id(&device_id)?;
-    if legacy_path.exists() {
-        fs::remove_file(&legacy_path)
-            .with_context(|| format!("remove {}", legacy_path.display()))?;
-    }
     Ok(device_id)
-}
-
-#[cfg(test)]
-fn stable_device_id_at_path(
-    path: &std::path::Path,
-    preferred_device_id: Option<&str>,
-) -> Result<String> {
-    if let Some(value) = env_device_id_override() {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-        }
-        fs::write(path, &value).with_context(|| format!("write {}", path.display()))?;
-        return Ok(value);
-    }
-    if let Ok(value) = fs::read_to_string(path) {
-        let value = value.trim();
-        if let Some(value) = normalize_device_id(value) {
-            fs::write(path, &value).with_context(|| format!("write {}", path.display()))?;
-            return Ok(value);
-        }
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let created = preferred_device_id
-        .map(str::trim)
-        .and_then(normalize_device_id)
-        .unwrap_or_else(uuid_v4_device_id);
-    fs::write(path, &created).with_context(|| format!("write {}", path.display()))?;
-    Ok(created)
 }
 
 pub fn local_stable_device_id() -> Result<String> {
@@ -1826,51 +1759,14 @@ fn local_device_public_key(device_id: &str) -> Result<String> {
             return Ok(value);
         }
     }
-    let legacy_path = state_dir().join("client-v2-device-public-key.txt");
-    let weak_seeded_key = format!("client-v2-{}", device_id.trim());
-    let legacy_key = fs::read_to_string(&legacy_path).ok().and_then(|value| {
-        let value = value.trim();
-        (is_strong_device_public_key(value) && value != weak_seeded_key).then(|| value.to_string())
-    });
-    let public_key = legacy_key.unwrap_or_else(random_device_public_key);
+    let public_key = random_device_public_key();
     crate::client_config::store_device_public_key(device_id, &public_key)?;
-    if legacy_path.exists() {
-        fs::remove_file(&legacy_path)
-            .with_context(|| format!("remove {}", legacy_path.display()))?;
-    }
     Ok(public_key)
-}
-
-#[cfg(test)]
-fn device_public_key_at_path(path: &std::path::Path, device_id: &str) -> Result<String> {
-    let weak_seeded_key = format!("client-v2-{}", device_id.trim());
-    if let Ok(value) = fs::read_to_string(path) {
-        let value = value.trim();
-        if is_strong_device_public_key(value) && value != weak_seeded_key {
-            return Ok(value.to_string());
-        }
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let created = random_device_public_key();
-    fs::write(path, &created).with_context(|| format!("write {}", path.display()))?;
-    Ok(created)
 }
 
 pub fn reset_local_device_id() -> Result<String> {
     let created = uuid_v4_device_id();
     crate::client_config::store_device_id(&created)?;
-    for file_name in [
-        "client-v2-device-id.txt",
-        "client-v2-device-public-key.txt",
-        "client-v2-session.json",
-    ] {
-        let path = state_dir().join(file_name);
-        if path.exists() {
-            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-        }
-    }
     Ok(created)
 }
 
@@ -2022,10 +1918,6 @@ fn format_uuid_v4(mut bytes: [u8; 16]) -> String {
     )
 }
 
-fn state_dir() -> PathBuf {
-    crate::client_config::client_state_dir()
-}
-
 fn device_name() -> String {
     env::var("COMPUTERNAME")
         .or_else(|_| env::var("HOSTNAME"))
@@ -2071,8 +1963,7 @@ mod tests {
 
     use super::{
         activation_plan_from_device_network_configs, activation_plan_from_network_config,
-        decode_control_json, device_public_key_at_path, is_strong_device_public_key, md5_hex,
-        punch_auth_headers, punch_mqtt_signature, stable_device_id_at_path, ControlPlaneClient,
+        decode_control_json, md5_hex, punch_auth_headers, punch_mqtt_signature, ControlPlaneClient,
         MqttCredential, PunchConnectSession, DEFAULT_CONTROL_BASE_URL,
     };
 
@@ -2200,12 +2091,16 @@ mod tests {
         fs::create_dir_all(&state_dir).expect("create state dir");
         let previous_state_dir = env::var_os("SLAN_STATE_DIR");
         env::set_var("SLAN_STATE_DIR", &state_dir);
+        let device_id = super::local_stable_device_id().expect("load stable test device id");
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         let address = listener.local_addr().expect("local address");
+        let response_device_id = device_id.clone();
         let request_handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept request");
             let request = read_http_request(&mut stream);
-            let response_body = br#"{"deviceId":"device-1","loginUrl":"http://127.0.0.1/login","mqtt":{"brokerUrl":"mqtt://47.245.40.231:1883","clientId":"slan-device-1","username":"slan-device-1-4102444800","password":"mqtt-secret","topicPrefix":"slan/device-1","expiresAt":4102444800}}"#;
+            let response_body = format!(
+                r#"{{"deviceId":"{response_device_id}","loginUrl":"http://127.0.0.1/login","mqtt":{{"brokerUrl":"mqtt://47.245.40.231:1883","clientId":"slan-device-1","username":"slan-device-1-4102444800","password":"mqtt-secret","topicPrefix":"slan/device-1","expiresAt":4102444800}}}}"#
+            );
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -2213,7 +2108,7 @@ mod tests {
             )
             .expect("write response headers");
             stream
-                .write_all(response_body)
+                .write_all(response_body.as_bytes())
                 .expect("write response body");
             request
         });
@@ -2222,7 +2117,7 @@ mod tests {
             base_url: format!("http://{address}"),
         };
         let prepared = client
-            .prepare_device_login("0123456789abcdef0123456789abcdef", "macos")
+            .prepare_device_login(&device_id, "macos")
             .expect("prepare device login");
         let mqtt = prepared.mqtt.expect("mqtt credential");
 
@@ -2242,7 +2137,7 @@ mod tests {
     }
 
     #[test]
-    fn activation_plan_prefers_peer_virtual_ips_over_legacy_global_ip() {
+    fn activation_plan_prefers_peer_virtual_ips_over_global_ip() {
         let plan = activation_plan_from_network_config(&serde_json::json!({
             "networkId": "net-1",
             "deviceId": "device-1",
@@ -2426,80 +2321,6 @@ mod tests {
         )
         .expect("decode first json value");
         assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
-    }
-
-    #[test]
-    fn device_id_is_compact_uuid_v4_and_persisted() {
-        let _guard = crate::test_env_lock();
-        env::remove_var("SLAN_CLIENT_DEVICE_ID");
-
-        let first_state_dir = unique_test_state_dir("uuid-device-id-first");
-        let first_path = first_state_dir.join("client-v2-device-id.txt");
-        let first = stable_device_id_at_path(&first_path, None).expect("create first device id");
-        let first_again =
-            stable_device_id_at_path(&first_path, None).expect("reuse first device id");
-        assert_eq!(first, first_again);
-        assert_compact_uuid_v4(&first);
-        assert_eq!(
-            fs::read_to_string(&first_path)
-                .expect("read persisted first device id")
-                .trim(),
-            first
-        );
-
-        let second_state_dir = unique_test_state_dir("uuid-device-id-second");
-        let second_path = second_state_dir.join("client-v2-device-id.txt");
-        let second = stable_device_id_at_path(&second_path, None).expect("create second device id");
-        assert_ne!(first, second);
-        assert_compact_uuid_v4(&second);
-
-        let legacy_state_dir = unique_test_state_dir("uuid-device-id-legacy");
-        let legacy_path = legacy_state_dir.join("client-v2-device-id.txt");
-        fs::create_dir_all(&legacy_state_dir).expect("create legacy state dir");
-        fs::write(&legacy_path, "11111111-1111-4111-8111-111111111111")
-            .expect("write legacy device id");
-        let legacy =
-            stable_device_id_at_path(&legacy_path, None).expect("normalize legacy device id");
-        assert_eq!(legacy, "11111111111141118111111111111111");
-        assert_eq!(
-            fs::read_to_string(&legacy_path)
-                .expect("read normalized legacy device id")
-                .trim(),
-            legacy
-        );
-
-        let _ = fs::remove_dir_all(first_state_dir);
-        let _ = fs::remove_dir_all(second_state_dir);
-        let _ = fs::remove_dir_all(legacy_state_dir);
-    }
-
-    #[test]
-    fn device_public_key_is_random_persisted_and_replaces_legacy_value() {
-        let state_dir = unique_test_state_dir("device-public-key");
-        let path = state_dir.join("client-v2-device-public-key.txt");
-        let device_id = "11111111-1111-4111-8111-111111111111";
-        let first = device_public_key_at_path(&path, device_id).expect("create public key");
-        let second = device_public_key_at_path(&path, device_id).expect("reuse public key");
-        assert_eq!(first, second);
-        assert!(is_strong_device_public_key(&first));
-        assert_ne!(first, format!("client-v2-{device_id}"));
-
-        fs::write(&path, format!("client-v2-{device_id}")).expect("write legacy public key");
-        let replaced = device_public_key_at_path(&path, device_id).expect("replace legacy key");
-        assert!(is_strong_device_public_key(&replaced));
-        assert_ne!(replaced, format!("client-v2-{device_id}"));
-
-        let _ = fs::remove_dir_all(state_dir);
-    }
-
-    fn assert_compact_uuid_v4(value: &str) {
-        assert_eq!(value.len(), 32);
-        assert!(value.chars().all(|ch| ch.is_ascii_hexdigit()));
-        assert_eq!(value.as_bytes().get(12), Some(&b'4'));
-        assert!(matches!(
-            value.as_bytes().get(16),
-            Some(b'8' | b'9' | b'a' | b'b')
-        ));
     }
 
     fn read_http_request(stream: &mut std::net::TcpStream) -> String {

@@ -123,6 +123,23 @@ func (s DeviceGroupService) syncNetworkDeviceGroupMemberships(ctx context.Contex
 	now := deviceNow(s.Now).Unix()
 	changedDeviceIDs := make([]string, 0)
 	for deviceID := range desired {
+		device, ok, err := s.Devices.GetDevice(ctx, deviceID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotFound
+		}
+		if !managedDeviceVirtualIP(device.VirtualIP) {
+			device.VirtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(s.Devices))
+			if device.VirtualIP == "" {
+				return ErrInvalidArgument
+			}
+			device.UpdatedAt = now
+			if err := s.Devices.SaveDevice(ctx, device); err != nil {
+				return err
+			}
+		}
 		if _, ok := existingByID[deviceID]; ok {
 			continue
 		}

@@ -328,6 +328,16 @@ mod android_tun {
                     direct_udp_probe_interval_from_ms(config.path_policy.probe_interval_ms)
                 })
                 .unwrap_or_else(|| Duration::from_secs(15));
+            let direct_udp_network_id = parsed_config
+                .as_ref()
+                .and_then(|config| config.relay_data_plane.as_ref())
+                .map(|config| config.network_id.clone())
+                .unwrap_or_default();
+            let direct_udp_node_configs = parsed_config
+                .as_ref()
+                .and_then(|config| config.relay_data_plane.as_ref())
+                .map(|config| config.node_configs.clone())
+                .unwrap_or_default();
             let mut last_direct_udp_probe = Instant::now()
                 .checked_sub(direct_udp_probe_interval)
                 .unwrap_or_else(Instant::now);
@@ -351,9 +361,21 @@ mod android_tun {
                 let mut did_work = false;
                 if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
                     if let Some(direct_udp) = direct_udp.as_ref() {
+                        let punch_probes = direct_udp.send_punch_endpoint_probes(
+                            direct_udp_network_id.as_str(),
+                            &direct_udp_node_configs,
+                        );
                         thread_stats
                             .direct_udp_probes_sent
                             .fetch_add(direct_udp.send_probe_packets() as u64, Ordering::Relaxed);
+                        if punch_probes > 0 {
+                            android_log_info(&format!(
+                                "SLAN_ANDROID_FFI_PUNCH_PROBES_SENT count={} networkId={} localNodeId={}",
+                                punch_probes,
+                                direct_udp_network_id,
+                                direct_udp.local_node_id,
+                            ));
+                        }
                     }
                     last_direct_udp_probe = Instant::now();
                 }
@@ -1571,11 +1593,12 @@ mod android_tun {
             let socket = unsafe { UdpSocket::from_raw_fd(fd) };
             let local_addr = socket.local_addr().ok();
             android_log_info(&format!(
-                "SLAN_ANDROID_FFI_PREPARE_DIRECT_UDP fd={} localAddr={:?} localNodeId={} peerPathCount={}",
+                "SLAN_ANDROID_FFI_PREPARE_DIRECT_UDP fd={} localAddr={:?} localNodeId={} peerPathCount={} nodeConfigCount={}",
                 fd,
                 local_addr,
                 relay_config.local_node_id,
                 relay_config.peer_paths.len(),
+                relay_config.node_configs.len(),
             ));
             DirectUdpTransport::attach_with_socket(
                 relay_config.local_node_id.as_str(),

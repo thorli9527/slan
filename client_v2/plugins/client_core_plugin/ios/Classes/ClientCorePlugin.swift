@@ -23,6 +23,27 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
   private static let infoControlBaseUrlKey = "SLANControlBaseURL"
   private static let packetTunnelProviderBundleId = "dev.slan.client.v2.SLANPacketTunnel"
   private static let packetTunnelDescription = "SLAN Packet Tunnel"
+  private let embeddedServiceQueue = DispatchQueue(
+    label: "dev.slan.client-core.embedded-service",
+    qos: .userInitiated
+  )
+  private let embeddedWatchQueue = DispatchQueue(
+    label: "dev.slan.client-core.embedded-watch",
+    qos: .utility
+  )
+  private let embeddedServiceStateQueue = DispatchQueue(
+    label: "dev.slan.client-core.embedded-service.state"
+  )
+  private let embeddedServicePendingLimit = 128
+  private var embeddedServicePendingCount = 0
+  private var embeddedServiceActiveCount = 0
+  private var embeddedServiceCompletedTotal = 0
+  private var embeddedServiceRejectedTotal = 0
+  private let embeddedWatchPendingLimit = 3
+  private var embeddedWatchPendingCount = 0
+  private var embeddedWatchActiveCount = 0
+  private var embeddedWatchCompletedTotal = 0
+  private var embeddedWatchRejectedTotal = 0
 
   private var packetTunnelManager: NETunnelProviderManager?
   private var pendingNetworkEventResult: FlutterResult?
@@ -72,7 +93,61 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
     case "iosStopPacketTunnel":
       iosStopPacketTunnel(result: result)
     case "embeddedServiceRequest":
-      result(handleEmbeddedServiceRequest(embeddedServiceRequestJson(call.arguments)))
+      let requestJson = embeddedServiceRequestJson(call.arguments)
+      let watchRequest = isEmbeddedWatchRequest(requestJson)
+      let accepted = embeddedServiceStateQueue.sync {
+        if watchRequest {
+          guard embeddedWatchPendingCount < embeddedWatchPendingLimit else {
+            embeddedWatchRejectedTotal += 1
+            return false
+          }
+          embeddedWatchPendingCount += 1
+        } else {
+          guard embeddedServicePendingCount < embeddedServicePendingLimit else {
+            embeddedServiceRejectedTotal += 1
+            return false
+          }
+          embeddedServicePendingCount += 1
+        }
+        return true
+      }
+      guard accepted else {
+        result(
+          FlutterError(
+            code: watchRequest ? "embedded_watch_busy" : "embedded_service_busy",
+            message: watchRequest
+              ? "embedded watch request queue is full"
+              : "embedded service request queue is full",
+            details: nil
+          )
+        )
+        return
+      }
+      let queue = watchRequest ? embeddedWatchQueue : embeddedServiceQueue
+      queue.async {
+        self.embeddedServiceStateQueue.sync {
+          if watchRequest {
+            self.embeddedWatchActiveCount = 1
+          } else {
+            self.embeddedServiceActiveCount = 1
+          }
+        }
+        let response = self.handleEmbeddedServiceRequest(requestJson)
+        self.embeddedServiceStateQueue.sync {
+          if watchRequest {
+            self.embeddedWatchActiveCount = 0
+            self.embeddedWatchPendingCount = max(0, self.embeddedWatchPendingCount - 1)
+            self.embeddedWatchCompletedTotal += 1
+          } else {
+            self.embeddedServiceActiveCount = 0
+            self.embeddedServicePendingCount = max(0, self.embeddedServicePendingCount - 1)
+            self.embeddedServiceCompletedTotal += 1
+          }
+        }
+        DispatchQueue.main.async {
+          result(response)
+        }
+      }
     case "mobileServerBaseUrl":
       result(mobileServerBaseUrl())
     case "setMobileServerBaseUrl":
@@ -149,6 +224,16 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
       return requestJson
     }
     return output
+  }
+
+  private func isEmbeddedWatchRequest(_ requestJson: String) -> Bool {
+    guard
+      let data = requestJson.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+      return false
+    }
+    return object["method"] as? String == "localBusinessEventWatch"
   }
 
   private func embeddedRequestedDeviceId(_ args: [String: Any]) -> String {
@@ -401,6 +486,31 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
 
   private func iosRuntimeState() -> [String: Any] {
     var runtime = compactState()
+    let embeddedServiceDiagnostics = embeddedServiceStateQueue.sync {
+      [
+        "embeddedServicePendingLimit": embeddedServicePendingLimit,
+        "embeddedServicePendingCount": embeddedServicePendingCount,
+        "embeddedServiceQueueDepth": max(
+          0,
+          embeddedServicePendingCount - embeddedServiceActiveCount
+        ),
+        "embeddedServiceActiveCount": embeddedServiceActiveCount,
+        "embeddedServiceCompletedTotal": embeddedServiceCompletedTotal,
+        "embeddedServiceRejectedTotal": embeddedServiceRejectedTotal,
+        "embeddedWatchPendingLimit": embeddedWatchPendingLimit,
+        "embeddedWatchPendingCount": embeddedWatchPendingCount,
+        "embeddedWatchQueueDepth": max(
+          0,
+          embeddedWatchPendingCount - embeddedWatchActiveCount
+        ),
+        "embeddedWatchActiveCount": embeddedWatchActiveCount,
+        "embeddedWatchCompletedTotal": embeddedWatchCompletedTotal,
+        "embeddedWatchRejectedTotal": embeddedWatchRejectedTotal,
+      ]
+    }
+    for (key, value) in embeddedServiceDiagnostics {
+      runtime[key] = value
+    }
     let config = SLANIosSharedStore.readNetworkConfig()
     let stats = SLANIosSharedStore.readPacketTunnelStats()
     let stoppedAtMs = intField(stats, "stoppedAtMs") ?? 0
@@ -520,26 +630,30 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
   private func stableDeviceId() -> String {
     let defaults = UserDefaults.standard
     if let existing = defaults.string(forKey: Self.deviceIdKey),
-      isUuidV4(existing.trimmingCharacters(in: .whitespacesAndNewlines))
+      let normalized = normalizedUuidV4(existing)
     {
-      return existing.trimmingCharacters(in: .whitespacesAndNewlines)
+      defaults.set(normalized, forKey: Self.deviceIdKey)
+      return normalized
     }
-    let value = UUID().uuidString.lowercased()
+    let value = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     persistStableDeviceId(value)
     return value
   }
 
   private func persistStableDeviceId(_ value: String) {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    guard isUuidV4(trimmed) else {
+    guard let normalized = normalizedUuidV4(value) else {
       return
     }
-    UserDefaults.standard.set(trimmed, forKey: Self.deviceIdKey)
+    UserDefaults.standard.set(normalized, forKey: Self.deviceIdKey)
   }
 
-  private func isUuidV4(_ value: String) -> Bool {
-    let pattern = #"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"#
-    return value.range(of: pattern, options: .regularExpression) != nil
+  private func normalizedUuidV4(_ value: String) -> String? {
+    let normalized = value
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "-", with: "")
+      .lowercased()
+    let pattern = #"^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$"#
+    return normalized.range(of: pattern, options: .regularExpression) == nil ? nil : normalized
   }
 
   private func stableNodeId() -> String {

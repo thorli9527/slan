@@ -1,24 +1,33 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock, RwLock, RwLockReadGuard,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
-use client_core::{AuthPayload, ClientCommand, ClientRuntime, ClientViewState};
+use client_core::{node_config_path_rank, AuthPayload, ClientViewState, NodeConfig};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     control_plane::{
         local_stable_device_id, set_control_base_url_override, ControlDevice, ControlPlaneClient,
-        DeviceSessionResponse, MqttCredential, RelayCandidate,
+        DeviceNetworkConfig, DeviceSessionResponse, MqttCredential, RelayCandidate,
     },
-    network_module::{network_module_configs_for_session, replace_network_module_configs},
+    network_module::{replace_network_module_configs, sync_resolver_runtime_state},
+    network_runtime_state::runtime_network_state_store,
     relay_candidates::replace_runtime_relay_candidates,
     relay_models::PersistedRelayCandidate,
+    resolver_runtime_state::clear_resolver_runtime_state,
 };
 
 const SESSION_RENEW_WINDOW_MS: u64 = 5 * 60 * 1_000;
+static APP_DATA_DIR_OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+static SESSION_RUNTIME_EPOCH: AtomicU64 = AtomicU64::new(1);
+static SESSION_RUNTIME_LIFECYCLE: RwLock<()> = RwLock::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,9 +55,28 @@ pub(crate) struct PersistedSession {
     pub(crate) virtual_ip: Option<String>,
     #[serde(default)]
     pub(crate) relay_candidates: Vec<PersistedRelayCandidate>,
+    #[serde(default)]
+    pub(crate) node_configs: Vec<NodeConfig>,
     pub(crate) mqtt: Option<MqttCredential>,
     pub(crate) expires_in: Option<u64>,
     pub(crate) authenticated_at_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedSession {
+    pub(crate) session: PersistedSession,
+    pub(crate) relay_candidates: Vec<PersistedRelayCandidate>,
+    pub(crate) network_configs: Vec<DeviceNetworkConfig>,
+}
+
+impl PreparedSession {
+    pub(crate) fn from_session(session: PersistedSession) -> Self {
+        Self {
+            relay_candidates: session.relay_candidates.clone(),
+            session,
+            network_configs: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -97,6 +125,7 @@ impl From<AuthPayload> for PersistedSession {
             network_ids: active_network_id.into_iter().collect(),
             virtual_ip: payload.virtual_ip,
             relay_candidates: Vec::new(),
+            node_configs: Vec::new(),
             mqtt: None,
             expires_in: payload.expires_in,
             authenticated_at_ms: current_timestamp_ms(),
@@ -127,6 +156,7 @@ impl PersistedSession {
             network_ids: Vec::new(),
             virtual_ip: None,
             relay_candidates: Vec::new(),
+            node_configs: Vec::new(),
             mqtt: None,
             expires_in: None,
             authenticated_at_ms: current_timestamp_ms(),
@@ -157,12 +187,7 @@ fn normalize_mqtt_credential(mut mqtt: MqttCredential) -> MqttCredential {
 }
 
 fn normalize_mqtt_topic_prefix(mqtt: &mut MqttCredential) {
-    let prefix = mqtt.topic_prefix.trim().trim_matches('/');
-    mqtt.topic_prefix = match prefix.strip_prefix("slan/v1/") {
-        Some(suffix) => format!("slan/{suffix}"),
-        None if prefix == "slan/v1" => "slan".to_string(),
-        None => prefix.to_string(),
-    };
+    mqtt.topic_prefix = mqtt.topic_prefix.trim().trim_matches('/').to_string();
 }
 
 fn normalize_session_mqtt_topic_prefix(session: &mut PersistedSession) {
@@ -182,8 +207,15 @@ pub(crate) fn load_valid_registered_session() -> Option<PersistedSession> {
         let _ = remove_session();
         return bootstrap_session_from_env().ok();
     }
-    match ensure_session_device_registered(session.clone()) {
-        Ok(session) => Some(session),
+    match prepare_session_device_registered(session.clone()) {
+        Ok(prepared) => {
+            if let Err(error) = persist_session(&prepared.session) {
+                eprintln!("client-core-service startup session persist skipped: {error:#}");
+                return Some(session);
+            }
+            apply_prepared_session_runtime(&prepared);
+            Some(prepared.session)
+        }
         Err(error) if session_auth_invalid_error(&error) => {
             eprintln!("client-core-service session invalid; clearing local session: {error:#}");
             let _ = remove_session();
@@ -194,20 +226,6 @@ pub(crate) fn load_valid_registered_session() -> Option<PersistedSession> {
             Some(session)
         }
     }
-}
-
-pub(crate) fn refresh_startup_session<P>(runtime: &mut ClientRuntime<P>)
-where
-    P: client_core::PlatformNetwork,
-{
-    let Some(session) = load_valid_registered_session() else {
-        let _ = runtime.dispatch(ClientCommand::Logout);
-        return;
-    };
-    if session.access_token.trim().is_empty() {
-        return;
-    }
-    let _ = runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
 }
 
 pub(crate) fn session_is_expired(session: &PersistedSession) -> bool {
@@ -313,7 +331,7 @@ fn bootstrap_session_from_env() -> Result<PersistedSession> {
     let response = client.bootstrap_device_session(&installation_key)?;
     let mut session = persisted_session_from_device_session(response);
     backfill_desktop_session_mqtt(&client, &mut session);
-    refresh_session_network_from_device_configs(&client, &mut session);
+    let _ = refresh_prepared_session_network(&client, &mut session, Vec::new());
     ensure_session_node_binding(&client, &mut session)?;
     persist_session(&session)?;
     Ok(session)
@@ -353,6 +371,7 @@ fn persisted_session_from_device_session(
     let device_token = response.device_session.device_token.clone();
     let relay_candidates =
         relay_candidates_from_device_session_response(&response, active_network_id.as_deref());
+    let node_configs = node_configs_from_device_session_response(&response);
     let mqtt = mqtt_from_device_session_response(&response);
     PersistedSession {
         access_token: device_token.clone(),
@@ -374,6 +393,7 @@ fn persisted_session_from_device_session(
         network_ids,
         virtual_ip,
         relay_candidates,
+        node_configs,
         mqtt,
         expires_in: response
             .device_session
@@ -392,38 +412,74 @@ pub(crate) fn session_auth_invalid_error(error: &anyhow::Error) -> bool {
         || message.contains("token expired")
 }
 
-pub(crate) fn ensure_session_device_registered(
+pub(crate) fn prepare_session_device_registered(
     mut session: PersistedSession,
-) -> Result<PersistedSession> {
+) -> Result<PreparedSession> {
     if session.access_token.trim().is_empty() {
-        return Ok(session);
+        return Ok(PreparedSession::from_session(session));
     }
     let client = ControlPlaneClient::from_env();
+    let mut projection = PreparedSession::from_session(session.clone());
     if session.session_kind == "device" {
-        ensure_bound_device_session(&client, &mut session, false)?;
+        let (relay_candidates, network_configs) =
+            prepare_bound_device_session(&client, &mut session, false)?;
+        projection.relay_candidates = relay_candidates;
+        projection.network_configs = network_configs;
         backfill_desktop_session_mqtt(&client, &mut session);
-        refresh_session_network_from_device_configs(&client, &mut session);
+        projection.network_configs =
+            refresh_prepared_session_network(&client, &mut session, projection.network_configs);
         ensure_session_node_binding(&client, &mut session)?;
-        persist_session(&session)?;
-        return Ok(session);
+        refresh_session_runtime_endpoints(&client, &mut session)?;
+        projection.session = session;
+        return Ok(projection);
     }
     let user_token_renewed = renew_user_session_if_needed(&client, &mut session)?;
-    ensure_bound_device_session(&client, &mut session, user_token_renewed)?;
+    let (relay_candidates, network_configs) =
+        prepare_bound_device_session(&client, &mut session, user_token_renewed)?;
+    projection.relay_candidates = relay_candidates;
+    projection.network_configs = network_configs;
     backfill_desktop_session_mqtt(&client, &mut session);
-    refresh_session_network_from_device_configs(&client, &mut session);
+    projection.network_configs =
+        refresh_prepared_session_network(&client, &mut session, projection.network_configs);
     ensure_session_node_binding(&client, &mut session)?;
-    persist_session(&session)?;
-    Ok(session)
+    refresh_session_runtime_endpoints(&client, &mut session)?;
+    projection.session = session;
+    Ok(projection)
 }
 
-pub(crate) fn hydrate_session_from_control_plane(payload: AuthPayload) -> Result<PersistedSession> {
+fn apply_prepared_session_runtime(prepared: &PreparedSession) {
+    if !prepared.relay_candidates.is_empty() {
+        replace_runtime_relay_candidates(prepared.relay_candidates.clone());
+    }
+    if !prepared.network_configs.is_empty() {
+        replace_network_module_configs(prepared.network_configs.clone());
+        sync_resolver_runtime_state(&prepared.session, &prepared.network_configs);
+    }
+}
+
+pub(crate) fn prepare_session_from_control_plane(payload: AuthPayload) -> Result<PreparedSession> {
     let client = ControlPlaneClient::from_env();
     let mut session = PersistedSession::from(payload);
-    bind_session_device_session(&client, &mut session)?;
+    let response = bind_device_session_response(&client, &session)?;
+    let relay_candidates = relay_candidates_from_device_session_response(
+        &response,
+        session.active_network_id.as_deref(),
+    );
+    let response_network_configs = response
+        .network_configs
+        .as_ref()
+        .map(|configs| configs.items.clone())
+        .unwrap_or_default();
+    apply_device_session_fields(&mut session, response, false);
     backfill_desktop_session_mqtt(&client, &mut session);
-    refresh_session_network_from_device_configs(&client, &mut session);
+    let network_configs =
+        refresh_prepared_session_network(&client, &mut session, response_network_configs);
     ensure_session_node_binding(&client, &mut session)?;
-    Ok(session)
+    Ok(PreparedSession {
+        session,
+        relay_candidates,
+        network_configs,
+    })
 }
 
 pub(crate) fn prepare_client_login_session(platform: &str) -> Result<PersistedSession> {
@@ -434,9 +490,7 @@ pub(crate) fn prepare_client_login_session(platform: &str) -> Result<PersistedSe
     let mqtt = login
         .mqtt
         .ok_or_else(|| anyhow::anyhow!("server did not return mqtt credential"))?;
-    let session = PersistedSession::prelogin(login.device_id, Some(mqtt));
-    persist_session(&session)?;
-    Ok(session)
+    Ok(PersistedSession::prelogin(login.device_id, Some(mqtt)))
 }
 
 fn renew_user_session_if_needed(
@@ -474,11 +528,11 @@ fn renew_user_session_if_needed(
     Ok(true)
 }
 
-fn ensure_bound_device_session(
+fn prepare_bound_device_session(
     client: &ControlPlaneClient,
     session: &mut PersistedSession,
     force_renew: bool,
-) -> Result<()> {
+) -> Result<(Vec<PersistedRelayCandidate>, Vec<DeviceNetworkConfig>)> {
     let has_device_token = session
         .device_token
         .as_deref()
@@ -486,95 +540,63 @@ fn ensure_bound_device_session(
         .filter(|value| !value.is_empty())
         .is_some();
     if !has_device_token {
-        return bind_session_device_session(client, session);
+        return prepare_bound_device_session_response(client, session, false);
     }
     if force_renew || device_session_should_renew(session) {
-        return renew_bound_device_session(client, session);
+        return prepare_bound_device_session_response(client, session, true);
     }
-    Ok(())
+    Ok((session.relay_candidates.clone(), Vec::new()))
 }
 
-fn renew_bound_device_session(
+fn prepare_bound_device_session_response(
     client: &ControlPlaneClient,
     session: &mut PersistedSession,
-) -> Result<()> {
-    let device_token = session
-        .device_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .context("missing device token for device session renew")?
-        .to_string();
-    let network_enabled = session
-        .virtual_ip
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some();
-    let response = client.renew_device_session(
-        &device_token,
-        session.device_refresh_token.as_deref(),
-        network_enabled,
-        0,
-        0,
-    )?;
+    renew: bool,
+) -> Result<(Vec<PersistedRelayCandidate>, Vec<DeviceNetworkConfig>)> {
+    let response = if renew {
+        let device_token = session
+            .device_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .context("missing device token for device session renew")?
+            .to_string();
+        let network_enabled = session
+            .virtual_ip
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some();
+        client.renew_device_session(
+            &device_token,
+            session.device_refresh_token.as_deref(),
+            network_enabled,
+            0,
+            0,
+        )?
+    } else {
+        bind_device_session_response(client, session)?
+    };
     let relay_candidates = relay_candidates_from_device_session_response(
         &response,
         session.active_network_id.as_deref(),
     );
-    let mqtt = mqtt_from_device_session_response(&response);
-    session.device_session_id = Some(response.device_session.session_id);
-    let renewed_device_token = response.device_session.device_token;
-    if session.session_kind == "device" {
-        session.access_token = renewed_device_token.clone();
-        session.authenticated_at_ms = current_timestamp_ms();
-        session.expires_in = response
-            .device_session
-            .device_token_expires_at
-            .checked_sub((current_timestamp_ms() / 1_000) as i64)
-            .map(|value| value.max(0) as u64);
-    }
-    session.device_token = Some(renewed_device_token);
-    session.device_refresh_token = response.device_session.device_refresh_token;
-    session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
-    session.network_ids = response
-        .device_session
-        .active_network_ids
-        .iter()
-        .filter_map(|value| non_empty_session_network_id(value))
-        .collect();
-    session.mqtt = mqtt.or(session.mqtt.take());
+    let network_configs = response
+        .network_configs
+        .as_ref()
+        .map(|configs| configs.items.clone())
+        .unwrap_or_default();
+    apply_device_session_fields(session, response, renew);
     if !relay_candidates.is_empty() {
         session.relay_candidates = relay_candidates.clone();
-        replace_runtime_relay_candidates(relay_candidates);
     }
-    sync_session_device_fields(session, &response.device);
-    if let Some(configs) = response.network_configs {
-        let items = configs.items;
-        replace_network_module_configs(items.clone());
-        if let Some(config) = items
-            .iter()
-            .rev()
-            .find(|item| !item.network_id.trim().is_empty())
-        {
-            session.active_network_id = non_empty_session_network_id(&config.network_id);
-            if let Some(global_ip) = config
-                .global_ip
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                session.virtual_ip = Some(global_ip.to_string());
-            }
-        }
-    }
-    Ok(())
+    Ok((relay_candidates, network_configs))
 }
 
-fn bind_session_device_session(
+fn bind_device_session_response(
     client: &ControlPlaneClient,
-    session: &mut PersistedSession,
-) -> Result<()> {
+    session: &PersistedSession,
+) -> Result<DeviceSessionResponse> {
     let device_id = session
         .device_id
         .as_deref()
@@ -582,14 +604,28 @@ fn bind_session_device_session(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .context("missing device id for device session bind")?;
-    let response = client.bind_device_session(&session.access_token, &device_id)?;
-    let relay_candidates = relay_candidates_from_device_session_response(
-        &response,
-        session.active_network_id.as_deref(),
-    );
+    client.bind_device_session(&session.access_token, &device_id)
+}
+
+fn apply_device_session_fields(
+    session: &mut PersistedSession,
+    response: DeviceSessionResponse,
+    renew_device_access_token: bool,
+) {
     let mqtt = mqtt_from_device_session_response(&response);
+    let node_configs = node_configs_from_device_session_response(&response);
     session.device_session_id = Some(response.device_session.session_id);
-    session.device_token = Some(response.device_session.device_token);
+    let device_token = response.device_session.device_token;
+    if renew_device_access_token && session.session_kind == "device" {
+        session.access_token = device_token.clone();
+        session.authenticated_at_ms = current_timestamp_ms();
+        session.expires_in = response
+            .device_session
+            .device_token_expires_at
+            .checked_sub((current_timestamp_ms() / 1_000) as i64)
+            .map(|value| value.max(0) as u64);
+    }
+    session.device_token = Some(device_token);
     session.device_refresh_token = response.device_session.device_refresh_token;
     session.device_token_expires_at = Some(response.device_session.device_token_expires_at);
     session.network_ids = response
@@ -599,14 +635,10 @@ fn bind_session_device_session(
         .filter_map(|value| non_empty_session_network_id(value))
         .collect();
     session.mqtt = mqtt.or(session.mqtt.take());
-    if !relay_candidates.is_empty() {
-        session.relay_candidates = relay_candidates.clone();
-        replace_runtime_relay_candidates(relay_candidates);
-    }
+    session.node_configs = node_configs;
     sync_session_device_fields(session, &response.device);
     if let Some(configs) = response.network_configs {
         let items = configs.items;
-        replace_network_module_configs(items.clone());
         if let Some(config) = items
             .iter()
             .rev()
@@ -623,7 +655,97 @@ fn bind_session_device_session(
             }
         }
     }
+}
+
+fn node_configs_from_device_session_response(response: &DeviceSessionResponse) -> Vec<NodeConfig> {
+    response
+        .runtime_endpoints
+        .as_ref()
+        .map(node_configs_from_runtime_endpoints)
+        .unwrap_or_default()
+}
+
+fn node_configs_from_runtime_endpoints(
+    runtime: &crate::control_plane::RuntimeEndpointsResponse,
+) -> Vec<NodeConfig> {
+    let mut nodes: Vec<_> = runtime
+        .node_configs
+        .iter()
+        .filter_map(|node| {
+            let config = NodeConfig {
+                node_id: node.node_id.trim().to_string(),
+                connection_type: node.connection_type.trim().to_string(),
+                transport: node.transport.trim().to_string(),
+                path_kind: node.path_kind.trim().to_string(),
+                address: node.address.trim().to_string(),
+                priority: node.priority,
+            };
+            config.is_valid().then_some(config)
+        })
+        .collect();
+    nodes.sort_by(|left, right| {
+        left.path_rank()
+            .cmp(&right.path_rank())
+            .then_with(|| left.priority.cmp(&right.priority))
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
+    nodes
+}
+
+pub(crate) fn refresh_session_runtime_endpoints(
+    client: &ControlPlaneClient,
+    session: &mut PersistedSession,
+) -> Result<()> {
+    let runtime = client.runtime_endpoints(session_device_api_token(session))?;
+    session.node_configs = node_configs_from_runtime_endpoints(&runtime);
     Ok(())
+}
+
+fn refresh_prepared_session_network(
+    client: &ControlPlaneClient,
+    session: &mut PersistedSession,
+    prepared_configs: Vec<DeviceNetworkConfig>,
+) -> Vec<DeviceNetworkConfig> {
+    let configs = if prepared_configs.is_empty() {
+        session
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|device_id| {
+                client
+                    .device_network_configs(session_device_api_token(session), device_id)
+                    .ok()
+            })
+            .unwrap_or_default()
+    } else {
+        prepared_configs
+    };
+    if let Some(config) = session
+        .active_network_id
+        .as_deref()
+        .and_then(|network_id| {
+            configs
+                .iter()
+                .find(|config| config.network_id == network_id)
+        })
+        .or_else(|| configs.last())
+    {
+        session.active_network_id = non_empty_session_network_id(&config.network_id);
+        if let Some(global_ip) = config
+            .global_ip
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            session.virtual_ip = Some(global_ip.to_string());
+        }
+    } else if session.active_network_id.is_none() {
+        if let Ok(Some(network_id)) = client.active_network_id(session_device_api_token(session)) {
+            session.active_network_id = Some(network_id);
+        }
+    }
+    configs
 }
 
 fn mqtt_from_device_session_response(response: &DeviceSessionResponse) -> Option<MqttCredential> {
@@ -683,33 +805,42 @@ fn relay_candidates_from_device_session_response(
 ) -> Vec<PersistedRelayCandidate> {
     let mut candidates = Vec::new();
     if let Some(runtime) = response.runtime_endpoints.as_ref() {
-        if let Some(network_id) = active_network_id {
-            if let Some(network) = runtime
-                .networks
-                .iter()
-                .find(|network| network.network_id == network_id)
-            {
-                candidates.extend(network.relay_candidates.iter().cloned());
-            }
-        }
-        if candidates.is_empty() {
-            candidates.extend(runtime.relay_candidates.iter().cloned());
-        }
-    }
-    if candidates.is_empty() {
-        if let Some(configs) = response.network_configs.as_ref() {
-            let selected = active_network_id
-                .and_then(|network_id| {
-                    configs
-                        .items
-                        .iter()
-                        .find(|config| config.network_id == network_id)
+        let mut relay_nodes: Vec<_> = runtime
+            .node_configs
+            .iter()
+            .filter(|node| node.connection_type == "relay")
+            .collect();
+        relay_nodes.sort_by(|left, right| {
+            node_config_path_rank(&left.path_kind)
+                .cmp(&node_config_path_rank(&right.path_kind))
+                .then_with(|| left.priority.cmp(&right.priority))
+                .then_with(|| left.node_id.cmp(&right.node_id))
+        });
+        candidates.extend(relay_nodes.into_iter().filter_map(|node| {
+            if node.connection_type != "relay"
+                || active_network_id.is_some_and(|network_id| {
+                    !node.network_ids.is_empty()
+                        && !node.network_ids.iter().any(|value| value == network_id)
                 })
-                .or_else(|| configs.items.last());
-            if let Some(config) = selected {
-                candidates.extend(config.relay_candidates.iter().cloned());
+            {
+                return None;
             }
-        }
+            Some(RelayCandidate {
+                endpoint_id: node.node_id.clone(),
+                transport: match node.transport.as_str() {
+                    "tcp" => "derp_tcp_tls_443".to_string(),
+                    value => value.to_string(),
+                },
+                address: node.address.clone(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+                reachable: false,
+                observed_rtt_ms: None,
+                path_score: Some(node.priority.into()),
+                selected: false,
+            })
+        }));
     }
     dedupe_relay_candidates(candidates)
 }
@@ -743,41 +874,6 @@ fn dedupe_relay_candidates(candidates: Vec<RelayCandidate>) -> Vec<PersistedRela
             })
         })
         .collect()
-}
-
-fn refresh_session_network_from_device_configs(
-    client: &ControlPlaneClient,
-    session: &mut PersistedSession,
-) {
-    let configs = network_module_configs_for_session(client, session);
-    if !configs.is_empty() {
-        let selected = session
-            .active_network_id
-            .as_deref()
-            .and_then(|network_id| {
-                configs
-                    .iter()
-                    .find(|config| config.network_id == network_id)
-            })
-            .or_else(|| configs.last());
-        if let Some(config) = selected {
-            session.active_network_id = Some(config.network_id.clone());
-            if let Some(global_ip) = config
-                .global_ip
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                session.virtual_ip = Some(global_ip.to_string());
-            }
-            return;
-        }
-    }
-    if session.active_network_id.is_none() {
-        if let Ok(Some(network_id)) = client.active_network_id(session_device_api_token(session)) {
-            session.active_network_id = Some(network_id);
-        }
-    }
 }
 
 // The current app control plane does not expose an independent "create control
@@ -910,11 +1006,6 @@ pub(crate) fn sync_session_device_fields(session: &mut PersistedSession, device:
     }
 }
 
-fn legacy_session_file_path() -> PathBuf {
-    let base = app_data_dir();
-    base.join("SLAN").join("client-v2-session.json")
-}
-
 fn bootstrap_env_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if cfg!(any(target_os = "macos", target_os = "linux")) {
@@ -1018,6 +1109,14 @@ pub(crate) fn clear_pending_console_login() -> Result<()> {
 }
 
 pub(crate) fn app_data_dir() -> PathBuf {
+    if let Some(dir) = APP_DATA_DIR_OVERRIDE.get().and_then(|value| {
+        value
+            .lock()
+            .ok()
+            .and_then(|current| current.as_ref().cloned())
+    }) {
+        return dir;
+    }
     if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
         return PathBuf::from(dir);
     }
@@ -1043,15 +1142,36 @@ pub(crate) fn app_data_dir() -> PathBuf {
     PathBuf::from("/var/lib")
 }
 
+#[allow(dead_code)] // Used by the mobile embedded library, not the desktop service binary.
+pub(crate) fn set_app_data_dir_override(value: &str) {
+    let value = value.trim();
+    if value.is_empty() {
+        return;
+    }
+    let override_dir = APP_DATA_DIR_OVERRIDE.get_or_init(|| Mutex::new(None));
+    let mut current = override_dir
+        .lock()
+        .expect("app data dir override mutex poisoned");
+    let next = PathBuf::from(value);
+    match current.as_ref() {
+        None => *current = Some(next),
+        Some(existing) if existing != &next => {
+            eprintln!(
+                "client-core-service ignored app data dir change after initialization: {}",
+                next.display()
+            );
+        }
+        Some(_) => {}
+    }
+}
+
 pub(crate) fn load_session() -> Result<PersistedSession> {
     let device_id = local_stable_device_id().context("load device id for client config")?;
-    let mut session = match crate::client_config::load_secret::<PersistedSession>(
+    let mut session = crate::client_config::load_secret::<PersistedSession>(
         &device_id,
         crate::client_config::KEY_SESSION,
-    )? {
-        Some(session) => session,
-        None => migrate_legacy_session(&device_id)?,
-    };
+    )?
+    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "session not found"))?;
     session.relay_candidates.clear();
     normalize_session_mqtt_topic_prefix(&mut session);
     Ok(session)
@@ -1062,17 +1182,126 @@ pub(crate) fn persist_session(session: &PersistedSession) -> Result<()> {
     let mut session = session.clone();
     session.relay_candidates.clear();
     normalize_session_mqtt_topic_prefix(&mut session);
+    let previous = crate::client_config::load_secret::<PersistedSession>(
+        &device_id,
+        crate::client_config::KEY_SESSION,
+    )?;
+    if previous
+        .as_ref()
+        .is_some_and(|previous| session_scope_changed(previous, &session))
+    {
+        clear_session_runtime_state();
+    }
     crate::client_config::store_secret(&device_id, crate::client_config::KEY_SESSION, &session)
 }
 
-fn migrate_legacy_session(device_id: &str) -> Result<PersistedSession> {
-    let path = legacy_session_file_path();
-    let payload = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let session: PersistedSession =
-        serde_json::from_slice(&payload).with_context(|| format!("decode {}", path.display()))?;
-    crate::client_config::store_secret(device_id, crate::client_config::KEY_SESSION, &session)?;
-    fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-    Ok(session)
+fn session_scope_changed(previous: &PersistedSession, next: &PersistedSession) -> bool {
+    previous.user_id.trim() != next.user_id.trim()
+        || normalized_session_scope_value(previous.device_id.as_deref())
+            != normalized_session_scope_value(next.device_id.as_deref())
+        || normalized_session_scope_value(previous.active_network_id.as_deref())
+            != normalized_session_scope_value(next.active_network_id.as_deref())
+}
+
+fn normalized_session_scope_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod session_scope_tests {
+    use super::{
+        clear_session_runtime_state, current_session_runtime_epoch, lock_session_runtime_epoch,
+        session_scope_changed, PersistedSession,
+    };
+    use std::{sync::mpsc, time::Duration};
+
+    fn session(
+        user_id: &str,
+        device_id: Option<&str>,
+        network_id: Option<&str>,
+    ) -> PersistedSession {
+        let mut session = PersistedSession::empty();
+        session.user_id = user_id.to_string();
+        session.device_id = device_id.map(str::to_string);
+        session.active_network_id = network_id.map(str::to_string);
+        session
+    }
+
+    #[test]
+    fn token_refresh_keeps_scope_but_identity_changes_reset_it() {
+        let previous = session("user-1", Some("device-1"), Some("network-1"));
+        let mut refreshed = previous.clone();
+        refreshed.access_token = "new-access-token".to_string();
+        refreshed.device_token = Some("new-device-token".to_string());
+        assert!(!session_scope_changed(&previous, &refreshed));
+
+        assert!(session_scope_changed(
+            &previous,
+            &session("user-2", Some("device-1"), Some("network-1"))
+        ));
+        assert!(session_scope_changed(
+            &previous,
+            &session("user-1", Some("device-2"), Some("network-1"))
+        ));
+        assert!(session_scope_changed(
+            &previous,
+            &session("user-1", Some("device-1"), Some("network-2"))
+        ));
+        assert!(!session_scope_changed(
+            &session("user-1", None, None),
+            &session("user-1", Some("  "), Some(""))
+        ));
+    }
+
+    #[test]
+    fn session_clear_waits_for_active_event_commit_and_invalidates_old_epoch() {
+        let _test_lock = crate::test_env_lock();
+        let epoch = current_session_runtime_epoch();
+        let event_guard = lock_session_runtime_epoch(epoch).expect("lock event epoch");
+        let (cleared_tx, cleared_rx) = mpsc::sync_channel(1);
+        let clear_task = std::thread::spawn(move || {
+            clear_session_runtime_state();
+            cleared_tx.send(()).expect("announce session clear");
+        });
+
+        assert!(cleared_rx.recv_timeout(Duration::from_millis(20)).is_err());
+        drop(event_guard);
+        cleared_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("session clear completes after event commit");
+        clear_task.join().expect("join session clear task");
+
+        assert!(current_session_runtime_epoch() > epoch);
+        assert!(lock_session_runtime_epoch(epoch).is_err());
+    }
+}
+
+fn clear_session_runtime_state() {
+    let _lifecycle = SESSION_RUNTIME_LIFECYCLE
+        .write()
+        .unwrap_or_else(|error| error.into_inner());
+    SESSION_RUNTIME_EPOCH.fetch_add(1, Ordering::AcqRel);
+    crate::network_module::clear_network_module();
+    runtime_network_state_store().clear();
+    clear_resolver_runtime_state();
+    replace_runtime_relay_candidates(Vec::new());
+}
+
+pub(crate) fn current_session_runtime_epoch() -> u64 {
+    SESSION_RUNTIME_EPOCH.load(Ordering::Acquire)
+}
+
+pub(crate) fn lock_session_runtime_epoch(
+    expected_epoch: u64,
+) -> Result<RwLockReadGuard<'static, ()>> {
+    let guard = SESSION_RUNTIME_LIFECYCLE
+        .read()
+        .unwrap_or_else(|error| error.into_inner());
+    anyhow::ensure!(
+        current_session_runtime_epoch() == expected_epoch,
+        "stale session runtime epoch"
+    );
+    Ok(guard)
 }
 
 pub(crate) fn revoke_remote_sessions(session: &PersistedSession) {
@@ -1088,14 +1317,17 @@ pub(crate) fn revoke_remote_sessions(session: &PersistedSession) {
 }
 
 pub(crate) fn remove_session() -> Result<()> {
+    clear_session_runtime_state();
     let device_id = local_stable_device_id().context("load device id for client config")?;
     crate::client_config::remove_secret(&device_id, crate::client_config::KEY_SESSION)?;
-    let legacy_path = legacy_session_file_path();
-    if legacy_path.exists() {
-        fs::remove_file(&legacy_path)
-            .with_context(|| format!("remove {}", legacy_path.display()))?;
-    }
     Ok(())
+}
+
+pub(crate) fn session_not_found_error(error: &anyhow::Error) -> bool {
+    error
+        .root_cause()
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
 }
 
 pub(crate) fn current_timestamp_ms() -> u64 {
@@ -1179,18 +1411,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_mqtt_topic_prefix_is_normalized() {
-        let mut mqtt = test_mqtt(None);
-        mqtt.topic_prefix = "slan/v1/devices/device-1".to_string();
-        normalize_mqtt_topic_prefix(&mut mqtt);
-        assert_eq!(mqtt.topic_prefix, "slan/devices/device-1");
-
-        mqtt.topic_prefix = " /slan/v1/ ".to_string();
-        normalize_mqtt_topic_prefix(&mut mqtt);
-        assert_eq!(mqtt.topic_prefix, "slan");
-    }
-
-    #[test]
     fn device_session_response_uses_runtime_endpoints() {
         let response: DeviceSessionResponse = serde_json::from_value(serde_json::json!({
             "device": {
@@ -1231,29 +1451,25 @@ mod tests {
                     "clientId": "client-1",
                     "username": "user",
                     "password": "pass",
-                    "topicPrefix": "slan/v1/devices/device-1",
+                    "topicPrefix": "slan/devices/device-1",
                     "expiresAt": 4_102_444_800i64
                 },
-                "punchNodes": [{
+                "nodeConfigs": [{
                     "nodeId": "punch-1",
-                    "name": "Punch",
-                    "region": "ap-east",
-                    "address": "47.245.40.231:29130",
-                    "publicUdpIp": "47.245.40.231",
-                    "publicUdpPort": 29130
-                }],
-                "relayCandidates": [{
-                    "endpointId": "relay-1",
+                    "connectionType": "direct",
                     "transport": "udp",
-                    "address": "47.245.40.231:29110"
-                }],
-                "networks": [{
-                    "networkId": "net-1",
-                    "relayCandidates": [{
-                        "endpointId": "derp-1",
-                        "transport": "derp_tcp_tls_443",
-                        "address": "47.245.40.231:29120"
-                    }]
+                    "pathKind": "direct_udp",
+                    "address": "47.245.40.231:29130",
+                    "priority": 100,
+                    "networkIds": []
+                }, {
+                    "nodeId": "derp-1",
+                    "connectionType": "relay",
+                    "transport": "tcp",
+                    "pathKind": "relay_tcp",
+                    "address": "47.245.40.231:29120",
+                    "priority": 300,
+                    "networkIds": ["net-1"]
                 }],
                 "refreshedAt": 1000
             }
@@ -1275,6 +1491,38 @@ mod tests {
         assert_eq!(session.relay_candidates.len(), 1);
         assert_eq!(session.relay_candidates[0].endpoint_id, "derp-1");
         assert_eq!(session.relay_candidates[0].address, "47.245.40.231:29120");
+        assert_eq!(session.node_configs.len(), 2);
+        assert_eq!(session.node_configs[0].node_id, "punch-1");
+        assert_eq!(session.node_configs[0].path_kind, "direct_udp");
+    }
+
+    #[test]
+    fn empty_runtime_endpoint_list_clears_stale_node_configs() {
+        let mut session = PersistedSession::empty();
+        session.node_configs.push(NodeConfig {
+            node_id: "stale-punch".to_string(),
+            connection_type: "direct".to_string(),
+            transport: "udp".to_string(),
+            path_kind: "direct_udp".to_string(),
+            address: "192.0.2.1:29130".to_string(),
+            priority: 100,
+        });
+        let response: DeviceSessionResponse = serde_json::from_value(serde_json::json!({
+            "device": {"deviceId": "device-1"},
+            "deviceSession": {
+                "sessionId": "session-1",
+                "deviceId": "device-1",
+                "deviceToken": "token-1",
+                "deviceTokenExpiresAt": 4_102_444_800i64,
+                "activeNetworkIds": []
+            },
+            "runtimeEndpoints": {"nodeConfigs": []}
+        }))
+        .expect("decode empty runtime endpoints");
+
+        apply_device_session_fields(&mut session, response, false);
+
+        assert!(session.node_configs.is_empty());
     }
 
     #[test]

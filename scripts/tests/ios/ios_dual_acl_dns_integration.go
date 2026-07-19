@@ -83,12 +83,6 @@ type networkModuleSnapshot struct {
 	SecurityRuleCount   int `json:"securityRuleCount"`
 }
 
-type mqttCredentialEnvelope struct {
-	MQTT struct {
-		BrokerURL string `json:"brokerUrl"`
-	} `json:"mqtt"`
-}
-
 type integrationFailure struct {
 	message string
 }
@@ -168,7 +162,7 @@ func main() {
 
 	for _, client := range clients {
 		login(ctx, client, email, password)
-		assertMQTTBrokerHost(ctx, bizURL, client.deviceID, expectMQTTHost)
+		assertMQTTBrokerHost(ctx, client, expectMQTTHost)
 		waitControlReady(ctx, client)
 	}
 	webAccessToken = loginUser(ctx, bizURL, email, password).Auth.Session.Token
@@ -267,20 +261,23 @@ func login(ctx context.Context, client *dualClient, email, password string) {
 	}
 }
 
-func assertMQTTBrokerHost(ctx context.Context, bizURL, deviceID, expectedHost string) {
+func assertMQTTBrokerHost(ctx context.Context, client *dualClient, expectedHost string) {
 	if strings.TrimSpace(expectedHost) == "" {
 		return
 	}
-	var out mqttCredentialEnvelope
-	getJSON(ctx, bizURL+"/api/app/devices/"+url.PathEscape(deviceID)+"/mqtt-credential", &out)
-	parsed, err := url.Parse(out.MQTT.BrokerURL)
+	response, err := localRequest(client.address, "localConnectControlMqtt", map[string]any{}, 15*time.Second)
 	if err != nil {
-		fail("parse mqtt broker url for %s: %v url=%s", deviceID, err, out.MQTT.BrokerURL)
+		fail("connect MQTT for %s: %v", client.deviceID, err)
+	}
+	brokerURL := strings.TrimSpace(fmt.Sprint(response["brokerUrl"]))
+	parsed, err := url.Parse(brokerURL)
+	if err != nil {
+		fail("parse mqtt broker url for %s: %v url=%s", client.deviceID, err, brokerURL)
 	}
 	if !strings.EqualFold(parsed.Hostname(), expectedHost) {
-		fail("mqtt broker host mismatch for %s: got=%s expected=%s url=%s", deviceID, parsed.Hostname(), expectedHost, out.MQTT.BrokerURL)
+		fail("mqtt broker host mismatch for %s: got=%s expected=%s url=%s", client.deviceID, parsed.Hostname(), expectedHost, brokerURL)
 	}
-	fmt.Printf("iosDualAclDnsIntegration: mqtt device=%s broker=%s\n", deviceID, out.MQTT.BrokerURL)
+	fmt.Printf("iosDualAclDnsIntegration: mqtt device=%s broker=%s\n", client.deviceID, brokerURL)
 }
 
 func waitServiceReady(ctx context.Context, client *dualClient) {
@@ -422,10 +419,22 @@ func enableNetwork(ctx context.Context, client *dualClient) {
 	if err != nil {
 		fail("%s enable network request failed: %v", client.name, err)
 	}
-	if response["networkEnabled"] != true {
-		fail("%s network did not enable: %#v", client.name, response)
+	deadline := time.Now().Add(20 * time.Second)
+	for response["networkEnabled"] != true && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			fail("%s enable network timeout: %v", client.name, ctx.Err())
+		case <-time.After(300 * time.Millisecond):
+		}
+		response, err = localRequest(client.address, "localState", map[string]any{}, 2*time.Second)
+		if err != nil {
+			continue
+		}
 	}
-	if response["virtualIp"] == nil || strings.TrimSpace(fmt.Sprint(response["virtualIp"])) == "" {
+	if response["networkEnabled"] != true {
+		fail("%s network did not enable after platform state commit: %#v", client.name, response)
+	}
+	if strings.TrimSpace(fmt.Sprint(response["virtualIp"])) == "" || response["virtualIp"] == nil {
 		fail("%s network enabled without virtualIp: %#v", client.name, response)
 	}
 	select {

@@ -1,8 +1,6 @@
 import 'dart:convert';
 
 import 'package:client_core_plugin/client_core_plugin.dart';
-import 'package:flutter/foundation.dart';
-
 import 'client_view_state.dart';
 
 abstract final class ClientBusinessEventType {
@@ -192,7 +190,6 @@ ClientViewState? reduceBusinessEvent(
   }
 }
 
-@visibleForTesting
 Map<String, Object?> iosPacketTunnelDiagnosticsFields(
   Map<String, Object?> stats,
 ) {
@@ -227,7 +224,6 @@ Map<String, Object?> iosPacketTunnelDiagnosticsFields(
   };
 }
 
-@visibleForTesting
 Map<String, Object?> androidRuntimeDiagnosticsFields(
   Map<String, Object?> state,
 ) {
@@ -252,6 +248,18 @@ Map<String, Object?> androidRuntimeDiagnosticsFields(
     'relayNoPeerPackets': state['relayNoPeerPackets'],
     'relayWriteFailures': state['relayWriteFailures'],
     'tunWriteFailures': state['tunWriteFailures'],
+    'embeddedServicePendingLimit': state['embeddedServicePendingLimit'],
+    'embeddedServicePendingCount': state['embeddedServicePendingCount'],
+    'embeddedServiceQueueDepth': state['embeddedServiceQueueDepth'],
+    'embeddedServiceActiveCount': state['embeddedServiceActiveCount'],
+    'embeddedServiceCompletedTotal': state['embeddedServiceCompletedTotal'],
+    'embeddedServiceRejectedTotal': state['embeddedServiceRejectedTotal'],
+    'embeddedWatchPendingLimit': state['embeddedWatchPendingLimit'],
+    'embeddedWatchPendingCount': state['embeddedWatchPendingCount'],
+    'embeddedWatchQueueDepth': state['embeddedWatchQueueDepth'],
+    'embeddedWatchActiveCount': state['embeddedWatchActiveCount'],
+    'embeddedWatchCompletedTotal': state['embeddedWatchCompletedTotal'],
+    'embeddedWatchRejectedTotal': state['embeddedWatchRejectedTotal'],
   };
 }
 

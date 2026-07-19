@@ -143,36 +143,77 @@ func networkDNSPayload(view servicepkg.NetworkConfigView) map[string]any {
 }
 
 func runtimeEndpointsPayload(view servicepkg.DeviceMQTTProfileView, punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any, refreshedAt int64) map[string]any {
-	networks := make([]map[string]any, 0, len(networkConfigs))
-	relayCandidates := make([]any, 0)
-	seenRelayCandidates := make(map[string]struct{})
+	nodeConfigs := runtimeNodeConfigs(punchNodes, networkConfigs)
+	return map[string]any{
+		"mqtt":        appMQTTCredentialPayload(view),
+		"nodeConfigs": nodeConfigs,
+		"refreshedAt": refreshedAt,
+	}
+}
+
+func runtimeNodeConfigs(punchNodes []servicepkg.PunchNodeView, networkConfigs []map[string]any) []map[string]any {
+	nodes := make([]map[string]any, 0, len(punchNodes))
+	for index, node := range punchNodes {
+		priority := node.Priority
+		if priority <= 0 {
+			priority = index + 1
+		}
+		if priority > 99 {
+			priority = 99
+		}
+		nodes = append(nodes, map[string]any{
+			"nodeId":         node.NodeID,
+			"connectionType": "direct",
+			"transport":      "udp",
+			"pathKind":       "direct_udp",
+			"address":        node.Address,
+			"priority":       100 + priority,
+			"networkIds":     []string{},
+		})
+	}
+	seenRelayNodes := make(map[string]int)
 	for _, config := range networkConfigs {
+		networkID, _ := config["networkId"].(string)
 		candidates, _ := config["relayCandidates"].([]map[string]any)
-		relayList := make([]any, 0, len(candidates))
 		for _, candidate := range candidates {
-			relayList = append(relayList, candidate)
 			key := relayCandidateRuntimeKey(candidate)
 			if key == "" {
 				continue
 			}
-			if _, ok := seenRelayCandidates[key]; ok {
+			if existing, ok := seenRelayNodes[key]; ok {
+				networkIDs, _ := nodes[existing]["networkIds"].([]string)
+				nodes[existing]["networkIds"] = uniqueStrings(append(networkIDs, networkID))
 				continue
 			}
-			seenRelayCandidates[key] = struct{}{}
-			relayCandidates = append(relayCandidates, candidate)
+			transport, _ := candidate["transport"].(string)
+			address, _ := candidate["address"].(string)
+			nodeID, _ := candidate["endpointId"].(string)
+			pathKind := "relay_udp"
+			nodeTransport := "udp"
+			priority := 200 + len(seenRelayNodes)
+			if transport == "derp_tcp_tls_443" {
+				pathKind = "relay_tcp"
+				nodeTransport = "tcp"
+				priority = 300 + len(seenRelayNodes)
+			}
+			seenRelayNodes[key] = len(nodes)
+			nodes = append(nodes, map[string]any{
+				"nodeId":         nodeID,
+				"connectionType": "relay",
+				"transport":      nodeTransport,
+				"pathKind":       pathKind,
+				"address":        address,
+				"priority":       priority,
+				"networkIds":     compactStrings(networkID),
+			})
 		}
-		networks = append(networks, map[string]any{
-			"networkId":       config["networkId"],
-			"relayCandidates": relayList,
-		})
 	}
-	return map[string]any{
-		"mqtt":            appMQTTCredentialPayload(view),
-		"punchNodes":      punchNodePayloads(punchNodes),
-		"relayCandidates": relayCandidates,
-		"networks":        networks,
-		"refreshedAt":     refreshedAt,
-	}
+	sort.SliceStable(nodes, func(i, j int) bool {
+		left, _ := nodes[i]["priority"].(int)
+		right, _ := nodes[j]["priority"].(int)
+		return left < right
+	})
+	return nodes
 }
 
 func relayCandidateRuntimeKey(candidate map[string]any) string {

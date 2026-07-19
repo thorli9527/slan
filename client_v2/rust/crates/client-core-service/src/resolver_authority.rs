@@ -663,15 +663,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "self".to_string(),
             fqdn: "self.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -682,7 +677,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
 
         let mut runtime = RuntimeNetworkState::default();
@@ -710,15 +704,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "self".to_string(),
             fqdn: "self.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -729,7 +718,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
 
         let mut runtime = RuntimeNetworkState::default();
@@ -757,15 +745,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "v6".to_string(),
             fqdn: "v6.example.lan".to_string(),
             record_type: "AAAA".to_string(),
@@ -776,7 +759,6 @@ mod tests {
             port: 0,
             ttl: 120,
             enabled: true,
-            updated_at: 0,
         }]);
 
         let mut runtime = RuntimeNetworkState::default();
@@ -804,15 +786,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "self".to_string(),
             fqdn: "self.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -823,7 +800,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.members_by_device_id.insert(
@@ -851,15 +827,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -870,7 +841,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
 
         assert_eq!(
@@ -895,15 +865,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -914,7 +879,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.network = Some(crate::network_event::NetworkEventNetworkView {
@@ -963,15 +927,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -982,7 +941,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.network = Some(crate::network_event::NetworkEventNetworkView {
@@ -1068,15 +1026,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1087,7 +1040,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.network = Some(crate::network_event::NetworkEventNetworkView {
@@ -1155,15 +1107,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1174,7 +1121,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.network = Some(crate::network_event::NetworkEventNetworkView {
@@ -1230,15 +1176,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1249,7 +1190,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.network = Some(crate::network_event::NetworkEventNetworkView {
@@ -1305,15 +1245,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1324,7 +1259,6 @@ mod tests {
             port: 0,
             ttl: 60,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.network = Some(crate::network_event::NetworkEventNetworkView {
@@ -1374,15 +1308,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "arpa".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-ptr".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "4.3.2.1.in-addr".to_string(),
             fqdn: "4.3.2.1.in-addr.arpa".to_string(),
             record_type: "PTR".to_string(),
@@ -1393,7 +1322,6 @@ mod tests {
             port: 0,
             ttl: 45,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.members_by_device_id.insert(
@@ -1426,15 +1354,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-txt".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "txt".to_string(),
             fqdn: "txt.example.lan".to_string(),
             record_type: "TXT".to_string(),
@@ -1445,7 +1368,6 @@ mod tests {
             port: 0,
             ttl: 90,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.members_by_device_id.insert(
@@ -1472,16 +1394,11 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![
             ResolverRecordView {
                 record_id: "rec-1".to_string(),
-                zone_id: "zone-1".to_string(),
-                network_id: "net-1".to_string(),
                 name: "peer".to_string(),
                 fqdn: "peer.example.lan".to_string(),
                 record_type: "A".to_string(),
@@ -1492,12 +1409,9 @@ mod tests {
                 port: 0,
                 ttl: 60,
                 enabled: true,
-                updated_at: 0,
             },
             ResolverRecordView {
                 record_id: "rec-2".to_string(),
-                zone_id: "zone-1".to_string(),
-                network_id: "net-1".to_string(),
                 name: "peer".to_string(),
                 fqdn: "peer.example.lan".to_string(),
                 record_type: "A".to_string(),
@@ -1508,7 +1422,6 @@ mod tests {
                 port: 0,
                 ttl: 60,
                 enabled: true,
-                updated_at: 0,
             },
         ]);
 
@@ -1537,16 +1450,11 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![
             ResolverRecordView {
                 record_id: "rec-1".to_string(),
-                zone_id: "zone-1".to_string(),
-                network_id: "net-1".to_string(),
                 name: "txt".to_string(),
                 fqdn: "txt.example.lan".to_string(),
                 record_type: "TXT".to_string(),
@@ -1557,12 +1465,9 @@ mod tests {
                 port: 0,
                 ttl: 60,
                 enabled: true,
-                updated_at: 0,
             },
             ResolverRecordView {
                 record_id: "rec-2".to_string(),
-                zone_id: "zone-1".to_string(),
-                network_id: "net-1".to_string(),
                 name: "txt".to_string(),
                 fqdn: "txt.example.lan".to_string(),
                 record_type: "TXT".to_string(),
@@ -1573,7 +1478,6 @@ mod tests {
                 port: 0,
                 ttl: 60,
                 enabled: true,
-                updated_at: 0,
             },
         ]);
 
@@ -1602,15 +1506,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-srv".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "_sip._tcp".to_string(),
             fqdn: "_sip._tcp.example.lan".to_string(),
             record_type: "SRV".to_string(),
@@ -1621,7 +1520,6 @@ mod tests {
             port: 5060,
             ttl: 120,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.members_by_device_id.insert(
@@ -1655,15 +1553,10 @@ mod tests {
         let mut dns = RuntimeResolverState::default();
         dns.replace_zones(vec![ResolverZoneView {
             zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             zone_name: "example.lan".to_string(),
-            expose_global: false,
-            updated_at: 0,
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-self".to_string(),
-            zone_id: "zone-1".to_string(),
-            network_id: "net-1".to_string(),
             name: "self".to_string(),
             fqdn: "self.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1674,7 +1567,6 @@ mod tests {
             port: 0,
             ttl: 30,
             enabled: true,
-            updated_at: 0,
         }]);
         let mut runtime = RuntimeNetworkState::default();
         runtime.bind_session_identity(Some("device-1"), Some("10.0.0.151"));

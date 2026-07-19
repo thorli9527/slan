@@ -32,9 +32,7 @@ if [[ -n "${EXPECT_MQTT_HOST}" ]]; then
   ARGS+=(-expect-mqtt-host "${EXPECT_MQTT_HOST}")
 fi
 
-if [[ "${CHECK_MESSAGES}" == "0" ]]; then
-  ARGS+=(-check-messages=false)
-fi
+ARGS+=(-check-messages="${CHECK_MESSAGES}")
 
 cd "${ROOT_DIR}"
 go run ./scripts/ios_dual_acl_dns_integration.go "${ARGS[@]}"

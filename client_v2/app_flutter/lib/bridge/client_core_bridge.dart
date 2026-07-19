@@ -114,6 +114,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// 已处理的最后一个业务事件 revision。
   int _lastBusinessEventRevision = 0;
 
+  /// Rust 事件流实例 ID；服务重启后变化，用于重置 revision 游标。
+  String? _businessEventStreamId;
+
   /// 是否存在正在执行的网络开关操作。
   bool _networkToggleInFlight = false;
 
@@ -435,7 +438,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           'mqttLastMessageTopic': status?.mqttLastMessageTopic,
           'mqttLastMessageType': status?.mqttLastMessageType,
           'lastMqttPublishSummary': status?.lastMqttPublishSummary,
-          'mqttNetworkEventTopic': status?.mqttNetworkEventTopic,
+          'mqttNetworkEventTopics': status?.mqttNetworkEventTopics,
           'mqttNetworkEventSubscribed': status?.mqttNetworkEventSubscribed,
           'activeNetworkId': status?.activeNetworkId,
           'deviceId': status?.deviceId,
@@ -983,12 +986,30 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     if (!_usesNativeMobileControlPlane) {
       return null;
     }
-    final embeddedArgs = _embeddedArguments(arguments);
+    final requestId = _localService.createRequestId();
+    final embeddedArgs = _embeddedArguments(arguments, requestId);
+    ClientUiDiagnostics.unawaitedLog(
+      'bridge.embeddedService.request',
+      state: _state.value,
+      fields: {'method': method, 'requestId': requestId},
+    );
     try {
-      final response = await _plugin.embeddedServiceRequest(jsonEncode({
-        'method': method,
-        'args': embeddedArgs,
-      }));
+      final response = await _plugin
+          .embeddedServiceRequest(jsonEncode({
+            'method': method,
+            'args': embeddedArgs,
+          }))
+          .timeout(
+            _localService.responseTimeoutFor(method, embeddedArgs),
+            onTimeout: () => throw PlatformException(
+              code: 'embedded_service_timeout',
+              message: 'SLAN embedded service request timed out: $method',
+              details: {
+                'method': method,
+                'requestId': requestId,
+              },
+            ),
+          );
       final error = response?['error'];
       if (error is String && error.trim().isNotEmpty) {
         throw PlatformException(
@@ -996,6 +1017,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           message: error,
         );
       }
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.embeddedService.response',
+        state: _state.value,
+        fields: {'method': method, 'requestId': requestId},
+      );
       return response;
     } on Object catch (error) {
       ClientUiDiagnostics.unawaitedLog(
@@ -1003,6 +1029,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         state: _state.value,
         fields: {
           'method': method,
+          'requestId': requestId,
           'message': error.toString(),
         },
       );
@@ -1017,30 +1044,34 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   ///
   /// 每个内嵌服务请求都需要知道控制面地址。设备身份 override 必须显式传
   /// `deviceIdOverride`，避免普通业务字段 `deviceId` 被误解释成全局身份切换。
-  Object _embeddedArguments(Object? arguments) {
+  Object _embeddedArguments(Object? arguments, String requestId) {
     final controlBaseUrl = _effectiveControlBaseUrl;
     final testDeviceId = _testDeviceId.trim();
     if (controlBaseUrl.isEmpty) {
       if (arguments is Map) {
         return {
           ...arguments.cast<String, Object?>(),
+          'requestId': arguments['requestId'] ?? requestId,
           if (testDeviceId.isNotEmpty) 'deviceIdOverride': testDeviceId,
         };
       }
       return {
         if (arguments != null) 'value': arguments,
+        'requestId': requestId,
         if (testDeviceId.isNotEmpty) 'deviceIdOverride': testDeviceId,
       };
     }
     if (arguments is Map) {
       return {
         ...arguments.cast<String, Object?>(),
+        'requestId': arguments['requestId'] ?? requestId,
         'controlBaseUrl': controlBaseUrl,
         if (testDeviceId.isNotEmpty) 'deviceIdOverride': testDeviceId,
       };
     }
     return {
       'value': arguments,
+      'requestId': requestId,
       'controlBaseUrl': controlBaseUrl,
       if (testDeviceId.isNotEmpty) 'deviceIdOverride': testDeviceId,
     };
@@ -1066,35 +1097,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   String get _effectiveControlBaseUrl =>
       _runtimeControlBaseUrl ??
       _normalizeServerBaseUrl(_defaultEmbeddedControlBaseUrl);
-
-  static int? _intValue(Object? value) {
-    if (value is int) {
-      return value;
-    }
-    if (value is num) {
-      return value.toInt();
-    }
-    if (value is String) {
-      return int.tryParse(value);
-    }
-    return null;
-  }
-
-  static bool? _boolValue(Object? value) {
-    if (value is bool) {
-      return value;
-    }
-    if (value is String) {
-      final normalized = value.trim().toLowerCase();
-      if (normalized == 'true') {
-        return true;
-      }
-      if (normalized == 'false') {
-        return false;
-      }
-    }
-    return null;
-  }
 
   /// 移动端内嵌服务的默认控制面地址。
   String get _defaultEmbeddedControlBaseUrl => _defaultControlBaseUrl;
@@ -1807,13 +1809,26 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           }
           return;
         }
+        final responseStreamId = json['streamId'];
+        final streamChanged = responseStreamId is String &&
+            responseStreamId.isNotEmpty &&
+            _businessEventStreamId != null &&
+            responseStreamId != _businessEventStreamId;
+        if (responseStreamId is String && responseStreamId.isNotEmpty) {
+          _businessEventStreamId = responseStreamId;
+        }
+        if (json['streamReset'] == true ||
+            streamChanged ||
+            json['replayGap'] == true) {
+          await _recoverBusinessEventStream(json, revision);
+          return;
+        }
         if (revision <= _lastBusinessEventRevision) {
-          if (revision < _lastBusinessEventRevision) {
-            _lastBusinessEventRevision = revision;
-          }
-          final next = await _stateAfterBusinessEvent(json);
-          if (next != null && _staleBusinessSnapshotShouldUpdate(next)) {
-            _setStateIfChanged(next);
+          if (revision == _lastBusinessEventRevision) {
+            final next = await _stateAfterBusinessEvent(json);
+            if (next != null && _staleBusinessSnapshotShouldUpdate(next)) {
+              _setStateIfChanged(next);
+            }
           }
           if (_usesNativeMobileControlPlane) {
             await _pauseIfActive(
@@ -1830,6 +1845,34 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         }
       },
     );
+  }
+
+  Future<void> _recoverBusinessEventStream(
+    Map<String, Object?> event,
+    int eventRevision,
+  ) async {
+    final latestRevision = event['latestRevision'];
+    _lastBusinessEventRevision =
+        latestRevision is int ? latestRevision : eventRevision;
+    ClientUiDiagnostics.unawaitedLog(
+      'bridge.businessEvent.streamRecovered',
+      state: _state.value,
+      fields: {
+        'oldestAvailableRevision': event['oldestAvailableRevision'],
+        'latestRevision': latestRevision,
+        'streamId': event['streamId'],
+        'streamReset': event['streamReset'],
+        'replayGap': event['replayGap'],
+      },
+    );
+    if (_usesNativeMobileControlPlane && _state.value.signedIn) {
+      await _refreshNativeMobilePeersFromControlSync();
+    }
+    final snapshot = _eventPayloadState(event, 'snapshot');
+    final next = snapshot ?? await _queryCurrentState();
+    if (next != null) {
+      _setStateIfChanged(next);
+    }
   }
 
   /// 判断旧 revision 快照是否仍值得合并到当前 UI。
@@ -1862,48 +1905,36 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     return false;
   }
 
-  void _applyPlatformNetworkEvent(
+  Future<void> _forwardPlatformNetworkEvent(
     AndroidNetworkEvent event, {
     required String runtimeLogEvent,
     required Future<void> Function(
       String event, {
       Map<String, Object?>? runtimeState,
+      String? error,
     }) logRuntimeState,
-  }) {
-    final runtimeState = event.runtimeState;
-    if (runtimeState != null) {
-      unawaited(logRuntimeState(
-        runtimeLogEvent,
-        runtimeState: runtimeState,
-      ));
-      _setStateIfChanged(_platformNetworkEventState(event, runtimeState));
-    }
-    if (_platformNetworkEventShouldSettleToggle(event)) {
-      _settleNetworkToggleFromEvent();
-    }
+  }) async {
+    final isError = event.eventType == AndroidNetworkEventType.error;
+    final runtimeState = event.runtimeState ??
+        (isError
+            ? <String, Object?>{
+                'adapterPresent': _state.value.networkEnabled,
+                'networkEnabled': _state.value.networkEnabled,
+                if (_state.value.virtualIp != null)
+                  'virtualIp': _state.value.virtualIp,
+              }
+            : null);
+    await logRuntimeState(
+      runtimeLogEvent,
+      runtimeState: runtimeState,
+      error: isError ? event.message : null,
+    );
   }
 
   ClientViewState _localServiceNotConnectedState() {
     return _settledNetworkUiState(
       _state.value,
       notice: 'localServiceNotConnected',
-    );
-  }
-
-  ClientViewState _platformNetworkEventState(
-    AndroidNetworkEvent event,
-    Map<String, Object?> runtimeState,
-  ) {
-    final networkEnabled = runtimeState['networkEnabled'] == true;
-    final isError = event.eventType == AndroidNetworkEventType.error;
-    return _settledNetworkUiState(
-      _state.value,
-      networkEnabled: networkEnabled,
-      virtualIp: runtimeState['virtualIp'] as String?,
-      notice: event.eventType,
-      error: isError ? event.message : null,
-      errorSource: isError ? ClientErrorSource.networkSwitch : null,
-      clearVirtualIp: !networkEnabled,
     );
   }
 
@@ -1948,13 +1979,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     );
   }
 
-  /// 平台网络事件是否应该结算当前网络开关操作。
-  bool _platformNetworkEventShouldSettleToggle(AndroidNetworkEvent event) {
-    return event.eventType == AndroidNetworkEventType.vpnStarted ||
-        event.eventType == AndroidNetworkEventType.vpnStopped ||
-        event.eventType == AndroidNetworkEventType.error;
-  }
-
   /// 启动平台网络事件监听骨架。
   ///
   /// Android / iOS 共用超时、重试和事件落状态流程，仅保留平台 watch 方法、
@@ -1970,6 +1994,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     required Future<void> Function(
       String event, {
       Map<String, Object?>? runtimeState,
+      String? error,
     }) logRuntimeState,
     void Function(AndroidNetworkEvent event)? onEvent,
   }) {
@@ -1988,7 +2013,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           return;
         }
         onEvent?.call(event);
-        _applyPlatformNetworkEvent(
+        await _forwardPlatformNetworkEvent(
           event,
           runtimeLogEvent: runtimeLogEvent,
           logRuntimeState: logRuntimeState,
@@ -2125,6 +2150,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   Future<void> _logAndroidRuntimeState(
     String event, {
     Map<String, Object?>? runtimeState,
+    String? error,
   }) async {
     if (!_isAndroid) {
       return;
@@ -2134,6 +2160,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       platform: 'android',
       runtimeState:
           runtimeState ?? _jsonMap(await _plugin.androidRuntimeState()),
+      error: error,
     );
   }
 
@@ -2141,6 +2168,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   Future<void> _logIosRuntimeState(
     String event, {
     Map<String, Object?>? runtimeState,
+    String? error,
   }) async {
     if (!_isIos) {
       return;
@@ -2149,6 +2177,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       event,
       platform: 'ios',
       runtimeState: runtimeState ?? _jsonMap(await _plugin.iosRuntimeState()),
+      error: error,
     );
   }
 
@@ -2156,6 +2185,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     String event, {
     required String platform,
     required Map<String, Object?>? runtimeState,
+    String? error,
   }) async {
     final state = runtimeState;
     if (state == null || state.isEmpty) {
@@ -2167,11 +2197,12 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       state: _state.value,
       fields: traffic,
     );
-    unawaited(_reportPlatformRuntimeState(
+    await _reportPlatformRuntimeState(
       platform: platform,
       runtimeState: state,
       traffic: traffic,
-    ));
+      error: error,
+    );
   }
 
   /// 把平台数据面运行态写回本地/内嵌服务，供 Web Console 和诊断接口查看。
@@ -2198,11 +2229,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           error: error,
         );
       }
-      await _reportRuntimeToControlPlane(
-        platform: platform,
-        runtimeState: runtimeState,
-        traffic: traffic,
-      );
     } on Object catch (reportError) {
       ClientUiDiagnostics.unawaitedLog(
         'bridge.platformRuntimeState.reportFailed',
@@ -2213,280 +2239,6 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         },
       );
     }
-  }
-
-  Future<void> _reportRuntimeToControlPlane({
-    required String platform,
-    required Map<String, Object?> runtimeState,
-    Map<String, Object?>? traffic,
-  }) async {
-    final deviceId = _runtimeReportDeviceId(runtimeState);
-    if (deviceId == null || deviceId.isEmpty) {
-      return;
-    }
-    final base = _runtimeReportBaseFields(runtimeState, traffic);
-    final reportedAtMs = base.reportedAtMs;
-    final lastSeenAt = base.lastSeenAt;
-    final rxBytesTotal = base.rxBytesTotal;
-    final txBytesTotal = base.txBytesTotal;
-    final networkEnabled = base.networkEnabled;
-    final deviceVersion = runtimeState['deviceVersion'] is String
-        ? (runtimeState['deviceVersion'] as String).trim()
-        : '';
-    final runtimePath = runtimeState['runtimePath'] is Map
-        ? (runtimeState['runtimePath'] as Map).cast<String, Object?>()
-        : const <String, Object?>{};
-    final networkId = _firstNonEmptyString([
-      runtimeState['networkId'],
-      runtimePath['networkId'],
-    ]);
-    final natType = _firstNonEmptyString([
-      runtimeState['natType'],
-      runtimePath['natType'],
-    ]);
-    final activePath = _firstNonEmptyString([
-      runtimeState['activePath'],
-      runtimeState['pathType'],
-      runtimePath['activePath'],
-    ]);
-    final relayTransport = _firstNonEmptyString([
-      runtimeState['relayTransport'],
-      runtimePath['relayTransport'],
-    ]);
-    final relayEndpoint = _firstNonEmptyString([
-      runtimeState['relayEndpoint'],
-      runtimeState['relayAddress'],
-      runtimeState['endpoint'],
-      runtimePath['relayEndpoint'],
-      runtimePath['relayAddress'],
-    ]);
-    final derpNodeId = _firstNonEmptyString([
-      runtimeState['derpNodeId'],
-      runtimeState['relayEndpointId'],
-      runtimeState['endpointId'],
-      runtimePath['derpNodeId'],
-      runtimePath['relayEndpointId'],
-      runtimePath['endpointId'],
-    ]);
-    final peerNodeId = _firstNonEmptyString([
-      runtimeState['peerNodeId'],
-      runtimePath['peerNodeId'],
-    ]);
-    final ticketExpiresAt = _firstNonEmptyString([
-      runtimeState['ticketExpiresAt'],
-      runtimePath['ticketExpiresAt'],
-    ]);
-    final lastPathChange = _firstNonEmptyString([
-      runtimeState['lastPathChange'],
-      runtimePath['lastPathChange'],
-    ]);
-    final path = _runtimeReportPathFields(runtimeState, runtimePath);
-    final pathObservedAt = path.pathObservedAt;
-    final pathScore = path.pathScore;
-    final observedRttMs = path.observedRttMs;
-    final packetLossPpm = path.packetLossPpm;
-    final relayMtu = path.relayMtu;
-    final maxFramePayload = path.maxFramePayload;
-    final ticketRenewDue = path.ticketRenewDue;
-    final pathDowngrades = path.pathDowngrades;
-    final pathUpgrades = path.pathUpgrades;
-    final body = _runtimeReportBody(
-      deviceId: deviceId,
-      platform: platform,
-      deviceVersion: deviceVersion,
-      reportedAtMs: reportedAtMs,
-      lastSeenAt: lastSeenAt,
-      networkEnabled: networkEnabled,
-      rxBytesTotal: rxBytesTotal,
-      txBytesTotal: txBytesTotal,
-      networkId: networkId,
-      natType: natType,
-      activePath: activePath,
-      pathObservedAt: pathObservedAt,
-      relayTransport: relayTransport,
-      relayEndpoint: relayEndpoint,
-      derpNodeId: derpNodeId,
-      peerNodeId: peerNodeId,
-      pathScore: pathScore,
-      observedRttMs: observedRttMs,
-      packetLossPpm: packetLossPpm,
-      relayMtu: relayMtu,
-      maxFramePayload: maxFramePayload,
-      ticketExpiresAt: ticketExpiresAt,
-      ticketRenewDue: ticketRenewDue,
-      pathDowngrades: pathDowngrades,
-      pathUpgrades: pathUpgrades,
-      lastPathChange: lastPathChange,
-    );
-
-    try {
-      if (_usesNativeMobileControlPlane) {
-        await _embeddedServiceRequest('localReportDeviceRuntime', {
-          'deviceId': deviceId,
-          'body': body,
-        });
-      } else {
-        await _localService.localReportDeviceRuntime(
-          deviceId: deviceId,
-          body: body,
-        );
-      }
-    } on Object catch (error) {
-      ClientUiDiagnostics.unawaitedLog(
-        'bridge.platformRuntimeState.controlPlaneReportFailed',
-        state: _state.value,
-        fields: {
-          'platform': platform,
-          'deviceId': deviceId,
-          'message': error.toString(),
-        },
-      );
-    }
-  }
-
-  String? _runtimeReportDeviceId(Map<String, Object?> runtimeState) {
-    final stateDeviceId = _state.value.deviceId?.trim();
-    final testDeviceId = _testDeviceId.trim();
-    final runtimeDeviceId = runtimeState['deviceId'] is String
-        ? runtimeState['deviceId'] as String
-        : null;
-    final trimmedStateDeviceId =
-        stateDeviceId?.isNotEmpty == true ? stateDeviceId : null;
-    final trimmedRuntimeDeviceId = runtimeDeviceId?.trim().isNotEmpty == true
-        ? runtimeDeviceId!.trim()
-        : null;
-    if (trimmedStateDeviceId != null) {
-      return trimmedStateDeviceId;
-    }
-    if (trimmedRuntimeDeviceId != null) {
-      return trimmedRuntimeDeviceId;
-    }
-    if (testDeviceId.isNotEmpty) {
-      return testDeviceId;
-    }
-    return null;
-  }
-
-  _RuntimeReportBaseFields _runtimeReportBaseFields(
-    Map<String, Object?> runtimeState,
-    Map<String, Object?>? traffic,
-  ) {
-    final reportedAtMs = _intValue(runtimeState['reportedAtMs']) ??
-        _intValue(traffic?['updatedAtMs']) ??
-        DateTime.now().millisecondsSinceEpoch;
-    return _RuntimeReportBaseFields(
-      reportedAtMs: reportedAtMs,
-      lastSeenAt:
-          _intValue(runtimeState['lastSeenAt']) ?? (reportedAtMs ~/ 1000),
-      rxBytesTotal: _intValue(runtimeState['rxBytesTotal']) ??
-          _intValue(traffic?['bytesRead']) ??
-          _state.value.trafficRxBytes,
-      txBytesTotal: _intValue(runtimeState['txBytesTotal']) ??
-          _intValue(traffic?['bytesWritten']) ??
-          _state.value.trafficTxBytes,
-      networkEnabled: _boolValue(runtimeState['networkEnabled']) ??
-          _state.value.networkEnabled,
-    );
-  }
-
-  _RuntimeReportPathFields _runtimeReportPathFields(
-    Map<String, Object?> runtimeState,
-    Map<String, Object?> runtimePath,
-  ) {
-    return _RuntimeReportPathFields(
-      pathObservedAt: _intValue(runtimeState['pathObservedAt']) ??
-          _intValue(runtimeState['observedAt']) ??
-          _intValue(runtimePath['observedAt']) ??
-          _intValue(runtimePath['pathObservedAt']),
-      pathScore: _intValue(runtimeState['pathScore']) ??
-          _intValue(runtimePath['pathScore']),
-      observedRttMs: _intValue(runtimeState['observedRttMs']) ??
-          _intValue(runtimeState['rttMs']) ??
-          _intValue(runtimePath['observedRttMs']),
-      packetLossPpm: _intValue(runtimeState['packetLossPpm']) ??
-          _intValue(runtimePath['packetLossPpm']),
-      relayMtu: _intValue(runtimeState['relayMtu']) ??
-          _intValue(runtimePath['relayMtu']),
-      maxFramePayload: _intValue(runtimeState['maxFramePayload']) ??
-          _intValue(runtimePath['maxFramePayload']),
-      ticketRenewDue: _boolValue(runtimeState['ticketRenewDue']) ??
-          _boolValue(runtimePath['ticketRenewDue']),
-      pathDowngrades: _intValue(runtimeState['pathDowngrades']) ??
-          _intValue(runtimePath['pathDowngrades']),
-      pathUpgrades: _intValue(runtimeState['pathUpgrades']) ??
-          _intValue(runtimePath['pathUpgrades']),
-    );
-  }
-
-  Map<String, Object?> _runtimeReportBody({
-    required String deviceId,
-    required String platform,
-    required String deviceVersion,
-    required int reportedAtMs,
-    required int lastSeenAt,
-    required bool networkEnabled,
-    required int? rxBytesTotal,
-    required int? txBytesTotal,
-    required String? networkId,
-    required String? natType,
-    required String? activePath,
-    required int? pathObservedAt,
-    required String? relayTransport,
-    required String? relayEndpoint,
-    required String? derpNodeId,
-    required String? peerNodeId,
-    required int? pathScore,
-    required int? observedRttMs,
-    required int? packetLossPpm,
-    required int? relayMtu,
-    required int? maxFramePayload,
-    required String? ticketExpiresAt,
-    required bool? ticketRenewDue,
-    required int? pathDowngrades,
-    required int? pathUpgrades,
-    required String? lastPathChange,
-  }) {
-    return <String, Object?>{
-      'deviceId': deviceId,
-      'reportedAtMs': reportedAtMs,
-      'lastSeenAt': lastSeenAt,
-      'status': networkEnabled ? 'active' : 'inactive',
-      if (rxBytesTotal != null) 'rxBytesTotal': rxBytesTotal,
-      if (txBytesTotal != null) 'txBytesTotal': txBytesTotal,
-      if (deviceVersion.isNotEmpty) 'deviceVersion': deviceVersion,
-      'platform': platform,
-      if (networkId != null) 'networkId': networkId,
-      if (natType != null) 'natType': natType,
-      if (activePath != null) 'activePath': activePath,
-      if (pathObservedAt != null) 'pathObservedAt': pathObservedAt,
-      if (relayTransport != null) 'relayTransport': relayTransport,
-      if (relayEndpoint != null) 'relayEndpoint': relayEndpoint,
-      if (derpNodeId != null) 'derpNodeId': derpNodeId,
-      if (peerNodeId != null) 'peerNodeId': peerNodeId,
-      if (pathScore != null) 'pathScore': pathScore,
-      if (observedRttMs != null) 'observedRttMs': observedRttMs,
-      if (packetLossPpm != null) 'packetLossPpm': packetLossPpm,
-      if (relayMtu != null) 'relayMtu': relayMtu,
-      if (maxFramePayload != null) 'maxFramePayload': maxFramePayload,
-      if (ticketExpiresAt != null) 'ticketExpiresAt': ticketExpiresAt,
-      if (ticketRenewDue != null) 'ticketRenewDue': ticketRenewDue,
-      if (pathDowngrades != null) 'pathDowngrades': pathDowngrades,
-      if (pathUpgrades != null) 'pathUpgrades': pathUpgrades,
-      if (lastPathChange != null) 'lastPathChange': lastPathChange,
-    };
-  }
-
-  String? _firstNonEmptyString(List<Object?> values) {
-    for (final value in values) {
-      if (value is! String) {
-        continue;
-      }
-      final text = value.trim();
-      if (text.isNotEmpty) {
-        return text;
-      }
-    }
-    return null;
   }
 
   /// 将业务事件转换为下一份 UI 状态。
@@ -2733,6 +2485,8 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
         'localBusinessEventWatch',
         {
           'lastRevision': lastRevision,
+          if (_businessEventStreamId != null)
+            'streamId': _businessEventStreamId,
           'timeoutMs': 30000,
         },
       );
@@ -2740,6 +2494,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     try {
       return await _localService.localBusinessEventWatch(
         lastRevision: lastRevision,
+        streamId: _businessEventStreamId,
       );
     } on Object catch (error) {
       ClientUiDiagnostics.unawaitedLog(
@@ -2832,17 +2587,23 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   /// 这是桌面端业务状态和业务命令的唯一入口；不要在 Flutter 新增 biz HTTP。
   Future<Object?> _requestLocalService(String method,
       [Object? arguments]) async {
+    final requestId = _localService.createRequestId();
     ClientUiDiagnostics.unawaitedLog(
       'bridge.localService.request',
       state: _state.value,
-      fields: {'method': method},
+      fields: {'method': method, 'requestId': requestId},
     );
-    final response = await _localService.request(method, arguments: arguments);
+    final response = await _localService.request(
+      method,
+      arguments: arguments,
+      requestId: requestId,
+    );
     ClientUiDiagnostics.unawaitedLog(
       'bridge.localService.response',
       state: _state.value,
       fields: {
         'method': method,
+        'requestId': requestId,
         'bytes': _responseByteCount(response),
       },
     );
@@ -2968,44 +2729,4 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   int _responseByteCount(Object? response) {
     return response is String ? response.length : 0;
   }
-}
-
-final class _RuntimeReportBaseFields {
-  const _RuntimeReportBaseFields({
-    required this.reportedAtMs,
-    required this.lastSeenAt,
-    required this.rxBytesTotal,
-    required this.txBytesTotal,
-    required this.networkEnabled,
-  });
-
-  final int reportedAtMs;
-  final int lastSeenAt;
-  final int? rxBytesTotal;
-  final int? txBytesTotal;
-  final bool networkEnabled;
-}
-
-final class _RuntimeReportPathFields {
-  const _RuntimeReportPathFields({
-    required this.pathObservedAt,
-    required this.pathScore,
-    required this.observedRttMs,
-    required this.packetLossPpm,
-    required this.relayMtu,
-    required this.maxFramePayload,
-    required this.ticketRenewDue,
-    required this.pathDowngrades,
-    required this.pathUpgrades,
-  });
-
-  final int? pathObservedAt;
-  final int? pathScore;
-  final int? observedRttMs;
-  final int? packetLossPpm;
-  final int? relayMtu;
-  final int? maxFramePayload;
-  final bool? ticketRenewDue;
-  final int? pathDowngrades;
-  final int? pathUpgrades;
 }

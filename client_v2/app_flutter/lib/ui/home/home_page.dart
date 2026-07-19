@@ -444,11 +444,13 @@ class _HomePageState extends State<HomePage> {
         normalized.contains('blocked')) {
       return '服务端停用，请联系管理员。';
     }
+    if (normalized.contains('not assigned to any network') ||
+        normalized.contains('no active network attachment') ||
+        normalized.contains('no active network')) {
+      return '当前设备未加入任何网络，请重新登录或在 Web Console 中配置网络。';
+    }
     if (normalized.contains('device unavailable')) {
       return '设备不可用，请联系管理员重新启用。';
-    }
-    if (normalized.contains('no active network attachment')) {
-      return '当前设备没有可用的网络绑定，请先在 Web Console 中绑定设备。';
     }
     if (normalized.contains('session expired')) {
       return '登录状态已失效，请重新登录。';

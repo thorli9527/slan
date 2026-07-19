@@ -118,12 +118,20 @@ ensure_network_ready() {
   local response=''
   while (( SECONDS < deadline )); do
     response="$(request_json localNetworkActivate || true)"
-    if [[ -n "$response" ]] && jq -e '.networkEnabled == true and (.virtualIp // "" | length > 0)' >/dev/null <<<"$response"; then
+    if [[ -n "$response" ]] && jq -e '
+      .networkEnabled == true and
+      (.virtualIp // "" | length > 0) and
+      ((.error // "") | length == 0)
+    ' >/dev/null <<<"$response"; then
       printf '%s\n' "$response"
       return 0
     fi
     response="$(request_json localStatus || true)"
-    if [[ -n "$response" ]] && jq -e '.networkEnabled == true and (.virtualIp // "" | length > 0)' >/dev/null <<<"$response"; then
+    if [[ -n "$response" ]] && jq -e '
+      .networkEnabled == true and
+      (.virtualIp // "" | length > 0) and
+      ((.error // "") | length == 0)
+    ' >/dev/null <<<"$response"; then
       printf '%s\n' "$response"
       return 0
     fi

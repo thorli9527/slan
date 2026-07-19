@@ -128,7 +128,7 @@ func registerManagedDevice(ctx context.Context, users repository.UserRepository,
 		return model.Device{}, err
 	}
 	virtualIP := strings.TrimSpace(existing.VirtualIP)
-	if virtualIP == "" {
+	if !managedDeviceVirtualIP(virtualIP) {
 		virtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(devices))
 	}
 	device := model.Device{

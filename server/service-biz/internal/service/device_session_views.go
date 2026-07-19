@@ -23,7 +23,7 @@ func buildBoundDeviceSessionView(
 	if err != nil {
 		return DeviceSessionBoundView{}, err
 	}
-	deviceNetworks, err := networks.ListNetworksByDevice(ctx, device.DeviceID)
+	deviceNetworks, err := activeDeviceNetworks(ctx, networks, device.DeviceID)
 	if err != nil {
 		return DeviceSessionBoundView{}, err
 	}

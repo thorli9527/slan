@@ -1,7 +1,7 @@
 #![allow(clippy::items_after_test_module)]
 
 use std::{
-    env, fs,
+    fs,
     net::{TcpStream, ToSocketAddrs, UdpSocket},
     path::PathBuf,
     time::{Duration, Instant},
@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::Result;
 use client_core::{normalize_relay_transport, ClientViewState};
+use client_core_platform::direct_udp::current_direct_udp_endpoint_report;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -383,6 +384,24 @@ fn endpoint_report_message(
     let endpoint_report = load_direct_udp_endpoint_report(reported_at_ms)?;
     let updated_at = i64::try_from(reported_at_ms / 1_000).unwrap_or(i64::MAX);
 
+    let mut endpoints = vec![serde_json::json!({
+        "type": endpoint_report.endpoint_type.clone(),
+        "address": endpoint_report.endpoint.clone(),
+        "updatedAt": endpoint_report.updated_at().unwrap_or(updated_at)
+    })];
+    if !endpoint_report.lan_endpoint.is_empty()
+        && endpoints[0]
+            .get("address")
+            .and_then(serde_json::Value::as_str)
+            != Some(endpoint_report.lan_endpoint.as_str())
+    {
+        endpoints.push(serde_json::json!({
+            "type": "lan_udp",
+            "address": endpoint_report.lan_endpoint.clone(),
+            "updatedAt": endpoint_report.updated_at().unwrap_or(updated_at)
+        }));
+    }
+
     Some(ControlTransportMessage {
         id: format!("endpoint-report-{reported_at_ms}"),
         topic: topic.to_string(),
@@ -397,16 +416,19 @@ fn endpoint_report_message(
                 "networkId": network_id,
                 "nodeId": session.self_node_id.clone().unwrap_or_default(),
                 "natType": endpoint_report.nat_type,
-                "endpoints": [
-                    {
-                        "type": endpoint_report.endpoint_type,
-                        "address": endpoint_report.endpoint,
-                        "updatedAt": endpoint_report.updated_at().unwrap_or(updated_at)
-                    }
-                ]
+                "endpoints": endpoints
             }
         }),
     })
+}
+
+pub(crate) fn pending_endpoint_report_message(
+    session: &PersistedSession,
+    reported_at_ms: u64,
+) -> Option<ControlTransportMessage> {
+    let plan = control_transport_plan(session);
+    let topic = plan.upstream_control_topic?;
+    endpoint_report_message(session, &topic, reported_at_ms, plan.control_qos)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -415,6 +437,8 @@ struct DirectUdpEndpointReport {
     endpoint: String,
     #[serde(default)]
     endpoint_type: String,
+    #[serde(default)]
+    lan_endpoint: String,
     #[serde(default)]
     nat_type: String,
     #[serde(default)]
@@ -430,7 +454,7 @@ impl DirectUdpEndpointReport {
             return None;
         }
         if self.endpoint_type.is_empty() {
-            self.endpoint_type = "lan".to_string();
+            self.endpoint_type = "lan_udp".to_string();
         }
         if self.nat_type.is_empty() {
             self.nat_type = "unknown".to_string();
@@ -448,24 +472,20 @@ impl DirectUdpEndpointReport {
 }
 
 fn load_direct_udp_endpoint_report(now_ms: u64) -> Option<DirectUdpEndpointReport> {
-    if let Some(endpoint) = env::var("SLAN_DIRECT_UDP_ENDPOINT")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        if matches!(
-            endpoint.to_ascii_lowercase().as_str(),
-            "disabled" | "off" | "none"
-        ) {
-            return None;
-        }
+    if let Some(report) = current_direct_udp_endpoint_report() {
         return DirectUdpEndpointReport {
-            endpoint,
-            endpoint_type: env::var("SLAN_DIRECT_UDP_ENDPOINT_TYPE").unwrap_or_default(),
-            nat_type: env::var("SLAN_DIRECT_UDP_NAT_TYPE").unwrap_or_default(),
-            updated_at_ms: Some(now_ms),
+            endpoint: report.endpoint,
+            endpoint_type: report.endpoint_type,
+            lan_endpoint: report.lan_endpoint,
+            nat_type: report.nat_type,
+            updated_at_ms: Some(report.updated_at_ms),
         }
-        .normalized(now_ms);
+        .normalized(now_ms)
+        .filter(|report| {
+            report
+                .updated_at_ms
+                .is_some_and(|updated_at_ms| now_ms.saturating_sub(updated_at_ms) <= 5 * 60 * 1_000)
+        });
     }
     let payload = fs::read(direct_udp_endpoint_file_path()).ok()?;
     let report = serde_json::from_slice::<DirectUdpEndpointReport>(&payload).ok()?;

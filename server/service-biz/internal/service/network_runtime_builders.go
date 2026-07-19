@@ -137,7 +137,10 @@ func buildActivePunchNodes(items []model.PunchNode) []model.PunchNode {
 
 func defaultPunchNodes(nowFn func() time.Time) []model.PunchNode {
 	now := networkNow(nowFn).Unix()
-	endpoint := bootstrap.DefaultRelayEndpoint()
+	endpoint := bootstrap.DefaultPunchEndpoint()
+	if endpoint == "" {
+		return nil
+	}
 	return []model.PunchNode{{
 		NodeID:    "punch-default",
 		Name:      "Default Punch",

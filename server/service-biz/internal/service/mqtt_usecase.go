@@ -147,6 +147,7 @@ func (s MQTTWebhookService) ReportEndpoint(ctx context.Context, input MQTTEndpoi
 		)
 		return false, err
 	}
+	reportedMembershipActive := false
 	for _, item := range items {
 		if item.DeviceID != input.DeviceID {
 			continue
@@ -162,38 +163,91 @@ func (s MQTTWebhookService) ReportEndpoint(ctx context.Context, input MQTTEndpoi
 			)
 			return false, ErrNotFound
 		}
-		updated := item
+		reportedMembershipActive = true
+		break
+	}
+	if !reportedMembershipActive {
+		log.Printf(
+			"mqtt endpoint report membership not found networkId=%s deviceId=%s nodeId=%s",
+			input.NetworkID,
+			input.DeviceID,
+			input.NodeID,
+		)
+		return false, ErrNotFound
+	}
+
+	networks, err := s.Networks.ListNetworksByDevice(ctx, input.DeviceID)
+	if err != nil {
+		return false, err
+	}
+	changedAny := false
+	changedNetworks := make([]string, 0)
+	for _, network := range networks {
+		membership, ok, err := findNetworkMembership(ctx, s.Networks, network.NetworkID, input.DeviceID)
+		if err != nil {
+			return false, err
+		}
+		if !ok || !networkMemberActive(membership) {
+			continue
+		}
+		updated := membership
 		updated.Endpoints = modelDeviceEndpoints(input.Endpoints)
 		updated.NATType = input.NATType
 		updated.UpdatedAt = currentTime(s.Now).Unix()
 		if err := s.Networks.SaveNetworkDevice(ctx, updated); err != nil {
 			log.Printf(
 				"mqtt endpoint report save failed networkId=%s deviceId=%s endpoints=%#v err=%v",
-				input.NetworkID,
+				network.NetworkID,
 				input.DeviceID,
 				input.Endpoints,
 				err,
 			)
 			return false, err
 		}
-		changed := deviceEndpointsChanged(item.Endpoints, updated.Endpoints)
+		changed := deviceEndpointsChanged(membership.Endpoints, updated.Endpoints)
+		changedAny = changedAny || changed
+		if changed {
+			changedNetworks = append(changedNetworks, network.NetworkID)
+		}
 		log.Printf(
 			"mqtt endpoint report saved networkId=%s deviceId=%s changed=%t previous=%#v next=%#v",
-			input.NetworkID,
+			network.NetworkID,
 			input.DeviceID,
 			changed,
-			item.Endpoints,
+			membership.Endpoints,
 			updated.Endpoints,
 		)
-		return changed, nil
 	}
-	log.Printf(
-		"mqtt endpoint report membership not found networkId=%s deviceId=%s nodeId=%s",
-		input.NetworkID,
-		input.DeviceID,
-		input.NodeID,
-	)
-	return false, ErrNotFound
+	for _, networkID := range changedNetworks {
+		version, err := bumpNetworkConfigVersion(
+			ctx,
+			s.Networks,
+			s.EventPublisher,
+			s.Now,
+			networkID,
+			"peer_endpoint_changed",
+		)
+		if err != nil {
+			return false, err
+		}
+		if err := publishNetworkEvent(
+			ctx,
+			s.EventPublisher,
+			NetworkEventPeerPathChanged,
+			networkID,
+			uint64(version.Version),
+			currentTime(s.Now).UnixMilli(),
+			NetworkEventPeerPathChangedPayload{Paths: []NetworkEventPeerPathView{{
+				PeerDeviceID: input.DeviceID,
+				PathType:     "direct_udp",
+				Reachable:    true,
+				UpdatedAt:    currentTime(s.Now).Unix(),
+			}}},
+		); err != nil {
+			return false, err
+		}
+	}
+	return changedAny, nil
 }
 
 func normalizeMQTTEndpointReportInput(input MQTTEndpointReportInput) MQTTEndpointReportInput {
@@ -233,12 +287,22 @@ func deviceEndpointsChanged(previous, next []model.DeviceEndpoint) bool {
 	if len(previous) != len(next) {
 		return true
 	}
-	for i := range previous {
-		if previous[i] != next[i] {
+	previousCounts := deviceEndpointIdentityCounts(previous)
+	for key, count := range deviceEndpointIdentityCounts(next) {
+		if previousCounts[key] != count {
 			return true
 		}
 	}
 	return false
+}
+
+func deviceEndpointIdentityCounts(items []model.DeviceEndpoint) map[string]int {
+	counts := make(map[string]int, len(items))
+	for _, item := range items {
+		key := strings.TrimSpace(item.Type) + "|" + strings.TrimSpace(item.Address)
+		counts[key]++
+	}
+	return counts
 }
 
 func (s MQTTWebhookService) ReportPathHealth(ctx context.Context, input MQTTPathHealthReportInput) error {

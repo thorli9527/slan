@@ -52,30 +52,7 @@ fn config_lock() -> &'static Mutex<()> {
 }
 
 pub(crate) fn client_state_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("SLAN_STATE_DIR") {
-        return PathBuf::from(dir).join("SLAN");
-    }
-    if cfg!(target_os = "windows") {
-        return std::env::var_os("ProgramData")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("SLAN");
-    }
-    if cfg!(target_os = "macos") {
-        return PathBuf::from("/Library/Application Support/SLAN");
-    }
-    if cfg!(target_os = "ios") {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir)
-            .join("Library")
-            .join("Application Support")
-            .join("SLAN");
-    }
-    if cfg!(target_os = "android") {
-        return std::env::temp_dir().join("SLAN");
-    }
-    PathBuf::from("/var/lib/SLAN")
+    crate::session_store::app_data_dir().join("SLAN")
 }
 
 pub(crate) fn config_file_path() -> PathBuf {

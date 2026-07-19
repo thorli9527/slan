@@ -2,13 +2,14 @@ use std::{
     fs,
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     path::PathBuf,
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use client_core::{
     ipv4_source, normalize_virtual_ip, relay_frame::decode_slan_relay_data_frame_full,
-    relay_peer_index_for_packet, PathKind, PeerPathConfig,
+    relay_peer_index_for_packet, NodeConfig, PathKind, PeerPathConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -85,15 +86,20 @@ pub struct DirectUdpReceive {
 }
 
 /// DirectUdpEndpointReport 是本机 direct UDP 端点上报文件内容。
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DirectUdpEndpointReport {
-    endpoint: String,
-    endpoint_type: String,
-    nat_type: String,
-    bind_address: String,
-    updated_at_ms: u64,
+pub struct DirectUdpEndpointReport {
+    pub endpoint: String,
+    pub endpoint_type: String,
+    #[serde(default)]
+    pub lan_endpoint: String,
+    pub nat_type: String,
+    pub bind_address: String,
+    pub updated_at_ms: u64,
 }
+
+static DIRECT_UDP_ENDPOINT_REPORT: OnceLock<Mutex<Option<DirectUdpEndpointReport>>> =
+    OnceLock::new();
 
 impl DirectUdpTransport {
     /// 使用系统 UDP socket 附加 direct UDP runtime。
@@ -212,6 +218,9 @@ impl DirectUdpTransport {
         buffer: &mut [u8],
     ) -> std::io::Result<Option<DirectUdpReceive>> {
         let (frame_len, remote_addr) = self.socket.recv_from(buffer)?;
+        if self.handle_punch_response(&buffer[..frame_len]) {
+            return Ok(None);
+        }
         if let Some(peer_index) = self
             .peers
             .iter()
@@ -251,6 +260,71 @@ impl DirectUdpTransport {
             }
         }
         sent
+    }
+
+    /// Register this exact data-plane socket with every configured punch node.
+    pub fn send_punch_endpoint_probes(
+        &self,
+        network_id: &str,
+        node_configs: &[NodeConfig],
+    ) -> usize {
+        let payload = serde_json::json!({
+            "kind": "endpoint_probe",
+            "networkId": network_id,
+            "nodeId": self.local_node_id,
+            "type": "direct_udp",
+            "natType": "unknown",
+        })
+        .to_string();
+        let mut sent = 0;
+        for node in node_configs
+            .iter()
+            .filter(|node| node.is_direct_udp_discovery())
+        {
+            let address = match resolve_direct_udp_peer_address(&node.address) {
+                Ok(address) => address,
+                Err(error) => {
+                    eprintln!(
+                        "direct udp punch address rejected node={} address={} error={error:#}",
+                        node.node_id, node.address
+                    );
+                    continue;
+                }
+            };
+            match self.socket.send_to(payload.as_bytes(), address) {
+                Ok(_) => sent += 1,
+                Err(error) => eprintln!(
+                    "direct udp punch probe failed network={} node={} address={} error={error}",
+                    network_id, node.node_id, address
+                ),
+            }
+        }
+        sent
+    }
+
+    /// Consume a punch response and retain the server-observed reflexive endpoint.
+    pub fn handle_punch_response(&self, frame: &[u8]) -> bool {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(frame) else {
+            return false;
+        };
+        if value.get("kind").and_then(serde_json::Value::as_str) != Some("endpoint_reflexive") {
+            return false;
+        }
+        let endpoint = value
+            .get("endpoint")
+            .and_then(|value| value.get("reflexive"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(endpoint) = endpoint else {
+            return true;
+        };
+        eprintln!(
+            "direct udp punch reflexive endpoint node={} endpoint={}",
+            self.local_node_id, endpoint
+        );
+        persist_direct_udp_reflexive_endpoint(&self.socket, endpoint);
+        true
     }
 
     /// 回复指定 peer 的 probe。
@@ -372,19 +446,18 @@ pub fn direct_udp_probe_interval_from_ms(value: u64) -> Duration {
 }
 
 fn udp_address_for_peer(path: &PeerPathConfig) -> Option<(PathKind, String)> {
-    for path_kind in [PathKind::LanUdp, PathKind::Ipv6Udp, PathKind::DirectUdp] {
-        if let Some(address) = path.candidates.iter().find_map(|candidate| {
-            (candidate.kind == path_kind)
-                .then_some(candidate.address.as_deref())
-                .flatten()
+    path.candidates
+        .iter()
+        .filter(|candidate| candidate.kind.is_direct_udp())
+        .filter_map(|candidate| {
+            candidate
+                .address
+                .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        }) {
-            return Some((path_kind, address));
-        }
-    }
-    None
+                .map(|address| (candidate.kind, address.to_string()))
+        })
+        .min_by_key(|(kind, _)| kind.priority())
 }
 
 fn resolve_direct_udp_peer_address(address: &str) -> Result<SocketAddr> {
@@ -443,27 +516,48 @@ pub fn persist_direct_udp_endpoint_report(socket: &UdpSocket) {
     let Ok(local_addr) = socket.local_addr() else {
         return;
     };
-    let report_host = std::env::var("SLAN_DIRECT_UDP_PUBLIC_HOST")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or_else(direct_udp_lan_host)
-        .unwrap_or_else(|| local_addr.ip().to_string());
+    let report_host = direct_udp_lan_host().unwrap_or_else(|| local_addr.ip().to_string());
     let report = DirectUdpEndpointReport {
         endpoint: format!("{report_host}:{}", local_addr.port()),
-        endpoint_type: std::env::var("SLAN_DIRECT_UDP_ENDPOINT_TYPE")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "lan".to_string()),
-        nat_type: std::env::var("SLAN_DIRECT_UDP_NAT_TYPE")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "unknown".to_string()),
+        endpoint_type: "lan_udp".to_string(),
+        lan_endpoint: format!("{report_host}:{}", local_addr.port()),
+        nat_type: "unknown".to_string(),
         bind_address: local_addr.to_string(),
         updated_at_ms: current_timestamp_ms(),
     };
+    persist_direct_udp_endpoint_report_value(report);
+}
+
+pub fn persist_direct_udp_reflexive_endpoint(socket: &UdpSocket, endpoint: &str) {
+    let Ok(local_addr) = socket.local_addr() else {
+        return;
+    };
+    let lan_endpoint = current_direct_udp_endpoint_report()
+        .map(|report| {
+            if report.lan_endpoint.trim().is_empty() && report.endpoint_type == "lan_udp" {
+                report.endpoint
+            } else {
+                report.lan_endpoint
+            }
+        })
+        .unwrap_or_default();
+    persist_direct_udp_endpoint_report_value(DirectUdpEndpointReport {
+        endpoint: endpoint.trim().to_string(),
+        endpoint_type: "direct_udp".to_string(),
+        lan_endpoint,
+        nat_type: "unknown".to_string(),
+        bind_address: local_addr.to_string(),
+        updated_at_ms: current_timestamp_ms(),
+    });
+}
+
+fn persist_direct_udp_endpoint_report_value(report: DirectUdpEndpointReport) {
+    if let Ok(mut current) = DIRECT_UDP_ENDPOINT_REPORT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+    {
+        *current = Some(report.clone());
+    }
     let path = direct_udp_endpoint_file_path();
     let Some(parent) = path.parent() else {
         return;
@@ -478,10 +572,24 @@ pub fn persist_direct_udp_endpoint_report(socket: &UdpSocket) {
 }
 
 pub fn clear_direct_udp_endpoint_report() {
+    if let Ok(mut current) = DIRECT_UDP_ENDPOINT_REPORT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+    {
+        *current = None;
+    }
     let path = direct_udp_endpoint_file_path();
     if path.exists() {
         let _ = fs::remove_file(path);
     }
+}
+
+pub fn current_direct_udp_endpoint_report() -> Option<DirectUdpEndpointReport> {
+    DIRECT_UDP_ENDPOINT_REPORT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|current| current.clone())
 }
 
 fn direct_udp_lan_host() -> Option<String> {
@@ -621,6 +729,88 @@ mod tests {
         })
         .unwrap();
         assert_eq!(transport.peers.len(), 1);
+    }
+
+    #[test]
+    fn direct_udp_attach_prefers_lan_candidate_regardless_of_input_order() {
+        let public = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let lan = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let paths = vec![PeerPathConfig {
+            peer_node_id: "node-a".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9".to_string()],
+            candidates: vec![
+                PathCandidate {
+                    kind: PathKind::DirectUdp,
+                    state: PathState::Probing,
+                    endpoint_id: None,
+                    address: Some(public.local_addr().unwrap().to_string()),
+                    session_id: None,
+                    transport: Some("udp".to_string()),
+                    rtt_ms: None,
+                    path_score: None,
+                    last_ok_at_ms: None,
+                    last_error: None,
+                },
+                PathCandidate {
+                    kind: PathKind::LanUdp,
+                    state: PathState::Probing,
+                    endpoint_id: None,
+                    address: Some(lan.local_addr().unwrap().to_string()),
+                    session_id: None,
+                    transport: Some("udp".to_string()),
+                    rtt_ms: None,
+                    path_score: None,
+                    last_ok_at_ms: None,
+                    last_error: None,
+                },
+            ],
+        }];
+
+        let transport = DirectUdpTransport::attach_with_socket("node-local", &paths, || {
+            UdpSocket::bind("127.0.0.1:0")
+        })
+        .unwrap();
+
+        assert_eq!(transport.peers[0].path_kind, PathKind::LanUdp);
+        assert_eq!(transport.peers[0].socket_addr, lan.local_addr().unwrap());
+    }
+
+    #[test]
+    fn punch_probe_uses_only_canonical_direct_discovery_nodes() {
+        let punch = UdpSocket::bind("127.0.0.1:0").unwrap();
+        punch
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let transport = DirectUdpTransport::attach_with_socket("node-local", &[], || {
+            UdpSocket::bind("127.0.0.1:0")
+        })
+        .unwrap();
+        let nodes = vec![
+            NodeConfig {
+                node_id: "punch-1".to_string(),
+                connection_type: "direct".to_string(),
+                transport: "udp".to_string(),
+                path_kind: "direct_udp".to_string(),
+                address: punch.local_addr().unwrap().to_string(),
+                priority: 100,
+            },
+            NodeConfig {
+                node_id: "relay-1".to_string(),
+                connection_type: "relay".to_string(),
+                transport: "udp".to_string(),
+                path_kind: "relay_udp".to_string(),
+                address: punch.local_addr().unwrap().to_string(),
+                priority: 200,
+            },
+        ];
+
+        assert_eq!(transport.send_punch_endpoint_probes("network-1", &nodes), 1);
+        let mut buffer = [0_u8; 512];
+        let (len, _) = punch.recv_from(&mut buffer).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&buffer[..len]).unwrap();
+        assert_eq!(payload["kind"], "endpoint_probe");
+        assert_eq!(payload["networkId"], "network-1");
+        assert_eq!(payload["nodeId"], "node-local");
     }
 
     #[test]

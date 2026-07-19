@@ -34,6 +34,11 @@ func (s DeviceSessionService) BindDeviceSession(ctx context.Context, input BindD
 	}
 	nowUnix := deviceNow(s.Now).Unix()
 	device, updated := applyBindDeviceSessionInput(device, input, nowUnix)
+	if !managedDeviceVirtualIP(device.VirtualIP) {
+		device.VirtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(s.Devices))
+		device.UpdatedAt = nowUnix
+		updated = true
+	}
 	if updated {
 		if err := s.Devices.SaveDevice(ctx, device); err != nil {
 			return DeviceSessionBoundView{}, err

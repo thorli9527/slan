@@ -161,7 +161,7 @@ sudo_run() {
   fi
 }
 
-echo "+ mac android socket defaults: account=$EMAIL biz=$BIZ_URL admin_biz=$ADMIN_BIZ_URL service_host=$MAC_SERVICE_HOST android_device=$ANDROID_DEVICE"
+echo "+ mac android socket defaults: account=$EMAIL biz=$BIZ_URL admin_biz=$ADMIN_BIZ_URL service_host=$MAC_SERVICE_HOST android_device=$ANDROID_DEVICE force_relay_only=${SLAN_FORCE_RELAY_ONLY:-0}"
 
 android_runtime_json() {
   sed -n 's/.*SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD=//p' "$ANDROID_LOG" | tail -n 1
@@ -183,6 +183,19 @@ assert_android_stat_min() {
   [[ -n "$value" ]] || fail "missing Android runtime stat: $key"
   if (( value < min_value )); then
     fail "Android runtime stat $key=$value is below expected minimum $min_value"
+  fi
+}
+
+assert_android_stat_max() {
+  local key="$1"
+  local max_value="$2"
+  local json value
+  json="$(android_runtime_json)"
+  [[ -n "$json" ]] || fail "missing SLAN_ANDROID_RUNTIME_STATS_BEFORE_HOLD in Android log"
+  value="$(json_number_value "$json" "$key")"
+  [[ -n "$value" ]] || fail "missing Android runtime stat: $key"
+  if (( value > max_value )); then
+    fail "Android runtime stat $key=$value is above expected maximum $max_value"
   fi
 }
 
@@ -233,6 +246,11 @@ run_android_socket_test() {
       "${ANDROID_COMMON_DART_DEFINES[@]}" \
       --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID" \
       --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
+      --dart-define="SLAN_TEST_FORCE_RELAY_ONLY=${SLAN_FORCE_RELAY_ONLY:-0}" \
+      --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+      --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=true" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=4" \
       --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=$ANDROID_POST_ENABLE_WAIT_SECONDS" \
       --dart-define="SLAN_TEST_HOLD_SECONDS=${SLAN_ANDROID_TEST_HOLD_SECONDS:-0}" \
       --dart-define="SLAN_TEST_UDP_SEND_TARGET=$ANDROID_UDP_TARGET" \
@@ -306,6 +324,11 @@ start_android_echo_test() {
       "${android_common_dart_defines[@]}" \
       --dart-define="SLAN_TEST_DEVICE_ID=$ANDROID_TEST_DEVICE_ID" \
       --dart-define="SLAN_TEST_CHECK_SWITCH=true" \
+      --dart-define="SLAN_TEST_FORCE_RELAY_ONLY=${SLAN_FORCE_RELAY_ONLY:-0}" \
+      --dart-define="SLAN_TEST_WAIT_MQTT=true" \
+      --dart-define="SLAN_TEST_EXPECT_NETWORK_MODULE=true" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_PEERS=1" \
+      --dart-define="SLAN_TEST_MIN_NETWORK_MODULE_SECURITY_RULES=4" \
       --dart-define="SLAN_TEST_POST_ENABLE_WAIT_SECONDS=$ANDROID_POST_ENABLE_WAIT_SECONDS" \
       --dart-define="SLAN_TEST_UDP_ECHO_PORT=$UDP_PORT" \
       --dart-define="SLAN_TEST_TCP_ECHO_PORT=$TCP_PORT" \
@@ -528,8 +551,8 @@ reset_existing_macos_service_identity() {
     SLAN_CLIENT_CORE_SERVICE_HOST="$MAC_SERVICE_HOST"
     SLAN_CONTROL_BASE_URL="$BIZ_URL"
     SLAN_MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
+    SLAN_FORCE_RELAY_ONLY="${SLAN_FORCE_RELAY_ONLY:-0}"
     SLAN_RESET_MACOS_IDENTITY=1
-    SLAN_DIRECT_UDP_ENDPOINT="${SLAN_DIRECT_UDP_ENDPOINT:-}"
     SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}"
     "$ROOT_DIR/scripts/install_macos_service.sh"
     --binary "$expected_bin"
@@ -717,22 +740,6 @@ reload_mac_network_snapshot() {
   [[ -n "$reloaded_ip" ]] && MAC_IP="$reloaded_ip"
   wait_mac_network_module "$ANDROID_TEST_DEVICE_ID" 120 >/dev/null \
     || fail "Mac network module did not receive Android peer, DNS, and ACL snapshot"
-  if [[ -z "${SLAN_DIRECT_UDP_ENDPOINT:-}" ]]; then
-    sleep 2
-    echo "+ restart Mac service after direct UDP endpoint discovery"
-    sudo_run launchctl kickstart -k system/dev.slan.client-core-service
-    output="$(
-      run_client_core_login_check "mac direct endpoint report" \
-        -biz-url "$BIZ_URL" \
-        -address "$MAC_SERVICE_HOST" \
-        -email "$EMAIL" \
-        -password "$PASSWORD" \
-        -register=false \
-        -enable-network=true \
-        -timeout "$TIMEOUT"
-    )" || fail "Mac service failed after direct endpoint discovery restart"
-    echo "$output"
-  fi
   sleep "${SLAN_MAC_ENDPOINT_REPORT_SETTLE_SECONDS:-10}"
 }
 
@@ -806,7 +813,6 @@ if [[ "$MAC_SERVICE_MODE" == "service" ]]; then
     SLAN_CONTROL_BASE_URL="$BIZ_URL" \
     SLAN_CLIENT_DEVICE_ID="$MAC_TEST_DEVICE_ID" \
     SLAN_MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}" \
-    SLAN_DIRECT_UDP_ENDPOINT="${SLAN_DIRECT_UDP_ENDPOINT:-}" \
     SLAN_STATE_DIR="$WORK_DIR/state" \
     "$SERVICE_BIN" >"$MAC_SERVICE_LOG" 2>&1 &
   PIDS+=("$!")
@@ -823,7 +829,7 @@ if [[ -n "${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}" ]]; then
   set_macos_relay_transport_allowlist "${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST}"
 fi
 
-echo "+ login and enable Mac service network at $MAC_SERVICE_HOST"
+echo "+ login Mac service and register its device at $MAC_SERVICE_HOST"
 if ! MAC_OUTPUT="$(
   run_client_core_login_check "mac socket login" \
     -biz-url "$BIZ_URL" \
@@ -831,7 +837,7 @@ if ! MAC_OUTPUT="$(
     -email "$EMAIL" \
     -password "$PASSWORD" \
     -register="$REGISTER_USER" \
-    -enable-network=true \
+    -enable-network=false \
     -timeout "$TIMEOUT"
 )"; then
   echo "$MAC_OUTPUT" >&2
@@ -845,22 +851,19 @@ if ! MAC_OUTPUT="$(
 fi
 echo "$MAC_OUTPUT"
 MAC_DEVICE_ID="$(echo "$MAC_OUTPUT" | sed -n 's/.*deviceId=\([^ ]*\).*/\1/p' | tail -n 1)"
-MAC_IP="$(echo "$MAC_OUTPUT" | sed -n 's/.*clientCoreServiceNetwork: enabled virtualIp=\([^ ]*\).*/\1/p' | tail -n 1)"
 if [[ -z "$MAC_DEVICE_ID" ]]; then
   echo "failed to parse Mac device id from login output" >&2
   exit 1
 fi
-if [[ -z "$MAC_IP" ]]; then
-  echo "failed to parse Mac virtual IP from login output" >&2
-  exit 1
-fi
-MAC_IP="${MAC_IP%%/*}"
-echo "Mac network IP: $MAC_IP"
 
 ensure_network_context
 provision_network_membership_and_acl "$MAC_DEVICE_ID"
 provision_socket_dns_record "$MAC_DEVICE_ID"
 reload_mac_network_snapshot
+if [[ -z "${MAC_IP:-}" ]]; then
+  fail "failed to parse Mac virtual IP after network assignment"
+fi
+echo "Mac network IP: $MAC_IP"
 
 if [[ "$RUN_MAC_LOCAL_DNS_SMOKE" == "1" ]]; then
   echo "+ run mac local dns smoke on $MAC_SERVICE_HOST"
@@ -1011,6 +1014,9 @@ fi
 if [[ -n "${SLAN_EXPECT_ANDROID_DIRECT_READY_MIN:-}" ]]; then
   assert_android_stat_min "directUdpReadyPeerCount" "$SLAN_EXPECT_ANDROID_DIRECT_READY_MIN"
 fi
+if [[ -n "${SLAN_EXPECT_ANDROID_DIRECT_READY_MAX:-}" ]]; then
+  assert_android_stat_max "directUdpReadyPeerCount" "$SLAN_EXPECT_ANDROID_DIRECT_READY_MAX"
+fi
 if [[ -n "${SLAN_EXPECT_ANDROID_DIRECT_FRAMES_SENT_MIN:-}" ]]; then
   assert_android_stat_min "directUdpFramesSent" "$SLAN_EXPECT_ANDROID_DIRECT_FRAMES_SENT_MIN"
 fi
@@ -1029,3 +1035,4 @@ fi
 cat "$ECHO_LOG"
 
 echo "macAndroidSocketCheck: ok email=$EMAIL macIp=$MAC_IP targetHost=$TARGET_HOST udp=$UDP_PORT tcp=$TCP_PORT"
+echo "macAndroidBusinessCheck: ok mqtt=connected network=ready dns=resolved acl=applied androidToMac=udp,tcp macToAndroid=udp,tcp"

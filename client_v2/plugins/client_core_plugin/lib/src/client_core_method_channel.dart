@@ -109,6 +109,10 @@ class ClientCorePlugin {
     return _invokeNativeOnly('setAndroidDebugEmulatorVpnBypass', enabled);
   }
 
+  Future<void> setAndroidTestForceRelayOnly(bool enabled) {
+    return _invokeNativeOnly('setAndroidTestForceRelayOnly', enabled);
+  }
+
   /// 派发桌面端通用控制命令。
   ///
   /// macOS/Windows/Linux 原生插件会负责自动启动本地 service。

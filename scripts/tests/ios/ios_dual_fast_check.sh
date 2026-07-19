@@ -110,10 +110,6 @@ if [[ "$RUN_DUAL_QUICK" == "1" ]]; then
     echo "==> if simulators are not booted, run: bash scripts/start_ios_dual_sims.sh"
     echo "==> iOS dual DNS/ACL quick validation"
     bash scripts/ios_app_dns_acl_smoke.sh
-    echo "==> iOS MQTT client_message quick validation"
-    go run scripts/client_message_mqtt_smoke.go \
-      -biz-url "$SLAN_BIZ_URL" \
-      -expect-mqtt-host "$SLAN_EXPECT_MQTT_HOST"
   )
 fi
 

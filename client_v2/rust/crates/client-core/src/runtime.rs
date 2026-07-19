@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::{
-    command::ClientCommand,
+    command::{AssignedIpPayload, ClientCommand},
     platform::{
         PlatformNetwork, PlatformResolverConfig, PlatformResolverRecord, PlatformResolverZone,
         RelayDataPlaneConfig, RouteSpec,
@@ -41,6 +41,45 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
         self.state.clone()
     }
 
+    pub fn apply_network_disabled_state(&mut self) -> ClientViewState {
+        self.state.error = None;
+        self.state.syncing = false;
+        self.state.sync_reason = None;
+        self.state.switch_enabled = true;
+        self.state.network_enabled = false;
+        self.state.virtual_ip = None;
+        self.state.notice = Some("networkDisabled".to_string());
+        self.state.clone()
+    }
+
+    pub fn apply_network_enabled_state(&mut self, virtual_ip: String) -> ClientViewState {
+        self.state.error = None;
+        self.state.syncing = false;
+        self.state.sync_reason = None;
+        self.state.switch_enabled = true;
+        self.state.network_enabled = true;
+        self.state.virtual_ip = normalize_virtual_ip(&virtual_ip);
+        self.state.notice = Some("networkEnabled".to_string());
+        self.state.clone()
+    }
+
+    pub fn apply_assigned_ip_state(&mut self, payload: AssignedIpPayload) -> ClientViewState {
+        self.state.error = None;
+        if let Some(virtual_ip) = normalize_virtual_ip(&payload.virtual_ip) {
+            self.state.virtual_ip = Some(virtual_ip);
+            self.state.notice = Some("assignedIpSynced".to_string());
+        } else {
+            self.state.error = Some("assigned virtual IP is empty".to_string());
+        }
+        self.state.clone()
+    }
+
+    pub fn apply_logout_state(&mut self) -> ClientViewState {
+        self.state = ClientViewState::default();
+        self.state.notice = Some("signedOut".to_string());
+        self.state.clone()
+    }
+
     pub fn dispatch(&mut self, command: ClientCommand) -> Result<ClientViewState> {
         self.state.error = None;
         match command {
@@ -76,9 +115,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
             ClientCommand::DisableNetwork => {
                 self.with_syncing("disableNetwork", |runtime| {
                     runtime.platform.disable_network()?;
-                    runtime.state.network_enabled = false;
-                    runtime.state.virtual_ip = None;
-                    runtime.state.notice = Some("networkDisabled".to_string());
+                    runtime.apply_network_disabled_state();
                     Ok(())
                 })?;
             }
@@ -88,11 +125,8 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                         self.platform
                             .configure_ip(&virtual_ip, payload.prefix_len.unwrap_or(32))?;
                     }
-                    self.state.virtual_ip = Some(virtual_ip);
-                    self.state.notice = Some("assignedIpSynced".to_string());
-                } else {
-                    self.state.error = Some("assigned virtual IP is empty".to_string());
                 }
+                self.apply_assigned_ip_state(payload);
             }
             ClientCommand::ApplyPlatformRuntimeState(runtime_state) => {
                 self.state.network_enabled = runtime_state.network_enabled;
@@ -124,8 +158,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
             }
             ClientCommand::Logout => {
                 let _ = self.platform.disable_network();
-                self.state = ClientViewState::default();
-                self.state.notice = Some("signedOut".to_string());
+                self.apply_logout_state();
             }
             ClientCommand::Refresh => self.refresh()?,
             ClientCommand::OpenWebConsole => {
@@ -175,9 +208,7 @@ impl<P: PlatformNetwork> ClientRuntime<P> {
                 .configure_resolver_map(resolver_zones, resolver_records)?;
             runtime.platform.configure_routes(routes)?;
             runtime.platform.configure_relay(relay_config)?;
-            runtime.state.network_enabled = true;
-            runtime.state.virtual_ip = Some(virtual_ip);
-            runtime.state.notice = Some("networkEnabled".to_string());
+            runtime.apply_network_enabled_state(virtual_ip);
             Ok(())
         })?;
         Ok(self.state.clone())

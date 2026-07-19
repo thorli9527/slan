@@ -9,6 +9,7 @@ import android.net.VpnService;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.system.Os;
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
@@ -18,6 +19,11 @@ import io.flutter.plugin.common.PluginRegistry;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.json.JSONObject;
 
 /** Flutter MethodChannel entrypoint for Android client-core integration. */
@@ -34,6 +40,34 @@ public final class ClientCorePlugin
   private final Object stateLock = new Object();
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private final Map<String, Object> state = new HashMap<>();
+  private final ThreadPoolExecutor embeddedServiceExecutor =
+      new ThreadPoolExecutor(
+          1,
+          1,
+          0L,
+          TimeUnit.MILLISECONDS,
+          new ArrayBlockingQueue<>(128),
+          runnable -> {
+            Thread thread = new Thread(runnable, "slan-embedded-service");
+            thread.setDaemon(true);
+            return thread;
+          },
+          new ThreadPoolExecutor.AbortPolicy());
+  private final AtomicLong embeddedServiceRejectedTotal = new AtomicLong();
+  private final ThreadPoolExecutor embeddedWatchExecutor =
+      new ThreadPoolExecutor(
+          1,
+          1,
+          0L,
+          TimeUnit.MILLISECONDS,
+          new ArrayBlockingQueue<>(2),
+          runnable -> {
+            Thread thread = new Thread(runnable, "slan-embedded-watch");
+            thread.setDaemon(true);
+            return thread;
+          },
+          new ThreadPoolExecutor.AbortPolicy());
+  private final AtomicLong embeddedWatchRejectedTotal = new AtomicLong();
 
   private MethodChannel channel;
   private Context applicationContext;
@@ -63,6 +97,8 @@ public final class ClientCorePlugin
     }
     channel = null;
     applicationContext = null;
+    embeddedServiceExecutor.shutdownNow();
+    embeddedWatchExecutor.shutdownNow();
   }
 
   @Override
@@ -120,16 +156,13 @@ public final class ClientCorePlugin
           protectSocket(call, result);
           return;
         case "androidRuntimeState":
-          result.success(SlanVpnRuntime.runtimeState());
+          result.success(runtimeStateWithEmbeddedServiceDiagnostics());
           return;
         case "androidWatchNetworkEvent":
           watchNetworkEvent(result);
           return;
         case "embeddedServiceRequest":
-          result.success(
-              SlanNativeBridge.serviceRequest(
-                  embeddedServiceRequestJson(
-                      call.arguments == null ? "{}" : String.valueOf(call.arguments))));
+          executeEmbeddedServiceRequest(call.arguments, result);
           return;
         case "mobileServerBaseUrl":
           result.success(mobileServerBaseUrl());
@@ -142,12 +175,67 @@ public final class ClientCorePlugin
           setAndroidDebugEmulatorVpnBypass(call.arguments);
           result.success(true);
           return;
+        case "setAndroidTestForceRelayOnly":
+          setAndroidTestForceRelayOnly(call.arguments);
+          result.success(true);
+          return;
         default:
           result.notImplemented();
       }
     } catch (Exception error) {
       result.error("android_plugin_error", error.getMessage(), null);
     }
+  }
+
+  private void executeEmbeddedServiceRequest(Object arguments, MethodChannel.Result result)
+      throws Exception {
+    final String requestJson =
+        embeddedServiceRequestJson(arguments == null ? "{}" : String.valueOf(arguments));
+    final boolean watchRequest =
+        "localBusinessEventWatch".equals(new JSONObject(requestJson).optString("method"));
+    final ThreadPoolExecutor executor =
+        watchRequest ? embeddedWatchExecutor : embeddedServiceExecutor;
+    try {
+      executor.execute(
+          () -> {
+            try {
+              String response = SlanNativeBridge.serviceRequest(requestJson);
+              mainHandler.post(() -> result.success(response));
+            } catch (Exception error) {
+              mainHandler.post(
+                  () -> result.error("embedded_service_error", error.getMessage(), null));
+            }
+          });
+    } catch (RejectedExecutionException error) {
+      if (watchRequest) {
+        embeddedWatchRejectedTotal.incrementAndGet();
+        result.error("embedded_watch_busy", "embedded watch request queue is full", null);
+      } else {
+        embeddedServiceRejectedTotal.incrementAndGet();
+        result.error("embedded_service_busy", "embedded service request queue is full", null);
+      }
+    }
+  }
+
+  private Map<String, Object> runtimeStateWithEmbeddedServiceDiagnostics() {
+    Map<String, Object> runtime = new HashMap<>(SlanVpnRuntime.runtimeState());
+    int queueDepth = embeddedServiceExecutor.getQueue().size();
+    int activeCount = embeddedServiceExecutor.getActiveCount();
+    runtime.put("embeddedServicePendingLimit", 129);
+    runtime.put("embeddedServicePendingCount", queueDepth + activeCount);
+    runtime.put("embeddedServiceQueueDepth", queueDepth);
+    runtime.put("embeddedServiceActiveCount", activeCount);
+    runtime.put("embeddedServiceCompletedTotal", embeddedServiceExecutor.getCompletedTaskCount());
+    runtime.put("embeddedServiceRejectedTotal", embeddedServiceRejectedTotal.get());
+    int watchQueueDepth = embeddedWatchExecutor.getQueue().size();
+    int watchActiveCount = embeddedWatchExecutor.getActiveCount();
+    runtime.put("embeddedWatchPendingLimit", 3);
+    runtime.put("embeddedWatchPendingCount", watchQueueDepth + watchActiveCount);
+    runtime.put("embeddedWatchQueueDepth", watchQueueDepth);
+    runtime.put("embeddedWatchActiveCount", watchActiveCount);
+    runtime.put("embeddedWatchCompletedTotal", embeddedWatchExecutor.getCompletedTaskCount());
+    runtime.put("embeddedWatchRejectedTotal", embeddedWatchRejectedTotal.get());
+    return runtime;
   }
 
   /** Reset cached UI state after startup or explicit sign-out. */
@@ -237,7 +325,7 @@ public final class ClientCorePlugin
       state.put("networkEnabled", true);
       state.put("virtualIp", config.optString("virtualIp", ""));
     }
-    result.success(SlanVpnRuntime.runtimeState());
+    result.success(runtimeStateWithEmbeddedServiceDiagnostics());
   }
 
   private String relayAddress(JSONObject config) {
@@ -311,14 +399,16 @@ public final class ClientCorePlugin
   private String stableDeviceId() {
     Context context = applicationContext;
     if (context == null) {
-      return UUID.randomUUID().toString().toLowerCase();
+      return UUID.randomUUID().toString().replace("-", "").toLowerCase();
     }
     SharedPreferences prefs = prefs();
     String existing = prefs.getString(DEVICE_ID_KEY, "");
-    if (existing != null && isUuidV4(existing.trim())) {
-      return existing.trim();
+    String normalized = normalizedUuidV4(existing);
+    if (!normalized.isEmpty()) {
+      prefs.edit().putString(DEVICE_ID_KEY, normalized).apply();
+      return normalized;
     }
-    String value = UUID.randomUUID().toString().toLowerCase();
+    String value = UUID.randomUUID().toString().replace("-", "").toLowerCase();
     prefs.edit().putString(DEVICE_ID_KEY, value).apply();
     return value;
   }
@@ -330,8 +420,18 @@ public final class ClientCorePlugin
       args = new JSONObject();
       request.put("args", args);
     }
-    String requestedDeviceId = args.optString("deviceId", "").trim();
-    args.put("deviceId", requestedDeviceId.isEmpty() ? stableDeviceId() : requestedDeviceId);
+    String requestedDeviceId = args.optString("deviceIdOverride", "").trim();
+    if (requestedDeviceId.isEmpty()) {
+      requestedDeviceId = args.optString("deviceId", "").trim();
+    }
+    String effectiveDeviceId = requestedDeviceId.isEmpty() ? stableDeviceId() : normalizedUuidV4(requestedDeviceId);
+    if (effectiveDeviceId.isEmpty()) {
+      effectiveDeviceId = stableDeviceId();
+    } else if (!requestedDeviceId.isEmpty()) {
+      prefs().edit().putString(DEVICE_ID_KEY, effectiveDeviceId).apply();
+    }
+    args.put("deviceId", effectiveDeviceId);
+    args.put("deviceIdOverride", effectiveDeviceId);
     Context context = applicationContext;
     if (context != null) {
       args.put("stateDir", context.getFilesDir().getAbsolutePath());
@@ -339,13 +439,12 @@ public final class ClientCorePlugin
     return request.toString();
   }
 
-  private boolean isUuidV4(String value) {
+  private String normalizedUuidV4(String value) {
     if (value == null) {
-      return false;
+      return "";
     }
-    String normalized = value.trim();
-    return normalized.matches(
-        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$");
+    String normalized = value.trim().replace("-", "").toLowerCase();
+    return normalized.matches("^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$") ? normalized : "";
   }
 
   private String stableNodeId() {
@@ -391,6 +490,16 @@ public final class ClientCorePlugin
     prefs().edit()
         .putBoolean("dev.slan.client.v2.android.debug.emulatorVpnBypass", enabled)
         .apply();
+  }
+
+  private void setAndroidTestForceRelayOnly(Object value) throws Exception {
+    if (!isDebugBuild()) {
+      throw new SecurityException("relay-only test policy is only available in debug builds");
+    }
+    boolean enabled = value instanceof Boolean
+        ? (Boolean) value
+        : Boolean.parseBoolean(String.valueOf(value));
+    Os.setenv("SLAN_FORCE_RELAY_ONLY", enabled ? "1" : "0", true);
   }
 
   private boolean allowDebugEmulatorVpnBypass() {

@@ -186,6 +186,8 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 pkill -x slan_client_v2 >/dev/null 2>&1 || true
 pkill -x $SLAN_LINUX_SERVICE_BIN_NAME >/dev/null 2>&1 || true
+pkill -f '^$SLAN_LINUX_SERVICE_BIN([[:space:]]|$)' >/dev/null 2>&1 || true
+pkill -f '^$SLAN_LINUX_GUI_BIN([[:space:]]|$)' >/dev/null 2>&1 || true
 rm -f $SLAN_LINUX_ETC_SERVICE_UNIT_PATH $SLAN_LINUX_SERVICE_UNIT_PATH
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
@@ -212,6 +214,8 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 pkill -x slan_client_v2 >/dev/null 2>&1 || true
 pkill -x $SLAN_LINUX_SERVICE_BIN_NAME >/dev/null 2>&1 || true
+pkill -f '^$SLAN_LINUX_SERVICE_BIN([[:space:]]|$)' >/dev/null 2>&1 || true
+pkill -f '^$SLAN_LINUX_GUI_BIN([[:space:]]|$)' >/dev/null 2>&1 || true
 exit 0
 EOF
   chmod 755 "$deb_root/DEBIAN/preinst" "$deb_root/DEBIAN/postinst" "$deb_root/DEBIAN/prerm"

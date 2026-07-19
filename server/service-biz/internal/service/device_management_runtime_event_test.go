@@ -86,6 +86,56 @@ func TestUpdateDeviceRuntimePublishesNetworkMemberEvent(t *testing.T) {
 	}
 }
 
+func TestUpdateDeviceRuntimeAppliesPresenceToEveryActiveNetwork(t *testing.T) {
+	now := time.Unix(1700003000, 0)
+	eventPublisher := &deviceRuntimeTestEventPublisher{}
+	devices := &deviceRegistrationTestDevices{
+		networkRuntimeTestDevices: networkRuntimeTestDevices{
+			devices: map[string]model.Device{
+				"device-a": {DeviceID: "device-a", OwnerID: "user-1", Status: "active"},
+			},
+		},
+	}
+	networks := &deviceRegistrationTestNetworks{
+		networkRuntimeTestNetworks: networkRuntimeTestNetworks{
+			networks: map[string]model.Network{
+				"net-a": {NetworkID: "net-a", Status: "active"},
+				"net-b": {NetworkID: "net-b", Status: "active"},
+			},
+			networkDevices: map[string][]model.NetworkDevice{
+				"net-a": {{NetworkID: "net-a", DeviceID: "device-a", Enabled: true, MemberStatus: model.NetworkMemberStatusActive}},
+				"net-b": {{NetworkID: "net-b", DeviceID: "device-a", Enabled: true, MemberStatus: model.NetworkMemberStatusActive}},
+			},
+		},
+	}
+	service := DeviceRuntimeAccessService{
+		deviceCoreDependencies: deviceCoreDependencies{
+			Users:          &deviceRegistrationTestUsers{users: map[string]model.User{"user-1": {UserID: "user-1", Status: "active"}}},
+			Devices:        devices,
+			Networks:       networks,
+			MQTT:           mqttkit.DefaultConfig(),
+			EventPublisher: eventPublisher,
+			Now:            func() time.Time { return now },
+		},
+	}
+
+	_, err := service.UpdateDeviceRuntime(context.Background(), UpdateDeviceRuntimeInput{
+		DeviceID:     "device-a",
+		NetworkID:    "net-a",
+		ActivePath:   "relay_udp",
+		ReportedAtMS: now.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("UpdateDeviceRuntime returned error: %v", err)
+	}
+	if got := len(networks.savedNetworkDevices); got != 2 {
+		t.Fatalf("expected runtime state saved to 2 networks, got %d", got)
+	}
+	if got := len(eventPublisher.events); got != 2 {
+		t.Fatalf("expected presence events for 2 networks, got %d", got)
+	}
+}
+
 func TestUpdateDeviceRuntimeDoesNotRepublishPresenceHeartbeatWithoutStateChange(t *testing.T) {
 	now := time.Unix(1700003000, 0)
 	eventPublisher := &deviceRuntimeTestEventPublisher{}

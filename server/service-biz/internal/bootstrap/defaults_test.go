@@ -21,3 +21,10 @@ func TestDefaultRelayEndpointFallsBackToPublicRelayHost(t *testing.T) {
 		t.Fatalf("DefaultRelayEndpoint() = %q, want %q", got, "47.245.40.231:29110")
 	}
 }
+
+func TestDefaultPunchEndpointUsesPunchNodesEnv(t *testing.T) {
+	t.Setenv("SLAN_WIRE_PUNCH_NODES", "local=47.245.40.231:29130")
+	if got := DefaultPunchEndpoint(); got != "47.245.40.231:29130" {
+		t.Fatalf("DefaultPunchEndpoint() = %q, want %q", got, "47.245.40.231:29130")
+	}
+}

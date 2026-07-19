@@ -12,9 +12,8 @@ DEFAULT_CONTROL_BASE_URL="http://47.245.40.231:28080"
 CONTROL_BASE_URL="${SLAN_CONTROL_BASE_URL:-${SLAN_BIZ_URL:-$DEFAULT_CONTROL_BASE_URL}}"
 MACOS_NETWORK_MOCK="${SLAN_MACOS_NETWORK_MOCK:-0}"
 RESET_IDENTITY="${SLAN_RESET_MACOS_IDENTITY:-0}"
-DIRECT_UDP_PUBLIC_HOST="${SLAN_DIRECT_UDP_PUBLIC_HOST:-}"
-DIRECT_UDP_ENDPOINT="${SLAN_DIRECT_UDP_ENDPOINT:-}"
 TEST_RELAY_TRANSPORT_ALLOWLIST="${SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST:-}"
+FORCE_RELAY_ONLY="${SLAN_FORCE_RELAY_ONLY:-}"
 APP_PATH=""
 SOURCE_BIN=""
 ORIGINAL_ARGS=("$@")
@@ -178,22 +177,16 @@ $(if [[ -n "$CONTROL_BASE_URL" ]]; then
     <string>${CONTROL_BASE_URL}</string>
 ENV
 fi)
-$(if [[ -n "$DIRECT_UDP_PUBLIC_HOST" ]]; then
-  cat <<ENV
-    <key>SLAN_DIRECT_UDP_PUBLIC_HOST</key>
-    <string>${DIRECT_UDP_PUBLIC_HOST}</string>
-ENV
-fi)
-$(if [[ -n "$DIRECT_UDP_ENDPOINT" ]]; then
-  cat <<ENV
-    <key>SLAN_DIRECT_UDP_ENDPOINT</key>
-    <string>${DIRECT_UDP_ENDPOINT}</string>
-ENV
-fi)
 $(if [[ -n "$TEST_RELAY_TRANSPORT_ALLOWLIST" ]]; then
   cat <<ENV
     <key>SLAN_TEST_RELAY_TRANSPORT_ALLOWLIST</key>
     <string>${TEST_RELAY_TRANSPORT_ALLOWLIST}</string>
+ENV
+fi)
+$(if [[ -n "$FORCE_RELAY_ONLY" ]]; then
+  cat <<ENV
+    <key>SLAN_FORCE_RELAY_ONLY</key>
+    <string>${FORCE_RELAY_ONLY}</string>
 ENV
 fi)
   </dict>
@@ -214,9 +207,8 @@ echo "installedServiceSha256: $(sha256_file "$SERVICE_BIN")"
 echo "serviceInfo: $(service_info "$SERVICE_BIN")"
 echo "host: $SERVICE_HOST"
 [[ -n "$CONTROL_BASE_URL" ]] && echo "controlBaseUrl: $CONTROL_BASE_URL"
-[[ -n "$DIRECT_UDP_PUBLIC_HOST" ]] && echo "directUdpPublicHost: $DIRECT_UDP_PUBLIC_HOST"
-[[ -n "$DIRECT_UDP_ENDPOINT" ]] && echo "directUdpEndpoint: $DIRECT_UDP_ENDPOINT"
 [[ -n "$TEST_RELAY_TRANSPORT_ALLOWLIST" ]] && echo "testRelayTransportAllowlist: $TEST_RELAY_TRANSPORT_ALLOWLIST"
+[[ -n "$FORCE_RELAY_ONLY" ]] && echo "forceRelayOnly: $FORCE_RELAY_ONLY"
 echo "plist: $PLIST"
 echo "logs: $LOG_DIR"
 if ! wait_service_ready "$SERVICE_HOST"; then

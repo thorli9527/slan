@@ -13,7 +13,7 @@ class ControlTransportStatus {
     this.mqttLastError,
     this.mqttLastMessageTopic,
     this.mqttLastMessageType,
-    this.mqttNetworkEventTopic,
+    this.mqttNetworkEventTopics = const [],
     this.mqttNetworkEventSubscribed,
     this.activeNetworkId,
     this.deviceId,
@@ -47,8 +47,8 @@ class ControlTransportStatus {
   /// 最近收到的下行控制消息类型。
   final String? mqttLastMessageType;
 
-  /// 当前订阅的网络事件 topic。
-  final String? mqttNetworkEventTopic;
+  /// 当前订阅的全部网络事件 topic。
+  final List<String> mqttNetworkEventTopics;
 
   /// 网络事件 topic 是否已订阅成功。
   final bool? mqttNetworkEventSubscribed;
@@ -76,7 +76,10 @@ class ControlTransportStatus {
       mqttLastError: json['mqttLastError'] as String?,
       mqttLastMessageTopic: json['mqttLastMessageTopic'] as String?,
       mqttLastMessageType: json['mqttLastMessageType'] as String?,
-      mqttNetworkEventTopic: json['mqttNetworkEventTopic'] as String?,
+      mqttNetworkEventTopics:
+          (json['mqttNetworkEventTopics'] as List? ?? const [])
+              .whereType<String>()
+              .toList(growable: false),
       mqttNetworkEventSubscribed: json['mqttNetworkEventSubscribed'] as bool?,
       activeNetworkId: json['activeNetworkId'] as String?,
       deviceId: json['deviceId'] as String?,

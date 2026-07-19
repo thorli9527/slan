@@ -61,16 +61,11 @@ pub(crate) fn apply_resolver_from_device_network_configs(
     for network in active_configs {
         zones.extend(network.resolver_zones.iter().map(|zone| ResolverZoneView {
             zone_id: zone.zone_id.clone(),
-            network_id: zone.network_id.clone(),
             zone_name: zone.zone_name.clone(),
-            expose_global: false,
-            updated_at: 0,
         }));
         records.extend(network.resolver_records.iter().map(|record| {
             ResolverRecordView {
                 record_id: record.record_id.clone(),
-                zone_id: record.zone_id.clone(),
-                network_id: record.network_id.clone(),
                 name: record.name.clone(),
                 fqdn: record
                     .fqdn
@@ -97,7 +92,6 @@ pub(crate) fn apply_resolver_from_device_network_configs(
                     .map(|value| value as u32)
                     .unwrap_or(60),
                 enabled: true,
-                updated_at: 0,
             }
         }));
     }
@@ -148,10 +142,7 @@ pub(crate) fn apply_resolver_from_network_snapshot(
         .iter()
         .map(|item| ResolverZoneView {
             zone_id: item.zone_id.clone(),
-            network_id: item.network_id.clone(),
             zone_name: item.zone_name.clone(),
-            expose_global: item.expose_global,
-            updated_at: item.updated_at,
         })
         .collect();
     let records = payload
@@ -175,10 +166,7 @@ pub(crate) fn apply_resolver_changed(
         .into_iter()
         .map(|item| ResolverZoneView {
             zone_id: item.zone_id,
-            network_id: item.network_id,
             zone_name: item.zone_name,
-            expose_global: item.expose_global,
-            updated_at: item.updated_at,
         })
         .collect();
     let records = payload
@@ -219,8 +207,6 @@ fn build_resolver_record_view(
     };
     ResolverRecordView {
         record_id: item.record_id.clone(),
-        zone_id: item.zone_id.clone(),
-        network_id: item.network_id.clone(),
         name,
         fqdn,
         record_type,
@@ -231,7 +217,6 @@ fn build_resolver_record_view(
         port: item.port,
         ttl: normalized_ttl(item.ttl),
         enabled: item.enabled,
-        updated_at: item.updated_at,
     }
 }
 

@@ -20,6 +20,7 @@ type PunchNodeView struct {
 	Address       string `json:"address"`
 	PublicUDPIP   string `json:"publicUdpIp"`
 	PublicUDPPort int    `json:"publicUdpPort"`
+	Priority      int    `json:"priority"`
 }
 
 type PunchConnectEndpointView struct {

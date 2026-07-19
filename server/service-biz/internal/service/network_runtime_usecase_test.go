@@ -15,10 +15,11 @@ import (
 )
 
 type networkRuntimeTestNetworks struct {
-	networks       map[string]model.Network
-	networkDevices map[string][]model.NetworkDevice
-	securityGroups map[string]model.SecurityGroup
-	securityRules  map[string][]model.SecurityRule
+	networks            map[string]model.Network
+	networkDevices      map[string][]model.NetworkDevice
+	savedNetworkDevices []model.NetworkDevice
+	securityGroups      map[string]model.SecurityGroup
+	securityRules       map[string][]model.SecurityRule
 }
 
 func (s *networkRuntimeTestNetworks) GetNetwork(_ context.Context, networkID string) (model.Network, bool, error) {
@@ -64,7 +65,8 @@ func (s *networkRuntimeTestNetworks) GetNetworkDevice(_ context.Context, network
 	return model.NetworkDevice{}, false, nil
 }
 
-func (s *networkRuntimeTestNetworks) SaveNetworkDevice(context.Context, model.NetworkDevice) error {
+func (s *networkRuntimeTestNetworks) SaveNetworkDevice(_ context.Context, item model.NetworkDevice) error {
+	s.savedNetworkDevices = append(s.savedNetworkDevices, item)
 	return nil
 }
 
@@ -481,8 +483,8 @@ func newNetworkRuntimeTestService(rules []model.SecurityRule) NetworkRuntimeServ
 	return NetworkRuntimeService{
 		Devices: &networkRuntimeTestDevices{
 			devices: map[string]model.Device{
-				"src": {DeviceID: "src", OwnerID: "user-1", Alias: "mac-src", Name: "Mac"},
-				"dst": {DeviceID: "dst", OwnerID: "user-1", Alias: "ios-dst", Name: "iPhone"},
+				"src": {DeviceID: "src", OwnerID: "user-1", VirtualIP: "10.0.0.1", Alias: "mac-src", Name: "Mac"},
+				"dst": {DeviceID: "dst", OwnerID: "user-1", VirtualIP: "10.0.0.2", Alias: "ios-dst", Name: "iPhone"},
 			},
 		},
 		Networks: &networkRuntimeTestNetworks{

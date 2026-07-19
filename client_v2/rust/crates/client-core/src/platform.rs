@@ -273,6 +273,9 @@ pub struct RelayDataPlaneConfig {
     pub local_node_id: String,
     /// 所属虚拟网络 ID。
     pub network_id: String,
+    /// Server-managed direct and relay infrastructure nodes.
+    #[serde(default)]
+    pub node_configs: Vec<NodeConfig>,
     #[serde(default)]
     pub path_policy: PathPolicy,
     #[serde(default)]
@@ -284,6 +287,60 @@ pub struct RelayDataPlaneConfig {
     #[serde(default)]
     pub acl_policies: Vec<PlatformAclPolicy>,
     pub sessions: Vec<RelayPeerSession>,
+}
+
+/// Server-managed infrastructure node used for direct discovery or relay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeConfig {
+    #[serde(default)]
+    pub node_id: String,
+    pub connection_type: String,
+    pub transport: String,
+    pub path_kind: String,
+    pub address: String,
+    #[serde(default)]
+    pub priority: u16,
+}
+
+impl NodeConfig {
+    /// Validate the canonical server-managed node tuple.
+    pub fn is_valid(&self) -> bool {
+        !self.node_id.trim().is_empty()
+            && !self.address.trim().is_empty()
+            && matches!(
+                (
+                    self.connection_type.as_str(),
+                    self.transport.as_str(),
+                    self.path_kind.as_str(),
+                ),
+                ("direct", "udp", "direct_udp")
+                    | ("relay", "udp", "relay_udp")
+                    | ("relay", "tcp", "relay_tcp")
+            )
+    }
+
+    /// Return the fixed infrastructure path order.
+    pub fn path_rank(&self) -> u8 {
+        node_config_path_rank(&self.path_kind)
+    }
+
+    /// Whether this node can discover the public endpoint of a direct UDP socket.
+    pub fn is_direct_udp_discovery(&self) -> bool {
+        self.connection_type == "direct"
+            && self.transport == "udp"
+            && self.path_kind == "direct_udp"
+    }
+}
+
+/// Return the canonical order for server-managed infrastructure path names.
+pub fn node_config_path_rank(path_kind: &str) -> u8 {
+    match path_kind {
+        "direct_udp" => 0,
+        "relay_udp" => 1,
+        "relay_tcp" => 2,
+        _ => u8::MAX,
+    }
 }
 
 /// 本机到单个 peer 的 relay 会话配置。
@@ -428,6 +485,7 @@ mod tests {
             relay_address: "47.245.40.231:39000".to_string(),
             local_node_id: "node-local".to_string(),
             network_id: "network-1".to_string(),
+            node_configs: Vec::new(),
             path_policy: PathPolicy::default(),
             peer_paths: Vec::new(),
             relay_mtu: Some(1280),
@@ -571,5 +629,25 @@ mod tests {
         assert!(decoded.resolver_zones.is_empty());
         assert!(decoded.resolver_records.is_empty());
         assert!(decoded.relay_data_plane.is_none());
+    }
+
+    #[test]
+    fn node_config_accepts_only_canonical_path_tuples() {
+        let direct = NodeConfig {
+            node_id: "punch-1".to_string(),
+            connection_type: "direct".to_string(),
+            transport: "udp".to_string(),
+            path_kind: "direct_udp".to_string(),
+            address: "203.0.113.1:3478".to_string(),
+            priority: 100,
+        };
+        assert!(direct.is_valid());
+        assert!(direct.is_direct_udp_discovery());
+        assert_eq!(direct.path_rank(), 0);
+
+        let mut invalid = direct;
+        invalid.connection_type = "relay".to_string();
+        assert!(!invalid.is_valid());
+        assert!(!invalid.is_direct_udp_discovery());
     }
 }

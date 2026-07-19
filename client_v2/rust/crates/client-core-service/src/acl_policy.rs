@@ -88,6 +88,25 @@ fn resolve_acl_rule_peer(
             );
             (node_id, ips)
         }
+        "device_group" => {
+            let group_id = rule.peer_value.trim();
+            let mut ips = Vec::new();
+            if device_in_group(config, &config.device_id, group_id) {
+                if let Some(ip) = config.global_ip.clone() {
+                    ips.push(ip);
+                }
+            }
+            ips.extend(
+                config
+                    .peers
+                    .iter()
+                    .filter(|peer| device_in_group(config, &peer.device_id, group_id))
+                    .filter_map(|peer| peer.global_ip.clone()),
+            );
+            ips.sort();
+            ips.dedup();
+            (None, ips)
+        }
         "domain" => {
             let value = rule.peer_value.trim();
             let mut ips = Vec::new();
@@ -119,6 +138,14 @@ fn resolve_acl_rule_peer(
         }
         _ => (None, Vec::new()),
     }
+}
+
+fn device_in_group(config: &DeviceNetworkConfig, device_id: &str, group_id: &str) -> bool {
+    !group_id.is_empty()
+        && config
+            .device_groups_by_device
+            .get(device_id)
+            .is_some_and(|group_ids| group_ids.iter().any(|value| value == group_id))
 }
 
 #[cfg(test)]
@@ -241,6 +268,48 @@ mod tests {
         assert_eq!(
             policies[0].rules[0].resolved_peer_virtual_ips,
             vec!["10.0.0.7/32".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolves_device_group_acl_rule_to_member_virtual_ips() {
+        let policies = platform_acl_policies(&[DeviceNetworkConfig {
+            network_id: "network-1".to_string(),
+            device_id: "local-device".to_string(),
+            global_ip: Some("10.0.0.2".to_string()),
+            peers: vec![
+                DeviceNetworkPeer {
+                    device_id: "peer-device".to_string(),
+                    global_ip: Some("10.0.0.3".to_string()),
+                    ..DeviceNetworkPeer::default()
+                },
+                DeviceNetworkPeer {
+                    device_id: "other-device".to_string(),
+                    global_ip: Some("10.0.0.4".to_string()),
+                    ..DeviceNetworkPeer::default()
+                },
+            ],
+            device_groups_by_device: std::collections::BTreeMap::from([
+                ("local-device".to_string(), vec!["group-1".to_string()]),
+                ("peer-device".to_string(), vec!["group-1".to_string()]),
+                ("other-device".to_string(), vec!["group-2".to_string()]),
+            ]),
+            rules: vec![DeviceSecurityRule {
+                rule_id: "rule-group".to_string(),
+                direction: "egress".to_string(),
+                action: "allow".to_string(),
+                protocol: "all".to_string(),
+                peer_type: "device_group".to_string(),
+                peer_value: "group-1".to_string(),
+                enabled: true,
+                ..DeviceSecurityRule::default()
+            }],
+            ..DeviceNetworkConfig::default()
+        }]);
+
+        assert_eq!(
+            policies[0].rules[0].resolved_peer_virtual_ips,
+            vec!["10.0.0.2".to_string(), "10.0.0.3".to_string()]
         );
     }
 

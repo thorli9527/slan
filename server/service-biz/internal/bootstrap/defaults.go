@@ -62,31 +62,19 @@ func defaultRelayNode(now int64) model.RelayNode {
 }
 
 func defaultPunchNode(now int64) (model.PunchNode, bool) {
-	raw := strings.TrimSpace(os.Getenv("SLAN_WIRE_PUNCH_NODES"))
-	if raw == "" {
+	endpoint := DefaultPunchEndpoint()
+	if endpoint == "" {
 		return model.PunchNode{}, false
-	}
-	first := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || r == '\n' })
-	if len(first) == 0 {
-		return model.PunchNode{}, false
-	}
-	addr := strings.TrimSpace(first[0])
-	if before, after, ok := strings.Cut(addr, "="); ok {
-		if strings.TrimSpace(after) != "" {
-			addr = strings.TrimSpace(after)
-		} else {
-			addr = strings.TrimSpace(before)
-		}
 	}
 	return model.PunchNode{
 		NodeID:    "punch000000000000000000000000000001",
 		Name:      "Punch 1",
 		Region:    defaultOpsRegion("SLAN_WIRE_PUNCH_REGION_ID", "default"),
-		Endpoint:  addr,
+		Endpoint:  endpoint,
 		Status:    "active",
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, strings.TrimSpace(addr) != ""
+	}, true
 }
 
 func defaultPunchEnabled() bool {
@@ -125,6 +113,18 @@ func DefaultRelayEndpoint() string {
 		return host + ":" + port
 	}
 	return "127.0.0.1:29110"
+}
+
+func DefaultPunchEndpoint() string {
+	raw := strings.TrimSpace(os.Getenv("SLAN_WIRE_PUNCH_NODES"))
+	if raw == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || r == '\n' })
+	if len(parts) == 0 {
+		return ""
+	}
+	return normalizeRelayAddress(parts[0])
 }
 
 func normalizeRelayAddress(value string) string {

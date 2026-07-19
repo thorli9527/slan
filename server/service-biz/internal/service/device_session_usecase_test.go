@@ -291,7 +291,7 @@ func TestBindDeviceSessionReplacesPreviousDeviceToken(t *testing.T) {
 	}
 }
 
-func TestBindDeviceSessionReattachesExistingDeviceToDefaultNetwork(t *testing.T) {
+func TestBindDeviceSessionMigratesLegacyIPAndIgnoresInactiveNetworkMembership(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	devices := &deviceSessionTestDevices{
 		networkRuntimeTestDevices: networkRuntimeTestDevices{
@@ -299,7 +299,7 @@ func TestBindDeviceSessionReattachesExistingDeviceToDefaultNetwork(t *testing.T)
 				"linux-1": {
 					DeviceID:  "linux-1",
 					OwnerID:   "user-1",
-					VirtualIP: "10.0.1.20",
+					VirtualIP: "100.124.242.246",
 					Name:      "Docker Linux",
 					Platform:  "linux",
 					Status:    "active",
@@ -321,7 +321,14 @@ func TestBindDeviceSessionReattachesExistingDeviceToDefaultNetwork(t *testing.T)
 					Status:    "active",
 				},
 			},
-			networkDevices: map[string][]model.NetworkDevice{},
+			networkDevices: map[string][]model.NetworkDevice{
+				"net-1": {{
+					NetworkID:    "net-1",
+					DeviceID:     "linux-1",
+					Enabled:      false,
+					MemberStatus: model.NetworkMemberStatusRemoved,
+				}},
+			},
 		},
 	}
 	service := DeviceSessionService{
@@ -348,10 +355,13 @@ func TestBindDeviceSessionReattachesExistingDeviceToDefaultNetwork(t *testing.T)
 	if err != nil {
 		t.Fatalf("BindDeviceSession returned error: %v", err)
 	}
-	if len(networks.networkDevices["net-1"]) != 0 {
-		t.Fatalf("expected detached device to remain outside the network until its group is referenced, got %+v", networks.networkDevices["net-1"])
+	if view.Profile.ActiveNetworkID != "" || len(view.MQTT.NetworkIDs) != 0 {
+		t.Fatalf("expected inactive membership to be excluded from profile and MQTT topics, got profile=%+v mqtt=%+v", view.Profile, view.MQTT)
 	}
 	if view.Profile.Device.DeviceID != "linux-1" {
 		t.Fatalf("expected existing device to be preserved, got %+v", view.Profile.Device)
+	}
+	if got := devices.devices["linux-1"].VirtualIP; got != "10.0.0.1" {
+		t.Fatalf("expected legacy virtual IP to migrate to 10.0.0.1, got %q", got)
 	}
 }

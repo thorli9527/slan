@@ -1,6 +1,12 @@
 package service
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/slan/service-biz/internal/model"
+)
 
 func TestDecodeControlUpEndpointReport(t *testing.T) {
 	t.Parallel()
@@ -56,5 +62,58 @@ func TestDecodeControlUpPathHealthReport(t *testing.T) {
 	}
 	if input.PathType != "relay_tcp" || input.RelayTransport != "tcp" || !input.TicketRenewDue {
 		t.Fatalf("unexpected path payload: %#v", input)
+	}
+}
+
+func TestReportEndpointAppliesDeviceEndpointsToEveryActiveNetwork(t *testing.T) {
+	networks := &networkRuntimeTestNetworks{
+		networks: map[string]model.Network{
+			"net-a": {NetworkID: "net-a", Status: "active"},
+			"net-b": {NetworkID: "net-b", Status: "active"},
+		},
+		networkDevices: map[string][]model.NetworkDevice{
+			"net-a": {{NetworkID: "net-a", DeviceID: "device-a", Enabled: true, MemberStatus: model.NetworkMemberStatusActive}},
+			"net-b": {{NetworkID: "net-b", DeviceID: "device-a", Enabled: true, MemberStatus: model.NetworkMemberStatusActive}},
+		},
+	}
+	service := MQTTWebhookService{
+		Networks: networks,
+		Now:      func() time.Time { return time.Unix(1700003000, 0) },
+	}
+
+	changed, err := service.ReportEndpoint(context.Background(), MQTTEndpointReportInput{
+		NetworkID: "net-a",
+		DeviceID:  "device-a",
+		NodeID:    "node-device-a",
+		NATType:   "easy",
+		Endpoints: []DeviceEndpointView{{Type: "direct_udp", Address: "1.2.3.4:5678"}},
+	})
+	if err != nil {
+		t.Fatalf("ReportEndpoint returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected endpoint change")
+	}
+	if got := len(networks.savedNetworkDevices); got != 2 {
+		t.Fatalf("expected endpoints saved to 2 networks, got %d", got)
+	}
+}
+
+func TestDeviceEndpointsChangedIgnoresTimestampAndOrder(t *testing.T) {
+	previous := []model.DeviceEndpoint{
+		{Type: "direct_udp", Address: "1.2.3.4:5678", UpdatedAt: 100},
+		{Type: "lan_udp", Address: "192.168.1.2:5678", UpdatedAt: 100},
+	}
+	next := []model.DeviceEndpoint{
+		{Type: "lan_udp", Address: "192.168.1.2:5678", UpdatedAt: 200},
+		{Type: "direct_udp", Address: "1.2.3.4:5678", UpdatedAt: 200},
+	}
+
+	if deviceEndpointsChanged(previous, next) {
+		t.Fatal("timestamp and ordering changes must not trigger network reconfiguration")
+	}
+	next[1].Address = "1.2.3.4:9876"
+	if !deviceEndpointsChanged(previous, next) {
+		t.Fatal("endpoint address changes must trigger network reconfiguration")
 	}
 }

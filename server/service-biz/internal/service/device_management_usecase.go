@@ -86,34 +86,65 @@ func (s DeviceRuntimeAccessService) updateDeviceRuntimeEntity(ctx context.Contex
 	if err := s.Devices.SaveDevice(ctx, device); err != nil {
 		return model.Device{}, err
 	}
-	networkID, membership, updated, err := s.updateDeviceRuntimeMembership(ctx, input, now)
+	membershipUpdates, err := s.updateDeviceRuntimeMemberships(ctx, input, now)
 	if err != nil {
 		return model.Device{}, err
 	}
-	if updated {
-		if err := s.publishRuntimeMembershipEvent(ctx, device, networkID, membership, nowTime); err != nil {
+	for _, update := range membershipUpdates {
+		if !update.Publish {
+			continue
+		}
+		if err := s.publishRuntimeMembershipEvent(ctx, device, update.NetworkID, update.Membership, nowTime); err != nil {
 			return model.Device{}, err
 		}
 	}
 	return device, nil
 }
 
-func (s DeviceRuntimeAccessService) updateDeviceRuntimeMembership(ctx context.Context, input UpdateDeviceRuntimeInput, now int64) (string, model.NetworkDevice, bool, error) {
+type deviceRuntimeMembershipUpdate struct {
+	NetworkID  string
+	Membership model.NetworkDevice
+	Publish    bool
+}
+
+func (s DeviceRuntimeAccessService) updateDeviceRuntimeMemberships(ctx context.Context, input UpdateDeviceRuntimeInput, now int64) ([]deviceRuntimeMembershipUpdate, error) {
 	if !hasDeviceRuntimeMembershipUpdate(input) {
-		return "", model.NetworkDevice{}, false, nil
+		return nil, nil
 	}
-	networkID, membership, ok, err := resolveDeviceRuntimeMembership(ctx, s.Networks, input.NetworkID, input.DeviceID)
-	if err != nil || !ok {
-		return "", model.NetworkDevice{}, false, err
+	networks, err := s.Networks.ListNetworksByDevice(ctx, input.DeviceID)
+	if err != nil {
+		return nil, err
 	}
-	membership.NetworkID = networkID
-	membership.DeviceID = input.DeviceID
-	previous := membership
-	updated := applyUpdateDeviceRuntimeMembership(membership, input, now)
-	if err := s.Networks.SaveNetworkDevice(ctx, updated); err != nil {
-		return "", model.NetworkDevice{}, false, err
+	reportedNetworkFound := input.NetworkID == ""
+	updates := make([]deviceRuntimeMembershipUpdate, 0, len(networks))
+	for _, network := range networks {
+		membership, ok, err := findNetworkMembership(ctx, s.Networks, network.NetworkID, input.DeviceID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || !networkMemberActive(membership) {
+			continue
+		}
+		if network.NetworkID == input.NetworkID {
+			reportedNetworkFound = true
+		}
+		membership.NetworkID = network.NetworkID
+		membership.DeviceID = input.DeviceID
+		previous := membership
+		updated := applyUpdateDeviceRuntimeMembership(membership, input, now)
+		if err := s.Networks.SaveNetworkDevice(ctx, updated); err != nil {
+			return nil, err
+		}
+		updates = append(updates, deviceRuntimeMembershipUpdate{
+			NetworkID:  network.NetworkID,
+			Membership: updated,
+			Publish:    shouldPublishRuntimeMembershipPresenceEvent(previous, updated),
+		})
 	}
-	return networkID, updated, shouldPublishRuntimeMembershipPresenceEvent(previous, updated), nil
+	if !reportedNetworkFound {
+		return nil, ErrNotFound
+	}
+	return updates, nil
 }
 
 func (s DeviceProvisioningService) DeleteDevice(ctx context.Context, input DeleteDeviceInput) error {

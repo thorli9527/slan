@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::{Mutex, OnceLock},
+};
 
 use crate::network_event::{
     NetworkEventAclRuleView, NetworkEventDeviceGroupView, NetworkEventMemberView,
@@ -77,5 +80,159 @@ impl RuntimeNetworkState {
 
     pub fn has_seen_event(&self, event_id: &str) -> bool {
         self.recent_event_ids.iter().any(|item| item == event_id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeNetworkSnapshot {
+    pub revision: u64,
+    pub state: RuntimeNetworkState,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeNetworkStateStoreInner {
+    revision: u64,
+    state: RuntimeNetworkState,
+}
+
+#[derive(Debug, Default)]
+pub struct RuntimeNetworkStateStore {
+    inner: Mutex<RuntimeNetworkStateStoreInner>,
+}
+
+impl RuntimeNetworkStateStore {
+    pub fn snapshot(&self) -> RuntimeNetworkSnapshot {
+        let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        RuntimeNetworkSnapshot {
+            revision: inner.revision,
+            state: inner.state.clone(),
+        }
+    }
+
+    pub fn snapshot_for_session(
+        &self,
+        session: Option<&PersistedSession>,
+    ) -> RuntimeNetworkSnapshot {
+        let mut snapshot = self.snapshot();
+        if let Some(session) = session {
+            snapshot.state.bind_persisted_session(session);
+        }
+        snapshot
+    }
+
+    pub fn read<R>(&self, read: impl FnOnce(&RuntimeNetworkState) -> R) -> R {
+        let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        read(&inner.state)
+    }
+
+    #[cfg(test)]
+    pub fn update<R>(&self, update: impl FnOnce(&mut RuntimeNetworkState) -> R) -> R {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        let result = update(&mut inner.state);
+        inner.revision = inner.revision.saturating_add(1);
+        result
+    }
+
+    pub fn try_update<R, E>(
+        &self,
+        update: impl FnOnce(&mut RuntimeNetworkState) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        let mut next = inner.state.clone();
+        let result = update(&mut next)?;
+        inner.state = next;
+        inner.revision = inner.revision.saturating_add(1);
+        Ok(result)
+    }
+
+    pub fn clear(&self) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        inner.state = RuntimeNetworkState::default();
+        inner.revision = inner.revision.saturating_add(1);
+    }
+}
+
+pub fn runtime_network_state_store() -> &'static RuntimeNetworkStateStore {
+    static STORE: OnceLock<RuntimeNetworkStateStore> = OnceLock::new();
+    STORE.get_or_init(RuntimeNetworkStateStore::default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeNetworkStateStore;
+
+    #[test]
+    fn store_updates_revision_and_returns_consistent_snapshots() {
+        let store = RuntimeNetworkStateStore::default();
+        assert_eq!(store.snapshot().revision, 0);
+
+        store.update(|state| {
+            state.bind_network_id("network-1");
+            state.bind_session_identity(Some("device-1"), Some("10.0.0.1"));
+        });
+
+        let snapshot = store.snapshot();
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(
+            snapshot.state.active_network_id.as_deref(),
+            Some("network-1")
+        );
+        assert_eq!(
+            store.read(|state| state.self_virtual_ip.clone()),
+            Some("10.0.0.1".to_string())
+        );
+    }
+
+    #[test]
+    fn failed_transaction_does_not_publish_partial_network_state() {
+        let store = RuntimeNetworkStateStore::default();
+        store.update(|state| state.bind_network_id("network-1"));
+
+        let result = store.try_update(|state| {
+            state.bind_network_id("network-2");
+            Err::<(), _>("expected failure")
+        });
+
+        assert_eq!(result, Err("expected failure"));
+        let snapshot = store.snapshot();
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(
+            snapshot.state.active_network_id.as_deref(),
+            Some("network-1")
+        );
+    }
+
+    #[test]
+    fn session_enriched_snapshot_does_not_advance_store_revision() {
+        let store = RuntimeNetworkStateStore::default();
+        let mut session = crate::session_store::PersistedSession::empty();
+        session.device_id = Some("device-1".to_string());
+        session.virtual_ip = Some("10.0.0.1".to_string());
+
+        let snapshot = store.snapshot_for_session(Some(&session));
+
+        assert_eq!(snapshot.revision, 0);
+        assert_eq!(snapshot.state.self_device_id.as_deref(), Some("device-1"));
+        assert_eq!(snapshot.state.self_virtual_ip.as_deref(), Some("10.0.0.1"));
+        assert_eq!(store.snapshot().revision, 0);
+        assert_eq!(store.snapshot().state.self_device_id, None);
+    }
+
+    #[test]
+    fn clear_removes_session_scoped_network_state() {
+        let store = RuntimeNetworkStateStore::default();
+        store.update(|state| {
+            state.bind_network_id("network-1");
+            state.bind_session_identity(Some("device-1"), Some("10.0.0.1"));
+        });
+
+        store.clear();
+
+        let snapshot = store.snapshot();
+        assert_eq!(snapshot.revision, 2);
+        assert_eq!(snapshot.state.active_network_id, None);
+        assert_eq!(snapshot.state.self_device_id, None);
+        assert!(snapshot.state.members_by_device_id.is_empty());
+        assert!(snapshot.state.acl_by_rule_id.is_empty());
     }
 }

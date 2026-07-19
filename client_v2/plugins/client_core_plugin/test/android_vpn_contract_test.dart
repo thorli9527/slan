@@ -28,6 +28,16 @@ void main() {
         'relayAddress': '127.0.0.1:3478',
         'localNodeId': 'node-a',
         'networkId': 'net-1',
+        'nodeConfigs': [
+          {
+            'nodeId': 'punch-cn-1',
+            'connectionType': 'direct',
+            'transport': 'udp',
+            'pathKind': 'direct_udp',
+            'address': '47.245.40.231:29130',
+            'priority': 100,
+          },
+        ],
         'pathPolicy': {
           'preferred': [
             'lan_udp',
@@ -89,6 +99,9 @@ void main() {
     final relay = config.relayDataPlane;
     expect(relay, isNotNull);
     expect(relay!.enabled, isTrue);
+    expect(relay.nodeConfigs.single.nodeId, 'punch-cn-1');
+    expect(relay.nodeConfigs.single.pathKind, 'direct_udp');
+    expect(relay.nodeConfigs.single.address, '47.245.40.231:29130');
     expect(relay.pathPolicy!.preferred, [
       'lan_udp',
       'ipv6_udp',
@@ -102,6 +115,8 @@ void main() {
 
     final json = config.toJson();
     final relayJson = json['relayDataPlane'] as Map<String, Object?>;
+    final nodeConfigs = relayJson['nodeConfigs'] as List<Object?>;
+    final nodeConfig = nodeConfigs.single as Map<String, Object?>;
     final peerPaths = relayJson['peerPaths'] as List<Object?>;
     final peerPath = peerPaths.single as Map<String, Object?>;
     final candidates = peerPath['candidates'] as List<Object?>;
@@ -109,6 +124,10 @@ void main() {
     final session = sessions.single as Map<String, Object?>;
     final ticket = session['ticket'] as Map<String, Object?>;
     expect(relayJson['relayAddress'], '127.0.0.1:3478');
+    expect(nodeConfig['nodeId'], 'punch-cn-1');
+    expect(nodeConfig['connectionType'], 'direct');
+    expect(nodeConfig['pathKind'], 'direct_udp');
+    expect(nodeConfig['address'], '47.245.40.231:29130');
     expect(
       (relayJson['pathPolicy'] as Map<String, Object?>)['fallbackEnabled'],
       isTrue,
@@ -129,6 +148,50 @@ void main() {
       PathKind.relayUdp,
       PathKind.derpTcpTls443,
     ]);
+  });
+
+  test('node configs reject invalid tuples and use canonical path order', () {
+    final config = RelayDataPlaneConfig.fromJson({
+      'nodeConfigs': [
+        {
+          'nodeId': 'relay-tcp',
+          'connectionType': 'relay',
+          'transport': 'tcp',
+          'pathKind': 'relay_tcp',
+          'address': 'relay.example:443',
+          'priority': 300,
+        },
+        {
+          'nodeId': 'invalid',
+          'connectionType': 'direct',
+          'transport': 'tcp',
+          'pathKind': 'direct_udp',
+          'address': 'invalid.example:443',
+          'priority': 1,
+        },
+        {
+          'nodeId': 'punch',
+          'connectionType': 'direct',
+          'transport': 'udp',
+          'pathKind': 'direct_udp',
+          'address': 'punch.example:3478',
+          'priority': 100,
+        },
+        {
+          'nodeId': 'relay-udp',
+          'connectionType': 'relay',
+          'transport': 'udp',
+          'pathKind': 'relay_udp',
+          'address': 'relay.example:3478',
+          'priority': 200,
+        },
+      ],
+    });
+
+    expect(
+      config.nodeConfigs.map((node) => node.nodeId),
+      ['punch', 'relay-udp', 'relay-tcp'],
+    );
   });
 
   test('android vpn config accepts network config envelope items', () {

@@ -3,22 +3,15 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ResolverZoneView {
     pub zone_id: String,
-    pub network_id: String,
     pub zone_name: String,
-    pub expose_global: bool,
-    pub updated_at: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ResolverRecordView {
     pub record_id: String,
-    pub zone_id: String,
-    pub network_id: String,
     pub name: String,
     pub fqdn: String,
     pub record_type: String,
@@ -29,7 +22,6 @@ pub struct ResolverRecordView {
     pub port: i32,
     pub ttl: u32,
     pub enabled: bool,
-    pub updated_at: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -55,14 +47,12 @@ pub struct CachedResolverAnswer {
     pub expires_at_ms: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ResolverConfigState {
     pub active_network_id: Option<String>,
     pub search_domains: Vec<String>,
     pub split_domains: Vec<String>,
     pub upstream_resolvers: Vec<String>,
-    pub system_resolvers: Vec<String>,
     pub fallback_to_system_resolvers: bool,
 }
 
@@ -90,6 +80,13 @@ static RESOLVER_RUNTIME_STATE: OnceLock<Mutex<RuntimeResolverState>> = OnceLock:
 
 pub(crate) fn resolver_runtime_state() -> &'static Mutex<RuntimeResolverState> {
     RESOLVER_RUNTIME_STATE.get_or_init(|| Mutex::new(RuntimeResolverState::default()))
+}
+
+pub(crate) fn clear_resolver_runtime_state() {
+    let mut state = resolver_runtime_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    *state = RuntimeResolverState::default();
 }
 
 impl RuntimeResolverState {
@@ -134,7 +131,6 @@ impl RuntimeResolverState {
             .collect();
     }
 
-    #[allow(dead_code)]
     pub fn set_search_domains(&mut self, search_domains: Vec<String>) {
         self.config.search_domains = search_domains
             .into_iter()
@@ -143,7 +139,6 @@ impl RuntimeResolverState {
             .collect();
     }
 
-    #[allow(dead_code)]
     pub fn set_split_domains(&mut self, split_domains: Vec<String>) {
         self.config.split_domains = split_domains
             .into_iter()
@@ -152,16 +147,6 @@ impl RuntimeResolverState {
             .collect();
     }
 
-    #[allow(dead_code)]
-    pub fn set_system_resolvers(&mut self, system_resolvers: Vec<String>) {
-        self.config.system_resolvers = system_resolvers
-            .into_iter()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .collect();
-    }
-
-    #[allow(dead_code)]
     pub fn set_fallback_to_system_resolvers(&mut self, enabled: bool) {
         self.config.fallback_to_system_resolvers = enabled;
     }
@@ -213,13 +198,7 @@ impl RuntimeResolverState {
     }
 
     pub fn effective_upstream_resolvers(&self) -> Vec<String> {
-        if !self.config.upstream_resolvers.is_empty() {
-            return self.config.upstream_resolvers.clone();
-        }
-        if self.config.fallback_to_system_resolvers {
-            return self.config.system_resolvers.clone();
-        }
-        Vec::new()
+        self.config.upstream_resolvers.clone()
     }
 
     pub fn has_resolver_data(&self) -> bool {

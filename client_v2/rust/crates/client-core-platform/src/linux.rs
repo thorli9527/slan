@@ -30,9 +30,10 @@ use client_core::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
     },
-    NetworkRuntimeState, PathCandidate, PathKind, PathState, PeerPathRuntime, PlatformAclPeer,
-    PlatformAclPolicy, PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkDiagnostics,
-    PlatformResolverConfig, RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
+    NetworkRuntimeState, NodeConfig, PathCandidate, PathKind, PathState, PeerPathRuntime,
+    PlatformAclPeer, PlatformAclPolicy, PlatformDiagnosticCheck, PlatformNetwork,
+    PlatformNetworkDiagnostics, PlatformResolverConfig, RelayDataPlaneConfig, RelayPeerSession,
+    RouteSpec,
 };
 use serde::Serialize;
 
@@ -349,6 +350,17 @@ impl PlatformNetwork for LinuxPlatformNetwork {
         if runtime.mock_enabled {
             return Ok(());
         }
+        let interface_name = runtime.interface_name().to_string();
+        let mtu = tunnel_mtu_for_relay(relay_config);
+        run_ip(&[
+            "link",
+            "set",
+            "dev",
+            &interface_name,
+            "mtu",
+            &mtu.to_string(),
+        ])
+        .with_context(|| format!("set Linux TUN MTU on {interface_name} to {mtu}"))?;
         restart_data_plane(&mut runtime)?;
         Ok(())
     }
@@ -422,7 +434,7 @@ impl PlatformNetwork for LinuxPlatformNetwork {
             }),
             interface_index: interface_index(&interface_name),
             virtual_ip: runtime.virtual_ip.clone(),
-            mtu: Some(DEFAULT_MTU),
+            mtu: Some(tunnel_mtu_for_relay(runtime.relay_config.as_ref())),
             mss: None,
             resolver_servers: runtime.resolver_servers.clone(),
             resolver_search_domains: runtime.resolver_search_domains.clone(),
@@ -494,6 +506,13 @@ impl PlatformNetwork for LinuxPlatformNetwork {
                 .unwrap_or_default(),
         })
     }
+}
+
+fn tunnel_mtu_for_relay(config: Option<&RelayDataPlaneConfig>) -> u32 {
+    config
+        .and_then(|value| value.max_frame_payload)
+        .map(|value| u32::from(value.clamp(512, 1400)))
+        .unwrap_or(DEFAULT_MTU)
 }
 
 fn resolvectl_domain_args(
@@ -594,6 +613,8 @@ fn start_udp_data_plane(
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
     let local_node_id = config.local_node_id.clone();
+    let network_id = config.network_id.clone();
+    let node_configs = config.node_configs.clone();
     let handle = thread::spawn(move || {
         run_udp_data_plane(
             file,
@@ -605,6 +626,8 @@ fn start_udp_data_plane(
             max_frame_payload,
             config_hash,
             direct_udp_probe_interval,
+            network_id,
+            node_configs,
             acl_policies,
             &mut stats,
             thread_stop,
@@ -1022,6 +1045,8 @@ fn run_udp_data_plane(
     max_frame_payload: usize,
     config_hash: u64,
     direct_udp_probe_interval: Duration,
+    network_id: String,
+    node_configs: Vec<NodeConfig>,
     acl_policies: Vec<PlatformAclPolicy>,
     stats: &mut RelayDataPlaneStats,
     stop: Arc<AtomicBool>,
@@ -1045,6 +1070,7 @@ fn run_udp_data_plane(
         }
         if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
             if let Some(direct_udp) = direct_udp.as_ref() {
+                let _ = direct_udp.send_punch_endpoint_probes(&network_id, &node_configs);
                 stats.direct_udp_probes_sent = stats
                     .direct_udp_probes_sent
                     .saturating_add(direct_udp.send_probe_packets() as u64);
@@ -1097,6 +1123,11 @@ fn run_udp_data_plane(
                                     transport.ready_peer_index_for_packet(&packet)
                                 })
                             {
+                                let direct_path_kind = direct_udp
+                                    .as_ref()
+                                    .and_then(|transport| transport.peers.get(direct_peer_index))
+                                    .map(|peer| peer.path_kind)
+                                    .unwrap_or(PathKind::DirectUdp);
                                 match direct_udp
                                     .as_ref()
                                     .expect("direct udp checked")
@@ -1105,8 +1136,12 @@ fn run_udp_data_plane(
                                     Ok(_) => {
                                         direct_sent = true;
                                         stats.last_tun_send_path =
-                                            Some(PathKind::DirectUdp.as_str().to_string());
-                                        record_direct_tun_packet_sent(stats, peer);
+                                            Some(direct_path_kind.as_str().to_string());
+                                        record_direct_tun_packet_sent(
+                                            stats,
+                                            peer,
+                                            direct_path_kind,
+                                        );
                                         if should_hedge_direct_packet_to_relay(&packet) {
                                             hedge_udp_packet_to_relay(peer, &frame, stats);
                                         }
@@ -1638,13 +1673,17 @@ fn record_relay_tun_packet_sent(stats: &mut RelayDataPlaneStats, peer: &RelayPee
     }
 }
 
-fn record_direct_tun_packet_sent(stats: &mut RelayDataPlaneStats, peer: &RelayPeer) {
+fn record_direct_tun_packet_sent(
+    stats: &mut RelayDataPlaneStats,
+    peer: &RelayPeer,
+    path_kind: PathKind,
+) {
     stats.tun_packets_sent = stats.tun_packets_sent.saturating_add(1);
     stats.direct_udp_frames_sent = stats.direct_udp_frames_sent.saturating_add(1);
-    stats.active_path = Some(PathKind::DirectUdp.as_str().to_string());
+    stats.active_path = Some(path_kind.as_str().to_string());
     if let Some(peer_stats) = relay_peer_stats_mut(stats, peer) {
         peer_stats.tun_packets_sent = peer_stats.tun_packets_sent.saturating_add(1);
-        if peer_stats.last_send_path.as_deref() != Some(PathKind::DirectUdp.as_str()) {
+        if peer_stats.last_send_path.as_deref() != Some(path_kind.as_str()) {
             peer_stats.path_upgrades = peer_stats.path_upgrades.saturating_add(1);
             peer_stats.last_path_change = Some(format!(
                 "{} -> {} after direct udp ready",
@@ -1652,10 +1691,10 @@ fn record_direct_tun_packet_sent(stats: &mut RelayDataPlaneStats, peer: &RelayPe
                     .last_send_path
                     .as_deref()
                     .unwrap_or(PathKind::RelayUdp.as_str()),
-                PathKind::DirectUdp.as_str()
+                path_kind.as_str()
             ));
         }
-        peer_stats.last_send_path = Some(PathKind::DirectUdp.as_str().to_string());
+        peer_stats.last_send_path = Some(path_kind.as_str().to_string());
     }
 }
 
@@ -1667,9 +1706,9 @@ fn mark_direct_peer_ready(
     let Some(peer) = direct_udp.peers.get(peer_index) else {
         return;
     };
-    stats.active_path = Some(PathKind::DirectUdp.as_str().to_string());
+    stats.active_path = Some(peer.path_kind.as_str().to_string());
     if let Some(peer_stats) = relay_peer_stats_mut_by_node_id(stats, peer.peer_node_id.as_str()) {
-        if peer_stats.last_send_path.as_deref() != Some(PathKind::DirectUdp.as_str()) {
+        if peer_stats.last_send_path.as_deref() != Some(peer.path_kind.as_str()) {
             peer_stats.path_upgrades = peer_stats.path_upgrades.saturating_add(1);
             peer_stats.last_path_change = Some(format!(
                 "{} -> {} after probe success",
@@ -1677,10 +1716,10 @@ fn mark_direct_peer_ready(
                     .last_send_path
                     .as_deref()
                     .unwrap_or(PathKind::RelayUdp.as_str()),
-                PathKind::DirectUdp.as_str()
+                peer.path_kind.as_str()
             ));
         }
-        peer_stats.last_send_path = Some(PathKind::DirectUdp.as_str().to_string());
+        peer_stats.last_send_path = Some(peer.path_kind.as_str().to_string());
     }
 }
 
@@ -2423,6 +2462,7 @@ mod tests {
             relay_address: "127.0.0.1:29110".to_string(),
             local_node_id: "node-local".to_string(),
             network_id: "network-1".to_string(),
+            node_configs: Vec::new(),
             path_policy: PathPolicy {
                 preferred: vec![PathKind::RelayUdp],
                 ..PathPolicy::default()

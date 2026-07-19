@@ -27,13 +27,13 @@ pub use path::{
     PeerPathConfig, PeerPathRuntime,
 };
 pub use platform::{
-    AndroidNetworkEvent, AndroidNetworkEventType, AndroidSocketProtectionReason,
-    AndroidSocketProtectionRequest, AndroidVpnConsentRequest, AndroidVpnPermissionState,
-    AndroidVpnSessionConfig, NetworkRuntimeState, PlatformAclPeer, PlatformAclPolicy,
-    PlatformAclRule, PlatformDeviceNetworkConfig, PlatformDiagnosticCheck, PlatformNetwork,
-    PlatformNetworkConfig, PlatformNetworkDiagnostics, PlatformResolverConfig,
-    PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig, RelayPeerSession,
-    RelayTicket, RouteSpec,
+    node_config_path_rank, AndroidNetworkEvent, AndroidNetworkEventType,
+    AndroidSocketProtectionReason, AndroidSocketProtectionRequest, AndroidVpnConsentRequest,
+    AndroidVpnPermissionState, AndroidVpnSessionConfig, NetworkRuntimeState, NodeConfig,
+    PlatformAclPeer, PlatformAclPolicy, PlatformAclRule, PlatformDeviceNetworkConfig,
+    PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkConfig, PlatformNetworkDiagnostics,
+    PlatformResolverConfig, PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig,
+    RelayPeerSession, RelayTicket, RouteSpec,
 };
 pub use relay_frame::relay_frame_is_replayed;
 pub use runtime::ClientRuntime;
