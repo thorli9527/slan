@@ -49,6 +49,7 @@ const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
 #[derive(Debug, Default)]
 pub struct ControlTransportWorkerState {
     running: bool,
+    connected: bool,
     reconnect_key: Option<String>,
     backoff_ms: u64,
     next_attempt_ms: u64,
@@ -95,16 +96,43 @@ pub fn wake_control_transport_worker(
     let worker_state = Arc::clone(worker_state);
     let state_notifier = Arc::clone(state_notifier);
     thread::spawn(move || {
-        let result = run_control_transport_worker(session, runtime, task_queue, state_notifier);
+        let result = run_control_transport_worker(
+            session,
+            runtime,
+            task_queue,
+            Arc::clone(&worker_state),
+            state_notifier,
+        );
         let error = result.err();
         release_worker(&worker_state, reconnect_key, error);
     });
+}
+
+pub fn wait_until_connected(
+    worker_state: &Arc<Mutex<ControlTransportWorkerState>>,
+    timeout: Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if worker_state
+            .lock()
+            .map(|state| state.running && state.connected)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn run_control_transport_worker(
     mut session: PersistedSession,
     runtime: RuntimeActorHandle,
     task_queue: Arc<Mutex<ControlTaskQueue>>,
+    worker_state: Arc<Mutex<ControlTransportWorkerState>>,
     state_notifier: Arc<RuntimeEventHub>,
 ) -> Result<(), String> {
     let plan = control_transport::control_transport_plan(&session);
@@ -140,6 +168,9 @@ fn run_control_transport_worker(
         downstream_topic,
         session.device_id.as_deref().unwrap_or_default()
     ));
+    if let Ok(mut state) = worker_state.lock() {
+        state.connected = true;
+    }
     sync_after_control_mqtt_connected(&runtime, &task_queue, &state_notifier)?;
 
     let mut last_ack_flush_ms = None;
@@ -596,6 +627,12 @@ fn try_ingest_device_network_membership_changed(
         != Some("device_network_membership_changed")
     {
         return Ok(false);
+    }
+    if !runtime.snapshot().state.signed_in {
+        log_service_error(
+            "client-core-service ignored prelogin device_network_membership_changed message",
+        );
+        return Ok(true);
     }
     let delivery_id = downstream_message_id(&value);
     let event: DeviceNetworkMembershipChangedPayload = serde_json::from_value(
@@ -1559,6 +1596,7 @@ fn claim_worker(
         return false;
     }
     state.running = true;
+    state.connected = false;
     state.reconnect_key = Some(reconnect_key);
     true
 }
@@ -1586,6 +1624,7 @@ fn release_worker(
         ));
     }
     state.running = false;
+    state.connected = false;
     state.backoff_ms = if error.is_some() {
         (state.backoff_ms.max(1_000) * 2).min(30_000)
     } else {
@@ -1601,6 +1640,7 @@ fn reset_worker_gate(worker_state: &Arc<Mutex<ControlTransportWorkerState>>) {
     if state.running {
         return;
     }
+    state.connected = false;
     state.reconnect_key = None;
     state.backoff_ms = 1_000;
     state.next_attempt_ms = 0;
@@ -1700,6 +1740,29 @@ mod tests {
         after.mqtt.as_mut().expect("mqtt credential").password = "secret-2".to_string();
 
         assert!(!mqtt_connection_matches(&before, &after));
+    }
+
+    #[test]
+    fn prelogin_membership_change_is_ignored_without_stopping_ingestion() {
+        let runtime = test_runtime();
+        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
+        let state_notifier = Arc::new(RuntimeEventHub::default());
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "type": "device_network_membership_changed",
+            "messageId": "membership-before-login",
+            "payload": {
+                "deviceId": "device-1",
+                "networkId": "network-1",
+                "networkIds": ["network-1"]
+            }
+        }))
+        .expect("encode membership event");
+
+        ingest_downstream_publish(&payload, &runtime, &task_queue, &state_notifier)
+            .expect("ignore prelogin membership event");
+
+        assert!(!runtime.snapshot().state.signed_in);
+        assert_eq!(state_notifier.latest_revision(), 0);
     }
 
     #[test]

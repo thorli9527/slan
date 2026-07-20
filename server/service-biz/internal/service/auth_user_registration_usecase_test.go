@@ -80,8 +80,11 @@ func (s *authUserRegistrationTestSessions) SaveConsoleLoginKey(context.Context, 
 type authUserRegistrationTestNetworks struct {
 	networks       map[string]model.Network
 	securityGroups map[string]model.SecurityGroup
+	securityRules  map[string]model.SecurityRule
+	groupRefs      map[string][]model.NetworkDeviceGroupReference
 	versions       map[string]model.NetworkConfigVersion
 	nextSecurityID int
+	nextRuleID     int
 }
 
 func (s *authUserRegistrationTestNetworks) GetNetwork(_ context.Context, networkID string) (model.Network, bool, error) {
@@ -223,15 +226,26 @@ func (s *authUserRegistrationTestNetworks) DeleteSecurityGroup(context.Context, 
 	return nil
 }
 
-func (s *authUserRegistrationTestNetworks) ListSecurityRules(context.Context, string) ([]model.SecurityRule, error) {
-	return nil, nil
+func (s *authUserRegistrationTestNetworks) ListSecurityRules(_ context.Context, securityGroupID string) ([]model.SecurityRule, error) {
+	out := []model.SecurityRule{}
+	for _, item := range s.securityRules {
+		if item.SecurityGroupID == securityGroupID {
+			out = append(out, item)
+		}
+	}
+	return out, nil
 }
 
-func (s *authUserRegistrationTestNetworks) GetSecurityRule(context.Context, string) (model.SecurityRule, bool, error) {
-	return model.SecurityRule{}, false, nil
+func (s *authUserRegistrationTestNetworks) GetSecurityRule(_ context.Context, ruleID string) (model.SecurityRule, bool, error) {
+	item, ok := s.securityRules[ruleID]
+	return item, ok, nil
 }
 
-func (s *authUserRegistrationTestNetworks) SaveSecurityRule(context.Context, model.SecurityRule) error {
+func (s *authUserRegistrationTestNetworks) SaveSecurityRule(_ context.Context, item model.SecurityRule) error {
+	if s.securityRules == nil {
+		s.securityRules = make(map[string]model.SecurityRule)
+	}
+	s.securityRules[item.RuleID] = item
 	return nil
 }
 
@@ -244,16 +258,96 @@ func (s *authUserRegistrationTestNetworks) NewSecurityGroupID() string {
 	return "sg-test-" + string(rune('0'+s.nextSecurityID))
 }
 
+func (s *authUserRegistrationTestNetworks) NewSecurityRuleID() string {
+	s.nextRuleID++
+	return "sgr-test-" + string(rune('0'+s.nextRuleID))
+}
+
+func (s *authUserRegistrationTestNetworks) ListNetworkDeviceGroupReferences(_ context.Context, networkID string) ([]model.NetworkDeviceGroupReference, error) {
+	return append([]model.NetworkDeviceGroupReference(nil), s.groupRefs[networkID]...), nil
+}
+
+func (s *authUserRegistrationTestNetworks) SaveNetworkDeviceGroupReference(_ context.Context, item model.NetworkDeviceGroupReference) error {
+	if s.groupRefs == nil {
+		s.groupRefs = make(map[string][]model.NetworkDeviceGroupReference)
+	}
+	s.groupRefs[item.NetworkID] = append(s.groupRefs[item.NetworkID], item)
+	return nil
+}
+
+func (s *authUserRegistrationTestNetworks) DeleteNetworkDeviceGroupReference(context.Context, string, string) error {
+	return nil
+}
+
+func (s *authUserRegistrationTestNetworks) DeleteNetworkDeviceGroupReferencesByGroup(context.Context, string) error {
+	return nil
+}
+
+type authUserRegistrationTestDevices struct {
+	networkRuntimeTestDevices
+	groups      map[string]model.DeviceGroup
+	assignments map[string]model.DeviceGroupAssignment
+	nextGroupID int
+}
+
+func (s *authUserRegistrationTestDevices) ListDeviceGroups(_ context.Context, userID string) ([]model.DeviceGroup, error) {
+	out := []model.DeviceGroup{}
+	for _, item := range s.groups {
+		if item.UserID == userID {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (s *authUserRegistrationTestDevices) GetDeviceGroup(_ context.Context, groupID string) (model.DeviceGroup, bool, error) {
+	item, ok := s.groups[groupID]
+	return item, ok, nil
+}
+
+func (s *authUserRegistrationTestDevices) SaveDeviceGroup(_ context.Context, item model.DeviceGroup) error {
+	if s.groups == nil {
+		s.groups = make(map[string]model.DeviceGroup)
+	}
+	s.groups[item.GroupID] = item
+	return nil
+}
+
+func (s *authUserRegistrationTestDevices) SetDeviceGroups(_ context.Context, item model.DeviceGroupAssignment) error {
+	if s.assignments == nil {
+		s.assignments = make(map[string]model.DeviceGroupAssignment)
+	}
+	s.assignments[item.DeviceID] = item
+	return nil
+}
+
+func (s *authUserRegistrationTestDevices) ListDeviceGroupAssignments(_ context.Context, userID string) ([]model.DeviceGroupAssignment, error) {
+	out := []model.DeviceGroupAssignment{}
+	for _, item := range s.assignments {
+		if item.UserID == userID {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (s *authUserRegistrationTestDevices) NewDeviceGroupID() string {
+	s.nextGroupID++
+	return "dgrp-test-" + string(rune('0'+s.nextGroupID))
+}
+
 var _ repository.NetworkRepository = (*authUserRegistrationTestNetworks)(nil)
 var _ repository.UserRepository = (*authUserRegistrationTestUsers)(nil)
 var _ repository.UserSessionRepository = (*authUserRegistrationTestSessions)(nil)
 
 func TestRegisterUserCreatesDefaultSecurityGroup(t *testing.T) {
 	networks := &authUserRegistrationTestNetworks{}
+	devices := &authUserRegistrationTestDevices{}
 	service := AuthUserRegistrationService{
 		authUserDependencies: authUserDependencies{
 			Users:              &authUserRegistrationTestUsers{},
 			Sessions:           &authUserRegistrationTestSessions{},
+			Devices:            devices,
 			Networks:           networks,
 			NewUserID:          func() string { return "user-test-1" },
 			NewNetID:           func() string { return "net-test-1" },
@@ -286,6 +380,37 @@ func TestRegisterUserCreatesDefaultSecurityGroup(t *testing.T) {
 	}
 	if groups[0].Name != "Default Security Group" {
 		t.Fatalf("unexpected default security group: %+v", groups[0])
+	}
+	deviceGroups, err := devices.ListDeviceGroups(context.Background(), "user-test-1")
+	if err != nil {
+		t.Fatalf("ListDeviceGroups returned error: %v", err)
+	}
+	if len(deviceGroups) != 1 || deviceGroups[0].Name != defaultUserDeviceGroupName {
+		t.Fatalf("unexpected default device groups: %+v", deviceGroups)
+	}
+	references, err := networks.ListNetworkDeviceGroupReferences(context.Background(), "net-test-1")
+	if err != nil {
+		t.Fatalf("ListNetworkDeviceGroupReferences returned error: %v", err)
+	}
+	if len(references) != 1 || references[0].GroupID != deviceGroups[0].GroupID {
+		t.Fatalf("unexpected default network group references: %+v", references)
+	}
+	rules, err := networks.ListSecurityRules(context.Background(), groups[0].SecurityGroupID)
+	if err != nil {
+		t.Fatalf("ListSecurityRules returned error: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("expected ingress and egress default rules, got %+v", rules)
+	}
+	directions := map[string]bool{}
+	for _, rule := range rules {
+		directions[rule.Direction] = true
+		if rule.PeerType != "device_group" || rule.PeerValue != deviceGroups[0].GroupID || rule.Action != "allow" || rule.Protocol != "all" || rule.PortRange != "all" || !rule.Enabled {
+			t.Fatalf("unexpected default security rule: %+v", rule)
+		}
+	}
+	if !directions["ingress"] || !directions["egress"] {
+		t.Fatalf("default security rule directions missing: %+v", directions)
 	}
 	version, ok, err := networks.GetNetworkVersion(context.Background(), "net-test-1")
 	if err != nil {

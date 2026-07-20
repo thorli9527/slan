@@ -41,6 +41,8 @@ func (s *deviceLoginTestSessions) SaveConsoleLoginKey(context.Context, model.Con
 type deviceLoginTestDevices struct {
 	deviceRegistrationTestDevices
 	logins         map[string]model.DeviceLoginDevice
+	groups         map[string]model.DeviceGroup
+	assignments    map[string]model.DeviceGroupAssignment
 	onOwnerChanged func(deviceID string)
 }
 
@@ -65,8 +67,42 @@ func (s *deviceLoginTestDevices) SaveDevice(ctx context.Context, item model.Devi
 	return nil
 }
 
+func (s *deviceLoginTestDevices) ListDeviceGroups(_ context.Context, userID string) ([]model.DeviceGroup, error) {
+	out := []model.DeviceGroup{}
+	for _, group := range s.groups {
+		if group.UserID == userID {
+			out = append(out, group)
+		}
+	}
+	return out, nil
+}
+
+func (s *deviceLoginTestDevices) GetDeviceGroup(_ context.Context, groupID string) (model.DeviceGroup, bool, error) {
+	group, ok := s.groups[groupID]
+	return group, ok, nil
+}
+
+func (s *deviceLoginTestDevices) SetDeviceGroups(_ context.Context, assignment model.DeviceGroupAssignment) error {
+	if s.assignments == nil {
+		s.assignments = make(map[string]model.DeviceGroupAssignment)
+	}
+	s.assignments[assignment.DeviceID] = assignment
+	return nil
+}
+
+func (s *deviceLoginTestDevices) ListDeviceGroupAssignments(_ context.Context, userID string) ([]model.DeviceGroupAssignment, error) {
+	out := []model.DeviceGroupAssignment{}
+	for _, assignment := range s.assignments {
+		if assignment.UserID == userID {
+			out = append(out, assignment)
+		}
+	}
+	return out, nil
+}
+
 type deviceLoginTestNetworks struct {
 	networkRuntimeTestNetworks
+	groupRefs map[string][]model.NetworkDeviceGroupReference
 }
 
 func (s *deviceLoginTestNetworks) ListNetworksByOwner(_ context.Context, ownerID string) ([]model.Network, error) {
@@ -104,14 +140,36 @@ func (s *deviceLoginTestNetworks) DeleteNetworkDevice(_ context.Context, network
 	return nil
 }
 
+func (s *deviceLoginTestNetworks) ListNetworkDeviceGroupReferences(_ context.Context, networkID string) ([]model.NetworkDeviceGroupReference, error) {
+	return append([]model.NetworkDeviceGroupReference(nil), s.groupRefs[networkID]...), nil
+}
+
+func (s *deviceLoginTestNetworks) SaveNetworkDeviceGroupReference(_ context.Context, item model.NetworkDeviceGroupReference) error {
+	if s.groupRefs == nil {
+		s.groupRefs = make(map[string][]model.NetworkDeviceGroupReference)
+	}
+	s.groupRefs[item.NetworkID] = append(s.groupRefs[item.NetworkID], item)
+	return nil
+}
+
+func (s *deviceLoginTestNetworks) DeleteNetworkDeviceGroupReference(context.Context, string, string) error {
+	return nil
+}
+
+func (s *deviceLoginTestNetworks) DeleteNetworkDeviceGroupReferencesByGroup(context.Context, string) error {
+	return nil
+}
+
 type deviceLoginTestPublisher struct {
 	deviceID string
 	event    DeviceControlEnvelope
+	events   []DeviceControlEnvelope
 }
 
 func (p *deviceLoginTestPublisher) PublishDeviceControl(_ context.Context, deviceID string, event DeviceControlEnvelope) error {
 	p.deviceID = deviceID
 	p.event = event
+	p.events = append(p.events, event)
 	return nil
 }
 
@@ -160,12 +218,17 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 				DeviceID: "device-1", Name: "Mac", Platform: "macos", Status: "pending", ExpiresAt: now.Add(time.Minute).Unix(),
 			},
 		},
+		groups: map[string]model.DeviceGroup{
+			"group-dev": {GroupID: "group-dev", UserID: "user-1", Name: defaultUserDeviceGroupName},
+		},
 	}
 	networks := &deviceLoginTestNetworks{networkRuntimeTestNetworks: networkRuntimeTestNetworks{
 		networks: map[string]model.Network{
 			"network-1": {NetworkID: "network-1", OwnerID: "user-1", Name: "Default", Default: true, Status: "active"},
 		},
 		networkDevices: map[string][]model.NetworkDevice{},
+	}, groupRefs: map[string][]model.NetworkDeviceGroupReference{
+		"network-1": {{NetworkID: "network-1", GroupID: "group-dev"}},
 	}}
 	publisher := &deviceLoginTestPublisher{}
 	service := AuthDeviceLoginCompleteService{authDeviceLoginDependencies: authDeviceLoginDependencies{
@@ -190,17 +253,56 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 	if got := devices.devices["device-1"].VirtualIP; got != "10.0.0.1" {
 		t.Fatalf("expected login allocation 10.0.0.1, got %q", got)
 	}
-	if len(networks.networkDevices["network-1"]) != 0 {
-		t.Fatalf("expected login not to attach an individual device to the network")
+	assignment, ok := devices.assignments["device-1"]
+	if !ok || len(assignment.GroupIDs) != 1 || assignment.GroupIDs[0] != "group-dev" {
+		t.Fatalf("expected first device in default group, got %+v", assignment)
 	}
-	if publisher.deviceID != "device-1" || publisher.event.Type != "device_user_login_succeeded" {
-		t.Fatalf("unexpected private login event: device=%q type=%q", publisher.deviceID, publisher.event.Type)
+	if len(networks.networkDevices["network-1"]) != 1 || networks.networkDevices["network-1"][0].DeviceID != "device-1" {
+		t.Fatalf("expected first device attached through default group, got %+v", networks.networkDevices["network-1"])
 	}
-	if got := publisher.event.Payload["accessToken"]; got != "access-1" {
+	if publisher.deviceID != "device-1" {
+		t.Fatalf("unexpected private event target: %q", publisher.deviceID)
+	}
+	if len(publisher.events) != 2 {
+		t.Fatalf("expected login and membership events, got %#v", publisher.events)
+	}
+	if publisher.events[0].Type != "device_user_login_succeeded" || publisher.events[1].Type != "device_network_membership_changed" {
+		t.Fatalf("private events published out of order: %#v", publisher.events)
+	}
+	loginEvent := publisher.events[0]
+	if got := loginEvent.Payload["accessToken"]; got != "access-1" {
 		t.Fatalf("expected access token in private login event, got %#v", got)
 	}
-	if got := publisher.event.Payload["virtualIp"]; got != "10.0.0.1" {
+	if got := loginEvent.Payload["virtualIp"]; got != "10.0.0.1" {
 		t.Fatalf("expected virtual IP in private login event, got %#v", got)
+	}
+}
+
+func TestSecondOwnedDeviceIsNotAutomaticallyAssignedToDefaultGroup(t *testing.T) {
+	devices := &deviceLoginTestDevices{
+		deviceRegistrationTestDevices: deviceRegistrationTestDevices{
+			networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{
+				"device-1": {DeviceID: "device-1", OwnerID: "user-1"},
+				"device-2": {DeviceID: "device-2", OwnerID: "user-1"},
+			}},
+		},
+		groups: map[string]model.DeviceGroup{
+			"group-dev": {GroupID: "group-dev", UserID: "user-1", Name: defaultUserDeviceGroupName},
+		},
+	}
+	service := AuthDeviceLoginCompleteService{authDeviceLoginDependencies: authDeviceLoginDependencies{
+		Devices: devices,
+	}}
+
+	joined, err := service.assignOnlyOwnedDeviceToDefaultGroup(context.Background(), devices.devices["device-2"])
+	if err != nil {
+		t.Fatalf("assignOnlyOwnedDeviceToDefaultGroup returned error: %v", err)
+	}
+	if joined {
+		t.Fatal("second device must not be automatically assigned")
+	}
+	if len(devices.assignments) != 0 {
+		t.Fatalf("unexpected second-device assignment: %+v", devices.assignments)
 	}
 }
 

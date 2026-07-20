@@ -829,7 +829,14 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       }
     }
     connection.start(queue: DispatchQueue.global(qos: .utility))
-    _ = semaphore.wait(timeout: .now() + 2)
+    let responseTimeout: DispatchTimeInterval = method == "localStateWatch"
+      ? .seconds(35)
+      : .seconds(2)
+    let waitResult = semaphore.wait(timeout: .now() + responseTimeout)
+    connection.cancel()
+    if waitResult == .timedOut {
+      return nil
+    }
 
     guard let text = String(data: response, encoding: .utf8), !text.isEmpty else {
       return nil

@@ -831,10 +831,12 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
             return Ok(response);
         }
         LocalServiceMethod::Dispatch => {
+            let command_type = request.args.get("type").and_then(Value::as_str);
             let should_wake_control_mqtt = matches!(
-                request.args.get("type").and_then(Value::as_str),
+                command_type,
                 Some("openClientLogin" | "loginWithPassword" | "applyDeviceUserLogin")
             );
+            let should_wait_for_control_mqtt = command_type == Some("openClientLogin");
             let response = handle_dispatch_request(request, &context.runtime)?;
             if should_wake_control_mqtt {
                 control_transport_worker::wake_control_transport_worker(
@@ -843,6 +845,14 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
                     &context.transport_worker_state,
                     &context.state_notifier,
                 );
+            }
+            if should_wait_for_control_mqtt
+                && !control_transport_worker::wait_until_connected(
+                    &context.transport_worker_state,
+                    Duration::from_secs(5),
+                )
+            {
+                anyhow::bail!("device MQTT subscription was not ready before browser login");
             }
             publish_method_business_event(&context.state_notifier, line, &response);
             return Ok(response);
