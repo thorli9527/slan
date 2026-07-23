@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
@@ -35,7 +37,10 @@ func (s DeviceSessionService) BindDeviceSession(ctx context.Context, input BindD
 	nowUnix := deviceNow(s.Now).Unix()
 	device, updated := applyBindDeviceSessionInput(device, input, nowUnix)
 	if !managedDeviceVirtualIP(device.VirtualIP) {
-		device.VirtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(s.Devices))
+		device.VirtualIP, err = allocateDeviceVirtualIP(s.Devices)
+		if err != nil {
+			return DeviceSessionBoundView{}, err
+		}
 		device.UpdatedAt = nowUnix
 		updated = true
 	}
@@ -99,15 +104,26 @@ func (s DeviceSessionService) RenewDeviceSession(ctx context.Context, accessToke
 	if !ok || session.Status != tokenStatusActive || session.RevokedAt > 0 || session.RefreshExpiry < now.Unix() {
 		return DeviceSessionBoundView{}, ErrUnauthorized
 	}
-	if accessToken != "" && normalizeDeviceAccessToken(accessToken) != session.AccessToken {
+	digest := sha256.Sum256([]byte(input.RefreshToken))
+	refreshTokenHash := hex.EncodeToString(digest[:])
+	rotationRetry := session.RefreshToken != input.RefreshToken
+	if rotationRetry && (session.PreviousRefreshTokenHash != refreshTokenHash || session.RefreshRotationGraceExpiry < now.Unix()) {
 		return DeviceSessionBoundView{}, ErrUnauthorized
 	}
-	session, err = newManagedDeviceSession(now, s.NewSessID, session.DeviceID, session.SessionMode)
-	if err != nil {
-		return DeviceSessionBoundView{}, err
+	if !rotationRetry && accessToken != "" && normalizeDeviceAccessToken(accessToken) != session.AccessToken {
+		return DeviceSessionBoundView{}, ErrUnauthorized
 	}
-	if err := replaceDeviceSession(ctx, s.Devices, session); err != nil {
-		return DeviceSessionBoundView{}, err
+	if !rotationRetry {
+		nextSession, err := newManagedDeviceSession(now, s.NewSessID, session.DeviceID, session.SessionMode)
+		if err != nil {
+			return DeviceSessionBoundView{}, err
+		}
+		nextSession.PreviousRefreshTokenHash = refreshTokenHash
+		nextSession.RefreshRotationGraceExpiry = now.Add(deviceRefreshRotationGrace).Unix()
+		if err := replaceDeviceSession(ctx, s.Devices, nextSession); err != nil {
+			return DeviceSessionBoundView{}, err
+		}
+		session = nextSession
 	}
 	device, err := getManagedDevice(ctx, s.Devices, session.DeviceID)
 	if err != nil {

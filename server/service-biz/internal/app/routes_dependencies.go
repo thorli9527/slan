@@ -20,6 +20,7 @@ func appRouteDependencies(useCases RouteUseCases) appapi.RouteDependencies {
 		DeviceSession:       useCases.App.DeviceSessions,
 		ClientMessages:      useCases.App.ClientMessages,
 		NetworkCore:         useCases.App.NetworkCore,
+		NetworkInvite:       useCases.App.NetworkInvite,
 		NetworkRuntime:      useCases.App.NetworkRuntime,
 	}
 }

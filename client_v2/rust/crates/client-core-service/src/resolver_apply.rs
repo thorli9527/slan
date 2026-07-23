@@ -1,14 +1,15 @@
-use anyhow::Result;
+use std::collections::{BTreeMap, BTreeSet};
+
+use client_core::PlatformResolverRecord;
 
 use crate::{
-    control_plane::{DeviceNetworkConfig, DeviceResolverConfig},
+    control_plane::{DeviceNetworkConfig, DeviceResolverConfig, DeviceSecurityRule},
     network_event::{
-        NetworkEventEnvelope, NetworkEventResolverChangedPayload, NetworkEventResolverConfigView,
-        NetworkEventType, NetworkSnapshotPayload,
+        NetworkEventAclRuleView, NetworkEventDeviceGroupView, NetworkEventMemberView,
+        NetworkEventNetworkView,
     },
-    resolver_runtime_state::{
-        resolver_runtime_state, ResolverRecordView, ResolverZoneView, RuntimeResolverState,
-    },
+    network_runtime_state::{NetworkSyncStatus, RuntimeNetworkState},
+    resolver_runtime_state::{ResolverRecordView, ResolverZoneView, RuntimeResolverState},
     session_store::current_timestamp_ms,
 };
 
@@ -27,38 +28,31 @@ pub(crate) fn apply_resolver_from_device_network_configs(
         .unwrap_or(activation_config);
 
     resolver.bind_network_id(active_network_id);
-    resolver.set_upstream_servers(if config.servers.is_empty() {
-        activation_config.servers.clone()
-    } else {
-        config.servers.clone()
-    });
-    resolver.set_search_domains(if config.search_domains.is_empty() {
-        activation_config.search_domains.clone()
-    } else {
-        config.search_domains.clone()
-    });
-    let split_domains = if config.split_domains.is_empty() {
-        if !config.search_domains.is_empty() {
-            config.search_domains.clone()
-        } else if !activation_config.split_domains.is_empty() {
-            activation_config.split_domains.clone()
-        } else {
-            activation_config.search_domains.clone()
-        }
-    } else {
-        config.split_domains.clone()
-    };
+    resolver.set_upstream_servers(unique_config_values(configs, activation_config, |value| {
+        &value.servers
+    }));
+    resolver.set_search_domains(unique_config_values(configs, activation_config, |value| {
+        &value.search_domains
+    }));
+    let mut split_domains =
+        unique_config_values(configs, activation_config, |value| &value.split_domains);
+    if split_domains.is_empty() {
+        split_domains =
+            unique_config_values(configs, activation_config, |value| &value.search_domains);
+    }
     resolver.set_split_domains(split_domains);
     resolver.set_fallback_to_system_resolvers(
-        config.fallback_to_system_resolvers || activation_config.fallback_to_system_resolvers,
+        config.fallback_to_system_resolvers
+            || activation_config.fallback_to_system_resolvers
+            || configs
+                .iter()
+                .any(|item| item.resolver.fallback_to_system_resolvers),
     );
 
-    let active_configs = configs
-        .iter()
-        .filter(|config| config.network_id.trim() == active_network_id.trim());
     let mut zones = Vec::new();
     let mut records = Vec::new();
-    for network in active_configs {
+    let mut network_states = Vec::new();
+    for network in configs {
         zones.extend(network.resolver_zones.iter().map(|zone| ResolverZoneView {
             zone_id: zone.zone_id.clone(),
             zone_name: zone.zone_name.clone(),
@@ -66,6 +60,11 @@ pub(crate) fn apply_resolver_from_device_network_configs(
         records.extend(network.resolver_records.iter().map(|record| {
             ResolverRecordView {
                 record_id: record.record_id.clone(),
+                network_id: if record.network_id.trim().is_empty() {
+                    network.network_id.clone()
+                } else {
+                    record.network_id.clone()
+                },
                 name: record.name.clone(),
                 fqdn: record
                     .fqdn
@@ -94,237 +93,301 @@ pub(crate) fn apply_resolver_from_device_network_configs(
                 enabled: true,
             }
         }));
+        network_states.push(runtime_network_state_from_config(network));
     }
     resolver.replace_zones(zones);
     resolver.replace_records(records);
+    resolver.replace_network_states(network_states);
     resolver.clear_cache();
     resolver.last_reload_at_ms = Some(current_timestamp_ms());
 }
 
-pub(crate) fn apply_resolver_runtime_event(envelope: &NetworkEventEnvelope) -> Result<()> {
-    let mut resolver = resolver_runtime_state()
-        .lock()
-        .expect("resolver runtime mutex poisoned");
-    match envelope.event_type {
-        NetworkEventType::NetworkSnapshot => {
-            let payload: NetworkSnapshotPayload = serde_json::from_value(envelope.payload.clone())?;
-            apply_resolver_from_network_snapshot(&mut resolver, &payload);
-        }
-        NetworkEventType::ResolverChanged => {
-            let payload: NetworkEventResolverChangedPayload =
-                serde_json::from_value(envelope.payload.clone())?;
-            apply_resolver_changed(&mut resolver, payload);
-        }
-        NetworkEventType::AclChanged
-        | NetworkEventType::MemberAdded
-        | NetworkEventType::MemberUpdated
-        | NetworkEventType::MemberRemoved
-        | NetworkEventType::MemberOnline
-        | NetworkEventType::MemberOffline
-        | NetworkEventType::DeviceGroupAdded
-        | NetworkEventType::DeviceGroupUpdated
-        | NetworkEventType::DeviceGroupRemoved => {
-            resolver.clear_cache();
-        }
-        NetworkEventType::NetworkConfigChanged | NetworkEventType::PeerPathChanged => {}
-    }
-    Ok(())
-}
-
-pub(crate) fn apply_resolver_from_network_snapshot(
-    dns: &mut RuntimeResolverState,
-    payload: &NetworkSnapshotPayload,
-) {
-    dns.bind_network_id(&payload.network.network_id);
-    apply_resolver_config(dns, &payload.resolver_config);
-    let zones = payload
-        .resolver_zones
+pub(crate) fn platform_resolver_records_from_configs(
+    configs: &[DeviceNetworkConfig],
+) -> Vec<PlatformResolverRecord> {
+    configs
         .iter()
-        .map(|item| ResolverZoneView {
-            zone_id: item.zone_id.clone(),
-            zone_name: item.zone_name.clone(),
+        .flat_map(|config| {
+            config.resolver_records.iter().map(|record| {
+                let target_ip = record
+                    .target_ip
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+                    .or_else(|| {
+                        let target_device_id = record.target_device_id.as_deref()?.trim();
+                        if target_device_id == config.device_id.trim() {
+                            return config.global_ip.clone();
+                        }
+                        config
+                            .peers
+                            .iter()
+                            .find(|peer| peer.device_id.trim() == target_device_id)
+                            .and_then(|peer| peer.global_ip.clone())
+                    });
+                PlatformResolverRecord {
+                    record_id: record.record_id.clone(),
+                    zone_id: record.zone_id.clone(),
+                    network_id: record.network_id.clone(),
+                    name: record.name.clone(),
+                    fqdn: record.fqdn.clone(),
+                    record_type: record.record_type.clone(),
+                    target_device_id: record.target_device_id.clone(),
+                    target_ip,
+                    cname: record.cname.clone(),
+                    port: record.port.clone(),
+                    ttl: record.ttl,
+                }
+            })
         })
-        .collect();
-    let records = payload
-        .resolver_records
+        .collect()
+}
+
+fn unique_config_values<'a>(
+    configs: &'a [DeviceNetworkConfig],
+    activation: &'a DeviceResolverConfig,
+    values: impl Fn(&'a DeviceResolverConfig) -> &'a Vec<String>,
+) -> Vec<String> {
+    configs
         .iter()
-        .map(build_resolver_record_view)
-        .collect();
-    dns.replace_zones(zones);
-    dns.replace_records(records);
-    dns.clear_cache();
-    dns.last_reload_at_ms = Some(current_timestamp_ms());
+        .flat_map(|config| values(&config.resolver).iter())
+        .chain(values(activation).iter())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
-pub(crate) fn apply_resolver_changed(
-    dns: &mut RuntimeResolverState,
-    payload: NetworkEventResolverChangedPayload,
-) {
-    apply_resolver_config(dns, &payload.config);
-    let zones = payload
-        .zones
-        .into_iter()
-        .map(|item| ResolverZoneView {
-            zone_id: item.zone_id,
-            zone_name: item.zone_name,
-        })
-        .collect();
-    let records = payload
-        .records
-        .into_iter()
-        .map(|item| build_resolver_record_view(&item))
-        .collect();
-    dns.replace_zones(zones);
-    dns.replace_records(records);
-    dns.clear_cache();
-    dns.last_reload_at_ms = Some(current_timestamp_ms());
-}
-
-fn apply_resolver_config(dns: &mut RuntimeResolverState, config: &NetworkEventResolverConfigView) {
-    dns.set_upstream_servers(config.servers.clone());
-    dns.set_search_domains(config.search_domains.clone());
-    dns.set_split_domains(if config.split_domains.is_empty() {
-        config.search_domains.clone()
-    } else {
-        config.split_domains.clone()
+fn runtime_network_state_from_config(config: &DeviceNetworkConfig) -> RuntimeNetworkState {
+    let network_id = config.network_id.trim().to_string();
+    let mut state = RuntimeNetworkState::default();
+    state.bind_network_id(&network_id);
+    state.bind_session_identity(Some(&config.device_id), config.global_ip.as_deref());
+    state.network = Some(NetworkEventNetworkView {
+        network_id,
+        name: config.network_name.clone().unwrap_or_default(),
+        default_acl_policy: config
+            .intra_group_policy
+            .clone()
+            .unwrap_or_else(|| "deny".to_string()),
+        ..NetworkEventNetworkView::default()
     });
-    dns.set_fallback_to_system_resolvers(config.fallback_to_system_resolvers);
-}
+    let mut members = Vec::with_capacity(config.peers.len() + 1);
+    members.push(NetworkEventMemberView {
+        device_id: config.device_id.clone(),
+        device_name: config.global_name.clone().unwrap_or_default(),
+        virtual_ip: config.global_ip.clone().unwrap_or_default(),
+        online: true,
+        group_ids: config
+            .device_groups_by_device
+            .get(&config.device_id)
+            .cloned()
+            .unwrap_or_default(),
+        ..NetworkEventMemberView::default()
+    });
+    members.extend(config.peers.iter().map(|peer| {
+        NetworkEventMemberView {
+            device_id: peer.device_id.clone(),
+            device_name: peer
+                .alias
+                .clone()
+                .or_else(|| peer.global_name.clone())
+                .unwrap_or_default(),
+            virtual_ip: peer.global_ip.clone().unwrap_or_default(),
+            online: peer.status.as_deref().is_some_and(|status| {
+                status.eq_ignore_ascii_case("active") || status.eq_ignore_ascii_case("online")
+            }),
+            group_ids: config
+                .device_groups_by_device
+                .get(&peer.device_id)
+                .cloned()
+                .unwrap_or_default(),
+            ..NetworkEventMemberView::default()
+        }
+    }));
+    state.members_by_device_id = members
+        .into_iter()
+        .map(|member| (member.device_id.clone(), member))
+        .collect();
 
-fn build_resolver_record_view(
-    item: &crate::network_event::NetworkEventResolverRecordView,
-) -> ResolverRecordView {
-    let name = item.name.trim().to_string();
-    let fqdn = if item.fqdn.trim().is_empty() {
-        name.clone()
-    } else {
-        item.fqdn.trim().to_string()
-    };
-    let record_type = if item.record_type.trim().is_empty() {
-        "A".to_string()
-    } else {
-        item.record_type.trim().to_string()
-    };
-    ResolverRecordView {
-        record_id: item.record_id.clone(),
-        name,
-        fqdn,
-        record_type,
-        value: item.value.clone(),
-        target_device_id: item.target_device_id.clone(),
-        target_ip: item.target_ip.clone(),
-        cname: item.cname.clone(),
-        port: item.port,
-        ttl: normalized_ttl(item.ttl),
-        enabled: item.enabled,
+    let mut members_by_group = BTreeMap::<String, Vec<String>>::new();
+    for (device_id, group_ids) in &config.device_groups_by_device {
+        for group_id in group_ids {
+            members_by_group
+                .entry(group_id.clone())
+                .or_default()
+                .push(device_id.clone());
+        }
     }
+    state.groups_by_group_id = members_by_group
+        .into_iter()
+        .map(|(group_id, mut member_device_ids)| {
+            member_device_ids.sort();
+            member_device_ids.dedup();
+            (
+                group_id.clone(),
+                NetworkEventDeviceGroupView {
+                    group_id,
+                    member_device_ids,
+                    ..NetworkEventDeviceGroupView::default()
+                },
+            )
+        })
+        .collect();
+    state.acl_by_rule_id = config
+        .rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| {
+            let rule = resolver_acl_rule(rule, index);
+            (rule.rule_id.clone(), rule)
+        })
+        .collect();
+    state.sync_status = NetworkSyncStatus::Live;
+    state
 }
 
-fn normalized_ttl(ttl: i32) -> u32 {
-    if ttl > 0 {
-        ttl as u32
+fn resolver_acl_rule(rule: &DeviceSecurityRule, index: usize) -> NetworkEventAclRuleView {
+    let mut view = NetworkEventAclRuleView {
+        rule_id: format!("{}:{index}", rule.rule_id),
+        priority: i32::try_from(rule.priority).unwrap_or_default(),
+        action: rule.action.clone(),
+        direction: rule.direction.clone(),
+        protocol: rule.protocol.clone(),
+        enabled: rule.enabled,
+        ..NetworkEventAclRuleView::default()
+    };
+    if rule.direction.eq_ignore_ascii_case("egress") {
+        view.source_type = "current_device".to_string();
+        view.target_type = rule.peer_type.clone();
+        assign_acl_side(
+            &rule.peer_type,
+            &rule.peer_value,
+            &mut view.target_values,
+            &mut view.target_device_ids,
+            &mut view.target_group_ids,
+        );
     } else {
-        60
+        view.source_type = rule.peer_type.clone();
+        view.target_type = "current_device".to_string();
+        assign_acl_side(
+            &rule.peer_type,
+            &rule.peer_value,
+            &mut view.source_values,
+            &mut view.source_device_ids,
+            &mut view.source_group_ids,
+        );
+    }
+    view
+}
+
+fn assign_acl_side(
+    side_type: &str,
+    side_value: &str,
+    values: &mut Vec<String>,
+    device_ids: &mut Vec<String>,
+    group_ids: &mut Vec<String>,
+) {
+    let value = side_value.trim();
+    if value.is_empty() {
+        return;
+    }
+    match side_type.trim().to_ascii_lowercase().as_str() {
+        "device" => device_ids.push(value.to_string()),
+        "device_group" => group_ids.push(value.to_string()),
+        _ => values.push(value.to_string()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_resolver_changed, apply_resolver_from_network_snapshot, apply_resolver_runtime_event,
+        apply_resolver_from_device_network_configs, platform_resolver_records_from_configs,
     };
     use crate::{
-        network_event::{
-            NetworkEventAclChangedPayload, NetworkEventEnvelope, NetworkEventNetworkView,
-            NetworkEventResolverChangedPayload, NetworkEventResolverConfigView, NetworkEventType,
-            NetworkSnapshotPayload,
+        control_plane::{
+            DeviceNetworkConfig, DeviceNetworkPeer, DeviceResolverConfig, DeviceResolverRecord,
+            DeviceResolverZone,
         },
-        resolver_runtime_state::{
-            resolver_runtime_state, CachedResolverAnswer, CachedResolverResultKind,
-            RuntimeResolverState,
-        },
+        resolver_authority::{resolve_authoritative, ResolveAuthoritativeResult},
+        resolver_runtime_state::RuntimeResolverState,
     };
 
     #[test]
-    fn acl_change_clears_resolver_cache() {
-        let _lock = crate::test_env_lock();
-        {
-            let mut dns = resolver_runtime_state()
-                .lock()
-                .expect("resolver runtime mutex poisoned");
-            dns.cache.cache_by_question.clear();
-            dns.put_cached_answer(CachedResolverAnswer {
-                qname: "peer.example".to_string(),
-                qtype: "A".to_string(),
-                result_kind: CachedResolverResultKind::AnswerA,
-                ttl: Some(60),
-                answers: vec!["10.0.0.9".to_string()],
-                expires_at_ms: u64::MAX,
-            });
-        }
-
-        apply_resolver_runtime_event(&NetworkEventEnvelope {
-            r#type: "network_event".to_string(),
-            network_id: "net-1".to_string(),
-            version: 2,
-            event_id: "evt-acl-clear-1".to_string(),
-            event_type: NetworkEventType::AclChanged,
-            occurred_at: 2,
-            payload: serde_json::to_value(NetworkEventAclChangedPayload { rules: vec![] })
-                .expect("encode acl payload"),
-        })
-        .expect("apply acl changed event");
-
-        let dns = resolver_runtime_state()
-            .lock()
-            .expect("resolver runtime mutex poisoned");
-        assert!(dns.cache.cache_by_question.is_empty());
-    }
-
-    #[test]
-    fn snapshot_applies_resolver_config() {
+    fn device_network_configs_aggregate_dns_across_all_joined_networks() {
         let mut dns = RuntimeResolverState::default();
-        apply_resolver_from_network_snapshot(
-            &mut dns,
-            &NetworkSnapshotPayload {
-                network: NetworkEventNetworkView {
-                    network_id: "net-1".to_string(),
-                    ..NetworkEventNetworkView::default()
-                },
-                resolver_config: NetworkEventResolverConfigView {
-                    servers: vec!["10.0.0.53".to_string()],
-                    search_domains: vec!["example.lan".to_string()],
-                    split_domains: vec!["example.lan".to_string()],
-                    fallback_to_system_resolvers: false,
-                },
-                ..NetworkSnapshotPayload::default()
+        let configs = vec![
+            DeviceNetworkConfig {
+                network_id: "net-active".to_string(),
+                device_id: "device-self".to_string(),
+                global_ip: Some("10.0.0.1".to_string()),
+                intra_group_policy: Some("allow".to_string()),
+                ..DeviceNetworkConfig::default()
             },
+            DeviceNetworkConfig {
+                network_id: "net-dns".to_string(),
+                device_id: "device-self".to_string(),
+                global_ip: Some("10.0.0.1".to_string()),
+                intra_group_policy: Some("allow".to_string()),
+                resolver: DeviceResolverConfig {
+                    search_domains: vec!["tt.com".to_string()],
+                    split_domains: vec!["tt.com".to_string()],
+                    ..DeviceResolverConfig::default()
+                },
+                peers: vec![DeviceNetworkPeer {
+                    device_id: "device-target".to_string(),
+                    global_ip: Some("10.0.0.12".to_string()),
+                    status: Some("active".to_string()),
+                    ..DeviceNetworkPeer::default()
+                }],
+                resolver_zones: vec![DeviceResolverZone {
+                    zone_id: "zone-tt".to_string(),
+                    network_id: "net-dns".to_string(),
+                    zone_name: "tt.com".to_string(),
+                }],
+                resolver_records: vec![DeviceResolverRecord {
+                    record_id: "record-api".to_string(),
+                    zone_id: "zone-tt".to_string(),
+                    network_id: "net-dns".to_string(),
+                    name: "api".to_string(),
+                    fqdn: Some("api.tt.com".to_string()),
+                    record_type: "A".to_string(),
+                    target_device_id: Some("device-target".to_string()),
+                    ttl: Some(60),
+                    ..DeviceResolverRecord::default()
+                }],
+                ..DeviceNetworkConfig::default()
+            },
+        ];
+
+        apply_resolver_from_device_network_configs(
+            &mut dns,
+            "net-active",
+            &DeviceResolverConfig::default(),
+            &configs,
         );
 
-        assert_eq!(dns.active_network_id(), Some("net-1"));
+        assert_eq!(dns.active_network_id(), Some("net-active"));
+        assert_eq!(dns.zone_count(), 1);
+        assert_eq!(dns.record_count(), 1);
+        assert!(dns.matches_split_domain("api.tt.com"));
+        let platform_records = platform_resolver_records_from_configs(&configs);
+        assert_eq!(platform_records.len(), 1);
+        assert_eq!(platform_records[0].target_ip.as_deref(), Some("10.0.0.12"));
+        let fallback_runtime = crate::network_runtime_state::RuntimeNetworkState::default();
         assert_eq!(
-            dns.effective_upstream_resolvers(),
-            vec!["10.0.0.53".to_string()]
+            resolve_authoritative(
+                &fallback_runtime,
+                &mut dns,
+                "device-self",
+                "api.tt.com",
+                "A",
+            ),
+            ResolveAuthoritativeResult::AnswerA {
+                ttl: 60,
+                ips: vec!["10.0.0.12".to_string()],
+            }
         );
-        assert!(dns.matches_split_domain("peer.example.lan"));
-    }
-
-    #[test]
-    fn resolver_changed_uses_search_domains_as_split_fallback() {
-        let mut dns = RuntimeResolverState::default();
-        apply_resolver_changed(
-            &mut dns,
-            NetworkEventResolverChangedPayload {
-                config: NetworkEventResolverConfigView {
-                    search_domains: vec!["corp.lan".to_string()],
-                    fallback_to_system_resolvers: true,
-                    ..NetworkEventResolverConfigView::default()
-                },
-                ..NetworkEventResolverChangedPayload::default()
-            },
-        );
-
-        assert!(dns.matches_split_domain("host.corp.lan"));
-        assert!(dns.effective_upstream_resolvers().is_empty());
     }
 }

@@ -55,12 +55,17 @@ func (s *GormStore) SaveDeviceInviteWithRelation(_ context.Context, invite model
 
 func (s *GormStore) RevokeDeviceInviteWithRelation(_ context.Context, invite model.DeviceInvite, sharedUserID, revokedBy string, revokedAt int64) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		sharedUserID = strings.TrimSpace(sharedUserID)
 		if err := tx.Model(&gormDeviceUserRelationRecord{}).
-			Where("device_id = ? AND user_id = ? AND role = ?", invite.DeviceID, strings.TrimSpace(sharedUserID), model.DeviceRelationRoleShared).
+			Where("device_id = ? AND user_id = ? AND role = ?", invite.DeviceID, sharedUserID, model.DeviceRelationRoleShared).
 			Updates(map[string]any{
 				"status": model.DeviceRelationStatusRevoked, "updated_at": revokedAt,
 				"revoked_by": strings.TrimSpace(revokedBy), "revoked_at": revokedAt,
 			}).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&gormDeviceGroupAssignmentRecord{},
+			"device_id = ? AND user_id = ?", invite.DeviceID, sharedUserID).Error; err != nil {
 			return err
 		}
 		row := deviceInviteRecordFromModel(invite)

@@ -305,6 +305,8 @@ func (r pathHealthReportRequest) input() servicepkg.MQTTPathHealthReportInput {
 		ObservedRttMs:     reader.int64("observedRttMs"),
 		PacketLossPpm:     reader.int64("packetLossPpm"),
 		PathScore:         reader.int64("pathScore"),
+		SignalScore:       int(reader.int64("signalScore")),
+		SignalQuality:     reader.string("signalQuality"),
 		RelayMtu:          int(reader.int64("relayMtu")),
 		MaxFramePayload:   int(reader.int64("maxFramePayload")),
 		TicketExpiresAt:   reader.string("ticketExpiresAt"),

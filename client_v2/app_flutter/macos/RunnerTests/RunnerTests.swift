@@ -1,12 +1,32 @@
 import Cocoa
 import FlutterMacOS
 import XCTest
+@testable import slan_client_v2
 
 class RunnerTests: XCTestCase {
 
-  func testExample() {
-    // If you add code to the Runner application, consider adding tests here.
-    // See https://developer.apple.com/documentation/xctest for more information about using XCTest.
+  func testKeyUpEventGuardForwardsOneBalancedKeySequence() {
+    let guardState = KeyUpEventGuard()
+
+    XCTAssertTrue(guardState.shouldForward(type: .keyDown, keyCode: 101))
+    XCTAssertTrue(guardState.shouldForward(type: .keyUp, keyCode: 101))
+  }
+
+  func testKeyUpEventGuardDropsRepeatedKeyUp() {
+    let guardState = KeyUpEventGuard()
+
+    XCTAssertTrue(guardState.shouldForward(type: .keyDown, keyCode: 101))
+    XCTAssertTrue(guardState.shouldForward(type: .keyUp, keyCode: 101))
+    XCTAssertFalse(guardState.shouldForward(type: .keyUp, keyCode: 101))
+  }
+
+  func testKeyUpEventGuardDropsKeyUpAfterFocusReset() {
+    let guardState = KeyUpEventGuard()
+
+    XCTAssertTrue(guardState.shouldForward(type: .keyDown, keyCode: 101))
+    guardState.reset()
+
+    XCTAssertFalse(guardState.shouldForward(type: .keyUp, keyCode: 101))
   }
 
 }

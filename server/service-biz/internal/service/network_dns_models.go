@@ -1,13 +1,12 @@
 package service
 
 type DNSZoneView struct {
-	ZoneID       string `json:"zoneId"`
-	NetworkID    string `json:"networkId"`
-	Name         string `json:"name"`
-	Status       string `json:"status"`
-	CreatedAt    int64  `json:"createdAt"`
-	UpdatedAt    int64  `json:"updatedAt"`
-	ExposeGlobal bool   `json:"exposeGlobal"`
+	ZoneID    string `json:"zoneId"`
+	NetworkID string `json:"networkId"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 type DNSRecordView struct {

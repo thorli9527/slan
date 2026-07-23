@@ -19,6 +19,9 @@ class ClientViewState {
     this.trafficTxBytesPerMinute,
     this.trafficRxBytesPerMinute,
     this.trafficUpdatedAtMs,
+    this.signalScore,
+    this.signalQuality,
+    this.signalPath,
   });
 
   /// 是否已登录。
@@ -75,6 +78,10 @@ class ClientViewState {
   /// 流量统计更新时间，Unix 毫秒。
   final int? trafficUpdatedAtMs;
 
+  final int? signalScore;
+  final String? signalQuality;
+  final String? signalPath;
+
   /// 构造未登录、网络未启用的默认 UI 状态。
   factory ClientViewState.initial() {
     return const ClientViewState(
@@ -111,6 +118,9 @@ class ClientViewState {
       trafficTxBytesPerMinute: _intValue(json['trafficTxBytesPerMinute']),
       trafficRxBytesPerMinute: _intValue(json['trafficRxBytesPerMinute']),
       trafficUpdatedAtMs: _intValue(json['trafficUpdatedAtMs']),
+      signalScore: _intValue(json['signalScore']),
+      signalQuality: json['signalQuality'] as String?,
+      signalPath: json['signalPath'] as String?,
     );
   }
 
@@ -137,6 +147,9 @@ class ClientViewState {
     int? trafficTxBytesPerMinute,
     int? trafficRxBytesPerMinute,
     int? trafficUpdatedAtMs,
+    int? signalScore,
+    String? signalQuality,
+    String? signalPath,
     bool clearSyncReason = false,
     bool clearVirtualIp = false,
   }) {
@@ -165,6 +178,9 @@ class ClientViewState {
       trafficRxBytesPerMinute:
           trafficRxBytesPerMinute ?? this.trafficRxBytesPerMinute,
       trafficUpdatedAtMs: trafficUpdatedAtMs ?? this.trafficUpdatedAtMs,
+      signalScore: signalScore ?? this.signalScore,
+      signalQuality: signalQuality ?? this.signalQuality,
+      signalPath: signalPath ?? this.signalPath,
     );
   }
 
@@ -191,7 +207,10 @@ class ClientViewState {
             trafficRxBytes == other.trafficRxBytes &&
             trafficTxBytesPerMinute == other.trafficTxBytesPerMinute &&
             trafficRxBytesPerMinute == other.trafficRxBytesPerMinute &&
-            trafficUpdatedAtMs == other.trafficUpdatedAtMs;
+            trafficUpdatedAtMs == other.trafficUpdatedAtMs &&
+            signalScore == other.signalScore &&
+            signalQuality == other.signalQuality &&
+            signalPath == other.signalPath;
   }
 
   /// 与 [operator ==] 保持字段集合一致。
@@ -216,6 +235,9 @@ class ClientViewState {
       trafficTxBytesPerMinute,
       trafficRxBytesPerMinute,
       trafficUpdatedAtMs,
+      signalScore,
+      signalQuality,
+      signalPath,
     ]);
   }
 

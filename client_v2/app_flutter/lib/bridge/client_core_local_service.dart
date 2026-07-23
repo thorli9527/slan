@@ -195,11 +195,20 @@ class ClientCoreLocalService {
     );
   }
 
+  Future<Map<String, Object?>?> localAcceptNetworkInvite(
+      String inviteCode) async {
+    return requestJson(
+      'localAcceptNetworkInvite',
+      arguments: {'inviteCode': inviteCode},
+    );
+  }
+
   /// 长轮询等待业务事件。
   ///
   /// 业务事件用于驱动 UI 增量刷新，例如登录成功、网络配置变化、消息到达。
   Future<Map<String, Object?>?> localBusinessEventWatch({
     required int lastRevision,
+    bool followLatest = false,
     String? streamId,
     int timeoutMs = 30000,
   }) async {
@@ -207,6 +216,7 @@ class ClientCoreLocalService {
       'localBusinessEventWatch',
       arguments: {
         'lastRevision': lastRevision,
+        if (followLatest) 'followLatest': true,
         if (streamId != null && streamId.isNotEmpty) 'streamId': streamId,
         'timeoutMs': timeoutMs,
       },

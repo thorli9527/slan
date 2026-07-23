@@ -11,7 +11,7 @@ done
 LABEL="dev.slan.client-core-service"
 APP_PATH="${SLAN_MACOS_APP_PATH:-client_v2/app_flutter/build/macos/Build/Products/Release/slan_client_v2.app}"
 SERVICE_IN_APP="${APP_PATH%/}/Contents/MacOS/client-core-service"
-CONFIG_FILE="/Library/Application Support/SLAN/config.json"
+CONFIG_FILE="/Library/Preferences/dev.slan.client-core-service/SLAN/config.json"
 SHUTDOWN_CHECK=0
 RUN_LOCAL_DNS_SMOKE="${SLAN_RUN_LOCAL_DNS_SMOKE:-0}"
 

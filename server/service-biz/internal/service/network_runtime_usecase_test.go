@@ -169,7 +169,9 @@ func (s *networkRuntimeTestNetworks) SaveSecurityRule(context.Context, model.Sec
 func (s *networkRuntimeTestNetworks) DeleteSecurityRule(context.Context, string) error { return nil }
 
 type networkRuntimeTestDevices struct {
-	devices map[string]model.Device
+	devices                 map[string]model.Device
+	groupAssignmentsByUser  map[string][]model.DeviceGroupAssignment
+	lastGroupAssignmentUser string
 }
 
 func (s *networkRuntimeTestDevices) ListDevicesByOwner(_ context.Context, ownerID string) ([]model.Device, error) {
@@ -252,12 +254,61 @@ func (s *networkRuntimeTestDevices) DeleteDeviceGroup(context.Context, string) e
 func (s *networkRuntimeTestDevices) SetDeviceGroups(context.Context, model.DeviceGroupAssignment) error {
 	return nil
 }
-
-func (s *networkRuntimeTestDevices) ListDeviceGroupAssignments(context.Context, string) ([]model.DeviceGroupAssignment, error) {
+func (s *networkRuntimeTestDevices) ListDeviceGroupAssignments(_ context.Context, userID string) ([]model.DeviceGroupAssignment, error) {
+	s.lastGroupAssignmentUser = userID
+	if s.groupAssignmentsByUser != nil {
+		return append([]model.DeviceGroupAssignment(nil), s.groupAssignmentsByUser[userID]...), nil
+	}
 	return []model.DeviceGroupAssignment{
 		{UserID: "user-1", DeviceID: "src", GroupIDs: []string{"group-src"}},
 		{UserID: "user-1", DeviceID: "dst", GroupIDs: []string{"group-dst"}},
 	}, nil
+}
+
+func TestBuildNetworkConfigUsesNetworkOwnerGroupsForSharedDevice(t *testing.T) {
+	devices := &networkRuntimeTestDevices{
+		devices: map[string]model.Device{
+			"shared": {DeviceID: "shared", OwnerID: "device-owner", VirtualIP: "10.0.0.1"},
+			"peer":   {DeviceID: "peer", VirtualIP: "10.0.0.12"},
+		},
+		groupAssignmentsByUser: map[string][]model.DeviceGroupAssignment{
+			"network-owner": {
+				{UserID: "network-owner", DeviceID: "shared", GroupIDs: []string{"group-dev"}},
+				{UserID: "network-owner", DeviceID: "peer", GroupIDs: []string{"group-dev"}},
+			},
+		},
+	}
+	networks := &networkRuntimeTestNetworks{
+		networkDevices: map[string][]model.NetworkDevice{
+			"net-shared": {
+				{NetworkID: "net-shared", DeviceID: "shared", Enabled: true, MemberStatus: model.NetworkMemberStatusActive},
+				{NetworkID: "net-shared", DeviceID: "peer", Enabled: true, MemberStatus: model.NetworkMemberStatusActive},
+			},
+		},
+		securityGroups: map[string]model.SecurityGroup{},
+		securityRules:  map[string][]model.SecurityRule{},
+	}
+
+	view, err := buildNetworkConfigView(
+		context.Background(),
+		nil,
+		devices,
+		networks,
+		model.Network{NetworkID: "net-shared", OwnerID: "network-owner", CIDR: "10.0.0.0/24"},
+		devices.devices["shared"],
+	)
+	if err != nil {
+		t.Fatalf("build shared network config: %v", err)
+	}
+	if devices.lastGroupAssignmentUser != "network-owner" {
+		t.Fatalf("loaded assignments for %q, want network owner", devices.lastGroupAssignmentUser)
+	}
+	if got := view.DeviceGroupsByDevice["shared"]; len(got) != 1 || got[0] != "group-dev" {
+		t.Fatalf("shared device groups = %#v", got)
+	}
+	if got := view.DeviceGroupsByDevice["peer"]; len(got) != 1 || got[0] != "group-dev" {
+		t.Fatalf("peer groups = %#v", got)
+	}
 }
 
 type networkRuntimeTestOps struct {

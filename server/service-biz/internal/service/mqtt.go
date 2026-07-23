@@ -55,6 +55,8 @@ type MQTTPathHealthReportInput struct {
 	ObservedRttMs     int64
 	PacketLossPpm     int64
 	PathScore         int64
+	SignalScore       int
+	SignalQuality     string
 	RelayMtu          int
 	MaxFramePayload   int
 	TicketExpiresAt   string

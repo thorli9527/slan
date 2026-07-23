@@ -4,8 +4,6 @@
       <span class="eyebrow">当前网络</span>
       <h2>{{ vm.selectedWorkspace.name }}</h2>
       <div class="workspace-meta">
-        <span>网络编码：<code>{{ vm.selectedWorkspace.code }}</code></span>
-        <span>模板键：<code>{{ vm.selectedWorkspace.template || '-' }}</code></span>
         <span>组内连通策略：{{ vm.intraGroupPolicyLabel(vm.selectedWorkspace.intraGroupPolicy) }}</span>
         <span>默认网络：{{ vm.selectedWorkspace.default ? '是' : '否' }}</span>
       </div>

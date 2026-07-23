@@ -10,8 +10,6 @@ import (
 type createNetworkFields struct {
 	ActorUserID      string `json:"actorUserId"`
 	Name             string `json:"name"`
-	Code             string `json:"code"`
-	TemplateKey      string `json:"templateKey"`
 	IntraGroupPolicy string `json:"intraGroupPolicy"`
 	Default          bool   `json:"default"`
 }
@@ -21,8 +19,6 @@ func (f createNetworkFields) createInput(ownerID string) servicepkg.CreateNetwor
 		OwnerID:          ownerID,
 		ActorUserID:      f.ActorUserID,
 		Name:             f.Name,
-		Code:             f.Code,
-		TemplateKey:      f.TemplateKey,
 		IntraGroupPolicy: f.IntraGroupPolicy,
 		Default:          f.Default,
 	}
@@ -30,8 +26,6 @@ func (f createNetworkFields) createInput(ownerID string) servicepkg.CreateNetwor
 
 type updateNetworkFields struct {
 	Name             string `json:"name"`
-	Code             string `json:"code"`
-	TemplateKey      string `json:"templateKey"`
 	IntraGroupPolicy string `json:"intraGroupPolicy"`
 	Default          *bool  `json:"default,omitempty"`
 }
@@ -39,8 +33,6 @@ type updateNetworkFields struct {
 func (f updateNetworkFields) updateInput(status string) servicepkg.UpdateNetworkInput {
 	return servicepkg.UpdateNetworkInput{
 		Name:             f.Name,
-		Code:             f.Code,
-		TemplateKey:      f.TemplateKey,
 		IntraGroupPolicy: f.IntraGroupPolicy,
 		Default:          f.Default,
 		Status:           status,
@@ -118,23 +110,21 @@ func (r revokeDeviceInviteRequest) toInput() servicepkg.RevokeDeviceInviteInput 
 }
 
 type createDNSZoneFields struct {
-	ActorUserID  string `json:"actorUserId"`
-	ZoneName     string `json:"zoneName"`
-	ExposeGlobal bool   `json:"exposeGlobal"`
+	ActorUserID string `json:"actorUserId"`
+	ZoneName    string `json:"zoneName"`
 }
 
 func (f createDNSZoneFields) createInput() servicepkg.CreateDNSZoneInput {
-	return servicepkg.CreateDNSZoneInput{ActorUserID: f.ActorUserID, Name: f.ZoneName, ExposeGlobal: f.ExposeGlobal}
+	return servicepkg.CreateDNSZoneInput{ActorUserID: f.ActorUserID, Name: f.ZoneName}
 }
 
 type updateDNSZoneFields struct {
-	ActorUserID  string `json:"actorUserId"`
-	ZoneName     string `json:"zoneName"`
-	ExposeGlobal *bool  `json:"exposeGlobal,omitempty"`
+	ActorUserID string `json:"actorUserId"`
+	ZoneName    string `json:"zoneName"`
 }
 
 func (f updateDNSZoneFields) updateInput(status string) servicepkg.UpdateDNSZoneInput {
-	return servicepkg.UpdateDNSZoneInput{ActorUserID: f.ActorUserID, Name: f.ZoneName, ExposeGlobal: f.ExposeGlobal, Status: status}
+	return servicepkg.UpdateDNSZoneInput{ActorUserID: f.ActorUserID, Name: f.ZoneName, Status: status}
 }
 
 type createDNSZoneRequest struct {
@@ -160,14 +150,13 @@ type dnsRecordFields struct {
 	Name           string `json:"name"`
 	RecordType     string `json:"recordType"`
 	TargetDeviceID string `json:"targetDeviceId"`
-	TargetIP       string `json:"targetIp"`
 	CNAME          string `json:"cname"`
 	Port           string `json:"port"`
 	TTL            int    `json:"ttl"`
 }
 
 func (f dnsRecordFields) value() string {
-	return dnsRecordValue(f.TargetDeviceID, f.TargetIP, f.CNAME)
+	return dnsRecordValue(f.TargetDeviceID, f.CNAME)
 }
 
 func (f dnsRecordFields) createInput() servicepkg.CreateDNSRecordInput {
@@ -346,8 +335,8 @@ func (r updateSecurityRuleRequest) toInput() servicepkg.UpdateSecurityRuleInput 
 	return r.updateSecurityRuleFieldsRequest.updateInput()
 }
 
-func dnsRecordValue(targetDeviceID, targetIP, cname string) string {
-	return firstNonEmpty(targetDeviceID, targetIP, cname)
+func dnsRecordValue(targetDeviceID, cname string) string {
+	return firstNonEmpty(targetDeviceID, cname)
 }
 
 func securityRuleFields(portFrom, portTo int, peerType, peerValue string) (string, string, string) {

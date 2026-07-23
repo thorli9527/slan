@@ -130,7 +130,10 @@ func (s *GormStore) GetDeviceSessionByAccessToken(_ context.Context, accessToken
 }
 
 func (s *GormStore) GetDeviceSessionByRefreshToken(_ context.Context, refreshToken string) (model.DeviceSession, bool, error) {
-	return firstModel(s.db.Where("refresh_token = ?", strings.TrimSpace(refreshToken)), func(row gormDeviceSessionRecord) model.DeviceSession {
+	refreshToken = strings.TrimSpace(refreshToken)
+	digest := sha256.Sum256([]byte(refreshToken))
+	refreshTokenHash := hex.EncodeToString(digest[:])
+	return firstModel(s.db.Where("refresh_token = ? OR previous_refresh_token_hash = ?", refreshToken, refreshTokenHash), func(row gormDeviceSessionRecord) model.DeviceSession {
 		return row.model()
 	})
 }
@@ -156,7 +159,7 @@ func (s *GormStore) SaveDeviceSession(_ context.Context, item model.DeviceSessio
 		).Error; err != nil {
 			return err
 		}
-		return upsertByColumns(tx, &row, []string{"session_id"}, []string{"device_id", "access_token", "refresh_token", "status", "session_mode", "expires_at", "refresh_expiry", "created_at", "updated_at", "revoked_at"})
+		return upsertByColumns(tx, &row, []string{"session_id"}, []string{"device_id", "access_token", "refresh_token", "status", "session_mode", "previous_refresh_token_hash", "refresh_rotation_grace_expiry", "expires_at", "refresh_expiry", "created_at", "updated_at", "revoked_at"})
 	})
 }
 

@@ -28,7 +28,7 @@ func (s NetworkCoreService) ListNetworks(ctx context.Context, ownerID string) ([
 
 func (s NetworkCoreService) CreateNetwork(ctx context.Context, input CreateNetworkInput) (NetworkSummaryView, error) {
 	input = normalizeCreateNetworkInput(input)
-	if input.OwnerID == "" || input.Name == "" {
+	if input.OwnerID == "" {
 		return NetworkSummaryView{}, ErrInvalidArgument
 	}
 	if _, err := requireNetworkUser(ctx, s.Users, input.OwnerID); err != nil {
@@ -42,6 +42,14 @@ func (s NetworkCoreService) CreateNetwork(ctx context.Context, input CreateNetwo
 			return NetworkSummaryView{}, ErrForbidden
 		}
 	}
+	existing, err := s.Networks.ListNetworksByOwner(ctx, input.OwnerID)
+	if err != nil {
+		return NetworkSummaryView{}, err
+	}
+	if input.Name == "" {
+		input.Name = nextManagedNetworkName(existing)
+	}
+	input.Default = false
 	now := networkNow(s.Now).Unix()
 	item := newManagedNetwork(now, newManagedNetworkID(s.NewNetworkID), input)
 	if err := s.Networks.SaveNetwork(ctx, item); err != nil {

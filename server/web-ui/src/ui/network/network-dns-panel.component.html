@@ -14,7 +14,7 @@
   <p class="form-error" *ngIf="vm.zoneDialogMessage">{{ vm.zoneDialogMessage }}</p>
   <div class="rules-table-wrap">
     <table class="compact-table">
-      <thead><tr><th>Zone</th><th>公网暴露</th><th>状态</th><th>操作</th></tr></thead>
+      <thead><tr><th>Zone</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>
         <tr *ngFor="let zone of vm.currentDNSZones">
           <td class="tag-cell-wrapper">
@@ -29,7 +29,6 @@
               <div class="tag-popover" *ngIf="vm.showZoneTagDialog && vm.editingZone === zone">
                 <div class="tag-popover-arrow"></div>
                 <div class="tag-editor-row"><span>Zone</span><input [(ngModel)]="vm.zoneNameValue" /></div>
-                <div class="tag-editor-row"><span>公网暴露</span><input type="checkbox" [(ngModel)]="vm.zoneExposeValue" /></div>
                 <p class="form-error" *ngIf="vm.zoneDialogMessage">{{ vm.zoneDialogMessage }}</p>
                 <div class="tag-popover-actions">
                   <button class="text-link" type="button" (click)="vm.saveZoneTagDialog()">保存</button>
@@ -38,7 +37,6 @@
               </div>
             </div>
           </td>
-          <td>{{ zone.expose ? '是' : '否' }}</td>
           <td><span class="status" [class.online]="zone.status === 'active'">{{ zone.status }}</span></td>
           <td class="table-actions">
             <button class="table-icon-button" type="button" title="编辑域" aria-label="编辑域" (click)="vm.openEditZoneDialog(zone)">
@@ -60,7 +58,7 @@
           </td>
         </tr>
         <tr *ngIf="vm.currentDNSZones.length === 0">
-          <td colspan="4">暂无内网域名，点击右上角“新增域”开始创建。</td>
+          <td colspan="3">暂无内网域名，点击右上角“新增域”开始创建。</td>
         </tr>
       </tbody>
     </table>

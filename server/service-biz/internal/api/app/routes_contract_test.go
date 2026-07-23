@@ -6,12 +6,18 @@ func TestAppRoutesExposeDeviceScopedNetworkConfigsOnly(t *testing.T) {
 	routes := Routes(RouteDependencies{})
 	foundDeviceConfigs := false
 	foundRuntimeEndpoints := false
+	foundCreateInvite := false
+	foundAcceptInvite := false
 	for _, route := range routes {
 		switch route.Path {
 		case "/api/app/devices/{deviceId}/network-configs":
 			foundDeviceConfigs = true
 		case "/api/app/runtime/endpoints":
 			foundRuntimeEndpoints = route.Method == "GET"
+		case "/api/app/network-invites":
+			foundCreateInvite = route.Method == "POST"
+		case "/api/app/network-invites/accept":
+			foundAcceptInvite = route.Method == "POST"
 		case "/api/app/networks/{networkId}/network-config":
 			t.Fatal("single-network config route must not be exposed to app clients")
 		}
@@ -21,5 +27,8 @@ func TestAppRoutesExposeDeviceScopedNetworkConfigsOnly(t *testing.T) {
 	}
 	if !foundRuntimeEndpoints {
 		t.Fatal("device-authenticated runtime endpoints route is missing")
+	}
+	if !foundCreateInvite || !foundAcceptInvite {
+		t.Fatal("network invite create/accept routes are missing")
 	}
 }

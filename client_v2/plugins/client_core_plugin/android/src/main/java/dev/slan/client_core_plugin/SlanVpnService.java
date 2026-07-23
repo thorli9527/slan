@@ -31,9 +31,11 @@ public final class SlanVpnService extends VpnService {
   static final String ACTION_START = "dev.slan.client_core_plugin.START_VPN";
   static final String ACTION_STOP = "dev.slan.client_core_plugin.STOP_VPN";
   static final String EXTRA_CONFIG_JSON = "configJson";
-  private static final String RESOLVER_CONFIG_KEY = "dns";
+  private static final String RESOLVER_CONFIG_KEY = "resolver";
   private static final String VPN_SOCKET_PREFS = "slan_vpn_sockets";
   private static final String DIRECT_UDP_PORT_KEY = "direct_udp_port";
+  private static final int DEFAULT_DIRECT_UDP_PORT = 41642;
+  private static final int TAILSCALE_DEFAULT_UDP_PORT = 41641;
 
   private static final String CHANNEL_ID = "slan_vpn";
   private static final int NOTIFICATION_ID = 24018;
@@ -288,20 +290,14 @@ public final class SlanVpnService extends VpnService {
   }
 
   private int preferredDirectUdpPort(JSONObject relayDataPlane) {
-    int persisted =
-        getSharedPreferences(VPN_SOCKET_PREFS, MODE_PRIVATE).getInt(DIRECT_UDP_PORT_KEY, 0);
-    if (persisted > 0) {
-      return persisted;
+    if (relayDataPlane.optBoolean("randomizeDirectUdpPort", false)) {
+      return 0;
     }
-    String localNodeId = relayDataPlane.optString("localNodeId", "").trim();
-    String compact = localNodeId.startsWith("node-") ? localNodeId.substring(5) : localNodeId;
-    int seed;
-    try {
-      seed = Integer.parseInt(compact.substring(0, Math.min(4, compact.length())), 16);
-    } catch (RuntimeException ignored) {
-      seed = localNodeId.hashCode();
+    int configured = relayDataPlane.optInt("directUdpPort", DEFAULT_DIRECT_UDP_PORT);
+    if (configured <= 0 || configured > 65535 || configured == TAILSCALE_DEFAULT_UDP_PORT) {
+      return DEFAULT_DIRECT_UDP_PORT;
     }
-    return 40000 + Math.floorMod(seed, 20000);
+    return configured;
   }
 
   private int detachProtectedIpv4DatagramSocket(

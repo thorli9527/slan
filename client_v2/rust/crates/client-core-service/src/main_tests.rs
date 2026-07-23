@@ -5,19 +5,20 @@ use super::{
     filter_relay_sessions_for_transport, invalidate_runtime_session, local_status_active_path,
     method_business_event_type, parse_rfc3339_utc_ms, path_diagnose_active_path_counts,
     path_diagnose_health, path_diagnose_resolver, peer_network_id, peer_path_configs,
-    publish_method_business_event, relay_candidate_matching_connect_plan_path,
-    relay_maintenance_reconfigure_reason, relay_path_candidate_from_connect_plan,
-    relay_reconfigure_backoff_applies, relay_session_from_connect_plan_ticket,
-    relay_session_targets, relay_sessions_missing, relay_ticket_should_renew, relay_ticket_timing,
-    relay_transport_for_path_type, request_is_watch, routes_with_peer_virtual_ips,
-    status_is_managed_disabled, valid_direct_candidate_address, ControlPeer, LocalRequestMetrics,
-    PersistedConnectPlan, PersistedConnectPlanPath, PersistedConnectPlanStore,
-    PreparedControlNetworkActivation, RelayMaintenanceState, LOCAL_REQUEST_CONCURRENCY_LIMIT,
-    LOCAL_WATCH_CONCURRENCY_LIMIT, RELAY_NO_RX_RECONFIGURE_INTERVALS,
-    RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
+    platform_resolver_config, publish_method_business_event,
+    relay_candidate_matching_connect_plan_path, relay_maintenance_reconfigure_reason,
+    relay_path_candidate_from_connect_plan, relay_reconfigure_backoff_applies,
+    relay_session_from_connect_plan_ticket, relay_session_targets, relay_sessions_missing,
+    relay_ticket_should_renew, relay_ticket_timing, relay_transport_for_path_type,
+    request_is_watch, routes_with_peer_virtual_ips, status_is_managed_disabled,
+    valid_direct_candidate_address, ControlPeer, LocalRequestMetrics, PersistedConnectPlan,
+    PersistedConnectPlanPath, PersistedConnectPlanStore, PreparedControlNetworkActivation,
+    RelayMaintenanceState, LOCAL_REQUEST_CONCURRENCY_LIMIT, LOCAL_WATCH_CONCURRENCY_LIMIT,
+    RELAY_NO_RX_RECONFIGURE_INTERVALS, RELAY_RESPONSE_GAP_DEGRADED_PACKETS,
 };
 use crate::control_plane::{
-    DeviceNetworkConfig, DeviceNetworkPeer, PunchConnectSession, PunchEndpoint,
+    DeviceNetworkConfig, DeviceNetworkPeer, DeviceResolverConfig, PunchConnectSession,
+    PunchEndpoint,
 };
 use crate::{
     local_api::{
@@ -1352,6 +1353,23 @@ fn path_diagnose_resolver_reports_missing_expected_servers() {
     assert!(resolver.checked);
     assert_eq!(resolver.ok, Some(false));
     assert_eq!(resolver.missing_servers, vec!["8.8.8.8".to_string()]);
+}
+
+#[test]
+fn platform_resolver_uses_client_owned_service_address_for_managed_domains() {
+    let resolver = platform_resolver_config(
+        "net-1",
+        &DeviceResolverConfig {
+            servers: vec!["8.8.8.8".to_string()],
+            split_domains: vec!["tt.com".to_string()],
+            ..DeviceResolverConfig::default()
+        },
+        &[],
+    );
+
+    assert_eq!(resolver.servers, vec![client_core::SLAN_DNS_SERVICE_IP]);
+    assert_eq!(resolver.split_domains, vec!["tt.com"]);
+    assert!(!resolver.fallback_to_system_resolvers);
 }
 
 #[test]

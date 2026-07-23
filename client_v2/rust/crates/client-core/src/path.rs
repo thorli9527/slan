@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -420,6 +420,51 @@ pub fn preferred_path_order(policy: &PathPolicy) -> Vec<PathKind> {
     values
 }
 
+/// 按传输层级和实时链路质量比较候选；Ordering::Less 表示更优。
+pub fn compare_path_candidates(left: &PathCandidate, right: &PathCandidate) -> Ordering {
+    left.kind
+        .priority()
+        .cmp(&right.kind.priority())
+        .then_with(|| path_state_rank(left.state).cmp(&path_state_rank(right.state)))
+        .then_with(|| {
+            left.path_score
+                .unwrap_or(u32::MAX)
+                .cmp(&right.path_score.unwrap_or(u32::MAX))
+        })
+        .then_with(|| {
+            left.rtt_ms
+                .unwrap_or(u32::MAX)
+                .cmp(&right.rtt_ms.unwrap_or(u32::MAX))
+        })
+        .then_with(|| {
+            right
+                .last_ok_at_ms
+                .unwrap_or(0)
+                .cmp(&left.last_ok_at_ms.unwrap_or(0))
+        })
+        .then_with(|| {
+            left.address
+                .as_deref()
+                .unwrap_or_default()
+                .cmp(right.address.as_deref().unwrap_or_default())
+        })
+}
+
+pub fn sort_path_candidates(candidates: &mut [PathCandidate]) {
+    candidates.sort_by(compare_path_candidates);
+}
+
+fn path_state_rank(state: PathState) -> u8 {
+    match state {
+        PathState::Ready => 0,
+        PathState::Standby => 1,
+        PathState::Probing => 2,
+        PathState::Degraded => 3,
+        PathState::Failed => 4,
+        PathState::Disabled => 5,
+    }
+}
+
 pub fn update_peer_active_path(
     peer_paths: &mut [PeerPathRuntime],
     peer_node_id: &str,
@@ -611,6 +656,26 @@ mod tests {
             PathKind::RelayUdp,
             PathKind::DerpTcpTls443
         ));
+    }
+
+    #[test]
+    fn candidate_sort_keeps_transport_tier_then_uses_quality() {
+        let mut slow_lan = candidate(PathKind::LanUdp, PathState::Ready);
+        slow_lan.rtt_ms = Some(80);
+        let mut fast_direct = candidate(PathKind::DirectUdp, PathState::Ready);
+        fast_direct.rtt_ms = Some(5);
+        let mut slow_relay = candidate(PathKind::RelayUdp, PathState::Standby);
+        slow_relay.path_score = Some(200);
+        let mut fast_relay = candidate(PathKind::RelayUdp, PathState::Standby);
+        fast_relay.path_score = Some(40);
+        let mut candidates = vec![slow_relay, fast_direct, fast_relay, slow_lan];
+
+        sort_path_candidates(&mut candidates);
+
+        assert_eq!(candidates[0].kind, PathKind::LanUdp);
+        assert_eq!(candidates[1].kind, PathKind::DirectUdp);
+        assert_eq!(candidates[2].path_score, Some(40));
+        assert_eq!(candidates[3].path_score, Some(200));
     }
 
     #[test]

@@ -153,7 +153,6 @@ impl RuntimeEventHub {
         event
     }
 
-    #[cfg(test)]
     pub(crate) fn latest_revision(&self) -> u64 {
         self.store
             .lock()
@@ -398,6 +397,21 @@ mod tests {
     fn wait_next_returns_none_after_timeout() {
         let hub = RuntimeEventHub::with_capacity(4);
         assert!(hub.wait_next(0, Duration::from_millis(1)).is_none());
+    }
+
+    #[test]
+    fn latest_revision_seeds_subscription_without_replaying_history() {
+        let hub = RuntimeEventHub::with_capacity(4);
+        hub.publish("state.changed", serde_json::json!({}));
+        hub.publish("network.changed", serde_json::json!({}));
+
+        let cursor = hub.latest_revision();
+        let read = hub.wait_read_after(cursor, Duration::from_millis(1));
+
+        assert_eq!(cursor, 2);
+        assert!(read.event.is_none());
+        assert_eq!(read.latest_revision, cursor);
+        assert!(!read.replay_gap);
     }
 
     #[test]

@@ -2,12 +2,10 @@ package service
 
 import "strings"
 
-const DefaultNetworkDNSServer = "10.0.0.53"
-
 func BuildNetworkDNSConfigView(view NetworkConfigView) NetworkDNSConfigView {
 	searchDomains := dnsSearchDomains(view.DNSZones)
 	return NetworkDNSConfigView{
-		Servers:                   []string{DefaultNetworkDNSServer},
+		Servers:                   []string{},
 		SearchDomains:             searchDomains,
 		SplitDomains:              append([]string(nil), searchDomains...),
 		FallbackToSystemResolvers: false,

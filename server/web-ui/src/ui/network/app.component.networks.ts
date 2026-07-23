@@ -98,23 +98,9 @@ export abstract class AppComponentNetworks extends AppComponentData {
     void this.loadWorkspaceDevices(workspaceId);
   }
 
-  onWorkspaceNameChanged(): void {
-    const preset = this.workspacePresets.find((item) => item.name === this.workspaceName.trim());
-    if (preset) {
-      this.workspaceCode = preset.code;
-      this.workspaceTemplateKey = preset.code;
-      return;
-    }
-    const slugValue = slug(this.workspaceName);
-    this.workspaceCode = slugValue;
-    this.workspaceTemplateKey = slugValue;
-  }
-
   openWorkspaceDialog(): void {
     this.closeInlinePopovers();
-    this.workspaceName = '默认网络';
-    this.workspaceCode = '';
-    this.workspaceTemplateKey = 'custom';
+    this.workspaceName = this.nextWorkspaceName();
     this.workspaceIntraGroupPolicy = 'allow';
     this.workspaceDefault = false;
     this.workspaceDialogMessage = '';
@@ -122,12 +108,18 @@ export abstract class AppComponentNetworks extends AppComponentData {
     this.showWorkspaceDialog = true;
   }
 
+  private nextWorkspaceName(): string {
+    const maxSequence = this.workspaces.reduce((currentMax, workspace) => {
+      const match = /^network-(\d+)$/i.exec(workspace.name.trim());
+      return match ? Math.max(currentMax, Number(match[1])) : currentMax;
+    }, 0);
+    return `network-${String(maxSequence + 1).padStart(2, '0')}`;
+  }
+
   openEditWorkspaceDialog(workspace: WorkspaceRow): void {
     this.closeInlinePopovers();
     this.selectedWorkspaceId = workspace.workspaceId;
     this.workspaceName = workspace.name;
-    this.workspaceCode = workspace.code;
-    this.workspaceTemplateKey = workspace.template;
     this.workspaceIntraGroupPolicy = workspace.intraGroupPolicy;
     this.workspaceDefault = workspace.default;
     this.workspaceDialogMessage = '';
@@ -145,8 +137,8 @@ export abstract class AppComponentNetworks extends AppComponentData {
       await this.saveWorkspaceDialog();
       return;
     }
-    const code = slug(this.workspaceCode || this.workspaceName);
-    if (this.isWorkspaceCodeDuplicated(code)) {
+    const name = this.workspaceName.trim();
+    if (this.isWorkspaceNameDuplicated(name)) {
       this.workspaceDialogMessage = '当前用户下网络名称不能重复';
       return;
     }
@@ -154,11 +146,9 @@ export abstract class AppComponentNetworks extends AppComponentData {
       await this.api.post(WEB_API.networks(), {
         ownerUserId: this.effectiveUserId,
         actorUserId: this.effectiveUserId,
-        name: this.workspaceName,
-        code,
-        templateKey: this.workspaceTemplateKey || code,
+        name,
         intraGroupPolicy: this.workspaceIntraGroupPolicy,
-        default: this.workspaceDefault,
+        default: false,
       });
       await this.loadDashboard(this.currentUserId);
       this.closeWorkspaceDialog();
@@ -173,7 +163,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
     const id = compactUuid();
     this.workspaces = [
       ...this.workspaces,
-      { networkId: id, workspaceId: id, name: this.workspaceName, code, template: this.workspaceTemplateKey || code || 'custom', intraGroupPolicy: this.workspaceIntraGroupPolicy, default: this.workspaceDefault, members: 1, devices: 0, zone: `${code}.${id}.${DEFAULT_USER_ID}.sub.staticlss.com` },
+      { networkId: id, workspaceId: id, name, intraGroupPolicy: this.workspaceIntraGroupPolicy, default: this.workspaceDefault, members: 1, devices: 0, zone: `${slug(name)}.${id}.${DEFAULT_USER_ID}.sub.staticlss.com` },
     ];
     this.closeWorkspaceDialog();
   }
@@ -183,8 +173,7 @@ export abstract class AppComponentNetworks extends AppComponentData {
     if (!workspace || !this.workspaceName.trim()) {
       return;
     }
-    const code = slug(this.workspaceCode || this.workspaceName);
-    if (this.isWorkspaceCodeDuplicated(code, workspace.workspaceId)) {
+    if (this.isWorkspaceNameDuplicated(this.workspaceName, workspace.workspaceId)) {
       this.workspaceDialogMessage = '当前用户下网络名称不能重复';
       return;
     }
@@ -193,14 +182,10 @@ export abstract class AppComponentNetworks extends AppComponentData {
       const updated = await this.api.patch<ApiWorkspace>(WEB_API.network(workspace.workspaceId, this.effectiveUserId), {
         actorUserId: this.effectiveUserId,
         name,
-        code,
-        templateKey: this.workspaceTemplateKey || code,
         intraGroupPolicy: this.workspaceIntraGroupPolicy,
         default: this.workspaceDefault,
       });
       workspace.name = updated.name;
-      workspace.code = updated.code ?? code;
-      workspace.template = updated.templateKey ?? this.workspaceTemplateKey ?? workspace.code;
       workspace.intraGroupPolicy = updated.intraGroupPolicy === 'deny' ? 'deny' : 'allow';
       workspace.default = !!updated.default;
     } catch {
@@ -210,12 +195,10 @@ export abstract class AppComponentNetworks extends AppComponentData {
         return;
       }
       workspace.name = name;
-      workspace.code = code;
-      workspace.template = this.workspaceTemplateKey || workspace.code;
       workspace.intraGroupPolicy = this.workspaceIntraGroupPolicy;
       workspace.default = this.workspaceDefault;
     }
-    workspace.zone = `${slug(workspace.code)}.${workspace.workspaceId}.${this.effectiveUserId}.sub.staticlss.com`;
+    workspace.zone = `${slug(workspace.name)}.${workspace.workspaceId}.${this.effectiveUserId}.sub.staticlss.com`;
     this.closeWorkspaceDialog();
   }
 
@@ -264,8 +247,6 @@ export abstract class AppComponentNetworks extends AppComponentData {
         name,
       });
       this.editingWorkspace.name = updated.name;
-      this.editingWorkspace.code = updated.code ?? this.editingWorkspace.code;
-      this.editingWorkspace.template = updated.templateKey ?? this.editingWorkspace.template ?? this.editingWorkspace.code;
     } catch {
       if (!this.isDemoMode) {
         this.workspaceDialogMessage = '更新网络名称失败';
@@ -273,9 +254,8 @@ export abstract class AppComponentNetworks extends AppComponentData {
         return;
       }
       this.editingWorkspace.name = name;
-      this.editingWorkspace.template = this.editingWorkspace.template || this.editingWorkspace.code;
     }
-    this.editingWorkspace.zone = `${slug(this.editingWorkspace.code)}.${this.editingWorkspace.workspaceId}.${this.effectiveUserId}.sub.staticlss.com`;
+    this.editingWorkspace.zone = `${slug(this.editingWorkspace.name)}.${this.editingWorkspace.workspaceId}.${this.effectiveUserId}.sub.staticlss.com`;
     this.closeWorkspaceTagDialogs();
   }
 
@@ -334,8 +314,9 @@ export abstract class AppComponentNetworks extends AppComponentData {
     this.notifyStateChanged();
   }
 
-  override isWorkspaceCodeDuplicated(code: string, exceptWorkspaceId = ''): boolean {
-    return this.workspaces.some((workspace) => workspace.workspaceId !== exceptWorkspaceId && workspace.code === code);
+  override isWorkspaceNameDuplicated(name: string, exceptWorkspaceId = ''): boolean {
+    const normalizedName = name.trim().toLowerCase();
+    return this.workspaces.some((workspace) => workspace.workspaceId !== exceptWorkspaceId && workspace.name.trim().toLowerCase() === normalizedName);
   }
 
   intraGroupPolicyLabel(policy: string): string {

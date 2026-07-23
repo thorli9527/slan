@@ -83,17 +83,16 @@ func buildNetworkEventSnapshotPayload(
 	for _, zone := range view.DNSZones {
 		zoneNamesByID[zone.ZoneID] = strings.TrimSpace(zone.Name)
 		dnsZones = append(dnsZones, NetworkEventDNSZoneView{
-			ZoneID:       zone.ZoneID,
-			NetworkID:    zone.NetworkID,
-			ZoneName:     zone.Name,
-			ExposeGlobal: zone.ExposeGlobal,
-			UpdatedAt:    zone.UpdatedAt,
+			ZoneID:    zone.ZoneID,
+			NetworkID: zone.NetworkID,
+			ZoneName:  zone.Name,
+			UpdatedAt: zone.UpdatedAt,
 		})
 	}
 
 	dnsRecords := make([]NetworkEventDNSRecordView, 0, len(view.DNSRecords))
 	for _, record := range view.DNSRecords {
-		port, _ := strconv.Atoi(strings.TrimSpace(record.Port))
+		port, _ := strconv.Atoi(normalizeDNSRecordPort(record.Type, record.Port))
 		dnsRecords = append(dnsRecords, NetworkEventDNSRecordView{
 			RecordID:       record.RecordID,
 			ZoneID:         record.ZoneID,

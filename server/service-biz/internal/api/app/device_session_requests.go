@@ -71,14 +71,16 @@ func (r bindDeviceSessionRequest) toInput() servicepkg.BindDeviceSessionInput {
 }
 
 type renewDeviceSessionRequest struct {
-	NetworkEnabled *bool `json:"networkEnabled"`
-	RXBytesTotal   int64 `json:"rxBytesTotal"`
-	TXBytesTotal   int64 `json:"txBytesTotal"`
-	LastSeenAt     int64 `json:"lastSeenAt"`
+	RefreshToken   string `json:"refreshToken"`
+	NetworkEnabled *bool  `json:"networkEnabled"`
+	RXBytesTotal   int64  `json:"rxBytesTotal"`
+	TXBytesTotal   int64  `json:"txBytesTotal"`
+	LastSeenAt     int64  `json:"lastSeenAt"`
 }
 
 func (r renewDeviceSessionRequest) toInput() servicepkg.RenewDeviceSessionInput {
 	return servicepkg.RenewDeviceSessionInput{
+		RefreshToken:   r.RefreshToken,
 		NetworkEnabled: r.NetworkEnabled,
 		RXBytesTotal:   r.RXBytesTotal,
 		TXBytesTotal:   r.TXBytesTotal,

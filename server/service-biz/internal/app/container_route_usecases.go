@@ -23,6 +23,7 @@ type AppRouteUseCases struct {
 	DeviceSessions      servicepkg.DeviceSessionUseCase
 	ClientMessages      servicepkg.ClientMessageUseCase
 	NetworkCore         servicepkg.NetworkCoreUseCase
+	NetworkInvite       servicepkg.NetworkInviteUseCase
 	NetworkRuntime      servicepkg.NetworkRuntimeUseCase
 }
 
@@ -77,6 +78,7 @@ func newRouteUseCases(useCases UseCases) RouteUseCases {
 			DeviceSessions:      useCases.Devices.SessionRuntime,
 			ClientMessages:      useCases.Devices.ClientMessages,
 			NetworkCore:         useCases.Network.CoreAccess,
+			NetworkInvite:       useCases.Network.InviteManagement,
 			NetworkRuntime:      useCases.Network.RuntimeControl,
 		},
 		Web: WebRouteUseCases{

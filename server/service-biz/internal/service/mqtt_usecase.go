@@ -325,6 +325,7 @@ func (s MQTTWebhookService) ReportPathHealth(ctx context.Context, input MQTTPath
 	for _, item := range items {
 		if item.DeviceID == input.DeviceID && networkMemberActive(item) {
 			updated := item
+			updated.LastPathHealthAt = currentTime(s.Now).Unix()
 			updated.ActivePath = pathType
 			updated.PathObservedAt = input.SampledAtMs
 			if updated.PathObservedAt <= 0 {
@@ -335,6 +336,8 @@ func (s MQTTWebhookService) ReportPathHealth(ctx context.Context, input MQTTPath
 			updated.DerpNodeID = input.DerpNodeID
 			updated.PeerNodeID = input.PeerNodeID
 			updated.PathScore = input.PathScore
+			updated.SignalScore = input.SignalScore
+			updated.SignalQuality = input.SignalQuality
 			updated.ObservedRttMs = input.ObservedRttMs
 			updated.PacketLossPpm = input.PacketLossPpm
 			updated.RelayMtu = input.RelayMtu
@@ -369,6 +372,7 @@ func normalizeMQTTPathHealthReportInput(input MQTTPathHealthReportInput) MQTTPat
 	input.DerpNodeID = strings.TrimSpace(input.DerpNodeID)
 	input.TicketExpiresAt = strings.TrimSpace(input.TicketExpiresAt)
 	input.LastPathChange = strings.TrimSpace(input.LastPathChange)
+	input.SignalQuality = strings.TrimSpace(strings.ToLower(input.SignalQuality))
 	if input.ObservedRttMs < 0 {
 		input.ObservedRttMs = 0
 	}
@@ -377,6 +381,16 @@ func normalizeMQTTPathHealthReportInput(input MQTTPathHealthReportInput) MQTTPat
 	}
 	if input.PathScore < 0 {
 		input.PathScore = 0
+	}
+	if input.SignalScore < 0 {
+		input.SignalScore = 0
+	} else if input.SignalScore > 100 {
+		input.SignalScore = 100
+	}
+	switch input.SignalQuality {
+	case "excellent", "good", "fair", "poor", "offline":
+	default:
+		input.SignalQuality = ""
 	}
 	if input.RelayMtu < 0 {
 		input.RelayMtu = 0

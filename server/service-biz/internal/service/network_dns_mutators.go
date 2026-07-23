@@ -4,22 +4,18 @@ import "github.com/slan/service-biz/internal/model"
 
 func newManagedDNSZone(id string, now int64, input CreateDNSZoneInput) model.DNSZone {
 	return model.DNSZone{
-		ZoneID:       id,
-		NetworkID:    input.NetworkID,
-		Name:         input.Name,
-		ExposeGlobal: input.ExposeGlobal,
-		Status:       "active",
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ZoneID:    id,
+		NetworkID: input.NetworkID,
+		Name:      input.Name,
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 }
 
 func applyUpdateDNSZoneInput(item model.DNSZone, input UpdateDNSZoneInput, now int64) model.DNSZone {
 	if input.Name != "" {
 		item.Name = input.Name
-	}
-	if input.ExposeGlobal != nil {
-		item.ExposeGlobal = *input.ExposeGlobal
 	}
 	if input.Status != "" {
 		item.Status = input.Status

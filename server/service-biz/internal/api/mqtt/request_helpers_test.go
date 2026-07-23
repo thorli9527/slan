@@ -167,6 +167,8 @@ func TestPathHealthReportRequestInput(t *testing.T) {
 				"observedRttMs":   float64(18),
 				"packetLossPpm":   float64(22),
 				"pathScore":       float64(90),
+				"signalScore":     float64(82),
+				"signalQuality":   "good",
 				"relayMtu":        float64(1280),
 				"maxFramePayload": float64(1200),
 				"ticketExpiresAt": "2026-07-03T12:00:00Z",
@@ -184,6 +186,9 @@ func TestPathHealthReportRequestInput(t *testing.T) {
 	}
 	if input.ObservedRttMs != 18 || input.PacketLossPpm != 22 || input.PathScore != 90 {
 		t.Fatalf("unexpected path stats: %#v", input)
+	}
+	if input.SignalScore != 82 || input.SignalQuality != "good" {
+		t.Fatalf("unexpected signal quality: %#v", input)
 	}
 	if input.RelayMtu != 1280 || input.MaxFramePayload != 1200 {
 		t.Fatalf("unexpected relay sizing: %#v", input)

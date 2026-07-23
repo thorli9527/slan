@@ -52,11 +52,11 @@ func (s AuthUserRegistrationService) RegisterUser(ctx context.Context, input Reg
 	if _, err := bumpNetworkConfigVersion(ctx, s.Networks, nil, s.Now, network.NetworkID, "user_default_network_created"); err != nil {
 		return AuthSessionView{}, err
 	}
-	session, err := newAuthUserSession(now, s.NewSessID, user.UserID, tokenModeShort)
+	session, err := newAuthUserSession(now, s.NewSessID, user.UserID, tokenModeShort, input.ClientType, input.DeviceID)
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	if err := s.Sessions.SaveUserSession(ctx, session); err != nil {
+	if err := s.Sessions.ReplaceUserSessionForClient(ctx, session); err != nil {
 		return AuthSessionView{}, err
 	}
 	return authSessionView(user, session), nil

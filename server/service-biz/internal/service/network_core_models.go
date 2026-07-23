@@ -5,8 +5,6 @@ type NetworkView struct {
 	OwnerID          string `json:"ownerId"`
 	Name             string `json:"name"`
 	CIDR             string `json:"cidr"`
-	Code             string `json:"code"`
-	TemplateKey      string `json:"templateKey"`
 	IntraGroupPolicy string `json:"intraGroupPolicy"`
 	Default          bool   `json:"default"`
 	Status           string `json:"status"`
@@ -16,8 +14,6 @@ type NetworkView struct {
 
 type NetworkSummaryView struct {
 	Network          NetworkView `json:"network"`
-	Code             string      `json:"code"`
-	TemplateKey      string      `json:"templateKey"`
 	IntraGroupPolicy string      `json:"intraGroupPolicy"`
 	Default          bool        `json:"default"`
 	DeviceCount      int         `json:"deviceCount"`
@@ -50,6 +46,8 @@ type NetworkRuntimePathView struct {
 	DerpNodeID      string `json:"derpNodeId"`
 	PeerNodeID      string `json:"peerNodeId"`
 	PathScore       int64  `json:"pathScore"`
+	SignalScore     int    `json:"signalScore"`
+	SignalQuality   string `json:"signalQuality"`
 	ObservedRttMs   int64  `json:"observedRttMs"`
 	PacketLossPpm   int64  `json:"packetLossPpm"`
 	RelayMtu        int    `json:"relayMtu"`

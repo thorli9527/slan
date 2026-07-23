@@ -116,20 +116,15 @@ func networkEventDNSRecords(
 	zoneNamesByID := networkEventZoneNamesByID(zones)
 	out := make([]NetworkEventDNSRecordView, 0, len(records))
 	for _, record := range records {
-		port, _ := strconv.Atoi(strings.TrimSpace(record.Port))
+		port, _ := strconv.Atoi(normalizeDNSRecordPort(record.Type, record.Port))
 		value := strings.TrimSpace(record.Value)
 		targetDeviceID := ""
-		targetIP := ""
 		cname := ""
 		switch strings.ToUpper(strings.TrimSpace(record.Type)) {
 		case "CNAME":
 			cname = value
 		case "A", "AAAA":
-			if strings.Contains(value, ".") {
-				targetIP = value
-			} else {
-				targetDeviceID = value
-			}
+			targetDeviceID = value
 		}
 		out = append(out, NetworkEventDNSRecordView{
 			RecordID:       record.RecordID,
@@ -140,7 +135,6 @@ func networkEventDNSRecords(
 			RecordType:     strings.TrimSpace(record.Type),
 			Value:          value,
 			TargetDeviceID: targetDeviceID,
-			TargetIP:       targetIP,
 			CNAME:          cname,
 			Port:           port,
 			TTL:            record.TTL,
@@ -184,11 +178,10 @@ func networkEventDNSZones(zones []model.DNSZone) []NetworkEventDNSZoneView {
 	out := make([]NetworkEventDNSZoneView, 0, len(zones))
 	for _, zone := range zones {
 		out = append(out, NetworkEventDNSZoneView{
-			ZoneID:       zone.ZoneID,
-			NetworkID:    zone.NetworkID,
-			ZoneName:     zone.Name,
-			ExposeGlobal: zone.ExposeGlobal,
-			UpdatedAt:    zone.UpdatedAt,
+			ZoneID:    zone.ZoneID,
+			NetworkID: zone.NetworkID,
+			ZoneName:  zone.Name,
+			UpdatedAt: zone.UpdatedAt,
 		})
 	}
 	return out

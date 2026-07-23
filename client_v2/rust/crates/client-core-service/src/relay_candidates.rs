@@ -135,10 +135,18 @@ pub(crate) fn select_relay_candidates(
         .collect::<Vec<_>>();
     selections.sort_by(|left, right| {
         right
-            .selected
-            .cmp(&left.selected)
-            .then_with(|| right.reachable.cmp(&left.reachable))
+            .reachable
+            .cmp(&left.reachable)
+            .then_with(|| {
+                relay_transport_rank(&left.transport).cmp(&relay_transport_rank(&right.transport))
+            })
             .then_with(|| left.path_score.cmp(&right.path_score))
+            .then_with(|| {
+                left.rtt_ms
+                    .unwrap_or(u32::MAX)
+                    .cmp(&right.rtt_ms.unwrap_or(u32::MAX))
+            })
+            .then_with(|| right.selected.cmp(&left.selected))
             .then_with(|| left.endpoint_id.cmp(&right.endpoint_id))
     });
     let has_explicit_selected = selections.iter().any(|selection| selection.selected);
@@ -150,6 +158,14 @@ pub(crate) fn select_relay_candidates(
         };
     }
     selections
+}
+
+fn relay_transport_rank(transport: &str) -> u8 {
+    match normalize_relay_transport(transport) {
+        Some("udp") => 0,
+        Some("derp_tcp_tls_443") => 1,
+        _ => 2,
+    }
 }
 
 fn filtered_relay_candidates_for_testing(
@@ -468,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn server_selected_candidate_stays_sticky_across_peer_local_probes() {
+    fn local_quality_overrides_stale_server_selected_hint() {
         let _lock = crate::test_env_lock();
         set_test_relay_transport_allowlist(None);
         let selections = select_relay_candidates(&[
@@ -498,8 +514,56 @@ mod tests {
             },
         ]);
 
-        assert_eq!(selections[0].endpoint_id, "derp-server-selected");
+        assert_eq!(selections[0].endpoint_id, "derp-locally-faster");
         assert!(selections[0].selected);
         assert!(!selections[1].selected);
+    }
+
+    #[test]
+    fn udp_relay_ports_are_ranked_by_quality_before_derp() {
+        let _lock = crate::test_env_lock();
+        set_test_relay_transport_allowlist(None);
+        let selections = select_relay_candidates(&[
+            PersistedRelayCandidate {
+                endpoint_id: "udp-slow".to_string(),
+                transport: "udp".to_string(),
+                address: "udp://127.0.0.1:1".to_string(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+                reachable_hint: true,
+                observed_rtt_ms_hint: Some(80),
+                path_score_hint: Some(110),
+                selected_hint: false,
+            },
+            PersistedRelayCandidate {
+                endpoint_id: "udp-fast".to_string(),
+                transport: "udp".to_string(),
+                address: "udp://127.0.0.1:2".to_string(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+                reachable_hint: true,
+                observed_rtt_ms_hint: Some(15),
+                path_score_hint: Some(45),
+                selected_hint: false,
+            },
+            PersistedRelayCandidate {
+                endpoint_id: "derp-fast".to_string(),
+                transport: "derp_tcp_tls_443".to_string(),
+                address: "derp://127.0.0.1:3".to_string(),
+                country_code: None,
+                region_id: None,
+                cluster_id: None,
+                reachable_hint: true,
+                observed_rtt_ms_hint: Some(5),
+                path_score_hint: Some(5),
+                selected_hint: false,
+            },
+        ]);
+
+        assert_eq!(selections[0].endpoint_id, "udp-fast");
+        assert_eq!(selections[1].endpoint_id, "udp-slow");
+        assert_eq!(selections[2].endpoint_id, "derp-fast");
     }
 }

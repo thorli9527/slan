@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{PathPolicy, PeerPathConfig, PeerPathRuntime};
 
+/// Stable host-local DNS service address intercepted by each SLAN data plane.
+/// It is never allocated to devices and never leaves the local tunnel.
+pub const SLAN_DNS_SERVICE_IP: &str = "10.0.0.53";
+
 /// 平台路由配置，描述需要写入系统路由表或 VPN 配置的目标网段。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,8 +156,6 @@ pub struct PlatformDeviceNetworkConfig {
     #[serde(default)]
     pub network_name: Option<String>,
     #[serde(default)]
-    pub network_code: Option<String>,
-    #[serde(default)]
     pub intra_group_policy: Option<String>,
     #[serde(default)]
     pub network_created_at: Option<i64>,
@@ -273,6 +275,12 @@ pub struct RelayDataPlaneConfig {
     pub local_node_id: String,
     /// 所属虚拟网络 ID。
     pub network_id: String,
+    /// Direct UDP 固定监听端口；随机模式下为 0。
+    #[serde(default = "default_direct_udp_port")]
+    pub direct_udp_port: u16,
+    /// 是否让操作系统为 Direct UDP 分配随机端口。
+    #[serde(default)]
+    pub randomize_direct_udp_port: bool,
     /// Server-managed direct and relay infrastructure nodes.
     #[serde(default)]
     pub node_configs: Vec<NodeConfig>,
@@ -287,6 +295,10 @@ pub struct RelayDataPlaneConfig {
     #[serde(default)]
     pub acl_policies: Vec<PlatformAclPolicy>,
     pub sessions: Vec<RelayPeerSession>,
+}
+
+fn default_direct_udp_port() -> u16 {
+    41642
 }
 
 /// Server-managed infrastructure node used for direct discovery or relay.
@@ -485,6 +497,8 @@ mod tests {
             relay_address: "47.245.40.231:39000".to_string(),
             local_node_id: "node-local".to_string(),
             network_id: "network-1".to_string(),
+            direct_udp_port: 41642,
+            randomize_direct_udp_port: false,
             node_configs: Vec::new(),
             path_policy: PathPolicy::default(),
             peer_paths: Vec::new(),

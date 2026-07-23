@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/slan/service-biz/internal/model"
@@ -83,6 +84,7 @@ type authDeviceLoginDependencies struct {
 	MQTT            mqttkit.Config
 	DevicePublisher DeviceControlPublisher
 	EventPublisher  NetworkEventPublisher
+	NewSessID       func(string) string
 	Now             func() time.Time
 }
 
@@ -150,6 +152,7 @@ func NewAuthDeviceLoginService(
 	mqtt mqttkit.Config,
 	devicePublisher DeviceControlPublisher,
 	eventPublisher NetworkEventPublisher,
+	newSessionID func(string) string,
 	now func() time.Time,
 ) AuthDeviceLoginService {
 	deps := authDeviceLoginDependencies{
@@ -160,6 +163,7 @@ func NewAuthDeviceLoginService(
 		MQTT:            mqtt,
 		DevicePublisher: devicePublisher,
 		EventPublisher:  eventPublisher,
+		NewSessID:       newSessionID,
 		Now:             now,
 	}
 	return AuthDeviceLoginService{
@@ -242,7 +246,7 @@ func newAuthDeviceID(devices repository.DeviceRepository) string {
 	})
 }
 
-func newAuthUserSession(now time.Time, next func(string) string, userID string, sessionMode string) (model.UserSession, error) {
+func newAuthUserSession(now time.Time, next func(string) string, userID string, sessionMode string, clientType string, deviceID string) (model.UserSession, error) {
 	access, err := randomHex(24)
 	if err != nil {
 		return model.UserSession{}, err
@@ -258,6 +262,8 @@ func newAuthUserSession(now time.Time, next func(string) string, userID string, 
 		RefreshToken:  refresh,
 		Status:        tokenStatusActive,
 		SessionMode:   normalizedSessionMode(sessionMode),
+		ClientType:    normalizedUserSessionClient(clientType),
+		DeviceID:      strings.TrimSpace(deviceID),
 		ExpiresAt:     now.Add(defaultUserAccessTTL).Unix(),
 		RefreshExpiry: now.Add(userRefreshTTL(sessionMode)).Unix(),
 		CreatedAt:     now.Unix(),

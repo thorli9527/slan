@@ -435,7 +435,15 @@ pub(crate) fn prepare_session_device_registered(
     }
     let user_token_renewed = renew_user_session_if_needed(&client, &mut session)?;
     let (relay_candidates, network_configs) =
-        prepare_bound_device_session(&client, &mut session, user_token_renewed)?;
+        match prepare_bound_device_session(&client, &mut session, user_token_renewed) {
+            Ok(prepared) => prepared,
+            Err(error) if session_auth_invalid_error(&error) => {
+                clear_bound_device_session(&mut session);
+                prepare_bound_device_session(&client, &mut session, false)
+                    .context("rebind device session after renewal rejection")?
+            }
+            Err(error) => return Err(error),
+        };
     projection.relay_candidates = relay_candidates;
     projection.network_configs = network_configs;
     backfill_desktop_session_mqtt(&client, &mut session);
@@ -546,6 +554,13 @@ fn prepare_bound_device_session(
         return prepare_bound_device_session_response(client, session, true);
     }
     Ok((session.relay_candidates.clone(), Vec::new()))
+}
+
+fn clear_bound_device_session(session: &mut PersistedSession) {
+    session.device_token_expires_at = None;
+    session.device_session_id = None;
+    session.device_token = None;
+    session.device_refresh_token = None;
 }
 
 fn prepare_bound_device_session_response(
@@ -1309,9 +1324,7 @@ pub(crate) fn revoke_remote_sessions(session: &PersistedSession) {
         return;
     }
     let client = ControlPlaneClient::from_env();
-    if let Err(error) =
-        client.logout_sessions(&session.access_token, session.device_token.as_deref())
-    {
+    if let Err(error) = client.logout_sessions(&session.access_token) {
         eprintln!("client-core-service remote logout skipped: {error:#}");
     }
 }
@@ -1321,6 +1334,36 @@ pub(crate) fn remove_session() -> Result<()> {
     let device_id = local_stable_device_id().context("load device id for client config")?;
     crate::client_config::remove_secret(&device_id, crate::client_config::KEY_SESSION)?;
     Ok(())
+}
+
+pub(crate) fn remove_user_session_preserving_device() -> Result<()> {
+    let mut session = match load_session() {
+        Ok(session) => session,
+        Err(error) if session_not_found_error(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let Some(device_token) = session
+        .device_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return remove_session();
+    };
+    let now_ms = current_timestamp_ms();
+    session.access_token = device_token;
+    session.refresh_token = None;
+    session.user_id.clear();
+    session.user_label = "device-session".to_string();
+    session.session_kind = "device".to_string();
+    session.expires_in = session
+        .device_token_expires_at
+        .map(|expires_at| expires_at.saturating_sub((now_ms / 1_000) as i64).max(0) as u64);
+    session.authenticated_at_ms = now_ms;
+    session.active_network_id = None;
+    session.virtual_ip = None;
+    persist_session(&session)
 }
 
 pub(crate) fn session_not_found_error(error: &anyhow::Error) -> bool {

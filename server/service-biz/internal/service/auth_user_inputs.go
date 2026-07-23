@@ -1,15 +1,19 @@
 package service
 
 type RegisterUserInput struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	Name       string `json:"name"`
+	ClientType string `json:"-"`
+	DeviceID   string `json:"deviceId"`
 }
 
 type LoginUserInput struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	SessionMode string `json:"sessionMode"`
+	ClientType  string `json:"-"`
+	DeviceID    string `json:"deviceId"`
 }
 
 type ChangeUserPasswordInput struct {

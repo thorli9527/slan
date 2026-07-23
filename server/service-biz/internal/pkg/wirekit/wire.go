@@ -1,8 +1,6 @@
 package wirekit
 
 import (
-	"fmt"
-	"hash/fnv"
 	"net"
 	"strconv"
 	"strings"
@@ -10,18 +8,18 @@ import (
 )
 
 type NodeView struct {
-	RegionID    string `json:"regionId"`
-	NodeID      string `json:"nodeId"`
-	Name        string `json:"name,omitempty"`
-	Host        string `json:"host"`
-	UDPPort     int    `json:"udpPort,omitempty"`
-	AdminPort   int    `json:"adminPort,omitempty"`
-	Port        int    `json:"port,omitempty"`
-	Enabled     bool   `json:"enabled"`
-	Healthy     bool   `json:"healthy"`
-	Stale       bool   `json:"stale"`
-	Priority    int    `json:"priority"`
-	UpdatedAtMS int64  `json:"updatedAtMs"`
+	RegionID          string           `json:"regionId"`
+	NodeID            string           `json:"nodeId"`
+	Name              string           `json:"name,omitempty"`
+	Host              string           `json:"host"`
+	UDPPort           int              `json:"udpPort,omitempty"`
+	AdminPort         int              `json:"adminPort,omitempty"`
+	Port              int              `json:"port,omitempty"`
+	Enabled           bool             `json:"enabled"`
+	Healthy           bool             `json:"healthy"`
+	Stale             bool             `json:"stale"`
+	Priority          int              `json:"priority"`
+	UpdatedAtMS       int64            `json:"updatedAtMs"`
 	TicketKeyRotation *TicketKeyStatus `json:"ticketKeyRotation,omitempty"`
 }
 
@@ -121,35 +119,6 @@ func ParsePeerID(peerID string) (string, string) {
 
 func NodeID(deviceID string) string {
 	return "node-" + strings.TrimSpace(deviceID)
-}
-
-func DeviceVirtualIP(deviceID string) string {
-	hash := fnv.New32a()
-	_, _ = hash.Write([]byte(strings.TrimSpace(deviceID)))
-	value := hash.Sum32()
-
-	second := 64 + int((value>>16)%64)
-	third := int((value >> 8) & 0xff)
-	fourth := int(value & 0xff)
-	if third == 0 {
-		third = 1
-	}
-	if fourth == 0 || fourth == 255 {
-		fourth = 2 + (fourth % 252)
-	}
-	return fmt.Sprintf("100.%d.%d.%d", second, third, fourth)
-}
-
-func DeviceAllowedIP(deviceID string) string {
-	return DeviceVirtualIP(deviceID) + "/32"
-}
-
-func VirtualIP(_ string, deviceID string) string {
-	return DeviceVirtualIP(deviceID)
-}
-
-func AllowedIP(_ string, deviceID string) string {
-	return DeviceAllowedIP(deviceID)
 }
 
 func HostPort(host string, port int) string {

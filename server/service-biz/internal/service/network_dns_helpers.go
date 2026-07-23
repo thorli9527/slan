@@ -2,10 +2,39 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/slan/service-biz/internal/model"
 	"github.com/slan/service-biz/internal/repository"
 )
+
+func validateManagedDNSRecordTarget(
+	ctx context.Context,
+	networks repository.NetworkRepository,
+	networkID string,
+	recordType string,
+	value string,
+) error {
+	switch strings.ToUpper(strings.TrimSpace(recordType)) {
+	case "A", "AAAA":
+		deviceID := strings.TrimSpace(value)
+		if deviceID == "" {
+			return invalidArgumentError("DNS address record target device is required")
+		}
+		member, ok, err := networks.GetNetworkDevice(ctx, strings.TrimSpace(networkID), deviceID)
+		if err != nil {
+			return err
+		}
+		if !ok || !networkMemberActive(member) {
+			return invalidArgumentError("DNS address record target must be an active device in the current network")
+		}
+	case "CNAME":
+		if strings.TrimSpace(value) == "" {
+			return invalidArgumentError("DNS CNAME target is required")
+		}
+	}
+	return nil
+}
 
 func requireManagedDNSZone(ctx context.Context, networks repository.NetworkRepository, zoneID string) (model.DNSZone, error) {
 	item, ok, err := networks.GetDNSZone(ctx, zoneID)

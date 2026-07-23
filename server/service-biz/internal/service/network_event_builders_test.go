@@ -99,6 +99,7 @@ func TestNetworkEventDNSRecordsBuildsFullFQDN(t *testing.T) {
 				Name:      "self",
 				Type:      "A",
 				Value:     "device-1",
+				Port:      "443",
 				TTL:       60,
 			},
 		},
@@ -122,6 +123,9 @@ func TestNetworkEventDNSRecordsBuildsFullFQDN(t *testing.T) {
 	}
 	if records[0].Value != "device-1" {
 		t.Fatalf("expected raw value, got %q", records[0].Value)
+	}
+	if records[0].Port != 0 {
+		t.Fatalf("expected A record port to be omitted, got %d", records[0].Port)
 	}
 }
 
@@ -211,8 +215,8 @@ func TestBuildNetworkEventSnapshotPayloadBuildsFullFQDN(t *testing.T) {
 	if payload.DNSRecords[0].FQDN != "self.example.lan" {
 		t.Fatalf("expected full fqdn, got %q", payload.DNSRecords[0].FQDN)
 	}
-	if len(payload.DNSConfig.Servers) != 1 || payload.DNSConfig.Servers[0] != DefaultNetworkDNSServer {
-		t.Fatalf("expected dns config default server, got %+v", payload.DNSConfig.Servers)
+	if len(payload.DNSConfig.Servers) != 0 {
+		t.Fatalf("expected client-owned dns service address, got %+v", payload.DNSConfig.Servers)
 	}
 	if len(payload.DNSConfig.SearchDomains) != 1 || payload.DNSConfig.SearchDomains[0] != "example.lan" {
 		t.Fatalf("expected dns search domain, got %+v", payload.DNSConfig.SearchDomains)

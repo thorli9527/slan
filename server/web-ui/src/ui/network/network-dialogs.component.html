@@ -6,7 +6,6 @@
     </header>
     <div class="form">
       <label><span>域名</span><input [(ngModel)]="vm.zoneName" /></label>
-      <label><span>公网暴露</span><input type="checkbox" [(ngModel)]="vm.zoneExpose" /></label>
       <p class="form-error" *ngIf="vm.zoneDialogMessage">{{ vm.zoneDialogMessage }}</p>
     </div>
     <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeZoneDialog()">取消</button><button class="primary" type="button" (click)="vm.saveZoneDialog()">{{ vm.zoneDialogMode === 'create' ? '创建' : '保存' }}</button></footer>
@@ -22,12 +21,9 @@
     <div class="form">
       <label><span>主机名</span><input [(ngModel)]="vm.recordName" /></label>
       <label><span>解析类型</span><select [(ngModel)]="vm.recordType" (ngModelChange)="vm.syncRecordType()"><option value="A">A</option><option value="CNAME">CNAME</option></select></label>
-      <label><span>目标类型</span><select [(ngModel)]="vm.recordTargetType" (ngModelChange)="vm.syncRecordValue()"><option value="device" *ngIf="vm.recordType !== 'CNAME'">设备</option><option value="ip" *ngIf="vm.recordType !== 'CNAME'">IP</option><option value="cname">CNAME</option></select></label>
       <div class="record-value-row">
-        <label *ngIf="vm.recordTargetType === 'device'"><span>值</span><select [(ngModel)]="vm.recordDeviceId" (ngModelChange)="vm.syncRecordValue()"><option *ngFor="let device of vm.recordDeviceOptions" [value]="device.deviceId">{{ vm.userLabel(device.owner) }} / {{ device.alias }} / {{ device.deviceId }}</option></select></label>
-        <label *ngIf="vm.recordTargetType === 'ip'"><span>目标 IP</span><input [(ngModel)]="vm.recordTargetIp" (ngModelChange)="vm.syncRecordValue()" placeholder="10.0.0.10" /></label>
-        <label *ngIf="vm.recordTargetType === 'cname'"><span>目标 CNAME</span><input [(ngModel)]="vm.recordCname" (ngModelChange)="vm.syncRecordValue()" placeholder="upstream.internal" /></label>
-        <label *ngIf="vm.recordTargetType === 'device'"><span>端口</span><input [(ngModel)]="vm.recordPort" (ngModelChange)="vm.syncRecordValue()" /></label>
+        <label *ngIf="vm.recordType === 'A'"><span>目标设备</span><select [(ngModel)]="vm.recordDeviceId" (ngModelChange)="vm.syncRecordValue()"><option *ngFor="let device of vm.recordDeviceOptions" [value]="device.deviceId">{{ device.alias || device.deviceId }}</option></select></label>
+        <label *ngIf="vm.recordType === 'CNAME'"><span>目标 CNAME</span><input [(ngModel)]="vm.recordCname" (ngModelChange)="vm.syncRecordValue()" placeholder="upstream.internal" /></label>
       </div>
       <p class="form-error" *ngIf="vm.recordDialogMessage">{{ vm.recordDialogMessage }}</p>
     </div>
@@ -104,13 +100,10 @@
     <div class="form">
       <label>
         <span>网络名称</span>
-        <input [(ngModel)]="vm.workspaceName" list="workspace-name-options" (input)="vm.onWorkspaceNameChanged()" />
-        <datalist id="workspace-name-options"><option *ngFor="let preset of vm.workspacePresets" [value]="preset.name"></option></datalist>
+        <input [(ngModel)]="vm.workspaceName" />
       </label>
-      <label><span>网络编码</span><input [(ngModel)]="vm.workspaceCode" /></label>
-      <label><span>模板键</span><input [(ngModel)]="vm.workspaceTemplateKey" /></label>
       <label><span>组内连通策略</span><select [(ngModel)]="vm.workspaceIntraGroupPolicy"><option value="allow">组内互通</option><option value="deny">组内隔离</option></select></label>
-      <label><span>默认网络</span><input type="checkbox" [(ngModel)]="vm.workspaceDefault" /></label>
+      <label *ngIf="vm.workspaceDialogMode === 'edit'"><span>默认网络</span><input type="checkbox" [(ngModel)]="vm.workspaceDefault" /></label>
       <p class="form-error" *ngIf="vm.workspaceDialogMessage">{{ vm.workspaceDialogMessage }}</p>
     </div>
     <footer class="modal-footer"><button class="ghost" type="button" (click)="vm.closeWorkspaceDialog()">取消</button><button class="primary" type="button" (click)="vm.addWorkspace()">{{ vm.workspaceDialogMode === 'create' ? '创建网络' : '保存修改' }}</button></footer>

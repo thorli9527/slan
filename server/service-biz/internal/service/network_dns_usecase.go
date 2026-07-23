@@ -103,6 +103,9 @@ func (s NetworkDNSService) AddDNSRecord(ctx context.Context, input CreateDNSReco
 	if _, err := requireOwnedManagedNetwork(ctx, s.Users, s.Networks, input.ActorUserID, input.NetworkID); err != nil {
 		return DNSRecordView{}, err
 	}
+	if err := validateManagedDNSRecordTarget(ctx, s.Networks, input.NetworkID, input.Type, input.Value); err != nil {
+		return DNSRecordView{}, err
+	}
 	now := networkNow(s.Now).Unix()
 	item := newManagedDNSRecord(newManagedDNSRecordID(s.Networks, s.NewDNSRecordID), now, input)
 	if err := s.Networks.SaveDNSRecord(ctx, item); err != nil {
@@ -131,6 +134,9 @@ func (s NetworkDNSService) UpdateDNSRecord(ctx context.Context, input UpdateDNSR
 		return DNSRecordView{}, err
 	}
 	item = applyUpdateDNSRecordInput(item, input, networkNow(s.Now).Unix())
+	if err := validateManagedDNSRecordTarget(ctx, s.Networks, item.NetworkID, item.Type, item.Value); err != nil {
+		return DNSRecordView{}, err
+	}
 	if err := s.Networks.SaveDNSRecord(ctx, item); err != nil {
 		return DNSRecordView{}, err
 	}

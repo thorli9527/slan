@@ -122,7 +122,7 @@ func buildNetworkConfigView(
 	if _, ipnet, err := net.ParseCIDR(network.CIDR); err == nil && ipnet != nil {
 		prefixLen, _ = ipnet.Mask.Size()
 	}
-	deviceGroupsByDevice, err := buildNetworkConfigDeviceGroupsByDevice(ctx, devices, device.OwnerID, deviceIDs)
+	deviceGroupsByDevice, err := buildNetworkConfigDeviceGroupsByDevice(ctx, devices, network.OwnerID, deviceIDs)
 	if err != nil {
 		return NetworkConfigView{}, err
 	}

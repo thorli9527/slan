@@ -57,7 +57,6 @@ func networkResolvedConfigPayload(resolved servicepkg.NetworkResolvedConfigView)
 	return map[string]any{
 		"networkId":           view.Network.NetworkID,
 		"networkName":         view.Network.Name,
-		"networkCode":         appNetworkCode(view.Network),
 		"intraGroupPolicy":    firstNonEmpty(view.Network.IntraGroupPolicy, "allow"),
 		"networkCreatedAt":    view.Network.CreatedAt,
 		"configVersion":       view.ConfigVersion,
@@ -303,6 +302,8 @@ func runtimePathPayload(view servicepkg.NetworkRuntimePathView) any {
 		"derpNodeId":      view.DerpNodeID,
 		"peerNodeId":      view.PeerNodeID,
 		"pathScore":       view.PathScore,
+		"signalScore":     view.SignalScore,
+		"signalQuality":   view.SignalQuality,
 		"rttMs":           view.ObservedRttMs,
 		"observedRttMs":   view.ObservedRttMs,
 		"packetLossPpm":   view.PacketLossPpm,
@@ -542,10 +543,9 @@ func dnsZonePayloads(items []servicepkg.DNSZoneView) []map[string]any {
 	payloads := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		payloads = append(payloads, map[string]any{
-			"zoneId":       item.ZoneID,
-			"networkId":    item.NetworkID,
-			"zoneName":     item.Name,
-			"exposeGlobal": item.ExposeGlobal,
+			"zoneId":    item.ZoneID,
+			"networkId": item.NetworkID,
+			"zoneName":  item.Name,
 		})
 	}
 	return payloads
@@ -590,22 +590,6 @@ func buildZoneNamesByID(items []servicepkg.DNSZoneView) map[string]string {
 		result[item.ZoneID] = item.Name
 	}
 	return result
-}
-
-func appNetworkCode(item servicepkg.NetworkView) string {
-	code := strings.TrimSpace(item.Code)
-	if code != "" {
-		return code
-	}
-	code = strings.TrimSpace(item.CIDR)
-	if code != "" {
-		return code
-	}
-	code = strings.TrimSpace(item.NetworkID)
-	if len(code) > 8 {
-		code = code[:8]
-	}
-	return code
 }
 
 func firstNonEmpty(values ...string) string {

@@ -32,6 +32,9 @@ void main() {
     expect(find.text('SLAN Client'), findsNothing);
     expect(find.text('signedIn'), findsNothing);
     expect(find.byKey(const Key('network-switch')), findsOneWidget);
+    expect(find.text('用户'), findsOneWidget);
+    expect(find.text('当前用户邮箱'), findsNothing);
+    expect(find.text('tester@example.com'), findsOneWidget);
   });
 
   testWidgets('desktop network control omits enabled status label',
@@ -55,6 +58,123 @@ void main() {
       expect(find.byKey(const Key('network-switch')), findsOneWidget);
       expect(find.text('网络已启用'), findsNothing);
       expect(find.text('网络未启用'), findsNothing);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('desktop shows network docking below user and before ip',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final bridge = _UiTestBridge(
+        initialState: const ClientViewState(
+          signedIn: true,
+          userLabel: 'tester@example.com',
+          virtualIp: '10.0.0.8',
+          networkEnabled: true,
+          syncing: false,
+          switchEnabled: true,
+          signalScore: 91,
+          signalQuality: 'excellent',
+          signalPath: 'direct_udp',
+        ),
+        activationDelay: Duration.zero,
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+
+      expect(find.text('优秀 · 91 分 · UDP 直联'), findsNothing);
+      expect(
+          find.byKey(const Key('client-signal-quality-value')), findsNothing);
+      expect(find.byKey(const Key('network-docking-actions')), findsOneWidget);
+      expect(find.byKey(const Key('network-docking-avatar')), findsOneWidget);
+      final userY = tester.getTopLeft(find.text('tester@example.com')).dy;
+      final dockingY = tester
+          .getTopLeft(find.byKey(const Key('network-docking-actions')))
+          .dy;
+      final ipY =
+          tester.getTopLeft(find.byKey(const Key('network-ip-value'))).dy;
+      expect(dockingY, greaterThan(userY));
+      expect(dockingY, lessThan(ipY));
+      final userX = tester.getTopLeft(find.text('用户')).dx;
+      final dockingX = tester.getTopLeft(find.text('网络对接')).dx;
+      expect(dockingX, closeTo(userX, 2));
+      expect(find.byKey(const Key('generate-network-invite')), findsNothing);
+      expect(find.text('生成接入码'), findsNothing);
+      expect(find.byKey(const Key('accept-network-invite')), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('network invite dialog validates and submits trimmed code',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final bridge = _UiTestBridge(
+        initialState: const ClientViewState(
+          signedIn: true,
+          userLabel: 'tester@example.com',
+          networkEnabled: true,
+          syncing: false,
+          switchEnabled: true,
+        ),
+        activationDelay: Duration.zero,
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('accept-network-invite')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('network-invite-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('network-invite-submit')));
+      await tester.pump();
+      expect(find.text('请输入接入码'), findsWidgets);
+      expect(bridge.acceptedInviteCodes, isEmpty);
+
+      await tester.enterText(
+          find.byKey(const Key('network-invite-code-input')), '  JOIN-123  ');
+      await tester.tap(find.byKey(const Key('network-invite-submit')));
+      await tester.pumpAndSettle();
+
+      expect(bridge.acceptedInviteCodes, ['JOIN-123']);
+      expect(find.byKey(const Key('network-invite-dialog')), findsNothing);
+      expect(find.text('网络接入已确认'), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('network invite dialog keeps errors inline', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final bridge = _UiTestBridge(
+        initialState: const ClientViewState(
+          signedIn: true,
+          userLabel: 'tester@example.com',
+          networkEnabled: true,
+          syncing: false,
+          switchEnabled: true,
+        ),
+        activationDelay: Duration.zero,
+        inviteError: '接入码已失效',
+      );
+
+      await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('accept-network-invite')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const Key('network-invite-code-input')), 'EXPIRED');
+      await tester.tap(find.byKey(const Key('network-invite-submit')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('network-invite-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('network-invite-error')), findsOneWidget);
+      expect(find.text('接入失败：接入码已失效'), findsOneWidget);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
@@ -132,6 +252,39 @@ void main() {
     expect(_networkSwitch(tester).onChanged, isNotNull);
     expect(find.byKey(const Key('network-ip-value')), findsOneWidget);
     expect(find.text('10.0.0.10'), findsOneWidget);
+  });
+
+  testWidgets('switch blocks repeated taps before bridge state update',
+      (tester) async {
+    final bridge = _UiTestBridge(
+      initialState: const ClientViewState(
+        signedIn: true,
+        userLabel: 'tester@example.com',
+        networkEnabled: false,
+        syncing: false,
+        switchEnabled: true,
+      ),
+      dispatchStartDelay: const Duration(milliseconds: 100),
+      activationDelay: const Duration(milliseconds: 100),
+      assignedIp: '10.0.0.10',
+    );
+
+    await tester.pumpWidget(SlanClientV2App(bridge: bridge));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('network-switch')));
+    await tester.tap(find.byKey(const Key('network-switch')));
+    expect(bridge.networkCommandCount, 1);
+
+    await tester.pump();
+    expect(_networkSwitch(tester).value, isTrue);
+    expect(_networkSwitch(tester).onChanged, isNull);
+
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(bridge.networkCommandCount, 1);
+    expect(_networkSwitch(tester).value, isTrue);
+    expect(_networkSwitch(tester).onChanged, isNotNull);
   });
 
   testWidgets('switch reverts and ip stays disabled when activation fails',
@@ -348,7 +501,7 @@ void main() {
     expect(bridge.androidPrepareCount, greaterThanOrEqualTo(2));
   });
 
-  testWidgets('signed in panel shows current device id', (tester) async {
+  testWidgets('signed in panel omits current device id', (tester) async {
     final bridge = _UiTestBridge(
       initialState: const ClientViewState(
         signedIn: true,
@@ -365,8 +518,8 @@ void main() {
     await tester.pumpWidget(SlanClientV2App(bridge: bridge));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('client-device-id-value')), findsOneWidget);
-    expect(find.text('device-current'), findsOneWidget);
+    expect(find.byKey(const Key('client-device-id-value')), findsNothing);
+    expect(find.text('device-current'), findsNothing);
   });
 }
 
@@ -383,6 +536,8 @@ class _UiTestBridge implements ClientCoreBridge {
     this.assignedIp,
     this.activationError,
     this.disableError,
+    this.inviteError,
+    this.dispatchStartDelay = Duration.zero,
   })  : _state = ValueNotifier<ClientViewState>(initialState),
         _androidNetworkAuthorization =
             ValueNotifier<AndroidNetworkAuthorizationState>(
@@ -396,9 +551,13 @@ class _UiTestBridge implements ClientCoreBridge {
   final String? assignedIp;
   final String? activationError;
   final String? disableError;
+  final String? inviteError;
+  final Duration dispatchStartDelay;
   ClientCommandType? lastCommand;
   Map<String, Object?>? lastPayload;
   int androidPrepareCount = 0;
+  int networkCommandCount = 0;
+  final List<String> acceptedInviteCodes = [];
   String serverUrl = 'http://127.0.0.1:28080';
 
   @override
@@ -429,7 +588,20 @@ class _UiTestBridge implements ClientCoreBridge {
   }
 
   @override
+  Future<void> acceptNetworkInvite(String inviteCode) async {
+    acceptedInviteCodes.add(inviteCode);
+    if (inviteError != null) throw Exception(inviteError);
+  }
+
+  @override
   Future<void> dispatch(ClientCommand command) async {
+    if (command.type == ClientCommandType.enableNetwork ||
+        command.type == ClientCommandType.disableNetwork) {
+      networkCommandCount += 1;
+      if (dispatchStartDelay > Duration.zero) {
+        await Future<void>.delayed(dispatchStartDelay);
+      }
+    }
     lastCommand = command.type;
     lastPayload = command.payload;
     if (command.type == ClientCommandType.enableNetwork) {

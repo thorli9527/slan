@@ -48,6 +48,15 @@ pub struct ClientViewState {
     /// 流量统计更新时间，Unix 毫秒。
     #[serde(default)]
     pub traffic_updated_at_ms: Option<u64>,
+    /// 当前数据面综合信号分数（0-100）。
+    #[serde(default)]
+    pub signal_score: Option<u8>,
+    /// 当前数据面信号等级：excellent/good/fair/poor/offline。
+    #[serde(default)]
+    pub signal_quality: Option<String>,
+    /// 当前优选路径类型。
+    #[serde(default)]
+    pub signal_path: Option<String>,
 }
 
 impl Default for ClientViewState {
@@ -71,6 +80,9 @@ impl Default for ClientViewState {
             traffic_tx_bytes_per_minute: None,
             traffic_rx_bytes_per_minute: None,
             traffic_updated_at_ms: None,
+            signal_score: None,
+            signal_quality: Some("offline".to_string()),
+            signal_path: None,
         }
     }
 }

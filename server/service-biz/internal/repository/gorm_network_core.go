@@ -58,7 +58,7 @@ func (s *GormStore) ListNetworksByDevice(ctx context.Context, deviceID string) (
 
 func (s *GormStore) SaveNetwork(_ context.Context, network model.Network) error {
 	row := networkRecordFromModel(network)
-	return upsertByColumns(s.db, &row, []string{"network_id"}, []string{"owner_id", "name", "cidr", "code", "template_key", "intra_group_policy", "default", "status", "created_at", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"network_id"}, []string{"owner_id", "name", "cidr", "intra_group_policy", "default", "status", "created_at", "updated_at"})
 }
 
 func (s *GormStore) SaveNetworkVersion(_ context.Context, item model.NetworkConfigVersion) error {

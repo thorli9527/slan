@@ -80,33 +80,37 @@ func (r gormDeviceUserRelationRecord) model() model.DeviceUserRelation {
 
 func deviceSessionRecordFromModel(item model.DeviceSession) gormDeviceSessionRecord {
 	return gormDeviceSessionRecord{
-		SessionID:     item.SessionID,
-		DeviceID:      item.DeviceID,
-		AccessToken:   item.AccessToken,
-		RefreshToken:  item.RefreshToken,
-		Status:        item.Status,
-		SessionMode:   item.SessionMode,
-		ExpiresAt:     item.ExpiresAt,
-		RefreshExpiry: item.RefreshExpiry,
-		CreatedAt:     item.CreatedAt,
-		UpdatedAt:     item.UpdatedAt,
-		RevokedAt:     item.RevokedAt,
+		SessionID:                  item.SessionID,
+		DeviceID:                   item.DeviceID,
+		AccessToken:                item.AccessToken,
+		RefreshToken:               item.RefreshToken,
+		Status:                     item.Status,
+		SessionMode:                item.SessionMode,
+		PreviousRefreshTokenHash:   item.PreviousRefreshTokenHash,
+		RefreshRotationGraceExpiry: item.RefreshRotationGraceExpiry,
+		ExpiresAt:                  item.ExpiresAt,
+		RefreshExpiry:              item.RefreshExpiry,
+		CreatedAt:                  item.CreatedAt,
+		UpdatedAt:                  item.UpdatedAt,
+		RevokedAt:                  item.RevokedAt,
 	}
 }
 
 func (r gormDeviceSessionRecord) model() model.DeviceSession {
 	return model.DeviceSession{
-		SessionID:     r.SessionID,
-		DeviceID:      r.DeviceID,
-		AccessToken:   r.AccessToken,
-		RefreshToken:  r.RefreshToken,
-		Status:        r.Status,
-		SessionMode:   r.SessionMode,
-		ExpiresAt:     r.ExpiresAt,
-		RefreshExpiry: r.RefreshExpiry,
-		CreatedAt:     r.CreatedAt,
-		UpdatedAt:     r.UpdatedAt,
-		RevokedAt:     r.RevokedAt,
+		SessionID:                  r.SessionID,
+		DeviceID:                   r.DeviceID,
+		AccessToken:                r.AccessToken,
+		RefreshToken:               r.RefreshToken,
+		Status:                     r.Status,
+		SessionMode:                r.SessionMode,
+		PreviousRefreshTokenHash:   r.PreviousRefreshTokenHash,
+		RefreshRotationGraceExpiry: r.RefreshRotationGraceExpiry,
+		ExpiresAt:                  r.ExpiresAt,
+		RefreshExpiry:              r.RefreshExpiry,
+		CreatedAt:                  r.CreatedAt,
+		UpdatedAt:                  r.UpdatedAt,
+		RevokedAt:                  r.RevokedAt,
 	}
 }
 

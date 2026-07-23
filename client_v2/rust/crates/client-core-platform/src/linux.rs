@@ -30,10 +30,10 @@ use client_core::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
     },
-    NetworkRuntimeState, NodeConfig, PathCandidate, PathKind, PathState, PeerPathRuntime,
-    PlatformAclPeer, PlatformAclPolicy, PlatformDiagnosticCheck, PlatformNetwork,
-    PlatformNetworkDiagnostics, PlatformResolverConfig, RelayDataPlaneConfig, RelayPeerSession,
-    RouteSpec,
+    resolver_response_for_query, NetworkRuntimeState, NodeConfig, PathCandidate, PathKind,
+    PathState, PeerPathRuntime, PlatformAclPeer, PlatformAclPolicy, PlatformDiagnosticCheck,
+    PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig, PlatformResolverRecord,
+    RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
 };
 use serde::Serialize;
 
@@ -69,6 +69,7 @@ struct LinuxRuntime {
     resolver_servers: Vec<String>,
     resolver_search_domains: Vec<String>,
     resolver_split_domains: Vec<String>,
+    resolver_records: Vec<PlatformResolverRecord>,
     routes: Vec<RouteSpec>,
     relay_config: Option<RelayDataPlaneConfig>,
     tun: Option<TunRuntime>,
@@ -332,10 +333,40 @@ impl PlatformNetwork for LinuxPlatformNetwork {
                 "resolvectl",
                 &[
                     "default-route".to_string(),
-                    interface_name,
+                    interface_name.clone(),
                     "false".to_string(),
                 ],
             );
+        }
+        for server in &runtime.resolver_servers {
+            if server
+                .parse::<Ipv4Addr>()
+                .is_ok_and(|address| !address.is_loopback())
+            {
+                run_ip(&[
+                    "route",
+                    "replace",
+                    &format!("{server}/32"),
+                    "dev",
+                    &interface_name,
+                ])?;
+            }
+        }
+        Ok(())
+    }
+
+    fn configure_resolver_map(
+        &self,
+        _resolver_zones: &[client_core::PlatformResolverZone],
+        resolver_records: &[PlatformResolverRecord],
+    ) -> Result<()> {
+        let mut runtime = runtime().lock().expect("linux runtime mutex poisoned");
+        let changed = runtime.resolver_records != resolver_records;
+        runtime.resolver_records = resolver_records.to_vec();
+        let mock_enabled = runtime.mock_enabled;
+        drop(runtime);
+        if changed && !mock_enabled && command_available("resolvectl") {
+            let _ = run_command("resolvectl", &["flush-caches".to_string()]);
         }
         Ok(())
     }
@@ -451,6 +482,7 @@ impl PlatformNetwork for LinuxPlatformNetwork {
     fn disable_network(&self) -> Result<()> {
         let mut runtime = runtime().lock().expect("linux runtime mutex poisoned");
         runtime.tun = None;
+        let resolver_servers = runtime.resolver_servers.clone();
         if !runtime.mock_enabled {
             let interface_name = runtime.interface_name().to_string();
             for route in runtime
@@ -467,6 +499,21 @@ impl PlatformNetwork for LinuxPlatformNetwork {
                     "resolvectl",
                     &["revert".to_string(), interface_name.clone()],
                 );
+                let _ = run_command("resolvectl", &["flush-caches".to_string()]);
+            }
+            for server in resolver_servers {
+                if server
+                    .parse::<Ipv4Addr>()
+                    .is_ok_and(|address| !address.is_loopback())
+                {
+                    let _ = run_ip(&[
+                        "route",
+                        "del",
+                        &format!("{server}/32"),
+                        "dev",
+                        &interface_name,
+                    ]);
+                }
             }
             let _ = run_ip(&["addr", "flush", "dev", &interface_name]);
             let _ = run_ip(&["link", "set", "dev", &interface_name, "down"]);
@@ -475,6 +522,10 @@ impl PlatformNetwork for LinuxPlatformNetwork {
         runtime.virtual_ip = None;
         runtime.prefix_len = None;
         runtime.routes.clear();
+        runtime.resolver_servers.clear();
+        runtime.resolver_search_domains.clear();
+        runtime.resolver_split_domains.clear();
+        runtime.resolver_records.clear();
         runtime.relay_config = None;
         Ok(())
     }
@@ -551,17 +602,23 @@ fn restart_data_plane(runtime: &mut LinuxRuntime) -> Result<()> {
     });
     let interface_name = runtime.interface_name().to_string();
     let local_virtual_ip = runtime.virtual_ip.clone().unwrap_or_default();
+    let dns_servers = runtime.resolver_servers.clone();
+    let dns_records = runtime.resolver_records.clone();
     runtime.tun = None;
     runtime.tun = if let Some(config) = config {
         Some(start_udp_data_plane(
             interface_name.as_str(),
             config,
             local_virtual_ip,
+            dns_servers,
+            dns_records,
         )?)
     } else if !local_virtual_ip.trim().is_empty() {
         Some(start_local_data_plane(
             interface_name.as_str(),
             local_virtual_ip,
+            dns_servers,
+            dns_records,
         )?)
     } else {
         None
@@ -569,14 +626,25 @@ fn restart_data_plane(runtime: &mut LinuxRuntime) -> Result<()> {
     Ok(())
 }
 
-fn start_local_data_plane(interface_name: &str, local_virtual_ip: String) -> Result<TunRuntime> {
+fn start_local_data_plane(
+    interface_name: &str,
+    local_virtual_ip: String,
+    dns_servers: Vec<String>,
+    dns_records: Vec<PlatformResolverRecord>,
+) -> Result<TunRuntime> {
     let file = open_tun(interface_name)
         .with_context(|| format!("open Linux TUN interface {interface_name}"))?;
     eprintln!("linux local data plane attached virtual_ip={local_virtual_ip}");
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
     let handle = thread::spawn(move || {
-        run_local_data_plane(file, local_virtual_ip, thread_stop);
+        run_local_data_plane(
+            file,
+            local_virtual_ip,
+            dns_servers,
+            dns_records,
+            thread_stop,
+        );
     });
     Ok(TunRuntime {
         stop,
@@ -588,6 +656,8 @@ fn start_udp_data_plane(
     interface_name: &str,
     config: RelayDataPlaneConfig,
     local_virtual_ip: String,
+    dns_servers: Vec<String>,
+    dns_records: Vec<PlatformResolverRecord>,
 ) -> Result<TunRuntime> {
     let file = open_tun(interface_name)
         .with_context(|| format!("open Linux TUN interface {interface_name}"))?;
@@ -623,6 +693,8 @@ fn start_udp_data_plane(
             direct_udp,
             local_node_id,
             local_virtual_ip,
+            dns_servers,
+            dns_records,
             max_frame_payload,
             config_hash,
             direct_udp_probe_interval,
@@ -1042,6 +1114,8 @@ fn run_udp_data_plane(
     mut direct_udp: Option<DirectUdpTransport>,
     local_node_id: String,
     local_virtual_ip: String,
+    dns_servers: Vec<String>,
+    dns_records: Vec<PlatformResolverRecord>,
     max_frame_payload: usize,
     config_hash: u64,
     direct_udp_probe_interval: Duration,
@@ -1081,6 +1155,10 @@ fn run_udp_data_plane(
             Ok(0) => thread::sleep(DATA_PLANE_IDLE_SLEEP),
             Ok(packet_len) => {
                 let packet = &tun_buffer[..packet_len];
+                if let Some(reply) = local_dns_reply(packet, &dns_servers, &dns_records) {
+                    let _ = write_tun_packet_with_retry(&mut file, &reply);
+                    continue;
+                }
                 if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
                     if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
                         let _ = write_tun_packet_with_retry(&mut file, &reply);
@@ -2015,14 +2093,24 @@ fn acl_peer_for_derp_peer(peer: &DerpPeer) -> PlatformAclPeer {
     }
 }
 
-fn run_local_data_plane(mut file: File, local_virtual_ip: String, stop: Arc<AtomicBool>) {
+fn run_local_data_plane(
+    mut file: File,
+    local_virtual_ip: String,
+    dns_servers: Vec<String>,
+    dns_records: Vec<PlatformResolverRecord>,
+    stop: Arc<AtomicBool>,
+) {
     let mut tun_buffer = vec![0_u8; MAX_PACKET_SIZE];
     while !stop.load(Ordering::SeqCst) {
         match file.read(&mut tun_buffer) {
             Ok(0) => thread::sleep(DATA_PLANE_IDLE_SLEEP),
             Ok(packet_len) => {
                 let packet = &tun_buffer[..packet_len];
-                if let Some(reply) = local_virtual_ip_reply(packet, local_virtual_ip.as_str()) {
+                if let Some(reply) = local_dns_reply(packet, &dns_servers, &dns_records) {
+                    let _ = write_tun_packet_with_retry(&mut file, &reply);
+                } else if let Some(reply) =
+                    local_virtual_ip_reply(packet, local_virtual_ip.as_str())
+                {
                     let _ = write_tun_packet_with_retry(&mut file, &reply);
                 } else if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
                     let packet = normalize_ipv4_transport_checksums(packet);
@@ -2062,6 +2150,16 @@ fn local_virtual_ip_reply(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u
     } else {
         None
     }
+}
+
+fn local_dns_reply(
+    packet: &[u8],
+    dns_servers: &[String],
+    dns_records: &[PlatformResolverRecord],
+) -> Option<Vec<u8>> {
+    dns_servers
+        .iter()
+        .find_map(|server| resolver_response_for_query(packet, server, dns_records))
 }
 
 fn should_ignore_unroutable_destination(destination: &str) -> bool {
@@ -2462,6 +2560,8 @@ mod tests {
             relay_address: "127.0.0.1:29110".to_string(),
             local_node_id: "node-local".to_string(),
             network_id: "network-1".to_string(),
+            direct_udp_port: 41642,
+            randomize_direct_udp_port: false,
             node_configs: Vec::new(),
             path_policy: PathPolicy {
                 preferred: vec![PathKind::RelayUdp],
@@ -2564,7 +2664,6 @@ mod tests {
     fn linux_mock_runtime_records_dns_acl_and_relay_config() {
         let _guard = test_lock();
         std::env::set_var("SLAN_LINUX_NETWORK_MOCK", "1");
-        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
         reset_runtime();
 
         let platform = LinuxPlatformNetwork;
@@ -2614,36 +2713,54 @@ mod tests {
         drop(runtime);
 
         platform.disable_network().unwrap();
-        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
         std::env::remove_var("SLAN_LINUX_NETWORK_MOCK");
         reset_runtime();
     }
 
     #[test]
-    fn linux_mock_runtime_prefers_local_dns_override() {
+    fn linux_mock_runtime_keeps_configured_dns_service() {
         let _guard = test_lock();
         std::env::set_var("SLAN_LINUX_NETWORK_MOCK", "1");
-        std::env::set_var("SLAN_LOCAL_DNS_BIND", "127.0.0.1:53");
         reset_runtime();
 
         let platform = LinuxPlatformNetwork;
         platform.install_adapter().unwrap();
         platform
             .configure_resolver(&client_core::PlatformResolverConfig {
-                servers: vec!["10.0.0.53".to_string(), "8.8.8.8".to_string()],
+                servers: vec!["10.0.0.53".to_string()],
+                search_domains: vec!["slan.test".to_string()],
+                split_domains: vec!["slan.test".to_string()],
                 ..client_core::PlatformResolverConfig::default()
             })
             .unwrap();
+        platform
+            .configure_resolver_map(
+                &[],
+                &[PlatformResolverRecord {
+                    fqdn: Some("api.slan.test".to_string()),
+                    target_ip: Some("10.0.1.2".to_string()),
+                    ..PlatformResolverRecord::default()
+                }],
+            )
+            .unwrap();
 
         let diagnostics = platform.diagnostics().unwrap();
-        assert_eq!(diagnostics.resolver_servers, vec!["127.0.0.1"]);
+        assert_eq!(diagnostics.resolver_servers, vec!["10.0.0.53"]);
 
-        let runtime = runtime().lock().expect("linux runtime mutex poisoned");
-        assert_eq!(runtime.resolver_servers, vec!["127.0.0.1".to_string()]);
-        drop(runtime);
+        let runtime_guard = runtime().lock().expect("linux runtime mutex poisoned");
+        assert_eq!(
+            runtime_guard.resolver_servers,
+            vec!["10.0.0.53".to_string()]
+        );
+        drop(runtime_guard);
 
         platform.disable_network().unwrap();
-        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
+        let runtime_guard = runtime().lock().expect("linux runtime mutex poisoned");
+        assert!(runtime_guard.resolver_servers.is_empty());
+        assert!(runtime_guard.resolver_search_domains.is_empty());
+        assert!(runtime_guard.resolver_split_domains.is_empty());
+        assert!(runtime_guard.resolver_records.is_empty());
+        drop(runtime_guard);
         std::env::remove_var("SLAN_LINUX_NETWORK_MOCK");
         reset_runtime();
     }

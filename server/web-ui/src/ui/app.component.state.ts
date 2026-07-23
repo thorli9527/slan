@@ -19,7 +19,6 @@ import {
   NAV_GROUPS,
   ROOT_DOMAIN,
   SECURITY_RULE_TEMPLATES,
-  WORKSPACE_PRESETS,
 } from './app.seed-data';
 import {
   ApiDevice,
@@ -52,15 +51,13 @@ import {
   WorkspacePanel,
   WorkspaceRow,
 } from './app.models';
-import { shortCodeFromEmail, slug } from './app.utils';
+import { slug } from './app.utils';
 
 export abstract class AppComponentState {
   protected readonly emptyWorkspace: WorkspaceRow = {
     networkId: '',
     workspaceId: '',
     name: '',
-    code: '',
-    template: '',
     intraGroupPolicy: 'allow',
     default: false,
     devices: 0,
@@ -69,7 +66,6 @@ export abstract class AppComponentState {
   };
 
   readonly rootDomain = ROOT_DOMAIN;
-  readonly workspacePresets = WORKSPACE_PRESETS;
   readonly securityRuleTemplates: SecurityRuleTemplate[] = SECURITY_RULE_TEMPLATES;
   readonly navGroups = NAV_GROUPS;
   readonly downloadPlatforms = [
@@ -282,8 +278,6 @@ export abstract class AppComponentState {
   deviceAliasDialogMessage = '';
 
   workspaceName = '默认网络';
-  workspaceCode = 'default';
-  workspaceTemplateKey = 'default';
   workspaceIntraGroupPolicy: 'allow' | 'deny' = 'allow';
   workspaceDefault = false;
   workspaceDialogMessage = '';
@@ -307,7 +301,6 @@ export abstract class AppComponentState {
   bootstrapInstallCommand = '';
   bootstrapMessage = '';
   currentRefreshToken = '';
-  bootstrapNetworkId = DEFAULT_NETWORK_ID;
   bootstrapTTLSeconds = 1800;
   showJoinDialog = false;
   joinInviteCode = '';
@@ -339,9 +332,7 @@ export abstract class AppComponentState {
   zoneDialogMode: 'create' | 'edit' = 'create';
   editingZone: DNSZoneRow | null = null;
   zoneName = 'default';
-  zoneExpose = false;
   zoneNameValue = '';
-  zoneExposeValue = false;
   zoneRecordType = 'A';
   zoneValue = '10.0.0.1';
   showRecordDialog = false;
@@ -350,12 +341,10 @@ export abstract class AppComponentState {
   editingRecord: DNSRow | null = null;
   recordName = 'api';
   recordType = 'A';
-  recordTargetType: 'device' | 'ip' | 'cname' = 'device';
-  recordValue = '10.0.0.1';
+  recordTargetType: 'device' | 'cname' = 'device';
+  recordValue = '';
   recordDeviceId = DEFAULT_MAC_DEVICE_ID;
-  recordTargetIp = '10.0.0.10';
   recordCname = 'upstream.internal';
-  recordPort = '443';
   showIngressRuleDialog = false;
   showEgressRuleDialog = false;
   securityRuleDialogMessage = '';
@@ -646,8 +635,6 @@ export abstract class AppComponentState {
 
   dnsRecordTargetTypeLabel(record: DNSRow): string {
     switch (record.targetType) {
-      case 'ip':
-        return 'IP';
       case 'cname':
         return 'CNAME';
       default:
@@ -661,13 +648,7 @@ export abstract class AppComponentState {
 
   get recordDeviceOptions(): DeviceRow[] {
     const byId = new Map<string, DeviceRow>();
-    this.visibleDeviceOptions.forEach((device) => byId.set(device.deviceId, device));
-    if (this.recordDeviceId) {
-      const selected = this.devices.find((device) => device.deviceId === this.recordDeviceId);
-      if (selected) {
-        byId.set(selected.deviceId, selected);
-      }
-    }
+    this.workspaceDevices.forEach((device) => byId.set(device.deviceId, device));
     return Array.from(byId.values()).sort((a, b) => a.deviceId.localeCompare(b.deviceId));
   }
 
@@ -695,14 +676,6 @@ export abstract class AppComponentState {
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
-  bootstrapKeyNetworkName(item: ApiDeviceBootstrapKey): string {
-    return this.workspaces.find((workspace) => workspace.workspaceId === item.networkId)?.name ?? item.networkId;
-  }
-
-  get selectedBootstrapNetworkName(): string {
-    return this.workspaces.find((workspace) => workspace.workspaceId === this.bootstrapNetworkId)?.name ?? this.bootstrapNetworkId;
-  }
-
   get managedUserAliases(): UserAliasRow[] {
     const emails = new Set<string>();
     const visibleDeviceIds = new Set<string>();
@@ -723,7 +696,7 @@ export abstract class AppComponentState {
       .map((email) => this.userAliases.find((item) => item.email === email) ?? { email, alias: '' });
   }
 
-  get selectedDeviceUsages(): Array<{ workspaceName: string; workspaceCode: string; owner: string; joinMethod: string }> {
+  get selectedDeviceUsages(): Array<{ workspaceName: string; owner: string; joinMethod: string }> {
     if (!this.selectedExposureDevice) {
       return [];
     }
@@ -731,10 +704,24 @@ export abstract class AppComponentState {
       .filter((workspace) => (this.workspaceDeviceIdsByWorkspace[workspace.workspaceId] ?? []).includes(this.selectedExposureDevice?.deviceId ?? ''))
       .map((workspace) => ({
         workspaceName: workspace.name,
-        workspaceCode: workspace.code,
         owner: this.workspaceDeviceOwnerLabel(this.selectedExposureDevice as DeviceRow),
         joinMethod: this.workspaceDeviceJoinMethod(workspace.workspaceId, (this.selectedExposureDevice as DeviceRow).deviceId),
       }));
+  }
+
+  get selectedDeviceAccountReferences(): WorkspaceDeviceInviteRow[] {
+    if (!this.selectedExposureDevice) {
+      return [];
+    }
+    return this.workspaceDeviceInvites.filter((invite) =>
+      invite.acceptedDeviceId === this.selectedExposureDevice?.deviceId
+      && this.effectiveInviteStatus(invite) === 'accepted',
+    );
+  }
+
+  deviceReferenceAccountLabel(invite: WorkspaceDeviceInviteRow): string {
+    const account = invite.inviterEmail || invite.inviterUserId || '-';
+    return this.userLabel(account);
   }
 
   workspaceDeviceOwnerLabel(device: DeviceRow): string {
@@ -742,7 +729,15 @@ export abstract class AppComponentState {
   }
 
   isCurrentUserDeviceOwner(device: DeviceRow): boolean {
+    const ownerId = device.ownerId?.trim();
+    if (ownerId) {
+      return ownerId === this.currentUserId.trim();
+    }
     return this.currentOwnerKeys().has(device.owner.trim().toLowerCase());
+  }
+
+  isReferencedDevice(device: DeviceRow): boolean {
+    return !this.isCurrentUserDeviceOwner(device) && this.deviceShareInvite(device) !== null;
   }
 
   deviceShareInvite(device: DeviceRow): WorkspaceDeviceInviteRow | null {
@@ -782,14 +777,6 @@ export abstract class AppComponentState {
 
   get selectedWorkspace(): WorkspaceRow {
     return this.workspaces.find((workspace) => workspace.workspaceId === this.selectedWorkspaceId) ?? this.workspaces[0] ?? this.emptyWorkspace;
-  }
-
-  get invitedWorkspace(): WorkspaceRow | null {
-    const code = this.joinInviteCode.split('-')[0]?.trim().toLowerCase();
-    if (!code) {
-      return null;
-    }
-    return this.workspaces.find((workspace) => workspace.code.toLowerCase() === code) ?? null;
   }
 
   get selectedJoinInvite(): WorkspaceDeviceInviteRow | null {
@@ -834,26 +821,18 @@ export abstract class AppComponentState {
   }
 
   dnsRecordValue(record: DNSRow): string {
-    if (record.targetType === 'ip' || record.targetType === 'cname') {
+    if (record.targetType === 'cname') {
       return this.displayUserText(record.value || '-');
     }
     const device = this.devices.find((item) => item.deviceId === record.deviceId);
     if (!device) {
       return this.displayUserText(record.value || '-');
     }
-    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${record.port || '-'}`;
+    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId}`;
   }
 
   currentOwnerKeys(): Set<string> {
     return new Set([this.currentUser, this.authEmail, this.currentUserId].filter(Boolean).map((value) => value.trim().toLowerCase()));
-  }
-
-  get userSlug(): string {
-    return this.currentUserShortCode || shortCodeFromEmail(this.currentUser || this.authEmail);
-  }
-
-  get userShortSubdomain(): string {
-    return `${this.userSlug}.slan.com`;
   }
 
   get selectedDeviceExposures(): DeviceExposureRow[] {
@@ -885,5 +864,5 @@ export abstract class AppComponentState {
   protected abstract mapDNSRecord(record: ApiDNSRecord): DNSRow;
   protected abstract mapSecurityGroup(group: ApiSecurityGroup): SecurityGroupRow;
   protected abstract mapSecurityRule(rule: ApiSecurityRule): SecurityRuleRow;
-  abstract isWorkspaceCodeDuplicated(code: string, exceptWorkspaceId?: string): boolean;
+  abstract isWorkspaceNameDuplicated(name: string, exceptWorkspaceId?: string): boolean;
 }

@@ -4,6 +4,9 @@ set -eu
 LABEL="dev.slan.client-core-service"
 APP_LABEL="dev.slan.client-v2"
 INSTALL_DIR="/Library/Application Support/SLAN"
+STATE_ROOT="/Library/Preferences/dev.slan.client-core-service"
+STATE_DIR="${STATE_ROOT}/SLAN"
+STATE_BACKUP="/private/var/tmp/dev.slan.client-core-service.config.backup"
 LOG_DIR="/Library/Logs/SLAN"
 PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 APP_PLIST="/Library/LaunchAgents/${APP_LABEL}.plist"
@@ -13,9 +16,24 @@ SERVICE_BIN="${INSTALL_DIR}/client-core-service"
 INSTALL_LOG="${LOG_DIR}/installer.log"
 SERVICE_PID="${INSTALL_DIR}/client-core-service.pid"
 
-mkdir -p "$INSTALL_DIR" "$LOG_DIR"
+mkdir -p "$INSTALL_DIR" "$LOG_DIR" "$STATE_DIR"
 chown root:wheel "$INSTALL_DIR" "$LOG_DIR"
 chmod 755 "$INSTALL_DIR" "$LOG_DIR"
+chown -R root:wheel "$STATE_ROOT"
+chmod 700 "$STATE_ROOT" "$STATE_DIR"
+
+if [ ! -f "${STATE_DIR}/config.json" ]; then
+  if [ -f "$STATE_BACKUP" ]; then
+    cp -p "$STATE_BACKUP" "${STATE_DIR}/config.json"
+  elif [ -f "${INSTALL_DIR}/config.json" ]; then
+    cp -p "${INSTALL_DIR}/config.json" "${STATE_DIR}/config.json"
+  fi
+fi
+if [ -f "${STATE_DIR}/config.json" ]; then
+  chown root:wheel "${STATE_DIR}/config.json"
+  chmod 600 "${STATE_DIR}/config.json"
+fi
+rm -f "$STATE_BACKUP"
 
 launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
 launchctl disable "system/${LABEL}" >/dev/null 2>&1 || true
@@ -43,11 +61,11 @@ chown root:wheel "$SERVICE_BIN"
 chmod 755 "$SERVICE_BIN"
 chown -R root:wheel "$APP_PATH"
 
-DEVICE_ID="$("$SERVICE_BIN" --ensure-device-id)"
+DEVICE_ID="$(SLAN_STATE_DIR="$STATE_ROOT" "$SERVICE_BIN" --ensure-device-id)"
 {
   echo "installedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "deviceId: $DEVICE_ID"
-  echo "serviceInfo: $("$SERVICE_BIN" --service-info)"
+  echo "serviceInfo: $(SLAN_STATE_DIR="$STATE_ROOT" "$SERVICE_BIN" --service-info)"
 } >>"$INSTALL_LOG"
 chown root:wheel "$INSTALL_LOG"
 chmod 644 "$INSTALL_LOG"
@@ -77,6 +95,8 @@ cat > "$PLIST" <<PLIST
   <dict>
     <key>SLAN_CLIENT_CORE_SERVICE_HOST</key>
     <string>127.0.0.1:46392</string>
+    <key>SLAN_STATE_DIR</key>
+    <string>${STATE_ROOT}</string>
   </dict>
 </dict>
 </plist>

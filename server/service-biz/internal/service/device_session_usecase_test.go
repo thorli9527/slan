@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"testing"
@@ -74,8 +76,10 @@ func (s *deviceSessionTestDevices) GetDeviceSessionByAccessToken(_ context.Conte
 }
 
 func (s *deviceSessionTestDevices) GetDeviceSessionByRefreshToken(_ context.Context, token string) (model.DeviceSession, bool, error) {
+	digest := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(digest[:])
 	for _, session := range s.savedSessions {
-		if session.RefreshToken == token {
+		if session.RefreshToken == token || session.PreviousRefreshTokenHash == tokenHash {
 			return session, true, nil
 		}
 	}
@@ -291,6 +295,44 @@ func TestBindDeviceSessionReplacesPreviousDeviceToken(t *testing.T) {
 	}
 }
 
+func TestRenewDeviceSessionRetriesPreviousTokenIdempotently(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	devices := &deviceSessionTestDevices{
+		networkRuntimeTestDevices: networkRuntimeTestDevices{devices: map[string]model.Device{
+			"device-1": {DeviceID: "device-1", OwnerID: "user-1", Status: "active"},
+		}},
+		savedSessions: []model.DeviceSession{{
+			SessionID: "device-session-1", DeviceID: "device-1", AccessToken: "access-1",
+			RefreshToken: "refresh-1", Status: tokenStatusActive, SessionMode: tokenModeLong,
+			ExpiresAt: now.Add(time.Hour).Unix(), RefreshExpiry: now.Add(24 * time.Hour).Unix(),
+		}},
+	}
+	service := DeviceSessionService{
+		Users: &deviceSessionTestUsers{users: map[string]model.User{
+			"user-1": {UserID: "user-1", Email: "user@example.test", Status: "active"},
+		}},
+		Devices: devices,
+		Networks: &deviceSessionTestNetworks{networkRuntimeTestNetworks: networkRuntimeTestNetworks{
+			networks: map[string]model.Network{}, networkDevices: map[string][]model.NetworkDevice{},
+		}},
+		MQTT:      mqttkit.DefaultConfig(),
+		NewSessID: func(string) string { return "device-session-renewed" },
+		Now:       func() time.Time { return now },
+	}
+
+	first, err := service.RenewDeviceSession(context.Background(), "access-1", RenewDeviceSessionInput{RefreshToken: "refresh-1"})
+	if err != nil {
+		t.Fatalf("first renewal: %v", err)
+	}
+	retry, err := service.RenewDeviceSession(context.Background(), "access-1", RenewDeviceSessionInput{RefreshToken: "refresh-1"})
+	if err != nil {
+		t.Fatalf("idempotent retry: %v", err)
+	}
+	if retry.Session.AccessToken != first.Session.AccessToken || retry.Session.RefreshToken != first.Session.RefreshToken {
+		t.Fatalf("retry rotated device tokens again: first=%#v retry=%#v", first.Session, retry.Session)
+	}
+}
+
 func TestBindDeviceSessionMigratesLegacyIPAndIgnoresInactiveNetworkMembership(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	devices := &deviceSessionTestDevices{
@@ -299,7 +341,7 @@ func TestBindDeviceSessionMigratesLegacyIPAndIgnoresInactiveNetworkMembership(t 
 				"linux-1": {
 					DeviceID:  "linux-1",
 					OwnerID:   "user-1",
-					VirtualIP: "100.124.242.246",
+					VirtualIP: "172.16.0.1",
 					Name:      "Docker Linux",
 					Platform:  "linux",
 					Status:    "active",
@@ -361,7 +403,7 @@ func TestBindDeviceSessionMigratesLegacyIPAndIgnoresInactiveNetworkMembership(t 
 	if view.Profile.Device.DeviceID != "linux-1" {
 		t.Fatalf("expected existing device to be preserved, got %+v", view.Profile.Device)
 	}
-	if got := devices.devices["linux-1"].VirtualIP; got != "10.0.0.1" {
-		t.Fatalf("expected legacy virtual IP to migrate to 10.0.0.1, got %q", got)
+	if got := devices.devices["linux-1"].VirtualIP; got != "10.0.1.1" {
+		t.Fatalf("expected legacy virtual IP to migrate to 10.0.1.1, got %q", got)
 	}
 }

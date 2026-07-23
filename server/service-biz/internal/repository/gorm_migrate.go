@@ -45,6 +45,23 @@ func (s *GormStore) migrate() error {
 	); err != nil {
 		return err
 	}
+	if s.db.Migrator().HasColumn(&gormDNSZoneRecord{}, "expose_global") {
+		if err := s.db.Migrator().DropColumn(&gormDNSZoneRecord{}, "expose_global"); err != nil {
+			return err
+		}
+	}
+	for _, column := range []string{"code", "template_key"} {
+		if s.db.Migrator().HasColumn(&gormNetworkRecord{}, column) {
+			if err := s.db.Migrator().DropColumn(&gormNetworkRecord{}, column); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.db.Model(&gormDNSRecordRecord{}).
+		Where("port <> ? AND UPPER(\"type\") <> ?", "", "SRV").
+		Update("port", "").Error; err != nil {
+		return err
+	}
 	if err := s.migrateDeviceOwnershipRelations(); err != nil {
 		return err
 	}
@@ -52,6 +69,12 @@ func (s *GormStore) migrate() error {
 		return err
 	}
 	if err := s.ensureSingleDeviceSession(); err != nil {
+		return err
+	}
+	if err := s.ensureSingleUserSessionPerClient(); err != nil {
+		return err
+	}
+	if err := s.enforceWebSessionShortPolicy(); err != nil {
 		return err
 	}
 	if err := s.ensureUserScopedDeviceGroupAssignments(); err != nil {
@@ -195,6 +218,58 @@ func (s *GormStore) ensureSingleDeviceSession() error {
 	return s.db.Exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS uidx_gorm_device_session_records_device
 		ON gorm_device_session_records (device_id)
+	`).Error
+}
+
+func (s *GormStore) ensureSingleUserSessionPerClient() error {
+	if err := s.db.Exec(`DROP INDEX IF EXISTS uidx_gorm_user_session_records_user_client`).Error; err != nil {
+		return err
+	}
+	if err := s.db.Exec(`UPDATE gorm_user_session_records SET device_id = '' WHERE device_id IS NULL`).Error; err != nil {
+		return err
+	}
+	if err := s.db.Exec(`
+		DELETE FROM gorm_user_session_records
+		WHERE client_type IS NULL OR client_type = ''
+	`).Error; err != nil {
+		return err
+	}
+	if err := s.db.Exec(`
+		DELETE FROM gorm_user_session_records
+		WHERE session_id IN (
+			SELECT session_id
+			FROM (
+				SELECT session_id,
+					ROW_NUMBER() OVER (
+						PARTITION BY user_id, client_type, device_id
+						ORDER BY updated_at DESC, created_at DESC, session_id DESC
+					) AS row_number
+				FROM gorm_user_session_records
+			) ranked
+			WHERE row_number > 1
+		)
+	`).Error; err != nil {
+		return err
+	}
+	return s.db.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS uidx_gorm_user_session_records_user_client_device
+		ON gorm_user_session_records (user_id, client_type, device_id)
+	`).Error
+}
+
+func (s *GormStore) enforceWebSessionShortPolicy() error {
+	return s.db.Exec(`
+		UPDATE gorm_user_session_records
+		SET session_mode = 'short',
+			refresh_expiry = LEAST(
+				refresh_expiry,
+				EXTRACT(EPOCH FROM NOW())::bigint + 604800
+			)
+		WHERE client_type = 'web'
+			AND (
+				session_mode <> 'short'
+				OR refresh_expiry > EXTRACT(EPOCH FROM NOW())::bigint + 604800
+			)
 	`).Error
 }
 

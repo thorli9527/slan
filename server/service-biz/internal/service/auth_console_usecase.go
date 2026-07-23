@@ -39,11 +39,11 @@ func (s AuthConsoleLoginService) ConsoleLogin(ctx context.Context, input Console
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	session, err := newAuthUserSession(now, s.NewSessID, user.UserID, tokenModeShort)
+	session, err := newAuthUserSession(now, s.NewSessID, user.UserID, tokenModeShort, UserSessionClientWeb, "")
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	if err := replaceUserSession(ctx, s.Sessions, session); err != nil {
+	if err := s.Sessions.ReplaceUserSessionForClient(ctx, session); err != nil {
 		return AuthSessionView{}, err
 	}
 	item = markConsoleLoginKeyUsed(item, now.Unix())

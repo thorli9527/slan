@@ -1,13 +1,12 @@
 package model
 
 type DNSZone struct {
-	ZoneID       string `json:"zoneId"`
-	NetworkID    string `json:"networkId"`
-	Name         string `json:"name"`
-	ExposeGlobal bool   `json:"exposeGlobal"`
-	Status       string `json:"status"`
-	CreatedAt    int64  `json:"createdAt"`
-	UpdatedAt    int64  `json:"updatedAt"`
+	ZoneID    string `json:"zoneId"`
+	NetworkID string `json:"networkId"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 type DNSRecord struct {

@@ -58,6 +58,51 @@ void main() {
     expect(status.mqttNetworkEventSubscribed, isTrue);
   });
 
+  test('business event snapshot wins over stale event state', () {
+    final current = ClientViewState.fromJson({
+      'signedIn': true,
+      'networkEnabled': true,
+      'virtualIp': '10.0.0.1',
+      'syncing': false,
+      'switchEnabled': true,
+    });
+    final staleData = ClientViewState.fromJson({
+      'signedIn': true,
+      'networkEnabled': false,
+      'syncing': false,
+      'switchEnabled': true,
+      'notice': 'networkDisabled',
+    });
+    final snapshot = ClientViewState.fromJson({
+      'signedIn': true,
+      'networkEnabled': true,
+      'virtualIp': '10.0.0.1',
+      'syncing': false,
+      'switchEnabled': true,
+      'notice': 'networkEnabled',
+    });
+
+    final next = reduceBusinessEvent(
+      current,
+      {
+        'businessType': ClientBusinessEventType.networkRuntimeChanged,
+        'businessData': {
+          'networkEnabled': false,
+          'notice': 'networkDisabled',
+        },
+        'snapshot': {
+          'networkEnabled': true,
+          'notice': 'networkEnabled',
+        },
+      },
+      dataState: staleData,
+      snapshotState: snapshot,
+    );
+
+    expect(next?.networkEnabled, isTrue);
+    expect(next?.virtualIp, '10.0.0.1');
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('client login command uses openClientLogin type', () {
@@ -132,6 +177,58 @@ void main() {
     );
     expect(bridge.state.value.userLabel, 'desktop@example.test');
     expect(service.seenMethods, contains('localState'));
+  });
+
+  test('desktop Web Console falls back to direct URL for device session',
+      () async {
+    const channel = MethodChannel('dev.slan/client_core_v2');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'dispatch');
+      return {
+        'signedIn': true,
+        'userLabel': 'desktop@example.test',
+        'deviceId': 'desktop-device-1',
+        'networkEnabled': true,
+        'syncing': false,
+        'switchEnabled': true,
+      };
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final service = await _FakeClientService.start([
+      const _ServiceReply(
+        expectedMethod: 'consoleLoginKey',
+        body: {
+          'signedIn': false,
+          'networkEnabled': false,
+          'syncing': false,
+          'switchEnabled': true,
+          'error': 'user login is required before opening Web Console',
+        },
+      ),
+    ]);
+    addTearDown(service.close);
+
+    String? openedUrl;
+    final bridge = MethodChannelClientCoreBridge(
+      localServiceHost: service.host,
+      openExternalUrl: (url) async => openedUrl = url,
+    );
+    _closeBridgeOnTearDown(bridge);
+
+    await bridge.dispatch(
+      const ClientCommand(ClientCommandType.openWebConsole),
+    );
+
+    expect(
+      openedUrl,
+      'http://47.245.40.231:24200?deviceId=desktop-device-1',
+    );
+    expect(service.seenMethods, ['consoleLoginKey']);
   });
 
   test('android runtime diagnostics preserve native relay counters', () {
@@ -1234,6 +1331,49 @@ void main() {
     expect(secondArgs['streamId'], 'stream-a');
     expect(thirdArgs['lastRevision'], 9);
     expect(thirdArgs['streamId'], 'stream-a');
+  });
+
+  test('first business event watch follows latest service revision', () async {
+    final service = await _FakeClientService.start([
+      const _ServiceReply(
+        expectedMethod: 'localBusinessEventWatch',
+        body: {
+          'revision': 7,
+          'streamId': 'stream-a',
+          'oldestAvailableRevision': 1,
+          'latestRevision': 7,
+          'replayGap': false,
+          'businessType': ClientBusinessEventType.stateChanged,
+          'businessData': <String, Object?>{},
+          'snapshot': {
+            'signedIn': true,
+            'networkEnabled': true,
+            'syncing': false,
+            'switchEnabled': true,
+            'virtualIp': '10.0.0.1',
+          },
+        },
+      ),
+    ]);
+    addTearDown(service.close);
+
+    final bridge =
+        MethodChannelClientCoreBridge(localServiceHost: service.host);
+    _closeBridgeOnTearDown(bridge);
+    await bridge.start();
+
+    await _waitFor(
+      () => service.seenRequests.any(
+        (request) => request['method'] == 'localBusinessEventWatch',
+      ),
+      reason: 'bridge should start the business event watch',
+    );
+    final request = service.seenRequests.firstWhere(
+      (request) => request['method'] == 'localBusinessEventWatch',
+    );
+    final args = (request['args'] as Map).cast<String, Object?>();
+    expect(args['lastRevision'], 0);
+    expect(args['followLatest'], isTrue);
   });
 
   test('business event stream reset recovers after rust service restart',

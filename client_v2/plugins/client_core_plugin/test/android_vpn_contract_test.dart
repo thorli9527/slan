@@ -2,11 +2,13 @@ import 'package:client_core_plugin/client_core_plugin.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, Object?> _nativePlatformResolverConfigPayload(
-  List<String> servers,
-) {
+  List<String> servers, {
+  List<Map<String, Object?>> records = const [],
+}) {
   return {
     'resolver': {
       'servers': servers,
+      'records': records,
     },
   };
 }
@@ -204,7 +206,6 @@ void main() {
             'networkId': 'net-1',
             'deviceId': 'dev-1',
             'networkName': 'default',
-            'networkCode': 'default',
             'intraGroupPolicy': 'allow',
             'configVersion': 123,
             'globalIp': '10.0.0.2',
@@ -227,12 +228,23 @@ void main() {
     final config = AndroidVpnSessionConfig.fromJson({
       'virtualIp': '10.0.0.2',
       'prefixLen': 32,
-      ..._nativePlatformResolverConfigPayload(const ['10.0.0.53']),
+      ..._nativePlatformResolverConfigPayload(
+        const ['10.0.0.53'],
+        records: const [
+          {
+            'recordId': 'record-1',
+            'fqdn': 'api.tt.com',
+            'recordType': 'A',
+            'targetIp': '10.0.0.12',
+          },
+        ],
+      ),
     });
 
     final json = config.toJson();
     final resolverConfigPayload = json['resolver'] as Map<String, Object?>;
     expect(resolverConfigPayload['servers'], ['10.0.0.53']);
+    expect(resolverConfigPayload['records'], hasLength(1));
     expect(
       json.containsKey('dnsZones'),
       isFalse,

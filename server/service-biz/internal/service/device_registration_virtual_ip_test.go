@@ -117,10 +117,17 @@ func TestRegisterDeviceAllocatesStableVirtualIP(t *testing.T) {
 		DeviceID: "device-fixed-1",
 		Name:     "Pixel",
 		Platform: "android",
+		Alias:    "Pixel",
 	})
 	if err != nil {
 		t.Fatalf("first RegisterDevice returned error: %v", err)
 	}
+	if first.Device.Alias != "" {
+		t.Fatalf("expected first registration alias to be empty, got %q", first.Device.Alias)
+	}
+	storedWithAlias := devices.devices["device-fixed-1"]
+	storedWithAlias.Alias = "My phone"
+	devices.devices["device-fixed-1"] = storedWithAlias
 	second, err := service.RegisterDevice(context.Background(), RegisterDeviceInput{
 		OwnerID:  "user-1",
 		DeviceID: "device-fixed-1",
@@ -134,11 +141,14 @@ func TestRegisterDeviceAllocatesStableVirtualIP(t *testing.T) {
 	if first.VirtualIP == "" {
 		t.Fatalf("expected first registration to allocate virtual IP")
 	}
-	if first.VirtualIP != "10.0.0.1" {
-		t.Fatalf("expected first device IP to be 10.0.0.1, got %q", first.VirtualIP)
+	if first.VirtualIP != "10.0.1.1" {
+		t.Fatalf("expected first device IP to be 10.0.1.1, got %q", first.VirtualIP)
 	}
 	if second.VirtualIP != first.VirtualIP {
 		t.Fatalf("expected stable virtual IP across re-registration, first=%q second=%q", first.VirtualIP, second.VirtualIP)
+	}
+	if second.Device.Alias != "My phone" {
+		t.Fatalf("expected manual alias to survive re-registration, got %q", second.Device.Alias)
 	}
 	stored := devices.devices["device-fixed-1"]
 	if stored.VirtualIP != first.VirtualIP {
@@ -204,8 +214,8 @@ func TestRegisterDifferentDevicesGetDifferentVirtualIPs(t *testing.T) {
 	if first.VirtualIP == "" || second.VirtualIP == "" {
 		t.Fatalf("expected both devices to receive virtual IPs, first=%q second=%q", first.VirtualIP, second.VirtualIP)
 	}
-	if first.VirtualIP != "10.0.0.1" || second.VirtualIP != "10.0.0.2" {
-		t.Fatalf("expected sequential device IPs 10.0.0.1 and 10.0.0.2, got %q and %q", first.VirtualIP, second.VirtualIP)
+	if first.VirtualIP != "10.0.1.1" || second.VirtualIP != "10.0.1.2" {
+		t.Fatalf("expected sequential device IPs 10.0.1.1 and 10.0.1.2, got %q and %q", first.VirtualIP, second.VirtualIP)
 	}
 	if first.VirtualIP == second.VirtualIP {
 		t.Fatalf("expected different devices to receive different virtual IPs, got %q", first.VirtualIP)

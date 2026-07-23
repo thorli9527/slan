@@ -529,6 +529,7 @@ pub(crate) fn disable_network(platform: &PlatformNetworkImpl) -> Result<()> {
     platform
         .disable_network()
         .context("disable platform network")?;
+    crate::resolver_runtime_state::clear_resolver_runtime_state();
     record_runtime_state_result(&Ok(NetworkRuntimeState::default()));
     Ok(())
 }

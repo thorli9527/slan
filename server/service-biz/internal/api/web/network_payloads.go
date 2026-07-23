@@ -14,9 +14,7 @@ func networkPayload(view servicepkg.NetworkSummaryView) map[string]any {
 		"ownerUserId":      item.OwnerID,
 		"ownerId":          item.OwnerID,
 		"name":             item.Name,
-		"code":             view.Code,
 		"cidr":             item.CIDR,
-		"templateKey":      view.TemplateKey,
 		"intraGroupPolicy": view.IntraGroupPolicy,
 		"default":          view.Default,
 		"devices":          view.DeviceCount,
@@ -67,15 +65,14 @@ func networkDevicePayload(view servicepkg.NetworkDeviceView) map[string]any {
 
 func dnsZonePayload(view servicepkg.DNSZoneView) map[string]any {
 	return map[string]any{
-		"zoneId":       view.ZoneID,
-		"networkId":    view.NetworkID,
-		"workspaceId":  view.NetworkID,
-		"name":         view.Name,
-		"zoneName":     view.Name,
-		"exposeGlobal": view.ExposeGlobal,
-		"status":       view.Status,
-		"createdAt":    view.CreatedAt,
-		"updatedAt":    view.UpdatedAt,
+		"zoneId":      view.ZoneID,
+		"networkId":   view.NetworkID,
+		"workspaceId": view.NetworkID,
+		"name":        view.Name,
+		"zoneName":    view.Name,
+		"status":      view.Status,
+		"createdAt":   view.CreatedAt,
+		"updatedAt":   view.UpdatedAt,
 	}
 }
 
@@ -97,7 +94,6 @@ func dnsRecordPayload(view servicepkg.DNSRecordView, zoneName string) map[string
 		"recordType":     view.Type,
 		"value":          view.Value,
 		"targetDeviceId": view.TargetDeviceID,
-		"targetIp":       view.TargetIP,
 		"cname":          view.CNAME,
 		"port":           view.Port,
 		"ttl":            view.TTL,

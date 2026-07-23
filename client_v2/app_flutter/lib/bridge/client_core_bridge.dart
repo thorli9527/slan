@@ -54,6 +54,9 @@ abstract interface class ClientCoreBridge {
   /// 查询本地控制通道状态。
   Future<ControlTransportStatus?> localControlStatus();
 
+  /// 使用接入码把当前设备确认给邀请方。
+  Future<void> acceptNetworkInvite(String inviteCode);
+
   /// 停止后台监听和异步任务。
   Future<void> close() async {}
 }
@@ -116,6 +119,9 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
 
   /// Rust 事件流实例 ID；服务重启后变化，用于重置 revision 游标。
   String? _businessEventStreamId;
+
+  /// 首次订阅从当前最新事件开始，避免应用启动时重放历史 UI 状态。
+  bool _businessEventCursorInitialized = false;
 
   /// 是否存在正在执行的网络开关操作。
   bool _networkToggleInFlight = false;
@@ -458,6 +464,16 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   @override
+  Future<void> acceptNetworkInvite(String inviteCode) async {
+    final code = inviteCode.trim();
+    if (code.isEmpty) {
+      throw const FormatException('接入码不能为空');
+    }
+    await _localService.localAcceptNetworkInvite(code);
+    await _refreshState();
+  }
+
+  @override
   Future<void> close() async {
     _closed = true;
     _desktopBrowserLoginWatchEpoch++;
@@ -793,12 +809,15 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   Future<void> _openWebConsoleWithLoginKey(ClientViewState? state) async {
     String? consoleLoginKey;
     String? deviceId = state?.deviceId ?? _state.value.deviceId;
+    String? loginKeyError;
     try {
       final response = await _requestLocalService('consoleLoginKey');
       final json = _resultMap(response);
       consoleLoginKey = json?['loginKey'] as String?;
       deviceId = (json?['deviceId'] as String?) ?? deviceId;
+      loginKeyError = json?['error']?.toString().trim();
     } on Object catch (error) {
+      loginKeyError = error.toString();
       ClientUiDiagnostics.unawaitedLog(
         'bridge.openConsole.loginKeyFailed',
         state: _state.value,
@@ -806,7 +825,17 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
       );
     }
     if ((consoleLoginKey ?? '').trim().isEmpty) {
-      throw StateError('failed to create Web Console login key');
+      ClientUiDiagnostics.unawaitedLog(
+        'bridge.openConsole.loginKeyFallback',
+        state: _state.value,
+        fields: {
+          'message': (loginKeyError ?? '').isEmpty
+              ? 'console login key was not returned'
+              : loginKeyError,
+        },
+      );
+      await _openWebConsoleUrl(deviceId: deviceId);
+      return;
     }
     await _openWebConsoleUrl(
       consoleLoginKey: consoleLoginKey,
@@ -1789,7 +1818,11 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
             'bridge.businessEvent.mqttRepair',
           );
         }
-        final json = await _watchBusinessEvents(_lastBusinessEventRevision);
+        final followLatest = !_businessEventCursorInitialized;
+        final json = await _watchBusinessEvents(
+          _lastBusinessEventRevision,
+          followLatest: followLatest,
+        );
         if (json == null) {
           if (_usesNativeMobileControlPlane) {
             await _pauseIfActive(
@@ -1809,6 +1842,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
           }
           return;
         }
+        _businessEventCursorInitialized = true;
         final responseStreamId = json['streamId'];
         final streamChanged = responseStreamId is String &&
             responseStreamId.isNotEmpty &&
@@ -2479,12 +2513,16 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
   }
 
   /// 长轮询读取下一条业务事件。
-  Future<Map<String, Object?>?> _watchBusinessEvents(int lastRevision) async {
+  Future<Map<String, Object?>?> _watchBusinessEvents(
+    int lastRevision, {
+    required bool followLatest,
+  }) async {
     if (_usesNativeMobileControlPlane) {
       return _embeddedServiceRequest(
         'localBusinessEventWatch',
         {
           'lastRevision': lastRevision,
+          if (followLatest) 'followLatest': true,
           if (_businessEventStreamId != null)
             'streamId': _businessEventStreamId,
           'timeoutMs': 30000,
@@ -2494,6 +2532,7 @@ class MethodChannelClientCoreBridge implements ClientCoreBridge {
     try {
       return await _localService.localBusinessEventWatch(
         lastRevision: lastRevision,
+        followLatest: followLatest,
         streamId: _businessEventStreamId,
       );
     } on Object catch (error) {

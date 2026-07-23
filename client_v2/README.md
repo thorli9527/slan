@@ -33,6 +33,14 @@ Flutter must not directly generate mesh config, consume MQTT tasks, read helper 
 
 ## Layout
 
+### Direct UDP client port
+
+Desktop clients listen on UDP `41642` by default, avoiding Tailscale's default
+UDP `41641`. Set `SLAN_DIRECT_UDP_PORT` to another fixed port, or set
+`SLAN_DIRECT_UDP_RANDOMIZE=true` to let the operating system allocate a random
+port. If a configured fixed port is unavailable, the client falls back to a
+random port and reports the actual endpoint to the control plane.
+
 - `app_flutter/`: UI shell and bridge-facing client screens.
 - `plugins/client_core_plugin/`: Flutter platform plugin facade.
 - `rust/crates/client-core/`: platform-neutral client state machine and ports.

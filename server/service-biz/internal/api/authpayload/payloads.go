@@ -46,7 +46,6 @@ func SessionWithDefaultNetwork(view servicepkg.AuthSessionView, defaultNetwork *
 		payload["defaultNetwork"] = map[string]any{
 			"networkId": network.NetworkID,
 			"name":      network.Name,
-			"code":      defaultNetwork.Code,
 			"status":    network.Status,
 		}
 		payload["activeNetworkId"] = network.NetworkID
@@ -91,18 +90,18 @@ func userPayload(view servicepkg.UserView) map[string]any {
 
 func userSessionPayload(view servicepkg.UserSessionView) map[string]any {
 	return map[string]any{
-		"sessionId":    view.SessionID,
-		"userId":       view.UserID,
-		"token":        view.AccessToken,
-		"accessToken":  view.AccessToken,
-		"refreshToken": view.RefreshToken,
-		"status":       view.Status,
-		"sessionMode":  view.SessionMode,
-		"createdAt":    view.CreatedAt,
-		"updatedAt":    view.UpdatedAt,
-		"expiresAt":    view.ExpiresAt,
+		"sessionId":     view.SessionID,
+		"userId":        view.UserID,
+		"token":         view.AccessToken,
+		"accessToken":   view.AccessToken,
+		"refreshToken":  view.RefreshToken,
+		"status":        view.Status,
+		"sessionMode":   view.SessionMode,
+		"createdAt":     view.CreatedAt,
+		"updatedAt":     view.UpdatedAt,
+		"expiresAt":     view.ExpiresAt,
 		"refreshExpiry": view.RefreshExpiry,
-		"revokedAt":    view.RevokedAt,
+		"revokedAt":     view.RevokedAt,
 	}
 }
 

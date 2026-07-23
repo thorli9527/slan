@@ -111,7 +111,6 @@ class PlatformDeviceNetworkConfig {
     required this.networkId,
     required this.deviceId,
     this.networkName,
-    this.networkCode,
     this.intraGroupPolicy,
     this.configVersion,
     this.globalIp,
@@ -124,7 +123,6 @@ class PlatformDeviceNetworkConfig {
   final String networkId;
   final String deviceId;
   final String? networkName;
-  final String? networkCode;
   final String? intraGroupPolicy;
   final int? configVersion;
   final String? globalIp;
@@ -138,7 +136,6 @@ class PlatformDeviceNetworkConfig {
       networkId: json['networkId'] as String? ?? '',
       deviceId: json['deviceId'] as String? ?? '',
       networkName: json['networkName'] as String?,
-      networkCode: json['networkCode'] as String?,
       intraGroupPolicy: json['intraGroupPolicy'] as String?,
       configVersion: json['configVersion'] as int?,
       globalIp: json['globalIp'] as String?,
@@ -154,7 +151,6 @@ class PlatformDeviceNetworkConfig {
       'networkId': networkId,
       'deviceId': deviceId,
       if (networkName != null) 'networkName': networkName,
-      if (networkCode != null) 'networkCode': networkCode,
       if (intraGroupPolicy != null) 'intraGroupPolicy': intraGroupPolicy,
       if (configVersion != null) 'configVersion': configVersion,
       if (globalIp != null) 'globalIp': globalIp,

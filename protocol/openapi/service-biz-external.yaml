@@ -947,8 +947,6 @@ components:
             properties:
               ownerUserId: { type: string }
               name: { type: string }
-              code: { type: string }
-              templateKey: { type: string }
     UpdateNetwork:
       required: true
       content:
@@ -957,7 +955,6 @@ components:
             type: object
             properties:
               name: { type: string }
-              code: { type: string }
               status: { type: string }
     AddNetworkDevice:
       required: true

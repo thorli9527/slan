@@ -235,7 +235,12 @@ func (s *networkAccessTestNetworks) ListNetworkDevices(_ context.Context, networ
 	copy(out, items)
 	return out, nil
 }
-func (s *networkAccessTestNetworks) GetNetworkDevice(context.Context, string, string) (model.NetworkDevice, bool, error) {
+func (s *networkAccessTestNetworks) GetNetworkDevice(_ context.Context, networkID, deviceID string) (model.NetworkDevice, bool, error) {
+	for _, item := range s.networkDevices[networkID] {
+		if item.DeviceID == deviceID {
+			return item, true, nil
+		}
+	}
 	return model.NetworkDevice{}, false, nil
 }
 func (s *networkAccessTestNetworks) SaveNetworkDevice(_ context.Context, item model.NetworkDevice) error {
@@ -737,8 +742,8 @@ func TestNetworkDeviceGroupReferenceMaterializesMemberships(t *testing.T) {
 	if len(view.Items) != 1 || len(networks.networkDevices["net-1"]) != 1 {
 		t.Fatalf("expected referenced group and one materialized member, view=%+v members=%+v", view, networks.networkDevices["net-1"])
 	}
-	if got := devices.devices["dev-1"].VirtualIP; got != "10.0.0.1" {
-		t.Fatalf("expected group materialization to allocate 10.0.0.1, got %q", got)
+	if got := devices.devices["dev-1"].VirtualIP; got != "10.0.1.1" {
+		t.Fatalf("expected group materialization to allocate 10.0.1.1, got %q", got)
 	}
 
 	view, err = service.RemoveNetworkDeviceGroup(context.Background(), RemoveNetworkDeviceGroupInput{

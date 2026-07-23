@@ -3,6 +3,8 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+use crate::network_runtime_state::RuntimeNetworkState;
+
 #[derive(Debug, Clone, Default)]
 pub struct ResolverZoneView {
     pub zone_id: String,
@@ -12,6 +14,7 @@ pub struct ResolverZoneView {
 #[derive(Debug, Clone, Default)]
 pub struct ResolverRecordView {
     pub record_id: String,
+    pub network_id: String,
     pub name: String,
     pub fqdn: String,
     pub record_type: String,
@@ -73,6 +76,7 @@ pub struct RuntimeResolverState {
     pub config: ResolverConfigState,
     pub authority: ResolverAuthorityState,
     pub cache: ResolverCacheState,
+    pub networks_by_id: BTreeMap<String, RuntimeNetworkState>,
     pub last_reload_at_ms: Option<u64>,
 }
 
@@ -153,6 +157,20 @@ impl RuntimeResolverState {
 
     pub fn clear_cache(&mut self) {
         self.cache.cache_by_question.clear();
+    }
+
+    pub fn replace_network_states(&mut self, states: Vec<RuntimeNetworkState>) {
+        self.networks_by_id = states
+            .into_iter()
+            .filter_map(|state| {
+                let network_id = state.active_network_id.clone()?;
+                (!network_id.trim().is_empty()).then_some((network_id, state))
+            })
+            .collect();
+    }
+
+    pub fn network_state(&self, network_id: &str) -> Option<&RuntimeNetworkState> {
+        self.networks_by_id.get(network_id.trim())
     }
 
     pub fn cache_key(qname: &str, qtype: &str) -> String {

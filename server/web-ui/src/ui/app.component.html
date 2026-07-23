@@ -97,7 +97,6 @@
       <div class="account-menu">
         <div class="account-identity">
           <span>{{ currentUser }}</span>
-          <code>{{ userShortSubdomain }}</code>
         </div>
         <button class="ghost" type="button" (click)="openPasswordDialog()">修改密码</button>
         <button class="ghost" type="button" (click)="logout()">退出</button>
@@ -106,7 +105,6 @@
 
     <section class="summary-grid" *ngIf="active !== 'devices'">
       <article><span>设备</span><strong>{{ currentUserDevices.length }}</strong><small>{{ enabledDeviceCount() }} 台启用</small></article>
-      <article><span>短码域名</span><strong class="domain-text">{{ userShortSubdomain }}</strong><small>用户别名子域名</small></article>
       <article><span>网络</span><strong>{{ workspaces.length }}</strong><small>默认网络自动创建</small></article>
       <article><span>域名</span><strong>{{ dnsRecords.length }}</strong><small>网络内分发</small></article>
     </section>

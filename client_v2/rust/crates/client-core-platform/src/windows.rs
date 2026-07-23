@@ -24,14 +24,16 @@ use client_core::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
         stable_hash64,
     },
-    relay_peer_index_for_packet, selected_runtime_paths, update_peer_active_path,
-    NetworkRuntimeState, NodeConfig, PathKind, PathPolicy, PathState, PathTracker, PeerPathRuntime,
-    PlatformAclPeer, PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig,
-    RelayDataPlaneConfig, RelayPeerSession, RouteSpec,
+    relay_peer_index_for_packet, resolver_response_for_query, selected_runtime_paths,
+    update_peer_active_path, NetworkRuntimeState, NodeConfig, PathKind, PathPolicy, PathState,
+    PathTracker, PeerPathRuntime, PlatformAclPeer, PlatformNetwork, PlatformNetworkDiagnostics,
+    PlatformResolverConfig, PlatformResolverRecord, RelayDataPlaneConfig, RelayPeerSession,
+    RouteSpec,
 };
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 
+use crate::direct_udp::configured_direct_udp_port;
 use crate::effective_resolver_servers;
 
 const DEFAULT_INTERFACE_NAME: &str = "SLAN LAN Adapter";
@@ -132,6 +134,18 @@ impl Drop for WintunRuntime {
 #[derive(Debug, Clone, Default)]
 pub struct WindowsPlatformNetwork;
 
+#[derive(Debug, Clone, Default)]
+struct WindowsResolverRuntime {
+    servers: Vec<String>,
+    records: Vec<PlatformResolverRecord>,
+}
+
+static WINDOWS_RESOLVER_RUNTIME: OnceLock<Mutex<WindowsResolverRuntime>> = OnceLock::new();
+
+fn windows_resolver_runtime() -> &'static Mutex<WindowsResolverRuntime> {
+    WINDOWS_RESOLVER_RUNTIME.get_or_init(|| Mutex::new(WindowsResolverRuntime::default()))
+}
+
 impl PlatformNetwork for WindowsPlatformNetwork {
     fn install_adapter(&self) -> Result<()> {
         ensure_adapter_present(DEFAULT_INTERFACE_NAME)?;
@@ -167,7 +181,38 @@ impl PlatformNetwork for WindowsPlatformNetwork {
     fn configure_resolver(&self, resolver: &PlatformResolverConfig) -> Result<()> {
         let effective = effective_resolver_servers(&resolver.servers);
         configure_dns(DEFAULT_INTERFACE_NAME, &effective).context("configure Wintun DNS")?;
+        let routes = effective
+            .iter()
+            .filter(|server| server.parse::<std::net::Ipv4Addr>().is_ok())
+            .map(|server| RouteSpec {
+                destination: format!("{server}/32"),
+                gateway: None,
+            })
+            .collect::<Vec<_>>();
+        configure_routes(DEFAULT_INTERFACE_NAME, &routes)
+            .context("configure Wintun DNS service route")?;
+        windows_resolver_runtime()
+            .lock()
+            .expect("windows resolver runtime mutex poisoned")
+            .servers = effective;
         persist_state(&load_cached_runtime_state().unwrap_or_default())
+    }
+
+    fn configure_resolver_map(
+        &self,
+        _resolver_zones: &[client_core::PlatformResolverZone],
+        resolver_records: &[PlatformResolverRecord],
+    ) -> Result<()> {
+        let mut runtime = windows_resolver_runtime()
+            .lock()
+            .expect("windows resolver runtime mutex poisoned");
+        let changed = runtime.records != resolver_records;
+        runtime.records = resolver_records.to_vec();
+        drop(runtime);
+        if changed {
+            let _ = run_powershell("Clear-DnsClientCache -ErrorAction SilentlyContinue");
+        }
+        Ok(())
     }
 
     fn configure_relay(&self, config: Option<&RelayDataPlaneConfig>) -> Result<()> {
@@ -176,7 +221,16 @@ impl PlatformNetwork for WindowsPlatformNetwork {
 
     fn disable_network(&self) -> Result<()> {
         stop_wintun_data_plane();
-        disable_adapter(DEFAULT_INTERFACE_NAME)?;
+        let disable_result = disable_adapter(DEFAULT_INTERFACE_NAME);
+        {
+            let mut resolver = windows_resolver_runtime()
+                .lock()
+                .expect("windows resolver runtime mutex poisoned");
+            resolver.servers.clear();
+            resolver.records.clear();
+        }
+        let _ = run_powershell("Clear-DnsClientCache -ErrorAction SilentlyContinue");
+        disable_result?;
         let mut state = load_cached_runtime_state().unwrap_or_default();
         state.network_enabled = false;
         state.virtual_ip = None;
@@ -1347,6 +1401,12 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
     let release_receive_packet = runtime.release_receive_packet;
     let allocate_send_packet = runtime.allocate_send_packet;
     let send_packet = runtime.send_packet;
+    let resolver = windows_resolver_runtime()
+        .lock()
+        .expect("windows resolver runtime mutex poisoned")
+        .clone();
+    let dns_servers = resolver.servers;
+    let dns_records = resolver.records;
     let relay_address_owned = relay_address.to_string();
     let config_transport = config.transport.clone();
     let network_id = config.network_id.clone();
@@ -1514,6 +1574,14 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             if !packet.is_null() && packet_size > 0 {
                 let payload = unsafe { std::slice::from_raw_parts(packet, packet_size as usize) };
                 if payload.first().map(|byte| byte >> 4) == Some(4) {
+                    if let Some(reply) = local_dns_reply(payload, &dns_servers, &dns_records) {
+                        let _ =
+                            write_wintun_packet(session, allocate_send_packet, send_packet, &reply);
+                        unsafe {
+                            release_receive_packet(session, packet);
+                        }
+                        continue;
+                    }
                     if packet_targets_local_virtual_ip(payload, local_virtual_ip.as_str()) {
                         if let Some(reply) =
                             local_virtual_ip_reply(payload, local_virtual_ip.as_str())
@@ -2548,10 +2616,18 @@ fn udp_address_for_peer(path: &client_core::PeerPathConfig) -> Option<(PathKind,
 }
 
 fn attach_direct_udp_socket() -> Result<UdpSocket> {
-    let bind_address =
-        existing_direct_udp_bind_address().unwrap_or_else(|| "0.0.0.0:0".to_string());
-    let socket = UdpSocket::bind(&bind_address)
-        .with_context(|| format!("bind direct UDP socket to {bind_address}"))?;
+    let preferred_port = configured_direct_udp_port();
+    let bind_address = format!("0.0.0.0:{preferred_port}");
+    let socket = UdpSocket::bind(&bind_address).or_else(|error| {
+        if preferred_port == 0 {
+            return Err(error);
+        }
+        eprintln!(
+            "windows direct UDP preferred port {preferred_port} unavailable; using random port: {error}"
+        );
+        UdpSocket::bind("0.0.0.0:0")
+    })
+    .with_context(|| format!("bind direct UDP socket to {bind_address}"))?;
     socket
         .set_nonblocking(true)
         .context("set direct UDP socket nonblocking")?;
@@ -2982,6 +3058,16 @@ fn local_virtual_ip_reply(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u
     }
 }
 
+fn local_dns_reply(
+    packet: &[u8],
+    dns_servers: &[String],
+    dns_records: &[PlatformResolverRecord],
+) -> Option<Vec<u8>> {
+    dns_servers
+        .iter()
+        .find_map(|server| resolver_response_for_query(packet, server, dns_records))
+}
+
 fn should_ignore_unroutable_destination(destination: &str) -> bool {
     let mut parts = destination
         .split('.')
@@ -3179,6 +3265,12 @@ fn configure_wintun_local_data_plane() -> Result<()> {
         bail!("Wintun runtime is not ready");
     };
     let _ = runtime.data_plane.take();
+    let resolver = windows_resolver_runtime()
+        .lock()
+        .expect("windows resolver runtime mutex poisoned")
+        .clone();
+    let dns_servers = resolver.servers;
+    let dns_records = resolver.records;
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
     let session = runtime.session as usize;
@@ -3196,7 +3288,9 @@ fn configure_wintun_local_data_plane() -> Result<()> {
                 continue;
             }
             let payload = unsafe { std::slice::from_raw_parts(packet, packet_size as usize) };
-            if let Some(reply) = local_virtual_ip_reply(payload, local_virtual_ip.as_str()) {
+            if let Some(reply) = local_dns_reply(payload, &dns_servers, &dns_records) {
+                let _ = write_wintun_packet(session, allocate_send_packet, send_packet, &reply);
+            } else if let Some(reply) = local_virtual_ip_reply(payload, local_virtual_ip.as_str()) {
                 let _ = write_wintun_packet(session, allocate_send_packet, send_packet, &reply);
             } else if packet_targets_local_virtual_ip(payload, local_virtual_ip.as_str()) {
                 let packet = normalize_ipv4_transport_checksums(payload);
@@ -3304,13 +3398,6 @@ fn direct_udp_endpoint_file_path() -> PathBuf {
     app_data_dir()
         .join("SLAN")
         .join("client-v2-direct-udp-endpoint.json")
-}
-
-fn existing_direct_udp_bind_address() -> Option<String> {
-    let payload = fs::read(direct_udp_endpoint_file_path()).ok()?;
-    let report = serde_json::from_slice::<DirectUdpEndpointReport>(&payload).ok()?;
-    let bind_address = report.bind_address.trim();
-    (!bind_address.is_empty()).then(|| bind_address.to_string())
 }
 
 fn persist_direct_udp_endpoint_report(socket: &UdpSocket) {

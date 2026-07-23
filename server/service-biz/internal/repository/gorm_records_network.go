@@ -5,8 +5,6 @@ type gormNetworkRecord struct {
 	OwnerID          string `gorm:"size:64;index"`
 	Name             string `gorm:"size:255"`
 	CIDR             string `gorm:"column:cidr;size:128"`
-	Code             string `gorm:"size:128;index"`
-	TemplateKey      string `gorm:"size:128"`
 	IntraGroupPolicy string `gorm:"size:32"`
 	Default          bool   `gorm:"not null"`
 	Status           string `gorm:"size:64;index"`
@@ -45,6 +43,8 @@ type gormNetworkDeviceRecord struct {
 	DerpNodeID         string              `gorm:"size:64"`
 	PeerNodeID         string              `gorm:"size:64"`
 	PathScore          int64               `gorm:"not null"`
+	SignalScore        int                 `gorm:"not null;default:0"`
+	SignalQuality      string              `gorm:"size:32;not null;default:''"`
 	ObservedRttMs      int64               `gorm:"not null"`
 	PacketLossPpm      int64               `gorm:"not null"`
 	RelayMtu           int                 `gorm:"not null"`
@@ -79,13 +79,12 @@ type gormDeviceInviteRecord struct {
 }
 
 type gormDNSZoneRecord struct {
-	ZoneID       string `gorm:"primaryKey;size:64"`
-	NetworkID    string `gorm:"size:64;index"`
-	Name         string `gorm:"size:255"`
-	ExposeGlobal bool   `gorm:"not null"`
-	Status       string `gorm:"size:64;index"`
-	CreatedAt    int64  `gorm:"not null"`
-	UpdatedAt    int64  `gorm:"not null"`
+	ZoneID    string `gorm:"primaryKey;size:64"`
+	NetworkID string `gorm:"size:64;index"`
+	Name      string `gorm:"size:255"`
+	Status    string `gorm:"size:64;index"`
+	CreatedAt int64  `gorm:"not null"`
+	UpdatedAt int64  `gorm:"not null"`
 }
 
 type gormDNSRecordRecord struct {

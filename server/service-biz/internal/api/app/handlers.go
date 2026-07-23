@@ -17,6 +17,7 @@ type RouteDependencies struct {
 	DeviceSession       servicepkg.DeviceSessionUseCase
 	ClientMessages      servicepkg.ClientMessageUseCase
 	NetworkCore         servicepkg.NetworkCoreUseCase
+	NetworkInvite       servicepkg.NetworkInviteUseCase
 	NetworkRuntime      servicepkg.NetworkRuntimeUseCase
 }
 
@@ -61,6 +62,7 @@ func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
 
 func networkRoutes(deps RouteDependencies) []serviceapi.Route {
 	return serviceapi.CombineRoutes(
+		NetworkInviteHandler{Invites: deps.NetworkInvite, AuthSessions: deps.AuthSessions}.Routes(),
 		NetworkSnapshotHandler{Snapshots: deps.NetworkCore, DeviceSessions: deps.DeviceSession}.Routes(),
 		NetworkRuntimeHandler{
 			NetworkRuntime:    deps.NetworkRuntime,

@@ -5,10 +5,10 @@ use crate::{
     network_event::NetworkEventEnvelope,
     network_event_apply::{apply_network_event, ApplyResult},
     network_module::{
-        apply_network_module_event, replace_network_module_configs, sync_resolver_runtime_state,
+        apply_network_module_event, network_module_snapshot, replace_network_module_configs,
+        sync_resolver_runtime_state,
     },
     network_runtime_state::runtime_network_state_store,
-    resolver_apply::apply_resolver_runtime_event,
     session_store::{
         current_session_runtime_epoch, lock_session_runtime_epoch, PersistedSession,
         PreparedSession,
@@ -53,8 +53,9 @@ pub(crate) fn apply_network_event_projection(
         apply_network_event(state, envelope.clone())
     })?;
     if applies_secondary_projections(&apply_result) {
-        apply_resolver_runtime_event(envelope)?;
         apply_network_module_event(&envelope.network_id, local_device_id, envelope)?;
+        let configs = network_module_snapshot().configs;
+        sync_resolver_runtime_state(session, &configs);
     }
     Ok(apply_result)
 }

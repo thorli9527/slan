@@ -59,11 +59,10 @@ type NetworkEventDeviceGroupView struct {
 }
 
 type NetworkEventDNSZoneView struct {
-	ZoneID       string `json:"zoneId"`
-	NetworkID    string `json:"networkId"`
-	ZoneName     string `json:"zoneName"`
-	ExposeGlobal bool   `json:"exposeGlobal"`
-	UpdatedAt    int64  `json:"updatedAt"`
+	ZoneID    string `json:"zoneId"`
+	NetworkID string `json:"networkId"`
+	ZoneName  string `json:"zoneName"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 type NetworkEventDNSRecordView struct {

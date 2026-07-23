@@ -11,6 +11,9 @@ const (
 	tokenModeLong   = "long"
 	tokenModeManual = "manual"
 
+	UserSessionClientWeb     = "web"
+	UserSessionClientDesktop = "desktop"
+
 	installationKeyStatusUsed = "used"
 )
 
@@ -19,11 +22,13 @@ const (
 	defaultUserRefreshShortTTL  = 7 * 24 * time.Hour
 	defaultUserRefreshLongTTL   = 90 * 24 * time.Hour
 	defaultUserRefreshManualTTL = 180 * 24 * time.Hour
+	userRefreshRotationGrace    = 120 * time.Second
 
 	defaultDeviceAccessTTL        = 2 * time.Hour
 	defaultDeviceRefreshShortTTL  = 30 * 24 * time.Hour
 	defaultDeviceRefreshLongTTL   = 180 * 24 * time.Hour
 	defaultDeviceRefreshManualTTL = 365 * 24 * time.Hour
+	deviceRefreshRotationGrace    = 120 * time.Second
 
 	defaultInstallationKeyTTL = 30 * time.Minute
 	maxInstallationKeyTTL     = 1 * time.Hour
@@ -37,6 +42,15 @@ func normalizedSessionMode(mode string) string {
 		return tokenModeManual
 	default:
 		return tokenModeShort
+	}
+}
+
+func normalizedUserSessionClient(clientType string) string {
+	switch clientType {
+	case UserSessionClientDesktop:
+		return UserSessionClientDesktop
+	default:
+		return UserSessionClientWeb
 	}
 }
 

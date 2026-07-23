@@ -1,49 +1,22 @@
 package service
 
 import (
-	"fmt"
 	"net"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/slan/service-biz/internal/model"
 )
 
-func assignedNetworkIPMap(cidr string, deviceIDs []string) (map[string]string, int) {
-	ipMap := map[string]string{}
-	_, ipnet, err := net.ParseCIDR(strings.TrimSpace(cidr))
-	if err != nil || ipnet == nil {
-		return ipMap, 0
-	}
-	prefixLen, bits := ipnet.Mask.Size()
-	if bits != 32 {
-		return ipMap, prefixLen
-	}
-	base := ipnet.IP.To4()
-	if base == nil {
-		return ipMap, prefixLen
-	}
-	sorted := append([]string(nil), deviceIDs...)
-	sort.Strings(sorted)
-	for i, deviceID := range sorted {
-		if deviceID == "" {
-			continue
-		}
-		hostIP := append(net.IP(nil), base...)
-		offset := i + 10
-		for j := len(hostIP) - 1; j >= 0 && offset > 0; j-- {
-			offset += int(hostIP[j])
-			hostIP[j] = byte(offset % 256)
-			offset /= 256
-		}
-		if !ipnet.Contains(hostIP) {
-			continue
-		}
-		ipMap[deviceID] = hostIP.String()
-	}
-	return ipMap, prefixLen
-}
+const (
+	deviceVirtualIPHostCount       = 254
+	deviceVirtualIPFirstTierBlocks = 254
+	deviceVirtualIPTierBlocks      = 255
+	deviceVirtualIPPoolCapacity    = (deviceVirtualIPFirstTierBlocks + 255*deviceVirtualIPTierBlocks) * deviceVirtualIPHostCount
+	deviceVirtualIPCapacity        = 2 * deviceVirtualIPPoolCapacity
+)
+
+var deviceVirtualIPPoolPrefixes = [...]byte{10, 100}
 
 func deviceGlobalIP(device model.Device) string {
 	return strings.TrimSpace(device.VirtualIP)
@@ -51,7 +24,10 @@ func deviceGlobalIP(device model.Device) string {
 
 func managedDeviceVirtualIP(value string) bool {
 	ip := net.ParseIP(strings.TrimSpace(value)).To4()
-	return ip != nil && ip[0] == 10
+	if ip == nil || (ip[0] != 10 && ip[0] != 100) || ip[2] == 255 || ip[3] == 0 || ip[3] == 255 {
+		return false
+	}
+	return ip[1] != 0 || ip[2] != 0
 }
 
 func allocatedDeviceVirtualIP(sequenceID string) string {
@@ -61,14 +37,22 @@ func allocatedDeviceVirtualIP(sequenceID string) string {
 	}
 	value := strings.TrimPrefix(trimmed, "vip-")
 	index, err := strconv.Atoi(value)
-	if err != nil || index <= 0 {
+	if err != nil || index <= 0 || index > deviceVirtualIPCapacity {
 		return ""
 	}
-	index--
-	second := (index / (256 * 254)) % 256
-	third := (index / 254) % 256
-	fourth := 1 + (index % 254)
-	return fmt.Sprintf("10.%d.%d.%d", second, third, fourth)
+	zeroBased := index - 1
+	poolIndex := zeroBased / deviceVirtualIPPoolCapacity
+	poolOffset := zeroBased % deviceVirtualIPPoolCapacity
+	subnetIndex := poolOffset / deviceVirtualIPHostCount
+	fourth := 1 + poolOffset%deviceVirtualIPHostCount
+	first := deviceVirtualIPPoolPrefixes[poolIndex]
+	if subnetIndex < deviceVirtualIPFirstTierBlocks {
+		return net.IPv4(first, 0, byte(subnetIndex+1), byte(fourth)).String()
+	}
+	subnetIndex -= deviceVirtualIPFirstTierBlocks
+	second := 1 + subnetIndex/deviceVirtualIPTierBlocks
+	third := subnetIndex % deviceVirtualIPTierBlocks
+	return net.IPv4(first, byte(second), byte(third), byte(fourth)).String()
 }
 
 func networkGlobalName(deviceID, alias, name string) string {

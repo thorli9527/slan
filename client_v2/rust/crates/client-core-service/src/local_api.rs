@@ -68,6 +68,7 @@ pub(crate) enum LocalServiceMethod {
     LocalConnectControlMqtt,
     LocalSendClientMessage,
     LocalRegisterTestUser,
+    LocalAcceptNetworkInvite,
     LocalControlPlan,
     LocalControlCadence,
     LocalControlTickPlan,
@@ -115,6 +116,7 @@ impl LocalServiceMethod {
             "localConnectControlMqtt" => Self::LocalConnectControlMqtt,
             "localSendClientMessage" => Self::LocalSendClientMessage,
             "localRegisterTestUser" => Self::LocalRegisterTestUser,
+            "localAcceptNetworkInvite" => Self::LocalAcceptNetworkInvite,
             "localControlPlan" => Self::LocalControlPlan,
             "localControlCadence" => Self::LocalControlCadence,
             "localControlTickPlan" => Self::LocalControlTickPlan,
@@ -394,6 +396,8 @@ pub(crate) struct WatchStateResponse {
 pub(crate) struct WatchBusinessEventRequest {
     #[serde(default)]
     pub(crate) last_revision: u64,
+    #[serde(default)]
+    pub(crate) follow_latest: bool,
     #[serde(default)]
     pub(crate) stream_id: Option<String>,
     #[serde(default = "default_watch_timeout_ms")]

@@ -32,8 +32,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
     this.closeInlinePopovers();
     const workspace = this.selectedWorkspace;
     this.zoneDialogMessage = '';
-    this.zoneName = workspace.code === 'default' ? 'default.lan' : `${workspace.code}.internal`;
-    this.zoneExpose = workspace.name !== '默认网络';
+    this.zoneName = `${slug(workspace.name)}.internal`;
     this.zoneRecordType = 'A';
     this.zoneValue = this.devices[0]?.ip ?? '10.0.0.1';
     this.editingZone = null;
@@ -45,7 +44,6 @@ export abstract class AppComponentDns extends AppComponentDevices {
     this.closeInlinePopovers();
     this.zoneDialogMessage = '';
     this.zoneName = zone.zone;
-    this.zoneExpose = zone.expose;
     this.zoneRecordType = zone.recordType;
     this.zoneValue = zone.value;
     this.editingZone = zone;
@@ -62,7 +60,6 @@ export abstract class AppComponentDns extends AppComponentDevices {
     this.editingZone = zone;
     this.zoneDialogMessage = '';
     this.zoneNameValue = zone.zone;
-    this.zoneExposeValue = zone.expose;
     this.showZoneTagDialog = true;
   }
 
@@ -84,21 +81,18 @@ export abstract class AppComponentDns extends AppComponentDevices {
         const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(this.editingZone.workspaceId, zoneId, this.effectiveUserId), {
           actorUserId: this.effectiveUserId,
           zoneName,
-          exposeGlobal: this.zoneExposeValue,
         });
         Object.assign(this.editingZone, this.mapDNSZone(updated));
-      } catch {
+      } catch (error) {
         if (!this.isDemoMode) {
-          this.zoneDialogMessage = '更新 DNS Zone 失败';
+          this.zoneDialogMessage = this.zoneRequestError('更新', error);
           this.notifyStateChanged();
           return;
         }
         this.editingZone.zone = zoneName;
-        this.editingZone.expose = this.zoneExposeValue;
       }
     } else {
       this.editingZone.zone = zoneName;
-      this.editingZone.expose = this.zoneExposeValue;
     }
     this.closeZoneTagDialog();
   }
@@ -110,32 +104,34 @@ export abstract class AppComponentDns extends AppComponentDevices {
 
   async saveZoneDialog(): Promise<void> {
     this.zoneDialogMessage = '';
-    const workspace = this.selectedWorkspace;
+    const networkId = this.selectedWorkspaceId.trim();
+    if (!networkId) {
+      this.zoneDialogMessage = '创建 DNS Zone 失败：当前网络无效';
+      this.notifyStateChanged();
+      return;
+    }
     const zone = this.normalizePrivateZone(this.zoneName);
     if (this.zoneDialogMode === 'edit' && this.editingZone) {
       const zoneId = this.resourceId(this.editingZone.zoneId);
       if (zoneId) {
         try {
-          const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(workspace.workspaceId, zoneId, this.effectiveUserId), {
+          const updated = await this.api.patch<ApiDNSZone>(WEB_API.dnsZone(networkId, zoneId, this.effectiveUserId), {
             actorUserId: this.effectiveUserId,
             zoneName: zone,
-            exposeGlobal: this.zoneExpose,
           });
           Object.assign(this.editingZone, this.mapDNSZone(updated));
-        } catch {
+        } catch (error) {
           if (!this.isDemoMode) {
-            this.zoneDialogMessage = '更新 DNS Zone 失败';
+            this.zoneDialogMessage = this.zoneRequestError('更新', error);
             this.notifyStateChanged();
             return;
           }
           this.editingZone.zone = zone;
-          this.editingZone.expose = this.zoneExpose;
           this.editingZone.recordType = this.zoneRecordType;
           this.editingZone.value = this.zoneValue;
         }
       } else {
         this.editingZone.zone = zone;
-        this.editingZone.expose = this.zoneExpose;
         this.editingZone.recordType = this.zoneRecordType;
         this.editingZone.value = this.zoneValue;
       }
@@ -143,24 +139,23 @@ export abstract class AppComponentDns extends AppComponentDevices {
       this.notifyStateChanged();
       return;
     }
-      try {
-        const created = await this.api.post<ApiDNSZone>(WEB_API.dnsZones(workspace.workspaceId), {
-          actorUserId: this.effectiveUserId,
-          zoneName: zone,
-          exposeGlobal: this.zoneExpose,
-        });
-        this.dnsZones = [...this.dnsZones, this.mapDNSZone(created)];
-      } catch {
-        if (!this.isDemoMode) {
-          this.zoneDialogMessage = '创建 DNS Zone 失败';
-          this.notifyStateChanged();
-          return;
-        }
-        this.dnsZones = [
-          ...this.dnsZones,
-          { zoneId: this.localResourceId('zone'), networkId: workspace.networkId, workspaceId: workspace.workspaceId, zone, recordType: this.zoneRecordType, value: this.zoneValue, expose: this.zoneExpose, status: 'active' },
-        ];
+    try {
+      const created = await this.api.post<ApiDNSZone>(WEB_API.dnsZones(networkId), {
+        actorUserId: this.effectiveUserId,
+        zoneName: zone,
+      });
+      this.dnsZones = [...this.dnsZones, this.mapDNSZone(created)];
+    } catch (error) {
+      if (!this.isDemoMode) {
+        this.zoneDialogMessage = this.zoneRequestError('创建', error);
+        this.notifyStateChanged();
+        return;
       }
+      this.dnsZones = [
+        ...this.dnsZones,
+        { zoneId: this.localResourceId('zone'), networkId, workspaceId: networkId, zone, recordType: this.zoneRecordType, value: this.zoneValue, status: 'active' },
+      ];
+    }
     this.closeZoneDialog();
     this.notifyStateChanged();
   }
@@ -187,10 +182,8 @@ export abstract class AppComponentDns extends AppComponentDevices {
     this.recordName = this.domainName;
     this.recordType = 'A';
     this.recordTargetType = 'device';
-    this.recordDeviceId = this.workspaceDevices[0]?.deviceId ?? this.devices[0]?.deviceId ?? '';
-    this.recordTargetIp = '10.0.0.10';
-    this.recordCname = `${this.selectedWorkspace.code}.internal`;
-    this.recordPort = '443';
+    this.recordDeviceId = this.workspaceDevices[0]?.deviceId ?? '';
+    this.recordCname = `${slug(this.selectedWorkspace.name)}.internal`;
     this.recordValue = this.buildRecordValue();
     this.editingRecord = null;
     this.recordDialogMode = 'create';
@@ -202,11 +195,9 @@ export abstract class AppComponentDns extends AppComponentDevices {
     this.recordDialogMessage = '';
     this.recordName = record.name;
     this.recordType = record.recordType;
-    this.recordTargetType = record.targetType ?? (record.deviceId ? 'device' : 'ip');
+    this.recordTargetType = record.recordType === 'CNAME' ? 'cname' : 'device';
     this.recordDeviceId = record.deviceId || this.workspaceDevices[0]?.deviceId || '';
-    this.recordTargetIp = this.recordTargetType === 'ip' ? record.value : '';
     this.recordCname = this.recordTargetType === 'cname' ? record.value : '';
-    this.recordPort = record.port || '443';
     this.recordValue = this.buildRecordValue();
     this.editingRecord = record;
     this.recordDialogMode = 'edit';
@@ -214,17 +205,14 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   buildRecordValue(): string {
-    if (this.recordTargetType === 'ip') {
-      return this.recordTargetIp.trim();
-    }
     if (this.recordTargetType === 'cname') {
       return this.recordCname.trim().toLowerCase();
     }
     const device = this.devices.find((item) => item.deviceId === this.recordDeviceId);
     if (!device) {
-      return `- / - / ${this.recordPort}`;
+      return '- / -';
     }
-    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId} / ${this.recordPort}`;
+    return `${this.userLabel(device.owner)} / ${device.alias || device.deviceId}`;
   }
 
   syncRecordValue(): void {
@@ -232,11 +220,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
   }
 
   syncRecordType(): void {
-    if (this.recordType === 'CNAME') {
-      this.recordTargetType = 'cname';
-    } else if (this.recordTargetType === 'cname') {
-      this.recordTargetType = 'device';
-    }
+    this.recordTargetType = this.recordType === 'CNAME' ? 'cname' : 'device';
     this.syncRecordValue();
   }
 
@@ -250,12 +234,16 @@ export abstract class AppComponentDns extends AppComponentDevices {
     const workspace = this.selectedWorkspace;
     const name = slug(this.recordName);
     const zoneRow = this.currentDNSZones.find((item) => item.zoneId === this.selectedZoneId) ?? this.currentDNSZones[0];
-    const zone = zoneRow?.zone ?? `${workspace.code}.internal`;
+    const zone = zoneRow?.zone ?? `${slug(workspace.name)}.internal`;
     const fqdn = `${name}.${zone}`;
     this.recordValue = this.buildRecordValue();
     const targetDeviceId = this.recordTargetType === 'device' ? this.recordDeviceId : '';
-    const targetIp = this.recordTargetType === 'ip' ? this.recordTargetIp.trim() : '';
     const cname = this.recordTargetType === 'cname' ? this.recordCname.trim().toLowerCase() : '';
+    if ((this.recordTargetType === 'device' && !targetDeviceId) || (this.recordTargetType === 'cname' && !cname)) {
+      this.recordDialogMessage = this.recordTargetType === 'device' ? '请选择当前网络中的目标设备' : '请输入目标 CNAME';
+      this.notifyStateChanged();
+      return;
+    }
     if (this.recordDialogMode === 'edit' && this.editingRecord) {
       const recordId = this.resourceId(this.editingRecord.recordId);
       if (recordId) {
@@ -265,9 +253,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
             name,
             recordType: this.recordType,
             targetDeviceId,
-            targetIp,
             cname,
-            port: this.recordTargetType === 'device' ? this.recordPort : '',
             ttl: 60,
           });
           Object.assign(this.editingRecord, this.mapDNSRecord(updated));
@@ -282,7 +268,6 @@ export abstract class AppComponentDns extends AppComponentDevices {
           this.editingRecord.recordType = this.recordType;
           this.editingRecord.value = this.recordValue;
           this.editingRecord.deviceId = targetDeviceId;
-          this.editingRecord.port = this.recordTargetType === 'device' ? this.recordPort : '';
           this.editingRecord.ttl = 60;
           this.editingRecord.targetType = this.recordTargetType;
         }
@@ -292,7 +277,6 @@ export abstract class AppComponentDns extends AppComponentDevices {
         this.editingRecord.recordType = this.recordType;
         this.editingRecord.value = this.recordValue;
         this.editingRecord.deviceId = targetDeviceId;
-        this.editingRecord.port = this.recordTargetType === 'device' ? this.recordPort : '';
         this.editingRecord.ttl = 60;
         this.editingRecord.targetType = this.recordTargetType;
       }
@@ -309,9 +293,7 @@ export abstract class AppComponentDns extends AppComponentDevices {
           name,
           recordType: this.recordType,
           targetDeviceId,
-          targetIp,
           cname,
-          port: this.recordTargetType === 'device' ? this.recordPort : '',
           ttl: 60,
         });
         this.dnsRecords = [...this.dnsRecords, this.mapDNSRecord(created)];
@@ -323,13 +305,13 @@ export abstract class AppComponentDns extends AppComponentDevices {
         }
         this.dnsRecords = [
           ...this.dnsRecords,
-          { recordId: this.localResourceId('record'), zoneId, networkId: workspace.networkId, workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: targetDeviceId, port: this.recordTargetType === 'device' ? this.recordPort : '', ttl: 60, targetType: this.recordTargetType, expose: false },
+          { recordId: this.localResourceId('record'), zoneId, networkId: workspace.networkId, workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: targetDeviceId, ttl: 60, targetType: this.recordTargetType },
         ];
       }
     } else {
       this.dnsRecords = [
         ...this.dnsRecords,
-        { recordId: this.localResourceId('record'), networkId: workspace.networkId, workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: targetDeviceId, port: this.recordTargetType === 'device' ? this.recordPort : '', ttl: 60, targetType: this.recordTargetType, expose: false },
+        { recordId: this.localResourceId('record'), networkId: workspace.networkId, workspaceId: workspace.workspaceId, name, fqdn, recordType: this.recordType, value: this.recordValue, deviceId: targetDeviceId, ttl: 60, targetType: this.recordTargetType },
       ];
     }
     this.closeRecordDialog();
@@ -361,6 +343,11 @@ export abstract class AppComponentDns extends AppComponentDevices {
       .replace(/\/.*$/, '')
       .replace(/[^a-z0-9.-]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'internal.lan';
+  }
+
+  private zoneRequestError(action: string, error: unknown): string {
+    const detail = error instanceof Error ? error.message.trim() : String(error).trim();
+    return `${action} DNS Zone 失败${detail ? `：${detail}` : ''}`;
   }
 
   protected resourceId(value: string | undefined): string | undefined {

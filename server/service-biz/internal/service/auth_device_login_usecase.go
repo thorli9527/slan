@@ -158,7 +158,10 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 		device.UpdatedAt = now
 	}
 	if !managedDeviceVirtualIP(device.VirtualIP) {
-		device.VirtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(s.Devices))
+		device.VirtualIP, err = allocateDeviceVirtualIP(s.Devices)
+		if err != nil {
+			return CompleteDeviceLoginDeviceView{}, err
+		}
 	}
 	if err := s.Devices.SaveDevice(ctx, device); err != nil {
 		return CompleteDeviceLoginDeviceView{}, err
@@ -188,18 +191,32 @@ func (s AuthDeviceLoginCompleteService) CompleteDeviceLoginDevice(ctx context.Co
 	if len(networks) > 0 {
 		activeNetworkID = networks[0].NetworkID
 	}
+	desktopSession, err := newAuthUserSession(
+		nowTime,
+		s.NewSessID,
+		user.UserID,
+		tokenModeLong,
+		UserSessionClientDesktop,
+		device.DeviceID,
+	)
+	if err != nil {
+		return CompleteDeviceLoginDeviceView{}, err
+	}
+	if err := s.Sessions.ReplaceUserSessionForClient(ctx, desktopSession); err != nil {
+		return CompleteDeviceLoginDeviceView{}, err
+	}
 	event := DeviceControlEnvelope{
 		Type:      "device_user_login_succeeded",
 		MessageID: fmt.Sprintf("devlogin%d%s", nowTime.UnixMilli(), device.DeviceID),
 		Payload: map[string]any{
-			"accessToken":     userSession.AccessToken,
-			"refreshToken":    userSession.RefreshToken,
+			"accessToken":     desktopSession.AccessToken,
+			"refreshToken":    desktopSession.RefreshToken,
 			"userId":          user.UserID,
 			"userLabel":       user.Email,
 			"deviceId":        device.DeviceID,
 			"activeNetworkId": activeNetworkID,
 			"virtualIp":       device.VirtualIP,
-			"expiresIn":       max(userSession.ExpiresAt-now, 0),
+			"expiresIn":       max(desktopSession.ExpiresAt-now, 0),
 		},
 	}
 	if s.DevicePublisher != nil {

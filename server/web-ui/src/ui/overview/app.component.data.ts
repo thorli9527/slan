@@ -122,13 +122,11 @@ export abstract class AppComponentData extends AppComponentState {
         networkId: workspace.networkId,
         workspaceId: workspace.networkId,
         name: workspace.name,
-        code: workspace.code,
-        template: workspace.templateKey ?? 'custom',
         intraGroupPolicy: workspace.intraGroupPolicy === 'deny' ? 'deny' : 'allow',
         default: !!workspace.default,
         members: workspace.members ?? 0,
         devices: workspace.devices ?? 0,
-        zone: workspace.zone || `${workspace.code || slug(workspace.name)}.${workspace.networkId || 'network'}.${userId || 'user'}.sub.staticlss.com`,
+        zone: workspace.zone || `${slug(workspace.name)}.${workspace.networkId || 'network'}.${userId || 'user'}.sub.staticlss.com`,
       }));
       await Promise.all(this.workspaces.map((workspace) => this.loadWorkspaceDevices(workspace.workspaceId)));
       await this.loadCurrentUserDeviceSessions();
@@ -349,9 +347,10 @@ export abstract class AppComponentData extends AppComponentState {
   protected override mapDevice(device: ApiDevice): DeviceRow {
     return {
       deviceId: device.deviceId,
+      ownerId: device.ownerId,
       platform: device.platform,
       osVersion: device.osVersion ?? '',
-      alias: device.alias || device.name || device.deviceId,
+      alias: device.alias?.trim() || '',
       ip: device.globalIp,
       owner: device.ownerEmail || device.ownerId,
       status: device.status,
@@ -359,14 +358,13 @@ export abstract class AppComponentData extends AppComponentState {
   }
 
   protected override mapDNSZone(zone: ApiDNSZone): DNSZoneRow {
-    return { zoneId: zone.zoneId, networkId: zone.networkId, workspaceId: zone.networkId, zone: zone.zoneName, recordType: 'A', value: '', expose: zone.exposeGlobal, status: zone.status };
+    return { zoneId: zone.zoneId, networkId: zone.networkId, workspaceId: zone.networkId, zone: zone.zoneName, recordType: 'A', value: '', status: zone.status };
   }
 
   protected override mapDNSRecord(record: ApiDNSRecord): DNSRow {
-    const port = record.port ?? '';
     const networkId = record.networkId;
-    const targetType = record.targetDeviceId ? 'device' : record.targetIp ? 'ip' : record.cname ? 'cname' : 'device';
-    const value = record.targetDeviceId ? this.dnsRecordValue({ networkId, workspaceId: networkId, name: record.name, fqdn: record.fqdn, recordType: record.recordType, value: '', deviceId: record.targetDeviceId, port, ttl: record.ttl, targetType, expose: false }) : (record.targetIp || record.cname || '');
+    const targetType = record.recordType === 'CNAME' ? 'cname' : 'device';
+    const value = record.targetDeviceId ? this.dnsRecordValue({ networkId, workspaceId: networkId, name: record.name, fqdn: record.fqdn, recordType: record.recordType, value: '', deviceId: record.targetDeviceId, ttl: record.ttl, targetType }) : (record.cname || '');
     return {
       recordId: record.recordId,
       zoneId: record.zoneId,
@@ -377,10 +375,8 @@ export abstract class AppComponentData extends AppComponentState {
       recordType: record.recordType,
       value,
       deviceId: record.targetDeviceId ?? '',
-      port,
       ttl: record.ttl,
       targetType,
-      expose: false,
     };
   }
 

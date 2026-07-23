@@ -43,7 +43,6 @@ use crate::{
 };
 
 const MQTT_KEEPALIVE_PING_INTERVAL_MS: u64 = 15_000;
-const ACTIVE_NETWORK_RECONCILE_INTERVAL_MS: u64 = 10_000;
 const MQTT_RECONNECT_AFTER_SESSION_REFRESH_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Debug, Default)]
@@ -178,7 +177,6 @@ fn run_control_transport_worker(
     let mut last_runtime_state_ms = None;
     let mut last_path_health_ms = None;
     let mut last_keepalive_ping_ms = Some(current_timestamp_ms());
-    let mut last_active_network_reconcile_ms = Some(current_timestamp_ms());
     let mut last_network_subscribe_attempt_ms = Some(current_timestamp_ms());
     let mut initial_endpoint_report_queued = false;
     let connected_at_ms = current_timestamp_ms();
@@ -214,10 +212,11 @@ fn run_control_transport_worker(
 
         let now_ms = current_timestamp_ms();
         if !initial_endpoint_report_queued && last_runtime_state_ms.is_some() {
-            if let Some(message) =
-                control_transport::pending_endpoint_report_message(&session, now_ms)
-            {
-                publish_outbox_message_async(session.clone(), message, Arc::clone(&task_queue));
+            let messages = control_transport::pending_endpoint_report_messages(&session, now_ms);
+            if !messages.is_empty() {
+                for message in messages {
+                    publish_outbox_message_async(session.clone(), message, Arc::clone(&task_queue));
+                }
                 initial_endpoint_report_queued = true;
             }
         }
@@ -251,12 +250,6 @@ fn run_control_transport_worker(
             client.ping()?;
             last_keepalive_ping_ms = Some(now_ms);
             log_service_error("client-core-service sent mqtt keepalive ping");
-        }
-        if now_ms.saturating_sub(last_active_network_reconcile_ms.unwrap_or(0))
-            >= ACTIVE_NETWORK_RECONCILE_INTERVAL_MS
-        {
-            reconcile_active_network_state(&runtime, &task_queue, &state_notifier)?;
-            last_active_network_reconcile_ms = Some(now_ms);
         }
         let tick = control_transport::control_transport_tick_plan(
             ControlTransportTickRequest {
@@ -307,37 +300,6 @@ fn run_control_transport_worker(
             }
         }
     }
-}
-
-fn reconcile_active_network_state(
-    runtime: &RuntimeActorHandle,
-    task_queue: &Arc<Mutex<ControlTaskQueue>>,
-    state_notifier: &Arc<RuntimeEventHub>,
-) -> Result<(), String> {
-    let current_state = runtime.snapshot().state;
-    if !current_state.signed_in || !current_state.network_enabled {
-        return Ok(());
-    }
-    log_service_error("client-core-service reconciling active network state");
-    {
-        let mut queue = task_queue
-            .lock()
-            .map_err(|_| "control task queue mutex poisoned".to_string())?;
-        queue
-            .enqueue_downstream_unacked(
-                crate::control_tasks::ControlTaskAction::ReconcileNetworkState,
-                false,
-            )
-            .map_err(|err| err.to_string())?;
-    }
-    let state = crate::drain_pending_control_tasks(runtime, task_queue);
-    let business_type = if state.error.is_some() {
-        BUSINESS_NETWORK_SWITCH_FAILED
-    } else {
-        BUSINESS_NETWORK_RUNTIME_CHANGED
-    };
-    publish_state_business_event(state_notifier, business_type, &state);
-    Ok(())
 }
 
 fn connect_control_mqtt_with_retry(
@@ -719,7 +681,56 @@ fn try_ingest_network_event(
     let session = load_session().map_err(|err| format!("load session for network event: {err}"))?;
     let runtime_active_network_id =
         runtime_network_state_store().read(|state| state.active_network_id.clone());
-    if !network_event_targets_session(&envelope, &session, runtime_active_network_id.as_deref()) {
+    let active_network_id = runtime_active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            session
+                .active_network_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        });
+    if !network_event_targets_session(&envelope, &session, active_network_id) {
+        return Ok(true);
+    }
+    if !network_event_targets_active_runtime(&envelope.network_id, active_network_id) {
+        let local_device_id = session
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default()
+            .to_string();
+        let client = ControlPlaneClient::from_env();
+        let configs = client
+            .device_network_configs(session_device_api_token(&session), &local_device_id)
+            .map_err(|error| {
+                format!(
+                    "refresh inactive network event configs networkId={}: {error:#}",
+                    envelope.network_id
+                )
+            })?;
+        let mut prepared = crate::session_store::PreparedSession::from_session(session.clone());
+        prepared.network_configs = configs;
+        runtime
+            .call_named(
+                "network.inactive_event.refresh",
+                Some(envelope.event_id.clone()),
+                move |_runtime| {
+                    crate::network_event_projection::apply_prepared_session_projection(
+                        session_epoch,
+                        &prepared,
+                    )
+                },
+            )
+            .map_err(|error| format!("apply inactive network refresh: {error:#}"))?;
+        log_service_error(format!(
+            "client-core-service refreshed inactive network_event networkId={} activeNetworkId={}",
+            envelope.network_id,
+            active_network_id.unwrap_or_default()
+        ));
         return Ok(true);
     }
     let local_device_id = session
@@ -856,6 +867,18 @@ fn try_ingest_network_event(
         );
     }
     Ok(true)
+}
+
+fn network_event_targets_active_runtime(
+    event_network_id: &str,
+    active_network_id: Option<&str>,
+) -> bool {
+    let event_network_id = event_network_id.trim();
+    !event_network_id.is_empty()
+        && active_network_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            == Some(event_network_id)
 }
 
 fn log_downstream_message_summary(value: &serde_json::Value) -> Option<String> {
@@ -1648,14 +1671,13 @@ fn reset_worker_gate(worker_state: &Arc<Mutex<ControlTransportWorkerState>>) {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::sync::{Arc, Mutex};
 
-    use client_core::{AuthPayload, ClientCommand, ClientRuntime, NetworkRuntimeState};
+    use client_core::{AuthPayload, ClientCommand, ClientRuntime};
     use client_core_platform::PlatformNetworkImpl;
 
     use super::{
-        ingest_downstream_publish, mqtt_connection_matches, reconcile_active_network_state,
+        ingest_downstream_publish, mqtt_connection_matches, network_event_targets_active_runtime,
         reconnect_key, try_ingest_device_ip_reassigned,
     };
     use crate::control_plane::MqttCredential;
@@ -1668,7 +1690,7 @@ mod tests {
     use crate::session_store::PersistedSession;
     use crate::{
         control_tasks::ControlTaskQueue, BUSINESS_CONTROL_SYNC_CHANGED,
-        BUSINESS_NETWORK_RUNTIME_CHANGED, BUSINESS_NETWORK_SWITCH_FAILED,
+        BUSINESS_NETWORK_RUNTIME_CHANGED,
     };
 
     fn test_runtime() -> RuntimeActorHandle {
@@ -1785,6 +1807,19 @@ mod tests {
             &session,
             Some("network-a")
         ));
+    }
+
+    #[test]
+    fn only_active_network_events_reconfigure_the_single_runtime() {
+        assert!(network_event_targets_active_runtime(
+            "network-a",
+            Some("network-a")
+        ));
+        assert!(!network_event_targets_active_runtime(
+            "network-b",
+            Some("network-a")
+        ));
+        assert!(!network_event_targets_active_runtime("network-a", None));
     }
 
     #[test]
@@ -2238,77 +2273,5 @@ mod tests {
             std::env::remove_var("SLAN_STATE_DIR");
         }
         let _ = std::fs::remove_dir_all(&state_dir);
-    }
-
-    #[test]
-    fn active_network_reconcile_enqueues_reconcile_task_when_network_is_enabled() {
-        let _lock = crate::test_env_lock();
-        let state_dir = std::env::temp_dir().join(format!(
-            "slan-active-network-reconcile-test-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&state_dir);
-        fs::create_dir_all(&state_dir).expect("create temp state dir");
-        let previous_state_dir = std::env::var_os("SLAN_STATE_DIR");
-        std::env::set_var("SLAN_STATE_DIR", &state_dir);
-
-        let runtime = test_runtime();
-        runtime
-            .call(|runtime| {
-                runtime
-                    .dispatch(ClientCommand::ApplyDeviceUserLogin(AuthPayload {
-                        access_token: "token-1".to_string(),
-                        refresh_token: None,
-                        user_id: "user-1".to_string(),
-                        user_label: "user@example.com".to_string(),
-                        device_id: Some("device-1".to_string()),
-                        active_network_id: Some("net-1".to_string()),
-                        virtual_ip: Some("10.0.0.2".to_string()),
-                        expires_in: None,
-                    }))
-                    .expect("seed signed-in runtime");
-                runtime
-                    .dispatch(ClientCommand::ApplyPlatformRuntimeState(
-                        NetworkRuntimeState {
-                            adapter_present: true,
-                            network_enabled: true,
-                            virtual_ip: Some("10.0.0.2".to_string()),
-                            active_path: None,
-                            peer_paths: Vec::new(),
-                        },
-                    ))
-                    .expect("seed enabled network state");
-                Ok(())
-            })
-            .expect("seed runtime");
-        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
-        let state_notifier = Arc::new(RuntimeEventHub::default());
-
-        let _ = reconcile_active_network_state(&runtime, &task_queue, &state_notifier);
-
-        assert_eq!(state_notifier.latest_revision(), 1);
-        let event = state_notifier.next_after(0).expect("business event");
-        assert_eq!(event.business_type, BUSINESS_NETWORK_SWITCH_FAILED);
-
-        if let Some(value) = previous_state_dir {
-            std::env::set_var("SLAN_STATE_DIR", value);
-        } else {
-            std::env::remove_var("SLAN_STATE_DIR");
-        }
-        let _ = fs::remove_dir_all(&state_dir);
-    }
-
-    #[test]
-    fn active_network_reconcile_skips_when_network_is_disabled() {
-        let runtime = test_runtime();
-        let task_queue = Arc::new(Mutex::new(ControlTaskQueue::load_default()));
-        let state_notifier = Arc::new(RuntimeEventHub::default());
-
-        reconcile_active_network_state(&runtime, &task_queue, &state_notifier)
-            .expect("disabled network should not reconcile");
-
-        let mut queue = task_queue.lock().expect("task queue mutex");
-        let task = queue.take_next_pending().expect("read pending task");
-        assert!(task.is_none(), "disabled network must not enqueue refresh");
     }
 }

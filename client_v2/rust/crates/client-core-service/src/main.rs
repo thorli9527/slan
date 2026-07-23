@@ -32,7 +32,7 @@ mod session_store;
 mod time_utils;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, ErrorKind, Write},
     net::{TcpListener, TcpStream},
@@ -41,25 +41,25 @@ use std::{
         Arc, Mutex, OnceLock,
     },
     thread,
-    time::{Duration, UNIX_EPOCH},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 #[cfg(target_os = "windows")]
 use std::{
     ffi::OsString,
     process::{Command, Stdio},
-    time::Instant,
 };
 
 use anyhow::{Context, Result};
 use client_core::{
-    normalize_relay_transport, normalize_virtual_ip, relay_path_kind_for_transport,
-    AssignedIpPayload, AuthPayload, ClientCommand, ClientRuntime, ClientViewState,
-    NetworkRuntimeState, PasswordLoginPayload, PathCandidate, PathKind, PathState, PeerPathConfig,
-    PlatformAclPolicy, PlatformNetwork, PlatformNetworkDiagnostics, PlatformResolverConfig,
-    PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig, RelayPeerSession,
-    RelayTicket,
+    assess_signal_quality, normalize_relay_transport, normalize_virtual_ip,
+    relay_path_kind_for_transport, AssignedIpPayload, AuthPayload, ClientCommand, ClientRuntime,
+    ClientViewState, NetworkRuntimeState, PasswordLoginPayload, PathCandidate, PathKind, PathState,
+    PeerPathConfig, PlatformAclPolicy, PlatformNetwork, PlatformNetworkDiagnostics,
+    PlatformResolverConfig, PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig,
+    RelayPeerSession, RelayTicket, SLAN_DNS_SERVICE_IP,
 };
+use client_core_platform::direct_udp::configured_direct_udp_port;
 use client_core_platform::PlatformNetworkImpl;
 use serde_json::Value;
 #[cfg(target_os = "windows")]
@@ -132,10 +132,10 @@ use crate::session_store::{
     ensure_session_node_binding, load_pending_console_login, load_session,
     load_valid_registered_session, lock_session_runtime_epoch, persist_session,
     prepare_client_login_session, prepare_session_device_registered,
-    prepare_session_from_control_plane, remove_session, report_runtime_state,
-    revoke_remote_sessions, session_auth_invalid_error, session_device_api_token,
-    session_is_expired, session_not_found_error, sync_session_device_fields, PersistedSession,
-    PreparedSession,
+    prepare_session_from_control_plane, remove_session, remove_user_session_preserving_device,
+    report_runtime_state, revoke_remote_sessions, session_auth_invalid_error,
+    session_device_api_token, session_is_expired, session_not_found_error,
+    sync_session_device_fields, PersistedSession, PreparedSession,
 };
 use crate::time_utils::{parse_rfc3339_utc_ms, ticket_timing_with_window, TicketTiming};
 
@@ -162,6 +162,7 @@ const RELAY_RESPONSE_GAP_DEGRADED_PACKETS: u64 = 10;
 const RELAY_FAILURE_RECONFIGURE_DELTA: u64 = 5;
 static RUNTIME_CONNECT_PLANS: OnceLock<Mutex<PersistedConnectPlanStore>> = OnceLock::new();
 const SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const SESSION_AUTH_INVALID_GRACE: Duration = Duration::from_secs(5 * 60);
 const LOCAL_REQUEST_CONCURRENCY_LIMIT: usize = 64;
 const LOCAL_WATCH_CONCURRENCY_LIMIT: usize = 8;
 
@@ -340,8 +341,8 @@ fn run_service_server() -> Result<()> {
     let listener = TcpListener::bind(&bind_address)
         .with_context(|| format!("bind client-core-service on {bind_address}"))?;
     let mut initial_runtime = ClientRuntime::new(PlatformNetworkImpl);
-    if let Some(session) =
-        load_valid_registered_session().filter(|session| !session.access_token.trim().is_empty())
+    if let Some(session) = load_valid_registered_session()
+        .filter(|session| session.session_kind == "user" && !session.access_token.trim().is_empty())
     {
         let _ = initial_runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()));
     } else if let Some(state) = apply_pending_console_login(&mut initial_runtime) {
@@ -865,6 +866,9 @@ fn route_request(line: &str, context: &LocalServiceContext) -> Result<String> {
             )
         }
         LocalServiceMethod::LocalRegisterTestUser => return handle_register_test_user(request),
+        LocalServiceMethod::LocalAcceptNetworkInvite => {
+            return handle_accept_network_invite(request, &context.runtime)
+        }
         LocalServiceMethod::LocalSendClientMessage => return handle_send_client_message(request),
         LocalServiceMethod::LocalDiagnosticsExport => {
             return handle_export_diagnostics(&context.runtime)
@@ -928,7 +932,59 @@ fn publish_control_sync_event(state_notifier: &Arc<RuntimeEventHub>, method: Loc
 fn handle_state_snapshot(runtime: &RuntimeActorHandle) -> Result<String> {
     let mut state = runtime.snapshot().state;
     merge_persisted_client_message_into_state(&mut state);
+    enrich_signal_quality(&mut state);
     serde_json::to_string(&state).context("encode client state")
+}
+
+fn enrich_signal_quality(state: &mut ClientViewState) {
+    if !state.network_enabled {
+        state.signal_score = Some(0);
+        state.signal_quality = Some("offline".to_string());
+        state.signal_path = None;
+        return;
+    }
+    let platform_path = platform_transition::snapshot().runtime_state.active_path;
+    let stats = load_relay_runtime_stats();
+    let path = local_status_active_path(
+        platform_path.as_ref(),
+        stats.as_ref().and_then(|value| value.active_path.clone()),
+    )
+    .and_then(|value| value.as_str().map(str::to_string));
+    let loss = stats
+        .as_ref()
+        .and_then(crate::relay_store::runtime_packet_loss_ppm);
+    let rtt = stats.as_ref().and_then(|stats| {
+        runtime_relay_candidates()
+            .iter()
+            .find(|candidate| candidate.address == stats.relay_address)
+            .and_then(|candidate| candidate.observed_rtt_ms_hint)
+    });
+    let assessment = assess_signal_quality(true, path.as_deref(), rtt, loss);
+    state.signal_score = Some(assessment.score);
+    state.signal_quality = Some(assessment.quality);
+    state.signal_path = path;
+}
+
+fn handle_accept_network_invite(
+    request: ServiceRequest,
+    runtime: &RuntimeActorHandle,
+) -> Result<String> {
+    let invite_code = request
+        .args
+        .get("inviteCode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .context("接入码不能为空")?;
+    let session = load_session().context("当前未登录")?;
+    let device_id = session.device_id.as_deref().context("当前设备未注册")?;
+    let value = ControlPlaneClient::from_env().accept_network_invite(
+        &session.access_token,
+        invite_code,
+        device_id,
+    )?;
+    sync_control_assignment(runtime);
+    Ok(serde_json::to_string(&value).context("encode accepted network invite")?)
 }
 
 fn handle_local_status(
@@ -1263,7 +1319,8 @@ fn handle_local_session() -> Result<String> {
                     .saturating_add(seconds.saturating_mul(1000))
             });
             LocalSessionResponse {
-                signed_in: !session.access_token.trim().is_empty(),
+                signed_in: session.session_kind == "user"
+                    && !session.access_token.trim().is_empty(),
                 expired: session_is_expired(&session),
                 user_id: Some(session.user_id),
                 user_label: Some(session.user_label),
@@ -1410,12 +1467,11 @@ fn handle_start(
     let expected_device_id = snapshot.device_id.clone();
     let expected_signed_in = snapshot.signed_in;
     let prepared = load_valid_registered_session();
-    let should_read_runtime = prepared
-        .as_ref()
-        .is_some_and(|session| !session.access_token.trim().is_empty())
-        || snapshot.signed_in;
-    let prepared_runtime = prepare_runtime_refresh(should_read_runtime);
-    if prepared.is_none() {
+    let user_session_ready = prepared.as_ref().is_some_and(|session| {
+        session.session_kind == "user" && !session.access_token.trim().is_empty()
+    });
+    let prepared_runtime = prepare_runtime_refresh(user_session_ready || snapshot.signed_in);
+    if !user_session_ready {
         if let Err(error) = disable_platform_network_serialized() {
             log_service_error(format!(
                 "client-core-service startup platform disable failed: {error:#}"
@@ -1431,8 +1487,14 @@ fn handle_start(
         if runtime_login_context_matches(runtime, expected_device_id.as_deref(), expected_signed_in)
         {
             match prepared {
-                Some(session) if !session.access_token.trim().is_empty() => {
+                Some(session)
+                    if session.session_kind == "user"
+                        && !session.access_token.trim().is_empty() =>
+                {
                     runtime.dispatch(ClientCommand::ApplyDeviceUserLogin(session.into()))?;
+                }
+                Some(session) if session.session_kind == "device" => {
+                    runtime.apply_logout_state();
                 }
                 None => {
                     runtime.apply_logout_state();
@@ -1595,6 +1657,9 @@ where
 {
     persist_session(&prepared.session)?;
     apply_prepared_session_projection(current_session_runtime_epoch(), prepared)?;
+    if prepared.session.session_kind == "device" {
+        return Ok(runtime.apply_logout_state());
+    }
     runtime
         .dispatch(ClientCommand::ApplyDeviceUserLogin(
             prepared.session.clone().into(),
@@ -1772,7 +1837,7 @@ where
         log_service_error("client-core-service ignored stale logout result");
         return runtime.state().clone();
     }
-    if let Err(error) = remove_session() {
+    if let Err(error) = remove_user_session_preserving_device() {
         return state_with_error(runtime.state(), error.to_string());
     }
     runtime.apply_logout_state()
@@ -3051,9 +3116,11 @@ fn handle_watch_state(
         serde_json::from_value(request.args).context("decode watch state request")?;
     let timeout = Duration::from_millis(input.timeout_ms.clamp(1_000, 60_000));
     let snapshot = runtime.snapshots().wait_after(input.last_revision, timeout);
+    let mut state = snapshot.state;
+    enrich_signal_quality(&mut state);
     serde_json::to_string(&WatchStateResponse {
         revision: snapshot.revision,
-        state: snapshot.state,
+        state,
     })
     .context("encode watch state response")
 }
@@ -3070,13 +3137,19 @@ fn handle_watch_business_event(
         .stream_id
         .as_deref()
         .is_some_and(|stream_id| stream_id != state_notifier.stream_id());
+    let effective_last_revision = if input.follow_latest && !stream_reset {
+        state_notifier.latest_revision()
+    } else {
+        input.last_revision
+    };
     let read = if stream_reset {
         state_notifier.read_after(0)
     } else {
-        state_notifier.wait_read_after(input.last_revision, timeout)
+        state_notifier.wait_read_after(effective_last_revision, timeout)
     };
     let event = read.event;
-    let snapshot = runtime.snapshot().state;
+    let mut snapshot = runtime.snapshot().state;
+    enrich_signal_quality(&mut snapshot);
     serde_json::to_string(&WatchBusinessEventResponse {
         revision: event
             .as_ref()
@@ -3084,7 +3157,7 @@ fn handle_watch_business_event(
             .unwrap_or(if stream_reset {
                 read.latest_revision
             } else {
-                input.last_revision
+                effective_last_revision
             }),
         stream_id: state_notifier.stream_id().to_string(),
         stream_reset,
@@ -3541,7 +3614,6 @@ fn platform_network_configs(
             network_id: config.network_id.clone(),
             device_id: config.device_id.clone(),
             network_name: config.network_name.clone(),
-            network_code: config.network_code.clone(),
             intra_group_policy: config.intra_group_policy.clone(),
             network_created_at: config.network_created_at,
             config_version: config.config_version,
@@ -3575,62 +3647,50 @@ fn platform_resolver_zones(
 fn platform_resolver_records(
     configs: &[crate::control_plane::DeviceNetworkConfig],
 ) -> Vec<PlatformResolverRecord> {
-    configs
-        .iter()
-        .flat_map(|config| {
-            config
-                .resolver_records
-                .iter()
-                .map(|record| PlatformResolverRecord {
-                    record_id: record.record_id.clone(),
-                    zone_id: record.zone_id.clone(),
-                    network_id: record.network_id.clone(),
-                    name: record.name.clone(),
-                    fqdn: record.fqdn.clone(),
-                    record_type: record.record_type.clone(),
-                    target_device_id: record.target_device_id.clone(),
-                    target_ip: record.target_ip.clone(),
-                    cname: record.cname.clone(),
-                    port: record.port.clone(),
-                    ttl: record.ttl,
-                })
-        })
-        .collect()
+    resolver_apply::platform_resolver_records_from_configs(configs)
 }
 
 fn platform_resolver_config(
-    active_network_id: &str,
+    _active_network_id: &str,
     activation_dns: &crate::control_plane::DeviceResolverConfig,
     configs: &[crate::control_plane::DeviceNetworkConfig],
 ) -> PlatformResolverConfig {
-    let from_network = configs
+    let search_domains = configs
         .iter()
-        .find(|config| config.network_id.trim() == active_network_id.trim())
-        .or_else(|| configs.first())
-        .map(|config| PlatformResolverConfig {
-            servers: config.resolver.servers.clone(),
-            search_domains: config.resolver.search_domains.clone(),
-            split_domains: config.resolver.split_domains.clone(),
-            fallback_to_system_resolvers: config.resolver.fallback_to_system_resolvers,
-        })
-        .unwrap_or_default();
-    let mut resolver = from_network;
-    if resolver.servers.is_empty() {
-        resolver.servers = activation_dns.servers.clone();
+        .flat_map(|config| config.resolver.search_domains.iter())
+        .chain(activation_dns.search_domains.iter())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut split_domains = configs
+        .iter()
+        .flat_map(|config| config.resolver.split_domains.iter())
+        .chain(activation_dns.split_domains.iter())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if split_domains.is_empty() {
+        split_domains = search_domains.clone();
     }
-    if resolver.search_domains.is_empty() {
-        resolver.search_domains = activation_dns.search_domains.clone();
+    let has_managed_dns = !split_domains.is_empty()
+        || configs
+            .iter()
+            .any(|config| !config.resolver_zones.is_empty() || !config.resolver_records.is_empty());
+    PlatformResolverConfig {
+        servers: has_managed_dns
+            .then(|| SLAN_DNS_SERVICE_IP.to_string())
+            .into_iter()
+            .collect(),
+        search_domains,
+        split_domains,
+        fallback_to_system_resolvers: false,
     }
-    if resolver.split_domains.is_empty() {
-        resolver.split_domains = activation_dns.split_domains.clone();
-    }
-    if !resolver.fallback_to_system_resolvers {
-        resolver.fallback_to_system_resolvers = activation_dns.fallback_to_system_resolvers;
-    }
-    if resolver.split_domains.is_empty() {
-        resolver.split_domains = resolver.search_domains.clone();
-    }
-    resolver
 }
 
 fn prepare_relay_data_plane_from_latest_control(
@@ -4281,12 +4341,15 @@ fn build_relay_data_plane_config(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| relay.address.clone());
+    let direct_udp_port = configured_direct_udp_port();
     Ok(RelayDataPlaneConfig {
         enabled: !sessions.is_empty(),
         transport: relay.transport.clone(),
         relay_address,
         local_node_id: local_node_id.to_string(),
         network_id: network_id.to_string(),
+        direct_udp_port,
+        randomize_direct_udp_port: direct_udp_port == 0,
         node_configs: session.node_configs.clone(),
         path_policy,
         peer_paths: peer_path_configs(
@@ -4388,7 +4451,9 @@ fn peer_path_configs(
                                 continue;
                             }
                             direct_addresses.push(address.to_string());
-                            candidates.push(direct_path_candidate(kind, address));
+                            let mut candidate = direct_path_candidate(kind, address);
+                            candidate.path_score = u32::try_from(path.priority).ok();
+                            candidates.push(candidate);
                         } else if let Some(candidate) = relay_path_candidate_from_connect_plan(
                             path,
                             relay_sessions,
@@ -4432,7 +4497,12 @@ fn peer_path_configs(
                         continue;
                     }
                     direct_addresses.push(address.to_string());
-                    endpoint_candidates.push(direct_path_candidate(kind, address));
+                    let mut candidate = direct_path_candidate(kind, address);
+                    candidate.last_ok_at_ms = u64::try_from(endpoint.updated_at)
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .map(|value| value.saturating_mul(1_000));
+                    endpoint_candidates.push(candidate);
                 }
                 endpoint_candidates.sort_by_key(|candidate| match candidate.kind {
                     PathKind::LanUdp => 0,
@@ -4487,7 +4557,7 @@ fn peer_path_configs(
                     },
                 );
             }
-            candidates.sort_by_key(|candidate| candidate.kind.priority());
+            client_core::sort_path_candidates(&mut candidates);
             PeerPathConfig {
                 peer_node_id: peer.node_id.clone(),
                 peer_virtual_ips: peer.virtual_ips.clone(),
@@ -5285,67 +5355,81 @@ fn error_state_json(error: String) -> String {
 }
 
 fn spawn_session_refresh_worker(runtime: RuntimeActorHandle, state_notifier: Arc<RuntimeEventHub>) {
-    thread::spawn(move || loop {
-        thread::sleep(SESSION_REFRESH_INTERVAL);
-        let expected_snapshot = runtime.snapshot();
-        let expected_state = expected_snapshot.state.clone();
-        match refresh_logged_in_session() {
-            Ok(Some(prepared)) => {
-                let before = expected_state.clone();
-                let correlation_id = prepared.session.device_id.clone();
-                let state = runtime
-                    .call_named_if_revision(
-                        "session.refresh.apply",
-                        correlation_id,
-                        expected_snapshot.revision,
-                        move |runtime| {
-                            if !runtime_login_context_matches(
-                                runtime,
-                                expected_state.device_id.as_deref(),
-                                expected_state.signed_in,
-                            ) {
-                                anyhow::bail!("stale session refresh");
-                            }
-                            commit_registered_session(runtime, &prepared)
-                        },
-                    )
-                    .map(|state| state.unwrap_or_else(|| runtime.snapshot().state))
-                    .unwrap_or_else(|error| state_with_error(&before, error.to_string()));
-                if state != before {
-                    let business_data =
-                        serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
-                    publish_business_event(
-                        &state_notifier,
-                        BUSINESS_SESSION_CHANGED,
-                        business_data,
-                    );
+    thread::spawn(move || {
+        let mut auth_invalid_since = None;
+        loop {
+            thread::sleep(SESSION_REFRESH_INTERVAL);
+            let expected_snapshot = runtime.snapshot();
+            let expected_state = expected_snapshot.state.clone();
+            match refresh_logged_in_session() {
+                Ok(Some(prepared)) => {
+                    auth_invalid_since = None;
+                    let before = expected_state.clone();
+                    let correlation_id = prepared.session.device_id.clone();
+                    let state = runtime
+                        .call_named_if_revision(
+                            "session.refresh.apply",
+                            correlation_id,
+                            expected_snapshot.revision,
+                            move |runtime| {
+                                if !runtime_login_context_matches(
+                                    runtime,
+                                    expected_state.device_id.as_deref(),
+                                    expected_state.signed_in,
+                                ) {
+                                    anyhow::bail!("stale session refresh");
+                                }
+                                commit_registered_session(runtime, &prepared)
+                            },
+                        )
+                        .map(|state| state.unwrap_or_else(|| runtime.snapshot().state))
+                        .unwrap_or_else(|error| state_with_error(&before, error.to_string()));
+                    if state != before {
+                        let business_data =
+                            serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
+                        publish_business_event(
+                            &state_notifier,
+                            BUSINESS_SESSION_CHANGED,
+                            business_data,
+                        );
+                    }
                 }
-            }
-            Ok(None) => {}
-            Err(error) => {
-                log_service_error(format!(
-                    "client-core-service session refresh skipped: {error:#}"
-                ));
-                if session_auth_invalid_error(&error)
-                    || error.to_string().contains("session expired")
-                {
-                    let state = invalidate_runtime_session(
-                        &runtime,
-                        "session.refresh.logout",
-                        expected_snapshot.revision,
-                        expected_snapshot.state.device_id,
-                        expected_snapshot.state.signed_in,
-                    )
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| runtime.snapshot().state);
-                    let business_data =
-                        serde_json::to_value(state).unwrap_or_else(|_| serde_json::json!({}));
-                    publish_business_event(
-                        &state_notifier,
-                        BUSINESS_SESSION_CHANGED,
-                        business_data,
-                    );
+                Ok(None) => {
+                    auth_invalid_since = None;
+                }
+                Err(error) => {
+                    log_service_error(format!(
+                        "client-core-service session refresh skipped: {error:#}"
+                    ));
+                    let auth_invalid = session_auth_invalid_error(&error)
+                        || error.to_string().contains("session expired");
+                    if !auth_invalid {
+                        auth_invalid_since = None;
+                        continue;
+                    }
+                    let first_failure = auth_invalid_since.get_or_insert_with(Instant::now);
+                    if first_failure.elapsed() < SESSION_AUTH_INVALID_GRACE {
+                        continue;
+                    }
+                    {
+                        let state = invalidate_runtime_session(
+                            &runtime,
+                            "session.refresh.logout",
+                            expected_snapshot.revision,
+                            expected_snapshot.state.device_id,
+                            expected_snapshot.state.signed_in,
+                        )
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| runtime.snapshot().state);
+                        let business_data =
+                            serde_json::to_value(state).unwrap_or_else(|_| serde_json::json!({}));
+                        publish_business_event(
+                            &state_notifier,
+                            BUSINESS_SESSION_CHANGED,
+                            business_data,
+                        );
+                    }
                 }
             }
         }

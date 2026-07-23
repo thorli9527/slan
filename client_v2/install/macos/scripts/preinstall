@@ -4,6 +4,9 @@ set -eu
 SERVICE_LABEL="dev.slan.client-core-service"
 APP_LABEL="dev.slan.client-v2"
 INSTALL_DIR="/Library/Application Support/SLAN"
+STATE_ROOT="/Library/Preferences/dev.slan.client-core-service"
+STATE_DIR="${STATE_ROOT}/SLAN"
+STATE_BACKUP="/private/var/tmp/dev.slan.client-core-service.config.backup"
 SERVICE_BIN="${INSTALL_DIR}/client-core-service"
 SERVICE_PID="${INSTALL_DIR}/client-core-service.pid"
 SERVICE_PLIST="/Library/LaunchDaemons/${SERVICE_LABEL}.plist"
@@ -21,6 +24,12 @@ if [ -f "$APP_PLIST" ]; then
 fi
 pkill -x "slan_client_v2" >/dev/null 2>&1 || true
 pkill -x "client-core-service" >/dev/null 2>&1 || true
+
+# Keep device identity and device-session tokens outside the installer-owned tree.
+if [ -f "${INSTALL_DIR}/config.json" ]; then
+  mkdir -p "$STATE_DIR"
+  cp -p "${INSTALL_DIR}/config.json" "$STATE_BACKUP"
+fi
 
 rm -f "$SERVICE_PLIST" "$APP_PLIST" "$SERVICE_BIN" "$SERVICE_PID"
 rm -rf "$APP_PATH"

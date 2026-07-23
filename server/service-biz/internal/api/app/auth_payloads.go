@@ -25,7 +25,6 @@ func appAuthSessionPayloadWithDefaultNetwork(view servicepkg.AuthSessionView, de
 		payload["defaultNetwork"] = map[string]any{
 			"networkId": network.NetworkID,
 			"name":      network.Name,
-			"code":      defaultNetwork.Code,
 			"status":    network.Status,
 		}
 		payload["activeNetworkId"] = network.NetworkID

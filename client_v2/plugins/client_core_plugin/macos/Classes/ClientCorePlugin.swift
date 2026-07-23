@@ -5,12 +5,13 @@ import Network
 public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
   private static let launchdServiceLabel = "dev.slan.client-core-service"
   private static let defaultServiceHost = "127.0.0.1:46392"
-  private static let trayOpenTitle = "Open Client"
+  private static let trayOpenTitle = "Open"
   private static let trayNetworkTitle = "Network"
   private static let trayQuitTitle = "Quit"
   private var statusItem: NSStatusItem?
-  private var trayStatusMenuItem: NSMenuItem?
-  private var networkMenuItem: NSMenuItem?
+  private var trayStatusLabel: NSTextField?
+  private var trayAccountEmailLabel: NSTextField?
+  private var networkSwitch: NSSwitch?
   private let bundledServiceLock = NSLock()
   private let browserLogLock = NSLock()
   private var bundledServiceProcess: Process?
@@ -196,35 +197,74 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     item.button?.toolTip = "SLAN Client"
 
     let menu = NSMenu()
-    let trayStatusItem = NSMenuItem(title: "Status: Starting", action: nil, keyEquivalent: "")
-    trayStatusItem.isEnabled = false
-    menu.addItem(trayStatusItem)
+    menu.minimumWidth = 340
+    let headerItem = NSMenuItem()
+    headerItem.view = makeStatusMenuHeader()
+    menu.addItem(headerItem)
     menu.addItem(NSMenuItem.separator())
     menu.addItem(makeMenuItem(
       title: Self.trayOpenTitle,
       action: #selector(openMainWindow),
       keyEquivalent: ""
     ))
-    let networkItem = makeMenuItem(
-      title: Self.trayNetworkTitle,
-      action: #selector(toggleNetwork),
-      keyEquivalent: ""
-    )
-    networkItem.isEnabled = false
-    networkItem.state = .off
-    menu.addItem(networkItem)
-    menu.addItem(NSMenuItem.separator())
     menu.addItem(makeMenuItem(
       title: Self.trayQuitTitle,
       action: #selector(quitShell),
       keyEquivalent: "q"
     ))
     item.menu = menu
-    trayStatusMenuItem = trayStatusItem
-    networkMenuItem = networkItem
     self.statusItem = item
     applyStatusIcon(signedIn: false, networkEnabled: false, serviceAvailable: false)
     startStateWatchLoop()
+  }
+
+  private func makeStatusMenuHeader() -> NSView {
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 100))
+
+    let title = makeMenuLabel("SLAN", size: 18, weight: .semibold, color: .labelColor)
+    title.frame = NSRect(x: 16, y: 70, width: 220, height: 23)
+    view.addSubview(title)
+
+    let status = makeMenuLabel("正在连接", size: 12, weight: .regular, color: .secondaryLabelColor)
+    status.frame = NSRect(x: 16, y: 51, width: 220, height: 18)
+    view.addSubview(status)
+    trayStatusLabel = status
+
+    let toggle = NSSwitch(frame: NSRect(x: 270, y: 54, width: 50, height: 26))
+    toggle.target = self
+    toggle.action = #selector(toggleNetwork)
+    toggle.isEnabled = false
+    view.addSubview(toggle)
+    networkSwitch = toggle
+
+    let separator = NSBox(frame: NSRect(x: 16, y: 40, width: 308, height: 1))
+    separator.boxType = .separator
+    view.addSubview(separator)
+
+    let user = makeMenuLabel("用户", size: 12, weight: .semibold, color: .secondaryLabelColor)
+    user.frame = NSRect(x: 16, y: 10, width: 48, height: 20)
+    view.addSubview(user)
+
+    let email = makeMenuLabel("未登录", size: 14, weight: .medium, color: .labelColor)
+    email.frame = NSRect(x: 76, y: 10, width: 248, height: 20)
+    email.lineBreakMode = .byTruncatingTail
+    view.addSubview(email)
+    trayAccountEmailLabel = email
+
+    return view
+  }
+
+  private func makeMenuLabel(
+    _ text: String,
+    size: CGFloat,
+    weight: NSFont.Weight,
+    color: NSColor
+  ) -> NSTextField {
+    let label = NSTextField(labelWithString: text)
+    label.font = NSFont.systemFont(ofSize: size, weight: weight)
+    label.textColor = color
+    label.isSelectable = false
+    return label
   }
 
   private func applyStatusIcon(
@@ -408,10 +448,9 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     latestMenuState = nil
     statusItem?.button?.toolTip = "SLAN Client - Service unavailable"
     applyStatusIcon(signedIn: false, networkEnabled: false, serviceAvailable: false)
-    trayStatusMenuItem?.title = "Status: Service unavailable"
-    networkMenuItem?.title = "Network unavailable"
-    networkMenuItem?.isEnabled = false
-    networkMenuItem?.state = .off
+    trayStatusLabel?.stringValue = "服务暂不可用"
+    networkSwitch?.isEnabled = false
+    networkSwitch?.state = .off
   }
 
   private func applyMenuStateIfChanged(_ snapshot: [String: Any]) {
@@ -426,35 +465,25 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
     let error = stringField(snapshot, "error")
     let statusText: String
     if !error.isEmpty {
-      statusText = "Error"
+      statusText = "连接异常"
     } else if syncing {
-      statusText = "Updating network"
+      statusText = "正在连接"
     } else if networkEnabled {
-      statusText = "Network enabled"
+      statusText = "已连接"
     } else if signedIn {
-      statusText = "Network disabled"
+      statusText = "未连接"
     } else {
-      statusText = "Signed out"
+      statusText = "未登录"
     }
-    trayStatusMenuItem?.title = "Status: \(statusText)"
-    if !signedIn {
-      networkMenuItem?.title = "Sign in to enable network"
-      networkMenuItem?.toolTip = "Open the client and sign in first"
-    } else if syncing {
-      networkMenuItem?.title = "Updating Network..."
-      networkMenuItem?.toolTip = "Wait for the current network operation"
-    } else {
-      networkMenuItem?.title = networkEnabled ? "Disable Network" : "Enable Network"
-      networkMenuItem?.toolTip = networkEnabled
-        ? "Disable the SLAN virtual network"
-        : "Enable the SLAN virtual network"
-    }
-    networkMenuItem?.state = networkEnabled ? .on : .off
-    networkMenuItem?.isEnabled = trayNetworkItemEnabled(
+    trayStatusLabel?.stringValue = statusText
+    networkSwitch?.state = networkEnabled ? .on : .off
+    networkSwitch?.isEnabled = trayNetworkItemEnabled(
       signedIn: signedIn,
       syncing: syncing,
       switchEnabled: switchEnabled
     )
+    let userLabel = stringField(snapshot, "userLabel")
+    trayAccountEmailLabel?.stringValue = userLabel.isEmpty ? "未登录" : userLabel
     applyStatusIcon(
       signedIn: signedIn,
       networkEnabled: networkEnabled,
@@ -478,6 +507,7 @@ public class ClientCorePlugin: NSObject, FlutterPlugin, NSWindowDelegate {
       && boolField(left, "syncing") == boolField(right, "syncing")
       && boolField(left, "switchEnabled") == boolField(right, "switchEnabled")
       && stringField(left, "error") == stringField(right, "error")
+      && stringField(left, "userLabel") == stringField(right, "userLabel")
       && stringField(left, "deviceId") == stringField(right, "deviceId")
   }
 

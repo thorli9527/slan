@@ -26,9 +26,9 @@ func normalizeCreateDNSRecordInput(input CreateDNSRecordInput) CreateDNSRecordIn
 	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.ZoneID = strings.TrimSpace(input.ZoneID)
 	input.Name = strings.TrimSpace(input.Name)
-	input.Type = strings.TrimSpace(input.Type)
+	input.Type = strings.ToUpper(strings.TrimSpace(input.Type))
 	input.Value = strings.TrimSpace(input.Value)
-	input.Port = strings.TrimSpace(input.Port)
+	input.Port = normalizeDNSRecordPort(input.Type, input.Port)
 	return input
 }
 
@@ -37,10 +37,17 @@ func normalizeUpdateDNSRecordInput(input UpdateDNSRecordInput) UpdateDNSRecordIn
 	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.ZoneID = strings.TrimSpace(input.ZoneID)
 	input.Name = strings.TrimSpace(input.Name)
-	input.Type = strings.TrimSpace(input.Type)
+	input.Type = strings.ToUpper(strings.TrimSpace(input.Type))
 	input.Value = strings.TrimSpace(input.Value)
-	input.Port = strings.TrimSpace(input.Port)
+	input.Port = normalizeDNSRecordPort(input.Type, input.Port)
 	return input
+}
+
+func normalizeDNSRecordPort(recordType, port string) string {
+	if !strings.EqualFold(strings.TrimSpace(recordType), "SRV") {
+		return ""
+	}
+	return strings.TrimSpace(port)
 }
 
 func normalizeDNSRecordID(recordID string) string {

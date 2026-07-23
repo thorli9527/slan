@@ -20,7 +20,7 @@ func (s *GormStore) GetDNSZone(_ context.Context, zoneID string) (model.DNSZone,
 
 func (s *GormStore) SaveDNSZone(_ context.Context, zone model.DNSZone) error {
 	row := dnsZoneRecordFromModel(zone)
-	return upsertByColumns(s.db, &row, []string{"zone_id"}, []string{"network_id", "name", "expose_global", "status", "created_at", "updated_at"})
+	return upsertByColumns(s.db, &row, []string{"zone_id"}, []string{"network_id", "name", "status", "created_at", "updated_at"})
 }
 
 func (s *GormStore) DeleteDNSZone(_ context.Context, zoneID string) error {

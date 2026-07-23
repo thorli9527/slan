@@ -5,7 +5,7 @@ import 'compact_info_row.dart';
 
 /// 已登录首页状态面板。
 ///
-/// 集中展示当前用户、虚拟 IP、流量统计和设备 ID。
+/// 集中展示当前用户、虚拟 IP 和流量统计。
 class SignedInStatusPanel extends StatelessWidget {
   const SignedInStatusPanel({
     required this.desktop,
@@ -13,6 +13,7 @@ class SignedInStatusPanel extends StatelessWidget {
     required this.currentIp,
     required this.state,
     required this.onToggle,
+    this.onAcceptInvite,
     super.key,
   });
 
@@ -29,12 +30,13 @@ class SignedInStatusPanel extends StatelessWidget {
 
   /// 网络开关回调。
   final ValueChanged<bool> onToggle;
+  final VoidCallback? onAcceptInvite;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: EdgeInsets.fromLTRB(16, desktop ? 16 : 12, 16, 14),
+      padding: EdgeInsets.fromLTRB(14, desktop ? 12 : 10, 14, 11),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(22),
@@ -46,8 +48,10 @@ class SignedInStatusPanel extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Expanded(child: CompactIdentity(userLabel: userLabel)),
-              const SizedBox(width: 12),
+              Expanded(
+                child: CompactIdentity(userLabel: userLabel),
+              ),
+              const SizedBox(width: 8),
               _NetworkControl(
                 desktop: desktop,
                 state: state,
@@ -55,9 +59,39 @@ class SignedInStatusPanel extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Divider(height: 1, color: theme.colorScheme.outlineVariant),
-          const SizedBox(height: 11),
+          if (desktop && onAcceptInvite != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              key: const Key('network-docking-actions'),
+              children: [
+                CircleAvatar(
+                  key: const Key('network-docking-avatar'),
+                  radius: 12,
+                  backgroundColor: theme.colorScheme.primaryContainer,
+                  foregroundColor: theme.colorScheme.onPrimaryContainer,
+                  child: const Icon(Icons.link_rounded, size: 15),
+                ),
+                const SizedBox(width: 9),
+                SizedBox(
+                  width: 76,
+                  child: Text(
+                    '网络对接',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  key: const Key('accept-network-invite'),
+                  style: _networkDockingButtonStyle(),
+                  onPressed: onAcceptInvite,
+                  child: const Text('确认接入'),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
           CompactInfoRow(
             valueKey: const Key('network-ip-value'),
             icon: Icons.router_rounded,
@@ -65,14 +99,14 @@ class SignedInStatusPanel extends StatelessWidget {
             value: currentIp,
           ),
           if (_hasTraffic(state)) ...[
-            const SizedBox(height: 7),
+            const SizedBox(height: 6),
             CompactInfoRow(
               valueKey: const Key('client-traffic-total-value'),
               icon: Icons.speed_rounded,
               label: '已用',
               value: _trafficTotalText(state),
             ),
-            const SizedBox(height: 7),
+            const SizedBox(height: 6),
             CompactInfoRow(
               valueKey: const Key('client-traffic-current-value'),
               icon: Icons.swap_vert_rounded,
@@ -80,27 +114,18 @@ class SignedInStatusPanel extends StatelessWidget {
               value: _trafficCurrentText(state),
             ),
           ],
-          if (_deviceIdText(state) != null) ...[
-            const SizedBox(height: 7),
-            CompactInfoRow(
-              valueKey: const Key('client-device-id-value'),
-              icon: Icons.devices_other_rounded,
-              label: '设备 ID',
-              value: _deviceIdText(state)!,
-            ),
-          ],
         ],
       ),
     );
   }
 
-  /// 清理设备 ID，空字符串不展示。
-  String? _deviceIdText(ClientViewState state) {
-    final deviceId = state.deviceId?.trim();
-    if (deviceId == null || deviceId.isEmpty) {
-      return null;
-    }
-    return deviceId;
+  ButtonStyle _networkDockingButtonStyle() {
+    return TextButton.styleFrom(
+      minimumSize: const Size(0, 30),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      visualDensity: VisualDensity.compact,
+      textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+    );
   }
 
   /// 判断是否已有流量统计。
@@ -154,7 +179,7 @@ class _NetworkControl extends StatelessWidget {
   Widget build(BuildContext context) {
     if (desktop) {
       return SizedBox(
-        width: 88,
+        width: 56,
         child: _NetworkSwitch(state: state, onToggle: onToggle),
       );
     }
@@ -213,33 +238,47 @@ class _NetworkSwitch extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final switchBusy = state.syncing && !state.switchEnabled;
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 20,
-            height: 16,
-            child: switchBusy
-                ? CircularProgressIndicator(
+    final enabled = state.networkEnabled;
+    return Tooltip(
+      message: switchBusy
+          ? '正在更新网络'
+          : enabled
+              ? '停用网络'
+              : '启用网络',
+      child: SizedBox(
+        width: 56,
+        height: 34,
+        child: Stack(
+          alignment: Alignment.centerRight,
+          children: [
+            if (switchBusy)
+              Positioned(
+                left: 0,
+                child: SizedBox.square(
+                  dimension: 12,
+                  child: CircularProgressIndicator(
                     strokeWidth: 2,
                     color: theme.colorScheme.primary,
-                  )
-                : null,
-          ),
-          const SizedBox(width: 4),
-          SizedBox(
-            height: 36,
-            child: Switch(
-              key: const Key('network-switch'),
-              value: state.networkEnabled,
-              onChanged:
-                  state.switchEnabled && !state.syncing ? onToggle : null,
+                  ),
+                ),
+              ),
+            Transform.scale(
+              scale: 0.76,
+              alignment: Alignment.centerRight,
+              child: Switch(
+                key: const Key('network-switch'),
+                value: enabled,
+                activeTrackColor: theme.colorScheme.primary,
+                activeThumbColor: theme.colorScheme.onPrimary,
+                inactiveTrackColor: theme.colorScheme.surfaceContainerHighest,
+                inactiveThumbColor: theme.colorScheme.onSurfaceVariant,
+                trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+                onChanged:
+                    state.switchEnabled && !state.syncing ? onToggle : null,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

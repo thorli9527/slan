@@ -26,6 +26,7 @@ const API_DEVICE_SESSION_BOOTSTRAP: &str = "/api/app/device/session/bootstrap";
 const API_DEVICE_SESSION_BIND: &str = "/api/app/device/session/bind";
 const API_DEVICE_SESSION_RENEW: &str = "/api/app/device/session/renew";
 const API_CLIENT_MESSAGES: &str = "/api/app/client/messages";
+const API_NETWORK_INVITES: &str = "/api/app/network-invites";
 const API_DEVICES: &str = "/api/app/devices";
 const API_RUNTIME_ENDPOINTS: &str = "/api/app/runtime/endpoints";
 const API_RELAY_TICKETS: &str = "/api/app/relay/tickets";
@@ -311,8 +312,6 @@ pub struct DeviceNetworkConfig {
     #[serde(default)]
     pub network_name: Option<String>,
     #[serde(default)]
-    pub network_code: Option<String>,
-    #[serde(default)]
     pub intra_group_policy: Option<String>,
     #[serde(default)]
     pub network_created_at: Option<i64>,
@@ -470,6 +469,7 @@ struct RegisterDeviceRequest {
 struct PasswordLoginRequest<'a> {
     email: &'a str,
     password: &'a str,
+    session_mode: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     device_id: Option<&'a str>,
 }
@@ -558,6 +558,23 @@ impl ControlPlaneClient {
             .collect())
     }
 
+    pub fn accept_network_invite(
+        &self,
+        access_token: &str,
+        invite_code: &str,
+        device_id: &str,
+    ) -> Result<Value> {
+        self.request_json(
+            "POST",
+            &format!("{API_NETWORK_INVITES}/accept"),
+            access_token,
+            Some(serde_json::json!({
+                "inviteCode": invite_code.trim(),
+                "deviceId": device_id.trim(),
+            })),
+        )
+    }
+
     pub fn prepare_device_login(
         &self,
         device_id: &str,
@@ -584,6 +601,7 @@ impl ControlPlaneClient {
         let body = serde_json::to_value(PasswordLoginRequest {
             email,
             password,
+            session_mode: "long",
             device_id: Some(device_id.as_str()),
         })?;
         let response = self.request_json_without_auth("POST", API_AUTH_LOGIN, Some(body))?;
@@ -595,9 +613,11 @@ impl ControlPlaneClient {
         if email.is_empty() || password.is_empty() {
             bail!("账号和密码不能为空");
         }
+        let device_id = local_stable_device_id()?;
         let body = serde_json::json!({
             "email": email,
             "password": password,
+            "deviceId": device_id,
         });
         let response = self
             .request_json_without_auth("POST", API_AUTH_REGISTER, Some(body.clone()))
@@ -608,7 +628,7 @@ impl ControlPlaneClient {
                     Err(error)
                 }
             })?;
-        parse_login_response(&response, email, "")
+        parse_login_response(&response, email, &device_id)
     }
 
     pub fn bootstrap_device_session(
@@ -684,10 +704,8 @@ impl ControlPlaneClient {
         Ok(payload)
     }
 
-    pub fn logout_sessions(&self, access_token: &str, device_token: Option<&str>) -> Result<()> {
-        let body = serde_json::json!({
-            "deviceToken": device_token.unwrap_or_default(),
-        });
+    pub fn logout_sessions(&self, access_token: &str) -> Result<()> {
+        let body = serde_json::json!({});
         let _ = self.request_json("POST", API_AUTH_LOGOUT, access_token, Some(body))?;
         Ok(())
     }
@@ -1033,7 +1051,7 @@ fn register_device_body(device_id: &str) -> Result<Value> {
         platform: platform_name().to_string(),
         os_name: platform_name().to_string(),
         os_version: env::var("SLAN_OS_VERSION").unwrap_or_default(),
-        alias: device_name,
+        alias: String::new(),
         device_version: env!("CARGO_PKG_VERSION").to_string(),
         country_code: device_country_code(),
         public_key,
@@ -2037,6 +2055,10 @@ mod tests {
         assert_eq!(
             body.get("deviceId").and_then(Value::as_str),
             Some(compact_device_id)
+        );
+        assert_eq!(
+            body.get("sessionMode").and_then(Value::as_str),
+            Some("long")
         );
 
         env::remove_var("SLAN_CLIENT_DEVICE_ID");

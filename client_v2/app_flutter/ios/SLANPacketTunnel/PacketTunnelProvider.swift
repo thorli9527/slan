@@ -12,6 +12,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   private var readingPackets = false
   // 服务端下发的可达子网表，用于判断每个出站 IPv4 包应该走 SLAN 数据面还是丢弃统计。
   private var routeTable: [RouteEntry] = []
+  private var dnsServers: [String] = []
+  private var resolverRecords: [NativeResolverRecord] = []
   // RelayRuntime 内部同时管理 UDP 直链和中继路径，PacketTunnelProvider 只负责按目的地址投递。
   private var relayRuntime: RelayRuntime?
   // 暴露给宿主 App 查询的运行统计，便于客户端页面诊断路由、直链和中继状态。
@@ -36,18 +38,38 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
       addresses: [virtualIp],
       subnetMasks: [Self.mask(Self.hostInterfacePrefixLen)]
     )
+    let resolverConfig = config["resolver"] as? [String: Any] ?? [:]
+    dnsServers = (resolverConfig["servers"] as? [String] ?? [])
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    resolverRecords = NativeResolverRecord.records(resolverConfig["records"])
     routeTable = Self.routeEntries(config["routes"])
+    for dnsServer in dnsServers {
+      guard let address = Self.ipv4Value(dnsServer) else { continue }
+      let route = RouteEntry(
+        cidr: "\(dnsServer)/32",
+        destination: dnsServer,
+        mask: "255.255.255.255",
+        network: address,
+        prefix: 32
+      )
+      if !routeTable.contains(where: { $0.cidr == route.cidr }) {
+        routeTable.append(route)
+      }
+    }
     let routes = routeTable.map {
       NEIPv4Route(destinationAddress: $0.destination, subnetMask: $0.mask)
     }
     ipv4.includedRoutes = routes.isEmpty ? [NEIPv4Route.default()] : routes
     networkSettings.ipv4Settings = ipv4
 
-    let dnsServers =
-      ((config["dns"] as? [String: Any])?["servers"] as? [String])
-      ?? []
     if !dnsServers.isEmpty {
-      networkSettings.dnsSettings = NEDNSSettings(servers: dnsServers)
+      let dnsSettings = NEDNSSettings(servers: dnsServers)
+      let splitDomains = (resolverConfig["splitDomains"] as? [String] ?? [])
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+      dnsSettings.matchDomains = splitDomains
+      networkSettings.dnsSettings = dnsSettings
     }
     if let mtu = config["mtu"] as? Int, mtu >= 576 {
       networkSettings.mtu = NSNumber(value: mtu)
@@ -99,18 +121,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     readingPackets = false
     relayRuntime?.stop()
     relayRuntime = nil
+    dnsServers.removeAll()
+    resolverRecords.removeAll()
+    routeTable.removeAll()
     tunnelStats.stoppedAtMs = Self.nowMs()
     persistStats()
     os_log("SLAN PacketTunnel stopped reason=%{public}d", log: Self.logger, type: .info, reason.rawValue)
     completionHandler()
   }
 
-  // 宿主 App 通过 NetworkExtension 消息查询统计信息，目前只处理 stats 命令。
+  // 宿主 App 通过 NetworkExtension 消息查询统计或热更新 resolver 记录。
   override func handleAppMessage(
     _ messageData: Data,
     completionHandler: ((Data?) -> Void)?
   ) {
     let command = String(data: messageData, encoding: .utf8) ?? ""
+    if command == "reloadResolver" {
+      reloadResolverFromSharedConfig()
+      completionHandler?(Data("ok".utf8))
+      return
+    }
     guard command == "stats" else {
       completionHandler?(nil)
       return
@@ -133,6 +163,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
     let data = try? JSONSerialization.data(withJSONObject: tunnelStats.dictionary)
     completionHandler?(data)
+  }
+
+  private func reloadResolverFromSharedConfig() {
+    let config = SLANIosSharedStore.readNetworkConfig() ?? [:]
+    let resolverConfig = config["resolver"] as? [String: Any] ?? [:]
+    dnsServers = (resolverConfig["servers"] as? [String] ?? [])
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    resolverRecords = NativeResolverRecord.records(resolverConfig["records"])
+    os_log(
+      "SLAN PacketTunnel resolver reloaded servers=%{public}d records=%{public}d",
+      log: Self.logger,
+      type: .info,
+      dnsServers.count,
+      resolverRecords.count
+    )
   }
 
   // 持续从 NEPacketTunnelFlow 异步读取系统写入 utun 的 IP 包。
@@ -159,6 +205,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
       tunnelStats.bytesRead += packet.count
       guard let destination = Self.ipv4Destination(packet) else {
         tunnelStats.nonIpv4Packets += 1
+        continue
+      }
+      if dnsServers.contains(destination.address),
+        let reply = Ipv4Packet.dnsResponse(
+          for: packet,
+          resolverIp: destination.address,
+          records: resolverRecords
+        )
+      {
+        _ = packetFlow.writePackets([reply], withProtocols: [NSNumber(value: AF_INET)])
         continue
       }
       if destination.address == RelayPeerRuntime.normalizeVirtualIp(tunnelStats.virtualIp) {
@@ -349,6 +405,34 @@ private struct RouteEntry {
   func contains(_ address: UInt32) -> Bool {
     let mask = PacketTunnelProviderMask.value(prefix)
     return (address & mask) == network
+  }
+}
+
+private struct NativeResolverRecord {
+  let fqdn: String
+  let recordType: String
+  let targetIp: String
+  let cname: String
+  let ttl: UInt32
+
+  static func records(_ value: Any?) -> [NativeResolverRecord] {
+    guard let items = value as? [[String: Any]] else { return [] }
+    return items.compactMap { item in
+      let fqdn = ((item["fqdn"] as? String) ?? (item["name"] as? String) ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        .lowercased()
+      guard !fqdn.isEmpty else { return nil }
+      return NativeResolverRecord(
+        fqdn: fqdn,
+        recordType: ((item["recordType"] as? String) ?? "A").uppercased(),
+        targetIp: ((item["targetIp"] as? String) ?? "")
+          .trimmingCharacters(in: .whitespacesAndNewlines),
+        cname: ((item["cname"] as? String) ?? "")
+          .trimmingCharacters(in: .whitespacesAndNewlines),
+        ttl: UInt32(clamping: (item["ttl"] as? NSNumber)?.int64Value ?? 60)
+      )
+    }
   }
 }
 
@@ -600,6 +684,110 @@ private struct AclRule {
 
 // IPv4 包处理工具，负责修正校验和以及生成本机 ICMP Echo Reply。
 private enum Ipv4Packet {
+  static func dnsResponse(
+    for packet: Data,
+    resolverIp: String,
+    records: [NativeResolverRecord]
+  ) -> Data? {
+    guard packet.count >= 40, packet[0] >> 4 == 4, packet[9] == 17 else { return nil }
+    let ihl = Int(packet[0] & 0x0f) * 4
+    let totalLen = Int(packet.readUInt16(at: 2))
+    guard ihl >= 20, totalLen <= packet.count, totalLen >= ihl + 20,
+      packet.readUInt16(at: ihl + 2) == 53,
+      destinationAddress(packet) == resolverIp
+    else { return nil }
+    let dnsOffset = ihl + 8
+    guard packet.readUInt16(at: dnsOffset + 4) == 1 else { return nil }
+    var cursor = dnsOffset + 12
+    var labels: [String] = []
+    while cursor < totalLen {
+      let length = Int(packet[cursor])
+      cursor += 1
+      if length == 0 { break }
+      guard length <= 63, cursor + length <= totalLen else { return nil }
+      guard let label = String(data: packet.subdata(in: cursor..<cursor + length), encoding: .utf8)
+      else { return nil }
+      labels.append(label)
+      cursor += length
+    }
+    guard cursor + 4 <= totalLen else { return nil }
+    let qname = labels.joined(separator: ".").lowercased()
+    let qtype = packet.readUInt16(at: cursor)
+    let questionEnd = cursor + 4
+    var answers: [(UInt16, UInt32, Data)] = []
+    for record in records where record.fqdn == qname {
+      if qtype == 1, record.recordType == "A", let address = ipv4Bytes(record.targetIp) {
+        answers.append((1, record.ttl, Data(address)))
+      } else if qtype == 5, record.recordType == "CNAME", let name = encodedDnsName(record.cname) {
+        answers.append((5, record.ttl, name))
+      }
+    }
+    guard !answers.isEmpty else { return nil }
+
+    var dns = Data()
+    dns.append(packet.subdata(in: dnsOffset..<dnsOffset + 2))
+    appendUInt16(0x8180, to: &dns)
+    appendUInt16(1, to: &dns)
+    appendUInt16(UInt16(clamping: answers.count), to: &dns)
+    appendUInt16(0, to: &dns)
+    appendUInt16(0, to: &dns)
+    dns.append(packet.subdata(in: dnsOffset + 12..<questionEnd))
+    for (type, ttl, data) in answers {
+      appendUInt16(0xc00c, to: &dns)
+      appendUInt16(type, to: &dns)
+      appendUInt16(1, to: &dns)
+      appendUInt32(ttl, to: &dns)
+      appendUInt16(UInt16(clamping: data.count), to: &dns)
+      dns.append(data)
+    }
+
+    var reply = packet.subdata(in: 0..<ihl + 8)
+    reply.append(dns)
+    reply.replaceSubrange(2..<4, with: UInt16(clamping: reply.count).bigEndianBytes)
+    let sourceIp = reply.subdata(in: 12..<16)
+    let destinationIp = reply.subdata(in: 16..<20)
+    reply.replaceSubrange(12..<16, with: destinationIp)
+    reply.replaceSubrange(16..<20, with: sourceIp)
+    let sourcePort = reply.subdata(in: ihl..<ihl + 2)
+    let destinationPort = reply.subdata(in: ihl + 2..<ihl + 4)
+    reply.replaceSubrange(ihl..<ihl + 2, with: destinationPort)
+    reply.replaceSubrange(ihl + 2..<ihl + 4, with: sourcePort)
+    reply.replaceSubrange(ihl + 4..<ihl + 6, with: UInt16(clamping: 8 + dns.count).bigEndianBytes)
+    return normalizeTransportChecksums(reply)
+  }
+
+  private static func ipv4Bytes(_ value: String) -> [UInt8]? {
+    let parts = value.split(separator: ".")
+    guard parts.count == 4 else { return nil }
+    let bytes = parts.compactMap { UInt8($0) }
+    return bytes.count == 4 ? bytes : nil
+  }
+
+  private static func encodedDnsName(_ value: String) -> Data? {
+    let labels = value.trimmingCharacters(in: CharacterSet(charactersIn: ".")).split(separator: ".")
+    guard !labels.isEmpty else { return nil }
+    var data = Data()
+    for label in labels {
+      let bytes = Data(label.utf8)
+      guard !bytes.isEmpty, bytes.count <= 63 else { return nil }
+      data.append(UInt8(bytes.count))
+      data.append(bytes)
+    }
+    data.append(0)
+    return data
+  }
+
+  private static func appendUInt16(_ value: UInt16, to data: inout Data) {
+    data.append(contentsOf: value.bigEndianBytes)
+  }
+
+  private static func appendUInt32(_ value: UInt32, to data: inout Data) {
+    data.append(UInt8((value >> 24) & 0xff))
+    data.append(UInt8((value >> 16) & 0xff))
+    data.append(UInt8((value >> 8) & 0xff))
+    data.append(UInt8(value & 0xff))
+  }
+
   // iOS utun 出站包在再次封装前需要重算 IP/TCP/UDP 校验和，避免远端协议栈丢包。
   static func normalizeTransportChecksums(_ packet: Data) -> Data {
     guard packet.count >= 20, packet[0] >> 4 == 4 else {
@@ -1221,6 +1409,8 @@ private final class DirectUdpRuntime {
   private let configHash: UInt64
   private let packetFlow: NEPacketTunnelFlow
   private let aclPolicies: [AclPolicy]
+  private let directUdpPort: UInt16
+  private let randomizeDirectUdpPort: Bool
   private var peers: [DirectUdpPeerRuntime]
   private let punchNodes: [DirectUdpNodeConfig]
   private let queue = DispatchQueue(label: "dev.slan.client.v2.direct-udp", qos: .utility)
@@ -1293,6 +1483,11 @@ private final class DirectUdpRuntime {
     self.configHash = configHash
     self.packetFlow = packetFlow
     self.aclPolicies = aclPolicies
+    let configuredPort = config["directUdpPort"] as? Int ?? 41642
+    self.randomizeDirectUdpPort = config["randomizeDirectUdpPort"] as? Bool ?? false
+    self.directUdpPort = configuredPort > 0 && configuredPort <= 65535 && configuredPort != 41641
+      ? UInt16(configuredPort)
+      : 41642
     self.peers = peers
     self.punchNodes = (config["nodeConfigs"] as? [[String: Any]] ?? [])
       .compactMap(DirectUdpNodeConfig.parse)
@@ -1312,7 +1507,12 @@ private final class DirectUdpRuntime {
     running = true
     let parameters = NWParameters.udp
     parameters.allowLocalEndpointReuse = true
-    guard let listener = try? NWListener(using: parameters, on: .any) else {
+    let preferredPort = randomizeDirectUdpPort
+      ? Network.NWEndpoint.Port.any
+      : Network.NWEndpoint.Port(rawValue: directUdpPort) ?? .any
+    guard let listener = (try? NWListener(using: parameters, on: preferredPort))
+      ?? (try? NWListener(using: parameters, on: .any))
+    else {
       running = false
       return
     }

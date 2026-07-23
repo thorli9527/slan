@@ -15,8 +15,6 @@ func normalizeCreateNetworkInput(input CreateNetworkInput) CreateNetworkInput {
 	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.CIDR = strings.TrimSpace(input.CIDR)
-	input.Code = strings.TrimSpace(input.Code)
-	input.TemplateKey = strings.TrimSpace(input.TemplateKey)
 	input.IntraGroupPolicy = strings.TrimSpace(input.IntraGroupPolicy)
 	return input
 }
@@ -26,8 +24,6 @@ func normalizeUpdateNetworkInput(input UpdateNetworkInput) UpdateNetworkInput {
 	input.ActorUserID = strings.TrimSpace(input.ActorUserID)
 	input.Name = strings.TrimSpace(input.Name)
 	input.CIDR = strings.TrimSpace(input.CIDR)
-	input.Code = strings.TrimSpace(input.Code)
-	input.TemplateKey = strings.TrimSpace(input.TemplateKey)
 	input.IntraGroupPolicy = strings.TrimSpace(input.IntraGroupPolicy)
 	input.Status = strings.TrimSpace(input.Status)
 	return input

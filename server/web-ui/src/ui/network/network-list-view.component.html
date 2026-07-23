@@ -41,13 +41,12 @@
   <p class="form-error" *ngIf="vm.workspaceDialogMessage">{{ vm.workspaceDialogMessage }}</p>
   <div class="rules-table-wrap">
     <table>
-      <thead><tr><th>网络</th><th>编码</th><th>模板键</th><th>组内连通策略</th><th>默认网络</th><th>设备</th></tr></thead>
+      <thead><tr><th>网络</th><th>组内连通策略</th><th>默认网络</th><th>设备</th></tr></thead>
       <tbody>
         <tr *ngFor="let workspace of vm.workspaces" [class.selected-row]="workspace.workspaceId === vm.selectedWorkspace.workspaceId">
           <td class="tag-cell-wrapper">
             <div class="alias-tag-cell">
-              <button class="text-link" type="button" [title]="'查看网络详情: ' + (workspace.name || workspace.workspaceId)" aria-label="查看网络详情" (click)="vm.openWorkspaceDetail(workspace)">查看详情</button>
-              <strong>{{ workspace.name }}</strong>
+              <button class="text-link" type="button" [title]="'查看网络详情: ' + (workspace.name || workspace.workspaceId)" [attr.aria-label]="'查看网络详情: ' + (workspace.name || workspace.workspaceId)" (click)="vm.openWorkspaceDetail(workspace)">{{ workspace.name }}</button>
               <button class="tag-icon-button" type="button" title="修改名称" (click)="vm.openWorkspaceNameTagDialog(workspace); $event.stopPropagation()">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M20 13.2 13.2 20a2 2 0 0 1-2.8 0L4 13.6V4h9.6L20 10.4a2 2 0 0 1 0 2.8Z"></path>
@@ -65,8 +64,6 @@
               </div>
             </div>
           </td>
-          <td><code>{{ workspace.code }}</code></td>
-          <td><code>{{ workspace.template || '-' }}</code></td>
           <td class="tag-cell-wrapper">
             <div class="alias-tag-cell">
               <span>{{ vm.intraGroupPolicyLabel(workspace.intraGroupPolicy) }}</span>
@@ -92,7 +89,7 @@
           <td>{{ workspace.devices }} 台</td>
         </tr>
         <tr *ngIf="vm.workspaces.length === 0">
-          <td colspan="6">暂无网络，点击上方“新增网络”开始创建。</td>
+          <td colspan="4">暂无网络，点击上方“新增网络”开始创建。</td>
         </tr>
       </tbody>
     </table>

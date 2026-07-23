@@ -65,6 +65,16 @@ func (s *authUserRegistrationTestSessions) SaveUserSession(_ context.Context, it
 	return nil
 }
 
+func (s *authUserRegistrationTestSessions) ReplaceUserSessionForClient(_ context.Context, item model.UserSession) error {
+	s.items = append(s.items, item)
+	return nil
+}
+
+func (s *authUserRegistrationTestSessions) ReplaceUserSession(_ context.Context, _ string, item model.UserSession) error {
+	s.items = append(s.items, item)
+	return nil
+}
+
 func (s *authUserRegistrationTestSessions) DeleteUserSessionByAccessToken(context.Context, string) error {
 	return nil
 }

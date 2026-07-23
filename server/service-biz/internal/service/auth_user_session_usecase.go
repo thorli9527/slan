@@ -1,18 +1,25 @@
 package service
 
-import "context"
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+)
 
 func (s AuthUserSessionService) LoginUser(ctx context.Context, input LoginUserInput) (AuthSessionView, error) {
 	input = normalizeLoginUserInput(input)
+	if input.ClientType == UserSessionClientWeb {
+		input.SessionMode = tokenModeShort
+	}
 	user, err := requireUserLogin(ctx, s.Users, input)
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	session, err := newAuthUserSession(authNow(s.Now), s.NewSessID, user.UserID, input.SessionMode)
+	session, err := newAuthUserSession(authNow(s.Now), s.NewSessID, user.UserID, input.SessionMode, input.ClientType, input.DeviceID)
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	if err := replaceUserSession(ctx, s.Sessions, session); err != nil {
+	if err := s.Sessions.ReplaceUserSessionForClient(ctx, session); err != nil {
 		return AuthSessionView{}, err
 	}
 	return authSessionView(user, session), nil
@@ -44,31 +51,34 @@ func (s AuthUserSessionService) RenewUserSession(ctx context.Context, accessToke
 	if !ok || session.Status != tokenStatusActive || session.RevokedAt > 0 || session.RefreshExpiry < now.Unix() {
 		return AuthSessionView{}, ErrUnauthorized
 	}
+	digest := sha256.Sum256([]byte(input.RefreshToken))
+	refreshTokenHash := hex.EncodeToString(digest[:])
+	rotationRetry := session.RefreshToken != input.RefreshToken
+	if rotationRetry && (session.PreviousRefreshTokenHash != refreshTokenHash || session.RefreshRotationGraceExpiry < now.Unix()) {
+		return AuthSessionView{}, ErrUnauthorized
+	}
 	user, err := requireAuthUser(ctx, s.Users, session.UserID)
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	if accessToken != "" && normalizeUserAccessToken(accessToken) != session.AccessToken {
+	if !rotationRetry && accessToken != "" && normalizeUserAccessToken(accessToken) != session.AccessToken {
 		return AuthSessionView{}, ErrUnauthorized
 	}
-	nextSession, err := newAuthUserSession(now, s.NewSessID, session.UserID, session.SessionMode)
+	if rotationRetry {
+		return authSessionView(user, session), nil
+	}
+	nextSession, err := newAuthUserSession(now, s.NewSessID, session.UserID, session.SessionMode, session.ClientType, session.DeviceID)
 	if err != nil {
 		return AuthSessionView{}, err
 	}
-	if err := replaceUserSession(ctx, s.Sessions, nextSession); err != nil {
+	nextSession.PreviousRefreshTokenHash = refreshTokenHash
+	nextSession.RefreshRotationGraceExpiry = now.Add(userRefreshRotationGrace).Unix()
+	if err := s.Sessions.ReplaceUserSession(ctx, session.AccessToken, nextSession); err != nil {
 		return AuthSessionView{}, err
 	}
 	return authSessionView(user, nextSession), nil
 }
 
-func (s AuthUserSessionService) LogoutUser(ctx context.Context, accessToken string, input LogoutUserInput) error {
-	if err := s.Sessions.DeleteUserSessionByAccessToken(ctx, normalizeUserAccessToken(accessToken)); err != nil {
-		return err
-	}
-	if token := normalizeDeviceAccessToken(input.DeviceToken); token != "" {
-		if err := s.Devices.DeleteDeviceSessionByAccessToken(ctx, token); err != nil {
-			return err
-		}
-	}
-	return nil
+func (s AuthUserSessionService) LogoutUser(ctx context.Context, accessToken string, _ LogoutUserInput) error {
+	return s.Sessions.DeleteUserSessionByAccessToken(ctx, normalizeUserAccessToken(accessToken))
 }

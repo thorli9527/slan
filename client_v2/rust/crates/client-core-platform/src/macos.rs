@@ -51,7 +51,8 @@ const RELAY_STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 const RELAY_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const DERP_WRITE_RETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const DATA_PLANE_IDLE_SLEEP: Duration = Duration::from_millis(2);
-const DATA_PLANE_SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
+const UTUN_REOPEN_ATTEMPTS: usize = 6;
+const UTUN_REOPEN_BACKOFF: Duration = Duration::from_millis(50);
 
 fn macos_verbose_trace_enabled() -> bool {
     matches!(
@@ -83,6 +84,7 @@ struct MacosRuntime {
     resolver_search_domains: Vec<String>,
     resolver_split_domains: Vec<String>,
     resolver_records: Vec<PlatformResolverRecord>,
+    resolver_routes: Vec<RouteSpec>,
     routes: Vec<RouteSpec>,
     relay_config: Option<RelayDataPlaneConfig>,
     utun: Option<UtunRuntime>,
@@ -99,21 +101,24 @@ struct UtunRuntime {
 
 impl Drop for UtunRuntime {
     fn drop(&mut self) {
+        if let Err(error) = self.stop_and_join() {
+            eprintln!(
+                "macos data plane shutdown failed interface={} error={error:#}",
+                self.interface_name
+            );
+        }
+    }
+}
+
+impl UtunRuntime {
+    fn stop_and_join(&mut self) -> Result<()> {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
-            let started = Instant::now();
-            while !handle.is_finished() && started.elapsed() < DATA_PLANE_SHUTDOWN_GRACE {
-                thread::sleep(DATA_PLANE_IDLE_SLEEP);
-            }
-            if handle.is_finished() {
-                let _ = handle.join();
-            } else {
-                eprintln!(
-                    "macos data plane shutdown timed out interface={}; detaching thread",
-                    self.interface_name
-                );
-            }
+            handle
+                .join()
+                .map_err(|_| anyhow!("macos data plane thread panicked"))?;
         }
+        Ok(())
     }
 }
 
@@ -336,6 +341,7 @@ impl PlatformNetwork for MacosPlatformNetwork {
         if macos_network_mock_enabled() {
             ensure_mock_runtime(&mut runtime);
             runtime.resolver_servers = effective_resolver_servers;
+            runtime.resolver_routes = resolver_route_specs(&runtime.resolver_servers);
             runtime.resolver_search_domains = resolver.search_domains.clone();
             runtime.resolver_split_domains = resolver.split_domains.clone();
             return Ok(());
@@ -348,11 +354,14 @@ impl PlatformNetwork for MacosPlatformNetwork {
         runtime.resolver_servers = effective_resolver_servers;
         runtime.resolver_search_domains = resolver.search_domains.clone();
         runtime.resolver_split_domains = resolver.split_domains.clone();
+        let resolver_routes = resolver_route_specs(&runtime.resolver_servers);
         macos_trace!(
             "SLAN_MACOS_CONFIGURE_RESOLVER_START interface={} resolver_servers={}",
             interface_name,
             runtime.resolver_servers.join(",")
         );
+        sync_utun_routes(&interface_name, &runtime.resolver_routes, &resolver_routes)?;
+        runtime.resolver_routes = resolver_routes;
         configure_utun_dns(
             &interface_name,
             &runtime.resolver_servers,
@@ -375,7 +384,13 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let mut runtime = runtime()
             .lock()
             .map_err(|_| anyhow!("macos network runtime lock poisoned"))?;
+        let changed = runtime.resolver_records != resolver_records;
         runtime.resolver_records = resolver_records.to_vec();
+        let mock_enabled = macos_network_mock_enabled();
+        drop(runtime);
+        if changed && !mock_enabled {
+            flush_macos_dns_cache();
+        }
         Ok(())
     }
 
@@ -433,6 +448,10 @@ impl PlatformNetwork for MacosPlatformNetwork {
             runtime.virtual_ip = None;
             runtime.prefix_len = None;
             runtime.resolver_servers.clear();
+            runtime.resolver_search_domains.clear();
+            runtime.resolver_split_domains.clear();
+            runtime.resolver_records.clear();
+            runtime.resolver_routes.clear();
             runtime.routes.clear();
             runtime.relay_config = None;
             runtime.utun = None;
@@ -441,9 +460,13 @@ impl PlatformNetwork for MacosPlatformNetwork {
         let utun = runtime.utun.take();
         let interface_name = runtime.interface_name.take();
         let routes = mem::take(&mut runtime.routes);
+        let resolver_routes = mem::take(&mut runtime.resolver_routes);
         runtime.virtual_ip = None;
         runtime.prefix_len = None;
         runtime.resolver_servers.clear();
+        runtime.resolver_search_domains.clear();
+        runtime.resolver_split_domains.clear();
+        runtime.resolver_records.clear();
         runtime.relay_config = None;
         drop(runtime);
 
@@ -453,8 +476,12 @@ impl PlatformNetwork for MacosPlatformNetwork {
             for route in routes.iter().rev() {
                 let _ = delete_utun_route(interface_name, route);
             }
+            for route in resolver_routes.iter().rev() {
+                let _ = delete_utun_route(interface_name, route);
+            }
             let _ = run_command("/sbin/ifconfig", &[interface_name, "down"]);
         }
+        flush_macos_dns_cache();
         Ok(())
     }
 
@@ -561,9 +588,13 @@ fn restart_data_plane(runtime: &mut MacosRuntime) -> Result<()> {
             && !config.relay_address.trim().is_empty()
             && !config.sessions.is_empty()
     });
-    let old_utun = runtime.utun.take();
-    drop(old_utun);
-    let utun = open_utun().context("reopen macos utun interface for data plane")?;
+    if let Some(mut old_utun) = runtime.utun.take() {
+        old_utun
+            .stop_and_join()
+            .context("stop previous macos data plane")?;
+        drop(old_utun);
+    }
+    let utun = reopen_utun_for_data_plane()?;
     let interface_name = utun.interface_name.clone();
     macos_trace!(
         "SLAN_MACOS_RESTART_DATA_PLANE_START interface={} relay_enabled={} relay_sessions={} has_virtual_ip={} routes={} resolvers={}",
@@ -581,6 +612,9 @@ fn restart_data_plane(runtime: &mut MacosRuntime) -> Result<()> {
     configure_utun_mtu(&interface_name, tunnel_mtu_for_relay(config.as_ref()))?;
     configure_utun_dns(&interface_name, &runtime.resolver_servers, &[], &[])?;
     for route in &runtime.routes {
+        let _ = add_utun_route(&interface_name, route);
+    }
+    for route in &runtime.resolver_routes {
         let _ = add_utun_route(&interface_name, route);
     }
     let local_virtual_ip = runtime.virtual_ip.clone().unwrap_or_default();
@@ -797,6 +831,26 @@ fn open_utun() -> Result<UtunRuntime> {
     })
 }
 
+fn reopen_utun_for_data_plane() -> Result<UtunRuntime> {
+    let mut last_error = None;
+    for attempt in 1..=UTUN_REOPEN_ATTEMPTS {
+        match open_utun() {
+            Ok(utun) => return Ok(utun),
+            Err(error) => {
+                eprintln!(
+                    "SLAN_MACOS_UTUN_REOPEN_RETRY attempt={attempt} max_attempts={UTUN_REOPEN_ATTEMPTS} error={error:#}"
+                );
+                last_error = Some(error);
+                if attempt < UTUN_REOPEN_ATTEMPTS {
+                    thread::sleep(UTUN_REOPEN_BACKOFF);
+                }
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("macos utun reopen failed")))
+        .context("reopen macos utun interface for data plane")
+}
+
 fn create_utun_socket() -> Result<RawFd> {
     let fd = unsafe { libc::socket(libc::PF_SYSTEM, libc::SOCK_DGRAM, libc::SYSPROTO_CONTROL) };
     if fd < 0 {
@@ -957,6 +1011,40 @@ fn parse_ifconfig_ipv4_addresses(text: &str) -> Vec<Ipv4Addr> {
             value.parse::<Ipv4Addr>().ok()
         })
         .collect()
+}
+
+fn resolver_route_specs(servers: &[String]) -> Vec<RouteSpec> {
+    let mut routes = Vec::new();
+    for server in servers {
+        let Ok(address) = server.trim().parse::<Ipv4Addr>() else {
+            continue;
+        };
+        if address.is_loopback() || address.is_unspecified() {
+            continue;
+        }
+        let route = RouteSpec {
+            destination: format!("{address}/32"),
+            gateway: None,
+        };
+        if !routes.contains(&route) {
+            routes.push(route);
+        }
+    }
+    routes
+}
+
+fn sync_utun_routes(
+    interface_name: &str,
+    previous: &[RouteSpec],
+    next: &[RouteSpec],
+) -> Result<()> {
+    for route in previous.iter().rev().filter(|route| !next.contains(route)) {
+        delete_utun_route(interface_name, route)?;
+    }
+    for route in next.iter().filter(|route| !previous.contains(route)) {
+        add_utun_route(interface_name, route)?;
+    }
+    Ok(())
 }
 
 fn add_utun_route(interface_name: &str, route: &RouteSpec) -> Result<()> {
@@ -1679,13 +1767,14 @@ fn run_udp_data_plane(
             Ok(packet_len) => {
                 did_work = true;
                 if let Some(packet) = strip_utun_header(&tun_buffer[..packet_len]) {
+                    if let Some(reply) = local_dns_reply(packet, &dns_servers, &dns_records) {
+                        let _ = write_utun_ipv4_packet(&mut file, &reply);
+                        continue;
+                    }
                     if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
-                        if let Some(reply) = local_virtual_ip_reply(
-                            packet,
-                            local_virtual_ip.as_str(),
-                            &dns_servers,
-                            &dns_records,
-                        ) {
+                        if let Some(reply) =
+                            local_virtual_ip_reply(packet, local_virtual_ip.as_str())
+                        {
                             let _ = write_utun_ipv4_packet(&mut file, &reply);
                         } else {
                             let packet = normalize_ipv4_transport_checksums(packet);
@@ -2934,12 +3023,11 @@ fn run_local_data_plane(
             Ok(packet_len) => {
                 did_work = true;
                 if let Some(packet) = strip_utun_header(&tun_buffer[..packet_len]) {
-                    if let Some(reply) = local_virtual_ip_reply(
-                        packet,
-                        local_virtual_ip.as_str(),
-                        &dns_servers,
-                        &dns_records,
-                    ) {
+                    if let Some(reply) = local_dns_reply(packet, &dns_servers, &dns_records) {
+                        let _ = write_utun_ipv4_packet(&mut file, &reply);
+                    } else if let Some(reply) =
+                        local_virtual_ip_reply(packet, local_virtual_ip.as_str())
+                    {
                         let _ = write_utun_ipv4_packet(&mut file, &reply);
                     } else if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
                         let packet = normalize_ipv4_transport_checksums(packet);
@@ -3039,9 +3127,8 @@ fn packet_targets_local_virtual_ip(packet: &[u8], local_virtual_ip: &str) -> boo
         .unwrap_or(false)
 }
 
-fn local_virtual_ip_reply(
+fn local_dns_reply(
     packet: &[u8],
-    local_virtual_ip: &str,
     dns_servers: &[String],
     dns_records: &[PlatformResolverRecord],
 ) -> Option<Vec<u8>> {
@@ -3050,9 +3137,11 @@ fn local_virtual_ip_reply(
             return Some(reply);
         }
     }
-    packet_targets_local_virtual_ip(packet, local_virtual_ip)
-        .then(|| icmp_echo_reply_for_request(packet, local_virtual_ip))
-        .flatten()
+    None
+}
+
+fn local_virtual_ip_reply(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u8>> {
+    icmp_echo_reply_for_request(packet, local_virtual_ip)
 }
 
 fn should_ignore_unroutable_destination(destination: &str) -> bool {
@@ -3166,6 +3255,11 @@ fn run_command(program: &str, args: &[&str]) -> Result<()> {
     )
 }
 
+fn flush_macos_dns_cache() {
+    let _ = run_command("/usr/bin/dscacheutil", &["-flushcache"]);
+    let _ = run_command("/usr/bin/killall", &["-HUP", "mDNSResponder"]);
+}
+
 fn run_command_with_input(program: &str, args: &[&str], input: &[u8]) -> Result<()> {
     let mut child = Command::new(program)
         .args(args)
@@ -3257,9 +3351,14 @@ mod tests {
     }
 
     #[test]
-    fn utun_runtime_drop_does_not_wait_forever_for_data_plane() {
+    fn utun_runtime_drop_waits_for_cooperative_data_plane_shutdown() {
         let stop = Arc::new(AtomicBool::new(false));
-        let handle = thread::spawn(|| thread::sleep(Duration::from_secs(2)));
+        let thread_stop = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            while !thread_stop.load(Ordering::SeqCst) {
+                thread::sleep(DATA_PLANE_IDLE_SLEEP);
+            }
+        });
         let runtime = UtunRuntime {
             interface_name: "utun-test".to_string(),
             file: None,
@@ -3314,19 +3413,18 @@ mod tests {
     #[test]
     fn macos_local_virtual_ip_replies_to_icmp_echo() {
         let request = icmp_echo_request("10.0.0.9", "10.0.0.2");
-        let reply = local_virtual_ip_reply(&request, "10.0.0.2/32", &[], &[]).unwrap();
+        let reply = local_virtual_ip_reply(&request, "10.0.0.2/32").unwrap();
 
         assert_eq!(&reply[12..16], &[10, 0, 0, 2]);
         assert_eq!(&reply[16..20], &[10, 0, 0, 9]);
         assert_eq!(reply[20], 0);
-        assert!(local_virtual_ip_reply(&request, "10.0.0.3/32", &[], &[]).is_none());
+        assert!(local_virtual_ip_reply(&request, "10.0.0.3/32").is_none());
     }
 
     #[test]
-    fn macos_mock_runtime_prefers_local_dns_override() {
+    fn macos_mock_runtime_keeps_configured_dns_service() {
         let _guard = test_lock();
         std::env::set_var("SLAN_MACOS_NETWORK_MOCK", "1");
-        std::env::set_var("SLAN_LOCAL_DNS_BIND", "127.0.0.1:53");
         reset_runtime();
 
         let platform = MacosPlatformNetwork;
@@ -3334,22 +3432,44 @@ mod tests {
         platform.configure_ip("10.0.0.1", 32).unwrap();
         platform
             .configure_resolver(&client_core::PlatformResolverConfig {
-                servers: vec!["10.0.0.53".to_string(), "8.8.8.8".to_string()],
+                servers: vec!["10.0.0.53".to_string()],
+                search_domains: vec!["slan.test".to_string()],
+                split_domains: vec!["slan.test".to_string()],
                 ..client_core::PlatformResolverConfig::default()
             })
             .unwrap();
+        platform
+            .configure_resolver_map(
+                &[],
+                &[PlatformResolverRecord {
+                    fqdn: Some("api.slan.test".to_string()),
+                    target_ip: Some("10.0.1.2".to_string()),
+                    ..PlatformResolverRecord::default()
+                }],
+            )
+            .unwrap();
 
         let diagnostics = platform.diagnostics().unwrap();
-        assert_eq!(diagnostics.resolver_servers, vec!["127.0.0.1"]);
+        assert_eq!(diagnostics.resolver_servers, vec!["10.0.0.53"]);
 
-        let runtime = runtime()
+        let runtime_guard = runtime()
             .lock()
             .expect("macos network runtime mutex poisoned");
-        assert_eq!(runtime.resolver_servers, vec!["127.0.0.1".to_string()]);
-        drop(runtime);
+        assert_eq!(
+            runtime_guard.resolver_servers,
+            vec!["10.0.0.53".to_string()]
+        );
+        drop(runtime_guard);
 
         platform.disable_network().unwrap();
-        std::env::remove_var("SLAN_LOCAL_DNS_BIND");
+        let runtime_guard = runtime()
+            .lock()
+            .expect("macos network runtime mutex poisoned");
+        assert!(runtime_guard.resolver_servers.is_empty());
+        assert!(runtime_guard.resolver_search_domains.is_empty());
+        assert!(runtime_guard.resolver_split_domains.is_empty());
+        assert!(runtime_guard.resolver_records.is_empty());
+        drop(runtime_guard);
         std::env::remove_var("SLAN_MACOS_NETWORK_MOCK");
         reset_runtime();
     }
@@ -3365,6 +3485,26 @@ mod tests {
         assert!(script.contains("d.add ServerAddresses * 10.0.0.53"));
         assert!(script.contains("d.add SearchDomains * corp.lan"));
         assert!(script.contains("d.add SupplementalMatchDomains * mesh.local"));
+    }
+
+    #[test]
+    fn resolver_routes_include_unique_non_loopback_ipv4_servers() {
+        let routes = resolver_route_specs(&[
+            "10.0.0.53".to_string(),
+            " 10.0.0.53 ".to_string(),
+            "127.0.0.1".to_string(),
+            "0.0.0.0".to_string(),
+            "::1".to_string(),
+            "invalid".to_string(),
+        ]);
+
+        assert_eq!(
+            routes,
+            vec![RouteSpec {
+                destination: "10.0.0.53/32".to_string(),
+                gateway: None,
+            }]
+        );
     }
 
     fn test_session(relay_url: &str) -> client_core::RelayPeerSession {

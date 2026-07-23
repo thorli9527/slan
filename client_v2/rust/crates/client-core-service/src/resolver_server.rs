@@ -83,11 +83,7 @@ pub(crate) fn local_resolver_server_last_query_at_ms() -> Option<u64> {
 }
 
 pub(crate) fn desired_local_resolver_bind_addr() -> String {
-    std::env::var("SLAN_LOCAL_DNS_BIND")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_LOCAL_DNS_BIND_ADDR.to_string())
+    DEFAULT_LOCAL_DNS_BIND_ADDR.to_string()
 }
 
 impl ResolverServer {

@@ -113,8 +113,8 @@ X-Slan-Punch-Signature: md5(deviceId + mqttPassword)
 | Method | Path | Auth | Request | Response | 用途 |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/networks?userId=...` | User/Web | - | `{items: Network[]}` | 网络列表 |
-| POST | `/api/networks` | User/Web | `{ownerUserId,name,code,templateKey}` | `{network,defaultSecurityGroup,defaultDNSZone}` | 创建网络 |
-| PATCH | `/api/networks/{networkId}` | User/Web | `{name,code,status}` | `Network` | 更新网络 |
+| POST | `/api/networks` | User/Web | `{ownerUserId,name}` | `{network,defaultSecurityGroup,defaultDNSZone}` | 创建网络 |
+| PATCH | `/api/networks/{networkId}` | User/Web | `{name,status}` | `Network` | 更新网络 |
 | GET | `/api/networks/{networkId}/devices` | User/Web | - | `{items: NetworkDevice[]}` | 网络成员设备 |
 | POST | `/api/networks/{networkId}/devices` | User/Web | `{deviceId,ownerUserId,alias,role,enabled}` | `NetworkDevice` | 添加设备到网络 |
 | PATCH | `/api/networks/{networkId}/devices/{deviceId}` | User/Web | `{alias,role,enabled}` | `NetworkDevice` | 更新网络成员 |

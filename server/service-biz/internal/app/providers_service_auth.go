@@ -35,6 +35,7 @@ func newAuthServices(deps UseCaseDependencies) AuthServices {
 			deps.mqttConfig(),
 			servicepkg.NewDeviceControlPublisher(deps.mqttConfig()),
 			servicepkg.NewNetworkEventPublisher(deps.mqttConfig()),
+			ids.NewSessionID,
 			nil,
 		),
 	}

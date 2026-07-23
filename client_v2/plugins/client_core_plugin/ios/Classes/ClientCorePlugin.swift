@@ -265,7 +265,37 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
     if config["sessionName"] == nil {
       config["sessionName"] = "SLAN"
     }
+    let previousConfig = SLANIosSharedStore.readNetworkConfig()
     SLANIosSharedStore.writeNetworkConfig(config)
+    if let session = packetTunnelManager?.connection as? NETunnelProviderSession,
+      session.status == .connected,
+      resolverOnlyConfigChange(previous: previousConfig, next: config)
+    {
+      do {
+        try session.sendProviderMessage(Data("reloadResolver".utf8)) { [weak self] _ in
+          guard let self = self else { return }
+          DispatchQueue.main.async {
+            self.state["virtualIp"] = self.stringField(config, "virtualIp")
+            self.state["adapterPresent"] = true
+            self.state["networkEnabled"] = true
+            self.state["syncing"] = false
+            self.state["switchEnabled"] = true
+            self.state["notice"] = "networkConfigReloaded"
+            self.state["error"] = nil
+            result(self.compactState())
+          }
+        }
+      } catch {
+        result(
+          FlutterError(
+            code: "ios_resolver_reload_failed",
+            message: error.localizedDescription,
+            details: nil
+          )
+        )
+      }
+      return
+    }
     startPacketTunnel(config: config) { [weak self] startResult in
       guard let self = self else { return }
       DispatchQueue.main.async {
@@ -298,6 +328,33 @@ public class ClientCorePlugin: NSObject, FlutterPlugin {
         result(self.compactState())
       }
     }
+  }
+
+  private func resolverOnlyConfigChange(
+    previous: [String: Any]?,
+    next: [String: Any]
+  ) -> Bool {
+    guard var previous = previous else { return false }
+    let previousResolver = previous.removeValue(forKey: "resolver")
+    var nextWithoutResolver = next
+    let nextResolver = nextWithoutResolver.removeValue(forKey: "resolver")
+    if !NSDictionary(dictionary: previous).isEqual(to: nextWithoutResolver) {
+      return false
+    }
+    let previousResolverMap = previousResolver as? [String: Any] ?? [:]
+    let nextResolverMap = nextResolver as? [String: Any] ?? [:]
+    guard !NSDictionary(dictionary: previousResolverMap).isEqual(to: nextResolverMap) else {
+      return false
+    }
+    return NSDictionary(dictionary: resolverRoutingConfig(previousResolverMap))
+      .isEqual(to: resolverRoutingConfig(nextResolverMap))
+  }
+
+  private func resolverRoutingConfig(_ resolver: [String: Any]) -> [String: Any] {
+    var routing = resolver
+    routing.removeValue(forKey: "records")
+    routing.removeValue(forKey: "zones")
+    return routing
   }
 
   private func iosStopPacketTunnel(result: @escaping FlutterResult) {

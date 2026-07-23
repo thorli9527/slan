@@ -131,9 +131,9 @@ func (s DeviceGroupService) syncNetworkDeviceGroupMemberships(ctx context.Contex
 			return ErrNotFound
 		}
 		if !managedDeviceVirtualIP(device.VirtualIP) {
-			device.VirtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(s.Devices))
-			if device.VirtualIP == "" {
-				return ErrInvalidArgument
+			device.VirtualIP, err = allocateDeviceVirtualIP(s.Devices)
+			if err != nil {
+				return err
 			}
 			device.UpdatedAt = now
 			if err := s.Devices.SaveDevice(ctx, device); err != nil {

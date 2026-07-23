@@ -506,14 +506,6 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
   async openBootstrapDialog(): Promise<void> {
     this.closeInlinePopovers();
     this.deviceListMessage = '';
-    const network = this.workspaces.find((item) => item.workspaceId === this.bootstrapNetworkId) ?? this.workspaces[0];
-    if (!network) {
-      this.bootstrapMessage = '请先创建网络。';
-      this.showBootstrapDialog = true;
-      this.notifyStateChanged();
-      return;
-    }
-    this.bootstrapNetworkId = network.workspaceId;
     this.bootstrapInstallationKey = '';
     this.bootstrapQrDataUrl = '';
     this.bootstrapInstallCommand = '';
@@ -522,7 +514,6 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       const key = await this.api.post<ApiDeviceBootstrapKey>(WEB_API.deviceBootstrapKeys(), {
         userId: this.effectiveUserId,
         actorUserId: this.effectiveUserId,
-        networkId: network.networkId,
         ttlSeconds: this.bootstrapTTLSeconds,
       });
       this.bootstrapInstallationKey = key.installationKey || key.token || key.key || '';
@@ -545,7 +536,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
           key: this.bootstrapInstallationKey,
           installationKey: this.bootstrapInstallationKey,
           createdByUserId: this.effectiveUserId,
-          networkId: network.networkId,
+          networkId: '',
           expiresAt: now + this.bootstrapTTLSeconds,
           status: 'active',
           createdAt: now,
@@ -647,6 +638,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     this.closeInlinePopovers();
     this.selectedExposureDevice = device;
     this.exposureUser = '';
+    this.deviceGroupBindingMessage = '';
     this.showDeviceExposureDialog = true;
   }
 
@@ -668,13 +660,46 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
     this.deviceExposures = this.deviceExposures.filter((item) => item !== exposure);
   }
 
+  async removeSelectedDeviceReference(invite: WorkspaceDeviceInviteRow): Promise<void> {
+    const device = this.selectedExposureDevice;
+    if (!device) {
+      return;
+    }
+    this.deviceGroupBindingMessage = '';
+    try {
+      await this.api.post(WEB_API.deviceInviteRevoke(invite.inviteId), {
+        actorUserId: this.effectiveUserId,
+      });
+      await this.loadDashboard(this.currentUserId);
+    } catch {
+      if (this.isDemoMode) {
+        this.workspaceDeviceInvites = this.workspaceDeviceInvites.map((item) =>
+          item.inviteId === invite.inviteId ? { ...item, status: 'revoked' } : item,
+        );
+        return;
+      }
+      this.deviceGroupBindingMessage = this.isCurrentUserDeviceOwner(device)
+        ? '撤回设备共享失败'
+        : '移除共享设备失败';
+    }
+    this.notifyStateChanged();
+  }
+
   async removeDevice(device: DeviceRow): Promise<void> {
+    if (!this.isReferencedDevice(device)) {
+      this.deviceListMessage = this.isCurrentUserDeviceOwner(device)
+        ? '自有设备不允许在这里删除'
+        : '未找到设备引用关系';
+      this.notifyStateChanged();
+      return;
+    }
     const invite = this.deviceShareInvite(device);
     if (!invite) {
-      this.deviceListMessage = this.isCurrentUserDeviceOwner(device)
-        ? 'owner 设备不允许删除'
-        : '未找到设备共享关系';
+      this.deviceListMessage = '未找到设备引用关系';
       this.notifyStateChanged();
+      return;
+    }
+    if (!window.confirm(`确定删除引用设备“${device.alias || device.deviceId}”吗？相关分组和网络关系也会一并删除。`)) {
       return;
     }
     try {
@@ -685,9 +710,7 @@ export abstract class AppComponentDevices extends AppComponentUserAlias {
       return;
     } catch {
       if (!this.isDemoMode) {
-        this.deviceListMessage = this.isCurrentUserDeviceOwner(device)
-          ? '撤回设备共享失败'
-          : '移除共享设备失败';
+        this.deviceListMessage = '删除引用设备失败';
         this.notifyStateChanged();
         return;
       }

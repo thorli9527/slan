@@ -232,6 +232,14 @@ func newDeviceVirtualIPID(devices repository.DeviceRepository) string {
 	})
 }
 
+func allocateDeviceVirtualIP(devices repository.DeviceRepository) (string, error) {
+	virtualIP := allocatedDeviceVirtualIP(newDeviceVirtualIPID(devices))
+	if virtualIP == "" {
+		return "", conflictError("device virtual IP pool exhausted")
+	}
+	return virtualIP, nil
+}
+
 func newDeviceSessionID(next func(string) string) string {
 	return scopedID(next, "dsess")
 }

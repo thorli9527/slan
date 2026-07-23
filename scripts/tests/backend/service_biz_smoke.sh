@@ -252,8 +252,6 @@ http_call "" -X POST "${APP_BASE_URL}/api/app/devices/${DST_DEVICE_ID}/renew" \
   -d "{\"userId\":\"${USER_ID}\",\"networkEnabled\":true,\"rxBytesTotal\":256,\"txBytesTotal\":512}" >/dev/null || fail "destination device renew failed"
 http_call "" "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/network-configs" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "device network configs failed"
-http_call "" "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
-  -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "app network config failed"
 http_call "" "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/relay-candidates?deviceId=${DEVICE_ID}" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}" >/dev/null || fail "relay candidates failed"
 PEER_ID="${NETWORK_ID}:${DEVICE_ID}"
@@ -338,7 +336,7 @@ fi
 if ! printf '%s' "${GROUP_RULE_UPDATED}" | grep -q '"description":"updated smoke group ingress"'; then
   fail "security rule update did not persist description: ${GROUP_RULE_UPDATED}"
 fi
-GROUP_RULE_CONFIG="$(http_json "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
+GROUP_RULE_CONFIG="$(http_json "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/network-configs" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}")"
 if ! printf '%s' "${GROUP_RULE_CONFIG}" | grep -q "\"ruleId\":\"${GROUP_RULE_ID}\""; then
   fail "device_group ACL rule missing from network config: ${GROUP_RULE_CONFIG}"
@@ -359,7 +357,7 @@ INGRESS_DENY_RULE_ID="$(printf '%s' "${INGRESS_DENY_RULE}" | sed -n 's/.*"ruleId
 if [[ -z "${INGRESS_DENY_RULE_ID}" ]]; then
   fail "missing ingress deny security rule id: ${INGRESS_DENY_RULE}"
 fi
-INGRESS_DENIED_CONFIG="$(http_json "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
+INGRESS_DENIED_CONFIG="$(http_json "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/network-configs" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}")"
 if ! printf '%s' "${INGRESS_DENIED_CONFIG}" | grep -q "\"ruleId\":\"${INGRESS_DENY_RULE_ID}\""; then
   fail "ingress ACL deny rule missing from network config: ${INGRESS_DENIED_CONFIG}"
@@ -381,7 +379,7 @@ http_call "" -X POST "${WEB_BASE_URL}/api/web/security-groups/${SECURITY_GROUP_I
   -H "Authorization: Bearer ${USER_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d "{\"actorUserId\":\"${USER_ID}\",\"direction\":\"egress\",\"priority\":10,\"action\":\"deny\",\"protocol\":\"all\",\"portFrom\":0,\"portTo\":0,\"peerType\":\"device\",\"peerValue\":\"${DST_DEVICE_ID}\",\"description\":\"deny smoke peer\",\"enabled\":true}" >/dev/null || fail "failed to create egress deny rule"
-DENIED_CONFIG="$(http_json "${APP_BASE_URL}/api/app/networks/${NETWORK_ID}/network-config?deviceId=${DEVICE_ID}" \
+DENIED_CONFIG="$(http_json "${APP_BASE_URL}/api/app/devices/${DEVICE_ID}/network-configs" \
   -H "Authorization: Bearer ${DEVICE_TOKEN}")"
 if ! printf '%s' "${DENIED_CONFIG}" | grep -q '"securityRuleCount":1'; then
   fail "ACL deny rule count missing from network config: ${DENIED_CONFIG}"

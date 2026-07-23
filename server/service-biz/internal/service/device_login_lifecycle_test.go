@@ -28,6 +28,21 @@ func (s *deviceLoginTestSessions) ListUserSessionsByUserID(context.Context, stri
 func (s *deviceLoginTestSessions) SaveUserSession(context.Context, model.UserSession) error {
 	return nil
 }
+func (s *deviceLoginTestSessions) ReplaceUserSessionForClient(_ context.Context, next model.UserSession) error {
+	if s.sessions == nil {
+		s.sessions = make(map[string]model.UserSession)
+	}
+	for accessToken, session := range s.sessions {
+		if session.UserID == next.UserID && session.ClientType == next.ClientType && session.DeviceID == next.DeviceID {
+			delete(s.sessions, accessToken)
+		}
+	}
+	s.sessions[next.AccessToken] = next
+	return nil
+}
+func (s *deviceLoginTestSessions) ReplaceUserSession(context.Context, string, model.UserSession) error {
+	return nil
+}
 func (s *deviceLoginTestSessions) DeleteUserSessionByAccessToken(context.Context, string) error {
 	return nil
 }
@@ -240,7 +255,8 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 				UserID: "user-1", AccessToken: "access-1", RefreshToken: "refresh-1", Status: "active", ExpiresAt: now.Add(time.Hour).Unix(),
 			},
 		}},
-		Devices: devices, Networks: networks, DevicePublisher: publisher, Now: func() time.Time { return now },
+		Devices: devices, Networks: networks, DevicePublisher: publisher,
+		NewSessID: func(string) string { return "desktop-session-1" }, Now: func() time.Time { return now },
 	}}
 
 	_, err := service.CompleteDeviceLoginDevice(context.Background(), CompleteDeviceLoginDeviceInput{
@@ -250,8 +266,8 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteDeviceLoginDevice returned error: %v", err)
 	}
-	if got := devices.devices["device-1"].VirtualIP; got != "10.0.0.1" {
-		t.Fatalf("expected login allocation 10.0.0.1, got %q", got)
+	if got := devices.devices["device-1"].VirtualIP; got != "10.0.1.1" {
+		t.Fatalf("expected login allocation 10.0.1.1, got %q", got)
 	}
 	assignment, ok := devices.assignments["device-1"]
 	if !ok || len(assignment.GroupIDs) != 1 || assignment.GroupIDs[0] != "group-dev" {
@@ -270,10 +286,18 @@ func TestCompleteDeviceLoginAllocatesIPAndPublishesPrivateLogin(t *testing.T) {
 		t.Fatalf("private events published out of order: %#v", publisher.events)
 	}
 	loginEvent := publisher.events[0]
-	if got := loginEvent.Payload["accessToken"]; got != "access-1" {
-		t.Fatalf("expected access token in private login event, got %#v", got)
+	desktopAccessToken, _ := loginEvent.Payload["accessToken"].(string)
+	if desktopAccessToken == "" || desktopAccessToken == "access-1" {
+		t.Fatalf("expected an independent desktop access token, got %#v", desktopAccessToken)
 	}
-	if got := loginEvent.Payload["virtualIp"]; got != "10.0.0.1" {
+	desktopSession, ok, err := service.Sessions.GetUserSessionByAccessToken(context.Background(), desktopAccessToken)
+	if err != nil {
+		t.Fatalf("load desktop session: %v", err)
+	}
+	if !ok || desktopSession.ClientType != UserSessionClientDesktop || desktopSession.DeviceID != "device-1" {
+		t.Fatalf("expected device-scoped desktop session, got %#v", desktopSession)
+	}
+	if got := loginEvent.Payload["virtualIp"]; got != "10.0.1.1" {
 		t.Fatalf("expected virtual IP in private login event, got %#v", got)
 	}
 }

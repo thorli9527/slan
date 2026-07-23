@@ -43,8 +43,6 @@ pub(crate) struct MobilePlatformDeviceNetworkConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) network_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) network_code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) intra_group_policy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) network_created_at: Option<i64>,

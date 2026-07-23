@@ -28,7 +28,9 @@ func (h AuthHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	if !serviceapi.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	view, err := h.AuthRegistration.RegisterUser(r.Context(), req.ToInput())
+	input := req.ToInput()
+	input.ClientType = servicepkg.UserSessionClientDesktop
+	view, err := h.AuthRegistration.RegisterUser(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return
@@ -41,7 +43,9 @@ func (h AuthHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	if !serviceapi.DecodeJSONOrError(w, r, &req) {
 		return
 	}
-	view, err := h.AuthSessions.LoginUser(r.Context(), req.ToInput())
+	input := req.ToInput()
+	input.ClientType = servicepkg.UserSessionClientDesktop
+	view, err := h.AuthSessions.LoginUser(r.Context(), input)
 	if err != nil {
 		serviceapi.WriteError(w, err)
 		return

@@ -6,6 +6,7 @@ pub mod path;
 pub mod platform;
 pub mod relay_frame;
 pub mod runtime;
+pub mod signal_quality;
 pub mod state;
 
 pub use command::{
@@ -20,11 +21,11 @@ pub use packet::{
     normalize_ipv4_transport_checksums, normalize_virtual_ip, relay_peer_index_for_packet,
 };
 pub use path::{
-    mark_path_ready_for_node, mark_path_ready_for_nodes, mark_peer_path_probe_success,
-    normalize_relay_transport, path_should_upgrade, preferred_path_order,
-    relay_path_kind_for_transport, select_active_path, selected_runtime_paths,
-    update_peer_active_path, PathCandidate, PathKind, PathPolicy, PathState, PathTracker,
-    PeerPathConfig, PeerPathRuntime,
+    compare_path_candidates, mark_path_ready_for_node, mark_path_ready_for_nodes,
+    mark_peer_path_probe_success, normalize_relay_transport, path_should_upgrade,
+    preferred_path_order, relay_path_kind_for_transport, select_active_path,
+    selected_runtime_paths, sort_path_candidates, update_peer_active_path, PathCandidate, PathKind,
+    PathPolicy, PathState, PathTracker, PeerPathConfig, PeerPathRuntime,
 };
 pub use platform::{
     node_config_path_rank, AndroidNetworkEvent, AndroidNetworkEventType,
@@ -33,8 +34,9 @@ pub use platform::{
     PlatformAclPeer, PlatformAclPolicy, PlatformAclRule, PlatformDeviceNetworkConfig,
     PlatformDiagnosticCheck, PlatformNetwork, PlatformNetworkConfig, PlatformNetworkDiagnostics,
     PlatformResolverConfig, PlatformResolverRecord, PlatformResolverZone, RelayDataPlaneConfig,
-    RelayPeerSession, RelayTicket, RouteSpec,
+    RelayPeerSession, RelayTicket, RouteSpec, SLAN_DNS_SERVICE_IP,
 };
 pub use relay_frame::relay_frame_is_replayed;
 pub use runtime::ClientRuntime;
+pub use signal_quality::{assess_signal_quality, SignalQualityAssessment};
 pub use state::ClientViewState;

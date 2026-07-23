@@ -15,9 +15,9 @@ use client_core::{
     relay_path_kind_for_transport, AssignedIpPayload, AuthPayload, ClientCommand,
     ClientMessageNoticePayload, ClientRuntime, ClientViewState, PathCandidate, PathKind, PathState,
     PeerPathConfig, PlatformAclPolicy, PlatformResolverConfig, RelayDataPlaneConfig,
-    RelayPeerSession, RouteSpec,
+    RelayPeerSession, RouteSpec, SLAN_DNS_SERVICE_IP,
 };
-use client_core_platform::PlatformNetworkImpl;
+use client_core_platform::{direct_udp::configured_direct_udp_port, PlatformNetworkImpl};
 use control_mqtt_client::{ThinControlMqttClient, ThinMqttCredential, ThinMqttQoS};
 use serde_json::Value;
 
@@ -319,6 +319,7 @@ fn handle_request_json(request_json: &str) -> Result<String> {
                 .context("decode watch business event request")?;
             serde_json::to_string(&watch_embedded_business_event(
                 input.last_revision,
+                input.follow_latest,
                 input.stream_id.as_deref(),
                 Duration::from_millis(input.timeout_ms.clamp(1_000, 60_000)),
             ))
@@ -741,6 +742,8 @@ fn platform_network_config() -> Result<Value> {
         .map(|config| config.relay_address.clone())
         .or_else(|| best_relay.as_ref().map(|relay| relay.address.clone()));
     let resolver = platform_resolver_config(&network_id, &activation.resolver, &network_configs);
+    let resolver_records =
+        crate::resolver_apply::platform_resolver_records_from_configs(&network_configs);
     let config = MobilePlatformNetworkConfig {
         session_name: "SLAN".to_string(),
         virtual_ip: activation.virtual_ip.clone(),
@@ -761,6 +764,12 @@ fn platform_network_config() -> Result<Value> {
     };
     let mut value = serde_json::to_value(config).context("encode platform config value")?;
     if let Value::Object(map) = &mut value {
+        if let Some(Value::Object(resolver)) = map.get_mut("resolver") {
+            resolver.insert(
+                "records".to_string(),
+                serde_json::to_value(resolver_records).context("encode native resolver records")?,
+            );
+        }
         map.insert(
             "relayDebug".to_string(),
             serde_json::json!({
@@ -808,7 +817,6 @@ fn platform_network_configs(
             network_id: config.network_id.clone(),
             device_id: config.device_id.clone(),
             network_name: config.network_name.clone(),
-            network_code: config.network_code.clone(),
             intra_group_policy: config.intra_group_policy.clone(),
             network_created_at: config.network_created_at,
             config_version: config.config_version,
@@ -822,38 +830,46 @@ fn platform_network_configs(
 }
 
 fn platform_resolver_config(
-    active_network_id: &str,
+    _active_network_id: &str,
     activation_dns: &crate::control_plane::DeviceResolverConfig,
     configs: &[crate::control_plane::DeviceNetworkConfig],
 ) -> PlatformResolverConfig {
-    let from_network = configs
+    let search_domains = configs
         .iter()
-        .find(|config| config.network_id.trim() == active_network_id.trim())
-        .or_else(|| configs.first())
-        .map(|config| PlatformResolverConfig {
-            servers: config.resolver.servers.clone(),
-            search_domains: config.resolver.search_domains.clone(),
-            split_domains: config.resolver.split_domains.clone(),
-            fallback_to_system_resolvers: config.resolver.fallback_to_system_resolvers,
-        })
-        .unwrap_or_default();
-    let mut resolver = from_network;
-    if resolver.servers.is_empty() {
-        resolver.servers = activation_dns.servers.clone();
+        .flat_map(|config| config.resolver.search_domains.iter())
+        .chain(activation_dns.search_domains.iter())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut split_domains = configs
+        .iter()
+        .flat_map(|config| config.resolver.split_domains.iter())
+        .chain(activation_dns.split_domains.iter())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if split_domains.is_empty() {
+        split_domains = search_domains.clone();
     }
-    if resolver.search_domains.is_empty() {
-        resolver.search_domains = activation_dns.search_domains.clone();
+    let has_managed_dns = !split_domains.is_empty()
+        || configs
+            .iter()
+            .any(|config| !config.resolver_zones.is_empty() || !config.resolver_records.is_empty());
+    PlatformResolverConfig {
+        servers: has_managed_dns
+            .then(|| SLAN_DNS_SERVICE_IP.to_string())
+            .into_iter()
+            .collect(),
+        search_domains,
+        split_domains,
+        fallback_to_system_resolvers: false,
     }
-    if resolver.split_domains.is_empty() {
-        resolver.split_domains = activation_dns.split_domains.clone();
-    }
-    if !resolver.fallback_to_system_resolvers {
-        resolver.fallback_to_system_resolvers = activation_dns.fallback_to_system_resolvers;
-    }
-    if resolver.split_domains.is_empty() {
-        resolver.split_domains = resolver.search_domains.clone();
-    }
-    resolver
 }
 
 fn embedded_eligible_relay_peer_count(
@@ -966,12 +982,15 @@ fn build_embedded_relay_data_plane_config(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| relay.address.clone());
+    let direct_udp_port = configured_direct_udp_port();
     Ok(RelayDataPlaneConfig {
         enabled: !sessions.is_empty(),
         transport: relay.transport.clone(),
         relay_address,
         local_node_id: local_node_id.to_string(),
         network_id: network_id.to_string(),
+        direct_udp_port,
+        randomize_direct_udp_port: direct_udp_port == 0,
         node_configs: session.node_configs.clone(),
         path_policy: Default::default(),
         peer_paths: embedded_peer_path_configs(
@@ -2535,16 +2554,22 @@ fn publish_embedded_business_event(
 
 fn watch_embedded_business_event(
     last_revision: u64,
+    follow_latest: bool,
     requested_stream_id: Option<&str>,
     timeout: Duration,
 ) -> WatchBusinessEventResponse {
     let event_hub = runtime().events();
     let stream_reset =
         requested_stream_id.is_some_and(|stream_id| stream_id != event_hub.stream_id());
+    let effective_last_revision = if follow_latest && !stream_reset {
+        event_hub.latest_revision()
+    } else {
+        last_revision
+    };
     let read = if stream_reset {
         event_hub.read_after(0)
     } else {
-        event_hub.wait_read_after(last_revision, timeout)
+        event_hub.wait_read_after(effective_last_revision, timeout)
     };
     if let Some(event) = read.event {
         return WatchBusinessEventResponse {
@@ -2566,7 +2591,7 @@ fn watch_embedded_business_event(
         revision: if stream_reset {
             read.latest_revision
         } else {
-            last_revision
+            effective_last_revision
         },
         stream_id: event_hub.stream_id().to_string(),
         stream_reset,
@@ -3088,7 +3113,7 @@ mod tests {
             state.get("virtualIp").and_then(Value::as_str),
             Some("10.0.0.99")
         );
-        let event = watch_embedded_business_event(0, None, Duration::ZERO);
+        let event = watch_embedded_business_event(0, false, None, Duration::ZERO);
         assert_eq!(event.business_type, BUSINESS_NETWORK_RUNTIME_CHANGED);
         assert_eq!(
             event
@@ -3118,7 +3143,8 @@ mod tests {
             response.pointer("/state/error").and_then(Value::as_str),
             Some("expected platform failure")
         );
-        let error_event = watch_embedded_business_event(event.revision, None, Duration::ZERO);
+        let error_event =
+            watch_embedded_business_event(event.revision, false, None, Duration::ZERO);
         assert_eq!(error_event.business_type, BUSINESS_NETWORK_RUNTIME_CHANGED);
         assert_eq!(
             error_event
@@ -3494,7 +3520,7 @@ mod tests {
             })
             .expect("reset embedded runtime");
         reconcile_embedded_active_network_state();
-        let after = watch_embedded_business_event(0, None, Duration::ZERO).revision;
+        let after = watch_embedded_business_event(0, false, None, Duration::ZERO).revision;
         assert_eq!(after, 0);
 
         if let Some(value) = previous_state_dir {
@@ -3579,7 +3605,7 @@ mod tests {
         persist_session(&session).expect("persist embedded reconcile session");
 
         reconcile_embedded_active_network_state();
-        let event = watch_embedded_business_event(0, None, Duration::ZERO);
+        let event = watch_embedded_business_event(0, false, None, Duration::ZERO);
         assert!(event.revision > 0);
         assert_eq!(event.business_type, "control.sync.changed");
         assert_eq!(

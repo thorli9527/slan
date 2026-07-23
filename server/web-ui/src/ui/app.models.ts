@@ -109,8 +109,6 @@ export type ApiNetwork = {
 	networkId: string;
 	ownerUserId: string;
 	name: string;
-	code: string;
-	templateKey?: string;
 	intraGroupPolicy?: IntraGroupPolicy;
 	default: boolean;
 	devices?: number;
@@ -123,6 +121,7 @@ export type ApiNetwork = {
 export type ApiDeviceInvite = {
   inviteId: string;
   inviterUserId?: string;
+  inviterEmail?: string;
   inviteCode: string;
   status: string;
   createdAt: number;
@@ -179,7 +178,6 @@ export type ApiNetworkDNSZone = {
   zoneId: string;
   networkId: string;
   zoneName: string;
-  exposeGlobal: boolean;
   status: string;
   createdAt: number;
   updatedAt?: number;
@@ -193,7 +191,6 @@ export type ApiNetworkDNSRecord = {
   fqdn: string;
   recordType: string;
   targetDeviceId?: string;
-  targetIp?: string;
   cname?: string;
   port?: string;
   ttl: number;
@@ -270,7 +267,6 @@ export type ApiDeviceGroupMember = {
 export type ApiNetworkConfig = {
   networkId: string;
   networkName?: string;
-  networkCode?: string;
   intraGroupPolicy?: IntraGroupPolicy;
   configVersion?: number;
   deviceId: string;
@@ -311,6 +307,7 @@ export type ApiRelayTicket = {
 // UI view models. These are derived from server API models for display/editing.
 export type DeviceRow = {
   deviceId: string;
+  ownerId?: string;
   platform: string;
   osVersion: string;
   alias: string;
@@ -330,8 +327,6 @@ export type DeviceGroupRow = {
 export type NetworkRow = {
   networkId: string;
   name: string;
-	code: string;
-	template: string;
 	intraGroupPolicy: IntraGroupPolicy;
   default: boolean;
 	devices: number;
@@ -343,7 +338,7 @@ export type NetworkRow = {
 
 export type MemberRow = { user: string; alias: string; role: string; status: string };
 export type UserAliasRow = { email: string; alias: string };
-export type DNSZoneRow = { zoneId?: string; networkId: string; zone: string; recordType: string; value: string; expose: boolean; status: string; workspaceId: string };
+export type DNSZoneRow = { zoneId?: string; networkId: string; zone: string; recordType: string; value: string; status: string; workspaceId: string };
 export type DNSRow = {
   recordId?: string;
   zoneId?: string;
@@ -353,10 +348,8 @@ export type DNSRow = {
   recordType: string;
   value: string;
   deviceId: string;
-  port: string;
   ttl: number;
-  targetType?: 'device' | 'ip' | 'cname';
-  expose: boolean;
+  targetType?: 'device' | 'cname';
   workspaceId: string;
 };
 export type RuleSubjectType = 'device' | 'device_group' | 'user' | 'network' | 'workspace' | 'all';
@@ -378,7 +371,6 @@ export type SecurityGroupRow = { securityGroupId: string; networkId: string; nam
 export type DeviceExposureRow = { deviceId: string; user: string; alias: string; status: string };
 export type NetworkDeviceInviteRow = ApiDeviceInvite & { networkId?: string; workspaceId?: string };
 export type NetworkPanel = 'devices' | 'deviceGroups' | 'zones' | 'records' | 'securityGroups' | 'securityRules';
-export type NetworkPreset = { name: string; code: string };
 export type SecurityRuleTemplate = {
   name: string;
   description?: string;
@@ -395,7 +387,6 @@ export type SecurityRuleTemplate = {
 export type WorkspaceRow = NetworkRow;
 export type WorkspaceDeviceInviteRow = NetworkDeviceInviteRow;
 export type WorkspacePanel = NetworkPanel;
-export type WorkspacePreset = NetworkPreset;
 export type ApiWorkspace = ApiNetwork & { workspaceId?: string };
 export type ApiWorkspaceDevice = ApiNetworkDevice & { workspaceDeviceId?: string; workspaceId?: string };
 export type ApiDNSZone = ApiNetworkDNSZone & { workspaceId?: string };

@@ -135,7 +135,10 @@ ClientViewState? reduceBusinessEvent(
   required ClientViewState? snapshotState,
 }) {
   final type = businessEventType(event);
-  final incoming = queriedState ?? dataState ?? snapshotState;
+  // The event payload describes the state when the event was published, while
+  // snapshotState is captured when Rust answers this watch request. A delayed
+  // event must not roll the UI back after a newer runtime transition.
+  final incoming = queriedState ?? snapshotState ?? dataState;
   if (incoming == null) {
     return null;
   }

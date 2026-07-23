@@ -250,6 +250,11 @@ mod android_tun {
         stop_tun();
         set_nonblocking(tun_fd);
         let parsed_config = serde_json::from_str::<AndroidVpnSessionConfig>(&config_json).ok();
+        let native_resolver_records = serde_json::from_str::<serde_json::Value>(&config_json)
+            .ok()
+            .and_then(|value| value.pointer("/resolver/records").cloned())
+            .and_then(|value| serde_json::from_value::<Vec<PlatformResolverRecord>>(value).ok())
+            .unwrap_or_default();
         let stats = Arc::new(TunStats::default());
         let last_attach_error = Arc::new(Mutex::new(None));
         stats.requested_relay_session_count.store(
@@ -352,7 +357,8 @@ mod android_tun {
             let resolver_records = parsed_config
                 .as_ref()
                 .map(|config| config.resolver_records.clone())
-                .unwrap_or_else(Vec::<PlatformResolverRecord>::new);
+                .filter(|records| !records.is_empty())
+                .unwrap_or(native_resolver_records);
             let resolver_servers = parsed_config
                 .as_ref()
                 .map(|config| config.resolver.servers.clone())
@@ -391,17 +397,17 @@ mod android_tun {
                         thread_stats
                             .bytes_read
                             .fetch_add(packet_len as u64, Ordering::Relaxed);
-                        if packet_targets_local_virtual_ip(
-                            &tun_buffer[..packet_len],
-                            local_virtual_ip.as_str(),
-                        ) {
-                            let packet = &tun_buffer[..packet_len];
-                            if let Some(reply) = local_dns_reply(
-                                packet,
-                                local_virtual_ip.as_str(),
-                                &resolver_servers,
-                                &resolver_records,
-                            ) {
+                        let packet = &tun_buffer[..packet_len];
+                        if let Some(reply) =
+                            local_dns_reply(packet, &resolver_servers, &resolver_records)
+                        {
+                            write_android_tun_inbound_packet(&mut file, &thread_stats, &reply);
+                            continue;
+                        }
+                        if packet_targets_local_virtual_ip(packet, local_virtual_ip.as_str()) {
+                            if let Some(reply) =
+                                local_virtual_ip_reply(packet, local_virtual_ip.as_str())
+                            {
                                 write_android_tun_inbound_packet(&mut file, &thread_stats, &reply);
                             } else {
                                 write_android_tun_inbound_packet(&mut file, &thread_stats, packet);
@@ -2059,7 +2065,6 @@ mod android_tun {
 
     fn local_dns_reply(
         packet: &[u8],
-        local_virtual_ip: &str,
         dns_servers: &[String],
         dns_records: &[PlatformResolverRecord],
     ) -> Option<Vec<u8>> {
@@ -2068,9 +2073,11 @@ mod android_tun {
                 return Some(reply);
             }
         }
-        packet_targets_local_virtual_ip(packet, local_virtual_ip)
-            .then(|| icmp_echo_reply_for_request(packet, local_virtual_ip))
-            .flatten()
+        None
+    }
+
+    fn local_virtual_ip_reply(packet: &[u8], local_virtual_ip: &str) -> Option<Vec<u8>> {
+        icmp_echo_reply_for_request(packet, local_virtual_ip)
     }
 
     fn should_ignore_unroutable_destination(destination: &str) -> bool {

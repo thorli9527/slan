@@ -5,8 +5,6 @@ type Network struct {
 	OwnerID          string `json:"ownerId"`
 	Name             string `json:"name"`
 	CIDR             string `json:"cidr,omitempty"`
-	Code             string `json:"code"`
-	TemplateKey      string `json:"templateKey"`
 	IntraGroupPolicy string `json:"intraGroupPolicy"`
 	Default          bool   `json:"default"`
 	Status           string `json:"status"`

@@ -20,13 +20,15 @@ func (s inviteRevocationTestUsers) GetUser(_ context.Context, userID string) (mo
 
 type inviteRevocationTestNetworks struct {
 	repository.NetworkRepository
-	invite model.DeviceInvite
+	invite             model.DeviceInvite
+	syncedOwnerUserIDs []string
 }
 
 type inviteRevocationTestRelations struct {
 	repository.DeviceRelationRepository
-	networks *inviteRevocationTestNetworks
-	relation model.DeviceUserRelation
+	networks          *inviteRevocationTestNetworks
+	relation          model.DeviceUserRelation
+	assignmentRemoved bool
 }
 
 func (s *inviteRevocationTestRelations) SaveDeviceInviteWithRelation(_ context.Context, invite model.DeviceInvite, relation model.DeviceUserRelation) error {
@@ -41,7 +43,13 @@ func (s *inviteRevocationTestRelations) RevokeDeviceInviteWithRelation(_ context
 	s.relation.Status = model.DeviceRelationStatusRevoked
 	s.relation.RevokedBy = revokedBy
 	s.relation.RevokedAt = revokedAt
+	s.assignmentRemoved = true
 	return nil
+}
+
+func (s *inviteRevocationTestNetworks) ListNetworksByOwner(_ context.Context, userID string) ([]model.Network, error) {
+	s.syncedOwnerUserIDs = append(s.syncedOwnerUserIDs, userID)
+	return []model.Network{}, nil
 }
 
 func (s *inviteRevocationTestNetworks) GetDeviceInvite(_ context.Context, inviteID string) (model.DeviceInvite, bool, error) {
@@ -187,6 +195,12 @@ func TestRevokeDeviceInviteAllowsInviterAndDeviceOwner(t *testing.T) {
 			}
 			if relations.relation.Status != model.DeviceRelationStatusRevoked || relations.relation.UserID != "inviter" {
 				t.Fatalf("expected revoked shared relation, got %#v", relations.relation)
+			}
+			if !relations.assignmentRemoved {
+				t.Fatal("expected shared user's device-group assignment to be removed")
+			}
+			if len(networks.syncedOwnerUserIDs) != 1 || networks.syncedOwnerUserIDs[0] != "inviter" {
+				t.Fatalf("expected referencing user's networks to be synchronized, got %#v", networks.syncedOwnerUserIDs)
 			}
 		})
 	}

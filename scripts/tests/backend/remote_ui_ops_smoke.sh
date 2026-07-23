@@ -222,12 +222,12 @@ printf '%s' "${OWNER_VISIBLE_AFTER_REVOKE}" | grep -Fq "\"deviceId\":\"${SECOND_
 
 WORKSPACE="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/networks" \
   -H 'Content-Type: application/json' \
-  -d "{\"ownerUserId\":\"${USER_ID}\",\"name\":\"Remote Smoke Network\",\"code\":\"rsmoke-${RUN_ID}\",\"templateKey\":\"team\"}")" || fail "network create failed"
+  -d "{\"ownerUserId\":\"${USER_ID}\",\"name\":\"Remote Smoke Network\"}")" || fail "network create failed"
 WORKSPACE_ID="$(printf '%s' "${WORKSPACE}" | json_value networkId)"
 [[ -n "${WORKSPACE_ID}" ]] || fail "missing network id"
 curl --silent --fail -X PATCH "${WEB_BASE}/api/web/networks/${WORKSPACE_ID}" \
   -H 'Content-Type: application/json' \
-  -d "{\"name\":\"Remote Smoke Network Updated\",\"code\":\"rsmoke-${RUN_ID}\",\"status\":\"enabled\"}" >/dev/null || fail "network update failed"
+  -d "{\"name\":\"Remote Smoke Network Updated\",\"status\":\"enabled\"}" >/dev/null || fail "network update failed"
 curl --silent --fail -X POST "${WEB_BASE}/api/web/networks/${WORKSPACE_ID}/devices" \
   -H 'Content-Type: application/json' \
   -d "{\"deviceId\":\"${DEVICE_ID}\",\"actorUserId\":\"${USER_ID}\",\"alias\":\"Remote Network Device\",\"enabled\":true}" >/dev/null || fail "network device add failed"
@@ -238,12 +238,12 @@ curl --silent --fail -X PATCH "${WEB_BASE}/api/web/networks/${WORKSPACE_ID}/devi
 
 ZONE="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/networks/${WORKSPACE_ID}/dns/zones" \
   -H 'Content-Type: application/json' \
-  -d "{\"zoneName\":\"remote-${RUN_ID}.staticlss.com\",\"exposeGlobal\":true}")" || fail "dns zone create failed"
+  -d "{\"zoneName\":\"remote-${RUN_ID}.staticlss.com\"}")" || fail "dns zone create failed"
 ZONE_ID="$(printf '%s' "${ZONE}" | json_value zoneId)"
 [[ -n "${ZONE_ID}" ]] || fail "missing dns zone id"
 curl --silent --fail -X PATCH "${WEB_BASE}/api/web/networks/${WORKSPACE_ID}/dns/zones/${ZONE_ID}" \
   -H 'Content-Type: application/json' \
-  -d "{\"zoneName\":\"remote-${RUN_ID}.staticlss.com\",\"exposeGlobal\":false}" >/dev/null || fail "dns zone update failed"
+  -d "{\"zoneName\":\"remote-${RUN_ID}.staticlss.com\"}" >/dev/null || fail "dns zone update failed"
 RECORD="$(curl --silent --fail -X POST "${WEB_BASE}/api/web/networks/${WORKSPACE_ID}/dns/records" \
   -H 'Content-Type: application/json' \
   -d "{\"zoneId\":\"${ZONE_ID}\",\"name\":\"app\",\"recordType\":\"A\",\"targetDeviceId\":\"${DEVICE_ID}\",\"targetIp\":\"\",\"cname\":\"\",\"port\":\"\",\"ttl\":60}")" || fail "dns record create failed"

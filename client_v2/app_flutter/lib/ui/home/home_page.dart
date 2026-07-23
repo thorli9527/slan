@@ -9,6 +9,7 @@ import '../../bridge/client_ui_diagnostics.dart';
 import '../../bridge/client_view_state.dart';
 import 'widgets/android_authorization_panel.dart';
 import 'widgets/network_status_panel.dart';
+import 'widgets/network_invite_dialog.dart';
 import 'widgets/password_login_form.dart';
 import 'widgets/signed_in_actions.dart';
 import 'widgets/signed_out_status.dart';
@@ -52,6 +53,12 @@ class _HomePageState extends State<HomePage> {
 
   /// 上一次登录态，用于从未登录变已登录时触发平台授权准备。
   bool _lastSignedIn = false;
+
+  /// UI 本地网络切换锁，覆盖命令派发到 bridge 首次状态回推之间的窗口。
+  bool _networkTogglePending = false;
+
+  /// 本次网络切换的目标状态，用于立即更新开关显示。
+  bool? _networkToggleTargetEnabled;
 
   @override
   void initState() {
@@ -318,19 +325,43 @@ class _HomePageState extends State<HomePage> {
 
   /// 处理用户点击网络开关。
   void _toggleNetwork(bool enabled) {
+    if (_networkTogglePending) {
+      ClientUiDiagnostics.unawaitedLog(
+        'home.switch.ignoredInFlight',
+        state: widget.bridge.state.value,
+        fields: {'targetEnabled': enabled},
+      );
+      return;
+    }
+    setState(() {
+      _networkTogglePending = true;
+      _networkToggleTargetEnabled = enabled;
+    });
     _lastShownError = null;
     ClientUiDiagnostics.unawaitedLog(
       'home.switch.tap',
       state: widget.bridge.state.value,
       fields: {'targetEnabled': enabled},
     );
-    widget.bridge.dispatch(
-      ClientCommand(
-        enabled
-            ? ClientCommandType.enableNetwork
-            : ClientCommandType.disableNetwork,
-      ),
-    );
+    unawaited(_dispatchNetworkToggle(enabled));
+  }
+
+  Future<void> _dispatchNetworkToggle(bool enabled) async {
+    try {
+      await widget.bridge.dispatch(
+        ClientCommand(
+          enabled
+              ? ClientCommandType.enableNetwork
+              : ClientCommandType.disableNetwork,
+        ),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _networkTogglePending = false;
+        _networkToggleTargetEnabled = null;
+      });
+    }
   }
 
   /// 启动 bridge 并准备 Android 授权状态。
@@ -465,13 +496,35 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSignedInHeader({
     required ClientViewState state,
   }) {
+    final displayedState = _networkTogglePending
+        ? state.copyWith(
+            networkEnabled: _networkToggleTargetEnabled ?? state.networkEnabled,
+            syncing: true,
+            switchEnabled: false,
+          )
+        : state;
     return SignedInStatusPanel(
       desktop: _isDesktopLike,
-      userLabel: _userLabel(state),
-      currentIp: _ipText(state),
-      state: state,
+      userLabel: _userLabel(displayedState),
+      currentIp: _ipText(displayedState),
+      state: displayedState,
       onToggle: _toggleNetwork,
+      onAcceptInvite: _isDesktopLike ? _acceptNetworkInvite : null,
     );
+  }
+
+  Future<void> _acceptNetworkInvite() async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (_) => NetworkInviteDialog(
+        onAccept: widget.bridge.acceptNetworkInvite,
+      ),
+    );
+    if (accepted == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('网络接入已确认')),
+      );
+    }
   }
 
   /// 构建 Android VPN 授权提示；非 Android 或无需提示时隐藏。

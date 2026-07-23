@@ -1,18 +1,16 @@
 package service
 
 type CreateDNSZoneInput struct {
-	NetworkID    string `json:"networkId"`
-	ActorUserID  string `json:"actorUserId"`
-	Name         string `json:"name"`
-	ExposeGlobal bool   `json:"exposeGlobal"`
+	NetworkID   string `json:"networkId"`
+	ActorUserID string `json:"actorUserId"`
+	Name        string `json:"name"`
 }
 
 type UpdateDNSZoneInput struct {
-	ZoneID       string `json:"zoneId"`
-	ActorUserID  string `json:"actorUserId"`
-	Name         string `json:"name"`
-	ExposeGlobal *bool  `json:"exposeGlobal,omitempty"`
-	Status       string `json:"status"`
+	ZoneID      string `json:"zoneId"`
+	ActorUserID string `json:"actorUserId"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
 }
 
 type CreateDNSRecordInput struct {

@@ -8,13 +8,12 @@ import (
 
 func dnsZoneView(item model.DNSZone) DNSZoneView {
 	return DNSZoneView{
-		ZoneID:       item.ZoneID,
-		NetworkID:    item.NetworkID,
-		Name:         item.Name,
-		Status:       item.Status,
-		CreatedAt:    item.CreatedAt,
-		UpdatedAt:    item.UpdatedAt,
-		ExposeGlobal: item.ExposeGlobal,
+		ZoneID:    item.ZoneID,
+		NetworkID: item.NetworkID,
+		Name:      item.Name,
+		Status:    item.Status,
+		CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt,
 	}
 }
 
@@ -26,7 +25,7 @@ func dnsRecordView(item model.DNSRecord) DNSRecordView {
 		Name:      item.Name,
 		Type:      item.Type,
 		Value:     item.Value,
-		Port:      item.Port,
+		Port:      normalizeDNSRecordPort(item.Type, item.Port),
 		TTL:       item.TTL,
 		Status:    "active",
 		CreatedAt: item.CreatedAt,
@@ -37,11 +36,7 @@ func dnsRecordView(item model.DNSRecord) DNSRecordView {
 	case "CNAME":
 		view.CNAME = value
 	default:
-		if strings.Contains(value, ".") {
-			view.TargetIP = value
-		} else {
-			view.TargetDeviceID = value
-		}
+		view.TargetDeviceID = value
 	}
 	return view
 }

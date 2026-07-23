@@ -8,8 +8,6 @@ func networkRecordFromModel(item model.Network) gormNetworkRecord {
 		OwnerID:          item.OwnerID,
 		Name:             item.Name,
 		CIDR:             item.CIDR,
-		Code:             item.Code,
-		TemplateKey:      item.TemplateKey,
 		IntraGroupPolicy: item.IntraGroupPolicy,
 		Default:          item.Default,
 		Status:           item.Status,
@@ -24,8 +22,6 @@ func (r gormNetworkRecord) model() model.Network {
 		OwnerID:          r.OwnerID,
 		Name:             r.Name,
 		CIDR:             r.CIDR,
-		Code:             r.Code,
-		TemplateKey:      r.TemplateKey,
 		IntraGroupPolicy: r.IntraGroupPolicy,
 		Default:          r.Default,
 		Status:           r.Status,
@@ -77,6 +73,8 @@ func networkDeviceRecordFromModel(item model.NetworkDevice) gormNetworkDeviceRec
 		DerpNodeID:         item.DerpNodeID,
 		PeerNodeID:         item.PeerNodeID,
 		PathScore:          item.PathScore,
+		SignalScore:        item.SignalScore,
+		SignalQuality:      item.SignalQuality,
 		ObservedRttMs:      item.ObservedRttMs,
 		PacketLossPpm:      item.PacketLossPpm,
 		RelayMtu:           item.RelayMtu,
@@ -114,6 +112,8 @@ func (r gormNetworkDeviceRecord) model() model.NetworkDevice {
 		DerpNodeID:         r.DerpNodeID,
 		PeerNodeID:         r.PeerNodeID,
 		PathScore:          r.PathScore,
+		SignalScore:        r.SignalScore,
+		SignalQuality:      r.SignalQuality,
 		ObservedRttMs:      r.ObservedRttMs,
 		PacketLossPpm:      r.PacketLossPpm,
 		RelayMtu:           r.RelayMtu,
@@ -160,25 +160,23 @@ func (r gormDeviceInviteRecord) model() model.DeviceInvite {
 
 func dnsZoneRecordFromModel(item model.DNSZone) gormDNSZoneRecord {
 	return gormDNSZoneRecord{
-		ZoneID:       item.ZoneID,
-		NetworkID:    item.NetworkID,
-		Name:         item.Name,
-		ExposeGlobal: item.ExposeGlobal,
-		Status:       item.Status,
-		CreatedAt:    item.CreatedAt,
-		UpdatedAt:    item.UpdatedAt,
+		ZoneID:    item.ZoneID,
+		NetworkID: item.NetworkID,
+		Name:      item.Name,
+		Status:    item.Status,
+		CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt,
 	}
 }
 
 func (r gormDNSZoneRecord) model() model.DNSZone {
 	return model.DNSZone{
-		ZoneID:       r.ZoneID,
-		NetworkID:    r.NetworkID,
-		Name:         r.Name,
-		ExposeGlobal: r.ExposeGlobal,
-		Status:       r.Status,
-		CreatedAt:    r.CreatedAt,
-		UpdatedAt:    r.UpdatedAt,
+		ZoneID:    r.ZoneID,
+		NetworkID: r.NetworkID,
+		Name:      r.Name,
+		Status:    r.Status,
+		CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt,
 	}
 }
 

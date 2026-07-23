@@ -139,7 +139,6 @@ pub(crate) fn replace_network_module_from_snapshot(
         network_id: network_id.to_string(),
         network_name: (!snapshot.network.name.trim().is_empty())
             .then(|| snapshot.network.name.clone()),
-        network_code: None,
         intra_group_policy: (!snapshot.network.default_acl_policy.trim().is_empty())
             .then(|| snapshot.network.default_acl_policy.clone()),
         network_created_at: None,
@@ -237,7 +236,6 @@ pub(crate) fn replace_network_module_from_snapshot(
         .lock()
         .expect("client network module mutex poisoned");
     if let Some(existing) = guard.configs.get(network_id) {
-        config.network_code = existing.network_code.clone();
         config.network_created_at = existing.network_created_at;
         config.config_version = existing.config_version;
         config.node_id = existing.node_id.clone();
@@ -558,13 +556,22 @@ mod tests {
     use super::{
         apply_network_module_event, clear_network_module, network_module_snapshot,
         replace_network_module_configs, replace_network_module_from_snapshot,
+        sync_resolver_runtime_state,
     };
-    use crate::control_plane::{DeviceNetworkConfig, DeviceSecurityGroup, DeviceSecurityRule};
+    use crate::control_plane::{
+        DeviceNetworkConfig, DeviceNetworkPeer, DeviceResolverRecord, DeviceResolverZone,
+        DeviceSecurityGroup, DeviceSecurityRule,
+    };
     use crate::network_event::{
         NetworkEventAclChangedPayload, NetworkEventAclRuleView, NetworkEventDeviceGroupView,
         NetworkEventEnvelope, NetworkEventMemberPayload, NetworkEventMemberView,
         NetworkEventNetworkView, NetworkEventResolverChangedPayload,
         NetworkEventResolverRecordView, NetworkEventType, NetworkSnapshotPayload,
+    };
+    use crate::{
+        resolver_authority::{resolve_authoritative, ResolveAuthoritativeResult},
+        resolver_runtime_state::{clear_resolver_runtime_state, resolver_runtime_state},
+        session_store::PersistedSession,
     };
 
     #[test]
@@ -894,5 +901,115 @@ mod tests {
         );
         assert_eq!(snapshot.configs[0].resolver_records[0].ttl, Some(90));
         assert_eq!(snapshot.configs[0].rules[0].rule_id, "rule-4");
+    }
+
+    #[test]
+    fn resolver_delete_event_invalidates_cached_answer_immediately() {
+        let _lock = crate::test_env_lock();
+        clear_network_module();
+        clear_resolver_runtime_state();
+        replace_network_module_configs(vec![DeviceNetworkConfig {
+            network_id: "network-delete".to_string(),
+            device_id: "device-self".to_string(),
+            global_ip: Some("10.0.1.1".to_string()),
+            intra_group_policy: Some("allow".to_string()),
+            peers: vec![DeviceNetworkPeer {
+                device_id: "device-peer".to_string(),
+                global_ip: Some("10.0.1.2".to_string()),
+                status: Some("active".to_string()),
+                ..DeviceNetworkPeer::default()
+            }],
+            resolver_zones: vec![DeviceResolverZone {
+                zone_id: "zone-delete".to_string(),
+                network_id: "network-delete".to_string(),
+                zone_name: "delete.test".to_string(),
+            }],
+            resolver_records: vec![DeviceResolverRecord {
+                record_id: "record-delete".to_string(),
+                zone_id: "zone-delete".to_string(),
+                network_id: "network-delete".to_string(),
+                name: "api".to_string(),
+                fqdn: Some("api.delete.test".to_string()),
+                record_type: "A".to_string(),
+                target_device_id: Some("device-peer".to_string()),
+                ttl: Some(300),
+                ..DeviceResolverRecord::default()
+            }],
+            ..DeviceNetworkConfig::default()
+        }]);
+        let mut session = PersistedSession::empty();
+        session.device_id = Some("device-self".to_string());
+        session.active_network_id = Some("network-delete".to_string());
+        sync_resolver_runtime_state(&session, &network_module_snapshot().configs);
+
+        {
+            let mut resolver = resolver_runtime_state()
+                .lock()
+                .expect("resolver runtime mutex poisoned");
+            let runtime = resolver
+                .network_state("network-delete")
+                .cloned()
+                .expect("network resolver state");
+            assert_eq!(
+                resolve_authoritative(
+                    &runtime,
+                    &mut resolver,
+                    "device-self",
+                    "api.delete.test",
+                    "A",
+                ),
+                ResolveAuthoritativeResult::AnswerA {
+                    ttl: 300,
+                    ips: vec!["10.0.1.2".to_string()],
+                }
+            );
+            assert_eq!(resolver.cache_count(), 1);
+        }
+
+        apply_network_module_event(
+            "network-delete",
+            "device-self",
+            &NetworkEventEnvelope {
+                r#type: "network_event".to_string(),
+                network_id: "network-delete".to_string(),
+                version: 2,
+                event_id: "resolver-delete".to_string(),
+                event_type: NetworkEventType::ResolverChanged,
+                occurred_at: 2,
+                payload: serde_json::to_value(NetworkEventResolverChangedPayload {
+                    config: Default::default(),
+                    zones: vec![crate::network_event::NetworkEventResolverZoneView {
+                        zone_id: "zone-delete".to_string(),
+                        network_id: "network-delete".to_string(),
+                        zone_name: "delete.test".to_string(),
+                        ..Default::default()
+                    }],
+                    records: vec![],
+                })
+                .expect("encode resolver deletion"),
+            },
+        )
+        .expect("apply resolver deletion");
+        sync_resolver_runtime_state(&session, &network_module_snapshot().configs);
+
+        let mut resolver = resolver_runtime_state()
+            .lock()
+            .expect("resolver runtime mutex poisoned");
+        let runtime = resolver
+            .network_state("network-delete")
+            .cloned()
+            .expect("network resolver state");
+        assert_eq!(resolver.record_count(), 0);
+        assert_eq!(resolver.cache_count(), 0);
+        assert_eq!(
+            resolve_authoritative(
+                &runtime,
+                &mut resolver,
+                "device-self",
+                "api.delete.test",
+                "A",
+            ),
+            ResolveAuthoritativeResult::NxDomain
+        );
     }
 }

@@ -6,6 +6,7 @@ type RegisterUser struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Name     string `json:"name"`
+	DeviceID string `json:"deviceId"`
 }
 
 func (r RegisterUser) ToInput() servicepkg.RegisterUserInput {
@@ -13,6 +14,7 @@ func (r RegisterUser) ToInput() servicepkg.RegisterUserInput {
 		Email:    r.Email,
 		Password: r.Password,
 		Name:     r.Name,
+		DeviceID: r.DeviceID,
 	}
 }
 
@@ -20,6 +22,7 @@ type LoginUser struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	SessionMode string `json:"sessionMode"`
+	DeviceID    string `json:"deviceId"`
 }
 
 func (r LoginUser) ToInput() servicepkg.LoginUserInput {
@@ -27,6 +30,7 @@ func (r LoginUser) ToInput() servicepkg.LoginUserInput {
 		Email:       r.Email,
 		Password:    r.Password,
 		SessionMode: r.SessionMode,
+		DeviceID:    r.DeviceID,
 	}
 }
 

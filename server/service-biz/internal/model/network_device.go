@@ -39,6 +39,8 @@ type NetworkDevice struct {
 	DerpNodeID         string               `json:"derpNodeId,omitempty"`
 	PeerNodeID         string               `json:"peerNodeId,omitempty"`
 	PathScore          int64                `json:"pathScore,omitempty"`
+	SignalScore        int                  `json:"signalScore,omitempty"`
+	SignalQuality      string               `json:"signalQuality,omitempty"`
 	ObservedRttMs      int64                `json:"observedRttMs,omitempty"`
 	PacketLossPpm      int64                `json:"packetLossPpm,omitempty"`
 	RelayMtu           int                  `json:"relayMtu,omitempty"`

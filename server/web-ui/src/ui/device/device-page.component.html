@@ -6,18 +6,8 @@
         <p *ngIf="vm.devicePanel === 'list'">我能管理或访问的设备；只有设备 owner 可以确认邀请码接入。</p>
       </div>
       <div class="table-actions" *ngIf="vm.devicePanel === 'list'">
-        <button class="table-icon-button" type="button" title="生成安装命令" aria-label="生成安装命令" (click)="vm.openBootstrapDialog()">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 5v14"></path>
-            <path d="M5 12h14"></path>
-          </svg>
-        </button>
-        <button class="table-icon-button" type="button" title="生成接入码" aria-label="生成接入码" (click)="vm.openInviteDialog()">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 5v14"></path>
-            <path d="M5 12h14"></path>
-          </svg>
-        </button>
+        <button class="ghost small" type="button" (click)="vm.openBootstrapDialog()">生成安装命令</button>
+        <button class="ghost small" type="button" (click)="vm.openInviteDialog()">生成接入码</button>
       </div>
     </div>
     <div class="quota-strip" *ngIf="vm.devicePanel === 'list'">
@@ -40,8 +30,6 @@
       <tbody>
         <tr *ngFor="let device of vm.currentUserDevices">
           <td class="device-id-cell">
-            <button class="text-link" type="button" [title]="'查看设备: ' + (device.alias || device.deviceId)" aria-label="查看设备详情" (click)="vm.openDeviceExposureDialog(device)">查看详情</button>
-            <strong>{{ device.alias || device.deviceId }}</strong>
             <code>{{ device.deviceId }}</code>
           </td>
           <td>{{ device.platform }} {{ device.osVersion }}</td>
@@ -72,31 +60,10 @@
           <td>{{ vm.userLabel(device.owner) }}</td>
           <td><span class="status online">{{ device.status }}</span></td>
           <td class="table-actions">
-            <button class="table-icon-button" type="button" title="绑定分组" aria-label="绑定分组" (click)="vm.openDeviceGroupPickerDialog(device)">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M8 7h8"></path>
-                <path d="M8 12h8"></path>
-                <path d="M8 17h5"></path>
-                <path d="M4 7h.01"></path>
-                <path d="M4 12h.01"></path>
-                <path d="M4 17h.01"></path>
-              </svg>
-            </button>
-            <button *ngIf="vm.isCurrentUserDeviceOwner(device)" class="table-icon-button" title="邀请确认" aria-label="邀请确认" type="button" (click)="vm.openJoinDialog(device)">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 5v14"></path>
-                <path d="M5 12h14"></path>
-              </svg>
-            </button>
-            <button *ngIf="vm.deviceShareInvite(device)" class="table-icon-button danger" type="button" [title]="vm.deviceShareActionLabel(device)" [attr.aria-label]="vm.deviceShareActionLabel(device)" (click)="vm.removeDevice(device)">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 7h16"></path>
-                <path d="M9 7V5h6v2"></path>
-                <path d="M8 7l1 12h6l1-12"></path>
-                <path d="M10 11v5"></path>
-                <path d="M14 11v5"></path>
-              </svg>
-            </button>
+            <button class="text-link" type="button" (click)="vm.openDeviceGroupPickerDialog(device)">绑定分组</button>
+            <button *ngIf="vm.isCurrentUserDeviceOwner(device)" class="text-link" type="button" (click)="vm.openDeviceExposureDialog(device)">对外引用</button>
+            <button *ngIf="vm.isCurrentUserDeviceOwner(device)" class="text-link" type="button" (click)="vm.openJoinDialog(device)">邀请确认</button>
+            <button *ngIf="vm.isReferencedDevice(device)" class="link-danger" type="button" (click)="vm.removeDevice(device)">删除</button>
           </td>
         </tr>
         <tr *ngIf="vm.currentUserDevices.length === 0">
@@ -109,14 +76,13 @@
       <div class="section-title">
         <div>
           <h3>接入安装 Key</h3>
-          <p>用于无登录设备接入指定网络；一次性使用，并受过期/撤销状态约束。</p>
+          <p>用于无登录设备接入当前账户；一次性使用，并受过期/撤销状态约束。</p>
         </div>
       </div>
       <table class="compact-table">
-        <thead><tr><th>网络</th><th>设备别名</th><th>状态</th><th>过期时间</th><th>创建时间</th><th>操作</th></tr></thead>
+        <thead><tr><th>设备别名</th><th>状态</th><th>过期时间</th><th>创建时间</th><th>操作</th></tr></thead>
         <tbody>
           <tr *ngFor="let item of vm.currentDeviceBootstrapKeys">
-            <td>{{ vm.bootstrapKeyNetworkName(item) }}</td>
             <td>{{ item.deviceAlias || '-' }}</td>
             <td>{{ vm.bootstrapStatusLabel(item) }}</td>
             <td>{{ vm.bootstrapExpiryText(item) }}</td>
@@ -135,7 +101,7 @@
             </td>
           </tr>
           <tr *ngIf="vm.currentDeviceBootstrapKeys.length === 0">
-            <td colspan="6">暂无接入安装 Key</td>
+            <td colspan="5">暂无接入安装 Key</td>
           </tr>
         </tbody>
       </table>
@@ -310,18 +276,12 @@
     <header class="modal-header">
       <div>
         <h2>生成接入安装命令</h2>
-        <p>一次性接入安装 Key 默认 30 分钟有效，且最长不超过 1 小时，用于无用户登录设备接入当前网络。</p>
+        <p>一次性接入安装 Key 默认 30 分钟有效，且最长不超过 1 小时，用于无用户登录设备接入当前账户。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="vm.closeBootstrapDialog()">×</button>
     </header>
     <div class="notice danger" *ngIf="vm.bootstrapMessage">{{ vm.bootstrapMessage }}</div>
     <div class="form">
-      <label>
-        <span>目标网络</span>
-        <select [(ngModel)]="vm.bootstrapNetworkId">
-          <option *ngFor="let workspace of vm.workspaces" [value]="workspace.workspaceId">{{ workspace.name }} / {{ workspace.code }}</option>
-        </select>
-      </label>
       <label>
         <span>有效期(秒)</span>
         <input type="number" min="60" step="60" [(ngModel)]="vm.bootstrapTTLSeconds" />
@@ -334,8 +294,6 @@
       <div class="invite-code">
         <span>一次性接入安装 Key</span>
         <strong>{{ vm.bootstrapInstallationKey }}</strong>
-        <span>目标网络</span>
-        <strong>{{ vm.selectedBootstrapNetworkName }}</strong>
         <span>过期时间</span>
         <strong>{{ vm.bootstrapTTLSeconds }} 秒</strong>
         <span>安装命令</span>
@@ -398,30 +356,30 @@
 </div>
 
 <div class="modal-backdrop" *ngIf="vm.showDeviceExposureDialog" (click)="vm.dismissOverlayBackdrop()">
-  <section class="modal" (click)="$event.stopPropagation()">
+  <section class="modal binding-modal" (click)="$event.stopPropagation()">
     <header class="modal-header">
       <div>
-        <h2>使用关系</h2>
-        <p>设备 {{ vm.selectedExposureDevice?.deviceId }} 当前被哪些网络使用。</p>
+        <h2>对外引用关系</h2>
+        <p>{{ vm.selectedExposureDevice?.alias || vm.selectedExposureDevice?.deviceId }} 当前被哪些账户引用。</p>
       </div>
       <button class="icon-button" type="button" title="关闭" (click)="vm.closeDeviceExposureDialog()">×</button>
     </header>
     <table class="compact-table">
-      <thead><tr><th>网络</th><th>编码</th><th>归属</th><th>接入方式</th></tr></thead>
+      <thead><tr><th>引用账户</th><th>关系状态</th><th>操作</th></tr></thead>
       <tbody>
-        <tr *ngFor="let item of vm.selectedDeviceUsages">
-          <td>{{ item.workspaceName }}</td>
-          <td><code>{{ item.workspaceCode }}</code></td>
-          <td>{{ item.owner }}</td>
-          <td>{{ item.joinMethod }}</td>
+        <tr *ngFor="let invite of vm.selectedDeviceAccountReferences">
+          <td><strong>{{ vm.deviceReferenceAccountLabel(invite) }}</strong></td>
+          <td>引用中</td>
+          <td><button class="link-danger" type="button" (click)="vm.removeSelectedDeviceReference(invite)">取消引用</button></td>
         </tr>
-        <tr *ngIf="vm.selectedDeviceUsages.length === 0">
-          <td colspan="4">暂无使用关系</td>
+        <tr *ngIf="vm.selectedDeviceAccountReferences.length === 0">
+          <td colspan="3">当前设备暂无账户引用关系。</td>
         </tr>
       </tbody>
     </table>
+    <p class="form-error" *ngIf="vm.deviceGroupBindingMessage">{{ vm.deviceGroupBindingMessage }}</p>
     <footer class="modal-footer">
-      <button class="primary" type="button" (click)="vm.closeDeviceExposureDialog()">确认</button>
+      <button class="primary" type="button" (click)="vm.closeDeviceExposureDialog()">完成</button>
     </footer>
   </section>
 </div>

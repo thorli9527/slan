@@ -3,6 +3,8 @@ set -euo pipefail
 
 LABEL="dev.slan.client-core-service"
 INSTALL_DIR="/Library/Application Support/SLAN"
+STATE_ROOT="/Library/Preferences/dev.slan.client-core-service"
+STATE_DIR="${STATE_ROOT}/SLAN"
 LOG_DIR="/Library/Logs/SLAN"
 PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 SERVICE_BIN="${INSTALL_DIR}/client-core-service"
@@ -122,17 +124,21 @@ if [[ "${EUID}" -ne 0 ]]; then
   exec sudo "$0" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
 fi
 
-mkdir -p "$INSTALL_DIR" "$LOG_DIR"
+mkdir -p "$INSTALL_DIR" "$LOG_DIR" "$STATE_DIR"
 launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
 launchctl disable "system/${LABEL}" >/dev/null 2>&1 || true
 pkill -x "client-core-service" >/dev/null 2>&1 || true
 rm -f "$PLIST" "$SERVICE_BIN" "$SERVICE_PID"
 if [[ "$RESET_IDENTITY" == "1" ]]; then
   rm -f \
-    "${INSTALL_DIR}/config.json" \
+    "${STATE_DIR}/config.json" \
     "${INSTALL_DIR}/client-v2-session.json" \
     "${INSTALL_DIR}/client-v2-device-id.txt" \
     "${INSTALL_DIR}/client-v2-device-public-key.txt"
+fi
+
+if [[ ! -f "${STATE_DIR}/config.json" && -f "${INSTALL_DIR}/config.json" ]]; then
+  cp -p "${INSTALL_DIR}/config.json" "${STATE_DIR}/config.json"
 fi
 
 cp "$SOURCE_BIN" "$SERVICE_BIN"
@@ -140,8 +146,11 @@ chown root:wheel "$SERVICE_BIN"
 chmod 755 "$SERVICE_BIN"
 chown root:wheel "$INSTALL_DIR" "$LOG_DIR"
 chmod 755 "$INSTALL_DIR" "$LOG_DIR"
+chown -R root:wheel "$STATE_ROOT"
+chmod 700 "$STATE_ROOT" "$STATE_DIR"
+[[ ! -f "${STATE_DIR}/config.json" ]] || chmod 600 "${STATE_DIR}/config.json"
 
-DEVICE_ID="$("$SERVICE_BIN" --ensure-device-id)"
+DEVICE_ID="$(SLAN_STATE_DIR="$STATE_ROOT" "$SERVICE_BIN" --ensure-device-id)"
 echo "deviceId: $DEVICE_ID"
 
 cat > "$PLIST" <<PLIST
@@ -169,6 +178,8 @@ cat > "$PLIST" <<PLIST
   <dict>
     <key>SLAN_CLIENT_CORE_SERVICE_HOST</key>
     <string>${SERVICE_HOST}</string>
+    <key>SLAN_STATE_DIR</key>
+    <string>${STATE_ROOT}</string>
     <key>SLAN_MACOS_NETWORK_MOCK</key>
     <string>${MACOS_NETWORK_MOCK}</string>
 $(if [[ -n "$CONTROL_BASE_URL" ]]; then

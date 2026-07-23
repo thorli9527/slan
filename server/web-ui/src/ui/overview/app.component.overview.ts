@@ -36,8 +36,9 @@ export abstract class AppComponentOverview extends AppComponentSecurity {
     }
   }
 
-  override isWorkspaceCodeDuplicated(code: string, exceptWorkspaceId = ''): boolean {
-    return this.workspaces.some((workspace) => workspace.workspaceId !== exceptWorkspaceId && workspace.code === code);
+  override isWorkspaceNameDuplicated(name: string, exceptWorkspaceId = ''): boolean {
+    const normalizedName = name.trim().toLowerCase();
+    return this.workspaces.some((workspace) => workspace.workspaceId !== exceptWorkspaceId && workspace.name.trim().toLowerCase() === normalizedName);
   }
 
   formatTime(value?: number): string {

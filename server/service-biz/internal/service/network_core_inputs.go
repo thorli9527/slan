@@ -5,8 +5,6 @@ type CreateNetworkInput struct {
 	ActorUserID      string `json:"actorUserId"`
 	Name             string `json:"name"`
 	CIDR             string `json:"cidr"`
-	Code             string `json:"code"`
-	TemplateKey      string `json:"templateKey"`
 	IntraGroupPolicy string `json:"intraGroupPolicy"`
 	Default          bool   `json:"default"`
 }
@@ -16,8 +14,6 @@ type UpdateNetworkInput struct {
 	ActorUserID      string `json:"actorUserId"`
 	Name             string `json:"name"`
 	CIDR             string `json:"cidr"`
-	Code             string `json:"code"`
-	TemplateKey      string `json:"templateKey"`
 	IntraGroupPolicy string `json:"intraGroupPolicy"`
 	Default          *bool  `json:"default,omitempty"`
 	Status           string `json:"status"`

@@ -78,7 +78,7 @@ func registerInstalledDevice(
 		OwnerID:       input.OwnerID,
 		Name:          input.Name,
 		Platform:      input.Platform,
-		Alias:         input.Alias,
+		Alias:         "",
 		OSName:        input.OSName,
 		OSVersion:     input.OSVersion,
 		PublicKey:     input.PublicKey,
@@ -89,6 +89,7 @@ func registerInstalledDevice(
 		UpdatedAt:     now,
 	}
 	if exists {
+		device.Alias = existing.Alias
 		device.VirtualIP = existing.VirtualIP
 		device.CreatedAt = existing.CreatedAt
 		device.LastSeenAt = existing.LastSeenAt
@@ -129,7 +130,10 @@ func registerManagedDevice(ctx context.Context, users repository.UserRepository,
 	}
 	virtualIP := strings.TrimSpace(existing.VirtualIP)
 	if !managedDeviceVirtualIP(virtualIP) {
-		virtualIP = allocatedDeviceVirtualIP(newDeviceVirtualIPID(devices))
+		virtualIP, err = allocateDeviceVirtualIP(devices)
+		if err != nil {
+			return model.Device{}, err
+		}
 	}
 	device := model.Device{
 		DeviceID:      deviceID,
@@ -137,7 +141,7 @@ func registerManagedDevice(ctx context.Context, users repository.UserRepository,
 		VirtualIP:     virtualIP,
 		Name:          input.Name,
 		Platform:      input.Platform,
-		Alias:         input.Alias,
+		Alias:         "",
 		OSName:        input.OSName,
 		OSVersion:     input.OSVersion,
 		PublicKey:     input.PublicKey,
@@ -148,6 +152,7 @@ func registerManagedDevice(ctx context.Context, users repository.UserRepository,
 		UpdatedAt:     now,
 	}
 	if exists {
+		device.Alias = existing.Alias
 		device.CreatedAt = existing.CreatedAt
 		if device.CreatedAt == 0 {
 			device.CreatedAt = now

@@ -173,6 +173,18 @@ func (s NetworkInviteService) RevokeDeviceInvite(ctx context.Context, input Revo
 			if err := s.Relations.RevokeDeviceInviteWithRelation(ctx, invite, invite.InviterUserID, input.ActorUserID, networkNow(s.Now).Unix()); err != nil {
 				return DeviceInviteView{}, err
 			}
+			groupService := DeviceGroupService{
+				Users:           s.Users,
+				Devices:         s.Devices,
+				Relations:       s.Relations,
+				Networks:        s.Networks,
+				EventPublisher:  s.EventPublisher,
+				DevicePublisher: s.DevicePublisher,
+				Now:             s.Now,
+			}
+			if err := groupService.syncOwnerNetworkDeviceGroups(ctx, invite.InviterUserID, "device_reference_revoked"); err != nil {
+				return DeviceInviteView{}, err
+			}
 		} else if err := s.Networks.SaveDeviceInvite(ctx, invite); err != nil {
 			return DeviceInviteView{}, err
 		}

@@ -1,6 +1,7 @@
 #![allow(clippy::items_after_test_module)]
 
 use std::{
+    collections::BTreeSet,
     fs,
     net::{TcpStream, ToSocketAddrs, UdpSocket},
     path::PathBuf,
@@ -8,7 +9,7 @@ use std::{
 };
 
 use anyhow::Result;
-use client_core::{normalize_relay_transport, ClientViewState};
+use client_core::{assess_signal_quality, normalize_relay_transport, ClientViewState};
 use client_core_platform::direct_udp::current_direct_udp_endpoint_report;
 use serde::Deserialize;
 use serde_json::Value;
@@ -338,11 +339,12 @@ pub fn control_transport_outbox(
             });
         }
         if let Some(topic) = plan.upstream_control_topic.clone() {
-            if let Some(message) =
-                endpoint_report_message(session, &topic, reported_at_ms, plan.control_qos)
-            {
-                messages.push(message);
-            }
+            messages.extend(endpoint_report_messages(
+                session,
+                &topic,
+                reported_at_ms,
+                plan.control_qos,
+            ));
         }
     }
     if include_path_health {
@@ -370,18 +372,15 @@ pub fn control_transport_outbox(
     ControlTransportOutbox { messages }
 }
 
-fn endpoint_report_message(
+fn endpoint_report_messages(
     session: &PersistedSession,
     topic: &str,
     reported_at_ms: u64,
     qos: MqttQos,
-) -> Option<ControlTransportMessage> {
-    let network_id = session
-        .active_network_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let endpoint_report = load_direct_udp_endpoint_report(reported_at_ms)?;
+) -> Vec<ControlTransportMessage> {
+    let Some(endpoint_report) = load_direct_udp_endpoint_report(reported_at_ms) else {
+        return Vec::new();
+    };
     let updated_at = i64::try_from(reported_at_ms / 1_000).unwrap_or(i64::MAX);
 
     let mut endpoints = vec![serde_json::json!({
@@ -402,33 +401,60 @@ fn endpoint_report_message(
         }));
     }
 
-    Some(ControlTransportMessage {
-        id: format!("endpoint-report-{reported_at_ms}"),
-        topic: topic.to_string(),
-        qos,
-        kind: ControlTransportMessageKind::EndpointReport,
-        ack_task_id: None,
-        payload: serde_json::json!({
-            "type": "endpoint_report",
-            "requestId": format!("endpoint-report-{reported_at_ms}"),
-            "networkId": network_id,
-            "payload": {
-                "networkId": network_id,
-                "nodeId": session.self_node_id.clone().unwrap_or_default(),
-                "natType": endpoint_report.nat_type,
-                "endpoints": endpoints
+    endpoint_report_network_ids(session)
+        .into_iter()
+        .map(|network_id| {
+            let message_id = format!("endpoint-report-{network_id}-{reported_at_ms}");
+            ControlTransportMessage {
+                id: message_id.clone(),
+                topic: topic.to_string(),
+                qos,
+                kind: ControlTransportMessageKind::EndpointReport,
+                ack_task_id: None,
+                payload: serde_json::json!({
+                    "type": "endpoint_report",
+                    "requestId": message_id,
+                    "networkId": network_id,
+                    "payload": {
+                        "networkId": network_id,
+                        "nodeId": session.self_node_id.clone().unwrap_or_default(),
+                        "natType": endpoint_report.nat_type,
+                        "endpoints": endpoints
+                    }
+                }),
             }
-        }),
-    })
+        })
+        .collect()
 }
 
-pub(crate) fn pending_endpoint_report_message(
+fn endpoint_report_network_ids(session: &PersistedSession) -> Vec<String> {
+    let mut network_ids = session
+        .network_ids
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    if let Some(network_id) = session
+        .active_network_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        network_ids.insert(network_id.to_string());
+    }
+    network_ids.into_iter().collect()
+}
+
+pub(crate) fn pending_endpoint_report_messages(
     session: &PersistedSession,
     reported_at_ms: u64,
-) -> Option<ControlTransportMessage> {
+) -> Vec<ControlTransportMessage> {
     let plan = control_transport_plan(session);
-    let topic = plan.upstream_control_topic?;
-    endpoint_report_message(session, &topic, reported_at_ms, plan.control_qos)
+    let Some(topic) = plan.upstream_control_topic else {
+        return Vec::new();
+    };
+    endpoint_report_messages(session, &topic, reported_at_ms, plan.control_qos)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -539,6 +565,13 @@ fn relay_path_health_messages(
                     .as_ref()
                     .filter(|stats| stats.relay_address == candidate.address),
             );
+            let path_type = relay_path_type_for_transport(candidate.transport.as_str());
+            let signal = assess_signal_quality(
+                true,
+                Some(&path_type),
+                sample.observed_rtt_ms,
+                sample.packet_loss_ppm,
+            );
             ControlTransportMessage {
                 id: format!("path-health-{}-{reported_at_ms}", candidate.endpoint_id),
                 topic: topic.to_string(),
@@ -551,7 +584,7 @@ fn relay_path_health_messages(
                     "networkId": network_id,
                     "payload": {
                         "networkId": network_id,
-                        "pathType": relay_path_type_for_transport(candidate.transport.as_str()),
+                        "pathType": path_type,
                         "relayTransport": normalize_relay_transport(&candidate.transport)
                             .unwrap_or(candidate.transport.as_str()),
                         "endpoint": candidate.address,
@@ -559,6 +592,8 @@ fn relay_path_health_messages(
                         "observedRttMs": sample.observed_rtt_ms,
                         "packetLossPpm": sample.packet_loss_ppm,
                         "pathScore": sample.path_score,
+                        "signalScore": signal.score,
+                        "signalQuality": signal.quality,
                         "sourceCountryCode": device_country_code(),
                         "relayCountryCode": candidate.country_code,
                         "crossCountry": cross_country(device_country_code().as_deref(), candidate.country_code.as_deref()),
@@ -601,6 +636,8 @@ fn peer_runtime_path_health_messages(
                 .filter(|value| !value.is_empty())
                 .or(stats.active_path.as_deref())
                 .unwrap_or("unknown");
+            let packet_loss_ppm = peer_packet_loss_ppm(peer);
+            let signal = assess_signal_quality(true, Some(path_type), None, packet_loss_ppm);
             ControlTransportMessage {
                 id: format!("peer-path-health-{}-{reported_at_ms}", peer.peer_node_id),
                 topic: topic.to_string(),
@@ -619,8 +656,10 @@ fn peer_runtime_path_health_messages(
                         "relayTransport": relay_transport_from_path(path_type)
                             .or(stats.relay_transport.as_deref()),
                         "endpoint": stats.relay_address,
-                        "packetLossPpm": peer_packet_loss_ppm(peer),
+                        "packetLossPpm": packet_loss_ppm,
                         "pathScore": peer_path_score(peer),
+                        "signalScore": signal.score,
+                        "signalQuality": signal.quality,
                         "relayMtu": stats.relay_mtu,
                         "maxFramePayload": stats.max_frame_payload,
                         "ticketExpiresAt": stats.ticket_expires_at,
@@ -1061,6 +1100,22 @@ const RELAY_TICKET_RENEW_WINDOW_MS: u64 = 5 * 60 * 1000;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_reports_target_every_session_network() {
+        let mut session = PersistedSession::empty();
+        session.active_network_id = Some("net-primary".to_string());
+        session.network_ids = vec![
+            "net-shared".to_string(),
+            "net-primary".to_string(),
+            "net-shared".to_string(),
+        ];
+
+        assert_eq!(
+            endpoint_report_network_ids(&session),
+            vec!["net-primary".to_string(), "net-shared".to_string()]
+        );
+    }
 
     #[test]
     fn prelogin_session_is_ready_for_downstream_device_user_login_succeeded() {

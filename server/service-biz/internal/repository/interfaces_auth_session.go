@@ -11,6 +11,8 @@ type UserSessionRepository interface {
 	GetUserSessionByRefreshToken(ctx context.Context, refreshToken string) (model.UserSession, bool, error)
 	ListUserSessionsByUserID(ctx context.Context, userID string) ([]model.UserSession, error)
 	SaveUserSession(ctx context.Context, session model.UserSession) error
+	ReplaceUserSessionForClient(ctx context.Context, session model.UserSession) error
+	ReplaceUserSession(ctx context.Context, oldAccessToken string, session model.UserSession) error
 	DeleteUserSessionByAccessToken(ctx context.Context, accessToken string) error
 	UserConsoleRepository
 }

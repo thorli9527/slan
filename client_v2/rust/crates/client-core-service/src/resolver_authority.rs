@@ -113,15 +113,17 @@ pub(crate) fn resolve_authoritative(
     let mut aaaa_answers = Vec::new();
     let mut txt_answers = Vec::new();
     let mut answer_ttl = None;
-    for record_id in record_ids {
-        let Some(record) = dns.authority.records_by_id.get(record_id) else {
-            continue;
-        };
+    let records = record_ids
+        .iter()
+        .filter_map(|record_id| dns.authority.records_by_id.get(record_id).cloned())
+        .collect::<Vec<_>>();
+    for record in &records {
         if !record.enabled {
             continue;
         }
+        let record_runtime = dns.network_state(&record.network_id).unwrap_or(runtime);
         if !record_visible_to_requester(
-            runtime,
+            record_runtime,
             requester_device_id,
             record.target_device_id.as_str(),
             record.fqdn.as_str(),
@@ -132,7 +134,7 @@ pub(crate) fn resolve_authoritative(
         let actual = record.record_type.trim().to_ascii_uppercase();
         if actual == "A" && wanted == "A" {
             matched_type = true;
-            if let Some(ip) = resolve_record_target_ipv4(runtime, record) {
+            if let Some(ip) = resolve_record_target_ipv4(record_runtime, record) {
                 answer_ttl.get_or_insert(normalized_ttl(record.ttl));
                 if !a_answers.iter().any(|item| item == &ip) {
                     a_answers.push(ip);
@@ -667,6 +669,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "self".to_string(),
             fqdn: "self.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -708,6 +711,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "self".to_string(),
             fqdn: "self.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -749,6 +753,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "v6".to_string(),
             fqdn: "v6.example.lan".to_string(),
             record_type: "AAAA".to_string(),
@@ -790,6 +795,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "self".to_string(),
             fqdn: "self.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -831,6 +837,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -869,6 +876,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -931,6 +939,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1030,6 +1039,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1111,6 +1121,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1180,6 +1191,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1249,6 +1261,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-1".to_string(),
+            network_id: String::new(),
             name: "peer".to_string(),
             fqdn: "peer.example.lan".to_string(),
             record_type: "A".to_string(),
@@ -1312,6 +1325,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-ptr".to_string(),
+            network_id: String::new(),
             name: "4.3.2.1.in-addr".to_string(),
             fqdn: "4.3.2.1.in-addr.arpa".to_string(),
             record_type: "PTR".to_string(),
@@ -1358,6 +1372,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-txt".to_string(),
+            network_id: String::new(),
             name: "txt".to_string(),
             fqdn: "txt.example.lan".to_string(),
             record_type: "TXT".to_string(),
@@ -1399,6 +1414,7 @@ mod tests {
         dns.replace_records(vec![
             ResolverRecordView {
                 record_id: "rec-1".to_string(),
+                network_id: String::new(),
                 name: "peer".to_string(),
                 fqdn: "peer.example.lan".to_string(),
                 record_type: "A".to_string(),
@@ -1412,6 +1428,7 @@ mod tests {
             },
             ResolverRecordView {
                 record_id: "rec-2".to_string(),
+                network_id: String::new(),
                 name: "peer".to_string(),
                 fqdn: "peer.example.lan".to_string(),
                 record_type: "A".to_string(),
@@ -1455,6 +1472,7 @@ mod tests {
         dns.replace_records(vec![
             ResolverRecordView {
                 record_id: "rec-1".to_string(),
+                network_id: String::new(),
                 name: "txt".to_string(),
                 fqdn: "txt.example.lan".to_string(),
                 record_type: "TXT".to_string(),
@@ -1468,6 +1486,7 @@ mod tests {
             },
             ResolverRecordView {
                 record_id: "rec-2".to_string(),
+                network_id: String::new(),
                 name: "txt".to_string(),
                 fqdn: "txt.example.lan".to_string(),
                 record_type: "TXT".to_string(),
@@ -1510,6 +1529,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-srv".to_string(),
+            network_id: String::new(),
             name: "_sip._tcp".to_string(),
             fqdn: "_sip._tcp.example.lan".to_string(),
             record_type: "SRV".to_string(),
@@ -1557,6 +1577,7 @@ mod tests {
         }]);
         dns.replace_records(vec![ResolverRecordView {
             record_id: "rec-self".to_string(),
+            network_id: String::new(),
             name: "self".to_string(),
             fqdn: "self.example.lan".to_string(),
             record_type: "A".to_string(),

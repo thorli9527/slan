@@ -12,8 +12,6 @@ func networkView(item model.Network) NetworkView {
 		OwnerID:          item.OwnerID,
 		Name:             item.Name,
 		CIDR:             item.CIDR,
-		Code:             strings.TrimSpace(item.Code),
-		TemplateKey:      strings.TrimSpace(item.TemplateKey),
 		IntraGroupPolicy: strings.TrimSpace(item.IntraGroupPolicy),
 		Default:          item.Default,
 		Status:           item.Status,
@@ -23,17 +21,8 @@ func networkView(item model.Network) NetworkView {
 }
 
 func networkSummaryView(item model.Network) NetworkSummaryView {
-	code := strings.TrimSpace(item.CIDR)
-	if code == "" {
-		code = item.NetworkID
-		if len(code) > 8 {
-			code = code[:8]
-		}
-	}
 	return NetworkSummaryView{
 		Network:          networkView(item),
-		Code:             firstNonEmpty(strings.TrimSpace(item.Code), code),
-		TemplateKey:      firstNonEmpty(strings.TrimSpace(item.TemplateKey), "custom"),
 		IntraGroupPolicy: firstNonEmpty(strings.TrimSpace(item.IntraGroupPolicy), "allow"),
 		Default:          item.Default,
 	}
@@ -46,10 +35,7 @@ func networkSummaryZoneName(item model.Network, zones []model.DNSZone) string {
 			return name
 		}
 	}
-	code := strings.TrimSpace(item.Code)
-	if code == "" {
-		code = strings.TrimSpace(item.Name)
-	}
+	code := strings.TrimSpace(item.Name)
 	code = strings.ToLower(strings.ReplaceAll(code, " ", "-"))
 	if code == "" {
 		code = item.NetworkID
@@ -69,6 +55,8 @@ func networkRuntimePathView(item model.NetworkDevice, ok bool) NetworkRuntimePat
 		DerpNodeID:      item.DerpNodeID,
 		PeerNodeID:      item.PeerNodeID,
 		PathScore:       item.PathScore,
+		SignalScore:     item.SignalScore,
+		SignalQuality:   item.SignalQuality,
 		ObservedRttMs:   item.ObservedRttMs,
 		PacketLossPpm:   item.PacketLossPpm,
 		RelayMtu:        item.RelayMtu,

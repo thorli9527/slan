@@ -8,8 +8,6 @@ func newManagedNetwork(now int64, id string, input CreateNetworkInput) model.Net
 		OwnerID:          input.OwnerID,
 		Name:             input.Name,
 		CIDR:             input.CIDR,
-		Code:             input.Code,
-		TemplateKey:      firstNonEmpty(input.TemplateKey, input.Code, "custom"),
 		IntraGroupPolicy: firstNonEmpty(input.IntraGroupPolicy, "allow"),
 		Default:          input.Default,
 		Status:           "active",
@@ -24,12 +22,6 @@ func applyUpdateNetworkInput(item model.Network, input UpdateNetworkInput, now i
 	}
 	if input.CIDR != "" {
 		item.CIDR = input.CIDR
-	}
-	if input.Code != "" {
-		item.Code = input.Code
-	}
-	if input.TemplateKey != "" {
-		item.TemplateKey = input.TemplateKey
 	}
 	if input.IntraGroupPolicy != "" {
 		item.IntraGroupPolicy = input.IntraGroupPolicy
