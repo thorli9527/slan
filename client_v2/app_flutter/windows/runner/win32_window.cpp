@@ -32,8 +32,11 @@ namespace {
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 constexpr UINT kTrayIconMessage = WM_APP + 1;
 constexpr UINT kTrayIconId = 1;
+constexpr UINT_PTR kTrayRefreshTimerId = 2;
+constexpr UINT kTrayRefreshIntervalMs = 2000;
 constexpr const wchar_t kTrayOpenTitle[] = L"Open";
-constexpr const wchar_t kTrayNetworkTitle[] = L"Network";
+constexpr const wchar_t kTrayEnableNetworkTitle[] = L"启用网络";
+constexpr const wchar_t kTrayDisableNetworkTitle[] = L"停用网络";
 constexpr const wchar_t kTrayQuitTitle[] = L"Quit";
 constexpr const wchar_t kTrayTooltipUnavailable[] =
     L"SLAN Client V2 - Service unavailable";
@@ -61,6 +64,8 @@ struct TrayServiceState {
   bool network_enabled = false;
   bool syncing = false;
   bool switch_enabled = false;
+  std::string user_label;
+  std::string error;
 };
 
 TrayServiceState QueryTrayServiceState();
@@ -69,6 +74,8 @@ void UpdateTrayIconState(HWND window, const TrayServiceState& state);
 HICON CreateVLTrayIcon(bool network_enabled, bool service_available);
 bool IsTrayNetworkActionEnabled(const TrayServiceState& state);
 const wchar_t* TrayTooltip(const TrayServiceState& state);
+std::string JsonStringField(const std::string& json, const char* field);
+std::wstring Utf8ToWide(const std::string& value);
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
@@ -108,9 +115,11 @@ void AddTrayIcon(HWND window) {
   Shell_NotifyIcon(NIM_ADD, &notify_icon);
   DestroyIcon(notify_icon.hIcon);
   UpdateTrayIconState(window, QueryTrayServiceState());
+  SetTimer(window, kTrayRefreshTimerId, kTrayRefreshIntervalMs, nullptr);
 }
 
 void RemoveTrayIcon(HWND window) {
+  KillTimer(window, kTrayRefreshTimerId);
   NOTIFYICONDATA notify_icon{};
   notify_icon.cbSize = sizeof(NOTIFYICONDATA);
   notify_icon.hWnd = window;
@@ -162,11 +171,34 @@ void ShowTrayMenu(HWND window) {
   const TrayServiceState state = QueryTrayServiceState();
   UpdateTrayIconState(window, state);
   HMENU menu = CreatePopupMenu();
+  AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, L"SLAN");
+  const wchar_t* status_text = L"服务暂不可用";
+  if (state.reachable) {
+    if (!state.error.empty()) {
+      status_text = L"连接异常";
+    } else if (state.syncing) {
+      status_text = L"正在连接";
+    } else if (state.network_enabled) {
+      status_text = L"已连接";
+    } else if (state.signed_in) {
+      status_text = L"未连接";
+    } else {
+      status_text = L"未登录";
+    }
+  }
+  AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, status_text);
+  const std::wstring user_label = state.user_label.empty()
+      ? L"用户  未登录"
+      : L"用户  " + Utf8ToWide(state.user_label);
+  AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, user_label.c_str());
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenu(menu, MF_STRING, ID_TRAY_SETTINGS, kTrayOpenTitle);
   UINT network_flags = MF_STRING;
   network_flags |= IsTrayNetworkActionEnabled(state) ? MF_ENABLED : MF_GRAYED;
   network_flags |= state.network_enabled ? MF_CHECKED : MF_UNCHECKED;
-  AppendMenu(menu, network_flags, ID_TRAY_NETWORK, kTrayNetworkTitle);
+  AppendMenuW(
+      menu, network_flags, ID_TRAY_NETWORK,
+      state.network_enabled ? kTrayDisableNetworkTitle : kTrayEnableNetworkTitle);
   AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenu(menu, MF_STRING, ID_TRAY_QUIT, kTrayQuitTitle);
 
@@ -229,6 +261,25 @@ std::string WideToUtf8(const std::wstring& value) {
   WideCharToMultiByte(
       CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), utf8.data(), size, nullptr, nullptr);
   return utf8;
+}
+
+std::wstring Utf8ToWide(const std::string& value) {
+  if (value.empty()) {
+    return L"";
+  }
+  const int size = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(),
+      static_cast<int>(value.size()), nullptr, 0);
+  if (size <= 0) {
+    return L"";
+  }
+  std::wstring wide(size, L'\0');
+  if (MultiByteToWideChar(
+          CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(),
+          static_cast<int>(value.size()), wide.data(), size) <= 0) {
+    return L"";
+  }
+  return wide;
 }
 
 std::string ServiceHost() {
@@ -346,6 +397,51 @@ bool JsonBoolField(const std::string& json, const char* field) {
   return true_pos != std::string::npos && (false_pos == std::string::npos || true_pos < false_pos);
 }
 
+std::string JsonStringField(const std::string& json, const char* field) {
+  const std::string key = std::string("\"") + field + "\"";
+  const auto key_pos = json.find(key);
+  if (key_pos == std::string::npos) {
+    return "";
+  }
+  const auto colon_pos = json.find(':', key_pos + key.size());
+  if (colon_pos == std::string::npos) {
+    return "";
+  }
+  size_t quote_pos = colon_pos + 1;
+  while (quote_pos < json.size() &&
+         (json[quote_pos] == ' ' || json[quote_pos] == '\t' ||
+          json[quote_pos] == '\r' || json[quote_pos] == '\n')) {
+    ++quote_pos;
+  }
+  if (quote_pos >= json.size() || json[quote_pos] != '"') {
+    return "";
+  }
+  std::string value;
+  bool escaping = false;
+  for (size_t index = quote_pos + 1; index < json.size(); ++index) {
+    const char ch = json[index];
+    if (escaping) {
+      switch (ch) {
+        case 'n': value.push_back('\n'); break;
+        case 'r': value.push_back('\r'); break;
+        case 't': value.push_back('\t'); break;
+        default: value.push_back(ch); break;
+      }
+      escaping = false;
+      continue;
+    }
+    if (ch == '\\') {
+      escaping = true;
+      continue;
+    }
+    if (ch == '"') {
+      return value;
+    }
+    value.push_back(ch);
+  }
+  return "";
+}
+
 TrayServiceState QueryTrayServiceState() {
   std::string response;
   TrayServiceState state{};
@@ -357,6 +453,8 @@ TrayServiceState QueryTrayServiceState() {
   state.network_enabled = JsonBoolField(response, "networkEnabled");
   state.syncing = JsonBoolField(response, "syncing");
   state.switch_enabled = JsonBoolField(response, "switchEnabled");
+  state.user_label = JsonStringField(response, "userLabel");
+  state.error = JsonStringField(response, "error");
   return state;
 }
 
@@ -497,6 +595,12 @@ Win32Window::MessageHandler(HWND hwnd,
                             UINT const message,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
+  static const UINT taskbar_created_message =
+      RegisterWindowMessageW(L"TaskbarCreated");
+  if (tray_mode_ && message == taskbar_created_message) {
+    AddTrayIcon(hwnd);
+    return 0;
+  }
   switch (message) {
     case WM_SYSCOMMAND:
       if ((wparam & 0xfff0) == SC_RESTORE) {
@@ -542,6 +646,13 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       if (lparam == WM_RBUTTONUP || lparam == WM_CONTEXTMENU) {
         ShowTrayMenu(hwnd);
+        return 0;
+      }
+      break;
+
+    case WM_TIMER:
+      if (tray_mode_ && wparam == kTrayRefreshTimerId) {
+        UpdateTrayIconState(hwnd, QueryTrayServiceState());
         return 0;
       }
       break;
