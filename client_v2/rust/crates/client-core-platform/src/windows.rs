@@ -347,6 +347,20 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         })
     }
 
+    fn mark_network_enabled(&self, virtual_ip: &str) -> Result<()> {
+        let mut runtime = windows_network_runtime()
+            .lock()
+            .expect("windows network runtime lock poisoned");
+        runtime.adapter_present = true;
+        runtime.network_enabled = true;
+        runtime.virtual_ip = Some(virtual_ip.to_string());
+        let mut state = load_cached_runtime_state().unwrap_or_default();
+        state.adapter_present = true;
+        state.network_enabled = true;
+        state.virtual_ip = Some(virtual_ip.to_string());
+        persist_state(&state)
+    }
+
     fn diagnostics(&self) -> Result<PlatformNetworkDiagnostics> {
         read_windows_network_diagnostics(DEFAULT_INTERFACE_NAME)
     }

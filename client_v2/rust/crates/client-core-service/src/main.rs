@@ -1672,6 +1672,12 @@ fn handle_open_client_login(
     correlation_id: Option<String>,
 ) -> Result<String> {
     let snapshot = runtime.snapshot().state;
+    if !browser_login_requires_preparation(&snapshot) {
+        log_service_error(
+            "client-core-service kept existing user session for browser login request",
+        );
+        return serde_json::to_string(&snapshot).context("encode current client login state");
+    }
     let expected_device_id = snapshot.device_id.clone();
     let expected_signed_in = snapshot.signed_in;
     let prepared = prepare_client_login_session(std::env::consts::OS);
@@ -1707,6 +1713,10 @@ fn handle_open_client_login(
         },
     )?;
     serde_json::to_string(&state).context("encode browser login client state")
+}
+
+fn browser_login_requires_preparation(state: &ClientViewState) -> bool {
+    !state.signed_in
 }
 
 fn handle_password_login(
@@ -4028,10 +4038,20 @@ fn execute_runtime_network_activation(
                 {
                     anyhow::bail!("stale platform network activation");
                 }
+                let network_was_enabled = platform
+                    .read_runtime_state()
+                    .ok()
+                    .is_some_and(|state| state.network_enabled);
                 execute_platform_network_activation(platform, &plan)
                     .map(|()| plan)
                     .inspect_err(|_| {
-                        let _ = platform_transition::disable_network(platform);
+                        if network_was_enabled {
+                            log_service_error(
+                                "client-core-service preserved existing network after reconfiguration failure",
+                            );
+                        } else {
+                            let _ = platform_transition::disable_network(platform);
+                        }
                     })
             },
         ),
@@ -5511,8 +5531,9 @@ fn spawn_runtime_sync_worker(runtime: RuntimeActorHandle, state_notifier: Arc<Ru
                 "client-core-service platform runtime refresh failed: {error:#}"
             ));
         }
-        let before = runtime.snapshot().state;
+        let before_sync = runtime.snapshot().state;
         sync_control_assignment(&runtime);
+        let before = runtime.snapshot().state;
         // Guard: a periodic platform read is observational and must never
         // disable an already-enabled network. If the platform cache
         // spuriously reports network_enabled=false (e.g. during a Windows
@@ -5520,7 +5541,10 @@ fn spawn_runtime_sync_worker(runtime: RuntimeActorHandle, state_notifier: Arc<Ru
         // network. Explicit disable flows (logout, deactivation) handle
         // network teardown through their own dedicated paths.
         let platform_snapshot = platform_transition::snapshot();
-        if before.network_enabled && !platform_snapshot.runtime_state.network_enabled {
+        if before.network_enabled
+            && before_sync.network_enabled
+            && !platform_snapshot.runtime_state.network_enabled
+        {
             log_service_error(format!(
                 "client-core-service periodic refresh guard: skipping network disable — before_ip={:?} platform_ip={:?} platform_enabled={}",
                 before.virtual_ip,

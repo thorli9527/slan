@@ -541,6 +541,7 @@ pub(crate) fn activate_network(
     }
     platform.configure_routes(activation.routes)?;
     platform.configure_relay(activation.relay_config)?;
+    platform.mark_network_enabled(activation.virtual_ip)?;
     record_network_enabled(activation.virtual_ip);
     Ok(())
 }

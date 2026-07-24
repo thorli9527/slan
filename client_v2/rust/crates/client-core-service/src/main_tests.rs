@@ -1,5 +1,6 @@
 use super::{
     android_data_plane_relay_candidate, apply_prepared_runtime_refresh,
+    browser_login_requires_preparation,
     commit_control_network_activation, commit_logout, commit_network_deactivation,
     commit_prepared_login, data_plane_relay_candidate, diagnostic_connect_plan_summaries,
     filter_relay_sessions_for_transport, invalidate_runtime_session, local_status_active_path,
@@ -46,6 +47,21 @@ use std::{
     fs,
     net::{TcpListener, UdpSocket},
 };
+
+#[test]
+fn browser_login_does_not_replace_an_existing_user_session() {
+    let mut signed_in = ClientViewState::default();
+    signed_in.signed_in = true;
+    signed_in.user_label = Some("user@example.test".to_string());
+    signed_in.device_id = Some("device-1".to_string());
+    signed_in.network_enabled = true;
+    signed_in.virtual_ip = Some("10.0.0.7".to_string());
+
+    assert!(!browser_login_requires_preparation(&signed_in));
+    assert!(browser_login_requires_preparation(
+        &ClientViewState::default()
+    ));
+}
 
 #[test]
 fn local_request_limits_protect_commands_from_duplicate_watchers() {
