@@ -5513,6 +5513,28 @@ fn spawn_runtime_sync_worker(runtime: RuntimeActorHandle, state_notifier: Arc<Ru
         }
         let before = runtime.snapshot().state;
         sync_control_assignment(&runtime);
+        // Guard: a periodic platform read is observational and must never
+        // disable an already-enabled network. If the platform cache
+        // spuriously reports network_enabled=false (e.g. during a Windows
+        // adapter state transition), applying it would tear down the working
+        // network. Explicit disable flows (logout, deactivation) handle
+        // network teardown through their own dedicated paths.
+        let platform_snapshot = platform_transition::snapshot();
+        if before.network_enabled && !platform_snapshot.runtime_state.network_enabled {
+            log_service_error(format!(
+                "client-core-service periodic refresh guard: skipping network disable — before_ip={:?} platform_ip={:?} platform_enabled={}",
+                before.virtual_ip,
+                platform_snapshot.runtime_state.virtual_ip,
+                platform_snapshot.runtime_state.network_enabled,
+            ));
+            // Still report the current (enabled) state, but do NOT apply the
+            // platform read that would disable the network.
+            if before.network_enabled {
+                report_runtime_state(&before);
+            }
+            thread::sleep(Duration::from_secs(10));
+            continue;
+        }
         let state = commit_runtime_refresh(&runtime, "runtime.periodic.refresh", None)
             .unwrap_or_else(|error| state_with_error(&before, error.to_string()));
         if before.network_enabled && !state.network_enabled {

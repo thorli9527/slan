@@ -303,6 +303,12 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         // which caused frequent timeouts and unreliable adapter state detection.
         let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
         let cached = load_cached_runtime_state().unwrap_or_default();
+        if !runtime.network_enabled {
+            debug_log(&format!(
+                "read_runtime_state: network_enabled=false adapter_present={} virtual_ip={:?} cached_enabled={}",
+                runtime.adapter_present, runtime.virtual_ip, cached.network_enabled,
+            ));
+        }
         Ok(NetworkRuntimeState {
             adapter_present: runtime.adapter_present,
             network_enabled: runtime.network_enabled,

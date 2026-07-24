@@ -461,6 +461,11 @@ pub trait PlatformNetwork {
     fn disable_network(&self) -> Result<()>;
     /// 读取平台当前网络运行状态。
     fn read_runtime_state(&self) -> Result<NetworkRuntimeState>;
+    /// 标记网络已启用（更新平台特定的运行时状态缓存）。
+    /// 默认空实现，Windows 平台需要更新 Wintun 运行时缓存。
+    fn mark_network_enabled(&self, _virtual_ip: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
