@@ -2530,18 +2530,18 @@ private final class RelayPeerRuntime {
   // 将客户端内部 ticket 字段映射为 relay 服务期望的下划线 JSON 字段。
   private func relayTicketWire(_ ticket: [String: Any]) -> [String: Any] {
     [
-      "ticket_id": stringField(ticket, "ticketId"),
-      "network_id": stringField(ticket, "networkId"),
-      "session_id": stringField(ticket, "sessionId"),
-      "src_node_id": stringField(ticket, "srcNodeId"),
-      "dst_node_id": stringField(ticket, "dstNodeId"),
-      "derp_cluster_id": stringField(ticket, "derpClusterId"),
-      "country_code": stringField(ticket, "countryCode"),
-      "city_code": stringField(ticket, "cityCode"),
-      "allowed_derp_node_ids": ticket["allowedDerpNodeIds"] as? [String] ?? [],
-      "relay_url": stringField(ticket, "relayUrl"),
-      "expires_at": stringField(ticket, "expiresAt"),
-      "session_key": stringField(ticket, "sessionKey"),
+      "ticketId": stringField(ticket, "ticketId"),
+      "networkId": stringField(ticket, "networkId"),
+      "sessionId": stringField(ticket, "sessionId"),
+      "srcNodeId": stringField(ticket, "srcNodeId"),
+      "dstNodeId": stringField(ticket, "dstNodeId"),
+      "derpClusterId": stringField(ticket, "derpClusterId"),
+      "countryCode": stringField(ticket, "countryCode"),
+      "cityCode": stringField(ticket, "cityCode"),
+      "allowedDerpNodeIds": ticket["allowedDerpNodeIds"] as? [String] ?? [],
+      "relayUrl": stringField(ticket, "relayUrl"),
+      "expiresAt": stringField(ticket, "expiresAt"),
+      "sessionKey": stringField(ticket, "sessionKey"),
       "signature": stringField(ticket, "signature")
     ]
   }

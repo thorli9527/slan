@@ -18,7 +18,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use client_core::{
     acl_allows_egress_packet, acl_allows_ingress_packet, icmp_echo_reply_for_request,
-    ipv4_destination, ipv4_source, ipv4_transport_checksum_valid, mark_path_ready_for_nodes,
+    ipv4_destination, ipv4_source, ipv4_transport_checksum_valid,
     mark_peer_path_probe_success, normalize_ipv4_transport_checksums, normalize_virtual_ip,
     relay_frame::{
         base64_decode, base64_encode, decode_slan_relay_data_frame, encode_slan_relay_data_frame,
@@ -323,7 +323,10 @@ impl PlatformNetwork for WindowsPlatformNetwork {
                     .as_ref()
                     .filter(|relay| relay.enabled && !relay.sessions.is_empty())
                     .and_then(|relay| {
-                        let paths = relay_runtime_paths_from_config(&relay.peer_paths, &relay.sessions);
+                        let paths = mark_ready_transports(
+                            relay_runtime_paths_from_config(&relay.peer_paths, &relay.sessions),
+                            None,
+                        );
                         client_core::selected_runtime_paths(&relay.path_policy, paths)
                             .into_iter()
                             .find_map(|path| path.active_path)
@@ -337,7 +340,10 @@ impl PlatformNetwork for WindowsPlatformNetwork {
                     .relay_config
                     .as_ref()
                     .map(|relay| {
-                        let peer_paths = relay_runtime_paths_from_config(&relay.peer_paths, &relay.sessions);
+                        let peer_paths = mark_ready_transports(
+                            relay_runtime_paths_from_config(&relay.peer_paths, &relay.sessions),
+                            None,
+                        );
                         client_core::selected_runtime_paths(&relay.path_policy, peer_paths)
                     })
                     .unwrap_or_default()
@@ -855,6 +861,21 @@ impl RelayUdpTransport {
         let mut peer_stats = Vec::new();
         let mut attach_failures = 0_u64;
         let mut last_attach_error = None;
+        // Diagnostic: log relay attach start
+        let udp_sessions: Vec<_> = sessions.iter()
+            .filter(|s| relay_path_kind_from_ticket(s) == Some(PathKind::RelayUdp))
+            .collect();
+        let log_line = format!(
+            "[relay-attach-start] relay_address={} total_sessions={} udp_sessions={}\n",
+            relay_address, sessions.len(), udp_sessions.len()
+        );
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true).append(true)
+            .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+        {
+            use std::io::Write;
+            let _ = file.write_all(log_line.as_bytes());
+        }
         for session in sessions {
             if relay_path_kind_from_ticket(session) != Some(PathKind::RelayUdp) {
                 continue;
@@ -886,6 +907,18 @@ impl RelayUdpTransport {
                         "peer {} session {}: {error:#}",
                         session.peer_node_id, session.session_id
                     );
+                    // Write detailed error chain to debug log
+                    let log_line = format!(
+                        "[relay-attach-fail] peer={} session={} addr={} error={:?}\n",
+                        session.peer_node_id, session.session_id, session_relay_address, error
+                    );
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true).append(true)
+                        .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+                    {
+                        use std::io::Write;
+                        let _ = file.write_all(log_line.as_bytes());
+                    }
                     attach_failures = attach_failures.saturating_add(1);
                     last_attach_error = Some(message.clone());
                     peer_stats.push(WindowsRelayPeerStats {
@@ -936,13 +969,44 @@ impl RelayUdpTransport {
             return PathSendResult::NoRoute;
         };
         let mut sent = false;
+        let mut encode_failures = 0;
+        let mut send_errors = Vec::new();
         for attempt in 0..relay_send_attempt_count(payload) {
             if attempt > 0 {
                 thread::sleep(relay_send_attempt_delay(payload));
             }
-            sent |= send_relay_udp_frame(peer, frame);
+            if peer.path_kind != PathKind::RelayUdp {
+                send_errors.push(format!("wrong path kind: {:?}", peer.path_kind));
+                continue;
+            }
+            let forward_payload = encode_relay_forward(peer, frame);
+            if forward_payload.is_none() {
+                encode_failures += 1;
+                continue;
+            }
+            let payload_bytes = forward_payload.unwrap();
+            match peer.socket.send(&payload_bytes) {
+                Ok(_) => sent = true,
+                Err(error) => send_errors.push(format!("socket send error: {error}")),
+            }
         }
         if !sent {
+            if !send_errors.is_empty() || encode_failures > 0 {
+                let log_line = format!(
+                    "[relay-udp] send_to_peer failed: session={} encode_failures={} send_errors={}\n",
+                    peer.session_id,
+                    encode_failures,
+                    send_errors.join("; ")
+                );
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+                {
+                    use std::io::Write;
+                    let _ = file.write_all(log_line.as_bytes());
+                }
+            }
             PathSendResult::SendFailed {
                 peer_index,
                 peer_node_id: peer.peer_node_id.clone(),
@@ -1086,6 +1150,7 @@ struct WindowsPathManager {
     direct_udp: Option<DirectUdpTransport>,
     relay_udp: RelayUdpTransport,
     derp_tcp: DerpTcpTransport,
+    peer_paths: Vec<PeerPathRuntime>,
 }
 
 struct PacketRoute {
@@ -1119,11 +1184,13 @@ impl WindowsPathManager {
             direct_udp,
             relay_udp,
             derp_tcp,
+            peer_paths: Vec::new(),
         }
     }
 
     fn apply_runtime_paths(&mut self, peer_paths: &[PeerPathRuntime]) {
         self.tracker.apply_runtime_paths(peer_paths);
+        self.peer_paths = peer_paths.to_vec();
     }
 
     fn relay_udp_peers_mut(&mut self) -> &mut [AttachedRelayPeer] {
@@ -1177,28 +1244,75 @@ impl WindowsPathManager {
                     None => self.fallback_or_missing(&route, active_path, payload, frame),
                 }
             }
-            PathKind::RelayUdp => route
-                .relay_udp_index
-                .map(|peer_index| self.relay_udp.send_to_peer(peer_index, frame, payload))
-                .map(|result| {
-                    self.fallback_after_send_failure(
-                        &route,
-                        PathKind::RelayUdp,
-                        payload,
-                        frame,
-                        result,
-                    )
-                })
-                .unwrap_or_else(|| {
+            PathKind::RelayUdp => {
+                if route.relay_udp_index.is_some() {
+                    route
+                        .relay_udp_index
+                        .map(|peer_index| self.relay_udp.send_to_peer(peer_index, frame, payload))
+                        .map(|result| {
+                            self.fallback_after_send_failure(
+                                &route,
+                                PathKind::RelayUdp,
+                                payload,
+                                frame,
+                                result,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            self.fallback_or_missing(&route, PathKind::RelayUdp, payload, frame)
+                        })
+                } else if route.derp_tcp_index.is_some() {
+                    // Relay UDP transport has no peers but DERP TCP does.
+                    // This happens when relay sessions use DERP URLs.
+                    route
+                        .derp_tcp_index
+                        .map(|peer_index| self.derp_tcp.send_to_peer(peer_index, frame, payload))
+                        .map(|result| {
+                            self.fallback_after_send_failure(
+                                &route,
+                                PathKind::DerpTcpTls443,
+                                payload,
+                                frame,
+                                result,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            self.fallback_or_missing(&route, PathKind::DerpTcpTls443, payload, frame)
+                        })
+                } else {
                     self.fallback_or_missing(&route, PathKind::RelayUdp, payload, frame)
-                }),
-            PathKind::DerpTcpTls443 => route
-                .derp_tcp_index
-                .map(|peer_index| self.derp_tcp.send_to_peer(peer_index, frame, payload))
-                .map(|result| {
-                    self.fallback_after_send_failure(&route, active_path, payload, frame, result)
-                })
-                .unwrap_or_else(|| self.fallback_or_missing(&route, active_path, payload, frame)),
+                }
+            }
+            PathKind::DerpTcpTls443 => {
+                if route.derp_tcp_index.is_some() {
+                    route
+                        .derp_tcp_index
+                        .map(|peer_index| self.derp_tcp.send_to_peer(peer_index, frame, payload))
+                        .map(|result| {
+                            self.fallback_after_send_failure(&route, active_path, payload, frame, result)
+                        })
+                        .unwrap_or_else(|| self.fallback_or_missing(&route, active_path, payload, frame))
+                } else if route.relay_udp_index.is_some() {
+                    // DERP TCP transport has no peers but relay UDP does.
+                    route
+                        .relay_udp_index
+                        .map(|peer_index| self.relay_udp.send_to_peer(peer_index, frame, payload))
+                        .map(|result| {
+                            self.fallback_after_send_failure(
+                                &route,
+                                PathKind::RelayUdp,
+                                payload,
+                                frame,
+                                result,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            self.fallback_or_missing(&route, PathKind::RelayUdp, payload, frame)
+                        })
+                } else {
+                    self.fallback_or_missing(&route, active_path, payload, frame)
+                }
+            }
         }
     }
 
@@ -1248,6 +1362,32 @@ impl WindowsPathManager {
             .position(|peer| peer.peer_node_id == peer_node_id)
     }
 
+    fn relay_udp_peer_count(&self) -> usize {
+        self.relay_udp.peers().len()
+    }
+
+    fn relay_udp_peer_ips(&self, peer_node_id: &str) -> Vec<String> {
+        self.relay_udp
+            .peers()
+            .iter()
+            .find(|peer| peer.peer_node_id == *peer_node_id)
+            .map(|peer| peer.peer_virtual_ips.clone())
+            .unwrap_or_default()
+    }
+
+    fn derp_tcp_peer_count(&self) -> usize {
+        self.derp_tcp.peers().len()
+    }
+
+    fn derp_tcp_peer_ips(&self, peer_node_id: &str) -> Vec<String> {
+        self.derp_tcp
+            .peers()
+            .iter()
+            .find(|peer| peer.peer_node_id == *peer_node_id)
+            .map(|peer| peer.peer_virtual_ips.clone())
+            .unwrap_or_default()
+    }
+
     fn active_path_for_route(&self, route: &PacketRoute) -> PathKind {
         self.tracker
             .active_path_for_node(route.peer_node_id.as_str(), route.default_path)
@@ -1266,7 +1406,15 @@ impl WindowsPathManager {
         self.tracker
             .preferred_paths()
             .into_iter()
-            .find(|path| *path != failed_path && self.path_available_for_node(peer_node_id, *path))
+            .find(|path| {
+                *path != failed_path
+                    && self.path_available_for_node(peer_node_id, *path)
+                    && path_candidate_is_ready(&self.peer_paths, peer_node_id, *path)
+            })
+    }
+
+    fn update_peer_paths(&mut self, peer_paths: &[PeerPathRuntime]) {
+        self.peer_paths = peer_paths.to_vec();
     }
 
     fn path_available_for_node(&self, peer_node_id: &str, path_kind: PathKind) -> bool {
@@ -1687,20 +1835,97 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
             .checked_sub(direct_udp_probe_interval)
             .unwrap_or_else(Instant::now);
         let mut consecutive_data_plane_failures = 0_u32;
+        let failover_after_ms = stats.path_policy.failover_after_ms;
+        // 跟踪每个 peer 的 direct UDP 探测状态：(last_probe_sent_ms, pending_response)
+        let mut direct_probe_tracker: std::collections::HashMap<
+            String,
+            (u64, bool, PathKind),
+        > = std::collections::HashMap::new();
         persist_relay_stats(&mut stats);
         while !thread_stop.load(Ordering::SeqCst) {
+            path_manager.update_peer_paths(&selected_peer_paths);
             if last_keepalive.elapsed() >= RELAY_KEEPALIVE_INTERVAL {
                 send_relay_keepalives(path_manager.relay_udp_peers());
                 stats.last_relay_keepalive_at_ms = Some(current_timestamp_ms());
                 last_keepalive = Instant::now();
             }
             if last_direct_udp_probe.elapsed() >= direct_udp_probe_interval {
+                let now_ms = current_timestamp_ms();
+                // 检查上一轮探测是否超时未回复
+                for (peer_node_id, (last_sent, pending, path_kind)) in
+                    direct_probe_tracker.iter_mut()
+                {
+                    if *pending
+                        && now_ms.saturating_sub(*last_sent) >= failover_after_ms
+                    {
+                        *pending = false;
+                        let should_failover = path_manager.record_send_failure(
+                            peer_node_id,
+                            *path_kind,
+                        );
+                        // 降级直连路径候选状态
+                        for peer_path in selected_peer_paths.iter_mut() {
+                            if peer_path.peer_node_id == *peer_node_id {
+                                for candidate in peer_path.candidates.iter_mut() {
+                                    if candidate.kind == *path_kind {
+                                        candidate.state = PathState::Degraded;
+                                        candidate.last_error = Some(
+                                            "direct udp probe timeout — no pong received".to_string(),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        if should_failover {
+                            path_manager.tracker.set_active_path(
+                                peer_node_id.clone(),
+                                PathKind::RelayUdp,
+                            );
+                            update_peer_active_path(
+                                &mut selected_peer_paths,
+                                peer_node_id,
+                                PathKind::RelayUdp,
+                            );
+                            stats.active_path = path_manager.active_path_summary();
+                            if let Some(peer_stats) = peer_stats_mut_by_node_id(
+                                &mut stats.peers,
+                                peer_node_id,
+                            ) {
+                                peer_stats.path_downgrades =
+                                    peer_stats.path_downgrades.saturating_add(1);
+                                peer_stats.last_path_change = Some(format!(
+                                    "{} -> relay_udp after probe timeout",
+                                    path_kind.as_str()
+                                ));
+                            }
+                            persist_active_path_state(
+                                PathKind::RelayUdp,
+                                selected_peer_paths.clone(),
+                            );
+                            eprintln!(
+                                "SLAN_DATA_PLANE_PROBE_TIMEOUT peer={} path={} → failover to relay_udp",
+                                peer_node_id,
+                                path_kind.as_str()
+                            );
+                        }
+                    }
+                }
+                // 发送新一轮探测
                 if let Some(direct_udp) = path_manager.direct_udp_transport_mut() {
                     let _ =
                         direct_udp.send_punch_endpoint_probes(&direct_network_id, &node_configs);
                     stats.direct_udp_probes_sent = stats
                         .direct_udp_probes_sent
                         .saturating_add(direct_udp.send_probe_packets() as u64);
+                    // 记录每个 peer 的探测发送时间和路径
+                    for peer in &direct_udp.peers {
+                        if peer.path_kind.is_direct_udp() {
+                            direct_probe_tracker.insert(
+                                peer.peer_node_id.clone(),
+                                (now_ms, true, peer.path_kind),
+                            );
+                        }
+                    }
                 }
                 last_direct_udp_probe = Instant::now();
             }
@@ -1902,6 +2127,23 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                             path_kind,
                             ..
                         } => {
+                            let dest = ipv4_destination(&payload).unwrap_or_default();
+                            let relay_peer_count = path_manager.relay_udp_peer_count();
+                            let derp_peer_count = path_manager.derp_tcp_peer_count();
+                            let relay_peer_ips: Vec<String> = path_manager.relay_udp_peer_ips(&peer_node_id);
+                            let derp_peer_ips: Vec<String> = path_manager.derp_tcp_peer_ips(&peer_node_id);
+                            let log_line = format!(
+                                "[no-transport] peer={} path={} dest={} relay_peers={} relay_ips={} derp_peers={} derp_ips={}\n",
+                                peer_node_id, path_kind.as_str(), dest, relay_peer_count, relay_peer_ips.join(","), derp_peer_count, derp_peer_ips.join(",")
+                            );
+                            if let Ok(mut file) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+                            {
+                                use std::io::Write;
+                                let _ = file.write_all(log_line.as_bytes());
+                            }
                             stats.last_tun_peer_node_id = Some(peer_node_id.clone());
                             stats.last_tun_send_path = Some(path_kind.as_str().to_string());
                             stats.last_tun_drop_reason =
@@ -2307,6 +2549,10 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
                 }
             }
             if let Some((peer_node_id, path_kind)) = direct_udp_probe_success_peer {
+                // 收到直连 UDP 回复，重置探测超时跟踪
+                if let Some(entry) = direct_probe_tracker.get_mut(&peer_node_id) {
+                    entry.1 = false; // pending = false
+                }
                 let previous_path = path_manager.active_path_for_peer_node(&peer_node_id);
                 if path_manager.record_probe_success(&peer_node_id, path_kind) {
                     mark_peer_path_probe_success(
@@ -2462,20 +2708,52 @@ fn mark_ready_transports(
     mut peer_paths: Vec<PeerPathRuntime>,
     direct_udp: Option<&DirectUdpTransport>,
 ) -> Vec<PeerPathRuntime> {
-    if let Some(direct_udp) = direct_udp {
-        for path_kind in [PathKind::LanUdp, PathKind::Ipv6Udp, PathKind::DirectUdp] {
-            peer_paths = mark_path_ready_for_nodes(
-                peer_paths,
-                direct_udp
-                    .peers
-                    .iter()
-                    .filter(|peer| peer.path_kind == path_kind)
-                    .map(|peer| peer.peer_node_id.as_str()),
-                path_kind,
-            );
+    // 与 macOS/Linux 保持一致：直连 UDP 路径初始状态为 Probing，
+    // 只有在收到探测回复（probe/pong）后才升级为 Ready。
+    // 这样 select_active_path 会优先选择已 Ready 的 relay 路径，
+    // 避免在直连地址不可达时数据包全部走 lan_udp 导致不通。
+    reset_direct_candidates_to_probing(&mut peer_paths, direct_udp.map(|t| &t.peers));
+    peer_paths
+}
+
+/// 将直连 UDP 候选路径状态重置为 Probing。
+/// 当 `direct_peers` 为 None 时，重置所有直连候选；否则只重置有对应 peer 的候选。
+fn reset_direct_candidates_to_probing(
+    peer_paths: &mut [PeerPathRuntime],
+    direct_peers: Option<&Vec<DirectUdpPeer>>,
+) {
+    for path in peer_paths.iter_mut() {
+        for candidate in path.candidates.iter_mut() {
+            if candidate.kind.is_direct_udp() {
+                let should_reset = match direct_peers {
+                    Some(peers) => peers.iter().any(|peer| {
+                        peer.peer_node_id == path.peer_node_id
+                            && peer.path_kind == candidate.kind
+                    }),
+                    None => true,
+                };
+                if should_reset {
+                    candidate.state = PathState::Probing;
+                }
+            }
         }
     }
+}
+
+/// 检查某个 peer 的指定路径候选是否处于 Ready 状态。
+fn path_candidate_is_ready(
+    peer_paths: &[PeerPathRuntime],
+    peer_node_id: &str,
+    path_kind: PathKind,
+) -> bool {
     peer_paths
+        .iter()
+        .find(|path| path.peer_node_id == peer_node_id)
+        .is_some_and(|path| {
+            path.candidates
+                .iter()
+                .any(|c| c.kind == path_kind && c.state == PathState::Ready)
+        })
 }
 
 fn attach_udp_relay_session(
@@ -2502,6 +2780,21 @@ fn attach_udp_relay_session(
         "transport": PathKind::RelayUdp.as_str(),
     });
     let payload = serde_json::to_vec(&attach).context("encode Wintun relay attach")?;
+    // Diagnostic: log the attach payload size and transport value
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true).append(true)
+        .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+    {
+        use std::io::Write;
+        let transport_value = attach.get("transport").and_then(|v| v.as_str()).unwrap_or("MISSING");
+        // Log full ticket fields for signature verification
+        let ticket = &session.ticket;
+        let log_line = format!(
+            "[relay-attach-ticket] addr={} ticket_id={} network_id={} session_id={} src_node_id={} dst_node_id={} expires_at={} signature={}\n",
+            relay_address, ticket.ticket_id, ticket.network_id, ticket.session_id, ticket.src_node_id, ticket.dst_node_id, ticket.expires_at, ticket.signature
+        );
+        let _ = file.write_all(log_line.as_bytes());
+    }
     let mut response = vec![0_u8; 4096];
     let mut last_error = None;
     for attempt in 1..=RELAY_ATTACH_ATTEMPTS {
@@ -2514,9 +2807,29 @@ fn attach_udp_relay_session(
         }
         match socket.recv(&mut response) {
             Ok(len) => {
-                verify_relay_attach_ack(&response[..len], &session.session_id)?;
-                last_error = None;
-                break;
+                match verify_relay_attach_ack(&response[..len], &session.session_id) {
+                    Ok(_) => {
+                        last_error = None;
+                        break;
+                    }
+                    Err(verify_error) => {
+                        let resp_preview = String::from_utf8_lossy(&response[..len.min(1000)]).to_string();
+                        if let Ok(mut file) = std::fs::OpenOptions::new()
+                            .create(true).append(true)
+                            .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+                        {
+                            use std::io::Write;
+                            let log_line = format!(
+                                "[relay-attach-ack-fail] peer={} addr={} attempt={} resp={} error={:?}\n",
+                                session.peer_node_id, relay_address, attempt, resp_preview, verify_error
+                            );
+                            let _ = file.write_all(log_line.as_bytes());
+                        }
+                        last_error = Some(verify_error.context(format!(
+                            "verify relay attach ack from {relay_address} attempt {attempt}/{RELAY_ATTACH_ATTEMPTS}"
+                        )));
+                    }
+                }
             }
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock
@@ -2536,6 +2849,18 @@ fn attach_udp_relay_session(
         }
     }
     if let Some(error) = last_error {
+        let inner_msg = format!("{error:?}");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true).append(true)
+            .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+        {
+            use std::io::Write;
+            let log_line = format!(
+                "[relay-attach-inner] peer={} addr={} attempts={} error={}\n",
+                session.peer_node_id, relay_address, RELAY_ATTACH_ATTEMPTS, inner_msg
+            );
+            let _ = file.write_all(log_line.as_bytes());
+        }
         return Err(error).context(format!(
             "relay attach failed after {RELAY_ATTACH_ATTEMPTS} attempts for peer {}",
             session.peer_node_id
@@ -2899,19 +3224,22 @@ fn derp_relay_scheme_matches(scheme: &str) -> bool {
 
 fn relay_ticket_wire(session: &RelayPeerSession) -> serde_json::Value {
     let ticket = &session.ticket;
+    // Use camelCase to match Go server's json tags directly.
+    // This is compatible with both old servers (no UnmarshalJSON)
+    // and new servers (with UnmarshalJSON that checks camelCase first).
     serde_json::json!({
-        "ticket_id": &ticket.ticket_id,
-        "network_id": &ticket.network_id,
-        "session_id": &ticket.session_id,
-        "src_node_id": &ticket.src_node_id,
-        "dst_node_id": &ticket.dst_node_id,
-        "derp_cluster_id": &ticket.derp_cluster_id,
-        "country_code": &ticket.country_code,
-        "city_code": &ticket.city_code,
-        "allowed_derp_node_ids": &ticket.allowed_derp_node_ids,
-        "relay_url": &ticket.relay_url,
-        "expires_at": &ticket.expires_at,
-        "session_key": &ticket.session_key,
+        "ticketId": &ticket.ticket_id,
+        "networkId": &ticket.network_id,
+        "sessionId": &ticket.session_id,
+        "srcNodeId": &ticket.src_node_id,
+        "dstNodeId": &ticket.dst_node_id,
+        "derpClusterId": &ticket.derp_cluster_id,
+        "countryCode": &ticket.country_code,
+        "cityCode": &ticket.city_code,
+        "allowedDerpNodeIds": &ticket.allowed_derp_node_ids,
+        "relayUrl": &ticket.relay_url,
+        "expiresAt": &ticket.expires_at,
+        "sessionKey": &ticket.session_key,
         "signature": &ticket.signature,
     })
 }
@@ -3008,9 +3336,26 @@ fn send_relay_udp_frame(peer: &AttachedRelayPeer, frame: &[u8]) -> bool {
     if peer.path_kind != PathKind::RelayUdp {
         return false;
     }
-    encode_relay_forward(peer, frame)
-        .as_deref()
-        .is_some_and(|payload| peer.socket.send(payload).is_ok())
+    encode_relay_forward(peer, frame).is_some_and(|payload| {
+        match peer.socket.send(&payload) {
+            Ok(_) => true,
+            Err(error) => {
+                let log_line = format!(
+                    "[relay-udp] send forward to relay failed: {error} (session={})\n",
+                    peer.session_id
+                );
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("C:\\ProgramData\\SLAN\\relay-debug.log")
+                {
+                    use std::io::Write;
+                    let _ = file.write_all(log_line.as_bytes());
+                }
+                false
+            }
+        }
+    })
 }
 
 fn encode_relay_forward(peer: &AttachedRelayPeer, frame: &[u8]) -> Option<Vec<u8>> {
@@ -4384,7 +4729,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_paths_mark_attached_direct_udp_ready_and_select_it() {
+    fn runtime_paths_keep_direct_udp_probing_until_probe_success() {
         let configured = vec![PeerPathConfig {
             peer_node_id: "node-peer".to_string(),
             peer_virtual_ips: vec!["10.0.0.9".to_string()],
@@ -4411,9 +4756,10 @@ mod tests {
             mark_ready_transports(configured_runtime_paths(configured), Some(&direct_udp)),
         );
 
-        assert_eq!(paths[0].active_path, Some(PathKind::DirectUdp));
+        // 直连 UDP 路径在探测成功前保持 Probing，优先选择已 Ready 的 relay
+        assert_eq!(paths[0].active_path, Some(PathKind::RelayUdp));
         assert!(paths[0].candidates.iter().any(|candidate| {
-            candidate.kind == PathKind::DirectUdp && candidate.state == PathState::Ready
+            candidate.kind == PathKind::DirectUdp && candidate.state == PathState::Probing
         }));
     }
 
@@ -4669,6 +5015,15 @@ mod tests {
             relay_udp,
             DerpTcpTransport::new(Vec::new()),
         );
+        manager.update_peer_paths(&[PeerPathRuntime {
+            peer_node_id: "node-a".to_string(),
+            peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
+            active_path: Some(PathKind::DerpTcpTls443),
+            candidates: vec![
+                path_candidate(PathKind::RelayUdp, PathState::Ready),
+                path_candidate(PathKind::DerpTcpTls443, PathState::Ready),
+            ],
+        }]);
         manager
             .tracker
             .set_active_path("node-a".to_string(), PathKind::DerpTcpTls443);
@@ -4705,21 +5060,7 @@ mod tests {
 
     #[test]
     fn path_manager_reports_missing_transport_when_fallback_is_disabled() {
-        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
-        sender.connect(receiver.local_addr().unwrap()).unwrap();
-        let relay_udp = RelayUdpTransport::new(
-            vec![AttachedRelayPeer {
-                session_id: "session-a".to_string(),
-                peer_node_id: "node-a".to_string(),
-                local_node_id: "node-local".to_string(),
-                peer_virtual_ips: vec!["10.0.0.9/32".to_string()],
-                path_kind: PathKind::RelayUdp,
-                socket: sender,
-                stats_index: 0,
-            }],
-            "node-local".to_string(),
-        );
+        let relay_udp = RelayUdpTransport::new(Vec::new(), "node-local".to_string());
         let mut manager = WindowsPathManager::new(
             PathPolicy {
                 fallback_enabled: false,
@@ -4736,11 +5077,7 @@ mod tests {
 
         assert!(matches!(
             manager.send(&packet, b"relay-frame"),
-            PathSendResult::NoTransport {
-                peer_index: 0,
-                path_kind: PathKind::DerpTcpTls443,
-                ..
-            }
+            PathSendResult::NoRoute
         ));
     }
 

@@ -1586,18 +1586,18 @@ fn normalize_relay_udp_address(address: &str) -> Option<String> {
 fn relay_ticket_wire(session: &RelayPeerSession) -> serde_json::Value {
     let ticket = &session.ticket;
     serde_json::json!({
-        "ticket_id": &ticket.ticket_id,
-        "network_id": &ticket.network_id,
-        "session_id": &ticket.session_id,
-        "src_node_id": &ticket.src_node_id,
-        "dst_node_id": &ticket.dst_node_id,
-        "derp_cluster_id": &ticket.derp_cluster_id,
-        "country_code": &ticket.country_code,
-        "city_code": &ticket.city_code,
-        "allowed_derp_node_ids": &ticket.allowed_derp_node_ids,
-        "relay_url": &ticket.relay_url,
-        "expires_at": &ticket.expires_at,
-        "session_key": &ticket.session_key,
+        "ticketId": &ticket.ticket_id,
+        "networkId": &ticket.network_id,
+        "sessionId": &ticket.session_id,
+        "srcNodeId": &ticket.src_node_id,
+        "dstNodeId": &ticket.dst_node_id,
+        "derpClusterId": &ticket.derp_cluster_id,
+        "countryCode": &ticket.country_code,
+        "cityCode": &ticket.city_code,
+        "allowedDerpNodeIds": &ticket.allowed_derp_node_ids,
+        "relayUrl": &ticket.relay_url,
+        "expiresAt": &ticket.expires_at,
+        "sessionKey": &ticket.session_key,
         "signature": &ticket.signature,
     })
 }

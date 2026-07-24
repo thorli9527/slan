@@ -205,6 +205,7 @@ pub struct PathTracker {
     send_failure_started_at_ms: HashMap<(String, PathKind), u64>,
     probe_successes: HashMap<(String, PathKind), u32>,
     failed_path_cooldowns: HashMap<(String, PathKind), u32>,
+    direct_path_failed_at: HashMap<(String, PathKind), (u64, String)>,
 }
 
 impl PathTracker {
@@ -220,6 +221,7 @@ impl PathTracker {
             send_failure_started_at_ms: HashMap::new(),
             probe_successes: HashMap::new(),
             failed_path_cooldowns: HashMap::new(),
+            direct_path_failed_at: HashMap::new(),
         }
     }
 
@@ -344,6 +346,36 @@ impl PathTracker {
         self.probe_successes
             .remove(&(peer_node_id.to_string(), path_kind));
         true
+    }
+
+    /// 将指定 peer 的点对点 UDP 路径候选标记为失败，使其不再被 select_active_path 选中。
+    /// 用于探测超时后降级直连路径、切换到 relay 的场景。
+    pub fn mark_direct_path_failed(
+        &mut self,
+        peer_node_id: &str,
+        path_kind: PathKind,
+        now_ms: u64,
+        error: String,
+    ) {
+        if !path_kind.is_direct_udp() {
+            return;
+        }
+        let key = (peer_node_id.to_string(), path_kind);
+        self.failed_path_cooldowns
+            .insert(key.clone(), self.policy.failed_path_cooldown_probes.max(1));
+        self.probe_successes.remove(&key);
+        self.direct_path_failed_at
+            .insert(key, (now_ms, error));
+    }
+
+    /// 返回指定 peer 的点对点路径是否在冷却中（因探测失败被降级）。
+    pub fn is_direct_path_in_cooldown(
+        &self,
+        peer_node_id: &str,
+        path_kind: PathKind,
+    ) -> bool {
+        self.failed_path_cooldowns
+            .contains_key(&(peer_node_id.to_string(), path_kind))
     }
 
     /// 返回当前所有 peer 活跃路径的摘要，用于诊断展示。

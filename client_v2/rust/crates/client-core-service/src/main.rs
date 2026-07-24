@@ -4029,6 +4029,7 @@ fn execute_runtime_network_activation(
             return Ok(runtime.snapshot().state);
         }
     }
+    let network_was_enabled = runtime.snapshot().state.network_enabled;
     let snapshots = runtime.snapshots();
     let executed = match transition.prepared {
         Ok(plan) => platform_transition::run_serialized_correlated(
@@ -4076,7 +4077,13 @@ fn execute_runtime_network_activation(
     )?;
     if committed.rollback_platform {
         log_service_error("client-core-service rolled back failed network activation commit");
-        let _ = disable_platform_network_serialized();
+        if network_was_enabled {
+            log_service_error(
+                "client-core-service preserved existing network after activation commit rollback",
+            );
+        } else {
+            let _ = disable_platform_network_serialized();
+        }
     }
     Ok(committed.state)
 }
@@ -5066,6 +5073,7 @@ fn execute_downstream_network_assignment(
         return Ok(runtime.snapshot().state);
     }
     let snapshots = runtime.snapshots();
+    let network_was_enabled = runtime.snapshot().state.network_enabled;
     let prepared = platform_transition::run_serialized_correlated(
         "control_task.network.reconcile",
         correlation_id.clone(),
@@ -5081,8 +5089,27 @@ fn execute_downstream_network_assignment(
             })
         },
     );
-    if prepared.is_err() {
-        let _ = disable_platform_network_serialized();
+    if let Err(ref error) = prepared {
+        let error_msg = format!("{error:#}");
+        // A stale error means a newer network event already superseded this
+        // reconcile. The newer event will trigger its own reconcile, so we
+        // must NOT tear down the working network here.
+        if error_msg.contains("stale") {
+            log_service_error(format!(
+                "client-core-service ignored stale reconcile error (network_was_enabled={network_was_enabled}): {error_msg}"
+            ));
+        } else {
+            log_service_error(format!(
+                "client-core-service downstream reconcile failed (network_was_enabled={network_was_enabled}): {error_msg}"
+            ));
+            if network_was_enabled {
+                log_service_error(
+                    "client-core-service preserved existing network after downstream reconcile failure",
+                );
+            } else {
+                let _ = disable_platform_network_serialized();
+            }
+        }
     }
     let committed = runtime.call_named_if_revision(
         "control_task.network.reconcile.commit",
@@ -5112,19 +5139,26 @@ fn execute_downstream_network_assignment(
             Ok(committed)
         },
     )?;
-    if let Some((state, rollback_platform)) = committed {
-        if rollback_platform {
-            log_service_error("client-core-service rolled back failed downstream network commit");
+    if committed.is_none() {
+        // Revision changed during commit — a newer event is handling the
+        // network state. Do NOT disable the network here.
+        log_service_error(
+            "client-core-service skipped downstream reconcile rollback (revision changed during commit)",
+        );
+        return Ok(runtime.snapshot().state);
+    }
+    let (state, rollback_platform) = committed.unwrap();
+    if rollback_platform {
+        log_service_error("client-core-service rolled back failed downstream network commit");
+        if network_was_enabled {
+            log_service_error(
+                "client-core-service preserved existing network after downstream commit rollback",
+            );
+        } else {
             let _ = disable_platform_network_serialized();
         }
-        return Ok(state);
     }
-    let _ = disable_platform_network_serialized();
-    runtime.call_named(
-        "control_task.network.reconcile.rollback",
-        correlation_id,
-        |runtime| Ok(runtime.apply_network_disabled_state()),
-    )
+    Ok(state)
 }
 
 fn deactivate_control_network() {
