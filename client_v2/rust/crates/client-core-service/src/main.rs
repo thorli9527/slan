@@ -5535,7 +5535,13 @@ fn spawn_runtime_sync_worker(runtime: RuntimeActorHandle, state_notifier: Arc<Ru
                 serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
             publish_business_event(&state_notifier, business_type, business_data);
         }
-        report_runtime_state(&state);
+        // A periodic platform read is observational. In particular, Windows may
+        // briefly have no initialized runtime state while the service restores
+        // the adapter after restart. Do not turn that transient state into a
+        // control-plane network deactivation; explicit disable flows report it.
+        if state.network_enabled {
+            report_runtime_state(&state);
+        }
         thread::sleep(Duration::from_secs(10));
     });
 }

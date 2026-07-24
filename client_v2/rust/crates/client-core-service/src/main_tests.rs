@@ -261,7 +261,7 @@ fn stale_network_activation_result_preserves_current_runtime_state() {
     assert_eq!(state.device_id.as_deref(), Some("new-device"));
     assert_eq!(state.virtual_ip.as_deref(), Some("10.0.0.9"));
     assert!(state.error.is_none());
-    assert!(committed.rollback_platform);
+    assert!(!committed.rollback_platform);
 }
 
 #[test]

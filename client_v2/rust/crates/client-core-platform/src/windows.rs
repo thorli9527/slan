@@ -150,7 +150,15 @@ struct WindowsRuntime {
 static WINDOWS_NETWORK_RUNTIME: OnceLock<Mutex<WindowsRuntime>> = OnceLock::new();
 
 fn windows_network_runtime() -> &'static Mutex<WindowsRuntime> {
-    WINDOWS_NETWORK_RUNTIME.get_or_init(|| Mutex::new(WindowsRuntime::default()))
+    WINDOWS_NETWORK_RUNTIME.get_or_init(|| {
+        let cached = load_cached_runtime_state().unwrap_or_default();
+        Mutex::new(WindowsRuntime {
+            adapter_present: cached.adapter_present,
+            network_enabled: cached.network_enabled,
+            virtual_ip: cached.virtual_ip,
+            ..WindowsRuntime::default()
+        })
+    })
 }
 
 #[derive(Debug, Clone, Default)]
