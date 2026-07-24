@@ -515,10 +515,30 @@ pub(crate) fn activate_network(
     platform: &PlatformNetworkImpl,
     activation: PlatformNetworkActivation<'_>,
 ) -> Result<()> {
-    platform.install_adapter()?;
-    platform.configure_ip(activation.virtual_ip, activation.prefix_len)?;
-    platform.configure_resolver(activation.resolver)?;
-    platform.configure_resolver_map(activation.resolver_zones, activation.resolver_records)?;
+    // Fast path: if the adapter is already configured with the correct IP,
+    // skip the expensive install/configure steps (~12s saved per redundant cycle).
+    // This prevents timeout when multiple activation cycles are queued.
+    let already_configured = platform
+        .read_runtime_state()
+        .ok()
+        .is_some_and(|state| {
+            state.network_enabled
+                && state
+                    .virtual_ip
+                    .as_deref()
+                    .is_some_and(|ip| ip == activation.virtual_ip)
+        });
+    if already_configured {
+        crate::log_service_error(format!(
+            "activate_network: fast path — adapter already configured with {}",
+            activation.virtual_ip
+        ));
+    } else {
+        platform.install_adapter()?;
+        platform.configure_ip(activation.virtual_ip, activation.prefix_len)?;
+        platform.configure_resolver(activation.resolver)?;
+        platform.configure_resolver_map(activation.resolver_zones, activation.resolver_records)?;
+    }
     platform.configure_routes(activation.routes)?;
     platform.configure_relay(activation.relay_config)?;
     record_network_enabled(activation.virtual_ip);

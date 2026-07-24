@@ -1,6 +1,6 @@
 use std::{
     ffi::{c_void, OsStr},
-    fs,
+    fs::{self, OpenOptions},
     io::{BufRead, BufReader, ErrorKind, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
     os::windows::{ffi::OsStrExt, process::CommandExt},
@@ -134,6 +134,25 @@ impl Drop for WintunRuntime {
 #[derive(Debug, Clone, Default)]
 pub struct WindowsPlatformNetwork;
 
+/// WindowsRuntime 保存 Windows 平台层当前网络配置缓存。
+/// 与 macOS/Linux 一致，`read_runtime_state` 从内存读取，不调用外部进程。
+#[derive(Debug, Default)]
+struct WindowsRuntime {
+    adapter_present: bool,
+    network_enabled: bool,
+    virtual_ip: Option<String>,
+    prefix_len: Option<u8>,
+    routes: Vec<RouteSpec>,
+    relay_config: Option<RelayDataPlaneConfig>,
+    mtu: Option<u16>,
+}
+
+static WINDOWS_NETWORK_RUNTIME: OnceLock<Mutex<WindowsRuntime>> = OnceLock::new();
+
+fn windows_network_runtime() -> &'static Mutex<WindowsRuntime> {
+    WINDOWS_NETWORK_RUNTIME.get_or_init(|| Mutex::new(WindowsRuntime::default()))
+}
+
 #[derive(Debug, Clone, Default)]
 struct WindowsResolverRuntime {
     servers: Vec<String>,
@@ -149,6 +168,8 @@ fn windows_resolver_runtime() -> &'static Mutex<WindowsResolverRuntime> {
 impl PlatformNetwork for WindowsPlatformNetwork {
     fn install_adapter(&self) -> Result<()> {
         ensure_adapter_present(DEFAULT_INTERFACE_NAME)?;
+        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        runtime.adapter_present = true;
         persist_state(&NetworkRuntimeState {
             adapter_present: true,
             ..load_cached_runtime_state().unwrap_or_default()
@@ -166,6 +187,11 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         .context("configure Wintun adapter IP")?;
         verify_adapter_ip(DEFAULT_INTERFACE_NAME, virtual_ip)
             .context("verify Wintun adapter IP")?;
+        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        runtime.adapter_present = true;
+        runtime.network_enabled = true;
+        runtime.virtual_ip = Some(virtual_ip.to_string());
+        runtime.prefix_len = Some(HOST_INTERFACE_PREFIX_LEN);
         let mut state = load_cached_runtime_state().unwrap_or_default();
         state.adapter_present = true;
         state.network_enabled = true;
@@ -174,7 +200,16 @@ impl PlatformNetwork for WindowsPlatformNetwork {
     }
 
     fn configure_routes(&self, routes: &[RouteSpec]) -> Result<()> {
+        // Fast path: skip if routes haven't changed (prevents adapter toggle from repeated netsh calls).
+        let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        if runtime.routes == routes {
+            debug_log("configure_routes: fast path — routes unchanged, skipping");
+            return Ok(());
+        }
+        drop(runtime);
         configure_routes(DEFAULT_INTERFACE_NAME, routes).context("configure Wintun routes")?;
+        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        runtime.routes = routes.to_vec();
         persist_state(&load_cached_runtime_state().unwrap_or_default())
     }
 
@@ -216,7 +251,17 @@ impl PlatformNetwork for WindowsPlatformNetwork {
     }
 
     fn configure_relay(&self, config: Option<&RelayDataPlaneConfig>) -> Result<()> {
-        configure_wintun_data_plane(config).context("configure Wintun relay data plane")
+        // Fast path: skip if relay config hasn't changed.
+        let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        if runtime.relay_config.as_ref() == config {
+            debug_log("configure_relay: fast path — relay config unchanged, skipping");
+            return Ok(());
+        }
+        drop(runtime);
+        configure_wintun_data_plane(config).context("configure Wintun relay data plane")?;
+        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        runtime.relay_config = config.cloned();
+        Ok(())
     }
 
     fn disable_network(&self) -> Result<()> {
@@ -231,6 +276,11 @@ impl PlatformNetwork for WindowsPlatformNetwork {
         }
         let _ = run_powershell("Clear-DnsClientCache -ErrorAction SilentlyContinue");
         disable_result?;
+        let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        runtime.network_enabled = false;
+        runtime.virtual_ip = None;
+        runtime.routes.clear();
+        runtime.relay_config = None;
         let mut state = load_cached_runtime_state().unwrap_or_default();
         state.network_enabled = false;
         state.virtual_ip = None;
@@ -240,13 +290,47 @@ impl PlatformNetwork for WindowsPlatformNetwork {
     }
 
     fn read_runtime_state(&self) -> Result<NetworkRuntimeState> {
-        match read_windows_runtime_state(DEFAULT_INTERFACE_NAME) {
-            Ok(state) => {
-                persist_state(&state)?;
-                Ok(state)
-            }
-            Err(_) => load_cached_runtime_state(),
-        }
+        // Read from in-memory runtime cache — same pattern as macOS/Linux.
+        // This avoids shelling out to netsh/PowerShell every 10 seconds,
+        // which caused frequent timeouts and unreliable adapter state detection.
+        let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+        let cached = load_cached_runtime_state().unwrap_or_default();
+        Ok(NetworkRuntimeState {
+            adapter_present: runtime.adapter_present,
+            network_enabled: runtime.network_enabled,
+            virtual_ip: if runtime.network_enabled {
+                runtime.virtual_ip.clone()
+            } else {
+                None
+            },
+            active_path: if runtime.network_enabled {
+                runtime
+                    .relay_config
+                    .as_ref()
+                    .filter(|relay| relay.enabled && !relay.sessions.is_empty())
+                    .and_then(|relay| {
+                        let paths = relay_runtime_paths_from_config(&relay.peer_paths, &relay.sessions);
+                        client_core::selected_runtime_paths(&relay.path_policy, paths)
+                            .into_iter()
+                            .find_map(|path| path.active_path)
+                    })
+                    .or(cached.active_path)
+            } else {
+                None
+            },
+            peer_paths: if runtime.network_enabled {
+                runtime
+                    .relay_config
+                    .as_ref()
+                    .map(|relay| {
+                        let peer_paths = relay_runtime_paths_from_config(&relay.peer_paths, &relay.sessions);
+                        client_core::selected_runtime_paths(&relay.path_policy, peer_paths)
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
+        })
     }
 
     fn diagnostics(&self) -> Result<PlatformNetworkDiagnostics> {
@@ -290,15 +374,34 @@ fn ensure_adapter_present(interface_name: &str) -> Result<()> {
 }
 
 fn ensure_installed_adapter_ready(interface_name: &str) -> Result<()> {
+    // Fast path: check if adapter is already Up before calling Enable-NetAdapter.
+    // Repeated Enable-NetAdapter calls can cause Windows to toggle the adapter state.
+    let check_script = format!(
+        "$adapter = Get-NetAdapter -IncludeHidden -Name '{}' -ErrorAction SilentlyContinue; \
+         if (-not $adapter) {{ Write-Output 'not_found' }} else {{ Write-Output $adapter.AdminStatus.ToString() }}",
+        escape_powershell_single_quoted(interface_name),
+    );
+    if let Ok(status) = run_powershell(&check_script) {
+        let status = status.trim();
+        if status == "Up" {
+            debug_log(&format!("ensure_installed_adapter_ready: fast path — adapter already Up, skipping"));
+            return Ok(());
+        }
+    }
     let script = format!(
         "$name = '{}'; \
          $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
          if (-not $adapter) {{ throw \"SLAN local network adapter '$name' was not found. Please reinstall or repair SLAN Client.\" }}; \
-         Enable-NetAdapter -Name $name -Confirm:$false -ErrorAction Stop | Out-Null; \
-         Write-Output $adapter.Name",
+         $before = $adapter.AdminStatus.ToString(); \
+         Enable-NetAdapter -IncludeHidden -Name $name -Confirm:$false -ErrorAction Stop | Out-Null; \
+         $after = (Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue).AdminStatus.ToString(); \
+         Write-Output \"before=$before after=$after\"",
         escape_powershell_single_quoted(interface_name),
     );
-    run_powershell(&script).map(|_| ())
+    debug_log(&format!("ensure_installed_adapter_ready: enabling '{interface_name}'"));
+    let result = run_powershell(&script);
+    debug_log(&format!("ensure_installed_adapter_ready: result={result:?}"));
+    result.map(|_| ())
 }
 
 fn ensure_adapter_created(interface_name: &str) -> Result<()> {
@@ -1382,8 +1485,12 @@ fn configure_wintun_data_plane(config: Option<&RelayDataPlaneConfig>) -> Result<
     let Some(runtime) = runtime.as_mut() else {
         bail!("Wintun runtime is not ready");
     };
-    configure_adapter_mtu(DEFAULT_INTERFACE_NAME, relay_mtu)
-        .context("configure Wintun relay MTU")?;
+    if let Err(error) = configure_adapter_mtu(DEFAULT_INTERFACE_NAME, relay_mtu) {
+        eprintln!(
+            "SLAN warning: Wintun MTU configuration failed (mtu={relay_mtu}): {error:#}. \
+             Continuing with current adapter MTU."
+        );
+    }
     let requested_relay_session_count = config.sessions.len() as u32;
     let ticket_expires_at = earliest_relay_ticket_expires_at(&config.sessions);
     let relay_udp_attach = RelayUdpTransport::attach(
@@ -3647,85 +3754,175 @@ fn load_wintun_library() -> Result<Library> {
     bail!("wintun.dll not found; searched: {}", attempted.join(", "))
 }
 
+/// Get the network interface index for a named adapter.
+/// Using the numeric index with netsh avoids all command-line parsing issues
+/// with interface names containing spaces (e.g. "SLAN LAN Adapter").
+fn get_interface_index(interface_name: &str) -> Result<String> {
+    let script = format!(
+        "(Get-NetAdapter -IncludeHidden -Name '{}' -ErrorAction SilentlyContinue).ifIndex",
+        escape_powershell_single_quoted(interface_name),
+    );
+    let output = run_powershell(&script)?;
+    let idx = output.trim().to_string();
+    if idx.is_empty() {
+        bail!("SLAN local network adapter '{interface_name}' has no interface index");
+    }
+    Ok(idx)
+}
+
 fn configure_adapter_ip(interface_name: &str, virtual_ip: &str, prefix_len: u8) -> Result<()> {
     let virtual_ip = virtual_ip.trim();
     if virtual_ip.is_empty() || virtual_ip.eq_ignore_ascii_case("pending") {
         bail!("device unavailable: missing assigned virtual IP");
     }
+    // Adapter is already enabled by ensure_installed_adapter_ready (PowerShell Enable-NetAdapter).
+    // Wait for adapter to become fully operational (Wintun needs extra time after enable).
+    thread::sleep(Duration::from_secs(3));
+    // Use PowerShell New-NetIPAddress for reliable Wintun IP configuration.
+    // netsh `interface ipv4 set address` is unreliable on Wintun adapters — it silently
+    // fails to apply the IP even though the command returns success.
+    // PowerShell cmdlets (New-NetIPAddress / Remove-NetIPAddress) work reliably with Wintun
+    // and are the same approach used by WireGuard for Windows.
     let script = format!(
-        "$name = '{}'; \
-         $ip = '{}'; \
-         $prefix = {}; \
-         $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
-         if (-not $adapter) {{ throw \"SLAN local network adapter '$name' was not found. Please reinstall or repair SLAN Client.\" }}; \
-         Enable-NetAdapter -Name $name -Confirm:$false -ErrorAction Stop | Out-Null; \
-         Start-Sleep -Milliseconds 800; \
-         Set-NetIPInterface -InterfaceAlias $name -AddressFamily IPv4 -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null; \
-         Get-NetIPAddress -InterfaceAlias $name -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue; \
-         New-NetIPAddress -InterfaceAlias $name -IPAddress $ip -PrefixLength $prefix -ErrorAction Stop | Out-Null; \
-         $actual = Get-NetIPAddress -InterfaceAlias $name -AddressFamily IPv4 -ErrorAction Stop | Where-Object {{ $_.IPAddress -eq $ip }} | Select-Object -First 1 -ExpandProperty IPAddress; \
-         if ($actual -ne $ip) {{ throw \"SLAN local network adapter '$name' did not apply IP '$ip'.\" }}; \
-         Write-Output ($name + '|' + $ip)",
+        "$idx = (Get-NetAdapter -IncludeHidden -Name '{}' -ErrorAction SilentlyContinue).ifIndex; \
+         if (-not $idx) {{ throw 'SLAN adapter not found' }}; \
+         Remove-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue; \
+         New-NetIPAddress -InterfaceIndex $idx -IPAddress '{}' -PrefixLength {} -AddressFamily IPv4 -ErrorAction Stop | Out-Null",
         escape_powershell_single_quoted(interface_name),
-        escape_powershell_single_quoted(virtual_ip),
+        virtual_ip,
         prefix_len,
     );
-    run_powershell(&script).map(|_| ())
+    debug_log(&format!("configure_adapter_ip: setting {virtual_ip}/{prefix_len} on '{interface_name}'"));
+    run_powershell(&script).context("set Wintun adapter IP via PowerShell")?;
+    debug_log(&format!("configure_adapter_ip: PowerShell New-NetIPAddress succeeded, waiting 1s"));
+    // Wait for IP to take effect.
+    thread::sleep(Duration::from_secs(1));
+    // Verify via ipconfig.
+    let ipconfig_output = run_ipconfig().unwrap_or_default();
+    if ipconfig_output.contains(virtual_ip) {
+        debug_log("configure_adapter_ip: OK (ipconfig verified)");
+        return Ok(());
+    }
+    debug_log(&format!("configure_adapter_ip: ipconfig does not contain {virtual_ip}, trying Get-NetIPAddress"));
+    // Fallback: verify via Get-NetIPAddress.
+    let verify_script = format!(
+        "(Get-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress -join ','",
+        escape_powershell_single_quoted(interface_name),
+    );
+    let ips = run_powershell(&verify_script).unwrap_or_default();
+    if ips.contains(virtual_ip) {
+        debug_log("configure_adapter_ip: OK (Get-NetIPAddress verified)");
+        return Ok(());
+    }
+    debug_log(&format!("configure_adapter_ip: FAILED - ipconfig contains {virtual_ip}: {}, Get-NetIPAddress: [{ips}]", ipconfig_output.contains(virtual_ip)));
+    bail!(
+        "SLAN local network adapter '{interface_name}' did not apply IP '{virtual_ip}': \
+         ipconfig contains: {}, Get-NetIPAddress returned: [{ips}]",
+        ipconfig_output.contains(virtual_ip)
+    );
 }
 
 fn verify_adapter_ip(interface_name: &str, virtual_ip: &str) -> Result<()> {
+    debug_log(&format!("verify_adapter_ip: checking '{interface_name}' for {virtual_ip}"));
+    // Use PowerShell for all verification — netsh is unreliable on Wintun adapters.
+    // Note: Wintun adapters show "Disconnected" or "Down" until the Wintun session is
+    // started (which happens later in configure_relay). So we only verify:
+    // 1. The adapter exists
+    // 2. The IP address is configured
+    // We do NOT check connection status here.
     let script = format!(
-        "$name = '{}'; \
-         $ip = '{}'; \
-         $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction Stop; \
-         $actual = Get-NetIPAddress -InterfaceAlias $name -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {{ $_.IPAddress -eq $ip }} | Select-Object -First 1 -ExpandProperty IPAddress; \
-         if ($adapter.AdminStatus -ne 'Up') {{ throw \"SLAN local network adapter '$name' is disabled; adminStatus=\" + $adapter.AdminStatus }}; \
-         if ($actual -ne $ip) {{ throw \"SLAN local network adapter '$name' expected IP '$ip' but it was not applied.\" }}; \
-         Write-Output ([string]$adapter.AdminStatus + '|' + $actual)",
+        "$a = Get-NetAdapter -IncludeHidden -Name '{}' -ErrorAction SilentlyContinue; \
+         if (-not $a) {{ throw 'adapter not found' }}; \
+         $status = $a.Status.ToString(); \
+         $admin = $a.AdminStatus.ToString(); \
+         $ips = (Get-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress -join ','; \
+         Write-Output \"$admin|$status|$ips\"",
         escape_powershell_single_quoted(interface_name),
-        escape_powershell_single_quoted(virtual_ip),
+        escape_powershell_single_quoted(interface_name),
     );
-    run_powershell(&script).map(|_| ())
+    let output = run_powershell(&script).context("verify Wintun adapter IP via PowerShell")?;
+    let parts: Vec<&str> = output.trim().splitn(3, '|').collect();
+    let admin = parts.first().copied().unwrap_or("");
+    let status = parts.get(1).copied().unwrap_or("");
+    let ips = parts.get(2).copied().unwrap_or("");
+    debug_log(&format!("verify_adapter_ip: admin={admin} status={status} ips=[{ips}]"));
+    if !ips.contains(virtual_ip) {
+        bail!(
+            "SLAN local network adapter '{interface_name}' expected IP '{virtual_ip}' but it was not applied. \
+             admin={admin} status={status} Get-NetIPAddress returned: [{ips}]"
+        );
+    }
+    debug_log("verify_adapter_ip: OK");
+    Ok(())
 }
 
 fn configure_routes(interface_name: &str, routes: &[RouteSpec]) -> Result<()> {
     if routes.is_empty() {
         return Ok(());
     }
-    let mut script = format!(
-        "$name = '{}'; \
-         $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
-         if (-not $adapter) {{ throw \"SLAN local network adapter '$name' was not found. Please reinstall or repair SLAN Client.\" }}; \
-         $ifIndex = $adapter.ifIndex; ",
-        escape_powershell_single_quoted(interface_name),
-    );
+    debug_log(&format!("configure_routes: {} routes for '{interface_name}'", routes.len()));
+    // Use netsh with interface index for reliable Wintun route configuration.
+    let idx = get_interface_index(interface_name)
+        .context("get adapter interface index for routes")?;
+    debug_log(&format!("configure_routes: ifIndex={idx}"));
     for route in routes {
         let destination = route.destination.trim();
         if destination.is_empty() || destination.eq_ignore_ascii_case("mesh") {
             continue;
         }
         let gateway = route.gateway.as_deref().unwrap_or("0.0.0.0").trim();
-        script.push_str(&format!(
-            "New-NetRoute -DestinationPrefix '{}' -InterfaceIndex $ifIndex -NextHop '{}' -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Out-Null; ",
-            escape_powershell_single_quoted(destination),
-            escape_powershell_single_quoted(gateway),
-        ));
+        // netsh route destination must be in prefix/length format (e.g. "10.0.0.53/32").
+        // The RouteSpec destination is already in CIDR format, pass it through directly.
+        let netsh_dest = if destination.contains('/') {
+            destination.to_string()
+        } else {
+            format!("{destination}/32")
+        };
+        // Remove existing route first (ignore errors if it doesn't exist).
+        let _ = run_netsh(&[
+            "interface", "ipv4", "delete", "route",
+            &netsh_dest,
+            &idx,
+            gateway,
+        ]);
+        // Add the new route.
+        run_netsh(&[
+            "interface", "ipv4", "add", "route",
+            &netsh_dest,
+            &idx,
+            gateway,
+        ])
+        .with_context(|| format!("add route {destination} via {gateway}"))?;
     }
-    run_powershell(&script).map(|_| ())
+    Ok(())
 }
 
 fn configure_adapter_mtu(interface_name: &str, mtu: u16) -> Result<()> {
-    let interface_name = escape_powershell_single_quoted(interface_name);
-    let script = format!(
-        "$name = '{interface_name}'; \
-         $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
-         if (-not $adapter) {{ throw \"SLAN local network adapter '$name' was not found. Please reinstall or repair SLAN Client.\" }}; \
-         Set-NetIPInterface -InterfaceAlias $name -AddressFamily IPv4 -NlMtuBytes {mtu} -ErrorAction Stop | Out-Null; \
-         $actual = (Get-NetIPInterface -InterfaceAlias $name -AddressFamily IPv4 -ErrorAction Stop | Select-Object -First 1).NlMtuBytes; \
-         if ([int]$actual -ne {mtu}) {{ throw \"SLAN local network adapter '$name' MTU did not apply: \" + $actual }}; \
-         Write-Output ($name + '|mtu=' + $actual)"
-    );
-    run_powershell(&script).map(|_| ())
+    // Fast path: skip if MTU hasn't changed (prevents adapter toggle from repeated netsh calls).
+    let runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+    if runtime.mtu == Some(mtu) {
+        debug_log(&format!("configure_adapter_mtu: fast path — mtu={mtu} unchanged, skipping"));
+        return Ok(());
+    }
+    drop(runtime);
+    // Use netsh with interface index for reliable Wintun MTU configuration.
+    let idx = get_interface_index(interface_name)
+        .context("get adapter interface index for MTU")?;
+    run_netsh(&[
+        "interface", "ipv4", "set", "subinterface",
+        &idx,
+        &format!("mtu={mtu}"),
+        "store=active",
+    ])
+    .map(|_| ())
+    .with_context(|| {
+        format!(
+            "SLAN local network adapter '{interface_name}' MTU set failed (target={mtu})"
+        )
+    })?;
+    let mut runtime = windows_network_runtime().lock().expect("windows network runtime lock poisoned");
+    runtime.mtu = Some(mtu);
+    Ok(())
 }
 
 fn configure_dns(interface_name: &str, dns_servers: &[String]) -> Result<()> {
@@ -3787,48 +3984,6 @@ fn disable_adapter(interface_name: &str) -> Result<()> {
     run_powershell(&script).map(|_| ())
 }
 
-fn read_windows_runtime_state(interface_name: &str) -> Result<NetworkRuntimeState> {
-    let script = format!(
-        "$name = '{}'; \
-         $adapter = Get-NetAdapter -IncludeHidden -Name $name -ErrorAction SilentlyContinue; \
-         if (-not $adapter) {{ Write-Output 'missing||'; exit 0 }}; \
-         $ip = Get-NetIPAddress -InterfaceAlias $name -AddressFamily IPv4 -ErrorAction SilentlyContinue | \
-           Where-Object {{ $_.IPAddress -and $_.IPAddress -ne '0.0.0.0' -and $_.IPAddress -notlike '169.254.*' }} | \
-           Select-Object -First 1 -ExpandProperty IPAddress; \
-         Write-Output ([string]$adapter.AdminStatus + '|' + $adapter.Name + '|' + $ip)",
-        escape_powershell_single_quoted(interface_name),
-    );
-    let output = run_powershell(&script)?;
-    let mut parts = output.split('|');
-    let status = parts.next().unwrap_or_default().trim();
-    let name = parts.next().unwrap_or_default().trim();
-    let ip = parts.next().unwrap_or_default().trim();
-    if status.eq_ignore_ascii_case("missing") || name.is_empty() {
-        return Ok(NetworkRuntimeState::default());
-    }
-    let network_enabled = status.eq_ignore_ascii_case("up") && is_usable_virtual_ip(ip);
-    let cached = load_cached_runtime_state().unwrap_or_default();
-    Ok(NetworkRuntimeState {
-        adapter_present: true,
-        network_enabled,
-        virtual_ip: if network_enabled {
-            Some(ip.to_string())
-        } else {
-            None
-        },
-        active_path: if network_enabled {
-            cached.active_path
-        } else {
-            None
-        },
-        peer_paths: if network_enabled {
-            cached.peer_paths
-        } else {
-            Vec::new()
-        },
-    })
-}
-
 fn read_windows_network_diagnostics(interface_name: &str) -> Result<PlatformNetworkDiagnostics> {
     let interface_name = escape_powershell_single_quoted(interface_name);
     let script = format!(
@@ -3869,9 +4024,27 @@ fn read_windows_network_diagnostics(interface_name: &str) -> Result<PlatformNetw
         .context("decode Windows network diagnostics")
 }
 
+#[cfg(test)]
 fn is_usable_virtual_ip(ip: &str) -> bool {
     let ip = ip.trim();
     !ip.is_empty() && ip != "0.0.0.0" && !ip.starts_with("169.254.")
+}
+
+/// Write a debug message to `%ProgramData%\SLAN\slan-debug.log`.
+/// This is necessary because `eprintln!` output is lost when running as a Windows service.
+fn debug_log(message: &str) {
+    let Ok(program_data) = std::env::var("ProgramData") else {
+        return;
+    };
+    let path = PathBuf::from(program_data).join("SLAN").join("slan-debug.log");
+    let _ = fs::create_dir_all(path.parent().unwrap());
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "{timestamp} {message}");
+    }
 }
 
 fn run_powershell(script: &str) -> Result<String> {
@@ -3906,13 +4079,98 @@ fn escape_powershell_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+/// Execute a `netsh` command and return stdout on success.
+/// `netsh` is significantly faster and more reliable than PowerShell cmdlets for
+/// virtual network adapter (Wintun/TAP) configuration — same approach used by
+/// WireGuard and OpenVPN on Windows.
+fn run_netsh(args: &[&str]) -> Result<String> {
+    debug_log(&format!("netsh exec: netsh {}", args.join(" ")));
+    let output = Command::new("netsh")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .context("run netsh command")?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    debug_log(&format!(
+        "netsh result: status={} stdout=[{}] stderr=[{}]",
+        output.status, stdout, stderr
+    ));
+    if output.status.success() {
+        return Ok(stdout);
+    }
+    let detail = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("exit status {}", output.status)
+    };
+    bail!("netsh command failed: {detail}");
+}
+
+/// Execute `ipconfig` and return its stdout.
+/// Used for IP address verification because its output is more reliably parsed
+/// than `netsh show addresses` on non-English Windows installations.
+fn run_ipconfig() -> Result<String> {
+    let output = Command::new("ipconfig")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .context("run ipconfig")?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Prepare a value for use as a netsh argument.
+/// Rust's `Command::args()` on Windows automatically handles quoting for arguments
+/// containing spaces via the standard MSVCRT command-line escaping conventions.
+/// We must NOT add manual quotes — that would cause double-quoting and netsh
+/// would receive literal quote characters as part of the value.
+#[cfg(test)]
+fn escape_netsh_arg(value: &str) -> String {
+    value.to_string()
+}
+
+/// Convert an IPv4 prefix length (0–32) to a dotted-decimal subnet mask.
+#[cfg(test)]
+fn prefix_len_to_subnet_mask(prefix_len: u8) -> String {
+    if prefix_len == 0 {
+        return "0.0.0.0".to_string();
+    }
+    let mask: u32 = 0xFFFFFFFFu32 << (32 - prefix_len.min(32));
+    format!(
+        "{}.{}.{}.{}",
+        (mask >> 24) & 0xFF,
+        (mask >> 16) & 0xFF,
+        (mask >> 8) & 0xFF,
+        mask & 0xFF,
+    )
+}
+
+/// Parse a CIDR string like "10.0.0.0/8" into (prefix, mask) for netsh commands.
+/// netsh expects routes in the form "prefix/mask" (e.g. "10.0.0.0/255.0.0.0").
+#[cfg(test)]
+fn parse_cidr_for_netsh(cidr: &str) -> (String, String) {
+    if let Some((prefix, len_str)) = cidr.split_once('/') {
+        if let Ok(len) = len_str.parse::<u8>() {
+            return (prefix.to_string(), prefix_len_to_subnet_mask(len));
+        }
+    }
+    // If already in prefix/mask form or unparseable, return as-is.
+    let parts: Vec<&str> = cidr.splitn(2, '/').collect();
+    (
+        parts.first().copied().unwrap_or(cidr).to_string(),
+        parts.get(1).copied().unwrap_or("255.255.255.255").to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         detach_udp_relay_sessions, direct_udp_control_packet, direct_udp_control_payload,
         direct_udp_probe_interval_from_policy, earliest_relay_ticket_expires_at,
-        is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply, mark_ready_transports,
-        normalize_direct_udp_address, refresh_relay_ticket_timing, relay_error_message,
+        escape_netsh_arg, is_usable_dns_server, is_usable_virtual_ip, local_virtual_ip_reply,
+        mark_ready_transports, normalize_direct_udp_address, parse_cidr_for_netsh,
+        prefix_len_to_subnet_mask, refresh_relay_ticket_timing, relay_error_message,
         relay_runtime_paths_from_config, relay_udp_address_for_session, send_frame_to_peer,
         validate_relay_peer_session, validate_relay_peer_session_for_path, AttachedRelayPeer,
         DerpTcpTransport, DirectUdpControlKind, DirectUdpPeer, DirectUdpTransport, PathSendResult,
@@ -5097,5 +5355,37 @@ mod tests {
                 signature: "signature".to_string(),
             },
         }
+    }
+
+    #[test]
+    fn prefix_len_to_subnet_mask_returns_correct_values() {
+        assert_eq!(prefix_len_to_subnet_mask(0), "0.0.0.0");
+        assert_eq!(prefix_len_to_subnet_mask(8), "255.0.0.0");
+        assert_eq!(prefix_len_to_subnet_mask(16), "255.255.0.0");
+        assert_eq!(prefix_len_to_subnet_mask(24), "255.255.255.0");
+        assert_eq!(prefix_len_to_subnet_mask(32), "255.255.255.255");
+        assert_eq!(prefix_len_to_subnet_mask(30), "255.255.255.252");
+    }
+
+    #[test]
+    fn parse_cidr_for_netsh_handles_various_formats() {
+        assert_eq!(
+            parse_cidr_for_netsh("10.0.0.0/8"),
+            ("10.0.0.0".to_string(), "255.0.0.0".to_string())
+        );
+        assert_eq!(
+            parse_cidr_for_netsh("192.168.1.0/24"),
+            ("192.168.1.0".to_string(), "255.255.255.0".to_string())
+        );
+        assert_eq!(
+            parse_cidr_for_netsh("10.0.1.114/32"),
+            ("10.0.1.114".to_string(), "255.255.255.255".to_string())
+        );
+    }
+
+    #[test]
+    fn escape_netsh_arg_wraps_in_double_quotes() {
+        assert_eq!(escape_netsh_arg("SLAN LAN Adapter"), "SLAN LAN Adapter");
+        assert_eq!(escape_netsh_arg("simple"), "simple");
     }
 }

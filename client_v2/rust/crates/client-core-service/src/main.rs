@@ -4131,11 +4131,16 @@ where
                     .starts_with("stale network activation plan:")
                 {
                     log_service_error(format!(
-                        "client-core-service ignored stale network activation plan: {error:#}"
+                        "client-core-service ignored stale network activation plan (platform already configured): {error:#}"
                     ));
+                    // Do NOT rollback the platform — the platform activation succeeded,
+                    // so the adapter is already configured. A newer network event changed
+                    // the persisted session during the platform apply, but that newer event
+                    // will trigger its own activation. Rolling back here would tear down
+                    // a working network, causing the adapter to go Disabled.
                     return ControlNetworkActivationCommit {
                         state: runtime.state().clone(),
-                        rollback_platform: true,
+                        rollback_platform: false,
                     };
                 }
                 log_service_error(format!(
@@ -5069,10 +5074,18 @@ fn execute_downstream_network_assignment(
                 .is_some();
             let committed = match commit_downstream_network_assignment(runtime, prepared) {
                 Ok(()) => (runtime.state().clone(), false),
-                Err(error) => (
-                    state_with_error(runtime.state(), error.to_string()),
-                    platform_applied,
-                ),
+                Err(error) => {
+                    log_service_error(format!(
+                        "client-core-service downstream network commit failed (platform_applied={platform_applied}): {error:#}"
+                    ));
+                    // If the platform activation succeeded, do NOT rollback — the adapter
+                    // is already configured. A newer event may have changed the session,
+                    // but that event will trigger its own activation.
+                    (
+                        state_with_error(runtime.state(), error.to_string()),
+                        false,
+                    )
+                }
             };
             Ok(committed)
         },
