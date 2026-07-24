@@ -56,6 +56,7 @@ func deviceRoutes(deps RouteDependencies) []serviceapi.Route {
 			NetworkConfigView: deps.NetworkCore,
 		}.Routes(),
 		DeviceConfigHandler{Devices: deps.DeviceCore, DeviceSessions: deps.DeviceSession, NetworkCore: deps.NetworkCore}.Routes(),
+		DeviceLogHandler{DeviceSessions: deps.DeviceSession}.Routes(),
 		ClientMessageHandler{Messages: deps.ClientMessages, DeviceSessions: deps.DeviceSession}.Routes(),
 	)
 }

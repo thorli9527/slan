@@ -7,6 +7,7 @@ mod control_plane;
 mod control_tasks;
 mod control_transport;
 mod control_transport_worker;
+mod diagnostic_upload;
 mod local_api;
 #[cfg(test)]
 mod main_tests;
@@ -383,6 +384,7 @@ fn run_service_server() -> Result<()> {
     spawn_session_refresh_worker(runtime.clone(), Arc::clone(&state_notifier));
     spawn_runtime_sync_worker(runtime.clone(), Arc::clone(&state_notifier));
     spawn_platform_diagnostics_worker();
+    diagnostic_upload::spawn_worker();
     spawn_platform_late_completion_worker(runtime.clone(), Arc::clone(&state_notifier));
     spawn_local_resolver_supervisor(runtime.clone());
     spawn_control_task_worker(

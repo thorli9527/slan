@@ -7,6 +7,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:slan_client_v2/bridge/client_core_local_service.dart';
 
 void main() {
+  test('platform network config uses command response timeout', () {
+    final service = ClientCoreLocalService();
+
+    expect(
+      service.responseTimeoutFor('localPlatformNetworkConfig', null),
+      const Duration(seconds: 65),
+    );
+  });
+
   test('local service returns first JSON line', () async {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     final receivedRequest = Completer<Map<String, Object?>>();

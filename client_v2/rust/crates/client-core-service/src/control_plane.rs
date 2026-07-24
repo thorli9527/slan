@@ -49,6 +49,10 @@ fn api_device_runtime(device_id: &str) -> String {
     format!("/api/app/devices/{}/runtime", device_id.trim())
 }
 
+fn api_device_logs(device_id: &str) -> String {
+    format!("/api/app/devices/{}/logs", device_id.trim())
+}
+
 fn api_relay_candidates(network_id: &str, device_id: &str) -> String {
     format!(
         "/api/app/networks/{}/relay-candidates?deviceId={}",
@@ -893,6 +897,17 @@ impl ControlPlaneClient {
         body: Value,
     ) -> Result<()> {
         let path = api_device_runtime(device_id);
+        let _ = self.request_json("POST", &path, access_token, Some(body))?;
+        Ok(())
+    }
+
+    pub fn upload_device_logs(
+        &self,
+        access_token: &str,
+        device_id: &str,
+        body: Value,
+    ) -> Result<()> {
+        let path = api_device_logs(device_id);
         let _ = self.request_json("POST", &path, access_token, Some(body))?;
         Ok(())
     }

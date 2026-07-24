@@ -33,8 +33,11 @@ services:
       SLAN_RELAY_ENDPOINTS: ${SLAN_RELAY_ENDPOINTS:-}
       SLAN_WIRE_RELAY_PUBLIC_HOST: ${SLAN_WIRE_RELAY_PUBLIC_HOST:-}
       SLAN_WIRE_RELAY_PUBLIC_UDP_PORT: ${SLAN_WIRE_RELAY_PUBLIC_UDP_PORT:-29110}
+      SLAN_CLIENT_LOG_DIR: /var/lib/slan/client-logs
     ports:
       - "${SLAN_BIZ_APP_PORT:-39080}:8080"
+    volumes:
+      - slan-client-logs:/var/lib/slan/client-logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -111,3 +114,4 @@ services:
 
 volumes:
   slan-biz-postgres:
+  slan-client-logs:

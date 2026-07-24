@@ -233,22 +233,18 @@ void main() {
         await tester.pump();
 
         await tester.pumpUntilSignedInOrLoginFailed(
-          timeout: const Duration(seconds: 15),
+          timeout: const Duration(seconds: 65),
         );
       }
       expect(tester.signedInEmailText(), email);
       expect(find.byKey(const Key('network-switch')), findsOneWidget);
-      expect(find.byKey(const Key('client-device-id-value')), findsOneWidget);
-      final currentDeviceId = tester
-          .widget<Text>(find.byKey(const Key('client-device-id-value')))
-          .data
-          ?.trim();
-      if (currentDeviceId == null || currentDeviceId.isEmpty) {
-        fail('signed in UI returned empty device id');
-      }
+      final currentDeviceId = await tester.pumpUntilDeviceId(
+        bridge,
+        timeout: const Duration(seconds: 15),
+      );
       debugPrint('SLAN_TEST_CLIENT_DEVICE_ID=$currentDeviceId');
       if (expectedDeviceId.trim().isNotEmpty) {
-        expect(find.text(expectedDeviceId.trim()), findsOneWidget);
+        expect(currentDeviceId, expectedDeviceId.trim());
       }
       if (waitMqtt) {
         await tester.pumpUntilMqttConnected(
@@ -615,7 +611,7 @@ extension on WidgetTester {
   Future<void> pumpUntilSignedInOrLoginFailed({
     required Duration timeout,
   }) async {
-    final signedIn = find.text('当前用户邮箱');
+    final signedIn = find.byKey(const Key('current-user-email-value'));
     final loginFailed = find.textContaining('登录失败');
     final end = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(end)) {
@@ -1011,6 +1007,26 @@ extension on WidgetTester {
       }
     }
     fail('MQTT did not connect before waiting for client message: $lastStatus');
+  }
+
+  Future<String> pumpUntilDeviceId(
+    ClientCoreBridge bridge, {
+    required Duration timeout,
+  }) async {
+    final end = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(end)) {
+      await pump(const Duration(milliseconds: 250));
+      final stateDeviceId = (bridge.state.value.deviceId ?? '').trim();
+      if (stateDeviceId.isNotEmpty) {
+        return stateDeviceId;
+      }
+      final deviceId =
+          ((await bridge.localControlStatus())?.deviceId ?? '').trim();
+      if (deviceId.isNotEmpty) {
+        return deviceId;
+      }
+    }
+    fail('signed in control status returned empty device id');
   }
 
   Future<void> pumpUntilNetworkModule(

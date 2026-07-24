@@ -37,6 +37,7 @@ class ClientCoreLocalService {
     'dispatch',
     'consoleLoginKey',
     'localEnsureDevice',
+    'localPlatformNetworkConfig',
     'localConnectControlMqtt',
     'localRefreshRelayCandidates',
     'localRelayPrepare',

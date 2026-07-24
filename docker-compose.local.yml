@@ -73,10 +73,12 @@ services:
       SLAN_SERVICE_BIZ_DB_SSLMODE: disable
       SLAN_SERVICE_BIZ_DB_TIMEZONE: UTC
       SLAN_CLIENT_DOWNLOAD_DIR: /var/lib/slan/client-downloads
+      SLAN_CLIENT_LOG_DIR: /var/lib/slan/client-logs
     ports:
       - "${SLAN_BIZ_PUBLIC_PORT:-28080}:8080"
     volumes:
       - slan-client-downloads:/var/lib/slan/client-downloads
+      - slan-client-logs:/var/lib/slan/client-logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -355,5 +357,6 @@ volumes:
   slan-postgres-data:
   slan-redis-data:
   slan-client-downloads:
+  slan-client-logs:
   slan-caddy-data:
   slan-caddy-config:
